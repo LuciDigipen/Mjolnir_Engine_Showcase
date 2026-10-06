@@ -44,7 +44,7 @@ TEST_CASE("A release round trips every tile through its index and pack", "[terra
     const TerrainEncodedRelease encoded = Encode(info, layout, tiles);
     REQUIRE(encoded.packs.size() == 1);
     CHECK(encoded.packs[0].fileName == "chunk_-1_-1.tpack");
-    CHECK(encoded.index.size() == 664);
+    CHECK(encoded.index.size() == 760);
     CHECK(encoded.packs[0].bytes.size() == 48 + 3 * 16912 + 16900);
 
     auto [source, handle] = OpenInMemory(encoded);

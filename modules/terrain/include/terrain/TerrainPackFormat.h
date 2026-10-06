@@ -25,14 +25,14 @@ namespace mir
 {
     // Binary layout: docs/modules/terrain.md.
     inline constexpr TerrainFormatVersion kTerrainFormatVersion{2};
-    inline constexpr uint32_t kTerrainFormatMinor = 0;
+    inline constexpr uint32_t kTerrainFormatMinor = 1;
 
     // Encoding version for height payloads.
     inline constexpr uint32_t kTerrainHeightsContentVersion = 1;
 
     inline constexpr uint32_t kTerrainIndexHeaderSize = 128;
     inline constexpr uint32_t kTerrainPackRecordSize = 32;
-    inline constexpr uint32_t kTerrainTileRecordSize = 120;
+    inline constexpr uint32_t kTerrainTileRecordSize = 144;
     inline constexpr uint32_t kTerrainLayerRecordSize = 16;
     inline constexpr uint32_t kTerrainPackHeaderSize = 48;
     inline constexpr uint32_t kTerrainIndexTrailerSize = 8;
@@ -94,6 +94,10 @@ namespace mir
         uint32_t level = 0;
         bool source = true;
         std::optional<double> maxDeviation;
+        uint64_t sourceChecksum = 0;
+        uint64_t topologyHash = 0;
+        uint32_t vertexCount = 0;
+        uint32_t indexCount = 0;
     };
 
     enum class TerrainPackErrorCode : uint8_t
