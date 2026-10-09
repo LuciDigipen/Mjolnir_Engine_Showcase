@@ -703,6 +703,8 @@ namespace mir
         mAssetCache.emplace(&*mAssetManifest, CookedAssetsDir());
         if (mModelSystem)
             mModelSystem->CommitReload(&*mAssetCache);
+        if (mMeshResolveSystem)
+            mMeshResolveSystem->CommitReload(&*mAssetCache);
         mAssetLoadFailed = false;
         mAssetImport.MarkApplied();
         MIR_LOG_INFO("Applied imported assets at an Edit frame boundary");

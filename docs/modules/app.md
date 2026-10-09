@@ -238,6 +238,13 @@ Removing the `MeshRenderer` removes `MeshBounds` too. `Reset()` empties the
 caches and runs wherever `ReleaseSceneResources` does: `StopScene` and
 `UnloadCurrentScene`.
 
+`ApplyImportedAssets` calls `CommitReload` with the new `AssetCache`, after
+`ModelSystem`'s. It frees the cached meshes and forgets every entity's names, so
+the next `PostUpdate` resolves every renderer from the new cache, including one
+whose mesh failed before the import. That runs before `Render`, so no freed mesh
+is drawn. A mesh file that is not valid JSON, lacks a vertex field, or has an
+index past its vertices logs an error and resolves to no mesh.
+
 A `materialShader` whose `CreateMaterial` fails logs an error and resolves to the
 renderer's error material. The mesh then draws magenta, rather than the default
 grey a null handle would give it.
@@ -417,6 +424,13 @@ is tested in `terrain` (`TerrainScene.tests.cpp`) and the collider assembly in
    cheap for a large scene.
 
 ## Changed
+
+*2026-10-08* - **`MeshResolveSystem` follows an asset import, and a bad mesh
+file no longer throws.** Was: it kept the `AssetCache*` from startup, so with no
+manifest at startup every mesh failed until a restart, and a re-imported mesh
+kept its old geometry. A malformed mesh file threw `nlohmann::json` exceptions
+out of `OnUpdate`. Now: `ApplyImportedAssets` calls `CommitReload`, and the parse
+catches the exception, checks indices, and logs.
 
 *2026-10-08* — **Meshes resolve every frame in `MeshResolveSystem`, and `App`
 carries out the editor's entity actions.** Was: `ResolveSceneMeshes` ran once,

@@ -40,18 +40,37 @@ namespace mir
                 return std::nullopt;
 
             MeshData mesh;
-            for (const auto &v : json->value("vertices", nlohmann::json::array()))
+            try
             {
-                Vertex vertex{};
-                const auto &p = v.at("position");
-                const auto &c = v.at("color");
-                const auto &n = v.at("normal");
-                vertex.pos = glm::vec3(p.at(0).get<float>(), p.at(1).get<float>(), p.at(2).get<float>());
-                vertex.color = glm::vec3(c.at(0).get<float>(), c.at(1).get<float>(), c.at(2).get<float>());
-                vertex.normal = glm::vec3(n.at(0).get<float>(), n.at(1).get<float>(), n.at(2).get<float>());
-                mesh.vertices.push_back(vertex);
+                for (const auto &v : json->value("vertices", nlohmann::json::array()))
+                {
+                    Vertex vertex{};
+                    const auto &p = v.at("position");
+                    const auto &c = v.at("color");
+                    const auto &n = v.at("normal");
+                    vertex.pos = glm::vec3(p.at(0).get<float>(), p.at(1).get<float>(), p.at(2).get<float>());
+                    vertex.color = glm::vec3(c.at(0).get<float>(), c.at(1).get<float>(), c.at(2).get<float>());
+                    vertex.normal = glm::vec3(n.at(0).get<float>(), n.at(1).get<float>(), n.at(2).get<float>());
+                    mesh.vertices.push_back(vertex);
+                }
+                mesh.indices = json->value("indices", std::vector<uint32_t>{});
             }
-            mesh.indices = json->value("indices", std::vector<uint32_t>{});
+            catch (const nlohmann::json::exception &exception)
+            {
+                MIR_LOG_ERROR("MeshResolveSystem: '{}' is not a valid mesh: {}", assetPath, exception.what());
+                return std::nullopt;
+            }
+
+            // an index past the vertices would read out of bounds on the GPU
+            for (const uint32_t index : mesh.indices)
+            {
+                if (index >= mesh.vertices.size())
+                {
+                    MIR_LOG_ERROR("MeshResolveSystem: '{}' has index {} past its {} vertices", assetPath, index,
+                        mesh.vertices.size());
+                    return std::nullopt;
+                }
+            }
             return mesh;
         }
 
@@ -81,6 +100,22 @@ namespace mir
     {
         mMeshes.clear();
         mMaterials.clear();
+        mResolved.clear();
+    }
+
+    void MeshResolveSystem::CommitReload(AssetCache *assets)
+    {
+        std::vector<MeshHandle> meshes;
+        for (const auto &[name, cached] : mMeshes)
+        {
+            if (!cached.mMesh.IsNull())
+                meshes.push_back(cached.mMesh);
+        }
+        mRenderer.ReleaseModelResources(meshes, {}, {});
+
+        // materials come from shaders, not the asset cache, so they stay
+        mAssets = assets;
+        mMeshes.clear();
         mResolved.clear();
     }
 
