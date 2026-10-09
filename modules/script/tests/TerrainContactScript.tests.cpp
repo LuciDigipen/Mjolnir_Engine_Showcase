@@ -35,8 +35,6 @@ namespace
 {
     constexpr float kStep = 1.0f / 60.0f;
 
-    // A ball scripted with the shipped terrain_contact.lua, dropped onto a height field tagged
-    // with the ground entity, driven the way App does: scripts, then one substep and the publish.
     struct Fixture
     {
         mir::World world;
@@ -51,7 +49,7 @@ namespace
 
         explicit Fixture(bool groundIsTerrain)
         {
-            // The script reacts only through print, which reaches LogHistory once logging is on.
+            // The script's print reaches LogHistory only once logging is on.
             mir::InitLog({ .filePath = (std::filesystem::temp_directory_path() / "mir_terrain_contact_tests.log").string() });
             mir::LogHistory::Clear();
 

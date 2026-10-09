@@ -1,6 +1,4 @@
--- Placeholder consumer of world:collisions: logs this body's first terrain contact, once.
--- Terrain is recognised generically, by the other entity having a TerrainInstance.
--- world:collisions reports last frame's events, so the line lags the contact by one frame.
+-- Placeholder: logs this body's first terrain contact, once.
 local TerrainContact = {}
 
 function TerrainContact.NewInstanceData()
