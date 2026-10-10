@@ -25,8 +25,8 @@
 namespace mir::terrainbake
 {
     // Bump when a command's behaviour or output changes. 2: publish, sync. 3: package.
-    inline constexpr uint32_t kTerrainToolVersion = 7;
-    inline constexpr uint32_t kTerrainReportVersion = 5;
+    inline constexpr uint32_t kTerrainToolVersion = 8;
+    inline constexpr uint32_t kTerrainReportVersion = 6;
 
     // In report order.
     namespace check
@@ -45,6 +45,7 @@ namespace mir::terrainbake
         inline constexpr std::string_view kFinite = "finite";
         inline constexpr std::string_view kEdges = "edges";
         inline constexpr std::string_view kCorners = "corners";
+        inline constexpr std::string_view kRegions = "regions";
         inline constexpr std::string_view kIdentity = "identity";
         inline constexpr std::string_view kLock = "lock";
         inline constexpr std::string_view kCurrent = "current";
@@ -99,6 +100,32 @@ namespace mir::terrainbake
         uint64_t topologyHash = 0;
     };
 
+    struct TerrainRegionSummary
+    {
+        uint32_t level = 0;
+        TileCoord region;
+        std::string pack;
+        TileRange tiles;
+        TerrainLocalBounds validExtent;
+        float minHeight = 0.0f;
+        float maxHeight = 0.0f;
+        double cellSpacing = 0.0;
+        uint32_t vertices = 0;
+        uint32_t triangles = 0;
+        uint64_t bytes = 0;
+        double maxDeviation = 0.0;
+        bool readable = false;
+    };
+
+    struct TerrainRegionGridSummary
+    {
+        uint32_t regionTiles = 0;
+        uint32_t cells = 0;
+        uint32_t unit = 0;
+        uint32_t levels = 0;
+        double levelZeroEdge = 0.0;
+    };
+
     struct TerrainFileSummary
     {
         std::string name;
@@ -139,7 +166,7 @@ namespace mir::terrainbake
 
     class TerrainReport
     {
-      public:
+    public:
         TerrainReport(std::string command, std::initializer_list<std::string_view> checks);
 
         void Ran(std::string_view check, std::string detail = {});
@@ -163,6 +190,8 @@ namespace mir::terrainbake
         std::optional<uint64_t> nonce;
         std::optional<TerrainLayout> layout;
         std::vector<TerrainTileSummary> tiles;
+        std::optional<TerrainRegionGridSummary> regionGrid;
+        std::vector<TerrainRegionSummary> regions;
         std::vector<TerrainSourceEstimate> sourceEstimates;
         uint64_t referenceSamples = 0;
         uint64_t peakDoubleSamples = 0;
@@ -174,7 +203,7 @@ namespace mir::terrainbake
         std::vector<TerrainDiagnostic> warnings;
         std::optional<TerrainSeamSummary> seams;
 
-      private:
+    private:
         TerrainCheck *Find(std::string_view check);
     };
 
