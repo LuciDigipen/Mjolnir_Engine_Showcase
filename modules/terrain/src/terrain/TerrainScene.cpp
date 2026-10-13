@@ -119,8 +119,9 @@ namespace mir
 
         TerrainWorld::AssetState ResolveAsset(const TerrainInstanceSpec &instance,
                                               const std::filesystem::path &releasesRoot,
-                                              const TerrainWorld::AssetState *before, std::vector<TerrainIssue> &issues,
-                                              TerrainStreamer &streamer)
+                                              const TerrainWorld::AssetState *before,
+                                              std::vector<TerrainIssue> &issues, TerrainStreamer &streamer,
+                                              TerrainEagerLoad eager)
         {
             TerrainWorld::AssetState state;
             state.asset = instance.asset;
@@ -182,9 +183,7 @@ namespace mir
                     return unusable(opened.error.message);
                 release = std::move(*opened.value);
             }
-            // Stop-gap until collision residency guards bodies: an Eager release is used only once all of it
-            // is resident.
-            if (streamer.Add(release) == TerrainResidencyMode::Eager)
+            if (streamer.Add(release) == TerrainResidencyMode::Eager && eager == TerrainEagerLoad::Wait)
                 if (const TerrainPackError loaded = streamer.WaitForEager(release->Info()); loaded.code != Code::None)
                     return unusable(loaded.message);
             state.release = std::move(release);
@@ -311,7 +310,7 @@ namespace mir
 
     TerrainWorld ResolveTerrainWorld(const TerrainSceneSpec &spec, const std::filesystem::path &releasesRoot,
                                      const TerrainWorld *previous, std::vector<TerrainIssue> &issues,
-                                     TerrainStreamer &streamer)
+                                     TerrainStreamer &streamer, TerrainEagerLoad eager)
     {
         TerrainWorld next;
         for (const TerrainInstanceSpec &instance : spec.instances)
@@ -319,7 +318,7 @@ namespace mir
             if (FindAsset(next.mAssets, instance.asset))
                 continue;
             const TerrainWorld::AssetState *before = previous ? FindAsset(previous->mAssets, instance.asset) : nullptr;
-            next.mAssets.push_back(ResolveAsset(instance, releasesRoot, before, issues, streamer));
+            next.mAssets.push_back(ResolveAsset(instance, releasesRoot, before, issues, streamer, eager));
         }
 
         std::vector<TerrainInstanceState> placed;
