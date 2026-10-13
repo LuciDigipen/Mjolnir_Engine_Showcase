@@ -270,15 +270,23 @@ namespace mir
 
     TerrainPackError TerrainReleaseHandle::VerifyAllPacks() const
     {
-        const TerrainIndex &index = *mIndex;
-        std::vector<std::vector<const TerrainTileRecord *>> members(index.packs.size());
-        for (const TerrainTileRecord &record : index.tiles)
-            members[record.pack].push_back(&record);
-        for (const TerrainTileRecord &record : index.regions)
-            members[record.pack].push_back(&record);
+        for (size_t p = 0; p < mIndex->packs.size(); ++p)
+            if (TerrainPackError error = VerifyPack(p); error.code != Code::None)
+                return error;
+        return {};
+    }
 
-        for (size_t p = 0; p < index.packs.size(); ++p)
+    TerrainPackError TerrainReleaseHandle::VerifyPack(size_t p) const
         {
+        const TerrainIndex &index = *mIndex;
+        if (p >= index.packs.size())
+            return Error(Code::InvalidInput, "pack {} is not in the index's {} packs", p, index.packs.size());
+        std::vector<const TerrainTileRecord *> members;
+        for (const std::vector<TerrainTileRecord> *records : {&index.tiles, &index.regions})
+            for (const TerrainTileRecord &record : *records)
+                if (record.pack == p)
+                    members.push_back(&record);
+
             const TerrainPackRecord &record = index.packs[p];
             const std::string name = TerrainPackFileName(record.chunk);
             const std::string where = std::format("{}/{}: ", mSource->Describe(), name);
@@ -293,8 +301,7 @@ namespace mir
             if (!bytes)
                 return Error(Code::Io, "{}cannot read the pack", where);
             if (bytes->size() != record.fileSize)
-                return Error(Code::Corrupt, "{}read {} bytes, the index says {}", where, bytes->size(),
-                             record.fileSize);
+            return Error(Code::Corrupt, "{}read {} bytes, the index says {}", where, bytes->size(), record.fileSize);
             const uint64_t checksum = Fnv1a64(*bytes);
             if (checksum != record.checksum)
                 return Error(Code::Corrupt, "{}checksum {} does not match the index {}", where, Hex(checksum),
@@ -306,7 +313,7 @@ namespace mir
                 return {header.code, where + header.message};
 
             const std::span<const std::byte> all(*bytes);
-            for (const TerrainTileRecord *tile : members[p])
+        for (const TerrainTileRecord *tile : members)
             {
                 if (tile->offset < headerSize)
                     return Error(Code::Malformed, "{}tile {} starts at {}, inside the {}-byte header", where,
@@ -325,7 +332,6 @@ namespace mir
                 if (error.code != Code::None)
                     return {error.code, where + error.message};
             }
-        }
         return {};
     }
 
@@ -381,5 +387,36 @@ namespace mir
             return Fail<TerrainReleaseId>(Code::NotFound, "{}: no current release pointer (nothing published?)",
                                           path.generic_string());
         return ReadTerrainCurrentPointer(releasesRoot, asset);
+    }
+
+    std::vector<TerrainStoredRelease> ListTerrainReleases(const std::filesystem::path &releasesRoot, AssetId asset)
+    {
+        std::vector<TerrainStoredRelease> stored;
+        std::error_code ec;
+        for (const std::filesystem::directory_entry &dir :
+             std::filesystem::directory_iterator(TerrainAssetReleasesDir(releasesRoot, asset), ec))
+        {
+            const std::optional<uint64_t> id = ParseTerrainIdHex(dir.path().filename().string());
+            std::error_code isDir;
+            if (!id || *id == 0 || !dir.is_directory(isDir))
+                continue;
+            TerrainStoredRelease release{TerrainReleaseId(*id)};
+            std::error_code listed;
+            for (const std::filesystem::directory_entry &file : std::filesystem::directory_iterator(dir.path(), listed))
+            {
+                std::error_code sized;
+                if (!file.is_regular_file(sized))
+                    continue;
+                const uintmax_t bytes = file.file_size(sized);
+                if (sized)
+                    continue;
+                ++release.files;
+                release.bytes += bytes;
+            }
+            stored.push_back(release);
+        }
+        std::sort(stored.begin(), stored.end(), [](const TerrainStoredRelease &a, const TerrainStoredRelease &b)
+                  { return a.release.value < b.release.value; });
+        return stored;
     }
 }

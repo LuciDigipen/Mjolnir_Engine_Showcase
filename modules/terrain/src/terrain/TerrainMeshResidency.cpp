@@ -17,6 +17,7 @@
 #include <chrono>
 #include <cmath>
 #include <deque>
+#include <format>
 #include <limits>
 #include <map>
 #include <mutex>
@@ -208,6 +209,7 @@ namespace mir
             // This Request's want, if any.
             std::optional<TerrainDemand> demand;
             float rank = 0.0f;
+            std::string error;
         };
 
         struct Want
@@ -281,6 +283,7 @@ namespace mir
             entry.bytes = 0;
             entry.state = TerrainMeshState::Failed;
             entry.built.reset();
+            entry.error = error;
             failures.emplace_back(key, std::move(error));
         }
 
@@ -337,7 +340,10 @@ namespace mir
         {
             const auto ticket = impl.tickets.find(finished.ticket);
             if (ticket == impl.tickets.end())
+            {
+                ++impl.stats.discarded;
                 continue;
+            }
             const TerrainPayloadKey key = ticket->second;
             impl.tickets.erase(ticket);
             Impl::Entry &entry = impl.entries.at(key);
@@ -612,4 +618,28 @@ namespace mir
             }
         return stats;
     }
-} // namespace mir
+
+    TerrainReleaseUsage TerrainMeshResidency::Usage(const TerrainReleaseInfo &release) const
+    {
+        TerrainReleaseUsage usage;
+        for (const auto &[key, entry] : mImpl->entries)
+        {
+            if (!SameRelease(key, release))
+                continue;
+            usage.bytes += entry.bytes;
+            switch (entry.state)
+            {
+            case TerrainMeshState::Building:
+            case TerrainMeshState::Built:
+            case TerrainMeshState::Uploading: ++usage.inFlight; break;
+            case TerrainMeshState::Ready: ++usage.ready; break;
+            case TerrainMeshState::Failed:
+                if (usage.failed++ == 0)
+                    usage.failure = std::format("{}: {}", DescribeTerrainPayloadKey(key), entry.error);
+                break;
+            case TerrainMeshState::Absent: break;
+            }
+        }
+        return usage;
+    }
+}

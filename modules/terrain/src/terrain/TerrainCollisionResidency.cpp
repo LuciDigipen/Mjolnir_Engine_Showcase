@@ -432,6 +432,8 @@ namespace mir
         {
             std::shared_ptr<const TerrainReleaseHandle> handle;
             TerrainResidencyMode mode = TerrainResidencyMode::Interest;
+            // Built ahead of a release switch, never placed.
+            bool staged = false;
             std::vector<TerrainPlacement> placements;
             float minHeight = 0.0f;
             float maxHeight = 0.0f;
@@ -461,6 +463,7 @@ namespace mir
         std::unordered_map<uint64_t, PieceKey> tickets;
         std::vector<Release> releases;
         std::vector<TerrainCollisionAnswer> answers;
+        std::vector<std::pair<TerrainReleaseInfo, TerrainCollisionStatus>> stagedStatus;
         std::vector<TerrainCollisionEvent> events;
         std::deque<double> latencies;
         std::optional<TerrainInterestId> interest;
@@ -721,14 +724,15 @@ namespace mir
 
     TerrainCollisionResidency::~TerrainCollisionResidency() = default;
 
-    void TerrainCollisionResidency::SetInstances(std::span<const TerrainCollisionInstance> instances)
+    void TerrainCollisionResidency::SetInstances(std::span<const TerrainCollisionInstance> instances,
+                                                 std::span<const TerrainCollisionInstance> staged)
     {
         Impl &impl = *mImpl;
         std::vector<Impl::Release> next;
-        for (const TerrainCollisionInstance &instance : instances)
+        const auto add = [&](const TerrainCollisionInstance &instance, bool stage)
         {
             if (!instance.release)
-                continue;
+                return;
             const TerrainReleaseInfo &info = instance.release->Info();
             auto found =
                 std::find_if(next.begin(), next.end(), [&](const Impl::Release &r) { return r.Info() == info; });
@@ -741,6 +745,7 @@ namespace mir
                     release.layouts = std::move(old->layouts);
                 release.handle = instance.release;
                 release.mode = instance.mode;
+                release.staged = stage;
                 release.minHeight = std::numeric_limits<float>::infinity();
                 release.maxHeight = -std::numeric_limits<float>::infinity();
                 for (const TerrainTileRecord &record : instance.release->Index().tiles)
@@ -752,8 +757,15 @@ namespace mir
                 next.push_back(std::move(release));
                 found = next.end() - 1;
             }
+            // An active release ignores staged instances of itself.
+            else if (found->staged != stage)
+                return;
             found->placements.push_back(instance.placement);
-        }
+        };
+        for (const TerrainCollisionInstance &instance : instances)
+            add(instance, false);
+        for (const TerrainCollisionInstance &instance : staged)
+            add(instance, true);
         impl.releases = std::move(next);
 
         for (auto it = impl.entries.begin(); it != impl.entries.end();)
@@ -764,10 +776,13 @@ namespace mir
                 impl.Drop(it++);
                 continue;
             }
-            std::erase_if(it->second.colliders, [&](const Impl::Collider &collider) {
-                const bool kept =
-                    std::any_of(release->placements.begin(), release->placements.end(),
-                                [&](const TerrainPlacement &p) { return SamePlacement(p, collider.placement); });
+            std::erase_if(it->second.colliders,
+                          [&](const Impl::Collider &collider)
+                          {
+                              const bool kept = !release->staged &&
+                                                std::any_of(release->placements.begin(), release->placements.end(),
+                                                            [&](const TerrainPlacement &p)
+                                                            { return SamePlacement(p, collider.placement); });
                 if (!kept && collider.id != 0)
                     impl.physics->Remove(collider.id);
                 return !kept;
@@ -789,7 +804,10 @@ namespace mir
         {
             const auto ticket = impl.tickets.find(built.ticket);
             if (ticket == impl.tickets.end())
+            {
+                ++impl.stats.discarded;
                 continue;
+            }
             const PieceKey key = ticket->second;
             impl.tickets.erase(ticket);
             Impl::Entry &entry = impl.entries.at(key);
@@ -834,8 +852,12 @@ namespace mir
             event.error = entry.error;
             event.bytes = entry.bytes;
             if (Impl::Release *release = impl.FindRelease(key))
+            {
+                event.staged = release->staged;
+                if (!release->staged)
                 for (const TerrainPlacement &placement : release->placements)
                     impl.Place(entry, key, placement);
+            }
             for (const Impl::Collider &collider : entry.colliders)
             {
                 event.colliders += collider.id != 0;
@@ -849,7 +871,7 @@ namespace mir
             if (entry.state != Impl::State::Ready)
                 continue;
             Impl::Release *release = impl.FindRelease(key);
-            if (!release)
+            if (!release || release->staged)
                 continue;
             for (const TerrainPlacement &placement : release->placements)
                 if (!impl.ColliderFor(entry, placement))
@@ -921,10 +943,11 @@ namespace mir
 
         for (Impl::Release &release : impl.releases)
             if (release.mode == TerrainResidencyMode::Eager)
-                want({release.Info().asset, release.Info().release, 0, 0, true, false}, true, 0.0);
+                want({release.Info().asset, release.Info().release, 0, 0, true, false}, !release.staged, 0.0);
 
         const double tau = impl.Prediction();
         std::vector<std::vector<Impl::Need>> needs(sources.size());
+        std::vector<std::vector<PieceKey>> stagedNeeds(impl.releases.size());
         for (size_t s = 0; s < sources.size(); ++s)
         {
             const TerrainCollisionSource &source = sources[s];
@@ -967,9 +990,8 @@ namespace mir
                         if (release.mode == TerrainResidencyMode::Eager)
                         {
                             const PieceLayout &layout = impl.LayoutOf(release, 0, 0, true);
-                            if (!prefetch && lowest <= double(layout.maxHeight) + slack)
-                                needs[s].push_back(
-                                    {r, p, {release.Info().asset, release.Info().release, 0, 0, true, false}});
+                            if (!prefetch && !release.staged && lowest <= double(layout.maxHeight) + slack)
+                                needs[s].push_back({r, p, {release.Info().asset, release.Info().release, 0, 0, true, false}});
                             continue;
                         }
                         const std::optional<TerrainLayout> covered = TerrainLayout::Create(
@@ -1001,6 +1023,13 @@ namespace mir
                                     const auto found = impl.entries.find(fine);
                                     if (found == impl.entries.end() || !found->second.needed)
                                         want(fine, false, rank);
+                                    continue;
+                                }
+                                if (release.staged)
+                                {
+                                    want(fine, false, rank);
+                                    if (std::find(stagedNeeds[r].begin(), stagedNeeds[r].end(), fine) == stagedNeeds[r].end())
+                                        stagedNeeds[r].push_back(fine);
                                     continue;
                                 }
                                 want(fine, true, rank);
@@ -1115,6 +1144,40 @@ namespace mir
             impl.StartBuild(entry, key, release, layout, std::move(heights));
         }
 
+        impl.stagedStatus.clear();
+        for (size_t r = 0; r < impl.releases.size(); ++r)
+        {
+            const Impl::Release &release = impl.releases[r];
+            if (!release.staged)
+                continue;
+            if (release.mode == TerrainResidencyMode::Eager)
+                stagedNeeds[r] = {{release.Info().asset, release.Info().release, 0, 0, true, false}};
+            TerrainCollisionStatus status;
+            for (const PieceKey &key : stagedNeeds[r])
+            {
+                ++status.needed;
+                const auto found = impl.entries.find(key);
+                const Impl::State state = found == impl.entries.end() ? Impl::State::Waiting : found->second.state;
+                if (state == Impl::State::Ready)
+                {
+                    ++status.ready;
+                    status.contactError = std::max(status.contactError, found->second.error.total);
+                }
+                else if (state == Impl::State::Failed)
+                {
+                    if (status.failed++ == 0)
+                        status.reason = std::format("{}: {}", DescribeTerrainCollisionPiece(NameOf(key)),
+                                                    found->second.message);
+                }
+                else
+                    ++status.pending;
+            }
+            status.state = status.failed    ? TerrainCollisionState::Failed
+                           : status.pending ? TerrainCollisionState::Pending
+                                            : TerrainCollisionState::Ready;
+            impl.stagedStatus.emplace_back(release.Info(), std::move(status));
+        }
+
         impl.answers.assign(sources.size(), {});
         for (size_t s = 0; s < sources.size(); ++s)
         {
@@ -1179,6 +1242,8 @@ namespace mir
                 source.radius + (speed + source.acceleration * stepSeconds) * stepSeconds + kContactSlack;
             for (Impl::Release &release : impl.releases)
             {
+                if (release.staged)
+                    continue;
                 const TerrainLayout &grid = release.handle->Index().layout;
                 for (const TerrainPlacement &placement : release.placements)
                 {
@@ -1254,6 +1319,16 @@ namespace mir
         return source < mImpl->answers.size() ? mImpl->answers[source] : kNone;
     }
 
+    TerrainCollisionStatus TerrainCollisionResidency::StagedStatus(const TerrainReleaseInfo &release) const
+    {
+        for (const auto &[info, status] : mImpl->stagedStatus)
+            if (info == release)
+                return status;
+        TerrainCollisionStatus none;
+        none.state = TerrainCollisionState::Pending;
+        return none;
+    }
+
     void TerrainCollisionResidency::ForEachCollider(
         const std::function<void(const TerrainPlacement &, TerrainColliderId)> &visit) const
     {
@@ -1273,6 +1348,7 @@ namespace mir
         impl.entries.clear();
         impl.releases.clear();
         impl.answers.clear();
+        impl.stagedStatus.clear();
     }
 
     double TerrainCollisionResidency::PredictionSeconds() const
@@ -1312,6 +1388,30 @@ namespace mir
                 stats.colliders += collider.id != 0;
         }
         return stats;
+    }
+
+    TerrainReleaseUsage TerrainCollisionResidency::Usage(const TerrainReleaseInfo &release) const
+    {
+        TerrainReleaseUsage usage;
+        for (const auto &[key, entry] : mImpl->entries)
+        {
+            if (!SameRelease(release, key))
+                continue;
+            switch (entry.state)
+            {
+            case Impl::State::Waiting: ++usage.waiting; break;
+            case Impl::State::Building: ++usage.inFlight; break;
+            case Impl::State::Ready:
+                ++usage.ready;
+                usage.bytes += entry.bytes;
+                break;
+            case Impl::State::Failed:
+                if (usage.failed++ == 0)
+                    usage.failure = std::format("{}: {}", DescribeTerrainCollisionPiece(NameOf(key)), entry.message);
+                break;
+            }
+        }
+        return usage;
     }
 
     TerrainCollisionSources::Id TerrainCollisionSources::Add(const TerrainCollisionSource &source)
