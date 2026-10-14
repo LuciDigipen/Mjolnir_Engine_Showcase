@@ -55,7 +55,6 @@ namespace mir
             TerrainPlacement placement;
             TerrainRenderTiles tiles;
             BodyHandle collider;
-            // The selected height field's first sample.
             TerrainLocalPosition colliderOrigin;
         };
 

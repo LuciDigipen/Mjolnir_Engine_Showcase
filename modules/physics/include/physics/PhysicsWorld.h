@@ -59,7 +59,6 @@ namespace mir
         // Jolt's square side, padded with holes.
         uint32_t mSampleCount = 0;
         std::size_t mMemoryBytes = 0;
-        // Measured from every valid decoded shape vertex, before world placement.
         double mMaxQuantizationError = 0.0;
         double mMaxHorizontalError = 0.0;
         uint64_t mValidSamples = 0;
