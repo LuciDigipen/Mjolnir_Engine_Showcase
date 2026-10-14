@@ -38,6 +38,21 @@
         "nearZ": 0.1
       },
       "type": "Camera"
+    },
+    {
+      "fields": {
+        "lookAtTarget": true,
+        "offset": [
+          0.0,
+          3.0,
+          7.0
+        ],
+        "offsetInTargetSpace": false,
+        "snapDistance": 50.0,
+        "stiffness": 4.0,
+        "target": 11
+      },
+      "type": "CameraFollow"
     }
   ],
   "id": 3,

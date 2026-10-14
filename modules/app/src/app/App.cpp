@@ -33,8 +33,10 @@
 #include <physics/CollisionEventSystem.h>
 #include <physics/CollisionEvents.h>
 #include <physics/ComponentRegistration.h>
+#include <physics/PhysicsInterpolationSystem.h>
 #include <physics/PhysicsSystem.h>
 #include <physics/PhysicsWorld.h>
+#include <renderer/CameraFollowSystem.h>
 #include <renderer/ComponentRegistration.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/RenderSystem.h>
@@ -214,8 +216,13 @@ namespace mir
         // Transforms it writes into world matrices
         mScheduler.AddSystem<PhysicsSystem>(SystemPhase::FixedUpdate);
 
-        // should be before any other system in PostUpdate
+
+        mScheduler.AddSystem<PhysicsInterpolationSystem>(SystemPhase::PostUpdate);
+
+        //should be before any other system in PostUpdate that reads WorldTransform
         mScheduler.AddSystem<TransformPropagateSystem>(SystemPhase::PostUpdate);
+
+        mScheduler.AddSystem<CameraFollowSystem>(SystemPhase::PostUpdate);
         mModelSystem =
             &mScheduler.AddSystem<ModelSystem>(SystemPhase::PostUpdate, mRenderer, Assets(), mProject.mAssetIdRoot);
         mMeshResolveSystem = &mScheduler.AddSystem<MeshResolveSystem>(SystemPhase::PostUpdate, mRenderer, Assets(),
@@ -471,7 +478,10 @@ namespace mir
         return &*mAssetCache;
     }
 
-    SystemContext App::MakeContext(float dt) { return SystemContext{ mWorld, mCommands, dt, mElapsed, mFrame }; }
+    SystemContext App::MakeContext(float dt)
+    {
+        return SystemContext{ mWorld, mCommands, dt, mElapsed, mFrame, mFixedTimestep.Alpha() };
+    }
 
     void App::Run()
     {

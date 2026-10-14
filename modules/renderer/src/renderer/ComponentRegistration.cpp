@@ -10,6 +10,7 @@
 #include "renderer/ComponentRegistration.h"
 
 #include "renderer/components/Camera.h"
+#include "renderer/components/CameraFollow.h"
 #include "renderer/components/Light.h"
 #include "renderer/components/MeshRenderer.h"
 #include "renderer/components/Sky.h"
@@ -165,6 +166,7 @@ namespace mir
         ComponentRegistry::Instance().Register<Camera>(kCameraFields);
         ComponentRegistry::Instance().Register<Light>(kLightFields, &LightPickRadius, &DrawLightGizmo);
         ComponentRegistry::Instance().Register<Sky>(kSkyFields);
+        ComponentRegistry::Instance().Register<CameraFollow>(kCameraFollowFields);
     }
 
     void RegisterRendererEntityTypes()

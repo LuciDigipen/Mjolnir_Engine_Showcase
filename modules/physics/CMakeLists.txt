@@ -27,6 +27,7 @@ target_sources(engine_physics PRIVATE
     src/physics/CollisionEventSystem.cpp
     src/physics/ComponentRegistration.cpp
     src/physics/JoltRuntime.cpp
+    src/physics/PhysicsInterpolationSystem.cpp
     src/physics/PhysicsSystem.cpp
     src/physics/PhysicsWorld.cpp
 )

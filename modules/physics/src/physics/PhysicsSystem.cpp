@@ -43,6 +43,12 @@ namespace mir
                 ? physics.CreateDynamicBox(position, rigidBody.halfExtent, transform.Rotation())
                 : physics.CreateStaticBox(position, rigidBody.halfExtent, transform.Rotation());
         }
+
+        void ResetStepPoses(RigidBody &rigidBody, const Transform &transform)
+        {
+            rigidBody.previousPosition = rigidBody.currentPosition = transform.Position();
+            rigidBody.previousRotation = rigidBody.currentRotation = transform.Rotation();
+        }
     }
 
     void PhysicsSystem::OnStart(SystemContext &context)
@@ -78,10 +84,13 @@ namespace mir
                     // meaning OnStart() in a script can never find a body.
                     rigidBody.body = CreateBodyFor(*physics, rigidBody, transform);
                     physics->SetBodyEntity(rigidBody.body, entity);
+                    ResetStepPoses(rigidBody, transform);
                 }
                 else if (transform.Version() != rigidBody.transformVersion)
                 {
+                    // if is a teleport.
                     physics->SetBodyTransform(rigidBody.body, BodyWorldPosition(transform), transform.Rotation());
+                    ResetStepPoses(rigidBody, transform);
                 }
 
                 rigidBody.transformVersion = transform.Version();
@@ -95,6 +104,9 @@ namespace mir
                 if (!rigidBody.body.IsValid() || rigidBody.motion != PhysicsMotion::Dynamic)
                     return;
 
+                rigidBody.previousPosition = rigidBody.currentPosition;
+                rigidBody.previousRotation = rigidBody.currentRotation;
+
                 // A body Jolt left at a non-finite position keeps its last
                 // Transform instead of writing that back.
                 const std::optional<WorldPosition> position = physics->BodyPosition(rigidBody.body);
@@ -105,6 +117,8 @@ namespace mir
                 if (rotation != transform.Rotation())
                     transform.SetRotation(rotation);
 
+                rigidBody.currentPosition = transform.Position();
+                rigidBody.currentRotation = transform.Rotation();
                 rigidBody.transformVersion = transform.Version();
             });
     }
