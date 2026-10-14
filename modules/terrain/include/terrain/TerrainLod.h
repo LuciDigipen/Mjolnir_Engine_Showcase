@@ -48,11 +48,9 @@ namespace mir
                                                      std::span<const std::byte> payload);
     TerrainResult<TerrainLodNormals> DecodeTerrainNormals(const TerrainIndex &index, const TerrainTileRecord &record,
                                                          std::span<const std::byte> payload);
-    // The actual decoded mesh; points are tile-local x/z meters.
     std::optional<double> EvaluateTerrainLod(const TerrainLodSurface &lod, double x, double z);
     std::optional<double> TerrainRegularDeviation(const TerrainLayout &sourceLayout, const TileHeights &source,
         const TerrainLayout &queryLayout, const TileHeights &query);
-    // Exact XY triangle overlay extrema, with a numerical enclosure.
     std::optional<double> TerrainLodDeviation(const TerrainLayout &sourceLayout, const TileHeights &source,
                                              const TerrainLodSurface &lod);
 }

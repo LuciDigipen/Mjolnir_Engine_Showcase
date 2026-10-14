@@ -242,7 +242,6 @@ namespace mir
             double ax0=std::min({a[0].x,a[1].x,a[2].x}),ax1=std::max({a[0].x,a[1].x,a[2].x});
             double az0=std::min({a[0].z,a[1].z,a[2].z}),az1=std::max({a[0].z,a[1].z,a[2].z});
             if(ax1<minX||ax0>maxX||az1<minZ||az0>maxZ)continue;
-            // An unchanged canonical source triangle needs no overlay.
             const int canonicalX=std::clamp(int(std::floor(ax0/s)),0,n-1);
             const int canonicalZ=std::clamp(int(std::floor(az0/s)),0,n-1);
             bool canonical=ax0==coordX(canonicalX)&&ax1==coordX(canonicalX+1)&&

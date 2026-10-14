@@ -47,7 +47,6 @@ namespace mir::terrainbake
             }
             glm::vec3 Normal(double x,double z,const TileHeights &fallback) const
             {
-                // Incident source grids determine a common, LOD-independent stencil.
                 double step=Layout(fallback).SampleSpacing();
                 const auto &ref=recipe.layout;const double size=ref.TileSize();
                 for(int dz=-1;dz<=1;++dz)for(int dx=-1;dx<=1;++dx)
