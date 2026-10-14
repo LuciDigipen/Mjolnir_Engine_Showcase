@@ -56,6 +56,12 @@
         "name": "Sphere"
       },
       "type": "Name"
+    },
+    {
+      "fields": {
+        "scriptName": "terrain_contact"
+      },
+      "type": "ScriptRef"
     }
   ],
   "id": 4,
