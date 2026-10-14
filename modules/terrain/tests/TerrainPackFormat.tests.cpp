@@ -44,7 +44,6 @@ TEST_CASE("A release round trips every tile through its index and pack", "[terra
     const TerrainEncodedRelease encoded = Encode(info, layout, tiles);
     REQUIRE(encoded.packs.size() == 1);
     CHECK(encoded.packs[0].fileName == "chunk_-1_-1.tpack");
-    // 128 header + 32 pack + 4 * 120 payloads + 16 layer + 8 trailer; 48 header + 4 payloads of 65^2 floats, 16-aligned.
     CHECK(encoded.index.size() == 664);
     CHECK(encoded.packs[0].bytes.size() == 48 + 3 * 16912 + 16900);
 
@@ -235,7 +234,6 @@ TEST_CASE("A newer minor with longer header, records and an extension section st
     const uint32_t packCount = 4;
     const uint32_t tileCount = 9;
 
-    // Format 2.1: a longer header and records, and an unknown section before the trailer.
     std::vector<std::byte> v11(v10.begin(), v10.begin() + kTerrainIndexHeaderSize);
     v11.insert(v11.end(), 16, std::byte{0xAB});
     StoreU32(v11, 8, 1);

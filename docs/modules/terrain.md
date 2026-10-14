@@ -764,7 +764,7 @@ collider) until `current` moves to one that loads.
 *As of 2026-10-09.* Format 2 supports sparse layers, independent payload
 ranges and unique per-tile source records (#145). Recipes and runtime meshes
 still use one layer until the remaining P2 issues are integrated. See
-[the #145 handoff](../terrain-p2-145.md) for validation and full-map measurements.
+local validation notes for validation and full-map measurements.
 The accepted P1/P2 size baseline is 256 m tiles and 4096 m chunks; see
 [the measurements](#size-baseline-issue-24). Layout, addressing, placement, identities, the canonical
 surface, the tile mesh builder, the collider block, the release format, its
@@ -871,7 +871,7 @@ documentation decision; the production terrain runtime is unchanged.
 nested layer grids, independent payload keys/ranges and per-tile deviation
 bounds; v1 readers/writers removed. Candidate manifest and sync use format 2.
 All four build presets pass; full-map index measurements are recorded in
-[the #145 handoff](../terrain-p2-145.md).
+local validation notes.
 
 *2026-10-03* — **A build without the editor packages terrain (#116).** Was: no
 packaging step, so the `windows-msvc-game-*` builds, which read `games/` next

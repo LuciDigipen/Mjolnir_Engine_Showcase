@@ -23,20 +23,11 @@
 
 namespace mir
 {
-    // Format 2 only. LE index: 128-byte header, pack table, payload table,
-    // layer table, extension bytes, FNV64 trailer. Header fields through 112
-    // retain their offsets; 120/124 are layer count/record size (16 bytes).
-    // Layer: spacing f64, intervals i32, reserved u32. Payload fields 0..87
-    // retain their offsets; 88 layer, 92 kind, 96 level, 100 source flag,
-    // 104 hasDeviation, 108 reserved, 112 deviation f64 (120 bytes total).
-    // Keys sort by (z, x, kind, level, layer). Every tile has one finest
-    // Height source. Height, LodHeight, Normal and Region keys are reserved;
-    // this reader decodes Height only. Unknown kinds fail, never get skipped.
-    // New content may extend these keys in a minor without changing addressing.
+    // Binary layout: docs/modules/terrain.md.
     inline constexpr TerrainFormatVersion kTerrainFormatVersion{2};
     inline constexpr uint32_t kTerrainFormatMinor = 0;
 
-    // Payload: (n + 1)^2 float32 in TileHeights order. A new encoding bumps this, not the format.
+    // Encoding version for height payloads.
     inline constexpr uint32_t kTerrainHeightsContentVersion = 1;
 
     inline constexpr uint32_t kTerrainIndexHeaderSize = 128;
@@ -48,10 +39,8 @@ namespace mir
 
     inline constexpr uint32_t kDefaultTerrainPayloadAlignment = 16;
     inline constexpr uint32_t kMaxTerrainPayloadAlignment = 65536;
-    // 16 x 16 tiles; not frozen.
     inline constexpr int32_t kDefaultTerrainChunkTiles = 16;
 
-    // Not .bin or .blob: the editor watcher and the cooker own those.
     inline constexpr std::string_view kTerrainIndexFileName = "release.tindex";
 
     // floorDiv(tile, chunkTiles) on each axis.
@@ -119,12 +108,11 @@ namespace mir
         InvalidInput,  // the writer was given tiles or options it cannot encode
     };
 
-    // Message names the file, record, tile and field.
     struct TerrainPackError
     {
         TerrainPackErrorCode code = TerrainPackErrorCode::None;
         std::string message;
-        // Set only when a payload that matches its checksum holds NaN or infinity: the first such sample.
+        // First non-finite sample in a checksum-valid payload.
         std::optional<GlobalSampleIndex> nonFiniteSample;
     };
 
@@ -138,7 +126,7 @@ namespace mir
         explicit operator bool() const { return Ok(); }
     };
 
-    // Fully checked sparse payloads; layout is the stable finest reference grid.
+    // layout is the finest reference grid, not each tile's source grid.
     struct TerrainIndex
     {
         TerrainReleaseInfo release;
@@ -153,7 +141,6 @@ namespace mir
         std::vector<TerrainPackRecord> packs;
         std::vector<TerrainTileRecord> tiles;
 
-        // The unique source payload.
         const TerrainTileRecord *Find(TileCoord tile) const;
         const TerrainTileRecord *Find(TileCoord tile, uint32_t layer,
                                        TerrainPayloadKind kind = TerrainPayloadKind::Height,

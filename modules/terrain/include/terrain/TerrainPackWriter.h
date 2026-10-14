@@ -61,7 +61,6 @@ namespace mir
     uint64_t TerrainHeightsHash(std::span<const TerrainLayout> layers,
                                 std::span<const TerrainTileWrite> tiles);
 
-    // Single-layer convenience; exactly one source per map tile.
     TerrainResult<TerrainEncodedRelease> EncodeTerrainRelease(const TerrainReleaseInfo &info,
                                                               const TerrainLayout &layout,
                                                               std::span<const TileHeights> tiles,
