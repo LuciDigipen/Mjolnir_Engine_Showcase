@@ -952,4 +952,4 @@ shape. The binding performs no IO and resolves the World resource per call;
 Play retains its pinned release. Invalid arguments return `Failed/InvalidInput`
 with a script error log; no terrain or no covering instance gives `OutsideMap`.
 The old Backlog item 2's script query is complete; per-instance mesh uploads
-remain as described there. Verification: [#144 handoff](../terrain-p2-144.md).
+remain as described there. Verification: local validation notes.
