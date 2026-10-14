@@ -216,7 +216,6 @@ TEST_CASE("Query and collider sampling consume adjusted release values", "[terra
     CHECK(answer.localHeight == fine.At(63, 32));
     const TerrainGenerator generator(r);
     CHECK(answer.localHeight != generator.SampleHeight({-1, -32}));
-    // Single source precision adapter remains a pure final-sample copy.
     const auto layout = *r.SourceLayout({-1, -1});
     const auto lookup = [&](TileCoord t) -> std::span<const float> {
         const auto it = std::find_if(baked->tiles.begin(), baked->tiles.end(), [&](const auto &v) { return v.Tile() == t; });

@@ -18,7 +18,6 @@ namespace mir::terrainbake
         TerrainSeamWeight weight = TerrainSeamWeight::Smoothstep;
     };
 
-    // Offline only. Source grids remain unchanged; tiles become the authoritative final surface.
     bool AdjustTerrainSeams(const TerrainRecipe &recipe, std::span<TileHeights> tiles,
                             TerrainReport &report, TerrainSeamOptions options = {});
     void ReportSeamWarnings(TerrainReport &report);

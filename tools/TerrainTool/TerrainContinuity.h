@@ -40,7 +40,6 @@ namespace mir::terrainbake
     };
     using TerrainContinuityLookup = std::function<TerrainContinuityTile(TileCoord)>;
 
-    // Float32 interpolation allowance plus a double coordinate/evaluation roundoff bound.
     double TerrainSeamTolerance(double supportMagnitude, double coordinateMagnitude, double minSpacing);
     ContinuityStats CheckMixedTileContinuity(const TerrainLayout &reference, const TerrainContinuityLookup &lookup,
                                             TerrainReport &report);
