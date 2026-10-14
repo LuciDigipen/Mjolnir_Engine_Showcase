@@ -1,0 +1,62 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.4,
+          0.4,
+          0.4
+        ]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "materialShader": "default",
+        "meshName": "meshes/cube.mesh.json",
+        "tint": [
+          0.95,
+          0.6,
+          0.15,
+          1.0
+        ]
+      },
+      "type": "MeshRenderer"
+    },
+    {
+      "fields": {
+        "scriptName": "follow_rig"
+      },
+      "type": "ScriptRef"
+    },
+    {
+      "fields": {
+        "name": "FollowRig"
+      },
+      "type": "Name"
+    }
+  ],
+  "id": 11,
+  "parent": 0
+}

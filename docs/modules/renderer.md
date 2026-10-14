@@ -125,6 +125,7 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `MeshRenderer`, `Camera` | `renderer/components/` | Handles, and `fovY`/`near`/`far` (`far` 0 = no far plane), declared here rather than in `core` |
 | `MeshBounds` | `renderer/components/MeshBounds.h` | `{mLocalMin, mLocalMax}`, a mesh's own local-space AABB; attached and kept current by `app`'s `MeshResolveSystem` (see [app.md](app.md)), read by the editor's viewport click-picking (see [editor.md](editor.md)) — not used for rendering at all |
 | `Ray`, `RayIntersectsAABB`, `WorldRay`, `MakeCameraRay`, `RayIntersectsBox` | `renderer/CameraMath.h` | `WorldRay` is a camera ray with a double `WorldPosition` origin and a float direction; `RayIntersectsBox` places a `WorldPose` box relative to that origin in double, then runs the local ray/AABB slab test — the same file `MakeViewProjection` lives in, so both stay in the same Vulkan-convention math |
+| `CameraFollow`, `CameraFollowSystem` | `renderer/components/CameraFollow.h`, `renderer/CameraFollowSystem.h` | `{target, offset, offsetInTargetSpace, stiffness, snapDistance, lookAtTarget}`; the system runs in `PostUpdate` right after `TransformPropagateSystem`, only while simulating, and re-resolves the camera's `WorldTransform` so `RenderSystem` draws this frame's pose. `StepCameraFollow` is the pure step it uses |
 | `RenderSystem` | `renderer/RenderSystem.h` | The ECS-to-renderer bridge, `SystemPhase::Render` |
 | `Shapes.h` | `renderer/Shapes.h` | `MakeCube()` and friends — plain vectors, no Vulkan |
 | `RenderSettings` | `renderer/RenderSettings.h` | Project Settings' `"rendering"` section (`rayTracing: bool`, `fog: bool`); `LoadFile`/`SaveFile`, a World resource loaded in `App::Initialize` |
@@ -580,6 +581,14 @@ No tests. Everything here needs a device, and the module is verified by running.
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-10-14* — **`CameraFollow`.** Was: a game camera only moved if a script
+wrote its `Transform`. Now: a `CameraFollow` on a root entity chases its
+`target`'s `WorldTransform` at an offset, closing `1 - e^(-stiffness * dt)` of
+the gap each frame so the follow is the same at any frame rate, snapping on the
+first simulated frame and past `snapDistance`. It reads targets after
+propagation, so a `RigidBody` target with `interpolate` set is followed at its
+blended pose rather than its per-step one. Because: issue #28.
 
 *2026-10-08* — **Error texture and error material.** Was: the renderer had one
 fallback per level. A null or stale texture became white or a flat normal, and
