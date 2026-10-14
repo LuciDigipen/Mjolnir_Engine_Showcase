@@ -15,7 +15,3 @@ __pycache__/
 # IDE
 /.idea
 /.vscode
-
-/docs/terrain-p2-[0-9]*
-
-/docs/terrain-p2-summary.md
