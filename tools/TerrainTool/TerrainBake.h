@@ -40,17 +40,19 @@ namespace mir::terrainbake
         TerrainReleaseInfo info;
         TerrainLayout layout;
         uint64_t nonce = 0;
-        // Every layout tile in (z, x) order.
         std::vector<TileHeights> tiles;
         TerrainEncodedRelease encoded;
     };
 
-    // P1: final heights are the source heights unchanged. Fills the "generate" check.
     std::optional<std::vector<TileHeights>> BakeFinalHeights(const TerrainRecipe &recipe, TerrainReport &report);
 
     // Fills the "encode" check.
     std::optional<TerrainBakedRelease> EncodeBakedRelease(AssetId asset, TerrainSourceFingerprint source,
                                                           const TerrainLayout &layout, std::vector<TileHeights> tiles,
+                                                          const TerrainBakeOptions &options, TerrainReport &report);
+
+    std::optional<TerrainBakedRelease> EncodeBakedRelease(AssetId asset, TerrainSourceFingerprint source,
+                                                          const TerrainRecipe &recipe, std::vector<TileHeights> tiles,
                                                           const TerrainBakeOptions &options, TerrainReport &report);
 
     TerrainCandidateManifest MakeCandidateManifest(const TerrainBakedRelease &baked, std::string assetPath,
