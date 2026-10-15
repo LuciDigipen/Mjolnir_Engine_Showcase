@@ -25,8 +25,8 @@
 namespace mir::terrainbake
 {
     // Bump when a command's behaviour or output changes. 2: publish, sync. 3: package.
-    inline constexpr uint32_t kTerrainToolVersion = 6;
-    inline constexpr uint32_t kTerrainReportVersion = 4;
+    inline constexpr uint32_t kTerrainToolVersion = 7;
+    inline constexpr uint32_t kTerrainReportVersion = 5;
 
     // In report order.
     namespace check
@@ -92,6 +92,11 @@ namespace mir::terrainbake
         uint32_t samplesPerSide = 0;
         uint32_t layer = 0;
         bool source = false;
+        uint32_t kind = 0;
+        uint32_t level = 0;
+        std::optional<double> maxDeviation;
+        uint64_t sourceChecksum = 0;
+        uint64_t topologyHash = 0;
     };
 
     struct TerrainFileSummary
@@ -134,7 +139,7 @@ namespace mir::terrainbake
 
     class TerrainReport
     {
-    public:
+      public:
         TerrainReport(std::string command, std::initializer_list<std::string_view> checks);
 
         void Ran(std::string_view check, std::string detail = {});
@@ -169,7 +174,7 @@ namespace mir::terrainbake
         std::vector<TerrainDiagnostic> warnings;
         std::optional<TerrainSeamSummary> seams;
 
-    private:
+      private:
         TerrainCheck *Find(std::string_view check);
     };
 

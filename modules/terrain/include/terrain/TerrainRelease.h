@@ -11,6 +11,7 @@
 #include <terrain/TerrainByteSource.h>
 #include <terrain/TerrainIdentity.h>
 #include <terrain/TerrainLayout.h>
+#include <terrain/TerrainLod.h>
 #include <terrain/TerrainPackFormat.h>
 #include <terrain/TileHeights.h>
 #include <terrain/TileKey.h>
@@ -42,27 +43,48 @@ namespace mir
     // Never rereads the current pointer, so it keeps reading the same files after it moves.
     class TerrainReleaseHandle
     {
-    public:
-    // Reads and checks the whole index; packs are read a tile at a time.
+      public:
+        // Reads and checks the whole index; packs are read a tile at a time.
         [[nodiscard]] static TerrainResult<TerrainReleaseHandle> Open(std::shared_ptr<TerrainByteSource> source);
 
-        const TerrainReleaseInfo &Info() const { return mIndex->release; }
-        const TerrainIndex &Index() const { return *mIndex; }
+        const TerrainReleaseInfo &Info() const
+        {
+            return mIndex->release;
+        }
+        const TerrainIndex &Index() const
+        {
+            return *mIndex;
+        }
         // Reference grid; source precision comes from Index().Find(tile).
-        const TerrainLayout &Layout() const { return mIndex->layout; }
-        std::span<const TerrainLayout> Layers() const { return mIndex->layers; }
-        const TerrainByteSource &Source() const { return *mSource; }
-        TerrainByteSource &Source() { return *mSource; }
+        const TerrainLayout &Layout() const
+        {
+            return mIndex->layout;
+        }
+        std::span<const TerrainLayout> Layers() const
+        {
+            return mIndex->layers;
+        }
+        const TerrainByteSource &Source() const
+        {
+            return *mSource;
+        }
+        TerrainByteSource &Source()
+        {
+            return *mSource;
+        }
 
-    // Reads only the tile's byte range.
+        // Reads only the tile's byte range.
         TerrainResult<TileHeights> ReadTile(const TileKey &key) const;
         TerrainResult<TileHeights> ReadTile(const TileKey &key, uint32_t layer) const;
         TerrainResult<TileHeights> ReadTileRecord(const TerrainTileRecord &record) const;
+        TerrainResult<std::vector<std::byte>> ReadPayload(const TerrainTileRecord &record) const;
+        TerrainResult<TerrainLodSurface> ReadLod(const TileKey &key, uint32_t layer) const;
+        TerrainResult<TerrainLodNormals> ReadNormals(const TileKey &key, uint32_t layer) const;
 
-    // Reads every pack whole and checks it.
+        // Reads every pack whole and checks it.
         TerrainPackError VerifyAllPacks() const;
 
-    private:
+      private:
         TerrainReleaseHandle(std::shared_ptr<const TerrainIndex> index, std::shared_ptr<TerrainByteSource> source);
 
         std::shared_ptr<const TerrainIndex> mIndex;
@@ -73,12 +95,10 @@ namespace mir
     TerrainResult<TerrainReleaseHandle> OpenTerrainRelease(const std::filesystem::path &releasesRoot, AssetId asset,
                                                            TerrainReleaseId release);
 
-    TerrainResult<TerrainReleaseId> ReadTerrainCurrentPointer(const std::filesystem::path &releasesRoot,
-                                                              AssetId asset);
+    TerrainResult<TerrainReleaseId> ReadTerrainCurrentPointer(const std::filesystem::path &releasesRoot, AssetId asset);
     TerrainResult<TerrainReleaseHandle> OpenCurrentTerrainRelease(const std::filesystem::path &releasesRoot,
                                                                   AssetId asset);
 
     // A missing pointer is NotFound without a log line.
-    TerrainResult<TerrainReleaseId> PeekTerrainCurrentPointer(const std::filesystem::path &releasesRoot,
-                                                              AssetId asset);
+    TerrainResult<TerrainReleaseId> PeekTerrainCurrentPointer(const std::filesystem::path &releasesRoot, AssetId asset);
 }

@@ -25,14 +25,14 @@ namespace mir
 {
     // Binary layout: docs/modules/terrain.md.
     inline constexpr TerrainFormatVersion kTerrainFormatVersion{2};
-    inline constexpr uint32_t kTerrainFormatMinor = 0;
+    inline constexpr uint32_t kTerrainFormatMinor = 1;
 
     // Encoding version for height payloads.
     inline constexpr uint32_t kTerrainHeightsContentVersion = 1;
 
     inline constexpr uint32_t kTerrainIndexHeaderSize = 128;
     inline constexpr uint32_t kTerrainPackRecordSize = 32;
-    inline constexpr uint32_t kTerrainTileRecordSize = 120;
+    inline constexpr uint32_t kTerrainTileRecordSize = 144;
     inline constexpr uint32_t kTerrainLayerRecordSize = 16;
     inline constexpr uint32_t kTerrainPackHeaderSize = 48;
     inline constexpr uint32_t kTerrainIndexTrailerSize = 8;
@@ -62,7 +62,7 @@ namespace mir
         TerrainChunkCoord chunk;
         uint32_t tileCount = 0;
         uint64_t fileSize = 0;
-    // Fnv1a64 of the whole pack file.
+        // Fnv1a64 of the whole pack file.
         uint64_t checksum = 0;
     };
 
@@ -85,7 +85,7 @@ namespace mir
         uint64_t length = 0;
         uint64_t checksum = 0;
         double sampleSpacing = 0.0;
-    // Padding samples included.
+        // Padding samples included.
         float minHeight = 0.0f;
         float maxHeight = 0.0f;
         TerrainLocalBounds validExtent;
@@ -94,6 +94,10 @@ namespace mir
         uint32_t level = 0;
         bool source = true;
         std::optional<double> maxDeviation;
+        uint64_t sourceChecksum = 0;
+        uint64_t topologyHash = 0;
+        uint32_t vertexCount = 0;
+        uint32_t indexCount = 0;
     };
 
     enum class TerrainPackErrorCode : uint8_t
@@ -116,14 +120,19 @@ namespace mir
         std::optional<GlobalSampleIndex> nonFiniteSample;
     };
 
-    template <typename T>
-    struct TerrainResult
+    template <typename T> struct TerrainResult
     {
         std::optional<T> value;
         TerrainPackError error;
 
-        bool Ok() const { return value.has_value(); }
-        explicit operator bool() const { return Ok(); }
+        bool Ok() const
+        {
+            return value.has_value();
+        }
+        explicit operator bool() const
+        {
+            return Ok();
+        }
     };
 
     // layout is the finest reference grid, not each tile's source grid.
@@ -136,15 +145,14 @@ namespace mir
         int32_t chunkTiles = 0;
         TerrainLayout layout;
         std::vector<TerrainLayout> layers;
-    // Fnv1a64 of the ordered payload keys, spacing, source flags and checksums.
+        // Fnv1a64 of the ordered payload keys, spacing, source flags and checksums.
         uint64_t heightsHash = 0;
         std::vector<TerrainPackRecord> packs;
         std::vector<TerrainTileRecord> tiles;
 
         const TerrainTileRecord *Find(TileCoord tile) const;
         const TerrainTileRecord *Find(TileCoord tile, uint32_t layer,
-                                       TerrainPayloadKind kind = TerrainPayloadKind::Height,
-                                       uint32_t level = 0) const;
+                                      TerrainPayloadKind kind = TerrainPayloadKind::Height, uint32_t level = 0) const;
     };
 
     uint64_t TerrainRecordsHeightsHash(std::span<const TerrainTileRecord> records);

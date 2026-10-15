@@ -64,7 +64,10 @@ TEST_CASE("Bake final heights are the generator's source heights, tile by tile",
         std::vector<float> source(TileSampleCount(recipe.layout));
         REQUIRE(generator.FillTile(order[t], source).Ok());
         CHECK(std::equal(source.begin(), source.end(), tile.Samples().begin(), tile.Samples().end(),
-                         [](float a, float b) { return std::bit_cast<uint32_t>(a) == std::bit_cast<uint32_t>(b); }));
+                         [](float a, float b)
+                         {
+                             return std::bit_cast<uint32_t>(a) == std::bit_cast<uint32_t>(b);
+                         }));
     }
     CHECK(TerrainHeightsHash(recipe.layout, *tiles) == kExampleHeightsHash);
 }
@@ -75,7 +78,8 @@ TEST_CASE("A bake mints its release id once from the final heights and a nonce",
     const AssetId asset = MakeAssetId(ExampleAssetPath());
     const TerrainSourceFingerprint fingerprint = FingerprintRecipe(recipe);
     TerrainReport report("bake", {check::kGenerate, check::kEncode});
-    auto bake = [&](std::optional<uint64_t> nonce) {
+    auto bake = [&](std::optional<uint64_t> nonce)
+    {
         std::optional<std::vector<TileHeights>> tiles = BakeFinalHeights(recipe, report);
         REQUIRE(tiles);
         std::optional<TerrainBakedRelease> baked =
@@ -125,11 +129,25 @@ TEST_CASE("A bake writes exactly the release files and a manifest, then nothing 
     REQUIRE(report.release);
     CHECK(report.release->asset == MakeAssetId(ExampleAssetPath()));
     CHECK(report.assetPath == ExampleAssetPath());
-    CHECK(report.heightsHash == kExampleHeightsHash);
     CHECK(report.nonce == kNonce);
     CHECK(report.surfaceVersion == kTerrainSurfaceVersion);
     CHECK(report.candidateDir == out);
-    REQUIRE(report.tiles.size() == 4);
+    REQUIRE(report.tiles.size() == 24);
+    CHECK(std::count_if(report.tiles.begin(), report.tiles.end(),
+                        [](const auto &t)
+                        {
+                            return t.source;
+                        }) == 4);
+    CHECK(std::count_if(report.tiles.begin(), report.tiles.end(),
+                        [](const auto &t)
+                        {
+                            return t.kind == 1;
+                        }) == 8);
+    CHECK(std::count_if(report.tiles.begin(), report.tiles.end(),
+                        [](const auto &t)
+                        {
+                            return t.kind == 2;
+                        }) == 8);
     for (const TerrainTileSummary &tile : report.tiles)
         CHECK(tile.readable);
     REQUIRE(report.files.size() == 5);
@@ -155,6 +173,16 @@ TEST_CASE("A bake writes exactly the release files and a manifest, then nothing 
         TerrainReleaseHandle::Open(std::make_shared<TerrainFileSource>(out));
     REQUIRE(opened);
     CHECK(opened.value->Info() == *report.release);
+    CHECK(opened.value->Index().heightsHash == report.heightsHash);
+    std::vector<TileHeights> sources;
+    for (const auto &record : opened.value->Index().tiles)
+        if (record.source)
+        {
+            auto tile = opened.value->ReadTileRecord(record);
+            REQUIRE(tile);
+            sources.push_back(std::move(*tile.value));
+        }
+    CHECK(TerrainHeightsHash(LoadExample().layout, sources) == kExampleHeightsHash);
 }
 
 TEST_CASE("A bake refuses an existing non-empty directory and leaves it as it was", "[terraintool][bake]")

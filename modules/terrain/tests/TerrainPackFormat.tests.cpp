@@ -44,7 +44,7 @@ TEST_CASE("A release round trips every tile through its index and pack", "[terra
     const TerrainEncodedRelease encoded = Encode(info, layout, tiles);
     REQUIRE(encoded.packs.size() == 1);
     CHECK(encoded.packs[0].fileName == "chunk_-1_-1.tpack");
-    CHECK(encoded.index.size() == 664);
+    CHECK(encoded.index.size() == 760);
     CHECK(encoded.packs[0].bytes.size() == 48 + 3 * 16912 + 16900);
 
     auto [source, handle] = OpenInMemory(encoded);
@@ -158,8 +158,8 @@ TEST_CASE("Tile addresses and the heights hash do not depend on chunk size or al
     const AssetId asset = TerrainAsset("terrain/edge.terrain.json");
 
     const TerrainEncodedRelease perTile = Encode(Info(asset, 0xE1), layout, tiles, {.chunkTiles = 1});
-    const TerrainEncodedRelease paged = Encode(Info(asset, 0xE1), layout, tiles,
-                                               {.chunkTiles = 16, .payloadAlignment = 4096});
+    const TerrainEncodedRelease paged =
+        Encode(Info(asset, 0xE1), layout, tiles, {.chunkTiles = 16, .payloadAlignment = 4096});
     CHECK(perTile.packs.size() == 9);
     CHECK(paged.packs.size() == 4);
     CHECK(perTile.heightsHash == paged.heightsHash);
@@ -190,7 +190,8 @@ TEST_CASE("The writer refuses incomplete, duplicate or invalid tiles", "[terrain
     const TerrainReleaseInfo info = Info(asset, 0xE1);
 
     auto refused = [&](const TerrainReleaseInfo &i, std::span<const TileHeights> t, TerrainPackWriteOptions o,
-                       std::string_view text) {
+                       std::string_view text)
+    {
         const TerrainResult<TerrainEncodedRelease> result = EncodeTerrainRelease(i, layout, t, o);
         CHECK_FALSE(result.value.has_value());
         CHECK(result.error.code == Code::InvalidInput);
@@ -341,7 +342,8 @@ TEST_CASE("Format 2 sparse layers preserve independent ranges and tile source pr
     CHECK(encoded.heightsHash == TerrainHeightsHash(fixture.layers, fixture.records));
     for (const auto &r : handle.Index().tiles)
     {
-        source->ResetStats(); source->ClearRequests();
+        source->ResetStats();
+        source->ClearRequests();
         auto read = handle.ReadTile({fixture.info.asset, r.tile}, r.layer);
         REQUIRE(read);
         CHECK(read.value->SamplesPerSide() == r.samplesPerSide);
@@ -362,9 +364,12 @@ TEST_CASE("Format 2 sparse layers preserve independent ranges and tile source pr
         const auto r = query.HeightAt(position, {fixture.info, 1.0});
         CHECK(r.sourceSpacing == fixture.layers[t].SampleSpacing());
         CHECK(r.spacing == 8.0);
-        CHECK(r.status == (t == 0 ? TerrainHeightStatus::CoarserWhileLoading : TerrainHeightStatus::CoarserAtSourceLimit));
-        if (t < 3) CHECK(r.maxError == 100.0 + SurfaceTolerance(
-            std::max(std::abs(double(handle.Index().Find(tile, 3)->minHeight)), std::abs(double(handle.Index().Find(tile, 3)->maxHeight)))));
+        CHECK(r.status ==
+              (t == 0 ? TerrainHeightStatus::CoarserWhileLoading : TerrainHeightStatus::CoarserAtSourceLimit));
+        if (t < 3)
+            CHECK(r.maxError ==
+                  100.0 + SurfaceTolerance(std::max(std::abs(double(handle.Index().Find(tile, 3)->minHeight)),
+                                                    std::abs(double(handle.Index().Find(tile, 3)->maxHeight)))));
     }
     CHECK(source->Stats().reads == 0);
     CHECK(PreloadAllTerrainTiles(query, handle).loaded == 7);
@@ -384,7 +389,8 @@ TEST_CASE("Format 2 rejects missing duplicate unknown and non-nesting layer reco
     const auto encoded = fixture.Encode();
     const auto index = *ParseTerrainIndex(encoded.index).value;
     const size_t table = kTerrainIndexHeaderSize + index.packs.size() * kTerrainPackRecordSize;
-    auto refused = [&](auto patch, std::string_view field) {
+    auto refused = [&](auto patch, std::string_view field)
+    {
         auto bytes = encoded.index;
         patch(bytes);
         ResealIndex(bytes);
@@ -393,13 +399,43 @@ TEST_CASE("Format 2 rejects missing duplicate unknown and non-nesting layer reco
         CHECK(parsed.error.code == Code::Malformed);
         CHECK(Mentions(parsed.error, field));
     };
-    refused([&](auto &b) { StoreU32(b, table + 100, 0); }, "no source record");
-    refused([&](auto &b) { StoreU32(b, table + kTerrainTileRecordSize + 100, 1); }, "two source records");
-    refused([&](auto &b) { StoreU32(b, table + 88, 99); }, "unknown layer");
-    refused([&](auto &b) { StoreU64(b, table + 24, 4); }, "payload length");
+    refused(
+        [&](auto &b)
+        {
+            StoreU32(b, table + 100, 0);
+        },
+        "no source record");
+    refused(
+        [&](auto &b)
+        {
+            StoreU32(b, table + kTerrainTileRecordSize + 100, 1);
+        },
+        "two source records");
+    refused(
+        [&](auto &b)
+        {
+            StoreU32(b, table + 88, 99);
+        },
+        "unknown layer");
+    refused(
+        [&](auto &b)
+        {
+            StoreU64(b, table + 24, 4);
+        },
+        "payload length");
     const size_t layerTable = table + index.tiles.size() * kTerrainTileRecordSize;
-    refused([&](auto &b) { StoreU64(b, layerTable + kTerrainLayerRecordSize, std::bit_cast<uint64_t>(3.0)); }, "does not nest");
-    refused([&](auto &b) { StoreU64(b, table + kTerrainTileRecordSize + 16, LoadU64(b, table + 16)); }, "overlap");
+    refused(
+        [&](auto &b)
+        {
+            StoreU64(b, layerTable + kTerrainLayerRecordSize, std::bit_cast<uint64_t>(3.0));
+        },
+        "does not nest");
+    refused(
+        [&](auto &b)
+        {
+            StoreU64(b, table + kTerrainTileRecordSize + 16, LoadU64(b, table + 16));
+        },
+        "overlap");
     auto legacy = encoded.index;
     StoreU32(legacy, 4, 1);
     CHECK(ParseTerrainIndex(legacy).error.code == Code::Unsupported);

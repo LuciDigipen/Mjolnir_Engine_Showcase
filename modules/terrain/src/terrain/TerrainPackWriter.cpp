@@ -53,25 +53,66 @@ namespace mir
         std::vector<TerrainTileRecord> records;
         for (const auto &input : tiles)
         {
-            if (!input.heights || input.layer >= layers.size()) return 0;
+            if (!input.heights || input.layer >= layers.size())
+                return 0;
             TerrainTileRecord r;
-            r.tile = input.heights->Tile(); r.layer = input.layer; r.source = input.source;
+            r.tile = input.heights->Tile();
+            r.layer = input.layer;
+            r.source = input.source;
             r.sampleSpacing = layers[input.layer].SampleSpacing();
             r.samplesPerSide = input.heights->SamplesPerSide();
             r.maxDeviation = input.maxDeviation;
+            r.sourceChecksum = input.sourceChecksum;
             r.checksum = Fnv1a64(EncodePayload(*input.heights));
             records.push_back(r);
         }
-        std::sort(records.begin(), records.end(), [](const auto &a, const auto &b) {
-            return std::tuple(a.tile.z, a.tile.x, a.layer) < std::tuple(b.tile.z, b.tile.x, b.layer);
-        });
+        std::sort(records.begin(), records.end(),
+                  [](const auto &a, const auto &b)
+                  {
+                      return std::tuple(a.tile.z, a.tile.x, a.layer) < std::tuple(b.tile.z, b.tile.x, b.layer);
+                  });
+        return detail::HeightsHashOf(records);
+    }
+
+    uint64_t TerrainPayloadsHash(std::span<const TerrainLayout> layers, std::span<const TerrainTileWrite> tiles,
+                                 std::span<const TerrainPayloadWrite> derived)
+    {
+        std::vector<TerrainTileRecord> records;
+        for (const auto &v : tiles)
+        {
+            if (!v.heights || v.layer >= layers.size())
+                return 0;
+            TerrainTileRecord r;
+            r.tile = v.heights->Tile();
+            r.layer = v.layer;
+            r.source = v.source;
+            r.sampleSpacing = layers[v.layer].SampleSpacing();
+            r.samplesPerSide = v.heights->SamplesPerSide();
+            r.maxDeviation = v.maxDeviation;
+            r.sourceChecksum = v.sourceChecksum;
+            r.checksum = Fnv1a64(EncodePayload(*v.heights));
+            records.push_back(r);
+        }
+        for (const auto &v : derived)
+        {
+            auto r = v.record;
+            r.checksum = Fnv1a64(v.bytes);
+            records.push_back(r);
+        }
+        std::sort(records.begin(), records.end(),
+                  [](const auto &a, const auto &b)
+                  {
+                      return std::tuple(a.tile.z, a.tile.x, a.kind, a.level, a.layer) <
+                             std::tuple(b.tile.z, b.tile.x, b.kind, b.level, b.layer);
+                  });
         return detail::HeightsHashOf(records);
     }
 
     uint64_t TerrainHeightsHash(const TerrainLayout &layout, std::span<const TileHeights> tiles)
     {
         std::vector<TerrainTileWrite> inputs;
-        for (const auto &tile : tiles) inputs.push_back({&tile});
+        for (const auto &tile : tiles)
+            inputs.push_back({&tile});
         return TerrainHeightsHash(std::span(&layout, 1), inputs);
     }
 
@@ -81,13 +122,23 @@ namespace mir
                                                               const TerrainPackWriteOptions &options)
     {
         std::vector<TerrainTileWrite> inputs;
-        for (const auto &tile : tiles) inputs.push_back({&tile});
+        for (const auto &tile : tiles)
+            inputs.push_back({&tile});
         return EncodeTerrainRelease(info, std::span(&layout, 1), inputs, options);
     }
 
     TerrainResult<TerrainEncodedRelease> EncodeTerrainRelease(const TerrainReleaseInfo &info,
                                                               std::span<const TerrainLayout> layers,
                                                               std::span<const TerrainTileWrite> tiles,
+                                                              const TerrainPackWriteOptions &options)
+    {
+        return EncodeTerrainRelease(info, layers, tiles, {}, options);
+    }
+
+    TerrainResult<TerrainEncodedRelease> EncodeTerrainRelease(const TerrainReleaseInfo &info,
+                                                              std::span<const TerrainLayout> layers,
+                                                              std::span<const TerrainTileWrite> tiles,
+                                                              std::span<const TerrainPayloadWrite> derived,
                                                               const TerrainPackWriteOptions &options)
     {
         using Code = TerrainPackErrorCode;
@@ -128,24 +179,64 @@ namespace mir
                 if (!std::isfinite(h))
                     return Fail<R>(Code::InvalidInput, "tile {}: sample is not finite", Describe(tile.Tile()));
         }
-        std::sort(sorted.begin(), sorted.end(), [](const auto &a, const auto &b) {
-            return std::tuple(a.heights->Tile().z, a.heights->Tile().x, a.layer) <
-                   std::tuple(b.heights->Tile().z, b.heights->Tile().x, b.layer);
-        });
+        std::sort(sorted.begin(), sorted.end(),
+                  [](const auto &a, const auto &b)
+                  {
+                      return std::tuple(a.heights->Tile().z, a.heights->Tile().x, a.layer) <
+                             std::tuple(b.heights->Tile().z, b.heights->Tile().x, b.layer);
+                  });
         for (size_t t = 1; t < sorted.size(); ++t)
             if (sorted[t - 1].heights->Tile() == sorted[t].heights->Tile() && sorted[t - 1].layer == sorted[t].layer)
-                return Fail<R>(Code::InvalidInput, "tile {} layer {} is given twice", Describe(sorted[t].heights->Tile()),
-                               sorted[t].layer);
+                return Fail<R>(Code::InvalidInput, "tile {} layer {} is given twice",
+                               Describe(sorted[t].heights->Tile()), sorted[t].layer);
 
-        std::map<std::pair<int32_t, int32_t>, std::vector<uint32_t>> chunks;
-        for (uint32_t t = 0; t < sorted.size(); ++t)
+        std::vector<TerrainPayloadWrite> inputs;
+        for (const auto &v : sorted)
         {
-            const TerrainChunkCoord chunk = TerrainChunkOf(sorted[t].heights->Tile(), options.chunkTiles);
+            TerrainTileRecord r;
+            r.tile = v.heights->Tile();
+            r.layer = v.layer;
+            r.source = v.source;
+            r.maxDeviation = v.maxDeviation;
+            r.sourceChecksum = v.sourceChecksum;
+            r.samplesPerSide = v.heights->SamplesPerSide();
+            r.sampleSpacing = layers[v.layer].SampleSpacing();
+            auto [lo, hi] = std::minmax_element(v.heights->Samples().begin(), v.heights->Samples().end());
+            r.minHeight = *lo;
+            r.maxHeight = *hi;
+            r.validExtent = *layout.ValidExtent(r.tile);
+            inputs.push_back({r, EncodePayload(*v.heights)});
+        }
+        inputs.insert(inputs.end(), derived.begin(), derived.end());
+        auto key = [](const auto &v)
+        {
+            const auto &r = v.record;
+            return std::tuple(r.tile.z, r.tile.x, r.kind, r.level, r.layer);
+        };
+        std::sort(inputs.begin(), inputs.end(),
+                  [&](const auto &a, const auto &b)
+                  {
+                      return key(a) < key(b);
+                  });
+        if (inputs.size() > UINT32_MAX)
+            return Fail<R>(Code::InvalidInput, "too many payloads");
+        for (size_t i = 0; i < inputs.size(); ++i)
+        {
+            auto &r = inputs[i].record;
+            if (r.layer >= layers.size() || !layout.Contains(r.tile) || (i && key(inputs[i - 1]) == key(inputs[i])))
+                return Fail<R>(Code::InvalidInput, "invalid or duplicate derived key");
+            r.length = inputs[i].bytes.size();
+            r.checksum = Fnv1a64(inputs[i].bytes);
+        }
+        std::map<std::pair<int32_t, int32_t>, std::vector<uint32_t>> chunks;
+        for (uint32_t t = 0; t < inputs.size(); ++t)
+        {
+            const TerrainChunkCoord chunk = TerrainChunkOf(inputs[t].record.tile, options.chunkTiles);
             chunks[{chunk.z, chunk.x}].push_back(t);
         }
 
         TerrainEncodedRelease encoded;
-        std::vector<TerrainTileRecord> records(sorted.size());
+        std::vector<TerrainTileRecord> records(inputs.size());
         std::vector<TerrainPackRecord> packs;
         packs.reserve(chunks.size());
         for (const auto &[key, members] : chunks)
@@ -169,26 +260,12 @@ namespace mir
 
             for (uint32_t t : members)
             {
-                const TileHeights &tile = *sorted[t].heights;
                 out.PadTo(options.payloadAlignment);
-                const std::vector<std::byte> payload = EncodePayload(tile);
-                const auto [lo, hi] = std::minmax_element(tile.Samples().begin(), tile.Samples().end());
-
                 TerrainTileRecord &record = records[t];
-                record.tile = tile.Tile();
+                record = inputs[t].record;
                 record.pack = packIndex;
-                record.samplesPerSide = tile.SamplesPerSide();
                 record.offset = out.Size();
-                record.length = payload.size();
-                record.checksum = Fnv1a64(payload);
-                record.layer = sorted[t].layer;
-                record.source = sorted[t].source;
-                record.maxDeviation = sorted[t].maxDeviation;
-                record.sampleSpacing = layers[record.layer].SampleSpacing();
-                record.minHeight = *lo;
-                record.maxHeight = *hi;
-                record.validExtent = *layout.ValidExtent(tile.Tile());
-                out.Bytes(payload);
+                out.Bytes(inputs[t].bytes);
             }
 
             packs.push_back({chunk, static_cast<uint32_t>(members.size()), pack.bytes.size(), Fnv1a64(pack.bytes)});
@@ -255,6 +332,10 @@ namespace mir
             out.U32(r.maxDeviation ? 1 : 0);
             out.U32(0);
             out.F64(r.maxDeviation.value_or(0.0));
+            out.U64(r.sourceChecksum);
+            out.U64(r.topologyHash);
+            out.U32(r.vertexCount);
+            out.U32(r.indexCount);
         }
         for (const auto &layer : layers)
         {

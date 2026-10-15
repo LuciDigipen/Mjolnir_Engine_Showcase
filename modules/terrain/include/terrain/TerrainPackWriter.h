@@ -25,7 +25,7 @@ namespace mir
 {
     struct TerrainPackWriteOptions
     {
-    // Addresses never depend on it.
+        // Addresses never depend on it.
         int32_t chunkTiles = kDefaultTerrainChunkTiles;
         // Power of two up to kMaxTerrainPayloadAlignment.
         uint32_t payloadAlignment = kDefaultTerrainPayloadAlignment;
@@ -51,6 +51,7 @@ namespace mir
         uint32_t layer = 0;
         bool source = true;
         std::optional<double> maxDeviation;
+        uint64_t sourceChecksum = 0;
     };
 
     TerrainResult<TerrainEncodedRelease> EncodeTerrainRelease(const TerrainReleaseInfo &info,
@@ -58,8 +59,21 @@ namespace mir
                                                               std::span<const TerrainTileWrite> tiles,
                                                               const TerrainPackWriteOptions &options = {});
 
-    uint64_t TerrainHeightsHash(std::span<const TerrainLayout> layers,
-                                std::span<const TerrainTileWrite> tiles);
+    struct TerrainPayloadWrite
+    {
+        TerrainTileRecord record;
+        std::vector<std::byte> bytes;
+    };
+
+    TerrainResult<TerrainEncodedRelease> EncodeTerrainRelease(const TerrainReleaseInfo &info,
+                                                              std::span<const TerrainLayout> layers,
+                                                              std::span<const TerrainTileWrite> tiles,
+                                                              std::span<const TerrainPayloadWrite> derived,
+                                                              const TerrainPackWriteOptions &options = {});
+    uint64_t TerrainPayloadsHash(std::span<const TerrainLayout> layers, std::span<const TerrainTileWrite> tiles,
+                                 std::span<const TerrainPayloadWrite> derived);
+
+    uint64_t TerrainHeightsHash(std::span<const TerrainLayout> layers, std::span<const TerrainTileWrite> tiles);
 
     TerrainResult<TerrainEncodedRelease> EncodeTerrainRelease(const TerrainReleaseInfo &info,
                                                               const TerrainLayout &layout,
