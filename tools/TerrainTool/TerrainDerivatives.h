@@ -1,3 +1,12 @@
+/**
+ * @file TerrainDerivatives.h
+ * @author Jackey Cen
+ * @brief Derives terrain LODs, normals and query heights from final source heights.
+ *
+ * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
+ *
+ */
+
 #pragma once
 #include "TerrainRecipe.h"
 #include <terrain/TerrainLod.h>
@@ -16,5 +25,6 @@ namespace mir::terrainbake
         std::vector<TerrainPayloadWrite> payloads;
     };
     std::optional<TerrainDerivatives> BakeTerrainDerivatives(const TerrainRecipe &recipe,
-        std::span<const TileHeights> finalHeights, std::string &error);
+                                                             std::span<const TileHeights> finalHeights,
+                                                             std::string &error);
 }

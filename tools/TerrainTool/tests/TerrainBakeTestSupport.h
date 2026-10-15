@@ -45,7 +45,8 @@ namespace mir::terrainbake::test
     // ctest runs each TEST_CASE in its own process, so a counter alone would repeat.
     inline const std::string &ProcessToken()
     {
-        static const std::string token = [] {
+        static const std::string token = []
+        {
             std::random_device rd;
             std::ostringstream out;
             out << std::hex << ((static_cast<uint64_t>(rd()) << 32) ^ rd());
@@ -61,8 +62,8 @@ namespace mir::terrainbake::test
         explicit ScratchDir(std::string_view tag)
         {
             static std::atomic<int> counter{0};
-            path = fs::temp_directory_path() / ("mjolnir_terraintool_" + std::string(tag) + "_" + ProcessToken() +
-                                                "_" + std::to_string(counter.fetch_add(1)));
+            path = fs::temp_directory_path() / ("mjolnir_terraintool_" + std::string(tag) + "_" + ProcessToken() + "_" +
+                                                std::to_string(counter.fetch_add(1)));
             fs::create_directories(path);
         }
 
@@ -165,7 +166,11 @@ namespace mir::terrainbake::test
     // (z, x) order from (-1, -1).
     inline TileHeights &TileAt(std::vector<TileHeights> &tiles, TileCoord tile)
     {
-        auto it = std::find_if(tiles.begin(), tiles.end(), [&](const TileHeights &t) { return t.Tile() == tile; });
+        auto it = std::find_if(tiles.begin(), tiles.end(),
+                               [&](const TileHeights &t)
+                               {
+                                   return t.Tile() == tile;
+                               });
         REQUIRE(it != tiles.end());
         return *it;
     }

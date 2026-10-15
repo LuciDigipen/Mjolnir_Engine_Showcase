@@ -25,7 +25,7 @@ namespace mir
 {
     struct TerrainPackWriteOptions
     {
-    // Addresses never depend on it.
+        // Addresses never depend on it.
         int32_t chunkTiles = kDefaultTerrainChunkTiles;
         // Power of two up to kMaxTerrainPayloadAlignment.
         uint32_t payloadAlignment = kDefaultTerrainPayloadAlignment;
@@ -66,13 +66,14 @@ namespace mir
     };
 
     TerrainResult<TerrainEncodedRelease> EncodeTerrainRelease(const TerrainReleaseInfo &info,
-        std::span<const TerrainLayout> layers, std::span<const TerrainTileWrite> tiles,
-        std::span<const TerrainPayloadWrite> derived, const TerrainPackWriteOptions &options = {});
+                                                              std::span<const TerrainLayout> layers,
+                                                              std::span<const TerrainTileWrite> tiles,
+                                                              std::span<const TerrainPayloadWrite> derived,
+                                                              const TerrainPackWriteOptions &options = {});
     uint64_t TerrainPayloadsHash(std::span<const TerrainLayout> layers, std::span<const TerrainTileWrite> tiles,
-                                std::span<const TerrainPayloadWrite> derived);
+                                 std::span<const TerrainPayloadWrite> derived);
 
-    uint64_t TerrainHeightsHash(std::span<const TerrainLayout> layers,
-                                std::span<const TerrainTileWrite> tiles);
+    uint64_t TerrainHeightsHash(std::span<const TerrainLayout> layers, std::span<const TerrainTileWrite> tiles);
 
     TerrainResult<TerrainEncodedRelease> EncodeTerrainRelease(const TerrainReleaseInfo &info,
                                                               const TerrainLayout &layout,

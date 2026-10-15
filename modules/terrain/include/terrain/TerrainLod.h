@@ -1,3 +1,12 @@
+/**
+ * @file TerrainLod.h
+ * @author Jackey Cen
+ * @brief Typed terrain LOD payloads and final-surface error bounds.
+ *
+ * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
+ *
+ */
+
 #pragma once
 
 #include <terrain/TerrainPackFormat.h>
@@ -45,12 +54,12 @@ namespace mir
     std::vector<std::byte> EncodeTerrainLod(const TerrainLodSurface &lod);
     std::vector<std::byte> EncodeTerrainNormals(const TerrainLodSurface &lod, std::span<const glm::vec3> normals);
     TerrainResult<TerrainLodSurface> DecodeTerrainLod(const TerrainIndex &index, const TerrainTileRecord &record,
-                                                     std::span<const std::byte> payload);
+                                                      std::span<const std::byte> payload);
     TerrainResult<TerrainLodNormals> DecodeTerrainNormals(const TerrainIndex &index, const TerrainTileRecord &record,
-                                                         std::span<const std::byte> payload);
+                                                          std::span<const std::byte> payload);
     std::optional<double> EvaluateTerrainLod(const TerrainLodSurface &lod, double x, double z);
     std::optional<double> TerrainRegularDeviation(const TerrainLayout &sourceLayout, const TileHeights &source,
-        const TerrainLayout &queryLayout, const TileHeights &query);
+                                                  const TerrainLayout &queryLayout, const TileHeights &query);
     std::optional<double> TerrainLodDeviation(const TerrainLayout &sourceLayout, const TileHeights &source,
-                                             const TerrainLodSurface &lod);
+                                              const TerrainLodSurface &lod);
 }

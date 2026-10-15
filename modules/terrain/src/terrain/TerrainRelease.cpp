@@ -64,7 +64,8 @@ namespace mir
             const uint32_t tileCount = LoadU32(bytes, 40);
             const uint32_t contentVersion = LoadU32(bytes, 44);
             if (chunk != record.chunk || tileCount != record.tileCount)
-                return Error(Code::Malformed, "pack header says chunk {} with {} tiles, the index says chunk {} with {}",
+                return Error(Code::Malformed,
+                             "pack header says chunk {} with {} tiles, the index says chunk {} with {}",
                              Describe(chunk), tileCount, Describe(record.chunk), record.tileCount);
             if (contentVersion != index.contentVersion)
                 return Error(Code::Unsupported, "pack content version {} differs from the index's {}", contentVersion,
@@ -147,8 +148,8 @@ namespace mir
             return Failure<TerrainReleaseHandle>(index.error, where);
 
         TerrainResult<TerrainReleaseHandle> result;
-        result.value = TerrainReleaseHandle(std::make_shared<const TerrainIndex>(std::move(*index.value)),
-                                            std::move(source));
+        result.value =
+            TerrainReleaseHandle(std::make_shared<const TerrainIndex>(std::move(*index.value)), std::move(source));
         return result;
     }
 
@@ -203,34 +204,49 @@ namespace mir
 
     TerrainResult<std::vector<std::byte>> TerrainReleaseHandle::ReadPayload(const TerrainTileRecord &input) const
     {
-        using R=std::vector<std::byte>;
-        const auto *record=mIndex->Find(input.tile,input.layer,input.kind,input.level);
-        if(record!=&input)return Fail<R>(Code::InvalidInput,"payload record is not from this index");
-        const auto name=TerrainPackFileName(mIndex->packs[input.pack].chunk);
-        auto bytes=mSource->ReadRange(name,input.offset,static_cast<size_t>(input.length));
-        if(!bytes)return Fail<R>(Code::Io,"cannot read payload range in {}",name);
-        if(bytes->size()!=input.length||Fnv1a64(*bytes)!=input.checksum)return Fail<R>(Code::Corrupt,"payload checksum/length differs");
-        return {std::move(bytes),{}};
+        using R = std::vector<std::byte>;
+        const auto *record = mIndex->Find(input.tile, input.layer, input.kind, input.level);
+        if (record != &input)
+            return Fail<R>(Code::InvalidInput, "payload record is not from this index");
+        const auto name = TerrainPackFileName(mIndex->packs[input.pack].chunk);
+        auto bytes = mSource->ReadRange(name, input.offset, static_cast<size_t>(input.length));
+        if (!bytes)
+            return Fail<R>(Code::Io, "cannot read payload range in {}", name);
+        if (bytes->size() != input.length || Fnv1a64(*bytes) != input.checksum)
+            return Fail<R>(Code::Corrupt, "payload checksum/length differs");
+        return {std::move(bytes), {}};
     }
 
-    TerrainResult<TerrainLodSurface> TerrainReleaseHandle::ReadLod(const TileKey &key,uint32_t layer) const
+    TerrainResult<TerrainLodSurface> TerrainReleaseHandle::ReadLod(const TileKey &key, uint32_t layer) const
     {
-        if(key.asset!=Info().asset)return Fail<TerrainLodSurface>(Code::WrongIdentity,"wrong asset");
-        const auto *source=mIndex->Find(key.coord);
-        const auto *record=source&&layer>=source->layer?mIndex->Find(key.coord,layer,TerrainPayloadKind::LodHeight,layer-source->layer):nullptr;
-        if(!record)return Fail<TerrainLodSurface>(Code::NotFound,"LOD key is absent");
-        auto bytes=ReadPayload(*record);if(!bytes)return Failure<TerrainLodSurface>(bytes.error,"");
-        return DecodeTerrainLod(*mIndex,*record,*bytes.value);
+        if (key.asset != Info().asset)
+            return Fail<TerrainLodSurface>(Code::WrongIdentity, "wrong asset");
+        const auto *source = mIndex->Find(key.coord);
+        const auto *record = source && layer >= source->layer
+                                 ? mIndex->Find(key.coord, layer, TerrainPayloadKind::LodHeight, layer - source->layer)
+                                 : nullptr;
+        if (!record)
+            return Fail<TerrainLodSurface>(Code::NotFound, "LOD key is absent");
+        auto bytes = ReadPayload(*record);
+        if (!bytes)
+            return Failure<TerrainLodSurface>(bytes.error, "");
+        return DecodeTerrainLod(*mIndex, *record, *bytes.value);
     }
 
-    TerrainResult<TerrainLodNormals> TerrainReleaseHandle::ReadNormals(const TileKey &key,uint32_t layer) const
+    TerrainResult<TerrainLodNormals> TerrainReleaseHandle::ReadNormals(const TileKey &key, uint32_t layer) const
     {
-        if(key.asset!=Info().asset)return Fail<TerrainLodNormals>(Code::WrongIdentity,"wrong asset");
-        const auto *source=mIndex->Find(key.coord);
-        const auto *record=source&&layer>=source->layer?mIndex->Find(key.coord,layer,TerrainPayloadKind::Normal,layer-source->layer):nullptr;
-        if(!record)return Fail<TerrainLodNormals>(Code::NotFound,"normal key is absent");
-        auto bytes=ReadPayload(*record);if(!bytes)return Failure<TerrainLodNormals>(bytes.error,"");
-        return DecodeTerrainNormals(*mIndex,*record,*bytes.value);
+        if (key.asset != Info().asset)
+            return Fail<TerrainLodNormals>(Code::WrongIdentity, "wrong asset");
+        const auto *source = mIndex->Find(key.coord);
+        const auto *record = source && layer >= source->layer
+                                 ? mIndex->Find(key.coord, layer, TerrainPayloadKind::Normal, layer - source->layer)
+                                 : nullptr;
+        if (!record)
+            return Fail<TerrainLodNormals>(Code::NotFound, "normal key is absent");
+        auto bytes = ReadPayload(*record);
+        if (!bytes)
+            return Failure<TerrainLodNormals>(bytes.error, "");
+        return DecodeTerrainNormals(*mIndex, *record, *bytes.value);
     }
 
     TerrainPackError TerrainReleaseHandle::VerifyAllPacks() const
@@ -275,12 +291,16 @@ namespace mir
                     return Error(Code::Malformed, "{}tile {} starts at {}, inside the {}-byte header", where,
                                  Describe(tile->tile), tile->offset, headerSize);
                 // ParseTerrainIndex already kept every range inside fileSize.
-                const auto payload=all.subspan(static_cast<size_t>(tile->offset),static_cast<size_t>(tile->length));
+                const auto payload = all.subspan(static_cast<size_t>(tile->offset), static_cast<size_t>(tile->length));
                 TerrainPackError error;
-                if(tile->kind==TerrainPayloadKind::Height) error=DecodeTerrainTile(index,*tile,payload).error;
-                else if(tile->kind==TerrainPayloadKind::LodHeight) error=DecodeTerrainLod(index,*tile,payload).error;
-                else if(tile->kind==TerrainPayloadKind::Normal) error=DecodeTerrainNormals(index,*tile,payload).error;
-                if(error.code!=Code::None)return {error.code,where+error.message};
+                if (tile->kind == TerrainPayloadKind::Height)
+                    error = DecodeTerrainTile(index, *tile, payload).error;
+                else if (tile->kind == TerrainPayloadKind::LodHeight)
+                    error = DecodeTerrainLod(index, *tile, payload).error;
+                else if (tile->kind == TerrainPayloadKind::Normal)
+                    error = DecodeTerrainNormals(index, *tile, payload).error;
+                if (error.code != Code::None)
+                    return {error.code, where + error.message};
             }
         }
         return {};
@@ -308,8 +328,7 @@ namespace mir
         return opened;
     }
 
-    TerrainResult<TerrainReleaseId> ReadTerrainCurrentPointer(const std::filesystem::path &releasesRoot,
-                                                              AssetId asset)
+    TerrainResult<TerrainReleaseId> ReadTerrainCurrentPointer(const std::filesystem::path &releasesRoot, AssetId asset)
     {
         const std::filesystem::path path = TerrainCurrentPointerPath(releasesRoot, asset);
         const std::optional<std::string> text = ReadText(path);
@@ -331,8 +350,7 @@ namespace mir
         return OpenTerrainRelease(releasesRoot, asset, *id.value);
     }
 
-    TerrainResult<TerrainReleaseId> PeekTerrainCurrentPointer(const std::filesystem::path &releasesRoot,
-                                                              AssetId asset)
+    TerrainResult<TerrainReleaseId> PeekTerrainCurrentPointer(const std::filesystem::path &releasesRoot, AssetId asset)
     {
         const std::filesystem::path path = TerrainCurrentPointerPath(releasesRoot, asset);
         std::error_code ec;

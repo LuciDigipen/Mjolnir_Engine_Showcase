@@ -1,3 +1,12 @@
+/**
+ * @file TerrainPrecision.tests.cpp
+ * @author Jackey Cen
+ * @brief Tests mixed-resolution terrain source precision and payloads.
+ *
+ * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
+ *
+ */
+
 #include "TerrainBakeTestSupport.h"
 
 #include <TerrainGenerator.h>
@@ -32,9 +41,11 @@ namespace
 
     bool Issue(const RecipeParseResult &parsed, std::string_view field, std::string_view text)
     {
-        return std::any_of(parsed.issues.begin(), parsed.issues.end(), [&](const auto &issue) {
-            return issue.field == field && issue.message.find(text) != std::string::npos;
-        });
+        return std::any_of(parsed.issues.begin(), parsed.issues.end(),
+                           [&](const auto &issue)
+                           {
+                               return issue.field == field && issue.message.find(text) != std::string::npos;
+                           });
     }
 
     TerrainBakedRelease BakeMixed(const TerrainRecipe &recipe)
@@ -43,22 +54,23 @@ namespace
         auto tiles = BakeFinalHeights(recipe, report);
         REQUIRE(tiles);
         auto baked = EncodeBakedRelease(MakeAssetId(ExampleAssetPath()), FingerprintRecipe(recipe), recipe,
-                                       std::move(*tiles), {kNonce, {}}, report);
+                                        std::move(*tiles), {kNonce, {}}, report);
         REQUIRE(baked);
         REQUIRE(report.Ok());
         return std::move(*baked);
     }
 
-    double PyramidPoint(const TerrainGenerator &generator, const TerrainLayout &reference,
-                        int level, int64_t x, int64_t z)
+    double PyramidPoint(const TerrainGenerator &generator, const TerrainLayout &reference, int level, int64_t x,
+                        int64_t z)
     {
         if (level == 0)
             return generator.Height(reference.SamplePosition(x), reference.SamplePosition(z));
         double rows[3];
         for (int k = -1; k <= 1; ++k)
             rows[k + 1] = (PyramidPoint(generator, reference, level - 1, x * 2 - 1, z * 2 + k) +
-                2.0 * PyramidPoint(generator, reference, level - 1, x * 2, z * 2 + k) +
-                PyramidPoint(generator, reference, level - 1, x * 2 + 1, z * 2 + k)) * 0.25;
+                           2.0 * PyramidPoint(generator, reference, level - 1, x * 2, z * 2 + k) +
+                           PyramidPoint(generator, reference, level - 1, x * 2 + 1, z * 2 + k)) *
+                          0.25;
         return (rows[0] + 2.0 * rows[1] + rows[2]) * 0.25;
     }
 }
@@ -100,9 +112,21 @@ TEST_CASE("Explicit source defaults fill only unassigned tiles", "[terraintool][
     const auto index = ParseTerrainIndex(baked.encoded.index);
     REQUIRE(index);
     CHECK(index.value->tiles.size() == 21);
-    CHECK(std::count_if(index.value->tiles.begin(), index.value->tiles.end(), [](const auto &t) { return t.source; }) == 4);
-    CHECK(std::count_if(index.value->tiles.begin(), index.value->tiles.end(), [](const auto &t) { return t.kind == TerrainPayloadKind::LodHeight; }) == 7);
-    CHECK(std::count_if(index.value->tiles.begin(), index.value->tiles.end(), [](const auto &t) { return t.kind == TerrainPayloadKind::Normal; }) == 7);
+    CHECK(std::count_if(index.value->tiles.begin(), index.value->tiles.end(),
+                        [](const auto &t)
+                        {
+                            return t.source;
+                        }) == 4);
+    CHECK(std::count_if(index.value->tiles.begin(), index.value->tiles.end(),
+                        [](const auto &t)
+                        {
+                            return t.kind == TerrainPayloadKind::LodHeight;
+                        }) == 7);
+    CHECK(std::count_if(index.value->tiles.begin(), index.value->tiles.end(),
+                        [](const auto &t)
+                        {
+                            return t.kind == TerrainPayloadKind::Normal;
+                        }) == 7);
     CHECK(index.value->layers.size() == 4);
     CHECK(index.value->Find({0, -1})->source);
     CHECK(index.value->Find({0, -1})->sampleSpacing == 8.0);
@@ -211,8 +235,8 @@ TEST_CASE("Filtered planes preserve height without octave renormalization", "[te
     const TerrainGenerator generator(recipe);
     for (const auto &layout : recipe.SourceLayers())
         for (const GlobalSampleIndex point : {GlobalSampleIndex{-3, -2}, {0, 0}, {5, 6}})
-            CHECK(generator.SampleHeight(layout, point) == float(generator.Height(layout.SamplePosition(point.x),
-                                                                                  layout.SamplePosition(point.z))));
+            CHECK(generator.SampleHeight(layout, point) ==
+                  float(generator.Height(layout.SamplePosition(point.x), layout.SamplePosition(point.z))));
 }
 
 TEST_CASE("A local precision edit never changes other generated source tiles", "[terraintool][precision]")
@@ -236,8 +260,7 @@ TEST_CASE("A local precision edit never changes other generated source tiles", "
         REQUIRE(after.FillTile(layoutAfter, rule.tile, b).Ok());
         CHECK(a == b);
     }
-    CHECK(original.SourceLayout({-1, -1})->IntervalsPerTile() !=
-          edited.SourceLayout({-1, -1})->IntervalsPerTile());
+    CHECK(original.SourceLayout({-1, -1})->IntervalsPerTile() != edited.SourceLayout({-1, -1})->IntervalsPerTile());
 }
 
 TEST_CASE("Mixed source grids retain index precision and independent range reads", "[terraintool][precision]")
@@ -248,10 +271,15 @@ TEST_CASE("Mixed source grids retain index precision and independent range reads
     auto opened = TerrainReleaseHandle::Open(memory);
     REQUIRE(opened);
     const auto &handle = *opened.value;
-    REQUIRE(std::count_if(handle.Index().tiles.begin(),handle.Index().tiles.end(),[](const auto &r){return r.source;}) == 4);
+    REQUIRE(std::count_if(handle.Index().tiles.begin(), handle.Index().tiles.end(),
+                          [](const auto &r)
+                          {
+                              return r.source;
+                          }) == 4);
     for (const auto &record : handle.Index().tiles)
     {
-        if(!record.source)continue;
+        if (!record.source)
+            continue;
         CHECK(record.source);
         CHECK(record.sampleSpacing == recipe.SourceSpacing(record.tile));
         CHECK(record.samplesPerSide == int32_t(recipe.layout.TileSize() / record.sampleSpacing) + 1);
@@ -276,14 +304,15 @@ TEST_CASE("Mixed source grids retain index precision and independent range reads
         REQUIRE(answer.HasHeight());
         CHECK(answer.sourceSpacing == rule.spacing);
         CHECK(answer.spacing == rule.spacing);
-        CHECK(answer.status == (rule.spacing == 1.0 ? TerrainHeightStatus::MeetsRequirement :
-                                                    TerrainHeightStatus::CoarserAtSourceLimit));
+        CHECK(answer.status == (rule.spacing == 1.0 ? TerrainHeightStatus::MeetsRequirement
+                                                    : TerrainHeightStatus::CoarserAtSourceLimit));
     }
     if constexpr (mir::kLargeWorld)
     {
         for (double offset : {-150000.25, 150000.5})
         {
-            const TerrainPlacement placement{baked.info.asset, *WorldPosition::FromDoubleMeters({offset, -20.0, -offset})};
+            const TerrainPlacement placement{baked.info.asset,
+                                             *WorldPosition::FromDoubleMeters({offset, -20.0, -offset})};
             const auto local = *TerrainLocalPosition::FromMeters({12.25, 0.0, -127.75});
             const auto world = *TryTerrainLocalToWorld(local, placement.translation);
             const auto near = query.HeightAt(local, {baked.info, 1.0});
@@ -319,11 +348,11 @@ TEST_CASE("Filtered source fill is independent of tile order and range grouping"
     TerrainReport report("order", {});
     auto tiles = BakeFinalHeights(recipe, report);
     REQUIRE(tiles);
-    const auto forward = EncodeBakedRelease(MakeAssetId(ExampleAssetPath()), FingerprintRecipe(recipe), recipe,
-                                            *tiles, {kNonce, {}}, report);
+    const auto forward = EncodeBakedRelease(MakeAssetId(ExampleAssetPath()), FingerprintRecipe(recipe), recipe, *tiles,
+                                            {kNonce, {}}, report);
     std::reverse(tiles->begin(), tiles->end());
-    const auto backward = EncodeBakedRelease(MakeAssetId(ExampleAssetPath()), FingerprintRecipe(recipe), recipe,
-                                             *tiles, {kNonce, {}}, report);
+    const auto backward = EncodeBakedRelease(MakeAssetId(ExampleAssetPath()), FingerprintRecipe(recipe), recipe, *tiles,
+                                             {kNonce, {}}, report);
     REQUIRE(forward);
     REQUIRE(backward);
     CHECK(forward->encoded.index == backward->encoded.index);
@@ -332,7 +361,8 @@ TEST_CASE("Filtered source fill is independent of tile order and range grouping"
         CHECK(forward->encoded.packs[p].bytes == backward->encoded.packs[p].bytes);
 }
 
-TEST_CASE("Source sample estimates follow tile size and do not bake global reference samples", "[terraintool][precision]")
+TEST_CASE("Source sample estimates follow tile size and do not bake global reference samples",
+          "[terraintool][precision]")
 {
     const auto recipe = Mixed();
     const auto estimates = recipe.SourceEstimates();
@@ -382,10 +412,26 @@ TEST_CASE("Mixed candidate validation reports source assignment and continuous f
     CHECK(report.Status(check::kEdges) == CheckStatus::Passed);
     CHECK(report.Status(check::kCorners) == CheckStatus::Passed);
     REQUIRE(report.tiles.size() == 30);
-    CHECK(std::count_if(report.tiles.begin(), report.tiles.end(), [](const auto &t) { return t.source; }) == 4);
-    CHECK(std::count_if(report.tiles.begin(), report.tiles.end(), [](const auto &t) { return t.kind == 0 && !t.source; }) == 6);
-    CHECK(std::count_if(report.tiles.begin(), report.tiles.end(), [](const auto &t) { return t.kind == 1; }) == 10);
-    CHECK(std::count_if(report.tiles.begin(), report.tiles.end(), [](const auto &t) { return t.kind == 2; }) == 10);
+    CHECK(std::count_if(report.tiles.begin(), report.tiles.end(),
+                        [](const auto &t)
+                        {
+                            return t.source;
+                        }) == 4);
+    CHECK(std::count_if(report.tiles.begin(), report.tiles.end(),
+                        [](const auto &t)
+                        {
+                            return t.kind == 0 && !t.source;
+                        }) == 6);
+    CHECK(std::count_if(report.tiles.begin(), report.tiles.end(),
+                        [](const auto &t)
+                        {
+                            return t.kind == 1;
+                        }) == 10);
+    CHECK(std::count_if(report.tiles.begin(), report.tiles.end(),
+                        [](const auto &t)
+                        {
+                            return t.kind == 2;
+                        }) == 10);
     for (const auto &summary : report.tiles)
     {
         if (!summary.source)
@@ -402,7 +448,8 @@ TEST_CASE("Mixed candidate validation reports source assignment and continuous f
     CHECK(validated.Status(check::kIdentity) == CheckStatus::Passed);
 }
 
-TEST_CASE("Precision parsing refuses unusable coarse coordinates and estimates decimal grids exactly", "[terraintool][precision]")
+TEST_CASE("Precision parsing refuses unusable coarse coordinates and estimates decimal grids exactly",
+          "[terraintool][precision]")
 {
     Json json = MixedJson();
     json["layout"]["intervalsPerTile"] = 4;

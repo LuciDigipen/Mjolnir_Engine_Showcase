@@ -82,7 +82,7 @@ namespace mir::terrainbake
         std::vector<TerrainSourceEstimate> SourceEstimates() const;
     };
 
-        // Dotted JSON path; empty for the whole document.
+    // Dotted JSON path; empty for the whole document.
     struct RecipeIssue
     {
         std::string field;

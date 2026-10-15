@@ -139,7 +139,7 @@ namespace mir::terrainbake
 
     class TerrainReport
     {
-    public:
+      public:
         TerrainReport(std::string command, std::initializer_list<std::string_view> checks);
 
         void Ran(std::string_view check, std::string detail = {});
@@ -174,7 +174,7 @@ namespace mir::terrainbake
         std::vector<TerrainDiagnostic> warnings;
         std::optional<TerrainSeamSummary> seams;
 
-    private:
+      private:
         TerrainCheck *Find(std::string_view check);
     };
 

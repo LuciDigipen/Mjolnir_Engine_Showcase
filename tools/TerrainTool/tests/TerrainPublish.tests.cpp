@@ -93,9 +93,21 @@ TEST_CASE("Publish copies only the release files and moves current last", "[terr
     CHECK(report.publish->current == id);
     CHECK(report.release->release == id);
     REQUIRE(report.tiles.size() == 24);
-    CHECK(std::count_if(report.tiles.begin(), report.tiles.end(), [](const auto &t) { return t.source; }) == 4);
-    CHECK(std::count_if(report.tiles.begin(), report.tiles.end(), [](const auto &t) { return t.kind == 1; }) == 8);
-    CHECK(std::count_if(report.tiles.begin(), report.tiles.end(), [](const auto &t) { return t.kind == 2; }) == 8);
+    CHECK(std::count_if(report.tiles.begin(), report.tiles.end(),
+                        [](const auto &t)
+                        {
+                            return t.source;
+                        }) == 4);
+    CHECK(std::count_if(report.tiles.begin(), report.tiles.end(),
+                        [](const auto &t)
+                        {
+                            return t.kind == 1;
+                        }) == 8);
+    CHECK(std::count_if(report.tiles.begin(), report.tiles.end(),
+                        [](const auto &t)
+                        {
+                            return t.kind == 2;
+                        }) == 8);
 
     const fs::path assetDir = TerrainAssetReleasesDir(releases, ExampleAsset());
     std::vector<std::string> names{TerrainIdHex(id.value), "current"};
@@ -110,7 +122,8 @@ TEST_CASE("Publish copies only the release files and moves current last", "[terr
 
     const TerrainResult<TerrainReleaseHandle> current = OpenCurrentTerrainRelease(releases, ExampleAsset());
     REQUIRE(current);
-    const TerrainResult<TerrainReleaseHandle> baked = TerrainReleaseHandle::Open(std::make_shared<TerrainFileSource>(candidate));
+    const TerrainResult<TerrainReleaseHandle> baked =
+        TerrainReleaseHandle::Open(std::make_shared<TerrainFileSource>(candidate));
     REQUIRE(baked);
     CHECK(current.value->Info() == baked.value->Info());
     CHECK(ReadAllTiles(*current.value) == ReadAllTiles(*baked.value));
@@ -303,10 +316,12 @@ TEST_CASE("A second publisher of one asset waits for the lock or fails", "[terra
     CHECK(ReleaseDirNames(assetDir).empty());
     CHECK_FALSE(PeekTerrainCurrent(releases, ExampleAsset()));
 
-    std::thread holder([&] {
-        std::this_thread::sleep_for(300ms);
-        held.reset();
-    });
+    std::thread holder(
+        [&]
+        {
+            std::this_thread::sleep_for(300ms);
+            held.reset();
+        });
     const TerrainReport waited = Publish(candidate, releases, std::nullopt, 10s);
     holder.join();
     REQUIRE(waited.Ok());
