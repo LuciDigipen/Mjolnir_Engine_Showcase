@@ -1,3 +1,12 @@
+/**
+ * @file TerrainBindings.tests.cpp
+ * @author Jackey Cen
+ * @brief Tests Lua terrain height queries, precision, statuses and pinned releases.
+ *
+ * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
+ *
+ */
+
 #include "../src/script/bindings/EntityBindings.h"
 #include "../src/script/bindings/TerrainBindings.h"
 #include "../src/script/bindings/WorldBindings.h"
@@ -59,8 +68,7 @@ namespace
             info = Info(asset, kReleaseA, 0x87654321fedcba98);
             for (const double spacing : {1.0, 2.0, 4.0, 8.0})
             {
-                const auto layout = TerrainLayout::CreateFromTileSize(16.0, spacing,
-                                                                       {-12.5, -16.0, 16.0, 14.25});
+                const auto layout = TerrainLayout::CreateFromTileSize(16.0, spacing, {-12.5, -16.0, 16.0, 14.25});
                 REQUIRE(layout);
                 layouts.push_back(*layout);
             }
@@ -72,7 +80,10 @@ namespace
             Resolve();
         }
 
-        ~Fixture() { std::filesystem::remove_all(root); }
+        ~Fixture()
+        {
+            std::filesystem::remove_all(root);
+        }
 
         TerrainEncodedRelease EncodeFixture(const TerrainReleaseInfo &identity, float salt, bool flat = false)
         {
@@ -99,7 +110,8 @@ namespace
             for (uint32_t layer = 0; layer < 4; ++layer)
             {
                 add(coordinates[layer], layer, true);
-                if (layer != 3) add(coordinates[layer], 3, false);
+                if (layer != 3)
+                    add(coordinates[layer], 3, false);
             }
             std::vector<TerrainTileWrite> writes;
             for (size_t i = 0; i < tiles.size(); ++i)
@@ -110,8 +122,14 @@ namespace
             return std::move(*value.value);
         }
 
-        TerrainWorld &Terrain() { return world.Resource<TerrainWorld>(); }
-        TerrainResidentRelease &Resident() { return *Terrain().Instances().front().release; }
+        TerrainWorld &Terrain()
+        {
+            return world.Resource<TerrainWorld>();
+        }
+        TerrainResidentRelease &Resident()
+        {
+            return *Terrain().Instances().front().release;
+        }
 
         void Resolve()
         {
@@ -125,7 +143,8 @@ namespace
         void ResetQuery(bool preload = false)
         {
             Resident().Query() = TerrainHeightQuery::Create(memory->handle);
-            if (preload) REQUIRE(PreloadAllTerrainTiles(Resident().Query(), memory->handle).Ok());
+            if (preload)
+                REQUIRE(PreloadAllTerrainTiles(Resident().Query(), memory->handle).Ok());
         }
 
         WorldPosition At(double x, double z)
@@ -162,7 +181,11 @@ namespace
         sol::table Eval(std::string_view source)
         {
             auto result = lua.safe_script(source, sol::script_pass_on_error);
-            if (!result.valid()) { const sol::error error = result; INFO(error.what()); }
+            if (!result.valid())
+            {
+                const sol::error error = result;
+                INFO(error.what());
+            }
             REQUIRE(result.valid());
             return result.get<sol::table>();
         }
@@ -171,7 +194,7 @@ namespace
     std::string Status(TerrainHeightStatus status)
     {
         const char *names[]{"MeetsRequirement", "CoarserWhileLoading", "CoarserAtSourceLimit",
-                            "Loading", "OutsideMap", "Failed"};
+                            "Loading",          "OutsideMap",          "Failed"};
         return names[static_cast<unsigned>(status)];
     }
 
@@ -189,7 +212,8 @@ namespace
             REQUIRE(value.get_type() == sol::type::number);
             CHECK(value.as<double>() == *expected);
         }
-        else CHECK(value.get_type() == sol::type::lua_nil);
+        else
+            CHECK(value.get_type() == sol::type::lua_nil);
     }
 
     void Compare(const sol::table &table, const TerrainHeightResult &expected)
@@ -198,9 +222,12 @@ namespace
         CHECK(table.get<std::string>("failure") == Failure(expected.failure));
         CHECK(table.get<bool>("hasHeight") == expected.HasHeight());
         OptionalNumber(table, "localHeight", expected.HasHeight() ? std::optional(expected.localHeight) : std::nullopt);
-        OptionalNumber(table, "worldHeight", expected.worldPoint ? std::optional<double>(expected.worldPoint->Meters().y) : std::nullopt);
-        OptionalNumber(table, "spacing", std::isfinite(expected.spacing) ? std::optional(expected.spacing) : std::nullopt);
-        OptionalNumber(table, "sourceSpacing", std::isfinite(expected.sourceSpacing) ? std::optional(expected.sourceSpacing) : std::nullopt);
+        OptionalNumber(table, "worldHeight",
+                       expected.worldPoint ? std::optional<double>(expected.worldPoint->Meters().y) : std::nullopt);
+        OptionalNumber(table, "spacing",
+                       std::isfinite(expected.spacing) ? std::optional(expected.spacing) : std::nullopt);
+        OptionalNumber(table, "sourceSpacing",
+                       std::isfinite(expected.sourceSpacing) ? std::optional(expected.sourceSpacing) : std::nullopt);
         OptionalNumber(table, "maxError", expected.maxError);
         const sol::object point = table["worldPoint"];
         if (expected.worldPoint)
@@ -212,7 +239,8 @@ namespace
             CHECK(value.get<double>("y") == double(meters.y));
             CHECK(value.get<double>("z") == double(meters.z));
         }
-        else CHECK(point.get_type() == sol::type::lua_nil);
+        else
+            CHECK(point.get_type() == sol::type::lua_nil);
         CHECK(table.get<std::string>("releaseId") == TerrainIdHex(expected.release.release.value));
         const sol::table release = table["release"];
         CHECK(release.get<std::string>("assetId") == TerrainIdHex(expected.release.asset.value));
@@ -266,7 +294,8 @@ TEST_CASE("Lua terrain query distinguishes resident loading source limit and fai
         const auto value = CheckQuery(fixture, lua, point, 1.0);
         CHECK(value.get<std::string>("status") == "Loading");
         CHECK(query.PayloadRequests().size() == 1);
-        for (int i = 0; i < 16; ++i) CheckQuery(fixture, lua, point, 1.0);
+        for (int i = 0; i < 16; ++i)
+            CheckQuery(fixture, lua, point, 1.0);
         CHECK(query.PayloadRequests().size() == 1);
     }
     SECTION("CoarserWhileLoading")
@@ -286,7 +315,8 @@ TEST_CASE("Lua terrain query distinguishes resident loading source limit and fai
     }
     SECTION("Failed LoadFailed")
     {
-        REQUIRE(query.MarkFailed(fixture.info, 0, {-1, -1}, {TerrainPackErrorCode::Io, "controlled failure"}).code == TerrainPackErrorCode::None);
+        REQUIRE(query.MarkFailed(fixture.info, 0, {-1, -1}, {TerrainPackErrorCode::Io, "controlled failure"}).code ==
+                TerrainPackErrorCode::None);
         const auto value = CheckQuery(fixture, lua, point, 1.0);
         CHECK(value.get<std::string>("failure") == "LoadFailed");
     }
@@ -323,7 +353,8 @@ TEST_CASE("Lua terrain query preserves unknown error and legitimate height zero"
     REQUIRE(custom);
     const auto tile = fixture.memory->handle.ReadTile({fixture.asset, {-1, -1}}, 3);
     REQUIRE(tile);
-    REQUIRE(custom->Insert(fixture.info, 1, std::make_shared<TileHeights>(*tile.value)).code == TerrainPackErrorCode::None);
+    REQUIRE(custom->Insert(fixture.info, 1, std::make_shared<TileHeights>(*tile.value)).code ==
+            TerrainPackErrorCode::None);
     fixture.Resident().Query() = std::move(*custom);
     value = CheckQuery(fixture, lua, point, 1.0);
     CHECK(value.get<std::string>("status") == "CoarserWhileLoading");
@@ -354,18 +385,30 @@ TEST_CASE("Lua terrain query reports malformed and nonfinite arguments before ch
     const auto before = fixture.Resident().Handle().Source().Stats();
     InitLog({.consoleLevel = LogLevel::Error, .fileLevel = LogLevel::Off});
     LogHistory::Clear();
-    const char *calls[]{
-        "()", "(nil, 1)", "(false, 1)", "(1, 1)", "('position', 1)",
-        "({}, 1)", "({x=0,z=0}, 1)", "({x='0',y=0,z=0}, 1)",
-        "({x=0,y=false,z=0}, 1)", "({x=0,y=0,z={}}, 1)",
-        "({x=0/0,y=0,z=0}, 1)", "({x=0,y=math.huge,z=0}, 1)",
-        "({x=0,y=0,z=-math.huge}, 1)", "({x=0,y=0,z=0})",
-        "({x=0,y=0,z=0}, nil)", "({x=0,y=0,z=0}, '1')",
-        "({x=0,y=0,z=0}, false)", "({x=0,y=0,z=0}, 0)",
-        "({x=0,y=0,z=0}, -1)", "({x=0,y=0,z=0}, math.huge)",
-        "({x=0,y=0,z=0}, 0/0)", "({x=0,y=0,z=0}, 1, 2)",
-        "({x=0,y=0,z=0}, {})",
-        "(setmetatable({}, {__index=function() error('must not run') end}), 1)"};
+    const char *calls[]{"()",
+                        "(nil, 1)",
+                        "(false, 1)",
+                        "(1, 1)",
+                        "('position', 1)",
+                        "({}, 1)",
+                        "({x=0,z=0}, 1)",
+                        "({x='0',y=0,z=0}, 1)",
+                        "({x=0,y=false,z=0}, 1)",
+                        "({x=0,y=0,z={}}, 1)",
+                        "({x=0/0,y=0,z=0}, 1)",
+                        "({x=0,y=math.huge,z=0}, 1)",
+                        "({x=0,y=0,z=-math.huge}, 1)",
+                        "({x=0,y=0,z=0})",
+                        "({x=0,y=0,z=0}, nil)",
+                        "({x=0,y=0,z=0}, '1')",
+                        "({x=0,y=0,z=0}, false)",
+                        "({x=0,y=0,z=0}, 0)",
+                        "({x=0,y=0,z=0}, -1)",
+                        "({x=0,y=0,z=0}, math.huge)",
+                        "({x=0,y=0,z=0}, 0/0)",
+                        "({x=0,y=0,z=0}, 1, 2)",
+                        "({x=0,y=0,z=0}, {})",
+                        "(setmetatable({}, {__index=function() error('must not run') end}), 1)"};
     TerrainHeightResult expected;
     expected.failure = TerrainHeightFailure::InvalidInput;
     for (const char *call : calls)
@@ -389,9 +432,10 @@ TEST_CASE("Lua terrain query reports malformed and nonfinite arguments before ch
 
 TEST_CASE("Lua terrain query keeps double world positions at both 150 km placements", "[script][terrain][lwc]")
 {
-    if (!kLargeWorld) SKIP("subcentimeter world placement requires MIR_LARGE_WORLD");
-    for (const glm::dvec3 placement : {glm::dvec3{150000.500123, -20.000017, -150000.250321},
-                                     glm::dvec3{-150000.500123, 35.000017, 150000.250321}})
+    if (!kLargeWorld)
+        SKIP("subcentimeter world placement requires MIR_LARGE_WORLD");
+    for (const glm::dvec3 placement :
+         {glm::dvec3{150000.500123, -20.000017, -150000.250321}, glm::dvec3{-150000.500123, 35.000017, 150000.250321}})
     {
         Fixture fixture(placement);
         LuaQuery lua(fixture.world);

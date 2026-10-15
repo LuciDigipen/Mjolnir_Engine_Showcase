@@ -1,3 +1,12 @@
+/**
+ * @file TerrainBindings.cpp
+ * @author Jackey Cen
+ * @brief Exposes resident terrain height results and metadata to Lua.
+ *
+ * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
+ *
+ */
+
 #include "TerrainBindings.h"
 
 #include <core/ecs/World.h>
@@ -18,12 +27,18 @@ namespace mir
         {
             switch (status)
             {
-            case TerrainHeightStatus::MeetsRequirement: return "MeetsRequirement";
-            case TerrainHeightStatus::CoarserWhileLoading: return "CoarserWhileLoading";
-            case TerrainHeightStatus::CoarserAtSourceLimit: return "CoarserAtSourceLimit";
-            case TerrainHeightStatus::Loading: return "Loading";
-            case TerrainHeightStatus::OutsideMap: return "OutsideMap";
-            case TerrainHeightStatus::Failed: return "Failed";
+            case TerrainHeightStatus::MeetsRequirement:
+                return "MeetsRequirement";
+            case TerrainHeightStatus::CoarserWhileLoading:
+                return "CoarserWhileLoading";
+            case TerrainHeightStatus::CoarserAtSourceLimit:
+                return "CoarserAtSourceLimit";
+            case TerrainHeightStatus::Loading:
+                return "Loading";
+            case TerrainHeightStatus::OutsideMap:
+                return "OutsideMap";
+            case TerrainHeightStatus::Failed:
+                return "Failed";
             }
             return "Failed";
         }
@@ -32,11 +47,16 @@ namespace mir
         {
             switch (failure)
             {
-            case TerrainHeightFailure::None: return "None";
-            case TerrainHeightFailure::WrongRelease: return "WrongRelease";
-            case TerrainHeightFailure::InvalidInput: return "InvalidInput";
-            case TerrainHeightFailure::LoadFailed: return "LoadFailed";
-            case TerrainHeightFailure::InvalidSamples: return "InvalidSamples";
+            case TerrainHeightFailure::None:
+                return "None";
+            case TerrainHeightFailure::WrongRelease:
+                return "WrongRelease";
+            case TerrainHeightFailure::InvalidInput:
+                return "InvalidInput";
+            case TerrainHeightFailure::LoadFailed:
+                return "LoadFailed";
+            case TerrainHeightFailure::InvalidSamples:
+                return "InvalidSamples";
             }
             return "InvalidInput";
         }
@@ -47,7 +67,8 @@ namespace mir
             out["status"] = StatusName(result.status);
             out["failure"] = FailureName(result.failure);
             out["hasHeight"] = result.HasHeight();
-            if (result.HasHeight()) out["localHeight"] = result.localHeight;
+            if (result.HasHeight())
+                out["localHeight"] = result.localHeight;
             if (result.worldPoint)
             {
                 const WorldVec3 meters = result.worldPoint->Meters();
@@ -58,9 +79,12 @@ namespace mir
                 out["worldPoint"] = point;
                 out["worldHeight"] = meters.y;
             }
-            if (std::isfinite(result.spacing)) out["spacing"] = result.spacing;
-            if (std::isfinite(result.sourceSpacing)) out["sourceSpacing"] = result.sourceSpacing;
-            if (result.maxError) out["maxError"] = *result.maxError;
+            if (std::isfinite(result.spacing))
+                out["spacing"] = result.spacing;
+            if (std::isfinite(result.sourceSpacing))
+                out["sourceSpacing"] = result.sourceSpacing;
+            if (result.maxError)
+                out["maxError"] = *result.maxError;
             out["releaseId"] = std::format("{:016x}", result.release.release.value);
             sol::table release = lua.create_table();
             release["assetId"] = std::format("{:016x}", result.release.asset.value);
@@ -78,7 +102,8 @@ namespace mir
 
         bool Number(const sol::object &object, double &number)
         {
-            if (object.get_type() != sol::type::number) return false;
+            if (object.get_type() != sol::type::number)
+                return false;
             number = object.as<double>();
             return std::isfinite(number);
         }
