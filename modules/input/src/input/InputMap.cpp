@@ -66,6 +66,7 @@ namespace mir
                 { "channel", ToString(binding.channel) },
                 { "key", KeyName(binding.key) },
                 { "mouseButton", MouseButtonName(binding.mouseButton) },
+                { "useMouseDelta", binding.useMouseDelta },
                 { "useGamepadAxis", binding.useGamepadAxis },
                 { "gamepadButton", GamepadButtonName(binding.gamepadButton) },
                 { "gamepadAxis", GamepadAxisName(binding.gamepadAxis) },
@@ -81,6 +82,7 @@ namespace mir
             binding.channel = ParseAxisChannel(node.value("channel", std::string("X")));
             binding.key = ParseKey(node.value("key", std::string()));
             binding.mouseButton = ParseMouseButton(node.value("mouseButton", std::string())).value_or(MouseButton::Left);
+            binding.useMouseDelta = node.value("useMouseDelta", false);
             binding.useGamepadAxis = node.value("useGamepadAxis", false);
             binding.gamepadButton = ParseGamepadButton(node.value("gamepadButton", std::string())).value_or(GamepadButton::A);
             binding.gamepadAxis = ParseGamepadAxis(node.value("gamepadAxis", std::string())).value_or(GamepadAxis::LeftX);
@@ -100,6 +102,8 @@ namespace mir
             return "Axis1D";
         case InputActionType::Axis2D:
             return "Axis2D";
+        case InputActionType::Delta2D:
+            return "Delta2D";
         }
         return "Button";
     }
@@ -110,6 +114,8 @@ namespace mir
             return InputActionType::Axis1D;
         if (name == "Axis2D")
             return InputActionType::Axis2D;
+        if (name == "Delta2D")
+            return InputActionType::Delta2D;
         return InputActionType::Button;
     }
 

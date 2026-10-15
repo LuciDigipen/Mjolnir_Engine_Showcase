@@ -1,4 +1,4 @@
--- Test rig for CameraFollow: drives this entity along a figure-8 so a
+-- Test rig for CameraController: drives this entity along a figure-8 so a
 -- following camera has something to chase.
 local FollowRig = {}
 

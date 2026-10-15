@@ -19,6 +19,8 @@
 #include <audio/AudioListenerSystem.h>
 #include <audio/AudioSystem.h>
 #include <audio/ComponentRegistration.h>
+#include <camera/CameraControllerSystem.h>
+#include <camera/ComponentRegistration.h>
 #include <core/EngineVersion.h>
 #include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/DeferredAccess.h>
@@ -36,7 +38,6 @@
 #include <physics/PhysicsInterpolationSystem.h>
 #include <physics/PhysicsSystem.h>
 #include <physics/PhysicsWorld.h>
-#include <renderer/CameraFollowSystem.h>
 #include <renderer/ComponentRegistration.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/RenderSystem.h>
@@ -183,6 +184,7 @@ namespace mir
         RegisterRendererComponents();
         RegisterRendererEntityTypes();
         RegisterPhysicsComponents();
+        RegisterCameraComponents();
         RegisterScriptComponents();
         RegisterAudioComponents();
         RegisterModelPlayer();
@@ -222,7 +224,7 @@ namespace mir
         //should be before any other system in PostUpdate that reads WorldTransform
         mScheduler.AddSystem<TransformPropagateSystem>(SystemPhase::PostUpdate);
 
-        mScheduler.AddSystem<CameraFollowSystem>(SystemPhase::PostUpdate);
+        mScheduler.AddSystem<CameraControllerSystem>(SystemPhase::PostUpdate);
         mModelSystem =
             &mScheduler.AddSystem<ModelSystem>(SystemPhase::PostUpdate, mRenderer, Assets(), mProject.mAssetIdRoot);
         mMeshResolveSystem = &mScheduler.AddSystem<MeshResolveSystem>(SystemPhase::PostUpdate, mRenderer, Assets(),
