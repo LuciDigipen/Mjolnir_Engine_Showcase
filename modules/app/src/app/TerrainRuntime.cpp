@@ -212,7 +212,7 @@ namespace mir
     }
 
     std::optional<TerrainRuntime::InstanceResources> TerrainRuntime::Reuse(const TerrainInstanceState &instance,
-                                                                            std::vector<InstanceResources> &old)
+                                                                           std::vector<InstanceResources> &old)
     {
         const TerrainReleaseInfo &release = instance.release->Info();
         const auto find = [&](bool samePlace)
@@ -308,27 +308,34 @@ namespace mir
             desc.mOrigin = *worldOrigin;
             const BodyHandle body = physics->CreateStaticHeightField(desc);
             const auto info = physics->HeightFieldInfoOf(body);
-            const auto error = info ? TerrainCollisionErrorBudget(*samples.value, instance.placement, *worldOrigin,
-                info->mMaxQuantizationError, info->mMaxHorizontalError) : std::nullopt;
+            const auto error = info
+                                   ? TerrainCollisionErrorBudget(*samples.value, instance.placement, *worldOrigin,
+                                                                 info->mMaxQuantizationError, info->mMaxHorizontalError)
+                                   : std::nullopt;
             const bool covered = info && TerrainCollisionCovers(*samples.value, instance.placement, *worldOrigin,
-                info->mExtentX, info->mExtentZ);
+                                                                info->mExtentX, info->mExtentZ);
             if (covered && error && error->total <= policy.maxError)
             {
-                MIR_LOG_INFO("Terrain '{}': collision {} m, error {} m (geometry {}, quantization {}, horizontal {}, numeric {})",
-                    instance.recipePath, spacing, error->total, error->geometry, error->quantization,
-                    error->horizontal, error->numeric);
-                if (!refusals.empty()) MIR_LOG_INFO("Terrain collision refined:{}", refusals);
+                MIR_LOG_INFO(
+                    "Terrain '{}': collision {} m, error {} m (geometry {}, quantization {}, horizontal {}, numeric {})",
+                    instance.recipePath, spacing, error->total, error->geometry, error->quantization, error->horizontal,
+                    error->numeric);
+                if (!refusals.empty())
+                    MIR_LOG_INFO("Terrain collision refined:{}", refusals);
                 origin = area.origin;
                 return body;
             }
             physics->DestroyBody(body);
-            if (!covered) refusals += std::format(" [{} m: decoded XY support does not cover the map]", spacing);
-            refusals += error ? std::format(" [{} m: total {} = geometry {} + quantization {} + horizontal {} + numeric {}]",
-                spacing, error->total, error->geometry, error->quantization, error->horizontal, error->numeric)
-                : std::format(" [{} m: height field or error proof failed]", spacing);
+            if (!covered)
+                refusals += std::format(" [{} m: decoded XY support does not cover the map]", spacing);
+            refusals +=
+                error ? std::format(" [{} m: total {} = geometry {} + quantization {} + horizontal {} + numeric {}]",
+                                    spacing, error->total, error->geometry, error->quantization, error->horizontal,
+                                    error->numeric)
+                      : std::format(" [{} m: height field or error proof failed]", spacing);
         }
         Report(std::format("Terrain '{}': no collision spacing satisfies {} m;{} the instance is not loaded",
-            instance.recipePath, policy.maxError, refusals));
+                           instance.recipePath, policy.maxError, refusals));
         return {};
     }
 

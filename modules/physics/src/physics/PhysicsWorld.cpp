@@ -63,7 +63,7 @@ namespace
     // Statics never collide with statics; every other pair does.
     class ObjectLayerPairFilterImpl final : public JPH::ObjectLayerPairFilter
     {
-    public:
+      public:
         bool ShouldCollide(JPH::ObjectLayer a, JPH::ObjectLayer b) const override
         {
             return a == Layers::kMoving || b == Layers::kMoving;
@@ -72,14 +72,17 @@ namespace
 
     class BroadPhaseLayerInterfaceImpl final : public JPH::BroadPhaseLayerInterface
     {
-    public:
+      public:
         BroadPhaseLayerInterfaceImpl()
         {
             mLayers[Layers::kNonMoving] = BroadPhaseLayers::kNonMoving;
             mLayers[Layers::kMoving] = BroadPhaseLayers::kMoving;
         }
 
-        JPH::uint GetNumBroadPhaseLayers() const override { return BroadPhaseLayers::kCount; }
+        JPH::uint GetNumBroadPhaseLayers() const override
+        {
+            return BroadPhaseLayers::kCount;
+        }
 
         JPH::BroadPhaseLayer GetBroadPhaseLayer(JPH::ObjectLayer layer) const override
         {
@@ -87,20 +90,20 @@ namespace
             return mLayers[layer];
         }
 
-    #if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
+#if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
         const char *GetBroadPhaseLayerName(JPH::BroadPhaseLayer layer) const override
         {
             return layer == BroadPhaseLayers::kMoving ? "MOVING" : "NON_MOVING";
         }
-    #endif
+#endif
 
-    private:
+      private:
         JPH::BroadPhaseLayer mLayers[Layers::kCount];
     };
 
     class ObjectVsBroadPhaseLayerFilterImpl final : public JPH::ObjectVsBroadPhaseLayerFilter
     {
-    public:
+      public:
         bool ShouldCollide(JPH::ObjectLayer layer, JPH::BroadPhaseLayer broadPhase) const override
         {
             return layer == Layers::kMoving || broadPhase == BroadPhaseLayers::kMoving;
@@ -131,7 +134,7 @@ namespace
     // the way in. CMake and JoltRuntime check the package; this checks what this
     // file compiled against.
     static_assert(sizeof(JPH::Real) == sizeof(mir::WorldReal),
-        "JPH_DOUBLE_PRECISION must match MIR_LARGE_WORLD (the large-world vcpkg feature)");
+                  "JPH_DOUBLE_PRECISION must match MIR_LARGE_WORLD (the large-world vcpkg feature)");
 
     JPH::RVec3 ToJolt(mir::WorldPosition position)
     {
@@ -169,8 +172,7 @@ namespace
         return entity.IsNull() ? mir::kNullEntity : entity;
     }
 
-    JPH::RVec3 OffsetToWorldPoint(const JPH::BodyInterface &bodies, JPH::BodyID id,
-        const glm::vec3 &localOffset)
+    JPH::RVec3 OffsetToWorldPoint(const JPH::BodyInterface &bodies, JPH::BodyID id, const glm::vec3 &localOffset)
     {
         const JPH::Vec3 worldOffset = bodies.GetRotation(id) * ToJolt(localOffset);
         return bodies.GetCenterOfMassPosition(id) + worldOffset;
@@ -179,10 +181,10 @@ namespace
     // Folds Jolt's per sub-shape contacts into one touching state per body pair.
     class ContactTracker final : public JPH::ContactListener
     {
-    public:
+      public:
         // Called on Jolt's job threads with bodies locked: read only IDs and the manifold.
         void OnContactAdded(const JPH::Body &body1, const JPH::Body &body2, const JPH::ContactManifold &manifold,
-            JPH::ContactSettings &) override
+                            JPH::ContactSettings &) override
         {
             const JPH::SubShapeIDPair key(body1.GetID(), manifold.mSubShapeID1, body2.GetID(), manifold.mSubShapeID2);
             const std::scoped_lock lock(mMutex);
@@ -202,7 +204,7 @@ namespace
         }
 
         void OnContactPersisted(const JPH::Body &body1, const JPH::Body &body2, const JPH::ContactManifold &manifold,
-            JPH::ContactSettings &) override
+                                JPH::ContactSettings &) override
         {
             const std::scoped_lock lock(mMutex);
             if (const auto it = mPairs.find(PairKey(body1.GetID(), body2.GetID())); it != mPairs.end())
@@ -278,11 +280,14 @@ namespace
                     out.push_back(MakeEvent(mir::CollisionPhase::End, it->second, bodies));
                 mPairs.erase(it);
             }
-            std::erase_if(mSubShapes, [body](const JPH::SubShapeIDPair &key)
-                { return key.GetBody1ID() == body || key.GetBody2ID() == body; });
+            std::erase_if(mSubShapes,
+                          [body](const JPH::SubShapeIDPair &key)
+                          {
+                              return key.GetBody1ID() == body || key.GetBody2ID() == body;
+                          });
         }
 
-    private:
+      private:
         struct Pair
         {
             // A has the lower ID.
@@ -328,12 +333,12 @@ namespace
         }
 
         static mir::CollisionEvent MakeEvent(mir::CollisionPhase phase, const Pair &pair,
-            const JPH::BodyInterface &bodies)
+                                             const JPH::BodyInterface &bodies)
         {
             mir::CollisionEvent event;
             event.mPhase = phase;
-            event.mBodyA = mir::BodyHandle{ pair.mBodyA.GetIndexAndSequenceNumber() };
-            event.mBodyB = mir::BodyHandle{ pair.mBodyB.GetIndexAndSequenceNumber() };
+            event.mBodyA = mir::BodyHandle{pair.mBodyA.GetIndexAndSequenceNumber()};
+            event.mBodyB = mir::BodyHandle{pair.mBodyB.GetIndexAndSequenceNumber()};
             event.mEntityA = EntityFromUserData(bodies.GetUserData(pair.mBodyA));
             event.mEntityB = EntityFromUserData(bodies.GetUserData(pair.mBodyB));
             event.mPoint = PositionFromJolt(pair.mPoint).value_or(mir::WorldPosition{});
@@ -354,37 +359,31 @@ namespace mir
     struct PhysicsWorld::Impl
     {
         explicit Impl(const PhysicsWorldDesc &desc)
-            : mJobSystem(static_cast<JPH::uint>(JPH::cMaxPhysicsJobs),
-                  static_cast<JPH::uint>(JPH::cMaxPhysicsBarriers),
-                  desc.mWorkerThreads > 0 ? static_cast<int>(desc.mWorkerThreads) : -1)
-            , mCollisionSteps(desc.mCollisionSteps > 0 ? desc.mCollisionSteps : 1)
+            : mJobSystem(static_cast<JPH::uint>(JPH::cMaxPhysicsJobs), static_cast<JPH::uint>(JPH::cMaxPhysicsBarriers),
+                         desc.mWorkerThreads > 0 ? static_cast<int>(desc.mWorkerThreads) : -1),
+              mCollisionSteps(desc.mCollisionSteps > 0 ? desc.mCollisionSteps : 1)
         {
             mSystem.Init(desc.mMaxBodies,
-                0, // body mutexes: 0 lets Jolt pick a default
-                desc.mMaxBodyPairs,
-                desc.mMaxContactConstraints,
-                mBroadPhaseLayers,
-                mObjectVsBroadPhase,
-                mObjectLayerPairs);
+                         0, // body mutexes: 0 lets Jolt pick a default
+                         desc.mMaxBodyPairs, desc.mMaxContactConstraints, mBroadPhaseLayers, mObjectVsBroadPhase,
+                         mObjectLayerPairs);
 
             mSystem.SetGravity(ToJolt(desc.mGravity));
             mSystem.SetContactListener(&mContacts);
         }
 
-        BodyHandle CreateBody(const JPH::Shape *shape, WorldPosition position,
-            const glm::quat &rotation, bool dynamic, bool enhancedInternalEdgeRemoval = false)
+        BodyHandle CreateBody(const JPH::Shape *shape, WorldPosition position, const glm::quat &rotation, bool dynamic,
+                              bool enhancedInternalEdgeRemoval = false)
         {
             const JPH::RefConst<JPH::Shape> owned(shape);
 
-            JPH::BodyCreationSettings settings(owned,
-                ToJolt(position),
-                ToJolt(rotation),
-                dynamic ? JPH::EMotionType::Dynamic : JPH::EMotionType::Static,
-                dynamic ? Layers::kMoving : Layers::kNonMoving);
+            JPH::BodyCreationSettings settings(owned, ToJolt(position), ToJolt(rotation),
+                                               dynamic ? JPH::EMotionType::Dynamic : JPH::EMotionType::Static,
+                                               dynamic ? Layers::kMoving : Layers::kNonMoving);
             settings.mEnhancedInternalEdgeRemoval = enhancedInternalEdgeRemoval;
 
-            const JPH::BodyID id = mSystem.GetBodyInterface().CreateAndAddBody(settings,
-                dynamic ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+            const JPH::BodyID id = mSystem.GetBodyInterface().CreateAndAddBody(
+                settings, dynamic ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
 
             if (id.IsInvalid())
             {
@@ -395,13 +394,13 @@ namespace mir
             if (!dynamic)
                 mBroadPhaseDirty = true;
 
-            return BodyHandle{ id.GetIndexAndSequenceNumber() };
+            return BodyHandle{id.GetIndexAndSequenceNumber()};
         }
 
         // the first in declaration order to outlive other systems
         detail::JoltRuntimeRef mRuntime;
 
-        JPH::TempAllocatorImpl mTempAllocator{ 10 * 1024 * 1024 };
+        JPH::TempAllocatorImpl mTempAllocator{10 * 1024 * 1024};
         JPH::JobSystemThreadPool mJobSystem;
 
         BroadPhaseLayerInterfaceImpl mBroadPhaseLayers;
@@ -420,15 +419,14 @@ namespace mir
         std::unordered_map<uint32_t, HeightFieldInfo> mHeightFieldInfo;
     };
 
-    PhysicsWorld::PhysicsWorld(const PhysicsWorldDesc &desc)
-        : mImpl(std::make_unique<Impl>(desc))
+    PhysicsWorld::PhysicsWorld(const PhysicsWorldDesc &desc) : mImpl(std::make_unique<Impl>(desc))
     {
     }
 
     PhysicsWorld::~PhysicsWorld() = default;
 
     BodyHandle PhysicsWorld::CreateStaticBox(WorldPosition position, const glm::vec3 &halfExtent,
-        const glm::quat &rotation)
+                                             const glm::quat &rotation)
     {
         if (halfExtent.x <= 0.0f || halfExtent.y <= 0.0f || halfExtent.z <= 0.0f)
         {
@@ -439,8 +437,7 @@ namespace mir
         return mImpl->CreateBody(new JPH::BoxShape(ToJolt(halfExtent)), position, rotation, false);
     }
 
-    BodyHandle PhysicsWorld::CreateStaticSphere(WorldPosition position, float radius,
-        const glm::quat &rotation)
+    BodyHandle PhysicsWorld::CreateStaticSphere(WorldPosition position, float radius, const glm::quat &rotation)
     {
         if (radius <= 0.0f)
         {
@@ -452,7 +449,7 @@ namespace mir
     }
 
     BodyHandle PhysicsWorld::CreateDynamicBox(WorldPosition position, const glm::vec3 &halfExtent,
-        const glm::quat &rotation)
+                                              const glm::quat &rotation)
     {
         if (halfExtent.x <= 0.0f || halfExtent.y <= 0.0f || halfExtent.z <= 0.0f)
         {
@@ -463,8 +460,7 @@ namespace mir
         return mImpl->CreateBody(new JPH::BoxShape(ToJolt(halfExtent)), position, rotation, true);
     }
 
-    BodyHandle PhysicsWorld::CreateDynamicSphere(WorldPosition position, float radius,
-        const glm::quat &rotation)
+    BodyHandle PhysicsWorld::CreateDynamicSphere(WorldPosition position, float radius, const glm::quat &rotation)
     {
         if (radius <= 0.0f)
         {
@@ -498,7 +494,8 @@ namespace mir
         // Jolt 5.5's triangle walk breaks from block size 3 (terrain ADR 0017).
         if ((desc.mBlockSize != 2 && desc.mBlockSize != 4) || desc.mBitsPerSample < 1 || desc.mBitsPerSample > 8)
         {
-            MIR_LOG_ERROR("PhysicsWorld::CreateStaticHeightField: block size must be 2 or 4, bits per sample in [1, 8]");
+            MIR_LOG_ERROR(
+                "PhysicsWorld::CreateStaticHeightField: block size must be 2 or 4, bits per sample in [1, 8]");
             return {};
         }
 
@@ -508,8 +505,8 @@ namespace mir
         const uint32_t side = std::max({columns, rows, 2 * desc.mBlockSize});
         if (side > kMaxHeightFieldSide - kMaxHeightFieldSide % desc.mBlockSize)
         {
-            MIR_LOG_ERROR("PhysicsWorld::CreateStaticHeightField: {} x {} samples exceed Jolt's {} per side",
-                columns, rows, kMaxHeightFieldSide);
+            MIR_LOG_ERROR("PhysicsWorld::CreateStaticHeightField: {} x {} samples exceed Jolt's {} per side", columns,
+                          rows, kMaxHeightFieldSide);
             return {};
         }
 
@@ -524,11 +521,11 @@ namespace mir
             for (uint32_t x = 0; x < columns; ++x)
             {
                 const float height = desc.mSamples[static_cast<std::size_t>(z) * stride * desc.mCountX +
-                                                  static_cast<std::size_t>(x) * stride];
+                                                   static_cast<std::size_t>(x) * stride];
                 if (!std::isfinite(height))
                 {
-                    MIR_LOG_ERROR("PhysicsWorld::CreateStaticHeightField: sample ({}, {}) is not finite",
-                        x * stride, z * stride);
+                    MIR_LOG_ERROR("PhysicsWorld::CreateStaticHeightField: sample ({}, {}) is not finite", x * stride,
+                                  z * stride);
                     return {};
                 }
                 settings.mHeightSamples[static_cast<std::size_t>(z) * side + x] = height;
@@ -553,17 +550,19 @@ namespace mir
             for (uint32_t x = 0; x < columns; ++x)
             {
                 const float input = desc.mSamples[size_t(z) * stride * desc.mCountX + size_t(x) * stride];
-                if (input == kHeightFieldHole) continue;
+                if (input == kHeightFieldHole)
+                    continue;
                 const JPH::Vec3 decoded = field->GetPosition(x, z);
                 if (field->IsNoCollision(x, z) || !std::isfinite(decoded.GetY()))
                 {
                     MIR_LOG_ERROR("PhysicsWorld::CreateStaticHeightField: a valid sample decoded to a hole");
                     return {};
                 }
-                info.mMaxQuantizationError = std::max(info.mMaxQuantizationError, std::abs(double(decoded.GetY()) - input));
-                info.mMaxHorizontalError = std::max({info.mMaxHorizontalError,
-                    std::abs(double(decoded.GetX()) - double(x) * desc.mSpacing * stride),
-                    std::abs(double(decoded.GetZ()) - double(z) * desc.mSpacing * stride)});
+                info.mMaxQuantizationError =
+                    std::max(info.mMaxQuantizationError, std::abs(double(decoded.GetY()) - input));
+                info.mMaxHorizontalError = std::max(
+                    {info.mMaxHorizontalError, std::abs(double(decoded.GetX()) - double(x) * desc.mSpacing * stride),
+                     std::abs(double(decoded.GetZ()) - double(z) * desc.mSpacing * stride)});
                 ++info.mValidSamples;
             }
         info.mExtentX = field->GetPosition(columns - 1, 0).GetX();
@@ -571,7 +570,8 @@ namespace mir
         ++mImpl->mHeightFieldsBuilt;
         // Enhanced internal edge removal keeps planar crossings smooth.
         const BodyHandle body = mImpl->CreateBody(result.Get(), desc.mOrigin, kIdentityRotation, false, true);
-        if (body.IsValid()) mImpl->mHeightFieldInfo.emplace(body.mId, info);
+        if (body.IsValid())
+            mImpl->mHeightFieldInfo.emplace(body.mId, info);
         return body;
     }
 
@@ -642,10 +642,8 @@ namespace mir
         if (!body.IsValid())
             return;
 
-        mImpl->mSystem.GetBodyInterface().SetPositionAndRotation(ToBodyId(body),
-            ToJolt(position),
-            ToJolt(rotation),
-            JPH::EActivation::Activate);
+        mImpl->mSystem.GetBodyInterface().SetPositionAndRotation(ToBodyId(body), ToJolt(position), ToJolt(rotation),
+                                                                 JPH::EActivation::Activate);
     }
 
     void PhysicsWorld::SetBodyLinearVelocity(BodyHandle body, const glm::vec3 &velocity)
@@ -677,9 +675,8 @@ namespace mir
         if (!body.IsValid())
             return;
 
-        mImpl->mSystem.GetBodyInterface().AddLinearAndAngularVelocity(ToBodyId(body),
-            JPH::Vec3::sZero(),
-            ToJolt(velocity));
+        mImpl->mSystem.GetBodyInterface().AddLinearAndAngularVelocity(ToBodyId(body), JPH::Vec3::sZero(),
+                                                                      ToJolt(velocity));
     }
 
     void PhysicsWorld::AddForce(BodyHandle body, const glm::vec3 &force)
@@ -714,8 +711,7 @@ namespace mir
         mImpl->mSystem.GetBodyInterface().AddAngularImpulse(ToBodyId(body), ToJolt(angularImpulse));
     }
 
-    void PhysicsWorld::AddForceAtOffset(BodyHandle body, const glm::vec3 &force,
-        const glm::vec3 &localOffset)
+    void PhysicsWorld::AddForceAtOffset(BodyHandle body, const glm::vec3 &force, const glm::vec3 &localOffset)
     {
         if (!body.IsValid())
             return;
@@ -726,8 +722,7 @@ namespace mir
         bodies.AddForce(id, ToJolt(force), OffsetToWorldPoint(bodies, id, localOffset));
     }
 
-    void PhysicsWorld::AddImpulseAtOffset(BodyHandle body, const glm::vec3 &impulse,
-        const glm::vec3 &localOffset)
+    void PhysicsWorld::AddImpulseAtOffset(BodyHandle body, const glm::vec3 &impulse, const glm::vec3 &localOffset)
     {
         if (!body.IsValid())
             return;
@@ -765,7 +760,7 @@ namespace mir
     }
 
     std::optional<RayHit> PhysicsWorld::RayCast(WorldPosition origin, const glm::vec3 &direction,
-        float maxDistance) const
+                                                float maxDistance) const
     {
         const float length = glm::length(direction);
         const glm::vec3 span = direction * (maxDistance / length);
@@ -785,7 +780,7 @@ namespace mir
             return std::nullopt;
 
         RayHit result;
-        result.mBody = BodyHandle{ hit.mBodyID.GetIndexAndSequenceNumber() };
+        result.mBody = BodyHandle{hit.mBodyID.GetIndexAndSequenceNumber()};
         result.mPoint = *position;
         result.mDistance = hit.mFraction * maxDistance;
 
@@ -834,15 +829,12 @@ namespace mir
             mImpl->mBroadPhaseDirty = false;
         }
 
-        const JPH::EPhysicsUpdateError error = mImpl->mSystem.Update(dt,
-            mImpl->mCollisionSteps,
-            &mImpl->mTempAllocator,
-            &mImpl->mJobSystem);
+        const JPH::EPhysicsUpdateError error =
+            mImpl->mSystem.Update(dt, mImpl->mCollisionSteps, &mImpl->mTempAllocator, &mImpl->mJobSystem);
 
         if (error != JPH::EPhysicsUpdateError::None)
         {
-            MIR_LOG_WARN("PhysicsWorld::Step: Jolt update error bits {}",
-                static_cast<uint32_t>(error));
+            MIR_LOG_WARN("PhysicsWorld::Step: Jolt update error bits {}", static_cast<uint32_t>(error));
         }
 
         mImpl->mContacts.Flush(mImpl->mSystem.GetBodyInterface(), mImpl->mCollisionEvents);

@@ -1,3 +1,12 @@
+/**
+ * @file TerrainCollision.h
+ * @author Jackey Cen
+ * @brief Terrain collision sampling policy and conservative error budgets.
+ *
+ * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
+ *
+ */
+
 #pragma once
 
 #include <terrain/TerrainAreaSamples.h>
@@ -34,10 +43,11 @@ namespace mir
     };
 
     TerrainResult<TerrainUniformSamples> BuildTerrainUniformSamples(const TerrainIndex &index,
-        const TerrainHeightQuery &query, double spacing);
+                                                                    const TerrainHeightQuery &query, double spacing);
     bool TerrainCollisionCovers(const TerrainUniformSamples &samples, const TerrainPlacement &placement,
-        WorldPosition origin, double extentX, double extentZ);
+                                WorldPosition origin, double extentX, double extentZ);
     std::optional<TerrainCollisionError> TerrainCollisionErrorBudget(const TerrainUniformSamples &samples,
-        const TerrainPlacement &placement, WorldPosition origin, double quantizationError,
-        double horizontalError);
+                                                                     const TerrainPlacement &placement,
+                                                                     WorldPosition origin, double quantizationError,
+                                                                     double horizontalError);
 }

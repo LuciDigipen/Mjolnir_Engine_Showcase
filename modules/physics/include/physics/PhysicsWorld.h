@@ -30,7 +30,7 @@
 
 namespace mir
 {
-    inline const glm::quat kIdentityRotation{ 1.0f, 0.0f, 0.0f, 0.0f };
+    inline const glm::quat kIdentityRotation{1.0f, 0.0f, 0.0f, 0.0f};
 
     // Drops every triangle touching the sample (Jolt's cNoCollisionValue).
     inline constexpr float kHeightFieldHole = std::numeric_limits<float>::max();
@@ -70,13 +70,13 @@ namespace mir
     {
         BodyHandle mBody;
         WorldPosition mPoint;
-        glm::vec3 mNormal{ 0.0f };
+        glm::vec3 mNormal{0.0f};
         float mDistance = 0.0f;
     };
 
     struct PhysicsWorldDesc
     {
-        glm::vec3 mGravity{ 0.0f, -9.81f, 0.0f };
+        glm::vec3 mGravity{0.0f, -9.81f, 0.0f};
 
         uint32_t mMaxBodies = 1024;
         uint32_t mMaxBodyPairs = 1024;
@@ -89,7 +89,7 @@ namespace mir
 
     class PhysicsWorld
     {
-    public:
+      public:
         explicit PhysicsWorld(const PhysicsWorldDesc &desc = {});
         ~PhysicsWorld();
 
@@ -128,7 +128,7 @@ namespace mir
         void AddAngularVelocity(BodyHandle body, const glm::vec3 &velocity);
 
         // Force and torque accumulate until the next Step() consumes and clears
-        // them, so a continuous push has to be re-applied every step. 
+        // them, so a continuous push has to be re-applied every step.
         void AddForce(BodyHandle body, const glm::vec3 &force);
         void AddTorque(BodyHandle body, const glm::vec3 &torque);
         void AddImpulse(BodyHandle body, const glm::vec3 &impulse);
@@ -156,7 +156,7 @@ namespace mir
         // Oldest first; events pile up until drained.
         std::vector<CollisionEvent> DrainCollisionEvents();
 
-    private:
+      private:
         struct Impl;
         std::unique_ptr<Impl> mImpl;
     };

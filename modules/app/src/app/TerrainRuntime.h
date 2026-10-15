@@ -34,7 +34,7 @@ namespace mir
 
     class TerrainRuntime
     {
-    public:
+      public:
         void Bind(World &world, VulkanRenderer &renderer, const GameProject &project);
 
         void Load();
@@ -48,7 +48,7 @@ namespace mir
         // Before ReleaseSceneResources on scene unload.
         void Unload();
 
-    private:
+      private:
         struct InstanceResources
         {
             TerrainReleaseInfo release;
@@ -58,7 +58,10 @@ namespace mir
             TerrainLocalPosition colliderOrigin;
         };
 
-        bool Bound() const { return mWorld != nullptr; }
+        bool Bound() const
+        {
+            return mWorld != nullptr;
+        }
         void Apply(TerrainSceneSpec spec);
         // Takes what it reuses out of old; the rest is left to destroy after the swap.
         std::vector<InstanceResources> Build(TerrainWorld &next, std::vector<InstanceResources> &old);
