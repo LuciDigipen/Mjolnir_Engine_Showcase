@@ -5,12 +5,14 @@ add_library(terrain_bake STATIC
     TerrainBake.cpp
     TerrainCandidate.cpp
     TerrainContinuity.cpp
+    TerrainMixedContinuity.cpp
     TerrainGenerator.cpp
     TerrainNoise.cpp
     TerrainPackage.cpp
     TerrainPublish.cpp
     TerrainRecipe.cpp
     TerrainReport.cpp
+    TerrainSeams.cpp
     TerrainSync.cpp
     TerrainValidate.cpp
 )
@@ -31,6 +33,7 @@ if(BUILD_TESTING)
         tests/TerrainPrecision.tests.cpp
         tests/TerrainPublish.tests.cpp
         tests/TerrainRecipe.tests.cpp
+        tests/TerrainSeams.tests.cpp
         tests/TerrainSync.tests.cpp
         tests/TerrainToolCli.tests.cpp
         tests/TerrainValidate.tests.cpp
@@ -40,10 +43,4 @@ if(BUILD_TESTING)
     target_compile_definitions(terrain_tool_tests PRIVATE TERRAIN_TOOL_EXE="$<TARGET_FILE:TerrainTool>")
     add_dependencies(terrain_tool_tests TerrainTool)
     catch_discover_tests(terrain_tool_tests)
-endif()
-
-option(MJOLNIR_TERRAIN_INDEX_BENCHMARK "Build the metadata-only format 2 index benchmark" OFF)
-if(MJOLNIR_TERRAIN_INDEX_BENCHMARK)
-    add_executable(terrain_index_benchmark experiments/TerrainIndexBenchmark.cpp)
-    target_link_libraries(terrain_index_benchmark PRIVATE mir::terrain)
 endif()

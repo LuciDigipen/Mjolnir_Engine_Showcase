@@ -42,6 +42,7 @@ namespace mir::terrainbake
         uint64_t nonce = 0;
         std::vector<TileHeights> tiles;
         TerrainEncodedRelease encoded;
+        std::optional<TerrainSeamSummary> seams;
     };
 
     std::optional<std::vector<TileHeights>> BakeFinalHeights(const TerrainRecipe &recipe, TerrainReport &report);
