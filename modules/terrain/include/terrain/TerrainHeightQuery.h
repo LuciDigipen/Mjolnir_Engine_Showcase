@@ -37,6 +37,7 @@ namespace mir
         std::optional<std::vector<TileCoord>> bakedTiles;
         // Measured bound against the finest baked surface; nullopt if unmeasured.
         std::optional<double> maxDeviation;
+        std::unordered_map<TileCoord, double> tileDeviations;
     };
 
     struct TerrainHeightRequest
@@ -123,7 +124,6 @@ namespace mir
         [[nodiscard]] static std::optional<TerrainHeightQuery> Create(const TerrainReleaseInfo &release,
                                                                       std::vector<TerrainHeightLayer> layers);
 
-        // One layer: the release's own layout. Reads nothing.
         [[nodiscard]] static TerrainHeightQuery Create(const TerrainReleaseHandle &release);
 
         const TerrainReleaseInfo &Release() const { return mRelease; }
@@ -195,8 +195,9 @@ namespace mir
         bool Ok() const { return firstError.code == TerrainPackErrorCode::None; }
     };
 
-    // Synchronous loader for P1. Refuses a handle of another release before reading.
+    // Missing sparse keys return NotFound without creating residency slots.
     TerrainPreloadReport PreloadTerrainTiles(TerrainHeightQuery &query, const TerrainReleaseHandle &release,
-                                             std::span<const TileCoord> tiles);
-    TerrainPreloadReport PreloadAllTerrainTiles(TerrainHeightQuery &query, const TerrainReleaseHandle &release);
+                                             std::span<const TileCoord> tiles, std::optional<uint32_t> releaseLayer = std::nullopt);
+    TerrainPreloadReport PreloadAllTerrainTiles(TerrainHeightQuery &query, const TerrainReleaseHandle &release,
+                                                std::optional<uint32_t> releaseLayer = std::nullopt);
 }

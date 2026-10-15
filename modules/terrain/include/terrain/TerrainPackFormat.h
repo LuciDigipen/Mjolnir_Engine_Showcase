@@ -23,25 +23,24 @@
 
 namespace mir
 {
-    // Byte layout and compatibility rules: docs/modules/terrain.md.
-    inline constexpr TerrainFormatVersion kTerrainFormatVersion{1};
+    // Binary layout: docs/modules/terrain.md.
+    inline constexpr TerrainFormatVersion kTerrainFormatVersion{2};
     inline constexpr uint32_t kTerrainFormatMinor = 0;
 
-    // Payload: (n + 1)^2 float32 in TileHeights order. A new encoding bumps this, not the format.
+    // Encoding version for height payloads.
     inline constexpr uint32_t kTerrainHeightsContentVersion = 1;
 
-    inline constexpr uint32_t kTerrainIndexHeaderSize = 120;
+    inline constexpr uint32_t kTerrainIndexHeaderSize = 128;
     inline constexpr uint32_t kTerrainPackRecordSize = 32;
-    inline constexpr uint32_t kTerrainTileRecordSize = 88;
+    inline constexpr uint32_t kTerrainTileRecordSize = 120;
+    inline constexpr uint32_t kTerrainLayerRecordSize = 16;
     inline constexpr uint32_t kTerrainPackHeaderSize = 48;
     inline constexpr uint32_t kTerrainIndexTrailerSize = 8;
 
     inline constexpr uint32_t kDefaultTerrainPayloadAlignment = 16;
     inline constexpr uint32_t kMaxTerrainPayloadAlignment = 65536;
-    // 16 x 16 tiles; not frozen.
     inline constexpr int32_t kDefaultTerrainChunkTiles = 16;
 
-    // Not .bin or .blob: the editor watcher and the cooker own those.
     inline constexpr std::string_view kTerrainIndexFileName = "release.tindex";
 
     // floorDiv(tile, chunkTiles) on each axis.
@@ -67,6 +66,16 @@ namespace mir
         uint64_t checksum = 0;
     };
 
+    enum class TerrainPayloadKind : uint32_t
+    {
+        Height = 0,
+        LodHeight = 1,
+        Normal = 2,
+        Region = 3,
+    };
+
+    bool TerrainLayersNest(const TerrainLayout &fine, const TerrainLayout &coarse);
+
     struct TerrainTileRecord
     {
         TileCoord tile;
@@ -80,6 +89,11 @@ namespace mir
         float minHeight = 0.0f;
         float maxHeight = 0.0f;
         TerrainLocalBounds validExtent;
+        uint32_t layer = 0;
+        TerrainPayloadKind kind = TerrainPayloadKind::Height;
+        uint32_t level = 0;
+        bool source = true;
+        std::optional<double> maxDeviation;
     };
 
     enum class TerrainPackErrorCode : uint8_t
@@ -94,12 +108,11 @@ namespace mir
         InvalidInput,  // the writer was given tiles or options it cannot encode
     };
 
-    // Message names the file, record, tile and field.
     struct TerrainPackError
     {
         TerrainPackErrorCode code = TerrainPackErrorCode::None;
         std::string message;
-        // Set only when a payload that matches its checksum holds NaN or infinity: the first such sample.
+        // First non-finite sample in a checksum-valid payload.
         std::optional<GlobalSampleIndex> nonFiniteSample;
     };
 
@@ -113,7 +126,7 @@ namespace mir
         explicit operator bool() const { return Ok(); }
     };
 
-    // Fully cross-checked; records cover the layout, sorted by (z, x).
+    // layout is the finest reference grid, not each tile's source grid.
     struct TerrainIndex
     {
         TerrainReleaseInfo release;
@@ -122,13 +135,19 @@ namespace mir
         uint32_t payloadAlignment = 0;
         int32_t chunkTiles = 0;
         TerrainLayout layout;
-    // Fnv1a64 over every (tileX, tileZ, payload checksum).
+        std::vector<TerrainLayout> layers;
+    // Fnv1a64 of the ordered payload keys, spacing, source flags and checksums.
         uint64_t heightsHash = 0;
         std::vector<TerrainPackRecord> packs;
         std::vector<TerrainTileRecord> tiles;
 
         const TerrainTileRecord *Find(TileCoord tile) const;
+        const TerrainTileRecord *Find(TileCoord tile, uint32_t layer,
+                                       TerrainPayloadKind kind = TerrainPayloadKind::Height,
+                                       uint32_t level = 0) const;
     };
+
+    uint64_t TerrainRecordsHeightsHash(std::span<const TerrainTileRecord> records);
 
     // Never returns a partial index.
     TerrainResult<TerrainIndex> ParseTerrainIndex(std::span<const std::byte> bytes);
