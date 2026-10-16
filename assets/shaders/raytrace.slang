@@ -111,7 +111,7 @@ void rayGenMain()
     RayPayload payload;
     payload.color = float3(0.0, 0.0, 0.0);
 
-    TraceRay(gTlas, RAY_FLAG_NONE, 0xFF, 0, 0, 0, ray, payload);
+    TraceRay(gTlas, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, 0xFF, 0, 0, 0, ray, payload);
 
     gOutput[pixel + pushData.outputOffset] = float4(payload.color, 1.0);
 }

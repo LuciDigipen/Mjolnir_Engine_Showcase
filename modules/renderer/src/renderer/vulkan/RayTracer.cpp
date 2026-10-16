@@ -7,6 +7,7 @@
  *
  */
 #include "RayTracer.h"
+#include "RayFacing.h"
 #include "Device.h"
 #include "MaterialStore.h"
 #include "ResourceStore.h"
@@ -635,15 +636,20 @@ namespace mir::vk
             if (mesh == nullptr || item.mesh.mIndex >= mBlases.size() || mBlases[item.mesh.mIndex].mBlas == VK_NULL_HANDLE)
                 continue;
 
+            const GpuMaterial *const material = materials.FindOrDefault(item.material);
+            const auto facing = RtTriangleFacingFlags(
+                material ? material->mCullMode : VK_CULL_MODE_BACK_BIT,
+                material ? material->mFrontFace : VK_FRONT_FACE_COUNTER_CLOCKWISE, item.model);
+            if (!facing)
+                continue;
+
             instances[instanceCount] = VkAccelerationStructureInstanceKHR{
                 .transform = ToTransformMatrixKHR(item.model),
                 .instanceCustomIndex = instanceCount,
                 .mask = 0xFF,
                 .instanceShaderBindingTableRecordOffset = 0,
-                .flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR,
+                .flags = *facing,
                 .accelerationStructureReference = mBlases[item.mesh.mIndex].mAddress };
-
-            const GpuMaterial *const material = materials.FindOrDefault(item.material);
 
             instanceInfos[instanceCount] = RtInstanceInfo{
                 .vertexAddress = GetBufferAddress(mDevice->Handle(), mesh->mVertexBuffer),
