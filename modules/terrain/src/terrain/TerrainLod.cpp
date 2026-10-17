@@ -26,8 +26,6 @@ namespace mir
         using V = glm::dvec3;
         using P = glm::dvec2;
         using Code = TerrainPackErrorCode;
-        constexpr uint32_t kLodMagic = 0x31444f4c;
-        constexpr uint32_t kNormalMagic = 0x314d524e;
         double Cross(P a, P b)
         {
             return a.x * b.y - a.y * b.x;
@@ -41,7 +39,7 @@ namespace mir
         }
         struct Polygon
         {
-            std::array<P, 32> points{};
+            std::array<P, kTerrainOverlayPolygonCapacity> points{};
             size_t count = 0;
             bool empty() const
             {
@@ -77,7 +75,8 @@ namespace mir
             auto uncertainSign = [&](P p, double cross)
             {
                 double scale = std::abs((b.x - a.x) * (p.y - a.y)) + std::abs((b.y - a.y) * (p.x - a.x));
-                if (cross != 0 && std::abs(cross) <= 64 * std::numeric_limits<double>::epsilon() * scale)
+                if (cross != 0 && std::abs(cross) <= kTerrainOverlaySignRoundoffFactor *
+                                                         std::numeric_limits<double>::epsilon() * scale)
                     uncertainty = 1;
             };
             uncertainSign(prev, dp);
@@ -127,16 +126,22 @@ namespace mir
                 return detail::Error(Code::Corrupt, "derived payload length is invalid");
             if (Fnv1a64(bytes) != r.checksum)
                 return detail::Error(Code::Corrupt, "derived payload checksum differs");
-            if (detail::LoadU32(bytes, 0) != magic || detail::LoadU32(bytes, 4) != kTerrainLodContentVersion)
+            if (detail::LoadU32(bytes, terrainformat::derived::kMagic) != magic ||
+                detail::LoadU32(bytes, terrainformat::derived::kContentVersion) != kTerrainLodContentVersion)
                 return detail::Error(Code::Unsupported, "derived payload kind/content version differs");
             const auto *source = index.Find(r.tile);
             if (!source || !source->source || source->kind != TerrainPayloadKind::Height ||
-                detail::LoadI32(bytes, 8) != r.tile.x || detail::LoadI32(bytes, 12) != r.tile.z ||
-                detail::LoadF64(bytes, 16) != source->sampleSpacing || detail::LoadF64(bytes, 24) != r.sampleSpacing ||
-                detail::LoadU64(bytes, 32) != source->checksum || detail::LoadU64(bytes, 40) != r.topologyHash ||
-                detail::LoadU64(bytes, 48) != 0 || detail::LoadU32(bytes, 56) != r.vertexCount ||
-                detail::LoadU32(bytes, 60) != r.indexCount || !r.maxDeviation ||
-                detail::LoadF64(bytes, 64) != *r.maxDeviation || detail::LoadU64(bytes, 72) != 0)
+                detail::LoadI32(bytes, terrainformat::derived::kX) != r.tile.x ||
+                detail::LoadI32(bytes, terrainformat::derived::kZ) != r.tile.z ||
+                detail::LoadF64(bytes, terrainformat::derived::kSourceSpacing) != source->sampleSpacing ||
+                detail::LoadF64(bytes, terrainformat::derived::kSpacing) != r.sampleSpacing ||
+                detail::LoadU64(bytes, terrainformat::derived::kSourceChecksum) != source->checksum ||
+                detail::LoadU64(bytes, terrainformat::derived::kTopologyHash) != r.topologyHash ||
+                detail::LoadU64(bytes, terrainformat::derived::kReserved0) != 0 ||
+                detail::LoadU32(bytes, terrainformat::derived::kVertexCount) != r.vertexCount ||
+                detail::LoadU32(bytes, terrainformat::derived::kIndexCount) != r.indexCount || !r.maxDeviation ||
+                detail::LoadF64(bytes, terrainformat::derived::kDeviation) != *r.maxDeviation ||
+                detail::LoadU64(bytes, terrainformat::derived::kReserved1) != 0)
                 return detail::Error(Code::Corrupt, "derived tile/source/spacing/error provenance differs from index");
             return {};
         }
@@ -166,7 +171,7 @@ namespace mir
     {
         std::vector<std::byte> bytes;
         detail::LeWriter out(bytes);
-        Header(out, kLodMagic, lod, static_cast<uint32_t>(lod.positions.size()));
+        Header(out, terrainformat::kLodMagic, lod, static_cast<uint32_t>(lod.positions.size()));
         for (auto v : lod.positions)
         {
             out.F32(v.x);
@@ -181,7 +186,7 @@ namespace mir
     {
         std::vector<std::byte> bytes;
         detail::LeWriter out(bytes);
-        Header(out, kNormalMagic, lod, static_cast<uint32_t>(normals.size()));
+        Header(out, terrainformat::kNormalMagic, lod, static_cast<uint32_t>(normals.size()));
         for (auto v : normals)
         {
             out.F32(v.x);
@@ -196,21 +201,25 @@ namespace mir
         using R = TerrainLodSurface;
         if (r.kind != TerrainPayloadKind::LodHeight)
             return detail::Fail<R>(Code::InvalidInput, "not a LodHeight record");
-        auto error = CheckHeader(index, r, bytes, kLodMagic);
+        auto error = CheckHeader(index, r, bytes, terrainformat::kLodMagic);
         if (error.code != Code::None)
             return detail::Failure<R>(error, "");
-        uint32_t n = detail::LoadU32(bytes, 56), ni = detail::LoadU32(bytes, 60);
-        if (n < 4 || ni < 6 || ni % 3 != 0 || uint64_t(80) + uint64_t(n) * 12 + uint64_t(ni) * 4 != bytes.size())
+        uint32_t n = detail::LoadU32(bytes, terrainformat::derived::kVertexCount),
+                 ni = detail::LoadU32(bytes, terrainformat::derived::kIndexCount);
+        if (n < 4 || ni < 6 || ni % 3 != 0 ||
+            uint64_t(kTerrainDerivedHeaderSize) + uint64_t(n) * terrainformat::kVec3Bytes +
+                    uint64_t(ni) * terrainformat::kIndexBytes !=
+                bytes.size())
             return detail::Fail<R>(Code::Corrupt, "LOD vertex/index counts are invalid");
         R lod;
         lod.release = index.release;
         lod.tile = r.tile;
         lod.layer = r.layer;
         lod.level = r.level;
-        lod.sourceSpacing = detail::LoadF64(bytes, 16);
+        lod.sourceSpacing = detail::LoadF64(bytes, terrainformat::derived::kSourceSpacing);
         lod.spacing = r.sampleSpacing;
-        lod.sourceChecksum = detail::LoadU64(bytes, 32);
-        lod.topologyHash = detail::LoadU64(bytes, 40);
+        lod.sourceChecksum = detail::LoadU64(bytes, terrainformat::derived::kSourceChecksum);
+        lod.topologyHash = detail::LoadU64(bytes, terrainformat::derived::kTopologyHash);
         lod.maxDeviation = *r.maxDeviation;
         const auto &layout = index.layers[r.layer];
         lod.origin = *TerrainLocalPosition::FromMeters({layout.SamplePosition(layout.TileFirstSample(r.tile.x)), 0,
@@ -219,8 +228,9 @@ namespace mir
         const float size = static_cast<float>(layout.TileSize());
         for (uint32_t i = 0; i < n; ++i)
         {
-            size_t at = 80 + size_t(i) * 12;
-            glm::vec3 p(detail::LoadF32(bytes, at), detail::LoadF32(bytes, at + 4), detail::LoadF32(bytes, at + 8));
+            size_t at = kTerrainDerivedHeaderSize + size_t(i) * terrainformat::kVec3Bytes;
+            glm::vec3 p(detail::LoadF32(bytes, at), detail::LoadF32(bytes, at + terrainformat::kFloatBytes),
+                        detail::LoadF32(bytes, at + 2 * terrainformat::kFloatBytes));
             if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z) || p.x < 0 || p.z < 0 || p.x > size ||
                 p.z > size)
                 return detail::Fail<R>(Code::Corrupt, "LOD vertex is nonfinite or outside tile");
@@ -230,7 +240,8 @@ namespace mir
         }
         for (uint32_t i = 0; i < ni; ++i)
         {
-            uint32_t id = detail::LoadU32(bytes, 80 + size_t(n) * 12 + size_t(i) * 4);
+            uint32_t id = detail::LoadU32(bytes, kTerrainDerivedHeaderSize + size_t(n) * terrainformat::kVec3Bytes +
+                                                     size_t(i) * terrainformat::kIndexBytes);
             if (id >= n)
                 return detail::Fail<R>(Code::Corrupt, "LOD index exceeds vertex count");
             lod.indices.push_back(id);
@@ -253,12 +264,14 @@ namespace mir
         using R = TerrainLodNormals;
         if (r.kind != TerrainPayloadKind::Normal)
             return detail::Fail<R>(Code::InvalidInput, "not a Normal record");
-        auto error = CheckHeader(index, r, bytes, kNormalMagic);
+        auto error = CheckHeader(index, r, bytes, terrainformat::kNormalMagic);
         if (error.code != Code::None)
             return detail::Failure<R>(error, "");
-        uint32_t n = detail::LoadU32(bytes, 56), ni = detail::LoadU32(bytes, 60);
+        uint32_t n = detail::LoadU32(bytes, terrainformat::derived::kVertexCount),
+                 ni = detail::LoadU32(bytes, terrainformat::derived::kIndexCount);
         const auto *mesh = index.Find(r.tile, r.layer, TerrainPayloadKind::LodHeight, r.level);
-        if (!mesh || n < 4 || ni < 6 || ni % 3 != 0 || uint64_t(80) + uint64_t(n) * 12 != bytes.size() ||
+        if (!mesh || n < 4 || ni < 6 || ni % 3 != 0 ||
+            uint64_t(kTerrainDerivedHeaderSize) + uint64_t(n) * terrainformat::kVec3Bytes != bytes.size() ||
             r.minHeight != mesh->minHeight || r.maxHeight != mesh->maxHeight || r.maxDeviation != mesh->maxDeviation)
             return detail::Fail<R>(Code::Corrupt, "normal payload has no matching LOD metadata");
         R normals;
@@ -266,16 +279,17 @@ namespace mir
         normals.tile = r.tile;
         normals.layer = r.layer;
         normals.level = r.level;
-        normals.sourceSpacing = detail::LoadF64(bytes, 16);
+        normals.sourceSpacing = detail::LoadF64(bytes, terrainformat::derived::kSourceSpacing);
         normals.spacing = r.sampleSpacing;
-        normals.sourceChecksum = detail::LoadU64(bytes, 32);
-        normals.topologyHash = detail::LoadU64(bytes, 40);
+        normals.sourceChecksum = detail::LoadU64(bytes, terrainformat::derived::kSourceChecksum);
+        normals.topologyHash = detail::LoadU64(bytes, terrainformat::derived::kTopologyHash);
         for (uint32_t i = 0; i < n; ++i)
         {
-            size_t at = 80 + size_t(i) * 12;
-            glm::vec3 v(detail::LoadF32(bytes, at), detail::LoadF32(bytes, at + 4), detail::LoadF32(bytes, at + 8));
+            size_t at = kTerrainDerivedHeaderSize + size_t(i) * terrainformat::kVec3Bytes;
+            glm::vec3 v(detail::LoadF32(bytes, at), detail::LoadF32(bytes, at + terrainformat::kFloatBytes),
+                        detail::LoadF32(bytes, at + 2 * terrainformat::kFloatBytes));
             double norm = glm::dot(glm::dvec3(v), glm::dvec3(v));
-            if (!std::isfinite(norm) || std::abs(norm - 1) > 2e-6 || v.y <= 0)
+            if (!std::isfinite(norm) || std::abs(norm - 1) > kTerrainNormalLengthSquaredTolerance || v.y <= 0)
                 return detail::Fail<R>(Code::Corrupt, "normal is nonfinite, not unit, or downward");
             normals.normals.push_back(v);
         }
@@ -296,7 +310,7 @@ namespace mir
                 const auto a = t[j], b = t[(j + 1) % 3];
                 double v = Cross(P(b.x - a.x, b.z - a.z), p - P(a.x, a.z));
                 const double scale = std::abs((b.x - a.x) * (p.y - a.z)) + std::abs((b.z - a.z) * (p.x - a.x));
-                if (v > 64 * std::numeric_limits<double>::epsilon() * scale)
+                if (v > kTerrainOverlaySignRoundoffFactor * std::numeric_limits<double>::epsilon() * scale)
                     inside = false;
             }
             if (inside)
@@ -415,7 +429,8 @@ namespace mir
                         polygon = Clip(std::move(polygon), P(maxX, minZ), P(maxX, maxZ), uncertain);
                         polygon = Clip(std::move(polygon), P(maxX, maxZ), P(minX, maxZ), uncertain);
                         polygon = Clip(std::move(polygon), P(minX, maxZ), P(minX, minZ), uncertain);
-                        if (condition > 1 / (64 * std::numeric_limits<double>::epsilon()))
+                        if (condition >
+                            1 / (kTerrainOverlaySignRoundoffFactor * std::numeric_limits<double>::epsilon()))
                             uncertain = 1;
                         if (uncertain)
                         {
@@ -432,7 +447,8 @@ namespace mir
                             if (left > right || top > bottom)
                                 continue;
                             double pairBound = 0;
-                            bool finite = condition <= 1 / (64 * std::numeric_limits<double>::epsilon());
+                            bool finite = condition <= 1 / (kTerrainOverlaySignRoundoffFactor *
+                                                            std::numeric_limits<double>::epsilon());
                             for (P p : {P(left, top), P(right, top), P(right, bottom), P(left, bottom)})
                             {
                                 const double difference = std::abs(Height(a, p) - Height(b, p));
@@ -454,7 +470,7 @@ namespace mir
                     }
                 }
         }
-        double margin = 4096 * std::numeric_limits<double>::epsilon() * maxHeight *
+        double margin = kTerrainDeviationRoundoffFactor * std::numeric_limits<double>::epsilon() * maxHeight *
                         (1 + layout.TileSize() / s + std::max(std::abs(ox), std::abs(oz)) / s) * maxCondition;
         if (!std::isfinite(bound) || !std::isfinite(margin) || !std::isfinite(bound + margin))
             return {};

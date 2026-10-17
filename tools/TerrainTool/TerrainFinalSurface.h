@@ -10,6 +10,7 @@
 
 #include "TerrainRecipe.h"
 
+#include <terrain/TerrainConstants.h>
 #include <terrain/TileAddressing.h>
 #include <terrain/TileHeights.h>
 
@@ -81,8 +82,8 @@ namespace mir::terrainbake
                         continue;
                     const double ax = ref.SamplePosition(ref.TileFirstSample(t.x)),
                                  az = ref.SamplePosition(ref.TileFirstSample(t.z));
-                    const double eps =
-                        64 * std::numeric_limits<double>::epsilon() * std::max({1.0, std::abs(x), std::abs(z), size});
+                    const double eps = kTerrainSharedNodeRoundoffFactor * std::numeric_limits<double>::epsilon() *
+                                       std::max({1.0, std::abs(x), std::abs(z), size});
                     if (x >= ax - eps && x <= ax + size + eps && z >= az - eps && z <= az + size + eps)
                         step = std::max(step, Layout(*other).SampleSpacing());
                 }

@@ -320,6 +320,28 @@ before a level 0 Region is fine. Storage at 128 cells is of the order of the
 The numbers come from one generated map and are a development baseline, not
 streaming budgets; #125 sets the screen-error thresholds from data.
 
+### Numerical limits and tolerances
+
+`terrain/TerrainConstants.h` is the shared definition site for pack/LOD/Region
+format values, Region defaults and their numerical checks. The default sizes
+come from [Size baseline](#size-baseline-issue-24) and the measured
+[Region hierarchy choice](#region-hierarchy-issue-124); the binary field
+offsets and strides follow the format table under [Rules](#rules).
+
+The existing Region limits are implementation guards: at most 4096 cells per
+side, 2^20 tiles per level-0 Region and level index 40. Reference sample indices
+stay below 2^53 to preserve exact integer addressing in double. These limits
+are distinct from the measured default of 16 tiles and 128 cells.
+
+LOD and Region decoders allow 2e-6 absolute error in a normal's squared length.
+Region coverage allows 1e-9 relative area error. Deviation enclosure retains
+the existing 4096-times-double-epsilon factor scaled by height, cell size and
+coordinates. Overlay predicates/conditioning, shared-node reconciliation and
+the Region sampler each retain a separately named 64-times-epsilon factor;
+the overlay clipping buffer holds at most 32 points. These are conservative
+numerical policies, not rendering quality settings or prototype measurements;
+this consolidation changes none of their values.
+
 ### Height queries
 
 A `TerrainHeightQuery` holds the final heights of one release in memory and
@@ -413,6 +435,15 @@ keeps the releases it entered with; a publish during Play is adopted at the
 first Edit frame boundary after Stop.
 
 ### Source, candidates and published releases
+
+Only authored recipes and scene references are versioned. Generated
+`.tpack`/`.tindex` files and each game's terrain releases are ignored.
+On a new checkout, building the engine runs `TerrainTool sync` before launch:
+missing releases are baked, validated and published locally; matching releases
+are reused. A build without the editor also packages that local release next
+to the executable. The runtime consumes these releases without linking the
+offline baker. Tests create their own releases in temporary directories and
+do not require a game's generated files or a fixed locally minted release id.
 
 A game's terrain has three places with separate lifetimes:
 
@@ -586,6 +617,7 @@ tools\TerrainTool\TerrainTool.exe publish --candidate terrain-candidates\relief-
 | `TileAddress` | `terrain/TileAddressing.h` | `AddressLocal`, `AddressWorld`: status, tile, within-tile meters, `SampleCell` |
 | `TerrainSourceFingerprint`, `TerrainFormatVersion`, `TerrainReleaseId`, `TerrainReleaseInfo` | `terrain/TerrainIdentity.h` | three identities that never convert into each other |
 | `TileHeights` | `terrain/TileHeights.h` | one tile's `(n+1)^2` float32 samples; `At`, `Set`, `Samples` |
+| `TerrainConstants.h` | `terrain/TerrainConstants.h` | shared format layout, Region defaults, limits and numerical policy; decision references in the header |
 | `TerrainIndex`, `TerrainTileRecord`, `TerrainPackRecord`, `TerrainResult`, `TerrainPackError` | `terrain/TerrainPackFormat.h` | the format 2.2 sparse layer/payload layout, Region table and version numbers; `Find` (any kind, Region by x/z, level, layer 0), `FindRegion`, `regionGrid`, `regions`; `ParseTerrainIndex`, `DecodeTerrainTile` (bytes from any reader), `TerrainPackFileName` |
 | `EncodeTerrainRelease`, `MintTerrainReleaseId` | `terrain/TerrainPackWriter.h` | index and pack bytes from `TileHeights`, derived payloads and `TerrainRegionWrites`, in memory; `TerrainPayloadsHash`, `TerrainHeightsHash`, `MakeTerrainReleaseNonce` |
 | `TerrainRegionCoord`, `TerrainRegionGrid` | `terrain/TerrainRegionGrid.h` | a Region's level and x, z; the quadtree over a reference grid: levels, counts, ordinals, tiles, rect, valid extent, meshed domain, grid lines, cell spacing, parent and children |
@@ -931,14 +963,14 @@ Region reads with no tile read; coverage, error bounds against random probes
 and tight bounds on aligned cells; malformed Region header fields, records,
 offsets and payloads; writer refusals),
 `TerrainRelease` (naming, pointer parsing, disk reads, a handle kept across a
-pointer switch, the committed fixture in `tests/fixtures/releases/`),
+pointer switch, locally generated releases checked against pinned format hashes),
 `TerrainSurface` (2x2 tiles of 256 m at 4 m around the origin, at mixed signs
 and about 150 km out: every sample, dense shared-edge probes from all sides and
 their neighbouring doubles, four-tile corners, random points against explicit
 mesh-triangle planes, closed max edges, a partial boundary tile with padding,
 missing and invalid samples), `TerrainHeightQuery` (every status; dense,
 shared-edge, four-corner, negative and partial-boundary probes against
-`EvaluateSurface` from memory, disk and the committed fixture with zero reads
+`EvaluateSurface` from memory, disk and a locally generated fixture with zero reads
 during queries; a 4 m layer with its 8 m decimation; a per-tile source limit;
 payload requests; corrupt and missing packs; a query pinned across a pointer
 switch; world queries near the origin and about ±150 km out; refused layers and
@@ -1007,7 +1039,7 @@ first map tile, addressed by level and Region coordinate. TerrainTool bakes
 level 0 = 16 tiles with 128 cells (prototype in
 [Region hierarchy](#region-hierarchy-issue-124)), validates by rederiving,
 reports Regions in a `regions` check and report section (tool 8, report 6),
-and sync rebakes older releases. The committed fixture was regenerated.
+and sync rebakes older releases. Format hashes pin the generated test fixture.
 
 *2026-10-08* — **Recorded measured P1/P2 sizes ([#24](https://github.com/GAM550F26/alpha/issues/24)).**
 Accepted 256 m logical tiles and 4096 m chunks as revisable engine-development

@@ -283,7 +283,7 @@ namespace mir
 
             TerrainEncodedPack pack{chunk, TerrainPackFileName(chunk), {}};
             LeWriter out(pack.bytes);
-            out.Bytes(detail::kPackMagic);
+            out.Bytes(terrainformat::kPackMagic);
             out.U32(kTerrainFormatVersion.value);
             out.U32(kTerrainFormatMinor);
             out.U32(kTerrainPackHeaderSize);
@@ -314,7 +314,7 @@ namespace mir
         encoded.heightsHash = detail::HeightsHashOf(records, regionRecords);
         const TerrainLocalBounds &bounds = layout.Bounds();
         LeWriter out(encoded.index);
-        out.Bytes(detail::kIndexMagic);
+        out.Bytes(terrainformat::kIndexMagic);
         out.U32(kTerrainFormatVersion.value);
         out.U32(kTerrainFormatMinor);
         out.U32(kTerrainIndexHeaderSize);

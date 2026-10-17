@@ -22,11 +22,6 @@
 
 namespace mir::detail
 {
-    inline constexpr std::array<std::byte, 4> kIndexMagic{std::byte{'M'}, std::byte{'J'}, std::byte{'T'},
-                                                          std::byte{'I'}};
-    inline constexpr std::array<std::byte, 4> kPackMagic{std::byte{'M'}, std::byte{'J'}, std::byte{'T'},
-                                                         std::byte{'P'}};
-
     inline bool LessZX(int32_t ax, int32_t az, int32_t bx, int32_t bz)
     {
         return az != bz ? az < bz : ax < bx;

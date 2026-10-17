@@ -23,10 +23,6 @@
 
 namespace mir::terrainbake
 {
-    // One default chunk per level 0 Region.
-    inline constexpr uint32_t kTerrainRegionTiles = 16;
-    inline constexpr uint32_t kTerrainRegionCells = 128;
-
     struct TerrainRegionSettings
     {
         uint32_t regionTiles = kTerrainRegionTiles;

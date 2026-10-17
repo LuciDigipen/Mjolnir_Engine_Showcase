@@ -330,7 +330,7 @@ namespace mir::terrainbake
                 const glm::dvec3 a = v[j], b = v[(j + 1) % 3];
                 const double side = Cross(b.x - a.x, b.z - a.z, x - a.x, z - a.z);
                 const double scale = std::abs((b.x - a.x) * (z - a.z)) + std::abs((b.z - a.z) * (x - a.x));
-                inside = side <= 64 * std::numeric_limits<double>::epsilon() * scale;
+                inside = side <= kTerrainSamplerRoundoffFactor * std::numeric_limits<double>::epsilon() * scale;
             }
             if (!inside)
                 continue;

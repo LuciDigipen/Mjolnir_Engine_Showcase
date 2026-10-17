@@ -8,6 +8,8 @@
  */
 #pragma once
 
+#include <terrain/TerrainConstants.h>
+
 #include <terrain/TerrainLayout.h>
 #include <terrain/TileKey.h>
 
@@ -19,8 +21,6 @@
 
 namespace mir
 {
-    inline constexpr uint32_t kMaxTerrainRegionCells = 4096;
-
     // x and z count from the first Region of that level, which every level shares.
     struct TerrainRegionCoord
     {

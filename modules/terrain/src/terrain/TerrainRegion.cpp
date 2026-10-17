@@ -35,7 +35,6 @@ namespace mir
         using detail::LoadU32;
         using detail::LoadU64;
 
-        constexpr uint32_t kRegionMagic = 0x314e4752;
 
         std::string RegionName(TerrainRegionCoord region)
         {
@@ -146,7 +145,8 @@ namespace mir
 
     uint64_t TerrainRegionPayloadLength(uint32_t vertexCount, uint32_t indexCount)
     {
-        return uint64_t(kTerrainRegionHeaderSize) + uint64_t(vertexCount) * 24 + uint64_t(indexCount) * 4;
+        return uint64_t(kTerrainRegionHeaderSize) + uint64_t(vertexCount) * terrainformat::kRegionVertexBytes +
+               uint64_t(indexCount) * terrainformat::kIndexBytes;
     }
 
     std::vector<std::byte> EncodeTerrainRegion(const TerrainRegionMesh &mesh)
@@ -155,7 +155,7 @@ namespace mir
         bytes.reserve(
             size_t(TerrainRegionPayloadLength(uint32_t(mesh.positions.size()), uint32_t(mesh.indices.size()))));
         detail::LeWriter out(bytes);
-        out.U32(kRegionMagic);
+        out.U32(terrainformat::kRegionMagic);
         out.U32(kTerrainRegionContentVersion);
         out.U32(mesh.region.level);
         out.I32(mesh.region.x);
@@ -206,21 +206,32 @@ namespace mir
                            record.length);
         if (Fnv1a64(bytes) != record.checksum)
             return Fail<R>(Code::Corrupt, "{}: payload checksum differs from the index", name);
-        if (LoadU32(bytes, 0) != kRegionMagic || LoadU32(bytes, 4) != kTerrainRegionContentVersion)
+        if (LoadU32(bytes, terrainformat::region::kMagic) != terrainformat::kRegionMagic ||
+            LoadU32(bytes, terrainformat::region::kContentVersion) != kTerrainRegionContentVersion)
             return Fail<R>(Code::Unsupported, "{}: payload magic or content version {} is not supported", name,
-                           LoadU32(bytes, 4));
+                           LoadU32(bytes, terrainformat::region::kContentVersion));
 
         const TerrainLocalBounds rect = grid.Rect(region);
         const TileRange tiles = grid.MapTiles(region);
-        const uint32_t vertexCount = LoadU32(bytes, 80), indexCount = LoadU32(bytes, 84);
-        if (LoadU32(bytes, 8) != region.level || LoadI32(bytes, 12) != region.x || LoadI32(bytes, 16) != region.z ||
-            LoadU32(bytes, 20) != 0 || LoadF64(bytes, 24) != rect.minX || LoadF64(bytes, 32) != rect.minZ ||
-            LoadF64(bytes, 40) != record.sampleSpacing || LoadI32(bytes, 48) != tiles.min.x ||
-            LoadI32(bytes, 52) != tiles.min.z || LoadI32(bytes, 56) != tiles.max.x ||
-            LoadI32(bytes, 60) != tiles.max.z || LoadU64(bytes, 64) != record.sourceChecksum ||
-            LoadU64(bytes, 72) != record.topologyHash || vertexCount != record.vertexCount ||
-            indexCount != record.indexCount || !record.maxDeviation || LoadF64(bytes, 88) != *record.maxDeviation ||
-            LoadU64(bytes, 96) != 0 || LoadU64(bytes, 104) != 0)
+        const uint32_t vertexCount = LoadU32(bytes, terrainformat::region::kVertexCount),
+                       indexCount = LoadU32(bytes, terrainformat::region::kIndexCount);
+        if (LoadU32(bytes, terrainformat::region::kLevel) != region.level ||
+            LoadI32(bytes, terrainformat::region::kX) != region.x ||
+            LoadI32(bytes, terrainformat::region::kZ) != region.z ||
+            LoadU32(bytes, terrainformat::region::kReserved0) != 0 ||
+            LoadF64(bytes, terrainformat::region::kOriginX) != rect.minX ||
+            LoadF64(bytes, terrainformat::region::kOriginZ) != rect.minZ ||
+            LoadF64(bytes, terrainformat::region::kSpacing) != record.sampleSpacing ||
+            LoadI32(bytes, terrainformat::region::kMinTileX) != tiles.min.x ||
+            LoadI32(bytes, terrainformat::region::kMinTileZ) != tiles.min.z ||
+            LoadI32(bytes, terrainformat::region::kMaxTileX) != tiles.max.x ||
+            LoadI32(bytes, terrainformat::region::kMaxTileZ) != tiles.max.z ||
+            LoadU64(bytes, terrainformat::region::kSourceChecksum) != record.sourceChecksum ||
+            LoadU64(bytes, terrainformat::region::kTopologyHash) != record.topologyHash ||
+            vertexCount != record.vertexCount || indexCount != record.indexCount || !record.maxDeviation ||
+            LoadF64(bytes, terrainformat::region::kDeviation) != *record.maxDeviation ||
+            LoadU64(bytes, terrainformat::region::kReserved1) != 0 ||
+            LoadU64(bytes, terrainformat::region::kReserved2) != 0)
             return Fail<R>(Code::Corrupt, "{}: payload header differs from its index record and grid", name);
         if (vertexCount < 3 || indexCount < 3 || indexCount % 3 != 0 ||
             TerrainRegionPayloadLength(vertexCount, indexCount) != bytes.size())
@@ -245,8 +256,9 @@ namespace mir
         mesh.positions.reserve(vertexCount);
         for (uint32_t i = 0; i < vertexCount; ++i)
         {
-            const size_t at = kTerrainRegionHeaderSize + size_t(i) * 12;
-            const glm::vec3 p(LoadF32(bytes, at), LoadF32(bytes, at + 4), LoadF32(bytes, at + 8));
+            const size_t at = kTerrainRegionHeaderSize + size_t(i) * terrainformat::kVec3Bytes;
+            const glm::vec3 p(LoadF32(bytes, at), LoadF32(bytes, at + terrainformat::kFloatBytes),
+                              LoadF32(bytes, at + 2 * terrainformat::kFloatBytes));
             if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z) || p.x < domain.minX ||
                 p.x > domain.maxX || p.z < domain.minZ || p.z > domain.maxZ)
                 return Fail<R>(Code::Corrupt, "{}: vertex {} is not finite or lies outside the Region's domain", name,
@@ -256,21 +268,22 @@ namespace mir
             mesh.positions.push_back(p);
         }
         mesh.normals.reserve(vertexCount);
-        const size_t normalsAt = kTerrainRegionHeaderSize + size_t(vertexCount) * 12;
+        const size_t normalsAt = kTerrainRegionHeaderSize + size_t(vertexCount) * terrainformat::kVec3Bytes;
         for (uint32_t i = 0; i < vertexCount; ++i)
         {
-            const size_t at = normalsAt + size_t(i) * 12;
-            const glm::vec3 n(LoadF32(bytes, at), LoadF32(bytes, at + 4), LoadF32(bytes, at + 8));
+            const size_t at = normalsAt + size_t(i) * terrainformat::kVec3Bytes;
+            const glm::vec3 n(LoadF32(bytes, at), LoadF32(bytes, at + terrainformat::kFloatBytes),
+                              LoadF32(bytes, at + 2 * terrainformat::kFloatBytes));
             const double norm = glm::dot(glm::dvec3(n), glm::dvec3(n));
-            if (!std::isfinite(norm) || std::abs(norm - 1.0) > 2e-6 || n.y <= 0.0f)
+            if (!std::isfinite(norm) || std::abs(norm - 1.0) > kTerrainNormalLengthSquaredTolerance || n.y <= 0.0f)
                 return Fail<R>(Code::Corrupt, "{}: normal {} is not finite, not unit or points down", name, i);
             mesh.normals.push_back(n);
         }
         mesh.indices.reserve(indexCount);
-        const size_t indicesAt = normalsAt + size_t(vertexCount) * 12;
+        const size_t indicesAt = normalsAt + size_t(vertexCount) * terrainformat::kVec3Bytes;
         for (uint32_t i = 0; i < indexCount; ++i)
         {
-            const uint32_t id = LoadU32(bytes, indicesAt + size_t(i) * 4);
+            const uint32_t id = LoadU32(bytes, indicesAt + size_t(i) * terrainformat::kIndexBytes);
             if (id >= vertexCount)
                 return Fail<R>(Code::Corrupt, "{}: index {} is past the vertices", name, i);
             mesh.indices.push_back(id);
@@ -337,7 +350,7 @@ namespace mir
             area += std::abs(Cross(b.x - a.x, b.z - a.z, c.x - a.x, c.z - a.z)) * 0.5;
         }
         const double expected = (double(domain.maxX) - domain.minX) * (double(domain.maxZ) - domain.minZ);
-        return expected > 0.0 && std::abs(area - expected) <= 1e-9 * expected;
+        return expected > 0.0 && std::abs(area - expected) <= kTerrainCoverageRelativeTolerance * expected;
     }
 
     std::optional<double> TerrainRegionDeviation(const TerrainRegionGrid &grid, const TerrainRegionMesh &mesh,
@@ -479,7 +492,8 @@ namespace mir
                             tileBound = std::max(tileBound, difference);
                         }
                 }
-                const double margin = 4096 * std::numeric_limits<double>::epsilon() * maxHeight *
+                const double margin = kTerrainDeviationRoundoffFactor * std::numeric_limits<double>::epsilon() *
+                                      maxHeight *
                                       (1 + (tileSize + 2 * cellSpan) / layout.SampleSpacing() +
                                        std::max(std::abs(ox), std::abs(oz)) / layout.SampleSpacing());
                 if (!std::isfinite(margin))

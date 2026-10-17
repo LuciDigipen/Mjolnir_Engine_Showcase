@@ -26,15 +26,14 @@ namespace mir
             return quotient;
         }
 
-        constexpr int64_t kExactSampleLimit = int64_t(1) << 53;
     } // namespace
 
     std::optional<TerrainRegionGrid> TerrainRegionGrid::Create(const TerrainLayout &reference, uint32_t regionTiles,
                                                                uint32_t cells, uint32_t unit)
     {
         const int64_t n = reference.IntervalsPerTile();
-        if (regionTiles < 1 || regionTiles > (1u << 20) || cells < 1 || cells > kMaxTerrainRegionCells || unit < 1 ||
-            n % unit != 0)
+        if (regionTiles < 1 || regionTiles > kMaxTerrainRegionTiles || cells < 1 || cells > kMaxTerrainRegionCells ||
+            unit < 1 || n % unit != 0)
             return std::nullopt;
 
         TerrainRegionGrid grid(reference);
@@ -53,13 +52,14 @@ namespace mir
         grid.mOrdinals.push_back(0);
         for (uint32_t level = 0;; ++level)
         {
-            if (level > 40)
+            if (level > kMaxTerrainRegionLevel)
                 return std::nullopt;
             const int64_t edge = r << level;
             // Every Region's last tile and last sample stay addressable.
             const int64_t lastTileX = firstX * r + countX * edge, lastTileZ = firstZ * r + countZ * edge;
             if (lastTileX > std::numeric_limits<int32_t>::max() || lastTileZ > std::numeric_limits<int32_t>::max() ||
-                std::max({std::abs(firstX * r), std::abs(firstZ * r), lastTileX, lastTileZ}) >= kExactSampleLimit / n)
+                std::max({std::abs(firstX * r), std::abs(firstZ * r), lastTileX, lastTileZ}) >=
+                    kTerrainExactSampleLimit / n)
                 return std::nullopt;
             grid.mCounts.push_back({static_cast<int32_t>(countX), static_cast<int32_t>(countZ)});
             grid.mOrdinals.push_back(grid.mOrdinals.back() + uint64_t(countX) * uint64_t(countZ));

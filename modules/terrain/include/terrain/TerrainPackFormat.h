@@ -8,6 +8,8 @@
  */
 #pragma once
 
+#include <terrain/TerrainConstants.h>
+
 #include <terrain/TerrainIdentity.h>
 #include <terrain/TerrainLayout.h>
 #include <terrain/TerrainRegionGrid.h>
@@ -24,26 +26,6 @@
 
 namespace mir
 {
-    // Binary layout: docs/modules/terrain.md.
-    inline constexpr TerrainFormatVersion kTerrainFormatVersion{2};
-    inline constexpr uint32_t kTerrainFormatMinor = 2;
-
-    // Encoding version for height payloads.
-    inline constexpr uint32_t kTerrainHeightsContentVersion = 1;
-
-    inline constexpr uint32_t kTerrainIndexHeaderSize = 152;
-    // Minors 0 and 1.
-    inline constexpr uint32_t kTerrainLegacyIndexHeaderSize = 128;
-    inline constexpr uint32_t kTerrainPackRecordSize = 32;
-    inline constexpr uint32_t kTerrainTileRecordSize = 144;
-    inline constexpr uint32_t kTerrainLayerRecordSize = 16;
-    inline constexpr uint32_t kTerrainPackHeaderSize = 48;
-    inline constexpr uint32_t kTerrainIndexTrailerSize = 8;
-
-    inline constexpr uint32_t kDefaultTerrainPayloadAlignment = 16;
-    inline constexpr uint32_t kMaxTerrainPayloadAlignment = 65536;
-    inline constexpr int32_t kDefaultTerrainChunkTiles = 16;
-
     inline constexpr std::string_view kTerrainIndexFileName = "release.tindex";
 
     // floorDiv(tile, chunkTiles) on each axis.

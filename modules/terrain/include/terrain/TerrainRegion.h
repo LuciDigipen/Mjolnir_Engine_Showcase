@@ -8,6 +8,8 @@
  */
 #pragma once
 
+#include <terrain/TerrainConstants.h>
+
 #include <core/math/WorldCoordinates.h>
 #include <terrain/TerrainIdentity.h>
 #include <terrain/TerrainLayout.h>
@@ -27,9 +29,6 @@
 
 namespace mir
 {
-    inline constexpr uint32_t kTerrainRegionContentVersion = 1;
-    inline constexpr uint32_t kTerrainRegionHeaderSize = 112;
-
     // Positions are relative to origin, the first sample of the Region's rect. Triangles split each cell
     // along TriangulateCell's diagonal and winding; an outer edge inside the map also holds every node
     // of the finer source beside it, the nodes tile LODs keep on that edge.

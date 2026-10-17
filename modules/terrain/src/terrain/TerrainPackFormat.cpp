@@ -85,14 +85,14 @@ namespace mir
 
         TerrainResult<Header> ParseHeader(std::span<const std::byte> bytes)
         {
-            constexpr size_t kPrefix = 16;
+            constexpr size_t kPrefix = terrainformat::kPrefixSize;
             if (bytes.size() < kPrefix)
                 return Fail<Header>(Code::Malformed, "{} bytes is too short for an index header (truncated?)",
                                     bytes.size());
-            if (!std::equal(detail::kIndexMagic.begin(), detail::kIndexMagic.end(), bytes.begin()))
+            if (!std::equal(terrainformat::kIndexMagic.begin(), terrainformat::kIndexMagic.end(), bytes.begin()))
                 return Fail<Header>(Code::Malformed, "bad magic: not a terrain release index");
 
-            const uint32_t format = LoadU32(bytes, 4);
+            const uint32_t format = LoadU32(bytes, terrainformat::index::kMajor);
             if (format != kTerrainFormatVersion.value)
                 return Fail<Header>(Code::Unsupported,
                                     "format version {} is not supported (this reader reads {}); rebake it with a "
@@ -100,10 +100,11 @@ namespace mir
                                     format, kTerrainFormatVersion.value);
 
             Header h;
-            h.minor = LoadU32(bytes, 8);
-            h.headerSize = LoadU32(bytes, 12);
-            const uint32_t minimumHeader = h.minor >= 2 ? kTerrainIndexHeaderSize : kTerrainLegacyIndexHeaderSize;
-            if (h.headerSize < minimumHeader || h.headerSize % 8 != 0)
+            h.minor = LoadU32(bytes, terrainformat::index::kMinor);
+            h.headerSize = LoadU32(bytes, terrainformat::index::kHeaderSize);
+            const uint32_t minimumHeader =
+                h.minor >= kTerrainRegionsFormatMinor ? kTerrainIndexHeaderSize : kTerrainLegacyIndexHeaderSize;
+            if (h.headerSize < minimumHeader || h.headerSize % terrainformat::kRecordAlignment != 0)
                 return Fail<Header>(Code::Malformed, "header size {} is invalid (needs >= {} and a multiple of 8)",
                                     h.headerSize, minimumHeader);
             if (bytes.size() < uint64_t(h.headerSize) + kTerrainIndexTrailerSize)
@@ -120,37 +121,40 @@ namespace mir
                                     "checksum {} does not match the contents {} (truncated or corrupt index)",
                                     Hex(stored), Hex(actual));
 
-            h.contentVersion = LoadU32(bytes, 16);
+            h.contentVersion = LoadU32(bytes, terrainformat::index::kContentVersion);
             if (h.contentVersion != kTerrainHeightsContentVersion)
                 return Fail<Header>(Code::Unsupported, "content version {} is not supported (this reader reads {})",
                                     h.contentVersion, kTerrainHeightsContentVersion);
-            h.alignment = LoadU32(bytes, 20);
-            h.asset = LoadU64(bytes, 24);
-            h.release = LoadU64(bytes, 32);
-            h.source = LoadU64(bytes, 40);
-            h.spacing = LoadF64(bytes, 48);
-            h.intervals = LoadI32(bytes, 56);
-            h.chunkTiles = LoadI32(bytes, 60);
-            h.bounds = {LoadF64(bytes, 64), LoadF64(bytes, 72), LoadF64(bytes, 80), LoadF64(bytes, 88)};
-            h.packCount = LoadU32(bytes, 96);
-            h.packRecordSize = LoadU32(bytes, 100);
-            h.tileCount = LoadU32(bytes, 104);
-            h.tileRecordSize = LoadU32(bytes, 108);
-            h.heightsHash = LoadU64(bytes, 112);
-            h.layerCount = LoadU32(bytes, 120);
-            h.layerRecordSize = LoadU32(bytes, 124);
-            if (h.layerCount == 0 || h.layerRecordSize < kTerrainLayerRecordSize || h.layerRecordSize % 8 != 0)
+            h.alignment = LoadU32(bytes, terrainformat::index::kAlignment);
+            h.asset = LoadU64(bytes, terrainformat::index::kAsset);
+            h.release = LoadU64(bytes, terrainformat::index::kRelease);
+            h.source = LoadU64(bytes, terrainformat::index::kSource);
+            h.spacing = LoadF64(bytes, terrainformat::index::kSpacing);
+            h.intervals = LoadI32(bytes, terrainformat::index::kIntervals);
+            h.chunkTiles = LoadI32(bytes, terrainformat::index::kChunkTiles);
+            h.bounds = {LoadF64(bytes, terrainformat::index::kMinX), LoadF64(bytes, terrainformat::index::kMinZ),
+                        LoadF64(bytes, terrainformat::index::kMaxX), LoadF64(bytes, terrainformat::index::kMaxZ)};
+            h.packCount = LoadU32(bytes, terrainformat::index::kPackCount);
+            h.packRecordSize = LoadU32(bytes, terrainformat::index::kPackRecordSize);
+            h.tileCount = LoadU32(bytes, terrainformat::index::kTileCount);
+            h.tileRecordSize = LoadU32(bytes, terrainformat::index::kTileRecordSize);
+            h.heightsHash = LoadU64(bytes, terrainformat::index::kHeightsHash);
+            h.layerCount = LoadU32(bytes, terrainformat::index::kLayerCount);
+            h.layerRecordSize = LoadU32(bytes, terrainformat::index::kLayerRecordSize);
+            if (h.layerCount == 0 || h.layerRecordSize < kTerrainLayerRecordSize ||
+                h.layerRecordSize % terrainformat::kRecordAlignment != 0)
                 return Fail<Header>(Code::Malformed, "layer count {} or record size {} is invalid", h.layerCount,
                                     h.layerRecordSize);
-            if (h.minor >= 2)
+            if (h.minor >= kTerrainRegionsFormatMinor)
             {
-                h.regionCount = LoadU32(bytes, 128);
-                h.regionRecordSize = LoadU32(bytes, 132);
-                h.regionTiles = LoadU32(bytes, 136);
-                h.regionCells = LoadU32(bytes, 140);
-                h.regionUnit = LoadU32(bytes, 144);
-                h.regionLevels = LoadU32(bytes, 148);
-                if (h.regionRecordSize < kTerrainTileRecordSize || h.regionRecordSize % 8 != 0)
+                h.regionCount = LoadU32(bytes, terrainformat::index::kRegionCount);
+                h.regionRecordSize = LoadU32(bytes, terrainformat::index::kRegionRecordSize);
+                h.regionTiles = LoadU32(bytes, terrainformat::index::kRegionTiles);
+                h.regionCells = LoadU32(bytes, terrainformat::index::kRegionCells);
+                h.regionUnit = LoadU32(bytes, terrainformat::index::kRegionUnit);
+                h.regionLevels = LoadU32(bytes, terrainformat::index::kRegionLevels);
+                if (h.regionRecordSize < kTerrainTileRecordSize ||
+                    h.regionRecordSize % terrainformat::kRecordAlignment != 0)
                     return Fail<Header>(Code::Malformed,
                                         "Region record size {} is invalid (needs >= {}, a multiple of 8)",
                                         h.regionRecordSize, kTerrainTileRecordSize);
@@ -169,10 +173,11 @@ namespace mir
                 return Fail<Header>(Code::Malformed, "asset id is zero");
             if (h.release == 0)
                 return Fail<Header>(Code::Malformed, "release id is zero");
-            if (h.packRecordSize < kTerrainPackRecordSize || h.packRecordSize % 8 != 0)
+            if (h.packRecordSize < kTerrainPackRecordSize || h.packRecordSize % terrainformat::kRecordAlignment != 0)
                 return Fail<Header>(Code::Malformed, "pack record size {} is invalid (needs >= {}, a multiple of 8)",
                                     h.packRecordSize, kTerrainPackRecordSize);
-            if (h.tileRecordSize < (h.minor == 0 ? 120u : kTerrainTileRecordSize) || h.tileRecordSize % 8 != 0)
+            if (h.tileRecordSize < (h.minor == 0 ? kTerrainLegacyTileRecordSize : kTerrainTileRecordSize) ||
+                h.tileRecordSize % terrainformat::kRecordAlignment != 0)
                 return Fail<Header>(Code::Malformed, "tile record size {} is invalid (needs >= {}, a multiple of 8)",
                                     h.tileRecordSize, kTerrainTileRecordSize);
 
@@ -204,38 +209,40 @@ namespace mir
         TerrainPackRecord ReadPackRecord(std::span<const std::byte> b, size_t at)
         {
             TerrainPackRecord r;
-            r.chunk = {LoadI32(b, at), LoadI32(b, at + 4)};
-            r.tileCount = LoadU32(b, at + 8);
-            r.fileSize = LoadU64(b, at + 16);
-            r.checksum = LoadU64(b, at + 24);
+            r.chunk = {LoadI32(b, at + terrainformat::packRecord::kX), LoadI32(b, at + terrainformat::packRecord::kZ)};
+            r.tileCount = LoadU32(b, at + terrainformat::packRecord::kTileCount);
+            r.fileSize = LoadU64(b, at + terrainformat::packRecord::kFileSize);
+            r.checksum = LoadU64(b, at + terrainformat::packRecord::kChecksum);
             return r;
         }
 
         TerrainTileRecord ReadTileRecord(std::span<const std::byte> b, size_t at, uint32_t size)
         {
             TerrainTileRecord r;
-            r.tile = {LoadI32(b, at), LoadI32(b, at + 4)};
-            r.pack = LoadU32(b, at + 8);
-            r.samplesPerSide = static_cast<int32_t>(LoadU32(b, at + 12));
-            r.offset = LoadU64(b, at + 16);
-            r.length = LoadU64(b, at + 24);
-            r.checksum = LoadU64(b, at + 32);
-            r.sampleSpacing = LoadF64(b, at + 40);
-            r.minHeight = LoadF32(b, at + 48);
-            r.maxHeight = LoadF32(b, at + 52);
-            r.validExtent = {LoadF64(b, at + 56), LoadF64(b, at + 64), LoadF64(b, at + 72), LoadF64(b, at + 80)};
-            r.layer = LoadU32(b, at + 88);
-            r.kind = static_cast<TerrainPayloadKind>(LoadU32(b, at + 92));
-            r.level = LoadU32(b, at + 96);
-            r.source = LoadU32(b, at + 100) != 0;
-            if (LoadU32(b, at + 104) != 0)
-                r.maxDeviation = LoadF64(b, at + 112);
-            if (size >= 144)
+            r.tile = {LoadI32(b, at + terrainformat::payload::kX), LoadI32(b, at + terrainformat::payload::kZ)};
+            r.pack = LoadU32(b, at + terrainformat::payload::kPack);
+            r.samplesPerSide = static_cast<int32_t>(LoadU32(b, at + terrainformat::payload::kSamplesPerSide));
+            r.offset = LoadU64(b, at + terrainformat::payload::kOffset);
+            r.length = LoadU64(b, at + terrainformat::payload::kLength);
+            r.checksum = LoadU64(b, at + terrainformat::payload::kChecksum);
+            r.sampleSpacing = LoadF64(b, at + terrainformat::payload::kSpacing);
+            r.minHeight = LoadF32(b, at + terrainformat::payload::kMinHeight);
+            r.maxHeight = LoadF32(b, at + terrainformat::payload::kMaxHeight);
+            r.validExtent = {
+                LoadF64(b, at + terrainformat::payload::kMinX), LoadF64(b, at + terrainformat::payload::kMinZ),
+                LoadF64(b, at + terrainformat::payload::kMaxX), LoadF64(b, at + terrainformat::payload::kMaxZ)};
+            r.layer = LoadU32(b, at + terrainformat::payload::kLayer);
+            r.kind = static_cast<TerrainPayloadKind>(LoadU32(b, at + terrainformat::payload::kKind));
+            r.level = LoadU32(b, at + terrainformat::payload::kLevel);
+            r.source = LoadU32(b, at + terrainformat::payload::kSource) != 0;
+            if (LoadU32(b, at + terrainformat::payload::kHasDeviation) != 0)
+                r.maxDeviation = LoadF64(b, at + terrainformat::payload::kDeviation);
+            if (size >= kTerrainTileRecordSize)
             {
-                r.sourceChecksum = LoadU64(b, at + 120);
-                r.topologyHash = LoadU64(b, at + 128);
-                r.vertexCount = LoadU32(b, at + 136);
-                r.indexCount = LoadU32(b, at + 140);
+                r.sourceChecksum = LoadU64(b, at + terrainformat::payload::kSourceChecksum);
+                r.topologyHash = LoadU64(b, at + terrainformat::payload::kTopologyHash);
+                r.vertexCount = LoadU32(b, at + terrainformat::payload::kVertexCount);
+                r.indexCount = LoadU32(b, at + terrainformat::payload::kIndexCount);
             }
             return r;
         }
@@ -280,7 +287,8 @@ namespace mir
             if (!std::isfinite(r.minHeight) || !std::isfinite(r.maxHeight) || r.minHeight > r.maxHeight)
                 return Error(Code::Malformed, "tile {}: height range [{}, {}] is invalid", tile, r.minHeight,
                              r.maxHeight);
-            if (r.kind == TerrainPayloadKind::Region || static_cast<uint32_t>(r.kind) > 3)
+            if (r.kind == TerrainPayloadKind::Region ||
+                static_cast<uint32_t>(r.kind) > static_cast<uint32_t>(TerrainPayloadKind::Region))
                 return Error(Code::Unsupported, "tile {}: unsupported payload kind", tile);
             if (r.kind == TerrainPayloadKind::Height)
             {
@@ -289,8 +297,9 @@ namespace mir
             }
             else
             {
-                const uint64_t expected = 80ull + uint64_t(r.vertexCount) * 12 +
-                                          (r.kind == TerrainPayloadKind::LodHeight ? uint64_t(r.indexCount) * 4 : 0);
+                const uint64_t expected =
+                    uint64_t(kTerrainDerivedHeaderSize) + uint64_t(r.vertexCount) * terrainformat::kVec3Bytes +
+                    (r.kind == TerrainPayloadKind::LodHeight ? uint64_t(r.indexCount) * terrainformat::kIndexBytes : 0);
                 if (h.minor < 1 || r.source || !r.maxDeviation || r.vertexCount < 4 || r.indexCount < 6 ||
                     r.indexCount % 3 || r.length != expected)
                     return Error(Code::Malformed, "tile {}: derived count/source/length/error fields invalid", tile);
@@ -509,7 +518,8 @@ namespace mir
         for (uint32_t l = 0; l < h.layerCount; ++l)
         {
             const size_t at = layerTable + size_t(l) * h.layerRecordSize;
-            auto layer = TerrainLayout::Create(LoadF64(bytes, at), LoadI32(bytes, at + 8), h.bounds);
+            auto layer = TerrainLayout::Create(LoadF64(bytes, at + terrainformat::layer::kSpacing),
+                                               LoadI32(bytes, at + terrainformat::layer::kIntervals), h.bounds);
             if (!layer || layer->IntervalsPerTile() > kMaxTerrainTileIntervals)
                 return Fail<R>(Code::Malformed, "layer {}: spacing or intervals is invalid", l);
             if (l == 0 && (layer->SampleSpacing() != h.spacing || layer->IntervalsPerTile() != h.intervals))
@@ -563,7 +573,8 @@ namespace mir
                     "tile records {} and {} duplicate a key or are not in increasing order (both name tile {})", t - 1,
                     t, Describe(r.tile));
             const size_t raw = tileTable + size_t(t) * h.tileRecordSize;
-            if (LoadU32(bytes, raw + 100) > 1 || LoadU32(bytes, raw + 104) > 1)
+            if (LoadU32(bytes, raw + terrainformat::payload::kSource) > 1 ||
+                LoadU32(bytes, raw + terrainformat::payload::kHasDeviation) > 1)
                 return Fail<R>(Code::Malformed, "tile record {}: invalid source/deviation flag", t);
             const TerrainPackError checked = CheckTileRecord(h, layers[r.layer], packs, r);
             if (checked.code != Code::None)
@@ -660,7 +671,8 @@ namespace mir
                 const size_t raw = regionTable + size_t(o) * h.regionRecordSize;
                 TerrainTileRecord &r = regions[o];
                 r = ReadTileRecord(bytes, raw, h.regionRecordSize);
-                if (LoadU32(bytes, raw + 100) > 1 || LoadU32(bytes, raw + 104) > 1)
+                if (LoadU32(bytes, raw + terrainformat::payload::kSource) > 1 ||
+                    LoadU32(bytes, raw + terrainformat::payload::kHasDeviation) > 1)
                     return Fail<R>(Code::Malformed, "Region record {}: invalid source/deviation flag", o);
                 const TerrainRegionCoord want = regionGrid->AtOrdinal(o);
                 if (want.level != checksumLevel)
