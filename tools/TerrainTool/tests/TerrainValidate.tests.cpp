@@ -53,7 +53,9 @@ TEST_CASE("A baked candidate passes every check, with and without its recipe", "
 {
     ScratchDir scratch("validate_ok");
     const fs::path dir = scratch.path / "candidate";
-    const TerrainBakedRelease baked = WriteCraftedCandidate(dir, [](auto &) {});
+    const TerrainReleaseId baked = BakeCandidate(dir, kNonce);
+    const auto opened = TerrainReleaseHandle::Open(std::make_shared<TerrainFileSource>(dir));
+    REQUIRE(opened);
     const TerrainRecipe recipe = LoadExample();
 
     const TerrainReport report = Validate(dir, &recipe);
@@ -64,10 +66,12 @@ TEST_CASE("A baked candidate passes every check, with and without its recipe", "
         CHECK(c.status == CheckStatus::Passed);
     }
     REQUIRE(report.release);
-    CHECK(*report.release == baked.info);
-    CHECK(report.heightsHash == baked.encoded.heightsHash);
+    CHECK(report.release->release == baked);
+    CHECK(*report.release == opened.value->Info());
+    CHECK(report.heightsHash == opened.value->Index().heightsHash);
     CHECK(report.surfaceVersion == kTerrainSurfaceVersion);
-    CHECK(report.tiles.size() == 4);
+    CHECK(report.tiles.size() == opened.value->Index().tiles.size());
+    CHECK(std::count_if(report.tiles.begin(), report.tiles.end(), [](const auto &tile) { return tile.source; }) == 4);
 
     CHECK(Validate(dir).Status(check::kIdentity) == CheckStatus::Passed);
 
@@ -241,7 +245,7 @@ TEST_CASE("Validating against a recipe checks the source fingerprint and layout"
 {
     ScratchDir scratch("validate_recipe");
     const fs::path dir = scratch.path / "candidate";
-    WriteCraftedCandidate(dir, [](auto &) {});
+    BakeCandidate(dir, kNonce);
 
     std::ifstream in(ExampleRecipePath());
     Json json = Json::parse(in);
