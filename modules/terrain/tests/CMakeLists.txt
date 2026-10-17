@@ -15,7 +15,5 @@ engine_add_module_tests(terrain
     TileHeights.tests.cpp
 )
 
-target_compile_definitions(engine_terrain_tests PRIVATE TERRAIN_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
-
 # TerrainInstance must round-trip SceneIO; terrain itself never links scene.
 target_link_libraries(engine_terrain_tests PRIVATE mir::scene)
