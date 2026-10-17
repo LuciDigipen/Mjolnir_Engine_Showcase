@@ -254,15 +254,15 @@ namespace mir
         using R = TerrainRegionMesh;
         const TerrainTileRecord *record = mIndex->FindRegion(region);
         if (!record)
-            return Fail<R>(Code::NotFound, "Region L{} ({}, {}) is not in release {}", region.level, region.x,
-                           region.z, Hex(Info().release.value));
+            return Fail<R>(Code::NotFound, "Region L{} ({}, {}) is not in release {}", region.level, region.x, region.z,
+                           Hex(Info().release.value));
         TerrainResult<std::vector<std::byte>> bytes = ReadPayload(*record);
         if (!bytes)
             return Failure<R>(bytes.error, "");
         TerrainResult<R> mesh = DecodeTerrainRegion(*mIndex, *record, *bytes.value);
         if (!mesh)
             return Failure<R>(mesh.error, std::format("{}/{}: ", mSource->Describe(),
-                                                       TerrainPackFileName(mIndex->packs[record->pack].chunk)));
+                                                      TerrainPackFileName(mIndex->packs[record->pack].chunk)));
         return mesh;
     }
 
@@ -312,11 +312,16 @@ namespace mir
                 // ParseTerrainIndex already kept every range inside fileSize.
                 const auto payload = all.subspan(static_cast<size_t>(tile->offset), static_cast<size_t>(tile->length));
                 TerrainPackError error;
-                if(tile->kind==TerrainPayloadKind::Height) error=DecodeTerrainTile(index,*tile,payload).error;
-                else if(tile->kind==TerrainPayloadKind::LodHeight) error=DecodeTerrainLod(index,*tile,payload).error;
-                else if(tile->kind==TerrainPayloadKind::Normal) error=DecodeTerrainNormals(index,*tile,payload).error;
-                else if(tile->kind==TerrainPayloadKind::Region) error=DecodeTerrainRegion(index,*tile,payload).error;
-                if(error.code!=Code::None)return {error.code,where+error.message};
+                if (tile->kind == TerrainPayloadKind::Height)
+                    error = DecodeTerrainTile(index, *tile, payload).error;
+                else if (tile->kind == TerrainPayloadKind::LodHeight)
+                    error = DecodeTerrainLod(index, *tile, payload).error;
+                else if (tile->kind == TerrainPayloadKind::Normal)
+                    error = DecodeTerrainNormals(index, *tile, payload).error;
+                else if (tile->kind == TerrainPayloadKind::Region)
+                    error = DecodeTerrainRegion(index, *tile, payload).error;
+                if (error.code != Code::None)
+                    return {error.code, where + error.message};
             }
         }
         return {};

@@ -122,7 +122,8 @@ namespace
         if (a.size() != b.size())
             return false;
         for (auto i = a.begin(), j = b.begin(); i != a.end(); ++i, ++j)
-            if (i->first != j->first || std::bit_cast<uint32_t>(i->second.height) != std::bit_cast<uint32_t>(j->second.height) ||
+            if (i->first != j->first ||
+                std::bit_cast<uint32_t>(i->second.height) != std::bit_cast<uint32_t>(j->second.height) ||
                 i->second.normal != j->second.normal)
                 return false;
         return true;
@@ -143,8 +144,11 @@ namespace
         json["generator"]["version"] = 2;
         json["layout"] = {{"sampleSpacing", recipe.layout.SampleSpacing()},
                           {"intervalsPerTile", recipe.layout.IntervalsPerTile()},
-                          {"bounds", {{"minX", recipe.layout.Bounds().minX}, {"minZ", recipe.layout.Bounds().minZ},
-                                      {"maxX", recipe.layout.Bounds().maxX}, {"maxZ", recipe.layout.Bounds().maxZ}}}};
+                          {"bounds",
+                           {{"minX", recipe.layout.Bounds().minX},
+                            {"minZ", recipe.layout.Bounds().minZ},
+                            {"maxX", recipe.layout.Bounds().maxX},
+                            {"maxZ", recipe.layout.Bounds().maxZ}}}};
         json["parameters"]["ridges"] = {{"amplitude", recipe.relief.ridges.amplitude},
                                         {"wavelength", recipe.relief.ridges.wavelength},
                                         {"octaves", recipe.relief.ridges.octaves}};
@@ -163,7 +167,8 @@ namespace
     }
 
     // Edits one Region payload and its record, then reseals every checksum so only the edit is wrong.
-    void PatchRegionSealed(const fs::path &dir, size_t ordinal, const std::function<void(std::vector<std::byte> &)> &edit,
+    void PatchRegionSealed(const fs::path &dir, size_t ordinal,
+                           const std::function<void(std::vector<std::byte> &)> &edit,
                            const std::function<void(std::vector<std::byte> &, size_t, TerrainTileRecord &)> &editRecord)
     {
         std::vector<std::byte> index = ReadFile(dir / kTerrainIndexFileName);
@@ -196,7 +201,7 @@ namespace
         ValidateTerrainCandidate(dir, {recipe, true}, report);
         return report;
     }
-}
+} // namespace
 
 TEST_CASE("Regions cover their valid extent and bound their distance to the final mixed surface",
           "[terraintool][regions]")
@@ -204,8 +209,8 @@ TEST_CASE("Regions cover their valid extent and bound their distance to the fina
     const TerrainRecipe recipe = MixedRecipe();
     const std::vector<TileHeights> tiles = FinalHeights(recipe);
     const TerrainFinalSurface final = Surface(recipe, tiles);
-    for (const TerrainRegionSettings settings : {TerrainRegionSettings{1, 4}, TerrainRegionSettings{2, 8},
-                                                 TerrainRegionSettings{}})
+    for (const TerrainRegionSettings settings :
+         {TerrainRegionSettings{1, 4}, TerrainRegionSettings{2, 8}, TerrainRegionSettings{}})
     {
         INFO("Region tiles " << settings.regionTiles << ", cells " << settings.cells);
         const TerrainRegionBake bake = Regions(recipe, tiles, settings);
@@ -225,8 +230,8 @@ TEST_CASE("Regions cover their valid extent and bound their distance to the fina
                 if (x < recipe.layout.Bounds().minX || x > recipe.layout.Bounds().maxX ||
                     z < recipe.layout.Bounds().minZ || z > recipe.layout.Bounds().maxZ)
                     continue;
-                const TileHeights &owner = *final.Tile(AddressLocal(recipe.layout,
-                    *TerrainLocalPosition::FromMeters({x, 0.0, z})).tile);
+                const TileHeights &owner =
+                    *final.Tile(AddressLocal(recipe.layout, *TerrainLocalPosition::FromMeters({x, 0.0, z})).tile);
                 CHECK(mesh.positions[i].y == float(final.SharedHeight(x, z, owner)));
                 CHECK(mesh.normals[i] == final.Normal(x, z, owner));
             }
@@ -249,12 +254,12 @@ TEST_CASE("Regions cover their valid extent and bound their distance to the fina
     }
 }
 
-TEST_CASE("Region edges hold the tile LOD ring nodes and their neighbours' nodes bit for bit",
-          "[terraintool][regions]")
+TEST_CASE("Region edges hold the tile LOD ring nodes and their neighbours' nodes bit for bit", "[terraintool][regions]")
 {
     const TerrainRecipe recipe = MixedRecipe();
     const TerrainBakedRelease baked = Bake(recipe, {1, 4});
-    const TerrainResult<TerrainReleaseHandle> opened = TerrainReleaseHandle::Open(MakeTerrainMemorySource(baked.encoded));
+    const TerrainResult<TerrainReleaseHandle> opened =
+        TerrainReleaseHandle::Open(MakeTerrainMemorySource(baked.encoded));
     REQUIRE(opened);
     const TerrainReleaseHandle &handle = *opened.value;
     const TerrainIndex &index = handle.Index();
@@ -305,9 +310,9 @@ TEST_CASE("Region edges hold the tile LOD ring nodes and their neighbours' nodes
             int32_t outside;
         };
         const std::array<Side, 4> sides{{{region.x > 0, true, extent.minX, tiles.min.x - 1},
-                                          {region.x < count.x - 1, true, extent.maxX, tiles.max.x + 1},
-                                          {region.z > 0, false, extent.minZ, tiles.min.z - 1},
-                                          {region.z < count.z - 1, false, extent.maxZ, tiles.max.z + 1}}};
+                                         {region.x < count.x - 1, true, extent.maxX, tiles.max.x + 1},
+                                         {region.z > 0, false, extent.minZ, tiles.min.z - 1},
+                                         {region.z < count.z - 1, false, extent.maxZ, tiles.max.z + 1}}};
         for (const Side &side : sides)
         {
             if (!side.inside)
@@ -316,9 +321,11 @@ TEST_CASE("Region edges hold the tile LOD ring nodes and their neighbours' nodes
             const int32_t last = side.vertical ? tiles.max.z : tiles.max.x;
             for (int32_t along = first; along <= last; ++along)
             {
-                const TileCoord neighbour = side.vertical ? TileCoord{side.outside, along} : TileCoord{along, side.outside};
-                const TileCoord mineTile = side.vertical ? TileCoord{side.outside == tiles.min.x - 1 ? tiles.min.x : tiles.max.x, along}
-                                                         : TileCoord{along, side.outside == tiles.min.z - 1 ? tiles.min.z : tiles.max.z};
+                const TileCoord neighbour =
+                    side.vertical ? TileCoord{side.outside, along} : TileCoord{along, side.outside};
+                const TileCoord mineTile =
+                    side.vertical ? TileCoord{side.outside == tiles.min.x - 1 ? tiles.min.x : tiles.max.x, along}
+                                  : TileCoord{along, side.outside == tiles.min.z - 1 ? tiles.min.z : tiles.max.z};
                 const TerrainLocalBounds segment = *ref.ValidExtent(neighbour);
                 const double from = side.vertical ? segment.minZ : segment.minX;
                 const double to = side.vertical ? segment.maxZ : segment.maxX;

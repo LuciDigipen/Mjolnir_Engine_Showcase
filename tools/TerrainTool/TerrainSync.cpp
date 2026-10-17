@@ -26,10 +26,10 @@ namespace mir::terrainbake
         namespace fs = std::filesystem;
 
         constexpr std::initializer_list<std::string_view> kAfterCurrent{
-            check::kGenerate, check::kEncode,   check::kWrite,  check::kCandidate, check::kFormat,
-            check::kIndex,    check::kPacks,    check::kCoverage, check::kPayloads, check::kFinite,
-            check::kEdges,    check::kCorners,  check::kRegions,  check::kIdentity, check::kTarget,
-            check::kCopy,     check::kVerify,   check::kRename,   check::kPointer};
+            check::kGenerate, check::kEncode,  check::kWrite,    check::kCandidate, check::kFormat,
+            check::kIndex,    check::kPacks,   check::kCoverage, check::kPayloads,  check::kFinite,
+            check::kEdges,    check::kCorners, check::kRegions,  check::kIdentity,  check::kTarget,
+            check::kCopy,     check::kVerify,  check::kRename,   check::kPointer};
 
         void Fail(TerrainReport &report, std::string_view check, std::string field, std::string message)
         {
@@ -119,11 +119,10 @@ namespace mir::terrainbake
         // Format 2.1 can also describe generic Height-only releases. Those are
         // readable, but cannot satisfy the runtime's default source-layer mesh.
         for (const TerrainTileRecord &source : index.tiles)
-            if (source.source &&
-                (!index.Find(source.tile, source.layer, TerrainPayloadKind::LodHeight, 0) ||
-                 !index.Find(source.tile, source.layer, TerrainPayloadKind::Normal, 0)))
-                return std::format("current release {}: tile ({}, {}) has no source-layer LOD/normal derivatives",
-                                   id, source.tile.x, source.tile.z);
+            if (source.source && (!index.Find(source.tile, source.layer, TerrainPayloadKind::LodHeight, 0) ||
+                                  !index.Find(source.tile, source.layer, TerrainPayloadKind::Normal, 0)))
+                return std::format("current release {}: tile ({}, {}) has no source-layer LOD/normal derivatives", id,
+                                   source.tile.x, source.tile.z);
         const TerrainRegionSettings regions;
         if (!index.regionGrid || index.regionGrid->RegionTiles() != regions.regionTiles ||
             index.regionGrid->Cells() != regions.cells)
@@ -142,12 +141,12 @@ namespace mir::terrainbake
 
     TerrainReport RunTerrainSync(const TerrainSyncRequest &request)
     {
-        TerrainReport report("sync", {check::kArguments, check::kRecipe, check::kLock, check::kCurrent,
-                                      check::kGenerate, check::kEncode, check::kWrite, check::kCandidate,
-                                      check::kFormat, check::kIndex, check::kPacks, check::kCoverage,
-                                      check::kPayloads, check::kFinite, check::kEdges, check::kCorners,
-                                      check::kRegions, check::kIdentity, check::kTarget, check::kCopy,
-                                      check::kVerify, check::kRename, check::kPointer});
+        TerrainReport report("sync",
+                             {check::kArguments, check::kRecipe,   check::kLock,      check::kCurrent, check::kGenerate,
+                              check::kEncode,    check::kWrite,    check::kCandidate, check::kFormat,  check::kIndex,
+                              check::kPacks,     check::kCoverage, check::kPayloads,  check::kFinite,  check::kEdges,
+                              check::kCorners,   check::kRegions,  check::kIdentity,  check::kTarget,  check::kCopy,
+                              check::kVerify,    check::kRename,   check::kPointer});
         report.recipePath = request.recipePath;
         report.candidateDir = request.candidateDir;
         const fs::path releases = request.gameDir.empty() ? fs::path() : TerrainReleasesRoot(request.gameDir);

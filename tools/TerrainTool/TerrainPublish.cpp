@@ -542,11 +542,11 @@ namespace mir::terrainbake
 
     TerrainReport RunTerrainPublish(const TerrainPublishRequest &request)
     {
-        TerrainReport report("publish", {check::kArguments, check::kRecipe, check::kCandidate, check::kFormat,
-                                         check::kIndex, check::kPacks, check::kCoverage, check::kPayloads,
-                                         check::kFinite, check::kEdges, check::kCorners, check::kRegions,
-                                         check::kIdentity, check::kLock, check::kTarget, check::kCopy, check::kVerify,
-                                         check::kRename, check::kPointer});
+        TerrainReport report("publish",
+                             {check::kArguments, check::kRecipe, check::kCandidate, check::kFormat, check::kIndex,
+                              check::kPacks, check::kCoverage, check::kPayloads, check::kFinite, check::kEdges,
+                              check::kCorners, check::kRegions, check::kIdentity, check::kLock, check::kTarget,
+                              check::kCopy, check::kVerify, check::kRename, check::kPointer});
         report.candidateDir = request.candidateDir;
         report.recipePath = request.recipePath;
         report.publish = TerrainPublishSummary{request.releasesRoot};

@@ -80,8 +80,8 @@ namespace mir
         return TerrainPayloadsHash(layers, tiles, derived, TerrainRegionWrites{});
     }
 
-    uint64_t TerrainPayloadsHash(std::span<const TerrainLayout> layers,std::span<const TerrainTileWrite> tiles,
-                                std::span<const TerrainPayloadWrite> derived, const TerrainRegionWrites &regions)
+    uint64_t TerrainPayloadsHash(std::span<const TerrainLayout> layers, std::span<const TerrainTileWrite> tiles,
+                                 std::span<const TerrainPayloadWrite> derived, const TerrainRegionWrites &regions)
     {
         if (layers.empty())
             return 0;
@@ -101,9 +101,16 @@ namespace mir
             r.checksum = Fnv1a64(EncodePayload(*v.heights));
             records.push_back(r);
         }
-        for(const auto &v:derived){auto r=v.record;r.checksum=Fnv1a64(v.bytes);records.push_back(r);}
-        std::sort(records.begin(),records.end(),[](const auto &a,const auto &b){
-            return std::tuple(a.tile.z,a.tile.x,a.kind,a.level,a.layer)<std::tuple(b.tile.z,b.tile.x,b.kind,b.level,b.layer);});
+        for (const auto &v : derived)
+        {
+            auto r = v.record;
+            r.checksum = Fnv1a64(v.bytes);
+            records.push_back(r);
+        }
+        std::sort(records.begin(), records.end(), [](const auto &a, const auto &b) {
+            return std::tuple(a.tile.z, a.tile.x, a.kind, a.level, a.layer) <
+                   std::tuple(b.tile.z, b.tile.x, b.kind, b.level, b.layer);
+        });
         const auto ordered = detail::OrderRegionWrites(regions, layers.front());
         if (!ordered)
             return 0;
@@ -150,9 +157,11 @@ namespace mir
     }
 
     TerrainResult<TerrainEncodedRelease> EncodeTerrainRelease(const TerrainReleaseInfo &info,
-        std::span<const TerrainLayout> layers, std::span<const TerrainTileWrite> tiles,
-        std::span<const TerrainPayloadWrite> derived, const TerrainRegionWrites &regions,
-        const TerrainPackWriteOptions &options)
+                                                              std::span<const TerrainLayout> layers,
+                                                              std::span<const TerrainTileWrite> tiles,
+                                                              std::span<const TerrainPayloadWrite> derived,
+                                                              const TerrainRegionWrites &regions,
+                                                              const TerrainPackWriteOptions &options)
     {
         using Code = TerrainPackErrorCode;
         using R = TerrainEncodedRelease;
@@ -293,7 +302,8 @@ namespace mir
                 const TerrainPayloadWrite &input = region ? regionInputs[t - inputs.size()] : inputs[t];
                 TerrainTileRecord &record = region ? regionRecords[t - inputs.size()] : records[t];
                 record = input.record;
-                record.pack=packIndex;record.offset=out.Size();
+                record.pack = packIndex;
+                record.offset = out.Size();
                 out.Bytes(input.bytes);
             }
 
@@ -366,7 +376,10 @@ namespace mir
             out.U32(r.maxDeviation ? 1 : 0);
             out.U32(0);
             out.F64(r.maxDeviation.value_or(0.0));
-            out.U64(r.sourceChecksum);out.U64(r.topologyHash);out.U32(r.vertexCount);out.U32(r.indexCount);
+            out.U64(r.sourceChecksum);
+            out.U64(r.topologyHash);
+            out.U32(r.vertexCount);
+            out.U32(r.indexCount);
         };
         for (const TerrainTileRecord &r : records)
             writeRecord(r);

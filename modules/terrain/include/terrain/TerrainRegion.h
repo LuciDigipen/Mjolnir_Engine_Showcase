@@ -87,4 +87,4 @@ namespace mir
     // triangle overlay. nullopt when a source is missing or a value cannot be enclosed.
     std::optional<double> TerrainRegionDeviation(const TerrainRegionGrid &grid, const TerrainRegionMesh &mesh,
                                                  const TerrainSourceLookup &sources);
-}
+} // namespace mir

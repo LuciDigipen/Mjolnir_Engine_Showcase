@@ -51,15 +51,15 @@ namespace mir::terrainbake
     // Evaluates a Region mesh by locating the cell first; origin-relative x, z.
     class TerrainRegionSampler
     {
-    public:
+      public:
         TerrainRegionSampler(const TerrainRegionGrid &grid, const TerrainRegionMesh &mesh);
 
         std::optional<double> HeightAt(double x, double z) const;
 
-    private:
+      private:
         const TerrainRegionMesh &mMesh;
         std::vector<double> mLinesX;
         std::vector<double> mLinesZ;
         std::vector<std::vector<uint32_t>> mCells;
     };
-}
+} // namespace mir::terrainbake

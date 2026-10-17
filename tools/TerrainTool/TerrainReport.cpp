@@ -227,8 +227,9 @@ namespace mir::terrainbake
                                    {"bytes", s.bytes},
                                    {"maxDeviation", s.maxDeviation},
                                    {"readable", s.readable}});
-            j["regions"] = {{"regionTiles", g.regionTiles}, {"cells", g.cells},          {"unit", g.unit},
-                            {"levels", g.levels},           {"levelZeroEdge", g.levelZeroEdge}, {"records", records}};
+            j["regions"] = {
+                {"regionTiles", g.regionTiles},     {"cells", g.cells},  {"unit", g.unit}, {"levels", g.levels},
+                {"levelZeroEdge", g.levelZeroEdge}, {"records", records}};
         }
         j["sourceEstimates"] = Json::array();
         for (const auto &estimate : r.sourceEstimates)

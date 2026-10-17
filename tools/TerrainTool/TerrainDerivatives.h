@@ -28,5 +28,7 @@ namespace mir::terrainbake
         std::optional<TerrainRegionBake> regions;
     };
     std::optional<TerrainDerivatives> BakeTerrainDerivatives(const TerrainRecipe &recipe,
-        std::span<const TileHeights> finalHeights, std::string &error, const TerrainRegionSettings *regions = nullptr);
+                                                             std::span<const TileHeights> finalHeights,
+                                                             std::string &error,
+                                                             const TerrainRegionSettings *regions = nullptr);
 }

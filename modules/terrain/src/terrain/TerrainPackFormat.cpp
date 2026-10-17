@@ -140,8 +140,8 @@ namespace mir
             h.layerCount = LoadU32(bytes, 120);
             h.layerRecordSize = LoadU32(bytes, 124);
             if (h.layerCount == 0 || h.layerRecordSize < kTerrainLayerRecordSize || h.layerRecordSize % 8 != 0)
-                return Fail<Header>(Code::Malformed, "layer count {} or record size {} is invalid",
-                                    h.layerCount, h.layerRecordSize);
+                return Fail<Header>(Code::Malformed, "layer count {} or record size {} is invalid", h.layerCount,
+                                    h.layerRecordSize);
             if (h.minor >= 2)
             {
                 h.regionCount = LoadU32(bytes, 128);
@@ -151,13 +151,15 @@ namespace mir
                 h.regionUnit = LoadU32(bytes, 144);
                 h.regionLevels = LoadU32(bytes, 148);
                 if (h.regionRecordSize < kTerrainTileRecordSize || h.regionRecordSize % 8 != 0)
-                    return Fail<Header>(Code::Malformed, "Region record size {} is invalid (needs >= {}, a multiple of 8)",
+                    return Fail<Header>(Code::Malformed,
+                                        "Region record size {} is invalid (needs >= {}, a multiple of 8)",
                                         h.regionRecordSize, kTerrainTileRecordSize);
                 if (h.regionTiles == 0 &&
                     (h.regionCount != 0 || h.regionCells != 0 || h.regionUnit != 0 || h.regionLevels != 0))
-                    return Fail<Header>(Code::Malformed, "an index without Regions has Region count {}, cells {}, "
-                                        "unit {} or levels {}", h.regionCount, h.regionCells, h.regionUnit,
-                                        h.regionLevels);
+                    return Fail<Header>(Code::Malformed,
+                                        "an index without Regions has Region count {}, cells {}, "
+                                        "unit {} or levels {}",
+                                        h.regionCount, h.regionCells, h.regionUnit, h.regionLevels);
             }
 
             if (!IsPowerOfTwo(h.alignment) || h.alignment > kMaxTerrainPayloadAlignment)
@@ -322,8 +324,10 @@ namespace mir
             const std::string name = DescribeRegion(want);
             const TerrainRegionCoord have{r.level, r.tile.x, r.tile.z};
             if (have != want)
-                return Error(Code::Malformed, "Region records must list every Region once in (level, z, x) order: "
-                             "{} is where {} belongs", DescribeRegion(have), name);
+                return Error(Code::Malformed,
+                             "Region records must list every Region once in (level, z, x) order: "
+                             "{} is where {} belongs",
+                             DescribeRegion(have), name);
             if (r.kind != TerrainPayloadKind::Region || r.layer != 0 || r.source)
                 return Error(Code::Malformed, "{}: kind, layer or source flag is not a Region's", name);
             if (r.samplesPerSide != grid.SamplesPerSide(want.level) || r.sampleSpacing != grid.CellSpacing(want.level))
@@ -369,7 +373,7 @@ namespace mir
         }
 
         uint64_t HeightsHashOf(std::span<const TerrainTileRecord> tiles, std::span<const TerrainTileRecord> regions)
-            {
+        {
             std::vector<std::byte> bytes;
             bytes.reserve((tiles.size() + regions.size()) * 56);
             LeWriter out(bytes);
@@ -626,10 +630,13 @@ namespace mir
         {
             regionGrid = TerrainRegionGrid::Create(*layout, h.regionTiles, h.regionCells, h.regionUnit);
             if (!regionGrid)
-                return Fail<R>(Code::Malformed, "Region grid of {} tiles, {} cells and unit {} does not fit the "
-                               "reference grid", h.regionTiles, h.regionCells, h.regionUnit);
+                return Fail<R>(Code::Malformed,
+                               "Region grid of {} tiles, {} cells and unit {} does not fit the "
+                               "reference grid",
+                               h.regionTiles, h.regionCells, h.regionUnit);
             if (regionGrid->Levels() != h.regionLevels || regionGrid->RegionCount() != h.regionCount)
-                return Fail<R>(Code::Malformed, "the header lists {} Region levels and {} Regions, the grid has {} and {}",
+                return Fail<R>(Code::Malformed,
+                               "the header lists {} Region levels and {} Regions, the grid has {} and {}",
                                h.regionLevels, h.regionCount, regionGrid->Levels(), regionGrid->RegionCount());
             std::vector<TerrainSourceChecksum> sourceChecksums;
             for (const TerrainTileRecord &r : tiles)
@@ -686,7 +693,7 @@ namespace mir
             byOffset.push_back(&r);
         std::sort(byOffset.begin(), byOffset.end(), [](const TerrainTileRecord *a, const TerrainTileRecord *b) {
             return a->pack != b->pack ? a->pack < b->pack : a->offset < b->offset;
-                  });
+        });
         for (size_t i = 1; i < byOffset.size(); ++i)
         {
             const TerrainTileRecord &a = *byOffset[i - 1];

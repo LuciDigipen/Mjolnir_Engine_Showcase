@@ -47,7 +47,10 @@ namespace mir::terrainbake
             TerrainRegionMesh mesh;
             std::map<std::pair<int64_t, int64_t>, uint32_t> ids;
 
-            const TerrainLayout &Ref() const { return grid.Reference(); }
+            const TerrainLayout &Ref() const
+            {
+                return grid.Reference();
+            }
 
             // The tile holding a sample, the larger index on an edge, kept inside the map.
             const TileHeights &TileAt(int64_t ix, int64_t iz) const
@@ -141,14 +144,14 @@ namespace mir::terrainbake
             // An edge with a neighbouring Region keeps every source node beside it.
             const bool left = region.x > 0, right = region.x < count.x - 1;
             const bool bottom = region.z > 0, top = region.z < count.z - 1;
-            const std::vector<int64_t> leftNodes = left ? b.EdgeNodes(lx.front(), lz.front(), lz.back(), true)
-                                                        : std::vector<int64_t>{};
-            const std::vector<int64_t> rightNodes = right ? b.EdgeNodes(lx.back(), lz.front(), lz.back(), true)
-                                                          : std::vector<int64_t>{};
-            const std::vector<int64_t> bottomNodes = bottom ? b.EdgeNodes(lz.front(), lx.front(), lx.back(), false)
-                                                            : std::vector<int64_t>{};
-            const std::vector<int64_t> topNodes = top ? b.EdgeNodes(lz.back(), lx.front(), lx.back(), false)
-                                                      : std::vector<int64_t>{};
+            const std::vector<int64_t> leftNodes =
+                left ? b.EdgeNodes(lx.front(), lz.front(), lz.back(), true) : std::vector<int64_t>{};
+            const std::vector<int64_t> rightNodes =
+                right ? b.EdgeNodes(lx.back(), lz.front(), lz.back(), true) : std::vector<int64_t>{};
+            const std::vector<int64_t> bottomNodes =
+                bottom ? b.EdgeNodes(lz.front(), lx.front(), lx.back(), false) : std::vector<int64_t>{};
+            const std::vector<int64_t> topNodes =
+                top ? b.EdgeNodes(lz.back(), lx.front(), lx.back(), false) : std::vector<int64_t>{};
             auto between = [](const std::vector<int64_t> &nodes, int64_t from, int64_t to) {
                 const auto first = std::upper_bound(nodes.begin(), nodes.end(), from);
                 const auto last = std::lower_bound(nodes.begin(), nodes.end(), to);
@@ -183,7 +186,7 @@ namespace mir::terrainbake
             b.mesh.topologyHash = TerrainTopologyHash(b.mesh.positions, b.mesh.indices);
             return std::move(b.mesh);
         }
-    }
+    } // namespace
 
     std::optional<TerrainRegionBake> BakeTerrainRegions(const TerrainRecipe &recipe,
                                                         std::span<const TileHeights> heights,
@@ -242,8 +245,8 @@ namespace mir::terrainbake
             if (region.x == 0 && region.z == 0)
                 levelChecksums = TerrainRegionSourceChecksums(*grid, region.level, checksums);
             TerrainRegionMesh mesh = BuildRegion(final, *grid, region);
-            mesh.sourceChecksum = levelChecksums[size_t(region.z) * size_t(grid->Count(region.level).x) +
-                                                 size_t(region.x)];
+            mesh.sourceChecksum =
+                levelChecksums[size_t(region.z) * size_t(grid->Count(region.level).x) + size_t(region.x)];
             const std::string name = std::format("Region L{} ({}, {})", region.level, region.x, region.z);
             if (mesh.positions.size() > UINT32_MAX || mesh.indices.size() > UINT32_MAX ||
                 !TerrainRegionCoversDomain(*grid, mesh))
@@ -338,4 +341,4 @@ namespace mir::terrainbake
         }
         return std::nullopt;
     }
-}
+} // namespace mir::terrainbake

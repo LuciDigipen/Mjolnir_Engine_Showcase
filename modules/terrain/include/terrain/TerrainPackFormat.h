@@ -159,8 +159,7 @@ namespace mir
         const TerrainTileRecord *Find(TileCoord tile) const;
         // Kind Region names a Region by its x, z in tile and its level, with layer 0.
         const TerrainTileRecord *Find(TileCoord tile, uint32_t layer,
-                                       TerrainPayloadKind kind = TerrainPayloadKind::Height,
-                                       uint32_t level = 0) const;
+                                      TerrainPayloadKind kind = TerrainPayloadKind::Height, uint32_t level = 0) const;
         const TerrainTileRecord *FindRegion(TerrainRegionCoord region) const;
     };
 

@@ -82,7 +82,7 @@ namespace
         REQUIRE(mesh);
         return *mesh.value;
     }
-}
+} // namespace
 
 TEST_CASE("Level zero Regions sit on the tile-zero grid and each level doubles until one covers the map",
           "[terrain][region]")
@@ -237,8 +237,7 @@ TEST_CASE("A release reads each Region by level and coordinate in one range and 
         CHECK(ReadOk(handle, tile.Tile()) == tile);
 }
 
-TEST_CASE("Region meshes cover their domains and bound their distance to the final surface",
-          "[terrain][region][error]")
+TEST_CASE("Region meshes cover their domains and bound their distance to the final surface", "[terrain][region][error]")
 {
     for (const TerrainLayout &layout : {EdgeLayout(), ReliefLayout()})
         for (const uint32_t regionTiles : {1u, 2u, 16u})
@@ -299,8 +298,8 @@ TEST_CASE("A Region error bound over whole aligned cells is attained at a source
                 const SurfaceSample final =
                     EvaluateSurface(*layout, *TerrainLocalPosition::FromMeters({x, 0.0, z}), LookupOf(r.tiles));
                 REQUIRE(final.IsOk());
-                nodes = std::max(nodes, std::abs(*EvaluateTerrainRegion(mesh, x - origin.x, z - origin.z) -
-                                                 final.height));
+                nodes =
+                    std::max(nodes, std::abs(*EvaluateTerrainRegion(mesh, x - origin.x, z - origin.z) - final.height));
             }
         CHECK(nodes > 0.0);
         CHECK(nodes <= mesh.maxDeviation);
@@ -379,8 +378,8 @@ TEST_CASE("Malformed Region tables are refused before any Region is read", "[ter
         refused([&](auto &b) { StoreU64(b, first + 16, 16); }, Code::Malformed, "pack header");
         refused([&](auto &b) { StoreU64(b, first + 16, (index.packs[region.pack].fileSize + 15) / 16 * 16); },
                 Code::Malformed, "ends past");
-        refused([&](auto &b) { StoreU64(b, first + 16, std::numeric_limits<uint64_t>::max() - 15); },
-                Code::Malformed, "ends past");
+        refused([&](auto &b) { StoreU64(b, first + 16, std::numeric_limits<uint64_t>::max() - 15); }, Code::Malformed,
+                "ends past");
         const TerrainTileRecord *neighbour = nullptr;
         for (const TerrainTileRecord &t : index.tiles)
             if (t.pack == region.pack)

@@ -255,8 +255,9 @@ namespace mir::test
                         mesh.indices.push_back(id);
                 }
             mesh.topologyHash = TerrainTopologyHash(mesh.positions, mesh.indices);
-            mesh.sourceChecksum = TerrainRegionSourceChecksums(*grid, region.level, checksums)
-                [size_t(region.z) * size_t(grid->Count(region.level).x) + size_t(region.x)];
+            mesh.sourceChecksum = TerrainRegionSourceChecksums(
+                *grid, region.level,
+                checksums)[size_t(region.z) * size_t(grid->Count(region.level).x) + size_t(region.x)];
             const std::optional<double> deviation = TerrainRegionDeviation(*grid, mesh, sources);
             REQUIRE(deviation);
             mesh.maxDeviation = *deviation;

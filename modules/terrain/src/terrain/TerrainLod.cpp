@@ -304,8 +304,9 @@ namespace mir
         }
         return {};
     }
-    std::optional<double> detail::OverlayDeviation(const TerrainLayout &layout,const TileHeights &source,
-        TileCoord tile,std::span<const glm::dvec3> positions,std::span<const uint32_t> indices,bool requireCover)
+    std::optional<double> detail::OverlayDeviation(const TerrainLayout &layout, const TileHeights &source,
+                                                   TileCoord tile, std::span<const glm::dvec3> positions,
+                                                   std::span<const uint32_t> indices, bool requireCover)
     {
         if (source.Tile() != tile || source.IntervalsPerTile() != layout.IntervalsPerTile() || indices.size() % 3)
             return {};
@@ -336,7 +337,8 @@ namespace mir
             meshMinZ = std::min(meshMinZ, v.z);
             meshMaxZ = std::max(meshMaxZ, v.z);
         }
-        if(requireCover&&(meshMinX>minX||meshMaxX<maxX||meshMinZ>minZ||meshMaxZ<maxZ))return {};
+        if (requireCover && (meshMinX > minX || meshMaxX < maxX || meshMinZ > minZ || meshMaxZ < maxZ))
+            return {};
         double bound = 0, maxHeight = 1, maxCondition = 1;
         for (float h : source.Samples())
         {
@@ -461,8 +463,10 @@ namespace mir
     std::optional<double> TerrainLodDeviation(const TerrainLayout &layout, const TileHeights &source,
                                               const TerrainLodSurface &lod)
     {
-        std::vector<glm::dvec3> positions;for(auto p:lod.positions)positions.emplace_back(p);
-        return detail::OverlayDeviation(layout,source,lod.tile,positions,lod.indices,true);
+        std::vector<glm::dvec3> positions;
+        for (auto p : lod.positions)
+            positions.emplace_back(p);
+        return detail::OverlayDeviation(layout, source, lod.tile, positions, lod.indices, true);
     }
     std::optional<double> TerrainRegularDeviation(const TerrainLayout &sourceLayout, const TileHeights &source,
                                                   const TerrainLayout &queryLayout, const TileHeights &query)
@@ -488,6 +492,6 @@ namespace mir
                 for (auto id : {a, d, c, a, c, b})
                     indices.push_back(id);
             }
-        return detail::OverlayDeviation(sourceLayout,source,tile,positions,indices,true);
+        return detail::OverlayDeviation(sourceLayout, source, tile, positions, indices, true);
     }
 }

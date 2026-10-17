@@ -67,8 +67,10 @@ namespace mir
             const TerrainLayout &ref = grid.Reference();
             const SampleRange domain = grid.Domain(region);
             const TerrainLocalBounds rect = grid.Rect(region);
-            return {float(ref.SamplePosition(domain.min.x) - rect.minX), float(ref.SamplePosition(domain.min.z) - rect.minZ),
-                    float(ref.SamplePosition(domain.max.x) - rect.minX), float(ref.SamplePosition(domain.max.z) - rect.minZ)};
+            return {float(ref.SamplePosition(domain.min.x) - rect.minX),
+                    float(ref.SamplePosition(domain.min.z) - rect.minZ),
+                    float(ref.SamplePosition(domain.max.x) - rect.minX),
+                    float(ref.SamplePosition(domain.max.z) - rect.minZ)};
         }
 
         // Source node indices of a tile-local coordinate, when it is one exactly.
@@ -79,7 +81,7 @@ namespace mir
                 return std::nullopt;
             return i;
         }
-    }
+    } // namespace
 
     std::vector<uint64_t> TerrainRegionSourceChecksums(const TerrainRegionGrid &grid, uint32_t level,
                                                        std::span<const TerrainSourceChecksum> sources)
@@ -150,7 +152,8 @@ namespace mir
     std::vector<std::byte> EncodeTerrainRegion(const TerrainRegionMesh &mesh)
     {
         std::vector<std::byte> bytes;
-        bytes.reserve(size_t(TerrainRegionPayloadLength(uint32_t(mesh.positions.size()), uint32_t(mesh.indices.size()))));
+        bytes.reserve(
+            size_t(TerrainRegionPayloadLength(uint32_t(mesh.positions.size()), uint32_t(mesh.indices.size()))));
         detail::LeWriter out(bytes);
         out.U32(kRegionMagic);
         out.U32(kTerrainRegionContentVersion);
@@ -213,10 +216,11 @@ namespace mir
         if (LoadU32(bytes, 8) != region.level || LoadI32(bytes, 12) != region.x || LoadI32(bytes, 16) != region.z ||
             LoadU32(bytes, 20) != 0 || LoadF64(bytes, 24) != rect.minX || LoadF64(bytes, 32) != rect.minZ ||
             LoadF64(bytes, 40) != record.sampleSpacing || LoadI32(bytes, 48) != tiles.min.x ||
-            LoadI32(bytes, 52) != tiles.min.z || LoadI32(bytes, 56) != tiles.max.x || LoadI32(bytes, 60) != tiles.max.z ||
-            LoadU64(bytes, 64) != record.sourceChecksum || LoadU64(bytes, 72) != record.topologyHash ||
-            vertexCount != record.vertexCount || indexCount != record.indexCount || !record.maxDeviation ||
-            LoadF64(bytes, 88) != *record.maxDeviation || LoadU64(bytes, 96) != 0 || LoadU64(bytes, 104) != 0)
+            LoadI32(bytes, 52) != tiles.min.z || LoadI32(bytes, 56) != tiles.max.x ||
+            LoadI32(bytes, 60) != tiles.max.z || LoadU64(bytes, 64) != record.sourceChecksum ||
+            LoadU64(bytes, 72) != record.topologyHash || vertexCount != record.vertexCount ||
+            indexCount != record.indexCount || !record.maxDeviation || LoadF64(bytes, 88) != *record.maxDeviation ||
+            LoadU64(bytes, 96) != 0 || LoadU64(bytes, 104) != 0)
             return Fail<R>(Code::Corrupt, "{}: payload header differs from its index record and grid", name);
         if (vertexCount < 3 || indexCount < 3 || indexCount % 3 != 0 ||
             TerrainRegionPayloadLength(vertexCount, indexCount) != bytes.size())
@@ -230,7 +234,8 @@ namespace mir
         mesh.sourceChecksum = record.sourceChecksum;
         mesh.topologyHash = record.topologyHash;
         mesh.maxDeviation = *record.maxDeviation;
-        const std::optional<TerrainLocalPosition> origin = TerrainLocalPosition::FromMeters({rect.minX, 0.0, rect.minZ});
+        const std::optional<TerrainLocalPosition> origin =
+            TerrainLocalPosition::FromMeters({rect.minX, 0.0, rect.minZ});
         if (!origin)
             return Fail<R>(Code::Corrupt, "{}: origin is not finite", name);
         mesh.origin = *origin;
@@ -496,4 +501,4 @@ namespace mir
             return std::nullopt;
         return bound;
     }
-}
+} // namespace mir

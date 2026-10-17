@@ -63,7 +63,7 @@ namespace
                         (mesh.region.z > 0 && p.z == bottom) || (mesh.region.z < count.z - 1 && p.z == top);
         return boundary;
     }
-}
+} // namespace
 
 int main(int argc, char **argv)
 {
@@ -146,11 +146,16 @@ int main(int argc, char **argv)
 
             const TerrainRegionGrid &grid = *bake->writes.grid;
             const double edge = recipe.layout.TileSize() * regionTiles;
-            Json config = {{"regionTiles", regionTiles}, {"levelZeroEdge", edge}, {"cells", cells},
-                           {"unit", grid.Unit()},          {"levels", grid.Levels()},
-                           {"regions", grid.RegionCount()}, {"bakeSeconds", bakeSeconds},
+            Json config = {{"regionTiles", regionTiles},
+                           {"levelZeroEdge", edge},
+                           {"cells", cells},
+                           {"unit", grid.Unit()},
+                           {"levels", grid.Levels()},
+                           {"regions", grid.RegionCount()},
+                           {"bakeSeconds", bakeSeconds},
                            {"payloadHash", std::format("{:016x}", Fnv1a64(all))},
-                           {"repeatsBitForBit", all == repeated}, {"levelStats", Json::array()}};
+                           {"repeatsBitForBit", all == repeated},
+                           {"levelStats", Json::array()}};
             uint64_t totalBytes = 0;
             std::mt19937 random(124);
             for (uint32_t level = 0; level < grid.Levels(); ++level)

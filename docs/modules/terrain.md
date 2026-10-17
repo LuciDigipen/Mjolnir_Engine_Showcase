@@ -292,7 +292,7 @@ without its finest level. The edge polylines add about 29k vertices to the
 4096 m square of 8 m tiles at their coarsest LOD has 256 x 33^2 = 278784
 vertices; a 128-cell level 0 Region has 14 times fewer.
 
-`TerrainRenderProbe --regions` renders the same map (RTX 3070 Laptop, 1280 x
+The local `TerrainRenderProbe --regions` prototype rendered the same map (RTX 3070 Laptop, 1280 x
 720, 60 degree vertical field of view) from 3000 m up looking at the far
 corner, from 90 m on a shallow approach, and straight down from 3500 m with
 only terrain in view, against all 4096 tiles at their source LOD (5.8 M
@@ -304,7 +304,8 @@ pixels of silhouette change; 64 cells reach 0.75 and 2.05 px, 256 cells 0.23
 and 0.41 px with 8% to 19% more vertices. With 8192 m the same rule refines
 every Region of this 16 km map down to tiles. The straight-down view has no
 background pixel in any selection, including tile, level 0 and level 1
-borders, so the edges are crack-free on the GPU too.
+borders, so the edges are crack-free on the GPU too. The GPU probe is local
+measurement tooling; the optional CPU comparison above is included in this branch.
 
 **Choice: level 0 = 4096 m (16 tiles), 128 cells.** At 1280 x 720 and a 60
 degree field of view, the 5.8 m bound projects to one pixel at about 3.6 km,

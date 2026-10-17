@@ -27,14 +27,14 @@ namespace mir
         }
 
         constexpr int64_t kExactSampleLimit = int64_t(1) << 53;
-    }
+    } // namespace
 
     std::optional<TerrainRegionGrid> TerrainRegionGrid::Create(const TerrainLayout &reference, uint32_t regionTiles,
                                                                uint32_t cells, uint32_t unit)
     {
         const int64_t n = reference.IntervalsPerTile();
-        if (regionTiles < 1 || regionTiles > (1u << 20) || cells < 1 || cells > kMaxTerrainRegionCells ||
-            unit < 1 || n % unit != 0)
+        if (regionTiles < 1 || regionTiles > (1u << 20) || cells < 1 || cells > kMaxTerrainRegionCells || unit < 1 ||
+            n % unit != 0)
             return std::nullopt;
 
         TerrainRegionGrid grid(reference);
@@ -70,10 +70,10 @@ namespace mir
         }
 
         const TerrainLocalBounds &b = reference.Bounds();
-        grid.mMeshed = {{detail::LocateAxis(reference, b.minX, b.maxX).cell,
-                         detail::LocateAxis(reference, b.minZ, b.maxZ).cell},
-                        {detail::LocateAxis(reference, b.maxX, b.maxX).cell + 1,
-                         detail::LocateAxis(reference, b.maxZ, b.maxZ).cell + 1}};
+        grid.mMeshed = {
+            {detail::LocateAxis(reference, b.minX, b.maxX).cell, detail::LocateAxis(reference, b.minZ, b.maxZ).cell},
+            {detail::LocateAxis(reference, b.maxX, b.maxX).cell + 1,
+             detail::LocateAxis(reference, b.maxZ, b.maxZ).cell + 1}};
         return grid;
     }
 
@@ -229,4 +229,4 @@ namespace mir
                a.Bounds() == b.Bounds() && mRegionTiles == other.mRegionTiles && mCells == other.mCells &&
                mUnit == other.mUnit;
     }
-}
+} // namespace mir

@@ -83,14 +83,15 @@ namespace mir
     };
 
     TerrainResult<TerrainEncodedRelease> EncodeTerrainRelease(const TerrainReleaseInfo &info,
-        std::span<const TerrainLayout> layers, std::span<const TerrainTileWrite> tiles,
-        std::span<const TerrainPayloadWrite> derived, const TerrainRegionWrites &regions,
-        const TerrainPackWriteOptions &options = {});
+                                                              std::span<const TerrainLayout> layers,
+                                                              std::span<const TerrainTileWrite> tiles,
+                                                              std::span<const TerrainPayloadWrite> derived,
+                                                              const TerrainRegionWrites &regions,
+                                                              const TerrainPackWriteOptions &options = {});
     uint64_t TerrainPayloadsHash(std::span<const TerrainLayout> layers, std::span<const TerrainTileWrite> tiles,
-                                std::span<const TerrainPayloadWrite> derived, const TerrainRegionWrites &regions);
+                                 std::span<const TerrainPayloadWrite> derived, const TerrainRegionWrites &regions);
 
-    uint64_t TerrainHeightsHash(std::span<const TerrainLayout> layers,
-                                std::span<const TerrainTileWrite> tiles);
+    uint64_t TerrainHeightsHash(std::span<const TerrainLayout> layers, std::span<const TerrainTileWrite> tiles);
 
     TerrainResult<TerrainEncodedRelease> EncodeTerrainRelease(const TerrainReleaseInfo &info,
                                                               const TerrainLayout &layout,

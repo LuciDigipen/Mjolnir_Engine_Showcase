@@ -37,27 +37,54 @@ namespace mir
     // multiples of Unit() reference intervals.
     class TerrainRegionGrid
     {
-    public:
+      public:
         // Refuses a unit that does not divide the tile, and Regions past int32 tiles or 2^53 samples.
         [[nodiscard]] static std::optional<TerrainRegionGrid> Create(const TerrainLayout &reference,
                                                                      uint32_t regionTiles, uint32_t cells,
                                                                      uint32_t unit);
 
-        const TerrainLayout &Reference() const { return mReference; }
-        uint32_t RegionTiles() const { return mRegionTiles; }
-        uint32_t Cells() const { return mCells; }
-        uint32_t Unit() const { return mUnit; }
-        uint32_t Levels() const { return static_cast<uint32_t>(mCounts.size()); }
-        TileCoord FirstTile() const { return mFirstTile; }
+        const TerrainLayout &Reference() const
+        {
+            return mReference;
+        }
+        uint32_t RegionTiles() const
+        {
+            return mRegionTiles;
+        }
+        uint32_t Cells() const
+        {
+            return mCells;
+        }
+        uint32_t Unit() const
+        {
+            return mUnit;
+        }
+        uint32_t Levels() const
+        {
+            return static_cast<uint32_t>(mCounts.size());
+        }
+        TileCoord FirstTile() const
+        {
+            return mFirstTile;
+        }
         // Regions per axis.
-        TileCoord Count(uint32_t level) const { return mCounts[level]; }
-        uint64_t RegionCount() const { return mOrdinals.back(); }
+        TileCoord Count(uint32_t level) const
+        {
+            return mCounts[level];
+        }
+        uint64_t RegionCount() const
+        {
+            return mOrdinals.back();
+        }
         bool Contains(TerrainRegionCoord region) const;
         // Position in (level, z, x) order; region must be contained.
         uint64_t Ordinal(TerrainRegionCoord region) const;
         TerrainRegionCoord AtOrdinal(uint64_t ordinal) const;
 
-        int64_t EdgeTiles(uint32_t level) const { return int64_t(mRegionTiles) << level; }
+        int64_t EdgeTiles(uint32_t level) const
+        {
+            return int64_t(mRegionTiles) << level;
+        }
         // May reach past the map.
         TileRange Tiles(TerrainRegionCoord region) const;
         TileRange MapTiles(TerrainRegionCoord region) const;
@@ -79,7 +106,7 @@ namespace mir
 
         bool SameGrid(const TerrainRegionGrid &other) const;
 
-    private:
+      private:
         TerrainRegionGrid(const TerrainLayout &reference) : mReference(reference) {}
 
         int64_t FirstSampleX(TerrainRegionCoord region) const;
@@ -97,10 +124,9 @@ namespace mir
         // Regions before each level; one past the last level is the total.
         std::vector<uint64_t> mOrdinals;
     };
-}
+} // namespace mir
 
-template <>
-struct std::hash<mir::TerrainRegionCoord>
+template <> struct std::hash<mir::TerrainRegionCoord>
 {
     size_t operator()(const mir::TerrainRegionCoord &region) const noexcept
     {

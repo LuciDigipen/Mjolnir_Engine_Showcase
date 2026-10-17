@@ -120,7 +120,8 @@ namespace mir::terrainbake
         }
     }
     std::optional<TerrainDerivatives> BakeTerrainDerivatives(const TerrainRecipe &recipe,
-        std::span<const TileHeights> heights,std::string &error,const TerrainRegionSettings *regions)
+                                                             std::span<const TileHeights> heights, std::string &error,
+                                                             const TerrainRegionSettings *regions)
     {
         TerrainDerivatives result;
         result.layers.push_back(recipe.layout);
@@ -255,7 +256,8 @@ namespace mir::terrainbake
                 result.queryErrors.push_back(*queryBound);
             }
         }
-        if(regions&&!(result.regions=BakeTerrainRegions(recipe,heights,*regions,error)))return {};
+        if (regions && !(result.regions = BakeTerrainRegions(recipe, heights, *regions, error)))
+            return {};
         return result;
     }
 }
