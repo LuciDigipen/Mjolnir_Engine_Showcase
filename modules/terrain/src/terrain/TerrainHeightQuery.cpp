@@ -328,7 +328,8 @@ namespace mir
     std::vector<TerrainPayloadRequest> TerrainHeightQuery::TakeUsedTiles()
     {
         for (const TerrainPayloadRequest &used : mUsed)
-            if (const auto slot = mLayers[used.layer].slots.find(used.tile.coord); slot != mLayers[used.layer].slots.end())
+            if (const auto slot = mLayers[used.layer].slots.find(used.tile.coord);
+                slot != mLayers[used.layer].slots.end())
                 slot->second.used = false;
         return std::exchange(mUsed, {});
     }

@@ -86,4 +86,4 @@ namespace mir
     // The game file is required; the local file is optional and replaces values key by key.
     TerrainStreamingSettingsLoad LoadTerrainStreamingSettings(const std::filesystem::path &gameFile,
                                                               const std::filesystem::path &localFile);
-}
+} // namespace mir

@@ -129,7 +129,7 @@ namespace mir
     // into one read and one shared payload; only the jobs it posts touch byte sources.
     class TerrainStreamer
     {
-    public:
+      public:
         // Monotonic seconds; the default counts from construction.
         using Clock = std::function<double()>;
 
@@ -176,19 +176,20 @@ namespace mir
 
         TerrainStreamingStats Stats() const;
 
-    private:
+      private:
         struct Impl;
         std::unique_ptr<Impl> mImpl;
     };
-}
+} // namespace mir
 
-template <>
-struct std::hash<mir::TerrainPayloadKey>
+template <> struct std::hash<mir::TerrainPayloadKey>
 {
     size_t operator()(const mir::TerrainPayloadKey &key) const noexcept
     {
         size_t h = std::hash<uint64_t>{}(key.asset.value);
-        const auto mix = [&h](uint64_t v) { h ^= std::hash<uint64_t>{}(v) + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2); };
+        const auto mix = [&h](uint64_t v) {
+            h ^= std::hash<uint64_t>{}(v) + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+        };
         mix(key.release.value);
         mix((uint64_t(uint32_t(key.kind)) << 32) | key.level);
         mix(key.layer);

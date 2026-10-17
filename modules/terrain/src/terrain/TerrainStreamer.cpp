@@ -37,9 +37,9 @@ namespace mir
         using detail::Error;
         using detail::Hex;
         using SteadyClock = std::chrono::steady_clock;
-        using Payload = std::variant<std::monostate, std::shared_ptr<const TileHeights>,
-                                     std::shared_ptr<const TerrainLodSurface>, std::shared_ptr<const TerrainLodNormals>,
-                                     std::shared_ptr<const TerrainRegionMesh>>;
+        using Payload =
+            std::variant<std::monostate, std::shared_ptr<const TileHeights>, std::shared_ptr<const TerrainLodSurface>,
+                         std::shared_ptr<const TerrainLodNormals>, std::shared_ptr<const TerrainRegionMesh>>;
 
         double Seconds(SteadyClock::duration duration)
         {
@@ -81,8 +81,7 @@ namespace mir
             double decodeSeconds = 0.0;
         };
 
-        template <typename T>
-        void Keep(TerrainResult<T> decoded, Finished &out)
+        template <typename T> void Keep(TerrainResult<T> decoded, Finished &out)
         {
             if (decoded)
                 out.payload = std::make_shared<const T>(std::move(*decoded.value));
@@ -109,10 +108,18 @@ namespace mir
             const TerrainTileRecord &record = *job.record;
             switch (record.kind)
             {
-            case TerrainPayloadKind::Height: Keep(DecodeTerrainTile(index, record, *bytes.value), out); break;
-            case TerrainPayloadKind::LodHeight: Keep(DecodeTerrainLod(index, record, *bytes.value), out); break;
-            case TerrainPayloadKind::Normal: Keep(DecodeTerrainNormals(index, record, *bytes.value), out); break;
-            case TerrainPayloadKind::Region: Keep(DecodeTerrainRegion(index, record, *bytes.value), out); break;
+            case TerrainPayloadKind::Height:
+                Keep(DecodeTerrainTile(index, record, *bytes.value), out);
+                break;
+            case TerrainPayloadKind::LodHeight:
+                Keep(DecodeTerrainLod(index, record, *bytes.value), out);
+                break;
+            case TerrainPayloadKind::Normal:
+                Keep(DecodeTerrainNormals(index, record, *bytes.value), out);
+                break;
+            case TerrainPayloadKind::Region:
+                Keep(DecodeTerrainRegion(index, record, *bytes.value), out);
+                break;
             }
             out.decodeSeconds = Seconds(SteadyClock::now() - read);
             return out;
@@ -121,7 +128,7 @@ namespace mir
         // Shared with every posted job, so a job that runs after the streamer is gone finds a live queue.
         class WorkQueue
         {
-        public:
+          public:
             void Push(const Order &order, Job job)
             {
                 std::lock_guard lock(mMutex);
@@ -216,7 +223,7 @@ namespace mir
                 mFinished.clear();
             }
 
-        private:
+          private:
             std::mutex mMutex;
             std::condition_variable mReady;
             std::map<Order, Job> mPending;
@@ -225,13 +232,12 @@ namespace mir
             bool mClosed = false;
         };
 
-        template <typename T>
-        std::shared_ptr<const T> As(const Payload &payload)
+        template <typename T> std::shared_ptr<const T> As(const Payload &payload)
         {
             const auto *held = std::get_if<std::shared_ptr<const T>>(&payload);
             return held ? *held : nullptr;
         }
-    }
+    } // namespace
 
     TerrainPayloadKey TerrainPayloadKeyOf(const TerrainReleaseInfo &release, const TerrainTileRecord &record)
     {
@@ -263,14 +269,16 @@ namespace mir
         const uint64_t indices = uint64_t(record.indexCount) * sizeof(uint32_t);
         switch (record.kind)
         {
-        case TerrainPayloadKind::Height:
-        {
+        case TerrainPayloadKind::Height: {
             const uint64_t side = uint64_t(std::max(record.samplesPerSide, 0));
             return sizeof(TileHeights) + side * side * sizeof(float);
         }
-        case TerrainPayloadKind::LodHeight: return sizeof(TerrainLodSurface) + vertices * sizeof(glm::vec3) + indices;
-        case TerrainPayloadKind::Normal: return sizeof(TerrainLodNormals) + vertices * sizeof(glm::vec3);
-        case TerrainPayloadKind::Region: return sizeof(TerrainRegionMesh) + 2 * vertices * sizeof(glm::vec3) + indices;
+        case TerrainPayloadKind::LodHeight:
+            return sizeof(TerrainLodSurface) + vertices * sizeof(glm::vec3) + indices;
+        case TerrainPayloadKind::Normal:
+            return sizeof(TerrainLodNormals) + vertices * sizeof(glm::vec3);
+        case TerrainPayloadKind::Region:
+            return sizeof(TerrainRegionMesh) + 2 * vertices * sizeof(glm::vec3) + indices;
         }
         return record.length;
     }
@@ -290,12 +298,12 @@ namespace mir
 
             bool Alive()
             {
-                std::erase_if(owners, [](const std::weak_ptr<TerrainResidentRelease> &owner) { return owner.expired(); });
+                std::erase_if(owners,
+                              [](const std::weak_ptr<TerrainResidentRelease> &owner) { return owner.expired(); });
                 return !owners.empty();
             }
 
-            template <typename F>
-            void ForEachQuery(F &&f)
+            template <typename F> void ForEachQuery(F &&f)
             {
                 for (const std::weak_ptr<TerrainResidentRelease> &weak : owners)
                     if (const std::shared_ptr<TerrainResidentRelease> owner = weak.lock())
@@ -350,7 +358,10 @@ namespace mir
             executor.reset();
         }
 
-        uint64_t Used() const { return resident + loading; }
+        uint64_t Used() const
+        {
+            return resident + loading;
+        }
 
         std::shared_ptr<ReleaseState> FindRelease(AssetId asset, TerrainReleaseId release) const
         {
@@ -417,7 +428,7 @@ namespace mir
             if (request.release != release.info.release || request.tile.asset != release.info.asset)
                 return;
             const TerrainPayloadKey key{release.info.asset, release.info.release, TerrainPayloadKind::Height, 0,
-                                        request.layer, request.tile.coord};
+                                        request.layer,      request.tile.coord};
             release.queryUses[key] = now;
             if (!asked)
                 return;
@@ -580,8 +591,9 @@ namespace mir
                     e.error = {};
                     resident += e.bytes;
                     if (const std::shared_ptr<const TileHeights> heights = As<TileHeights>(e.payload))
-                        e.release->ForEachQuery([&](TerrainHeightQuery &query)
-                                                { (void)query.Insert(e.release->info, e.key.layer, heights); });
+                        e.release->ForEachQuery([&](TerrainHeightQuery &query) {
+                            (void)query.Insert(e.release->info, e.key.layer, heights);
+                        });
                     continue;
                 }
 
@@ -600,8 +612,9 @@ namespace mir
                 e.state = TerrainPayloadState::Failed;
                 e.notBefore = now + settings.retry.failedHoldSeconds;
                 if (e.key.kind == TerrainPayloadKind::Height)
-                    e.release->ForEachQuery([&](TerrainHeightQuery &query)
-                                            { (void)query.MarkFailed(e.release->info, e.key.layer, e.key.coord, e.error); });
+                    e.release->ForEachQuery([&](TerrainHeightQuery &query) {
+                        (void)query.MarkFailed(e.release->info, e.key.layer, e.key.coord, e.error);
+                    });
             }
         }
 
@@ -655,8 +668,8 @@ namespace mir
             for (auto &[key, e] : entries)
             {
                 const bool lesser = !e.demand || *e.demand < below;
-                const bool movable = e.state == TerrainPayloadState::Ready ||
-                                     (e.state == TerrainPayloadState::Loading && e.demand);
+                const bool movable =
+                    e.state == TerrainPayloadState::Ready || (e.state == TerrainPayloadState::Loading && e.demand);
                 if (lesser && movable)
                 {
                     victims.push_back(&e);
@@ -665,20 +678,18 @@ namespace mir
             }
             if (!partial && freeable < need)
                 return;
-            std::sort(victims.begin(), victims.end(),
-                      [](const Entry *a, const Entry *b)
-                      {
-                          if (a->demand.has_value() != b->demand.has_value())
-                              return !a->demand.has_value();
-                          if (!a->demand)
-                              return std::tie(a->lastDemand, a->lastWanted, a->sequence) <
-                                     std::tie(b->lastDemand, b->lastWanted, b->sequence);
-                          if (*a->demand != *b->demand)
-                              return *a->demand < *b->demand;
-                          if (a->rank != b->rank)
-                              return a->rank > b->rank;
-                          return a->sequence > b->sequence;
-                      });
+            std::sort(victims.begin(), victims.end(), [](const Entry *a, const Entry *b) {
+                if (a->demand.has_value() != b->demand.has_value())
+                    return !a->demand.has_value();
+                if (!a->demand)
+                    return std::tie(a->lastDemand, a->lastWanted, a->sequence) <
+                           std::tie(b->lastDemand, b->lastWanted, b->sequence);
+                if (*a->demand != *b->demand)
+                    return *a->demand < *b->demand;
+                if (a->rank != b->rank)
+                    return a->rank > b->rank;
+                return a->sequence > b->sequence;
+            });
             uint64_t freed = 0;
             for (Entry *victim : victims)
             {
@@ -710,9 +721,9 @@ namespace mir
             for (auto &[key, e] : entries)
                 if (e.state == TerrainPayloadState::Waiting && e.demand && e.record && now >= e.notBefore)
                     candidates.push_back(&e);
-            std::sort(candidates.begin(), candidates.end(),
-                      [](const Entry *a, const Entry *b)
-                      { return Order{*a->demand, a->rank, a->sequence, 0} < Order{*b->demand, b->rank, b->sequence, 0}; });
+            std::sort(candidates.begin(), candidates.end(), [](const Entry *a, const Entry *b) {
+                return Order{*a->demand, a->rank, a->sequence, 0} < Order{*b->demand, b->rank, b->sequence, 0};
+            });
             for (Entry *candidate : candidates)
             {
                 const bool required = *candidate->demand == TerrainDemand::Required;
@@ -770,9 +781,9 @@ namespace mir
         const TerrainReleaseInfo &info = release->Info();
         if (const std::shared_ptr<Impl::ReleaseState> known = mImpl->FindRelease(info.asset, info.release))
         {
-            const bool owned = std::any_of(known->owners.begin(), known->owners.end(),
-                                           [&](const std::weak_ptr<TerrainResidentRelease> &owner)
-                                           { return owner.lock() == release; });
+            const bool owned = std::any_of(
+                known->owners.begin(), known->owners.end(),
+                [&](const std::weak_ptr<TerrainResidentRelease> &owner) { return owner.lock() == release; });
             if (!owned)
                 known->owners.push_back(release);
             return known->mode;
@@ -941,12 +952,21 @@ namespace mir
         for (const auto &[key, e] : impl.entries)
             switch (e.state)
             {
-            case TerrainPayloadState::Waiting: ++stats.waiting; break;
-            case TerrainPayloadState::Loading: ++stats.loading; break;
-            case TerrainPayloadState::Ready: ++stats.ready; break;
-            case TerrainPayloadState::Failed: ++stats.failed; break;
-            case TerrainPayloadState::Absent: break;
+            case TerrainPayloadState::Waiting:
+                ++stats.waiting;
+                break;
+            case TerrainPayloadState::Loading:
+                ++stats.loading;
+                break;
+            case TerrainPayloadState::Ready:
+                ++stats.ready;
+                break;
+            case TerrainPayloadState::Failed:
+                ++stats.failed;
+                break;
+            case TerrainPayloadState::Absent:
+                break;
             }
         return stats;
     }
-}
+} // namespace mir

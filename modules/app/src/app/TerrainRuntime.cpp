@@ -80,7 +80,8 @@ namespace mir
 
         const TerrainStreamingSettings &settings = *load.settings;
         world.EmplaceResource<TerrainStreamingSettings>(settings);
-        world.EmplaceResource<TerrainStreamer>(settings, std::make_shared<TerrainWorkerPool>(settings.io.workerThreads));
+        world.EmplaceResource<TerrainStreamer>(settings,
+                                               std::make_shared<TerrainWorkerPool>(settings.io.workerThreads));
         MIR_LOG_INFO("Terrain streaming: {:.0f} MiB CPU budget, {} read workers, {} residency{}",
                      MiB(settings.cpu.budgetBytes), settings.io.workerThreads,
                      TerrainResidencyModeName(*settings.residency.mode),
@@ -327,8 +328,9 @@ namespace mir
             {
                 // The source precision's LOD and normals, already resident; nothing is read here.
                 const TerrainTileRecord *source = index.Find({x, z});
-                const auto resident = [&](TerrainPayloadKind kind) -> const TerrainTileRecord *
-                { return source ? index.Find({x, z}, source->layer, kind, 0) : nullptr; };
+                const auto resident = [&](TerrainPayloadKind kind) -> const TerrainTileRecord * {
+                    return source ? index.Find({x, z}, source->layer, kind, 0) : nullptr;
+                };
                 const TerrainTileRecord *lodRecord = resident(TerrainPayloadKind::LodHeight);
                 const TerrainTileRecord *normalRecord = resident(TerrainPayloadKind::Normal);
                 const auto lod = lodRecord ? streamer.Lod(TerrainPayloadKeyOf(release.Info(), *lodRecord)) : nullptr;

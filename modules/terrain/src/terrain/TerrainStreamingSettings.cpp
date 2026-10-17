@@ -73,7 +73,7 @@ namespace mir
 
         class Reader
         {
-        public:
+          public:
             Reader(const json &merged, const json *local, std::string gameFile, std::string localFile,
                    std::vector<std::string> &problems)
                 : mMerged(merged), mLocal(local), mGameFile(std::move(gameFile)), mLocalFile(std::move(localFile)),
@@ -128,8 +128,8 @@ namespace mir
                 const json *value = Find(section, name, key);
                 if (!value)
                     return std::nullopt;
-                const bool whole = value->is_number_unsigned() ||
-                                   (value->is_number_integer() && value->get<int64_t>() >= 0);
+                const bool whole =
+                    value->is_number_unsigned() || (value->is_number_integer() && value->get<int64_t>() >= 0);
                 if (!whole || value->get<uint64_t>() > std::numeric_limits<uint32_t>::max())
                 {
                     Problem(name, key, "must be a whole number");
@@ -151,7 +151,7 @@ namespace mir
                 return value->get<std::string>();
             }
 
-        private:
+          private:
             const json *Find(const json *section, std::string_view name, std::string_view key)
             {
                 if (!section)
@@ -194,15 +194,18 @@ namespace mir
                     return mode;
             return std::nullopt;
         }
-    }
+    } // namespace
 
     std::string_view TerrainResidencyModeName(TerrainResidencyMode mode)
     {
         switch (mode)
         {
-        case TerrainResidencyMode::Auto: return "Auto";
-        case TerrainResidencyMode::Eager: return "Eager";
-        case TerrainResidencyMode::Interest: return "Interest";
+        case TerrainResidencyMode::Auto:
+            return "Auto";
+        case TerrainResidencyMode::Eager:
+            return "Eager";
+        case TerrainResidencyMode::Interest:
+            return "Interest";
         }
         return "Auto";
     }
@@ -210,8 +213,9 @@ namespace mir
     std::vector<std::string> ValidateTerrainStreamingSettings(const TerrainStreamingSettings &settings)
     {
         std::vector<std::string> problems;
-        Check(settings, [&](std::string_view section, std::string_view key, std::string_view problem)
-              { problems.push_back(std::format("{}.{}: {}", section, key, problem)); });
+        Check(settings, [&](std::string_view section, std::string_view key, std::string_view problem) {
+            problems.push_back(std::format("{}.{}: {}", section, key, problem));
+        });
         return problems;
     }
 
@@ -226,8 +230,8 @@ namespace mir
         const std::string localName = localFile.generic_string();
         if (!load.gameFileFound)
         {
-            load.problems.push_back(std::format("{}: missing; a game with terrain ships its streaming settings",
-                                                gameName));
+            load.problems.push_back(
+                std::format("{}: missing; a game with terrain ships its streaming settings", gameName));
             return load;
         }
 
@@ -273,9 +277,11 @@ namespace mir
         const json *retry =
             reader.Section("retry", {"maxAttempts", "firstDelaySeconds", "maxDelaySeconds", "failedHoldSeconds"});
         s.retry.maxAttempts = reader.Count(retry, "retry", "maxAttempts").value_or(0);
-        s.retry.firstDelaySeconds = reader.Number(retry, "retry", "firstDelaySeconds").value_or(s.retry.firstDelaySeconds);
+        s.retry.firstDelaySeconds =
+            reader.Number(retry, "retry", "firstDelaySeconds").value_or(s.retry.firstDelaySeconds);
         s.retry.maxDelaySeconds = reader.Number(retry, "retry", "maxDelaySeconds").value_or(s.retry.maxDelaySeconds);
-        s.retry.failedHoldSeconds = reader.Number(retry, "retry", "failedHoldSeconds").value_or(s.retry.failedHoldSeconds);
+        s.retry.failedHoldSeconds =
+            reader.Number(retry, "retry", "failedHoldSeconds").value_or(s.retry.failedHoldSeconds);
 
         const json *residency = reader.Section("residency", {"mode", "queryLeaseSeconds"});
         if (const std::optional<std::string> mode = reader.Text(residency, "residency", "mode"))
@@ -283,10 +289,11 @@ namespace mir
         s.residency.queryLeaseSeconds =
             reader.Number(residency, "residency", "queryLeaseSeconds").value_or(s.residency.queryLeaseSeconds);
 
-        Check(s, [&](std::string_view section, std::string_view key, std::string_view problem)
-              { reader.Problem(section, key, problem); });
+        Check(s, [&](std::string_view section, std::string_view key, std::string_view problem) {
+            reader.Problem(section, key, problem);
+        });
         if (load.problems.empty())
             load.settings = s;
         return load;
     }
-}
+} // namespace mir

@@ -61,8 +61,14 @@ namespace
         {
         }
 
-        const TerrainIndex &Index() const { return opened.release->Handle().Index(); }
-        TerrainHeightQuery &Query() { return opened.release->Query(); }
+        const TerrainIndex &Index() const
+        {
+            return opened.release->Handle().Index();
+        }
+        TerrainHeightQuery &Query()
+        {
+            return opened.release->Query();
+        }
 
         TerrainPayloadKey Tile(TileCoord tile) const
         {
@@ -92,7 +98,8 @@ namespace
 
         const TileHeights &Written(TileCoord tile) const
         {
-            const auto it = std::find_if(tiles.begin(), tiles.end(), [&](const TileHeights &t) { return t.Tile() == tile; });
+            const auto it =
+                std::find_if(tiles.begin(), tiles.end(), [&](const TileHeights &t) { return t.Tile() == tile; });
             REQUIRE(it != tiles.end());
             return *it;
         }
@@ -102,9 +109,9 @@ namespace
         {
             const double x = layout.SamplePosition(layout.TileFirstSample(tile.x) + 3) + 0.25;
             const double z = layout.SamplePosition(layout.TileFirstSample(tile.z) + 5) + 0.5;
-            const auto local = TerrainLocalPosition::FromMeters({std::clamp(x, layout.Bounds().minX, layout.Bounds().maxX),
-                                                                 0.0,
-                                                                 std::clamp(z, layout.Bounds().minZ, layout.Bounds().maxZ)});
+            const auto local =
+                TerrainLocalPosition::FromMeters({std::clamp(x, layout.Bounds().minX, layout.Bounds().maxX), 0.0,
+                                                  std::clamp(z, layout.Bounds().minZ, layout.Bounds().maxZ)});
             REQUIRE(local);
             return *local;
         }
@@ -116,9 +123,8 @@ namespace
 
         double Expected(TileCoord tile) const
         {
-            const SurfaceSample sample = EvaluateSurface(layout, In(tile), [this](TileCoord owner) {
-                return Written(owner).Samples();
-            });
+            const SurfaceSample sample =
+                EvaluateSurface(layout, In(tile), [this](TileCoord owner) { return Written(owner).Samples(); });
             REQUIRE(sample.IsOk());
             return sample.height;
         }
@@ -146,7 +152,8 @@ namespace
         streamer.SetInterest(interest, wants);
     }
 
-    bool SameRange(const TerrainMemorySource::Request &request, const std::string &pack, const TerrainTileRecord &record)
+    bool SameRange(const TerrainMemorySource::Request &request, const std::string &pack,
+                   const TerrainTileRecord &record)
     {
         return request.file == pack && request.offset == record.offset && request.length == record.length;
     }
@@ -156,7 +163,7 @@ namespace
         const TerrainStreamingStats stats = streamer.Stats();
         CHECK(stats.residentBytes + stats.loadingBytes <= stats.budgetBytes);
     }
-}
+} // namespace
 
 TEST_CASE("Repeated wants for one payload share one range read and one decoded payload", "[terrain][streaming]")
 {
@@ -210,8 +217,7 @@ TEST_CASE("Repeated wants for one payload share one range read and one decoded p
     CHECK(s.opened.source->RangeRequests().size() == 2);
 }
 
-TEST_CASE("A want dropped before its read starts is canceled while other consumers keep theirs",
-          "[terrain][streaming]")
+TEST_CASE("A want dropped before its read starts is canceled while other consumers keep theirs", "[terrain][streaming]")
 {
     Streamed s;
     Manual m(StreamingSettings(uint64_t(1) << 24, Mode::Interest));
@@ -279,19 +285,21 @@ TEST_CASE("Reads start in demand order, then rank, and follow a raised demand", 
     const TerrainPayloadKey query = s.Tile({0, 0});
     const TerrainPayloadKey root = s.Region({1, 0, 0});
     const TerrainInterestId view = m.streamer.AddInterest();
-    Want(m.streamer, view, {{prefetch, Demand::Prefetch, 0.0f},
-                            {farVisible, Demand::Visible, 5.0f},
-                            {nearVisible, Demand::Visible, 1.0f},
-                            {query, Demand::Query, 9.0f},
-                            {root, Demand::Required, 3.0f}});
+    Want(m.streamer, view,
+         {{prefetch, Demand::Prefetch, 0.0f},
+          {farVisible, Demand::Visible, 5.0f},
+          {nearVisible, Demand::Visible, 1.0f},
+          {query, Demand::Query, 9.0f},
+          {root, Demand::Required, 3.0f}});
     m.streamer.Update();
     REQUIRE(m.executor->Pending() == 5);
 
-    Want(m.streamer, view, {{prefetch, Demand::Required, 0.0f},
-                            {farVisible, Demand::Visible, 5.0f},
-                            {nearVisible, Demand::Visible, 1.0f},
-                            {query, Demand::Query, 9.0f},
-                            {root, Demand::Required, 3.0f}});
+    Want(m.streamer, view,
+         {{prefetch, Demand::Required, 0.0f},
+          {farVisible, Demand::Visible, 5.0f},
+          {nearVisible, Demand::Visible, 1.0f},
+          {query, Demand::Query, 9.0f},
+          {root, Demand::Required, 3.0f}});
     m.streamer.Update();
     m.executor->RunAll();
     const std::vector<TerrainMemorySource::Request> ranges = s.opened.source->RangeRequests();
@@ -421,8 +429,7 @@ TEST_CASE("CPU residency stays within the budget and speculative data goes befor
     Manual m(StreamingSettings(6 * each, Mode::Interest));
     m.streamer.Add(s.opened.release);
     const auto tile = [&](int i) { return s.Tile({i % 4, i / 4}); };
-    const auto settle = [&]
-    {
+    const auto settle = [&] {
         m.streamer.Update();
         CheckWithinBudget(m.streamer);
         m.executor->RunAll();
@@ -457,8 +464,11 @@ TEST_CASE("CPU residency stays within the budget and speculative data goes befor
     CHECK(m.streamer.Status(tile(3)).state == State::Waiting);
 
     const TerrainInterestId collision = m.streamer.AddInterest();
-    Want(m.streamer, collision, {{tile(9), Demand::Required}, {tile(10), Demand::Required},
-                                 {tile(11), Demand::Required}, {tile(12), Demand::Required}});
+    Want(m.streamer, collision,
+         {{tile(9), Demand::Required},
+          {tile(10), Demand::Required},
+          {tile(11), Demand::Required},
+          {tile(12), Demand::Required}});
     settle();
     for (int i = 9; i <= 12; ++i)
         CHECK(m.streamer.Status(tile(i)).state == State::Ready);
@@ -690,17 +700,16 @@ TEST_CASE("Concurrent range reads of one file source return every payload intact
         CHECK(pool.ThreadCount() == 4);
         for (size_t round = 0; round < rounds; ++round)
             for (const TerrainTileRecord *record : records)
-                pool.Post([&, record]
-                          {
-                              const auto bytes = handle->ReadPayload(*record);
-                              if (bytes && Fnv1a64(*bytes.value) == record->checksum)
-                                  ++intact;
-                              {
-                                  std::lock_guard lock(mutex);
-                                  threads.insert(std::this_thread::get_id());
-                              }
-                              ++done;
-                          });
+                pool.Post([&, record] {
+                    const auto bytes = handle->ReadPayload(*record);
+                    if (bytes && Fnv1a64(*bytes.value) == record->checksum)
+                        ++intact;
+                    {
+                        std::lock_guard lock(mutex);
+                        threads.insert(std::this_thread::get_id());
+                    }
+                    ++done;
+                });
         while (done < rounds * records.size())
             std::this_thread::yield();
     }
@@ -725,7 +734,10 @@ TEST_CASE("The manual executor runs jobs in order only when asked", "[terrain][s
 {
     TerrainManualExecutor executor;
     std::vector<int> ran;
-    executor.Post([&] { ran.push_back(1); executor.Post([&] { ran.push_back(3); }); });
+    executor.Post([&] {
+        ran.push_back(1);
+        executor.Post([&] { ran.push_back(3); });
+    });
     executor.Post([&] { ran.push_back(2); });
     CHECK(executor.Pending() == 2);
     CHECK(ran.empty());
@@ -755,16 +767,14 @@ TEST_CASE("Moving through a map keeps residency within the budget and reads only
     REQUIRE(streamer.Add(opened.release) == Mode::Interest);
     const TerrainInterestId view = streamer.AddInterest();
     const TileRange map = layout->Tiles();
-    const auto lookup = [&](TileCoord owner)
-    {
+    const auto lookup = [&](TileCoord owner) {
         for (const TileHeights &tile : tiles)
             if (tile.Tile() == owner)
                 return tile.Samples();
         return std::span<const float>{};
     };
 
-    const auto wantsAround = [&](glm::dvec2 at)
-    {
+    const auto wantsAround = [&](glm::dvec2 at) {
         const TileCoord center{int32_t(at.x / 64.0), int32_t(at.y / 64.0)};
         std::vector<TerrainPayloadWant> wants;
         for (int32_t dz = -2; dz <= 2; ++dz)
@@ -782,11 +792,10 @@ TEST_CASE("Moving through a map keeps residency within the budget and reads only
         return wants;
     };
 
-    const auto nearReady = [&](const std::vector<TerrainPayloadWant> &wants)
-    {
-        return std::all_of(wants.begin(), wants.end(),
-                           [&](const TerrainPayloadWant &want)
-                           { return want.demand == Demand::Prefetch || streamer.Status(want.key).state == State::Ready; });
+    const auto nearReady = [&](const std::vector<TerrainPayloadWant> &wants) {
+        return std::all_of(wants.begin(), wants.end(), [&](const TerrainPayloadWant &want) {
+            return want.demand == Demand::Prefetch || streamer.Status(want.key).state == State::Ready;
+        });
     };
 
     size_t heights = 0;
@@ -924,12 +933,11 @@ TEST_CASE("Measure a mover crossing a map read from disk", "[.][streaming-measur
                 still[want.key] = it->second;
         }
         pending = std::move(still);
-        std::this_thread::sleep_until(start + std::chrono::duration_cast<Clock::duration>(
-                                                  std::chrono::duration<double>((frames + 1) * frame)));
+        std::this_thread::sleep_until(
+            start + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>((frames + 1) * frame)));
     }
 
-    const auto percentile = [](std::vector<double> values, double p)
-    {
+    const auto percentile = [](std::vector<double> values, double p) {
         if (values.empty())
             return 0.0;
         std::sort(values.begin(), values.end());
@@ -938,8 +946,8 @@ TEST_CASE("Measure a mover crossing a map read from disk", "[.][streaming-measur
     const TerrainStreamingStats stats = streamer.Stats();
     std::printf("frames %zu, wall %.1f s, answered %.1f%%\n", frames,
                 std::chrono::duration<double>(Clock::now() - start).count(), 100.0 * double(answered) / double(frames));
-    std::printf("Update ms P50 %.4f P95 %.4f P99 %.4f max %.4f\n", percentile(updateMs, 0.5), percentile(updateMs, 0.95),
-                percentile(updateMs, 0.99), percentile(updateMs, 1.0));
+    std::printf("Update ms P50 %.4f P95 %.4f P99 %.4f max %.4f\n", percentile(updateMs, 0.5),
+                percentile(updateMs, 0.95), percentile(updateMs, 0.99), percentile(updateMs, 1.0));
     std::printf("HeightAt us P50 %.2f P99 %.2f max %.2f\n", percentile(queryUs, 0.5), percentile(queryUs, 0.99),
                 percentile(queryUs, 1.0));
     std::printf("Required ready ms (n %zu) P50 %.1f P95 %.1f P99 %.1f max %.1f\n", requiredMs.size(),

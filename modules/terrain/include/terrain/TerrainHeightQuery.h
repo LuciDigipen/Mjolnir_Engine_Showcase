@@ -160,7 +160,7 @@ namespace mir
         // Resident tiles answered from since the last take, once each.
         std::vector<TerrainPayloadRequest> TakeUsedTiles();
 
-    private:
+      private:
         struct Slot
         {
             TerrainTileResidency residency = TerrainTileResidency::Absent;

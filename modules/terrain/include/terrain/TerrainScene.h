@@ -85,15 +85,27 @@ namespace mir
     class TerrainResidentRelease
     {
     public:
-        [[nodiscard]] static TerrainResult<std::shared_ptr<TerrainResidentRelease>> Open(
-            const std::filesystem::path &releasesRoot, AssetId asset, TerrainReleaseId release);
-        [[nodiscard]] static std::shared_ptr<TerrainResidentRelease> Create(TerrainReleaseHandle handle);
+      [[nodiscard]] static TerrainResult<std::shared_ptr<TerrainResidentRelease>> Open(
+          const std::filesystem::path &releasesRoot, AssetId asset, TerrainReleaseId release);
+      [[nodiscard]] static std::shared_ptr<TerrainResidentRelease> Create(TerrainReleaseHandle handle);
 
-        const TerrainReleaseInfo &Info() const { return mHandle->Info(); }
-        const TerrainLayout &Layout() const { return mHandle->Layout(); }
-        const TerrainReleaseHandle &Handle() const { return *mHandle; }
-        // Shared with the workers reading it.
-        const std::shared_ptr<const TerrainReleaseHandle> &SharedHandle() const { return mHandle; }
+      const TerrainReleaseInfo &Info() const
+      {
+          return mHandle->Info();
+      }
+      const TerrainLayout &Layout() const
+      {
+          return mHandle->Layout();
+      }
+      const TerrainReleaseHandle &Handle() const
+      {
+          return *mHandle;
+      }
+      // Shared with the workers reading it.
+      const std::shared_ptr<const TerrainReleaseHandle> &SharedHandle() const
+      {
+          return mHandle;
+      }
         TerrainHeightQuery &Query() { return mQuery; }
         const TerrainHeightQuery &Query() const { return mQuery; }
 
@@ -101,10 +113,10 @@ namespace mir
         TileSampleLookup Lookup(uint32_t layer = 0) const;
 
     private:
-        explicit TerrainResidentRelease(std::shared_ptr<const TerrainReleaseHandle> handle);
+      explicit TerrainResidentRelease(std::shared_ptr<const TerrainReleaseHandle> handle);
 
-        std::shared_ptr<const TerrainReleaseHandle> mHandle;
-        TerrainHeightQuery mQuery;
+      std::shared_ptr<const TerrainReleaseHandle> mHandle;
+      TerrainHeightQuery mQuery;
     };
 
     // Map bounds plus translation, in world meters.
@@ -154,12 +166,11 @@ namespace mir
         void RemoveInstance(size_t index);
 
     private:
-        friend TerrainWorld ResolveTerrainWorld(const TerrainSceneSpec &, const std::filesystem::path &,
-                                                const TerrainWorld *, std::vector<TerrainIssue> &,
-                                                TerrainStreamer &);
+      friend TerrainWorld ResolveTerrainWorld(const TerrainSceneSpec &, const std::filesystem::path &,
+                                              const TerrainWorld *, std::vector<TerrainIssue> &, TerrainStreamer &);
 
-        std::vector<AssetState> mAssets;
-        std::vector<TerrainInstanceState> mInstances;
+      std::vector<AssetState> mAssets;
+      std::vector<TerrainInstanceState> mInstances;
     };
 
     // previous is not changed. Overlapping instances are all refused. New releases are added to the

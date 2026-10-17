@@ -68,17 +68,23 @@ namespace mir::test
         {
             return [now = now] { return *now; };
         }
-        void Advance(double seconds) { *now += seconds; }
+        void Advance(double seconds)
+        {
+            *now += seconds;
+        }
     };
 
     // Wraps an in-memory release: holds reads until resumed, fails or corrupts chosen files, records the
     // reading threads.
     class ControlledSource final : public TerrainByteSource
     {
-    public:
+      public:
         explicit ControlledSource(std::shared_ptr<TerrainMemorySource> inner) : mInner(std::move(inner)) {}
 
-        TerrainMemorySource &Inner() { return *mInner; }
+        TerrainMemorySource &Inner()
+        {
+            return *mInner;
+        }
 
         void Hold()
         {
@@ -127,9 +133,12 @@ namespace mir::test
             return mRanges;
         }
 
-        std::string Describe() const override { return "<controlled>"; }
+        std::string Describe() const override
+        {
+            return "<controlled>";
+        }
 
-    protected:
+      protected:
         std::optional<std::vector<std::byte>> DoReadAll(std::string_view file) const override
         {
             return mInner->ReadAll(file);
@@ -160,9 +169,12 @@ namespace mir::test
             return bytes;
         }
 
-        std::optional<uint64_t> DoSize(std::string_view file) const override { return mInner->Size(file); }
+        std::optional<uint64_t> DoSize(std::string_view file) const override
+        {
+            return mInner->Size(file);
+        }
 
-    private:
+      private:
         std::shared_ptr<TerrainMemorySource> mInner;
         mutable std::mutex mMutex;
         mutable std::condition_variable mResumed;
@@ -187,8 +199,7 @@ namespace mir::test
     }
 
     // Updates until done() holds; fails the test instead of hanging.
-    template <typename Done>
-    void UpdateUntil(TerrainStreamer &streamer, Done done)
+    template <typename Done> void UpdateUntil(TerrainStreamer &streamer, Done done)
     {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
         for (;;)
@@ -200,4 +211,4 @@ namespace mir::test
             streamer.WaitForCompletion(std::chrono::milliseconds(5));
         }
     }
-}
+} // namespace mir::test

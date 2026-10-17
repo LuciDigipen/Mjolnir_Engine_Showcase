@@ -119,8 +119,8 @@ namespace mir
 
         TerrainWorld::AssetState ResolveAsset(const TerrainInstanceSpec &instance,
                                               const std::filesystem::path &releasesRoot,
-                                              const TerrainWorld::AssetState *before,
-                                              std::vector<TerrainIssue> &issues, TerrainStreamer &streamer)
+                                              const TerrainWorld::AssetState *before, std::vector<TerrainIssue> &issues,
+                                              TerrainStreamer &streamer)
         {
             TerrainWorld::AssetState state;
             state.asset = instance.asset;
@@ -169,11 +169,9 @@ namespace mir
                 return state;
             }
 
-            const auto unusable = [&](const std::string &why)
-            {
-                return refuse(TerrainIssueKind::BadRelease,
-                              std::format("{}: release {} cannot be used: {}{}", subject, Hex(current.value->value),
-                                          why, keeping));
+            const auto unusable = [&](const std::string &why) {
+                return refuse(TerrainIssueKind::BadRelease, std::format("{}: release {} cannot be used: {}{}", subject,
+                                                                        Hex(current.value->value), why, keeping));
             };
             std::shared_ptr<TerrainResidentRelease> release = streamer.Find(instance.asset, *current.value);
             if (!release)

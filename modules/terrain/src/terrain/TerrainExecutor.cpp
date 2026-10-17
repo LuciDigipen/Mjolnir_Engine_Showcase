@@ -85,4 +85,4 @@ namespace mir
             ++ran;
         return ran;
     }
-}
+} // namespace mir
