@@ -139,7 +139,7 @@ namespace mir
             double distance = 0.0;
             double error = 0.0;
             bool refined = false;
-            // Refined the update before, so its children may still be ready.
+            // Previous desired detail, used for refine/merge hysteresis.
             bool wasRefined = false;
             bool beyondFar = false;
             uint32_t firstChild = 0;
@@ -471,8 +471,8 @@ namespace mir
                 out.push_back(*chosen);
                 return true;
             }
-            if ((node.kind == TerrainUnitKind::Tile || node.wasRefined) &&
-                Substitute(inst, instance, node, planes, origin, ready, out, sink))
+            // A merge can take many frames to load; ready children remain stand-ins throughout.
+            if (Substitute(inst, instance, node, planes, origin, ready, out, sink))
             {
                 if (sink)
                     ++sink->impl.stats.otherFallbacks;

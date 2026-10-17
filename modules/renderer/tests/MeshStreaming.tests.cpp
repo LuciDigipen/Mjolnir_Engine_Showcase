@@ -93,6 +93,40 @@ TEST_CASE("Each frame admits queued meshes in order within its byte budget, the 
     CHECK(queue.UploadingBytes() == 6200);
 }
 
+TEST_CASE("An empty staging ring admits large uploads after completion or clearing", "[renderer][streaming]")
+{
+    MeshUploadQueue queue({.stagingBytes = 4 * kAlign, .frameBytes = 4 * kAlign});
+    queue.Push({Mesh(0), 2 * kAlign, 2 * kAlign});
+    REQUIRE(Slots(queue.Admit(1)) == std::vector<uint32_t>{0});
+
+    SECTION("The previous copy completes")
+    {
+        REQUIRE(queue.Complete(1) == std::vector<MeshHandle>{Mesh(0)});
+    }
+    SECTION("The queue is cleared at scene unload")
+    {
+        queue.Clear();
+    }
+    REQUIRE(queue.StagingUsed() == 0);
+
+    // Larger than either contiguous portion at the old cursor, but smaller than the empty ring.
+    queue.Push({Mesh(1), 3 * kAlign, 3 * kAlign});
+    queue.Push({Mesh(2), kAlign, kAlign});
+    REQUIRE(Slots(queue.Admit(2)) == std::vector<uint32_t>{1, 2});
+    CHECK(queue.Pending() == 0);
+    CHECK(queue.StagingUsed() == 4 * kAlign);
+    REQUIRE(queue.Complete(2).size() == 2);
+
+    // Alignment padding after a short copy must not prevent a full-capacity upload either.
+    queue.Push({Mesh(3), 1, 1});
+    REQUIRE(queue.Admit(3).size() == 1);
+    REQUIRE(queue.Complete(3).size() == 1);
+    queue.Push({Mesh(4), 4 * kAlign, 4 * kAlign});
+    REQUIRE(Slots(queue.Admit(4)) == std::vector<uint32_t>{4});
+    REQUIRE(queue.Complete(4).size() == 1);
+    CHECK(queue.StagingUsed() == 0);
+}
+
 TEST_CASE("A full staging ring holds later meshes back until earlier frames complete", "[renderer][streaming]")
 {
     MeshUploadQueue queue({.stagingBytes = 4 * kAlign, .frameBytes = 1u << 20});

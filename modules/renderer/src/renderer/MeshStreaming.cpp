@@ -16,6 +16,9 @@ namespace mir
     {
         if (bytes == 0 || bytes > mCapacity || alignment == 0)
             return std::nullopt;
+        // No copy owns an offset now; discard wrap padding before admitting the next block.
+        if (mSpans.empty())
+            mHead = mTail = 0;
         uint64_t start = (mHead + alignment - 1) / alignment * alignment;
         // A block never straddles the end of the ring.
         if (start % mCapacity + bytes > mCapacity)

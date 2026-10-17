@@ -588,6 +588,53 @@ TEST_CASE("Units that are not ready give way to ready coarser or finer ones and 
     }
 }
 
+TEST_CASE("A merging Region keeps ready children until its upload finishes", "[terrain][selection]")
+{
+    const Fixture f;
+    const TerrainSelectionInstance instance = f.Instance();
+    const uint32_t top = f.Grid().Levels() - 1;
+    const TerrainPayloadKey root = TerrainPayloadKeyOf(f.info, *f.Index().FindRegion({top, 0, 0}));
+    ReadySet ready;
+    for (const TerrainPayloadKey &key : f.AllKeys())
+        if (!(key == root))
+            ready.keys.insert(key);
+
+    TerrainViewSelector selector(ViewSettings(0));
+    selector.Update({&instance, 1}, LookingEverywhere(f.At({-150.0, 30.0, -100.0}), 4000.0), ready.Predicate());
+    CheckCoveredOnce(f, selector.Draws());
+    REQUIRE(CountKind(selector.Draws(), Kind::Tile) > 0);
+
+    const TerrainView far = LookingEverywhere(f.At({1000000.0, 1000000.0, 1000000.0}), 300.0);
+    for (int frame = 0; frame < 5; ++frame)
+    {
+        INFO("pending frame " << frame);
+        selector.Update({&instance, 1}, far, ready.Predicate());
+        CheckCoveredOnce(f, selector.Draws());
+        CHECK(selector.Stats().missing == 0);
+        CHECK(selector.Stats().otherFallbacks > 0);
+        const auto wants = WantsByKey(selector.Wants());
+        REQUIRE(wants.contains(root));
+        CHECK(wants.at(root).demand == Demand::Visible);
+        for (const TerrainDrawUnit &unit : selector.Draws())
+        {
+            CHECK_FALSE(unit.geometry == root);
+            REQUIRE(wants.contains(unit.geometry));
+            CHECK(wants.at(unit.geometry).demand == Demand::Visible);
+        }
+        std::vector<TerrainDrawUnit> volumeDraws;
+        selector.Collect(far.frustum, ready.Predicate(), volumeDraws);
+        CheckCoveredOnce(f, volumeDraws);
+    }
+
+    ready.keys.insert(root);
+    selector.Update({&instance, 1}, far, ready.Predicate());
+    REQUIRE(selector.Draws().size() == 1);
+    CHECK(selector.Draws()[0].geometry == root);
+    CHECK(selector.Stats().otherFallbacks == 0);
+    CHECK(selector.Stats().missing == 0);
+    CheckCoveredOnce(f, selector.Draws());
+}
+
 TEST_CASE("Wants are Visible for what the view draws and chooses, Prefetch for the rest within the budget",
           "[terrain][selection]")
 {
