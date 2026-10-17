@@ -257,7 +257,7 @@ namespace mir::terrainbake
             return std::nullopt;
         }
         std::string derivativeError;
-        auto derivatives = BakeTerrainDerivatives(recipe, tiles, derivativeError);
+        auto derivatives = BakeTerrainDerivatives(recipe, tiles, derivativeError, &options.regions);
         if (!derivatives)
         {
             Fail(report, check::kEncode, "derivatives", derivativeError);
@@ -286,11 +286,13 @@ namespace mir::terrainbake
         for (size_t i = 0; i < derivatives->queryHeights.size(); ++i)
             records.push_back({&derivatives->queryHeights[i], derivatives->queryLayers[i], false,
                                derivatives->queryErrors[i], sourceChecksums.at(derivatives->queryHeights[i].Tile())});
-        const uint64_t heightsHash = TerrainPayloadsHash(layers, records, derivatives->payloads);
+        const uint64_t heightsHash =
+            TerrainPayloadsHash(layers, records, derivatives->payloads, derivatives->regions->writes);
         const uint64_t nonce = options.nonce ? *options.nonce : MakeTerrainReleaseNonce();
         const TerrainReleaseInfo info{asset, source, kTerrainFormatVersion,
                                       MintTerrainReleaseId(asset, source, heightsHash, nonce)};
-        auto encoded = EncodeTerrainRelease(info, layers, records, derivatives->payloads, options.pack);
+        auto encoded = EncodeTerrainRelease(info, layers, records, derivatives->payloads, derivatives->regions->writes,
+                                            options.pack);
         if (!encoded)
         {
             Fail(report, check::kEncode, "", encoded.error.message);
@@ -411,10 +413,10 @@ namespace mir::terrainbake
 
     TerrainReport RunTerrainBake(const TerrainBakeRequest &request)
     {
-        TerrainReport report("bake",
-                             {check::kArguments, check::kRecipe, check::kGenerate, check::kEncode, check::kWrite,
-                              check::kCandidate, check::kFormat, check::kIndex, check::kPacks, check::kCoverage,
-                              check::kPayloads, check::kFinite, check::kEdges, check::kCorners, check::kIdentity});
+        TerrainReport report("bake", {check::kArguments, check::kRecipe, check::kGenerate, check::kEncode,
+                                      check::kWrite, check::kCandidate, check::kFormat, check::kIndex, check::kPacks,
+                                      check::kCoverage, check::kPayloads, check::kFinite, check::kEdges,
+                                      check::kCorners, check::kRegions, check::kIdentity});
         BakeTerrainCandidate(request, report);
         return report;
     }

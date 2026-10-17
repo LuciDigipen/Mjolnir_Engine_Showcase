@@ -44,25 +44,27 @@ namespace mir
         {
             if (bytes.size() < kTerrainPackHeaderSize)
                 return Error(Code::Malformed, "{} bytes is too short for a pack header", bytes.size());
-            if (!std::equal(detail::kPackMagic.begin(), detail::kPackMagic.end(), bytes.begin()))
+            if (!std::equal(terrainformat::kPackMagic.begin(), terrainformat::kPackMagic.end(), bytes.begin()))
                 return Error(Code::Malformed, "bad magic: not a terrain tile pack");
-            const uint32_t format = LoadU32(bytes, 4);
+            const uint32_t format = LoadU32(bytes, terrainformat::pack::kMajor);
             if (format != kTerrainFormatVersion.value)
                 return Error(Code::Unsupported, "format version {} is not supported (this reader reads {})", format,
                              kTerrainFormatVersion.value);
-            headerSize = LoadU32(bytes, 12);
-            if (headerSize < kTerrainPackHeaderSize || headerSize % 8 != 0 || headerSize > bytes.size())
+            headerSize = LoadU32(bytes, terrainformat::pack::kHeaderSize);
+            if (headerSize < kTerrainPackHeaderSize || headerSize % terrainformat::kRecordAlignment != 0 ||
+                headerSize > bytes.size())
                 return Error(Code::Malformed, "pack header size {} is invalid", headerSize);
 
-            const uint64_t asset = LoadU64(bytes, 16);
-            const uint64_t release = LoadU64(bytes, 24);
+            const uint64_t asset = LoadU64(bytes, terrainformat::pack::kAsset);
+            const uint64_t release = LoadU64(bytes, terrainformat::pack::kRelease);
             if (asset != index.release.asset.value || release != index.release.release.value)
                 return Error(Code::WrongIdentity, "pack is asset {} release {}, the index is asset {} release {}",
                              Hex(asset), Hex(release), Hex(index.release.asset.value),
                              Hex(index.release.release.value));
-            const TerrainChunkCoord chunk{LoadI32(bytes, 32), LoadI32(bytes, 36)};
-            const uint32_t tileCount = LoadU32(bytes, 40);
-            const uint32_t contentVersion = LoadU32(bytes, 44);
+            const TerrainChunkCoord chunk{LoadI32(bytes, terrainformat::pack::kX),
+                                          LoadI32(bytes, terrainformat::pack::kZ)};
+            const uint32_t tileCount = LoadU32(bytes, terrainformat::pack::kTileCount);
+            const uint32_t contentVersion = LoadU32(bytes, terrainformat::pack::kContentVersion);
             if (chunk != record.chunk || tileCount != record.tileCount)
                 return Error(Code::Malformed,
                              "pack header says chunk {} with {} tiles, the index says chunk {} with {}",
@@ -249,11 +251,30 @@ namespace mir
         return DecodeTerrainNormals(*mIndex, *record, *bytes.value);
     }
 
+    TerrainResult<TerrainRegionMesh> TerrainReleaseHandle::ReadRegion(TerrainRegionCoord region) const
+    {
+        using R = TerrainRegionMesh;
+        const TerrainTileRecord *record = mIndex->FindRegion(region);
+        if (!record)
+            return Fail<R>(Code::NotFound, "Region L{} ({}, {}) is not in release {}", region.level, region.x, region.z,
+                           Hex(Info().release.value));
+        TerrainResult<std::vector<std::byte>> bytes = ReadPayload(*record);
+        if (!bytes)
+            return Failure<R>(bytes.error, "");
+        TerrainResult<R> mesh = DecodeTerrainRegion(*mIndex, *record, *bytes.value);
+        if (!mesh)
+            return Failure<R>(mesh.error, std::format("{}/{}: ", mSource->Describe(),
+                                                      TerrainPackFileName(mIndex->packs[record->pack].chunk)));
+        return mesh;
+    }
+
     TerrainPackError TerrainReleaseHandle::VerifyAllPacks() const
     {
         const TerrainIndex &index = *mIndex;
         std::vector<std::vector<const TerrainTileRecord *>> members(index.packs.size());
         for (const TerrainTileRecord &record : index.tiles)
+            members[record.pack].push_back(&record);
+        for (const TerrainTileRecord &record : index.regions)
             members[record.pack].push_back(&record);
 
         for (size_t p = 0; p < index.packs.size(); ++p)
@@ -299,6 +320,8 @@ namespace mir
                     error = DecodeTerrainLod(index, *tile, payload).error;
                 else if (tile->kind == TerrainPayloadKind::Normal)
                     error = DecodeTerrainNormals(index, *tile, payload).error;
+                else if (tile->kind == TerrainPayloadKind::Region)
+                    error = DecodeTerrainRegion(index, *tile, payload).error;
                 if (error.code != Code::None)
                     return {error.code, where + error.message};
             }

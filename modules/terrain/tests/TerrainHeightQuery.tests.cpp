@@ -342,16 +342,25 @@ TEST_CASE("A release preloaded from disk answers without touching the files agai
     CHECK(query.ResidentTile(0, {-1, 0}) == query.ResidentTile(0, {-1, 0}));
     std::filesystem::remove_all(root);
 
-    // The committed fixture release.
-    TerrainReleaseHandle fixture =
-        OpenOk(OpenCurrentTerrainRelease(std::filesystem::path(TERRAIN_FIXTURE_DIR) / "releases",
-                                         TerrainAsset("terrain/fixture.terrain.json")));
+    // A separate local release, with no game or checked-in pack dependency.
+    const auto fixtureLayout = TerrainLayout::Create(2.0, 4, {-10.0, -6.0, 9.0, 7.0});
+    REQUIRE(fixtureLayout);
+    const auto fixtureTiles = BuildTiles(*fixtureLayout);
+    auto fixtureInfo = Info(TerrainAsset("terrain/fixture.terrain.json"), 1);
+    fixtureInfo.release =
+        MintTerrainReleaseId(fixtureInfo.asset, fixtureInfo.source, TerrainHeightsHash(*fixtureLayout, fixtureTiles),
+                             MakeTerrainReleaseNonce());
+    const auto fixtureRoot = MakeScratchDir("query_fixture");
+    WriteRelease(fixtureRoot, fixtureInfo, Encode(fixtureInfo, *fixtureLayout, fixtureTiles, {.chunkTiles = 2}));
+    PointCurrentAt(fixtureRoot, fixtureInfo.asset, fixtureInfo.release);
+    TerrainReleaseHandle fixture = OpenOk(OpenCurrentTerrainRelease(fixtureRoot, fixtureInfo.asset));
     TerrainHeightQuery fixtureQuery = TerrainHeightQuery::Create(fixture);
     REQUIRE(PreloadAllTerrainTiles(fixtureQuery, fixture).loaded == 8);
     const TerrainHeightResult corner = fixtureQuery.HeightAt(Local(-8.0, 0.0), Need(fixture.Info(), 2.0));
     CHECK(corner.status == Status::MeetsRequirement);
     CHECK(corner.tile == TileCoord{-1, 0});
     CHECK(corner.localHeight == double(AnalyticHeight(-4, 0)));
+    std::filesystem::remove_all(fixtureRoot);
 }
 
 TEST_CASE("Each result state is distinct and only height states carry a height", "[terrain][query]")

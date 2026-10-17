@@ -12,6 +12,7 @@ add_library(terrain_bake STATIC
     TerrainPackage.cpp
     TerrainPublish.cpp
     TerrainRecipe.cpp
+    TerrainRegions.cpp
     TerrainReport.cpp
     TerrainSeams.cpp
     TerrainSync.cpp
@@ -35,6 +36,7 @@ if(BUILD_TESTING)
         tests/TerrainPrecision.tests.cpp
         tests/TerrainPublish.tests.cpp
         tests/TerrainRecipe.tests.cpp
+        tests/TerrainRegions.tests.cpp
         tests/TerrainRenderMesh.tests.cpp
         tests/TerrainSeams.tests.cpp
         tests/TerrainSync.tests.cpp
@@ -46,4 +48,10 @@ if(BUILD_TESTING)
     target_compile_definitions(terrain_tool_tests PRIVATE TERRAIN_TOOL_EXE="$<TARGET_FILE:TerrainTool>")
     add_dependencies(terrain_tool_tests TerrainTool)
     catch_discover_tests(terrain_tool_tests)
+endif()
+
+option(MJOLNIR_TERRAIN_REGION_EXPERIMENT "Build the Region size and resolution comparison" OFF)
+if(MJOLNIR_TERRAIN_REGION_EXPERIMENT)
+    add_executable(terrain_region_experiment experiments/TerrainRegionExperiment.cpp)
+    target_link_libraries(terrain_region_experiment PRIVATE terrain_bake nlohmann_json::nlohmann_json)
 endif()

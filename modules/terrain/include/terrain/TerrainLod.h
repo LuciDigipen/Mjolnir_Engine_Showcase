@@ -9,6 +9,8 @@
 
 #pragma once
 
+#include <terrain/TerrainConstants.h>
+
 #include <terrain/TerrainPackFormat.h>
 #include <terrain/TerrainSurface.h>
 #include <glm/vec3.hpp>
@@ -17,9 +19,6 @@
 
 namespace mir
 {
-    inline constexpr uint32_t kTerrainLodContentVersion = 1;
-    inline constexpr uint32_t kTerrainDerivedHeaderSize = 80;
-
     struct TerrainLodSurface
     {
         TerrainReleaseInfo release;

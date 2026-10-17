@@ -8,8 +8,11 @@
  */
 #pragma once
 
+#include <terrain/TerrainConstants.h>
+
 #include <terrain/TerrainIdentity.h>
 #include <terrain/TerrainLayout.h>
+#include <terrain/TerrainRegionGrid.h>
 #include <terrain/TileHeights.h>
 #include <terrain/TileKey.h>
 
@@ -23,24 +26,6 @@
 
 namespace mir
 {
-    // Binary layout: docs/modules/terrain.md.
-    inline constexpr TerrainFormatVersion kTerrainFormatVersion{2};
-    inline constexpr uint32_t kTerrainFormatMinor = 1;
-
-    // Encoding version for height payloads.
-    inline constexpr uint32_t kTerrainHeightsContentVersion = 1;
-
-    inline constexpr uint32_t kTerrainIndexHeaderSize = 128;
-    inline constexpr uint32_t kTerrainPackRecordSize = 32;
-    inline constexpr uint32_t kTerrainTileRecordSize = 144;
-    inline constexpr uint32_t kTerrainLayerRecordSize = 16;
-    inline constexpr uint32_t kTerrainPackHeaderSize = 48;
-    inline constexpr uint32_t kTerrainIndexTrailerSize = 8;
-
-    inline constexpr uint32_t kDefaultTerrainPayloadAlignment = 16;
-    inline constexpr uint32_t kMaxTerrainPayloadAlignment = 65536;
-    inline constexpr int32_t kDefaultTerrainChunkTiles = 16;
-
     inline constexpr std::string_view kTerrainIndexFileName = "release.tindex";
 
     // floorDiv(tile, chunkTiles) on each axis.
@@ -149,13 +134,20 @@ namespace mir
         uint64_t heightsHash = 0;
         std::vector<TerrainPackRecord> packs;
         std::vector<TerrainTileRecord> tiles;
+        std::optional<TerrainRegionGrid> regionGrid;
+        // Every Region of regionGrid, in its ordinal order.
+        std::vector<TerrainTileRecord> regions;
 
         const TerrainTileRecord *Find(TileCoord tile) const;
+        // Kind Region names a Region by its x, z in tile and its level, with layer 0.
         const TerrainTileRecord *Find(TileCoord tile, uint32_t layer,
                                       TerrainPayloadKind kind = TerrainPayloadKind::Height, uint32_t level = 0) const;
+        const TerrainTileRecord *FindRegion(TerrainRegionCoord region) const;
     };
 
     uint64_t TerrainRecordsHeightsHash(std::span<const TerrainTileRecord> records);
+    uint64_t TerrainRecordsHeightsHash(std::span<const TerrainTileRecord> records,
+                                       std::span<const TerrainTileRecord> regions);
 
     // Never returns a partial index.
     TerrainResult<TerrainIndex> ParseTerrainIndex(std::span<const std::byte> bytes);
