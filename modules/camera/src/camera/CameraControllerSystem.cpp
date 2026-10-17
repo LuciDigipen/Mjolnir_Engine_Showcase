@@ -92,13 +92,14 @@ namespace mir
 
         return next;
     }
-
+    
     void SeedFreeFly(CameraController &controller, const glm::quat &rotation)
     {
         const glm::vec3 forward = rotation * glm::vec3(0.0f, 0.0f, -1.0f);
         const float pitch = glm::degrees(std::asin(std::clamp(forward.y, -1.0f, 1.0f)));
         controller.mPitchDegrees = std::clamp(pitch, -kMaxPitchDegrees, kMaxPitchDegrees);
-
+        //when the camera looks almost straight up or down, the horizontal part is near zero and yaw isn’t meaningful, so it keeps the previous yaw.
+        //so only run if its meaningful
         if (forward.x * forward.x + forward.z * forward.z > kMinLookDistance * kMinLookDistance)
             controller.mYawDegrees = glm::degrees(std::atan2(forward.z, forward.x));
     }
