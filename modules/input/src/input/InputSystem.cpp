@@ -26,8 +26,14 @@ namespace mir
     {
         constexpr float kDeviceSwitchDeadzone = 0.2f;
 
-        float ReadBinding(const InputBinding &binding, const RawInputSnapshot &raw, bool suppressKeyboard,
-                           bool suppressMouse)
+        struct MouseDelta
+        {
+            float x = 0.0f;
+            float y = 0.0f;
+        };
+
+        float ReadBinding(const InputBinding &binding, const RawInputSnapshot &raw, MouseDelta mouseDelta,
+                           bool suppressKeyboard, bool suppressMouse)
         {
             switch (binding.device)
             {
@@ -35,7 +41,11 @@ namespace mir
                 return !suppressKeyboard && raw.IsDown(binding.key) ? 1.0f : 0.0f;
 
             case DeviceKind::Mouse:
-                return !suppressMouse && raw.IsDown(binding.mouseButton) ? 1.0f : 0.0f;
+                if (suppressMouse)
+                    return 0.0f;
+                if (binding.useMouseDelta)
+                    return binding.channel == AxisChannel::Y ? mouseDelta.y : mouseDelta.x;
+                return raw.IsDown(binding.mouseButton) ? 1.0f : 0.0f;
 
             case DeviceKind::Gamepad:
                 for (const GamepadState &pad : raw.gamepads)
@@ -57,10 +67,10 @@ namespace mir
 
         // scale only applies to a digital source composited into an axis
         // (e.g. D:+1/A:-1) - an analog gamepad axis is already signed.
-        float ReadAxisContribution(const InputBinding &binding, const RawInputSnapshot &raw, bool suppressKeyboard,
-                                    bool suppressMouse)
+        float ReadAxisContribution(const InputBinding &binding, const RawInputSnapshot &raw, MouseDelta mouseDelta,
+                                    bool suppressKeyboard, bool suppressMouse)
         {
-            const float sourceValue = ReadBinding(binding, raw, suppressKeyboard, suppressMouse);
+            const float sourceValue = ReadBinding(binding, raw, mouseDelta, suppressKeyboard, suppressMouse);
             return binding.useGamepadAxis ? sourceValue : sourceValue * binding.scale;
         }
 
@@ -105,6 +115,9 @@ namespace mir
         const bool suppressMouse = state.UiCapturesMouse();
 
         const bool mouseMoved = mHasLastMouse && (raw.mouseX != mLastMouseX || raw.mouseY != mLastMouseY);
+        const MouseDelta mouseDelta = mHasLastMouse
+            ? MouseDelta{ static_cast<float>(raw.mouseX - mLastMouseX), static_cast<float>(raw.mouseY - mLastMouseY) }
+            : MouseDelta{};
         mLastMouseX = raw.mouseX;
         mLastMouseY = raw.mouseY;
         mHasLastMouse = true;
@@ -127,7 +140,7 @@ namespace mir
             {
                 bool down = false;
                 for (const InputBinding &binding : action.bindings)
-                    down = down || ReadBinding(binding, raw, suppressKeyboard, suppressMouse) != 0.0f;
+                    down = down || ReadBinding(binding, raw, mouseDelta, suppressKeyboard, suppressMouse) != 0.0f;
 
                 value.down = down;
                 value.x = down ? 1.0f : 0.0f;
@@ -138,7 +151,7 @@ namespace mir
             {
                 float total = 0.0f;
                 for (const InputBinding &binding : action.bindings)
-                    total += ReadAxisContribution(binding, raw, suppressKeyboard, suppressMouse);
+                    total += ReadAxisContribution(binding, raw, mouseDelta, suppressKeyboard, suppressMouse);
 
                 value.x = std::clamp(total, -1.0f, 1.0f);
                 value.down = value.x != 0.0f;
@@ -146,17 +159,19 @@ namespace mir
             }
 
             case InputActionType::Axis2D:
+            case InputActionType::Delta2D:
             {
                 float totalX = 0.0f;
                 float totalY = 0.0f;
                 for (const InputBinding &binding : action.bindings)
                 {
                     float &target = binding.channel == AxisChannel::Y ? totalY : totalX;
-                    target += ReadAxisContribution(binding, raw, suppressKeyboard, suppressMouse);
+                    target += ReadAxisContribution(binding, raw, mouseDelta, suppressKeyboard, suppressMouse);
                 }
 
-                value.x = std::clamp(totalX, -1.0f, 1.0f);
-                value.y = std::clamp(totalY, -1.0f, 1.0f);
+                const bool clamp = action.type == InputActionType::Axis2D;
+                value.x = clamp ? std::clamp(totalX, -1.0f, 1.0f) : totalX;
+                value.y = clamp ? std::clamp(totalY, -1.0f, 1.0f) : totalY;
                 value.down = value.x != 0.0f || value.y != 0.0f;
                 break;
             }

@@ -59,6 +59,7 @@ namespace mir
             if (raw.mouseButtons[static_cast<size_t>(i)] && !mPreviousRaw.mouseButtons[static_cast<size_t>(i)])
             {
                 binding.device = DeviceKind::Mouse;
+                binding.useMouseDelta = false;
                 binding.mouseButton = static_cast<MouseButton>(i);
                 return true;
             }
@@ -113,10 +114,20 @@ namespace mir
             ImGui::Checkbox("Analog", &binding.useGamepadAxis);
             ImGui::SameLine();
         }
+        else if (binding.device == DeviceKind::Mouse)
+        {
+            ImGui::Checkbox("Motion", &binding.useMouseDelta);
+            ImGui::SameLine();
+        }
 
         const bool isAnalog = binding.device == DeviceKind::Gamepad && binding.useGamepadAxis;
+        const bool isMouseMotion = binding.device == DeviceKind::Mouse && binding.useMouseDelta;
 
-        if (isAnalog)
+        if (isMouseMotion)
+        {
+            ImGui::TextUnformatted("Mouse motion");
+        }
+        else if (isAnalog)
         {
             const std::string axisLabel(GamepadAxisName(binding.gamepadAxis));
             ImGui::SetNextItemWidth(110.0f);
@@ -162,7 +173,7 @@ namespace mir
             ImGui::DragFloat("Scale", &binding.scale, 0.1f, -1.0f, 1.0f);
         }
 
-        if (action.type == InputActionType::Axis2D)
+        if (action.type == InputActionType::Axis2D || action.type == InputActionType::Delta2D)
         {
             ImGui::SameLine();
             ImGui::SetNextItemWidth(55.0f);
@@ -237,7 +248,7 @@ namespace mir
 
         ImGui::SameLine();
         ImGui::SetNextItemWidth(120.0f);
-        const char *typeItems[] = { "Button", "Axis1D", "Axis2D" };
+        const char *typeItems[] = { "Button", "Axis1D", "Axis2D", "Delta2D" };
         ImGui::Combo("##NewActionType", &mNewActionType, typeItems, IM_ARRAYSIZE(typeItems));
 
         ImGui::SameLine();

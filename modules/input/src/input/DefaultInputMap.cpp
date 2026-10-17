@@ -26,6 +26,11 @@ namespace mir
             return InputBinding{ .device = DeviceKind::Mouse, .mouseButton = button };
         }
 
+        InputBinding MouseDeltaBinding(AxisChannel channel)
+        {
+            return InputBinding{ .device = DeviceKind::Mouse, .channel = channel, .useMouseDelta = true };
+        }
+
         InputBinding PadButtonBinding(GamepadButton button, AxisChannel channel = AxisChannel::X, float scale = 1.0f)
         {
             return InputBinding{ .device = DeviceKind::Gamepad, .channel = channel, .gamepadButton = button, .scale = scale };
@@ -91,6 +96,50 @@ namespace mir
                 KeyBinding(Key::F11),
             };
         }
+
+        // -1 is forward and up.
+        void AddCameraActions(InputMap &map)
+        {
+            map.AddAction(std::string(kCameraMoveAction), InputActionType::Axis2D).bindings = {
+                KeyBinding(Key::A, AxisChannel::X, -1.0f),
+                KeyBinding(Key::D, AxisChannel::X, 1.0f),
+                KeyBinding(Key::W, AxisChannel::Y, -1.0f),
+                KeyBinding(Key::S, AxisChannel::Y, 1.0f),
+                PadAxisBinding(GamepadAxis::LeftX, AxisChannel::X),
+                PadAxisBinding(GamepadAxis::LeftY, AxisChannel::Y),
+            };
+
+            map.AddAction(std::string(kCameraVerticalAction), InputActionType::Axis1D).bindings = {
+                KeyBinding(Key::E, AxisChannel::X, 1.0f),
+                KeyBinding(Key::Q, AxisChannel::X, -1.0f),
+                PadButtonBinding(GamepadButton::RightBumper, AxisChannel::X, 1.0f),
+                PadButtonBinding(GamepadButton::LeftBumper, AxisChannel::X, -1.0f),
+            };
+
+            map.AddAction(std::string(kCameraLookAction), InputActionType::Delta2D).bindings = {
+                MouseDeltaBinding(AxisChannel::X),
+                MouseDeltaBinding(AxisChannel::Y),
+            };
+
+            map.AddAction(std::string(kCameraLookHoldAction), InputActionType::Button).bindings = {
+                MouseBinding(MouseButton::Right),
+            };
+
+            map.AddAction(std::string(kCameraLookStickAction), InputActionType::Axis2D).bindings = {
+                PadAxisBinding(GamepadAxis::RightX, AxisChannel::X),
+                PadAxisBinding(GamepadAxis::RightY, AxisChannel::Y),
+            };
+
+            map.AddAction(std::string(kCameraFastAction), InputActionType::Button).bindings = {
+                KeyBinding(Key::LeftShift),
+                PadButtonBinding(GamepadButton::LeftThumb),
+            };
+
+            map.AddAction(std::string(kToggleCameraModeAction), InputActionType::Button).bindings = {
+                KeyBinding(Key::F2),
+                PadButtonBinding(GamepadButton::Back),
+            };
+        }
     }
 
     InputMap DefaultInputMap()
@@ -98,6 +147,7 @@ namespace mir
         InputMap map;
         AddUIActions(map);
         AddWindowActions(map);
+        AddCameraActions(map);
         return map;
     }
 
