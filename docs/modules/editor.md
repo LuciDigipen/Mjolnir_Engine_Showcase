@@ -379,6 +379,20 @@ Open Project asks for, but not the menu or the dialog themselves.
 
 ## Changed
 
+*2026-10-18* — **A standalone Post-Processing panel (#207).** Was: no place
+for post-effect controls other than Project Settings. Now: `PostProcessingPanel`
+(`editor/panels/PostProcessingPanel.h`), opened from Project >
+Post-Processing, is a first-class panel shaped like `InputSettingsPanel` -
+not another `ProjectSettingsPanel` subsection - with the same draft-copy/Save
+pattern: edits only touch a draft until Save writes it to
+`project_settings.json` and assigns it onto the live `PostProcessingSettings`
+World resource, so every effect applies next frame with no restart.
+`DrawLayout` gained a `PostProcessingSettings &` parameter, threaded through
+from `App` the same way `RenderSettings &` is. It lists whatever
+`PostEffectRegistry` (see [renderer.md](renderer.md)) has registered - a
+checkbox per effect, its own params UI indented underneath when enabled -
+and currently reads "No post effects yet", since this issue registers none.
+
 *2026-10-18* — **The Create menu gained a `Primitive` submenu: cube, sphere,
 plane, cylinder, capsule, cone.** No `HierarchyPanel` change needed - these
 are just six more `EntityPresetRegistry` entries, registered under

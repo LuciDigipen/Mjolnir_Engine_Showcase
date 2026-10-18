@@ -20,10 +20,12 @@
 #include <editor/panels/InputSettingsPanel.h>
 #include <editor/panels/InspectorPanel.h>
 #include <editor/panels/LogPanel.h>
+#include <editor/panels/PostProcessingPanel.h>
 #include <editor/panels/PreferencesPanel.h>
 #include <editor/panels/ProfilerPanel.h>
 #include <editor/panels/ProjectSettingsPanel.h>
 #include <imguiruntime/ImGuiRuntime.h>
+#include <renderer/PostProcessingSettings.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/VulkanRenderer.h>
 #include <window/Window.h>
@@ -100,9 +102,10 @@ namespace mir
 
         //between ImGuiRuntime::BeginFrame and EndFrame
         EditorActions DrawLayout(bool enableLayout, InputMap &inputMap, RenderSettings &renderSettings,
-                                 const EngineModeState &mode, std::span<const ProjectMenuEntry> projects,
-                                 std::string_view currentProject, World &world, const AssetImportView &assetImport,
-                                 const VulkanRenderer &renderer, const ContentBrowserView &contentBrowser);
+                                 PostProcessingSettings &postProcessingSettings, const EngineModeState &mode,
+                                 std::span<const ProjectMenuEntry> projects, std::string_view currentProject,
+                                 World &world, const AssetImportView &assetImport, const VulkanRenderer &renderer,
+                                 const ContentBrowserView &contentBrowser);
 
         VkRect2D SceneViewportRect() const { return mSceneViewportRect; }
 
@@ -138,6 +141,7 @@ namespace mir
         bool mShowStyleEditor = false;
         bool mShowProjectSettings = false;
         bool mShowInputSettings = false;
+        bool mShowPostProcessing = false;
         bool mShowAssetImport = false;
         bool mShowContentBrowser = false;
         bool mShowPreferences = false;
@@ -155,6 +159,7 @@ namespace mir
         ProjectSettingsPanel mProjectSettingsPanel;
         PreferencesPanel mPreferencesPanel;
         InputSettingsPanel mInputSettingsPanel;
+        PostProcessingPanel mPostProcessingPanel;
         ProfilerPanel mProfilerPanel;
         EditorCamera mCamera;
 
