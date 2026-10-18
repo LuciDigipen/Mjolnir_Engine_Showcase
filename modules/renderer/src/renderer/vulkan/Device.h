@@ -64,8 +64,14 @@ namespace mir::vk
         // Every device-wide and queue-wide wait goes through these, so they can be counted.
         void WaitIdle() const;
         void WaitQueueIdle() const;
-        uint64_t DeviceWaits() const { return mDeviceWaits; }
-        uint64_t QueueWaits() const { return mQueueWaits; }
+        uint64_t DeviceWaits() const
+        {
+            return mDeviceWaits;
+        }
+        uint64_t QueueWaits() const
+        {
+            return mQueueWaits;
+        }
 
     private:
         bool CreateInstance(const RendererDesc &desc);

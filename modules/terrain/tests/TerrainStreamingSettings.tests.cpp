@@ -133,10 +133,10 @@ TEST_CASE("Missing, unknown and invalid settings are reported by path and file, 
         const TerrainStreamingSettingsLoad load =
             files.Load(R"({ "cpu": {}, "io": { "workerThreads": 2 }, "retry": { "maxAttempts": 2 } })");
         CHECK_FALSE(load.settings);
-        for (const char *path : {"cpu.budgetMiB is missing", "io.maxInstallsPerFrame is missing",
-                                 "retry.firstDelaySeconds is missing", "retry.maxDelaySeconds is missing",
-                                 "retry.failedHoldSeconds is missing", "residency is missing", "view is missing",
-                                 "gpu is missing"})
+        for (const char *path :
+             {"cpu.budgetMiB is missing", "io.maxInstallsPerFrame is missing", "retry.firstDelaySeconds is missing",
+              "retry.maxDelaySeconds is missing", "retry.failedHoldSeconds is missing", "residency is missing",
+              "view is missing", "gpu is missing"})
             CHECK(Reports(load, game, path));
         CHECK(load.problems.size() == 8);
     }
@@ -165,7 +165,8 @@ TEST_CASE("Missing, unknown and invalid settings are reported by path and file, 
     SECTION("Invalid values name the file that set them")
     {
         const TerrainStreamingSettingsLoad load = files.Load(
-            kComplete, R"({ "cpu": { "budgetMiB": 0 }, "io": { "workerThreads": 65 }, "retry": { "maxDelaySeconds": 0.01 },
+            kComplete,
+            R"({ "cpu": { "budgetMiB": 0 }, "io": { "workerThreads": 65 }, "retry": { "maxDelaySeconds": 0.01 },
                             "view": { "mergeErrorPixels": 2, "prefetchBudgetMiB": -1 },
                             "gpu": { "uploadMiBPerFrame": 0, "meshRetainSeconds": -1 } })");
         CHECK_FALSE(load.settings);
@@ -192,11 +193,11 @@ TEST_CASE("Validation names every field of settings built in code that was left 
 {
     const std::vector<std::string> unset = ValidateTerrainStreamingSettings({});
     CHECK(unset.size() == 17);
-    for (const char *path : {"cpu.budgetMiB", "io.workerThreads", "io.maxInstallsPerFrame", "retry.maxAttempts",
-                             "retry.firstDelaySeconds", "retry.maxDelaySeconds", "retry.failedHoldSeconds",
-                             "residency.mode", "residency.queryLeaseSeconds", "view.refineErrorPixels",
-                             "view.mergeErrorPixels", "view.prefetchErrorPixels", "view.prefetchBudgetMiB",
-                             "gpu.budgetMiB", "gpu.uploadMiBPerFrame", "gpu.stagingMiB", "gpu.meshRetainSeconds"})
+    for (const char *path :
+         {"cpu.budgetMiB", "io.workerThreads", "io.maxInstallsPerFrame", "retry.maxAttempts", "retry.firstDelaySeconds",
+          "retry.maxDelaySeconds", "retry.failedHoldSeconds", "residency.mode", "residency.queryLeaseSeconds",
+          "view.refineErrorPixels", "view.mergeErrorPixels", "view.prefetchErrorPixels", "view.prefetchBudgetMiB",
+          "gpu.budgetMiB", "gpu.uploadMiBPerFrame", "gpu.stagingMiB", "gpu.meshRetainSeconds"})
         CHECK(std::any_of(unset.begin(), unset.end(), [&](const std::string &p) { return p.starts_with(path); }));
 
     TerrainStreamingSettings s;

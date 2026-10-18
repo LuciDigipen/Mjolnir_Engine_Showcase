@@ -33,7 +33,7 @@ namespace
             slots.push_back(entry.item.mesh.mIndex);
         return slots;
     }
-}
+} // namespace
 
 TEST_CASE("Staging ring space comes back only when the frame that copied from it completes", "[renderer][streaming]")
 {

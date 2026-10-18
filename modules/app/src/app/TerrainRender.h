@@ -39,24 +39,30 @@ namespace mir
     class TerrainGpuUploader final : public TerrainMeshUploader
     {
     public:
-        explicit TerrainGpuUploader(VulkanRenderer &renderer) : mRenderer(renderer) {}
+      explicit TerrainGpuUploader(VulkanRenderer &renderer) : mRenderer(renderer) {}
 
-        // For meshes queued from now on.
-        void SetRayTracing(bool rayTracing) { mOptions.rayTracing = rayTracing; }
-        bool RayTracing() const { return mOptions.rayTracing; }
+      // For meshes queued from now on.
+      void SetRayTracing(bool rayTracing)
+      {
+          mOptions.rayTracing = rayTracing;
+      }
+      bool RayTracing() const
+      {
+          return mOptions.rayTracing;
+      }
 
-        uint64_t Footprint(uint32_t vertices, uint32_t indices) const override;
-        uint64_t QueuedBytes() const override;
-        TerrainGpuMeshId Upload(TerrainMeshData &&mesh) override;
-        TerrainGpuMeshState State(TerrainGpuMeshId mesh) const override;
-        void Retire(TerrainGpuMeshId mesh) override;
-        uint64_t RetiringBytes() const override;
+      uint64_t Footprint(uint32_t vertices, uint32_t indices) const override;
+      uint64_t QueuedBytes() const override;
+      TerrainGpuMeshId Upload(TerrainMeshData &&mesh) override;
+      TerrainGpuMeshState State(TerrainGpuMeshId mesh) const override;
+      void Retire(TerrainGpuMeshId mesh) override;
+      uint64_t RetiringBytes() const override;
 
-        static MeshHandle Handle(TerrainGpuMeshId mesh);
+      static MeshHandle Handle(TerrainGpuMeshId mesh);
 
     private:
-        VulkanRenderer &mRenderer;
-        MeshUploadOptions mOptions;
+      VulkanRenderer &mRenderer;
+      MeshUploadOptions mOptions;
     };
 
     // A ready mesh drawn at an instance's placement; nullopt when its origin does not fit the world.

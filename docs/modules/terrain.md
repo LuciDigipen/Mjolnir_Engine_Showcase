@@ -672,7 +672,7 @@ retires every terrain mesh to be made again. A raster-only project builds no
 terrain BLAS on any device. The BLAS is built in the same frame as the copies,
 all of a frame's builds in one call, inside the frame budget.
 
-**Measurements** (`TerrainRenderProbe --selection`, Release, RTX 3070 Laptop,
+**Local prototype measurements** (`TerrainRenderProbe --selection`, Release, RTX 3070 Laptop,
 1280 x 720, 60 Hz; the #124 prototype map streamed by interest with
 TerrainCheck's `view` and `gpu` values, a 512 MiB CPU and a 1024 MiB GPU budget
 unless noted; development baselines, not budgets). Frame times leave out the

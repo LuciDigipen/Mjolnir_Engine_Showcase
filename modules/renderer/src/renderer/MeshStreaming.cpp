@@ -61,7 +61,8 @@ namespace mir
 
     bool MeshUploadQueue::Cancel(MeshHandle mesh)
     {
-        const auto it = std::find_if(mPending.begin(), mPending.end(), [&](const Item &item) { return item.mesh == mesh; });
+        const auto it =
+            std::find_if(mPending.begin(), mPending.end(), [&](const Item &item) { return item.mesh == mesh; });
         if (it == mPending.end())
             return false;
         mPendingBytes -= it->gpuBytes;
@@ -118,4 +119,4 @@ namespace mir
         mUploadingBytes = 0;
         mLastFrameBytes = 0;
     }
-}
+} // namespace mir

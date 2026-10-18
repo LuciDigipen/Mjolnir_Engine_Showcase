@@ -39,7 +39,7 @@ namespace
     // What the residency is told by a renderer: queued, then recorded, then complete.
     class FakeUploader final : public TerrainMeshUploader
     {
-    public:
+      public:
         enum class Stage
         {
             Queued,
@@ -84,9 +84,12 @@ namespace
         {
             switch (meshes.at(id).stage)
             {
-            case Stage::Ready: return TerrainGpuMeshState::Ready;
-            case Stage::Failed: return TerrainGpuMeshState::Failed;
-            default: return TerrainGpuMeshState::Uploading;
+            case Stage::Ready:
+                return TerrainGpuMeshState::Ready;
+            case Stage::Failed:
+                return TerrainGpuMeshState::Failed;
+            default:
+                return TerrainGpuMeshState::Uploading;
             }
         }
 
@@ -100,7 +103,10 @@ namespace
             meshes.erase(found);
         }
 
-        uint64_t RetiringBytes() const override { return retiring; }
+        uint64_t RetiringBytes() const override
+        {
+            return retiring;
+        }
 
         // A frame: what was recorded completes when complete holds, and everything queued is recorded.
         void Frame(const std::function<bool(const TerrainPayloadKey &)> &complete = {})
@@ -120,7 +126,10 @@ namespace
                     mesh.stage = Stage::Failed;
         }
 
-        void FreeRetired() { retiring = 0; }
+        void FreeRetired()
+        {
+            retiring = 0;
+        }
 
         std::map<TerrainGpuMeshId, Mesh> meshes;
         std::vector<TerrainPayloadKey> uploadOrder;
@@ -171,7 +180,10 @@ namespace
             instance = {resident->SharedHandle(), {info.asset, *WorldPosition::FromDoubleMeters(at)}};
         }
 
-        const TerrainIndex &Index() const { return resident->Handle().Index(); }
+        const TerrainIndex &Index() const
+        {
+            return resident->Handle().Index();
+        }
 
         TerrainPayloadKey Tile(TileCoord tile, uint32_t level = 0) const
         {
@@ -236,7 +248,7 @@ namespace
             residency.Install();
         }
     };
-}
+} // namespace
 
 TEST_CASE("A unit is ready only once its GPU upload has completed", "[terrain][gpu]")
 {
@@ -273,7 +285,8 @@ TEST_CASE("A unit is ready only once its GPU upload has completed", "[terrain][g
     const TerrainResidentMesh *mesh = h.residency.Acquire(tile, h.now);
     REQUIRE(mesh != nullptr);
     CHECK(mesh->origin.Meters() == glm::dvec3(64.0, 0.0, 128.0));
-    CHECK(h.uploader.meshes.at(mesh->id).vertices == a.Index().Find({1, 2}, 0, TerrainPayloadKind::LodHeight, 0)->vertexCount);
+    CHECK(h.uploader.meshes.at(mesh->id).vertices ==
+          a.Index().Find({1, 2}, 0, TerrainPayloadKind::LodHeight, 0)->vertexCount);
     const TerrainMeshStats stats = h.residency.Stats();
     CHECK(stats.ready == 2);
     CHECK(stats.heldBytes == a.Bytes(tile, h.uploader) + a.Bytes(region, h.uploader));
@@ -289,9 +302,10 @@ TEST_CASE("Builds start Visible before Prefetch, nearest first, a frame's upload
     const uint64_t tileBytes = a.Bytes(a.Tile({0, 0}), sizes);
     Harness h(GpuSettings(uint64_t(1) << 30, 2 * tileBytes));
 
-    const std::vector<TerrainPayloadWant> wants{
-        {a.Tile({3, 3}), Demand::Prefetch, 1.0f}, {a.Tile({2, 2}), Demand::Visible, 30.0f},
-        {a.Tile({1, 1}), Demand::Visible, 20.0f}, {a.Tile({0, 0}), Demand::Visible, 10.0f}};
+    const std::vector<TerrainPayloadWant> wants{{a.Tile({3, 3}), Demand::Prefetch, 1.0f},
+                                                {a.Tile({2, 2}), Demand::Visible, 30.0f},
+                                                {a.Tile({1, 1}), Demand::Visible, 20.0f},
+                                                {a.Tile({0, 0}), Demand::Visible, 10.0f}};
     h.Request({&a.instance, 1}, wants, payloads.streamer);
     CHECK(h.residency.State(a.Tile({0, 0})) == TerrainMeshState::Building);
     CHECK(h.residency.State(a.Tile({1, 1})) == TerrainMeshState::Building);
@@ -340,8 +354,7 @@ TEST_CASE("Built meshes go to the uploader only while a frame's upload has room"
     CHECK(h.uploader.meshes.size() == 2);
 }
 
-TEST_CASE("A Visible mesh makes room by retiring unwanted, then Prefetch meshes, never a Visible one",
-          "[terrain][gpu]")
+TEST_CASE("A Visible mesh makes room by retiring unwanted, then Prefetch meshes, never a Visible one", "[terrain][gpu]")
 {
     const Release a(0x127, {0.0, 0.0, 0.0});
     const Payloads payloads{&a};
@@ -349,8 +362,7 @@ TEST_CASE("A Visible mesh makes room by retiring unwanted, then Prefetch meshes,
     const uint64_t tileBytes = a.Bytes(a.Tile({0, 0}), sizes);
     Harness h(GpuSettings(3 * tileBytes, uint64_t(1) << 30, 100.0));
 
-    const auto settle = [&](const std::vector<TerrainPayloadWant> &wants)
-    {
+    const auto settle = [&](const std::vector<TerrainPayloadWant> &wants) {
         for (int frame = 0; frame < 4; ++frame)
         {
             h.Request({&a.instance, 1}, wants, payloads.streamer);
@@ -368,22 +380,28 @@ TEST_CASE("A Visible mesh makes room by retiring unwanted, then Prefetch meshes,
     REQUIRE(h.residency.Ready(old));
 
     const TerrainPayloadKey next = a.Tile({1, 1});
-    h.Request({&a.instance, 1}, {{drawn, Demand::Visible, 1.0f}, {far, Demand::Prefetch, 9.0f},
-                                 {next, Demand::Visible, 2.0f}}, payloads.streamer);
+    h.Request({&a.instance, 1},
+              {{drawn, Demand::Visible, 1.0f}, {far, Demand::Prefetch, 9.0f}, {next, Demand::Visible, 2.0f}},
+              payloads.streamer);
     CHECK(h.uploader.retired == std::vector<TerrainPayloadKey>{old});
     CHECK(h.residency.State(next) == TerrainMeshState::Absent);
     CHECK(h.residency.Stats().budgetWaits == 1);
     CHECK(h.residency.Stats().retiringBytes == tileBytes);
 
     h.uploader.FreeRetired();
-    h.Request({&a.instance, 1}, {{drawn, Demand::Visible, 1.0f}, {far, Demand::Prefetch, 9.0f},
-                                 {next, Demand::Visible, 2.0f}}, payloads.streamer);
+    h.Request({&a.instance, 1},
+              {{drawn, Demand::Visible, 1.0f}, {far, Demand::Prefetch, 9.0f}, {next, Demand::Visible, 2.0f}},
+              payloads.streamer);
     CHECK(h.residency.State(next) == TerrainMeshState::Building);
 
     const TerrainPayloadKey another = a.Tile({2, 1}), speculative = a.Tile({2, 2});
-    h.Request({&a.instance, 1}, {{drawn, Demand::Visible, 1.0f}, {far, Demand::Prefetch, 9.0f},
-                                 {next, Demand::Visible, 2.0f}, {another, Demand::Visible, 3.0f},
-                                 {speculative, Demand::Prefetch, 1.0f}}, payloads.streamer);
+    h.Request({&a.instance, 1},
+              {{drawn, Demand::Visible, 1.0f},
+               {far, Demand::Prefetch, 9.0f},
+               {next, Demand::Visible, 2.0f},
+               {another, Demand::Visible, 3.0f},
+               {speculative, Demand::Prefetch, 1.0f}},
+              payloads.streamer);
     CHECK(h.uploader.retired == std::vector<TerrainPayloadKey>{old, far});
     CHECK(h.residency.Ready(drawn));
     CHECK(h.residency.State(speculative) == TerrainMeshState::Absent);
@@ -416,8 +434,7 @@ TEST_CASE("A mesh nobody wants or draws retires after meshRetainSeconds", "[terr
     CHECK(h.residency.Stats().retired == 1);
 }
 
-TEST_CASE("A build nobody wants any more is canceled, and a result for a dropped mesh never uploads",
-          "[terrain][gpu]")
+TEST_CASE("A build nobody wants any more is canceled, and a result for a dropped mesh never uploads", "[terrain][gpu]")
 {
     const Release a(0x127, {0.0, 0.0, 0.0});
     const Payloads payloads{&a};
@@ -460,8 +477,11 @@ TEST_CASE("Switching releases retires every mesh of the old one, and its late wo
     h.BuildAll();
     REQUIRE(h.residency.Ready(ready));
     REQUIRE(h.residency.Ready(kept));
-    h.Request(both, {{ready, Demand::Visible, 1.0f}, {kept, Demand::Visible, 1.0f}, {uploading, Demand::Visible, 2.0f},
-                     {building, Demand::Visible, 3.0f}},
+    h.Request(both,
+              {{ready, Demand::Visible, 1.0f},
+               {kept, Demand::Visible, 1.0f},
+               {uploading, Demand::Visible, 2.0f},
+               {building, Demand::Visible, 3.0f}},
               payloads.streamer);
     REQUIRE(h.residency.State(uploading) == TerrainMeshState::Uploading);
     REQUIRE(h.residency.State(building) == TerrainMeshState::Building);
@@ -549,8 +569,7 @@ TEST_CASE("A refined Region stays drawn until every child's GPU mesh is ready", 
     const TerrainView camera{{*WorldPosition::FromDoubleMeters(eye), viewProj}, 1000.0, 0.0};
     const TerrainUnitReady ready = [&](const TerrainDrawUnit &unit) { return h.residency.Ready(unit.geometry); };
 
-    const auto frame = [&](const std::function<bool(const TerrainPayloadKey &)> &complete)
-    {
+    const auto frame = [&](const std::function<bool(const TerrainPayloadKey &)> &complete) {
         h.residency.Install();
         selector.Update({&a.instance, 1}, camera, ready);
         h.Request({&a.instance, 1}, std::vector<TerrainPayloadWant>(selector.Wants().begin(), selector.Wants().end()),

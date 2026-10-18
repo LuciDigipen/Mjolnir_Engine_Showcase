@@ -82,7 +82,7 @@ namespace mir::vk
         MeshHandle ReserveMesh();
         // Device buffers for a reserved slot; rayTracing makes them BLAS build inputs.
         bool CreateMeshBuffers(GpuMesh &mesh, uint32_t slot, VkDeviceSize vertexBytes, VkDeviceSize indexBytes,
-            bool rayTracing);
+                               bool rayTracing);
         // Empties the slot and moves its generation on; the caller frees the returned buffers later.
         GpuMesh TakeMesh(MeshHandle handle);
         // GPU objects only; the slot and its generation are the caller's.

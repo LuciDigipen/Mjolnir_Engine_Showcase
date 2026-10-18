@@ -1,7 +1,8 @@
 /**
  * @file MeshUploader.cpp
  * @author Jackey Cen
- * @brief Records queued mesh uploads and their BLAS builds into frames, and frees retired meshes after their last frame.
+ * @brief Records queued mesh uploads and their BLAS builds into frames, and frees retired meshes after their last
+ * frame.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -27,7 +28,7 @@ namespace mir::vk
         if (desc.stagingBytes < MeshUploadQueue::kStagingAlignment || desc.frameBytes == 0)
         {
             MIR_LOG_ERROR("ConfigureMeshStreaming: {} staging bytes and {} bytes a frame are too few",
-                desc.stagingBytes, desc.frameBytes);
+                          desc.stagingBytes, desc.frameBytes);
             return false;
         }
         if (Configured() && desc == mQueue.Desc())
@@ -41,8 +42,8 @@ namespace mir::vk
         DestroyStaging();
         VmaAllocationInfo info{};
         if (!CreateBuffer(mDevice->Allocator(), desc.stagingBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
-            mStaging, mStagingAllocation, &info))
+                          VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
+                          mStaging, mStagingAllocation, &info))
         {
             MIR_LOG_CRITICAL("ConfigureMeshStreaming: staging ring allocation failed");
             mStaging = VK_NULL_HANDLE;
@@ -74,7 +75,7 @@ namespace mir::vk
     }
 
     uint64_t MeshUploader::Footprint(const RayTracer &rayTracer, uint32_t vertexCount, uint32_t indexCount,
-        const MeshUploadOptions &options) const
+                                     const MeshUploadOptions &options) const
     {
         uint64_t bytes = uint64_t(vertexCount) * sizeof(Vertex) + uint64_t(indexCount) * sizeof(uint32_t);
         if (options.rayTracing && mDevice->RayTracingSupported() && vertexCount > 0)
@@ -83,7 +84,7 @@ namespace mir::vk
     }
 
     MeshHandle MeshUploader::Queue(ResourceStore &resources, const RayTracer &rayTracer, std::vector<Vertex> vertices,
-        std::vector<uint32_t> indices, const MeshUploadOptions &options)
+                                   std::vector<uint32_t> indices, const MeshUploadOptions &options)
     {
         if (!Configured())
         {
@@ -101,8 +102,8 @@ namespace mir::vk
         const uint64_t gpu = Footprint(rayTracer, uint32_t(vertices.size()), uint32_t(indices.size()), options);
         const MeshHandle handle = resources.ReserveMesh();
         resources.FindMeshSlot(handle)->mBytes = gpu;
-        mQueue.Push({ handle, staging, gpu });
-        mQueued[handle.mIndex] = Queued{ handle, std::move(vertices), std::move(indices), blas };
+        mQueue.Push({handle, staging, gpu});
+        mQueued[handle.mIndex] = Queued{handle, std::move(vertices), std::move(indices), blas};
         ++mQueuedCount;
         return handle;
     }
@@ -198,8 +199,9 @@ namespace mir::vk
                 VkBuffer own = VK_NULL_HANDLE;
                 VmaAllocation ownAllocation = VK_NULL_HANDLE;
                 if (!CreateBuffer(mDevice->Allocator(), vertexBytes + indexBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                    VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
-                    own, ownAllocation, &info))
+                                  VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                                      VMA_ALLOCATION_CREATE_MAPPED_BIT,
+                                  own, ownAllocation, &info))
                 {
                     MIR_LOG_ERROR("Mesh {}: staging buffer allocation failed, the upload is dropped", handle.mIndex);
                     resources.FreeMesh(*mesh);
@@ -212,23 +214,23 @@ namespace mir::vk
                 source = own;
                 target = static_cast<std::byte *>(info.pMappedData);
                 targetAllocation = ownAllocation;
-                mRetired.Push(frame, vertexBytes + indexBytes, Garbage{ {}, { { own, ownAllocation } } });
+                mRetired.Push(frame, vertexBytes + indexBytes, Garbage{{}, {{own, ownAllocation}}});
             }
             std::memcpy(target, queued.vertices.data(), vertexBytes);
             std::memcpy(target + vertexBytes, queued.indices.data(), indexBytes);
             vmaFlushAllocation(mDevice->Allocator(), targetAllocation, entry.stagingOffset ? offset : 0,
-                vertexBytes + indexBytes);
+                               vertexBytes + indexBytes);
 
-            const VkBufferCopy vertexCopy{ .srcOffset = offset, .dstOffset = 0, .size = vertexBytes };
+            const VkBufferCopy vertexCopy{.srcOffset = offset, .dstOffset = 0, .size = vertexBytes};
             vkCmdCopyBuffer(cmd, source, mesh->mVertexBuffer, 1, &vertexCopy);
-            const VkBufferCopy indexCopy{ .srcOffset = offset + vertexBytes, .dstOffset = 0, .size = indexBytes };
+            const VkBufferCopy indexCopy{.srcOffset = offset + vertexBytes, .dstOffset = 0, .size = indexBytes};
             vkCmdCopyBuffer(cmd, source, mesh->mIndexBuffer, 1, &indexCopy);
 
             mesh->mIndexCount = uint32_t(queued.indices.size());
             mesh->mState = GpuMeshState::Uploading;
             mUploadedBytes += entry.item.gpuBytes;
             if (queued.blas)
-                builds.push_back({ handle.mIndex, mesh, uint32_t(queued.vertices.size()) });
+                builds.push_back({handle.mIndex, mesh, uint32_t(queued.vertices.size())});
         }
 
         if (!builds.empty())
@@ -237,33 +239,30 @@ namespace mir::vk
             mBlasBuilt += batch.built;
             mBlasBytes += batch.blasBytes;
             if (batch.scratchBuffer != VK_NULL_HANDLE)
-                mRetired.Push(frame, batch.scratchBytes,
-                    Garbage{ {}, { { batch.scratchBuffer, batch.scratchAllocation } } });
+                mRetired.Push(frame, batch.scratchBytes, Garbage{{}, {{batch.scratchBuffer, batch.scratchAllocation}}});
         }
 
         // Later frames draw and trace from these, in submission order on the one queue.
         VkPipelineStageFlags2 srcStages = VK_PIPELINE_STAGE_2_COPY_BIT;
         VkAccessFlags2 srcAccess = VK_ACCESS_2_TRANSFER_WRITE_BIT;
-        VkPipelineStageFlags2 dstStages = VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT;
+        VkPipelineStageFlags2 dstStages =
+            VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT;
         VkAccessFlags2 dstAccess = VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT;
         if (mDevice->RayTracingSupported())
         {
             srcStages |= VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
             srcAccess |= VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
             dstStages |= VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR |
-                VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR;
+                         VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR;
             dstAccess |= VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT;
         }
-        const VkMemoryBarrier2 barrier{
-            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-            .srcStageMask = srcStages,
-            .srcAccessMask = srcAccess,
-            .dstStageMask = dstStages,
-            .dstAccessMask = dstAccess };
+        const VkMemoryBarrier2 barrier{.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+                                       .srcStageMask = srcStages,
+                                       .srcAccessMask = srcAccess,
+                                       .dstStageMask = dstStages,
+                                       .dstAccessMask = dstAccess};
         const VkDependencyInfo dependency{
-            .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-            .memoryBarrierCount = 1,
-            .pMemoryBarriers = &barrier };
+            .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &barrier};
         vkCmdPipelineBarrier2(cmd, &dependency);
     }
 
@@ -304,4 +303,4 @@ namespace mir::vk
         stats.lastFrameBytes = mQueue.LastFrameBytes();
         stats.maxFrameBytes = mMaxFrameBytes;
     }
-}
+} // namespace mir::vk

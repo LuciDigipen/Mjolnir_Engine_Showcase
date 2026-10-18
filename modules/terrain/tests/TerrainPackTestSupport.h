@@ -320,8 +320,9 @@ namespace mir::test
                 const std::optional<double> deviation = TerrainLodDeviation(source, tile, lod);
                 REQUIRE(deviation);
                 lod.maxDeviation = *deviation;
-                const auto [lo, hi] = std::minmax_element(lod.positions.begin(), lod.positions.end(),
-                                                          [](const glm::vec3 &p, const glm::vec3 &q) { return p.y < q.y; });
+                const auto [lo, hi] =
+                    std::minmax_element(lod.positions.begin(), lod.positions.end(),
+                                        [](const glm::vec3 &p, const glm::vec3 &q) { return p.y < q.y; });
 
                 TerrainTileRecord record;
                 record.tile = tile.Tile();
@@ -341,8 +342,8 @@ namespace mir::test
                 record.indexCount = uint32_t(lod.indices.size());
                 writes.push_back({record, EncodeTerrainLod(lod)});
                 record.kind = TerrainPayloadKind::Normal;
-                writes.push_back(
-                    {record, EncodeTerrainNormals(lod, std::vector<glm::vec3>(lod.positions.size(), {0.0f, 1.0f, 0.0f}))});
+                writes.push_back({record, EncodeTerrainNormals(
+                                              lod, std::vector<glm::vec3>(lod.positions.size(), {0.0f, 1.0f, 0.0f}))});
             }
         return writes;
     }

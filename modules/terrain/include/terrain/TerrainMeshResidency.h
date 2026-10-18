@@ -1,7 +1,8 @@
 /**
  * @file TerrainMeshResidency.h
  * @author Jackey Cen
- * @brief Keeps the GPU meshes of wanted terrain draw units within a GPU budget, built on workers, uploaded a frame at a time.
+ * @brief Keeps the GPU meshes of wanted terrain draw units within a GPU budget, built on workers, uploaded a frame at a
+ * time.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -48,7 +49,7 @@ namespace mir
     // The renderer's side, implemented outside this module; called on the main thread only.
     class TerrainMeshUploader
     {
-    public:
+      public:
         virtual ~TerrainMeshUploader() = default;
 
         // GPU bytes a mesh of this size holds once uploaded.
@@ -122,7 +123,7 @@ namespace mir
     // usable. Meshes are keyed by their geometry payload, so viewports and instances of one release share them.
     class TerrainMeshResidency
     {
-    public:
+      public:
         // Settings must validate.
         TerrainMeshResidency(const TerrainStreamingSettings::Gpu &settings, std::shared_ptr<TerrainExecutor> executor,
                              TerrainMeshUploader &uploader);
@@ -155,8 +156,8 @@ namespace mir
         std::vector<std::pair<TerrainPayloadKey, std::string>> TakeFailures();
         TerrainMeshStats Stats() const;
 
-    private:
+      private:
         struct Impl;
         std::unique_ptr<Impl> mImpl;
     };
-}
+} // namespace mir

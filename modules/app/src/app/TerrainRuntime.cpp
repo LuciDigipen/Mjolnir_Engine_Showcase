@@ -100,8 +100,8 @@ namespace mir
                      TerrainResidencyModeName(*settings.residency.mode),
                      load.localFileFound ? " (machine-local overrides applied)" : "");
         MIR_LOG_INFO("Terrain views: refine above {} px, merge below {} px, prefetch to {} px within {:.1f} MiB",
-                     settings.view.refineErrorPixels, settings.view.mergeErrorPixels,
-                     settings.view.prefetchErrorPixels, MiB(*settings.view.prefetchBudgetBytes));
+                     settings.view.refineErrorPixels, settings.view.mergeErrorPixels, settings.view.prefetchErrorPixels,
+                     MiB(*settings.view.prefetchBudgetBytes));
 
         const TerrainStreamingSettings::Gpu &gpu = settings.gpu;
         if (!renderer.ConfigureMeshStreaming({.stagingBytes = gpu.stagingBytes, .frameBytes = gpu.uploadBytesPerFrame}))
@@ -524,7 +524,7 @@ namespace mir
                     AppendDraws(view.selector->Draws(), view.draws);
                     LogView(view, camera);
                     mFrameViews.push_back(i);
-    }
+                }
     }
 
     void TerrainRuntime::AppendViewDraws(size_t view, std::vector<WorldDrawItem> &out)
@@ -570,12 +570,9 @@ namespace mir
         const std::span<const TerrainInstanceState> instances = mWorld->Resource<TerrainWorld>().Instances();
         for (const auto &[key, error] : mMeshes->TakeFailures())
         {
-            const auto instance = std::find_if(instances.begin(), instances.end(),
-                                               [&](const TerrainInstanceState &i)
-                                               {
-                                                   return i.release->Info().asset == key.asset &&
-                                                          i.release->Info().release == key.release;
-                                               });
+            const auto instance = std::find_if(instances.begin(), instances.end(), [&](const TerrainInstanceState &i) {
+                return i.release->Info().asset == key.asset && i.release->Info().release == key.release;
+            });
             Report(std::format("Terrain '{}': no mesh for {} ({}); that area is not drawn",
                                instance == instances.end() ? std::string("?") : instance->recipePath,
                                DescribeTerrainPayloadKey(key), error));

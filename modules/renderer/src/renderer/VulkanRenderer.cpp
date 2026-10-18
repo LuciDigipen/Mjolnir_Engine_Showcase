@@ -25,18 +25,12 @@
 namespace mir
 {
     VulkanRenderer::VulkanRenderer()
-        : mDevice(std::make_unique<vk::Device>()),
-        mSwapchain(std::make_unique<vk::Swapchain>()),
-        mFrameSync(std::make_unique<vk::FrameSync>()),
-        mResources(std::make_unique<vk::ResourceStore>()),
-        mMaterialStore(std::make_unique<vk::MaterialStore>()),
-        mCameraBuffer(std::make_unique<vk::CameraBuffer>()),
-        mShadowMaps(std::make_unique<vk::ShadowMaps>()),
-        mModelDescriptors(std::make_unique<vk::ModelDescriptors>()),
-        mRayTracer(std::make_unique<vk::RayTracer>()),
-        mCapture(std::make_unique<vk::FrameCapture>()),
-        mImGuiOverlay(std::make_unique<vk::ImGuiOverlay>()),
-        mMeshUploads(std::make_unique<vk::MeshUploader>())
+        : mDevice(std::make_unique<vk::Device>()), mSwapchain(std::make_unique<vk::Swapchain>()),
+          mFrameSync(std::make_unique<vk::FrameSync>()), mResources(std::make_unique<vk::ResourceStore>()),
+          mMaterialStore(std::make_unique<vk::MaterialStore>()), mCameraBuffer(std::make_unique<vk::CameraBuffer>()),
+          mShadowMaps(std::make_unique<vk::ShadowMaps>()), mModelDescriptors(std::make_unique<vk::ModelDescriptors>()),
+          mRayTracer(std::make_unique<vk::RayTracer>()), mCapture(std::make_unique<vk::FrameCapture>()),
+          mImGuiOverlay(std::make_unique<vk::ImGuiOverlay>()), mMeshUploads(std::make_unique<vk::MeshUploader>())
     {}
     VulkanRenderer::~VulkanRenderer() = default;
 
@@ -180,7 +174,7 @@ namespace mir
     }
 
     MeshHandle VulkanRenderer::QueueMesh(std::vector<Vertex> vertices, std::vector<uint32_t> indices,
-        const MeshUploadOptions &options)
+                                         const MeshUploadOptions &options)
     {
         return mMeshUploads->Queue(*mResources, *mRayTracer, std::move(vertices), std::move(indices), options);
     }
@@ -192,10 +186,14 @@ namespace mir
             return MeshUploadState::Stale;
         switch (mesh->mState)
         {
-        case vk::GpuMeshState::Ready: return MeshUploadState::Ready;
-        case vk::GpuMeshState::Pending: return MeshUploadState::Pending;
-        case vk::GpuMeshState::Uploading: return MeshUploadState::Uploading;
-        case vk::GpuMeshState::Failed: return MeshUploadState::Failed;
+        case vk::GpuMeshState::Ready:
+            return MeshUploadState::Ready;
+        case vk::GpuMeshState::Pending:
+            return MeshUploadState::Pending;
+        case vk::GpuMeshState::Uploading:
+            return MeshUploadState::Uploading;
+        case vk::GpuMeshState::Failed:
+            return MeshUploadState::Failed;
         }
         return MeshUploadState::Stale;
     }
@@ -206,7 +204,7 @@ namespace mir
     }
 
     uint64_t VulkanRenderer::MeshFootprint(uint32_t vertexCount, uint32_t indexCount,
-        const MeshUploadOptions &options) const
+                                           const MeshUploadOptions &options) const
     {
         return mMeshUploads->Footprint(*mRayTracer, vertexCount, indexCount, options);
     }

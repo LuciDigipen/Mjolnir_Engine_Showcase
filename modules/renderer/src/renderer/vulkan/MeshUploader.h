@@ -1,7 +1,8 @@
 /**
  * @file MeshUploader.h
  * @author Jackey Cen
- * @brief Records queued mesh uploads and their BLAS builds into frames, and frees retired meshes after their last frame.
+ * @brief Records queued mesh uploads and their BLAS builds into frames, and frees retired meshes after their last
+ * frame.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -31,18 +32,24 @@ namespace mir::vk
     // ready once the frame timeline passes that frame.
     class MeshUploader
     {
-    public:
-        void Initialize(Device &device) { mDevice = &device; }
+      public:
+        void Initialize(Device &device)
+        {
+            mDevice = &device;
+        }
         // Creates the staging ring; a later, different desc needs nothing queued or in flight.
         bool Configure(const MeshStreamingDesc &desc);
-        bool Configured() const { return mStaging != VK_NULL_HANDLE; }
+        bool Configured() const
+        {
+            return mStaging != VK_NULL_HANDLE;
+        }
         // With the device idle.
         void Shutdown(RayTracer &rayTracer);
 
         MeshHandle Queue(ResourceStore &resources, const RayTracer &rayTracer, std::vector<Vertex> vertices,
-            std::vector<uint32_t> indices, const MeshUploadOptions &options);
+                         std::vector<uint32_t> indices, const MeshUploadOptions &options);
         uint64_t Footprint(const RayTracer &rayTracer, uint32_t vertexCount, uint32_t indexCount,
-            const MeshUploadOptions &options) const;
+                           const MeshUploadOptions &options) const;
         // Freed once lastUse completes; a mesh not recorded yet is canceled at once. False for a stale handle.
         bool Retire(ResourceStore &resources, RayTracer &rayTracer, MeshHandle mesh, uint64_t lastUse);
         // Drops a mesh the caller destroys itself, with the device idle.
@@ -56,7 +63,7 @@ namespace mir::vk
 
         void FillStats(MeshStreamingStats &stats) const;
 
-    private:
+      private:
         struct Queued
         {
             MeshHandle mesh;
@@ -93,4 +100,4 @@ namespace mir::vk
         uint64_t mBlasBytes = 0;
         uint64_t mMaxFrameBytes = 0;
     };
-}
+} // namespace mir::vk

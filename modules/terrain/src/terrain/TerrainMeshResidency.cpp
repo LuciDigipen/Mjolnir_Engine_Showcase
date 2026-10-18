@@ -1,7 +1,8 @@
 /**
  * @file TerrainMeshResidency.cpp
  * @author Jackey Cen
- * @brief Keeps the GPU meshes of wanted terrain draw units within a GPU budget, built on workers, uploaded a frame at a time.
+ * @brief Keeps the GPU meshes of wanted terrain draw units within a GPU budget, built on workers, uploaded a frame at a
+ * time.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -94,7 +95,8 @@ namespace mir
             }
             else
             {
-                TerrainResult<TerrainTileMesh> built = MakeTerrainRenderMesh(job.release->Index(), *job.lod, *job.normals);
+                TerrainResult<TerrainTileMesh> built =
+                    MakeTerrainRenderMesh(job.release->Index(), *job.lod, *job.normals);
                 if (built)
                 {
                     data.origin = built.value->origin;
@@ -112,7 +114,7 @@ namespace mir
         // Shared with every posted job, so a job that runs after the residency is gone finds a live queue.
         class BuildQueue
         {
-        public:
+          public:
             void Push(const Order &order, BuildJob job)
             {
                 std::lock_guard lock(mMutex);
@@ -177,7 +179,7 @@ namespace mir
                 mFinished.clear();
             }
 
-        private:
+          private:
             std::mutex mMutex;
             std::map<Order, BuildJob> mPending;
             std::unordered_map<uint64_t, Order> mOrders;
@@ -189,7 +191,7 @@ namespace mir
         {
             return key.asset == release.asset && key.release == release.release;
         }
-    }
+    } // namespace
 
     struct TerrainMeshResidency::Impl
     {
@@ -301,16 +303,14 @@ namespace mir
                 if (resident && (!entry.demand || *entry.demand < demand))
                     victims.push_back(it);
             }
-            std::sort(victims.begin(), victims.end(),
-                      [this](const auto &a, const auto &b)
-                      {
-                          const Entry &x = a->second, &y = b->second;
-                          if (x.demand.has_value() != y.demand.has_value())
-                              return !x.demand.has_value();
-                          if (!x.demand)
-                              return LastTouched(x) < LastTouched(y);
-                          return x.rank > y.rank;
-                      });
+            std::sort(victims.begin(), victims.end(), [this](const auto &a, const auto &b) {
+                const Entry &x = a->second, &y = b->second;
+                if (x.demand.has_value() != y.demand.has_value())
+                    return !x.demand.has_value();
+                if (!x.demand)
+                    return LastTouched(x) < LastTouched(y);
+                return x.rank > y.rank;
+            });
             for (const auto &victim : victims)
             {
                 if (held + bytes <= settings.budgetBytes)
@@ -322,8 +322,7 @@ namespace mir
     };
 
     TerrainMeshResidency::TerrainMeshResidency(const TerrainStreamingSettings::Gpu &settings,
-                                               std::shared_ptr<TerrainExecutor> executor,
-                                               TerrainMeshUploader &uploader)
+                                               std::shared_ptr<TerrainExecutor> executor, TerrainMeshUploader &uploader)
         : mImpl(std::make_unique<Impl>(settings, std::move(executor), uploader))
     {
         mImpl->stats.budgetBytes = settings.budgetBytes;
@@ -359,7 +358,8 @@ namespace mir
                 continue;
             switch (impl.uploader.State(entry.mesh.id))
             {
-            case TerrainGpuMeshState::Uploading: break;
+            case TerrainGpuMeshState::Uploading:
+                break;
             case TerrainGpuMeshState::Ready:
                 entry.state = TerrainMeshState::Ready;
                 ++impl.stats.uploadsReady;
@@ -433,9 +433,10 @@ namespace mir
         {
             if (impl.entries.contains(key))
                 continue;
-            const auto instance = std::find_if(instances.begin(), instances.end(),
-                                               [&](const TerrainSelectionInstance &i)
-                                               { return i.release && SameRelease(key, i.release->Info()); });
+            const auto instance =
+                std::find_if(instances.begin(), instances.end(), [&](const TerrainSelectionInstance &i) {
+                    return i.release && SameRelease(key, i.release->Info());
+                });
             if (instance == instances.end())
                 continue;
             const bool resident = want.kind == TerrainUnitKind::Region
@@ -445,11 +446,9 @@ namespace mir
             if (resident)
                 candidates.push_back({key, &want, &*instance});
         }
-        std::sort(candidates.begin(), candidates.end(),
-                  [](const Candidate &a, const Candidate &b)
-                  {
-                      return std::tie(b.want->demand, a.want->rank) < std::tie(a.want->demand, b.want->rank);
-                  });
+        std::sort(candidates.begin(), candidates.end(), [](const Candidate &a, const Candidate &b) {
+            return std::tie(b.want->demand, a.want->rank) < std::tie(a.want->demand, b.want->rank);
+        });
 
         uint64_t building = 0;
         for (const auto &[key, entry] : impl.entries)
@@ -555,8 +554,9 @@ namespace mir
         Impl &impl = *mImpl;
         for (auto it = impl.entries.begin(); it != impl.entries.end();)
         {
-            const bool kept = std::any_of(keep.begin(), keep.end(),
-                                          [&](const TerrainReleaseInfo &release) { return SameRelease(it->first, release); });
+            const bool kept = std::any_of(keep.begin(), keep.end(), [&](const TerrainReleaseInfo &release) {
+                return SameRelease(it->first, release);
+            });
             if (kept)
                 ++it;
             else
@@ -592,13 +592,24 @@ namespace mir
         for (const auto &[key, entry] : impl.entries)
             switch (entry.state)
             {
-            case TerrainMeshState::Building: ++stats.building; break;
-            case TerrainMeshState::Built: ++stats.built; break;
-            case TerrainMeshState::Uploading: ++stats.uploading; break;
-            case TerrainMeshState::Ready: ++stats.ready; break;
-            case TerrainMeshState::Failed: ++stats.failed; break;
-            case TerrainMeshState::Absent: break;
+            case TerrainMeshState::Building:
+                ++stats.building;
+                break;
+            case TerrainMeshState::Built:
+                ++stats.built;
+                break;
+            case TerrainMeshState::Uploading:
+                ++stats.uploading;
+                break;
+            case TerrainMeshState::Ready:
+                ++stats.ready;
+                break;
+            case TerrainMeshState::Failed:
+                ++stats.failed;
+                break;
+            case TerrainMeshState::Absent:
+                break;
             }
         return stats;
     }
-}
+} // namespace mir

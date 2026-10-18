@@ -288,8 +288,7 @@ namespace mir
                 reader.Problem(it.key(), "", "is not a known section");
 
         // Zero, which fails validation, unless the value is at least one byte.
-        const auto bytesOf = [&](const json *section, std::string_view name, std::string_view key) -> uint64_t
-        {
+        const auto bytesOf = [&](const json *section, std::string_view name, std::string_view key) -> uint64_t {
             const std::optional<double> mib = reader.Number(section, name, key);
             const double bytes = mib ? *mib * kBytesPerMiB : 0.0;
             if (bytes >= 1.0 && bytes < static_cast<double>(std::numeric_limits<int64_t>::max()))
@@ -320,8 +319,8 @@ namespace mir
         s.residency.queryLeaseSeconds =
             reader.Number(residency, "residency", "queryLeaseSeconds").value_or(s.residency.queryLeaseSeconds);
 
-        const json *view = reader.Section("view", {"refineErrorPixels", "mergeErrorPixels", "prefetchErrorPixels",
-                                                   "prefetchBudgetMiB"});
+        const json *view = reader.Section(
+            "view", {"refineErrorPixels", "mergeErrorPixels", "prefetchErrorPixels", "prefetchBudgetMiB"});
         TerrainStreamingSettings::View &v = s.view;
         v.refineErrorPixels = reader.Number(view, "view", "refineErrorPixels").value_or(v.refineErrorPixels);
         v.mergeErrorPixels = reader.Number(view, "view", "mergeErrorPixels").value_or(v.mergeErrorPixels);

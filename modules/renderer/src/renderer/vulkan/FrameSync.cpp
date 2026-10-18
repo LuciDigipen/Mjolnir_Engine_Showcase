@@ -194,7 +194,8 @@ namespace mir::vk
     uint64_t FrameSync::CompletedValue() const
     {
         uint64_t value = 0;
-        if (mTimeline == VK_NULL_HANDLE || vkGetSemaphoreCounterValue(mDevice->Handle(), mTimeline, &value) != VK_SUCCESS)
+        if (mTimeline == VK_NULL_HANDLE ||
+            vkGetSemaphoreCounterValue(mDevice->Handle(), mTimeline, &value) != VK_SUCCESS)
             return 0;
         return value;
     }

@@ -83,7 +83,7 @@ namespace mir
     // Staging space handed out in frame order and given back once the frame that copied from it completes.
     class StagingRing
     {
-    public:
+      public:
         explicit StagingRing(uint64_t capacity = 0) : mCapacity(capacity) {}
 
         // An offset into the ring; nullopt while it is too full, and always for more than the capacity.
@@ -93,10 +93,16 @@ namespace mir
         void Release(uint64_t completed);
         void Clear();
 
-        uint64_t Capacity() const { return mCapacity; }
-        uint64_t Used() const { return mHead - mTail; }
+        uint64_t Capacity() const
+        {
+            return mCapacity;
+        }
+        uint64_t Used() const
+        {
+            return mHead - mTail;
+        }
 
-    private:
+      private:
         struct Span
         {
             uint64_t end = 0;
@@ -114,7 +120,7 @@ namespace mir
     // first of a frame goes even past the budget, so a mesh larger than the budget uploads alone.
     class MeshUploadQueue
     {
-    public:
+      public:
         static constexpr uint64_t kStagingAlignment = 256;
 
         explicit MeshUploadQueue(const MeshStreamingDesc &desc = {});
@@ -142,15 +148,36 @@ namespace mir
         // Everything queued or in flight is forgotten.
         void Clear();
 
-        const MeshStreamingDesc &Desc() const { return mDesc; }
-        size_t Pending() const { return mPending.size(); }
-        uint64_t PendingBytes() const { return mPendingBytes; }
-        size_t Uploading() const { return mInFlight.size(); }
-        uint64_t UploadingBytes() const { return mUploadingBytes; }
-        uint64_t LastFrameBytes() const { return mLastFrameBytes; }
-        uint64_t StagingUsed() const { return mRing.Used(); }
+        const MeshStreamingDesc &Desc() const
+        {
+            return mDesc;
+        }
+        size_t Pending() const
+        {
+            return mPending.size();
+        }
+        uint64_t PendingBytes() const
+        {
+            return mPendingBytes;
+        }
+        size_t Uploading() const
+        {
+            return mInFlight.size();
+        }
+        uint64_t UploadingBytes() const
+        {
+            return mUploadingBytes;
+        }
+        uint64_t LastFrameBytes() const
+        {
+            return mLastFrameBytes;
+        }
+        uint64_t StagingUsed() const
+        {
+            return mRing.Used();
+        }
 
-    private:
+      private:
         struct InFlight
         {
             Item item;
@@ -167,10 +194,9 @@ namespace mir
     };
 
     // Objects kept until the frames that may still read them complete.
-    template <typename T>
-    class FrameRetireList
+    template <typename T> class FrameRetireList
     {
-    public:
+      public:
         // lastUse is the last frame that may read it.
         void Push(uint64_t lastUse, uint64_t bytes, T value)
         {
@@ -179,8 +205,7 @@ namespace mir
         }
 
         // Hands every entry whose frame has completed to release, oldest first.
-        template <typename F>
-        void Collect(uint64_t completed, F &&release)
+        template <typename F> void Collect(uint64_t completed, F &&release)
         {
             std::vector<Entry> kept;
             for (Entry &entry : mEntries)
@@ -196,8 +221,7 @@ namespace mir
             mEntries = std::move(kept);
         }
 
-        template <typename F>
-        void ReleaseAll(F &&release)
+        template <typename F> void ReleaseAll(F &&release)
         {
             for (Entry &entry : mEntries)
                 release(entry.value);
@@ -205,10 +229,16 @@ namespace mir
             mBytes = 0;
         }
 
-        size_t Size() const { return mEntries.size(); }
-        uint64_t Bytes() const { return mBytes; }
+        size_t Size() const
+        {
+            return mEntries.size();
+        }
+        uint64_t Bytes() const
+        {
+            return mBytes;
+        }
 
-    private:
+      private:
         struct Entry
         {
             uint64_t lastUse = 0;
@@ -219,4 +249,4 @@ namespace mir
         std::vector<Entry> mEntries;
         uint64_t mBytes = 0;
     };
-}
+} // namespace mir

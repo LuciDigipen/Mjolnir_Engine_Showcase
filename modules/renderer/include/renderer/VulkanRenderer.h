@@ -188,7 +188,7 @@ namespace mir
         // CreateMesh and DestroyMesh stay synchronous. Configure once before queueing.
         bool ConfigureMeshStreaming(const MeshStreamingDesc &desc);
         MeshHandle QueueMesh(std::vector<Vertex> vertices, std::vector<uint32_t> indices,
-            const MeshUploadOptions &options);
+                             const MeshUploadOptions &options);
         MeshUploadState MeshState(MeshHandle handle) const;
         // The handle goes stale at once; false when it already was.
         bool RetireMesh(MeshHandle handle);

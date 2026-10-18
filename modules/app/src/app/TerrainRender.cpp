@@ -35,8 +35,8 @@ namespace mir
 
     TerrainGpuMeshId TerrainGpuUploader::Upload(TerrainMeshData &&mesh)
     {
-        const MeshHandle handle = mRenderer.QueueMesh(MakeTerrainVertices(mesh.vertices), std::move(mesh.indices),
-                                                      mOptions);
+        const MeshHandle handle =
+            mRenderer.QueueMesh(MakeTerrainVertices(mesh.vertices), std::move(mesh.indices), mOptions);
         if (handle.IsNull())
             return 0;
         return (uint64_t(handle.mGeneration) << 32) | handle.mIndex;
@@ -46,11 +46,14 @@ namespace mir
     {
         switch (mRenderer.MeshState(Handle(mesh)))
         {
-        case MeshUploadState::Ready: return TerrainGpuMeshState::Ready;
+        case MeshUploadState::Ready:
+            return TerrainGpuMeshState::Ready;
         case MeshUploadState::Pending:
-        case MeshUploadState::Uploading: return TerrainGpuMeshState::Uploading;
+        case MeshUploadState::Uploading:
+            return TerrainGpuMeshState::Uploading;
         case MeshUploadState::Stale:
-        case MeshUploadState::Failed: return TerrainGpuMeshState::Failed;
+        case MeshUploadState::Failed:
+            return TerrainGpuMeshState::Failed;
         }
         return TerrainGpuMeshState::Failed;
     }

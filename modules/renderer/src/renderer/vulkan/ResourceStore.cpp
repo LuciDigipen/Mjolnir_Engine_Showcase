@@ -260,22 +260,23 @@ namespace mir::vk
         mesh.mState = GpuMeshState::Pending;
         const uint32_t index = PlaceSlot(mMeshes, mFreeMeshIndices, mesh);
         mHighestMeshGeneration = std::max(mHighestMeshGeneration, mMeshes[index].mGeneration);
-        return MeshHandle{ index, mMeshes[index].mGeneration };
+        return MeshHandle{index, mMeshes[index].mGeneration};
     }
 
     bool ResourceStore::CreateMeshBuffers(GpuMesh &mesh, uint32_t slot, VkDeviceSize vertexBytes,
-        VkDeviceSize indexBytes, bool rayTracing)
+                                          VkDeviceSize indexBytes, bool rayTracing)
     {
-        const VkBufferUsageFlags extraUsage = rayTracing
-            ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
-            : 0;
+        const VkBufferUsageFlags extraUsage =
+            rayTracing ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+                             VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR
+                       : 0;
         const bool created =
             CreateBuffer(mDevice->Allocator(), vertexBytes,
-                VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | extraUsage,
-                0, mesh.mVertexBuffer, mesh.mVertexAllocation, nullptr) &&
+                         VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | extraUsage, 0,
+                         mesh.mVertexBuffer, mesh.mVertexAllocation, nullptr) &&
             CreateBuffer(mDevice->Allocator(), indexBytes,
-                VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | extraUsage,
-                0, mesh.mIndexBuffer, mesh.mIndexAllocation, nullptr);
+                         VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | extraUsage, 0,
+                         mesh.mIndexBuffer, mesh.mIndexAllocation, nullptr);
         if (!created)
         {
             FreeMesh(mesh);
@@ -284,9 +285,9 @@ namespace mir::vk
             return false;
         }
         mDevice->NameObject(VK_OBJECT_TYPE_BUFFER, reinterpret_cast<uint64_t>(mesh.mVertexBuffer),
-            std::format("Mesh {} vertices", slot).c_str());
+                            std::format("Mesh {} vertices", slot).c_str());
         mDevice->NameObject(VK_OBJECT_TYPE_BUFFER, reinterpret_cast<uint64_t>(mesh.mIndexBuffer),
-            std::format("Mesh {} indices", slot).c_str());
+                            std::format("Mesh {} indices", slot).c_str());
         return true;
     }
 

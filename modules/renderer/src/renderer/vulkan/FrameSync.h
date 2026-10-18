@@ -46,11 +46,14 @@ namespace mir::vk
         bool Stopped() const { return mStopped; }
 
         // The timeline value of the last frame begun: work recorded so far is done once it completes.
-        uint64_t LastIssuedValue() const { return mNextSignalValue - 1; }
+        uint64_t LastIssuedValue() const
+        {
+            return mNextSignalValue - 1;
+        }
         // Every frame at or below it has finished on the GPU; does not wait.
         uint64_t CompletedValue() const;
 
-    private:
+      private:
         Device *mDevice = nullptr;
 
         VkCommandPool mCmdPools[kFramesInFlight]{};
