@@ -37,7 +37,7 @@ namespace
 
     class FakeShape final : public TerrainColliderShape
     {
-    public:
+      public:
         double spacing = 0.0;
         uint32_t countX = 0;
         uint32_t countZ = 0;
@@ -50,7 +50,7 @@ namespace
     // Shapes are counted, colliders recorded by id.
     class FakePhysics final : public TerrainColliderPhysics
     {
-    public:
+      public:
         std::optional<TerrainBuiltCollider> Build(const TerrainAreaSamples &samples, float quantizationMin,
                                                   float quantizationMax) const override
         {
@@ -120,8 +120,9 @@ namespace
                 TileHeights tile = *TileHeights::Create({x, z}, n);
                 for (int32_t k = 0; k <= n; ++k)
                     for (int32_t i = 0; i <= n; ++i)
-                        tile.Set(i, k, Ground(layout.SamplePosition(layout.TileFirstSample(x) + i),
-                                              layout.SamplePosition(layout.TileFirstSample(z) + k)));
+                        tile.Set(i, k,
+                                 Ground(layout.SamplePosition(layout.TileFirstSample(x) + i),
+                                        layout.SamplePosition(layout.TileFirstSample(z) + k)));
                 tiles.push_back(std::move(tile));
             }
         return Encode(info, layout, tiles);
@@ -172,12 +173,14 @@ namespace
         {
             std::vector<TerrainCollisionInstance> instances;
             for (const glm::dvec3 &at : placements)
-                instances.push_back({release.release->SharedHandle(), {info.asset, At(at)},
-                                     *streamer->ModeOf(info)});
+                instances.push_back({release.release->SharedHandle(), {info.asset, At(at)}, *streamer->ModeOf(info)});
             residency->SetInstances(instances);
         }
 
-        double Now() const { return *clock.now; }
+        double Now() const
+        {
+            return *clock.now;
+        }
 
         void Step(std::span<const TerrainCollisionSource> sources)
         {
@@ -204,10 +207,9 @@ namespace
             return pieces;
         }
     };
-}
+} // namespace
 
-TEST_CASE("An Eager release collides as one piece, ready only once its colliders are placed",
-          "[terrain][collision]")
+TEST_CASE("An Eager release collides as one piece, ready only once its colliders are placed", "[terrain][collision]")
 {
     Fixture f(TerrainResidencyMode::Eager);
     f.Place({{0.0, 0.0, 0.0}, {1000.0, 5.0, 0.0}});
@@ -267,8 +269,7 @@ TEST_CASE("A slow Eager build does not stretch the prediction of every source", 
     CHECK(f.residency->PredictionSeconds() == prediction);
 }
 
-TEST_CASE("Interest pieces are built only where a source's predicted range reaches the ground",
-          "[terrain][collision]")
+TEST_CASE("Interest pieces are built only where a source's predicted range reaches the ground", "[terrain][collision]")
 {
     Fixture f(TerrainResidencyMode::Interest);
     f.Place({{0.0, 0.0, 0.0}});
@@ -368,8 +369,9 @@ TEST_CASE("Slow and failed reads keep a source pending or failed, never ready, u
     f.Run(4, sources);
     CHECK(f.residency->Answer(0).status.state == State::Ready);
     const std::vector<TerrainCollisionEvent> events = f.residency->TakeEvents();
-    const auto placed = std::find_if(events.begin(), events.end(), [](const TerrainCollisionEvent &e)
-                                     { return e.kind == TerrainCollisionEvent::Kind::Placed && !e.piece.coarse; });
+    const auto placed = std::find_if(events.begin(), events.end(), [](const TerrainCollisionEvent &e) {
+        return e.kind == TerrainCollisionEvent::Kind::Placed && !e.piece.coarse;
+    });
     REQUIRE(placed != events.end());
     CHECK(placed->latencySeconds >= 30 * kStep);
     CHECK(f.residency->PredictionSeconds() >=
@@ -521,6 +523,7 @@ TEST_CASE("A piece whose heights make no shape fails once and the source never r
     f.Run(8, sources);
     CHECK(f.physics->builds == builds);
     const std::vector<TerrainCollisionEvent> events = f.residency->TakeEvents();
-    CHECK(std::count_if(events.begin(), events.end(), [](const TerrainCollisionEvent &e)
-                        { return e.kind == TerrainCollisionEvent::Kind::Failed; }) >= 1);
+    CHECK(std::count_if(events.begin(), events.end(), [](const TerrainCollisionEvent &e) {
+              return e.kind == TerrainCollisionEvent::Kind::Failed;
+          }) >= 1);
 }

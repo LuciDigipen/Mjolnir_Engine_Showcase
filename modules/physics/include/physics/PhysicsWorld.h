@@ -74,12 +74,15 @@ namespace mir
     // A built height field shape that static bodies at any number of places share. Immutable.
     class SharedHeightField
     {
-    public:
-        bool IsValid() const { return mData != nullptr; }
+      public:
+        bool IsValid() const
+        {
+            return mData != nullptr;
+        }
         // Null for a shape Jolt did not make a height field of.
         const HeightFieldInfo *Info() const;
 
-    private:
+      private:
         friend class PhysicsWorld;
         friend SharedHeightField BuildHeightField(const HeightFieldDesc &desc);
 

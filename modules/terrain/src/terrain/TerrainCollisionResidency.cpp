@@ -55,7 +55,9 @@ namespace mir
             size_t operator()(const PieceKey &key) const noexcept
             {
                 size_t h = std::hash<uint64_t>{}(key.asset.value);
-                const auto mix = [&h](uint64_t v) { h ^= std::hash<uint64_t>{}(v) + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2); };
+                const auto mix = [&h](uint64_t v) {
+                    h ^= std::hash<uint64_t>{}(v) + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+                };
                 mix(key.release.value);
                 mix((uint64_t(uint32_t(key.x)) << 32) | uint32_t(key.z));
                 mix(uint64_t(key.whole) << 1 | uint64_t(key.coarse));
@@ -191,8 +193,8 @@ namespace mir
             Built out;
             out.ticket = job.ticket;
             const TerrainIndex &index = job.release->Index();
-            const TerrainSourceTileLookup lookup = [&job](uint32_t layer, TileCoord tile) -> std::shared_ptr<const TileHeights>
-            {
+            const TerrainSourceTileLookup lookup = [&job](uint32_t layer,
+                                                          TileCoord tile) -> std::shared_ptr<const TileHeights> {
                 for (const auto &[l, t, heights] : job.sources)
                     if (l == layer && t == tile)
                         return heights;
@@ -265,7 +267,7 @@ namespace mir
         // Shared with every posted job, so a job that runs after the residency is gone finds a live queue.
         class BuildQueue
         {
-        public:
+          public:
             void Push(const Order &order, BuildJob job)
             {
                 std::lock_guard lock(mMutex);
@@ -329,23 +331,27 @@ namespace mir
                 mFinished.clear();
             }
 
-        private:
+          private:
             std::mutex mMutex;
             std::map<Order, BuildJob> mPending;
             std::unordered_map<uint64_t, Order> mOrders;
             std::deque<Built> mFinished;
             bool mClosed = false;
         };
-    }
+    } // namespace
 
     std::string_view TerrainCollisionStateName(TerrainCollisionState state)
     {
         switch (state)
         {
-        case TerrainCollisionState::Ready: return "ready";
-        case TerrainCollisionState::CoarseSufficient: return "coarse but sufficient";
-        case TerrainCollisionState::Pending: return "pending";
-        case TerrainCollisionState::Failed: return "failed";
+        case TerrainCollisionState::Ready:
+            return "ready";
+        case TerrainCollisionState::CoarseSufficient:
+            return "coarse but sufficient";
+        case TerrainCollisionState::Pending:
+            return "pending";
+        case TerrainCollisionState::Failed:
+            return "failed";
         }
         return "ready";
     }
@@ -365,17 +371,15 @@ namespace mir
         for (size_t i = 0; i < pieces.size(); ++i)
         {
             const TerrainCollisionPieceArea &piece = pieces[i];
-            const TerrainLocalBounds reach{piece.seams[0] ? piece.rect.minX : -kInfinity,
-                                           piece.seams[2] ? piece.rect.minZ : -kInfinity,
-                                           piece.seams[1] ? piece.rect.maxX : kInfinity,
-                                           piece.seams[3] ? piece.rect.maxZ : kInfinity};
+            const TerrainLocalBounds reach{
+                piece.seams[0] ? piece.rect.minX : -kInfinity, piece.seams[2] ? piece.rect.minZ : -kInfinity,
+                piece.seams[1] ? piece.rect.maxX : kInfinity, piece.seams[3] ? piece.rect.maxZ : kInfinity};
             if (!Intersects(reach, footprint))
                 continue;
             candidates.push_back(i);
-            const TerrainLocalBounds inner{reach.minX + (piece.seams[0] ? piece.margin : 0.0),
-                                           reach.minZ + (piece.seams[2] ? piece.margin : 0.0),
-                                           reach.maxX - (piece.seams[1] ? piece.margin : 0.0),
-                                           reach.maxZ - (piece.seams[3] ? piece.margin : 0.0)};
+            const TerrainLocalBounds inner{
+                reach.minX + (piece.seams[0] ? piece.margin : 0.0), reach.minZ + (piece.seams[2] ? piece.margin : 0.0),
+                reach.maxX - (piece.seams[1] ? piece.margin : 0.0), reach.maxZ - (piece.seams[3] ? piece.margin : 0.0)};
             if (footprint.minX >= inner.minX && footprint.maxX <= inner.maxX && footprint.minZ >= inner.minZ &&
                 footprint.maxZ <= inner.maxZ)
                 owners.push_back(i);
@@ -434,7 +438,10 @@ namespace mir
             std::unordered_map<uint64_t, PieceLayout> layouts;
             std::optional<PieceLayout> whole;
 
-            const TerrainReleaseInfo &Info() const { return handle->Info(); }
+            const TerrainReleaseInfo &Info() const
+            {
+                return handle->Info();
+            }
         };
 
         // What one source needs of one instance.
@@ -512,8 +519,9 @@ namespace mir
                 const int64_t tz0 = std::max<int64_t>(pz * n, mapTiles.min.z);
                 const int64_t tx1 = std::min<int64_t>(px * n + n - 1, mapTiles.max.x);
                 const int64_t tz1 = std::min<int64_t>(pz * n + n - 1, mapTiles.max.z);
-                const auto edge = [&grid](int64_t tile)
-                { return grid.SamplePosition(grid.TileFirstSample(static_cast<int32_t>(tile))); };
+                const auto edge = [&grid](int64_t tile) {
+                    return grid.SamplePosition(grid.TileFirstSample(static_cast<int32_t>(tile)));
+                };
                 const TerrainLocalBounds core{std::max(map.minX, edge(tx0)), std::max(map.minZ, edge(tz0)),
                                               std::min(map.maxX, edge(tx1 + 1)), std::min(map.maxZ, edge(tz1 + 1))};
                 layout.seams[0] = tx0 > mapTiles.min.x;
@@ -565,7 +573,8 @@ namespace mir
         // The part a source may own: seam sides drawn in by the margin, the map's own sides unbounded.
         TerrainLocalBounds Inner(const PieceLayout &layout) const
         {
-            const double margin = policy.spacings.empty() ? 0.0 : kTerrainSeamMarginCells * policy.spacings[FineStart(layout)];
+            const double margin =
+                policy.spacings.empty() ? 0.0 : kTerrainSeamMarginCells * policy.spacings[FineStart(layout)];
             return {layout.seams[0] ? layout.rect.minX + margin : -kInfinity,
                     layout.seams[2] ? layout.rect.minZ + margin : -kInfinity,
                     layout.seams[1] ? layout.rect.maxX - margin : kInfinity,
@@ -623,8 +632,8 @@ namespace mir
             const std::optional<WorldPosition> origin =
                 TryTerrainLocalToWorld(entry.samples.area.origin, placement.translation);
             const std::optional<TerrainCollisionError> error =
-                origin ? TerrainCollisionErrorBudget(entry.samples, placement, *origin,
-                                                     entry.decoded.quantizationError, entry.decoded.horizontalError)
+                origin ? TerrainCollisionErrorBudget(entry.samples, placement, *origin, entry.decoded.quantizationError,
+                                                     entry.decoded.horizontalError)
                        : std::nullopt;
             const bool covered = origin && TerrainCollisionCovers(entry.samples, placement, *origin,
                                                                   entry.decoded.extentX, entry.decoded.extentZ);
@@ -721,8 +730,8 @@ namespace mir
             if (!instance.release)
                 continue;
             const TerrainReleaseInfo &info = instance.release->Info();
-            auto found = std::find_if(next.begin(), next.end(),
-                                      [&](const Impl::Release &r) { return r.Info() == info; });
+            auto found =
+                std::find_if(next.begin(), next.end(), [&](const Impl::Release &r) { return r.Info() == info; });
             if (found == next.end())
             {
                 Impl::Release release;
@@ -755,16 +764,14 @@ namespace mir
                 impl.Drop(it++);
                 continue;
             }
-            std::erase_if(it->second.colliders,
-                          [&](const Impl::Collider &collider)
-                          {
-                              const bool kept = std::any_of(release->placements.begin(), release->placements.end(),
-                                                            [&](const TerrainPlacement &p)
-                                                            { return SamePlacement(p, collider.placement); });
-                              if (!kept && collider.id != 0)
-                                  impl.physics->Remove(collider.id);
-                              return !kept;
-                          });
+            std::erase_if(it->second.colliders, [&](const Impl::Collider &collider) {
+                const bool kept =
+                    std::any_of(release->placements.begin(), release->placements.end(),
+                                [&](const TerrainPlacement &p) { return SamePlacement(p, collider.placement); });
+                if (!kept && collider.id != 0)
+                    impl.physics->Remove(collider.id);
+                return !kept;
+            });
             ++it;
         }
     }
@@ -868,16 +875,14 @@ namespace mir
             for (auto it = impl.entries.begin(); it != impl.entries.end(); ++it)
                 if (it->second.state == Impl::State::Ready && !it->second.needed)
                     victims.push_back(it);
-            std::sort(victims.begin(), victims.end(),
-                      [](const auto &a, const auto &b)
-                      {
-                          const Impl::Entry &x = a->second, &y = b->second;
-                          if (x.prefetched != y.prefetched)
-                              return !x.prefetched;
-                          if (!x.prefetched)
-                              return x.lastWanted < y.lastWanted;
-                          return x.rank > y.rank;
-                      });
+            std::sort(victims.begin(), victims.end(), [](const auto &a, const auto &b) {
+                const Impl::Entry &x = a->second, &y = b->second;
+                if (x.prefetched != y.prefetched)
+                    return !x.prefetched;
+                if (!x.prefetched)
+                    return x.lastWanted < y.lastWanted;
+                return x.rank > y.rank;
+            });
             for (const auto &victim : victims)
             {
                 if (held <= impl.settings.budgetBytes)
@@ -904,8 +909,7 @@ namespace mir
             entry.rank = std::numeric_limits<float>::infinity();
         }
 
-        const auto want = [&](const PieceKey &key, bool needed, double rank)
-        {
+        const auto want = [&](const PieceKey &key, bool needed, double rank) {
             Impl::Entry &entry = impl.entries[key];
             entry.needed = entry.needed || needed;
             entry.prefetched = entry.prefetched || !needed;
@@ -964,7 +968,8 @@ namespace mir
                         {
                             const PieceLayout &layout = impl.LayoutOf(release, 0, 0, true);
                             if (!prefetch && lowest <= double(layout.maxHeight) + slack)
-                                needs[s].push_back({r, p, {release.Info().asset, release.Info().release, 0, 0, true, false}});
+                                needs[s].push_back(
+                                    {r, p, {release.Info().asset, release.Info().release, 0, 0, true, false}});
                             continue;
                         }
                         const std::optional<TerrainLayout> covered = TerrainLayout::Create(
@@ -984,8 +989,12 @@ namespace mir
                                 if (layout.tiles.empty() || !Intersects(impl.Inner(layout), box) ||
                                     lowest > double(layout.maxHeight) + slack)
                                     continue;
-                                const PieceKey fine{release.Info().asset, release.Info().release,
-                                                    static_cast<int32_t>(px), static_cast<int32_t>(pz), false, false};
+                                const PieceKey fine{release.Info().asset,
+                                                    release.Info().release,
+                                                    static_cast<int32_t>(px),
+                                                    static_cast<int32_t>(pz),
+                                                    false,
+                                                    false};
                                 const double rank = Distance(layout.rect, at.x, at.z);
                                 if (prefetch)
                                 {
@@ -1124,7 +1133,8 @@ namespace mir
                     continue;
                 }
                 Impl::Entry &fine = fineEntry->second;
-                Impl::Collider *fineCollider = fine.state == Impl::State::Ready ? impl.ColliderFor(fine, placement) : nullptr;
+                Impl::Collider *fineCollider =
+                    fine.state == Impl::State::Ready ? impl.ColliderFor(fine, placement) : nullptr;
                 if (fineCollider && fineCollider->id != 0)
                 {
                     ++status.ready;
@@ -1134,9 +1144,10 @@ namespace mir
                 PieceKey coarseKey = need.fine;
                 coarseKey.coarse = true;
                 const auto coarse = impl.entries.find(coarseKey);
-                Impl::Collider *coarseCollider = coarse != impl.entries.end() && coarse->second.state == Impl::State::Ready
-                                                     ? impl.ColliderFor(coarse->second, placement)
-                                                     : nullptr;
+                Impl::Collider *coarseCollider =
+                    coarse != impl.entries.end() && coarse->second.state == Impl::State::Ready
+                        ? impl.ColliderFor(coarse->second, placement)
+                        : nullptr;
                 if (coarseCollider && coarseCollider->id != 0 && coarseCollider->error.total <= source.tolerance)
                 {
                     ++status.coarse;
@@ -1156,7 +1167,7 @@ namespace mir
                 else
                     ++status.pending;
             }
-            status.state = status.failed ? TerrainCollisionState::Failed
+            status.state = status.failed    ? TerrainCollisionState::Failed
                            : status.pending ? TerrainCollisionState::Pending
                            : status.coarse  ? TerrainCollisionState::CoarseSufficient
                                             : TerrainCollisionState::Ready;
@@ -1164,7 +1175,8 @@ namespace mir
             if (!(stepSeconds > 0.0))
                 continue;
             const double speed = glm::length(source.velocity);
-            const double reach = source.radius + (speed + source.acceleration * stepSeconds) * stepSeconds + kContactSlack;
+            const double reach =
+                source.radius + (speed + source.acceleration * stepSeconds) * stepSeconds + kContactSlack;
             for (Impl::Release &release : impl.releases)
             {
                 const TerrainLayout &grid = release.handle->Index().layout;
@@ -1180,8 +1192,7 @@ namespace mir
                         continue;
                     std::vector<TerrainCollisionPieceArea> areas;
                     std::vector<TerrainColliderId> ids;
-                    const auto add = [&](const PieceKey &fineKey, const PieceLayout &layout)
-                    {
+                    const auto add = [&](const PieceKey &fineKey, const PieceLayout &layout) {
                         for (const bool coarse : {false, true})
                         {
                             PieceKey key = fineKey;
@@ -1221,7 +1232,8 @@ namespace mir
                                 for (int64_t px = FloorDiv(tiles.min.x, n); px <= FloorDiv(tiles.max.x, n); ++px)
                                     add({release.Info().asset, release.Info().release, static_cast<int32_t>(px),
                                          static_cast<int32_t>(pz), false, false},
-                                        impl.LayoutOf(release, static_cast<int32_t>(px), static_cast<int32_t>(pz), false));
+                                        impl.LayoutOf(release, static_cast<int32_t>(px), static_cast<int32_t>(pz),
+                                                      false));
                         }
                     }
                     bool unowned = false;
@@ -1283,10 +1295,18 @@ namespace mir
         {
             switch (entry.state)
             {
-            case Impl::State::Waiting: ++stats.waiting; break;
-            case Impl::State::Building: ++stats.building; break;
-            case Impl::State::Ready: ++stats.ready; break;
-            case Impl::State::Failed: ++stats.failed; break;
+            case Impl::State::Waiting:
+                ++stats.waiting;
+                break;
+            case Impl::State::Building:
+                ++stats.building;
+                break;
+            case Impl::State::Ready:
+                ++stats.ready;
+                break;
+            case Impl::State::Failed:
+                ++stats.failed;
+                break;
             }
             for (const Impl::Collider &collider : entry.colliders)
                 stats.colliders += collider.id != 0;
@@ -1327,4 +1347,4 @@ namespace mir
         if (mSources.contains(id))
             mStatus[id] = std::move(status);
     }
-}
+} // namespace mir

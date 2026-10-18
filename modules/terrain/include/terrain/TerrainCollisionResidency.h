@@ -91,7 +91,7 @@ namespace mir
     // A built shape, opaque here; shared by the colliders of every instance of its release.
     class TerrainColliderShape
     {
-    public:
+      public:
         virtual ~TerrainColliderShape() = default;
     };
 
@@ -109,7 +109,7 @@ namespace mir
     // The physics side, implemented outside this module.
     class TerrainColliderPhysics
     {
-    public:
+      public:
         virtual ~TerrainColliderPhysics() = default;
 
         // Any thread. Shapes of one release get one quantization range. Nullopt when no shape is made.
@@ -217,7 +217,7 @@ namespace mir
     // are read, and the colliders are placed and removed only in Install, at a safe point between fixed steps.
     class TerrainCollisionResidency
     {
-    public:
+      public:
         // Settings must validate.
         TerrainCollisionResidency(const TerrainStreamingSettings::Collision &settings,
                                   std::shared_ptr<TerrainExecutor> executor,
@@ -252,7 +252,7 @@ namespace mir
         std::vector<TerrainCollisionEvent> TakeEvents();
         TerrainCollisionStats Stats() const;
 
-    private:
+      private:
         struct Impl;
         std::unique_ptr<Impl> mImpl;
     };
@@ -260,7 +260,7 @@ namespace mir
     // World resource: sources a game registers besides the dynamic RigidBodies, which count on their own.
     class TerrainCollisionSources
     {
-    public:
+      public:
         using Id = uint32_t;
 
         Id Add(const TerrainCollisionSource &source);
@@ -270,12 +270,15 @@ namespace mir
         // As of the last evaluation; Ready until one ran.
         TerrainCollisionStatus Status(Id id) const;
 
-        const std::map<Id, TerrainCollisionSource> &All() const { return mSources; }
+        const std::map<Id, TerrainCollisionSource> &All() const
+        {
+            return mSources;
+        }
         void SetStatus(Id id, TerrainCollisionStatus status);
 
-    private:
+      private:
         std::map<Id, TerrainCollisionSource> mSources;
         std::map<Id, TerrainCollisionStatus> mStatus;
         Id mNext = 1;
     };
-}
+} // namespace mir

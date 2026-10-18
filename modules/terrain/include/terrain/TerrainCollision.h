@@ -53,7 +53,8 @@ namespace mir
     using TerrainSourceTileLookup = std::function<std::shared_ptr<const TileHeights>(uint32_t layer, TileCoord tile)>;
     // The part of the map inside bounds, from the sources the lookup gives; any thread when the lookup is.
     TerrainResult<TerrainUniformSamples> BuildTerrainUniformSamples(const TerrainIndex &index,
-        const TerrainSourceTileLookup &sources, double spacing, const TerrainLocalBounds &bounds);
+                                                                    const TerrainSourceTileLookup &sources,
+                                                                    double spacing, const TerrainLocalBounds &bounds);
     bool TerrainCollisionCovers(const TerrainUniformSamples &samples, const TerrainPlacement &placement,
                                 WorldPosition origin, double extentX, double extentZ);
     std::optional<TerrainCollisionError> TerrainCollisionErrorBudget(const TerrainUniformSamples &samples,

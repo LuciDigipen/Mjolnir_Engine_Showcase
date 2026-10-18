@@ -119,9 +119,8 @@ namespace mir
 
         TerrainWorld::AssetState ResolveAsset(const TerrainInstanceSpec &instance,
                                               const std::filesystem::path &releasesRoot,
-                                              const TerrainWorld::AssetState *before,
-                                              std::vector<TerrainIssue> &issues, TerrainStreamer &streamer,
-                                              TerrainEagerLoad eager)
+                                              const TerrainWorld::AssetState *before, std::vector<TerrainIssue> &issues,
+                                              TerrainStreamer &streamer, TerrainEagerLoad eager)
         {
             TerrainWorld::AssetState state;
             state.asset = instance.asset;

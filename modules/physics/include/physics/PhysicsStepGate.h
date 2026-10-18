@@ -18,7 +18,7 @@ namespace mir
 
     class PhysicsStepGate
     {
-    public:
+      public:
         virtual ~PhysicsStepGate() = default;
 
         // Once per fixed step, after new bodies and Transform edits reach the PhysicsWorld and before it steps.
@@ -30,4 +30,4 @@ namespace mir
     {
         std::vector<PhysicsStepGate *> gates;
     };
-}
+} // namespace mir

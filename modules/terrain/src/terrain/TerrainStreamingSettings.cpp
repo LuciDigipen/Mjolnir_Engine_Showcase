@@ -393,10 +393,10 @@ namespace mir
         g.stagingBytes = bytesOf(gpu, "gpu", "stagingMiB");
         g.meshRetainSeconds = reader.Number(gpu, "gpu", "meshRetainSeconds").value_or(g.meshRetainSeconds);
 
-        const json *collision = reader.Section(
-            "collision", {"spacingsMeters", "maxErrorMeters", "pieceTiles", "seamOverlapMeters", "bodyToleranceMeters",
-                          "loadLatencySeconds", "latencyMarginSeconds", "prefetchSeconds", "budgetMiB",
-                          "retainSeconds"});
+        const json *collision =
+            reader.Section("collision", {"spacingsMeters", "maxErrorMeters", "pieceTiles", "seamOverlapMeters",
+                                         "bodyToleranceMeters", "loadLatencySeconds", "latencyMarginSeconds",
+                                         "prefetchSeconds", "budgetMiB", "retainSeconds"});
         TerrainStreamingSettings::Collision &c = s.collision;
         c.spacingsMeters = reader.Numbers(collision, "collision", "spacingsMeters").value_or(c.spacingsMeters);
         c.maxErrorMeters = reader.Number(collision, "collision", "maxErrorMeters").value_or(c.maxErrorMeters);
@@ -404,15 +404,17 @@ namespace mir
         c.seamOverlapMeters = reader.Number(collision, "collision", "seamOverlapMeters").value_or(c.seamOverlapMeters);
         c.bodyToleranceMeters =
             reader.Number(collision, "collision", "bodyToleranceMeters").value_or(c.bodyToleranceMeters);
-        c.loadLatencySeconds = reader.Number(collision, "collision", "loadLatencySeconds").value_or(c.loadLatencySeconds);
+        c.loadLatencySeconds =
+            reader.Number(collision, "collision", "loadLatencySeconds").value_or(c.loadLatencySeconds);
         c.latencyMarginSeconds =
             reader.Number(collision, "collision", "latencyMarginSeconds").value_or(c.latencyMarginSeconds);
         c.prefetchSeconds = reader.Number(collision, "collision", "prefetchSeconds").value_or(c.prefetchSeconds);
         c.budgetBytes = bytesOf(collision, "collision", "budgetMiB");
         c.retainSeconds = reader.Number(collision, "collision", "retainSeconds").value_or(c.retainSeconds);
 
-        Check(s, [&](std::string_view section, std::string_view key, std::string_view problem)
-              { reader.Problem(section, key, problem); });
+        Check(s, [&](std::string_view section, std::string_view key, std::string_view problem) {
+            reader.Problem(section, key, problem);
+        });
         if (load.problems.empty())
             load.settings = s;
         return load;

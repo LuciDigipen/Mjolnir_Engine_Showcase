@@ -147,10 +147,10 @@ TEST_CASE("Missing, unknown and invalid settings are reported by path and file, 
         const TerrainStreamingSettingsLoad load =
             files.Load(R"({ "cpu": {}, "io": { "workerThreads": 2 }, "retry": { "maxAttempts": 2 } })");
         CHECK_FALSE(load.settings);
-        for (const char *path : {"cpu.budgetMiB is missing", "io.maxInstallsPerFrame is missing",
-                                 "retry.firstDelaySeconds is missing", "retry.maxDelaySeconds is missing",
-                                 "retry.failedHoldSeconds is missing", "residency is missing", "view is missing",
-                                 "gpu is missing", "collision is missing"})
+        for (const char *path :
+             {"cpu.budgetMiB is missing", "io.maxInstallsPerFrame is missing", "retry.firstDelaySeconds is missing",
+              "retry.maxDelaySeconds is missing", "retry.failedHoldSeconds is missing", "residency is missing",
+              "view is missing", "gpu is missing", "collision is missing"})
             CHECK(Reports(load, game, path));
         CHECK(load.problems.size() == 9);
     }
@@ -214,15 +214,33 @@ TEST_CASE("Validation names every field of settings built in code that was left 
 {
     const std::vector<std::string> unset = ValidateTerrainStreamingSettings({});
     CHECK(unset.size() == 27);
-    for (const char *path : {"cpu.budgetMiB", "io.workerThreads", "io.maxInstallsPerFrame", "retry.maxAttempts",
-                             "retry.firstDelaySeconds", "retry.maxDelaySeconds", "retry.failedHoldSeconds",
-                             "residency.mode", "residency.queryLeaseSeconds", "view.refineErrorPixels",
-                             "view.mergeErrorPixels", "view.prefetchErrorPixels", "view.prefetchBudgetMiB",
-                             "gpu.budgetMiB", "gpu.uploadMiBPerFrame", "gpu.stagingMiB", "gpu.meshRetainSeconds",
-                             "collision.spacingsMeters", "collision.maxErrorMeters", "collision.pieceTiles",
-                             "collision.seamOverlapMeters", "collision.bodyToleranceMeters",
-                             "collision.loadLatencySeconds", "collision.latencyMarginSeconds",
-                             "collision.prefetchSeconds", "collision.budgetMiB", "collision.retainSeconds"})
+    for (const char *path : {"cpu.budgetMiB",
+                             "io.workerThreads",
+                             "io.maxInstallsPerFrame",
+                             "retry.maxAttempts",
+                             "retry.firstDelaySeconds",
+                             "retry.maxDelaySeconds",
+                             "retry.failedHoldSeconds",
+                             "residency.mode",
+                             "residency.queryLeaseSeconds",
+                             "view.refineErrorPixels",
+                             "view.mergeErrorPixels",
+                             "view.prefetchErrorPixels",
+                             "view.prefetchBudgetMiB",
+                             "gpu.budgetMiB",
+                             "gpu.uploadMiBPerFrame",
+                             "gpu.stagingMiB",
+                             "gpu.meshRetainSeconds",
+                             "collision.spacingsMeters",
+                             "collision.maxErrorMeters",
+                             "collision.pieceTiles",
+                             "collision.seamOverlapMeters",
+                             "collision.bodyToleranceMeters",
+                             "collision.loadLatencySeconds",
+                             "collision.latencyMarginSeconds",
+                             "collision.prefetchSeconds",
+                             "collision.budgetMiB",
+                             "collision.retainSeconds"})
         CHECK(std::any_of(unset.begin(), unset.end(), [&](const std::string &p) { return p.starts_with(path); }));
 
     TerrainStreamingSettings s;
@@ -273,8 +291,8 @@ TEST_CASE("Collision spacings run coarse to fine and the seam overlap spans more
           std::vector<std::string>{"collision.seamOverlapMeters: must be a finite number of meters, more than 4 cells "
                                    "of the coarsest spacing"});
     s.collision.seamOverlapMeters = 64.0;
-    for (const std::vector<double> &spacings :
-         {std::vector<double>{}, std::vector<double>{8.0, 8.0}, std::vector<double>{4.0, 0.0}, std::vector<double>{-1.0}})
+    for (const std::vector<double> &spacings : {std::vector<double>{}, std::vector<double>{8.0, 8.0},
+                                                std::vector<double>{4.0, 0.0}, std::vector<double>{-1.0}})
     {
         s.collision.spacingsMeters = spacings;
         CHECK(ValidateTerrainStreamingSettings(s).size() == 1);

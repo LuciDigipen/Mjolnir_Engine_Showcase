@@ -791,8 +791,7 @@ TEST_CASE("Shapes given one quantization range decode the samples they share ali
     const float low = *std::min_element(area.begin(), area.end());
     const float high = *std::max_element(area.begin(), area.end());
 
-    const auto block = [&](uint32_t first, uint32_t last)
-    {
+    const auto block = [&](uint32_t first, uint32_t last) {
         std::vector<float> samples;
         for (uint32_t z = 0; z < kAreaSide; ++z)
             for (uint32_t x = first; x <= last; ++x)
@@ -803,8 +802,7 @@ TEST_CASE("Shapes given one quantization range decode the samples they share ali
     for (const bool shared : {false, true})
     {
         INFO((shared ? "one range" : "own ranges"));
-        const auto build = [&](const std::vector<float> &samples, uint32_t columns)
-        {
+        const auto build = [&](const std::vector<float> &samples, uint32_t columns) {
             HeightFieldDesc desc;
             desc.mSamples = samples;
             desc.mCountX = columns;

@@ -437,8 +437,9 @@ TEST_CASE("A held body takes velocity changes and impulses into its kept velocit
         world.AddAngularImpulse(body, glm::vec3(4.0f, 0.0f, 0.0f));
         world.AddImpulseAtOffset(body, glm::vec3(0.0f, 10.0f, 0.0f), glm::vec3(0.5f, 0.0f, 0.0f));
     }
-    const auto close = [](const glm::vec3 &a, const glm::vec3 &b)
-    { return glm::length(a - b) <= 1e-5f * std::max(1.0f, glm::length(b)); };
+    const auto close = [](const glm::vec3 &a, const glm::vec3 &b) {
+        return glm::length(a - b) <= 1e-5f * std::max(1.0f, glm::length(b));
+    };
     CHECK(close(world.BodyLinearVelocity(held), world.BodyLinearVelocity(free)));
     CHECK(close(world.BodyAngularVelocity(held), world.BodyAngularVelocity(free)));
 

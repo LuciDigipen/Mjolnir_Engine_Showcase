@@ -362,7 +362,7 @@ namespace
     // Read by Jolt's jobs during a step, changed only between steps.
     class ContactRestriction final : public JPH::GroupFilter
     {
-    public:
+      public:
         bool CanCollide(const JPH::CollisionGroup &a, const JPH::CollisionGroup &b) const override
         {
             const JPH::CollisionGroup &restricted = a.GetGroupID() == kRestrictedGroup ? a : b;
@@ -377,7 +377,7 @@ namespace
         // By body index, sorted.
         std::unordered_map<JPH::uint32, std::vector<JPH::uint32>> mAllowed;
     };
-}
+} // namespace
 
 namespace mir
 {
@@ -417,7 +417,8 @@ namespace mir
         // Jolt 5.5's triangle walk breaks from block size 3 (terrain ADR 0017).
         if ((desc.mBlockSize != 2 && desc.mBlockSize != 4) || desc.mBitsPerSample < 1 || desc.mBitsPerSample > 8)
         {
-            MIR_LOG_ERROR("PhysicsWorld::CreateStaticHeightField: block size must be 2 or 4, bits per sample in [1, 8]");
+            MIR_LOG_ERROR(
+                "PhysicsWorld::CreateStaticHeightField: block size must be 2 or 4, bits per sample in [1, 8]");
             return {};
         }
         const bool sharedRange = !std::isnan(desc.mQuantizationMin) || !std::isnan(desc.mQuantizationMax);
@@ -434,8 +435,8 @@ namespace mir
         const uint32_t side = std::max({columns, rows, 2 * desc.mBlockSize});
         if (side > kMaxHeightFieldSide - kMaxHeightFieldSide % desc.mBlockSize)
         {
-            MIR_LOG_ERROR("PhysicsWorld::CreateStaticHeightField: {} x {} samples exceed Jolt's {} per side",
-                columns, rows, kMaxHeightFieldSide);
+            MIR_LOG_ERROR("PhysicsWorld::CreateStaticHeightField: {} x {} samples exceed Jolt's {} per side", columns,
+                          rows, kMaxHeightFieldSide);
             return {};
         }
 
@@ -457,17 +458,18 @@ namespace mir
             for (uint32_t x = 0; x < columns; ++x)
             {
                 const float height = desc.mSamples[static_cast<std::size_t>(z) * stride * desc.mCountX +
-                                                  static_cast<std::size_t>(x) * stride];
+                                                   static_cast<std::size_t>(x) * stride];
                 if (!std::isfinite(height))
                 {
-                    MIR_LOG_ERROR("PhysicsWorld::CreateStaticHeightField: sample ({}, {}) is not finite",
-                        x * stride, z * stride);
+                    MIR_LOG_ERROR("PhysicsWorld::CreateStaticHeightField: sample ({}, {}) is not finite", x * stride,
+                                  z * stride);
                     return {};
                 }
                 if (sharedRange && height != kHeightFieldHole &&
                     (height < desc.mQuantizationMin || height > desc.mQuantizationMax))
                 {
-                    MIR_LOG_ERROR("PhysicsWorld::CreateStaticHeightField: sample ({}, {}) is outside the quantization range",
+                    MIR_LOG_ERROR(
+                        "PhysicsWorld::CreateStaticHeightField: sample ({}, {}) is outside the quantization range",
                         x * stride, z * stride);
                     return {};
                 }
@@ -495,17 +497,19 @@ namespace mir
             for (uint32_t x = 0; x < columns; ++x)
             {
                 const float input = desc.mSamples[size_t(z) * stride * desc.mCountX + size_t(x) * stride];
-                if (input == kHeightFieldHole) continue;
+                if (input == kHeightFieldHole)
+                    continue;
                 const JPH::Vec3 decoded = field->GetPosition(x, z);
                 if (field->IsNoCollision(x, z) || !std::isfinite(decoded.GetY()))
                 {
                     MIR_LOG_ERROR("PhysicsWorld::CreateStaticHeightField: a valid sample decoded to a hole");
                     return {};
                 }
-                info.mMaxQuantizationError = std::max(info.mMaxQuantizationError, std::abs(double(decoded.GetY()) - input));
-                info.mMaxHorizontalError = std::max({info.mMaxHorizontalError,
-                    std::abs(double(decoded.GetX()) - double(x) * desc.mSpacing * stride),
-                    std::abs(double(decoded.GetZ()) - double(z) * desc.mSpacing * stride)});
+                info.mMaxQuantizationError =
+                    std::max(info.mMaxQuantizationError, std::abs(double(decoded.GetY()) - input));
+                info.mMaxHorizontalError = std::max(
+                    {info.mMaxHorizontalError, std::abs(double(decoded.GetX()) - double(x) * desc.mSpacing * stride),
+                     std::abs(double(decoded.GetZ()) - double(z) * desc.mSpacing * stride)});
                 ++info.mValidSamples;
             }
         info.mExtentX = field->GetPosition(columns - 1, 0).GetX();
@@ -514,7 +518,7 @@ namespace mir
         built.mData = std::move(data);
         return built;
     }
-}
+} // namespace mir
 
 namespace mir
 {
@@ -556,8 +560,8 @@ namespace mir
             if (!dynamic)
                 mBroadPhaseDirty = true;
             else
-                mSystem.GetBodyInterface().SetCollisionGroup(id,
-                    JPH::CollisionGroup(nullptr, kDynamicGroup, id.GetIndex()));
+                mSystem.GetBodyInterface().SetCollisionGroup(
+                    id, JPH::CollisionGroup(nullptr, kDynamicGroup, id.GetIndex()));
 
             return BodyHandle{id.GetIndexAndSequenceNumber()};
         }

@@ -201,7 +201,7 @@ namespace
     // Holds every dynamic body while closed and records where the bodies were when it ran.
     class RecordingGate final : public mir::PhysicsStepGate
     {
-    public:
+      public:
         bool open = false;
         int calls = 0;
         std::vector<mir::WorldVec3> seen;
@@ -210,20 +210,18 @@ namespace
         {
             ++calls;
             seen.clear();
-            world.GetOrCreateQuery<mir::RigidBody>().ForEach(
-                [&](mir::Entity, mir::RigidBody &rigidBody)
-                {
-                    const std::optional<mir::WorldPosition> at = physics.BodyPosition(rigidBody.body);
-                    REQUIRE(at);
-                    seen.push_back(at->Meters());
-                    if (open)
-                        physics.ResumeBody(rigidBody.body);
-                    else
-                        physics.HoldBody(rigidBody.body);
-                });
+            world.GetOrCreateQuery<mir::RigidBody>().ForEach([&](mir::Entity, mir::RigidBody &rigidBody) {
+                const std::optional<mir::WorldPosition> at = physics.BodyPosition(rigidBody.body);
+                REQUIRE(at);
+                seen.push_back(at->Meters());
+                if (open)
+                    physics.ResumeBody(rigidBody.body);
+                else
+                    physics.HoldBody(rigidBody.body);
+            });
         }
     };
-}
+} // namespace
 
 TEST_CASE("Step gates see new bodies and teleports before the step and can hold a body", "[physics]")
 {

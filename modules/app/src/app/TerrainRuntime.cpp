@@ -64,7 +64,7 @@ namespace mir
 
         class JoltShape final : public TerrainColliderShape
         {
-        public:
+          public:
             explicit JoltShape(SharedHeightField built) : field(std::move(built)) {}
             SharedHeightField field;
         };
@@ -72,7 +72,7 @@ namespace mir
         TerrainColliderId ColliderOf(BodyHandle body)
         {
             return TerrainColliderId(body.mId) + 1;
-    }
+        }
 
         BodyHandle BodyOf(TerrainColliderId collider)
         {
@@ -81,8 +81,8 @@ namespace mir
 
         std::string Describe(const TerrainCollisionStatus &status)
         {
-            std::string text = std::format("{} pieces needed, {} ready, {} coarse, {} pending, {} failed", status.needed,
-                                           status.ready, status.coarse, status.pending, status.failed);
+            std::string text = std::format("{} pieces needed, {} ready, {} coarse, {} pending, {} failed",
+                                           status.needed, status.ready, status.coarse, status.pending, status.failed);
             if (!status.reason.empty())
                 text += ": " + status.reason;
             return text;
@@ -92,7 +92,7 @@ namespace mir
     // Shapes come from BuildHeightField on the workers; colliders are restricted static bodies.
     class TerrainRuntime::Colliders final : public TerrainColliderPhysics
     {
-    public:
+      public:
         explicit Colliders(TerrainRuntime &owner) : mOwner(owner) {}
 
         std::optional<TerrainBuiltCollider> Build(const TerrainAreaSamples &samples, float quantizationMin,
@@ -109,8 +109,12 @@ namespace mir
             if (!field.Info())
                 return std::nullopt;
             const HeightFieldInfo info = *field.Info();
-            return TerrainBuiltCollider{std::make_shared<JoltShape>(std::move(field)), info.mMaxQuantizationError,
-                                        info.mMaxHorizontalError, info.mExtentX, info.mExtentZ, info.mMemoryBytes};
+            return TerrainBuiltCollider{std::make_shared<JoltShape>(std::move(field)),
+                                        info.mMaxQuantizationError,
+                                        info.mMaxHorizontalError,
+                                        info.mExtentX,
+                                        info.mExtentZ,
+                                        info.mMemoryBytes};
         }
 
         TerrainColliderId Place(const TerrainColliderShape &shape, WorldPosition origin,
@@ -119,7 +123,8 @@ namespace mir
             PhysicsWorld *physics = mOwner.mWorld->TryResource<PhysicsWorld>();
             if (!physics)
                 return 0;
-            const BodyHandle body = physics->CreateStaticHeightField(static_cast<const JoltShape &>(shape).field, origin);
+            const BodyHandle body =
+                physics->CreateStaticHeightField(static_cast<const JoltShape &>(shape).field, origin);
             if (!body.IsValid())
                 return 0;
             physics->RestrictBody(body);
@@ -133,7 +138,7 @@ namespace mir
                 physics->DestroyBody(BodyOf(collider));
         }
 
-    private:
+      private:
         TerrainRuntime &mOwner;
     };
 
@@ -393,7 +398,7 @@ namespace mir
                 continue;
             }
             built.push_back({instance.release->Info(), instance.placement});
-                ++i;
+            ++i;
         }
         return built;
     }
@@ -423,8 +428,9 @@ namespace mir
         PhysicsWorld *physics = mWorld->TryResource<PhysicsWorld>();
         if (!physics || !mCollision)
             return;
-        mCollision->ForEachCollider([&](const TerrainPlacement &placement, TerrainColliderId collider)
-                                    { physics->SetBodyEntity(BodyOf(collider), EntityAt(placement)); });
+        mCollision->ForEachCollider([&](const TerrainPlacement &placement, TerrainColliderId collider) {
+            physics->SetBodyEntity(BodyOf(collider), EntityAt(placement));
+        });
     }
 
     Entity TerrainRuntime::EntityAt(const TerrainPlacement &placement) const
@@ -444,25 +450,23 @@ namespace mir
         if (physics)
         {
             const double gravity = glm::length(physics->Gravity());
-            mWorld->GetOrCreateQuery<RigidBody>().ForEach(
-                [&](Entity entity, RigidBody &rigidBody)
-                {
-                    if (!rigidBody.body.IsValid() || rigidBody.motion != PhysicsMotion::Dynamic)
-                        return;
-                    const std::optional<WorldPosition> at = physics->BodyPosition(rigidBody.body);
-                    if (!at)
-                        return;
-                    TerrainCollisionSource source;
-                    source.position = *at;
-                    source.velocity = glm::dvec3(physics->BodyLinearVelocity(rigidBody.body));
-                    source.radius = rigidBody.shape == PhysicsShape::Sphere ? double(rigidBody.radius)
-                                                                            : double(glm::length(rigidBody.halfExtent));
-                    source.acceleration = gravity;
-                    source.tolerance = settings.collision.bodyToleranceMeters;
-                    mSources.push_back(source);
-                    mBodies.push_back(rigidBody.body);
-                    mGuards[rigidBody.body.mId].entity = entity;
-                });
+            mWorld->GetOrCreateQuery<RigidBody>().ForEach([&](Entity entity, RigidBody &rigidBody) {
+                if (!rigidBody.body.IsValid() || rigidBody.motion != PhysicsMotion::Dynamic)
+                    return;
+                const std::optional<WorldPosition> at = physics->BodyPosition(rigidBody.body);
+                if (!at)
+                    return;
+                TerrainCollisionSource source;
+                source.position = *at;
+                source.velocity = glm::dvec3(physics->BodyLinearVelocity(rigidBody.body));
+                source.radius = rigidBody.shape == PhysicsShape::Sphere ? double(rigidBody.radius)
+                                                                        : double(glm::length(rigidBody.halfExtent));
+                source.acceleration = gravity;
+                source.tolerance = settings.collision.bodyToleranceMeters;
+                mSources.push_back(source);
+                mBodies.push_back(rigidBody.body);
+                mGuards[rigidBody.body.mId].entity = entity;
+            });
         }
         if (const TerrainCollisionSources *game = mWorld->TryResource<TerrainCollisionSources>())
             for (const auto &[id, source] : game->All())
@@ -520,7 +524,10 @@ namespace mir
                 guard.held = true;
                 guard.since = now;
                 MIR_LOG_INFO("Terrain collision holds {} at ({:.2f}, {:.2f}, {:.2f}){}: collision {}, {}", who, at.x,
-                             at.y, at.z, arrived ? " as it spawns" : jumped ? " after a teleport" : "",
+                             at.y, at.z,
+                             arrived  ? " as it spawns"
+                             : jumped ? " after a teleport"
+                                      : "",
                              TerrainCollisionStateName(status.state), Describe(status));
             }
             else if (simulate && physics.IsBodyHeld(body))

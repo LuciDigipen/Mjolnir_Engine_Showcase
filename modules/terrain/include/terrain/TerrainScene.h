@@ -175,8 +175,8 @@ namespace mir
 
     private:
       friend TerrainWorld ResolveTerrainWorld(const TerrainSceneSpec &, const std::filesystem::path &,
-                                                const TerrainWorld *, std::vector<TerrainIssue> &,
-                                                TerrainStreamer &, TerrainEagerLoad);
+                                              const TerrainWorld *, std::vector<TerrainIssue> &, TerrainStreamer &,
+                                              TerrainEagerLoad);
 
       std::vector<AssetState> mAssets;
       std::vector<TerrainInstanceState> mInstances;

@@ -44,11 +44,14 @@ namespace
     }
 
     constexpr double kPlaneX = -0.08, kPlaneZ = -0.03;
-    double Plane(double x, double z) { return 50.0 + kPlaneX * x + kPlaneZ * z; }
+    double Plane(double x, double z)
+    {
+        return 50.0 + kPlaneX * x + kPlaneZ * z;
+    }
 
     class JoltShape final : public TerrainColliderShape
     {
-    public:
+      public:
         explicit JoltShape(SharedHeightField field) : field(std::move(field)) {}
         SharedHeightField field;
     };
@@ -56,7 +59,7 @@ namespace
     // The physics side of terrain collision over one PhysicsWorld.
     class JoltColliders final : public TerrainColliderPhysics
     {
-    public:
+      public:
         explicit JoltColliders(PhysicsWorld &world) : mWorld(world) {}
 
         std::optional<TerrainBuiltCollider> Build(const TerrainAreaSamples &samples, float quantizationMin,
@@ -73,11 +76,16 @@ namespace
             if (!field.Info())
                 return std::nullopt;
             const HeightFieldInfo info = *field.Info();
-            return TerrainBuiltCollider{std::make_shared<JoltShape>(std::move(field)), info.mMaxQuantizationError,
-                                        info.mMaxHorizontalError, info.mExtentX, info.mExtentZ, info.mMemoryBytes};
+            return TerrainBuiltCollider{std::make_shared<JoltShape>(std::move(field)),
+                                        info.mMaxQuantizationError,
+                                        info.mMaxHorizontalError,
+                                        info.mExtentX,
+                                        info.mExtentZ,
+                                        info.mMemoryBytes};
         }
 
-        TerrainColliderId Place(const TerrainColliderShape &shape, WorldPosition origin, const TerrainPlacement &) override
+        TerrainColliderId Place(const TerrainColliderShape &shape, WorldPosition origin,
+                                const TerrainPlacement &) override
         {
             const BodyHandle body = mWorld.CreateStaticHeightField(static_cast<const JoltShape &>(shape).field, origin);
             if (!body.IsValid())
@@ -86,9 +94,12 @@ namespace
             return TerrainColliderId(body.mId) + 1;
         }
 
-        void Remove(TerrainColliderId collider) override { mWorld.DestroyBody(BodyHandle{uint32_t(collider - 1)}); }
+        void Remove(TerrainColliderId collider) override
+        {
+            mWorld.DestroyBody(BodyHandle{uint32_t(collider - 1)});
+        }
 
-    private:
+      private:
         PhysicsWorld &mWorld;
     };
 
@@ -115,8 +126,9 @@ namespace
                 TileHeights tile = *TileHeights::Create({x, z}, n);
                 for (int32_t k = 0; k <= n; ++k)
                     for (int32_t i = 0; i <= n; ++i)
-                        tile.Set(i, k, static_cast<float>(height(layout.SamplePosition(layout.TileFirstSample(x) + i),
-                                                                 layout.SamplePosition(layout.TileFirstSample(z) + k))));
+                        tile.Set(i, k,
+                                 static_cast<float>(height(layout.SamplePosition(layout.TileFirstSample(x) + i),
+                                                           layout.SamplePosition(layout.TileFirstSample(z) + k))));
                 tiles.push_back(std::move(tile));
             }
         return Encode(info, layout, tiles);
@@ -215,7 +227,10 @@ namespace
             return glm::dvec3(at->Meters());
         }
 
-        double Now() const { return *clock.now; }
+        double Now() const
+        {
+            return *clock.now;
+        }
 
         // One frame of one fixed step.
         void Frame()
@@ -284,10 +299,16 @@ namespace
         }
     };
 
-    TerrainLayout Ground() { return *TerrainLayout::CreateFromTileSize(64.0, 4.0, {-256.0, -256.0, 256.0, 256.0}); }
+    TerrainLayout Ground()
+    {
+        return *TerrainLayout::CreateFromTileSize(64.0, 4.0, {-256.0, -256.0, 256.0, 256.0});
+    }
 
     // P1's crossing fixture.
-    TerrainLayout Crossing() { return *TerrainLayout::CreateFromTileSize(256.0, 4.0, {-256.0, -256.0, 256.0, 256.0}); }
+    TerrainLayout Crossing()
+    {
+        return *TerrainLayout::CreateFromTileSize(256.0, 4.0, {-256.0, -256.0, 256.0, 256.0});
+    }
 
     struct Pass
     {
@@ -368,7 +389,7 @@ namespace
         }
         return pass;
     }
-}
+} // namespace
 
 TEST_CASE("A body over Eager terrain is held until its height field is placed, then rests on it",
           "[physics][terrain][collision-residency]")
@@ -431,7 +452,8 @@ TEST_CASE("Bodies running low over ridges and turning hard keep collision ahead 
     Scene scene(TerrainResidencyMode::Interest, Ridges, Ground(), 2, 64.0);
     scene.Place({0.0, 0.0, 0.0});
     const size_t ball = scene.AddSphere({150.0, scene.Surface(150.0, 0.0) + 0.6, 0.0}, 0.5);
-    const size_t box = scene.AddBox({-150.0, scene.Surface(-150.0, 0.0) + 0.6, 0.0}, {0.5f, 0.25f, 0.5f}, glm::vec3(0.0f));
+    const size_t box =
+        scene.AddBox({-150.0, scene.Surface(-150.0, 0.0) + 0.6, 0.0}, {0.5f, 0.25f, 0.5f}, glm::vec3(0.0f));
     scene.Run(120);
     double angle[2] = {0.0, kPi};
     for (int i = 0; i < 900; ++i)
@@ -564,9 +586,10 @@ namespace
             }
         return envelope;
     }
-}
+} // namespace
 
-TEST_CASE("Bodies cross overlapping height field pieces as smoothly as one shape", "[physics][terrain][collision-seams]")
+TEST_CASE("Bodies cross overlapping height field pieces as smoothly as one shape",
+          "[physics][terrain][collision-seams]")
 {
     // P1's slide through the four-tile corner first; then across each hand-over band, then along wider bands.
     const Path paths[] = {{{1.7, 2.3}, 12.0, 149, 24.0},
@@ -616,8 +639,8 @@ TEST_CASE("Bodies cross overlapping height field pieces as smoothly as one shape
             CHECK(pieces.kick == single.kick);
         }
         std::cout << "seams,path," << p << ",crossed," << crossed << ",handed," << handed << ",single kick,"
-                  << single.kick << ",gap," << single.lowestGap << ',' << single.highestGap << ",noise,"
-                  << lows.low << ',' << lows.high << ',' << highs.low << ',' << highs.high << ",pieces kick,"
-                  << pieces.kick << ",gap," << pieces.lowestGap << ',' << pieces.highestGap << '\n';
+                  << single.kick << ",gap," << single.lowestGap << ',' << single.highestGap << ",noise," << lows.low
+                  << ',' << lows.high << ',' << highs.low << ',' << highs.high << ",pieces kick," << pieces.kick
+                  << ",gap," << pieces.lowestGap << ',' << pieces.highestGap << '\n';
     }
 }
