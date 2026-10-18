@@ -11,6 +11,7 @@ target_link_libraries(engine_app
            mir::scene
            mir::script
     PRIVATE mir::input
+            mir::camera
             mir::animation
             mir::audio
             mir::physics
