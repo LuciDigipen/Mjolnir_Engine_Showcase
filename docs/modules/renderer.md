@@ -581,6 +581,37 @@ No tests. Everything here needs a device, and the module is verified by running.
 
 ## Changed
 
+*2026-10-18* — **`PostProcessingSettings` and `PostEffectRegistry` (#207).**
+Was: no post-processing concept existed. Now: `PostProcessingSettings`
+(`renderer/PostProcessingSettings.h`) is a `RenderSettings`-shaped World
+resource - `LoadFile`/`SaveFile` via the same `ReadJsonFile`/`UpdateJsonFile`
+recipe, its own `"postProcessing"` project-settings section (sibling to
+`"rendering"`/`"input"`/`"ide"`, never clobbering them) - holding
+`effects: unordered_map<string, PostEffectState>`, each a `{enabled, params}`
+pair with `params` kept as raw `nlohmann::json` rather than a typed struct,
+since no concrete effect exists yet to give it a shape. `PostEffectRegistry`
+(`renderer/PostEffectRegistry.h`), mirroring `core::EntityPresetRegistry`'s
+`Instance()`/`Register()`/`All()` shape, is the extension point: a future
+effect (bloom, depth of field, distance fog, HDR, motion blur, film
+settings) registers a name and a `void(json&)` draw callback the same way
+`RegisterRendererEntityTypes()` registers `Light/Sun` etc. This issue
+registers none - the new Post-Processing panel (see [editor.md](editor.md))
+reads an empty list until one does. Because: issue #207 - one panel should
+own every post effect's toggle and parameters instead of Project Settings,
+and that only works if effects can register into it without each one
+redesigning storage.
+
+Note for whoever adds the first real screen-space effect (bloom, depth of
+field, motion blur): raster and ray tracing do not share a post-process hook
+point today. Raster draws straight into the swapchain image in the same pass
+as ImGui (`VulkanRendererFrame.cpp:121-184`); ray tracing renders to its own
+offscreen image and blits it onto the swapchain
+(`VulkanRendererFrame.cpp:214-266`). A true screen-space effect needs an
+offscreen raster color target mirroring RT's, plus a shared post stage before
+blit/present. An effect that can instead ride the existing shared
+`CameraData` UBO both pipelines already read identically (as fog does) needs
+none of that.
+
 *2026-10-18* — **`Shapes.h` gained a primitive per editor shape, plus a
 reserved-name dispatcher.** Was: `MakeTriangle`/`MakeQuad`/`MakeCube`, authored
 for early render-path smoke testing and otherwise unused. Now: `MakeSphere`,

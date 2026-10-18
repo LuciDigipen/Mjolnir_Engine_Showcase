@@ -39,6 +39,7 @@
 #include <physics/PhysicsSystem.h>
 #include <physics/PhysicsWorld.h>
 #include <renderer/ComponentRegistration.h>
+#include <renderer/PostProcessingSettings.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/RenderSystem.h>
 #include <scene/EntitySnapshot.h>
@@ -203,6 +204,8 @@ namespace mir
         mWorld.EmplaceResource<InputMap>(std::move(inputMap));
 
         mWorld.EmplaceResource<RenderSettings>(RenderSettings::LoadFile(mProject.mProjectSettingsPath).value_or(RenderSettings{}));
+        mWorld.EmplaceResource<PostProcessingSettings>(
+            PostProcessingSettings::LoadFile(mProject.mProjectSettingsPath).value_or(PostProcessingSettings{}));
         mWorld.EmplaceResource<InputState>();
         mWorld.EmplaceResource<EngineModeState>();
 
@@ -524,8 +527,8 @@ namespace mir
             #if MIR_WITH_EDITOR
                 const EditorActions actions = mEditor.DrawLayout(
                     mDesc.mEnableEditorLayout, mWorld.Resource<InputMap>(), mWorld.Resource<RenderSettings>(),
-                    mWorld.Resource<EngineModeState>(), mProjectMenu, mProject.mDir, mWorld, mAssetImport.View(),
-                    mRenderer, mContentBrowser.View());
+                    mWorld.Resource<PostProcessingSettings>(), mWorld.Resource<EngineModeState>(), mProjectMenu,
+                    mProject.mDir, mWorld, mAssetImport.View(), mRenderer, mContentBrowser.View());
             #endif
 
                 mGameUI.BeginFrame(GameUIArea(), mWorld.Resource<InputState>(), mWorld.Resource<InputMap>(),
