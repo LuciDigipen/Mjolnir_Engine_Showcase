@@ -3,6 +3,21 @@
     "args": "--new-window {project} {file}",
     "path": "C:\\Users\\rahul\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe"
   },
+  "postProcessing": {
+    "effects": {
+      "Fog": {
+        "enabled": true,
+        "params": {}
+      },
+      "HDR": {
+        "enabled": true,
+        "params": {
+          "exposure": 1.0,
+          "tonemapOperator": "aces"
+        }
+      }
+    }
+  },
   "rendering": {
     "fog": true,
     "rayTracing": true

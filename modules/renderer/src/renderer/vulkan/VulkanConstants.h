@@ -18,6 +18,8 @@ namespace mir::vk
 
     constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
 
+    constexpr VkFormat kHdrColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+
     // Sizes the per-view slices of the camera, light and spot matrix buffers.
     constexpr uint32_t kMaxViewsPerFrame = 16;
 }

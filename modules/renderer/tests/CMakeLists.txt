@@ -1,6 +1,7 @@
 engine_add_module_tests(renderer
     CameraMath.tests.cpp
     FogEffect.tests.cpp
+    HdrEffect.tests.cpp
     PostEffectRegistry.tests.cpp
     PostProcessingSettings.tests.cpp
     RenderSettings.tests.cpp

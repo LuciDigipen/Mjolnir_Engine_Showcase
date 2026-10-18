@@ -45,12 +45,13 @@ namespace mir::vk
         void DestroyBlases();
 
         // Builds the frame's TLAS from `items` and traces `rect` into the output image,
-        // which ends in TRANSFER_SRC for the caller to blit.
+        // which ends in SHADER_READ_ONLY for the caller to sample (PostProcess's tonemap pass).
         void Record(VkCommandBuffer cmd, uint32_t frame, std::span<const DrawItem> items, const VkRect2D &rect,
             VkDescriptorSet cameraSet, uint32_t cameraOffset, const ResourceStore &resources,
             const MaterialStore &materials);
 
         VkImage OutputImage(uint32_t frame) const { return mOutputImages[frame]; }
+        VkImageView OutputView(uint32_t frame) const { return mOutputViews[frame]; }
 
     private:
         struct MeshBlas
