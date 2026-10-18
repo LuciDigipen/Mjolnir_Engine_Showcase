@@ -8,6 +8,7 @@
  */
 #pragma once
 #include "renderer/CameraMath.h"
+#include "renderer/ViewDrawSource.h"
 #include "renderer/ViewSubmission.h"
 #include "renderer/VulkanRenderer.h"
 
@@ -168,7 +169,80 @@ namespace mir
                     haveDefaultCamera = true;
                 });
 
-            if (haveDefaultCamera)
+            const VkExtent2D swapchainExtent = mRenderer.SwapchainExtent();
+
+            // Every viewport's camera, resolved once; view draw sources and the views share it.
+            mViewCameras.clear();
+            bool warnNoCamera = false;
+            for (size_t i = 0; i < mViewports.size(); ++i)
+            {
+                const Viewport &viewport = mViewports[i];
+
+                WorldPose cameraPose;
+                Camera camera{};
+                bool haveCamera = false;
+
+                if (viewport.mUseExternalCamera)
+                {
+                    cameraPose = viewport.mExternalCameraPose;
+                    camera = viewport.mExternalCamera;
+                    haveCamera = true;
+                }
+                else if (viewport.mCameraEntity != kNullEntity)
+                {
+                    mCameraQuery->ForEach([&](Entity e, const WorldTransform &world, const Camera &cam) {
+                        if (e != viewport.mCameraEntity)
+                            return;
+                        cameraPose = world.Pose();
+                        camera = cam;
+                        haveCamera = true;
+                    });
+                }
+                else if (haveDefaultCamera)
+                {
+                    cameraPose = defaultCameraPose;
+                    camera = defaultCamera;
+                    haveCamera = true;
+                }
+
+                if (!haveCamera)
+                {
+                    warnNoCamera = true;
+                    continue;
+                }
+
+                const VkExtent2D viewExtent = (viewport.mRect.extent.width > 0 && viewport.mRect.extent.height > 0)
+                                                  ? viewport.mRect.extent
+                                                  : swapchainExtent;
+                const float aspect = viewExtent.height == 0
+                                         ? 1.0f
+                                         : static_cast<float>(viewExtent.width) / static_cast<float>(viewExtent.height);
+                mViewCameras.push_back(ViewCamera{i, cameraPose, camera, viewExtent,
+                                                  MakeCameraRelativeViewProjection(cameraPose, camera, aspect)});
+            }
+
+            ViewDrawSources *viewSources = context.world.TryResource<ViewDrawSources>();
+            if (viewSources)
+                for (IViewDrawSource *source : viewSources->sources)
+                    source->Prepare(mViewCameras);
+
+            // Shadow maps follow the primary rendered viewport, including the
+            // editor's external camera and explicitly selected game cameras.
+            const bool haveShadowCamera = !mViewCameras.empty() && mViewCameras.front().viewport == 0;
+            const WorldPose shadowCameraPose = haveShadowCamera ? mViewCameras.front().pose : WorldPose{};
+
+            // The world draws plus what the sources draw inside that volume at the primary view's detail.
+            const auto shadowCasters = [&](WorldPosition origin,
+                                           const glm::mat4 &viewProj) -> std::span<const WorldDrawItem> {
+                if (!viewSources || viewSources->sources.empty() || !haveShadowCamera)
+                    return mDrawItems;
+                mPassItems.assign(mDrawItems.begin(), mDrawItems.end());
+                for (IViewDrawSource *source : viewSources->sources)
+                    source->AppendVolumeDraws(0, origin, viewProj, mPassItems);
+                return mPassItems;
+            };
+
+            if (haveShadowCamera)
             {
                 const auto assignNearest = [&](bool wantSpot, uint32_t cap)
                     {
@@ -179,7 +253,7 @@ namespace mir
                             if (isSpot != wantSpot || item.shadowSlot == -2)
                                 continue;
                             const std::optional<glm::vec3> relative =
-                                TryCameraRelativeFloat(item.position, defaultCameraPose.position);
+                                TryCameraRelativeFloat(item.position, shadowCameraPose.position);
                             candidates.emplace_back(
                                 relative ? glm::length(*relative) : std::numeric_limits<float>::max(), &item);
                         }
@@ -196,8 +270,6 @@ namespace mir
                     item.shadowSlot = -1;
             mRenderer.SetLights(mLightItems);
 
-            const VkExtent2D swapchainExtent = mRenderer.SwapchainExtent();
-
             mDrawItems.clear();
             mMeshQuery->ForEach([this](Entity, const WorldTransform &world, const MeshRenderer &renderer)
                 {
@@ -210,17 +282,16 @@ namespace mir
             // asset, with their morph/skin data attached).
             if (const ModelDrawItems *models = context.world.TryResource<ModelDrawItems>())
                 mDrawItems.insert(mDrawItems.end(), models->items.begin(), models->items.end());
-            if (const TerrainDrawItems *terrain = context.world.TryResource<TerrainDrawItems>())
-                mDrawItems.insert(mDrawItems.end(), terrain->items.begin(), terrain->items.end());
 
             const bool haveDirectionalLight = haveSunLight || haveSky;
             mSunShadowItems.clear();
-            if (haveDirectionalLight && haveDefaultCamera)
+            if (haveDirectionalLight && haveShadowCamera)
             {
                 const glm::mat4 sunShadowViewProj = MakeOrthographicViewProjection(
                     -sunDirWS, VulkanRenderer::kSunShadowHalfExtent, VulkanRenderer::kSunShadowNearZ);
-                BuildViewDrawItems(mDrawItems, defaultCameraPose.position, sunShadowViewProj, mSunShadowItems);
-                mRenderer.SetSunShadowCaster(true, sunShadowViewProj, defaultCameraPose.position, mSunShadowItems);
+                BuildViewDrawItems(shadowCasters(shadowCameraPose.position, sunShadowViewProj),
+                                   shadowCameraPose.position, sunShadowViewProj, mSunShadowItems);
+                mRenderer.SetSunShadowCaster(true, sunShadowViewProj, shadowCameraPose.position, mSunShadowItems);
             }
             else
             {
@@ -253,7 +324,8 @@ namespace mir
                             item.direction, upHint, fovYDegrees, VulkanRenderer::kSpotShadowNearZ, item.range);
 
                         mSpotShadowItems[slot].clear();
-                        BuildViewDrawItems(mDrawItems, item.position, spotViewProj, mSpotShadowItems[slot]);
+                        BuildViewDrawItems(shadowCasters(item.position, spotViewProj), item.position, spotViewProj,
+                                           mSpotShadowItems[slot]);
                         mRenderer.SetSpotShadowCaster(slot, true, spotViewProj, item.position, mSpotShadowItems[slot]);
                         spotSlotFilled[slot] = true;
                     }
@@ -269,7 +341,8 @@ namespace mir
                                 VulkanRenderer::kPointShadowNearZ, item.range);
 
                             mPointShadowItems[slot][face].clear();
-                            BuildViewDrawItems(mDrawItems, item.position, faceViewProj, mPointShadowItems[slot][face]);
+                            BuildViewDrawItems(shadowCasters(item.position, faceViewProj), item.position, faceViewProj,
+                                               mPointShadowItems[slot][face]);
                             faces[face] = PointShadowFace{ faceViewProj, mPointShadowItems[slot][face] };
                         }
                         mRenderer.SetPointShadowCaster(slot, true, item.position, item.range, faces);
@@ -286,66 +359,31 @@ namespace mir
                             slot, false, WorldPosition{}, 0.0f, std::array<PointShadowFace, 6>{});
             }
 
-            mDrawItemsPerViewport.resize(mViewports.size());
+            mDrawItemsPerViewport.resize(mViewCameras.size());
             mRenderViews.clear();
 
-            bool warnNoCamera = false;
             size_t skippedItems = 0;
 
-            for (size_t i = 0; i < mViewports.size(); ++i)
+            for (size_t v = 0; v < mViewCameras.size(); ++v)
             {
-                const Viewport &viewport = mViewports[i];
-
-                WorldPose cameraPose;
-                Camera camera{};
-                bool haveCamera = false;
-
-                if (viewport.mUseExternalCamera)
+                const ViewCamera &view = mViewCameras[v];
+                std::span<const WorldDrawItem> worldItems = mDrawItems;
+                if (viewSources && !viewSources->sources.empty())
                 {
-                    cameraPose = viewport.mExternalCameraPose;
-                    camera = viewport.mExternalCamera;
-                    haveCamera = true;
+                    mPassItems.assign(mDrawItems.begin(), mDrawItems.end());
+                    for (IViewDrawSource *source : viewSources->sources)
+                        source->AppendViewDraws(v, mPassItems);
+                    worldItems = mPassItems;
                 }
-                else if (viewport.mCameraEntity != kNullEntity)
-                {
-                    mCameraQuery->ForEach([&](Entity e, const WorldTransform &world, const Camera &cam)
-                        {
-                            if (e != viewport.mCameraEntity)
-                                return;
-                            cameraPose = world.Pose();
-                            camera = cam;
-                            haveCamera = true;
-                        });
-                }
-                else if (haveDefaultCamera)
-                {
-                    cameraPose = defaultCameraPose;
-                    camera = defaultCamera;
-                    haveCamera = true;
-                }
-
-                if (!haveCamera)
-                {
-                    warnNoCamera = true;
-                    continue;
-                }
-
-                const VkExtent2D viewExtent = (viewport.mRect.extent.width > 0 && viewport.mRect.extent.height > 0)
-                    ? viewport.mRect.extent
-                    : swapchainExtent;
-                const float aspect = viewExtent.height == 0
-                    ? 1.0f
-                    : static_cast<float>(viewExtent.width) / static_cast<float>(viewExtent.height);
-
-                const glm::mat4 viewProj = MakeCameraRelativeViewProjection(cameraPose, camera, aspect);
 
                 // Each viewport narrows against its own camera, so the same
                 // world item gets a different model matrix per view.
-                std::vector<DrawItem> &items = mDrawItemsPerViewport[i];
-                skippedItems += BuildViewDrawItems(mDrawItems, cameraPose.position, viewProj, items);
+                std::vector<DrawItem> &items = mDrawItemsPerViewport[v];
+                skippedItems += BuildViewDrawItems(worldItems, view.pose.position, view.viewProj, items);
 
-                mRenderViews.push_back(RenderView{ viewport.mRect, items, viewProj, cameraPose.position,
-                    camera.mNearZ, camera.HasFarPlane() ? camera.mFarZ : 0.0f });
+                mRenderViews.push_back(RenderView{mViewports[view.viewport].mRect, items, view.viewProj,
+                                                  view.pose.position, view.lens.mNearZ,
+                                                  view.lens.HasFarPlane() ? view.lens.mFarZ : 0.0f});
             }
 
             if (warnNoCamera && !mWarnedNoCamera)
@@ -395,6 +433,10 @@ namespace mir
 
         std::vector<LightItem> mLightItems;
         std::vector<WorldDrawItem> mDrawItems;
+        std::vector<ViewCamera> mViewCameras;
+        // mDrawItems plus one pass's view draws.
+        std::vector<WorldDrawItem> mPassItems;
+        // Parallel to mViewCameras.
         std::vector<std::vector<DrawItem>> mDrawItemsPerViewport;
         std::vector<RenderView> mRenderViews;
         std::vector<DrawItem> mSunShadowItems;
