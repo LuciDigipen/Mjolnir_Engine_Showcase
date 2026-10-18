@@ -34,6 +34,7 @@ cbuffer CameraData
     float4x4 invViewProj;
     float4 cameraPos; // the origin: the TLAS is built relative to this view's camera
     float4 fogColor;
+    float4 fogRange; // x = start distance, y = end distance
     float4 cameraWorldPos; // absolute camera position, for the atmosphere only
     float4 clipPlanes;     // x = near, y = far, or 0 for no far plane
     float4 atmosphereScattering;
@@ -220,6 +221,7 @@ void closestHitMain(inout RayPayload payload, in BuiltInTriangleIntersectionAttr
         }
     }
 
-    const float fogFactor = clamp(1.0 - exp(-fogColor.a * RayTCurrent()), 0.0, 1.0);
+    const float clampedDist = clamp(RayTCurrent(), fogRange.x, fogRange.y);
+    const float fogFactor = clamp(1.0 - exp(-fogColor.a * (clampedDist - fogRange.x)), 0.0, 1.0);
     payload.color = lerp(color, fogColor.rgb, fogFactor);
 }

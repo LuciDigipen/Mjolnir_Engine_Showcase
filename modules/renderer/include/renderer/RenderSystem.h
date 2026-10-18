@@ -15,6 +15,8 @@
 #include <core/ecs/System.h>
 #include <core/ecs/components/WorldTransform.h>
 #include <core/log/Log.h>
+#include <renderer/FogEffect.h>
+#include <renderer/PostProcessingSettings.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/components/Camera.h>
 #include <renderer/components/Light.h>
@@ -107,11 +109,14 @@ namespace mir
 
         void OnUpdate(SystemContext &context) override
         {
-            constexpr glm::vec3 kDefaultFogColor{ 0.5f, 0.6f, 0.7f };
-            constexpr float kDefaultFogDensity = 0.015f;
-
             const RenderSettings &renderSettings = context.world.Resource<RenderSettings>();
-            mRenderer.SetFog(kDefaultFogColor, renderSettings.fog ? kDefaultFogDensity : 0.0f);
+
+            const PostProcessingSettings &postProcessing = context.world.Resource<PostProcessingSettings>();
+            const auto fogIt = postProcessing.effects.find(std::string(kFogEffectName));
+            const FogParams fog =
+                fogIt != postProcessing.effects.end() ? ReadFogParams(fogIt->second.params) : FogParams{};
+            const bool fogEnabled = fogIt != postProcessing.effects.end() && fogIt->second.enabled;
+            mRenderer.SetFog(fog.color, fogEnabled ? fog.density : 0.0f, fog.start, fog.end);
 
             bool haveSunLight = false;
             glm::vec3 sunDirWS{ 0.0f, 1.0f, 0.0f };

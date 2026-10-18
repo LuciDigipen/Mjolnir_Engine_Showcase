@@ -32,26 +32,37 @@ namespace mir
         PostProcessingSettings settings;
 
         const auto postIt = root->find("postProcessing");
-        if (postIt == root->end() || !postIt->is_object())
-            return settings;
-
-        const auto effectsIt = postIt->find("effects");
-        if (effectsIt == postIt->end() || !effectsIt->is_object())
-            return settings;
-
-        for (const auto &[name, entry] : effectsIt->items())
+        if (postIt != root->end() && postIt->is_object())
         {
-            if (!entry.is_object())
-                continue;
+            const auto effectsIt = postIt->find("effects");
+            if (effectsIt != postIt->end() && effectsIt->is_object())
+            {
+                for (const auto &[name, entry] : effectsIt->items())
+                {
+                    if (!entry.is_object())
+                        continue;
 
-            PostEffectState state;
-            state.enabled = entry.value("enabled", false);
+                    PostEffectState state;
+                    state.enabled = entry.value("enabled", false);
 
-            const auto paramsIt = entry.find("params");
-            if (paramsIt != entry.end() && paramsIt->is_object())
-                state.params = *paramsIt;
+                    const auto paramsIt = entry.find("params");
+                    if (paramsIt != entry.end() && paramsIt->is_object())
+                        state.params = *paramsIt;
 
-            settings.effects.emplace(name, std::move(state));
+                    settings.effects.emplace(name, std::move(state));
+                }
+            }
+        }
+
+        if (settings.effects.find("Fog") == settings.effects.end())
+        {
+            const auto renderingIt = root->find("rendering");
+            if (renderingIt != root->end() && renderingIt->is_object())
+            {
+                const auto fogIt = renderingIt->find("fog");
+                if (fogIt != renderingIt->end() && fogIt->is_boolean())
+                    settings.effects["Fog"].enabled = fogIt->get<bool>();
+            }
         }
 
         return settings;

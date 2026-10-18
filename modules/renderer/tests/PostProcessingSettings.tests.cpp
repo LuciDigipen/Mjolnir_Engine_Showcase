@@ -63,7 +63,7 @@ TEST_CASE("PostProcessingSettings::LoadFile on a malformed file returns nullopt"
 TEST_CASE("LoadFile on a file with no postProcessing section returns no effects", "[renderer]")
 {
     TempSettingsFile file{ "no_section.json" };
-    file.Write(R"({"rendering": {"fog": true}})");
+    file.Write(R"({"rendering": {"rayTracing": true}})");
 
     const std::optional<mir::PostProcessingSettings> settings = mir::PostProcessingSettings::LoadFile(file.mPath);
     REQUIRE(settings.has_value());
@@ -145,4 +145,41 @@ TEST_CASE("SaveFile preserves a sibling 'rendering' section instead of clobberin
     const std::string contents = file.Read();
     REQUIRE(contents.find("\"rayTracing\": true") != std::string::npos);
     REQUIRE(contents.find("\"postProcessing\"") != std::string::npos);
+}
+
+TEST_CASE("LoadFile migrates a legacy rendering.fog=true into Fog.enabled", "[renderer]")
+{
+    TempSettingsFile file{ "legacy_fog_true.json" };
+    file.Write(R"({"rendering": {"fog": true, "rayTracing": true}})");
+
+    const std::optional<mir::PostProcessingSettings> settings = mir::PostProcessingSettings::LoadFile(file.mPath);
+    REQUIRE(settings.has_value());
+    const auto fogIt = settings->effects.find("Fog");
+    REQUIRE(fogIt != settings->effects.end());
+    CHECK(fogIt->second.enabled);
+}
+
+TEST_CASE("LoadFile migrates a legacy rendering.fog=false into Fog.enabled", "[renderer]")
+{
+    TempSettingsFile file{ "legacy_fog_false.json" };
+    file.Write(R"({"rendering": {"fog": false, "rayTracing": true}})");
+
+    const std::optional<mir::PostProcessingSettings> settings = mir::PostProcessingSettings::LoadFile(file.mPath);
+    REQUIRE(settings.has_value());
+    const auto fogIt = settings->effects.find("Fog");
+    REQUIRE(fogIt != settings->effects.end());
+    CHECK_FALSE(fogIt->second.enabled);
+}
+
+TEST_CASE("LoadFile does not let a stale rendering.fog override an existing Fog entry", "[renderer]")
+{
+    TempSettingsFile file{ "legacy_fog_ignored.json" };
+    file.Write(
+        R"({"rendering": {"fog": true}, "postProcessing": {"effects": {"Fog": {"enabled": false}}}})");
+
+    const std::optional<mir::PostProcessingSettings> settings = mir::PostProcessingSettings::LoadFile(file.mPath);
+    REQUIRE(settings.has_value());
+    const auto fogIt = settings->effects.find("Fog");
+    REQUIRE(fogIt != settings->effects.end());
+    CHECK_FALSE(fogIt->second.enabled);
 }

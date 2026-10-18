@@ -184,6 +184,7 @@ namespace mir
         RegisterCoreComponents();
         RegisterRendererComponents();
         RegisterRendererEntityTypes();
+        RegisterRendererPostEffects();
         RegisterPhysicsComponents();
         RegisterCameraComponents();
         RegisterScriptComponents();

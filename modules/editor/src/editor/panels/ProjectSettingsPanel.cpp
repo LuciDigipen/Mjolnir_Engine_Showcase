@@ -21,7 +21,6 @@ namespace mir
         ImGui::SeparatorText("Rendering");
 
         ImGui::Checkbox("Ray Tracing", &draftRenderSettings.rayTracing);
-        ImGui::Checkbox("Distance Fog", &draftRenderSettings.fog);
 
         if (!mRenderingStatusMessage.empty() && draftRenderSettings != mMessageSnapshot)
             mRenderingStatusMessage.clear();

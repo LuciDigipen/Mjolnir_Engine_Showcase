@@ -13,6 +13,7 @@
 #include "renderer/components/Light.h"
 #include "renderer/components/MeshRenderer.h"
 #include "renderer/components/Sky.h"
+#include "renderer/FogEffect.h"
 #include "renderer/Shapes.h"
 
 #include <core/ecs/ComponentGizmo.h>
@@ -223,5 +224,10 @@ namespace mir
             {
                 CreatePrimitiveEntity(world, entity, kConeMeshName, "Cone");
             });
+    }
+
+    void RegisterRendererPostEffects()
+    {
+        RegisterFogPostEffect();
     }
 }
