@@ -91,6 +91,14 @@ namespace mir
 
         CachedMesh &cached = mMeshes[meshName];
 
+        // Primitives (Shapes.h) generate their own geometry under a reserved name - no asset file, so no asset-cache lookup.
+        if (const std::optional<MeshData> builtin = MakeBuiltinMesh(meshName))
+        {
+            cached.mMesh = mRenderer.CreateMesh(builtin->vertices, builtin->indices);
+            cached.mBounds = ComputeMeshBounds(builtin->vertices);
+            return cached;
+        }
+
         const AssetPathResult logical = MakeLogicalAssetPath(mAssetIdRoot, meshName);
         if (!logical.Ok())
         {

@@ -581,6 +581,21 @@ No tests. Everything here needs a device, and the module is verified by running.
 
 ## Changed
 
+*2026-10-18* — **`Shapes.h` gained a primitive per editor shape, plus a
+reserved-name dispatcher.** Was: `MakeTriangle`/`MakeQuad`/`MakeCube`, authored
+for early render-path smoke testing and otherwise unused. Now: `MakeSphere`,
+`MakePlane`, `MakeCylinder`, `MakeCone` and `MakeCapsule` join them (same
+style: plain `MeshData`, right-handed Y-up, CCW from outside), each unit-sized
+and centred on the origin so a `Transform`'s scale reads as world dimensions -
+except `MakeCapsule`, whose total height is 2 (a unit cylindrical midsection
+plus two radius-0.5 hemispherical caps), since forcing it into a 1×1×1 box
+degenerates it into a sphere. `kCubeMeshName`/`kSphereMeshName`/etc name these
+to a `MeshRenderer.meshName` without a file on disk, and `MakeBuiltinMesh`
+dispatches one of those reserved names back to its generator (`nullopt` for
+anything else). Because: issue #214 (primitive entities need geometry that
+exists with no asset file). See [app.md](app.md) for where the dispatch is
+actually used, and [editor.md](editor.md) for the new Create-menu entries.
+
 *2026-10-15* — **`CameraFollow` left for the `camera` module.** Was: the follow
 camera lived here. Now: it is `CameraController` in
 [camera.md](camera.md), with a free-fly mode. Because: free-fly reads
