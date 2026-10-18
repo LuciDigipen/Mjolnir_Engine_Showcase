@@ -74,6 +74,8 @@ namespace mir
         struct Finished
         {
             uint64_t ticket = 0;
+            // The release the bytes came from.
+            TerrainReleaseInfo release;
             Payload payload;
             TerrainPackError error;
             uint64_t bytesRead = 0;
@@ -94,6 +96,7 @@ namespace mir
         {
             Finished out;
             out.ticket = job.ticket;
+            out.release = job.handle->Info();
             const auto start = SteadyClock::now();
             TerrainResult<std::vector<std::byte>> bytes = job.handle->ReadPayload(*job.record);
             const auto read = SteadyClock::now();
@@ -293,6 +296,7 @@ namespace mir
             std::shared_ptr<const TerrainReleaseHandle> handle;
             TerrainResidencyMode mode = TerrainResidencyMode::Interest;
             uint64_t footprint = 0;
+            bool staged = false;
             // Height-query tiles and when they were last asked for or answered from.
             std::unordered_map<TerrainPayloadKey, double> queryUses;
 
@@ -511,8 +515,15 @@ namespace mir
         {
             for (auto &[key, e] : entries)
             {
-                e.demand = e.eager ? std::optional(TerrainDemand::Required) : std::nullopt;
+                e.demand = std::nullopt;
                 e.rank = 0.0f;
+                if (e.eager && e.release->staged)
+                {
+                    e.demand = TerrainDemand::Prefetch;
+                    e.rank = std::numeric_limits<float>::infinity();
+                }
+                else if (e.eager)
+                    e.demand = TerrainDemand::Required;
             }
             for (const std::shared_ptr<ReleaseState> &release : releases)
                 for (auto it = release->queryUses.begin(); it != release->queryUses.end();)
@@ -581,6 +592,13 @@ namespace mir
                 Entry &e = entries.at(ticket->second);
                 loadingTickets.erase(ticket);
                 loading -= e.bytes;
+                // Another release's bytes never become this key's payload; the key reads again.
+                if (finished.release != e.release->info)
+                {
+                    ++stats.discarded;
+                    e.state = TerrainPayloadState::Waiting;
+                    continue;
+                }
 
                 if (finished.error.code == Code::None)
                 {
@@ -775,7 +793,7 @@ namespace mir
         return mImpl->settings;
     }
 
-    TerrainResidencyMode TerrainStreamer::Add(const std::shared_ptr<TerrainResidentRelease> &release)
+    TerrainResidencyMode TerrainStreamer::Add(const std::shared_ptr<TerrainResidentRelease> &release, bool staged)
     {
         MIR_ASSERT(release != nullptr, "TerrainStreamer::Add: no release");
         const TerrainReleaseInfo &info = release->Info();
@@ -786,6 +804,7 @@ namespace mir
                 [&](const std::weak_ptr<TerrainResidentRelease> &owner) { return owner.lock() == release; });
             if (!owned)
                 known->owners.push_back(release);
+            known->staged = known->staged && staged;
             return known->mode;
         }
 
@@ -793,6 +812,7 @@ namespace mir
         state->info = info;
         state->owners.push_back(release);
         state->handle = release->SharedHandle();
+        state->staged = staged;
         for (const TerrainTileRecord &record : state->handle->Index().tiles)
             state->footprint += TerrainPayloadFootprint(record);
         for (const TerrainTileRecord &record : state->handle->Index().regions)
@@ -803,7 +823,8 @@ namespace mir
         {
             uint64_t eager = 0;
             for (const std::shared_ptr<Impl::ReleaseState> &other : mImpl->releases)
-                if (other->mode == TerrainResidencyMode::Eager && other->Alive())
+                if (other->mode == TerrainResidencyMode::Eager && !other->staged && other->Alive() &&
+                    !(staged && other->info.asset == info.asset))
                     eager += other->footprint;
             const uint64_t budget = mImpl->settings.cpu.budgetBytes;
             mode = eager <= budget && state->footprint <= budget - eager ? TerrainResidencyMode::Eager
@@ -968,5 +989,36 @@ namespace mir
                 break;
             }
         return stats;
+    }
+
+    TerrainReleaseUsage TerrainStreamer::Usage(const TerrainReleaseInfo &release) const
+    {
+        TerrainReleaseUsage usage;
+        for (const auto &[key, e] : mImpl->entries)
+        {
+            if (key.asset != release.asset || key.release != release.release)
+                continue;
+            switch (e.state)
+            {
+            case TerrainPayloadState::Waiting:
+                ++(e.attempts > 0 ? usage.inFlight : usage.waiting);
+                break;
+            case TerrainPayloadState::Loading:
+                ++usage.inFlight;
+                usage.bytes += e.bytes;
+                break;
+            case TerrainPayloadState::Ready:
+                ++usage.ready;
+                usage.bytes += e.bytes;
+                break;
+            case TerrainPayloadState::Failed:
+                if (usage.failed++ == 0)
+                    usage.failure = e.error.message;
+                break;
+            case TerrainPayloadState::Absent:
+                break;
+            }
+        }
+        return usage;
     }
 } // namespace mir
