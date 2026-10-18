@@ -379,6 +379,16 @@ Open Project asks for, but not the menu or the dialog themselves.
 
 ## Changed
 
+*2026-10-18* — **The Create menu gained a `Primitive` submenu: cube, sphere,
+plane, cylinder, capsule, cone.** No `HierarchyPanel` change needed - these
+are just six more `EntityPresetRegistry` entries, registered under
+`"Primitive/*"` names from `RegisterRendererEntityTypes` (renderer,
+`ComponentRegistration.cpp`), the same grouping-by-slash-prefix `Light/*`
+already uses. Each spawns a `Transform` + `MeshRenderer` (named via one of
+`Shapes.h`'s reserved builtin names, `materialShader` "default") + `Name`;
+`MeshResolveSystem` generates its geometry without an asset file (see
+[app.md](app.md)). Because: issue #214.
+
 *2026-10-10* — **Double-clicking a `.lua` or `.json` file in the Content
 Browser opens the whole project folder as the workspace root, in a new IDE
 window, with the file open.** Was (2026-10-09): opened just the file, no
