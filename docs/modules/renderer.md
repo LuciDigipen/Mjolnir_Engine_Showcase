@@ -581,6 +581,34 @@ No tests. Everything here needs a device, and the module is verified by running.
 
 ## Changed
 
+*2026-10-18* — **Distance fog moved to the Post-Processing panel, with real
+controls (#210).** Was: `RenderSettings::fog` was one on/off flag in Project
+Settings, applied at a hardcoded color/density with no exposed start/end.
+Now: `FogEffect.h` (`renderer/FogEffect.h`) is fog's single source of truth
+for its shape - `FogParams{color, density, start, end}`, `ReadFogParams`/
+`WriteFogParams` round-tripping it through a `PostEffectState`'s json
+params, and `RegisterFogPostEffect` registering `"Fog"` into
+`PostEffectRegistry` with an ImGui draw callback for all four. Defaults
+(`color=(0.5,0.6,0.7)`, `density=0.015`, `start=0`, `end=300`) are the exact
+numbers the old hardcoded fallback used, chosen so a fresh project looks
+identical to before. `CameraData` (`vulkan/CameraBuffer.cpp`) gained
+`fogRange` (x=start, y=end) immediately after `fogColor`, rather than
+appended at the struct's tail, so `unlit.slang` - which stopped declaring
+fields right at `fogColor` - gains exactly one new field instead of padding
+through seven more it never reads; `default.slang`/`raytrace.slang`/
+`sky.slang` shift their already-declared trailing fields down by one slot.
+The fog formula in `default.slang`/`unlit.slang`/`raytrace.slang` becomes
+`fogFactor = clamp(1 - exp(-density * (clamp(dist, start, end) - start)), 0, 1)` -
+the same exponential curve, now with a near-fade start and a far cap. No
+raster/RT split: all three shaders read the one `CameraData` UBO. `RenderSystem::OnUpdate`
+reads `PostProcessingSettings.effects["Fog"]` instead of `RenderSettings::fog`.
+`RenderSettings` lost the `fog` field entirely and `ProjectSettingsPanel`
+lost its "Distance Fog" checkbox - `PostProcessingSettings::LoadFile` now
+migrates a project predating this (only `rendering.fog`, no
+`postProcessing.effects.Fog` yet) by seeding `Fog.enabled` from the legacy
+bool once; a project already saved under the new scheme is never
+overridden by a stale leftover flag. Because: issue #210.
+
 *2026-10-18* — **`PostProcessingSettings` and `PostEffectRegistry` (#207).**
 Was: no post-processing concept existed. Now: `PostProcessingSettings`
 (`renderer/PostProcessingSettings.h`) is a `RenderSettings`-shaped World

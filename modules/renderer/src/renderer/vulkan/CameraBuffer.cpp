@@ -38,6 +38,7 @@ namespace mir::vk
             glm::mat4 invViewProj;
             glm::vec4 cameraPos;      // xyz = camera in render space: always the origin
             glm::vec4 fogColor;       // rgb = fog color, a = density (0 = disabled)
+            glm::vec4 fogRange;       // x = start distance, y = end distance
             glm::vec4 cameraWorldPos; // xyz = absolute camera, narrowed from the Scene origin; atmosphere only
             glm::vec4 clipPlanes;     // x = near, y = far, or 0 for no far plane; ray tracing only
             glm::vec4 atmosphereScattering; // xyz = Rayleigh coeff (m^-1), w = Mie coeff (m^-1)
@@ -243,6 +244,7 @@ namespace mir::vk
             .invViewProj = glm::inverse(view.viewProj),
             .cameraPos = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f),
             .fogColor = glm::vec4(mFogColor, mFogDensity),
+            .fogRange = glm::vec4(mFogStart, mFogEnd, 0.0f, 0.0f),
             .cameraWorldPos = glm::vec4(cameraWorld, 1.0f),
             .clipPlanes = glm::vec4(view.nearZ, view.farZ, 0.0f, 0.0f),
             .atmosphereScattering = glm::vec4(mAtmosphere.mRayleighCoeff * 1e-6f, mAtmosphere.mMieCoeff * 1e-6f),
@@ -270,10 +272,12 @@ namespace mir::vk
         mLightColor = color;
     }
 
-    void CameraBuffer::SetFog(const glm::vec3 &color, float density)
+    void CameraBuffer::SetFog(const glm::vec3 &color, float density, float start, float end)
     {
         mFogColor = color;
         mFogDensity = density;
+        mFogStart = start;
+        mFogEnd = end;
     }
 
     void CameraBuffer::SetLights(std::span<const LightItem> lights)

@@ -38,6 +38,7 @@ target_compile_definitions(engine_renderer PRIVATE
 target_sources(engine_renderer PRIVATE
     src/renderer/CameraMath.cpp
     src/renderer/ComponentRegistration.cpp
+    src/renderer/FogEffect.cpp
     src/renderer/PostEffectRegistry.cpp
     src/renderer/PostProcessingSettings.cpp
     src/renderer/Renderer.cpp

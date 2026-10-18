@@ -35,6 +35,7 @@ cbuffer CameraData
     float4x4 invViewProj;
     float4 cameraPos; // the origin: model and camera share camera-relative render space
     float4 fogColor; // rgb = fog color, a = density (0 = disabled)
+    float4 fogRange; // x = start distance, y = end distance
 };
 
 [shader("vertex")]
@@ -52,7 +53,8 @@ VSOutput vertexMain(VSInput input)
 float4 fragmentMain(VSOutput input) : SV_Target
 {
     float dist = length(cameraPos.xyz - input.worldPos);
-    float fogFactor = clamp(1.0 - exp(-fogColor.a * dist), 0.0, 1.0);
+    float clampedDist = clamp(dist, fogRange.x, fogRange.y);
+    float fogFactor = clamp(1.0 - exp(-fogColor.a * (clampedDist - fogRange.x)), 0.0, 1.0);
     float3 color = lerp(input.color, fogColor.rgb, fogFactor);
 
     return float4(color, 1.0);
