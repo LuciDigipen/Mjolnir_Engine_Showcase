@@ -32,6 +32,7 @@
 namespace mir
 {
     class World;
+    class TerrainStreamer;
 
     enum class TerrainIssueKind : uint8_t
     {
@@ -79,17 +80,32 @@ namespace mir
     // Refuses a bad recipe path, and a placement other than a root's translation.
     TerrainSceneSpec CollectTerrainScene(World &world, std::string_view assetIdRoot);
 
-    // Every pack verified and every tile resident; the tiles never change after Load, though Query().HeightAt
-    // may still record payload requests.
+    // One opened release and its height query. Only the index is read here; a TerrainStreamer it is added
+    // to makes payloads resident and is the only writer of the query's residency.
     class TerrainResidentRelease
     {
     public:
-        [[nodiscard]] static TerrainResult<std::shared_ptr<TerrainResidentRelease>> Load(
-            const std::filesystem::path &releasesRoot, AssetId asset, TerrainReleaseId release);
+      [[nodiscard]] static TerrainResult<std::shared_ptr<TerrainResidentRelease>> Open(
+          const std::filesystem::path &releasesRoot, AssetId asset, TerrainReleaseId release);
+      [[nodiscard]] static std::shared_ptr<TerrainResidentRelease> Create(TerrainReleaseHandle handle);
 
-        const TerrainReleaseInfo &Info() const { return mHandle.Info(); }
-        const TerrainLayout &Layout() const { return mHandle.Layout(); }
-        const TerrainReleaseHandle &Handle() const { return mHandle; }
+      const TerrainReleaseInfo &Info() const
+      {
+          return mHandle->Info();
+      }
+      const TerrainLayout &Layout() const
+      {
+          return mHandle->Layout();
+      }
+      const TerrainReleaseHandle &Handle() const
+      {
+          return *mHandle;
+      }
+      // Shared with the workers reading it.
+      const std::shared_ptr<const TerrainReleaseHandle> &SharedHandle() const
+      {
+          return mHandle;
+      }
         TerrainHeightQuery &Query() { return mQuery; }
         const TerrainHeightQuery &Query() const { return mQuery; }
 
@@ -97,10 +113,10 @@ namespace mir
         TileSampleLookup Lookup(uint32_t layer = 0) const;
 
     private:
-        TerrainResidentRelease(TerrainReleaseHandle handle, TerrainHeightQuery query);
+      explicit TerrainResidentRelease(std::shared_ptr<const TerrainReleaseHandle> handle);
 
-        TerrainReleaseHandle mHandle;
-        TerrainHeightQuery mQuery;
+      std::shared_ptr<const TerrainReleaseHandle> mHandle;
+      TerrainHeightQuery mQuery;
     };
 
     // Map bounds plus translation, in world meters.
@@ -150,16 +166,18 @@ namespace mir
         void RemoveInstance(size_t index);
 
     private:
-        friend TerrainWorld ResolveTerrainWorld(const TerrainSceneSpec &, const std::filesystem::path &,
-                                                const TerrainWorld *, std::vector<TerrainIssue> &);
+      friend TerrainWorld ResolveTerrainWorld(const TerrainSceneSpec &, const std::filesystem::path &,
+                                              const TerrainWorld *, std::vector<TerrainIssue> &, TerrainStreamer &);
 
-        std::vector<AssetState> mAssets;
-        std::vector<TerrainInstanceState> mInstances;
+      std::vector<AssetState> mAssets;
+      std::vector<TerrainInstanceState> mInstances;
     };
 
-    // previous is not changed. Overlapping instances are all refused.
+    // previous is not changed. Overlapping instances are all refused. New releases are added to the
+    // streamer; an Eager one is waited for and refused when any payload fails.
     TerrainWorld ResolveTerrainWorld(const TerrainSceneSpec &spec, const std::filesystem::path &releasesRoot,
-                                     const TerrainWorld *previous, std::vector<TerrainIssue> &issues);
+                                     const TerrainWorld *previous, std::vector<TerrainIssue> &issues,
+                                     TerrainStreamer &streamer);
 
     // Reads only the pointer files.
     bool TerrainCurrentMoved(const TerrainWorld &world, const std::filesystem::path &releasesRoot);

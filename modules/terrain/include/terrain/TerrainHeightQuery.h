@@ -144,6 +144,9 @@ namespace mir
         TerrainPackError MarkFailed(const TerrainReleaseInfo &from, uint32_t layer, TileCoord tile,
                                     TerrainPackError error);
 
+        // Back to Absent, whatever the slot held; the next query needing it requests it again.
+        void Evict(uint32_t layer, TileCoord tile);
+
         TerrainTileResidency Residency(uint32_t layer, TileCoord tile) const;
         // Null unless resident.
         std::shared_ptr<const TileHeights> ResidentTile(uint32_t layer, TileCoord tile) const;
@@ -154,13 +157,17 @@ namespace mir
         std::span<const TerrainPayloadRequest> PayloadRequests() const { return mQueue; }
         std::vector<TerrainPayloadRequest> TakePayloadRequests();
 
-    private:
+        // Resident tiles answered from since the last take, once each.
+        std::vector<TerrainPayloadRequest> TakeUsedTiles();
+
+      private:
         struct Slot
         {
             TerrainTileResidency residency = TerrainTileResidency::Absent;
             std::shared_ptr<const TileHeights> heights;
             double maxAbsHeight = 0.0;
             TerrainPackError error;
+            bool used = false;
         };
 
         struct LayerState
@@ -183,6 +190,7 @@ namespace mir
         TerrainReleaseInfo mRelease;
         std::vector<LayerState> mLayers;
         std::vector<TerrainPayloadRequest> mQueue;
+        std::vector<TerrainPayloadRequest> mUsed;
     };
 
     struct TerrainPreloadReport
