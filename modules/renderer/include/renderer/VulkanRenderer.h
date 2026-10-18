@@ -229,7 +229,7 @@ namespace mir
 
         void SetAmbientColor(const glm::vec3 &color);
 
-        void SetFog(const glm::vec3 &color, float density);
+        void SetFog(const glm::vec3 &color, float density, float start, float end);
 
         void SetAtmosphere(const Sky &sky);
 

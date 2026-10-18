@@ -19,6 +19,8 @@
 #include <audio/AudioListenerSystem.h>
 #include <audio/AudioSystem.h>
 #include <audio/ComponentRegistration.h>
+#include <camera/CameraControllerSystem.h>
+#include <camera/ComponentRegistration.h>
 #include <core/EngineVersion.h>
 #include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/DeferredAccess.h>
@@ -36,8 +38,8 @@
 #include <physics/PhysicsInterpolationSystem.h>
 #include <physics/PhysicsSystem.h>
 #include <physics/PhysicsWorld.h>
-#include <renderer/CameraFollowSystem.h>
 #include <renderer/ComponentRegistration.h>
+#include <renderer/PostProcessingSettings.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/RenderSystem.h>
 #include <renderer/ViewDrawSource.h>
@@ -183,7 +185,9 @@ namespace mir
         RegisterCoreComponents();
         RegisterRendererComponents();
         RegisterRendererEntityTypes();
+        RegisterRendererPostEffects();
         RegisterPhysicsComponents();
+        RegisterCameraComponents();
         RegisterScriptComponents();
         RegisterAudioComponents();
         RegisterModelPlayer();
@@ -202,6 +206,8 @@ namespace mir
         mWorld.EmplaceResource<InputMap>(std::move(inputMap));
 
         mWorld.EmplaceResource<RenderSettings>(RenderSettings::LoadFile(mProject.mProjectSettingsPath).value_or(RenderSettings{}));
+        mWorld.EmplaceResource<PostProcessingSettings>(
+            PostProcessingSettings::LoadFile(mProject.mProjectSettingsPath).value_or(PostProcessingSettings{}));
         mWorld.EmplaceResource<InputState>();
         mWorld.EmplaceResource<EngineModeState>();
 
@@ -223,7 +229,7 @@ namespace mir
         //should be before any other system in PostUpdate that reads WorldTransform
         mScheduler.AddSystem<TransformPropagateSystem>(SystemPhase::PostUpdate);
 
-        mScheduler.AddSystem<CameraFollowSystem>(SystemPhase::PostUpdate);
+        mScheduler.AddSystem<CameraControllerSystem>(SystemPhase::PostUpdate);
         mModelSystem =
             &mScheduler.AddSystem<ModelSystem>(SystemPhase::PostUpdate, mRenderer, Assets(), mProject.mAssetIdRoot);
         mMeshResolveSystem = &mScheduler.AddSystem<MeshResolveSystem>(SystemPhase::PostUpdate, mRenderer, Assets(),
@@ -527,8 +533,8 @@ namespace mir
             #if MIR_WITH_EDITOR
                 const EditorActions actions = mEditor.DrawLayout(
                     mDesc.mEnableEditorLayout, mWorld.Resource<InputMap>(), mWorld.Resource<RenderSettings>(),
-                    mWorld.Resource<EngineModeState>(), mProjectMenu, mProject.mDir, mWorld, mAssetImport.View(),
-                    mRenderer, mContentBrowser.View());
+                    mWorld.Resource<PostProcessingSettings>(), mWorld.Resource<EngineModeState>(), mProjectMenu,
+                    mProject.mDir, mWorld, mAssetImport.View(), mRenderer, mContentBrowser.View());
             #endif
 
                 mGameUI.BeginFrame(GameUIArea(), mWorld.Resource<InputState>(), mWorld.Resource<InputMap>(),

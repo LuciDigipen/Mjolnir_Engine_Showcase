@@ -28,6 +28,7 @@ namespace mir
         Button,
         Axis1D,
         Axis2D,
+        Delta2D, 
     };
 
     enum class AxisChannel
@@ -43,6 +44,7 @@ namespace mir
 
         Key key = Key::Unknown;
         MouseButton mouseButton = MouseButton::Left;
+        bool useMouseDelta = false; 
 
         bool useGamepadAxis = false;
         GamepadButton gamepadButton = GamepadButton::A;

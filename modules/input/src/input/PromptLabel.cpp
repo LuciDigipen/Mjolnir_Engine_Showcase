@@ -99,7 +99,7 @@ namespace mir
         if (const InputBinding *binding = FirstOn(*found, DeviceKind::Keyboard))
             return KeyName(binding->key);
         if (const InputBinding *binding = FirstOn(*found, DeviceKind::Mouse))
-            return MouseLabel(binding->mouseButton);
+            return binding->useMouseDelta ? "Mouse" : MouseLabel(binding->mouseButton);
         return {};
     }
 }

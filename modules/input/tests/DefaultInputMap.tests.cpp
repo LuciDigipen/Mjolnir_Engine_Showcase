@@ -38,7 +38,12 @@ namespace
         kToggleFullscreenAction,
     };
 
-    constexpr size_t kDefaultActionCount = std::size(kUIActions) + std::size(kWindowActions);
+    constexpr std::string_view kCameraActions[] = {
+        kCameraMoveAction,      kCameraVerticalAction, kCameraLookAction,       kCameraLookHoldAction,
+        kCameraLookStickAction, kCameraFastAction,     kToggleCameraModeAction,
+    };
+
+    constexpr size_t kDefaultActionCount = std::size(kUIActions) + std::size(kWindowActions) + std::size(kCameraActions);
 
     // the mouse navigates by pointing and pauses by clicking the HUD, so these
     // two have no mouse binding
@@ -53,7 +58,7 @@ namespace
     bool SameBinding(const InputBinding &a, const InputBinding &b)
     {
         return a.device == b.device && a.channel == b.channel && a.key == b.key && a.mouseButton == b.mouseButton &&
-               a.useGamepadAxis == b.useGamepadAxis && a.gamepadButton == b.gamepadButton &&
+               a.useMouseDelta == b.useMouseDelta && a.useGamepadAxis == b.useGamepadAxis && a.gamepadButton == b.gamepadButton &&
                a.gamepadAxis == b.gamepadAxis && a.deadzone == b.deadzone && a.scale == b.scale;
     }
 
@@ -299,4 +304,64 @@ TEST_CASE("ForGame reads every action at rest while a game UI holds the input, a
 
     f.state.SetGameInputHeld(false);
     CHECK(f.state.ForGame("Jump").down);
+}
+
+TEST_CASE("CameraLook carries the mouse's movement in pixels, unclamped", "[input]")
+{
+    Fixture f;
+    f.window.mRaw.mouseX = 100.0;
+    f.window.mRaw.mouseY = 100.0;
+    f.Update(); // first sight of the cursor is not movement
+    CHECK(f.state.Get(kCameraLookAction).x == 0.0f);
+
+    f.window.mRaw.mouseX = 130.0;
+    f.window.mRaw.mouseY = 88.0;
+    f.Update();
+    CHECK(f.state.Get(kCameraLookAction).x == 30.0f);
+    CHECK(f.state.Get(kCameraLookAction).y == -12.0f);
+
+    f.Update();
+    CHECK_FALSE(f.state.IsDown(kCameraLookAction));
+
+    // the editor UI under the cursor keeps it
+    f.state.SetUiCapture(false, true);
+    f.window.mRaw.mouseX = 200.0;
+    f.Update();
+    CHECK(f.state.Get(kCameraLookAction).x == 0.0f);
+}
+
+TEST_CASE("CameraMove and CameraVertical read forward and up the same from keys and the gamepad", "[input]")
+{
+    Fixture f;
+    f.SetKey(Key::W, true);
+    f.SetKey(Key::E, true);
+    f.Update();
+    CHECK(f.state.Get(kCameraMoveAction).y == -1.0f);
+    CHECK(f.state.Get(kCameraVerticalAction).x == 1.0f);
+
+    f.SetKey(Key::W, false);
+    f.SetKey(Key::E, false);
+    f.Pad().axes[static_cast<size_t>(GamepadAxis::LeftY)] = -0.5f;
+    f.Pad().buttons[static_cast<size_t>(GamepadButton::RightBumper)] = true;
+    f.Update();
+    CHECK(f.state.Get(kCameraMoveAction).y == -0.5f);
+    CHECK(f.state.Get(kCameraVerticalAction).x == 1.0f);
+}
+
+TEST_CASE("A mouse-motion binding round-trips through SaveFile and LoadFile", "[input]")
+{
+    InputMap map;
+    map.AddAction("Look", InputActionType::Delta2D).bindings.push_back(
+        InputBinding{ .device = DeviceKind::Mouse, .channel = AxisChannel::Y, .useMouseDelta = true, .scale = -1.0f });
+
+    TempSettingsFile file("mouse_delta.json");
+    REQUIRE(map.SaveFile(file.mPath));
+    const std::optional<InputMap> loaded = InputMap::LoadFile(file.mPath);
+    REQUIRE(loaded.has_value());
+
+    const InputAction *look = loaded->Find("Look");
+    REQUIRE(look != nullptr);
+    CHECK(look->type == InputActionType::Delta2D);
+    REQUIRE(look->bindings.size() == 1);
+    CHECK(SameBinding(look->bindings[0], map.Actions()[0].bindings[0]));
 }

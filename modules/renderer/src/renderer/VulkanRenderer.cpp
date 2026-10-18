@@ -330,9 +330,9 @@ namespace mir
         mCameraBuffer->SetAmbientColor(color);
     }
 
-    void VulkanRenderer::SetFog(const glm::vec3 &color, float density)
+    void VulkanRenderer::SetFog(const glm::vec3 &color, float density, float start, float end)
     {
-        mCameraBuffer->SetFog(color, density);
+        mCameraBuffer->SetFog(color, density, start, end);
     }
 
     void VulkanRenderer::SetAtmosphere(const Sky &sky)

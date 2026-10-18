@@ -106,6 +106,7 @@ through it for anything touching a JSON file.
 | `serial` | JSON documents on disk | [serial.md](modules/serial.md) |
 | `script` | Lua embedding and ECS bindings | [script.md](modules/script.md) |
 | `audio` | Wwise lifetime and the per-frame pump | [audio.md](modules/audio.md) |
+| `camera` | Gameplay camera control: follow a target, or free-fly from input | [camera.md](modules/camera.md) |
 | `imguiruntime` | ImGui context lifetime, fonts, both backends, the frame bracket | [imguiruntime.md](modules/imguiruntime.md) |
 | `editor` | The editor shell, drawn into `imguiruntime`'s context | [editor.md](modules/editor.md) |
 | `editortheme` | Theme data only | [editortheme.md](modules/editortheme.md) |

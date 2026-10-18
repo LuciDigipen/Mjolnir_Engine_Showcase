@@ -46,7 +46,7 @@ namespace mir::vk
         void SetLights(std::span<const LightItem> lights);
         void SetDirectionalLight(const glm::vec3 &direction, const glm::vec3 &color);
         void SetAmbientColor(const glm::vec3 &color) { mAmbientColor = color; }
-        void SetFog(const glm::vec3 &color, float density);
+        void SetFog(const glm::vec3 &color, float density, float start, float end);
         void SetAtmosphere(const Sky &sky) { mAtmosphere = sky; }
 
         // Fills this view's slice of the frame's buffers; returns its dynamic offset into binding 0.
@@ -83,6 +83,8 @@ namespace mir::vk
         glm::vec3 mAmbientColor{ 0.25f, 0.25f, 0.25f };
         glm::vec3 mFogColor{ 0.02f, 0.02f, 0.02f };
         float mFogDensity = 0.0f;
+        float mFogStart = 0.0f;
+        float mFogEnd = 0.0f;
         Sky mAtmosphere{};
     };
 }

@@ -842,9 +842,9 @@ namespace mir
     }
 
     EditorActions Editor::DrawLayout(bool enableLayout, InputMap &inputMap, RenderSettings &renderSettings,
-        const EngineModeState &mode, std::span<const ProjectMenuEntry> projects,
-        std::string_view currentProject, World &world, const AssetImportView &assetImport,
-        const VulkanRenderer &renderer, const ContentBrowserView &contentBrowser)
+        PostProcessingSettings &postProcessingSettings, const EngineModeState &mode,
+        std::span<const ProjectMenuEntry> projects, std::string_view currentProject, World &world,
+        const AssetImportView &assetImport, const VulkanRenderer &renderer, const ContentBrowserView &contentBrowser)
     {
         EditorActions actions;
 
@@ -966,6 +966,7 @@ namespace mir
                 {
                     ImGui::MenuItem("Project Settings", nullptr, &mShowProjectSettings);
                     ImGui::MenuItem("Input Settings", nullptr, &mShowInputSettings);
+                    ImGui::MenuItem("Post-Processing", nullptr, &mShowPostProcessing);
                     ImGui::MenuItem("Asset Import", nullptr, &mShowAssetImport);
                     ImGui::MenuItem("Content Browser", nullptr, &mShowContentBrowser);
                     ImGui::Separator();
@@ -1034,6 +1035,17 @@ namespace mir
             else
             {
                 mInputSettingsPanel.OnHidden();
+            }
+
+            if (mShowPostProcessing)
+            {
+                if (ImGui::Begin("Post-Processing", &mShowPostProcessing))
+                    mPostProcessingPanel.Draw(postProcessingSettings, mProjectSettingsPath);
+                ImGui::End();
+            }
+            else
+            {
+                mPostProcessingPanel.OnHidden();
             }
 
             const std::span<const std::string> dropped =

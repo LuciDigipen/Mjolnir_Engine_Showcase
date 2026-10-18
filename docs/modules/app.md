@@ -228,7 +228,11 @@ them without a lookup.
 A `LoadedScene` file (see [scene.md](scene.md)) round-trips a `MeshRenderer`'s
 `meshName`/`materialShader` and a `ScriptRef`'s `scriptName` — strings, not the
 live `MeshHandle`/`instanceRef` `RenderSystem`/`ScriptSystem` actually need.
-Both turn names into handles by asset id under the game's `mAssetIdRoot`.
+`materialShader` and a `scriptName` always turn into handles by asset id under
+the game's `mAssetIdRoot`; a `meshName` does too, *unless* it's one of
+`Shapes.h`'s reserved builtin names (`MakeBuiltinMesh`), in which case it
+generates its geometry on the spot instead — no asset file, used by the
+editor's primitive entities (see [editor.md](editor.md)).
 
 `ResolveSceneScripts`, in the private `SceneResolve.cpp`, runs at the end of both
 places entities come from a `LoadedScene` file: `LoadScene()` and `StopScene()`
@@ -539,6 +543,19 @@ composition with gated reads; the Play/publish/Stop sequence through
    left for later; the panel's confirm modal is the primary safety net.
 
 ## Changed
+
+*2026-10-18* — **`MeshResolveSystem` resolves builtin primitives without
+touching the asset cache.** Was: `ResolveMesh` always turned `meshName` into
+an asset id under `mAssetIdRoot` and loaded it through `AssetCache` - every
+mesh needed a file on disk. Now: it checks `MakeBuiltinMesh` (renderer,
+`Shapes.h`) first; a reserved name (e.g. `"builtin:cube"`) generates its
+`MeshData` on the spot and skips `MakeLogicalAssetPath`/`AssetCache::Load`
+entirely, falling through to the existing file-backed path for anything else.
+Everything downstream - the per-entity resolve memoization, `CachedMesh`
+keyed by the raw name, `MeshBounds` add/update/remove, `Reset()` - is already
+generic over `meshName` and needed no changes. Because: issue #214 - the
+editor's new Primitive entities (see [editor.md](editor.md)) need to save and
+load with the scene without an external asset file.
 
 *2026-10-13* — **Terrain release switches checked and prewarmed in the
 background (#129).** Was: the Edit poll, `PlayScene` and `StopScene` adopted a

@@ -148,7 +148,6 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `MeshRenderer`, `Camera` | `renderer/components/` | Handles, and `fovY`/`near`/`far` (`far` 0 = no far plane), declared here rather than in `core` |
 | `MeshBounds` | `renderer/components/MeshBounds.h` | `{mLocalMin, mLocalMax}`, a mesh's own local-space AABB; attached and kept current by `app`'s `MeshResolveSystem` (see [app.md](app.md)), read by the editor's viewport click-picking (see [editor.md](editor.md)) — not used for rendering at all |
 | `Ray`, `RayIntersectsAABB`, `WorldRay`, `MakeCameraRay`, `RayIntersectsBox` | `renderer/CameraMath.h` | `WorldRay` is a camera ray with a double `WorldPosition` origin and a float direction; `RayIntersectsBox` places a `WorldPose` box relative to that origin in double, then runs the local ray/AABB slab test — the same file `MakeViewProjection` lives in, so both stay in the same Vulkan-convention math |
-| `CameraFollow`, `CameraFollowSystem` | `renderer/components/CameraFollow.h`, `renderer/CameraFollowSystem.h` | `{target, offset, offsetInTargetSpace, stiffness, snapDistance, lookAtTarget}`; the system runs in `PostUpdate` right after `TransformPropagateSystem`, only while simulating, and re-resolves the camera's `WorldTransform` so `RenderSystem` draws this frame's pose. `StepCameraFollow` is the pure step it uses |
 | `RenderSystem` | `renderer/RenderSystem.h` | The ECS-to-renderer bridge, `SystemPhase::Render` |
 | `Shapes.h` | `renderer/Shapes.h` | `MakeCube()` and friends — plain vectors, no Vulkan |
 | `RenderSettings` | `renderer/RenderSettings.h` | Project Settings' `"rendering"` section (`rayTracing: bool`, `fog: bool`); `LoadFile`/`SaveFile`, a World resource loaded in `App::Initialize` |
@@ -642,6 +641,85 @@ Everything that needs a device is verified by the smoke tests and
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-10-18* — **Distance fog moved to the Post-Processing panel, with real
+controls (#210).** Was: `RenderSettings::fog` was one on/off flag in Project
+Settings, applied at a hardcoded color/density with no exposed start/end.
+Now: `FogEffect.h` (`renderer/FogEffect.h`) is fog's single source of truth
+for its shape - `FogParams{color, density, start, end}`, `ReadFogParams`/
+`WriteFogParams` round-tripping it through a `PostEffectState`'s json
+params, and `RegisterFogPostEffect` registering `"Fog"` into
+`PostEffectRegistry` with an ImGui draw callback for all four. Defaults
+(`color=(0.5,0.6,0.7)`, `density=0.015`, `start=0`, `end=300`) are the exact
+numbers the old hardcoded fallback used, chosen so a fresh project looks
+identical to before. `CameraData` (`vulkan/CameraBuffer.cpp`) gained
+`fogRange` (x=start, y=end) immediately after `fogColor`, rather than
+appended at the struct's tail, so `unlit.slang` - which stopped declaring
+fields right at `fogColor` - gains exactly one new field instead of padding
+through seven more it never reads; `default.slang`/`raytrace.slang`/
+`sky.slang` shift their already-declared trailing fields down by one slot.
+The fog formula in `default.slang`/`unlit.slang`/`raytrace.slang` becomes
+`fogFactor = clamp(1 - exp(-density * (clamp(dist, start, end) - start)), 0, 1)` -
+the same exponential curve, now with a near-fade start and a far cap. No
+raster/RT split: all three shaders read the one `CameraData` UBO. `RenderSystem::OnUpdate`
+reads `PostProcessingSettings.effects["Fog"]` instead of `RenderSettings::fog`.
+`RenderSettings` lost the `fog` field entirely and `ProjectSettingsPanel`
+lost its "Distance Fog" checkbox - `PostProcessingSettings::LoadFile` now
+migrates a project predating this (only `rendering.fog`, no
+`postProcessing.effects.Fog` yet) by seeding `Fog.enabled` from the legacy
+bool once; a project already saved under the new scheme is never
+overridden by a stale leftover flag. Because: issue #210.
+
+*2026-10-18* — **`PostProcessingSettings` and `PostEffectRegistry` (#207).**
+Was: no post-processing concept existed. Now: `PostProcessingSettings`
+(`renderer/PostProcessingSettings.h`) is a `RenderSettings`-shaped World
+resource - `LoadFile`/`SaveFile` via the same `ReadJsonFile`/`UpdateJsonFile`
+recipe, its own `"postProcessing"` project-settings section (sibling to
+`"rendering"`/`"input"`/`"ide"`, never clobbering them) - holding
+`effects: unordered_map<string, PostEffectState>`, each a `{enabled, params}`
+pair with `params` kept as raw `nlohmann::json` rather than a typed struct,
+since no concrete effect exists yet to give it a shape. `PostEffectRegistry`
+(`renderer/PostEffectRegistry.h`), mirroring `core::EntityPresetRegistry`'s
+`Instance()`/`Register()`/`All()` shape, is the extension point: a future
+effect (bloom, depth of field, distance fog, HDR, motion blur, film
+settings) registers a name and a `void(json&)` draw callback the same way
+`RegisterRendererEntityTypes()` registers `Light/Sun` etc. This issue
+registers none - the new Post-Processing panel (see [editor.md](editor.md))
+reads an empty list until one does. Because: issue #207 - one panel should
+own every post effect's toggle and parameters instead of Project Settings,
+and that only works if effects can register into it without each one
+redesigning storage.
+
+Note for whoever adds the first real screen-space effect (bloom, depth of
+field, motion blur): raster and ray tracing do not share a post-process hook
+point today. Raster draws straight into the swapchain image in the same pass
+as ImGui (`VulkanRendererFrame.cpp:121-184`); ray tracing renders to its own
+offscreen image and blits it onto the swapchain
+(`VulkanRendererFrame.cpp:214-266`). A true screen-space effect needs an
+offscreen raster color target mirroring RT's, plus a shared post stage before
+blit/present. An effect that can instead ride the existing shared
+`CameraData` UBO both pipelines already read identically (as fog does) needs
+none of that.
+
+*2026-10-18* — **`Shapes.h` gained a primitive per editor shape, plus a
+reserved-name dispatcher.** Was: `MakeTriangle`/`MakeQuad`/`MakeCube`, authored
+for early render-path smoke testing and otherwise unused. Now: `MakeSphere`,
+`MakePlane`, `MakeCylinder`, `MakeCone` and `MakeCapsule` join them (same
+style: plain `MeshData`, right-handed Y-up, CCW from outside), each unit-sized
+and centred on the origin so a `Transform`'s scale reads as world dimensions -
+except `MakeCapsule`, whose total height is 2 (a unit cylindrical midsection
+plus two radius-0.5 hemispherical caps), since forcing it into a 1×1×1 box
+degenerates it into a sphere. `kCubeMeshName`/`kSphereMeshName`/etc name these
+to a `MeshRenderer.meshName` without a file on disk, and `MakeBuiltinMesh`
+dispatches one of those reserved names back to its generator (`nullopt` for
+anything else). Because: issue #214 (primitive entities need geometry that
+exists with no asset file). See [app.md](app.md) for where the dispatch is
+actually used, and [editor.md](editor.md) for the new Create-menu entries.
+
+*2026-10-15* — **`CameraFollow` left for the `camera` module.** Was: the follow
+camera lived here. Now: it is `CameraController` in
+[camera.md](camera.md), with a free-fly mode. Because: free-fly reads
+`InputState`, and the Vulkan module should not link `input`.
 
 *2026-10-14* — **`CameraFollow`.** Was: a game camera only moved if a script
 wrote its `Transform`. Now: a `CameraFollow` on a root entity chases its

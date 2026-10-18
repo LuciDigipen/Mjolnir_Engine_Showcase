@@ -27,6 +27,14 @@ namespace mir
 
     inline constexpr std::string_view kToggleFullscreenAction = "ToggleFullscreen";
 
+    inline constexpr std::string_view kCameraMoveAction = "CameraMove";
+    inline constexpr std::string_view kCameraVerticalAction = "CameraVertical";
+    inline constexpr std::string_view kCameraLookAction = "CameraLook";
+    inline constexpr std::string_view kCameraLookHoldAction = "CameraLookHold";
+    inline constexpr std::string_view kCameraLookStickAction = "CameraLookStick";
+    inline constexpr std::string_view kCameraFastAction = "CameraFast";
+    inline constexpr std::string_view kToggleCameraModeAction = "ToggleCameraMode";
+
     InputMap DefaultInputMap();
 
 

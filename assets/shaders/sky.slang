@@ -16,6 +16,7 @@ cbuffer CameraData
     float4x4 invViewProj;
     float4 cameraPos; // the origin of camera-relative render space
     float4 fogColor;
+    float4 fogRange; // x = start distance, y = end distance (unused here, kept for layout parity)
     float4 cameraWorldPos; // absolute camera position, for the altitude only
     float4 clipPlanes;
     float4 atmosphereScattering;
