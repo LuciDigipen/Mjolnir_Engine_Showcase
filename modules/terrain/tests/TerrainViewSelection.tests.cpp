@@ -77,69 +77,6 @@ namespace
         return tiles;
     }
 
-    std::vector<TerrainPayloadWrite> BuildTestLods(std::span<const TerrainLayout> layers,
-                                                   std::span<const TileHeights> tiles)
-    {
-        std::vector<TerrainPayloadWrite> writes;
-        const TerrainLayout &source = layers[0];
-        for (const TileHeights &tile : tiles)
-            for (uint32_t level = 0; level < layers.size(); ++level)
-            {
-                const TerrainLayout &layout = layers[level];
-                const int32_t n = layout.IntervalsPerTile(), stride = source.IntervalsPerTile() / n;
-                TerrainLodSurface lod;
-                lod.tile = tile.Tile();
-                lod.layer = level;
-                lod.level = level;
-                lod.sourceSpacing = source.SampleSpacing();
-                lod.spacing = layout.SampleSpacing();
-                lod.sourceChecksum = TerrainFinalHeightChecksum(tile);
-                lod.origin = *TerrainLocalPosition::FromMeters(
-                    {source.SamplePosition(source.TileFirstSample(tile.Tile().x)), 0.0,
-                     source.SamplePosition(source.TileFirstSample(tile.Tile().z))});
-                for (int32_t k = 0; k <= n; ++k)
-                    for (int32_t i = 0; i <= n; ++i)
-                        lod.positions.emplace_back(float(i * layout.SampleSpacing()), tile.At(i * stride, k * stride),
-                                                   float(k * layout.SampleSpacing()));
-                for (int32_t k = 0; k < n; ++k)
-                    for (int32_t i = 0; i < n; ++i)
-                    {
-                        const uint32_t a = uint32_t(k * (n + 1) + i), b = a + 1, d = a + uint32_t(n + 1), c = d + 1;
-                        for (uint32_t id : {a, d, c, a, c, b})
-                            lod.indices.push_back(id);
-                    }
-                lod.topologyHash = TerrainTopologyHash(lod.positions, lod.indices);
-                const std::optional<double> deviation = TerrainLodDeviation(source, tile, lod);
-                REQUIRE(deviation);
-                lod.maxDeviation = *deviation;
-                const auto [lo, hi] =
-                    std::minmax_element(lod.positions.begin(), lod.positions.end(),
-                                        [](const glm::vec3 &p, const glm::vec3 &q) { return p.y < q.y; });
-
-                TerrainTileRecord record;
-                record.tile = tile.Tile();
-                record.layer = level;
-                record.level = level;
-                record.kind = TerrainPayloadKind::LodHeight;
-                record.source = false;
-                record.samplesPerSide = n + 1;
-                record.sampleSpacing = layout.SampleSpacing();
-                record.minHeight = lo->y;
-                record.maxHeight = hi->y;
-                record.validExtent = *layout.ValidExtent(tile.Tile());
-                record.maxDeviation = lod.maxDeviation;
-                record.sourceChecksum = lod.sourceChecksum;
-                record.topologyHash = lod.topologyHash;
-                record.vertexCount = uint32_t(lod.positions.size());
-                record.indexCount = uint32_t(lod.indices.size());
-                writes.push_back({record, EncodeTerrainLod(lod)});
-                record.kind = TerrainPayloadKind::Normal;
-                writes.push_back({record, EncodeTerrainNormals(
-                                              lod, std::vector<glm::vec3>(lod.positions.size(), {0.0f, 1.0f, 0.0f}))});
-            }
-        return writes;
-    }
-
     TerrainStreamingSettings::View ViewSettings(uint64_t prefetchBudget = uint64_t(1) << 30)
     {
         TerrainStreamingSettings::View view;
@@ -147,7 +84,6 @@ namespace
         view.mergeErrorPixels = 0.75;
         view.prefetchErrorPixels = 0.5;
         view.prefetchBudgetBytes = prefetchBudget;
-        view.meshRetainSeconds = 1.0;
         return view;
     }
 
@@ -650,6 +586,53 @@ TEST_CASE("Units that are not ready give way to ready coarser or finer ones and 
         }
         CHECK(fallbacks > 0);
     }
+}
+
+TEST_CASE("A merging Region keeps ready children until its upload finishes", "[terrain][selection]")
+{
+    const Fixture f;
+    const TerrainSelectionInstance instance = f.Instance();
+    const uint32_t top = f.Grid().Levels() - 1;
+    const TerrainPayloadKey root = TerrainPayloadKeyOf(f.info, *f.Index().FindRegion({top, 0, 0}));
+    ReadySet ready;
+    for (const TerrainPayloadKey &key : f.AllKeys())
+        if (!(key == root))
+            ready.keys.insert(key);
+
+    TerrainViewSelector selector(ViewSettings(0));
+    selector.Update({&instance, 1}, LookingEverywhere(f.At({-150.0, 30.0, -100.0}), 4000.0), ready.Predicate());
+    CheckCoveredOnce(f, selector.Draws());
+    REQUIRE(CountKind(selector.Draws(), Kind::Tile) > 0);
+
+    const TerrainView far = LookingEverywhere(f.At({1000000.0, 1000000.0, 1000000.0}), 300.0);
+    for (int frame = 0; frame < 5; ++frame)
+    {
+        INFO("pending frame " << frame);
+        selector.Update({&instance, 1}, far, ready.Predicate());
+        CheckCoveredOnce(f, selector.Draws());
+        CHECK(selector.Stats().missing == 0);
+        CHECK(selector.Stats().otherFallbacks > 0);
+        const auto wants = WantsByKey(selector.Wants());
+        REQUIRE(wants.contains(root));
+        CHECK(wants.at(root).demand == Demand::Visible);
+        for (const TerrainDrawUnit &unit : selector.Draws())
+        {
+            CHECK_FALSE(unit.geometry == root);
+            REQUIRE(wants.contains(unit.geometry));
+            CHECK(wants.at(unit.geometry).demand == Demand::Visible);
+        }
+        std::vector<TerrainDrawUnit> volumeDraws;
+        selector.Collect(far.frustum, ready.Predicate(), volumeDraws);
+        CheckCoveredOnce(f, volumeDraws);
+    }
+
+    ready.keys.insert(root);
+    selector.Update({&instance, 1}, far, ready.Predicate());
+    REQUIRE(selector.Draws().size() == 1);
+    CHECK(selector.Draws()[0].geometry == root);
+    CHECK(selector.Stats().otherFallbacks == 0);
+    CHECK(selector.Stats().missing == 0);
+    CheckCoveredOnce(f, selector.Draws());
 }
 
 TEST_CASE("Wants are Visible for what the view draws and chooses, Prefetch for the rest within the budget",

@@ -71,8 +71,16 @@ namespace mir
                      "must be a finite positive number of pixels, at most mergeErrorPixels");
             if (!v.prefetchBudgetBytes)
                 emit("view", "prefetchBudgetMiB", "must be zero or more");
-            if (!NonNegative(v.meshRetainSeconds))
-                emit("view", "meshRetainSeconds", "must be a finite number of seconds, zero or more");
+
+            const TerrainStreamingSettings::Gpu &g = s.gpu;
+            if (g.budgetBytes == 0)
+                emit("gpu", "budgetMiB", "must be positive");
+            if (g.uploadBytesPerFrame == 0)
+                emit("gpu", "uploadMiBPerFrame", "must be positive");
+            if (g.stagingBytes == 0)
+                emit("gpu", "stagingMiB", "must be positive");
+            if (!NonNegative(g.meshRetainSeconds))
+                emit("gpu", "meshRetainSeconds", "must be a finite number of seconds, zero or more");
         }
 
         // Local objects merge into the game's key by key; any other local value replaces the game's.
@@ -276,17 +284,21 @@ namespace mir
         Reader reader(merged, local ? &*local : nullptr, gameName, localName, load.problems);
         for (auto it = merged.begin(); it != merged.end(); ++it)
             if (it.key() != "cpu" && it.key() != "io" && it.key() != "retry" && it.key() != "residency" &&
-                it.key() != "view")
+                it.key() != "view" && it.key() != "gpu")
                 reader.Problem(it.key(), "", "is not a known section");
+
+        // Zero, which fails validation, unless the value is at least one byte.
+        const auto bytesOf = [&](const json *section, std::string_view name, std::string_view key) -> uint64_t {
+            const std::optional<double> mib = reader.Number(section, name, key);
+            const double bytes = mib ? *mib * kBytesPerMiB : 0.0;
+            if (bytes >= 1.0 && bytes < static_cast<double>(std::numeric_limits<int64_t>::max()))
+                return static_cast<uint64_t>(std::llround(bytes));
+            return 0;
+        };
 
         TerrainStreamingSettings s;
         const json *cpu = reader.Section("cpu", {"budgetMiB"});
-        if (const std::optional<double> mib = reader.Number(cpu, "cpu", "budgetMiB"))
-        {
-            const double bytes = *mib * kBytesPerMiB;
-            if (bytes >= 1.0 && bytes < static_cast<double>(std::numeric_limits<int64_t>::max()))
-                s.cpu.budgetBytes = static_cast<uint64_t>(std::llround(bytes));
-        }
+        s.cpu.budgetBytes = bytesOf(cpu, "cpu", "budgetMiB");
 
         const json *io = reader.Section("io", {"workerThreads", "maxInstallsPerFrame"});
         s.io.workerThreads = reader.Count(io, "io", "workerThreads").value_or(0);
@@ -307,8 +319,8 @@ namespace mir
         s.residency.queryLeaseSeconds =
             reader.Number(residency, "residency", "queryLeaseSeconds").value_or(s.residency.queryLeaseSeconds);
 
-        const json *view = reader.Section("view", {"refineErrorPixels", "mergeErrorPixels", "prefetchErrorPixels",
-                                                   "prefetchBudgetMiB", "meshRetainSeconds"});
+        const json *view = reader.Section(
+            "view", {"refineErrorPixels", "mergeErrorPixels", "prefetchErrorPixels", "prefetchBudgetMiB"});
         TerrainStreamingSettings::View &v = s.view;
         v.refineErrorPixels = reader.Number(view, "view", "refineErrorPixels").value_or(v.refineErrorPixels);
         v.mergeErrorPixels = reader.Number(view, "view", "mergeErrorPixels").value_or(v.mergeErrorPixels);
@@ -319,7 +331,13 @@ namespace mir
             if (bytes >= 0.0 && bytes < static_cast<double>(std::numeric_limits<int64_t>::max()))
                 v.prefetchBudgetBytes = static_cast<uint64_t>(std::llround(bytes));
         }
-        v.meshRetainSeconds = reader.Number(view, "view", "meshRetainSeconds").value_or(v.meshRetainSeconds);
+
+        const json *gpu = reader.Section("gpu", {"budgetMiB", "uploadMiBPerFrame", "stagingMiB", "meshRetainSeconds"});
+        TerrainStreamingSettings::Gpu &g = s.gpu;
+        g.budgetBytes = bytesOf(gpu, "gpu", "budgetMiB");
+        g.uploadBytesPerFrame = bytesOf(gpu, "gpu", "uploadMiBPerFrame");
+        g.stagingBytes = bytesOf(gpu, "gpu", "stagingMiB");
+        g.meshRetainSeconds = reader.Number(gpu, "gpu", "meshRetainSeconds").value_or(g.meshRetainSeconds);
 
         Check(s, [&](std::string_view section, std::string_view key, std::string_view problem) {
             reader.Problem(section, key, problem);
