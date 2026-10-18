@@ -12,6 +12,8 @@
 #include <glm/vec2.hpp>
 #include <glm/vec4.hpp>
 
+#include <cstdint>
+
 namespace mir::vk
 {
     // normalCols = Normal matrix
@@ -37,5 +39,13 @@ namespace mir::vk
     {
         glm::mat4 viewProj; // 64
         glm::mat4 model;    // 64
+    };
+
+    // Must match TonemapOperator in renderer/HdrEffect.h.
+    struct TonemapPushConstants
+    {
+        float exposure;
+        uint32_t tonemapOperator;
+        glm::vec2 invExtent;
     };
 }

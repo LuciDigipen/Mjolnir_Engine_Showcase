@@ -62,6 +62,9 @@ namespace mir::vk
         VkImage DepthImage(uint32_t frame) const { return mDepthImages[frame]; }
         VkImageView DepthView(uint32_t frame) const { return mDepthViews[frame]; }
 
+        VkImage HdrColorImage(uint32_t frame) const { return mHdrColorImages[frame]; }
+        VkImageView HdrColorView(uint32_t frame) const { return mHdrColorViews[frame]; }
+
         bool SupportsCapture() const { return mCanCapture; }
 
     private:
@@ -70,6 +73,8 @@ namespace mir::vk
         bool CreateImageViews();
         bool CreateDepthResources();
         void DestroyDepthResources();
+        bool CreateHdrColorResources();
+        void DestroyHdrColorResources();
         bool CreateRenderCompleteSemaphores();
         void DestroyRenderCompleteSemaphores();
 
@@ -88,6 +93,10 @@ namespace mir::vk
         VkImage mDepthImages[kFramesInFlight]{};
         VmaAllocation mDepthAllocations[kFramesInFlight]{};
         VkImageView mDepthViews[kFramesInFlight]{};
+
+        VkImage mHdrColorImages[kFramesInFlight]{};
+        VmaAllocation mHdrColorAllocations[kFramesInFlight]{};
+        VkImageView mHdrColorViews[kFramesInFlight]{};
 
         bool mCanCapture = false;
         bool mOutOfDate = false;
