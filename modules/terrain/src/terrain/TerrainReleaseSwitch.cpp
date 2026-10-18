@@ -60,7 +60,7 @@ namespace mir
         // Shared with every posted job, so a job that runs after the switch is gone finds a live queue.
         class ResultQueue
         {
-        public:
+          public:
             void Push(Result result)
             {
                 std::lock_guard lock(mMutex);
@@ -81,7 +81,7 @@ namespace mir
                 mResults.clear();
             }
 
-        private:
+          private:
             std::mutex mMutex;
             std::deque<Result> mResults;
             bool mClosed = false;
@@ -104,9 +104,9 @@ namespace mir
                 if (!opened)
                     result.error = std::move(opened.error);
                 else if (opened.value->Info().asset != job.asset || opened.value->Info().release != job.release)
-                    result.error = detail::Error(Code::WrongIdentity, "its index is asset {} release {}",
-                                                 Hex(opened.value->Info().asset.value),
-                                                 Hex(opened.value->Info().release.value));
+                    result.error =
+                        detail::Error(Code::WrongIdentity, "its index is asset {} release {}",
+                                      Hex(opened.value->Info().asset.value), Hex(opened.value->Info().release.value));
                 else
                     result.handle = std::make_shared<const TerrainReleaseHandle>(std::move(*opened.value));
                 result.stored = ListTerrainReleases(root, job.asset);
@@ -114,7 +114,7 @@ namespace mir
             result.seconds = Seconds(SteadyClock::now() - start);
             return result;
         }
-    }
+    } // namespace
 
     TerrainPrewarmReport MeasureTerrainPrewarm(const TerrainReleaseInfo &release, const TerrainStreamer &streamer,
                                                const TerrainMeshResidency *meshes,
@@ -140,10 +140,14 @@ namespace mir
     {
         switch (state)
         {
-        case TerrainSwitchState::Verifying: return "verifying";
-        case TerrainSwitchState::Prewarming: return "prewarming";
-        case TerrainSwitchState::Ready: return "ready";
-        case TerrainSwitchState::Failed: return "failed";
+        case TerrainSwitchState::Verifying:
+            return "verifying";
+        case TerrainSwitchState::Prewarming:
+            return "prewarming";
+        case TerrainSwitchState::Ready:
+            return "ready";
+        case TerrainSwitchState::Failed:
+            return "failed";
         }
         return "verifying";
     }
@@ -175,7 +179,10 @@ namespace mir
         uint64_t stagingVersion = 0;
         bool suspended = false;
 
-        ~Impl() { queue->Close(); }
+        ~Impl()
+        {
+            queue->Close();
+        }
 
         Candidate *Find(AssetId asset)
         {
@@ -250,8 +257,9 @@ namespace mir
                 job.handle = candidate.handle;
                 job.pack = candidate.info.packsVerified;
                 candidate.ticket = job.ticket;
-                executor->Post([queue = queue, job = std::move(job), open = open, root = root]
-                               { queue->Push(Run(job, open, root)); });
+                executor->Post([queue = queue, job = std::move(job), open = open, root = root] {
+                    queue->Push(Run(job, open, root));
+                });
                 return;
             }
         }
@@ -336,9 +344,10 @@ namespace mir
         for (size_t i = impl.candidates.size(); i-- > 0;)
             if (std::find(present.begin(), present.end(), impl.candidates[i].info.asset) == present.end())
                 impl.Drop(impl.candidates[i].info.asset, "the asset left the scene");
-        std::erase_if(impl.unreadable, [&](const auto &entry)
-                      { return std::none_of(present.begin(), present.end(),
-                                            [&](AssetId asset) { return asset.value == entry.first; }); });
+        std::erase_if(impl.unreadable, [&](const auto &entry) {
+            return std::none_of(present.begin(), present.end(),
+                                [&](AssetId asset) { return asset.value == entry.first; });
+        });
         impl.Post();
         return resolve;
     }
@@ -500,4 +509,4 @@ namespace mir
     {
         return mImpl->stats;
     }
-}
+} // namespace mir

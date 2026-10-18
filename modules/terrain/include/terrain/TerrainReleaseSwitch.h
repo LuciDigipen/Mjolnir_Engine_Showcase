@@ -131,7 +131,7 @@ namespace mir
     // failed B is reported once and never read again until current moves; A stays in use throughout.
     class TerrainReleaseSwitch
     {
-    public:
+      public:
         using Clock = std::function<double()>;
 
         // open runs on the executor's threads; null opens from releasesRoot. The default clock counts from
@@ -174,8 +174,8 @@ namespace mir
         std::vector<TerrainSwitchEvent> TakeEvents();
         TerrainSwitchStats Stats() const;
 
-    private:
+      private:
         struct Impl;
         std::unique_ptr<Impl> mImpl;
     };
-}
+} // namespace mir

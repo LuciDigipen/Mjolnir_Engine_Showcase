@@ -631,15 +631,20 @@ namespace mir
             {
             case TerrainMeshState::Building:
             case TerrainMeshState::Built:
-            case TerrainMeshState::Uploading: ++usage.inFlight; break;
-            case TerrainMeshState::Ready: ++usage.ready; break;
+            case TerrainMeshState::Uploading:
+                ++usage.inFlight;
+                break;
+            case TerrainMeshState::Ready:
+                ++usage.ready;
+                break;
             case TerrainMeshState::Failed:
                 if (usage.failed++ == 0)
                     usage.failure = std::format("{}: {}", DescribeTerrainPayloadKey(key), entry.error);
                 break;
-            case TerrainMeshState::Absent: break;
+            case TerrainMeshState::Absent:
+                break;
             }
         }
         return usage;
     }
-}
+} // namespace mir

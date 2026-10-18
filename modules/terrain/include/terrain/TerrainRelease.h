@@ -106,8 +106,7 @@ namespace mir
                                                                   AssetId asset);
 
     // A missing pointer is NotFound without a log line.
-    TerrainResult<TerrainReleaseId> PeekTerrainCurrentPointer(const std::filesystem::path &releasesRoot,
-                                                              AssetId asset);
+    TerrainResult<TerrainReleaseId> PeekTerrainCurrentPointer(const std::filesystem::path &releasesRoot, AssetId asset);
 
     // A release directory as it is kept on disk.
     struct TerrainStoredRelease

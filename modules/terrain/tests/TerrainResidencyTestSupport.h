@@ -27,7 +27,7 @@ namespace mir::test
     // What the residency is told by a renderer: queued, then recorded, then complete.
     class FakeUploader final : public TerrainMeshUploader
     {
-    public:
+      public:
         enum class Stage
         {
             Queued,
@@ -72,9 +72,12 @@ namespace mir::test
         {
             switch (meshes.at(id).stage)
             {
-            case Stage::Ready: return TerrainGpuMeshState::Ready;
-            case Stage::Failed: return TerrainGpuMeshState::Failed;
-            default: return TerrainGpuMeshState::Uploading;
+            case Stage::Ready:
+                return TerrainGpuMeshState::Ready;
+            case Stage::Failed:
+                return TerrainGpuMeshState::Failed;
+            default:
+                return TerrainGpuMeshState::Uploading;
             }
         }
 
@@ -88,7 +91,10 @@ namespace mir::test
             meshes.erase(found);
         }
 
-        uint64_t RetiringBytes() const override { return retiring; }
+        uint64_t RetiringBytes() const override
+        {
+            return retiring;
+        }
 
         // A frame: what was recorded completes when complete holds, and everything queued is recorded.
         void Frame(const std::function<bool(const TerrainPayloadKey &)> &complete = {})
@@ -108,7 +114,10 @@ namespace mir::test
                     mesh.stage = Stage::Failed;
         }
 
-        void FreeRetired() { retiring = 0; }
+        void FreeRetired()
+        {
+            retiring = 0;
+        }
 
         std::map<TerrainGpuMeshId, Mesh> meshes;
         std::vector<TerrainPayloadKey> uploadOrder;
@@ -120,7 +129,7 @@ namespace mir::test
 
     class FakeShape final : public TerrainColliderShape
     {
-    public:
+      public:
         double spacing = 0.0;
         uint32_t countX = 0;
         uint32_t countZ = 0;
@@ -134,7 +143,7 @@ namespace mir::test
     // Shapes are counted, colliders recorded by id.
     class FakePhysics final : public TerrainColliderPhysics
     {
-    public:
+      public:
         std::optional<TerrainBuiltCollider> Build(const TerrainAreaSamples &samples, float quantizationMin,
                                                   float quantizationMax) const override
         {
@@ -185,4 +194,4 @@ namespace mir::test
         int removed = 0;
         TerrainColliderId next = 1;
     };
-}
+} // namespace mir::test

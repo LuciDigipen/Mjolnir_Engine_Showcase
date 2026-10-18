@@ -1000,7 +1000,9 @@ namespace mir
                 continue;
             switch (e.state)
             {
-            case TerrainPayloadState::Waiting: ++(e.attempts > 0 ? usage.inFlight : usage.waiting); break;
+            case TerrainPayloadState::Waiting:
+                ++(e.attempts > 0 ? usage.inFlight : usage.waiting);
+                break;
             case TerrainPayloadState::Loading:
                 ++usage.inFlight;
                 usage.bytes += e.bytes;
@@ -1013,9 +1015,10 @@ namespace mir
                 if (usage.failed++ == 0)
                     usage.failure = e.error.message;
                 break;
-            case TerrainPayloadState::Absent: break;
+            case TerrainPayloadState::Absent:
+                break;
             }
         }
         return usage;
     }
-}
+} // namespace mir

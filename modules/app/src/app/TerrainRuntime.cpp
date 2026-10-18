@@ -314,7 +314,8 @@ namespace mir
         if (poll)
             mSincePoll = 0.0f;
         const bool moved = poll && mSwitch && mSwitch->Poll(mWorld->Resource<TerrainWorld>());
-        std::vector<TerrainReleaseAdoption> ready = mSwitch ? mSwitch->TakeReady() : std::vector<TerrainReleaseAdoption>{};
+        std::vector<TerrainReleaseAdoption> ready =
+            mSwitch ? mSwitch->TakeReady() : std::vector<TerrainReleaseAdoption>{};
 
         if (!edited && !moved && ready.empty())
         {
@@ -483,8 +484,8 @@ namespace mir
         if (missing.empty())
             return true;
         Report(std::format("Terrain '{}': {}; the instance is not loaded", instance.recipePath, missing));
-                return false;
-                }
+        return false;
+    }
 
     void TerrainRuntime::ApplyResidencies()
     {
@@ -522,7 +523,7 @@ namespace mir
             return false;
         for (const std::shared_ptr<TerrainResidentRelease> &staged : mSwitch->Staged())
             if (staged->Info().asset == asset && staged->Info().release == release)
-        return true;
+                return true;
         return false;
     }
 
@@ -555,7 +556,8 @@ namespace mir
         switch (event.kind)
         {
         case TerrainSwitchEvent::Kind::Started:
-            MIR_LOG_INFO("{}: current names release {:016x} while release {:016x} is loaded; {:016x} stays in use while "
+            MIR_LOG_INFO("{}: current names release {:016x} while release {:016x} is loaded; {:016x} stays "
+                         "in use while "
                          "the new one is checked on a worker",
                          subject, c.release.value, c.loaded.value, c.loaded.value);
             break;
@@ -575,7 +577,8 @@ namespace mir
                                subject, c.release.value, c.failure, c.loaded.value));
             break;
         case TerrainSwitchEvent::Kind::Ready:
-            MIR_LOG_INFO("{}: release {:016x} is {} {:.3f} s after current moved; it replaces release {:016x} at the "
+            MIR_LOG_INFO("{}: release {:016x} is {} {:.3f} s after current moved; it replaces release "
+                         "{:016x} at the "
                          "next Edit frame boundary",
                          subject, c.release.value, c.warm ? "warm" : "as warm as the budgets let it get",
                          c.readyAt - c.startedAt, c.loaded.value);
@@ -596,12 +599,13 @@ namespace mir
         for (const TerrainStoredRelease &release : c.stored)
             stored += std::format("{}{:016x} ({:.2f} MiB in {} files{})", stored.empty() ? "" : ", ",
                                   release.release.value, MiB(release.bytes), release.files,
-                                  release.release == from      ? ", switched from"
+                                  release.release == from        ? ", switched from"
                                   : release.release == c.release ? ", now loaded"
                                                                  : "");
         MIR_LOG_INFO("Terrain '{}' (asset {:016x}): switched from release {:016x} to {:016x} at an Edit frame "
                      "boundary, {:.3f} s after current moved; {:016x}'s {} CPU payloads ({:.2f} MiB) go at the next "
-                     "update, its {} GPU meshes ({:.2f} MiB) retire once the frames that use them finish, and its {} "
+                     "update, its {} GPU meshes ({:.2f} MiB) retire once the frames that use them finish, and its "
+                     "{} "
                      "collision pieces left between steps; kept on disk, none deleted: {}",
                      c.logicalPath, c.asset.value, from.value, c.release.value, Now() - c.startedAt, from.value,
                      cpu.ready + cpu.inFlight, MiB(cpu.bytes), gpu.ready + gpu.inFlight, MiB(gpu.bytes),
@@ -950,11 +954,8 @@ namespace mir
             // The switch reports it and keeps the loaded release.
             if (IsStaged(key.asset, key.release))
                 continue;
-            const auto instance = std::find_if(instances.begin(), instances.end(),
-                                               [&](const TerrainInstanceState &i)
-                                               {
-                                                   return i.release->Info().asset == key.asset &&
-                                                          i.release->Info().release == key.release;
+            const auto instance = std::find_if(instances.begin(), instances.end(), [&](const TerrainInstanceState &i) {
+                return i.release->Info().asset == key.asset && i.release->Info().release == key.release;
             });
             Report(std::format("Terrain '{}': no mesh for {} ({}); that area is not drawn",
                                instance == instances.end() ? std::string("?") : instance->recipePath,

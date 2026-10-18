@@ -729,8 +729,7 @@ namespace mir
     {
         Impl &impl = *mImpl;
         std::vector<Impl::Release> next;
-        const auto add = [&](const TerrainCollisionInstance &instance, bool stage)
-        {
+        const auto add = [&](const TerrainCollisionInstance &instance, bool stage) {
             if (!instance.release)
                 return;
             const TerrainReleaseInfo &info = instance.release->Info();
@@ -776,13 +775,11 @@ namespace mir
                 impl.Drop(it++);
                 continue;
             }
-            std::erase_if(it->second.colliders,
-                          [&](const Impl::Collider &collider)
-                          {
-                              const bool kept = !release->staged &&
-                                                std::any_of(release->placements.begin(), release->placements.end(),
-                                                            [&](const TerrainPlacement &p)
-                                                            { return SamePlacement(p, collider.placement); });
+            std::erase_if(it->second.colliders, [&](const Impl::Collider &collider) {
+                const bool kept =
+                    !release->staged &&
+                    std::any_of(release->placements.begin(), release->placements.end(),
+                                [&](const TerrainPlacement &p) { return SamePlacement(p, collider.placement); });
                 if (!kept && collider.id != 0)
                     impl.physics->Remove(collider.id);
                 return !kept;
@@ -855,8 +852,8 @@ namespace mir
             {
                 event.staged = release->staged;
                 if (!release->staged)
-                for (const TerrainPlacement &placement : release->placements)
-                    impl.Place(entry, key, placement);
+                    for (const TerrainPlacement &placement : release->placements)
+                        impl.Place(entry, key, placement);
             }
             for (const Impl::Collider &collider : entry.colliders)
             {
@@ -991,7 +988,8 @@ namespace mir
                         {
                             const PieceLayout &layout = impl.LayoutOf(release, 0, 0, true);
                             if (!prefetch && !release.staged && lowest <= double(layout.maxHeight) + slack)
-                                needs[s].push_back({r, p, {release.Info().asset, release.Info().release, 0, 0, true, false}});
+                                needs[s].push_back(
+                                    {r, p, {release.Info().asset, release.Info().release, 0, 0, true, false}});
                             continue;
                         }
                         const std::optional<TerrainLayout> covered = TerrainLayout::Create(
@@ -1028,7 +1026,8 @@ namespace mir
                                 if (release.staged)
                                 {
                                     want(fine, false, rank);
-                                    if (std::find(stagedNeeds[r].begin(), stagedNeeds[r].end(), fine) == stagedNeeds[r].end())
+                                    if (std::find(stagedNeeds[r].begin(), stagedNeeds[r].end(), fine) ==
+                                        stagedNeeds[r].end())
                                         stagedNeeds[r].push_back(fine);
                                     continue;
                                 }
@@ -1166,8 +1165,8 @@ namespace mir
                 else if (state == Impl::State::Failed)
                 {
                     if (status.failed++ == 0)
-                        status.reason = std::format("{}: {}", DescribeTerrainCollisionPiece(NameOf(key)),
-                                                    found->second.message);
+                        status.reason =
+                            std::format("{}: {}", DescribeTerrainCollisionPiece(NameOf(key)), found->second.message);
                 }
                 else
                     ++status.pending;
@@ -1399,8 +1398,12 @@ namespace mir
                 continue;
             switch (entry.state)
             {
-            case Impl::State::Waiting: ++usage.waiting; break;
-            case Impl::State::Building: ++usage.inFlight; break;
+            case Impl::State::Waiting:
+                ++usage.waiting;
+                break;
+            case Impl::State::Building:
+                ++usage.inFlight;
+                break;
             case Impl::State::Ready:
                 ++usage.ready;
                 usage.bytes += entry.bytes;

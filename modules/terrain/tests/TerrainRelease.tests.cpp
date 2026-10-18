@@ -172,8 +172,7 @@ TEST_CASE("A release opened before the pointer moves keeps reading its own files
     std::filesystem::remove_all(root);
 }
 
-TEST_CASE("Packs verify one at a time, and an asset's kept releases are listed with their sizes",
-          "[terrain][release]")
+TEST_CASE("Packs verify one at a time, and an asset's kept releases are listed with their sizes", "[terrain][release]")
 {
     const std::filesystem::path root = MakeScratchDir("stored");
     const Fixture f;

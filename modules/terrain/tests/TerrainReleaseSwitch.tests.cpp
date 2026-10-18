@@ -108,7 +108,7 @@ namespace
     // Range reads wait while held, each until it is let go; whole-file reads pass.
     class GatedSource final : public TerrainByteSource
     {
-    public:
+      public:
         explicit GatedSource(std::shared_ptr<TerrainByteSource> inner) : mInner(std::move(inner)) {}
 
         // Up to limit reads wait at once; later ones pass.
@@ -145,9 +145,12 @@ namespace
             mChanged.notify_all();
         }
 
-        std::string Describe() const override { return mInner->Describe(); }
+        std::string Describe() const override
+        {
+            return mInner->Describe();
+        }
 
-    protected:
+      protected:
         std::optional<std::vector<std::byte>> DoReadAll(std::string_view file) const override
         {
             return mInner->ReadAll(file);
@@ -170,9 +173,12 @@ namespace
             return mInner->ReadRange(file, offset, length);
         }
 
-        std::optional<uint64_t> DoSize(std::string_view file) const override { return mInner->Size(file); }
+        std::optional<uint64_t> DoSize(std::string_view file) const override
+        {
+            return mInner->Size(file);
+        }
 
-    private:
+      private:
         std::shared_ptr<TerrainByteSource> mInner;
         mutable std::mutex mMutex;
         mutable std::condition_variable mChanged;
@@ -201,13 +207,14 @@ namespace
         ScratchRoot scratch;
         std::filesystem::path root = scratch.path;
         AssetId asset = TerrainAsset(kRecipe);
-        TerrainStreamingSettings settings = NoPrefetch(StreamingSettings(uint64_t(1) << 30, TerrainResidencyMode::Interest));
+        TerrainStreamingSettings settings =
+            NoPrefetch(StreamingSettings(uint64_t(1) << 30, TerrainResidencyMode::Interest));
         std::shared_ptr<TerrainWorkerPool> pool = std::make_shared<TerrainWorkerPool>(4);
         std::shared_ptr<TerrainManualExecutor> checks = std::make_shared<TerrainManualExecutor>();
         std::map<uint64_t, std::shared_ptr<GatedSource>> sources;
         int opens = 0;
-        TerrainReleaseOpener open = [this](AssetId id, TerrainReleaseId release) -> TerrainResult<TerrainReleaseHandle>
-        {
+        TerrainReleaseOpener open = [this](AssetId id,
+                                           TerrainReleaseId release) -> TerrainResult<TerrainReleaseHandle> {
             ++opens;
             auto source = std::make_shared<GatedSource>(
                 std::make_shared<TerrainFileSource>(TerrainReleaseDir(root, id, release)));
@@ -251,7 +258,10 @@ namespace
                 source->Open();
         }
 
-        WorldPosition At(const glm::dvec3 &local) const { return *WorldPosition::FromDoubleMeters(kPlacement + local); }
+        WorldPosition At(const glm::dvec3 &local) const
+        {
+            return *WorldPosition::FromDoubleMeters(kPlacement + local);
+        }
 
         void Load()
         {
@@ -293,13 +303,14 @@ namespace
             for (const TerrainInstanceState &instance : terrain.Instances())
             {
                 keep.push_back(instance.release->Info());
-                active.push_back({instance.release->SharedHandle(), instance.placement,
-                                  *streamer.ModeOf(instance.release->Info())});
+                active.push_back(
+                    {instance.release->SharedHandle(), instance.placement, *streamer.ModeOf(instance.release->Info())});
                 for (const std::shared_ptr<TerrainResidentRelease> &release : releases.Staged())
                     if (release->Info().asset == instance.placement.asset)
                     {
                         keep.push_back(release->Info());
-                        staged.push_back({release->SharedHandle(), instance.placement, *streamer.ModeOf(release->Info())});
+                        staged.push_back(
+                            {release->SharedHandle(), instance.placement, *streamer.ModeOf(release->Info())});
                     }
             }
             meshes.RetireReleases(keep);
@@ -324,7 +335,10 @@ namespace
             Residencies();
         }
 
-        void Stop() { playing = false; }
+        void Stop()
+        {
+            playing = false;
+        }
 
         // One frame: the install point, the Edit safe point, then the view.
         void Frame()
@@ -361,9 +375,9 @@ namespace
 
         void Prepare()
         {
-            const glm::mat4 viewProj = glm::perspectiveRH_ZO(glm::radians(90.0f), 1.0f, 0.5f, 4000.0f) *
-                                       glm::lookAt(glm::vec3(0.0f), glm::vec3(0.0f, -1.0f, 0.001f),
-                                                   glm::vec3(0.0f, 1.0f, 0.0f));
+            const glm::mat4 viewProj =
+                glm::perspectiveRH_ZO(glm::radians(90.0f), 1.0f, 0.5f, 4000.0f) *
+                glm::lookAt(glm::vec3(0.0f), glm::vec3(0.0f, -1.0f, 0.001f), glm::vec3(0.0f, 1.0f, 0.0f));
             const TerrainView camera{{At(eye), viewProj}, 1000.0, 0.0};
             const TerrainUnitReady ready = [this](const TerrainDrawUnit &unit) { return meshes.Ready(unit.geometry); };
 
@@ -404,8 +418,7 @@ namespace
                     draws.push_back(unit);
         }
 
-        template <typename Done>
-        void FrameUntil(Done done, std::source_location from = std::source_location::current())
+        template <typename Done> void FrameUntil(Done done, std::source_location from = std::source_location::current())
         {
             INFO("waiting for line " << from.line());
             const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
@@ -456,9 +469,7 @@ namespace
                 REQUIRE(result.status == TerrainHeightStatus::MeetsRequirement);
                 CHECK(result.release == release);
                 const SurfaceSample expected = EvaluateSurface(
-                    layout, *TerrainLocalPosition::FromMeters({local.x, 0.0, local.z}),
-                    [&](TileCoord tile)
-                    {
+                    layout, *TerrainLocalPosition::FromMeters({local.x, 0.0, local.z}), [&](TileCoord tile) {
                         for (const TileHeights &t : tiles)
                             if (t.Tile() == tile)
                                 return t.Samples();
@@ -518,7 +529,7 @@ namespace
     {
         return usage.waiting + usage.inFlight + usage.ready + usage.failed == 0 && usage.bytes == 0;
     }
-}
+} // namespace
 
 TEST_CASE("Play pins release A while B is published, then the Edit switch lets no late A read into B's scene",
           "[terrain][switch]")
@@ -558,13 +569,11 @@ TEST_CASE("Play pins release A while B is published, then the Edit switch lets n
     r.HoldNewReads(2);
     const uint64_t discarded = r.streamer.Stats().discarded;
     r.Stop();
-    r.FrameUntil(
-        [&]
-        {
-            if (r.Loaded() == a)
-                r.OnlyFrom(a, 0.0f);
-            return r.Loaded() == b;
-        });
+    r.FrameUntil([&] {
+        if (r.Loaded() == a)
+            r.OnlyFrom(a, 0.0f);
+        return r.Loaded() == b;
+    });
     CHECK(r.Count(Kind::Started) == 1);
     CHECK(r.Count(Kind::Verified) == 1);
     CHECK(r.Count(Kind::Ready) == 1);

@@ -89,8 +89,8 @@ namespace mir
       [[nodiscard]] static TerrainResult<std::shared_ptr<TerrainResidentRelease>> Open(
           const std::filesystem::path &releasesRoot, AssetId asset, TerrainReleaseId release);
       [[nodiscard]] static std::shared_ptr<TerrainResidentRelease> Create(TerrainReleaseHandle handle);
-        [[nodiscard]] static std::shared_ptr<TerrainResidentRelease> Create(
-            std::shared_ptr<const TerrainReleaseHandle> handle);
+      [[nodiscard]] static std::shared_ptr<TerrainResidentRelease> Create(
+          std::shared_ptr<const TerrainReleaseHandle> handle);
 
       const TerrainReleaseInfo &Info() const
       {
@@ -196,8 +196,8 @@ namespace mir
 
     private:
       friend TerrainWorld ResolveTerrainWorld(const TerrainSceneSpec &, const std::filesystem::path &,
-                                                const TerrainWorld *, std::vector<TerrainIssue> &,
-                                                TerrainStreamer &, const TerrainResolveOptions &);
+                                              const TerrainWorld *, std::vector<TerrainIssue> &, TerrainStreamer &,
+                                              const TerrainResolveOptions &);
 
       std::vector<AssetState> mAssets;
       std::vector<TerrainInstanceState> mInstances;

@@ -429,8 +429,8 @@ TEST_CASE("A body rests on release A while B's height field is built beside it, 
 
     std::vector<TileHeights> tilesB;
     const TerrainReleaseInfo infoB = Info(scene.info.asset, 0xB0D2);
-    const ControlledRelease b = OpenControlled(Release(
-        infoB, scene.layout, [](double x, double z) { return Ridges(x, z) - 1.0; }, tilesB));
+    const ControlledRelease b =
+        OpenControlled(Release(infoB, scene.layout, [](double x, double z) { return Ridges(x, z) - 1.0; }, tilesB));
     scene.streamer->Add(b.release, true);
     const TerrainPlacement where{scene.info.asset, At(placement)};
     const TerrainCollisionInstance active{scene.release.release->SharedHandle(), where, TerrainResidencyMode::Eager};
@@ -446,10 +446,8 @@ TEST_CASE("A body rests on release A while B's height field is built beside it, 
     scene.Run(240);
     CHECK(scene.residency->Answer(sphere).status.state == TerrainCollisionState::Ready);
     const glm::dvec3 onB = scene.Position(sphere);
-    const SurfaceSample surfaceB = EvaluateSurface(
-        scene.layout, *TerrainLocalPosition::FromMeters(onB - placement),
-        [&](TileCoord tile)
-        {
+    const SurfaceSample surfaceB =
+        EvaluateSurface(scene.layout, *TerrainLocalPosition::FromMeters(onB - placement), [&](TileCoord tile) {
             for (const TileHeights &t : tilesB)
                 if (t.Tile() == tile)
                     return t.Samples();

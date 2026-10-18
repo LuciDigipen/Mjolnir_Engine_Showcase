@@ -119,9 +119,8 @@ namespace mir
 
         TerrainWorld::AssetState ResolveAsset(const TerrainInstanceSpec &instance,
                                               const std::filesystem::path &releasesRoot,
-                                              const TerrainWorld::AssetState *before,
-                                              std::vector<TerrainIssue> &issues, TerrainStreamer &streamer,
-                                              const TerrainResolveOptions &options)
+                                              const TerrainWorld::AssetState *before, std::vector<TerrainIssue> &issues,
+                                              TerrainStreamer &streamer, const TerrainResolveOptions &options)
         {
             TerrainWorld::AssetState state;
             state.asset = instance.asset;
@@ -301,8 +300,9 @@ namespace mir
 
     TerrainReleaseOpener TerrainReleaseFileOpener(std::filesystem::path releasesRoot)
     {
-        return [root = std::move(releasesRoot)](AssetId asset, TerrainReleaseId release)
-        { return OpenTerrainRelease(root, asset, release); };
+        return [root = std::move(releasesRoot)](AssetId asset, TerrainReleaseId release) {
+            return OpenTerrainRelease(root, asset, release);
+        };
     }
 
     TileSampleLookup TerrainResidentRelease::Lookup(uint32_t layer) const
