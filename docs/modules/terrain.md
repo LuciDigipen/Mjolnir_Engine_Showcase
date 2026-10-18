@@ -952,6 +952,13 @@ spawn where the first Play on A had held it 1.2 s. While B prewarmed, the CPU
 residency sat at its 16 MiB budget (A's and B's Eager payloads plus the streamed
 map): the overlap #130 has to budget for.
 
+### Streaming budget measurements (issue #130)
+
+TerrainCheck uses the measured configuration recorded in
+[streaming-budget-results.md](../terrain/streaming-budget-results.md), including
+hardware, routes, readiness distributions, memory peaks and known workload limits.
+Measurement code and benchmark tools are maintained locally rather than in engine modules.
+
 ### Tile meshes
 
 The first renderer draws terrain as ordinary triangle meshes built from a
