@@ -73,7 +73,7 @@ namespace mir
         {
             return {box.min - origin, box.max - origin};
         }
-    }
+    } // namespace
 
     struct TerrainViewSelector::Impl
     {
@@ -193,7 +193,10 @@ namespace mir
             return distance > 0.0 ? bound * focal / distance : kInfinity;
         }
 
-        bool Beyond(double distance) const { return far > 0.0 && distance > far; }
+        bool Beyond(double distance) const
+        {
+            return far > 0.0 && distance > far;
+        }
 
         Catalog &CatalogOf(const std::shared_ptr<const TerrainReleaseHandle> &handle)
         {
@@ -318,9 +321,9 @@ namespace mir
             node.error = Error(record ? record->maxDeviation : std::optional<double>(), node.distance);
             node.beyondFar = Beyond(node.distance);
             node.wasRefined = inst.state->refined.contains(region);
-            const bool refine = !node.beyondFar &&
-                                (!record || (node.wasRefined ? node.error >= settings.mergeErrorPixels
-                                                             : node.error > settings.refineErrorPixels));
+            const bool refine =
+                !node.beyondFar && (!record || (node.wasRefined ? node.error >= settings.mergeErrorPixels
+                                                                : node.error > settings.refineErrorPixels));
             if (refine)
             {
                 node.firstChild = uint32_t(inst.nodes.size());
@@ -399,9 +402,8 @@ namespace mir
         }
 
         // Draws what the volume sees of the node's area at most once; false when part of it has nothing ready.
-        bool Cover(const Instance &inst, uint32_t instance, uint32_t at, const Planes &planes,
-                   const glm::dvec3 &origin, const TerrainUnitReady &ready, std::vector<TerrainDrawUnit> &out,
-                   Sink *sink) const
+        bool Cover(const Instance &inst, uint32_t instance, uint32_t at, const Planes &planes, const glm::dvec3 &origin,
+                   const TerrainUnitReady &ready, std::vector<TerrainDrawUnit> &out, Sink *sink) const
         {
             const Node &node = inst.nodes[at];
             if (node.beyondFar)
@@ -486,14 +488,13 @@ namespace mir
                         const glm::dvec3 &origin, const TerrainUnitReady &ready, std::vector<TerrainDrawUnit> &out,
                         Sink *sink) const
         {
-            const auto take = [&](const TerrainDrawUnit &unit)
-            {
+            const auto take = [&](const TerrainDrawUnit &unit) {
                 out.push_back(unit);
                 if (sink)
                     sink->impl.Want(unit, TerrainDemand::Visible, float(unit.distance));
             };
-            const auto readyLevel = [&](TileCoord tile, double distance, bool coarseFirst) -> std::optional<TerrainDrawUnit>
-            {
+            const auto readyLevel = [&](TileCoord tile, double distance,
+                                        bool coarseFirst) -> std::optional<TerrainDrawUnit> {
                 const uint32_t count = uint32_t(inst.catalog->tiles.at(tile).lods.size());
                 for (uint32_t i = 0; i < count; ++i)
                 {
@@ -509,13 +510,15 @@ namespace mir
             {
                 const uint32_t count = uint32_t(inst.catalog->tiles.at(node.coord).lods.size());
                 for (uint32_t level = node.level; level-- > 0;)
-                    if (const TerrainDrawUnit unit = TileUnit(inst, instance, node.coord, level, node.distance); ready(unit))
+                    if (const TerrainDrawUnit unit = TileUnit(inst, instance, node.coord, level, node.distance);
+                        ready(unit))
                     {
                         take(unit);
                         return true;
                     }
                 for (uint32_t level = node.level + 1; level < count; ++level)
-                    if (const TerrainDrawUnit unit = TileUnit(inst, instance, node.coord, level, node.distance); ready(unit))
+                    if (const TerrainDrawUnit unit = TileUnit(inst, instance, node.coord, level, node.distance);
+                        ready(unit))
                     {
                         take(unit);
                         return true;
@@ -800,4 +803,4 @@ namespace mir
     {
         return mImpl->stats;
     }
-}
+} // namespace mir

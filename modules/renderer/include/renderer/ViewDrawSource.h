@@ -41,7 +41,7 @@ namespace mir
     // view's draws or for other volumes drawn at a view's detail, such as shadow casters.
     class IViewDrawSource
     {
-    public:
+      public:
         virtual ~IViewDrawSource() = default;
 
         virtual void Prepare(std::span<const ViewCamera> views) = 0;
@@ -57,4 +57,4 @@ namespace mir
     {
         std::vector<IViewDrawSource *> sources;
     };
-}
+} // namespace mir

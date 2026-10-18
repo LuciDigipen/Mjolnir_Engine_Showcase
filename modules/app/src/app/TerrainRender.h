@@ -48,48 +48,60 @@ namespace mir
     class TerrainMeshCache
     {
     public:
-        struct Mesh
-        {
-            MeshHandle handle;
-            // Terrain-local origin of the vertex frame.
-            TerrainLocalPosition origin;
-            uint32_t vertices = 0;
-            double lastUsed = 0.0;
-        };
+      struct Mesh
+      {
+          MeshHandle handle;
+          // Terrain-local origin of the vertex frame.
+          TerrainLocalPosition origin;
+          uint32_t vertices = 0;
+          double lastUsed = 0.0;
+      };
 
-        struct Counters
-        {
-            uint64_t vertices = 0;
-            uint64_t created = 0;
-            uint64_t retired = 0;
-            uint64_t failed = 0;
-        };
+      struct Counters
+      {
+          uint64_t vertices = 0;
+          uint64_t created = 0;
+          uint64_t retired = 0;
+          uint64_t failed = 0;
+      };
 
-        bool Has(const TerrainPayloadKey &geometry) const { return mMeshes.contains(geometry); }
-        bool Failed(const TerrainPayloadKey &geometry) const { return mFailed.contains(geometry); }
-        size_t Size() const { return mMeshes.size(); }
+      bool Has(const TerrainPayloadKey &geometry) const
+      {
+          return mMeshes.contains(geometry);
+      }
+      bool Failed(const TerrainPayloadKey &geometry) const
+      {
+          return mFailed.contains(geometry);
+      }
+      size_t Size() const
+      {
+          return mMeshes.size();
+      }
 
-        // Uploads the mesh from the streamer's resident payloads the first time. Null while they are not
-        // resident, and for good once they do not make a mesh, which error then says.
-        const Mesh *Acquire(VulkanRenderer &renderer, const TerrainStreamer &streamer, const TerrainIndex &index,
-                            const TerrainDrawUnit &unit, double now, std::string &error);
+      // Uploads the mesh from the streamer's resident payloads the first time. Null while they are not
+      // resident, and for good once they do not make a mesh, which error then says.
+      const Mesh *Acquire(VulkanRenderer &renderer, const TerrainStreamer &streamer, const TerrainIndex &index,
+                          const TerrainDrawUnit &unit, double now, std::string &error);
 
-        // At most once per retainSeconds, destroys the meshes unused that long, in one device wait.
-        void Retire(VulkanRenderer &renderer, double now, double retainSeconds);
-        // Destroys every mesh of a release not in keep, in one device wait.
-        void RetireReleases(VulkanRenderer &renderer, std::span<const TerrainReleaseInfo> keep);
-        // Call when ReleaseSceneResources runs: a kept handle would name the next scene's mesh.
-        void Forget();
+      // At most once per retainSeconds, destroys the meshes unused that long, in one device wait.
+      void Retire(VulkanRenderer &renderer, double now, double retainSeconds);
+      // Destroys every mesh of a release not in keep, in one device wait.
+      void RetireReleases(VulkanRenderer &renderer, std::span<const TerrainReleaseInfo> keep);
+      // Call when ReleaseSceneResources runs: a kept handle would name the next scene's mesh.
+      void Forget();
 
-        const Counters &Stats() const { return mCounters; }
+      const Counters &Stats() const
+      {
+          return mCounters;
+      }
 
     private:
-        void Destroy(VulkanRenderer &renderer, std::vector<MeshHandle> &meshes);
+      void Destroy(VulkanRenderer &renderer, std::vector<MeshHandle> &meshes);
 
-        std::unordered_map<TerrainPayloadKey, Mesh> mMeshes;
-        std::unordered_set<TerrainPayloadKey> mFailed;
-        double mLastRetire = -std::numeric_limits<double>::infinity();
-        Counters mCounters;
+      std::unordered_map<TerrainPayloadKey, Mesh> mMeshes;
+      std::unordered_set<TerrainPayloadKey> mFailed;
+      double mLastRetire = -std::numeric_limits<double>::infinity();
+      Counters mCounters;
     };
 
     // A cached mesh drawn at an instance's placement; nullopt when its origin does not fit the world.

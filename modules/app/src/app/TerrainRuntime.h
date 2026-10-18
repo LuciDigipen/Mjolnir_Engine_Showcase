@@ -92,7 +92,10 @@ namespace mir
             std::string logged;
         };
 
-        bool Bound() const { return mWorld != nullptr; }
+        bool Bound() const
+        {
+            return mWorld != nullptr;
+        }
         TerrainStreamer *Streamer() const;
         double Now() const;
         void Apply(TerrainSceneSpec spec);

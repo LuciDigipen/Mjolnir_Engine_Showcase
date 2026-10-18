@@ -112,8 +112,9 @@ namespace
                 const std::optional<double> deviation = TerrainLodDeviation(source, tile, lod);
                 REQUIRE(deviation);
                 lod.maxDeviation = *deviation;
-                const auto [lo, hi] = std::minmax_element(lod.positions.begin(), lod.positions.end(),
-                                                          [](const glm::vec3 &p, const glm::vec3 &q) { return p.y < q.y; });
+                const auto [lo, hi] =
+                    std::minmax_element(lod.positions.begin(), lod.positions.end(),
+                                        [](const glm::vec3 &p, const glm::vec3 &q) { return p.y < q.y; });
 
                 TerrainTileRecord record;
                 record.tile = tile.Tile();
@@ -133,8 +134,8 @@ namespace
                 record.indexCount = uint32_t(lod.indices.size());
                 writes.push_back({record, EncodeTerrainLod(lod)});
                 record.kind = TerrainPayloadKind::Normal;
-                writes.push_back(
-                    {record, EncodeTerrainNormals(lod, std::vector<glm::vec3>(lod.positions.size(), {0.0f, 1.0f, 0.0f}))});
+                writes.push_back({record, EncodeTerrainNormals(
+                                              lod, std::vector<glm::vec3>(lod.positions.size(), {0.0f, 1.0f, 0.0f}))});
             }
         return writes;
     }
@@ -153,8 +154,7 @@ namespace
     // Built once per process.
     const TerrainEncodedRelease &SelectionRelease(const TerrainReleaseInfo &info)
     {
-        static const TerrainEncodedRelease encoded = [&info]
-        {
+        static const TerrainEncodedRelease encoded = [&info] {
             std::vector<TerrainLayout> layers;
             for (double spacing : {4.0, 8.0, 16.0})
                 layers.push_back(*TerrainLayout::CreateFromTileSize(kTileSize, spacing, kBounds));
@@ -187,9 +187,18 @@ namespace
             placement = {asset, *WorldPosition::FromDoubleMeters(at)};
         }
 
-        const TerrainIndex &Index() const { return release->Handle().Index(); }
-        const TerrainRegionGrid &Grid() const { return *Index().regionGrid; }
-        TerrainSelectionInstance Instance() const { return {release->SharedHandle(), placement}; }
+        const TerrainIndex &Index() const
+        {
+            return release->Handle().Index();
+        }
+        const TerrainRegionGrid &Grid() const
+        {
+            return *Index().regionGrid;
+        }
+        TerrainSelectionInstance Instance() const
+        {
+            return {release->SharedHandle(), placement};
+        }
 
         WorldPosition At(glm::dvec3 local) const
         {
@@ -310,7 +319,8 @@ namespace
     TerrainView Looking(WorldPosition eye, glm::dvec3 forward, double fovYDegrees = 60.0, double heightPixels = 720.0,
                         double farZ = 0.0)
     {
-        return {{eye, Perspective(forward, fovYDegrees, 16.0 / 9.0, 0.1, farZ)}, Focal(fovYDegrees, heightPixels), farZ};
+        return {
+            {eye, Perspective(forward, fovYDegrees, 16.0 / 9.0, 0.1, farZ)}, Focal(fovYDegrees, heightPixels), farZ};
     }
 
     struct ReadySet
@@ -319,7 +329,9 @@ namespace
 
         TerrainUnitReady Predicate() const
         {
-            return [this](const TerrainDrawUnit &unit) { return keys.contains(unit.geometry) && keys.contains(unit.normals); };
+            return [this](const TerrainDrawUnit &unit) {
+                return keys.contains(unit.geometry) && keys.contains(unit.normals);
+            };
         }
     };
 
@@ -330,7 +342,8 @@ namespace
 
     size_t CountKind(std::span<const TerrainDrawUnit> draws, Kind kind)
     {
-        return size_t(std::count_if(draws.begin(), draws.end(), [&](const TerrainDrawUnit &u) { return u.kind == kind; }));
+        return size_t(
+            std::count_if(draws.begin(), draws.end(), [&](const TerrainDrawUnit &u) { return u.kind == kind; }));
     }
 
     const TerrainDrawUnit *TileDrawn(std::span<const TerrainDrawUnit> draws, TileCoord tile)
@@ -362,14 +375,14 @@ namespace
         const TerrainStreamingStats stats = streamer.Stats();
         CHECK(stats.residentBytes + stats.loadingBytes <= stats.budgetBytes);
     }
-}
+} // namespace
 
 TEST_CASE("A selection with every unit ready covers the map exactly once from any eye", "[terrain][selection]")
 {
     const Fixture f;
     TerrainViewSelector selector(ViewSettings());
     const TerrainSelectionInstance instance = f.Instance();
-    const glm::dvec3 eyes[]{{30.0, 80.0, 100.0},  {-190.0, 40.0, -130.0}, {300.0, 600.0, 370.0},
+    const glm::dvec3 eyes[]{{30.0, 80.0, 100.0},   {-190.0, 40.0, -130.0}, {300.0, 600.0, 370.0},
                             {50.0, 3000.0, 120.0}, {-600.0, 30.0, 120.0},  {56.0, 1.0, 120.0}};
     for (const glm::dvec3 &eye : eyes)
         for (double focal : {20.0, 200.0, 2000.0})
@@ -400,9 +413,8 @@ TEST_CASE("Detail follows projected error: near ground is fine and far ground co
     const TerrainDrawUnit *near = TileDrawn(draws, under);
     REQUIRE(near);
     CHECK(near->geometry.level == 0);
-    const auto farthest = std::max_element(draws.begin(), draws.end(), [](const auto &a, const auto &b) {
-        return a.distance < b.distance;
-    });
+    const auto farthest = std::max_element(draws.begin(), draws.end(),
+                                           [](const auto &a, const auto &b) { return a.distance < b.distance; });
     CHECK((farthest->kind == Kind::Region || farthest->geometry.level > 0));
 
     for (const TerrainDrawUnit &unit : draws)
@@ -476,8 +488,7 @@ TEST_CASE("Hysteresis keeps a tile's LOD between the merge and refine bounds", "
     }
 }
 
-TEST_CASE("Turning and changing projection never drops a visible unit and never changes detail",
-          "[terrain][selection]")
+TEST_CASE("Turning and changing projection never drops a visible unit and never changes detail", "[terrain][selection]")
 {
     const Fixture f;
     const TerrainSelectionInstance instance = f.Instance();
@@ -694,7 +705,8 @@ TEST_CASE("Wants are Visible for what the view draws and chooses, Prefetch for t
     uint64_t prefetched = 0;
     for (const TerrainPayloadWant &want : limited.Wants())
         if (want.demand == Demand::Prefetch)
-            prefetched += TerrainPayloadFootprint(*f.Index().Find(want.key.coord, want.key.layer, want.key.kind, want.key.level));
+            prefetched +=
+                TerrainPayloadFootprint(*f.Index().Find(want.key.coord, want.key.layer, want.key.kind, want.key.level));
     CHECK(prefetched == limited.Stats().prefetchBytes);
 
     TerrainViewSelector none(ViewSettings(0));
@@ -791,8 +803,9 @@ TEST_CASE("Two viewports pick different detail for the same ground and share one
     std::unordered_set<TerrainPayloadKey> wantedByWide;
     for (const TerrainPayloadWant &want : wide.Wants())
         wantedByWide.insert(want.key);
-    const size_t shared = size_t(std::count_if(narrow.Wants().begin(), narrow.Wants().end(),
-                                               [&](const TerrainPayloadWant &w) { return wantedByWide.contains(w.key); }));
+    const size_t shared =
+        size_t(std::count_if(narrow.Wants().begin(), narrow.Wants().end(),
+                             [&](const TerrainPayloadWant &w) { return wantedByWide.contains(w.key); }));
     CHECK(shared > 0);
     const TerrainStreamingStats stats = streamer.Stats();
     CHECK(stats.evicted == 0);

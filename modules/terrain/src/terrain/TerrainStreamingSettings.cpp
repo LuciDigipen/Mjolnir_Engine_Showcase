@@ -63,10 +63,12 @@ namespace mir
                 emit("view", "refineErrorPixels", "must be a finite positive number of pixels");
             if (!positive(v.mergeErrorPixels) ||
                 (positive(v.refineErrorPixels) && v.mergeErrorPixels > v.refineErrorPixels))
-                emit("view", "mergeErrorPixels", "must be a finite positive number of pixels, at most refineErrorPixels");
+                emit("view", "mergeErrorPixels",
+                     "must be a finite positive number of pixels, at most refineErrorPixels");
             if (!positive(v.prefetchErrorPixels) ||
                 (positive(v.mergeErrorPixels) && v.prefetchErrorPixels > v.mergeErrorPixels))
-                emit("view", "prefetchErrorPixels", "must be a finite positive number of pixels, at most mergeErrorPixels");
+                emit("view", "prefetchErrorPixels",
+                     "must be a finite positive number of pixels, at most mergeErrorPixels");
             if (!v.prefetchBudgetBytes)
                 emit("view", "prefetchBudgetMiB", "must be zero or more");
             if (!NonNegative(v.meshRetainSeconds))
@@ -319,8 +321,9 @@ namespace mir
         }
         v.meshRetainSeconds = reader.Number(view, "view", "meshRetainSeconds").value_or(v.meshRetainSeconds);
 
-        Check(s, [&](std::string_view section, std::string_view key, std::string_view problem)
-              { reader.Problem(section, key, problem); });
+        Check(s, [&](std::string_view section, std::string_view key, std::string_view problem) {
+            reader.Problem(section, key, problem);
+        });
         if (load.problems.empty())
             load.settings = s;
         return load;

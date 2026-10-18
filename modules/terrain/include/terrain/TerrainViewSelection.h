@@ -96,7 +96,7 @@ namespace mir
     // every point at most once, and every visible point that has something ready.
     class TerrainViewSelector
     {
-    public:
+      public:
         explicit TerrainViewSelector(const TerrainStreamingSettings::View &settings);
         ~TerrainViewSelector();
 
@@ -115,8 +115,8 @@ namespace mir
         std::span<const TerrainPayloadWant> Wants() const;
         const TerrainViewStats &Stats() const;
 
-    private:
+      private:
         struct Impl;
         std::unique_ptr<Impl> mImpl;
     };
-}
+} // namespace mir

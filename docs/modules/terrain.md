@@ -579,7 +579,7 @@ From the scene camera (`smoke.TerrainCheck.game-mode`) the 2 x 2 map draws as
 four source-LOD tiles and the streamed map, after about a second of loading
 from nothing, as its four level 0 Regions; the coarse root fills in first.
 
-**Measurements** (`TerrainRenderProbe --selection`, Release, RTX 3070 Laptop,
+**Local prototype measurements** (`TerrainRenderProbe --selection`, Release, RTX 3070 Laptop,
 1280 x 720, 60 degree vertical field of view; TerrainCheck's `view` values; the
 #124 prototype map of 64 x 64 tiles with 1 to 8 m sources and three Region
 levels, streamed by interest from memory with two workers; development

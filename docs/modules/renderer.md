@@ -610,7 +610,7 @@ drew whole. Now: `RenderSystem` resolves every viewport's camera before
 anything else, hands the cameras to each `IViewDrawSource` in the
 `ViewDrawSources` resource, and asks it for each view's draws and for the
 shadow volumes' casters at viewport 0's detail. The shadow camera is viewport
-0's resolved camera, as before. `TerrainDrawItems` is gone.
+0's resolved camera. `TerrainDrawItems` is gone.
 
 *2026-10-08* — **Error texture and error material.** Was: the renderer had one
 fallback per level. A null or stale texture became white or a flat normal, and

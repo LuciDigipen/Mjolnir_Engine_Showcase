@@ -100,9 +100,8 @@ namespace mir
                      load.localFileFound ? " (machine-local overrides applied)" : "");
         MIR_LOG_INFO("Terrain views: refine above {} px, merge below {} px, prefetch to {} px within {:.1f} MiB, "
                      "meshes kept {} s after their last draw",
-                     settings.view.refineErrorPixels, settings.view.mergeErrorPixels,
-                     settings.view.prefetchErrorPixels, MiB(*settings.view.prefetchBudgetBytes),
-                     settings.view.meshRetainSeconds);
+                     settings.view.refineErrorPixels, settings.view.mergeErrorPixels, settings.view.prefetchErrorPixels,
+                     MiB(*settings.view.prefetchBudgetBytes), settings.view.meshRetainSeconds);
     }
 
     TerrainStreamer *TerrainRuntime::Streamer() const
@@ -295,8 +294,8 @@ namespace mir
                     ++i;
                     continue;
                 }
-            // Terrain drawn without its collider is terrain to fall through.
-            next.RemoveInstance(i);
+                // Terrain drawn without its collider is terrain to fall through.
+                next.RemoveInstance(i);
         }
         return built;
     }
@@ -305,14 +304,11 @@ namespace mir
                                                                            std::vector<InstanceResources> &old)
     {
         const TerrainReleaseInfo &release = instance.release->Info();
-        const auto find = [&](bool samePlace)
-        {
-            return std::find_if(old.begin(), old.end(),
-                                [&](const InstanceResources &resources)
-                                {
-                                    return resources.release == release &&
-                                           (!samePlace || SamePlacement(resources.placement, instance.placement));
-                                });
+        const auto find = [&](bool samePlace) {
+            return std::find_if(old.begin(), old.end(), [&](const InstanceResources &resources) {
+                return resources.release == release &&
+                       (!samePlace || SamePlacement(resources.placement, instance.placement));
+            });
         };
         auto match = find(true);
         if (match == old.end())
@@ -347,7 +343,7 @@ namespace mir
                 Report(std::format("Terrain '{}': tile ({}, {}) of release {:016x} has no source LOD and normal "
                                    "payloads to draw; the instance is not loaded",
                                    instance.recipePath, x, z, instance.release->Info().release.value));
-                    return false;
+                return false;
                 }
         return true;
     }
@@ -481,15 +477,15 @@ namespace mir
             view.draws.clear();
             AppendDraws(view.selector->Draws(), view.draws);
             LogView(view, camera);
-    }
+        }
 
         for (auto it = mViews.begin(); it != mViews.end();)
-    {
-            if (it->seen)
         {
+            if (it->seen)
+            {
                 ++it;
                 continue;
-        }
+            }
             streamer->RemoveInterest(it->interest);
             it = mViews.erase(it);
         }
@@ -520,8 +516,7 @@ namespace mir
 
     TerrainUnitReady TerrainRuntime::Ready(const TerrainStreamer &streamer) const
     {
-        return [this, &streamer](const TerrainDrawUnit &unit)
-        {
+        return [this, &streamer](const TerrainDrawUnit &unit) {
             if (mMeshes.Has(unit.geometry))
                 return true;
             return !mMeshes.Failed(unit.geometry) &&
@@ -600,7 +595,7 @@ namespace mir
                     physics->SetBodyEntity(resources.collider, instance.entity);
                     break;
                 }
-    }
+        }
     }
 
     void TerrainRuntime::DestroyCollider(BodyHandle body)

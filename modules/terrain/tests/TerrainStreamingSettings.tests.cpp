@@ -157,13 +157,16 @@ TEST_CASE("Missing, unknown and invalid settings are reported by path and file, 
     SECTION("Invalid values name the file that set them")
     {
         const TerrainStreamingSettingsLoad load = files.Load(
-            kComplete, R"({ "cpu": { "budgetMiB": 0 }, "io": { "workerThreads": 65 }, "retry": { "maxDelaySeconds": 0.01 },
+            kComplete,
+            R"({ "cpu": { "budgetMiB": 0 }, "io": { "workerThreads": 65 }, "retry": { "maxDelaySeconds": 0.01 },
                             "view": { "mergeErrorPixels": 2, "prefetchBudgetMiB": -1 } })");
         CHECK_FALSE(load.settings);
         CHECK(Reports(load, local, "cpu.budgetMiB must be positive"));
         CHECK(Reports(load, local, "io.workerThreads must be 1 to 64"));
-        CHECK(Reports(load, local, "retry.maxDelaySeconds must be a finite number of seconds, at least firstDelaySeconds"));
-        CHECK(Reports(load, local, "view.mergeErrorPixels must be a finite positive number of pixels, at most refineErrorPixels"));
+        CHECK(Reports(load, local,
+                      "retry.maxDelaySeconds must be a finite number of seconds, at least firstDelaySeconds"));
+        CHECK(Reports(load, local,
+                      "view.mergeErrorPixels must be a finite positive number of pixels, at most refineErrorPixels"));
         CHECK(Reports(load, local, "view.prefetchBudgetMiB must be zero or more"));
         CHECK(load.problems.size() == 5);
     }
@@ -179,11 +182,11 @@ TEST_CASE("Validation names every field of settings built in code that was left 
 {
     const std::vector<std::string> unset = ValidateTerrainStreamingSettings({});
     CHECK(unset.size() == 14);
-    for (const char *path : {"cpu.budgetMiB", "io.workerThreads", "io.maxInstallsPerFrame", "retry.maxAttempts",
-                             "retry.firstDelaySeconds", "retry.maxDelaySeconds", "retry.failedHoldSeconds",
-                             "residency.mode", "residency.queryLeaseSeconds", "view.refineErrorPixels",
-                             "view.mergeErrorPixels", "view.prefetchErrorPixels", "view.prefetchBudgetMiB",
-                             "view.meshRetainSeconds"})
+    for (const char *path :
+         {"cpu.budgetMiB", "io.workerThreads", "io.maxInstallsPerFrame", "retry.maxAttempts", "retry.firstDelaySeconds",
+          "retry.maxDelaySeconds", "retry.failedHoldSeconds", "residency.mode", "residency.queryLeaseSeconds",
+          "view.refineErrorPixels", "view.mergeErrorPixels", "view.prefetchErrorPixels", "view.prefetchBudgetMiB",
+          "view.meshRetainSeconds"})
         CHECK(std::any_of(unset.begin(), unset.end(), [&](const std::string &p) { return p.starts_with(path); }));
 
     TerrainStreamingSettings s;
@@ -203,8 +206,8 @@ TEST_CASE("Validation names every field of settings built in code that was left 
     s.view.meshRetainSeconds = 0.0;
     CHECK(ValidateTerrainStreamingSettings(s).empty());
     s.residency.queryLeaseSeconds = 0.0;
-    CHECK(ValidateTerrainStreamingSettings(s) == std::vector<std::string>{
-                                                     "residency.queryLeaseSeconds: must be a finite positive number of seconds"});
+    CHECK(ValidateTerrainStreamingSettings(s) ==
+          std::vector<std::string>{"residency.queryLeaseSeconds: must be a finite positive number of seconds"});
     s.residency.queryLeaseSeconds = 0.25;
     s.view.prefetchErrorPixels = 2.5;
     CHECK(ValidateTerrainStreamingSettings(s) ==
