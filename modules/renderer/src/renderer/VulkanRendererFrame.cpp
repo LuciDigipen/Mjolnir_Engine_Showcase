@@ -158,7 +158,7 @@ namespace mir
             .imageView = mSwapchain->DepthView(frame),
             .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
             .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-            .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
             .clearValue{ .depthStencil{ .depth = 0.0f } } }; // reverse-Z: 0 is the far end
 
         const VkRenderingInfo renderingInfo{
