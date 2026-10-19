@@ -2,7 +2,8 @@
  * @file PostProcessingBindings.cpp
  * @author Rahul Nair
  * @brief The Lua post-processing surface: world:set_fog/get_fog, set_hdr/get_hdr,
- *        set_bloom/get_bloom - one global stack, see PostProcessingBindings.h.
+ *        set_bloom/get_bloom, set_depth_of_field/get_depth_of_field - one
+ *        global stack, see PostProcessingBindings.h.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -13,6 +14,7 @@
 #include <core/log/Log.h>
 
 #include <renderer/BloomEffect.h>
+#include <renderer/DepthOfFieldEffect.h>
 #include <renderer/FogEffect.h>
 #include <renderer/HdrEffect.h>
 #include <renderer/PostProcessingSettings.h>
@@ -243,6 +245,51 @@ namespace mir
             out["radius"] = bloom.radius;
             return out;
         }
+
+        bool WorldSetDepthOfField(World &world, const sol::table &args)
+        {
+            PostProcessingSettings *settings = ResolveSettings(world, "set_depth_of_field");
+            if (settings == nullptr)
+                return false;
+
+            PostEffectState &state = settings->effects[std::string(kDepthOfFieldEffectName)];
+            DepthOfFieldParams dof = ReadDepthOfFieldParams(state.params);
+            bool enabled = state.enabled;
+
+            if (!GetOptionalBool(args, "enabled", "set_depth_of_field", enabled) ||
+                !GetOptionalFloat(args, "focusDistance", "set_depth_of_field", dof.focusDistance) ||
+                !GetOptionalFloat(args, "aperture", "set_depth_of_field", dof.aperture) ||
+                !GetOptionalFloat(args, "maxBlur", "set_depth_of_field", dof.maxBlur))
+                return false;
+
+            dof.focusDistance = std::max(dof.focusDistance, 0.0f);
+            dof.aperture = std::max(dof.aperture, 0.0f);
+            dof.maxBlur = std::max(dof.maxBlur, 0.0f);
+
+            state.enabled = enabled;
+            WriteDepthOfFieldParams(state.params, dof);
+            return true;
+        }
+
+        sol::object WorldGetDepthOfField(World &world, sol::this_state luaState)
+        {
+            sol::state_view lua(luaState);
+            PostProcessingSettings *settings = ResolveSettings(world, "get_depth_of_field");
+            if (settings == nullptr)
+                return sol::nil;
+
+            const auto it = settings->effects.find(std::string(kDepthOfFieldEffectName));
+            const bool enabled = it != settings->effects.end() && it->second.enabled;
+            const DepthOfFieldParams dof =
+                it != settings->effects.end() ? ReadDepthOfFieldParams(it->second.params) : DepthOfFieldParams{};
+
+            sol::table out = lua.create_table();
+            out["enabled"] = enabled;
+            out["focusDistance"] = dof.focusDistance;
+            out["aperture"] = dof.aperture;
+            out["maxBlur"] = dof.maxBlur;
+            return out;
+        }
     }
 
     void RegisterPostProcessingBindings(sol::state &lua)
@@ -254,5 +301,7 @@ namespace mir
         worldType.set_function("get_hdr", &WorldGetHdr);
         worldType.set_function("set_bloom", &WorldSetBloom);
         worldType.set_function("get_bloom", &WorldGetBloom);
+        worldType.set_function("set_depth_of_field", &WorldSetDepthOfField);
+        worldType.set_function("get_depth_of_field", &WorldGetDepthOfField);
     }
 }

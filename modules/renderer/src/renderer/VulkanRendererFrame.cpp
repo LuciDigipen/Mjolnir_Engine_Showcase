@@ -12,6 +12,7 @@
 #include <renderer/VulkanRenderer.h>
 #include "vulkan/Bloom.h"
 #include "vulkan/CameraBuffer.h"
+#include "vulkan/DepthOfField.h"
 #include "vulkan/Device.h"
 #include "vulkan/FrameCapture.h"
 #include "vulkan/FrameSync.h"
@@ -157,7 +158,7 @@ namespace mir
             .imageView = mSwapchain->DepthView(frame),
             .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
             .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-            .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
             .clearValue{ .depthStencil{ .depth = 0.0f } } }; // reverse-Z: 0 is the far end
 
         const VkRenderingInfo renderingInfo{
@@ -190,10 +191,27 @@ namespace mir
             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
             VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
 
+        vk::ImageBarrier(cmd, mSwapchain->DepthImage(frame), VK_IMAGE_ASPECT_DEPTH_BIT,
+            VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+
+        VkImageView colorSource = mSwapchain->HdrColorView(frame);
+        if (mDepthOfFieldEnabled)
+        {
+            mDevice->BeginLabel(cmd, "Depth Of Field Pass", { 0.5f, 0.0f, 1.0f, 1.0f });
+            const float nearZ = views.empty() ? 0.1f : views[0].nearZ;
+            const float farZ = views.empty() ? 0.0f : views[0].farZ;
+            mDepthOfField->Record(cmd, frame, mSwapchain->HdrColorView(frame), mSwapchain->DepthView(frame),
+                /*isLinearDepth*/ false, nearZ, farZ, extent);
+            mDevice->EndLabel(cmd);
+            colorSource = mDepthOfField->OutputView(frame);
+        }
+
         if (mBloomEnabled)
         {
             mDevice->BeginLabel(cmd, "Bloom Pass", { 1.0f, 0.5f, 0.0f, 1.0f });
-            mBloom->Record(cmd, frame, mSwapchain->HdrColorView(frame), extent);
+            mBloom->Record(cmd, frame, colorSource, extent);
             mDevice->EndLabel(cmd);
         }
 
@@ -231,7 +249,7 @@ namespace mir
         vkCmdSetViewport(cmd, 0, 1, &viewport);
         vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-        mPostProcess->Record(cmd, frame, mSwapchain->HdrColorView(frame), mBloom->OutputView(frame),
+        mPostProcess->Record(cmd, frame, colorSource, mBloom->OutputView(frame),
             mBloom->Intensity(), extent);
 
         mImGuiOverlay->RecordInPass(cmd);
@@ -290,10 +308,22 @@ namespace mir
             cameraOffset, *mResources, *mMaterialStore);
         mDevice->EndLabel(cmd);
 
-        if (mBloomEnabled && rect.extent.width > 0 && rect.extent.height > 0)
+        const bool hasRect = rect.extent.width > 0 && rect.extent.height > 0;
+
+        VkImageView colorSource = mRayTracer->OutputView(frame);
+        if (hasRect && mDepthOfFieldEnabled)
+        {
+            mDevice->BeginLabel(cmd, "Depth Of Field Pass", { 0.5f, 0.0f, 1.0f, 1.0f });
+            mDepthOfField->Record(cmd, frame, mRayTracer->OutputView(frame), mRayTracer->DistanceView(frame),
+                /*isLinearDepth*/ true, view.nearZ, view.farZ, mSwapchain->Extent());
+            mDevice->EndLabel(cmd);
+            colorSource = mDepthOfField->OutputView(frame);
+        }
+
+        if (hasRect && mBloomEnabled)
         {
             mDevice->BeginLabel(cmd, "Bloom Pass", { 1.0f, 0.5f, 0.0f, 1.0f });
-            mBloom->Record(cmd, frame, mRayTracer->OutputView(frame), mSwapchain->Extent());
+            mBloom->Record(cmd, frame, colorSource, mSwapchain->Extent());
             mDevice->EndLabel(cmd);
         }
 
@@ -322,7 +352,7 @@ namespace mir
         vkCmdBeginRendering(cmd, &renderingInfo);
         mDevice->BeginLabel(cmd, "Tonemap Pass", { 1.0f, 1.0f, 0.0f, 1.0f });
 
-        if (rect.extent.width > 0 && rect.extent.height > 0)
+        if (hasRect)
         {
             const VkViewport viewport{
                 .x = static_cast<float>(rect.offset.x),
@@ -333,7 +363,7 @@ namespace mir
             vkCmdSetViewport(cmd, 0, 1, &viewport);
             vkCmdSetScissor(cmd, 0, 1, &rect);
 
-            mPostProcess->Record(cmd, frame, mRayTracer->OutputView(frame), mBloom->OutputView(frame),
+            mPostProcess->Record(cmd, frame, colorSource, mBloom->OutputView(frame),
                 mBloom->Intensity(), mSwapchain->Extent());
         }
 

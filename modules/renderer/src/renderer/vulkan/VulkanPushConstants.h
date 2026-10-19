@@ -71,4 +71,25 @@ namespace mir::vk
         glm::vec2 invTargetExtent;
         float radius;
     };
+
+    // Shared by DepthOfField's CoC pass and its composite pass
+    struct DepthOfFieldCocPushConstants
+    {
+        float focusDistance;
+        float aperture;
+        float maxBlurTexels;
+        float nearClip;
+        float farClip; // 0 = no far plane
+        uint32_t isLinearDepth;
+        glm::vec2 invSrcExtent;
+        glm::vec2 invTargetExtent;
+    };
+
+    // Shared by the near and far blur passes - both just gather over the half-res CoC buffer.
+    struct DepthOfFieldBlurPushConstants
+    {
+        float maxBlurTexels;
+        float _pad0;
+        glm::vec2 invTargetExtent;
+    };
 }

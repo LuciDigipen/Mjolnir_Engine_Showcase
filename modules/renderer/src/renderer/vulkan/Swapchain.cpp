@@ -262,9 +262,16 @@ namespace mir::vk
     {
         VkFormatProperties formatProps{};
         vkGetPhysicalDeviceFormatProperties(mDevice->Physical(), kDepthFormat, &formatProps);
+
         if ((formatProps.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) == 0)
         {
             MIR_LOG_CRITICAL("CreateDepthResources: VK_FORMAT_D32_SFLOAT unsupported as an optimal-tiling depth attachment");
+            return false;
+        }
+
+        if ((formatProps.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) == 0)
+        {
+            MIR_LOG_CRITICAL("CreateDepthResources: VK_FORMAT_D32_SFLOAT unsupported as an optimal-tiling sampled image");
             return false;
         }
 
@@ -279,7 +286,7 @@ namespace mir::vk
                 .arrayLayers = 1,
                 .samples = VK_SAMPLE_COUNT_1_BIT,
                 .tiling = VK_IMAGE_TILING_OPTIMAL,
-                .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                 .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
                 .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
 

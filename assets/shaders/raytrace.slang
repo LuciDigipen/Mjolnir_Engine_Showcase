@@ -7,6 +7,9 @@ RaytracingAccelerationStructure gTlas;
 [[vk::binding(1, 0)]]
 RWTexture2D<float4> gOutput;
 
+[[vk::binding(3, 0)]]
+RWTexture2D<float> gDistance;
+
 struct RtInstanceInfo
 {
     float *vertexAddress;
@@ -54,6 +57,7 @@ RtPushConstants pushData;
 struct RayPayload
 {
     float3 color;
+    float distance;
 };
 
 struct ShadowPayload
@@ -111,10 +115,12 @@ void rayGenMain()
 
     RayPayload payload;
     payload.color = float3(0.0, 0.0, 0.0);
+    payload.distance = clipPlanes.y > 0.0 ? toFarPlane : 1.0e8;
 
     TraceRay(gTlas, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, 0xFF, 0, 0, 0, ray, payload);
 
     gOutput[pixel + pushData.outputOffset] = float4(payload.color, 1.0);
+    gDistance[pixel + pushData.outputOffset] = payload.distance;
 }
 
 [shader("miss")]
@@ -223,4 +229,5 @@ void closestHitMain(inout RayPayload payload, in BuiltInTriangleIntersectionAttr
     const float clampedDist = clamp(RayTCurrent(), fogRange.x, fogRange.y);
     const float fogFactor = clamp(1.0 - exp(-fogColor.a * (clampedDist - fogRange.x)), 0.0, 1.0);
     payload.color = lerp(color, fogColor.rgb, fogFactor);
+    payload.distance = RayTCurrent();
 }

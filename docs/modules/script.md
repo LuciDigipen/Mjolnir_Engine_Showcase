@@ -96,21 +96,22 @@ end
 
 ### Post-processing
 
-`world:set_fog/get_fog`, `world:set_hdr/get_hdr` and `world:set_bloom/get_bloom`
-reach `PostProcessingSettings` - one resource shared by the whole render, not a
-per-`Camera` component, so (like `set_state`) these take no entity. Each
-`set_*` takes one table; every field is optional and defaults to that effect's
-*current* live value, so a script can tweak one knob without restating the
-rest. A present-but-wrong-shaped field (a string where a number belongs, an
-unknown `tonemapOperator`) refuses the whole call - nothing is written - the
-same strictness `world:set` already uses for component fields. Each `get_*`
-returns a table of every field, or `nil` if this world has no
-`PostProcessingSettings` at all.
+`world:set_fog/get_fog`, `world:set_hdr/get_hdr`, `world:set_bloom/get_bloom`
+and `world:set_depth_of_field/get_depth_of_field` reach `PostProcessingSettings`
+- one resource shared by the whole render, not a per-`Camera` component, so
+(like `set_state`) these take no entity. Each `set_*` takes one table; every
+field is optional and defaults to that effect's *current* live value, so a
+script can tweak one knob without restating the rest. A present-but-wrong-shaped
+field (a string where a number belongs, an unknown `tonemapOperator`) refuses
+the whole call - nothing is written - the same strictness `world:set` already
+uses for component fields. Each `get_*` returns a table of every field, or
+`nil` if this world has no `PostProcessingSettings` at all.
 
 ```lua
 world:set_bloom({ enabled = true, threshold = 1.0, intensity = 0.5, radius = 1.0 })
 world:set_fog({ color = { x = 0.5, y = 0.6, z = 0.7 }, density = 0.015, startDistance = 0, endDistance = 300 })
 world:set_hdr({ exposure = 1.0, tonemapOperator = "aces" })  -- "none" | "reinhard" | "aces"
+world:set_depth_of_field({ enabled = true, focusDistance = 10.0, aperture = 0.1, maxBlur = 16.0 })
 
 local bloom = world:get_bloom()
 if bloom.enabled then
@@ -119,10 +120,11 @@ end
 ```
 
 `ReadFogParams`/`WriteFogParams`/`ReadHdrParams`/`WriteHdrParams`/
-`ReadBloomParams`/`WriteBloomParams` (`renderer/FogEffect.h`,
-`renderer/HdrEffect.h`, `renderer/BloomEffect.h`) are the same functions the
-Post-Processing panel itself reads and writes - this binding can't drift from
-what the panel shows, in either direction.
+`ReadBloomParams`/`WriteBloomParams`/`ReadDepthOfFieldParams`/`WriteDepthOfFieldParams`
+(`renderer/FogEffect.h`, `renderer/HdrEffect.h`, `renderer/BloomEffect.h`,
+`renderer/DepthOfFieldEffect.h`) are the same functions the Post-Processing
+panel itself reads and writes - this binding can't drift from what the panel
+shows, in either direction.
 
 ### Terrain height query (#144)
 
@@ -287,6 +289,15 @@ than something this module or `scene` does.
    flavour underneath.
 
 ## Changed
+
+*2026-10-18* — **`world:set_depth_of_field/get_depth_of_field` joins the
+post-processing bindings.** Was: the three effects below. Now: DoF followed
+the exact same shape the moment it existed as a fourth `PostEffectRegistry`
+entry - no new binding mechanism, just two more functions in
+`PostProcessingBindings.cpp` reading/writing through `ReadDepthOfFieldParams`/
+`WriteDepthOfFieldParams`. Because: a post-processing effect the panel exposes
+and gameplay code can't reach is the gap this file exists to close - leaving
+the newest effect out would have been the one exception.
 
 *2026-10-18* — **Post-processing bindings: `world:set_fog/get_fog`,
 `set_hdr/get_hdr`, `set_bloom/get_bloom`.** Was: Fog, HDR and Bloom
