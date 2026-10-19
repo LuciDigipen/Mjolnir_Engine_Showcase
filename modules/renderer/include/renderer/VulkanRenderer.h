@@ -48,6 +48,7 @@ namespace mir::vk
     class ModelDescriptors;
     class RayTracer;
     class PostProcess;
+    class Bloom;
     class FrameCapture;
     class ImGuiOverlay;
     class MeshUploader;
@@ -234,6 +235,9 @@ namespace mir
 
         void SetTonemap(float exposure, int tonemapOperator);
 
+        // enabled false skips the GPU chain for the frame and the panel's bloom contribution.
+        void SetBloom(bool enabled, float threshold, float intensity, float radius);
+
         void SetAtmosphere(const Sky &sky);
 
         void SetSkyVisible(bool visible) { mSkyVisible = visible; }
@@ -286,6 +290,8 @@ namespace mir
         std::unique_ptr<vk::RayTracer> mRayTracer;
 
         std::unique_ptr<vk::PostProcess> mPostProcess;
+        std::unique_ptr<vk::Bloom> mBloom;
+        bool mBloomEnabled = false;
 
         std::unique_ptr<vk::FrameCapture> mCapture;
 

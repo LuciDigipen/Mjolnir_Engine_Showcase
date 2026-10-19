@@ -36,6 +36,7 @@ target_compile_definitions(engine_renderer PRIVATE
 )
 
 target_sources(engine_renderer PRIVATE
+    src/renderer/BloomEffect.cpp
     src/renderer/CameraMath.cpp
     src/renderer/ComponentRegistration.cpp
     src/renderer/MeshStreaming.cpp
@@ -49,6 +50,7 @@ target_sources(engine_renderer PRIVATE
     src/renderer/ViewSubmission.cpp
     src/renderer/VulkanRenderer.cpp
     src/renderer/VulkanRendererFrame.cpp
+    src/renderer/vulkan/Bloom.cpp
     src/renderer/vulkan/CameraBuffer.cpp
     src/renderer/vulkan/Device.cpp
     src/renderer/vulkan/FrameCapture.cpp

@@ -47,5 +47,28 @@ namespace mir::vk
         float exposure;
         uint32_t tonemapOperator;
         glm::vec2 invExtent;
+        float bloomIntensity;
+    };
+
+    struct BloomExtractPushConstants
+    {
+        float threshold;
+        float knee;
+        glm::vec2 invSrcExtent;
+        glm::vec2 invTargetExtent;
+    };
+
+    struct BloomDownsamplePushConstants
+    {
+        glm::vec2 invSrcExtent;
+        glm::vec2 invTargetExtent;
+    };
+
+    // radius scales the tent filter's tap offsets - the panel's "Radius" knob.
+    struct BloomUpsamplePushConstants
+    {
+        glm::vec2 invSrcExtent;
+        glm::vec2 invTargetExtent;
+        float radius;
     };
 }

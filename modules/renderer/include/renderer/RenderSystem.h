@@ -16,6 +16,7 @@
 #include <core/ecs/System.h>
 #include <core/ecs/components/WorldTransform.h>
 #include <core/log/Log.h>
+#include <renderer/BloomEffect.h>
 #include <renderer/FogEffect.h>
 #include <renderer/HdrEffect.h>
 #include <renderer/PostProcessingSettings.h>
@@ -126,6 +127,12 @@ namespace mir
             const bool hdrEnabled = hdrIt != postProcessing.effects.end() && hdrIt->second.enabled;
             mRenderer.SetTonemap(hdrEnabled ? hdr.exposure : 1.0f,
                 static_cast<int>(hdrEnabled ? hdr.op : TonemapOperator::None));
+
+            const auto bloomIt = postProcessing.effects.find(std::string(kBloomEffectName));
+            const BloomParams bloom =
+                bloomIt != postProcessing.effects.end() ? ReadBloomParams(bloomIt->second.params) : BloomParams{};
+            const bool bloomEnabled = bloomIt != postProcessing.effects.end() && bloomIt->second.enabled;
+            mRenderer.SetBloom(bloomEnabled, bloom.threshold, bloom.intensity, bloom.radius);
 
             bool haveSunLight = false;
             glm::vec3 sunDirWS{ 0.0f, 1.0f, 0.0f };

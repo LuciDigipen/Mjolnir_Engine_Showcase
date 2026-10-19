@@ -20,11 +20,15 @@ VSOutput vertexMain(uint vertexId: SV_VertexID)
 [[vk::binding(0, 0)]]
 Sampler2D<float4> gHdrColor;
 
+[[vk::binding(1, 0)]]
+Sampler2D<float4> gBloom;
+
 struct PushConstants
 {
     float exposure;
     uint tonemapOperator;
     float2 invExtent;
+    float bloomIntensity;
 }
 
 [[vk::push_constant]]
@@ -54,7 +58,8 @@ float3 TonemapAces(float3 color)
 float4 fragmentMain(VSOutput input) : SV_Target
 {
     float2 uv = input.position.xy * pushData.invExtent;
-    float3 hdr = gHdrColor.Sample(uv).rgb * pushData.exposure;
+    float3 hdr = gHdrColor.Sample(uv).rgb + gBloom.Sample(uv).rgb * pushData.bloomIntensity;
+    hdr *= pushData.exposure;
 
     float3 ldr;
     if (pushData.tonemapOperator == kTonemapReinhard)

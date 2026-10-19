@@ -20,6 +20,8 @@ namespace mir::vk
 
     constexpr VkFormat kHdrColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 
+    constexpr uint32_t kBloomMipLevels = 6;
+
     // Sizes the per-view slices of the camera, light and spot matrix buffers.
     constexpr uint32_t kMaxViewsPerFrame = 16;
 }

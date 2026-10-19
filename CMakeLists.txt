@@ -110,6 +110,10 @@ engine_add_shaders(MjolnirEngine
     ENTRIES vertexMain:vertex fragmentMain:fragment)
 
 engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/bloom.slang
+    ENTRIES vertexMain:vertex brightpassMain:fragment downsampleMain:fragment upsampleMain:fragment)
+
+engine_add_shaders(MjolnirEngine
     SOURCE assets/shaders/shadowDepth.slang
     ENTRIES vertexMain:vertex)
 

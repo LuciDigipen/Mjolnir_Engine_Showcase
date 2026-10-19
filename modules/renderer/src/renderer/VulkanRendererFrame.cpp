@@ -10,6 +10,7 @@
 #define NOMINMAX
 #endif
 #include <renderer/VulkanRenderer.h>
+#include "vulkan/Bloom.h"
 #include "vulkan/CameraBuffer.h"
 #include "vulkan/Device.h"
 #include "vulkan/FrameCapture.h"
@@ -189,6 +190,13 @@ namespace mir
             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
             VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
 
+        if (mBloomEnabled)
+        {
+            mDevice->BeginLabel(cmd, "Bloom Pass", { 1.0f, 0.5f, 0.0f, 1.0f });
+            mBloom->Record(cmd, frame, mSwapchain->HdrColorView(frame), extent);
+            mDevice->EndLabel(cmd);
+        }
+
         vk::ImageBarrier(cmd, mSwapchain->Image(imageIndex), VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_UNDEFINED,
             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -223,7 +231,8 @@ namespace mir
         vkCmdSetViewport(cmd, 0, 1, &viewport);
         vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-        mPostProcess->Record(cmd, frame, mSwapchain->HdrColorView(frame), extent);
+        mPostProcess->Record(cmd, frame, mSwapchain->HdrColorView(frame), mBloom->OutputView(frame),
+            mBloom->Intensity(), extent);
 
         mImGuiOverlay->RecordInPass(cmd);
 
@@ -281,6 +290,13 @@ namespace mir
             cameraOffset, *mResources, *mMaterialStore);
         mDevice->EndLabel(cmd);
 
+        if (mBloomEnabled && rect.extent.width > 0 && rect.extent.height > 0)
+        {
+            mDevice->BeginLabel(cmd, "Bloom Pass", { 1.0f, 0.5f, 0.0f, 1.0f });
+            mBloom->Record(cmd, frame, mRayTracer->OutputView(frame), mSwapchain->Extent());
+            mDevice->EndLabel(cmd);
+        }
+
         vk::ImageBarrier(cmd, mSwapchain->Image(imageIndex), VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_UNDEFINED,
             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -317,7 +333,8 @@ namespace mir
             vkCmdSetViewport(cmd, 0, 1, &viewport);
             vkCmdSetScissor(cmd, 0, 1, &rect);
 
-            mPostProcess->Record(cmd, frame, mRayTracer->OutputView(frame), mSwapchain->Extent());
+            mPostProcess->Record(cmd, frame, mRayTracer->OutputView(frame), mBloom->OutputView(frame),
+                mBloom->Intensity(), mSwapchain->Extent());
         }
 
         mImGuiOverlay->RecordInPass(cmd);
