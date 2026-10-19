@@ -17,6 +17,7 @@
 #include <core/ecs/components/WorldTransform.h>
 #include <core/log/Log.h>
 #include <renderer/BloomEffect.h>
+#include <renderer/DepthOfFieldEffect.h>
 #include <renderer/FogEffect.h>
 #include <renderer/HdrEffect.h>
 #include <renderer/PostProcessingSettings.h>
@@ -133,6 +134,13 @@ namespace mir
                 bloomIt != postProcessing.effects.end() ? ReadBloomParams(bloomIt->second.params) : BloomParams{};
             const bool bloomEnabled = bloomIt != postProcessing.effects.end() && bloomIt->second.enabled;
             mRenderer.SetBloom(bloomEnabled, bloom.threshold, bloom.intensity, bloom.radius);
+
+            const auto dofIt = postProcessing.effects.find(std::string(kDepthOfFieldEffectName));
+            const DepthOfFieldParams dof =
+                dofIt != postProcessing.effects.end() ? ReadDepthOfFieldParams(dofIt->second.params)
+                                                       : DepthOfFieldParams{};
+            const bool dofEnabled = dofIt != postProcessing.effects.end() && dofIt->second.enabled;
+            mRenderer.SetDepthOfField(dofEnabled, dof.focusDistance, dof.aperture, dof.maxBlur);
 
             bool haveSunLight = false;
             glm::vec3 sunDirWS{ 0.0f, 1.0f, 0.0f };

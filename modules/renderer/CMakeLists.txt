@@ -39,6 +39,7 @@ target_sources(engine_renderer PRIVATE
     src/renderer/BloomEffect.cpp
     src/renderer/CameraMath.cpp
     src/renderer/ComponentRegistration.cpp
+    src/renderer/DepthOfFieldEffect.cpp
     src/renderer/MeshStreaming.cpp
     src/renderer/FogEffect.cpp
     src/renderer/HdrEffect.cpp
@@ -52,6 +53,7 @@ target_sources(engine_renderer PRIVATE
     src/renderer/VulkanRendererFrame.cpp
     src/renderer/vulkan/Bloom.cpp
     src/renderer/vulkan/CameraBuffer.cpp
+    src/renderer/vulkan/DepthOfField.cpp
     src/renderer/vulkan/Device.cpp
     src/renderer/vulkan/FrameCapture.cpp
     src/renderer/vulkan/FrameSync.cpp
