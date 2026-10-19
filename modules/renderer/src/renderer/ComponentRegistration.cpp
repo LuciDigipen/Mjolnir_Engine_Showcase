@@ -15,6 +15,7 @@
 #include "renderer/components/Sky.h"
 #include "renderer/BloomEffect.h"
 #include "renderer/DepthOfFieldEffect.h"
+#include "renderer/FilmEffect.h"
 #include "renderer/FogEffect.h"
 #include "renderer/HdrEffect.h"
 #include "renderer/Shapes.h"
@@ -235,5 +236,6 @@ namespace mir
         RegisterHdrPostEffect();
         RegisterBloomPostEffect();
         RegisterDepthOfFieldPostEffect();
+        RegisterFilmPostEffect();
     }
 }

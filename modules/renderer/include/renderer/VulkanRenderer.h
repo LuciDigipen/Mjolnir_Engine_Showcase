@@ -241,6 +241,9 @@ namespace mir
 
         void SetDepthOfField(bool enabled, float focusDistance, float aperture, float maxBlur);
 
+        void SetFilm(bool enabled, float grain, float contrast, float saturation, float vignetteStrength,
+            float vignetteRadius);
+
         void SetAtmosphere(const Sky &sky);
 
         void SetSkyVisible(bool visible) { mSkyVisible = visible; }

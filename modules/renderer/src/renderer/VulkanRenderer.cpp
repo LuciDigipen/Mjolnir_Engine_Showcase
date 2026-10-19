@@ -380,6 +380,13 @@ namespace mir
         mDepthOfField->SetParams(focusDistance, aperture, maxBlur);
     }
 
+    void VulkanRenderer::SetFilm(bool enabled, float grain, float contrast, float saturation,
+        float vignetteStrength, float vignetteRadius)
+    {
+        mPostProcess->SetFilmParams(enabled ? grain : 0.0f, enabled ? contrast : 1.0f,
+            enabled ? saturation : 1.0f, enabled ? vignetteStrength : 0.0f, vignetteRadius);
+    }
+
     void VulkanRenderer::SetAtmosphere(const Sky &sky)
     {
         mCameraBuffer->SetAtmosphere(sky);

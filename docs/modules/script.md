@@ -96,8 +96,9 @@ end
 
 ### Post-processing
 
-`world:set_fog/get_fog`, `world:set_hdr/get_hdr`, `world:set_bloom/get_bloom`
-and `world:set_depth_of_field/get_depth_of_field` reach `PostProcessingSettings`
+`world:set_fog/get_fog`, `world:set_hdr/get_hdr`, `world:set_bloom/get_bloom`,
+`world:set_depth_of_field/get_depth_of_field` and `world:set_film/get_film`
+reach `PostProcessingSettings`
 - one resource shared by the whole render, not a per-`Camera` component, so
 (like `set_state`) these take no entity. Each `set_*` takes one table; every
 field is optional and defaults to that effect's *current* live value, so a
@@ -112,6 +113,8 @@ world:set_bloom({ enabled = true, threshold = 1.0, intensity = 0.5, radius = 1.0
 world:set_fog({ color = { x = 0.5, y = 0.6, z = 0.7 }, density = 0.015, startDistance = 0, endDistance = 300 })
 world:set_hdr({ exposure = 1.0, tonemapOperator = "aces" })  -- "none" | "reinhard" | "aces"
 world:set_depth_of_field({ enabled = true, focusDistance = 10.0, aperture = 0.1, maxBlur = 16.0 })
+world:set_film({ enabled = true, grain = 0.05, contrast = 1.0, saturation = 1.0,
+                 vignetteStrength = 0.3, vignetteRadius = 1.0 })
 
 local bloom = world:get_bloom()
 if bloom.enabled then
@@ -120,11 +123,12 @@ end
 ```
 
 `ReadFogParams`/`WriteFogParams`/`ReadHdrParams`/`WriteHdrParams`/
-`ReadBloomParams`/`WriteBloomParams`/`ReadDepthOfFieldParams`/`WriteDepthOfFieldParams`
+`ReadBloomParams`/`WriteBloomParams`/`ReadDepthOfFieldParams`/`WriteDepthOfFieldParams`/
+`ReadFilmParams`/`WriteFilmParams`
 (`renderer/FogEffect.h`, `renderer/HdrEffect.h`, `renderer/BloomEffect.h`,
-`renderer/DepthOfFieldEffect.h`) are the same functions the Post-Processing
-panel itself reads and writes - this binding can't drift from what the panel
-shows, in either direction.
+`renderer/DepthOfFieldEffect.h`, `renderer/FilmEffect.h`) are the same functions
+the Post-Processing panel itself reads and writes - this binding can't drift
+from what the panel shows, in either direction.
 
 ### Terrain height query (#144)
 
@@ -289,6 +293,16 @@ than something this module or `scene` does.
    flavour underneath.
 
 ## Changed
+
+*2026-10-19* — **`world:set_film/get_film` joins the post-processing
+bindings (#213).** Was: the four effects below. Now: Film followed the exact
+same shape the moment it existed as a fifth `PostEffectRegistry` entry - two
+more functions in `PostProcessingBindings.cpp` reading/writing through
+`ReadFilmParams`/`WriteFilmParams`, clamping grain/contrast/saturation/
+vignetteStrength/vignetteRadius to `>= 0` the same way `set_bloom` clamps its
+own fields. Because: same reasoning as DoF's entry below - a post-processing
+effect the panel exposes and gameplay code can't reach is the gap this file
+exists to close.
 
 *2026-10-18* — **`world:set_depth_of_field/get_depth_of_field` joins the
 post-processing bindings.** Was: the three effects below. Now: DoF followed
