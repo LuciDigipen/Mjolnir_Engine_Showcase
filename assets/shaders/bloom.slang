@@ -20,9 +20,6 @@ VSOutput vertexMain(uint vertexId: SV_VertexID)
 [[vk::binding(0, 0)]]
 Sampler2D<float4> gSource;
 
-// A hardware-bilinear 4-tap box: each tap already blends its own 2x2
-// neighborhood, so this is a cheap stand-in for a much wider box filter -
-// the same trick the downsample and upsample passes both lean on.
 float3 SampleBox4(float2 uv, float2 offset)
 {
     float3 s0 = gSource.Sample(uv + float2(-offset.x, -offset.y)).rgb;
@@ -43,9 +40,6 @@ struct ExtractPushConstants
 [[vk::push_constant]]
 ExtractPushConstants extractData;
 
-// Bright-pass + first downsample in one: a soft knee around the threshold
-// instead of a hard cutoff, so a bright edge crossing it under motion fades
-// rather than flickers on and off.
 [shader("fragment")]
 float4 brightpassMain(VSOutput input) : SV_Target
 {
@@ -89,9 +83,6 @@ struct UpsamplePushConstants
 [[vk::push_constant]]
 UpsamplePushConstants upsampleData;
 
-// Drawn with additive blending onto the level it upsamples into, so the
-// smaller, already-blurred level above bleeds back down through the chain.
-// `radius` scales the tap offsets - the panel's one continuous blur-width knob.
 [shader("fragment")]
 float4 upsampleMain(VSOutput input) : SV_Target
 {
