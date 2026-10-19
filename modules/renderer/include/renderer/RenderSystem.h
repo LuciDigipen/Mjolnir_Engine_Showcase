@@ -21,6 +21,7 @@
 #include <renderer/FilmEffect.h>
 #include <renderer/FogEffect.h>
 #include <renderer/HdrEffect.h>
+#include <renderer/MotionBlurEffect.h>
 #include <renderer/PostProcessingSettings.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/components/Camera.h>
@@ -35,6 +36,7 @@
 #include <cmath>
 #include <limits>
 #include <optional>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -139,9 +141,17 @@ namespace mir
             const auto dofIt = postProcessing.effects.find(std::string(kDepthOfFieldEffectName));
             const DepthOfFieldParams dof =
                 dofIt != postProcessing.effects.end() ? ReadDepthOfFieldParams(dofIt->second.params)
-                                                       : DepthOfFieldParams{};
+                : DepthOfFieldParams{};
             const bool dofEnabled = dofIt != postProcessing.effects.end() && dofIt->second.enabled;
             mRenderer.SetDepthOfField(dofEnabled, dof.focusDistance, dof.aperture, dof.maxBlur);
+
+            const auto motionBlurIt = postProcessing.effects.find(std::string(kMotionBlurEffectName));
+            const MotionBlurParams motionBlur = motionBlurIt != postProcessing.effects.end()
+                ? ReadMotionBlurParams(motionBlurIt->second.params)
+                : MotionBlurParams{};
+            const bool motionBlurEnabled = motionBlurIt != postProcessing.effects.end() && motionBlurIt->second.enabled;
+            mRenderer.SetMotionBlur(motionBlurEnabled, motionBlur.shutterStrength,
+                static_cast<uint32_t>(std::max(motionBlur.sampleCount, 1)));
 
             const auto filmIt = postProcessing.effects.find(std::string(kFilmEffectName));
             const FilmParams film =
@@ -226,13 +236,14 @@ namespace mir
                 }
                 else if (viewport.mCameraEntity != kNullEntity)
                 {
-                    mCameraQuery->ForEach([&](Entity e, const WorldTransform &world, const Camera &cam) {
-                        if (e != viewport.mCameraEntity)
-                            return;
-                        cameraPose = world.Pose();
-                        camera = cam;
-                        haveCamera = true;
-                    });
+                    mCameraQuery->ForEach([&](Entity e, const WorldTransform &world, const Camera &cam)
+                        {
+                            if (e != viewport.mCameraEntity)
+                                return;
+                            cameraPose = world.Pose();
+                            camera = cam;
+                            haveCamera = true;
+                        });
                 }
                 else if (haveDefaultCamera)
                 {
@@ -248,13 +259,13 @@ namespace mir
                 }
 
                 const VkExtent2D viewExtent = (viewport.mRect.extent.width > 0 && viewport.mRect.extent.height > 0)
-                                                  ? viewport.mRect.extent
-                                                  : swapchainExtent;
+                    ? viewport.mRect.extent
+                    : swapchainExtent;
                 const float aspect = viewExtent.height == 0
-                                         ? 1.0f
-                                         : static_cast<float>(viewExtent.width) / static_cast<float>(viewExtent.height);
-                mViewCameras.push_back(ViewCamera{i, cameraPose, camera, viewExtent,
-                                                  MakeCameraRelativeViewProjection(cameraPose, camera, aspect)});
+                    ? 1.0f
+                    : static_cast<float>(viewExtent.width) / static_cast<float>(viewExtent.height);
+                mViewCameras.push_back(ViewCamera{ i, cameraPose, camera, viewExtent,
+                                                  MakeCameraRelativeViewProjection(cameraPose, camera, aspect) });
             }
 
             ViewDrawSources *viewSources = context.world.TryResource<ViewDrawSources>();
@@ -269,14 +280,15 @@ namespace mir
 
             // The world draws plus what the sources draw inside that volume at the primary view's detail.
             const auto shadowCasters = [&](WorldPosition origin,
-                                           const glm::mat4 &viewProj) -> std::span<const WorldDrawItem> {
-                if (!viewSources || viewSources->sources.empty() || !haveShadowCamera)
-                    return mDrawItems;
-                mPassItems.assign(mDrawItems.begin(), mDrawItems.end());
-                for (IViewDrawSource *source : viewSources->sources)
-                    source->AppendVolumeDraws(0, origin, viewProj, mPassItems);
-                return mPassItems;
-            };
+                const glm::mat4 &viewProj) -> std::span<const WorldDrawItem>
+                {
+                    if (!viewSources || viewSources->sources.empty() || !haveShadowCamera)
+                        return mDrawItems;
+                    mPassItems.assign(mDrawItems.begin(), mDrawItems.end());
+                    for (IViewDrawSource *source : viewSources->sources)
+                        source->AppendVolumeDraws(0, origin, viewProj, mPassItems);
+                    return mPassItems;
+                };
 
             if (haveShadowCamera)
             {
@@ -307,12 +319,22 @@ namespace mir
             mRenderer.SetLights(mLightItems);
 
             mDrawItems.clear();
-            mMeshQuery->ForEach([this](Entity, const WorldTransform &world, const MeshRenderer &renderer)
+            mCurrentPoses.clear();
+            mMeshQuery->ForEach([this](Entity entity, const WorldTransform &world, const MeshRenderer &renderer)
                 {
                     const glm::mat3 normalMatrix = glm::inverseTranspose(world.Linear());
-                    mDrawItems.push_back(
-                        WorldDrawItem{ renderer.mesh, world.Pose(), normalMatrix, renderer.tint, renderer.material });
+                    WorldDrawItem item{
+                        renderer.mesh, world.Pose(), normalMatrix, renderer.tint, renderer.material };
+
+                    const uint64_t key = PackEntity(entity);
+                    const auto previous = mPreviousPoses.find(key);
+                    if (previous != mPreviousPoses.end())
+                        item.previousPose = previous->second;
+                    mCurrentPoses[key] = world.Pose();
+
+                    mDrawItems.push_back(item);
                 });
+            std::swap(mPreviousPoses, mCurrentPoses);
 
             // ModelSystem builds its own items (meshes that came from a model
             // asset, with their morph/skin data attached).
@@ -326,7 +348,7 @@ namespace mir
                 const glm::mat4 sunShadowViewProj = MakeOrthographicViewProjection(
                     -sunDirWS, VulkanRenderer::kSunShadowHalfExtent, VulkanRenderer::kSunShadowNearZ);
                 BuildViewDrawItems(shadowCasters(shadowCameraPose.position, sunShadowViewProj),
-                                   shadowCameraPose.position, sunShadowViewProj, mSunShadowItems);
+                    shadowCameraPose.position, sunShadowViewProj, mSunShadowItems);
                 mRenderer.SetSunShadowCaster(true, sunShadowViewProj, shadowCameraPose.position, mSunShadowItems);
             }
             else
@@ -361,7 +383,7 @@ namespace mir
 
                         mSpotShadowItems[slot].clear();
                         BuildViewDrawItems(shadowCasters(item.position, spotViewProj), item.position, spotViewProj,
-                                           mSpotShadowItems[slot]);
+                            mSpotShadowItems[slot]);
                         mRenderer.SetSpotShadowCaster(slot, true, spotViewProj, item.position, mSpotShadowItems[slot]);
                         spotSlotFilled[slot] = true;
                     }
@@ -378,7 +400,7 @@ namespace mir
 
                             mPointShadowItems[slot][face].clear();
                             BuildViewDrawItems(shadowCasters(item.position, faceViewProj), item.position, faceViewProj,
-                                               mPointShadowItems[slot][face]);
+                                mPointShadowItems[slot][face]);
                             faces[face] = PointShadowFace{ faceViewProj, mPointShadowItems[slot][face] };
                         }
                         mRenderer.SetPointShadowCaster(slot, true, item.position, item.range, faces);
@@ -417,9 +439,9 @@ namespace mir
                 std::vector<DrawItem> &items = mDrawItemsPerViewport[v];
                 skippedItems += BuildViewDrawItems(worldItems, view.pose.position, view.viewProj, items);
 
-                mRenderViews.push_back(RenderView{mViewports[view.viewport].mRect, items, view.viewProj,
+                mRenderViews.push_back(RenderView{ mViewports[view.viewport].mRect, items, view.viewProj,
                                                   view.pose.position, view.lens.mNearZ,
-                                                  view.lens.HasFarPlane() ? view.lens.mFarZ : 0.0f});
+                                                  view.lens.HasFarPlane() ? view.lens.mFarZ : 0.0f });
             }
 
             if (warnNoCamera && !mWarnedNoCamera)
@@ -469,6 +491,8 @@ namespace mir
 
         std::vector<LightItem> mLightItems;
         std::vector<WorldDrawItem> mDrawItems;
+        std::unordered_map<uint64_t, WorldPose> mPreviousPoses;
+        std::unordered_map<uint64_t, WorldPose> mCurrentPoses;
         std::vector<ViewCamera> mViewCameras;
         // mDrawItems plus one pass's view draws.
         std::vector<WorldDrawItem> mPassItems;

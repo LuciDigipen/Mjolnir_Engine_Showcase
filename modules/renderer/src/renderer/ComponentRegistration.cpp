@@ -18,6 +18,7 @@
 #include "renderer/FilmEffect.h"
 #include "renderer/FogEffect.h"
 #include "renderer/HdrEffect.h"
+#include "renderer/MotionBlurEffect.h"
 #include "renderer/Shapes.h"
 
 #include <core/ecs/ComponentGizmo.h>
@@ -237,5 +238,6 @@ namespace mir
         RegisterBloomPostEffect();
         RegisterDepthOfFieldPostEffect();
         RegisterFilmPostEffect();
+        RegisterMotionBlurPostEffect();
     }
 }

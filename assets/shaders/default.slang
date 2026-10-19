@@ -45,6 +45,7 @@ cbuffer CameraData
     float4 atmosphereRadii;
     float4 atmosphereMisc;
     float4 lightingMeta;
+    float4x4 prevViewProj;
     float4x4 sunShadowViewProj;
 };
 
