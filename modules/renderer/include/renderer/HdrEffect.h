@@ -36,5 +36,8 @@ namespace mir
     HdrParams ReadHdrParams(const nlohmann::json &params);
     void WriteHdrParams(nlohmann::json &params, const HdrParams &hdr);
 
+    std::string_view ToString(TonemapOperator op);
+    TonemapOperator ParseOperator(std::string_view name);
+
     void RegisterHdrPostEffect();
 }

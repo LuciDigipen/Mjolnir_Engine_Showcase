@@ -13,6 +13,7 @@
 #include "bindings/EntityBindings.h"
 #include "bindings/InputBindings.h"
 #include "bindings/PhysicsBindings.h"
+#include "bindings/PostProcessingBindings.h"
 #include "bindings/TerrainBindings.h"
 #include "bindings/WorldBindings.h"
 
@@ -61,6 +62,7 @@ namespace mir
             RegisterInputBindings(mLua);
             RegisterPhysicsBindings(mLua);
             RegisterAudioBindings(mLua);
+            RegisterPostProcessingBindings(mLua);
         }
 
         struct ScriptInstance

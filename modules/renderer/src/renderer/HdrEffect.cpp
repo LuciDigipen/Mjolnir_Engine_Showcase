@@ -22,29 +22,6 @@ namespace mir
 {
     namespace
     {
-        std::string_view ToString(TonemapOperator op)
-        {
-            switch (op)
-            {
-            case TonemapOperator::None:
-                return "none";
-            case TonemapOperator::Reinhard:
-                return "reinhard";
-            case TonemapOperator::ACES:
-                return "aces";
-            }
-            return "reinhard";
-        }
-
-        TonemapOperator ParseOperator(std::string_view name)
-        {
-            if (name == "none")
-                return TonemapOperator::None;
-            if (name == "aces")
-                return TonemapOperator::ACES;
-            return TonemapOperator::Reinhard;
-        }
-
         void DrawHdrParams(nlohmann::json &params)
         {
             HdrParams hdr = ReadHdrParams(params);
@@ -65,6 +42,29 @@ namespace mir
             if (changed)
                 WriteHdrParams(params, hdr);
         }
+    }
+
+    std::string_view ToString(TonemapOperator op)
+    {
+        switch (op)
+        {
+        case TonemapOperator::None:
+            return "none";
+        case TonemapOperator::Reinhard:
+            return "reinhard";
+        case TonemapOperator::ACES:
+            return "aces";
+        }
+        return "reinhard";
+    }
+
+    TonemapOperator ParseOperator(std::string_view name)
+    {
+        if (name == "none")
+            return TonemapOperator::None;
+        if (name == "aces")
+            return TonemapOperator::ACES;
+        return TonemapOperator::Reinhard;
     }
 
     HdrParams ReadHdrParams(const nlohmann::json &params)
