@@ -82,9 +82,9 @@ namespace mir::vk
         mDevice = &device;
 
         VkPhysicalDeviceAccelerationStructurePropertiesKHR accelerationProperties{
-            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR};
-        VkPhysicalDeviceProperties2 properties{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
-                                               .pNext = &accelerationProperties};
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR };
+        VkPhysicalDeviceProperties2 properties{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+                                               .pNext = &accelerationProperties };
         vkGetPhysicalDeviceProperties2(mDevice->Physical(), &properties);
         mScratchAlignment =
             std::max<VkDeviceSize>(accelerationProperties.minAccelerationStructureScratchOffsetAlignment, 1);
@@ -188,23 +188,23 @@ namespace mir::vk
             geometry = VkAccelerationStructureGeometryKHR{
                 .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
                 .geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR,
-                .geometry{.triangles =
+                .geometry{ .triangles =
                               VkAccelerationStructureGeometryTrianglesDataKHR{
                                   .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR,
                                   .vertexFormat = VK_FORMAT_R32G32B32_SFLOAT,
-                                  .vertexData{.deviceAddress = GetBufferAddress(mDevice->Handle(), mesh.mVertexBuffer)},
+                                  .vertexData{ .deviceAddress = GetBufferAddress(mDevice->Handle(), mesh.mVertexBuffer) },
                                   .vertexStride = sizeof(Vertex),
                                   .maxVertex = build.vertexCount - 1,
                                   .indexType = VK_INDEX_TYPE_UINT32,
-                                  .indexData{.deviceAddress = GetBufferAddress(mDevice->Handle(), mesh.mIndexBuffer)}}},
-                .flags = VK_GEOMETRY_OPAQUE_BIT_KHR};
+                                  .indexData{ .deviceAddress = GetBufferAddress(mDevice->Handle(), mesh.mIndexBuffer) } } },
+                .flags = VK_GEOMETRY_OPAQUE_BIT_KHR };
             VkAccelerationStructureBuildGeometryInfoKHR info{
                 .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
                 .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
                 .flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR,
                 .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
                 .geometryCount = 1,
-                .pGeometries = &geometry};
+                .pGeometries = &geometry };
             const uint32_t primitiveCount = mesh.mIndexCount / 3;
             const AccelBuildSizes sizes = QueryAccelBuildSizes(mDevice->Handle(), info, primitiveCount);
 
@@ -212,8 +212,8 @@ namespace mir::vk
                 mBlases.resize(build.meshIndex + 1);
             MeshBlas &blas = mBlases[build.meshIndex];
             if (!CreateAccelerationStructureObject(sizes.accelerationStructureSize,
-                                                   VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, blas.mBuffer,
-                                                   blas.mAllocation, blas.mBlas))
+                VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, blas.mBuffer,
+                blas.mAllocation, blas.mBlas))
             {
                 MIR_LOG_ERROR("RecordMeshBlases: acceleration structure creation failed for mesh {}", build.meshIndex);
                 continue;
@@ -224,7 +224,7 @@ namespace mir::vk
             batch.scratchBytes = offset + sizes.buildScratchSize;
             batch.blasBytes += sizes.accelerationStructureSize;
             infos.push_back(info);
-            ranges.push_back({.primitiveCount = primitiveCount});
+            ranges.push_back({ .primitiveCount = primitiveCount });
             offsets.push_back(offset);
             slots.push_back(build.meshIndex);
         }
@@ -246,14 +246,14 @@ namespace mir::vk
             rangePointers.push_back(&ranges[i]);
         }
 
-        const VkMemoryBarrier2 copied{.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+        const VkMemoryBarrier2 copied{ .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
                                       .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
                                       .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
                                       .dstStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
                                       .dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT |
-                                                       VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR};
+                                                       VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR };
         const VkDependencyInfo copiedDep{
-            .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &copied};
+            .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &copied };
         vkCmdPipelineBarrier2(cmd, &copiedDep);
         // Disjoint scratch ranges, so the builds may run side by side.
         vkCmdBuildAccelerationStructuresKHR(cmd, uint32_t(infos.size()), infos.data(), rangePointers.data());
@@ -262,7 +262,7 @@ namespace mir::vk
         {
             const VkAccelerationStructureDeviceAddressInfoKHR addressInfo{
                 .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR,
-                .accelerationStructure = mBlases[slot].mBlas};
+                .accelerationStructure = mBlases[slot].mBlas };
             mBlases[slot].mAddress = vkGetAccelerationStructureDeviceAddressKHR(mDevice->Handle(), &addressInfo);
         }
         batch.built = slots.size();
@@ -281,21 +281,21 @@ namespace mir::vk
             .vertexFormat = VK_FORMAT_R32G32B32_SFLOAT,
             .vertexStride = sizeof(Vertex),
             .maxVertex = vertexCount > 0 ? vertexCount - 1 : 0,
-            .indexType = VK_INDEX_TYPE_UINT32};
-        const VkAccelerationStructureGeometryKHR geometry{.sType =
+            .indexType = VK_INDEX_TYPE_UINT32 };
+        const VkAccelerationStructureGeometryKHR geometry{ .sType =
                                                               VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
                                                           .geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR,
-                                                          .geometry{.triangles = triangles},
-                                                          .flags = VK_GEOMETRY_OPAQUE_BIT_KHR};
+                                                          .geometry{ .triangles = triangles },
+                                                          .flags = VK_GEOMETRY_OPAQUE_BIT_KHR };
         const VkAccelerationStructureBuildGeometryInfoKHR buildInfo{
             .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
             .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
             .flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR,
             .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
             .geometryCount = 1,
-            .pGeometries = &geometry};
+            .pGeometries = &geometry };
         const AccelBuildSizes sizes = QueryAccelBuildSizes(mDevice->Handle(), buildInfo, indexCount / 3);
-        return {sizes.accelerationStructureSize, sizes.buildScratchSize};
+        return { sizes.accelerationStructureSize, sizes.buildScratchSize };
     }
 
     RayTracer::MeshBlas RayTracer::TakeMeshBlas(uint32_t meshIndex)
@@ -320,7 +320,7 @@ namespace mir::vk
                 .arrayLayers = 1,
                 .samples = VK_SAMPLE_COUNT_1_BIT,
                 .tiling = VK_IMAGE_TILING_OPTIMAL,
-                .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                 .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
                 .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
 
@@ -840,14 +840,14 @@ namespace mir::vk
 
     bool RayTracer::CreateScratchBuffer(VkDeviceSize size, VkBuffer &outBuffer, VmaAllocation &outAllocation)
     {
-        const VkBufferCreateInfo bufferInfo{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        const VkBufferCreateInfo bufferInfo{ .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
                                             .size = size,
                                             .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                                                      VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-                                            .sharingMode = VK_SHARING_MODE_EXCLUSIVE};
-        const VmaAllocationCreateInfo allocInfo{.usage = VMA_MEMORY_USAGE_AUTO};
+                                            .sharingMode = VK_SHARING_MODE_EXCLUSIVE };
+        const VmaAllocationCreateInfo allocInfo{ .usage = VMA_MEMORY_USAGE_AUTO };
         return vmaCreateBufferWithAlignment(mDevice->Allocator(), &bufferInfo, &allocInfo, mScratchAlignment,
-                                            &outBuffer, &outAllocation, nullptr) == VK_SUCCESS;
+            &outBuffer, &outAllocation, nullptr) == VK_SUCCESS;
     }
 
     bool RayTracer::CreateAccelerationStructureObject(VkDeviceSize size, VkAccelerationStructureTypeKHR type,
@@ -986,6 +986,15 @@ namespace mir::vk
         ImageBarrier(cmd, mOutputImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
             VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
+            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+
+        const VkClearColorValue blackClear{ .float32 = { 0.0f, 0.0f, 0.0f, 0.0f } };
+        const VkImageSubresourceRange outputRange{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        vkCmdClearColorImage(cmd, mOutputImages[frame], VK_IMAGE_LAYOUT_GENERAL, &blackClear, 1, &outputRange);
+
+        ImageBarrier(cmd, mOutputImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
+            VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
             VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
 
         RecordTlasBuild(cmd, frame, items, resources, materials);

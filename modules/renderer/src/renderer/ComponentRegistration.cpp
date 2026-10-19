@@ -13,6 +13,7 @@
 #include "renderer/components/Light.h"
 #include "renderer/components/MeshRenderer.h"
 #include "renderer/components/Sky.h"
+#include "renderer/BloomEffect.h"
 #include "renderer/FogEffect.h"
 #include "renderer/HdrEffect.h"
 #include "renderer/Shapes.h"
@@ -231,5 +232,6 @@ namespace mir
     {
         RegisterFogPostEffect();
         RegisterHdrPostEffect();
+        RegisterBloomPostEffect();
     }
 }

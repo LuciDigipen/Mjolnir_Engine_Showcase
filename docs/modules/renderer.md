@@ -27,7 +27,8 @@ subsystem holds a pointer to the facade or to another subsystem.
 | `ModelDescriptors` | set 2: per-draw model data, reset each frame |
 | `ShadowMaps` | set 3: Sun, spot and point shadow maps, their pipelines and casters |
 | `RayTracer` | a BLAS per mesh slot, a TLAS per frame, the RT pipeline, SBT and output images |
-| `PostProcess` | the tonemap pipeline and per-frame descriptor sets - the one shared post-process hook point both `DrawFrame` and `TraceFrame` sample their own HDR target through |
+| `Bloom` | the bright-pass extract, downsample and additive-upsample pipelines and mip chain - reads whatever linear-HDR source `DrawFrame`/`TraceFrame` hand it, ahead of `PostProcess` |
+| `PostProcess` | the tonemap pipeline and per-frame descriptor sets - the one shared post-process hook point both `DrawFrame` and `TraceFrame` sample their own HDR target (and `Bloom`'s result) through |
 | `FrameCapture` | the `CaptureNextFrame` buffer and the PNG it writes |
 | `ImGuiOverlay` | ImGui's Vulkan backend and the draw data it overlays |
 | `MeshUploader` | the persistent staging ring, queued mesh uploads and their BLAS builds, and retired GPU objects until their last frame (#127) |
@@ -118,6 +119,7 @@ void SetDirectionalLight(const glm::vec3 &direction, const glm::vec3 &color); //
 void SetAmbientColor(const glm::vec3 &color);
 void SetFog(const glm::vec3 &color, float density);          // density <= 0 disables fog
 void SetTonemap(float exposure, int tonemapOperator);         // tonemapOperator matches TonemapOperator in HdrEffect.h
+void SetBloom(bool enabled, float threshold, float intensity, float radius); // enabled false skips the GPU chain
 void SetImGuiDrawData(ImDrawData *drawData);
 VkExtent2D SwapchainExtent() const; 
 
@@ -643,6 +645,37 @@ Everything that needs a device is verified by the smoke tests and
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-10-18* — **Bloom (#208).** Was: no screen-space bloom existed; the
+panel had nothing to toggle for it. Now: a new `vk::Bloom` subsystem
+(`vulkan/Bloom.h`) owns a `kBloomMipLevels`-deep (6) mip chain per frame in
+flight and reads whichever linear-HDR source that frame's caller hands it -
+`Swapchain::HdrColorView` for `RecordCommands`, `RayTracer::OutputView` for
+`RecordRtFrame` - the same hand-off `PostProcess` itself uses (see #211's
+note, above), called right before it each frame. Its `Record` runs a
+bright-pass extract with a soft knee around the threshold (so a bright edge
+crossing it under motion fades instead of flickering on and off), a
+downsample chain (hardware-bilinear 4-tap box filtering each half-res step,
+`assets/shaders/bloom.slang`) and an additive upsample chain back up (tent
+filtering, `Radius` scaling its tap offsets - the panel's one continuous
+blur-width knob) ending at mip 0, the frame's bloom texture. `PostProcess`
+gained a second sampled binding and a `bloomIntensity` push constant field;
+`tonemap.slang` adds `gBloom.Sample(uv) * bloomIntensity` to the HDR color
+before exposure/the operator, so bloom lives in the same linear space both
+already act on. Disabling bloom skips the whole chain for the frame
+(`VulkanRenderer::mBloomEnabled`) rather than just zeroing a result -
+`PostProcess::Record` still always samples mip 0 (intensity forced to 0 by
+`SetBloom`), which is why `Bloom::Initialize`/`Resize` transition the whole
+chain out of `UNDEFINED` once up front: a project with bloom off from frame
+one must never sample an image still sitting in `UNDEFINED`.
+`BloomEffect.h`/`.cpp`, registered into `PostEffectRegistry` as `"Bloom"`
+the same way `FogEffect`/`HdrEffect` register, is `{threshold=1, intensity=0.5,
+radius=1}`; **the default is disabled**, same reasoning as HDR's default.
+`RenderSystem::OnUpdate` reads it the same way it reads Fog/HDR and calls the
+new `VulkanRenderer::SetBloom(enabled, threshold, intensity, radius)`.
+Because: issue #208 - bright parts of the image should bleed light into
+their surroundings, adjustable from the Post-Processing panel, in both
+pipelines.
 
 *2026-10-18* — **HDR: a floating-point scene target and a shared tonemap
 pass, both pipelines (#211).** Was: raster wrote scene color straight into

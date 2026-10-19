@@ -7,6 +7,7 @@
  *
  */
 #include <renderer/VulkanRenderer.h>
+#include "vulkan/Bloom.h"
 #include "vulkan/CameraBuffer.h"
 #include "vulkan/Device.h"
 #include "vulkan/FrameCapture.h"
@@ -27,13 +28,20 @@
 namespace mir
 {
     VulkanRenderer::VulkanRenderer()
-        : mDevice(std::make_unique<vk::Device>()), mSwapchain(std::make_unique<vk::Swapchain>()),
-          mFrameSync(std::make_unique<vk::FrameSync>()), mResources(std::make_unique<vk::ResourceStore>()),
-          mMaterialStore(std::make_unique<vk::MaterialStore>()), mCameraBuffer(std::make_unique<vk::CameraBuffer>()),
-          mShadowMaps(std::make_unique<vk::ShadowMaps>()), mModelDescriptors(std::make_unique<vk::ModelDescriptors>()),
-          mRayTracer(std::make_unique<vk::RayTracer>()), mPostProcess(std::make_unique<vk::PostProcess>()),
-          mCapture(std::make_unique<vk::FrameCapture>()),
-          mImGuiOverlay(std::make_unique<vk::ImGuiOverlay>()), mMeshUploads(std::make_unique<vk::MeshUploader>())
+        : mDevice(std::make_unique<vk::Device>()),
+        mSwapchain(std::make_unique<vk::Swapchain>()),
+        mFrameSync(std::make_unique<vk::FrameSync>()),
+        mResources(std::make_unique<vk::ResourceStore>()),
+        mMaterialStore(std::make_unique<vk::MaterialStore>()),
+        mCameraBuffer(std::make_unique<vk::CameraBuffer>()),
+        mShadowMaps(std::make_unique<vk::ShadowMaps>()),
+        mModelDescriptors(std::make_unique<vk::ModelDescriptors>()),
+        mRayTracer(std::make_unique<vk::RayTracer>()),
+        mPostProcess(std::make_unique<vk::PostProcess>()),
+        mBloom(std::make_unique<vk::Bloom>()),
+        mCapture(std::make_unique<vk::FrameCapture>()),
+        mImGuiOverlay(std::make_unique<vk::ImGuiOverlay>()),
+        mMeshUploads(std::make_unique<vk::MeshUploader>())
     {}
     VulkanRenderer::~VulkanRenderer() = default;
 
@@ -95,6 +103,9 @@ namespace mir
         if (!mPostProcess->Initialize(*mDevice, mSwapchain->Format()))
             return false;
 
+        if (!mBloom->Initialize(*mDevice, mSwapchain->Extent()))
+            return false;
+
         return true;
     }
 
@@ -104,7 +115,8 @@ namespace mir
 
         // The swapchain cannot reach ray tracing, so the facade resizes its output images.
         if (!mSwapchain->Recreate(*mWindow) ||
-            (mDevice->RayTracingSupported() && !mRayTracer->Resize(mSwapchain->Extent())))
+            (mDevice->RayTracingSupported() && !mRayTracer->Resize(mSwapchain->Extent())) ||
+            !mBloom->Resize(mSwapchain->Extent()))
         {
             // Recreate may have cleared the flag already; set it so the next frame retries.
             mSwapchain->MarkOutOfDate();
@@ -123,6 +135,8 @@ namespace mir
             mFrameSync->Shutdown();
 
             mMeshUploads->Shutdown(*mRayTracer);
+
+            mBloom->Shutdown();
             mPostProcess->Shutdown();
             mMaterialStore->Shutdown();
             mRayTracer->Shutdown();
@@ -181,7 +195,7 @@ namespace mir
     }
 
     MeshHandle VulkanRenderer::QueueMesh(std::vector<Vertex> vertices, std::vector<uint32_t> indices,
-                                         const MeshUploadOptions &options)
+        const MeshUploadOptions &options)
     {
         return mMeshUploads->Queue(*mResources, *mRayTracer, std::move(vertices), std::move(indices), options);
     }
@@ -211,7 +225,7 @@ namespace mir
     }
 
     uint64_t VulkanRenderer::MeshFootprint(uint32_t vertexCount, uint32_t indexCount,
-                                           const MeshUploadOptions &options) const
+        const MeshUploadOptions &options) const
     {
         return mMeshUploads->Footprint(*mRayTracer, vertexCount, indexCount, options);
     }
@@ -345,6 +359,12 @@ namespace mir
     void VulkanRenderer::SetTonemap(float exposure, int tonemapOperator)
     {
         mPostProcess->SetParams(exposure, tonemapOperator);
+    }
+
+    void VulkanRenderer::SetBloom(bool enabled, float threshold, float intensity, float radius)
+    {
+        mBloomEnabled = enabled;
+        mBloom->SetParams(threshold, enabled ? intensity : 0.0f, radius);
     }
 
     void VulkanRenderer::SetAtmosphere(const Sky &sky)

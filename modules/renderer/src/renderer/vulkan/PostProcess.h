@@ -32,12 +32,15 @@ namespace mir::vk
             mTonemapOperator = tonemapOperator;
         }
 
-        void Record(VkCommandBuffer cmd, uint32_t frame, VkImageView source, VkExtent2D extent) const;
+        void Record(VkCommandBuffer cmd, uint32_t frame, VkImageView source, VkImageView bloom,
+            float bloomIntensity, VkExtent2D extent) const;
 
     private:
         Device *mDevice = nullptr;
 
         VkSampler mSampler = VK_NULL_HANDLE;
+
+        VkSampler mBloomSampler = VK_NULL_HANDLE;
 
         VkDescriptorSetLayout mSetLayout = VK_NULL_HANDLE;
         VkDescriptorPool mPool = VK_NULL_HANDLE;

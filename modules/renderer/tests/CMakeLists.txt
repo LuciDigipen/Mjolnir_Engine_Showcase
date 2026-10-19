@@ -1,4 +1,5 @@
 engine_add_module_tests(renderer
+    BloomEffect.tests.cpp
     CameraMath.tests.cpp
     MeshStreaming.tests.cpp
     FogEffect.tests.cpp

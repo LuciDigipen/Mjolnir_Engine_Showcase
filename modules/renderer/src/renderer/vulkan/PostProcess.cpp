@@ -38,16 +38,34 @@ namespace mir::vk
             return false;
         }
 
-        const VkDescriptorSetLayoutBinding binding{
-            .binding = 0,
-            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            .descriptorCount = 1,
-            .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT };
+        VkSamplerCreateInfo bloomSamplerInfo = samplerInfo;
+        bloomSamplerInfo.magFilter = VK_FILTER_LINEAR;
+        bloomSamplerInfo.minFilter = VK_FILTER_LINEAR;
+        bloomSamplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        bloomSamplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        bloomSamplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        bloomSamplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+
+        if (vkCreateSampler(mDevice->Handle(), &bloomSamplerInfo, nullptr, &mBloomSampler) != VK_SUCCESS)
+        {
+            MIR_LOG_CRITICAL("Initialize: vkCreateSampler (bloom) failed");
+            return false;
+        }
+
+        const VkDescriptorSetLayoutBinding bindings[]{
+            { .binding = 0,
+             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT },
+            { .binding = 1,
+             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT } };
 
         const VkDescriptorSetLayoutCreateInfo setLayoutInfo{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-            .bindingCount = 1,
-            .pBindings = &binding };
+            .bindingCount = 2,
+            .pBindings = bindings };
 
         if (vkCreateDescriptorSetLayout(mDevice->Handle(), &setLayoutInfo, nullptr, &mSetLayout) != VK_SUCCESS)
         {
@@ -56,7 +74,7 @@ namespace mir::vk
         }
 
         const VkDescriptorPoolSize poolSize{
-            .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = kFramesInFlight };
+            .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = kFramesInFlight * 2 };
 
         const VkDescriptorPoolCreateInfo poolInfo{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
@@ -230,6 +248,12 @@ namespace mir::vk
             mSetLayout = VK_NULL_HANDLE;
         }
 
+        if (mBloomSampler != VK_NULL_HANDLE)
+        {
+            vkDestroySampler(mDevice->Handle(), mBloomSampler, nullptr);
+            mBloomSampler = VK_NULL_HANDLE;
+        }
+
         if (mSampler != VK_NULL_HANDLE)
         {
             vkDestroySampler(mDevice->Handle(), mSampler, nullptr);
@@ -237,25 +261,34 @@ namespace mir::vk
         }
     }
 
-    void PostProcess::Record(VkCommandBuffer cmd, uint32_t frame, VkImageView source, VkExtent2D extent) const
+    void PostProcess::Record(VkCommandBuffer cmd, uint32_t frame, VkImageView source, VkImageView bloom,
+        float bloomIntensity, VkExtent2D extent) const
     {
-        const VkDescriptorImageInfo imageInfo{
-            .sampler = mSampler, .imageView = source, .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+        const VkDescriptorImageInfo imageInfos[]{
+            { .sampler = mSampler, .imageView = source, .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+            { .sampler = mBloomSampler, .imageView = bloom, .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } };
 
-        const VkWriteDescriptorSet write{
-            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = mSets[frame],
-            .dstBinding = 0,
-            .descriptorCount = 1,
-            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            .pImageInfo = &imageInfo };
-        vkUpdateDescriptorSets(mDevice->Handle(), 1, &write, 0, nullptr);
+        const VkWriteDescriptorSet writes[]{
+            { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+             .dstSet = mSets[frame],
+             .dstBinding = 0,
+             .descriptorCount = 1,
+             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+             .pImageInfo = &imageInfos[0] },
+            { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+             .dstSet = mSets[frame],
+             .dstBinding = 1,
+             .descriptorCount = 1,
+             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+             .pImageInfo = &imageInfos[1] } };
+        vkUpdateDescriptorSets(mDevice->Handle(), 2, writes, 0, nullptr);
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mPipeline);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mPipelineLayout, 0, 1, &mSets[frame], 0, nullptr);
 
         const TonemapPushConstants pushConstants{ mExposure, static_cast<uint32_t>(mTonemapOperator),
-            glm::vec2(1.0f / static_cast<float>(extent.width), 1.0f / static_cast<float>(extent.height)) };
+            glm::vec2(1.0f / static_cast<float>(extent.width), 1.0f / static_cast<float>(extent.height)),
+            bloomIntensity };
         vkCmdPushConstants(cmd, mPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pushConstants), &pushConstants);
 
         vkCmdDraw(cmd, 3, 1, 0, 0);
