@@ -500,7 +500,7 @@ until this.
 TerrainCheck's release is 35 payloads, 5.77 MiB decoded; resolving it with the
 Eager wait takes 0.03 s in Release (0.25 to 0.30 s in Debug, where the whole
 load is dominated by collider selection), and the Play sphere rests where it
-did before. The hidden `[streaming-measure]` case moves an interest across a
+did before. A local streaming measurement harness moves an interest across a
 40 x 40 map of 256 m tiles at 4 m (16.9 KB a tile) with 14 Regions of 128
 cells (0.79 MB each), read from disk through a warm file cache, with a 16 MiB
 budget and two workers. At 200 m/s and 60 frames a second for 9.2 km (2761
@@ -1683,8 +1683,8 @@ and the budget at every step, a consumer's evicted payload still valid,
 footprints; an Eager wait on the worker pool and its first failure; query
 leases; a dropped release and its discarded read; a key the index lacks;
 concurrent range reads of one file source; a mover crossing a 12 x 12 map
-within the budget with every read on a worker; a hidden `[streaming-measure]`
-case for the numbers below), `TerrainStreamingSettings` (a complete file and
+within the budget with every read on a worker; measurement harnesses remain
+local), `TerrainStreamingSettings` (a complete file and
 the key-by-key local override; missing, unknown, mistyped and invalid keys by
 path and file; unset fields of settings built in code; collision spacings and
 the seam overlap), `TerrainCollisionResidency` (with a fake physics side and a

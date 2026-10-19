@@ -25,12 +25,10 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
-#include <cstdio>
 #include <filesystem>
 #include <memory>
 #include <set>
 #include <thread>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -837,131 +835,4 @@ TEST_CASE("Moving through a map keeps residency within the budget and reads only
     CHECK(stats.maxUpdateSeconds > 0.0);
     CHECK(heights > 0);
     CHECK_FALSE(opened.source->ReaderThreads().contains(std::this_thread::get_id()));
-}
-
-TEST_CASE("Measure a mover crossing a map read from disk", "[.][streaming-measure]")
-{
-    const auto layout = TerrainLayout::CreateFromTileSize(256.0, 4.0, {0.0, 0.0, 10240.0, 10240.0});
-    REQUIRE(layout);
-    const std::vector<TileHeights> tiles = BuildTiles(*layout);
-    const TerrainReleaseInfo info = Info(TerrainAsset("terrain/measure.terrain.json"), 0x3EA5);
-    const TerrainEncodedRelease encoded =
-        EncodeWithRegions(info, *layout, tiles, BuildTestRegions(*layout, tiles, 16, 128));
-    const std::filesystem::path root = MakeScratchDir("streaming_measure");
-    WriteRelease(root, info, encoded);
-    const TerrainResult<TerrainReleaseHandle> opened = OpenTerrainRelease(root, info.asset, info.release);
-    REQUIRE(opened);
-    const std::shared_ptr<TerrainResidentRelease> release = TerrainResidentRelease::Create(*opened.value);
-    const TerrainIndex &index = release->Handle().Index();
-
-    const uint64_t budget = uint64_t(16) << 20;
-    TerrainStreamer streamer(StreamingSettings(budget, Mode::Interest), std::make_shared<TerrainWorkerPool>(2));
-    REQUIRE(streamer.Add(release) == Mode::Interest);
-    const TerrainInterestId view = streamer.AddInterest();
-
-    const double frame = 1.0 / 60.0;
-    const double speed = 200.0;
-    const glm::dvec2 from{500.0, 5120.0};
-    const double distance = 9200.0;
-    using Clock = std::chrono::steady_clock;
-    std::vector<double> updateMs;
-    std::vector<double> queryUs;
-    std::vector<double> requiredMs;
-    std::vector<double> visibleMs;
-    std::unordered_map<TerrainPayloadKey, std::pair<double, Demand>> pending;
-    size_t answered = 0;
-    size_t frames = 0;
-    const auto start = Clock::now();
-    for (double t = 0.0; t * speed <= distance; t += frame, ++frames)
-    {
-        const glm::dvec2 at = from + glm::dvec2(t * speed, 0.0);
-        std::vector<TerrainPayloadWant> wants;
-        const TileCoord center{int32_t(at.x / 256.0), int32_t(at.y / 256.0)};
-        for (const TerrainTileRecord &record : index.tiles)
-        {
-            const glm::dvec2 middle{(record.tile.x + 0.5) * 256.0, (record.tile.z + 0.5) * 256.0};
-            const double d = glm::length(middle - at);
-            const bool near = std::abs(record.tile.x - center.x) <= 1 && std::abs(record.tile.z - center.z) <= 1;
-            if (near)
-                wants.push_back({TerrainPayloadKeyOf(info, record), Demand::Required, float(d)});
-            else if (d <= 1536.0)
-                wants.push_back({TerrainPayloadKeyOf(info, record), Demand::Visible, float(d)});
-            else if (d <= 2560.0)
-                wants.push_back({TerrainPayloadKeyOf(info, record), Demand::Prefetch, float(d)});
-        }
-        for (const TerrainTileRecord &record : index.regions)
-        {
-            const TerrainLocalBounds rect = index.regionGrid->Rect({record.level, record.tile.x, record.tile.z});
-            const glm::dvec2 middle{(rect.minX + rect.maxX) / 2.0, (rect.minZ + rect.maxZ) / 2.0};
-            const double d = glm::length(middle - at);
-            if (record.level == 0 && d <= 6000.0)
-                wants.push_back({TerrainPayloadKeyOf(info, record), Demand::Visible, float(d)});
-            else if (record.level == 1)
-                wants.push_back({TerrainPayloadKeyOf(info, record), Demand::Prefetch, float(d)});
-        }
-        streamer.SetInterest(view, wants);
-
-        const auto beforeUpdate = Clock::now();
-        streamer.Update();
-        const auto afterUpdate = Clock::now();
-        updateMs.push_back(std::chrono::duration<double, std::milli>(afterUpdate - beforeUpdate).count());
-        const auto local = TerrainLocalPosition::FromMeters({at.x, 0.0, at.y});
-        const TerrainHeightResult r = release->Query().HeightAt(*local, {info, 4.0});
-        queryUs.push_back(std::chrono::duration<double, std::micro>(Clock::now() - afterUpdate).count());
-        answered += r.HasHeight() ? 1 : 0;
-        CHECK((r.status == Status::Loading || r.status == Status::MeetsRequirement));
-        CHECK(streamer.Stats().residentBytes + streamer.Stats().loadingBytes <= budget);
-
-        const double now = std::chrono::duration<double>(Clock::now() - start).count();
-        std::unordered_map<TerrainPayloadKey, std::pair<double, Demand>> still;
-        for (const TerrainPayloadWant &want : wants)
-        {
-            if (want.demand == Demand::Prefetch)
-                continue;
-            const auto it = pending.find(want.key);
-            const bool ready = streamer.Status(want.key).state == State::Ready;
-            if (it == pending.end())
-            {
-                if (!ready)
-                    still[want.key] = {now, want.demand};
-                continue;
-            }
-            if (ready)
-                (it->second.second == Demand::Required ? requiredMs : visibleMs)
-                    .push_back((now - it->second.first) * 1000.0);
-            else
-                still[want.key] = it->second;
-        }
-        pending = std::move(still);
-        std::this_thread::sleep_until(
-            start + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>((frames + 1) * frame)));
-    }
-
-    const auto percentile = [](std::vector<double> values, double p) {
-        if (values.empty())
-            return 0.0;
-        std::sort(values.begin(), values.end());
-        return values[std::min(values.size() - 1, size_t(p * double(values.size())))];
-    };
-    const TerrainStreamingStats stats = streamer.Stats();
-    std::printf("frames %zu, wall %.1f s, answered %.1f%%\n", frames,
-                std::chrono::duration<double>(Clock::now() - start).count(), 100.0 * double(answered) / double(frames));
-    std::printf("Update ms P50 %.4f P95 %.4f P99 %.4f max %.4f\n", percentile(updateMs, 0.5),
-                percentile(updateMs, 0.95), percentile(updateMs, 0.99), percentile(updateMs, 1.0));
-    std::printf("HeightAt us P50 %.2f P99 %.2f max %.2f\n", percentile(queryUs, 0.5), percentile(queryUs, 0.99),
-                percentile(queryUs, 1.0));
-    std::printf("Required ready ms (n %zu) P50 %.1f P95 %.1f P99 %.1f max %.1f\n", requiredMs.size(),
-                percentile(requiredMs, 0.5), percentile(requiredMs, 0.95), percentile(requiredMs, 0.99),
-                percentile(requiredMs, 1.0));
-    std::printf("Visible ready ms (n %zu) P50 %.1f P95 %.1f P99 %.1f max %.1f\n", visibleMs.size(),
-                percentile(visibleMs, 0.5), percentile(visibleMs, 0.95), percentile(visibleMs, 0.99),
-                percentile(visibleMs, 1.0));
-    std::printf("peak %.2f MiB of %.2f MiB, resident %.2f MiB, reads %llu, read %.1f MiB, evicted %llu, canceled %llu, "
-                "worker read %.3f s, decode %.3f s\n",
-                stats.peakBytes / 1048576.0, budget / 1048576.0, stats.residentBytes / 1048576.0,
-                (unsigned long long)stats.readsSucceeded, stats.bytesRead / 1048576.0,
-                (unsigned long long)stats.evicted, (unsigned long long)stats.canceled, stats.readSeconds,
-                stats.decodeSeconds);
-    CHECK(stats.peakBytes <= budget);
-    std::filesystem::remove_all(root);
 }
