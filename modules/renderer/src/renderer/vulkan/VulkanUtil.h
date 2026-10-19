@@ -11,6 +11,8 @@
 #include <volk.h>
 #include <vk_mem_alloc.h>
 
+#include <glm/vec2.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -20,6 +22,9 @@
 namespace mir::vk
 {
     class Device;
+
+    // 1 / extent, as fragment shaders want it for texel-to-UV math.
+    glm::vec2 InvExtent(VkExtent2D extent);
 
     bool CreateBuffer(VmaAllocator allocator,
         VkDeviceSize size,
@@ -45,9 +50,35 @@ namespace mir::vk
         VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess,
         uint32_t levelCount = 1, uint32_t layerCount = 1);
 
+    // Transitions a 2D color image into a color-attachment render target.
+    // firstUse: the image has been VK_IMAGE_LAYOUT_UNDEFINED since creation
+    // (or its last external use); otherwise it is assumed to be coming from
+    // VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL.
+    void ColorAttachmentBarrier(VkCommandBuffer cmd, VkImage image, bool firstUse = true);
+
+    // Transitions a 2D color image from color-attachment back to shader-read-only.
+    void ShaderReadOnlyBarrier(VkCommandBuffer cmd, VkImage image);
+
     // VK_NULL_HANDLE on failure, already logged.
     VkShaderModule CreateShaderModule(VkDevice device, const std::filesystem::path &path);
 
     // Records into a throwaway command buffer, submits it and waits for the queue to go idle.
     bool SubmitAndWait(const Device &device, const std::function<void(VkCommandBuffer)> &record);
+
+    bool AllocateDescriptorSet(VkDevice device, VkDescriptorPool pool, VkDescriptorSetLayout layout,
+        VkDescriptorSet &outSet);
+
+    // Fixed-function state shared by every single-triangle fullscreen pass
+    struct FullscreenPipelineDesc
+    {
+        VkShaderModule vertModule;
+        VkShaderModule fragModule;
+        const char *fragEntry;
+        VkPipelineLayout layout;
+        const VkPipelineColorBlendAttachmentState *blendAttachment;
+        VkFormat colorFormat;
+    };
+
+    bool CreateFullscreenPipeline(const Device &device, const FullscreenPipelineDesc &desc,
+        const char *debugName, VkPipeline &outPipeline);
 }

@@ -44,7 +44,11 @@ namespace mir::terrainbake
 
     TerrainCheck *TerrainReport::Find(std::string_view name)
     {
-        auto it = std::find_if(checks.begin(), checks.end(), [&](const TerrainCheck &c) { return c.name == name; });
+        auto it = std::find_if(checks.begin(), checks.end(),
+                               [&](const TerrainCheck &c)
+                               {
+                                   return c.name == name;
+                               });
         if (it != checks.end())
             return &*it;
         checks.push_back({std::string(name), CheckStatus::Skipped, "not run"});
@@ -73,6 +77,17 @@ namespace mir::terrainbake
         diagnostics.push_back(std::move(diagnostic));
     }
 
+    void TerrainReport::Warn(TerrainDiagnostic warning)
+    {
+        if (std::none_of(warnings.begin(), warnings.end(),
+                         [&](const auto &w)
+                         {
+                             return w.check == warning.check && w.field == warning.field && w.tiles == warning.tiles &&
+                                    w.message == warning.message;
+                         }))
+            warnings.push_back(std::move(warning));
+    }
+
     CheckStatus TerrainReport::Status(std::string_view name) const
     {
         for (const TerrainCheck &c : checks)
@@ -84,7 +99,10 @@ namespace mir::terrainbake
     bool TerrainReport::Ok() const
     {
         return std::none_of(checks.begin(), checks.end(),
-                            [](const TerrainCheck &c) { return c.status == CheckStatus::Failed; });
+                            [](const TerrainCheck &c)
+                            {
+                                return c.status == CheckStatus::Failed;
+                            });
     }
 
     std::string CheckStatusName(CheckStatus status)
@@ -135,9 +153,9 @@ namespace mir::terrainbake
         if (r.recipePath.empty())
             j["recipe"] = nullptr;
         else
-            j["recipe"] = {{"path", PathUtf8(r.recipePath)},
-                           {"fingerprint", r.recipeFingerprint ? Json(TerrainIdHex(r.recipeFingerprint->value))
-                                                               : Json(nullptr)}};
+            j["recipe"] = {
+                {"path", PathUtf8(r.recipePath)},
+                {"fingerprint", r.recipeFingerprint ? Json(TerrainIdHex(r.recipeFingerprint->value)) : Json(nullptr)}};
         j["candidate"] = PathUtf8(r.candidateDir);
 
         Json asset = {{"id", nullptr}, {"logicalPath", nullptr}};
@@ -174,11 +192,83 @@ namespace mir::terrainbake
 
         j["tiles"] = Json::array();
         for (const TerrainTileSummary &t : r.tiles)
-            j["tiles"].push_back({{"tile", TileJson(t.tile)},
-                                  {"pack", t.pack},
-                                  {"minHeight", t.minHeight},
-                                  {"maxHeight", t.maxHeight},
-                                  {"readable", t.readable}});
+            j["tiles"].push_back(
+                {{"tile", TileJson(t.tile)},
+                 {"pack", t.pack},
+                 {"minHeight", t.minHeight},
+                 {"maxHeight", t.maxHeight},
+                 {"readable", t.readable},
+                 {"sourceSpacing", t.sourceSpacing},
+                 {"payloadSpacing", t.payloadSpacing},
+                 {"kind", t.kind},
+                 {"level", t.level},
+                 {"maxDeviation", t.maxDeviation ? nlohmann::json(*t.maxDeviation) : nlohmann::json(nullptr)},
+                 {"sourceChecksum", TerrainIdHex(t.sourceChecksum)},
+                 {"topologyHash", TerrainIdHex(t.topologyHash)},
+                 {"samplesPerSide", t.samplesPerSide},
+                 {"layer", t.layer},
+                 {"source", t.source}});
+        j["regions"] = nullptr;
+        if (r.regionGrid)
+        {
+            const TerrainRegionGridSummary &g = *r.regionGrid;
+            Json records = Json::array();
+            for (const TerrainRegionSummary &s : r.regions)
+                records.push_back({{"level", s.level},
+                                   {"region", TileJson(s.region)},
+                                   {"pack", s.pack},
+                                   {"tiles", {{"min", TileJson(s.tiles.min)}, {"max", TileJson(s.tiles.max)}}},
+                                   {"validExtent", BoundsJson(s.validExtent)},
+                                   {"minHeight", s.minHeight},
+                                   {"maxHeight", s.maxHeight},
+                                   {"cellSpacing", s.cellSpacing},
+                                   {"vertices", s.vertices},
+                                   {"triangles", s.triangles},
+                                   {"bytes", s.bytes},
+                                   {"maxDeviation", s.maxDeviation},
+                                   {"readable", s.readable}});
+            j["regions"] = {
+                {"regionTiles", g.regionTiles},     {"cells", g.cells},  {"unit", g.unit}, {"levels", g.levels},
+                {"levelZeroEdge", g.levelZeroEdge}, {"records", records}};
+        }
+        j["sourceEstimates"] = Json::array();
+        for (const auto &estimate : r.sourceEstimates)
+            j["sourceEstimates"].push_back({{"spacing", estimate.spacing},
+                                            {"tileCount", estimate.tileCount},
+                                            {"samplesPerTile", estimate.samplesPerTile},
+                                            {"heightBytes", estimate.heightBytes}});
+        j["filter"] = {{"referenceSamples", r.referenceSamples},
+                       {"peakDoubleBytes", r.peakDoubleSamples * sizeof(double)}};
+
+        j["warnings"] = Json::array();
+        for (const auto &w : r.warnings)
+        {
+            Json tiles = Json::array();
+            for (const auto &t : w.tiles)
+                tiles.push_back(TileJson(t));
+            j["warnings"].push_back(
+                {{"check", w.check}, {"border", w.field}, {"tiles", tiles}, {"message", w.message}});
+        }
+        j["seams"] = nullptr;
+        if (r.seams)
+        {
+            const auto &s = *r.seams;
+            j["seams"] = {{"algorithmVersion", s.algorithmVersion}, {"weight", s.weight},
+                          {"bandMultiplier", s.bandMultiplier},     {"warningThreshold", s.warningThreshold},
+                          {"maxAdjustment", s.maxAdjustment},       {"adjustments", Json::array()}};
+            for (const auto &a : s.adjustments)
+            {
+                Json related = Json::array();
+                for (const auto &t : a.relatedTiles)
+                    related.push_back(TileJson(t));
+                j["seams"]["adjustments"].push_back({{"tile", TileJson(a.tile)},
+                                                     {"border", a.border},
+                                                     {"maxAdjustment", a.maxAdjustment},
+                                                     {"position", {a.x, a.z}},
+                                                     {"bandWidth", a.bandWidth},
+                                                     {"relatedTiles", related}});
+            }
+        }
 
         j["files"] = Json::array();
         for (const TerrainFileSummary &f : r.files)
@@ -186,7 +276,8 @@ namespace mir::terrainbake
 
         if (r.publish)
         {
-            auto id = [](const std::optional<TerrainReleaseId> &v) {
+            auto id = [](const std::optional<TerrainReleaseId> &v)
+            {
                 return v ? Json(TerrainIdHex(v->value)) : Json(nullptr);
             };
             j["publish"] = {{"releases", PathUtf8(r.publish->releasesRoot)},

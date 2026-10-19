@@ -9,6 +9,7 @@
 #pragma once
 
 #include <terrain/TerrainPackFormat.h>
+#include <terrain/TerrainPackWriter.h>
 
 #include <array>
 #include <cstddef>
@@ -21,11 +22,6 @@
 
 namespace mir::detail
 {
-    inline constexpr std::array<std::byte, 4> kIndexMagic{std::byte{'M'}, std::byte{'J'}, std::byte{'T'},
-                                                          std::byte{'I'}};
-    inline constexpr std::array<std::byte, 4> kPackMagic{std::byte{'M'}, std::byte{'J'}, std::byte{'T'},
-                                                         std::byte{'P'}};
-
     inline bool LessZX(int32_t ax, int32_t az, int32_t bx, int32_t bz)
     {
         return az != bz ? az < bz : ax < bx;
@@ -76,4 +72,9 @@ namespace mir::detail
     }
 
     uint64_t HeightsHashOf(std::span<const TerrainTileRecord> records);
+    uint64_t HeightsHashOf(std::span<const TerrainTileRecord> tiles, std::span<const TerrainTileRecord> regions);
+
+    // Every Region of the grid once, in ordinal order, with lengths and checksums filled.
+    TerrainResult<std::vector<TerrainPayloadWrite>> OrderRegionWrites(const TerrainRegionWrites &regions,
+                                                                      const TerrainLayout &reference);
 }

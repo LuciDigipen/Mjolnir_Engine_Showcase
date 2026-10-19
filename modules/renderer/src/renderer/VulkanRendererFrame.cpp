@@ -10,17 +10,23 @@
 #define NOMINMAX
 #endif
 #include <renderer/VulkanRenderer.h>
+#include "vulkan/Bloom.h"
 #include "vulkan/CameraBuffer.h"
+#include "vulkan/DepthOfField.h"
 #include "vulkan/Device.h"
 #include "vulkan/FrameCapture.h"
 #include "vulkan/FrameSync.h"
 #include "vulkan/ImGuiOverlay.h"
 #include "vulkan/MaterialStore.h"
+#include "vulkan/MeshUploader.h"
 #include "vulkan/ModelDescriptors.h"
+#include "vulkan/MotionBlur.h"
+#include "vulkan/PostProcess.h"
 #include "vulkan/RayTracer.h"
 #include "vulkan/ResourceStore.h"
 #include "vulkan/ShadowMaps.h"
 #include "vulkan/Swapchain.h"
+#include "vulkan/VelocityPass.h"
 #include "vulkan/VulkanConstants.h"
 #include "vulkan/VulkanUtil.h"
 #include "vulkan/VulkanPushConstants.h"
@@ -63,7 +69,11 @@ namespace mir
         {
             const vk::GpuMesh *const mesh = mResources->FindMesh(item.mesh);
             if (mesh == nullptr)
+            {
+                if (!item.mesh.IsNull())
+                    ++mSkippedDraws;
                 continue;
+            }
 
             const vk::GpuMaterial *const material = mMaterialStore->FindOrDefault(item.material);
             if (material == nullptr)
@@ -120,24 +130,26 @@ namespace mir
 
     void VulkanRenderer::RecordCommands(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views)
     {
-        // get image ready
-        vk::ImageBarrier(cmd, mSwapchain->Image(imageIndex), VK_IMAGE_ASPECT_COLOR_BIT,
+        const uint32_t frame = mFrameSync->Index();
+        const VkExtent2D extent = mSwapchain->Extent();
+
+        vk::ImageBarrier(cmd, mSwapchain->HdrColorImage(frame), VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_UNDEFINED,
             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
+            VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
 
-        vk::ImageBarrier(cmd, mSwapchain->DepthImage(mFrameSync->Index()), VK_IMAGE_ASPECT_DEPTH_BIT,
+        vk::ImageBarrier(cmd, mSwapchain->DepthImage(frame), VK_IMAGE_ASPECT_DEPTH_BIT,
             VK_IMAGE_LAYOUT_UNDEFINED,
             VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
             VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
             VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
             VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
 
-        const VkRenderingAttachmentInfo colorAttachment{
+        const VkRenderingAttachmentInfo hdrColorAttachment{
             .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView = mSwapchain->View(imageIndex),
+            .imageView = mSwapchain->HdrColorView(frame),
             .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
             .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
             .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
@@ -145,23 +157,23 @@ namespace mir
 
         const VkRenderingAttachmentInfo depthAttachment{
             .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView = mSwapchain->DepthView(mFrameSync->Index()),
+            .imageView = mSwapchain->DepthView(frame),
             .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
             .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-            .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
             .clearValue{ .depthStencil{ .depth = 0.0f } } }; // reverse-Z: 0 is the far end
 
         const VkRenderingInfo renderingInfo{
             .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
             // The stored extent, never the window: re-deriving it invites drift.
-            .renderArea{ .offset{ 0, 0 }, .extent = mSwapchain->Extent() },
+            .renderArea{ .offset{ 0, 0 }, .extent = extent },
             .layerCount = 1,
             .colorAttachmentCount = 1,
-            .pColorAttachments = &colorAttachment,
+            .pColorAttachments = &hdrColorAttachment,
             .pDepthAttachment = &depthAttachment };
 
         vkCmdBeginRendering(cmd, &renderingInfo);
-        mDevice->BeginLabel(cmd, "Triangle Pass", { 1.0f, 0.0f, 1.0f, 1.0f });
+        mDevice->BeginLabel(cmd, "Scene Pass", { 1.0f, 0.0f, 1.0f, 1.0f });
 
         if (views.size() > vk::kMaxViewsPerFrame)
         {
@@ -172,6 +184,103 @@ namespace mir
         const size_t viewCount = std::min<size_t>(views.size(), vk::kMaxViewsPerFrame);
         for (size_t i = 0; i < viewCount; ++i)
             RecordView(cmd, views[i], static_cast<uint32_t>(i));
+
+        mDevice->EndLabel(cmd);
+        vkCmdEndRendering(cmd);
+
+        vk::ImageBarrier(cmd, mSwapchain->HdrColorImage(frame), VK_IMAGE_ASPECT_COLOR_BIT,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+
+        if (mMotionBlurEnabled)
+        {
+            vk::ImageBarrier(cmd, mSwapchain->DepthImage(frame), VK_IMAGE_ASPECT_DEPTH_BIT,
+                VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT);
+
+            mVelocityCameraOffsets.clear();
+            const size_t motionViewCount = std::min<size_t>(views.size(), vk::kMaxViewsPerFrame);
+            for (size_t i = 0; i < motionViewCount; ++i)
+                mVelocityCameraOffsets.push_back(WriteCameraData(views[i], static_cast<uint32_t>(i)));
+
+            mDevice->BeginLabel(cmd, "Velocity Pass", { 0.0f, 1.0f, 0.5f, 1.0f });
+            mVelocityPass->Record(cmd, frame, views.subspan(0, motionViewCount), mCameraBuffer->Set(frame),
+                mVelocityCameraOffsets, mSwapchain->DepthView(frame), extent, *mResources);
+            mDevice->EndLabel(cmd);
+        }
+
+        vk::ImageBarrier(cmd, mSwapchain->DepthImage(frame), VK_IMAGE_ASPECT_DEPTH_BIT,
+            VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+            VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+
+        VkImageView colorSource = mSwapchain->HdrColorView(frame);
+        if (mDepthOfFieldEnabled)
+        {
+            mDevice->BeginLabel(cmd, "Depth Of Field Pass", { 0.5f, 0.0f, 1.0f, 1.0f });
+            const float nearZ = views.empty() ? 0.1f : views[0].nearZ;
+            const float farZ = views.empty() ? 0.0f : views[0].farZ;
+            mDepthOfField->Record(cmd, frame, mSwapchain->HdrColorView(frame), mSwapchain->DepthView(frame),
+                /*isLinearDepth*/ false, nearZ, farZ, extent);
+            mDevice->EndLabel(cmd);
+            colorSource = mDepthOfField->OutputView(frame);
+        }
+
+        if (mMotionBlurEnabled)
+        {
+            mDevice->BeginLabel(cmd, "Motion Blur Pass", { 0.0f, 1.0f, 0.5f, 1.0f });
+            mMotionBlur->Record(cmd, frame, colorSource, mVelocityPass->OutputView(frame), extent);
+            mDevice->EndLabel(cmd);
+            colorSource = mMotionBlur->OutputView(frame);
+        }
+
+        if (mBloomEnabled)
+        {
+            mDevice->BeginLabel(cmd, "Bloom Pass", { 1.0f, 0.5f, 0.0f, 1.0f });
+            mBloom->Record(cmd, frame, colorSource, extent);
+            mDevice->EndLabel(cmd);
+        }
+
+        vk::ImageBarrier(cmd, mSwapchain->Image(imageIndex), VK_IMAGE_ASPECT_COLOR_BIT,
+            VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+
+        const VkRenderingAttachmentInfo swapchainAttachment{
+            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+            .imageView = mSwapchain->View(imageIndex),
+            .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            // Every pixel is about to be overwritten by the fullscreen tonemap triangle.
+            .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE };
+
+        const VkRenderingInfo tonemapRenderingInfo{
+            .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+            .renderArea{ .offset{ 0, 0 }, .extent = extent },
+            .layerCount = 1,
+            .colorAttachmentCount = 1,
+            .pColorAttachments = &swapchainAttachment };
+
+        vkCmdBeginRendering(cmd, &tonemapRenderingInfo);
+        mDevice->BeginLabel(cmd, "Tonemap Pass", { 1.0f, 1.0f, 0.0f, 1.0f });
+
+        const VkViewport viewport{
+            .x = 0.0f, .y = 0.0f,
+            .width = static_cast<float>(extent.width),
+            .height = static_cast<float>(extent.height),
+            .minDepth = 0.0f, .maxDepth = 1.0f };
+        const VkRect2D scissor{ .offset{ 0, 0 }, .extent = extent };
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+        mPostProcess->Record(cmd, frame, colorSource, mBloom->OutputView(frame),
+            mBloom->Intensity(), extent);
 
         mImGuiOverlay->RecordInPass(cmd);
 
@@ -194,7 +303,11 @@ namespace mir
         const std::optional<vk::FrameContext> frame = mFrameSync->Begin(*mSwapchain);
         // After Begin's wait: this slot's last frame is done with its set 2 buffers.
         if (frame)
+        {
             mModelDescriptors->ResetFrame(mFrameSync->Index());
+            mMeshUploads->Collect(*mResources, *mRayTracer, mFrameSync->CompletedValue());
+            mMeshUploads->Record(frame->cmd, frame->signalValue, *mResources, *mRayTracer);
+        }
         return frame;
     }
 
@@ -216,53 +329,88 @@ namespace mir
         const RenderView &view = views[0];
 
         const VkRect2D rect = vk::ResolveViewRect(view.rect, mSwapchain->Extent());
+        const uint32_t frame = mFrameSync->Index();
 
         const uint32_t cameraOffset = WriteCameraData(view, 0);
 
         mDevice->BeginLabel(cmd, "Ray Trace Pass", { 0.0f, 1.0f, 1.0f, 1.0f });
-
-        mRayTracer->Record(cmd, mFrameSync->Index(), view.items, rect, mCameraBuffer->Set(mFrameSync->Index()),
+        mRayTracer->Record(cmd, frame, view.items, rect, mCameraBuffer->Set(frame),
             cameraOffset, *mResources, *mMaterialStore);
+        mDevice->EndLabel(cmd);
 
-        vk::ImageBarrier(cmd, mSwapchain->Image(imageIndex), VK_IMAGE_ASPECT_COLOR_BIT,
-            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
-            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        const bool hasRect = rect.extent.width > 0 && rect.extent.height > 0;
 
-        const VkClearColorValue clearColor{ .float32{ mClearColor.r, mClearColor.g, mClearColor.b, mClearColor.a } };
-        const VkImageSubresourceRange wholeImage{
-            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 };
-        vkCmdClearColorImage(cmd, mSwapchain->Image(imageIndex), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            &clearColor, 1, &wholeImage);
-
-        vk::ImageBarrier(cmd, mSwapchain->Image(imageIndex), VK_IMAGE_ASPECT_COLOR_BIT,
-            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
-
-        if (rect.extent.width > 0 && rect.extent.height > 0)
+        VkImageView colorSource = mRayTracer->OutputView(frame);
+        if (hasRect && mDepthOfFieldEnabled)
         {
-            const int32_t left = rect.offset.x;
-            const int32_t top = rect.offset.y;
-            const int32_t right = left + static_cast<int32_t>(rect.extent.width);
-            const int32_t bottom = top + static_cast<int32_t>(rect.extent.height);
-            const VkImageBlit blitRegion{
-                .srcSubresource{ .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1 },
-                .srcOffsets{ { left, top, 0 },{ right, bottom, 1 } },
-                .dstSubresource{ .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1 },
-                .dstOffsets{ { left, top, 0 },{ right, bottom, 1 } } };
-
-            vkCmdBlitImage(cmd,
-                mRayTracer->OutputImage(mFrameSync->Index()), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                mSwapchain->Image(imageIndex), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                1, &blitRegion, VK_FILTER_NEAREST);
+            mDevice->BeginLabel(cmd, "Depth Of Field Pass", { 0.5f, 0.0f, 1.0f, 1.0f });
+            mDepthOfField->Record(cmd, frame, mRayTracer->OutputView(frame), mRayTracer->DistanceView(frame),
+                /*isLinearDepth*/ true, view.nearZ, view.farZ, mSwapchain->Extent());
+            mDevice->EndLabel(cmd);
+            colorSource = mDepthOfField->OutputView(frame);
         }
 
-        const VkImageLayout layout =
-            mImGuiOverlay->RecordOver(cmd, *mSwapchain, imageIndex, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        mSwapchain->RecordPresentTransition(cmd, imageIndex, layout);
+        if (hasRect && mMotionBlurEnabled)
+        {
+            mDevice->BeginLabel(cmd, "Motion Blur Pass", { 0.0f, 1.0f, 0.5f, 1.0f });
+            mMotionBlur->Record(cmd, frame, colorSource, mRayTracer->VelocityView(frame), mSwapchain->Extent());
+            mDevice->EndLabel(cmd);
+            colorSource = mMotionBlur->OutputView(frame);
+        }
+
+        if (hasRect && mBloomEnabled)
+        {
+            mDevice->BeginLabel(cmd, "Bloom Pass", { 1.0f, 0.5f, 0.0f, 1.0f });
+            mBloom->Record(cmd, frame, colorSource, mSwapchain->Extent());
+            mDevice->EndLabel(cmd);
+        }
+
+        vk::ImageBarrier(cmd, mSwapchain->Image(imageIndex), VK_IMAGE_ASPECT_COLOR_BIT,
+            VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+
+        const VkRenderingAttachmentInfo colorAttachment{
+            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+            .imageView = mSwapchain->View(imageIndex),
+            .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+            .clearValue{ .color{ { mClearColor.r, mClearColor.g, mClearColor.b, mClearColor.a } } } };
+
+        const VkRenderingInfo renderingInfo{
+            .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+            .renderArea{ .offset{ 0, 0 }, .extent = mSwapchain->Extent() },
+            .layerCount = 1,
+            .colorAttachmentCount = 1,
+            .pColorAttachments = &colorAttachment };
+
+        vkCmdBeginRendering(cmd, &renderingInfo);
+        mDevice->BeginLabel(cmd, "Tonemap Pass", { 1.0f, 1.0f, 0.0f, 1.0f });
+
+        if (hasRect)
+        {
+            const VkViewport viewport{
+                .x = static_cast<float>(rect.offset.x),
+                .y = static_cast<float>(rect.offset.y),
+                .width = static_cast<float>(rect.extent.width),
+                .height = static_cast<float>(rect.extent.height),
+                .minDepth = 0.0f, .maxDepth = 1.0f };
+            vkCmdSetViewport(cmd, 0, 1, &viewport);
+            vkCmdSetScissor(cmd, 0, 1, &rect);
+
+            mPostProcess->Record(cmd, frame, colorSource, mBloom->OutputView(frame),
+                mBloom->Intensity(), mSwapchain->Extent());
+        }
+
+        mImGuiOverlay->RecordInPass(cmd);
 
         mDevice->EndLabel(cmd);
+        vkCmdEndRendering(cmd);
+
+        mSwapchain->RecordPresentTransition(cmd, imageIndex, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     }
 
     void VulkanRenderer::TraceFrame(std::span<const RenderView> views)

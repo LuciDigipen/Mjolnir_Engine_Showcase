@@ -39,8 +39,10 @@
 #include <physics/PhysicsSystem.h>
 #include <physics/PhysicsWorld.h>
 #include <renderer/ComponentRegistration.h>
+#include <renderer/PostProcessingSettings.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/RenderSystem.h>
+#include <renderer/ViewDrawSource.h>
 #include <scene/SceneIO.h>
 #include <script/ComponentRegistration.h>
 #include <script/ScriptSystem.h>
@@ -182,6 +184,7 @@ namespace mir
         RegisterCoreComponents();
         RegisterRendererComponents();
         RegisterRendererEntityTypes();
+        RegisterRendererPostEffects();
         RegisterPhysicsComponents();
         RegisterCameraComponents();
         RegisterScriptComponents();
@@ -191,7 +194,7 @@ namespace mir
 
         mWorld.EmplaceResource<ModelDrawItems>();
         mWorld.EmplaceResource<ModelMorphOverrides>();
-        mWorld.EmplaceResource<TerrainDrawItems>();
+        mWorld.EmplaceResource<ViewDrawSources>();
         mWorld.EmplaceResource<TerrainWorld>();
 
         // defers structural change
@@ -202,6 +205,8 @@ namespace mir
         mWorld.EmplaceResource<InputMap>(std::move(inputMap));
 
         mWorld.EmplaceResource<RenderSettings>(RenderSettings::LoadFile(mProject.mProjectSettingsPath).value_or(RenderSettings{}));
+        mWorld.EmplaceResource<PostProcessingSettings>(
+            PostProcessingSettings::LoadFile(mProject.mProjectSettingsPath).value_or(PostProcessingSettings{}));
         mWorld.EmplaceResource<InputState>();
         mWorld.EmplaceResource<EngineModeState>();
 
@@ -338,6 +343,7 @@ namespace mir
 
         // Play pins the terrain releases present on entry
         mTerrain->Refresh(0.0f, true);
+        mTerrain->BeginPlay();
 
         mPlaySnapshot = CaptureWorld(mWorld);
         ClearHistory();
@@ -370,7 +376,7 @@ namespace mir
         SetEngineMode(mWorld, EngineMode::Edit);
         SetPlayState(mWorld, PlayState::Running);
 
-        // Picks up a release published during Play
+        // Starts checking a release published during Play
         mTerrain->Refresh(0.0f, true);
     }
 
@@ -523,6 +529,9 @@ namespace mir
             mContentBrowser.Update();
         #endif
 
+            // Every mode, before any system runs
+            mTerrain->Update();
+
             // Edit, between frames, before any system runs
             if (IsEditing(mWorld))
                 mTerrain->Refresh(dt, false);
@@ -534,8 +543,8 @@ namespace mir
             #if MIR_WITH_EDITOR
                 const EditorActions actions = mEditor.DrawLayout(
                     mDesc.mEnableEditorLayout, mWorld.Resource<InputMap>(), mWorld.Resource<RenderSettings>(),
-                    mWorld.Resource<EngineModeState>(), mProjectMenu, mProject.mDir, mWorld, mAssetImport.View(),
-                    mRenderer, mContentBrowser.View());
+                    mWorld.Resource<PostProcessingSettings>(), mWorld.Resource<EngineModeState>(), mProjectMenu,
+                    mProject.mDir, mWorld, mAssetImport.View(), mRenderer, mContentBrowser.View());
             #endif
 
                 mGameUI.BeginFrame(GameUIArea(), mWorld.Resource<InputState>(), mWorld.Resource<InputMap>(),
@@ -727,6 +736,8 @@ namespace mir
         mAssetCache.emplace(&*mAssetManifest, CookedAssetsDir());
         if (mModelSystem)
             mModelSystem->CommitReload(&*mAssetCache);
+        if (mMeshResolveSystem)
+            mMeshResolveSystem->CommitReload(&*mAssetCache);
         mAssetLoadFailed = false;
         mAssetImport.MarkApplied();
         MIR_LOG_INFO("Applied imported assets at an Edit frame boundary");

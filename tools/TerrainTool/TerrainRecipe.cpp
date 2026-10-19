@@ -7,6 +7,7 @@
  *
  */
 #include "TerrainRecipe.h"
+#include "TerrainSeams.h"
 
 #include "TerrainNoise.h"
 #include "TerrainReport.h"
@@ -14,6 +15,7 @@
 #include <assets/AssetId.h>
 #include <core/fs/FileIO.h>
 #include <terrain/TileHeights.h>
+#include <terrain/TerrainPackFormat.h>
 
 #include <nlohmann/json.hpp>
 
@@ -77,20 +79,31 @@ namespace mir::terrainbake
 
         class Checker
         {
-        public:
-            void Add(std::string field, std::string message) { mIssues.push_back({std::move(field), std::move(message)}); }
-            bool Clean() const { return mIssues.empty(); }
-            std::vector<RecipeIssue> Take() { return std::move(mIssues); }
+          public:
+            void Add(std::string field, std::string message)
+            {
+                mIssues.push_back({std::move(field), std::move(message)});
+            }
+            bool Clean() const
+            {
+                return mIssues.empty();
+            }
+            std::vector<RecipeIssue> Take()
+            {
+                return std::move(mIssues);
+            }
 
-        private:
+          private:
             std::vector<RecipeIssue> mIssues;
         };
 
         // nlohmann silently keeps the last repeated key; this reports them.
         class DuplicateKeyTracker
         {
-        public:
-            explicit DuplicateKeyTracker(Checker &checker) : mChecker(checker) {}
+          public:
+            explicit DuplicateKeyTracker(Checker &checker) : mChecker(checker)
+            {
+            }
 
             std::string CurrentPath() const
             {
@@ -126,7 +139,7 @@ namespace mir::terrainbake
                 return true;
             }
 
-        private:
+          private:
             struct Level
             {
                 std::string key;
@@ -140,7 +153,7 @@ namespace mir::terrainbake
         // A missing or mistyped object is reported once; its fields then read as absent.
         class ObjectReader
         {
-        public:
+          public:
             ObjectReader(Checker &checker, const Json *object, std::string path,
                          std::initializer_list<std::string_view> keys)
                 : mChecker(checker), mPath(std::move(path))
@@ -158,7 +171,10 @@ namespace mir::terrainbake
                         mChecker.Add(Path(key), "unknown field (value " + Describe(value) + ")");
             }
 
-            std::string Path(std::string_view key) const { return JoinPath(mPath, key); }
+            std::string Path(std::string_view key) const
+            {
+                return JoinPath(mPath, key);
+            }
 
             const Json *Field(std::string_view key) const
             {
@@ -284,7 +300,7 @@ namespace mir::terrainbake
                 return value->get<std::string>();
             }
 
-        private:
+          private:
             Checker &mChecker;
             const Json *mObject = nullptr;
             std::string mPath;
@@ -296,8 +312,14 @@ namespace mir::terrainbake
             std::optional<double> wavelength;
             std::optional<int64_t> octaves;
 
-            bool Valid() const { return amplitude && wavelength && octaves; }
-            NoiseTerm Term() const { return {*amplitude, *wavelength, static_cast<int32_t>(*octaves)}; }
+            bool Valid() const
+            {
+                return amplitude && wavelength && octaves;
+            }
+            NoiseTerm Term() const
+            {
+                return {*amplitude, *wavelength, static_cast<int32_t>(*octaves)};
+            }
         };
 
         TermResult ReadTerm(const ObjectReader &parameters, std::string_view name)
@@ -347,8 +369,11 @@ namespace mir::terrainbake
         DuplicateKeyTracker duplicates(checker);
         try
         {
-            root = Json::parse(text, [&duplicates](int, Json::parse_event_t event, Json &parsed)
-                               { return duplicates.OnEvent(event, parsed); });
+            root = Json::parse(text,
+                               [&duplicates](int, Json::parse_event_t event, Json &parsed)
+                               {
+                                   return duplicates.OnEvent(event, parsed);
+                               });
         }
         catch (const Json::exception &error)
         {
@@ -357,25 +382,28 @@ namespace mir::terrainbake
             return {std::nullopt, checker.Take()};
         }
 
-        const ObjectReader top(checker, &root, "", {"recipeVersion", "generator", "seed", "layout", "parameters"});
+        const ObjectReader top(checker, &root, "",
+                               {"recipeVersion", "generator", "seed", "layout", "parameters", "precision"});
 
-        const std::optional<int64_t> recipeVersion = top.Integer("recipeVersion", 0, std::numeric_limits<uint32_t>::max());
-        if (recipeVersion && *recipeVersion != kTerrainRecipeVersion)
+        const std::optional<int64_t> recipeVersion =
+            top.Integer("recipeVersion", 0, std::numeric_limits<uint32_t>::max());
+        if (recipeVersion && *recipeVersion != 1 && *recipeVersion != kTerrainRecipeVersion)
             checker.Add("recipeVersion", "unsupported recipe version " + std::to_string(*recipeVersion) +
-                                             " (supported: " + std::to_string(kTerrainRecipeVersion) + ")");
+                                             " (supported: 1, " + std::to_string(kTerrainRecipeVersion) + ")");
 
         const ObjectReader generator = top.Object("generator", {"id", "version"});
         const std::optional<std::string> generatorId = generator.String("id");
         const std::optional<int64_t> generatorVersion =
             generator.Integer("version", 0, std::numeric_limits<uint32_t>::max());
+        const uint32_t expectedGenerator = recipeVersion && *recipeVersion == 1 ? 1 : kReliefGeneratorVersion;
         bool generatorSupported = false;
         if (generatorId && *generatorId != kReliefGeneratorId)
             checker.Add("generator.id", "unsupported generator \"" + *generatorId + "\" (supported: \"" +
                                             std::string(kReliefGeneratorId) + "\")");
-        else if (generatorId && generatorVersion && *generatorVersion != kReliefGeneratorVersion)
+        else if (generatorId && generatorVersion && *generatorVersion != expectedGenerator)
             checker.Add("generator.version", "unsupported version " + std::to_string(*generatorVersion) + " of \"" +
-                                                  std::string(kReliefGeneratorId) + "\" (supported: " +
-                                                  std::to_string(kReliefGeneratorVersion) + ")");
+                                                 std::string(kReliefGeneratorId) +
+                                                 "\" (supported: " + std::to_string(expectedGenerator) + ")");
         else
             generatorSupported = generatorId && generatorVersion;
 
@@ -388,8 +416,7 @@ namespace mir::terrainbake
             checker.Add("layout.sampleSpacing", FormatNumber(*spacing) + " m must be greater than 0");
             spacing.reset();
         }
-        const std::optional<int64_t> intervals =
-            layoutReader.Integer("intervalsPerTile", 1, kMaxTerrainTileIntervals);
+        const std::optional<int64_t> intervals = layoutReader.Integer("intervalsPerTile", 1, kMaxTerrainTileIntervals);
         const ObjectReader boundsReader = layoutReader.Object("bounds", {"minX", "minZ", "maxX", "maxZ"});
         const std::optional<double> minX = boundsReader.FiniteNumber("minX");
         const std::optional<double> minZ = boundsReader.FiniteNumber("minZ");
@@ -398,12 +425,14 @@ namespace mir::terrainbake
         bool boundsValid = minX && minZ && maxX && maxZ;
         if (minX && maxX && !(*minX < *maxX))
         {
-            checker.Add("layout.bounds", "minX " + FormatNumber(*minX) + " must be less than maxX " + FormatNumber(*maxX));
+            checker.Add("layout.bounds",
+                        "minX " + FormatNumber(*minX) + " must be less than maxX " + FormatNumber(*maxX));
             boundsValid = false;
         }
         if (minZ && maxZ && !(*minZ < *maxZ))
         {
-            checker.Add("layout.bounds", "minZ " + FormatNumber(*minZ) + " must be less than maxZ " + FormatNumber(*maxZ));
+            checker.Add("layout.bounds",
+                        "minZ " + FormatNumber(*minZ) + " must be less than maxZ " + FormatNumber(*maxZ));
             boundsValid = false;
         }
         std::optional<TerrainLayout> layout;
@@ -415,18 +444,94 @@ namespace mir::terrainbake
                                       "leave int32, or the spacing is below 2^16 ulps of the largest coordinate");
             else
             {
-                // Counted over whole tiles, padding included: what a bake holds, and never fewer than the
-                // height field reads, so a recipe that passes here also loads.
-                const TileRange tiles = layout->Tiles();
-                const int64_t n = layout->IntervalsPerTile();
-                const int64_t samplesX = (int64_t(tiles.max.x) - tiles.min.x + 1) * n + 1;
-                const int64_t samplesZ = (int64_t(tiles.max.z) - tiles.min.z + 1) * n + 1;
-                if (samplesX > kMaxTerrainSamplesPerSide || samplesZ > kMaxTerrainSamplesPerSide)
-                    checker.Add("layout.bounds", std::to_string(samplesX) + " x " + std::to_string(samplesZ) +
-                                                     " tile samples exceed " +
-                                                     std::to_string(kMaxTerrainSamplesPerSide) +
-                                                     " a side, the most one height field holds");
+                const TileRange range = layout->Tiles();
+                const uint64_t width = uint64_t(int64_t(range.max.x) - range.min.x + 1);
+                const uint64_t depth = uint64_t(int64_t(range.max.z) - range.min.z + 1);
+                if (width > UINT32_MAX / depth)
+                    checker.Add("layout.bounds", "tile count exceeds the format 2 source-record limit");
             }
+        }
+
+        std::optional<double> defaultSpacing;
+        std::vector<TerrainSourceRule> rules;
+        if (recipeVersion && *recipeVersion == 1)
+        {
+            if (root.is_object() && root.contains("precision"))
+                checker.Add("precision", "requires recipeVersion 2 and generator version 2");
+        }
+        else if (recipeVersion && *recipeVersion == kTerrainRecipeVersion)
+        {
+            const ObjectReader precision = top.Object("precision", {"defaultSpacing", "tiles"});
+            const Json *defaultValue = precision.Field("defaultSpacing");
+            if (defaultValue && !defaultValue->is_null())
+                defaultSpacing = precision.FiniteNumber("defaultSpacing");
+            const auto checkSpacing = [&](double value, const std::string &path)
+            {
+                if (!layout)
+                    return;
+                const double ratio = value / layout->SampleSpacing();
+                if (!std::isfinite(ratio) || ratio < 1.0 || ratio > layout->IntervalsPerTile() ||
+                    std::floor(ratio) != ratio || !std::has_single_bit(static_cast<uint64_t>(ratio)) ||
+                    layout->IntervalsPerTile() % static_cast<int64_t>(ratio) != 0 ||
+                    ratio * layout->SampleSpacing() != value)
+                {
+                    checker.Add(
+                        path,
+                        "spacing must be a power-of-two multiple of layout.sampleSpacing that divides intervalsPerTile");
+                    return;
+                }
+                const auto coarse =
+                    TerrainLayout::Create(value, layout->IntervalsPerTile() / int32_t(ratio), layout->Bounds());
+                if (!coarse || (value != layout->SampleSpacing() && !TerrainLayersNest(*layout, *coarse)))
+                    checker.Add(path, "source grid cannot preserve the reference tile boundaries and coordinate range");
+            };
+            if (defaultSpacing)
+                checkSpacing(*defaultSpacing, "precision.defaultSpacing");
+            std::set<std::pair<int32_t, int32_t>> assigned;
+            const Json *tiles = precision.Field("tiles");
+            if (tiles && !tiles->is_array())
+                checker.Add("precision.tiles", "expected an array");
+            else if (tiles)
+            {
+                for (size_t i = 0; i < tiles->size(); ++i)
+                {
+                    const std::string path = "precision.tiles[" + std::to_string(i) + "]";
+                    const ObjectReader rule(checker, &(*tiles)[i], path, {"x", "z", "spacing"});
+                    const auto x = rule.Integer("x", INT32_MIN, INT32_MAX);
+                    const auto z = rule.Integer("z", INT32_MIN, INT32_MAX);
+                    const auto value = rule.FiniteNumber("spacing");
+                    if (value)
+                        checkSpacing(*value, path + ".spacing");
+                    if (!x || !z)
+                        continue;
+                    const TileCoord tile{static_cast<int32_t>(*x), static_cast<int32_t>(*z)};
+                    if (!assigned.emplace(tile.z, tile.x).second)
+                        checker.Add(path, "duplicate tile assignment; overlapping source rules are forbidden");
+                    if (layout && !layout->Contains(tile))
+                        checker.Add(path, "tile is outside the map's tile range");
+                    if (value)
+                        rules.push_back({tile, *value});
+                }
+            }
+            if (layout && !defaultSpacing)
+            {
+                const TileRange range = layout->Tiles();
+                const uint64_t width = uint64_t(int64_t(range.max.x) - range.min.x + 1);
+                const uint64_t depth = uint64_t(int64_t(range.max.z) - range.min.z + 1);
+                const uint64_t covered = std::count_if(assigned.begin(), assigned.end(),
+                                                       [&](const auto &tile)
+                                                       {
+                                                           return layout->Contains({tile.second, tile.first});
+                                                       });
+                if (width > UINT64_MAX / depth || covered != width * depth)
+                    checker.Add("precision.tiles",
+                                "missing source assignments: null defaultSpacing requires complete tile coverage");
+            }
+            std::sort(rules.begin(), rules.end(),
+                      [](const auto &a, const auto &b)
+                      {
+                          return std::pair(a.tile.z, a.tile.x) < std::pair(b.tile.z, b.tile.x);
+                      });
         }
 
         // An unknown generator has no schema for its parameters.
@@ -463,14 +568,23 @@ namespace mir::terrainbake
             if (baseHeight && tiltX && tiltZ && broad.Valid() && ridges.Valid() && detail.Valid() && plainsHeight &&
                 plainsBlend)
             {
-                relief = ReliefParameters{*baseHeight,     *tiltX,         *tiltZ,      broad.Term(),
-                                          ridges.Term(),   detail.Term(),  *plainsHeight, *plainsBlend};
+                relief = ReliefParameters{*baseHeight,   *tiltX,        *tiltZ,        broad.Term(),
+                                          ridges.Term(), detail.Term(), *plainsHeight, *plainsBlend};
                 if (layout)
                 {
                     // The smooth floor adds at most blend / 4 above max(h, plains.height).
-                    const double reach = std::abs(*baseHeight) + std::abs(*tiltX) * SampleReach(*layout, false) +
-                                         std::abs(*tiltZ) * SampleReach(*layout, true) + broad.amplitude.value() +
-                                         ridges.amplitude.value() + detail.amplitude.value();
+                    double halo = 0.0;
+                    if (recipeVersion && *recipeVersion != 1)
+                    {
+                        double coarsest = defaultSpacing.value_or(*spacing);
+                        for (const auto &rule : rules)
+                            coarsest = std::max(coarsest, rule.spacing);
+                        halo = std::max(0.0, coarsest - *spacing);
+                    }
+                    const double reach = std::abs(*baseHeight) +
+                                         std::abs(*tiltX) * (SampleReach(*layout, false) + halo) +
+                                         std::abs(*tiltZ) * (SampleReach(*layout, true) + halo) +
+                                         broad.amplitude.value() + ridges.amplitude.value() + detail.amplitude.value();
                     const double bound = std::max(reach, std::abs(*plainsHeight)) + *plainsBlend * 0.25;
                     if (bound > kMaxHeightMagnitude)
                         checker.Add("parameters", "heights can reach +-" + FormatNumber(bound) +
@@ -482,9 +596,80 @@ namespace mir::terrainbake
 
         if (!checker.Clean() || !layout || !relief || !seed)
             return {std::nullopt, checker.Take()};
-        return {TerrainRecipe{kTerrainRecipeVersion, *generatorId, static_cast<uint32_t>(*generatorVersion), *seed,
-                              *layout, *relief},
+        return {TerrainRecipe{static_cast<uint32_t>(*recipeVersion), *generatorId,
+                              static_cast<uint32_t>(*generatorVersion), *seed, *layout, *relief, defaultSpacing,
+                              std::move(rules)},
                 {}};
+    }
+
+    std::optional<double> TerrainRecipe::SourceSpacing(TileCoord tile) const
+    {
+        if (!layout.Contains(tile))
+            return std::nullopt;
+        if (recipeVersion == 1)
+            return layout.SampleSpacing();
+        const auto it = std::lower_bound(sourceRules.begin(), sourceRules.end(), std::pair(tile.z, tile.x),
+                                         [](const auto &rule, const auto &key)
+                                         {
+                                             return std::pair(rule.tile.z, rule.tile.x) < key;
+                                         });
+        if (it != sourceRules.end() && it->tile == tile)
+            return it->spacing;
+        return defaultSpacing;
+    }
+
+    std::optional<TerrainLayout> TerrainRecipe::SourceLayout(TileCoord tile) const
+    {
+        const auto spacing = SourceSpacing(tile);
+        return spacing ? TerrainLayout::Create(*spacing,
+                                               layout.IntervalsPerTile() / int32_t(*spacing / layout.SampleSpacing()),
+                                               layout.Bounds())
+                       : std::nullopt;
+    }
+
+    std::vector<TerrainLayout> TerrainRecipe::SourceLayers() const
+    {
+        std::set<double> spacings{layout.SampleSpacing()};
+        if (recipeVersion != 1)
+        {
+            if (defaultSpacing)
+                spacings.insert(*defaultSpacing);
+            for (const auto &rule : sourceRules)
+                spacings.insert(rule.spacing);
+        }
+        std::vector<TerrainLayout> layers;
+        for (double spacing : spacings)
+            layers.push_back(*TerrainLayout::Create(
+                spacing, layout.IntervalsPerTile() / int32_t(spacing / layout.SampleSpacing()), layout.Bounds()));
+        return layers;
+    }
+
+    std::vector<TerrainSourceEstimate> TerrainRecipe::SourceEstimates() const
+    {
+        const TileRange range = layout.Tiles();
+        const uint64_t count =
+            uint64_t(int64_t(range.max.x) - range.min.x + 1) * uint64_t(int64_t(range.max.z) - range.min.z + 1);
+        std::map<double, uint64_t> counts;
+        if (recipeVersion == 1)
+            counts[layout.SampleSpacing()] = count;
+        else
+        {
+            if (defaultSpacing)
+                counts[*defaultSpacing] = count - sourceRules.size();
+            for (const auto &rule : sourceRules)
+                ++counts[rule.spacing];
+        }
+        std::vector<TerrainSourceEstimate> estimates;
+        for (const auto &[spacing, tiles] : counts)
+        {
+            if (tiles == 0)
+                continue;
+            const uint64_t ratio = uint64_t(spacing / layout.SampleSpacing());
+            const uint64_t side = uint64_t(layout.IntervalsPerTile()) / ratio + 1;
+            const uint64_t samples = side * side;
+            estimates.push_back({spacing, tiles, samples, tiles * samples * sizeof(float)});
+        }
+        return estimates;
     }
 
     RecipeParseResult LoadTerrainRecipe(const std::filesystem::path &path)
@@ -500,7 +685,7 @@ namespace mir::terrainbake
         const TerrainLayout &layout = recipe.layout;
         const ReliefParameters &relief = recipe.relief;
         std::map<std::string, std::string> fields;
-        fields["canonicalVersion"] = std::to_string(kRecipeCanonicalVersion);
+        fields["canonicalVersion"] = std::to_string(recipe.recipeVersion == 1 ? 1 : kRecipeCanonicalVersion);
         fields["recipeVersion"] = std::to_string(recipe.recipeVersion);
         fields["generator.id"] = recipe.generatorId;
         fields["generator.version"] = std::to_string(recipe.generatorVersion);
@@ -525,6 +710,19 @@ namespace mir::terrainbake
         }
         fields["parameters.plains.height"] = Bits(relief.plainsHeight);
         fields["parameters.plains.blend"] = Bits(relief.plainsBlend);
+
+        if (recipe.recipeVersion != 1)
+        {
+            fields["derivatives.version"] = "1";
+            fields["derivatives.maxSpacing"] = Bits(8.0);
+            fields["finalSeams.version"] = std::to_string(kTerrainSeamVersion);
+            fields["finalSeams.bandMultiplier"] = Bits(kTerrainSeamBandMultiplier);
+            fields["finalSeams.weight"] = "smoothstep";
+            fields["precision.defaultSpacing"] = recipe.defaultSpacing ? Bits(*recipe.defaultSpacing) : "none";
+            for (const auto &rule : recipe.sourceRules)
+                fields["precision.tile." + std::to_string(rule.tile.z) + "." + std::to_string(rule.tile.x)] =
+                    Bits(rule.spacing);
+        }
 
         std::string text;
         for (const auto &[key, value] : fields)

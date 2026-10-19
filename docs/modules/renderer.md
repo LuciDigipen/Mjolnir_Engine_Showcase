@@ -19,16 +19,22 @@ subsystem holds a pointer to the facade or to another subsystem.
 | Subsystem | Owns |
 |---|---|
 | `Device` | instance, debug messenger, surface, physical and logical device, queue, VMA allocator, cached device properties |
-| `Swapchain` | swapchain images and views, one depth image per frame in flight, render-complete semaphores, acquire and present |
+| `Swapchain` | swapchain images and views, one depth image and one HDR color image per frame in flight, render-complete semaphores, acquire and present |
 | `FrameSync` | command pools and buffers, image-acquired semaphores, the frame timeline with `kFramesInFlight = 2` |
 | `ResourceStore` | meshes, textures, samplers and the three built-in textures (white, flat normal, error magenta), behind slot/generation handles |
 | `MaterialStore` | materials and their pipelines, set 0, the pipeline layout every material shares, the sky pipeline |
 | `CameraBuffer` | set 1: per-view camera data and light list, plus the directional light, ambient, fog and atmosphere |
 | `ModelDescriptors` | set 2: per-draw model data, reset each frame |
 | `ShadowMaps` | set 3: Sun, spot and point shadow maps, their pipelines and casters |
-| `RayTracer` | a BLAS per mesh slot, a TLAS per frame, the RT pipeline, SBT and output images |
+| `RayTracer` | a BLAS per mesh slot, a TLAS per frame, the RT pipeline, SBT and output images, plus linear-distance and per-pixel velocity output images alongside color |
+| `DepthOfField` | the CoC, near/far blur and composite pipelines and their half/full-res working images - reads whatever linear-HDR color and depth/distance `DrawFrame`/`TraceFrame` hand it; its output becomes what `MotionBlur`, `Bloom` and `PostProcess` read from there on |
+| `VelocityPass` | raster-only: a second, depth-equal (no write) walk of the same `DrawItem`s the Scene Pass just drew, through `velocity.slang`, into its own per-pixel velocity image - the same shape as `ShadowMaps`' depth-only pass, not a screen-space one |
+| `MotionBlur` | the composite pipeline that samples color along whatever velocity buffer it's handed (`VelocityPass`'s output on raster, `RayTracer`'s `gVelocity` on ray tracing) - reads `DepthOfField`'s result when enabled, ahead of `Bloom` |
+| `Bloom` | the bright-pass extract, downsample and additive-upsample pipelines and mip chain - reads whatever linear-HDR source `DrawFrame`/`TraceFrame` hand it (`DepthOfField`'s or `MotionBlur`'s result when enabled), ahead of `PostProcess` |
+| `PostProcess` | the tonemap pipeline and per-frame descriptor sets - the one shared post-process hook point both `DrawFrame` and `TraceFrame` sample their scene color (and `Bloom`'s result) through; the same `tonemap.slang` pass also carries the film look (contrast, saturation, vignette, animated grain), applied after the tonemap itself |
 | `FrameCapture` | the `CaptureNextFrame` buffer and the PNG it writes |
 | `ImGuiOverlay` | ImGui's Vulkan backend and the draw data it overlays |
+| `MeshUploader` | the persistent staging ring, queued mesh uploads and their BLAS builds, and retired GPU objects until their last frame (#127) |
 
 The facade's own code is `VulkanRenderer.cpp`, which holds initialize, shutdown,
 the resource calls and the setters, and `VulkanRendererFrame.cpp`, which holds the
@@ -37,7 +43,9 @@ pass reads six subsystems at once.
 
 A frame starts in `BeginFrame`. It recreates the swapchain when the window
 changed size, or when `RequestSwapchainRecreate` asked for it, then `FrameSync::Begin` waits for the frame slot, acquires an image
-and begins the command buffer. `DrawFrame` records the shadow passes, then each
+and begins the command buffer. `MeshUploader` then marks the queued meshes of
+completed frames Ready, frees retired objects whose last frame completed, and
+records this frame's mesh copies and BLAS builds. `DrawFrame` records the shadow passes, then each
 view, then the ImGui overlay and any capture, and `FrameSync::End` submits and
 presents. `TraceFrame` goes through the same `BeginFrame` and `End`, with
 `RayTracer::Record` and a blit to the swapchain image in between.
@@ -54,6 +62,16 @@ one view-projection matrix scaled to that viewport's own rect, builds one
 `DrawItem` per `(WorldTransform, MeshRenderer)` pair, and packages the result as
 a `RenderView`. All of a frame's `RenderView`s go to `VulkanRenderer::DrawFrame`
 together.
+
+Some draws depend on the viewport: terrain picks its level of detail per
+camera. Such a producer is an `IViewDrawSource` registered in the
+`ViewDrawSources` World resource (`renderer/ViewDrawSource.h`). `RenderSystem`
+resolves every viewport's camera first and hands the list (`ViewCamera`: the
+viewport id, pose, lens, pixel extent and camera-relative view-projection) to
+each source's `Prepare`, then adds `AppendViewDraws(view)` to that view's world
+draws, and for the sun, spot and point shadow passes adds
+`AppendVolumeDraws(0, origin, viewProj)`: the source's draws inside that pass's
+volume at the primary view's detail (#125).
 
 `VulkanRenderer` draws every `RenderView` inside one render pass, swapping only the viewport/scissor rect between them (`RecordView`). This is split-screen-style clipping
 within the one swapchain image, not separate offscreen render targets.
@@ -88,6 +106,14 @@ bool DestroyMaterial(MaterialHandle handle); // same contract; always false on t
 MaterialHandle ErrorMaterial() const;        // solid magenta, for a caller whose CreateMaterial failed
 void ReleaseSceneResources();                // every mesh, material and texture but the built-ins
 
+// Asynchronous meshes (#127): no call waits on the GPU
+bool ConfigureMeshStreaming(const MeshStreamingDesc &desc);  // staging ring and per-frame bytes, from the caller's data
+MeshHandle QueueMesh(std::vector<Vertex> vertices, std::vector<uint32_t> indices, const MeshUploadOptions &options);
+MeshUploadState MeshState(MeshHandle handle) const;          // Stale, Pending, Uploading, Ready or Failed
+bool RetireMesh(MeshHandle handle);                          // stale at once, freed after its last frame
+uint64_t MeshFootprint(uint32_t vertexCount, uint32_t indexCount, const MeshUploadOptions &options) const;
+MeshStreamingStats MeshStreaming() const;                    // queue, uploads, retirement, idle waits, skipped draws
+
 void DrawFrame(std::span<const RenderView> views);
 void TraceFrame(std::span<const RenderView> views);  // opt-in RT path alongside DrawFrame - see Rules
 bool RayTracingSupported() const;                     // detected once at device selection, never a rejection reason
@@ -95,6 +121,11 @@ void SetClearColor(const glm::vec4 &color);
 void SetDirectionalLight(const glm::vec3 &direction, const glm::vec3 &color); // direction points *toward* the light
 void SetAmbientColor(const glm::vec3 &color);
 void SetFog(const glm::vec3 &color, float density);          // density <= 0 disables fog
+void SetTonemap(float exposure, int tonemapOperator);         // tonemapOperator matches TonemapOperator in HdrEffect.h
+void SetBloom(bool enabled, float threshold, float intensity, float radius); // enabled false skips the GPU chain
+void SetDepthOfField(bool enabled, float focusDistance, float aperture, float maxBlur); // enabled false skips the GPU chain
+void SetFilm(bool enabled, float grain, float contrast, float saturation, float vignetteStrength, float vignetteRadius); // enabled false neutralizes it
+void SetMotionBlur(bool enabled, float shutterStrength, uint32_t sampleCount); // enabled false skips the GPU chain
 void SetImGuiDrawData(ImDrawData *drawData);
 VkExtent2D SwapchainExtent() const; 
 
@@ -116,7 +147,9 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | Type | Header | Role |
 |---|---|---|
 | `Vertex`, `MeshHandle` | `renderer/Mesh.h` | `{pos, color, normal}`; a `{index, generation}` handle |
-| `TerrainDrawItems` | `renderer/VulkanRenderer.h` | World resource of entity-free terrain `WorldDrawItem`s, merged after `ModelDrawItems`; filled and emptied by app's terrain glue, not per frame |
+| `MeshStreamingDesc`, `MeshUploadOptions`, `MeshUploadState`, `MeshStreamingStats` | `renderer/MeshStreaming.h` | the staging ring and per-frame byte budget; whether a queued mesh gets a BLAS; where a queued mesh is; the counters (bytes queued, uploading and retiring, idle waits, skipped draws, highest generation) |
+| `StagingRing`, `MeshUploadQueue`, `FrameRetireList` | `renderer/MeshStreaming.h` | the CPU bookkeeping behind them, tested without a device: ring space by frame, admission under the frame budget, objects kept until their last frame completes |
+| `ViewDrawSources`, `IViewDrawSource`, `ViewCamera` | `renderer/ViewDrawSource.h` | World resource of producers whose draws depend on the viewport (app's terrain): `Prepare` with every viewport's camera, then `AppendViewDraws` per view and `AppendVolumeDraws` per shadow volume at a view's detail |
 | `TextureDesc`, `TextureHandle` | `renderer/Texture.h` | `{width, height, pixels, srgb}`, tightly-packed RGBA8; `kNullTexture` falls back to a default in `CreateMaterial` |
 | `MaterialDesc`, `MaterialHandle` | `renderer/Material.h` | `{shaderName, cullMode, polygonMode, baseColorTexture, normalTexture}`; `kNullMaterial` means the default |
 | `DrawItem` | `renderer/Renderer.h` | `{mesh, model, normalMatrix, tint, material}` — `model` is the world transform, not premultiplied by any camera |
@@ -180,20 +213,52 @@ BLAS. The scratch buffer outlives `BuildBLAS` because the command buffer has
 not been submitted when `BuildBLAS` returns, so `BuildMeshBlas` frees it after
 the submit and wait.
 
-**Terrain tiles are traced like any other mesh.** Each tile gets its own BLAS
-and one TLAS instance per frame, so the project's `rayTracing` setting alone
-(with device support and a single view) picks the path, terrain or not.
+**A queued mesh never waits: it uploads at the start of a frame and is Ready
+once that frame completes (#127).** `QueueMesh` reserves a slot (state
+Pending, no buffers) and keeps the vertex and index vectors. At the start of
+each recorded frame, after `FrameSync::Begin`'s wait, `MeshUploader` takes
+queued meshes in order while they fit `MeshStreamingDesc::frameBytes` (vertex
+and index bytes plus the acceleration structure, the first mesh of a frame
+even past it) and the persistent staging ring, creates their buffers, copies
+through the ring (a mesh larger than the ring gets a staging buffer of its
+own), builds a BLAS when `MeshUploadOptions::rayTracing` asks and the device
+supports it (all of the frame's builds in one call after one copy-to-build
+barrier, on one shared scratch buffer, `RayTracer::RecordMeshBlases`), and ends
+with one barrier so later commands on the one queue read the copies and the
+BLAS. The mesh is Uploading with that frame's
+timeline value and becomes Ready when a later frame start sees the timeline
+past it; ring space comes back at the same time. `FindMesh` returns Ready
+meshes only, so draws, shadow passes and the TLAS skip anything else, and a
+skipped non-null handle counts in `MeshStreamingStats::skippedDraws`.
+`RetireMesh` takes the buffers and BLAS out of the slot and moves its
+generation on at once; the objects are freed when the timeline passes the
+last frame issued at the time of the call (`FrameSync::LastIssuedValue`), and
+a mesh still Pending is dropped from the queue. `MeshStreamingStats` counts
+queued, uploading and retiring bytes, and every `vkDeviceWaitIdle` and
+`vkQueueWaitIdle`, which all go through `Device::WaitIdle` and
+`WaitQueueIdle`. `CreateMesh` and `DestroyMesh` keep their synchronous
+behaviour, BLAS included.
+
+**Terrain tiles are traced like any other mesh.** Each drawn unit (a tile at
+a LOD or a Region) gets its own BLAS and one TLAS instance per frame, so the
+project's `rayTracing` setting alone (with device support and a single view)
+picks the path, terrain or not; a traced frame holds that single view's
+terrain selection. Terrain meshes are queued with a BLAS only while the
+project's `rayTracing` is on, so a raster-only project builds none, even on a
+device that could.
 `RayTracer::kMaxInstances` is 16384 because one 4096 m chunk is already 256 tiles. Two
 limits stay open: a tile edge is shared by two instances, and ray/instance
 intersection is not watertight across them, so a seam may leak a rare pixel
-that raster's `translationGrid` closes; and BLAS memory (not yet measured)
-counts against the terrain residency budget.
+that raster's `translationGrid` closes; BLAS bytes count against terrain's
+GPU budget (#127).
 
-**`TerrainDrawItems` persists; `ModelDrawItems` does not.** Both are World
-resources of entity-free `WorldDrawItem`s that `RenderSystem` appends after the
-`MeshRenderer` query. `ModelSystem` rebuilds the model list every frame; the
-terrain list is filled once by app's terrain glue and emptied by it before the
-meshes are freed, since terrain does not move.
+**`ModelDrawItems` is one list; view draw sources answer per view.**
+`ModelSystem` rebuilds the model list every frame, and `RenderSystem` appends
+it after the `MeshRenderer` query for every view. A `ViewDrawSources` producer
+(app's terrain) answers each view and each shadow volume separately, after
+`Prepare` has seen every camera of the frame, so two viewports may draw the
+same ground at different detail. A source stays registered while it lives and
+removes itself before it dies.
 
 **A `translationGrid` makes separate draws meet bit for bit.** Plain
 narrowing rounds each draw's camera-relative translation to float on its own,
@@ -424,13 +489,15 @@ it instead of null, so the failure shows as magenta rather than as white.
 **`ReleaseSceneResources` is all or nothing, and the caller vouches for the
 handles.** It waits for the device to go idle, destroys every mesh, every
 material except the default and error materials, and every texture except the
-three built-ins. The next `CreateMesh` reuses index 0. The next
+three built-ins, and drops every queued, uploading and retired mesh. The next
+`CreateMesh` reuses index 0. The next
 `CreateMaterial` reuses index 2, since the default and error materials keep 0
 and 1. The next `CreateTexture` reuses index 3, since the built-in textures
-keep 0 to 2. Mesh and texture
-generations are not bumped, so a handle kept across the call names whatever is
-created next in its slot, with no error. `App` calls it only right after
-unloading a scene, when no `MeshRenderer` is left.
+keep 0 to 2. Every mesh slot's generation moves on (#127), so a mesh handle
+kept across the call misses instead of naming the next mesh in its slot;
+texture generations are not bumped, so a texture handle kept across the call
+names whatever is created next in its slot, with no error. `App` calls it only
+right after unloading a scene, when no `MeshRenderer` is left.
 
 **`DestroyMesh`/`DestroyMaterial` free one handle at a time, unlike
 `ReleaseSceneResources`, and unlike it they *do* bump the slot's generation**
@@ -514,7 +581,11 @@ back to the World's default camera in Play.
 `Renderer.h` is still an empty abstraction placeholder, so `App` names
 `VulkanRenderer` directly.
 
-No tests. Everything here needs a device, and the module is verified by running.
+`engine_renderer_tests` covers the parts that need no device: camera math,
+render settings, view submission and the asynchronous mesh bookkeeping
+(`MeshStreaming`: staging ring, frame budget, cancellation, retirement by frame).
+Everything that needs a device is verified by the smoke tests and
+`TerrainRenderProbe`.
 
 ## Backlog
 
@@ -581,6 +652,286 @@ No tests. Everything here needs a device, and the module is verified by running.
 
 ## Changed
 
+*2026-10-19* — **Motion blur (#212).** Was: no per-pixel velocity existed on
+either pipeline, so there was nothing to blur along. Now: a velocity buffer
+drives a single shared composite, `MotionBlur` (`vulkan/MotionBlur.h`,
+`assets/shaders/motionBlur.slang`), the same hand-off shape `DepthOfField`
+already uses - it reads whatever color and velocity that frame's caller hands
+it and becomes the new `colorSource` ahead of `Bloom`. Producing a true
+per-object velocity (not just a depth-reconstructed camera one, which would
+silently miss every moving object) took a different shape on each pipeline.
+Raster: a new `VelocityPass` subsystem re-walks the exact same `DrawItem`s the
+Scene Pass just drew, depth-tested `EQUAL`/no-write against the depth buffer
+already resolved (so only the fragment that actually won depth there
+contributes), through a dedicated `velocity.slang` - the same shape as
+`ShadowMaps`' depth-only pass, not a screen-space one. Its push constants
+carry only `model`/`prevModel` (128 bytes, Vulkan's guaranteed minimum,
+unchanged from before); `viewProj`/`prevViewProj` ride along in `CameraBuffer`'s
+existing per-view UBO instead, which `VelocityPass` binds directly - no other
+material shader needed to change. Ray traced: `RayTracer` gained a `gVelocity`
+storage image (same `gDistance` pattern DoF added) and `RtInstanceInfo` gained
+a `prevModel`; `closestHitMain` reprojects the object-space hit position
+through it to get the previous clip position, alongside the current one it
+already computes, entirely inside the existing hit shader. Both reduce to the
+same formula: `currentClip - previousClip`, where both model matrices are
+narrowed against *this* frame's camera (not each one's own), so a still
+object under a still camera comes out to exactly zero - camera panning and
+object motion both fall out of the one formula instead of needing separate
+code paths. The one new piece of state this needed and didn't have:
+`DrawItem`/`WorldDrawItem` gained `previousPose`/`previousModel`;
+`RenderSystem` and `ModelSystem` each keep a double-buffered
+`unordered_map<PackEntity(entity), WorldPose>` (swapped every frame, so an
+entity that disappears drops out for free) and set it per draw. A camera
+whose own matrix has no history yet (a brand new viewport) or an object whose
+history no longer fits float both fall back to the current value - zero
+velocity rather than a pop, the same "new = stationary" rule used throughout.
+`MotionBlurEffect.h`/`.cpp`, registered the same way as the other three, is
+`{shutterStrength=0.5, sampleCount=8}`; **the default is disabled**.
+`RenderSystem::OnUpdate` reads it and calls the new
+`VulkanRenderer::SetMotionBlur(enabled, shutterStrength, sampleCount)`.
+Because: issue #212 - blur pixels along their motion for the frame, camera
+and object, in both pipelines, adjustable from the Post-Processing panel.
+
+*2026-10-19* — **Film look: grain, contrast, saturation, vignette (#213).**
+Was: #207's Post-Processing panel named this grouping but nothing implemented
+it. Now: no new subsystem, no new working images - `PostProcess` is already
+*the* single hook point both `DrawFrame` and `TraceFrame` funnel their scene
+color through right after tonemapping, so the film look is pure math appended
+to `tonemap.slang`'s `fragmentMain`, in order: contrast (pivoted around 0.5),
+saturation (lerp toward luma), vignette (the cheap `uv*(1-uv)` parabola,
+raised to `vignetteRadius` and blended in by `vignetteStrength`, so strength=0
+is a no-op regardless of radius), then animated grain last, added on top of
+the graded, vignetted image like a sensor artifact rather than a static
+overlay. Grain's "varies over time" requirement ruled out a static noise
+texture or a per-pixel-only hash; the renderer has no engine-wide clock
+reaching this deep, so `vk::PostProcess` grew its own `mGrainFrame` counter,
+incremented once per `Record()` call (called exactly once per rendered frame
+regardless of which pipeline drew it) and pushed down as a `sin`/`dot` hash
+seed - cheap, self-contained, no new resource needed. `FilmEffect.h`/`.cpp`,
+registered into `PostEffectRegistry` as `"Film"` the same way the other four
+register, is `{grain=0, contrast=1, saturation=1, vignetteStrength=0,
+vignetteRadius=1}` - unlike Bloom/DoF's "on-like" defaults, every Film field
+defaults to a literal no-op so leaving it enabled with untouched sliders
+changes nothing (acceptance criterion, not incidental). `RenderSystem::OnUpdate`
+reads it the same way as the other effects and calls the new
+`VulkanRenderer::SetFilm(enabled, grain, contrast, saturation,
+vignetteStrength, vignetteRadius)`, which forces grain/contrast/saturation/
+vignetteStrength back to neutral when disabled (same trick `SetBloom` uses
+for intensity) rather than threading a separate enabled flag into the shader.
+Because: issue #213 - grain, contrast, saturation and vignette, adjustable
+from the panel, animated grain, neutral by default, after the tonemap, in
+both pipelines.
+
+*2026-10-18* — **Depth of field (#209).** Was: no screen-space DoF existed,
+and ray tracing had no depth output at all to build one from. Now: a new
+`vk::DepthOfField` subsystem (`vulkan/DepthOfField.h`, `assets/shaders/depthOfField.slang`)
+runs a half-res CoC pass, separate near/far gather blurs and a full-res
+composite, reading whatever linear-HDR color and depth/distance that frame's
+caller hands it - the same hand-off shape Bloom and `PostProcess` already
+use. Its output then *becomes* what Bloom and `PostProcess` read as the scene
+color from there on - one swap point (`colorSource` in both `RecordCommands`
+and `RecordRtFrame`) gets bloom highlights blurring correctly with DoF for
+free, no Bloom-specific plumbing. Getting a comparable depth source on both
+pipelines took real work: raster already had `Swapchain::DepthView`, but nothing
+sampled it before now, so `CreateDepthResources` gained `VK_IMAGE_USAGE_SAMPLED_BIT`
+and a format-support check for it; ray tracing had no depth output of any kind -
+`RayPayload` gained a `distance` field (`closestHitMain` sets it to
+`RayTCurrent()`, a miss leaves the far-plane default `rayGenMain` seeded it
+with), written to a new `gDistance` storage image with its own
+`mDistanceImages`/views in `RayTracer`, cleared to a far sentinel (not black -
+see Bloom's own RT-garbage fix, above) before every trace for the same
+sub-rect reason. One shader, `LinearizeDepth`, handles both: raster's
+reverse-Z buffer via the near/far branch derived from `CameraMath`'s own
+projection (`viewDist = n·f / (n + d·(f−n))`, or `n/d` with no far plane), ray
+tracing's distance passed straight through. The near and far layers are kept
+separate deliberately: acceptance criteria rule out both failure modes a
+single-layer gather would hit - the near layer gathers at a *fixed* radius
+(correct foreground bokeh spreading over a sharp subject) with each tap
+weighted by its own CoC and its coverage mask falling out of that same
+weighted average (smooth by construction, so no hard-edged halo); the far
+layer gathers at a radius scaled by the center pixel's own CoC, each tap
+additionally weighted by whether *its own* CoC can reach back to the center,
+which is what keeps a sharp foreground edge from bleeding into the blurred
+background behind it. `DepthOfFieldEffect.h`/`.cpp`, registered into
+`PostEffectRegistry` as `"DepthOfField"` the same way the other three
+register, is `{focusDistance=10, aperture=0.1, maxBlur=16}`; **the default is
+disabled**, same reasoning as HDR's and Bloom's. `RenderSystem::OnUpdate`
+reads it the same way and calls the new
+`VulkanRenderer::SetDepthOfField(enabled, focusDistance, aperture, maxBlur)`.
+One real implementation trap worth recording: GLM's `vec2` asks for only
+4-byte alignment, but slang's push constant blocks give a `vec2` member
+8-byte *base* alignment - a struct mixing a lone leading scalar with a `vec2`
+(`DepthOfFieldBlurPushConstants`) silently disagreed on that member's byte
+*offset* between C++ and the shader, not just the block's total size (which
+is the only thing `vkCreateGraphicsPipelines`'s validation actually catches).
+Found it by bisecting with a solid-color debug return in the composite shader
+until the whole screen showed it uniformly, rather than trusting "no
+validation errors" as proof of a correct layout. Because: issue #209 - blur
+what the camera isn't focused on, adjustable from the Post-Processing panel,
+in both pipelines, without a foreground halo or a bled focus edge.
+
+*2026-10-18* — **Bloom (#208).** Was: no screen-space bloom existed; the
+panel had nothing to toggle for it. Now: a new `vk::Bloom` subsystem
+(`vulkan/Bloom.h`) owns a `kBloomMipLevels`-deep (6) mip chain per frame in
+flight and reads whichever linear-HDR source that frame's caller hands it -
+`Swapchain::HdrColorView` for `RecordCommands`, `RayTracer::OutputView` for
+`RecordRtFrame` - the same hand-off `PostProcess` itself uses (see #211's
+note, above), called right before it each frame. Its `Record` runs a
+bright-pass extract with a soft knee around the threshold (so a bright edge
+crossing it under motion fades instead of flickering on and off), a
+downsample chain (hardware-bilinear 4-tap box filtering each half-res step,
+`assets/shaders/bloom.slang`) and an additive upsample chain back up (tent
+filtering, `Radius` scaling its tap offsets - the panel's one continuous
+blur-width knob) ending at mip 0, the frame's bloom texture. `PostProcess`
+gained a second sampled binding and a `bloomIntensity` push constant field;
+`tonemap.slang` adds `gBloom.Sample(uv) * bloomIntensity` to the HDR color
+before exposure/the operator, so bloom lives in the same linear space both
+already act on. Disabling bloom skips the whole chain for the frame
+(`VulkanRenderer::mBloomEnabled`) rather than just zeroing a result -
+`PostProcess::Record` still always samples mip 0 (intensity forced to 0 by
+`SetBloom`), which is why `Bloom::Initialize`/`Resize` transition the whole
+chain out of `UNDEFINED` once up front: a project with bloom off from frame
+one must never sample an image still sitting in `UNDEFINED`.
+`BloomEffect.h`/`.cpp`, registered into `PostEffectRegistry` as `"Bloom"`
+the same way `FogEffect`/`HdrEffect` register, is `{threshold=1, intensity=0.5,
+radius=1}`; **the default is disabled**, same reasoning as HDR's default.
+`RenderSystem::OnUpdate` reads it the same way it reads Fog/HDR and calls the
+new `VulkanRenderer::SetBloom(enabled, threshold, intensity, radius)`.
+Because: issue #208 - bright parts of the image should bleed light into
+their surroundings, adjustable from the Post-Processing panel, in both
+pipelines.
+
+*2026-10-18* — **HDR: a floating-point scene target and a shared tonemap
+pass, both pipelines (#211).** Was: raster wrote scene color straight into
+the swapchain's 8-bit UNORM/SRGB image (bright values clipped at the
+framebuffer, before anything could tonemap them), and ray tracing's output
+image was `R8G8B8A8_UNORM`, blitted onto the swapchain directly - no shared
+post-process hook point existed (see the note this entry replaces, from
+#207). Now: every scene pipeline (default/unlit/model/error materials, the
+sky) and ray tracing's output image are `vk::kHdrColorFormat`
+(`R16G16B16A16_SFLOAT`, a new `VulkanConstants.h` constant) - raster's own
+copy lives in `Swapchain` (`HdrColorImage`/`HdrColorView`, one per frame in
+flight, same resize cadence as its depth images); ray tracing's is its
+existing per-frame output image, just reformatted. A new subsystem,
+`vk::PostProcess` (`vulkan/PostProcess.h`), is the one shared hook point
+both funnel through: built once against the swapchain's own format (its
+target format never changes, so unlike the HDR images it samples it needs
+no `Resize`), it owns a fullscreen-triangle tonemap pipeline
+(`assets/shaders/tonemap.slang`) and rewrites a per-frame-in-flight
+descriptor to whichever HDR view that frame's caller hands it -
+`Swapchain::HdrColorView` for `RecordCommands`, `RayTracer::OutputView` for
+`RecordRtFrame` - right before binding it (safe: that frame-in-flight slot's
+prior submission has already finished, same guarantee `CameraBuffer`'s
+per-frame writes rely on). `RecordCommands` now runs two passes: the
+existing scene pass (same per-`RenderView` loop and sky draw, color
+attachment switched from the swapchain to the HDR target) and a second pass
+over the whole swapchain extent where `PostProcess::Record` samples it,
+applies exposure and the selected operator, and ImGui composites
+(`ImGuiOverlay::RecordInPass`) - same shared stage both paths now use.
+`RecordRtFrame` drops its manual whole-image clear + `vkCmdBlitImage`
+entirely: it opens the same kind of swapchain-targeting pass (`LOAD_OP_CLEAR`
+over the full extent, same "editor's other docked panels still see the
+clear color" guarantee the blit's pre-clear used to provide), sets
+viewport/scissor to the traced `rect` the same way raster's per-view scissor
+does, and calls `PostProcess::Record` there too - `ImGuiOverlay::RecordOver`
+is gone, its only caller. The tonemap fragment shader reads the destination
+pixel from `SV_Position` (always the absolute screen pixel, even when the
+ray traced path's viewport is a sub-rect) scaled by `1/extent`, rather than a
+vertex-interpolated UV, so one formula samples correctly whether the source
+image's valid content fills the whole frame (raster) or only a sub-rect
+written at an offset (`RtPushConstants::outputOffset`). `sky.slang`'s
+fragment shader and `raytrace.slang`'s `missMain` stop calling
+`TonemapReinhard` (moved out of `AtmosphereCommon.slang`, now dead there -
+it had exactly one caller each) and return raw, unbounded Nishita radiance -
+the shared tonemap pass clamps/tonemaps the sky along with everything else,
+instead of the sky always hard-coding Reinhard regardless of what's
+selected. `HdrEffect.h`/`.cpp`, registered into `PostEffectRegistry` as
+`"HDR"` the same way `FogEffect` registers `"Fog"`, is `{exposure,
+TonemapOperator}` (`None`/`Reinhard`/`ACES`) round-tripped through
+`PostEffectState::params` as `{exposure, tonemapOperator}` (the operator as
+a lowercase string, falling back to `Reinhard` for anything unrecognized).
+`RenderSystem::OnUpdate` reads it the same way it reads Fog and calls the
+new `VulkanRenderer::SetTonemap(exposure, int)` - unlike Fog, **the default
+is disabled**, which maps to `{exposure=1, None}` (plain `saturate`), chosen
+so a project that has never touched the panel renders bit-for-bit the same
+intent as before this issue (round-trip through a lossless float buffer,
+then clamp) rather than merely a close approximation. Because: issue #211 -
+bright values (specular highlights, the sky near the sun disc) clipped
+before anything could tonemap them, and the panel had no exposure or
+operator to expose in the first place.
+
+*2026-10-18* — **Distance fog moved to the Post-Processing panel, with real
+controls (#210).** Was: `RenderSettings::fog` was one on/off flag in Project
+Settings, applied at a hardcoded color/density with no exposed start/end.
+Now: `FogEffect.h` (`renderer/FogEffect.h`) is fog's single source of truth
+for its shape - `FogParams{color, density, start, end}`, `ReadFogParams`/
+`WriteFogParams` round-tripping it through a `PostEffectState`'s json
+params, and `RegisterFogPostEffect` registering `"Fog"` into
+`PostEffectRegistry` with an ImGui draw callback for all four. Defaults
+(`color=(0.5,0.6,0.7)`, `density=0.015`, `start=0`, `end=300`) are the exact
+numbers the old hardcoded fallback used, chosen so a fresh project looks
+identical to before. `CameraData` (`vulkan/CameraBuffer.cpp`) gained
+`fogRange` (x=start, y=end) immediately after `fogColor`, rather than
+appended at the struct's tail, so `unlit.slang` - which stopped declaring
+fields right at `fogColor` - gains exactly one new field instead of padding
+through seven more it never reads; `default.slang`/`raytrace.slang`/
+`sky.slang` shift their already-declared trailing fields down by one slot.
+The fog formula in `default.slang`/`unlit.slang`/`raytrace.slang` becomes
+`fogFactor = clamp(1 - exp(-density * (clamp(dist, start, end) - start)), 0, 1)` -
+the same exponential curve, now with a near-fade start and a far cap. No
+raster/RT split: all three shaders read the one `CameraData` UBO. `RenderSystem::OnUpdate`
+reads `PostProcessingSettings.effects["Fog"]` instead of `RenderSettings::fog`.
+`RenderSettings` lost the `fog` field entirely and `ProjectSettingsPanel`
+lost its "Distance Fog" checkbox - `PostProcessingSettings::LoadFile` now
+migrates a project predating this (only `rendering.fog`, no
+`postProcessing.effects.Fog` yet) by seeding `Fog.enabled` from the legacy
+bool once; a project already saved under the new scheme is never
+overridden by a stale leftover flag. Because: issue #210.
+
+*2026-10-18* — **`PostProcessingSettings` and `PostEffectRegistry` (#207).**
+Was: no post-processing concept existed. Now: `PostProcessingSettings`
+(`renderer/PostProcessingSettings.h`) is a `RenderSettings`-shaped World
+resource - `LoadFile`/`SaveFile` via the same `ReadJsonFile`/`UpdateJsonFile`
+recipe, its own `"postProcessing"` project-settings section (sibling to
+`"rendering"`/`"input"`/`"ide"`, never clobbering them) - holding
+`effects: unordered_map<string, PostEffectState>`, each a `{enabled, params}`
+pair with `params` kept as raw `nlohmann::json` rather than a typed struct,
+since no concrete effect exists yet to give it a shape. `PostEffectRegistry`
+(`renderer/PostEffectRegistry.h`), mirroring `core::EntityPresetRegistry`'s
+`Instance()`/`Register()`/`All()` shape, is the extension point: a future
+effect (bloom, depth of field, distance fog, HDR, motion blur, film
+settings) registers a name and a `void(json&)` draw callback the same way
+`RegisterRendererEntityTypes()` registers `Light/Sun` etc. This issue
+registers none - the new Post-Processing panel (see [editor.md](editor.md))
+reads an empty list until one does. Because: issue #207 - one panel should
+own every post effect's toggle and parameters instead of Project Settings,
+and that only works if effects can register into it without each one
+redesigning storage.
+
+Resolved by #211 (see Changed, above): raster and ray tracing now share one
+post-process hook point, `vk::PostProcess`'s tonemap pass. A future
+screen-space effect (bloom, depth of field, motion blur, film grading) that
+needs the pre-tonemap HDR buffer reads `Swapchain::HdrColorView`/
+`RayTracer::OutputView` the same way `PostProcess` does; one that belongs
+after tonemapping extends `PostProcess::Record` itself. An effect that can
+instead ride the existing shared `CameraData` UBO both pipelines already
+read identically (as fog does) still needs none of that.
+
+*2026-10-18* — **`Shapes.h` gained a primitive per editor shape, plus a
+reserved-name dispatcher.** Was: `MakeTriangle`/`MakeQuad`/`MakeCube`, authored
+for early render-path smoke testing and otherwise unused. Now: `MakeSphere`,
+`MakePlane`, `MakeCylinder`, `MakeCone` and `MakeCapsule` join them (same
+style: plain `MeshData`, right-handed Y-up, CCW from outside), each unit-sized
+and centred on the origin so a `Transform`'s scale reads as world dimensions -
+except `MakeCapsule`, whose total height is 2 (a unit cylindrical midsection
+plus two radius-0.5 hemispherical caps), since forcing it into a 1×1×1 box
+degenerates it into a sphere. `kCubeMeshName`/`kSphereMeshName`/etc name these
+to a `MeshRenderer.meshName` without a file on disk, and `MakeBuiltinMesh`
+dispatches one of those reserved names back to its generator (`nullopt` for
+anything else). Because: issue #214 (primitive entities need geometry that
+exists with no asset file). See [app.md](app.md) for where the dispatch is
+actually used, and [editor.md](editor.md) for the new Create-menu entries.
+
 *2026-10-15* — **`CameraFollow` left for the `camera` module.** Was: the follow
 camera lived here. Now: it is `CameraController` in
 [camera.md](camera.md), with a free-fly mode. Because: free-fly reads
@@ -593,6 +944,32 @@ the gap each frame so the follow is the same at any frame rate, snapping on the
 first simulated frame and past `snapDistance`. It reads targets after
 propagation, so a `RigidBody` target with `interpolate` set is followed at its
 blended pose rather than its per-step one. Because: issue #28.
+
+*2026-10-11* — **Asynchronous meshes (#127).** Was: the only way to make or
+free a mesh was `CreateMesh` (a staging buffer, a submit and a queue wait, then
+the same again for the BLAS on any RT device) and `DestroyMesh` or
+`ReleaseModelResources` (a device wait); `ReleaseSceneResources` restarted mesh
+generations. Now: `ConfigureMeshStreaming`, `QueueMesh`, `MeshState`,
+`RetireMesh`, `MeshFootprint` and `MeshStreaming` upload through a persistent
+staging ring at the start of each frame within a per-frame byte budget, build
+a BLAS only when asked, report readiness from the frame timeline and free
+retired meshes after their last frame, all without a wait (`MeshUploader`,
+`renderer/MeshStreaming.h`); `FindMesh` returns Ready meshes only; every
+device and queue wait is counted; `ReleaseSceneResources` moves every mesh
+slot's generation on; BLAS and TLAS scratch buffers are aligned to
+`minAccelerationStructureScratchOffsetAlignment` (with many small buffers
+sharing memory blocks, a plain allocation failed validation). `CreateMesh` and
+`DestroyMesh` behave as before. Because:
+streamed terrain replaced a level 0 Region by 256 tile meshes in one frame,
+each with two queue waits.
+
+*2026-10-10* — **Draws chosen per viewport (#125).** Was: terrain tile draws
+sat in a persistent `TerrainDrawItems` resource that every view and shadow pass
+drew whole. Now: `RenderSystem` resolves every viewport's camera before
+anything else, hands the cameras to each `IViewDrawSource` in the
+`ViewDrawSources` resource, and asks it for each view's draws and for the
+shadow volumes' casters at viewport 0's detail. The shadow camera is viewport
+0's resolved camera. `TerrainDrawItems` is gone.
 
 *2026-10-08* — **Error texture and error material.** Was: the renderer had one
 fallback per level. A null or stale texture became white or a flat normal, and

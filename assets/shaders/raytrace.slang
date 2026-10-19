@@ -7,6 +7,12 @@ RaytracingAccelerationStructure gTlas;
 [[vk::binding(1, 0)]]
 RWTexture2D<float4> gOutput;
 
+[[vk::binding(3, 0)]]
+RWTexture2D<float> gDistance;
+
+[[vk::binding(4, 0)]]
+RWTexture2D<float4> gVelocity;
+
 struct RtInstanceInfo
 {
     float *vertexAddress;
@@ -19,6 +25,7 @@ struct RtInstanceInfo
     uint pad0;
     uint pad1;
     uint pad2;
+    float4x4 prevModel; // camera-relative to THIS frame's camera - see DrawItem::previousModel
 };
 
 [[vk::binding(2, 0)]]
@@ -34,12 +41,14 @@ cbuffer CameraData
     float4x4 invViewProj;
     float4 cameraPos; // the origin: the TLAS is built relative to this view's camera
     float4 fogColor;
+    float4 fogRange;       // x = start distance, y = end distance
     float4 cameraWorldPos; // absolute camera position, for the atmosphere only
     float4 clipPlanes;     // x = near, y = far, or 0 for no far plane
     float4 atmosphereScattering;
     float4 atmosphereRadii;
     float4 atmosphereMisc;
     float4 lightingMeta; // x = this view's count in gLights, y = its first index
+    float4x4 prevViewProj;
 };
 
 struct RtPushConstants
@@ -53,6 +62,8 @@ RtPushConstants pushData;
 struct RayPayload
 {
     float3 color;
+    float distance;
+    float2 velocity; // NDC-space, current minus previous - see closestHitMain
 };
 
 struct ShadowPayload
@@ -110,10 +121,14 @@ void rayGenMain()
 
     RayPayload payload;
     payload.color = float3(0.0, 0.0, 0.0);
+    payload.distance = clipPlanes.y > 0.0 ? toFarPlane : 1.0e8;
+    payload.velocity = float2(0.0, 0.0); // a miss (sky) is treated as stationary
 
-    TraceRay(gTlas, RAY_FLAG_NONE, 0xFF, 0, 0, 0, ray, payload);
+    TraceRay(gTlas, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, 0xFF, 0, 0, 0, ray, payload);
 
     gOutput[pixel + pushData.outputOffset] = float4(payload.color, 1.0);
+    gDistance[pixel + pushData.outputOffset] = payload.distance;
+    gVelocity[pixel + pushData.outputOffset] = float4(payload.velocity, 0.0, 0.0);
 }
 
 [shader("miss")]
@@ -130,8 +145,7 @@ void missMain(inout RayPayload payload)
     params.sunIntensity = atmosphereMisc.y;
 
     const float3 rayOrigin = float3(cameraWorldPos.x, params.planetRadius + cameraWorldPos.y, cameraWorldPos.z);
-    float3 color = Atmosphere(WorldRayDirection(), rayOrigin, normalize(lightDirWS.xyz), params);
-    payload.color = TonemapReinhard(color);
+    payload.color = Atmosphere(WorldRayDirection(), rayOrigin, normalize(lightDirWS.xyz), params);
 }
 
 [shader("miss")]
@@ -154,6 +168,17 @@ void closestHitMain(inout RayPayload payload, in BuiltInTriangleIntersectionAttr
     const uint i0 = info.indexAddress[primBase + 0];
     const uint i1 = info.indexAddress[primBase + 1];
     const uint i2 = info.indexAddress[primBase + 2];
+
+    // Object-space hit position (pos is floats 0-2 of each vertex) - needed
+    // by both branches below, to reproject through info.prevModel for velocity.
+    const uint pb0 = i0 * kVertexStrideFloats;
+    const uint pb1 = i1 * kVertexStrideFloats;
+    const uint pb2 = i2 * kVertexStrideFloats;
+    const float3 op0 = float3(info.vertexAddress[pb0], info.vertexAddress[pb0 + 1], info.vertexAddress[pb0 + 2]);
+    const float3 op1 = float3(info.vertexAddress[pb1], info.vertexAddress[pb1 + 1], info.vertexAddress[pb1 + 2]);
+    const float3 op2 = float3(info.vertexAddress[pb2], info.vertexAddress[pb2 + 1], info.vertexAddress[pb2 + 2]);
+    const float3 objectPos = op0 * barycentrics.x + op1 * barycentrics.y + op2 * barycentrics.z;
+    const float3 hitWorldPos = WorldRayOrigin() + RayTCurrent() * WorldRayDirection();
 
     float3 color;
 
@@ -183,7 +208,6 @@ void closestHitMain(inout RayPayload payload, in BuiltInTriangleIntersectionAttr
             info.normalCol1.xyz * objNormal.y +
             info.normalCol2.xyz * objNormal.z);
 
-        const float3 hitWorldPos = WorldRayOrigin() + RayTCurrent() * WorldRayDirection();
         const float3 shadowOrigin = hitWorldPos + N * kShadowNormalBias;
         const float3 L = normalize(lightDirWS.xyz);
         const float3 V = normalize(cameraPos.xyz - hitWorldPos);
@@ -220,6 +244,16 @@ void closestHitMain(inout RayPayload payload, in BuiltInTriangleIntersectionAttr
         }
     }
 
-    const float fogFactor = clamp(1.0 - exp(-fogColor.a * RayTCurrent()), 0.0, 1.0);
+    const float clampedDist = clamp(RayTCurrent(), fogRange.x, fogRange.y);
+    const float fogFactor = clamp(1.0 - exp(-fogColor.a * (clampedDist - fogRange.x)), 0.0, 1.0);
     payload.color = lerp(color, fogColor.rgb, fogFactor);
+    payload.distance = RayTCurrent();
+
+    // hitWorldPos is already this frame's camera-relative space (cameraPos is
+    // its origin); info.prevModel puts objectPos in that SAME space (rebased
+    // to this frame's camera, not last frame's - see DrawItem::previousModel),
+    // so viewProj/prevViewProj alone carry the camera's own motion.
+    const float4 currClip = mul(viewProj, float4(hitWorldPos, 1.0));
+    const float4 prevClip = mul(prevViewProj, mul(info.prevModel, float4(objectPos, 1.0)));
+    payload.velocity = (currClip.xy / currClip.w) - (prevClip.xy / prevClip.w);
 }

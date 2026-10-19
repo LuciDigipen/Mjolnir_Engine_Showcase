@@ -342,16 +342,25 @@ TEST_CASE("A release preloaded from disk answers without touching the files agai
     CHECK(query.ResidentTile(0, {-1, 0}) == query.ResidentTile(0, {-1, 0}));
     std::filesystem::remove_all(root);
 
-    // The committed fixture release.
-    TerrainReleaseHandle fixture =
-        OpenOk(OpenCurrentTerrainRelease(std::filesystem::path(TERRAIN_FIXTURE_DIR) / "releases",
-                                         TerrainAsset("terrain/fixture.terrain.json")));
+    // A separate local release, with no game or checked-in pack dependency.
+    const auto fixtureLayout = TerrainLayout::Create(2.0, 4, {-10.0, -6.0, 9.0, 7.0});
+    REQUIRE(fixtureLayout);
+    const auto fixtureTiles = BuildTiles(*fixtureLayout);
+    auto fixtureInfo = Info(TerrainAsset("terrain/fixture.terrain.json"), 1);
+    fixtureInfo.release =
+        MintTerrainReleaseId(fixtureInfo.asset, fixtureInfo.source, TerrainHeightsHash(*fixtureLayout, fixtureTiles),
+                             MakeTerrainReleaseNonce());
+    const auto fixtureRoot = MakeScratchDir("query_fixture");
+    WriteRelease(fixtureRoot, fixtureInfo, Encode(fixtureInfo, *fixtureLayout, fixtureTiles, {.chunkTiles = 2}));
+    PointCurrentAt(fixtureRoot, fixtureInfo.asset, fixtureInfo.release);
+    TerrainReleaseHandle fixture = OpenOk(OpenCurrentTerrainRelease(fixtureRoot, fixtureInfo.asset));
     TerrainHeightQuery fixtureQuery = TerrainHeightQuery::Create(fixture);
     REQUIRE(PreloadAllTerrainTiles(fixtureQuery, fixture).loaded == 8);
     const TerrainHeightResult corner = fixtureQuery.HeightAt(Local(-8.0, 0.0), Need(fixture.Info(), 2.0));
     CHECK(corner.status == Status::MeetsRequirement);
     CHECK(corner.tile == TileCoord{-1, 0});
     CHECK(corner.localHeight == double(AnalyticHeight(-4, 0)));
+    std::filesystem::remove_all(fixtureRoot);
 }
 
 TEST_CASE("Each result state is distinct and only height states carry a height", "[terrain][query]")
@@ -603,6 +612,48 @@ TEST_CASE("Payload requests hand a loader each missing tile once", "[terrain][qu
     }
     CHECK(opened.source->Stats().reads == start.reads + 4);
     CHECK(query.PayloadRequests().empty());
+}
+
+TEST_CASE("An evicted tile is requested again and answered tiles are reported once per take", "[terrain][query]")
+{
+    const TerrainLayout layout = OriginBlock();
+    const TerrainReleaseInfo info = Info(TerrainAsset("terrain/evict.terrain.json"), 0x126E);
+    OpenedRelease opened = OpenInMemory(Encode(info, layout, HillTiles(layout)));
+    TerrainHeightQuery query = TerrainHeightQuery::Create(opened.handle);
+    REQUIRE(PreloadAllTerrainTiles(query, opened.handle).Ok());
+    CHECK(query.TakeUsedTiles().empty());
+
+    for (int i = 0; i < 3; ++i)
+    {
+        CHECK(query.HeightAt(Local(-10.0, -10.0), Need(info, 4.0)).status == Status::MeetsRequirement);
+        CHECK(query.HeightAt(Local(10.0, 10.0), Need(info, 4.0)).status == Status::MeetsRequirement);
+    }
+    const std::vector<TerrainPayloadRequest> used = query.TakeUsedTiles();
+    REQUIRE(used.size() == 2);
+    CHECK(used[0].tile == TileKey{info.asset, {-1, -1}});
+    CHECK(used[1].tile == TileKey{info.asset, {0, 0}});
+    CHECK(used[0].release == info.release);
+    CHECK(used[0].layer == 0);
+    CHECK(query.TakeUsedTiles().empty());
+    CHECK(query.HeightAt(Local(10.0, 10.0), Need(info, 4.0)).status == Status::MeetsRequirement);
+    CHECK(query.TakeUsedTiles().size() == 1);
+
+    query.Evict(0, {0, 0});
+    CHECK(query.Residency(0, {0, 0}) == TerrainTileResidency::Absent);
+    CHECK(query.ResidentTile(0, {0, 0}) == nullptr);
+    const TerrainHeightResult r = query.HeightAt(Local(10.0, 10.0), Need(info, 4.0));
+    CHECK(r.status == Status::Loading);
+    CHECK(std::isnan(r.localHeight));
+    CHECK(query.TakeUsedTiles().empty());
+    REQUIRE(query.PayloadRequests().size() == 1);
+    CHECK(query.PayloadRequests()[0].tile == TileKey{info.asset, {0, 0}});
+
+    query.Evict(0, {0, 0});
+    CHECK(query.PayloadRequests().empty());
+    REQUIRE(query.MarkFailed(info, 0, {-1, -1}, {Code::Io, "gone"}).code == Code::None);
+    query.Evict(0, {-1, -1});
+    CHECK(query.HeightAt(Local(-10.0, -10.0), Need(info, 4.0)).status == Status::Loading);
+    query.Evict(7, {0, 0});
 }
 
 TEST_CASE("Corrupt or missing payloads fail their tiles and never read as height zero", "[terrain][query]")

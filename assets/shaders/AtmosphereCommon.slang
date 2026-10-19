@@ -100,9 +100,3 @@ float3 Atmosphere(float3 rayDir, float3 rayOrigin, float3 sunDir, AtmospherePara
 
     return params.sunIntensity * (phaseRayleigh * params.rayleighCoeff * totalRayleigh + phaseMie * params.mieCoeff * totalMie);
 }
-
-// The raw scattering integral is unbounded near the sun disc.
-float3 TonemapReinhard(float3 color)
-{
-    return color / (color + 1.0);
-}

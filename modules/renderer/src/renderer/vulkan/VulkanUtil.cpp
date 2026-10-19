@@ -100,6 +100,11 @@ namespace mir::vk
         return rect;
     }
 
+    glm::vec2 InvExtent(VkExtent2D extent)
+    {
+        return { 1.0f / static_cast<float>(extent.width), 1.0f / static_cast<float>(extent.height) };
+    }
+
     void ImageBarrier(VkCommandBuffer cmd, VkImage image, VkImageAspectFlags aspectMask,
         VkImageLayout oldLayout, VkImageLayout newLayout,
         VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
@@ -128,6 +133,25 @@ namespace mir::vk
             .pImageMemoryBarriers = &barrier };
 
         vkCmdPipelineBarrier2(cmd, &dep);
+    }
+
+    void ColorAttachmentBarrier(VkCommandBuffer cmd, VkImage image, bool firstUse)
+    {
+        ImageBarrier(cmd, image, VK_IMAGE_ASPECT_COLOR_BIT,
+            firstUse ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            firstUse ? VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT : VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+            firstUse ? 0 : VK_ACCESS_2_SHADER_READ_BIT,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT);
+    }
+
+    void ShaderReadOnlyBarrier(VkCommandBuffer cmd, VkImage image)
+    {
+        ImageBarrier(cmd, image, VK_IMAGE_ASPECT_COLOR_BIT,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
     }
 
     VkShaderModule CreateShaderModule(VkDevice device, const std::filesystem::path &path)
@@ -185,12 +209,99 @@ namespace mir::vk
 
         const bool submitted = vkQueueSubmit(device.Queue(), 1, &submitInfo, VK_NULL_HANDLE) == VK_SUCCESS;
         if (submitted)
-            vkQueueWaitIdle(device.Queue());
+            device.WaitQueueIdle();
         else
             MIR_LOG_CRITICAL("SubmitAndWait: vkQueueSubmit failed");
 
         // Destroying the pool frees its command buffer too.
         vkDestroyCommandPool(device.Handle(), pool, nullptr);
         return submitted;
+    }
+
+    bool AllocateDescriptorSet(VkDevice device, VkDescriptorPool pool, VkDescriptorSetLayout layout,
+        VkDescriptorSet &outSet)
+    {
+        const VkDescriptorSetAllocateInfo allocInfo{
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .descriptorPool = pool,
+            .descriptorSetCount = 1,
+            .pSetLayouts = &layout };
+        return vkAllocateDescriptorSets(device, &allocInfo, &outSet) == VK_SUCCESS;
+    }
+
+    bool CreateFullscreenPipeline(const Device &device, const FullscreenPipelineDesc &desc,
+        const char *debugName, VkPipeline &outPipeline)
+    {
+        const VkPipelineShaderStageCreateInfo stages[]{
+            { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+             .stage = VK_SHADER_STAGE_VERTEX_BIT,
+             .module = desc.vertModule,
+             .pName = "vertexMain" },
+            { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+             .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+             .module = desc.fragModule,
+             .pName = desc.fragEntry } };
+
+        const VkPipelineVertexInputStateCreateInfo vertexInput{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
+
+        const VkPipelineInputAssemblyStateCreateInfo inputAssembly{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+            .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST };
+
+        const VkPipelineViewportStateCreateInfo viewportState{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+            .viewportCount = 1,
+            .scissorCount = 1 };
+
+        const VkPipelineRasterizationStateCreateInfo rasterizer{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+            .polygonMode = VK_POLYGON_MODE_FILL,
+            .cullMode = VK_CULL_MODE_NONE,
+            .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+            .lineWidth = 1.0f };
+
+        const VkPipelineMultisampleStateCreateInfo multisample{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+            .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT };
+
+        const VkPipelineColorBlendStateCreateInfo colorBlend{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+            .attachmentCount = 1,
+            .pAttachments = desc.blendAttachment };
+
+        const VkDynamicState dynamicStates[]{ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+        const VkPipelineDynamicStateCreateInfo dynamicState{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+            .dynamicStateCount = 2,
+            .pDynamicStates = dynamicStates };
+
+        const VkPipelineRenderingCreateInfo renderingInfo{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+            .colorAttachmentCount = 1,
+            .pColorAttachmentFormats = &desc.colorFormat };
+
+        const VkGraphicsPipelineCreateInfo pipelineInfo{
+            .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+            .pNext = &renderingInfo,
+            .stageCount = 2,
+            .pStages = stages,
+            .pVertexInputState = &vertexInput,
+            .pInputAssemblyState = &inputAssembly,
+            .pViewportState = &viewportState,
+            .pRasterizationState = &rasterizer,
+            .pMultisampleState = &multisample,
+            .pColorBlendState = &colorBlend,
+            .pDynamicState = &dynamicState,
+            .layout = desc.layout };
+
+        if (vkCreateGraphicsPipelines(device.Handle(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &outPipeline) !=
+            VK_SUCCESS)
+        {
+            MIR_LOG_CRITICAL("CreateFullscreenPipeline: vkCreateGraphicsPipelines failed for {}", debugName);
+            return false;
+        }
+        device.NameObject(VK_OBJECT_TYPE_PIPELINE, reinterpret_cast<uint64_t>(outPipeline), debugName);
+        return true;
     }
 }

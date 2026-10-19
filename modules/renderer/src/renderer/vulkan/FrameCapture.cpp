@@ -105,7 +105,7 @@ namespace mir::vk
         }
         else
         {
-            vkQueueWaitIdle(mDevice->Queue());
+            mDevice->WaitQueueIdle();
             vmaInvalidateAllocation(mDevice->Allocator(), mAllocation, 0, VK_WHOLE_SIZE);
             VmaAllocationInfo info{};
             vmaGetAllocationInfo(mDevice->Allocator(), mAllocation, &info);

@@ -10,15 +10,19 @@ samples on the CPU (plain data; `app` uploads it), the same samples gathered
 into one block for a collider, the one rule from a recipe path to its asset id
 and from a game to its published releases, and the scene side: the
 `TerrainInstance` component and the `TerrainWorld` resource it resolves to,
-which pins one release per asset. It does not bake, publish, stream or collide
-terrain itself; collision is built by physics from these samples, streaming is P3. Generating, baking and publishing
+which pins one release per asset, the streamer that reads payload ranges on
+a small worker pool and keeps them resident within a data-driven CPU budget
+(#126), and each viewport's choice of tiles and Regions to draw and payloads to
+want (#125), the GPU meshes those need (#127) and the height field pieces
+collision sources need (#128). It does not bake, publish, draw or collide
+terrain itself; collision shapes are built by physics from these samples. Generating, baking and publishing
 heights is offline work: the `terrain_bake` library and the headless
 `TerrainTool` executable in `tools/TerrainTool/` read a source recipe, produce
 heights on this module's grid, encode a candidate release with this module's
 writer, validate it with its reader and publish it as an immutable release
 (see [TerrainTool CLI](#terraintool-cli)); the engine never links them.
 
-`mir::terrain` · depends `mir::assets`, `mir::core` (public) · API `modules/terrain/include/terrain/` · maintainer Jackey Cen · reviewed 2026-10-08
+`mir::terrain` · depends `mir::assets`, `mir::core` (public), `mir::serial` (private, streaming settings) · API `modules/terrain/include/terrain/` · maintainer Jackey Cen · reviewed 2026-10-10
 
 ## Model
 
@@ -64,11 +68,11 @@ A tile's final heights live in a `TileHeights`: `(n+1)^2` float32 terrain-local
 meters, row-major with x fastest, shared edge and padding samples included.
 It is the one block the bake, query, mesh and heightfield code pass around.
 
-A bake encodes a complete set of tiles into one *release*: an index file plus
-one pack file per storage chunk (16 x 16 tiles by default). The index records,
-per tile, the pack, byte offset and length, checksum, height range, sample
-spacing and clipped valid extent, so a reader fetches one tile without reading
-its pack. Releases live in `<releasesRoot>/<assetIdHex16>/<releaseIdHex16>/`,
+A bake encodes one source per map tile and optional sparse coarse payloads
+into one format 2 *release*: an index plus one pack per storage chunk (16 x 16
+tiles by default). The index records each tile/layer key, source flag, pack,
+byte offset and length, checksum, height range, spacing and clipped extent,
+so a reader fetches one payload without reading its pack. Releases live in `<releasesRoot>/<assetIdHex16>/<releaseIdHex16>/`,
 and `<releasesRoot>/<assetIdHex16>/current` names the current one.
 
 ```cpp
@@ -98,7 +102,7 @@ These sizes may change after P3 measurements.
 | Chunk | Spatial grouping for index organization and possible regional work; does not require all member tiles resident |
 | `.tpack` | Physical container; format 1 maps each occupied chunk to one file |
 | Render patch / Region | Draw geometry; P1 has one mesh per tile, while future coarse Regions may combine tiles independently of chunks |
-| Physics area | Sample block for one collision shape; current App uses one area per terrain instance, independent of tile/chunk size |
+| Physics area | Sample block for one collision shape; since #128 one whole-map piece per Eager release and pieces of `collision.pieceTiles` tiles otherwise, independent of chunk size |
 
 The following results describe the **2026-10-03 measurement build**. CPU
 experiments used `BakeFinalHeights`, `BuildTerrainTileMesh`,
@@ -216,6 +220,131 @@ coarse geometry/error and collision-area residency independently. Use those
 results to revisit the tile and chunk parameters; this baseline does not set
 permanent distance, memory or latency thresholds.
 
+### Region hierarchy (issue #124)
+
+A release also carries a quadtree of coarse **Regions**: draw units for far
+terrain that replace a whole group of tiles. Every Region is an independent
+payload, so a distant view needs no tile payload in memory.
+
+**Grid.** Level 0 Regions are squares of `RegionTiles()` tiles (16: 4096 m at
+the 256 m baseline, one default chunk) on the grid of that size through tile 0,
+so they line up with chunks of that size without being bound to them. Level
+`L + 1` joins 2 x 2 level `L` Regions, counted from the map's first level 0
+Region, until one root covers the map. A Region is addressed by
+`TerrainRegionCoord{level, x, z}`, `x`/`z` counted from 0 at every level;
+`TerrainRegionGrid` gives its tiles, rect, valid extent (rect cut to the map
+bounds), parent and children. TerrainCheck's 2 x 2 map straddles the origin and
+gets four level 0 Regions and one root.
+
+**Mesh.** Each Region holds `Cells()` cells a side (128: 32 m at level 0,
+doubling per level), on grid lines that are multiples of `Unit()`, the coarsest
+source step of the release, so every grid node is a node of every source and
+takes its final height unchanged. Near the map edge the mesh stops at the
+reference cells touching the bounds, exactly where the collider block stops.
+Cells split along `TriangulateCell`'s diagonal. An outer edge shared with
+another Region also holds every node of the finer of the two sources beside it,
+with the heights (`TerrainFinalSurface::SharedHeight`) and shared-stencil
+normals the tile LOD rings use. So a Region meets tiles at any LOD, and
+Regions of any level, with the same vertices: crack-free by construction, with
+no skirts, as long as a selection replaces whole Regions (a Region by its four
+children or by all its tiles). Positions are float relative to the rect's
+first sample; on the integer spacings in use they are exact, so shared
+vertices also agree after camera-relative narrowing.
+
+**Error and coverage.** `maxDeviation` bounds the distance between the Region
+mesh and the release's final surface over the Region's valid extent: aligned
+cells compare at the source nodes (exact for piecewise-linear surfaces), the
+rest use the exact triangle overlay of the LOD bound, both with that bound's
+numerical enclosure. The bake fails when a Region misses part of its domain
+(`TerrainRegionCoversDomain`) or its error cannot be enclosed. Region bytes
+are a pure function of the final heights and the two settings; Debug and
+Release give the same bytes (pinned in `TerrainRegions.tests.cpp`).
+
+**Storage and addressing.** Format 2.2 appends the Region settings to the index
+header and one 144-byte record per Region (payload layout, kind `Region`, the
+Region's `x`/`z` in `tile`, its `level`, layer 0) after the layer table; the
+payload sits in the pack of the Region's first map tile. Readers address it
+like any payload:
+
+```cpp
+const TerrainTileRecord *record = index.Find({x, z}, 0, TerrainPayloadKind::Region, level);  // or FindRegion
+TerrainResult<std::vector<std::byte>> bytes = handle.ReadPayload(*record);                   // one range, checksum
+TerrainResult<TerrainRegionMesh> mesh = DecodeTerrainRegion(index, *record, *bytes.value);  // or ReadRegion
+```
+
+The index record already has what selection needs before any read: the valid
+extent, the height range of the mesh, the cell spacing and `maxDeviation`.
+
+**Prototype results.** A local Region size/resolution comparison bakes
+a prototype map of 64 x 64 tiles
+of 256 m (about 16.25 x 16.17 km, signed and clipped edges), 8 m by default
+with 1, 2 and 4 m blocks, 23.6 MB of final heights. Release, Ryzen 7 5800H:
+
+| Level 0 | Cells | Regions | Level 0 cell | Region bytes (all levels) | Largest Region (L0) | Vertices per L0 Region | L0 max error | L0 sampled P95 | Bake |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 4096 m | 64 | 21 | 64 m | 5.51 MB (0.23 x heights) | 0.31 MB | 7169 | 15.01 m | 2.29 m | 33.0 s |
+| **4096 m** | **128** | 21 | 32 m | 17.61 MB (0.75 x) | 0.89 MB | 19329 | 5.80 m | 1.32 m | 10.9 s |
+| 4096 m | 256 | 21 | 16 m | 66.11 MB (2.80 x) | 3.24 MB | 68225 | 3.00 m | 0.51 m | 8.1 s |
+| 8192 m | 64 | 5 | 128 m | 1.43 MB (0.06 x) | 0.31 MB | 7283 | 20.04 m | 3.41 m | 25.4 s |
+| 8192 m | 128 | 5 | 64 m | 4.33 MB (0.18 x) | 0.89 MB | 19443 | 15.01 m | 2.28 m | 7.7 s |
+| 8192 m | 256 | 5 | 32 m | 15.91 MB (0.67 x) | 3.22 MB | 67957 | 5.80 m | 1.31 m | 3.6 s |
+
+Each level up doubles the cell, so an 8192 m level 0 is the 4096 m hierarchy
+without its finest level. The edge polylines add about 29k vertices to the
+16 level 0 Regions (31% at 64 cells, 10% at 128, 3% at 256). For comparison, a
+4096 m square of 8 m tiles at their coarsest LOD has 256 x 33^2 = 278784
+vertices; a 128-cell level 0 Region has 14 times fewer.
+
+The local `TerrainRenderProbe --regions` prototype rendered the same map (RTX 3070 Laptop, 1280 x
+720, 60 degree vertical field of view) from 3000 m up looking at the far
+corner, from 90 m on a shallow approach, and straight down from 3500 m with
+only terrain in view, against all 4096 tiles at their source LOD (5.8 M
+vertices). A whole-Region selection (refine while the eye is closer than a
+Region edge; a refined level 0 Region becomes its tiles) with 4096 m and 128
+cells draws 2311 units and 4.0 M vertices from high up, 1546 and 2.5 M on the
+approach, with at most 0.40 and 0.74 px of projected bound and 21 and 8
+pixels of silhouette change; 64 cells reach 0.75 and 2.05 px, 256 cells 0.23
+and 0.41 px with 8% to 19% more vertices. With 8192 m the same rule refines
+every Region of this 16 km map down to tiles. The straight-down view has no
+background pixel in any selection, including tile, level 0 and level 1
+borders, so the edges are crack-free on the GPU too. Both CPU and GPU
+measurement tools and the prototype recipe remain local; only their results are retained here.
+
+**Choice: level 0 = 4096 m (16 tiles), 128 cells.** At 1280 x 720 and a 60
+degree field of view, the 5.8 m bound projects to one pixel at about 3.6 km,
+close to one Region edge, so a selection can draw a level 0 Region once the
+camera is about a Region away and keeps on the order of a few hundred tiles
+near it. 8192 m makes the finest Region 64 m cells (15 m bound, about 9.4 km),
+which would keep thousands of tiles resident and swap 1024 tiles at once; 256
+cells cost 3.8 times the bytes for half the error, 64 cells need about 9.4 km
+before a level 0 Region is fine. Storage at 128 cells is of the order of the
+8 m heights themselves. These settings are `kTerrainRegionTiles` and
+`kTerrainRegionCells` in TerrainTool; sync rebakes a release made with others.
+The numbers come from one generated map and are a development baseline, not
+streaming budgets; #125 sets the screen-error thresholds from data.
+
+### Numerical limits and tolerances
+
+`terrain/TerrainConstants.h` is the shared definition site for pack/LOD/Region
+format values, Region defaults and their numerical checks. The default sizes
+come from [Size baseline](#size-baseline-issue-24) and the measured
+[Region hierarchy choice](#region-hierarchy-issue-124); the binary field
+offsets and strides follow the format table under [Rules](#rules).
+
+The existing Region limits are implementation guards: at most 4096 cells per
+side, 2^20 tiles per level-0 Region and level index 40. Reference sample indices
+stay below 2^53 to preserve exact integer addressing in double. These limits
+are distinct from the measured default of 16 tiles and 128 cells.
+
+LOD and Region decoders allow 2e-6 absolute error in a normal's squared length.
+Region coverage allows 1e-9 relative area error. Deviation enclosure retains
+the existing 4096-times-double-epsilon factor scaled by height, cell size and
+coordinates. Overlay predicates/conditioning, shared-node reconciliation and
+the Region sampler each retain a separately named 64-times-epsilon factor;
+the overlay clipping buffer holds at most 32 points. These are conservative
+numerical policies, not rendering quality settings or prototype measurements;
+this consolidation changes none of their values.
+
 ### Height queries
 
 A `TerrainHeightQuery` holds the final heights of one release in memory and
@@ -226,7 +355,7 @@ relates to that requirement instead of returning a bare float:
 ```cpp
 const TerrainReleaseHandle &handle = *release.value;
 TerrainHeightQuery query = TerrainHeightQuery::Create(handle);  // reads nothing
-PreloadAllTerrainTiles(query, handle);                          // P1: synchronous, outside queries
+PreloadAllTerrainTiles(query, handle);                          // synchronous, for tools and tests
 const TerrainHeightResult r = query.HeightAt(world, placement, {handle.Info(), 1.0});
 switch (r.status)
 {
@@ -241,13 +370,593 @@ default:                                        Protect(r.failure); break;      
 A query never reads files or blocks. When the data it needs is not resident it
 records a `TerrainPayloadRequest` (release, tile key, layer, spacing) once; a
 loader takes them with `TakePayloadRequests` and hands back `TileHeights` with
-`Insert`, or a failure with `MarkFailed`. In P1 nothing drains the requests:
-the release is preloaded whole. P3's scheduler takes over that loop.
+`Insert`, a failure with `MarkFailed`, or forgets a slot with `Evict`. It also
+lists the resident tiles it answered from (`TakeUsedTiles`, once each per
+take). In the engine that loader is the `TerrainStreamer` of the next section;
+`PreloadTerrainTiles` and `PreloadAllTerrainTiles` stay as synchronous fills
+for tools and tests.
 
 A query has one or more *layers*, finest first, each a layout of one spacing
-over the same tiles. A P1 release is exactly one layer. Per-tile source
-precision (P2) is a finer layer that bakes only some tiles, and coarser levels
-(P3) are extra layers, so a coarse tile can answer while the fine one loads.
+over the same tiles. Format 2 permits sparse layers and one source spacing
+per tile; optional coarse payloads can answer while a fine payload loads.
+P2 bakes coarse levels and measured per-tile deviation bounds.
+
+### Streaming and CPU residency (issue #126)
+
+A `TerrainStreamer` (`terrain/TerrainStreamer.h`) makes payloads resident.
+Consumers say what they want, a small worker pool reads and decodes, and
+`Update`, called once per frame on the main thread, installs the results. It
+never reads a file or waits.
+
+**Keys and wants.** A `TerrainPayloadKey` names one payload of one published
+release: asset, release, kind, level, layer and tile (or Region `x`, `z`).
+Wants for one key merge into one entry, one read and one shared decoded
+payload, whoever asks: interests (`AddInterest`; `SetInterest` replaces an
+interest's whole list, for a viewport selection or a set of bodies), every
+payload of an Eager release, and height queries (the streamer drains each
+query's `TakePayloadRequests`). An entry takes the highest demand anyone has
+for it, `Required` (collision, Eager) > `Query` > `Visible` > `Prefetch`, and
+the lowest rank within that demand.
+
+```cpp
+TerrainStreamer &streamer = world.Resource<TerrainStreamer>();
+const TerrainInterestId view = streamer.AddInterest();
+const TerrainPayloadKey key = TerrainPayloadKeyOf(info, *index.FindRegion({0, 3, 1}));
+streamer.SetInterest(view, std::vector<TerrainPayloadWant>{{key, TerrainDemand::Visible, distance}});
+// next frame, after streamer.Update():
+if (const std::shared_ptr<const TerrainRegionMesh> mesh = streamer.Region(key))
+    Draw(*mesh);                                     // null until Ready
+```
+
+**States.** `Waiting` (wanted, held back by the budget or a retry delay),
+`Loading` (a worker reads the record's byte range, checks the record checksum
+and decodes the payload with its own checks), `Ready` (installed; a Height
+payload is also inserted into every height query of its release) and `Failed`
+(the error is kept). A worker takes whichever pending read is soonest when it
+starts, so priority holds on a FIFO pool and a raised demand reorders a read
+not yet started. A want that disappears cancels its read if no worker took it
+yet; a started read finishes and its payload stays until evicted. Payloads are
+`shared_ptr`s, so evicting one never invalidates a consumer still using it.
+
+**Failures.** Only an IO failure (a missing, unreadable or truncated range) is
+retried: after `retry.firstDelaySeconds`, doubling up to
+`retry.maxDelaySeconds`, until `retry.maxAttempts` reads have failed. A
+checksum or decode failure fails at once, since the release is immutable. A
+failed payload someone still wants starts a new round of attempts after
+`retry.failedHoldSeconds`, or at the next `Update` after `RetryFailed`. A height
+query answers `Loading` while its tile is read or retried and `Failed` with
+`LoadFailed` once it failed; neither carries a height.
+
+**Budget.** `cpu.budgetBytes` caps the decoded bytes held plus those being
+read; a payload's size (`TerrainPayloadFootprint`) is known from its record
+before any read. To start a read that does not fit, the streamer evicts what
+matters less: payloads nobody wants (least recently wanted first), then reads
+not yet started and payloads of a lower demand (highest rank first). A read
+that still does not fit waits, and lower demands wait behind it. Only
+`Required` reads may pass the budget (`Stats().overBudgetBytes`), and while
+over it everything that is not `Required` is evicted first. A height query's
+tile stays wanted as `Query` for `residency.queryLeaseSeconds` after it was
+last asked for or answered from.
+
+**Residency mode.** `residency.mode` is chosen per release when it is added:
+`Eager` requests every indexed payload (tiles, LOD, normals and Regions) as
+`Required`, through the same asynchronous path; `Interest` holds only what is
+wanted; `Auto` is Eager when the release's payload footprint fits what the
+budget has left after the other Eager releases. Nothing else is pinned: no
+Region level stays resident for a whole map unless the whole release fits.
+
+**Verification.** Opening a release reads and checks its index once; each
+payload is checked against its record when it is read. The engine reads packs
+whole only to check a newly published release before an Edit switch, one pack at
+a time on a worker (see [Release switch](#release-switch-issue-129));
+`VerifyAllPacks` stays in TerrainTool's validate and publish.
+
+**Threads.** `TerrainWorkerPool` (`terrain/TerrainExecutor.h`,
+`io.workerThreads` `std::jthread`s) runs posted jobs; tests inject a
+`TerrainManualExecutor` and a manual clock. Workers touch only the byte source,
+the immutable index and the decoders. Entries, height queries and the budget
+change only in `Update`, which installs at most `io.maxInstallsPerFrame`
+finished reads per call.
+
+**Settings.** `TerrainStreamingSettings` (`terrain/TerrainStreamingSettings.h`)
+has no code defaults. `LoadTerrainStreamingSettings` reads the game's
+`terrain_streaming.json` (beside `game.json`) and an optional
+`terrain_streaming.local.json` beside the executable, which overrides it key by
+key: what an installer would write per machine (git-ignored). Every missing,
+unknown or invalid key is reported with its JSON path and the file it is in,
+and then nothing loads. Later P3 issues add their own sections. TerrainCheck
+ships:
+
+```json
+{ "cpu": { "budgetMiB": 16 }, "io": { "workerThreads": 2, "maxInstallsPerFrame": 32 },
+  "retry": { "maxAttempts": 3, "firstDelaySeconds": 0.1, "maxDelaySeconds": 2.0, "failedHoldSeconds": 10.0 },
+  "residency": { "mode": "Auto", "queryLeaseSeconds": 2.0 },
+  "view": { "refineErrorPixels": 1.0, "mergeErrorPixels": 0.75, "prefetchErrorPixels": 0.5,
+            "prefetchBudgetMiB": 4 },
+  "gpu": { "budgetMiB": 128, "uploadMiBPerFrame": 8, "stagingMiB": 32, "meshRetainSeconds": 2.0 },
+  "collision": { "spacingsMeters": [8.0, 4.0, 2.0, 1.0], "maxErrorMeters": 0.05, "pieceTiles": 4,
+                 "seamOverlapMeters": 64.0, "bodyToleranceMeters": 0.05, "loadLatencySeconds": 0.5,
+                 "latencyMarginSeconds": 0.5, "prefetchSeconds": 2.0, "budgetMiB": 64, "retainSeconds": 2.0 } }
+```
+
+These are provisional development-machine values, not measured budgets; #130
+measures and replaces them. The `view` section is #125's (see the next
+section), the `gpu` section #127's and the `collision` section #128's (see
+[Collision residency](#collision-residency-issue-128)); the 16 MiB budget
+(256 MiB in #126) keeps TerrainCheck's 2 x 2 map Eager while its larger map
+streams by interest.
+
+**No wait at load (#128).** The engine resolves with `TerrainEagerLoad::Async`:
+an Eager release's payloads are requested as `Required` and arrive like any
+others, and collision residency holds the bodies that need ground not yet
+collidable. A payload that fails is reported when it fails, and the bodies
+that need it stay held. `TerrainEagerLoad::Wait` (`WaitForEager`, refusing a
+release when any payload failed) remains for tests and tools that want a whole
+release resident before they look at it. #126 had the engine wait for every
+Eager release at scene load, on Play entry and at an Edit switch, as a stop-gap
+until this.
+
+**Measurements** (Ryzen 7 5800H, NVMe; development baselines, not budgets).
+TerrainCheck's release is 35 payloads, 5.77 MiB decoded; resolving it with the
+Eager wait takes 0.03 s in Release (0.25 to 0.30 s in Debug, where the whole
+load is dominated by collider selection), and the Play sphere rests where it
+did before. A local streaming measurement harness moves an interest across a
+40 x 40 map of 256 m tiles at 4 m (16.9 KB a tile) with 14 Regions of 128
+cells (0.79 MB each), read from disk through a warm file cache, with a 16 MiB
+budget and two workers. At 200 m/s and 60 frames a second for 9.2 km (2761
+frames, Release), each frame wanting the 3 x 3 tiles under the mover as
+Required, tiles within 1.5 km as Visible, to 2.5 km as Prefetch and the level 0
+Regions within 6 km:
+
+| Update (main thread) P50 / P95 / P99 / max | HeightAt P99 | height available | Visible ready P50 / P95 | peak / budget | reads | evictions | worker read + decode |
+|---|---|---|---|---|---|---|---|
+| 0.094 / 0.142 / 0.219 / 0.81 ms | 8.4 µs | every frame | 24 / 40 ms | 15.99 / 16 MiB | 813 (18.8 MiB) | 177 | 0.35 + 0.06 s |
+
+Latencies are counted in whole frames (16.7 ms) and only for payloads that
+were not already resident (prefetched) when first wanted. Cold-cache IO, more
+viewports and faster movers are #130's.
+
+### Per-viewport selection (issue #125)
+
+Each viewport chooses its own draw units, a tile at one LOD (its LodHeight and
+Normal payloads) or a whole Region, with a `TerrainViewSelector`
+(`terrain/TerrainViewSelection.h`). App keeps one per viewport and feeds its
+wants to the streamer through that viewport's interest.
+
+```cpp
+TerrainViewSelector selector(settings.view);              // one per viewport
+const TerrainView view{{cameraPosition, cameraRelativeViewProj}, focalPixels, farOrZero};
+selector.Update(instances, view, ready);                  // ready: the unit's GPU mesh is usable (#127)
+streamer.SetInterest(interest, selector.Wants());         // Visible and Prefetch
+for (const TerrainDrawUnit &unit : selector.Draws())      // disjoint, inside the frustum
+    Draw(unit);
+selector.Collect(shadowVolume, ready, casters);           // the same detail inside another volume
+```
+
+**Detail from projected error.** A unit's error is its indexed bound
+(`maxDeviation` of the Region or of the tile's LOD record) times the
+viewport's focal length in pixels over the distance from the eye to the unit's
+box; a Region's box is widened by its bound, so it also holds the surface it
+stands for. Walking from the root Region, a Region is refined when its error
+passes `view.refineErrorPixels` and, once refined, stays so until it falls
+below `view.mergeErrorPixels`; a tile takes its coarsest LOD within the refine
+bound, with the same hysteresis between levels. The walk covers every
+direction around the eye, so turning the camera never changes detail and a
+Region coming into view already has its state; nothing depends on altitude or
+on fixed distances, and nothing past a finite far plane is refined, drawn or
+wanted.
+
+**Exactly once.** A Region gives way only to all its children: its four
+Regions, or at level 0 all its map tiles, so the drawn units never overlap and
+Region, tile and LOD borders meet with the shared edge nodes #124 bakes. Only
+leaves are culled: a Region's height range does not bound its descendants'
+finer geometry, so a refined Region is always descended, and a leaf is tested
+against the six clip planes with its box grown for float narrowing and the
+translation grid. A unit whose box the frustum holds is never left out.
+
+**Readiness.** A unit draws once the caller's `ready` says so; since #127 app
+answers with "its GPU mesh is usable" (it was "a mesh exists or the payloads are
+resident"). While a refined Region's visible children are not all ready, the Region itself
+draws if it is (coarse stays until its replacement is usable); a tile draws
+another resident LOD of itself; a Region that just merged draws its ready
+children until it arrives. Where nothing is ready the area is left out while it
+loads, and the coarsest missing Region is wanted first (negative rank), so a
+fresh view fills in coarse to fine.
+
+**Wants.** Everything drawn and every chosen unit in view is `Visible`, ranked
+by distance. Prefetch is separate from the draw list: the chosen units outside
+the frustum (every direction) and the finer units `view.prefetchErrorPixels`
+would pick, nearest first, until their footprints reach
+`view.prefetchBudgetMiB` (zero prefetches nothing). Two viewports want the same
+payloads under their own interests; the streamer reads each once and both draw
+from the same resident data at their own detail.
+
+**Drawing.** App's `TerrainRuntime` is a `ViewDrawSource` (renderer
+`ViewDrawSources`): `RenderSystem` hands it every viewport's camera, then asks
+for each view's draws and for shadow volumes at viewport 0's detail. A traced
+frame holds its single view's selection; more than one viewport keeps the
+whole-frame raster fallback. GPU meshes are shared by all viewports and
+instances; since #127 they are built, uploaded and retired asynchronously (see
+[GPU meshes](#gpu-meshes-issue-127)).
+
+**TerrainCheck** gains `assets/terrain/streamed-16x16.terrain.json`: 16 x 16
+tiles of 256 m at 8 m (one LOD), a level 0 Region over each quarter and one
+root, placed at (153000.5, -20, -77000.25) beside the 2 x 2 map in the scene
+camera's view. Its 14.5 MiB of payloads do not fit what the 16 MiB budget leaves
+after the Eager 2 x 2 map, so it streams by interest (and, since #128, collides
+in pieces that bodies ask for).
+From the scene camera (`smoke.TerrainCheck.game-mode`) the 2 x 2 map draws as
+four source-LOD tiles and the streamed map, after about a second of loading
+from nothing, as its four level 0 Regions; the coarse root fills in first.
+
+**Local prototype measurements** (`TerrainRenderProbe --selection`, Release, RTX 3070 Laptop,
+1280 x 720, 60 degree vertical field of view; TerrainCheck's `view` values; the
+#124 prototype map of 64 x 64 tiles with 1 to 8 m sources and three Region
+levels, streamed by interest from memory with two workers; development
+baselines, not budgets):
+
+| View | Above ground | Draws: tiles (by LOD) + Regions | Vertices | Max projected error | Settled after | Background pixels |
+|---|---:|---|---:|---:|---:|---:|
+| high altitude | 3000 m | 38 (22 L0, 7 L1, 5 L2, 4 L3) + 9 L0 | 211 k | 0.86 px | 7 frames | 440126 (sky) |
+| low approach | 90 m | 425 (393, 14, 10, 8) + 10 L0 | 655 k | 0.74 px | 25 frames | 440806 (sky) |
+| tilted, rolled 35 degrees | 400 m | 450 (415, 12, 18, 5) + 3 L0 | 590 k | 0.98 px | 17 frames | |
+| map edge, looking out | 60 m | 206 (206 L0) + 3 L0 | 270 k | 0.74 px | 8 frames | |
+| nadir, ground only | 3500 m | 132 (116, 7, 5, 4) + 3 L0 | 209 k | 0.92 px | 3 frames | 0 |
+
+The projected error counts only units coarser than their source. #124's
+unculled whole-Region mix drew 2311 units (4.0 M vertices) and 1546 (2.5 M) for
+the first two views, with the same background pixel counts as here. Two
+viewports in one frame, a 90 degree view 120 m up and a 12 degree view from
+6 km away aimed at the same ground, draw 338 and 374 units; of the 345 map
+tiles both draw, 172 are drawn at different detail (a Region in one, tiles in
+the other, or another LOD), and the 404 payloads both want are read once.
+
+A flight at a steady 60 Hz from 6000 m up and 9.9 km out down to 25 m over a
+1 m source tile (1801 frames, 35 s), starting with nothing resident:
+
+| CPU budget | Frames with missing areas | Frames with stand-ins | Units changed per frame (mean, P95 / P99 / max) | Selection P50 / P95 / P99 | Frame P50 / P95 / P99 / max | Peak resident | Reads | Evictions |
+|---|---:|---:|---|---|---|---:|---:|---:|
+| 512 MiB | 2 (the first two) | 112 | 0.79, 2 / 5 / 257 | 1.19 / 2.39 / 2.60 ms | 5.3 / 10.7 / 16.0 / 538 ms | 104.9 MiB | 2399 | 0 |
+| 64 MiB | 2 (the first two) | 113 | 0.79, 2 / 5 / 257 | 1.22 / 2.50 / 2.70 ms | 5.2 / 10.7 / 18.2 / 569 ms | 64.0 MiB | 2401 | 1005 |
+
+The worst frames upload a refined level 0 Region's 256 tiles at once (up to
+256 synchronous `CreateMesh` calls with their BLAS); #127's budgeted
+asynchronous upload is what removes those spikes. In the engine (TerrainCheck,
+Release, a temporary local harness): a 60 degree and a 20 degree viewport side
+by side draw the streamed map as four level 0 Regions and as 110 tiles, and ray
+tracing falls back to raster with its one warning; a camera flying from 3000 m
+to 700 m over it goes from two Regions to 107 tiles within the 16 MiB budget,
+retiring meshes as it goes.
+
+### GPU meshes (issue #127)
+
+A draw unit's GPU mesh is made by a `TerrainMeshResidency`
+(`terrain/TerrainMeshResidency.h`), behind a small `TerrainMeshUploader`
+interface that app implements over the renderer's asynchronous mesh queue
+(`QueueMesh`, `MeshState`, `RetireMesh`; see [renderer.md](renderer.md)). The
+terrain module still sees no renderer type.
+
+```cpp
+TerrainMeshResidency meshes(settings.gpu, workerPool, uploader);   // one per app
+meshes.Install();                                  // per frame, before any system: finished builds and uploads
+selector.Update(instances, view, [&](const TerrainDrawUnit &u) { return meshes.Ready(u.geometry); });
+meshes.Request(instances, everyViewportsWants, streamer, now);   // builds, hand-over, retirement
+if (const TerrainResidentMesh *mesh = meshes.Acquire(unit.geometry, now))
+    Draw(mesh->id, mesh->origin);                  // only GPU-usable meshes
+```
+
+**Ready means the GPU copy is usable.** A unit the viewports want (Visible or
+Prefetch, merged over every viewport) is built once its payloads are resident:
+a worker of the streamer's pool runs `MakeTerrainRenderMesh` (or copies a
+Region payload) on the job's own payload pointers, `Install` takes the result,
+`Request` hands it to the uploader, and the unit is Ready only when the uploader
+reports the upload complete (the renderer: when the frame timeline passed the
+frame that copied it). Until then the selector keeps drawing a ready coarser or
+finer unit, so a refined Region stays on screen until all of its children are
+usable, and a Region replaced by its 256 tiles no longer costs a frame.
+
+**Budgets from data.** `gpu.uploadBytesPerFrame` paces both ends: builds start
+while building and built bytes stay within it (one always may), built meshes go
+to the uploader while its queued bytes are below it, and the renderer records at
+most that many bytes a frame (vertex and index bytes plus the BLAS; the first
+mesh of a frame goes alone if larger), copied through a persistent ring of
+`gpu.stagingBytes`. `gpu.budgetBytes` caps what terrain holds on the GPU,
+counting meshes being built or uploaded and retired meshes the GPU may still
+read: a mesh that does not fit waits, and only a Visible one makes room, by
+retiring unwanted meshes and then Prefetch ones, never a Visible one. A mesh
+nobody wanted or drew for `gpu.meshRetainSeconds` is retired. Retirement never
+waits: the renderer frees the buffers and BLAS once every frame that may still
+read them has completed.
+
+**Release switches and scene exit.** Mesh keys carry the release, so a swap's
+`RetireReleases` drops the old release's builds, retires its uploads (a
+pending one is canceled) and nothing of it becomes ready afterwards; the next
+release's units are other keys. A scene change or Stop forgets every mesh before
+`ReleaseSceneResources`, which waits once and frees them with everything else;
+mesh handle generations move on there, so no kept handle can name a new mesh.
+
+**Ray tracing.** Terrain meshes get a BLAS only while the project's
+`rendering.rayTracing` is on and the device supports it; turning it either way
+retires every terrain mesh to be made again. A raster-only project builds no
+terrain BLAS on any device. The BLAS is built in the same frame as the copies,
+all of a frame's builds in one call, inside the frame budget.
+
+**Local prototype measurements** (`TerrainRenderProbe --selection`, Release, RTX 3070 Laptop,
+1280 x 720, 60 Hz; the #124 prototype map streamed by interest with
+TerrainCheck's `view` and `gpu` values, a 512 MiB CPU and a 1024 MiB GPU budget
+unless noted; development baselines, not budgets). Frame times leave out the
+capture frames. No flight frame called `vkDeviceWaitIdle` or `vkQueueWaitIdle`,
+and no draw met a stale or unfinished mesh:
+
+| Flight | Path | Frame P50 / P95 / P99 / max | `Request` P99 / max | Peak held (+ retiring) | BLAS | Frames with missing areas | Settling |
+|---|---|---|---|---|---:|---|---|
+| approach (as in #125) | raster | 5.6 / 11.6 / 13.0 / 15.5 ms | 0.56 / 2.26 ms | 81.4 MiB | 0 | first 6 | |
+| approach | RT | 7.6 / 11.7 / 14.9 / 25.2 ms | 0.87 / 1.72 ms | 207.7 (+2.6) MiB | 1265 | first 6 | |
+| approach, 64 MiB CPU | raster | 5.6 / 11.5 / 12.4 / 35.8 ms | 0.58 / 2.56 ms | 81.4 MiB | 0 | first 6 | |
+| approach, 48 MiB GPU | raster | 5.5 / 9.0 / 11.1 / 13.8 ms | 0.49 / 2.57 ms | 48.0 MiB | 0 | first 6 | 612 evicted, 470 waits |
+| straight, 250 m/s at 300 m | raster | 8.8 / 12.6 / 14.9 / 20.5 ms | 0.65 / 3.05 ms | 76.4 MiB | 0 | first 11 | |
+| straight | RT | 9.0 / 13.5 / 17.2 / 34.1 ms | 0.91 / 1.64 ms | 195.8 (+2.6) MiB | 1020 | first 11 | |
+| turns, 180 degrees/s at 150 m | raster | 7.6 / 10.6 / 12.9 / 15.0 ms | 0.90 / 2.53 ms | 137.4 MiB | 0 | 251 after settling | first view in 103 frames |
+| turns | RT | 8.9 / 13.8 / 17.1 / 31.4 ms | 1.09 / 1.54 ms | 335.5 (+1.5) MiB | 2884 | 202 after settling | 106 frames |
+| turns, 64 MiB prefetch | raster | 8.6 / 11.7 / 13.6 / 16.3 ms | 2.15 / 4.11 ms | 172.0 MiB | 0 | 39 after settling | 95 frames |
+| teleport to 4 corners every 2.5 s | raster | 9.4 / 12.1 / 14.5 / 17.5 ms | 2.92 / 4.34 ms | 110.3 MiB | 0 | 40 | 13 to 33 frames a jump |
+| teleport | RT | 9.1 / 15.2 / 17.0 / 25.6 ms | 1.59 / 2.07 ms | 282.4 (+1.5) MiB | 3720 | 94 | 29 to 55 frames |
+| scene unload midway | raster | 7.7 / 9.5 / 11.7 / 13.4 ms | 1.48 / 3.67 ms | 71.9 MiB | 0 | 14 | 15 frames after the unload |
+| scene unload | RT | 8.3 / 13.8 / 16.3 / 18.7 ms | 1.03 / 1.72 ms | 180.8 (+1.5) MiB | 1055 | 14 | 33 frames |
+
+The approach flight is the one #125 measured with synchronous uploads (frame
+P99 16.0 ms, max 538 ms): the frame that replaces a level 0 Region by its 256
+tiles (258 units changed) now takes 11.9 ms, and the slowest single mesh build
+(about 21 ms for a 1 m tile) runs on a worker. Under the 48 MiB GPU budget held
+plus retiring bytes never passed 48.0 MiB. Missing areas in the approach and
+straight flights are only the first frames after starting from nothing. While
+turning half a turn a second, ground that comes into view was not wanted
+before (TerrainCheck's 4 MiB prefetch budget drops thousands of units behind
+the camera), so it appears a few frames late (at most about 50 units missing);
+with 64 MiB of prefetch the frames with missing areas drop from 251 to 39 (at
+most 14 units). The scene unload frees everything at once (one device wait in
+`ReleaseSceneResources`, outside the measured frames); the highest mesh
+generation then keeps counting.
+
+### Collision residency (issue #128)
+
+A `TerrainCollisionResidency` (`terrain/TerrainCollisionResidency.h`) keeps the
+height field pieces that collision sources need. A worker builds them, and they
+are placed only between fixed steps. It sits behind a small
+`TerrainColliderPhysics` interface that app implements over `PhysicsWorld`, so
+the terrain module still sees no Jolt type. Every dynamic `RigidBody` is a
+source. A game registers others in the `TerrainCollisionSources` World
+resource, with inputs a body cannot give: a flight floor, a planned range, its
+own tolerance. It reads their status back from the same resource.
+
+```cpp
+TerrainCollisionResidency collision(settings.collision, workerPool, colliders);  // one per app
+collision.SetInstances(instances);             // at a safe point: the TerrainWorld's releases and placements
+// before every fixed step:
+collision.Install(now);                        // finished builds become colliders, unused pieces retire
+collision.Update(sources, streamer, now, dt);  // needs, reads, builds and one answer per source
+const TerrainCollisionAnswer &answer = collision.Answer(i);
+if (answer.status.state == TerrainCollisionState::Pending) physics.HoldBody(body);
+physics.RestrictContacts(body, BodiesOf(answer.contacts));
+```
+
+**Pieces.** An Eager release collides as one piece over the whole map, needed
+from its first frame and selected coarse to fine as in P2. An Interest release
+is cut into pieces of `collision.pieceTiles` tiles a side. Each piece reaches
+`collision.seamOverlapMeters` past its max x and z sides into its neighbours. A
+worker samples a piece from the resident final heights of its tiles
+(`BuildTerrainUniformSamples` over a `TerrainSourceTileLookup`) and asks the
+physics side for the shape (`BuildHeightField`, any thread). Every piece of a
+release is quantized against the release's height range, and every piece starts
+on an even sample, so Jolt's 2 x 2 blocks line up where pieces overlap.
+Instances of one release share each piece's shape with a body per placement; a
+placement the build did not see gets its own error and coverage check.
+
+**Seams.** A body touches only the colliders it is given
+(`PhysicsWorld::RestrictContacts`, a Jolt group filter): the piece whose inner
+part holds its whole footprint for the coming step, which is the piece shrunk on
+its seam sides by `kTerrainSeamMarginCells` cells. So a body never meets the
+boundary edges of another piece, which Jolt treats as active edges. Inside an
+overlap both pieces have the same triangles and the same quantized heights,
+except the last cells before a piece's max sides, where Jolt quantizes against a
+shorter block; the margin keeps hand-overs away from those cells. A body wider
+than the overlap lets one piece hold has no single owner. It touches every
+piece it overlaps, and app logs a warning once.
+
+**Need.** For each source and placement the residency predicts a box over τ
+seconds: from the position along the velocity, widened by the radius plus half
+the acceleration times τ squared, joined with the source's own range, and with
+its lowest point raised to the floor. τ is `collision.loadLatencySeconds` or the
+slowest of the last 16 measured request-to-collidable times of Interest pieces,
+whichever is larger, plus `collision.latencyMarginSeconds`; an Eager whole
+piece is needed from the start, so its build time is left out. A piece is needed when its inner
+part meets the box and the lowest predicted point is within the larger of
+`maxErrorMeters` and the source's tolerance of the piece's indexed maximum
+height. The same box over τ + `collision.prefetchSeconds` makes prefetch wants.
+Needed pieces want their tiles as `Required` through one streamer interest,
+prefetch pieces as `Prefetch`.
+
+**Readiness.** A piece's fine spacing starts at the coarsest policy spacing
+that is no coarser than its finest source and refines while the measured error
+(geometry, quantization, horizontal and numeric, as in P2) is above
+`maxErrorMeters`. When the policy has a coarser spacing, a coarse piece at the
+coarsest one is built first. It stands in while the fine piece is not
+collidable, for a source whose tolerance its measured error is within. A
+source's answer is `Ready`, `CoarseSufficient`, `Pending` or `Failed`, with
+counts, the largest contact error it relies on and the first failure's reason.
+A failed build is not retried; a failed read clears once the streamer reads the
+payload.
+
+**Protection.** App's `TerrainRuntime` is a `PhysicsStepGate`. Before each
+fixed step `PhysicsSystem` calls it. It installs finished pieces, updates the
+needs and holds every dynamic body whose answer is `Pending` or `Failed`
+(`PhysicsWorld::HoldBody`: kinematic at its pose with its velocities kept;
+impulses and velocity changes while held go into the kept velocity, forces are
+dropped). It resumes the body when the answer becomes `Ready` or
+`CoarseSufficient`. Spawn, load and teleport go through the same gate, and
+other bodies keep simulating. Holds, resumes, teleports, placed and retired
+pieces are logged at INFO, failures as errors. Colliders change only in
+`Install`, which runs in the gate and at the top of a frame, so never during a
+step or a query.
+
+**Budget.** `collision.budgetBytes` caps the shape bytes held. A piece nobody
+has needed for `collision.retainSeconds` is retired. Over the budget, unneeded
+pieces go first, then prefetch ones; needed pieces may pass it
+(`Stats().overBudgetBytes`).
+
+**Settings.** The `collision` section holds the P2 policy numbers
+(`spacingsMeters`, `maxErrorMeters`, which a `TerrainCollisionPolicy` World
+resource still overrides) and the residency's own. `seamOverlapMeters` must be
+more than twice the margin at the coarsest spacing. TerrainCheck's values (in
+the [settings example](#streaming-and-cpu-residency-issue-126)) are provisional
+development values, not measured ones.
+
+**Seam choice** (prototype in local ADR 0024; Jolt 5.5, P1's 2 x 2 tiles of
+256 m at 4 m, sphere and box at 8 m/s over P1's tilted plane). Gate from the
+#128 issue comment: no step velocity jump above 0.3 m/s and a gap within the
+single shape's envelope, about −5 mm to +1.8 mm. The first two columns are P1's
+corner path in 12 headings, the last one 3 sites x 24 headings across whole
+bands:
+
+| Variant | Jumps > 0.3 m/s, largest | Gap | Across bands: jumps, largest |
+|---|---|---|---|
+| one shape (P1) | 0, 0.135 m/s | −4.6 to +1.8 mm | 0, 0.163 m/s |
+| a body per tile, shared range | 11, 2.82 m/s | −20.1 to +22.8 mm | 34, 1.88 m/s |
+| bodies overlapping 1 / 8 cells | 17 / 11, 2.97 / 2.80 m/s | to +22 mm | 34 / 38 |
+| `MutableCompoundShape`, adjacent / 1 cell | 11 / 17, 2.8 m/s | to +23 mm | 33 / 33 |
+| compound, 8 cells overlap | 0, 0.134 m/s | −4.6 to +1.8 mm | 4, 0.82 m/s |
+| overlap 5 or 8 cells, shared range, one owner (chosen) | 0, 0.135 m/s | −4.6 to +1.8 mm | 0, 0.163 m/s |
+
+Separate bodies snag because another body's boundary edges are active edges
+that enhanced internal edge removal cannot void. A compound fails across the
+band because each child's last cells are quantized against a shorter block. An
+owner per body avoids both. On the gentle relief it does as well as the single
+shape, which itself jumps above 0.3 m/s in 8 of the 72 band runs there.
+
+**Seam test.** `[collision-seams]` slides P1's sphere and box through the
+residency in Interest mode (pieces of one tile) and in Eager mode (one shape),
+over P1's corner, two hand-over bands and along two wider bands. Jolt is built
+without cross-platform determinism, so each build repeats itself exactly but
+Debug and Release round differently. A start moved by 1 µm already shifts the
+single shape's lowest gap by up to 0.75 mm on P1's corner path and 1.9 mm on a
+hand-over band. So the approved gate is checked where the single shape, over
+start moves of 0 to 1 mm, keeps to it; elsewhere pieces must stay within the
+single shape's own spread, widened by that spread. Every run of either keeps
+step jumps within 0.3 m/s, and on P1's corner path pieces equal the single
+shape exactly:
+
+| Build | P1 corner, one shape = pieces | Lowest gap, one shape / pieces: hand-over bands | wider bands | Largest jump, pieces |
+|---|---|---|---|---|
+| Release | 0.1345 m/s, −4.567 to +1.834 mm | −10.86 / −10.91, −10.85 / −10.69 mm | −19.04 / −18.37, −3.98 / −3.98 mm | 0.149 m/s |
+| Debug | 0.1350 m/s, −5.004 to +1.830 mm | −10.82 / −10.87, −10.83 / −10.70 mm | −18.49 / −20.10, −3.95 / −3.95 mm | 0.151 m/s |
+
+The gate's figures are P1's own Debug measurement of this path rounded to
+0.1 mm (ADR 0017), so the single shape itself sits on them. Away from the
+corner the single shape's lowest gap reaches −19 mm on the same plane: the gap
+is Jolt's contact slop over a quantized surface, not a seam effect.
+
+**Measurements** (TerrainCheck, Release, `--no-editor`; development
+baselines). The 2 x 2 map's whole piece at 1 m builds in 1.13 to 1.16 s on a
+worker (683.7 KiB, error 3.9 mm, nearly all quantization), so the Play sphere is
+held for 1.23 to 1.27 s at spawn and then rests where it did in P1. The 16 x 16
+map's first 8 m piece builds in 10.1 ms (66.1 KiB, error 8.0 mm) and is
+collidable 0.09 s after `StreamedSphere` first needs it; the sphere is held
+0.099 s and then rolls down the slope. In Debug the whole 1 m piece takes about
+19 s, so the 2 x 2 map's sphere waits that long (through all of a Debug smoke
+run).
+
+### Release switch (issue #129)
+
+Release identity was already part of every name: payload keys, mesh keys (the
+geometry payload key), collision piece keys and height results all carry the
+asset and release, and every worker job holds its own release handle and
+payload pointers. A `TerrainReleaseSwitch` (`terrain/TerrainReleaseSwitch.h`)
+adds the move of a loaded asset from release A to the release B its `current`
+names, without any frame, step or query seeing the two mixed.
+
+```cpp
+TerrainReleaseSwitch releases(workerPool, TerrainReleasesRoot(gameDir));  // one per app
+// Edit, at the top of a frame, before any system:
+releases.Update(streamer);                     // install point: check results; a verified B goes to the streamer staged
+for (const auto &b : releases.Staged())        // select, mesh and build B's collision, never draw or place it
+    releases.Report(b->Info().asset, MeasureTerrainPrewarm(b->Info(), streamer, &meshes, &collision, viewsWarm));
+if (releases.Poll(terrainWorld)) resolve = true;  // reads only the current pointers
+for (TerrainReleaseAdoption &ready : releases.TakeReady())
+    options.adopt.push_back(ready.release);    // ResolveTerrainWorld(..., options) puts B in place of A
+// PlayScene: releases.Suspend() after the last adoption; StopScene: Resume()
+```
+
+**Verification.** When `current` of a loaded asset names another release, a
+worker opens its index (`OpenTerrainRelease`, or a `TerrainReleaseOpener` a test
+wraps) and lists the asset's release directories, then reads and checks one pack
+at a time (`TerrainReleaseHandle::VerifyPack`: size, whole-file checksum, header,
+every payload decoded, the checks `VerifyAllPacks` makes), so at most one worker
+is busy with it. The main thread reads only the pointer files, once a poll
+period in Edit. A missing, truncated, corrupt or misnamed B fails with one error
+naming the pack and the reason; A stays in use and B is not read again until
+`current` moves. `current` moving on, back to A, or the asset leaving the scene
+drops the candidate, and its job's late result is discarded.
+
+**Prewarm.** A verified B is added to the streamer staged (`Add(release, true)`):
+its mode is chosen as if A were gone, and an Eager B's payloads are wanted only
+as Prefetch with the lowest rank until B is added again unstaged, so they use
+room A does not need. App runs a second selector per viewport over B (never
+drawn) and asks for B's Visible units as Prefetch, so B's meshes build and
+upload below everything A wants. The collision residency gets B as staged
+instances (`SetInstances(active, staged)`): pieces are built for what the
+sources would need there, as prefetch, never placed, and `StagedStatus` counts
+them. `MeasureTerrainPrewarm` turns this into a report: warm when every
+viewport's B selection draws only the units it chose and every staged piece is
+built; failed when one of B's payloads, meshes or pieces fails, or a tile lacks
+its source LOD and normal records. B is ready when warm, or after
+`kTerrainSwitchIdleReports` reports in a row with none of its work in flight
+(a budget keeps it from getting warmer).
+
+**Switch.** At the next Edit frame boundary `TakeReady` hands B to
+`ResolveTerrainWorld` through `TerrainResolveOptions::adopt` (which adds B again
+unstaged, so an Eager B becomes Required); `keepLoaded` keeps every other loaded
+release whatever its `current` names. App then retires A's meshes
+(`RetireReleases`; freed after the last frame that used them), sets the collision
+instances (A's colliders leave between steps, B's prebuilt pieces are placed at
+the next `Install`), and A's last `TerrainResidentRelease` goes with the old
+`TerrainWorld`, so the streamer drops A's entries at its next `Update`. Workers
+still holding A's payloads or handle finish on their own references; their
+results find no ticket and are discarded (`discarded` in the streamer, mesh and
+collision stats; a streamer result whose bytes came from another release than
+its key is discarded too).
+
+**Play.** Play never polls or switches. `PlayScene` adopts a B that is already
+ready; otherwise Play enters on A without waiting, and `Suspend` lets B's staged
+release go (its late reads and builds are discarded, its verification result is
+kept) and posts no further checks until `StopScene`.
+
+**Diagnostics.** Logs only; the engine writes nothing into the releases tree.
+App logs Play's pinned release per asset, a candidate started, verified (worker
+seconds, packs, bytes), dropped, failed or ready, the switch with what A still
+held (CPU payloads, GPU meshes, collision pieces) and the asset's release
+directories kept on disk with their sizes, and pieces built ahead of a switch.
+`TerrainReleaseSwitch::Candidates`/`Stats`, `ListTerrainReleases` and
+`Usage(release)` on the streamer and both residencies give the same per release.
+
+**Measurements** (TerrainCheck's 2 x 2 map, editor and game layouts, a local
+harness that plays A, publishes B with TerrainTool during Play, stops and plays
+B; development baselines). During Play every query, ray and body stayed on A and
+the streamer held nothing of B. B (5.77 MiB in 4 packs) took 0.044 to 0.048 s of
+worker time to check in Release (0.35 to 0.37 s in Debug). The switch came 1.25
+to 1.33 s after Stop in Release (20.3 to 20.8 s in Debug), set by B's whole 1 m
+collision piece built ahead (1.13 s; 19.4 s in Debug), and the resolve at the
+switch took under a millisecond. With the scene camera the view drew B on the
+switch frame with no area loading, and the next Play let its sphere through at
+spawn where the first Play on A had held it 1.2 s. While B prewarmed, the CPU
+residency sat at its 16 MiB budget (A's and B's Eager payloads plus the streamed
+map): the overlap #130 has to budget for.
+
+### Streaming budget measurements (issue #130)
+
+TerrainCheck uses the measured configuration recorded in
+[streaming-budget-results.md](../terrain/streaming-budget-results.md), including
+hardware, routes, readiness distributions, memory peaks and known workload limits.
+Measurement code and benchmark tools are maintained locally rather than in engine modules.
 
 ### Tile meshes
 
@@ -269,11 +978,13 @@ The mesh has no renderer types. `app` converts it to renderer vertices,
 uploads it (traced like any mesh when ray tracing is on) and places the draw at placement plus
 origin in double (see [renderer.md](renderer.md) and [app.md](app.md)).
 
-The collider is one shape over the whole map (ADR 0017), so
-`BuildTerrainAreaSamples` gathers every tile's samples into one row-major
-block: exactly the cells the tile meshes cover, each sample taken from the tile
-that owns it, with its first sample as a terrain-local origin. `app` hands it to
-`PhysicsWorld::CreateStaticHeightField` at placement plus that origin.
+`BuildTerrainAreaSamples` gathers tiles' samples into one row-major block:
+exactly the cells the tile meshes cover, each sample taken from the tile that
+owns it, with its first sample as a terrain-local origin. A collision piece is
+such a block over a uniform layout of the piece's bounds
+(`BuildTerrainUniformSamples`); `app` hands it to `PhysicsWorld::BuildHeightField`
+and places the shape at placement plus that origin (see
+[Collision residency](#collision-residency-issue-128)).
 
 ### Scene instances and pinned releases
 
@@ -288,14 +999,18 @@ per instance.
 // TerrainInstance { "recipePath": "terrain/relief-2x2.terrain.json" }
 const TerrainSceneSpec spec = CollectTerrainScene(world, project.mAssetIdRoot);  // ids, placements, refusals
 std::vector<TerrainIssue> issues = spec.issues;
-TerrainWorld terrain = ResolveTerrainWorld(spec, TerrainReleasesRoot(gameDir), &loaded, issues);
+TerrainWorld terrain = ResolveTerrainWorld(spec, TerrainReleasesRoot(gameDir), &loaded, issues, streamer,
+                                           TerrainEagerLoad::Async);
 const TerrainHeightResult ground = terrain.HeightAt(position, 4.0);            // the instance holding the point
 ```
 
-`ResolveTerrainWorld` opens the release each asset's `current` names, reads every
-pack whole (`VerifyAllPacks`) and preloads every tile into a
-`TerrainResidentRelease`: handle plus height query, the one source an
-instance's mesh, collider and queries derive from. Given what is loaded, it
+`ResolveTerrainWorld` opens the release each asset's `current` names (its index
+only) as a `TerrainResidentRelease`: handle plus height query, the one source an
+instance's meshes, collision pieces and queries derive from. It reuses one the
+streamer already holds and adds a new one to the streamer. With
+`TerrainEagerLoad::Wait` it also waits until every payload of a new Eager
+release is resident, refusing the release when one fails; with `Async` it
+returns at once (see [Streaming](#streaming-and-cpu-residency-issue-126)). Given what is loaded, it
 keeps an asset whose pointer has not moved without reading anything, and when a
 moved pointer names a release that does not load, it keeps the old one and
 remembers the refusal. `TerrainCurrentMoved` is the cheap poll that decides
@@ -303,11 +1018,25 @@ whether a resolve is worth running. Instances whose effective XZ bounds (map
 bounds plus translation) overlap are refused; touching ones both load.
 
 App owns the `TerrainWorld` World resource and replaces it only at an Edit frame
-boundary, together with the meshes and colliders (see [app.md](app.md)). One Play
-keeps the releases it entered with; a publish during Play is adopted at the
-first Edit frame boundary after Stop.
+boundary, handing its releases and placements to the collision residency at the
+same point (see [app.md](app.md)). One Play
+keeps the releases it entered with. The engine resolves with
+`TerrainResolveOptions::keepLoaded`, so a loaded asset keeps its release whatever
+`current` names; a publish during Play is checked and prewarmed after Stop and
+put in place at an Edit frame boundary through `adopt` once ready (see
+[Release switch](#release-switch-issue-129)). Only an asset with nothing loaded
+follows a moved `current` at once.
 
 ### Source, candidates and published releases
+
+Only authored recipes and scene references are versioned. Generated
+`.tpack`/`.tindex` files and each game's terrain releases are ignored.
+On a new checkout, building the engine runs `TerrainTool sync` before launch:
+missing releases are baked, validated and published locally; matching releases
+are reused. A build without the editor also packages that local release next
+to the executable. The runtime consumes these releases without linking the
+offline baker. Tests create their own releases in temporary directories and
+do not require a game's generated files or a fixed locally minted release id.
 
 A game's terrain has three places with separate lifetimes:
 
@@ -377,8 +1106,11 @@ TerrainTool package --id-root <logical root> --source-path <relative path>
   `candidate.json` and stray files, format, index, whole packs, coverage (every
   layout tile's pack exists), payloads, finite heights, shared edges and
   four-tile corners (shared samples bit-identical, and `EvaluateSurfaceInCell`
-  from each side within `SurfaceTolerance` at four probes per cell), and
-  identity (manifest against index; with `--recipe`, fingerprint and layout).
+  from each side within `SurfaceTolerance` at four probes per cell), Regions
+  (each decodes; when every source decodes, the hierarchy is rebaked with the
+  index's settings and must match byte for byte; a recipe-backed candidate
+  must have one), and identity (manifest against index; with `--recipe`,
+  fingerprint and layout).
 - **publish** validates the candidate (with `candidate.json`), takes the
   asset's lock (`<asset>/.publish.lock`, opened exclusively; the OS drops it
   if the process dies), removes `.partial` directories earlier publishes left,
@@ -414,7 +1146,10 @@ The report is JSON: `kind`, `reportVersion`, `tool` (name, version),
 `command`, `ok`, `recipe` (path, fingerprint), `candidate`, `asset` (id,
 logical path), `release` (id, source fingerprint, format version and minor,
 content and surface versions, heights hash, nonce), `layout`, `tiles` (each
-tile's pack, stored height range and whether it read back), `files`, `checks`
+tile's pack, stored height range and whether it read back), `regions` (the
+settings, level 0 edge and, per Region, level, coordinate, pack, map tiles,
+valid extent, height range, cell spacing, vertices, triangles, bytes, error and
+whether it decoded; null without Regions), `files`, `checks`
 (each `passed`, `failed` or `skipped` with a detail; a check that could not
 cover every tile is `skipped`, never `passed`) and `diagnostics` (`check`,
 `field`, `tiles`, `sample`, `message`). `field` is a dotted recipe or
@@ -475,19 +1210,40 @@ tools\TerrainTool\TerrainTool.exe publish --candidate terrain-candidates\relief-
 | `TileAddress` | `terrain/TileAddressing.h` | `AddressLocal`, `AddressWorld`: status, tile, within-tile meters, `SampleCell` |
 | `TerrainSourceFingerprint`, `TerrainFormatVersion`, `TerrainReleaseId`, `TerrainReleaseInfo` | `terrain/TerrainIdentity.h` | three identities that never convert into each other |
 | `TileHeights` | `terrain/TileHeights.h` | one tile's `(n+1)^2` float32 samples; `At`, `Set`, `Samples` |
-| `TerrainIndex`, `TerrainTileRecord`, `TerrainPackRecord`, `TerrainResult`, `TerrainPackError` | `terrain/TerrainPackFormat.h` | the format 1.0 byte layout and version numbers; `ParseTerrainIndex`, `DecodeTerrainTile` (bytes from any reader), `TerrainPackFileName` |
-| `EncodeTerrainRelease`, `MintTerrainReleaseId` | `terrain/TerrainPackWriter.h` | index and pack bytes from `TileHeights`, in memory; `TerrainHeightsHash`, `MakeTerrainReleaseNonce` |
+| `TerrainConstants.h` | `terrain/TerrainConstants.h` | shared format layout, Region defaults, limits and numerical policy; decision references in the header |
+| `TerrainIndex`, `TerrainTileRecord`, `TerrainPackRecord`, `TerrainResult`, `TerrainPackError` | `terrain/TerrainPackFormat.h` | the format 2.2 sparse layer/payload layout, Region table and version numbers; `Find` (any kind, Region by x/z, level, layer 0), `FindRegion`, `regionGrid`, `regions`; `ParseTerrainIndex`, `DecodeTerrainTile` (bytes from any reader), `TerrainPackFileName` |
+| `EncodeTerrainRelease`, `MintTerrainReleaseId` | `terrain/TerrainPackWriter.h` | index and pack bytes from `TileHeights`, derived payloads and `TerrainRegionWrites`, in memory; `TerrainPayloadsHash`, `TerrainHeightsHash`, `MakeTerrainReleaseNonce` |
+| `TerrainRegionCoord`, `TerrainRegionGrid` | `terrain/TerrainRegionGrid.h` | a Region's level and x, z; the quadtree over a reference grid: levels, counts, ordinals, tiles, rect, valid extent, meshed domain, grid lines, cell spacing, parent and children |
+| `TerrainRegionMesh`, `EncodeTerrainRegion`, `DecodeTerrainRegion` | `terrain/TerrainRegion.h` | a Region payload (origin-relative positions, normals, indices, provenance, error) and its checked codec; `EvaluateTerrainRegion`, `TerrainRegionCoversDomain`, `TerrainRegionDeviation` against `TerrainSourceLookup`, `TerrainRegionSourceChecksums` |
 | `TerrainByteSource`, `TerrainFileSource`, `TerrainMemorySource` | `terrain/TerrainByteSource.h` | where a release's files come from, with read and byte counters |
-| `TerrainReleaseHandle`, `OpenTerrainRelease`, `OpenCurrentTerrainRelease` | `terrain/TerrainRelease.h` | one opened release; `ReadTile`, `VerifyAllPacks`; release directory and `current` pointer naming |
+| `TerrainReleaseHandle`, `OpenTerrainRelease`, `OpenCurrentTerrainRelease` | `terrain/TerrainRelease.h` | one opened release; `ReadTile`, `ReadLod`, `ReadNormals`, `ReadRegion` (one range), `ReadPayload` (any record of the index, checksum checked), `VerifyAllPacks`, `VerifyPack` (one pack); release directory and `current` pointer naming |
+| `TerrainStoredRelease`, `ListTerrainReleases` | `terrain/TerrainRelease.h` | an asset's release directories on disk with file counts and bytes, by id; directory entries only |
+| `TerrainReleaseSwitch` | `terrain/TerrainReleaseSwitch.h` | moving a loaded asset to the release `current` names: `Poll` (pointers only), `Update` (install point; verified releases staged in the streamer), `Staged`, `StagingVersion`, `Report`, `TakeReady`, `Suspend`/`Resume` (Play), `Clear`, `Candidates`, `TakeEvents`, `Stats` |
+| `TerrainReleaseCandidate`, `TerrainSwitchState`, `TerrainSwitchEvent`, `TerrainSwitchStats`, `TerrainReleaseAdoption`, `TerrainPrewarmReport`, `MeasureTerrainPrewarm`, `kTerrainSwitchIdleReports` | `terrain/TerrainReleaseSwitch.h` | a candidate's releases, state (Verifying, Prewarming, Ready, Failed), packs and bytes checked, times, failure and kept directories; started, verified, dropped, failed, ready and unreadable events; a ready release to adopt; warm, in flight or failed as measured from the residencies |
 | `TerrainAssetPath`, `ResolveTerrainAssetPath`, `TerrainReleasesRoot` | `terrain/TerrainAssetPath.h` | recipe path to logical path and asset id (`kTerrainRecipeSuffix`), game directory to its releases root, `IsTerrainFileExcludedFromCook` for AssetCooker |
 | `TileSamplesView`, `TileSampleLookup` | `terrain/TerrainSurface.h` | one tile's final float32 samples, not owned, in the release block layout |
 | `CellTriangulation`, `TriangulateCell` | `terrain/TerrainSurface.h` | a cell's diagonal and two triangles as global sample indices, counter-clockwise from +Y |
 | `SurfaceSample`, `SurfaceStatus` | `terrain/TerrainSurface.h` | `EvaluateSurface` (owner tile), `EvaluateSurfaceInCell` (a chosen cell): status, height, normal, tile, cell, triangle |
 | `SurfaceTolerance`, `kTerrainSurfaceVersion` | `terrain/TerrainSurface.h` | agreement bound between two evaluations at one point; the surface contract version derived data records |
-| `TerrainHeightQuery` | `terrain/TerrainHeightQuery.h` | resident heights of one release; `HeightAt` (terrain-local, or world plus placement), `Insert`, `MarkFailed`, `Residency`, `ResidentTile`, `TileError`, `PayloadRequests`, `TakePayloadRequests` |
+| `TerrainHeightQuery` | `terrain/TerrainHeightQuery.h` | resident heights of one release; `HeightAt` (terrain-local, or world plus placement), `Insert`, `MarkFailed`, `Evict`, `Residency`, `ResidentTile`, `TileError`, `PayloadRequests`, `TakePayloadRequests`, `TakeUsedTiles` |
 | `TerrainHeightRequest`, `TerrainHeightResult`, `TerrainHeightStatus`, `TerrainHeightFailure` | `terrain/TerrainHeightQuery.h` | bound release and required spacing in; status, local height, `worldPoint`, spacing, source spacing, known or unknown `maxError`, release, tile and layer out |
 | `TerrainHeightLayer`, `TerrainPayloadRequest`, `TerrainTileResidency` | `terrain/TerrainHeightQuery.h` | one spacing of the release (baked tiles, measured deviation); a missing payload for a loader; a tile's slot state |
-| `PreloadTerrainTiles`, `PreloadAllTerrainTiles` | `terrain/TerrainHeightQuery.h` | P1's synchronous fill of a query from its own release handle, recording per-tile failures |
+| `PreloadTerrainTiles`, `PreloadAllTerrainTiles` | `terrain/TerrainHeightQuery.h` | synchronous fill of a query from its own release handle, recording per-tile failures; tools and tests |
+| `TerrainStreamer` | `terrain/TerrainStreamer.h` | asynchronous payload reads and CPU residency: `Add` (residency mode; staged for a release switch), `Find`, `ModeOf`, `AddInterest`/`SetInterest`/`RemoveInterest`, `Update` (the per-frame install point), `WaitForEager`, `WaitForCompletion`, `Status`, `Heights`/`Lod`/`Normals`/`Region`, `RetryFailed`, `Stats`, `Usage` |
+| `TerrainReleaseUsage` | `terrain/TerrainStreamer.h` | one release's share of a residency (waiting, in flight, ready, failed, bytes, first failure); `Usage(release)` on the streamer, the mesh residency and the collision residency |
+| `TerrainPayloadKey`, `TerrainPayloadWant`, `TerrainDemand`, `TerrainPayloadState`, `TerrainPayloadStatus`, `TerrainStreamingStats` | `terrain/TerrainStreamer.h` | the key (asset, release, kind, level, layer, tile or Region), a want with demand and rank, the states, budget and counters; `TerrainPayloadKeyOf`, `TerrainPayloadFootprint`, `DescribeTerrainPayloadKey` |
+| `TerrainExecutor`, `TerrainWorkerPool`, `TerrainManualExecutor` | `terrain/TerrainExecutor.h` | where background jobs run: a pool of `std::jthread`s, or a queue a test runs by hand |
+| `TerrainStreamingSettings`, `TerrainResidencyMode`, `LoadTerrainStreamingSettings`, `ValidateTerrainStreamingSettings` | `terrain/TerrainStreamingSettings.h` | the CPU budget, IO, retry, residency, per-viewport detail (`view`), GPU mesh (`gpu`) and collision piece (`collision`) settings with no code defaults; the game file plus the machine-local override, every problem by path and file; `kTerrainSeamMarginCells` |
+| `TerrainCollisionPolicy`, `ValidTerrainCollisionPolicy`, `TerrainUniformSamples`, `TerrainCollisionError` | `terrain/TerrainCollision.h` | P2's collision spacings and error (from the `collision` settings; a World resource overrides them); a uniform block with its deviation, slope and height bound; the error sum |
+| `BuildTerrainUniformSamples`, `TerrainSourceTileLookup`, `TerrainCollisionErrorBudget`, `TerrainCollisionCovers` | `terrain/TerrainCollision.h` | a uniform block over the whole map from a height query, or over any bounds from a source lookup (any thread); its error for a placement and decoded shape; whether the decoded shape covers it |
+| `TerrainCollisionResidency` | `terrain/TerrainCollisionResidency.h` | height field pieces collision sources need: `SetInstances` (active, and staged ones built ahead but never placed), `SetPolicy`, `Install` (finished builds placed, unused retired; between fixed steps), `Update` (needs, reads, builds, answers), `Answer`, `StagedStatus`, `ForEachCollider`, `Clear`, `PredictionSeconds`, `TakeEvents`, `Stats`, `Usage` |
+| `TerrainCollisionSource`, `TerrainCollisionSources`, `TerrainCollisionState`, `TerrainCollisionStatus`, `TerrainCollisionAnswer` | `terrain/TerrainCollisionResidency.h` | a source's position, velocity, radius, acceleration, tolerance, floor and range; the World resource for a game's sources and their status; Ready, CoarseSufficient, Pending, Failed with counts and contact error; the colliders a source may touch and whether it has one owner |
+| `TerrainColliderPhysics`, `TerrainColliderShape`, `TerrainBuiltCollider`, `TerrainColliderId`, `kTerrainColliderHole` | `terrain/TerrainCollisionResidency.h` | the physics side a caller implements (`Build` on any thread with one quantization range, `Place` and `Remove` between steps); an opaque shared shape with its measured errors, extent and bytes |
+| `TerrainCollisionOwners`, `TerrainCollisionPieceArea`, `TerrainCollisionEvent`, `TerrainCollisionPieceName`, `TerrainCollisionStats` | `terrain/TerrainCollisionResidency.h` | which pieces a footprint may touch; placed, retired and failed pieces with spacing, error, build time, latency and bytes; held, peak and budget bytes, builds and latencies |
+| `TerrainViewSelector` | `terrain/TerrainViewSelection.h` | one viewport's selection over placed releases: `Update` (detail in every direction with hysteresis, frustum draws, wants), `Draws`, `Collect` (the same detail in another volume), `Wants`, `Stats` |
+| `TerrainMeshResidency` | `terrain/TerrainMeshResidency.h` | GPU meshes of draw units within the `gpu` budgets: `Install` (finished builds and uploads), `Request` (every viewport's wants: builds, hand-over, retirement), `State`, `Ready`, `Acquire`, `RetireReleases`, `RetireAll`, `Forget`, `TakeFailures`, `Stats`, `Usage` |
+| `TerrainMeshUploader`, `TerrainMeshData`, `TerrainGpuMeshId`, `TerrainGpuMeshState`, `TerrainMeshState`, `TerrainResidentMesh`, `TerrainMeshStats` | `terrain/TerrainMeshResidency.h` | the renderer side a caller implements (footprint, queued bytes, upload, state, retire, retiring bytes); a built mesh in its own frame; an upload's id and state; where a unit's mesh is; a ready mesh's id and origin; held, retiring and peak bytes and counters |
+| `TerrainView`, `TerrainCullVolume`, `TerrainSelectionInstance`, `TerrainDrawUnit`, `TerrainUnitKind`, `TerrainUnitReady`, `TerrainViewStats` | `terrain/TerrainViewSelection.h` | the eye, camera-relative clip volume, focal length in pixels and far distance; a release at a placement; a tile at a LOD or a Region with its payload keys, distance and projected error; whether a unit can be drawn; drawn, stand-in, missing, wanted and prefetch counts |
 | `TerrainTileMesh`, `TerrainMeshVertex` | `terrain/TerrainTileMesh.h` | one tile's raster mesh: release, surface version, tile, double origin, sample range, float vertices (position, normal), `TriangulateCell` indices, bounds |
 | `BuildTerrainTileMesh`, `TerrainMeshResult`, `TerrainMeshStatus` | `terrain/TerrainTileMesh.h` | builds it from a `TileSampleLookup`; `MissingTile`, `MissingNeighbour`, `InvalidSamples`, `InvalidInput` instead of a mesh |
 | `TerrainTileMeshWorldOrigin` | `terrain/TerrainTileMesh.h` | placement plus mesh origin in double; nullopt for another asset or an overflow |
@@ -495,9 +1251,10 @@ tools\TerrainTool\TerrainTool.exe publish --candidate terrain-candidates\relief-
 | `TerrainInstance`, `RegisterTerrainComponents` | `terrain/components/TerrainInstance.h`, `terrain/ComponentRegistration.h` | the scene component: `recipePath` (String, at most 63 characters) relative to assetsRoot; placement is the root entity's Transform position |
 | `TerrainSceneSpec`, `TerrainInstanceSpec`, `TerrainIssue`, `TerrainIssueKind` | `terrain/TerrainScene.h` | what the World asks for, sorted by content; refusals with a one-line message (`MissingRecipe`, `BadRecipePath`, `InvalidPlacement`, `NoRelease`, `BadRelease`, `Overlap`); `HasTerrain` |
 | `CollectTerrainScene` | `terrain/TerrainScene.h` | reads every `TerrainInstance` and its Transform; resolves the asset id, checks the placement |
-| `TerrainResidentRelease` | `terrain/TerrainScene.h` | one release opened, verified (`VerifyAllPacks`) and preloaded; `Info`, `Layout`, `Query`, `Lookup` |
+| `TerrainResidentRelease` | `terrain/TerrainScene.h` | one release opened (index only) with its height query, filled by a streamer; `Open`, `Create` (from a handle or a shared one), `Info`, `Layout`, `Handle`, `SharedHandle`, `Query`, `Lookup` |
 | `TerrainWorld`, `TerrainInstanceState`, `TerrainWorldRect` | `terrain/TerrainScene.h` | World resource: per asset the pinned release and what `current` last named, per instance placement, effective XZ bounds and release; `HeightAt`, `SameDerivedState`, `RemoveInstance` |
-| `ResolveTerrainWorld`, `TerrainCurrentMoved` | `terrain/TerrainScene.h` | resolve a spec against the releases, reusing what is loaded; the Edit poll |
+| `ResolveTerrainWorld`, `TerrainEagerLoad`, `TerrainCurrentMoved` | `terrain/TerrainScene.h` | resolve a spec against the releases through a streamer, reusing what is loaded; with `Wait` a new Eager release is waited for, with `Async` (the engine) not; a poll of the pointers |
+| `TerrainResolveOptions`, `TerrainReleaseOpener`, `TerrainReleaseFileOpener` | `terrain/TerrainScene.h` | `eager`; `keepLoaded` (the engine: a loaded asset keeps its release whatever `current` names); `adopt` (verified releases put in place of their assets' loaded ones); `open` (how a release is opened, on any thread; `OpenTerrainRelease` under the releases root by default) |
 | `PeekTerrainCurrentPointer` | `terrain/TerrainRelease.h` | `ReadTerrainCurrentPointer` without the FileIO log line when nothing is published |
 
 ## Rules
@@ -557,44 +1314,87 @@ minted by `FingerprintRecipe` in `tools/TerrainTool/` (#113): `Fnv1a64` of a
 canonical, sorted text of every recipe field, the generator id and version and
 the recipe schema version, so equal recipes match whatever their JSON spelling.
 
-**The files are little-endian and versioned for extension.** Every field is
-written byte by byte. The index header carries a major format
-(`kTerrainFormatVersion`, 1), a minor, its own size and the record sizes. A
-reader accepts any minor of its major: a newer minor may only append fields to
-the header and records, or add a section before the trailing checksum, and old
-readers skip what they do not know. Anything an old reader cannot safely skip
-bumps the major. The tile payload has its own content version (1: raw float32),
-so a new payload encoding does not touch the container.
+**The files are little-endian and versioned for extension.** Format 2 is the
+only supported release format; format 1 releases must be rebaked. Sync detects
+that mismatch. Minor versions can append fields/sections that this reader
+safely skips. Heights content version 1 remains raw float32.
 
-Byte offsets of format 1.0. All sizes are multiples of 8, and every payload
-offset is a multiple of the index's `payloadAlignment`.
+The stable reference grid in the header equals layer 0. Layers run fine to
+coarse, nest by integer ratios, and have bit-identical tile edges and bounds.
+Fine layers may be sparse. Every map tile has exactly one `source` Height
+record, which must be its finest baked record. Additional coarse Height
+payloads have `source=false` and may carry a measured `maxDeviation`.
 
-| Block | Size | Fields (offset type name) |
+| Block | Bytes | Fields (offset type name) |
 |---|---|---|
-| Index header | 120 | 0 `"MJTI"`, 4 u32 format, 8 u32 minor, 12 u32 headerSize, 16 u32 contentVersion, 20 u32 payloadAlignment, 24 u64 asset, 32 u64 release, 40 u64 sourceFingerprint, 48 f64 spacing, 56 i32 intervalsPerTile, 60 i32 chunkTiles, 64 f64 minX, 72 minZ, 80 maxX, 88 maxZ, 96 u32 packCount, 100 u32 packRecordSize, 104 u32 tileCount, 108 u32 tileRecordSize, 112 u64 heightsHash |
-| Pack record | 32 | 0 i32 chunkX, 4 i32 chunkZ, 8 u32 tileCount, 12 u32 zero, 16 u64 fileSize, 24 u64 file checksum |
-| Tile record | 88 | 0 i32 tileX, 4 i32 tileZ, 8 u32 pack, 12 u32 samplesPerSide, 16 u64 offset, 24 u64 length, 32 u64 payload checksum, 40 f64 spacing, 48 f32 minHeight, 52 f32 maxHeight, 56 f64 valid minX, 64 minZ, 72 maxX, 80 maxZ |
-| Pack header | 48 | 0 `"MJTP"`, 4 u32 format, 8 u32 minor, 12 u32 headerSize, 16 u64 asset, 24 u64 release, 32 i32 chunkX, 36 i32 chunkZ, 40 u32 tileCount, 44 u32 contentVersion |
+| Index header | 152 | 0 `"MJTI"`, 4 u32 major, 8 u32 minor, 12 u32 headerSize, 16 u32 contentVersion, 20 u32 alignment, 24 u64 asset, 32 u64 release, 40 u64 sourceFingerprint, 48 f64 reference spacing, 56 i32 intervals, 60 i32 chunkTiles, 64/72/80/88 f64 bounds, 96/100 u32 pack count/size, 104/108 u32 payload count/size, 112 u64 heightsHash, 120/124 u32 layer count/size; minor 2: 128/132 u32 Region count/size, 136 u32 Region tiles (0: no Regions), 140 u32 cells, 144 u32 unit, 148 u32 levels (minors 0 and 1 end at 128) |
+| Pack record | 32 | 0/4 i32 chunk, 8 u32 payloadCount (tile and Region payloads), 12 reserved, 16 u64 fileSize, 24 u64 checksum |
+| Payload record | 144 | 0/4 i32 tile, 8 u32 pack, 12 u32 samplesPerSide, 16/24/32 u64 offset/length/checksum, 40 f64 spacing, 48/52 f32 min/max, 56/64/72/80 f64 extent, 88 u32 layer, 92 u32 kind, 96 u32 level, 100 u32 source flag, 104 u32 deviation flag, 108 reserved, 112 f64 deviation; minor 1: 120/128 u64 sourceChecksum/topologyHash, 136/140 u32 vertex/index count |
+| Layer record | 16 | 0 f64 spacing, 8 i32 intervalsPerTile, 12 reserved |
+| Region record | 144 | the payload record: Region x/z in tile, level, layer 0, kind 3, spacing = widest cell, samplesPerSide = cells + 1, extent = valid extent, min/max of the mesh, deviation required, sourceChecksum = Fnv1a64 of its map tiles' (x, z, source checksum) |
+| Pack header | 48 | 0 `"MJTP"`, 4/8/12 u32 major/minor/headerSize, 16/24 u64 asset/release, 32/36 i32 chunk, 40/44 u32 payloadCount/contentVersion |
+| Region payload | 112 + 24 V + 4 I | 0 `"RGN1"`, 4 u32 content version, 8 u32 level, 12/16 i32 x/z, 24/32 f64 origin x/z, 40 f64 cell spacing, 48..60 i32 map tile range, 64/72 u64 source checksum/topology hash, 80/84 u32 V/I, 88 f64 deviation; then V float3 positions, V float3 normals, I u32 indices |
 
-The index is the header, `packCount` pack records, `tileCount` tile records,
-optional extension bytes, and a u64 `Fnv1a64` trailer over every byte before
-it. A pack is its header followed by the payloads.
+Tables follow header, packs, payloads, layers, Regions (minor 2), optional
+extension bytes and an 8-byte FNV64 trailer. Payload keys sort by
+`(z,x,kind,level,layer)`. Kind 0 is Height; 1/2 are LodHeight/Normal (minor 1);
+kind 3 Region appears only in the Region table, one record per Region in
+`(level, z, x)` order. This reader refuses unsupported content; future minor
+versions can add keys without another container major. Every payload is an
+independent aligned range, including records for the same tile. `heightsHash`
+includes the ordered tile/layer key, kind, level, source flag, spacing, sample
+count, optional error bound and checksum of every payload, Regions included,
+but excludes storage grouping/alignment; so a 2.1 reader refuses a 2.2 release
+that has Regions instead of reading part of it.
+
+`Layers()` exposes all grids. `Layout()` is only the reference grid; obtain
+source precision from `Index().Find(tile)`. `ReadTile(key)` reads that source;
+`ReadTile(key, layer)` reads an explicit sparse Height payload. Query loading
+constructs those sparse layers and can preload all payloads or a selected
+release layer; querying never performs IO.
 
 **A damaged release never yields samples.** Opening parses and cross-checks the
-whole index: magic, versions, checksum, sizes, a record for every layout tile
-exactly once in (z, x) order, the chunk each tile belongs to, aligned offsets
+whole index: magic, versions, checksum, sizes, one finest source per map tile,
+unique sorted payload keys, nested layer grids, the chunk each tile belongs to, aligned offsets
 that neither overflow nor run past their pack nor overlap, and valid extents
-equal to the layout's. Reading a tile checks its payload checksum and height
-range. Every failure is a `TerrainPackError` naming the file, record, tile and
+equal to the layout's. Region records must list the grid's Regions in order,
+each with the grid's spacing, node count and valid extent, a deviation, a
+length that holds its counts, its first map tile's pack and its map tiles'
+source checksum; the Region unit must be a multiple of every source step.
+Reading a tile checks its payload checksum and height range; decoding a Region
+also checks its header against the record and grid, that vertices stay in the
+domain, winding, unit upward normals, the height range, the topology hash and
+that the triangles cover the domain. Every failure is a `TerrainPackError` naming the file, record, tile and
 field; the terrain code returns it instead of logging, and core FileIO logs its
 own IO failures once.
 
 **Only the release reader touches disk, and only to read.** It goes through
 core `ReadBytes`, `ReadByteRange`, `FileSize` and `ReadText`, opening a file
 per read; `PeekTerrainCurrentPointer` checks that the pointer exists first, so
-an Edit poll of an unpublished asset logs nothing. Nothing here writes a release or the `current` pointer: TerrainTool's
+an Edit poll of an unpublished asset logs nothing; `ListTerrainReleases` reads
+only directory entries and file sizes. Nothing here writes a release or the `current` pointer: TerrainTool's
 bake writes the encoded bytes itself, into a candidate directory only, and its
-publish copies, verifies and switches the pointer.
+publish copies, verifies and switches the pointer. The one other file the
+module reads is the streaming settings, through `serial`.
+
+**Payload reads run on workers; residency changes on the main thread.** A
+streamer's jobs read one record range and decode it, touching only the byte
+source, the immutable index and the decoders, so concurrent reads are safe for
+both byte sources. Entries, height queries and the budget change only in
+`TerrainStreamer::Update`, which never reads or waits; `WaitForEager` is the
+only blocking call, and the engine no longer makes it (tests and tools do).
+Budgets, IO and retry numbers come only from `TerrainStreamingSettings`, which
+has no code defaults.
+
+**A viewport's draw set covers each point at most once.** A Region is replaced
+only by all its children, so drawn units never overlap; a unit that is not
+ready is stood in for by a ready unit covering the same area (its Region, its
+children, or another LOD of the tile), never by one that overlaps a neighbour.
+Detail comes from indexed error bounds and the viewport's projection with the
+`view` thresholds, around the eye in every direction, never from altitude or
+fixed distances; the frustum decides only what is drawn and culls leaves only,
+with boxes grown for float narrowing, so a unit the frustum holds is never left
+out. Prefetch never enters the draw list.
 
 **A candidate is validated before anyone may call it usable.** The bake
 validates its own output from disk before the directory gets its final name,
@@ -630,10 +1430,27 @@ this module: a caller gathers a release's samples into one block and hands it
 to `PhysicsWorld::CreateStaticHeightField` with the block's first sample as the
 shape origin, so Jolt's triangles are `TriangulateCell`'s. Jolt stores heights
 in 8 bits per 2 x 2 block, which puts the collider up to 3.2 cm from this
-surface on the twisty test terrain and under 5 mm on gentle ground. P1 builds
+surface on the twisty test terrain and under 5 mm on gentle ground. P1 built
 one shape over the whole 2x2 area: per-tile shapes quantize their shared edge
 differently (up to 3.3 cm apart) and snag sliding boxes at the seam. See ADR
-0017 (local).
+0017 (local). Pieces of one release share one quantization range and overlap
+(#128, ADR 0024, local).
+
+**A body touches one piece, away from its seams.** Each step a dynamic body
+may touch only the colliders its answer names: the one piece whose inner part
+holds its footprint, never another piece's boundary edges. A body with no
+single owner touches every piece it overlaps and is reported. Pieces overlap by
+more than twice the margin, start on an even sample and share their release's
+quantization range, so in the inner overlap two pieces are the same Jolt
+surface.
+
+**A body never steps onto ground that is not collidable.** Before each fixed
+step, a dynamic body whose predicted range needs a piece that is neither ready
+nor stood in for by a coarse piece within its tolerance is held at its pose
+with its velocity kept, and resumes when it is. Spawn, load and teleport pass
+the same gate; only the bodies that need the missing piece wait. Colliders are
+placed and removed only in `TerrainCollisionResidency::Install`, between steps
+and outside any query; workers only build shapes from the job's own heights.
 
 **Edges and corners give one height.** On a cell edge the height depends only
 on the edge's two samples, and both sides reduce to the same expression, so a
@@ -663,9 +1480,10 @@ formula changes it.
 **A height query never reads files and never blocks.** `TerrainHeightQuery`
 holds no byte source. It answers from resident tiles or records one
 `TerrainPayloadRequest` per layer and tile, which stays pending after it is
-taken until `Insert` or `MarkFailed` resolves it. Tests check the byte-source
-counters before and after queries. It is not thread-safe: its owner queries,
-inserts and takes requests on one thread.
+taken until `Insert`, `MarkFailed` or `Evict` resolves it. Tests check the
+byte-source counters before and after queries. It is not thread-safe: its
+owner, the streamer's `Update` in the engine, queries, inserts and takes
+requests on one thread.
 
 **A query answers for one release only.** It is created bound to one
 `TerrainReleaseInfo` and keeps it for life: a request bound to another release
@@ -735,31 +1553,80 @@ positive area refuse both instances, whatever their order; sharing an edge or a
 corner is fine, and on the shared edge `TerrainWorld::HeightAt` answers from the
 first instance.
 
-**A release is used whole or not at all.** `TerrainResidentRelease::Load` reads
-every pack whole and every tile before anything derives from it. A failure is a
-`TerrainIssue` naming the recipe, asset, release and cause; for an asset that is
-already loaded, the old release stays and the message says so. No stand-in
-terrain.
+**A failed payload is reported, never replaced.** With `TerrainEagerLoad::Wait`
+`ResolveTerrainWorld` waits until every payload of an Eager release is
+resident, each range checked against its record, and a failure is a
+`TerrainIssue` naming the recipe, asset, release, payload and cause; for an
+asset that is already loaded, the old release stays and the message says so.
+With `Async`, the engine's choice, a failure surfaces where it is used: a
+height query answers `Failed`, a draw unit stays missing and a collision piece
+fails, holding the bodies that need it. No stand-in terrain either way.
 
 **Resolving reuses what is pinned.** An asset whose `current` still names what
 the previous `TerrainWorld` examined keeps that outcome, a release or a refusal,
 without reading the release again. So a broken publish is reported once, not on
 every poll, and a release stays the same object (and the same meshes and
-collider) until `current` moves to one that loads.
+collision pieces) until `current` moves to one that loads.
+
+**A loaded release changes only through a checked, warm switch.** With
+`keepLoaded` a resolve never follows a moved `current` for an asset that has a
+release; a `TerrainReleaseSwitch` brings the new one once a worker has checked
+its index and every pack and its working set is warm (or as warm as the budgets
+allow), and only at an Edit frame boundary, never in Play. A release that fails
+the check is reported once and never read again until `current` moves; the
+loaded one stays. A staged release is never drawn and its pieces are never
+placed; only the active releases' units and colliders reach a frame or a step.
+Old releases are never deleted or written, and their late work is discarded.
+
+**A unit is drawable only once its GPU copy is.** `TerrainMeshResidency::Ready`
+is true only after the uploader reported the upload complete, and results land
+only in `Install`, once per frame; a worker runs only the mesh build, from the
+job's own payload pointers and the immutable index. Meshes are keyed by their
+geometry payload, so a release key is part of every mesh's name: retiring a
+release (`RetireReleases`) drops its builds and retires its uploads, and nothing
+of it can become ready afterwards.
+
+**GPU bytes stay within `gpu.budgetBytes`, retiring ones included.** Building,
+built, uploading and ready meshes plus the uploader's retiring bytes never pass
+it: a mesh that does not fit waits, and only a Visible one may make room, by
+retiring unwanted meshes (least recently touched first) and then Prefetch ones
+(farthest first); a Visible mesh is never retired for room. Builds start Visible
+first, then Prefetch, by rank, while building and built bytes stay within
+`gpu.uploadBytesPerFrame` (one always may), and built meshes go to the uploader
+while its queued bytes are below the same budget.
 
 ## State
 
-*As of 2026-10-08.* The accepted P1/P2 size baseline is 256 m tiles and
-4096 m chunks; see [the measurements](#size-baseline-issue-24). Layout,
-addressing, placement, identities, the canonical
+*As of 2026-10-13.* Format 2 supports sparse layers, independent payload
+ranges and unique per-tile source records (#145). Recipes and runtime meshes
+still use one layer until the remaining P2 issues are integrated. See
+local validation notes for validation and full-map measurements.
+The accepted P1/P2 size baseline is 256 m tiles and 4096 m chunks; see
+[the measurements](#size-baseline-issue-24). Layout, addressing, placement, identities, the canonical
 surface, the tile mesh builder, the collider block, the release format, its
-in-memory encoder, the synchronous range reader and the resident height query
-with a synchronous preload work; nothing takes the query's payload requests yet
-(P3). Scenes load terrain (#118): app's private `TerrainRuntime` resolves every
-`TerrainInstance` into the `TerrainWorld` resource and builds tile meshes and
-one height field per instance from the pinned release, and
-`games/TerrainCheck/` (a 2x2 relief at (150000.5, -20, -75000.25), ray tracing
-requested) runs as `smoke.TerrainCheck`. Offline callers: the `terrain_bake`
+in-memory encoder, the range reader and the resident height query work. Since
+#126 a `TerrainStreamer` reads payload ranges on a worker pool, takes the
+queries' payload requests and keeps decoded payloads within a CPU budget from
+the game's `terrain_streaming.json`; the engine resolves every release through
+it. Since #125 every viewport selects its own tiles and Regions
+(`TerrainViewSelector`) and wants their payloads; since #127 a
+`TerrainMeshResidency` builds their meshes on the worker pool and app uploads
+them through the renderer's asynchronous mesh queue within the `gpu` budgets,
+drawing a unit only once its GPU copy is usable. Since #128 a
+`TerrainCollisionResidency` builds the height field pieces collision sources
+need on the same pool (one whole piece for an Eager release, pieces by interest
+otherwise), and app holds each dynamic body whose ground is not collidable yet
+before each fixed step; nothing waits at load. Since #129 a newer published
+release of a loaded asset is checked pack by pack on a worker, prewarmed beside
+the loaded one (staged in the streamer, the mesh and the collision residency)
+and switched to at an Edit frame boundary (`TerrainReleaseSwitch`); Play keeps
+its release and does not wait for one being checked.
+Scenes load terrain (#118): app's private `TerrainRuntime` resolves every
+`TerrainInstance` into the `TerrainWorld` resource and hands its pinned
+releases to the collision residency, and `games/TerrainCheck/` (a 2x2
+relief at (150000.5, -20, -75000.25), ray tracing requested, plus a 16 x 16
+tile map that streams by interest, with a sphere on each) runs as `smoke.TerrainCheck` and
+`smoke.TerrainCheck.game-mode`. Offline callers: the `terrain_bake`
 library (#113: recipe, fingerprint, "mir.relief" generator; #115: bake,
 candidate directory, validation; #116: publish, sync, the per-asset lock) and
 the `TerrainTool` executable over it, tested by `terrain_tool_tests` (the CLI
@@ -767,6 +1634,11 @@ through `LaunchProcess`), plus AssetCooker, which only asks
 `IsTerrainFileExcludedFromCook`. Every build runs `TerrainTool sync` for each
 game recipe (today TerrainCheck's). Nothing outside C++ reads `TerrainWorld`
 yet: scripts have no height query.
+Since #124 every recipe bake also writes the Region hierarchy (format 2.2:
+16-tile level 0, 128 cells; see [Region hierarchy](#region-hierarchy-issue-124)),
+validation rederives it, and sync rebakes a current release without it.
+The engine draws Regions per viewport since #125; the streamer reads them like
+any payload.
 Bakes hold every tile in memory, as the encoder takes the whole set; that is
 fine for P1's small maps, not for a 150 km map. Old releases accumulate until a
 cleanup with a cross-process use protocol exists.
@@ -783,19 +1655,67 @@ about ±150 km, a float-narrowing counter-example, overflow), `TerrainIdentity`,
 clipped edge tiles, chunk-size independence, writer refusals, a newer minor,
 release-id minting), `TerrainPackIntegrity` (malformed,
 truncated, overlapping, duplicate, overflowing and corrupt indexes and packs),
+`TerrainRegion` (grid anchoring, levels, lines and clipped domains; one-range
+Region reads with no tile read; coverage, error bounds against random probes
+and tight bounds on aligned cells; malformed Region header fields, records,
+offsets and payloads; writer refusals),
 `TerrainRelease` (naming, pointer parsing, disk reads, a handle kept across a
-pointer switch, the committed fixture in `tests/fixtures/releases/`),
+pointer switch, one pack checked on its own, an asset's release directories
+listed with their sizes, locally generated releases checked against pinned format hashes),
 `TerrainSurface` (2x2 tiles of 256 m at 4 m around the origin, at mixed signs
 and about 150 km out: every sample, dense shared-edge probes from all sides and
 their neighbouring doubles, four-tile corners, random points against explicit
 mesh-triangle planes, closed max edges, a partial boundary tile with padding,
 missing and invalid samples), `TerrainHeightQuery` (every status; dense,
 shared-edge, four-corner, negative and partial-boundary probes against
-`EvaluateSurface` from memory, disk and the committed fixture with zero reads
+`EvaluateSurface` from memory, disk and a locally generated fixture with zero reads
 during queries; a 4 m layer with its 8 m decimation; a per-tile source limit;
-payload requests; corrupt and missing packs; a query pinned across a pointer
+payload requests; evicted slots requested again and used tiles reported once;
+corrupt and missing packs; a query pinned across a pointer
 switch; world queries near the origin and about ±150 km out; refused layers and
-tiles), `TerrainTileMesh` (a vertex on every sample,
+tiles), `TerrainStreamer` (one read and one shared payload for wants from two
+interests and a query, exact record ranges; cancellation before a read starts
+and a started read kept; demand, rank and raised-demand order; corrupt ranges
+failing at once and truncated ones after the retry policy, never as a height;
+recovery by retry, after the failed hold and by `RetryFailed`; eviction order
+and the budget at every step, a consumer's evicted payload still valid,
+`Required` past the budget; Auto, Eager and Interest modes and payload
+footprints; an Eager wait on the worker pool and its first failure; query
+leases; a dropped release and its discarded read; a key the index lacks;
+concurrent range reads of one file source; a mover crossing a 12 x 12 map
+within the budget with every read on a worker; measurement harnesses remain
+local), `TerrainStreamingSettings` (a complete file and
+the key-by-key local override; missing, unknown, mistyped and invalid keys by
+path and file; unset fields of settings built in code; collision spacings and
+the seam overlap), `TerrainCollisionResidency` (with a fake physics side and a
+manual executor: an Eager release as one piece, ready only once placed, its
+slow build leaving the prediction alone; pieces
+only where a predicted range reaches the ground; needs ahead of a fast source
+and prefetch beyond; a coarse stand-in within tolerance; slow and failed reads
+pending or failed, never ready; retirement and the budget; pieces shared by
+sources; owners of a footprint and the unowned case; even starts and one
+quantization range; instance changes; a piece that makes no shape),
+`TerrainViewSelection`
+(a 9 x 9 map of three tile LODs and four Region levels: every point drawn once
+from eyes high, low, at the edge and outside the map at three focal lengths;
+near fine and far coarse within the refine bound; LOD hysteresis while the focal
+length rises and falls; turning and projection changes never dropping a unit
+with a vertex in the frustum; stand-ins of another LOD, of the Region and of
+the children, holes only where nothing is ready and the coarsest Region wanted
+first; Visible and budgeted Prefetch wants including finer units; the far
+plane; another volume at the view's detail; two viewports at different detail
+sharing one read per payload through a streamer; a budgeted streamed flight
+covered at most once every frame and fully once settled; a far placement
+selecting what one near the origin does), `TerrainMeshResidency` (with a fake
+uploader and a manual executor: ready only once the upload completed, Visible
+before Prefetch and nearest first within a frame's upload, hand-over only while
+the upload queue has room, room made by retiring unwanted then Prefetch meshes
+and never a Visible one, retiring bytes holding a mesh back, retirement after
+`meshRetainSeconds` unwanted and undrawn, canceled builds and a late result
+never uploaded, a release switch whose old builds and uploads never become
+ready, a failed upload reported once and not rebuilt, `Forget`, and a refined
+Region drawn by the real selector until every child's GPU mesh is ready),
+`TerrainTileMesh` (a vertex on every sample,
 `TriangulateCell` order and winding, 20000 random points per block against
 `EvaluateSurface`, shared edges and normals at 4 m near and far and at 0.1 m,
 central-difference normals and missing neighbours, bounds, a clipped boundary
@@ -808,34 +1728,66 @@ with no tile entities, placement and path refusals, the engine and build
 spelling of one asset id, queries/meshes/collider block from one release at the
 far placement, missing/corrupt/incompatible releases next to a working one,
 touching and overlapping instances, a release pinned across a publish and the
-safe-point switch, a broken publish reported once and never re-read).
-`engine_terrain_tests` links `mir::scene` for that last file only.
+safe-point switch, a broken publish reported once and never re-read; every
+resolve goes through a streamer on a worker pool, Eager, with `Wait`),
+`TerrainReleaseSwitch` (the app's composition over a real worker pool with gated
+range reads, a fake uploader and a fake physics side: Play pinned on A while B is
+published, A's reads let go newest first, every draw, mesh, collider and height
+result from A; after Stop B checked, prewarmed and switched, A's held reads
+discarded, nothing of A left in any residency and its files unchanged, Play on
+B; a corrupt, truncated, partial or index-less B kept out, reported once and not
+read again, then a good C; Play entered while B is checked or prewarmed, its late
+reads discarded; candidates dropped when `current` moves on or back or the asset
+leaves; an unreadable pointer reported once; an asset with nothing loaded
+resolved again; a staged Eager release using only room left; staged pieces built
+but placed only once active).
+`engine_terrain_tests` links `mir::scene` for that last file only. Jolt-backed
+collision residency is tested in `modules/physics/tests/TerrainCollisionResidency.tests.cpp`
+(bodies held over Eager terrain until placed, a body resting on A while B's
+height field is built beside it and on B after the switch, a fast descent held
+short of unloaded ground, low runs over ridges with hard turns, a failed piece
+holding only its bodies until a retry, a teleport, and the `[collision-seams]`
+crossing above), with the terrain test support headers (the fake uploader and
+physics side are in `tests/TerrainResidencyTestSupport.h`).
 
 ## Backlog
 
-1. P3 asynchronous range reads, caching and eviction over the same files: take
-   the height query's payload requests, read each record's range, hand the
-   bytes to `DecodeTerrainTile` and `Insert` the result; add eviction, retry
-   and cancellation to the query's slots and decide its threading model.
-2. A script-facing height query over `TerrainWorld::HeightAt`; instances of
-   one asset share one release but upload their tile meshes once each.
-3. Per-tile source precision (P2), under the nesting rule above; the surface
-   rule stays, the views will carry their spacing. The query takes it as a
-   finer layer with `bakedTiles`; coarse levels (P3) as coarser layers with a
-   measured `maxDeviation`, per layer today, per tile if the bake records it.
-4. Measure the index at full map scale. Format 1 keeps 88 bytes per tile in one
-   index, about 30 MB for 586 x 586 tiles of a 150 km map; if opening it is too
-   slow, a later major can move tile tables into the packs.
+1. Streaming after #129: measured budgets and thresholds with telemetry (#130),
+   including the `gpu` and `collision` values and the prefetch budget, which
+   decides how much ground behind a turning camera is already on the GPU, and
+   the overlap of a release switch (both releases' working sets are held until
+   the switch). A switch checks every pack of the new release, so its time grows
+   with the release; it runs on one worker in Edit only. Loading a scene (and a
+   first publish of an asset with nothing loaded) still uses what `current`
+   names without that check, so a corrupt release then fails where it is used.
+   Collision residency only makes sure the ground is there: bodies keep Jolt's
+   discrete motion quality, so a very fast body can still sink into or pass a
+   thin ridge between steps, as on any static body. `Update` walks
+   every entry each frame, so its cost grows with the number of known payloads;
+   the streaming measurement read through a warm file cache. The selection
+   walks every unit it chooses each frame (about a millisecond on the prototype
+   map), and a Region is replaced only by all of its children, so one missing
+   tile keeps a refined level 0 Region coarse while it loads.
+2. A script-facing height query over `TerrainWorld::HeightAt`.
+3. Per-tile source recipe precision (#119), final seam adjustment (#120) and
+   baked coarse levels with per-tile measured bounds (#121). The format and
+   query already carry sparse layers and tile deviation values.
+4. Plan bounded index loading/caching for P3. The #145 benchmark measured
+   41.3 MB / 551 ms for one full layer and 164.9 MB / 2.32 s for four dense
+   layers; these Open times exclude pack reads and disk IO.
 5. Streaming meshes (P3): an edge tile needs its neighbour's samples for its
    edge normals, so residency must load one ring further, or rebuild an edge
    when the neighbour arrives. Runtime building versus prebaked mesh caches is
    still open (C13), as is a compact terrain vertex: the shared renderer
    `Vertex` costs 64 bytes where position and normal need 24.
-6. Render LOD and Region meshes (P2/P3) build on the same builder: a coarser
-   step over the same samples, never finer than the tile's spacing.
-7. Colliders over more than one shape (maps past Jolt's 32768 samples a side,
-   P3 residency) bring the per-tile seam back; measure overlap or a compound
-   shape before choosing.
+6. Render LOD meshes build on the same builder: a coarser step over the same
+   samples, never finer than the tile's spacing. Region meshes are baked
+   payloads (#124), not built at runtime.
+7. An Eager release still collides as one piece, so it is limited to Jolt's
+   32768 samples a side and its whole piece is built before anything on it
+   simulates (about a second for TerrainCheck's 1 m piece in Release). Pieces by
+   interest have no such limit; whether large Eager maps should use them too is
+   open.
 8. Removing old releases (and renamed-but-never-current ones) once a
    cross-process use protocol says which ones no running engine holds.
 9. Bake and validate in bounded memory (per chunk or tile row) before maps grow
@@ -843,8 +1795,88 @@ safe-point switch, a broken publish reported once and never re-read).
 10. A P2 change in how final heights follow from a recipe (the border band)
     must change what sync compares, e.g. by folding a bake version into the
     fingerprint, or sync keeps the old release current.
+11. Regions (#124): the Region settings are TerrainTool constants
+    (no recipe or CLI field yet); bake cost is per tile and per level, so a
+    150 km map needs the bounded bake of item 9; Region normals are point
+    samples of the source stencil, an area-averaged normal for far shading was
+    not compared; payloads use the plain float layout (compact encodings are
+    out of P3).
 
 ## Changed
+
+*2026-10-13* — **Release switches checked and prewarmed off the main thread
+(#129).** Was: in Edit the poll adopted a moved `current` at once, opening the
+new index on the main thread, and `PlayScene` and `StopScene` did the same; a
+new Eager release with a damaged payload failed where it was used, with the old
+release already gone. Now: the engine resolves with `keepLoaded`, and a
+`TerrainReleaseSwitch` checks the new release's index and every pack on a
+worker, prewarms its working set staged in the streamer, the mesh and the
+collision residency, and puts it in place at an Edit frame boundary through
+`adopt`; a failed one is reported once and the loaded release stays. Play enters
+on the loaded release without waiting, and a switch in progress lets its work go
+until Stop. `TerrainReleaseHandle::VerifyPack`, `ListTerrainReleases`, staged
+`TerrainStreamer::Add` and `TerrainCollisionResidency::SetInstances`,
+`Usage(release)` on the three residencies and `discarded` counts on the mesh and
+collision stats are new.
+
+*2026-10-12* — **Collision residency (#128).** Was: app built one height field
+over a whole Eager instance at load, the engine waited for every Eager release
+at load, on Play entry and at an Edit switch, an Interest release had no
+collider, every instance built its own shape, and `TerrainCollisionPolicy` had
+code defaults. Now: `TerrainCollisionResidency` builds the pieces that dynamic
+bodies and game sources need on the worker pool (Eager: one whole piece;
+Interest: overlapping pieces with one quantization range and an owner per
+body), places them between fixed steps and shares each shape across instances;
+app holds a body before each step until its ground is collidable. The engine
+resolves with `TerrainEagerLoad::Async`. `TerrainStreamingSettings` gains the
+`collision` section, which also holds the policy's spacings and error.
+TerrainCheck gains `StreamedSphere` on its streamed map.
+
+*2026-10-11* — **GPU meshes within budgets and without waits (#127).** Was: app
+built a drawn unit's mesh on the main thread and uploaded it with the
+synchronous `CreateMesh` (a BLAS on any RT device), counted a unit ready once its
+payloads were resident, and destroyed unused meshes with a device wait. Now:
+`TerrainMeshResidency` builds meshes on the worker pool, hands them to the
+renderer's asynchronous queue within the new `gpu` settings, counts a unit ready
+only once its GPU copy is usable, and retires meshes after their last frame;
+terrain gets a BLAS only while the project traces. `view.meshRetainSeconds`
+moved to `gpu.meshRetainSeconds`; `BuildTestLods` moved to the shared test
+support.
+
+*2026-10-10* — **Per-viewport tile and Region selection (#125).** Was: app drew
+every tile of an Eager release at its source LOD in every view, Regions were
+never drawn and an Interest release did not load. Now: `TerrainViewSelector`
+chooses each viewport's tiles and whole Regions from the indexed error bounds
+and the projection with `view` refine/merge thresholds, culls leaves
+conservatively, stands in ready coarser or finer units while others load, and
+wants Visible and budgeted Prefetch payloads per viewport; app draws per
+viewport (renderer `ViewDrawSources`) and loads Interest releases without a
+collider. `TerrainStreamingSettings` gains the `view` section. TerrainCheck
+streams a second, 16 x 16 tile map by interest under a 16 MiB budget.
+
+*2026-10-10* — **Asynchronous range reads and CPU residency (#126).** Was:
+`ResolveTerrainWorld` read every pack whole (`VerifyAllPacks`) and preloaded
+every tile on the main thread, and nothing took the height query's payload
+requests. Now: a `TerrainStreamer` merges wants from interests, Eager releases
+and height queries per payload key, reads each record's range on a
+`TerrainWorkerPool`, installs at one `Update` per frame, retries IO failures by
+policy and keeps decoded payloads within a CPU budget, evicting speculative
+before visible, query and required data. Budgets and policies come from the
+game's `terrain_streaming.json` plus an optional machine-local override, with
+no code defaults; `terrain` links `serial` privately for it. Residency is Auto,
+Eager or Interest per release; app waits for an Eager release at load (stop-gap
+until #128) and builds meshes from resident payloads. `TerrainHeightQuery`
+gains `Evict` and `TakeUsedTiles`; `TerrainResidentRelease::Load` became
+`Open` (index only) and `Create`.
+
+*2026-10-09* — **Region coarse hierarchy (#124).** Format 2.2: the index header
+gains the Region settings and a Region table; every Region payload (positions,
+normals, indices, provenance, error) is one aligned range in the pack of its
+first map tile, addressed by level and Region coordinate. TerrainTool bakes
+level 0 = 16 tiles with 128 cells (prototype in
+[Region hierarchy](#region-hierarchy-issue-124)), validates by rederiving,
+reports Regions in a `regions` check and report section (tool 8, report 6),
+and sync rebakes older releases. Format hashes pin the generated test fixture.
 
 *2026-10-08* — **Recorded measured P1/P2 sizes ([#24](https://github.com/GAM550F26/alpha/issues/24)).**
 Accepted 256 m logical tiles and 4096 m chunks as revisable engine-development
@@ -852,6 +1884,12 @@ defaults, using measurements collected on 2026-10-03 for sample/mesh memory,
 pinned-Jolt padding/boundaries, chunk grouping and file reads. Render Regions,
 physics areas and P3 streaming budgets remain independent. This is a
 documentation decision; the production terrain runtime is unchanged.
+
+*2026-10-06* — **Sparse format 2 releases (#145).** One unique source per tile,
+nested layer grids, independent payload keys/ranges and per-tile deviation
+bounds; v1 readers/writers removed. Candidate manifest and sync use format 2.
+All four build presets pass; full-map index measurements are recorded in
+local validation notes.
 
 *2026-10-03* — **A build without the editor packages terrain (#116).** Was: no
 packaging step, so the `windows-msvc-game-*` builds, which read `games/` next
@@ -921,3 +1959,15 @@ range and checks it. The module now reads files, through core FileIO and only
 in the release reader; it still writes none.
 
 *2026-09-30* — **Module created (#110).**
+
+## P2 #144: Lua height queries
+
+`world:terrain_height_at(position, requiredSpacing)` exposes the resident
+`TerrainWorld::HeightAt` result, including all statuses, failure, local/world
+height, spacing, source spacing, optional error, full release identity, tile
+and layer. See [script.md](script.md#terrain-height-query-144) for the result
+shape. The binding performs no IO and resolves the World resource per call;
+Play retains its pinned release. Invalid arguments return `Failed/InvalidInput`
+with a script error log; no terrain or no covering instance gives `OutsideMap`.
+The old Backlog item 2's script query is complete; per-instance mesh uploads
+remain as described there. Verification: local validation notes.

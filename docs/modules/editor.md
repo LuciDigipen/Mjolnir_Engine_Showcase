@@ -401,6 +401,30 @@ Now: `Editor` owns a `History`, turns the action into a command with
 the `ISceneOps` `App` implements, and an Edit menu sits between File and
 Project. See [editor-history.md](editor-history.md).
 
+*2026-10-18* — **A standalone Post-Processing panel (#207).** Was: no place
+for post-effect controls other than Project Settings. Now: `PostProcessingPanel`
+(`editor/panels/PostProcessingPanel.h`), opened from Project >
+Post-Processing, is a first-class panel shaped like `InputSettingsPanel` -
+not another `ProjectSettingsPanel` subsection - with the same draft-copy/Save
+pattern: edits only touch a draft until Save writes it to
+`project_settings.json` and assigns it onto the live `PostProcessingSettings`
+World resource, so every effect applies next frame with no restart.
+`DrawLayout` gained a `PostProcessingSettings &` parameter, threaded through
+from `App` the same way `RenderSettings &` is. It lists whatever
+`PostEffectRegistry` (see [renderer.md](renderer.md)) has registered - a
+checkbox per effect, its own params UI indented underneath when enabled -
+and currently reads "No post effects yet", since this issue registers none.
+
+*2026-10-18* — **The Create menu gained a `Primitive` submenu: cube, sphere,
+plane, cylinder, capsule, cone.** No `HierarchyPanel` change needed - these
+are just six more `EntityPresetRegistry` entries, registered under
+`"Primitive/*"` names from `RegisterRendererEntityTypes` (renderer,
+`ComponentRegistration.cpp`), the same grouping-by-slash-prefix `Light/*`
+already uses. Each spawns a `Transform` + `MeshRenderer` (named via one of
+`Shapes.h`'s reserved builtin names, `materialShader` "default") + `Name`;
+`MeshResolveSystem` generates its geometry without an asset file (see
+[app.md](app.md)). Because: issue #214.
+
 *2026-10-10* — **Double-clicking a `.lua` or `.json` file in the Content
 Browser opens the whole project folder as the workspace root, in a new IDE
 window, with the file open.** Was (2026-10-09): opened just the file, no

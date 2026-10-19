@@ -12,11 +12,13 @@
 #include <terrain/TerrainIdentity.h>
 #include <terrain/TerrainLayout.h>
 #include <terrain/TerrainPackFormat.h>
+#include <terrain/TerrainRegionGrid.h>
 #include <terrain/TileHeights.h>
 
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -25,7 +27,7 @@ namespace mir
 {
     struct TerrainPackWriteOptions
     {
-    // Addresses never depend on it.
+        // Addresses never depend on it.
         int32_t chunkTiles = kDefaultTerrainChunkTiles;
         // Power of two up to kMaxTerrainPayloadAlignment.
         uint32_t payloadAlignment = kDefaultTerrainPayloadAlignment;
@@ -45,14 +47,59 @@ namespace mir
         uint64_t heightsHash = 0;
     };
 
-    // No disk. Needs exactly one tile per layout tile, any order.
+    struct TerrainTileWrite
+    {
+        const TileHeights *heights = nullptr;
+        uint32_t layer = 0;
+        bool source = true;
+        std::optional<double> maxDeviation;
+        uint64_t sourceChecksum = 0;
+    };
+
+    TerrainResult<TerrainEncodedRelease> EncodeTerrainRelease(const TerrainReleaseInfo &info,
+                                                              std::span<const TerrainLayout> layers,
+                                                              std::span<const TerrainTileWrite> tiles,
+                                                              const TerrainPackWriteOptions &options = {});
+
+    struct TerrainPayloadWrite
+    {
+        TerrainTileRecord record;
+        std::vector<std::byte> bytes;
+    };
+
+    TerrainResult<TerrainEncodedRelease> EncodeTerrainRelease(const TerrainReleaseInfo &info,
+                                                              std::span<const TerrainLayout> layers,
+                                                              std::span<const TerrainTileWrite> tiles,
+                                                              std::span<const TerrainPayloadWrite> derived,
+                                                              const TerrainPackWriteOptions &options = {});
+    uint64_t TerrainPayloadsHash(std::span<const TerrainLayout> layers, std::span<const TerrainTileWrite> tiles,
+                                 std::span<const TerrainPayloadWrite> derived);
+
+    // One payload per Region of grid, in any order; a record names its Region by level and x, z as tile.
+    struct TerrainRegionWrites
+    {
+        std::optional<TerrainRegionGrid> grid;
+        std::vector<TerrainPayloadWrite> payloads;
+    };
+
+    TerrainResult<TerrainEncodedRelease> EncodeTerrainRelease(const TerrainReleaseInfo &info,
+                                                              std::span<const TerrainLayout> layers,
+                                                              std::span<const TerrainTileWrite> tiles,
+                                                              std::span<const TerrainPayloadWrite> derived,
+                                                              const TerrainRegionWrites &regions,
+                                                              const TerrainPackWriteOptions &options = {});
+    uint64_t TerrainPayloadsHash(std::span<const TerrainLayout> layers, std::span<const TerrainTileWrite> tiles,
+                                 std::span<const TerrainPayloadWrite> derived, const TerrainRegionWrites &regions);
+
+    uint64_t TerrainHeightsHash(std::span<const TerrainLayout> layers, std::span<const TerrainTileWrite> tiles);
+
     TerrainResult<TerrainEncodedRelease> EncodeTerrainRelease(const TerrainReleaseInfo &info,
                                                               const TerrainLayout &layout,
                                                               std::span<const TileHeights> tiles,
                                                               const TerrainPackWriteOptions &options = {});
 
     // Independent of chunk size and alignment.
-    uint64_t TerrainHeightsHash(std::span<const TileHeights> tiles);
+    uint64_t TerrainHeightsHash(const TerrainLayout &layout, std::span<const TileHeights> tiles);
 
     // The nonce makes two bakes of the same source distinct releases. Never zero.
     TerrainReleaseId MintTerrainReleaseId(AssetId asset, TerrainSourceFingerprint source, uint64_t heightsHash,
