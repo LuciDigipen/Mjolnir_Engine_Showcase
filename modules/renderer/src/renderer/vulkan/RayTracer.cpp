@@ -250,7 +250,8 @@ namespace mir::vk
                                       .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
                                       .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
                                       .dstStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-                                      .dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT};
+                                      .dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT |
+                                                       VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR};
         const VkDependencyInfo copiedDep{
             .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &copied};
         vkCmdPipelineBarrier2(cmd, &copiedDep);
