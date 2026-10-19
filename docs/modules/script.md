@@ -2,9 +2,11 @@
 
 Embeds Lua as the gameplay scripting layer, through sol2 over LuaJIT. A script
 reads per-frame ECS state and drives triggers, entity behaviour and UI logic. It
-does not touch physics, flight dynamics or rendering.
+does not touch physics or flight dynamics, and never draws a frame itself - its
+one reach into rendering is the post-processing settings resource, a handful of
+plain numbers, not the renderer's own state.
 
-`mir::script` · depends `mir::core` (public); `mir::assets`, `mir::audio`, `mir::input`, `mir::physics`, `sol2`, `luajit` (private) · API `modules/script/include/script/` · maintainer Rahul Nair · reviewed 2026-09-18
+`mir::script` · depends `mir::core` (public); `mir::assets`, `mir::audio`, `mir::input`, `mir::physics`, `mir::renderer`, `mir::terrain`, `sol2`, `luajit` (private) · API `modules/script/include/script/` · maintainer Rahul Nair · reviewed 2026-09-18
 
 ## Model
 
@@ -73,7 +75,7 @@ return Spin
 The Lua surface — `world:has/get/set/spawn/destroy/add/remove/each/declare` and
 the `Entity` usertype — lives in `src/script/bindings/` and is not public. Loaded
 Lua source reaches it; no C++ outside this module includes it. The input,
-physics and audio bindings each extend that same `World` usertype rather than
+physics, audio and terrain bindings each extend that same `World` usertype rather than
 adding one of their own, and each is registered after `RegisterWorldBindings`.
 
 The input half is `world:is_down/just_pressed/just_released/axis/axis2d` and
@@ -91,6 +93,80 @@ function T.OnUpdate(self, world, entity, dt)
     world:set_rtpc(entity, "Speed", self.charge * 100.0)   -- false if refused
 end
 ```
+
+### Post-processing
+
+`world:set_fog/get_fog`, `world:set_hdr/get_hdr` and `world:set_bloom/get_bloom`
+reach `PostProcessingSettings` - one resource shared by the whole render, not a
+per-`Camera` component, so (like `set_state`) these take no entity. Each
+`set_*` takes one table; every field is optional and defaults to that effect's
+*current* live value, so a script can tweak one knob without restating the
+rest. A present-but-wrong-shaped field (a string where a number belongs, an
+unknown `tonemapOperator`) refuses the whole call - nothing is written - the
+same strictness `world:set` already uses for component fields. Each `get_*`
+returns a table of every field, or `nil` if this world has no
+`PostProcessingSettings` at all.
+
+```lua
+world:set_bloom({ enabled = true, threshold = 1.0, intensity = 0.5, radius = 1.0 })
+world:set_fog({ color = { x = 0.5, y = 0.6, z = 0.7 }, density = 0.015, startDistance = 0, endDistance = 300 })
+world:set_hdr({ exposure = 1.0, tonemapOperator = "aces" })  -- "none" | "reinhard" | "aces"
+
+local bloom = world:get_bloom()
+if bloom.enabled then
+    world:set_bloom({ intensity = bloom.intensity * 0.9 })  -- everything else untouched
+end
+```
+
+`ReadFogParams`/`WriteFogParams`/`ReadHdrParams`/`WriteHdrParams`/
+`ReadBloomParams`/`WriteBloomParams` (`renderer/FogEffect.h`,
+`renderer/HdrEffect.h`, `renderer/BloomEffect.h`) are the same functions the
+Post-Processing panel itself reads and writes - this binding can't drift from
+what the panel shows, in either direction.
+
+### Terrain height query (#144)
+
+`world:terrain_height_at({x=..., y=..., z=...}, requiredSpacing)` queries the
+resident `TerrainWorld` at a world position. `requiredSpacing` is the largest
+acceptable spacing in meters. All three coordinates and spacing must be Lua
+numbers; coordinates must be finite and fit `WorldReal`, and spacing must be
+finite and positive. Missing fields, wrong types, missing or extra arguments
+log an error and return `Failed` / `InvalidInput`, even without terrain.
+Double builds preserve Lua doubles through `WorldPosition::FromDoubleMeters`.
+
+```lua
+local ground = world:terrain_height_at({x=150000.500123, y=10, z=-150000.250321}, 1)
+if ground.hasHeight then
+    print(ground.worldHeight, ground.spacing, ground.maxError, ground.releaseId)
+end
+```
+
+| Result field | Meaning |
+|---|---|
+| `status` | `MeetsRequirement`, `CoarserWhileLoading`, `CoarserAtSourceLimit`, `Loading`, `OutsideMap`, or `Failed` |
+| `failure` | `None`, `WrongRelease`, `InvalidInput`, `LoadFailed`, or `InvalidSamples` |
+| `hasHeight` | True for the three height-bearing statuses |
+| `localHeight` | Final terrain-local height; nil without a height |
+| `worldPoint`, `worldHeight` | `{x,y,z}` surface point and its world y; nil without a point |
+| `spacing`, `sourceSpacing` | Answering and finest baked spacing; nil when C++ has no finite value |
+| `maxError` | C++ bound against the finest baked surface; nil when unmeasured |
+| `releaseId` | Lowercase 16-digit hexadecimal release id |
+| `release` | Full identity: hexadecimal `assetId`, `sourceFingerprint`, `releaseId`, numeric `formatVersion` |
+| `tile`, `layer` | `{x,z}` signed tile and zero-based layer, exactly as returned by C++ |
+
+Unknown identities retain the C++ zero sentinel as `0000000000000000`.
+Missing heights never become zero; a real zero remains a number. Tile and
+layer fields retain C++ defaults on failures and are meaningful with the
+corresponding status. There is no sample/cell field in `TerrainHeightResult`.
+
+Each call looks up the World resource again; it caches no release and performs
+no IO. A loading state enqueues the C++ query's deduplicated payload request,
+which the terrain `TerrainStreamer` reads on a worker after its next per-frame
+`Update`; this binding starts no loader itself. An Eager release's payloads are
+requested when the scene loads but arrive on their own, so the first frames may
+answer `Loading` there too. A Play session keeps its release when `current` changes; app's Edit
+safe point replaces the resource after Stop. No resource, an empty resource,
+or no instance covering the point gives `OutsideMap` / `None`.
 
 ## Rules
 
@@ -211,6 +287,23 @@ than something this module or `scene` does.
    flavour underneath.
 
 ## Changed
+
+*2026-10-18* — **Post-processing bindings: `world:set_fog/get_fog`,
+`set_hdr/get_hdr`, `set_bloom/get_bloom`.** Was: Fog, HDR and Bloom
+were only reachable from the editor's Post-Processing panel - no script could
+read or change any of them, not even the ones (Fog, HDR) that predate this
+module's own post-processing work. Now: `PostProcessingBindings.cpp`, a new
+binding file alongside `AudioBindings`/`PhysicsBindings`/`TerrainBindings`,
+extends `World` the same way they do. `PostProcessingSettings` is one global
+resource, not a `Camera` field, so - like `set_state` for the one global Wwise
+state - these take no entity. `HdrEffect.h` gained `ToString`/`ParseOperator`
+(previously private to `HdrEffect.cpp`) so the binding's `tonemapOperator`
+string and the panel's own json use the exact same mapping; everything else
+reads/writes through the existing `Read*Params`/`Write*Params` functions
+unchanged. This module now depends on `mir::renderer` (private) - its first
+reach into rendering, scoped to this one settings resource, not the renderer's
+own runtime state. Because: every post-processing effect the panel exposes
+should be reachable from gameplay code too.
 
 *2026-10-02* — **Input bindings read `InputState::ForGame`.** Was: `Get`, so a
 script saw every press, including those that navigate an open pause menu. Now:

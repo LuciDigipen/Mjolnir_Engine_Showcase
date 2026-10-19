@@ -55,6 +55,10 @@ Programmer error uses assertions instead. `MIR_ASSERT` is for development errors
 
 ## Module graph
 
+`script` privately links `terrain` for the resident Lua height query (#144);
+`terrain` retains its assets/core dependencies and no script dependency, and
+links `serial` privately for its streaming settings (#126).
+
 The folder tree is in the [README](../README.md#folder-structure). This is how
 the pieces depend on each other.
 
@@ -102,6 +106,7 @@ through it for anything touching a JSON file.
 | `serial` | JSON documents on disk | [serial.md](modules/serial.md) |
 | `script` | Lua embedding and ECS bindings | [script.md](modules/script.md) |
 | `audio` | Wwise lifetime and the per-frame pump | [audio.md](modules/audio.md) |
+| `camera` | Gameplay camera control: follow a target, or free-fly from input | [camera.md](modules/camera.md) |
 | `imguiruntime` | ImGui context lifetime, fonts, both backends, the frame bracket | [imguiruntime.md](modules/imguiruntime.md) |
 | `editor` | The editor shell, drawn into `imguiruntime`'s context | [editor.md](modules/editor.md) |
 | `editortheme` | Theme data only | [editortheme.md](modules/editortheme.md) |
@@ -205,6 +210,7 @@ type. The flow is in [A file](#a-file).
 ```
 PollEvents                       close flag and framebuffer size refresh here
 dt = min(elapsed, mMaxDeltaSeconds)
+TerrainRuntime::Update           installs finished terrain reads, release checks, mesh builds, uploads and collision pieces (every mode); then, in Edit, its Refresh (which may switch to a checked, prewarmed release)
 ImGuiRuntime::BeginFrame         the NewFrame trio
 Editor::DrawLayout               -> EditorActions (scene action, game to open)
 UIContext::BeginFrame/EndFrame   game UI into the background list, scene viewport or whole window
@@ -219,7 +225,9 @@ Ordering between features is expressed as a phase, never as registration order.
 
 `ScriptSystem` runs in `PreUpdate`. `FixedUpdate` is for physics and its sync
 back to `Transform`; it runs zero or more times a frame with the fixed step as
-`dt`. `TransformPropagateSystem` runs in `PostUpdate`, after it. `RenderSystem`
+`dt`. Before each step `PhysicsSystem` calls the `PhysicsStepGates` World
+resource's gates; app's terrain is one, placing collision pieces and holding
+bodies whose ground is not collidable yet (#128). `TransformPropagateSystem` runs in `PostUpdate`, after it. `RenderSystem`
 runs in `Render`, after all of them, so every `WorldTransform` it reads is
 already current for the frame being drawn.
 
@@ -228,6 +236,12 @@ The scheduler flushes the command buffer at each phase boundary and after each
 
 `RenderSystem` holds a `VulkanRenderer&` passed to its constructor. The renderer
 is not published as a world resource, which keeps it out of reach of scripts.
+Draws that depend on the viewport come from the `ViewDrawSources` resource:
+`RenderSystem` hands each source every viewport's camera before it builds any
+view, and app's terrain answers per view with its own level of detail (#125).
+Meshes queued with `QueueMesh` are copied at the start of the next recorded
+frame within a per-frame byte budget and become drawable once that frame has
+completed; retired ones are freed after their last frame, with no wait (#127).
 
 ### A file
 
@@ -378,10 +392,17 @@ table. See [script.md](modules/script.md).
 1. No input. `window` surfaces no events at all.
 2. No renderer abstraction. `Renderer.h` is a placeholder and `App` names
    `VulkanRenderer` directly, so there is no headless mode, and nothing in
-   `app`, `renderer` or `editor` is unit tested.
+   `app`, `renderer` or `editor` is unit tested, except `ContentBrowserWatcher`
+   (see [modules/app.md](modules/app.md)), whose disk-polling logic has no
+   renderer/ECS dependency to need one.
 3. No typed assets. Everything cooks as a raw passthrough blob.
 4. Linux sources exist, but there is no Linux preset. macOS fails at configure.
 5. No CI. Tests are run by hand.
+6. **The Content Browser's rename detection is best-effort.** A rename is
+   recognized only when it is the single remove+add pair in a 250ms poll tick
+   with a matching size+mtime signature; renaming/moving an asset never
+   rewrites scene references to its old `AssetId` (see
+   [modules/assets.md](modules/assets.md)).
 
 ## Changed
 

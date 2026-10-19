@@ -1,6 +1,32 @@
 {
+  "ide": {
+    "args": "--new-window {project} {file}",
+    "path": "C:\\Users\\rahul\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe"
+  },
+  "postProcessing": {
+    "effects": {
+      "Bloom": {
+        "enabled": true,
+        "params": {
+          "intensity": 0.5,
+          "radius": 0.5,
+          "threshold": 1.0
+        }
+      },
+      "Fog": {
+        "enabled": true,
+        "params": {}
+      },
+      "HDR": {
+        "enabled": true,
+        "params": {
+          "exposure": 1.0,
+          "tonemapOperator": "aces"
+        }
+      }
+    }
+  },
   "rendering": {
-    "fog": false,
-    "rayTracing": false
+    "rayTracing": true
   }
 }

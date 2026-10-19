@@ -217,7 +217,8 @@ namespace mir::vk
             extent.width, extent.height, actualCount, imageCount,
             presentMode == VK_PRESENT_MODE_MAILBOX_KHR ? "MAILBOX" : "FIFO");
 
-        if (!CreateImageViews() || !CreateDepthResources() || !CreateRenderCompleteSemaphores())
+        if (!CreateImageViews() || !CreateDepthResources() || !CreateHdrColorResources() ||
+            !CreateRenderCompleteSemaphores())
             return false;
 
         mDevice->NameObject(VK_OBJECT_TYPE_SWAPCHAIN_KHR, reinterpret_cast<uint64_t>(mSwapchain), "Swapchain");
@@ -334,10 +335,79 @@ namespace mir::vk
         }
     }
 
+    bool Swapchain::CreateHdrColorResources()
+    {
+        for (uint32_t i = 0; i < kFramesInFlight; ++i)
+        {
+            const VkImageCreateInfo imageInfo{
+                .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                .imageType = VK_IMAGE_TYPE_2D,
+                .format = kHdrColorFormat,
+                .extent{ mExtent.width, mExtent.height, 1 },
+                .mipLevels = 1,
+                .arrayLayers = 1,
+                .samples = VK_SAMPLE_COUNT_1_BIT,
+                .tiling = VK_IMAGE_TILING_OPTIMAL,
+                .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
+
+            const VmaAllocationCreateInfo allocInfo{ .usage = VMA_MEMORY_USAGE_AUTO };
+
+            if (vmaCreateImage(mDevice->Allocator(), &imageInfo, &allocInfo,
+                &mHdrColorImages[i], &mHdrColorAllocations[i], nullptr) != VK_SUCCESS)
+            {
+                MIR_LOG_CRITICAL("CreateHdrColorResources: vmaCreateImage failed for HDR color buffer {}", i);
+                return false;
+            }
+
+            const VkImageViewCreateInfo viewInfo{
+                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                .image = mHdrColorImages[i],
+                .viewType = VK_IMAGE_VIEW_TYPE_2D,
+                .format = kHdrColorFormat,
+                .subresourceRange{
+                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                    .baseMipLevel = 0,
+                    .levelCount = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount = 1 } };
+
+            if (vkCreateImageView(mDevice->Handle(), &viewInfo, nullptr, &mHdrColorViews[i]) != VK_SUCCESS)
+            {
+                MIR_LOG_CRITICAL("CreateHdrColorResources: vkCreateImageView failed for HDR color buffer {}", i);
+                return false;
+            }
+
+            mDevice->NameObject(VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64_t>(mHdrColorImages[i]),
+                std::format("HDR color buffer {}", i).c_str());
+        }
+
+        return true;
+    }
+
+    void Swapchain::DestroyHdrColorResources()
+    {
+        for (uint32_t i = 0; i < kFramesInFlight; ++i)
+        {
+            if (mHdrColorViews[i] != VK_NULL_HANDLE)
+            {
+                vkDestroyImageView(mDevice->Handle(), mHdrColorViews[i], nullptr);
+                mHdrColorViews[i] = VK_NULL_HANDLE;
+            }
+            if (mHdrColorImages[i] != VK_NULL_HANDLE)
+            {
+                vmaDestroyImage(mDevice->Allocator(), mHdrColorImages[i], mHdrColorAllocations[i]);
+                mHdrColorImages[i] = VK_NULL_HANDLE;
+                mHdrColorAllocations[i] = VK_NULL_HANDLE;
+            }
+        }
+    }
+
     void Swapchain::Destroy()
     {
         DestroyRenderCompleteSemaphores();
-        // swapchain and depth go hand in hand
+        DestroyHdrColorResources();
         DestroyDepthResources();
 
         for (VkImageView view : mViews)

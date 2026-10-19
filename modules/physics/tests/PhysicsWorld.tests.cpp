@@ -13,9 +13,12 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <glm/geometric.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <optional>
+#include <span>
 
 namespace
 {
@@ -221,6 +224,43 @@ TEST_CASE("A bad handle has no position instead of crashing", "[physics]")
     REQUIRE_FALSE(world.BodyPosition(destroyed));
 }
 
+TEST_CASE("A body carries the entity it was tagged with", "[physics]")
+{
+    mir::PhysicsWorld world;
+
+    const mir::BodyHandle floor = AddFloor(world);
+    const mir::BodyHandle sphere = world.CreateDynamicSphere(At(0.0, 3.0, 0.0), 0.5f);
+    CHECK(world.BodyEntity(floor) == mir::kNullEntity);
+
+    // Entity{0, 0} packs to Jolt's default user data.
+    world.SetBodyEntity(floor, mir::Entity{ 0, 0 });
+    CHECK(world.BodyEntity(floor) == mir::Entity{ 0, 0 });
+
+    const mir::Entity high{ 0xFFFFFFFEu, 0xFFFFFFFFu };
+    world.SetBodyEntity(sphere, high);
+    CHECK(world.BodyEntity(sphere) == high);
+    CHECK(world.BodyEntity(floor) == mir::Entity{ 0, 0 });
+
+    const std::optional<mir::RayHit> hit = world.RayCast(At(0.0, 5.0, 0.0), glm::vec3(0.0f, -1.0f, 0.0f), 10.0f);
+    REQUIRE(hit);
+    CHECK(world.BodyEntity(hit->mBody) == high);
+
+    world.SetBodyEntity(floor, mir::kNullEntity);
+    CHECK(world.BodyEntity(floor) == mir::kNullEntity);
+
+    world.SetBodyEntity(mir::BodyHandle{}, high);
+    CHECK(world.BodyEntity(mir::BodyHandle{}) == mir::kNullEntity);
+
+    world.DestroyBody(sphere);
+    CHECK(world.BodyEntity(sphere) == mir::kNullEntity);
+    world.SetBodyEntity(sphere, high);
+    CHECK(world.BodyEntity(sphere) == mir::kNullEntity);
+
+    // A new body in the destroyed one's slot starts untagged.
+    const mir::BodyHandle reused = world.CreateDynamicSphere(At(0.0, 3.0, 0.0), 0.5f);
+    CHECK(world.BodyEntity(reused) == mir::kNullEntity);
+}
+
 TEST_CASE("Degenerate shapes are rejected, not asserted on", "[physics]")
 {
     mir::PhysicsWorld world;
@@ -350,4 +390,105 @@ TEST_CASE("Bodies collide at the map edge as they do at the origin", "[physics][
 
     CHECK(std::abs(restHeight[1] - restHeight[0]) <= 1e-4);
     CHECK(std::abs(restHeight[2] - restHeight[0]) <= 1e-4);
+}
+
+TEST_CASE("A held body keeps its pose and its velocities until it resumes", "[physics][hold]")
+{
+    mir::PhysicsWorld world;
+    AddFloor(world);
+    const mir::BodyHandle sphere = world.CreateDynamicSphere(At(0.0, 6.0, 0.0), 0.5f);
+    world.SetBodyLinearVelocity(sphere, glm::vec3(1.0f, -2.0f, 0.5f));
+    world.SetBodyAngularVelocity(sphere, glm::vec3(0.0f, 3.0f, 0.0f));
+    const mir::WorldVec3 before = MetersOf(world, sphere);
+
+    world.HoldBody(sphere);
+    CHECK(world.IsBodyHeld(sphere));
+    StepFor(world, 60);
+    CHECK(MetersOf(world, sphere) == before);
+    CHECK(world.BodyLinearVelocity(sphere) == glm::vec3(1.0f, -2.0f, 0.5f));
+    CHECK(world.BodyAngularVelocity(sphere) == glm::vec3(0.0f, 3.0f, 0.0f));
+
+    world.ResumeBody(sphere);
+    CHECK_FALSE(world.IsBodyHeld(sphere));
+    CHECK(world.BodyLinearVelocity(sphere) == glm::vec3(1.0f, -2.0f, 0.5f));
+    world.Step(kStep);
+    const mir::WorldVec3 after = MetersOf(world, sphere);
+    CHECK(after.x > before.x);
+    CHECK(after.y < before.y);
+    CHECK(world.BodyLinearVelocity(sphere).y < -2.0f);
+}
+
+TEST_CASE("A held body takes velocity changes and impulses into its kept velocities and drops forces",
+          "[physics][hold]")
+{
+    mir::PhysicsWorldDesc weightless;
+    weightless.mGravity = glm::vec3(0.0f);
+    mir::PhysicsWorld world(weightless);
+    const mir::BodyHandle held = world.CreateDynamicBox(At(0.0, 0.0, 0.0), glm::vec3(0.5f, 0.25f, 0.5f));
+    const mir::BodyHandle free = world.CreateDynamicBox(At(10.0, 0.0, 0.0), glm::vec3(0.5f, 0.25f, 0.5f));
+    world.HoldBody(held);
+
+    for (const mir::BodyHandle body : {held, free})
+    {
+        world.SetBodyLinearVelocity(body, glm::vec3(2.0f, 0.0f, 0.0f));
+        world.AddLinearVelocity(body, glm::vec3(0.0f, 1.0f, 0.0f));
+        world.AddAngularVelocity(body, glm::vec3(0.0f, 0.5f, 0.0f));
+        world.AddImpulse(body, glm::vec3(0.0f, 0.0f, 30.0f));
+        world.AddAngularImpulse(body, glm::vec3(4.0f, 0.0f, 0.0f));
+        world.AddImpulseAtOffset(body, glm::vec3(0.0f, 10.0f, 0.0f), glm::vec3(0.5f, 0.0f, 0.0f));
+    }
+    const auto close = [](const glm::vec3 &a, const glm::vec3 &b) {
+        return glm::length(a - b) <= 1e-5f * std::max(1.0f, glm::length(b));
+    };
+    CHECK(close(world.BodyLinearVelocity(held), world.BodyLinearVelocity(free)));
+    CHECK(close(world.BodyAngularVelocity(held), world.BodyAngularVelocity(free)));
+
+    world.AddForce(held, glm::vec3(1000.0f, 0.0f, 0.0f));
+    world.AddTorque(held, glm::vec3(0.0f, 1000.0f, 0.0f));
+    world.AddForceAtOffset(held, glm::vec3(0.0f, 1000.0f, 0.0f), glm::vec3(0.5f, 0.0f, 0.0f));
+    world.ResumeBody(held);
+    world.Step(kStep);
+    CHECK(close(world.BodyLinearVelocity(held), world.BodyLinearVelocity(free)));
+    CHECK(close(world.BodyAngularVelocity(held), world.BodyAngularVelocity(free)));
+}
+
+TEST_CASE("Only dynamic bodies are held, and destroying a held body forgets it", "[physics][hold]")
+{
+    mir::PhysicsWorld world;
+    const mir::BodyHandle floor = AddFloor(world);
+    world.HoldBody(floor);
+    CHECK_FALSE(world.IsBodyHeld(floor));
+    world.HoldBody(mir::BodyHandle{});
+    CHECK_FALSE(world.IsBodyHeld(mir::BodyHandle{}));
+
+    const mir::BodyHandle sphere = world.CreateDynamicSphere(At(0.0, 3.0, 0.0), 0.5f);
+    world.HoldBody(sphere);
+    world.HoldBody(sphere);
+    world.DestroyBody(sphere);
+    CHECK_FALSE(world.IsBodyHeld(sphere));
+    world.ResumeBody(sphere);
+    CHECK(world.BodyCount() == 1);
+}
+
+TEST_CASE("A restricted static body stops only the dynamic bodies allowed to touch it", "[physics][restrict]")
+{
+    mir::PhysicsWorld world;
+    const mir::BodyHandle floor = AddFloor(world);
+    world.RestrictBody(floor);
+    const mir::BodyHandle allowed = world.CreateDynamicSphere(At(-3.0, 3.0, 0.0), 0.5f);
+    const mir::BodyHandle refused = world.CreateDynamicSphere(At(0.0, 3.0, 0.0), 0.5f);
+    const mir::BodyHandle unrestricted = world.CreateDynamicSphere(At(3.0, 3.0, 0.0), 0.5f);
+    world.RestrictContacts(allowed, std::span<const mir::BodyHandle>(&floor, 1));
+    world.RestrictContacts(refused, {});
+
+    StepFor(world, 120);
+    CHECK(MetersOf(world, allowed).y > 0.5);
+    CHECK(MetersOf(world, unrestricted).y > 0.5);
+    CHECK(MetersOf(world, refused).y < -1.0);
+
+    world.SetBodyTransform(refused, At(0.0, 3.0, 0.0), mir::kIdentityRotation);
+    world.SetBodyLinearVelocity(refused, glm::vec3(0.0f));
+    world.ClearContactRestriction(refused);
+    StepFor(world, 120);
+    CHECK(MetersOf(world, refused).y > 0.5);
 }

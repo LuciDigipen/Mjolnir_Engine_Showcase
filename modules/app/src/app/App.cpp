@@ -19,6 +19,8 @@
 #include <audio/AudioListenerSystem.h>
 #include <audio/AudioSystem.h>
 #include <audio/ComponentRegistration.h>
+#include <camera/CameraControllerSystem.h>
+#include <camera/ComponentRegistration.h>
 #include <core/EngineVersion.h>
 #include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/DeferredAccess.h>
@@ -30,12 +32,17 @@
 #include <input/InputMap.h>
 #include <input/InputState.h>
 #include <input/InputSystem.h>
+#include <physics/CollisionEventSystem.h>
+#include <physics/CollisionEvents.h>
 #include <physics/ComponentRegistration.h>
+#include <physics/PhysicsInterpolationSystem.h>
 #include <physics/PhysicsSystem.h>
 #include <physics/PhysicsWorld.h>
 #include <renderer/ComponentRegistration.h>
+#include <renderer/PostProcessingSettings.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/RenderSystem.h>
+#include <renderer/ViewDrawSource.h>
 #include <scene/EntitySnapshot.h>
 #include <scene/SceneIO.h>
 #include <script/ComponentRegistration.h>
@@ -44,7 +51,9 @@
 #include <terrain/TerrainScene.h>
 
 #if MIR_WITH_EDITOR
+#include <core/platform/Process.h>
 #include <editor/EntityBaseline.h>
+#include <editor/IdeSettings.h>
 #include <editor/Selection.h>
 #endif
 
@@ -98,6 +107,7 @@ namespace mir
 
     #if MIR_WITH_EDITOR
         mAssetImport.Initialize(mProject);
+        mContentBrowser.Initialize(mProject);
     #else
             //no editor to lay out, the window is the game
         mDesc.mEnableEditorLayout = false;
@@ -175,7 +185,9 @@ namespace mir
         RegisterCoreComponents();
         RegisterRendererComponents();
         RegisterRendererEntityTypes();
+        RegisterRendererPostEffects();
         RegisterPhysicsComponents();
+        RegisterCameraComponents();
         RegisterScriptComponents();
         RegisterAudioComponents();
         RegisterModelPlayer();
@@ -183,7 +195,7 @@ namespace mir
 
         mWorld.EmplaceResource<ModelDrawItems>();
         mWorld.EmplaceResource<ModelMorphOverrides>();
-        mWorld.EmplaceResource<TerrainDrawItems>();
+        mWorld.EmplaceResource<ViewDrawSources>();
         mWorld.EmplaceResource<TerrainWorld>();
 
         // defers structural change
@@ -194,11 +206,14 @@ namespace mir
         mWorld.EmplaceResource<InputMap>(std::move(inputMap));
 
         mWorld.EmplaceResource<RenderSettings>(RenderSettings::LoadFile(mProject.mProjectSettingsPath).value_or(RenderSettings{}));
+        mWorld.EmplaceResource<PostProcessingSettings>(
+            PostProcessingSettings::LoadFile(mProject.mProjectSettingsPath).value_or(PostProcessingSettings{}));
         mWorld.EmplaceResource<InputState>();
         mWorld.EmplaceResource<EngineModeState>();
 
         // physcis world - currently Jolt
         mWorld.EmplaceResource<PhysicsWorld>();
+        mWorld.EmplaceResource<CollisionEvents>();
 
         mScheduler.AddSystem<InputSystem>(SystemPhase::PreUpdate, *mWindow);
 
@@ -208,8 +223,13 @@ namespace mir
         // Transforms it writes into world matrices
         mScheduler.AddSystem<PhysicsSystem>(SystemPhase::FixedUpdate);
 
-        // should be before any other system in PostUpdate
+
+        mScheduler.AddSystem<PhysicsInterpolationSystem>(SystemPhase::PostUpdate);
+
+        //should be before any other system in PostUpdate that reads WorldTransform
         mScheduler.AddSystem<TransformPropagateSystem>(SystemPhase::PostUpdate);
+
+        mScheduler.AddSystem<CameraControllerSystem>(SystemPhase::PostUpdate);
         mModelSystem =
             &mScheduler.AddSystem<ModelSystem>(SystemPhase::PostUpdate, mRenderer, Assets(), mProject.mAssetIdRoot);
         mMeshResolveSystem = &mScheduler.AddSystem<MeshResolveSystem>(SystemPhase::PostUpdate, mRenderer, Assets(),
@@ -218,6 +238,8 @@ namespace mir
         // after TransformPropagateSystem: it reads the WorldTransform that system writes
         mScheduler.AddSystem<AudioEmitterSystem>(SystemPhase::PostUpdate);
         mScheduler.AddSystem<AudioListenerSystem>(SystemPhase::PostUpdate);
+
+        mScheduler.AddSystem<CollisionEventSystem>(SystemPhase::PostUpdate);
 
         mRenderSystem = &mScheduler.AddSystem<RenderSystem>(SystemPhase::Render, mRenderer);
 
@@ -320,6 +342,7 @@ namespace mir
 
         // Play pins the terrain releases present on entry
         mTerrain->Refresh(0.0f, true);
+        mTerrain->BeginPlay();
 
         mPlaySnapshot = CaptureWorld(mWorld);
 
@@ -350,7 +373,7 @@ namespace mir
         SetEngineMode(mWorld, EngineMode::Edit);
         SetPlayState(mWorld, PlayState::Running);
 
-        // Picks up a release published during Play
+        // Starts checking a release published during Play
         mTerrain->Refresh(0.0f, true);
     }
 
@@ -463,7 +486,10 @@ namespace mir
         return &*mAssetCache;
     }
 
-    SystemContext App::MakeContext(float dt) { return SystemContext{ mWorld, mCommands, dt, mElapsed, mFrame }; }
+    SystemContext App::MakeContext(float dt)
+    {
+        return SystemContext{ mWorld, mCommands, dt, mElapsed, mFrame, mFixedTimestep.Alpha() };
+    }
 
     void App::Run()
     {
@@ -490,7 +516,11 @@ namespace mir
             mAssetImport.Update(IsEditing(mWorld));
             if (mAssetImport.PendingApply() && IsEditing(mWorld))
                 ApplyImportedAssets();
+            mContentBrowser.Update();
         #endif
+
+            // Every mode, before any system runs
+            mTerrain->Update();
 
             // Edit, between frames, before any system runs
             if (IsEditing(mWorld))
@@ -503,8 +533,8 @@ namespace mir
             #if MIR_WITH_EDITOR
                 const EditorActions actions = mEditor.DrawLayout(
                     mDesc.mEnableEditorLayout, mWorld.Resource<InputMap>(), mWorld.Resource<RenderSettings>(),
-                    mWorld.Resource<EngineModeState>(), mProjectMenu, mProject.mDir, mWorld, mAssetImport.View(),
-                    mRenderer);
+                    mWorld.Resource<PostProcessingSettings>(), mWorld.Resource<EngineModeState>(), mProjectMenu,
+                    mProject.mDir, mWorld, mAssetImport.View(), mRenderer, mContentBrowser.View());
             #endif
 
                 mGameUI.BeginFrame(GameUIArea(), mWorld.Resource<InputState>(), mWorld.Resource<InputMap>(),
@@ -634,6 +664,39 @@ namespace mir
         if (assetActionAccepted)
             mAssetImport.Handle(actions.mAssetImport);
 
+        if (actions.mContentBrowser.mKind == ContentBrowserActionKind::OpenInIde)
+        {
+            OpenInExternalIde(actions.mContentBrowser.mTargetPath);
+        }
+        else
+        {
+            bool contentBrowserActionAccepted = true;
+            if (actions.mContentBrowser.mKind == ContentBrowserActionKind::Delete)
+            {
+                if (const std::optional<std::string> logical =
+                    mContentBrowser.AssetLogicalPath(actions.mContentBrowser.mTargetPath);
+                    logical.has_value())
+                {
+                    const AssetId target = MakeAssetId(*logical);
+                    mWorld.GetOrCreateQuery<const ModelPlayer>().ForEach([&](Entity, const ModelPlayer &player)
+                        {
+                            AssetId referenced = player.ModelAsset();
+                            if (referenced.IsNull() && !player.ModelName().empty())
+                                if (const AssetPathResult logicalPlayer =
+                                    MakeLogicalAssetPath(mProject.mAssetIdRoot, player.ModelName());
+                                    logicalPlayer.Ok())
+                                    referenced = MakeAssetId(logicalPlayer.path);
+                            contentBrowserActionAccepted &= referenced != target;
+                        });
+                    if (!contentBrowserActionAccepted)
+                        mContentBrowser.Reject(actions.mContentBrowser.mTargetPath,
+                            "cannot delete this asset while a scene entity references it");
+                }
+            }
+            if (contentBrowserActionAccepted)
+                mContentBrowser.Handle(actions.mContentBrowser);
+        }
+
         if (!actions.mOpenProject.empty())
             RequestOpenProject(actions.mOpenProject);
 
@@ -677,6 +740,26 @@ namespace mir
             if (const Entity copy = DuplicateSceneEntity(mWorld, mScene, action.mTarget); !copy.IsNull())
                 selection.mSelected = { copy };
             break;
+        case EntityActionKind::Reparent:
+            {
+                // one invalid entity refuses the whole drop
+                if (!CanSetParentAll(mWorld, action.mTargets, action.mParent, action.mBefore))
+                    return;
+
+                const std::vector<Entity> moved = TopmostInHierarchyOrder(mWorld, action.mTargets);
+
+                for (const Entity entity : moved)
+                {
+                    if (action.mBefore.IsNull() && ParentOf(mWorld, entity) == action.mParent)
+                        MoveToLastSibling(mWorld, entity);
+                    else
+                        SetParent(mWorld, entity, action.mParent, action.mBefore);
+                }
+
+                if (!moved.empty())
+                    selection.mSelected = moved;
+                break;
+            }
         case EntityActionKind::None:
             break;
         }
@@ -708,6 +791,36 @@ namespace mir
         mAssetLoadFailed = false;
         mAssetImport.MarkApplied();
         MIR_LOG_INFO("Applied imported assets at an Edit frame boundary");
+    }
+
+    void App::OpenInExternalIde(const std::string &relativePath)
+    {
+        const IdeSettings settings = IdeSettings::LoadFile(mProject.mProjectSettingsPath).value_or(IdeSettings{});
+        const std::filesystem::path ide =
+            settings.path.empty() ? DetectDefaultIde().value_or(std::filesystem::path{})
+            : std::filesystem::path(settings.path);
+        if (ide.empty())
+        {
+            MIR_LOG_WARN("Content browser: no IDE configured or detected for '{}'", relativePath);
+            mContentBrowser.Reject(
+                relativePath, "no IDE configured and none could be auto-detected - set one in Project Settings");
+            return;
+        }
+
+        const std::filesystem::path absolute = mProject.mRootDir / relativePath;
+        const std::vector<std::string> args = settings.BuildArgs(mProject.mRootDir, absolute);
+
+        std::string argsLogged;
+        for (const std::string &arg : args)
+            argsLogged += (argsLogged.empty() ? "" : " ") + arg;
+        MIR_LOG_INFO("Content browser: opening '{}' (project root '{}') with '{}' {}", absolute.string(),
+            mProject.mRootDir.string(), ide.string(), argsLogged);
+
+        if (!LaunchProcess(ide, args, false).has_value())
+        {
+            MIR_LOG_ERROR("Content browser: could not launch '{}' for '{}'", ide.string(), relativePath);
+            mContentBrowser.Reject(relativePath, "could not launch '" + ide.string() + "'");
+        }
     }
 #endif
 

@@ -8,6 +8,7 @@
  */
 #include <physics/PhysicsSystem.h>
 
+#include <physics/PhysicsStepGate.h>
 #include <physics/PhysicsWorld.h>
 
 #include <core/ecs/EngineMode.h>
@@ -43,6 +44,12 @@ namespace mir
                 ? physics.CreateDynamicBox(position, rigidBody.halfExtent, transform.Rotation())
                 : physics.CreateStaticBox(position, rigidBody.halfExtent, transform.Rotation());
         }
+
+        void ResetStepPoses(RigidBody &rigidBody, const Transform &transform)
+        {
+            rigidBody.previousPosition = rigidBody.currentPosition = transform.Position();
+            rigidBody.previousRotation = rigidBody.currentRotation = transform.Rotation();
+        }
     }
 
     void PhysicsSystem::OnStart(SystemContext &context)
@@ -77,14 +84,23 @@ namespace mir
                     // This runs after ScriptSystem PreUpdate phase,
                     // meaning OnStart() in a script can never find a body.
                     rigidBody.body = CreateBodyFor(*physics, rigidBody, transform);
+                    physics->SetBodyEntity(rigidBody.body, entity);
+                    ResetStepPoses(rigidBody, transform);
                 }
                 else if (transform.Version() != rigidBody.transformVersion)
                 {
+                    // if is a teleport.
                     physics->SetBodyTransform(rigidBody.body, BodyWorldPosition(transform), transform.Rotation());
+                    ResetStepPoses(rigidBody, transform);
                 }
 
                 rigidBody.transformVersion = transform.Version();
             });
+
+        // Spawns and teleports above are already in the world, so they pass the gates like any move.
+        if (PhysicsStepGates *gates = context.world.TryResource<PhysicsStepGates>())
+            for (PhysicsStepGate *gate : gates->gates)
+                gate->BeforeStep(context.world, *physics, context.dt);
 
         physics->Step(context.dt);
 
@@ -93,6 +109,9 @@ namespace mir
             {
                 if (!rigidBody.body.IsValid() || rigidBody.motion != PhysicsMotion::Dynamic)
                     return;
+
+                rigidBody.previousPosition = rigidBody.currentPosition;
+                rigidBody.previousRotation = rigidBody.currentRotation;
 
                 // A body Jolt left at a non-finite position keeps its last
                 // Transform instead of writing that back.
@@ -104,6 +123,8 @@ namespace mir
                 if (rotation != transform.Rotation())
                     transform.SetRotation(rotation);
 
+                rigidBody.currentPosition = transform.Position();
+                rigidBody.currentRotation = transform.Rotation();
                 rigidBody.transformVersion = transform.Version();
             });
     }

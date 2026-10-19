@@ -12,6 +12,8 @@
 #include <glm/vec2.hpp>
 #include <glm/vec4.hpp>
 
+#include <cstdint>
+
 namespace mir::vk
 {
     // normalCols = Normal matrix
@@ -37,5 +39,36 @@ namespace mir::vk
     {
         glm::mat4 viewProj; // 64
         glm::mat4 model;    // 64
+    };
+
+    // Must match TonemapOperator in renderer/HdrEffect.h.
+    struct TonemapPushConstants
+    {
+        float exposure;
+        uint32_t tonemapOperator;
+        glm::vec2 invExtent;
+        float bloomIntensity;
+    };
+
+    struct BloomExtractPushConstants
+    {
+        float threshold;
+        float knee;
+        glm::vec2 invSrcExtent;
+        glm::vec2 invTargetExtent;
+    };
+
+    struct BloomDownsamplePushConstants
+    {
+        glm::vec2 invSrcExtent;
+        glm::vec2 invTargetExtent;
+    };
+
+    // radius scales the tent filter's tap offsets - the panel's "Radius" knob.
+    struct BloomUpsamplePushConstants
+    {
+        glm::vec2 invSrcExtent;
+        glm::vec2 invTargetExtent;
+        float radius;
     };
 }

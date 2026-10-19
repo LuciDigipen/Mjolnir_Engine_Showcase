@@ -11,15 +11,21 @@
 
 #include <core/ecs/EngineMode.h>
 #include <core/platform/Surface.h>
+#include <editor/BackgroundImage.h>
 #include <editor/EditorCamera.h>
+#include <editor/EditorPreferences.h>
 #include <editor/panels/AssetImportPanel.h>
+#include <editor/panels/ContentBrowserPanel.h>
 #include <editor/panels/HierarchyPanel.h>
 #include <editor/panels/InputSettingsPanel.h>
 #include <editor/panels/InspectorPanel.h>
 #include <editor/panels/LogPanel.h>
+#include <editor/panels/PostProcessingPanel.h>
+#include <editor/panels/PreferencesPanel.h>
 #include <editor/panels/ProfilerPanel.h>
 #include <editor/panels/ProjectSettingsPanel.h>
 #include <imguiruntime/ImGuiRuntime.h>
+#include <renderer/PostProcessingSettings.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/VulkanRenderer.h>
 #include <window/Window.h>
@@ -73,6 +79,7 @@ namespace mir
         std::string mCreateProjectName;
         bool mCreateProjectRayTracing = false;
         AssetImportAction mAssetImport;
+        ContentBrowserAction mContentBrowser;
     };
 
     class Editor
@@ -95,9 +102,10 @@ namespace mir
 
         //between ImGuiRuntime::BeginFrame and EndFrame
         EditorActions DrawLayout(bool enableLayout, InputMap &inputMap, RenderSettings &renderSettings,
-                                 const EngineModeState &mode, std::span<const ProjectMenuEntry> projects,
-                                 std::string_view currentProject, World &world, const AssetImportView &assetImport,
-                                 const VulkanRenderer &renderer);
+                                 PostProcessingSettings &postProcessingSettings, const EngineModeState &mode,
+                                 std::span<const ProjectMenuEntry> projects, std::string_view currentProject,
+                                 World &world, const AssetImportView &assetImport, const VulkanRenderer &renderer,
+                                 const ContentBrowserView &contentBrowser);
 
         VkRect2D SceneViewportRect() const { return mSceneViewportRect; }
 
@@ -124,11 +132,19 @@ namespace mir
 
         SceneMenuAction DrawPlayControls(const EngineModeState &mode);
 
+        void ApplyPreferencesRequest(const PreferencesRequest &request);
+        // copies @p source into EditorPreferencesDir() and shows it; false keeps the current image
+        bool SetBackgroundImage(const std::filesystem::path &source);
+        void ClearBackgroundImage();
+
         bool mInitialized = false;
         bool mShowStyleEditor = false;
         bool mShowProjectSettings = false;
         bool mShowInputSettings = false;
+        bool mShowPostProcessing = false;
         bool mShowAssetImport = false;
+        bool mShowContentBrowser = false;
+        bool mShowPreferences = false;
         bool mShowProfiler = false;
         std::string mImGuiIniPath;
         std::filesystem::path mProjectSettingsPath;
@@ -138,11 +154,18 @@ namespace mir
         LogPanel mLogPanel;
         HierarchyPanel mHierarchyPanel;
         AssetImportPanel mAssetImportPanel;
+        ContentBrowserPanel mContentBrowserPanel;
         InspectorPanel mInspectorPanel;
         ProjectSettingsPanel mProjectSettingsPanel;
+        PreferencesPanel mPreferencesPanel;
         InputSettingsPanel mInputSettingsPanel;
+        PostProcessingPanel mPostProcessingPanel;
         ProfilerPanel mProfilerPanel;
         EditorCamera mCamera;
+
+        std::filesystem::path mPreferencesPath;
+        EditorPreferences mPreferences;
+        BackgroundImage mBackground;
 
         // waiting on the confirm dialog
         ProjectMenuEntry mPendingProject;

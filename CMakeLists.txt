@@ -50,6 +50,7 @@ add_subdirectory(modules/animation)
 add_subdirectory(modules/app)
 add_subdirectory(modules/assets)
 add_subdirectory(modules/audio)
+add_subdirectory(modules/camera)
 add_subdirectory(modules/core)
 add_subdirectory(modules/editor)
 add_subdirectory(modules/editortheme)
@@ -103,6 +104,14 @@ engine_add_shaders(MjolnirEngine
 engine_add_shaders(MjolnirEngine
     SOURCE assets/shaders/sky.slang
     ENTRIES vertexMain:vertex fragmentMain:fragment)
+
+engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/tonemap.slang
+    ENTRIES vertexMain:vertex fragmentMain:fragment)
+
+engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/bloom.slang
+    ENTRIES vertexMain:vertex brightpassMain:fragment downsampleMain:fragment upsampleMain:fragment)
 
 engine_add_shaders(MjolnirEngine
     SOURCE assets/shaders/shadowDepth.slang
@@ -181,6 +190,13 @@ foreach(manifest IN LISTS game_manifests)
 
     list(APPEND game_copy_commands COMMAND "${CMAKE_COMMAND}" -E copy_if_different
          "${manifest}" "$<TARGET_FILE_DIR:MjolnirEngine>/games/${game_name}/game.json")
+
+    # A game with terrain ships its streaming settings; terrain_streaming.local.json is per machine, never copied.
+    if(EXISTS "${game_dir}/terrain_streaming.json")
+        list(APPEND game_copy_commands COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+             "${game_dir}/terrain_streaming.json"
+             "$<TARGET_FILE_DIR:MjolnirEngine>/games/${game_name}/terrain_streaming.json")
+    endif()
 
     set(scene_dest "${CMAKE_BINARY_DIR}/games/${game_name}/scenes")
     if(IS_DIRECTORY "${game_dir}/scenes" AND NOT EXISTS "${scene_dest}")
@@ -264,6 +280,15 @@ if(BUILD_TESTING)
         add_test(NAME smoke.game-mode
             COMMAND MjolnirEngine --game games/HelloWorld --no-editor --frames 120)
         set_tests_properties(smoke.game-mode PROPERTIES
+            LABELS smoke
+            TIMEOUT 120)
+    endif()
+
+    # TerrainCheck from its scene camera, which sees both terrains: per-viewport selection, streaming and tracing
+    if(EXISTS "${CMAKE_SOURCE_DIR}/games/TerrainCheck/game.json")
+        add_test(NAME smoke.TerrainCheck.game-mode
+            COMMAND MjolnirEngine --game games/TerrainCheck --no-editor --frames 120)
+        set_tests_properties(smoke.TerrainCheck.game-mode PROPERTIES
             LABELS smoke
             TIMEOUT 120)
     endif()

@@ -54,8 +54,8 @@ namespace
 
     std::vector<std::string> ValidateArgs(const fs::path &candidate, const fs::path &report)
     {
-        return {"validate", "--candidate", candidate.string(), "--report",
-                report.string(), "--recipe", ExampleRecipePath().string()};
+        return {"validate",      "--candidate", candidate.string(),          "--report",
+                report.string(), "--recipe",    ExampleRecipePath().string()};
     }
 
     Json ReadJson(const fs::path &path)
@@ -140,13 +140,19 @@ TEST_CASE("TerrainTool bake writes a validated 2x2 candidate and a structured re
     CHECK(report.at("layout").at("sampleSpacing") == 4.0);
     CHECK(report.at("layout").at("intervalsPerTile") == 64);
 
-    REQUIRE(report.at("tiles").size() == 4);
+    REQUIRE(report.at("tiles").size() == 24);
     Json coords = Json::array();
+    size_t lodCount = 0, normalCount = 0;
     for (const Json &tile : report.at("tiles"))
     {
-        coords.push_back(tile.at("tile"));
+        if (tile.at("source").get<bool>())
+            coords.push_back(tile.at("tile"));
+        lodCount += tile.at("kind") == 1;
+        normalCount += tile.at("kind") == 2;
         CHECK(tile.at("readable") == true);
     }
+    CHECK(lodCount == 8);
+    CHECK(normalCount == 8);
     CHECK(Text(coords) == Tiles({{-1, -1}, {0, -1}, {-1, 0}, {0, 0}}));
     CHECK(report.at("files").size() == 5);
     for (const Json &c : report.at("checks"))
@@ -175,7 +181,8 @@ TEST_CASE("TerrainTool bake writes a validated 2x2 candidate and a structured re
 TEST_CASE("Repeated bakes give the same final heights; only a fixed nonce repeats the release", "[terraintool][cli]")
 {
     ScratchDir scratch("cli_repeat");
-    auto bake = [&](const char *name, std::optional<std::string> nonce) {
+    auto bake = [&](const char *name, std::optional<std::string> nonce)
+    {
         const fs::path out = scratch.path / name;
         const fs::path report = scratch.path / (std::string(name) + ".json");
         REQUIRE(Run(BakeArgs(out, report, nonce)) == 0);
@@ -247,9 +254,12 @@ TEST_CASE("TerrainTool fails bad recipes and damaged candidates with tiles and f
         const Json report = ReadJson(reportPath);
         CHECK(report.at("ok") == false);
         const std::vector<Json> coverage = DiagnosticsOf(report, "coverage");
-        REQUIRE(coverage.size() == 1);
-        CHECK(Text(coverage[0].at("tiles")) == Tiles({{-1, 0}}));
-        CHECK(coverage[0].at("field") == "chunk_-1_0.tpack");
+        REQUIRE(coverage.size() == 6);
+        for (const auto &diagnostic : coverage)
+        {
+            CHECK(Text(diagnostic.at("tiles")) == Tiles({{-1, 0}}));
+            CHECK(diagnostic.at("field") == "chunk_-1_0.tpack");
+        }
         CHECK(CheckStatusOf(report, "edges") == "skipped");
     }
     SECTION("corrupt payload")
@@ -269,7 +279,10 @@ TEST_CASE("TerrainTool fails bad recipes and damaged candidates with tiles and f
     }
     SECTION("non-finite height")
     {
-        REQUIRE(Run(BakeArgs(baked, scratch.path / "bake.json")) == 0);
+        WriteCraftedCandidate(baked,
+                              [](std::vector<TileHeights> &)
+                              {
+                              });
         PatchSampleSealed(baked, {-1, -1}, 40, 3, std::numeric_limits<float>::infinity());
         CHECK(Run(ValidateArgs(baked, reportPath)) == 1);
         const Json report = ReadJson(reportPath);
@@ -281,10 +294,12 @@ TEST_CASE("TerrainTool fails bad recipes and damaged candidates with tiles and f
     }
     SECTION("edge discontinuity")
     {
-        WriteCraftedCandidate(crafted, [](std::vector<TileHeights> &tiles) {
-            TileHeights &tile = TileAt(tiles, {-1, 0});
-            tile.Set(30, 0, tile.At(30, 0) - 2.0f);
-        });
+        WriteCraftedCandidate(crafted,
+                              [](std::vector<TileHeights> &tiles)
+                              {
+                                  TileHeights &tile = TileAt(tiles, {-1, 0});
+                                  tile.Set(30, 0, tile.At(30, 0) - 2.0f);
+                              });
         CHECK(Run(ValidateArgs(crafted, reportPath)) == 1);
         const Json report = ReadJson(reportPath);
         CHECK(CheckStatusOf(report, "edges") == "failed");
@@ -298,10 +313,12 @@ TEST_CASE("TerrainTool fails bad recipes and damaged candidates with tiles and f
     }
     SECTION("corner discontinuity")
     {
-        WriteCraftedCandidate(crafted, [](std::vector<TileHeights> &tiles) {
-            TileHeights &tile = TileAt(tiles, {-1, -1});
-            tile.Set(64, 64, tile.At(64, 64) + 1.0f);
-        });
+        WriteCraftedCandidate(crafted,
+                              [](std::vector<TileHeights> &tiles)
+                              {
+                                  TileHeights &tile = TileAt(tiles, {-1, -1});
+                                  tile.Set(64, 64, tile.At(64, 64) + 1.0f);
+                              });
         CHECK(Run(ValidateArgs(crafted, reportPath)) == 1);
         const Json report = ReadJson(reportPath);
         const std::vector<Json> corners = DiagnosticsOf(report, "corners");
@@ -321,7 +338,12 @@ TEST_CASE("Bake and validate never change a published release or its current poi
     const AssetId asset = MakeAssetId(ExampleAssetPath());
 
     const fs::path staged = scratch.path / "staged";
-    const TerrainBakedRelease published = WriteCraftedCandidate(staged, [](auto &) {}, 0xC0FFEE);
+    const TerrainBakedRelease published = WriteCraftedCandidate(
+        staged,
+        [](auto &)
+        {
+        },
+        0xC0FFEE);
     const fs::path releaseDir = TerrainReleaseDir(releases, asset, published.info.release);
     fs::create_directories(releaseDir);
     WriteFile(releaseDir / kTerrainIndexFileName, published.encoded.index);
@@ -367,8 +389,14 @@ TEST_CASE("Bad command lines exit 2 and still leave a report", "[terraintool][cl
     CHECK(Run({"publish", "--report", report.string()}) == 2);
     CHECK(ReadJson(report).at("command") == "publish");
 
-    std::vector<std::string> noOut{"bake",          "--recipe",   ExampleRecipePath().string(), "--id-root",
-                                   std::string(kIdRoot), "--source-path", std::string(kSourcePath), "--report",
+    std::vector<std::string> noOut{"bake",
+                                   "--recipe",
+                                   ExampleRecipePath().string(),
+                                   "--id-root",
+                                   std::string(kIdRoot),
+                                   "--source-path",
+                                   std::string(kSourcePath),
+                                   "--report",
                                    report.string()};
     CHECK(Run(noOut) == 2);
     const Json missing = ReadJson(report);
@@ -408,9 +436,9 @@ TEST_CASE("TerrainTool publish and sync report what they did, with exit codes", 
     const fs::path reportPath = scratch.path / "reports" / "publish.json";
     const AssetId asset = MakeAssetId(ExampleAssetPath());
     REQUIRE(Run(BakeArgs(candidate, scratch.path / "reports" / "bake.json")) == 0);
-    const std::vector<std::string> publish{"publish",  "--candidate", candidate.string(), "--releases",
-                                           releases.string(), "--report", reportPath.string(), "--recipe",
-                                           ExampleRecipePath().string()};
+    const std::vector<std::string> publish{"publish",           "--candidate",     candidate.string(),
+                                           "--releases",        releases.string(), "--report",
+                                           reportPath.string(), "--recipe",        ExampleRecipePath().string()};
 
     REQUIRE(Run(publish) == 0);
     const Json report = ReadJson(reportPath);
@@ -469,11 +497,19 @@ TEST_CASE("TerrainTool sync publishes into the game's releases once per recipe c
     fs::create_directories(recipe.parent_path());
     fs::copy_file(ExampleRecipePath(), recipe);
     const fs::path reportPath = scratch.path / "build" / "terrain" / "relief-2x2.sync.json";
-    const std::vector<std::string> sync{"sync",          "--recipe",     recipe.string(),
-                                        "--id-root",     std::string(kIdRoot), "--source-path",
-                                        std::string(kSourcePath), "--game-dir", gameDir.string(),
-                                        "--candidate",   (scratch.path / "build" / "terrain" / "relief-2x2").string(),
-                                        "--report",      reportPath.string()};
+    const std::vector<std::string> sync{"sync",
+                                        "--recipe",
+                                        recipe.string(),
+                                        "--id-root",
+                                        std::string(kIdRoot),
+                                        "--source-path",
+                                        std::string(kSourcePath),
+                                        "--game-dir",
+                                        gameDir.string(),
+                                        "--candidate",
+                                        (scratch.path / "build" / "terrain" / "relief-2x2").string(),
+                                        "--report",
+                                        reportPath.string()};
     const fs::path releases = TerrainReleasesRoot(gameDir);
     const fs::path assetDir = TerrainAssetReleasesDir(releases, MakeAssetId(ExampleAssetPath()));
 
@@ -527,10 +563,9 @@ TEST_CASE("TerrainTool package copies the game's current release into another ga
     const fs::path outDir = build / "games" / "G";
     const fs::path reportPath = build / "terrain" / "relief-2x2.package.json";
     const AssetId asset = MakeAssetId(ExampleAssetPath());
-    const std::vector<std::string> package{"package",          "--id-root",   std::string(kIdRoot),
-                                           "--source-path",    std::string(kSourcePath), "--game-dir",
-                                           gameDir.string(),   "--out",       outDir.string(),
-                                           "--report",         reportPath.string()};
+    const std::vector<std::string> package{
+        "package",        "--id-root", std::string(kIdRoot), "--source-path", std::string(kSourcePath), "--game-dir",
+        gameDir.string(), "--out",     outDir.string(),      "--report",      reportPath.string()};
 
     CHECK(Run(package) == 1);
     CHECK(CheckStatusOf(ReadJson(reportPath), "current") == "failed");

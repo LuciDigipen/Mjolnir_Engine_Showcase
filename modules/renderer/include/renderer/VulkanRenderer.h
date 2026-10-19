@@ -13,6 +13,7 @@
 #include <core/platform/Surface.h>
 #include <renderer/Material.h>
 #include <renderer/Mesh.h>
+#include <renderer/MeshStreaming.h>
 #include <renderer/Texture.h>
 #include <renderer/components/Sky.h>
 
@@ -46,8 +47,11 @@ namespace mir::vk
     class ShadowMaps;
     class ModelDescriptors;
     class RayTracer;
+    class PostProcess;
+    class Bloom;
     class FrameCapture;
     class ImGuiOverlay;
+    class MeshUploader;
 }
 
 namespace mir
@@ -112,9 +116,6 @@ namespace mir
     // Draw items produced outside the MeshRenderer query (by ModelSystem),
     // picked up by RenderSystem as a World resource.
     struct ModelDrawItems { std::vector<WorldDrawItem> items; };
-
-    // Terrain tile draws. Unlike ModelDrawItems they persist until their producer clears them.
-    struct TerrainDrawItems { std::vector<WorldDrawItem> items; };
 
     // A Point/Spot/Area light in world space; the renderer narrows it against
     // each view's camera, as it does draw items.
@@ -183,6 +184,20 @@ namespace mir
             std::span<const MaterialHandle> materials,
             std::span<const TextureHandle> textures);
 
+        // Asynchronous meshes (renderer/MeshStreaming.h), none of which waits on the GPU: a queued mesh is copied
+        // through the persistent staging ring at the start of a frame, within the per-frame byte budget, and is
+        // Ready once that frame completes; a retired one is freed once every frame that may use it completes.
+        // CreateMesh and DestroyMesh stay synchronous. Configure once before queueing.
+        bool ConfigureMeshStreaming(const MeshStreamingDesc &desc);
+        MeshHandle QueueMesh(std::vector<Vertex> vertices, std::vector<uint32_t> indices,
+                             const MeshUploadOptions &options);
+        MeshUploadState MeshState(MeshHandle handle) const;
+        // The handle goes stale at once; false when it already was.
+        bool RetireMesh(MeshHandle handle);
+        // GPU bytes a queued mesh of this size holds, BLAS included.
+        uint64_t MeshFootprint(uint32_t vertexCount, uint32_t indexCount, const MeshUploadOptions &options) const;
+        MeshStreamingStats MeshStreaming() const;
+
         VkExtent2D SwapchainExtent() const;
 
         void RequestSwapchainRecreate();
@@ -216,7 +231,12 @@ namespace mir
 
         void SetAmbientColor(const glm::vec3 &color);
 
-        void SetFog(const glm::vec3 &color, float density);
+        void SetFog(const glm::vec3 &color, float density, float start, float end);
+
+        void SetTonemap(float exposure, int tonemapOperator);
+
+        // enabled false skips the GPU chain for the frame and the panel's bloom contribution.
+        void SetBloom(bool enabled, float threshold, float intensity, float radius);
 
         void SetAtmosphere(const Sky &sky);
 
@@ -269,9 +289,16 @@ namespace mir
         // Initialized only on a device with ray tracing; its Shutdown is a no-op otherwise.
         std::unique_ptr<vk::RayTracer> mRayTracer;
 
+        std::unique_ptr<vk::PostProcess> mPostProcess;
+        std::unique_ptr<vk::Bloom> mBloom;
+        bool mBloomEnabled = false;
+
         std::unique_ptr<vk::FrameCapture> mCapture;
 
         std::unique_ptr<vk::ImGuiOverlay> mImGuiOverlay;
 
+        std::unique_ptr<vk::MeshUploader> mMeshUploads;
+
+        uint64_t mSkippedDraws = 0;
     };
 }

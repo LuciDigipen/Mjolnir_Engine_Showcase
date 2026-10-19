@@ -40,5 +40,13 @@ namespace mir
             mAccumulator = std::min(mAccumulator, static_cast<double>(mStep) * mMaxSteps);
             return steps;
         }
+
+        // How far the leftover time reaches into the next substep, 0..1
+        float Alpha() const
+        {
+            if (mStep <= 0.0f)
+                return 1.0f;
+            return static_cast<float>(std::clamp(mAccumulator / mStep, 0.0, 1.0));
+        }
     };
 }

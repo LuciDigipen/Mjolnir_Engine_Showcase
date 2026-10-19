@@ -37,6 +37,8 @@ namespace mir
         float dt = 0.0f;      // seconds since the previous frame; the fixed step in FixedUpdate
         double elapsed = 0.0; // seconds since the first frame
         uint64_t frame = 0;
+
+        float fixedAlpha = 1.0f;
     };
 
     // A unit of per-frame work over the World.

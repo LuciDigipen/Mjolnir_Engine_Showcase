@@ -51,6 +51,7 @@
           0.25,
           0.25
         ],
+        "interpolate": true,
         "motion": 1,
         "radius": 0.5,
         "shape": 0

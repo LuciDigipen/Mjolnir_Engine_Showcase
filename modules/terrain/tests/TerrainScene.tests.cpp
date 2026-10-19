@@ -8,6 +8,7 @@
  */
 
 #include "TerrainPackTestSupport.h"
+#include "TerrainStreamingTestSupport.h"
 
 #include <terrain/ComponentRegistration.h>
 #include <terrain/TerrainAreaSamples.h>
@@ -63,6 +64,7 @@ namespace
             InstallHierarchy(world);
             RegisterCoreComponents();
             RegisterTerrainComponents();
+            EmplaceTestStreamer(world);
         }
     };
 
@@ -136,7 +138,8 @@ namespace
     {
         const TerrainSceneSpec spec = CollectTerrainScene(world, kIdRoot);
         issues = spec.issues;
-        return ResolveTerrainWorld(spec, root, previous, issues);
+        return ResolveTerrainWorld(spec, root, previous, issues, world.Resource<TerrainStreamer>(),
+                                   TerrainEagerLoad::Wait);
     }
 
     const TerrainIssue *IssueFor(const std::vector<TerrainIssue> &issues, std::string_view recipe)
@@ -208,12 +211,19 @@ TEST_CASE("A far TerrainInstance saves and reloads with its placement exact and 
     CHECK(glm::dvec3(spec.instances[0].translation.Meters()) == kFar);
     CHECK(spec.instances[0].recipePath == kRecipe);
     CHECK(spec.instances[0].asset == TerrainAsset(kRecipe));
+    CHECK(spec.instances[0].entity == loaded.mEntities.begin()->second);
 
     const PlaySnapshot snapshot = CaptureWorld(reloaded.world);
     const LoadedScene restored = RestoreWorld(reloaded.world, snapshot);
     CHECK(restored.mEntities.size() == 1);
     CHECK(EntityCount(reloaded.world) == 1);
-    CHECK(CollectTerrainScene(reloaded.world, kIdRoot) == authoredSpec);
+    const TerrainSceneSpec restoredSpec = CollectTerrainScene(reloaded.world, kIdRoot);
+    CHECK(restoredSpec == authoredSpec);
+    // operator== ignores the entity, which the restore recreates.
+    REQUIRE(restoredSpec.instances.size() == 1);
+    CHECK(restoredSpec.instances[0].entity == restored.mEntities.begin()->second);
+    CHECK(restoredSpec.instances[0].entity != spec.instances[0].entity);
+    CHECK(restoredSpec == spec);
 
     if constexpr (mir::kLargeWorld)
     {
@@ -386,7 +396,7 @@ TEST_CASE("A missing, corrupt or incompatible release is one clear issue and the
     const AssetId newer = TerrainAsset("terrain/newer.terrain.json");
     const TerrainReleaseInfo newerInfo = Info(newer, 0x2222);
     TerrainEncodedRelease encoded = Encode(newerInfo, ReliefLayout(), BuildTiles(ReliefLayout()));
-    StoreU32(encoded.index, 4, 2);
+    StoreU32(encoded.index, 4, 3);
     ResealIndex(encoded.index);
     WriteRelease(root, newerInfo, encoded);
     PointCurrentAt(root, newer, newerInfo.release);
@@ -540,6 +550,8 @@ TEST_CASE("A pinned release ignores a publish until a safe point, which switches
 
     // The remembered refusal comes back word for word.
     const TerrainIssue refusal = issues[0];
+    // Joining the old pool also finishes reads whose requests were already pruned.
+    EmplaceTestStreamer(scene.world);
     std::filesystem::remove_all(TerrainReleaseDir(root, asset, c.info.release));
     TerrainWorld still = Resolve(scene.world, root, &kept, issues);
     REQUIRE(issues.size() == 1);

@@ -1,0 +1,422 @@
+/**
+ * @file TerrainStreamingSettings.cpp
+ * @author Jackey Cen
+ * @brief Terrain streaming budgets, IO and retry policy, read from data files.
+ *
+ * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
+ *
+ */
+#include "terrain/TerrainStreamingSettings.h"
+
+#include <serial/JsonFile.h>
+
+#include <nlohmann/json.hpp>
+
+#include <algorithm>
+#include <cmath>
+#include <format>
+#include <functional>
+#include <initializer_list>
+#include <limits>
+#include <set>
+#include <utility>
+
+namespace mir
+{
+    namespace
+    {
+        using json = nlohmann::json;
+        using Emit = std::function<void(std::string_view section, std::string_view key, std::string_view problem)>;
+
+        constexpr double kBytesPerMiB = 1024.0 * 1024.0;
+
+        bool NonNegative(double seconds)
+        {
+            return std::isfinite(seconds) && seconds >= 0.0;
+        }
+
+        void Check(const TerrainStreamingSettings &s, const Emit &emit)
+        {
+            if (s.cpu.budgetBytes == 0)
+                emit("cpu", "budgetMiB", "must be positive");
+            if (s.io.workerThreads == 0 || s.io.workerThreads > kMaxTerrainStreamingWorkers)
+                emit("io", "workerThreads", std::format("must be 1 to {}", kMaxTerrainStreamingWorkers));
+            if (s.io.maxInstallsPerFrame == 0)
+                emit("io", "maxInstallsPerFrame", "must be at least 1");
+            if (s.retry.maxAttempts == 0)
+                emit("retry", "maxAttempts", "must be at least 1");
+            if (!NonNegative(s.retry.firstDelaySeconds))
+                emit("retry", "firstDelaySeconds", "must be a finite number of seconds, zero or more");
+            if (!NonNegative(s.retry.maxDelaySeconds) ||
+                (NonNegative(s.retry.firstDelaySeconds) && s.retry.maxDelaySeconds < s.retry.firstDelaySeconds))
+                emit("retry", "maxDelaySeconds", "must be a finite number of seconds, at least firstDelaySeconds");
+            if (!NonNegative(s.retry.failedHoldSeconds))
+                emit("retry", "failedHoldSeconds", "must be a finite number of seconds, zero or more");
+            if (!s.residency.mode)
+                emit("residency", "mode", "must be \"Auto\", \"Eager\" or \"Interest\"");
+            if (!std::isfinite(s.residency.queryLeaseSeconds) || s.residency.queryLeaseSeconds <= 0.0)
+                emit("residency", "queryLeaseSeconds", "must be a finite positive number of seconds");
+
+            const auto positive = [](double pixels) { return std::isfinite(pixels) && pixels > 0.0; };
+            const TerrainStreamingSettings::View &v = s.view;
+            if (!positive(v.refineErrorPixels))
+                emit("view", "refineErrorPixels", "must be a finite positive number of pixels");
+            if (!positive(v.mergeErrorPixels) ||
+                (positive(v.refineErrorPixels) && v.mergeErrorPixels > v.refineErrorPixels))
+                emit("view", "mergeErrorPixels",
+                     "must be a finite positive number of pixels, at most refineErrorPixels");
+            if (!positive(v.prefetchErrorPixels) ||
+                (positive(v.mergeErrorPixels) && v.prefetchErrorPixels > v.mergeErrorPixels))
+                emit("view", "prefetchErrorPixels",
+                     "must be a finite positive number of pixels, at most mergeErrorPixels");
+            if (!v.prefetchBudgetBytes)
+                emit("view", "prefetchBudgetMiB", "must be zero or more");
+
+            const TerrainStreamingSettings::Gpu &g = s.gpu;
+            if (g.budgetBytes == 0)
+                emit("gpu", "budgetMiB", "must be positive");
+            if (g.uploadBytesPerFrame == 0)
+                emit("gpu", "uploadMiBPerFrame", "must be positive");
+            if (g.stagingBytes == 0)
+                emit("gpu", "stagingMiB", "must be positive");
+            if (!NonNegative(g.meshRetainSeconds))
+                emit("gpu", "meshRetainSeconds", "must be a finite number of seconds, zero or more");
+
+            const TerrainStreamingSettings::Collision &c = s.collision;
+            bool spacings = !c.spacingsMeters.empty();
+            for (size_t i = 0; i < c.spacingsMeters.size(); ++i)
+                spacings = spacings && std::isfinite(c.spacingsMeters[i]) && c.spacingsMeters[i] > 0.0 &&
+                           (i == 0 || c.spacingsMeters[i] < c.spacingsMeters[i - 1]);
+            if (!spacings)
+                emit("collision", "spacingsMeters", "must list positive finite spacings, coarse to fine, each finer");
+            if (!NonNegative(c.maxErrorMeters))
+                emit("collision", "maxErrorMeters", "must be a finite number of meters, zero or more");
+            if (c.pieceTiles == 0)
+                emit("collision", "pieceTiles", "must be at least 1");
+            const uint32_t seamCells = 2 * kTerrainSeamMarginCells;
+            if (!std::isfinite(c.seamOverlapMeters) || c.seamOverlapMeters <= 0.0 ||
+                (spacings && c.seamOverlapMeters <= seamCells * c.spacingsMeters.front()))
+                emit("collision", "seamOverlapMeters",
+                     std::format("must be a finite number of meters, more than {} cells of the coarsest spacing",
+                                 seamCells));
+            if (!NonNegative(c.bodyToleranceMeters))
+                emit("collision", "bodyToleranceMeters", "must be a finite number of meters, zero or more");
+            if (!NonNegative(c.loadLatencySeconds))
+                emit("collision", "loadLatencySeconds", "must be a finite number of seconds, zero or more");
+            if (!NonNegative(c.latencyMarginSeconds))
+                emit("collision", "latencyMarginSeconds", "must be a finite number of seconds, zero or more");
+            if (!NonNegative(c.prefetchSeconds))
+                emit("collision", "prefetchSeconds", "must be a finite number of seconds, zero or more");
+            if (c.budgetBytes == 0)
+                emit("collision", "budgetMiB", "must be positive");
+            if (!NonNegative(c.retainSeconds))
+                emit("collision", "retainSeconds", "must be a finite number of seconds, zero or more");
+        }
+
+        // Local objects merge into the game's key by key; any other local value replaces the game's.
+        void Merge(json &into, const json &from)
+        {
+            for (auto it = from.begin(); it != from.end(); ++it)
+            {
+                json &slot = into[it.key()];
+                if (slot.is_object() && it->is_object())
+                    Merge(slot, *it);
+                else
+                    slot = *it;
+            }
+        }
+
+        class Reader
+        {
+          public:
+            Reader(const json &merged, const json *local, std::string gameFile, std::string localFile,
+                   std::vector<std::string> &problems)
+                : mMerged(merged), mLocal(local), mGameFile(std::move(gameFile)), mLocalFile(std::move(localFile)),
+                  mProblems(problems)
+            {
+            }
+
+            // Once per path; nothing more under a section already reported missing or malformed.
+            void Problem(std::string_view section, std::string_view key, std::string_view problem)
+            {
+                if (!key.empty() && mFlagged.contains(std::string(section)))
+                    return;
+                const std::string path = key.empty() ? std::string(section) : std::format("{}.{}", section, key);
+                if (mFlagged.insert(path).second)
+                    mProblems.push_back(std::format("{}: {} {}", Origin(section, key), path, problem));
+            }
+
+            const json *Section(std::string_view name, std::initializer_list<std::string_view> keys)
+            {
+                const auto it = mMerged.find(std::string(name));
+                if (it == mMerged.end())
+                {
+                    Problem(name, "", "is missing");
+                    return nullptr;
+                }
+                if (!it->is_object())
+                {
+                    Problem(name, "", "must be an object");
+                    return nullptr;
+                }
+                for (auto key = it->begin(); key != it->end(); ++key)
+                    if (std::find(keys.begin(), keys.end(), key.key()) == keys.end())
+                        Problem(name, key.key(), "is not a known setting");
+                return &*it;
+            }
+
+            std::optional<double> Number(const json *section, std::string_view name, std::string_view key)
+            {
+                const json *value = Find(section, name, key);
+                if (!value)
+                    return std::nullopt;
+                if (!value->is_number() || !std::isfinite(value->get<double>()))
+                {
+                    Problem(name, key, "must be a finite number");
+                    return std::nullopt;
+                }
+                return value->get<double>();
+            }
+
+            std::optional<std::vector<double>> Numbers(const json *section, std::string_view name, std::string_view key)
+            {
+                const json *value = Find(section, name, key);
+                if (!value)
+                    return std::nullopt;
+                std::vector<double> numbers;
+                if (value->is_array())
+                    for (const json &item : *value)
+                    {
+                        if (!item.is_number() || !std::isfinite(item.get<double>()))
+                        {
+                            numbers.clear();
+                            break;
+                        }
+                        numbers.push_back(item.get<double>());
+                    }
+                if (numbers.empty())
+                {
+                    Problem(name, key, "must be a list of finite numbers");
+                    return std::nullopt;
+                }
+                return numbers;
+            }
+
+            std::optional<uint32_t> Count(const json *section, std::string_view name, std::string_view key)
+            {
+                const json *value = Find(section, name, key);
+                if (!value)
+                    return std::nullopt;
+                const bool whole =
+                    value->is_number_unsigned() || (value->is_number_integer() && value->get<int64_t>() >= 0);
+                if (!whole || value->get<uint64_t>() > std::numeric_limits<uint32_t>::max())
+                {
+                    Problem(name, key, "must be a whole number");
+                    return std::nullopt;
+                }
+                return static_cast<uint32_t>(value->get<uint64_t>());
+            }
+
+            std::optional<std::string> Text(const json *section, std::string_view name, std::string_view key)
+            {
+                const json *value = Find(section, name, key);
+                if (!value)
+                    return std::nullopt;
+                if (!value->is_string())
+                {
+                    Problem(name, key, "must be a string");
+                    return std::nullopt;
+                }
+                return value->get<std::string>();
+            }
+
+          private:
+            const json *Find(const json *section, std::string_view name, std::string_view key)
+            {
+                if (!section)
+                    return nullptr;
+                const auto it = section->find(std::string(key));
+                if (it == section->end())
+                {
+                    Problem(name, key, "is missing");
+                    return nullptr;
+                }
+                return &*it;
+            }
+
+            // The local file when it sets the value (or replaces its section), else the game file.
+            const std::string &Origin(std::string_view section, std::string_view key) const
+            {
+                if (!mLocal || !mLocal->is_object())
+                    return mGameFile;
+                const auto it = mLocal->find(std::string(section));
+                if (it == mLocal->end())
+                    return mGameFile;
+                if (key.empty() || !it->is_object() || it->contains(std::string(key)))
+                    return mLocalFile;
+                return mGameFile;
+            }
+
+            const json &mMerged;
+            const json *mLocal;
+            std::string mGameFile;
+            std::string mLocalFile;
+            std::vector<std::string> &mProblems;
+            std::set<std::string> mFlagged;
+        };
+
+        std::optional<TerrainResidencyMode> ParseMode(std::string_view text)
+        {
+            for (const TerrainResidencyMode mode :
+                 {TerrainResidencyMode::Auto, TerrainResidencyMode::Eager, TerrainResidencyMode::Interest})
+                if (text == TerrainResidencyModeName(mode))
+                    return mode;
+            return std::nullopt;
+        }
+    } // namespace
+
+    std::string_view TerrainResidencyModeName(TerrainResidencyMode mode)
+    {
+        switch (mode)
+        {
+        case TerrainResidencyMode::Auto:
+            return "Auto";
+        case TerrainResidencyMode::Eager:
+            return "Eager";
+        case TerrainResidencyMode::Interest:
+            return "Interest";
+        }
+        return "Auto";
+    }
+
+    std::vector<std::string> ValidateTerrainStreamingSettings(const TerrainStreamingSettings &settings)
+    {
+        std::vector<std::string> problems;
+        Check(settings, [&](std::string_view section, std::string_view key, std::string_view problem) {
+            problems.push_back(std::format("{}.{}: {}", section, key, problem));
+        });
+        return problems;
+    }
+
+    TerrainStreamingSettingsLoad LoadTerrainStreamingSettings(const std::filesystem::path &gameFile,
+                                                              const std::filesystem::path &localFile)
+    {
+        TerrainStreamingSettingsLoad load;
+        std::error_code ec;
+        load.gameFileFound = std::filesystem::is_regular_file(gameFile, ec);
+        load.localFileFound = std::filesystem::is_regular_file(localFile, ec);
+        const std::string gameName = gameFile.generic_string();
+        const std::string localName = localFile.generic_string();
+        if (!load.gameFileFound)
+        {
+            load.problems.push_back(
+                std::format("{}: missing; a game with terrain ships its streaming settings", gameName));
+            return load;
+        }
+
+        const std::optional<json> game = ReadJsonFile(gameFile);
+        if (!game || !game->is_object())
+        {
+            load.problems.push_back(std::format("{}: not a JSON object", gameName));
+            return load;
+        }
+        std::optional<json> local;
+        if (load.localFileFound)
+        {
+            local = ReadJsonFile(localFile);
+            if (!local || !local->is_object())
+            {
+                load.problems.push_back(std::format("{}: not a JSON object", localName));
+                return load;
+            }
+        }
+
+        json merged = *game;
+        if (local)
+            Merge(merged, *local);
+
+        Reader reader(merged, local ? &*local : nullptr, gameName, localName, load.problems);
+        for (auto it = merged.begin(); it != merged.end(); ++it)
+            if (it.key() != "cpu" && it.key() != "io" && it.key() != "retry" && it.key() != "residency" &&
+                it.key() != "view" && it.key() != "gpu" && it.key() != "collision")
+                reader.Problem(it.key(), "", "is not a known section");
+
+        // Zero, which fails validation, unless the value is at least one byte.
+        const auto bytesOf = [&](const json *section, std::string_view name, std::string_view key) -> uint64_t {
+            const std::optional<double> mib = reader.Number(section, name, key);
+            const double bytes = mib ? *mib * kBytesPerMiB : 0.0;
+            if (bytes >= 1.0 && bytes < static_cast<double>(std::numeric_limits<int64_t>::max()))
+                return static_cast<uint64_t>(std::llround(bytes));
+            return 0;
+        };
+
+        TerrainStreamingSettings s;
+        const json *cpu = reader.Section("cpu", {"budgetMiB"});
+        s.cpu.budgetBytes = bytesOf(cpu, "cpu", "budgetMiB");
+
+        const json *io = reader.Section("io", {"workerThreads", "maxInstallsPerFrame"});
+        s.io.workerThreads = reader.Count(io, "io", "workerThreads").value_or(0);
+        s.io.maxInstallsPerFrame = reader.Count(io, "io", "maxInstallsPerFrame").value_or(0);
+
+        const json *retry =
+            reader.Section("retry", {"maxAttempts", "firstDelaySeconds", "maxDelaySeconds", "failedHoldSeconds"});
+        s.retry.maxAttempts = reader.Count(retry, "retry", "maxAttempts").value_or(0);
+        s.retry.firstDelaySeconds =
+            reader.Number(retry, "retry", "firstDelaySeconds").value_or(s.retry.firstDelaySeconds);
+        s.retry.maxDelaySeconds = reader.Number(retry, "retry", "maxDelaySeconds").value_or(s.retry.maxDelaySeconds);
+        s.retry.failedHoldSeconds =
+            reader.Number(retry, "retry", "failedHoldSeconds").value_or(s.retry.failedHoldSeconds);
+
+        const json *residency = reader.Section("residency", {"mode", "queryLeaseSeconds"});
+        if (const std::optional<std::string> mode = reader.Text(residency, "residency", "mode"))
+            s.residency.mode = ParseMode(*mode);
+        s.residency.queryLeaseSeconds =
+            reader.Number(residency, "residency", "queryLeaseSeconds").value_or(s.residency.queryLeaseSeconds);
+
+        const json *view = reader.Section(
+            "view", {"refineErrorPixels", "mergeErrorPixels", "prefetchErrorPixels", "prefetchBudgetMiB"});
+        TerrainStreamingSettings::View &v = s.view;
+        v.refineErrorPixels = reader.Number(view, "view", "refineErrorPixels").value_or(v.refineErrorPixels);
+        v.mergeErrorPixels = reader.Number(view, "view", "mergeErrorPixels").value_or(v.mergeErrorPixels);
+        v.prefetchErrorPixels = reader.Number(view, "view", "prefetchErrorPixels").value_or(v.prefetchErrorPixels);
+        if (const std::optional<double> mib = reader.Number(view, "view", "prefetchBudgetMiB"))
+        {
+            const double bytes = *mib * kBytesPerMiB;
+            if (bytes >= 0.0 && bytes < static_cast<double>(std::numeric_limits<int64_t>::max()))
+                v.prefetchBudgetBytes = static_cast<uint64_t>(std::llround(bytes));
+        }
+
+        const json *gpu = reader.Section("gpu", {"budgetMiB", "uploadMiBPerFrame", "stagingMiB", "meshRetainSeconds"});
+        TerrainStreamingSettings::Gpu &g = s.gpu;
+        g.budgetBytes = bytesOf(gpu, "gpu", "budgetMiB");
+        g.uploadBytesPerFrame = bytesOf(gpu, "gpu", "uploadMiBPerFrame");
+        g.stagingBytes = bytesOf(gpu, "gpu", "stagingMiB");
+        g.meshRetainSeconds = reader.Number(gpu, "gpu", "meshRetainSeconds").value_or(g.meshRetainSeconds);
+
+        const json *collision =
+            reader.Section("collision", {"spacingsMeters", "maxErrorMeters", "pieceTiles", "seamOverlapMeters",
+                                         "bodyToleranceMeters", "loadLatencySeconds", "latencyMarginSeconds",
+                                         "prefetchSeconds", "budgetMiB", "retainSeconds"});
+        TerrainStreamingSettings::Collision &c = s.collision;
+        c.spacingsMeters = reader.Numbers(collision, "collision", "spacingsMeters").value_or(c.spacingsMeters);
+        c.maxErrorMeters = reader.Number(collision, "collision", "maxErrorMeters").value_or(c.maxErrorMeters);
+        c.pieceTiles = reader.Count(collision, "collision", "pieceTiles").value_or(0);
+        c.seamOverlapMeters = reader.Number(collision, "collision", "seamOverlapMeters").value_or(c.seamOverlapMeters);
+        c.bodyToleranceMeters =
+            reader.Number(collision, "collision", "bodyToleranceMeters").value_or(c.bodyToleranceMeters);
+        c.loadLatencySeconds =
+            reader.Number(collision, "collision", "loadLatencySeconds").value_or(c.loadLatencySeconds);
+        c.latencyMarginSeconds =
+            reader.Number(collision, "collision", "latencyMarginSeconds").value_or(c.latencyMarginSeconds);
+        c.prefetchSeconds = reader.Number(collision, "collision", "prefetchSeconds").value_or(c.prefetchSeconds);
+        c.budgetBytes = bytesOf(collision, "collision", "budgetMiB");
+        c.retainSeconds = reader.Number(collision, "collision", "retainSeconds").value_or(c.retainSeconds);
+
+        Check(s, [&](std::string_view section, std::string_view key, std::string_view problem) {
+            reader.Problem(section, key, problem);
+        });
+        if (load.problems.empty())
+            load.settings = s;
+        return load;
+    }
+} // namespace mir

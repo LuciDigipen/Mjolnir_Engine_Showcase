@@ -17,7 +17,6 @@ namespace mir
     struct RenderSettings
     {
         bool rayTracing = false;
-        bool fog = false;
 
         bool operator==(const RenderSettings &) const = default;
 

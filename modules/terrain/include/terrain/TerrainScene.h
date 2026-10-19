@@ -9,6 +9,7 @@
 #pragma once
 
 #include <assets/AssetId.h>
+#include <core/ecs/Entity.h>
 #include <core/math/WorldCoordinates.h>
 #include <terrain/TerrainHeightQuery.h>
 #include <terrain/TerrainIdentity.h>
@@ -21,6 +22,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -31,6 +33,7 @@
 namespace mir
 {
     class World;
+    class TerrainStreamer;
 
     enum class TerrainIssueKind : uint8_t
     {
@@ -59,6 +62,7 @@ namespace mir
         std::string logicalPath;
         AssetId asset;
         WorldPosition translation;
+        Entity entity;
 
         bool operator==(const TerrainInstanceSpec &other) const;
     };
@@ -77,28 +81,71 @@ namespace mir
     // Refuses a bad recipe path, and a placement other than a root's translation.
     TerrainSceneSpec CollectTerrainScene(World &world, std::string_view assetIdRoot);
 
-    // Every pack verified and every tile resident; the tiles never change after Load, though Query().HeightAt
-    // may still record payload requests.
+    // One opened release and its height query. Only the index is read here; a TerrainStreamer it is added
+    // to makes payloads resident and is the only writer of the query's residency.
     class TerrainResidentRelease
     {
     public:
-        [[nodiscard]] static TerrainResult<std::shared_ptr<TerrainResidentRelease>> Load(
-            const std::filesystem::path &releasesRoot, AssetId asset, TerrainReleaseId release);
+      [[nodiscard]] static TerrainResult<std::shared_ptr<TerrainResidentRelease>> Open(
+          const std::filesystem::path &releasesRoot, AssetId asset, TerrainReleaseId release);
+      [[nodiscard]] static std::shared_ptr<TerrainResidentRelease> Create(TerrainReleaseHandle handle);
+      [[nodiscard]] static std::shared_ptr<TerrainResidentRelease> Create(
+          std::shared_ptr<const TerrainReleaseHandle> handle);
 
-        const TerrainReleaseInfo &Info() const { return mHandle.Info(); }
-        const TerrainLayout &Layout() const { return mHandle.Layout(); }
-        const TerrainReleaseHandle &Handle() const { return mHandle; }
+      const TerrainReleaseInfo &Info() const
+      {
+          return mHandle->Info();
+      }
+      const TerrainLayout &Layout() const
+      {
+          return mHandle->Layout();
+      }
+      const TerrainReleaseHandle &Handle() const
+      {
+          return *mHandle;
+      }
+      // Shared with the workers reading it.
+      const std::shared_ptr<const TerrainReleaseHandle> &SharedHandle() const
+      {
+          return mHandle;
+      }
         TerrainHeightQuery &Query() { return mQuery; }
         const TerrainHeightQuery &Query() const { return mQuery; }
 
         // Valid while this object lives.
-        TileSampleLookup Lookup() const;
+        TileSampleLookup Lookup(uint32_t layer = 0) const;
 
     private:
-        TerrainResidentRelease(TerrainReleaseHandle handle, TerrainHeightQuery query);
+      explicit TerrainResidentRelease(std::shared_ptr<const TerrainReleaseHandle> handle);
 
-        TerrainReleaseHandle mHandle;
-        TerrainHeightQuery mQuery;
+      std::shared_ptr<const TerrainReleaseHandle> mHandle;
+      TerrainHeightQuery mQuery;
+    };
+
+    enum class TerrainEagerLoad : uint8_t
+    {
+        // Blocks until every payload of a new Eager release is resident, and refuses it when one fails.
+        Wait,
+        // Returns at once: payloads arrive through the streamer, and their failures are reported as they come.
+        Async,
+    };
+
+    // Opens one release, on any thread; the identity it opened is checked by the caller.
+    using TerrainReleaseOpener = std::function<TerrainResult<TerrainReleaseHandle>(AssetId, TerrainReleaseId)>;
+
+    // OpenTerrainRelease under releasesRoot.
+    TerrainReleaseOpener TerrainReleaseFileOpener(std::filesystem::path releasesRoot);
+
+    struct TerrainResolveOptions
+    {
+        TerrainEagerLoad eager = TerrainEagerLoad::Async;
+        // An asset with a loaded release keeps it whatever current names; a TerrainReleaseSwitch brings the
+        // newer one once it is verified.
+        bool keepLoaded = false;
+        // Verified releases that replace the loaded ones of their assets.
+        std::vector<std::shared_ptr<TerrainResidentRelease>> adopt;
+        // Null opens from the releases root.
+        TerrainReleaseOpener open;
     };
 
     // Map bounds plus translation, in world meters.
@@ -148,16 +195,22 @@ namespace mir
         void RemoveInstance(size_t index);
 
     private:
-        friend TerrainWorld ResolveTerrainWorld(const TerrainSceneSpec &, const std::filesystem::path &,
-                                                const TerrainWorld *, std::vector<TerrainIssue> &);
+      friend TerrainWorld ResolveTerrainWorld(const TerrainSceneSpec &, const std::filesystem::path &,
+                                              const TerrainWorld *, std::vector<TerrainIssue> &, TerrainStreamer &,
+                                              const TerrainResolveOptions &);
 
-        std::vector<AssetState> mAssets;
-        std::vector<TerrainInstanceState> mInstances;
+      std::vector<AssetState> mAssets;
+      std::vector<TerrainInstanceState> mInstances;
     };
 
-    // previous is not changed. Overlapping instances are all refused.
+    // previous is not changed. Overlapping instances are all refused. New releases are added to the
+    // streamer; with Wait an Eager one is waited for and refused when any payload fails.
     TerrainWorld ResolveTerrainWorld(const TerrainSceneSpec &spec, const std::filesystem::path &releasesRoot,
-                                     const TerrainWorld *previous, std::vector<TerrainIssue> &issues);
+                                     const TerrainWorld *previous, std::vector<TerrainIssue> &issues,
+                                     TerrainStreamer &streamer, TerrainEagerLoad eager);
+    TerrainWorld ResolveTerrainWorld(const TerrainSceneSpec &spec, const std::filesystem::path &releasesRoot,
+                                     const TerrainWorld *previous, std::vector<TerrainIssue> &issues,
+                                     TerrainStreamer &streamer, const TerrainResolveOptions &options);
 
     // Reads only the pointer files.
     bool TerrainCurrentMoved(const TerrainWorld &world, const std::filesystem::path &releasesRoot);

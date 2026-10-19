@@ -34,6 +34,7 @@ cbuffer CameraData
     float4x4 invViewProj;
     float4 cameraPos; // the origin: the TLAS is built relative to this view's camera
     float4 fogColor;
+    float4 fogRange;       // x = start distance, y = end distance
     float4 cameraWorldPos; // absolute camera position, for the atmosphere only
     float4 clipPlanes;     // x = near, y = far, or 0 for no far plane
     float4 atmosphereScattering;
@@ -111,7 +112,7 @@ void rayGenMain()
     RayPayload payload;
     payload.color = float3(0.0, 0.0, 0.0);
 
-    TraceRay(gTlas, RAY_FLAG_NONE, 0xFF, 0, 0, 0, ray, payload);
+    TraceRay(gTlas, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, 0xFF, 0, 0, 0, ray, payload);
 
     gOutput[pixel + pushData.outputOffset] = float4(payload.color, 1.0);
 }
@@ -130,8 +131,7 @@ void missMain(inout RayPayload payload)
     params.sunIntensity = atmosphereMisc.y;
 
     const float3 rayOrigin = float3(cameraWorldPos.x, params.planetRadius + cameraWorldPos.y, cameraWorldPos.z);
-    float3 color = Atmosphere(WorldRayDirection(), rayOrigin, normalize(lightDirWS.xyz), params);
-    payload.color = TonemapReinhard(color);
+    payload.color = Atmosphere(WorldRayDirection(), rayOrigin, normalize(lightDirWS.xyz), params);
 }
 
 [shader("miss")]
@@ -220,6 +220,7 @@ void closestHitMain(inout RayPayload payload, in BuiltInTriangleIntersectionAttr
         }
     }
 
-    const float fogFactor = clamp(1.0 - exp(-fogColor.a * RayTCurrent()), 0.0, 1.0);
+    const float clampedDist = clamp(RayTCurrent(), fogRange.x, fogRange.y);
+    const float fogFactor = clamp(1.0 - exp(-fogColor.a * (clampedDist - fogRange.x)), 0.0, 1.0);
     payload.color = lerp(color, fogColor.rgb, fogFactor);
 }

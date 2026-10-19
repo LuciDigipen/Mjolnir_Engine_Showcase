@@ -1,20 +1,19 @@
-﻿engine_add_module(renderer)
+engine_add_module(renderer)
 
 # volk: function pointers w/o boiler plate
 find_package(volk CONFIG REQUIRED)
 # VMA : vulkan memory manager
 find_package(VulkanMemoryAllocator CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 target_include_directories(engine_renderer PRIVATE ${Stb_INCLUDE_DIR})
 
 target_link_libraries(engine_renderer
     PUBLIC volk::volk_headers
             mir::core
-            # glm is PUBLIC: VulkanRenderer::DrawFrame takes glm::mat4 in the
-            # public header. mir::core already carries glm publicly, but this
-            # target's own interface needs it, so it is declared here too.
             glm::glm
+            nlohmann_json::nlohmann_json
     PRIVATE GPUOpen::VulkanMemoryAllocator
             imgui::imgui
             mir::serial
@@ -37,21 +36,30 @@ target_compile_definitions(engine_renderer PRIVATE
 )
 
 target_sources(engine_renderer PRIVATE
+    src/renderer/BloomEffect.cpp
     src/renderer/CameraMath.cpp
     src/renderer/ComponentRegistration.cpp
+    src/renderer/MeshStreaming.cpp
+    src/renderer/FogEffect.cpp
+    src/renderer/HdrEffect.cpp
+    src/renderer/PostEffectRegistry.cpp
+    src/renderer/PostProcessingSettings.cpp
     src/renderer/Renderer.cpp
     src/renderer/RenderSettings.cpp
     src/renderer/Shapes.cpp
     src/renderer/ViewSubmission.cpp
     src/renderer/VulkanRenderer.cpp
     src/renderer/VulkanRendererFrame.cpp
+    src/renderer/vulkan/Bloom.cpp
     src/renderer/vulkan/CameraBuffer.cpp
     src/renderer/vulkan/Device.cpp
     src/renderer/vulkan/FrameCapture.cpp
     src/renderer/vulkan/FrameSync.cpp
     src/renderer/vulkan/ImGuiOverlay.cpp
     src/renderer/vulkan/MaterialStore.cpp
+    src/renderer/vulkan/MeshUploader.cpp
     src/renderer/vulkan/ModelDescriptors.cpp
+    src/renderer/vulkan/PostProcess.cpp
     src/renderer/vulkan/RayTracer.cpp
     src/renderer/vulkan/ResourceStore.cpp
     src/renderer/vulkan/ShadowMaps.cpp

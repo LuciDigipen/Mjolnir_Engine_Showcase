@@ -1,5 +1,12 @@
 engine_add_module_tests(renderer
+    BloomEffect.tests.cpp
     CameraMath.tests.cpp
+    MeshStreaming.tests.cpp
+    FogEffect.tests.cpp
+    HdrEffect.tests.cpp
+    PostEffectRegistry.tests.cpp
+    PostProcessingSettings.tests.cpp
     RenderSettings.tests.cpp
+    Shapes.tests.cpp
     ViewSubmission.tests.cpp
 )

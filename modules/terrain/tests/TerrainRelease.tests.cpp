@@ -11,6 +11,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <string>
 
 using namespace mir;
@@ -27,7 +28,7 @@ namespace
         return *layout;
     }
 
-    // The committed fixture: 2 m samples, n = 4, tiles (-2..1, -1..0), two tiles per pack.
+    // The generated fixture: 2 m samples, n = 4, tiles (-2..1, -1..0), two tiles per pack.
     struct Fixture
     {
         AssetId asset = TerrainAsset("terrain/fixture.terrain.json");
@@ -36,10 +37,6 @@ namespace
         TerrainPackWriteOptions options{.chunkTiles = 2};
     };
 
-    std::filesystem::path FixtureRoot()
-    {
-        return std::filesystem::path(TERRAIN_FIXTURE_DIR) / "releases";
-    }
 }
 
 TEST_CASE("Release directories and the current pointer follow the naming contract", "[terrain][release]")
@@ -175,26 +172,66 @@ TEST_CASE("A release opened before the pointer moves keeps reading its own files
     std::filesystem::remove_all(root);
 }
 
-// Run explicitly ("[.regenerate]") only after a deliberate format change.
-TEST_CASE("Regenerate the committed terrain fixture", "[.regenerate]")
+TEST_CASE("Packs verify one at a time, and an asset's kept releases are listed with their sizes", "[terrain][release]")
 {
+    const std::filesystem::path root = MakeScratchDir("stored");
     const Fixture f;
-    const TerrainEncodedRelease encoded = Encode(f.info, f.layout, BuildTiles(f.layout), f.options);
-    const std::filesystem::path root = FixtureRoot();
+    const TerrainReleaseInfo infoA = Info(f.asset, 0xA);
+    const TerrainReleaseInfo infoB = Info(f.asset, 0xB);
+    const TerrainEncodedRelease a = Encode(infoA, f.layout, BuildTiles(f.layout), f.options);
+    const std::filesystem::path dirA = WriteRelease(root, infoA, a);
+    WriteRelease(root, infoB, Encode(infoB, f.layout, BuildTiles(f.layout, 1.0f), f.options));
+    PointCurrentAt(root, f.asset, infoB.release);
+    std::filesystem::create_directories(TerrainAssetReleasesDir(root, f.asset) / "not-a-release");
+
+    const TerrainReleaseHandle handle = OpenOk(OpenTerrainRelease(root, f.asset, infoA.release));
+    REQUIRE(handle.Index().packs.size() == a.packs.size());
+    REQUIRE(a.packs.size() > 1);
+    for (size_t p = 0; p < handle.Index().packs.size(); ++p)
+        CHECK(handle.VerifyPack(p).code == Code::None);
+    CHECK(handle.VerifyPack(handle.Index().packs.size()).code == Code::InvalidInput);
+
+    const std::string damaged = TerrainPackFileName(handle.Index().packs[1].chunk);
+    std::optional<std::vector<std::byte>> bytes = ReadBytes(dirA / damaged);
+    REQUIRE(bytes);
+    bytes->back() ^= std::byte{0x40};
+    REQUIRE(WriteBytes(dirA / damaged, *bytes));
+    CHECK(handle.VerifyPack(0).code == Code::None);
+    const TerrainPackError corrupt = handle.VerifyPack(1);
+    CHECK(corrupt.code == Code::Corrupt);
+    CHECK(Mentions(corrupt, damaged));
+    CHECK(handle.VerifyAllPacks().code == Code::Corrupt);
+
+    uint64_t bytesA = a.index.size();
+    for (const TerrainEncodedPack &pack : a.packs)
+        bytesA += pack.bytes.size();
+    const std::vector<TerrainStoredRelease> stored = ListTerrainReleases(root, f.asset);
+    REQUIRE(stored.size() == 2);
+    CHECK(stored[0].release == infoA.release);
+    CHECK(stored[0].files == a.packs.size() + 1);
+    CHECK(stored[0].bytes == bytesA);
+    CHECK(stored[1].release == infoB.release);
+    CHECK(ListTerrainReleases(root, TerrainAsset("terrain/none.terrain.json")).empty());
     std::filesystem::remove_all(root);
-    WriteRelease(root, f.info, encoded);
-    REQUIRE(WriteText(TerrainCurrentPointerPath(root, f.asset), EncodeTerrainCurrentPointer(f.info.release)));
 }
 
-TEST_CASE("The committed fixture opens unchanged and matches the encoder byte for byte", "[terrain][release]")
+TEST_CASE("A generated release preserves the pinned format bytes and reads from disk", "[terrain][release]")
 {
     const Fixture f;
     const std::vector<TileHeights> tiles = BuildTiles(f.layout);
     const TerrainEncodedRelease encoded = Encode(f.info, f.layout, tiles, f.options);
-    const std::filesystem::path root = FixtureRoot();
+    const std::filesystem::path root = MakeScratchDir("generated_release");
+    WriteRelease(root, f.info, encoded);
+    PointCurrentAt(root, f.asset, f.info.release);
     const std::filesystem::path dir = TerrainReleaseDir(root, f.asset, f.info.release);
 
-    REQUIRE(encoded.packs.size() == 4);
+    // Golden hashes captured from the format 2.2 fixture, independent of this run's encoder.
+    CHECK(Fnv1a64(encoded.index) == 0x26fcf4ee439128a6ull);
+    const std::array<uint64_t, 4> packHashes{0x1860d35b37f80b51ull, 0x5a6305e53dc61c9dull, 0x9d46c88e788e1313ull,
+                                             0xb8ffee245ab02f17ull};
+    REQUIRE(encoded.packs.size() == packHashes.size());
+    for (size_t p = 0; p < encoded.packs.size(); ++p)
+        CHECK(Fnv1a64(encoded.packs[p].bytes) == packHashes[p]);
     CHECK(ReadBytes(dir / kTerrainIndexFileName) == encoded.index);
     for (const TerrainEncodedPack &pack : encoded.packs)
     {
@@ -212,7 +249,8 @@ TEST_CASE("The committed fixture opens unchanged and matches the encoder byte fo
     CHECK(ReadOk(handle, {-1, -1}) == tiles[1]);
     CHECK(handle.Source().Stats().reads == 1);
     CHECK(handle.Source().Stats().bytes == 100);
-    CHECK(encoded.index.size() == 960);
+    CHECK(encoded.index.size() == 1456);
     for (const TerrainEncodedPack &pack : encoded.packs)
         CHECK(pack.bytes.size() == 260);
+    std::filesystem::remove_all(root);
 }

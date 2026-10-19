@@ -13,6 +13,10 @@
 #include "renderer/components/Light.h"
 #include "renderer/components/MeshRenderer.h"
 #include "renderer/components/Sky.h"
+#include "renderer/BloomEffect.h"
+#include "renderer/FogEffect.h"
+#include "renderer/HdrEffect.h"
+#include "renderer/Shapes.h"
 
 #include <core/ecs/ComponentGizmo.h>
 #include <core/ecs/ComponentRegistry.h>
@@ -28,7 +32,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <format>
+#include <string_view>
 
 namespace mir
 {
@@ -75,6 +81,21 @@ namespace mir
             world.AddComponent<Light>(entity, light);
             world.AddComponent<Name>(entity,
                 MakeName(std::format("{}_Entity{}", LightTypeName(Type), entity.mIndex)));
+        }
+
+        void CreatePrimitiveEntity(World &world, Entity entity, std::string_view meshName,
+            std::string_view displayName)
+        {
+            AddTransform(world, entity);
+
+            MeshRenderer renderer{};
+            std::memcpy(renderer.meshName, meshName.data(),
+                std::min(meshName.size(), sizeof(renderer.meshName) - 1));
+            constexpr std::string_view kDefaultShader = "default";
+            std::memcpy(renderer.materialShader, kDefaultShader.data(), kDefaultShader.size());
+            world.AddComponent<MeshRenderer>(entity, renderer);
+
+            world.AddComponent<Name>(entity, MakeName(std::format("{}_Entity{}", displayName, entity.mIndex)));
         }
 
         // Viewport click-pick: a world-space sphere radius around the entity's transform origin.
@@ -180,5 +201,37 @@ namespace mir
                 world.AddComponent<Sky>(entity, Sky{});
                 world.AddComponent<Name>(entity, MakeName(std::format("Sky_Entity{}", entity.mIndex)));
             }, &CanCreateSky);
+
+        EntityPresetRegistry::Instance().Register("Primitive/Cube", [](World &world, Entity entity)
+            {
+                CreatePrimitiveEntity(world, entity, kCubeMeshName, "Cube");
+            });
+        EntityPresetRegistry::Instance().Register("Primitive/Sphere", [](World &world, Entity entity)
+            {
+                CreatePrimitiveEntity(world, entity, kSphereMeshName, "Sphere");
+            });
+        EntityPresetRegistry::Instance().Register("Primitive/Plane", [](World &world, Entity entity)
+            {
+                CreatePrimitiveEntity(world, entity, kPlaneMeshName, "Plane");
+            });
+        EntityPresetRegistry::Instance().Register("Primitive/Cylinder", [](World &world, Entity entity)
+            {
+                CreatePrimitiveEntity(world, entity, kCylinderMeshName, "Cylinder");
+            });
+        EntityPresetRegistry::Instance().Register("Primitive/Capsule", [](World &world, Entity entity)
+            {
+                CreatePrimitiveEntity(world, entity, kCapsuleMeshName, "Capsule");
+            });
+        EntityPresetRegistry::Instance().Register("Primitive/Cone", [](World &world, Entity entity)
+            {
+                CreatePrimitiveEntity(world, entity, kConeMeshName, "Cone");
+            });
+    }
+
+    void RegisterRendererPostEffects()
+    {
+        RegisterFogPostEffect();
+        RegisterHdrPostEffect();
+        RegisterBloomPostEffect();
     }
 }

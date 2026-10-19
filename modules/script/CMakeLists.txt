@@ -15,6 +15,8 @@ target_link_libraries(engine_script
             mir::audio
             mir::input
             mir::physics
+            mir::renderer
+            mir::terrain
             sol2::sol2
             PkgConfig::LuaJIT
 )
@@ -28,6 +30,8 @@ target_sources(engine_script PRIVATE
     src/script/bindings/EntityBindings.cpp
     src/script/bindings/InputBindings.cpp
     src/script/bindings/PhysicsBindings.cpp
+    src/script/bindings/PostProcessingBindings.cpp
+    src/script/bindings/TerrainBindings.cpp
     src/script/bindings/WorldBindings.cpp
 )
 

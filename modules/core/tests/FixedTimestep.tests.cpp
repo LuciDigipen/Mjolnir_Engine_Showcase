@@ -58,3 +58,16 @@ TEST_CASE("FixedTimestep caps substeps per frame and bounds the backlog", "[ecs]
     REQUIRE(timestep.mAccumulator == 0.0);
     REQUIRE(timestep.Advance(0.0f) == 0);
 }
+
+TEST_CASE("FixedTimestep Alpha is the leftover's share of a step, capped at 1", "[ecs][timestep]")
+{
+    FixedTimestep timestep = MakeTimestep();
+    REQUIRE(timestep.Alpha() == 0.0f);
+
+    timestep.Advance(kStep * 1.25f);
+    REQUIRE(timestep.Alpha() == 0.25f);
+
+    // a capped frame leaves a whole backlog, which still blends to the latest state
+    timestep.Advance(0.25f);
+    REQUIRE(timestep.Alpha() == 1.0f);
+}

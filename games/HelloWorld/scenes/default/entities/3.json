@@ -38,6 +38,26 @@
         "nearZ": 0.1
       },
       "type": "Camera"
+    },
+    {
+      "fields": {
+        "fastMultiplier": 4.0,
+        "lookAtTarget": true,
+        "lookSensitivity": 0.15,
+        "mode": 0,
+        "moveSpeed": 5.0,
+        "offset": [
+          0.0,
+          3.0,
+          7.0
+        ],
+        "offsetInTargetSpace": false,
+        "snapDistance": 50.0,
+        "stickLookRate": 120.0,
+        "stiffness": 4.0,
+        "target": 11
+      },
+      "type": "CameraController"
     }
   ],
   "id": 3,

@@ -7,17 +7,21 @@
  *
  */
 #include <renderer/VulkanRenderer.h>
+#include "vulkan/Bloom.h"
 #include "vulkan/CameraBuffer.h"
 #include "vulkan/Device.h"
 #include "vulkan/FrameCapture.h"
 #include "vulkan/FrameSync.h"
 #include "vulkan/ImGuiOverlay.h"
 #include "vulkan/MaterialStore.h"
+#include "vulkan/MeshUploader.h"
 #include "vulkan/ModelDescriptors.h"
+#include "vulkan/PostProcess.h"
 #include "vulkan/RayTracer.h"
 #include "vulkan/ResourceStore.h"
 #include "vulkan/ShadowMaps.h"
 #include "vulkan/Swapchain.h"
+#include "vulkan/VulkanConstants.h"
 
 #include <core/log/Log.h>
 
@@ -33,8 +37,11 @@ namespace mir
         mShadowMaps(std::make_unique<vk::ShadowMaps>()),
         mModelDescriptors(std::make_unique<vk::ModelDescriptors>()),
         mRayTracer(std::make_unique<vk::RayTracer>()),
+        mPostProcess(std::make_unique<vk::PostProcess>()),
+        mBloom(std::make_unique<vk::Bloom>()),
         mCapture(std::make_unique<vk::FrameCapture>()),
-        mImGuiOverlay(std::make_unique<vk::ImGuiOverlay>())
+        mImGuiOverlay(std::make_unique<vk::ImGuiOverlay>()),
+        mMeshUploads(std::make_unique<vk::MeshUploader>())
     {}
     VulkanRenderer::~VulkanRenderer() = default;
 
@@ -84,7 +91,7 @@ namespace mir
         if (!mModelDescriptors->Initialize(*mDevice))
             return false;
 
-        if (!mMaterialStore->Initialize(*mDevice, *mResources, mSwapchain->Format(),
+        if (!mMaterialStore->Initialize(*mDevice, *mResources, vk::kHdrColorFormat,
             { mCameraBuffer->SetLayout(), mModelDescriptors->SetLayout(), mShadowMaps->SetLayout() }))
             return false;
 
@@ -92,16 +99,24 @@ namespace mir
             !mRayTracer->Initialize(*mDevice, mSwapchain->Extent(), mCameraBuffer->SetLayout()))
             return false;
 
+        mMeshUploads->Initialize(*mDevice);
+        if (!mPostProcess->Initialize(*mDevice, mSwapchain->Format()))
+            return false;
+
+        if (!mBloom->Initialize(*mDevice, mSwapchain->Extent()))
+            return false;
+
         return true;
     }
 
     bool VulkanRenderer::RecreateSwapchain()
     {
-        vkDeviceWaitIdle(mDevice->Handle());
+        mDevice->WaitIdle();
 
         // The swapchain cannot reach ray tracing, so the facade resizes its output images.
         if (!mSwapchain->Recreate(*mWindow) ||
-            (mDevice->RayTracingSupported() && !mRayTracer->Resize(mSwapchain->Extent())))
+            (mDevice->RayTracingSupported() && !mRayTracer->Resize(mSwapchain->Extent())) ||
+            !mBloom->Resize(mSwapchain->Extent()))
         {
             // Recreate may have cleared the flag already; set it so the next frame retries.
             mSwapchain->MarkOutOfDate();
@@ -115,10 +130,14 @@ namespace mir
     {
         if (mDevice->Handle() != VK_NULL_HANDLE)
         {
-            vkDeviceWaitIdle(mDevice->Handle());
+            mDevice->WaitIdle();
 
             mFrameSync->Shutdown();
 
+            mMeshUploads->Shutdown(*mRayTracer);
+
+            mBloom->Shutdown();
+            mPostProcess->Shutdown();
             mMaterialStore->Shutdown();
             mRayTracer->Shutdown();
             mResources->Shutdown();
@@ -148,7 +167,7 @@ namespace mir
 
     bool VulkanRenderer::DestroyMesh(MeshHandle handle)
     {
-        if (mResources->FindMesh(handle) == nullptr)
+        if (mResources->FindMeshSlot(handle) == nullptr)
         {
             MIR_LOG_ERROR("DestroyMesh: handle is null or stale");
             return false;
@@ -156,17 +175,70 @@ namespace mir
 
         // in-flight frames (up to kFramesInFlight - 1 old ones) may still be
         // drawing from this buffer - see ReleaseSceneResources.
-        vkDeviceWaitIdle(mDevice->Handle());
+        mDevice->WaitIdle();
 
         return DestroyMeshAndBlas(handle);
     }
 
     bool VulkanRenderer::DestroyMeshAndBlas(MeshHandle handle)
     {
+        mMeshUploads->Forget(handle);
         if (!mResources->DestroyMesh(handle))
             return false;
         mRayTracer->DestroyMeshBlas(handle.mIndex);
         return true;
+    }
+
+    bool VulkanRenderer::ConfigureMeshStreaming(const MeshStreamingDesc &desc)
+    {
+        return mDevice->Handle() != VK_NULL_HANDLE && mMeshUploads->Configure(desc);
+    }
+
+    MeshHandle VulkanRenderer::QueueMesh(std::vector<Vertex> vertices, std::vector<uint32_t> indices,
+        const MeshUploadOptions &options)
+    {
+        return mMeshUploads->Queue(*mResources, *mRayTracer, std::move(vertices), std::move(indices), options);
+    }
+
+    MeshUploadState VulkanRenderer::MeshState(MeshHandle handle) const
+    {
+        const vk::GpuMesh *const mesh = mResources->FindMeshSlot(handle);
+        if (mesh == nullptr)
+            return MeshUploadState::Stale;
+        switch (mesh->mState)
+        {
+        case vk::GpuMeshState::Ready:
+            return MeshUploadState::Ready;
+        case vk::GpuMeshState::Pending:
+            return MeshUploadState::Pending;
+        case vk::GpuMeshState::Uploading:
+            return MeshUploadState::Uploading;
+        case vk::GpuMeshState::Failed:
+            return MeshUploadState::Failed;
+        }
+        return MeshUploadState::Stale;
+    }
+
+    bool VulkanRenderer::RetireMesh(MeshHandle handle)
+    {
+        return mMeshUploads->Retire(*mResources, *mRayTracer, handle, mFrameSync->LastIssuedValue());
+    }
+
+    uint64_t VulkanRenderer::MeshFootprint(uint32_t vertexCount, uint32_t indexCount,
+        const MeshUploadOptions &options) const
+    {
+        return mMeshUploads->Footprint(*mRayTracer, vertexCount, indexCount, options);
+    }
+
+    MeshStreamingStats VulkanRenderer::MeshStreaming() const
+    {
+        MeshStreamingStats stats;
+        mMeshUploads->FillStats(stats);
+        stats.deviceWaits = mDevice->DeviceWaits();
+        stats.queueWaits = mDevice->QueueWaits();
+        stats.skippedDraws = mSkippedDraws;
+        stats.highestGeneration = mResources->HighestMeshGeneration();
+        return stats;
     }
 
     TextureHandle VulkanRenderer::CreateTexture(const TextureDesc &desc)
@@ -181,7 +253,7 @@ namespace mir
 
     MaterialHandle VulkanRenderer::CreateMaterial(const MaterialDesc &desc)
     {
-        return mMaterialStore->CreateMaterial(desc, *mResources, mSwapchain->Format());
+        return mMaterialStore->CreateMaterial(desc, *mResources, vk::kHdrColorFormat);
     }
 
     MaterialHandle VulkanRenderer::ErrorMaterial() const
@@ -204,7 +276,7 @@ namespace mir
         }
 
         // in-flight frames may still be drawing with this pipeline/set
-        vkDeviceWaitIdle(mDevice->Handle());
+        mDevice->WaitIdle();
 
         return mMaterialStore->DestroyMaterial(handle);
     }
@@ -215,8 +287,9 @@ namespace mir
             return;
 
         // in-flight frames may still use them
-        vkDeviceWaitIdle(mDevice->Handle());
+        mDevice->WaitIdle();
 
+        mMeshUploads->Clear(*mRayTracer);
         mRayTracer->DestroyBlases();
         const std::size_t meshCount = mResources->ReleaseMeshes();
         mModelDescriptors->ResetFrames();
@@ -234,7 +307,8 @@ namespace mir
         if (mDevice->Handle() == VK_NULL_HANDLE)
             return;
 
-        vkDeviceWaitIdle(mDevice->Handle());
+        mDevice->WaitIdle();
+        mMeshUploads->Collect(*mResources, *mRayTracer, mFrameSync->LastIssuedValue());
 
         // Stale handles, the built-in materials and the default textures are skipped.
         for (const MeshHandle handle : meshes)
@@ -277,9 +351,20 @@ namespace mir
         mCameraBuffer->SetAmbientColor(color);
     }
 
-    void VulkanRenderer::SetFog(const glm::vec3 &color, float density)
+    void VulkanRenderer::SetFog(const glm::vec3 &color, float density, float start, float end)
     {
-        mCameraBuffer->SetFog(color, density);
+        mCameraBuffer->SetFog(color, density, start, end);
+    }
+
+    void VulkanRenderer::SetTonemap(float exposure, int tonemapOperator)
+    {
+        mPostProcess->SetParams(exposure, tonemapOperator);
+    }
+
+    void VulkanRenderer::SetBloom(bool enabled, float threshold, float intensity, float radius)
+    {
+        mBloomEnabled = enabled;
+        mBloom->SetParams(threshold, enabled ? intensity : 0.0f, radius);
     }
 
     void VulkanRenderer::SetAtmosphere(const Sky &sky)

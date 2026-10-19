@@ -28,13 +28,7 @@ namespace mir::vk
         // nullptr draws nothing this frame.
         void SetDrawData(ImDrawData *drawData) { mDrawData = drawData; }
 
-        // Raster path: inside the frame's open color pass.
         void RecordInPass(VkCommandBuffer cmd) const;
-
-        // Ray traced path: opens its own pass over the image, which is in `layout`.
-        // Returns the layout the image is left in.
-        VkImageLayout RecordOver(VkCommandBuffer cmd, const Swapchain &swapchain, uint32_t imageIndex,
-            VkImageLayout layout) const;
 
     private:
         Device *mDevice = nullptr;
