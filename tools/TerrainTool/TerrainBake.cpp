@@ -7,8 +7,11 @@
  *
  */
 #include "TerrainBake.h"
+#include "TerrainDerivatives.h"
+#include <unordered_map>
 
 #include "TerrainGenerator.h"
+#include "TerrainSeams.h"
 #include "TerrainValidate.h"
 
 #include <assets/AssetPath.h>
@@ -41,6 +44,8 @@ namespace mir::terrainbake
                 return "a wrong block size";
             case SourceFillStatus::NonFinite:
                 return "a non-finite height";
+            case SourceFillStatus::InvalidGrid:
+                return "a grid that does not nest in the reference grid";
             }
             return "?";
         }
@@ -70,8 +75,11 @@ namespace mir::terrainbake
 
         bool SameIgnoringCase(std::string_view a, std::string_view b)
         {
-            return a.size() == b.size() &&
-                   std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) { return Lower(x) == Lower(y); });
+            return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(),
+                                                      [](char x, char y)
+                                                      {
+                                                          return Lower(x) == Lower(y);
+                                                      });
         }
 
         bool CheckArguments(const TerrainBakeRequest &request, const fs::path &out, std::string &assetPath,
@@ -160,22 +168,41 @@ namespace mir::terrainbake
         const TerrainLayout &layout = generator.Layout();
         const TileRange range = layout.Tiles();
         std::vector<TileHeights> tiles;
-        for (int32_t z = range.min.z; z <= range.max.z; ++z)
-            for (int32_t x = range.min.x; x <= range.max.x; ++x)
+        report.sourceEstimates = recipe.SourceEstimates();
+        for (int64_t tz = range.min.z; tz <= range.max.z; ++tz)
+            for (int64_t tx = range.min.x; tx <= range.max.x; ++tx)
             {
-                std::optional<TileHeights> tile = TileHeights::Create({x, z}, layout.IntervalsPerTile());
+                const int32_t x = static_cast<int32_t>(tx), z = static_cast<int32_t>(tz);
+                const auto sourceLayout = recipe.SourceLayout({x, z});
+                if (!sourceLayout)
+                {
+                    report.Add({std::string(check::kGenerate),
+                                "precision.tiles",
+                                {{x, z}},
+                                std::nullopt,
+                                "tile has no source spacing"});
+                    return std::nullopt;
+                }
+                std::optional<TileHeights> tile = TileHeights::Create({x, z}, sourceLayout->IntervalsPerTile());
                 if (!tile)
                 {
-                    report.Add({std::string(check::kGenerate), "layout.intervalsPerTile", {{x, z}}, std::nullopt,
+                    report.Add({std::string(check::kGenerate),
+                                "layout.intervalsPerTile",
+                                {{x, z}},
+                                std::nullopt,
                                 std::format("{} intervals per tile is beyond a tile block's limit {}",
                                             layout.IntervalsPerTile(), kMaxTerrainTileIntervals)});
                     return std::nullopt;
                 }
-                const SourceFillResult filled = generator.FillTile({x, z}, tile->Samples());
+                const SourceFillResult filled = generator.FillTile(*sourceLayout, {x, z}, tile->Samples());
+                report.referenceSamples += filled.referenceSamples;
+                report.peakDoubleSamples = std::max(report.peakDoubleSamples, filled.peakDoubleSamples);
                 if (!filled.Ok())
                 {
                     const bool atSample = filled.status == SourceFillStatus::NonFinite;
-                    report.Add({std::string(atSample ? check::kFinite : check::kGenerate), "samples", {{x, z}},
+                    report.Add({std::string(atSample ? check::kFinite : check::kGenerate),
+                                "samples",
+                                {{x, z}},
                                 atSample ? std::optional(filled.sample) : std::nullopt,
                                 std::format("the generator returned {} for tile ({}, {})",
                                             SourceStatusName(filled.status), x, z)});
@@ -184,9 +211,11 @@ namespace mir::terrainbake
                 tiles.push_back(std::move(*tile));
             }
         report.Ran(check::kGenerate,
-                   std::format("{} tiles of {}^2 samples from \"{}\" v{}; final heights = source heights (P1)",
-                               tiles.size(), layout.IntervalsPerTile() + 1, recipe.generatorId,
-                               recipe.generatorVersion));
+                   std::format("{} source tiles from \"{}\" v{}; fixed reference {} m, tile {} m; {}", tiles.size(),
+                               recipe.generatorId, recipe.generatorVersion, layout.SampleSpacing(), layout.TileSize(),
+                               recipe.recipeVersion == 1 ? "uniform P1 heights unchanged" : "filtered source grids"));
+        if (!AdjustTerrainSeams(recipe, tiles, report))
+            return std::nullopt;
         return tiles;
     }
 
@@ -194,7 +223,7 @@ namespace mir::terrainbake
                                                           const TerrainLayout &layout, std::vector<TileHeights> tiles,
                                                           const TerrainBakeOptions &options, TerrainReport &report)
     {
-        const uint64_t heightsHash = TerrainHeightsHash(tiles);
+        const uint64_t heightsHash = TerrainHeightsHash(layout, tiles);
         const uint64_t nonce = options.nonce ? *options.nonce : MakeTerrainReleaseNonce();
         const TerrainReleaseInfo info{asset, source, kTerrainFormatVersion,
                                       MintTerrainReleaseId(asset, source, heightsHash, nonce)};
@@ -204,10 +233,76 @@ namespace mir::terrainbake
             Fail(report, check::kEncode, "", encoded.error.message);
             return std::nullopt;
         }
-        report.Ran(check::kEncode, std::format("release {}: index and {} packs, heights hash {}",
-                                               TerrainIdHex(info.release.value), encoded.value->packs.size(),
-                                               TerrainIdHex(encoded.value->heightsHash)));
-        return TerrainBakedRelease{info, layout, nonce, std::move(tiles), std::move(*encoded.value)};
+        report.Ran(check::kEncode,
+                   std::format("release {}: index and {} packs, heights hash {}", TerrainIdHex(info.release.value),
+                               encoded.value->packs.size(), TerrainIdHex(encoded.value->heightsHash)));
+        return TerrainBakedRelease{info, layout, nonce, std::move(tiles), std::move(*encoded.value), report.seams};
+    }
+
+    std::optional<TerrainBakedRelease> EncodeBakedRelease(AssetId asset, TerrainSourceFingerprint source,
+                                                          const TerrainRecipe &recipe, std::vector<TileHeights> tiles,
+                                                          const TerrainBakeOptions &options, TerrainReport &report)
+    {
+        if (recipe.recipeVersion != 1 && !report.seams)
+        {
+            Fail(report, check::kEncode, "seams", "v2 final heights require a seam summary");
+            return std::nullopt;
+        }
+        if (report.seams &&
+            (report.seams->algorithmVersion != kTerrainSeamVersion ||
+             report.seams->bandMultiplier != kTerrainSeamBandMultiplier || report.seams->weight != "smoothstep" ||
+             report.seams->warningThreshold != kTerrainSeamWarningThreshold))
+        {
+            Fail(report, check::kEncode, "seams", "prototype seam options cannot be encoded as a production candidate");
+            return std::nullopt;
+        }
+        std::string derivativeError;
+        auto derivatives = BakeTerrainDerivatives(recipe, tiles, derivativeError, &options.regions);
+        if (!derivatives)
+        {
+            Fail(report, check::kEncode, "derivatives", derivativeError);
+            return {};
+        }
+        const auto &layers = derivatives->layers;
+        std::vector<TerrainTileWrite> records;
+        for (const auto &tile : tiles)
+        {
+            const auto spacing = recipe.SourceSpacing(tile.Tile());
+            const auto layer = std::find_if(layers.begin(), layers.end(),
+                                            [&](const auto &layout)
+                                            {
+                                                return spacing && layout.SampleSpacing() == *spacing;
+                                            });
+            if (layer == layers.end())
+            {
+                Fail(report, check::kEncode, "precision.tiles", "tile has no assigned source layer");
+                return std::nullopt;
+            }
+            records.push_back({&tile, static_cast<uint32_t>(layer - layers.begin()), true, 0.0});
+        }
+        std::unordered_map<TileCoord, uint64_t> sourceChecksums;
+        for (const auto &tile : tiles)
+            sourceChecksums.emplace(tile.Tile(), TerrainFinalHeightChecksum(tile));
+        for (size_t i = 0; i < derivatives->queryHeights.size(); ++i)
+            records.push_back({&derivatives->queryHeights[i], derivatives->queryLayers[i], false,
+                               derivatives->queryErrors[i], sourceChecksums.at(derivatives->queryHeights[i].Tile())});
+        const uint64_t heightsHash =
+            TerrainPayloadsHash(layers, records, derivatives->payloads, derivatives->regions->writes);
+        const uint64_t nonce = options.nonce ? *options.nonce : MakeTerrainReleaseNonce();
+        const TerrainReleaseInfo info{asset, source, kTerrainFormatVersion,
+                                      MintTerrainReleaseId(asset, source, heightsHash, nonce)};
+        auto encoded = EncodeTerrainRelease(info, layers, records, derivatives->payloads, derivatives->regions->writes,
+                                            options.pack);
+        if (!encoded)
+        {
+            Fail(report, check::kEncode, "", encoded.error.message);
+            return std::nullopt;
+        }
+        report.Ran(check::kEncode, std::format("release {}: {} source tiles, {} sparse layers, {} packs",
+                                               TerrainIdHex(info.release.value), tiles.size(), layers.size(),
+                                               encoded.value->packs.size()));
+        return TerrainBakedRelease{info,        recipe.layout, nonce, std::move(tiles), std::move(*encoded.value),
+                                   report.seams};
     }
 
     TerrainCandidateManifest MakeCandidateManifest(const TerrainBakedRelease &baked, std::string assetPath,
@@ -222,7 +317,11 @@ namespace mir::terrainbake
         manifest.formatMinor = kTerrainFormatMinor;
         manifest.contentVersion = kTerrainHeightsContentVersion;
         manifest.surfaceVersion = kTerrainSurfaceVersion;
+        const auto index = ParseTerrainIndex(baked.encoded.index);
+        manifest.layerCount = static_cast<uint32_t>(index.value->layers.size());
+        manifest.payloadCount = static_cast<uint32_t>(index.value->tiles.size());
         manifest.files = DescribeReleaseFiles(baked.encoded);
+        manifest.seams = baked.seams;
         return manifest;
     }
 
@@ -241,7 +340,8 @@ namespace mir::terrainbake
 
         RecipeParseResult parsed = LoadTerrainRecipe(request.recipePath);
         for (RecipeIssue &issue : parsed.issues)
-            report.Add({std::string(check::kRecipe), std::move(issue.field), {}, std::nullopt, std::move(issue.message)});
+            report.Add(
+                {std::string(check::kRecipe), std::move(issue.field), {}, std::nullopt, std::move(issue.message)});
         if (!parsed.recipe)
             return false;
         const TerrainRecipe &recipe = *parsed.recipe;
@@ -252,8 +352,8 @@ namespace mir::terrainbake
         std::optional<std::vector<TileHeights>> tiles = BakeFinalHeights(recipe, report);
         if (!tiles)
             return false;
-        std::optional<TerrainBakedRelease> baked = EncodeBakedRelease(
-            MakeAssetId(assetPath), fingerprint, recipe.layout, std::move(*tiles), request.options, report);
+        std::optional<TerrainBakedRelease> baked =
+            EncodeBakedRelease(MakeAssetId(assetPath), fingerprint, recipe, std::move(*tiles), request.options, report);
         if (!baked)
             return false;
         report.release = baked->info;
@@ -299,8 +399,7 @@ namespace mir::terrainbake
         if (ec)
         {
             Fail(report, check::kWrite, "--out",
-                 std::format("cannot rename {} to {} ({})", PathUtf8(staging), PathUtf8(out),
-                             ec.message()));
+                 std::format("cannot rename {} to {} ({})", PathUtf8(staging), PathUtf8(out), ec.message()));
             return false;
         }
         cleanup.dir.clear();
@@ -317,7 +416,7 @@ namespace mir::terrainbake
         TerrainReport report("bake", {check::kArguments, check::kRecipe, check::kGenerate, check::kEncode,
                                       check::kWrite, check::kCandidate, check::kFormat, check::kIndex, check::kPacks,
                                       check::kCoverage, check::kPayloads, check::kFinite, check::kEdges,
-                                      check::kCorners, check::kIdentity});
+                                      check::kCorners, check::kRegions, check::kIdentity});
         BakeTerrainCandidate(request, report);
         return report;
     }

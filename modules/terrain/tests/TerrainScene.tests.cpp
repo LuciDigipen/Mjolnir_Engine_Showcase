@@ -8,6 +8,7 @@
  */
 
 #include "TerrainPackTestSupport.h"
+#include "TerrainStreamingTestSupport.h"
 
 #include <terrain/ComponentRegistration.h>
 #include <terrain/TerrainAreaSamples.h>
@@ -63,6 +64,7 @@ namespace
             InstallHierarchy(world);
             RegisterCoreComponents();
             RegisterTerrainComponents();
+            EmplaceTestStreamer(world);
         }
     };
 
@@ -136,7 +138,8 @@ namespace
     {
         const TerrainSceneSpec spec = CollectTerrainScene(world, kIdRoot);
         issues = spec.issues;
-        return ResolveTerrainWorld(spec, root, previous, issues);
+        return ResolveTerrainWorld(spec, root, previous, issues, world.Resource<TerrainStreamer>(),
+                                   TerrainEagerLoad::Wait);
     }
 
     const TerrainIssue *IssueFor(const std::vector<TerrainIssue> &issues, std::string_view recipe)
@@ -393,7 +396,7 @@ TEST_CASE("A missing, corrupt or incompatible release is one clear issue and the
     const AssetId newer = TerrainAsset("terrain/newer.terrain.json");
     const TerrainReleaseInfo newerInfo = Info(newer, 0x2222);
     TerrainEncodedRelease encoded = Encode(newerInfo, ReliefLayout(), BuildTiles(ReliefLayout()));
-    StoreU32(encoded.index, 4, 2);
+    StoreU32(encoded.index, 4, 3);
     ResealIndex(encoded.index);
     WriteRelease(root, newerInfo, encoded);
     PointCurrentAt(root, newer, newerInfo.release);
@@ -547,6 +550,8 @@ TEST_CASE("A pinned release ignores a publish until a safe point, which switches
 
     // The remembered refusal comes back word for word.
     const TerrainIssue refusal = issues[0];
+    // Joining the old pool also finishes reads whose requests were already pruned.
+    EmplaceTestStreamer(scene.world);
     std::filesystem::remove_all(TerrainReleaseDir(root, asset, c.info.release));
     TerrainWorld still = Resolve(scene.world, root, &kept, issues);
     REQUIRE(issues.size() == 1);

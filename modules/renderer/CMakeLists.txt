@@ -1,4 +1,4 @@
-﻿engine_add_module(renderer)
+engine_add_module(renderer)
 
 # volk: function pointers w/o boiler plate
 find_package(volk CONFIG REQUIRED)
@@ -38,6 +38,7 @@ target_compile_definitions(engine_renderer PRIVATE
 target_sources(engine_renderer PRIVATE
     src/renderer/CameraMath.cpp
     src/renderer/ComponentRegistration.cpp
+    src/renderer/MeshStreaming.cpp
     src/renderer/FogEffect.cpp
     src/renderer/HdrEffect.cpp
     src/renderer/PostEffectRegistry.cpp
@@ -54,6 +55,7 @@ target_sources(engine_renderer PRIVATE
     src/renderer/vulkan/FrameSync.cpp
     src/renderer/vulkan/ImGuiOverlay.cpp
     src/renderer/vulkan/MaterialStore.cpp
+    src/renderer/vulkan/MeshUploader.cpp
     src/renderer/vulkan/ModelDescriptors.cpp
     src/renderer/vulkan/PostProcess.cpp
     src/renderer/vulkan/RayTracer.cpp

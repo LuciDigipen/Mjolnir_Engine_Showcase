@@ -38,10 +38,48 @@ namespace mir::vk
         // Recreates the output images at the swapchain's new extent; the caller idles the device first.
         bool Resize(VkExtent2D extent);
 
+        struct MeshBlas
+        {
+            VkAccelerationStructureKHR mBlas = VK_NULL_HANDLE;
+            VkBuffer mBuffer = VK_NULL_HANDLE;
+            VmaAllocation mAllocation = VK_NULL_HANDLE;
+            VkDeviceAddress mAddress = 0;
+        };
+
+        struct BlasSizes
+        {
+            VkDeviceSize accelerationStructure = 0;
+            VkDeviceSize scratch = 0;
+        };
+
         // Indexed by mesh slot, so the resource store never sees ray tracing. False leaves the mesh raster-only.
         bool BuildMeshBlas(uint32_t meshIndex, const GpuMesh &mesh, uint32_t vertexCount);
+        struct MeshBlasBuild
+        {
+            uint32_t meshIndex = 0;
+            const GpuMesh *mesh = nullptr;
+            uint32_t vertexCount = 0;
+        };
+
+        struct BlasBatch
+        {
+            size_t built = 0;
+            VkDeviceSize blasBytes = 0;
+            // Shared by the batch; it must outlive the frame.
+            VkBuffer scratchBuffer = VK_NULL_HANDLE;
+            VmaAllocation scratchAllocation = VK_NULL_HANDLE;
+            VkDeviceSize scratchBytes = 0;
+        };
+
+        // One copy-to-build barrier, then every build in one call; callers check which BLASes were created.
+        BlasBatch RecordMeshBlases(VkCommandBuffer cmd, std::span<const MeshBlasBuild> builds);
+        bool HasMeshBlas(uint32_t meshIndex) const;
+        BlasSizes MeshBlasSizes(uint32_t vertexCount, uint32_t indexCount) const;
         // No-op for a slot that never had a BLAS.
         void DestroyMeshBlas(uint32_t meshIndex);
+        // Moves the slot's BLAS out for a later DestroyBLAS; empty when it has none.
+        MeshBlas TakeMeshBlas(uint32_t meshIndex);
+        void DestroyBLAS(MeshBlas &blas);
         void DestroyBlases();
 
         // Builds the frame's TLAS from `items` and traces `rect` into the output image,
@@ -54,14 +92,6 @@ namespace mir::vk
         VkImageView OutputView(uint32_t frame) const { return mOutputViews[frame]; }
 
     private:
-        struct MeshBlas
-        {
-            VkAccelerationStructureKHR mBlas = VK_NULL_HANDLE;
-            VkBuffer mBuffer = VK_NULL_HANDLE;
-            VmaAllocation mAllocation = VK_NULL_HANDLE;
-            VkDeviceAddress mAddress = 0;
-        };
-
         bool CreateAccelerationStructureObject(VkDeviceSize size, VkAccelerationStructureTypeKHR type,
             VkBuffer &outBuffer, VmaAllocation &outAllocation, VkAccelerationStructureKHR &outAS);
         bool CreateOutputImages(VkExtent2D extent);
@@ -72,11 +102,13 @@ namespace mir::vk
         void WriteDescriptorSets();
         bool BuildBLAS(const GpuMesh &mesh, uint32_t vertexCount, VkCommandBuffer cmd, MeshBlas &outBlas,
             VkBuffer &outScratchBuffer, VmaAllocation &outScratchAllocation);
-        void DestroyBLAS(MeshBlas &blas);
+        // Aligned to minAccelerationStructureScratchOffsetAlignment.
+        bool CreateScratchBuffer(VkDeviceSize size, VkBuffer &outBuffer, VmaAllocation &outAllocation);
         void RecordTlasBuild(VkCommandBuffer cmd, uint32_t frame, std::span<const DrawItem> items,
             const ResourceStore &resources, const MaterialStore &materials);
 
         Device *mDevice = nullptr;
+        VkDeviceSize mScratchAlignment = 1;
 
         VkDescriptorSetLayout mSetLayout = VK_NULL_HANDLE;
         VkDescriptorPool mPool = VK_NULL_HANDLE;

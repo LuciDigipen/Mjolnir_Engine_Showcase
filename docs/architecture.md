@@ -55,6 +55,10 @@ Programmer error uses assertions instead. `MIR_ASSERT` is for development errors
 
 ## Module graph
 
+`script` privately links `terrain` for the resident Lua height query (#144);
+`terrain` retains its assets/core dependencies and no script dependency, and
+links `serial` privately for its streaming settings (#126).
+
 The folder tree is in the [README](../README.md#folder-structure). This is how
 the pieces depend on each other.
 
@@ -206,6 +210,7 @@ type. The flow is in [A file](#a-file).
 ```
 PollEvents                       close flag and framebuffer size refresh here
 dt = min(elapsed, mMaxDeltaSeconds)
+TerrainRuntime::Update           installs finished terrain reads, release checks, mesh builds, uploads and collision pieces (every mode); then, in Edit, its Refresh (which may switch to a checked, prewarmed release)
 ImGuiRuntime::BeginFrame         the NewFrame trio
 Editor::DrawLayout               -> EditorActions (scene action, game to open)
 UIContext::BeginFrame/EndFrame   game UI into the background list, scene viewport or whole window
@@ -220,7 +225,9 @@ Ordering between features is expressed as a phase, never as registration order.
 
 `ScriptSystem` runs in `PreUpdate`. `FixedUpdate` is for physics and its sync
 back to `Transform`; it runs zero or more times a frame with the fixed step as
-`dt`. `TransformPropagateSystem` runs in `PostUpdate`, after it. `RenderSystem`
+`dt`. Before each step `PhysicsSystem` calls the `PhysicsStepGates` World
+resource's gates; app's terrain is one, placing collision pieces and holding
+bodies whose ground is not collidable yet (#128). `TransformPropagateSystem` runs in `PostUpdate`, after it. `RenderSystem`
 runs in `Render`, after all of them, so every `WorldTransform` it reads is
 already current for the frame being drawn.
 
@@ -229,6 +236,12 @@ The scheduler flushes the command buffer at each phase boundary and after each
 
 `RenderSystem` holds a `VulkanRenderer&` passed to its constructor. The renderer
 is not published as a world resource, which keeps it out of reach of scripts.
+Draws that depend on the viewport come from the `ViewDrawSources` resource:
+`RenderSystem` hands each source every viewport's camera before it builds any
+view, and app's terrain answers per view with its own level of detail (#125).
+Meshes queued with `QueueMesh` are copied at the start of the next recorded
+frame within a per-frame byte budget and become drawable once that frame has
+completed; retired ones are freed after their last frame, with no wait (#127).
 
 ### A file
 

@@ -5,12 +5,16 @@ add_library(terrain_bake STATIC
     TerrainBake.cpp
     TerrainCandidate.cpp
     TerrainContinuity.cpp
+    TerrainDerivatives.cpp
+    TerrainMixedContinuity.cpp
     TerrainGenerator.cpp
     TerrainNoise.cpp
     TerrainPackage.cpp
     TerrainPublish.cpp
     TerrainRecipe.cpp
+    TerrainRegions.cpp
     TerrainReport.cpp
+    TerrainSeams.cpp
     TerrainSync.cpp
     TerrainValidate.cpp
 )
@@ -27,14 +31,19 @@ if(BUILD_TESTING)
     add_executable(terrain_tool_tests
         tests/TerrainBake.tests.cpp
         tests/TerrainGenerator.tests.cpp
+        tests/TerrainDerivatives.tests.cpp
         tests/TerrainPackage.tests.cpp
+        tests/TerrainPrecision.tests.cpp
         tests/TerrainPublish.tests.cpp
         tests/TerrainRecipe.tests.cpp
+        tests/TerrainRegions.tests.cpp
+        tests/TerrainRenderMesh.tests.cpp
+        tests/TerrainSeams.tests.cpp
         tests/TerrainSync.tests.cpp
         tests/TerrainToolCli.tests.cpp
         tests/TerrainValidate.tests.cpp
     )
-    target_link_libraries(terrain_tool_tests PRIVATE terrain_bake nlohmann_json::nlohmann_json Catch2::Catch2WithMain)
+    target_link_libraries(terrain_tool_tests PRIVATE terrain_bake mir::renderer nlohmann_json::nlohmann_json Catch2::Catch2WithMain)
     target_compile_definitions(terrain_tool_tests PRIVATE TERRAIN_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
     target_compile_definitions(terrain_tool_tests PRIVATE TERRAIN_TOOL_EXE="$<TARGET_FILE:TerrainTool>")
     add_dependencies(terrain_tool_tests TerrainTool)

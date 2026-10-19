@@ -13,6 +13,7 @@
 #include "bindings/EntityBindings.h"
 #include "bindings/InputBindings.h"
 #include "bindings/PhysicsBindings.h"
+#include "bindings/TerrainBindings.h"
 #include "bindings/WorldBindings.h"
 
 #include <core/ecs/World.h>
@@ -35,25 +36,27 @@ namespace mir
             // Lua's own print writes to stdout, which nothing here reads -
             // route script output through the same log every other subsystem
             // uses instead.
-            mLua.set_function("print", [](sol::variadic_args args)
-            {
-                sol::state_view lua(args.lua_state());
-                const sol::function tostring = lua["tostring"];
+            mLua.set_function("print",
+                              [](sol::variadic_args args)
+                              {
+                                  sol::state_view lua(args.lua_state());
+                                  const sol::function tostring = lua["tostring"];
 
-                std::string line;
-                bool first = true;
-                for (const auto arg : args)
-                {
-                    if (!first)
-                        line += '\t';
-                    first = false;
-                    line += tostring(arg.get<sol::object>()).get<std::string>();
-                }
-                MIR_LOG_INFO("[lua] {}", line);
-            });
+                                  std::string line;
+                                  bool first = true;
+                                  for (const auto arg : args)
+                                  {
+                                      if (!first)
+                                          line += '\t';
+                                      first = false;
+                                      line += tostring(arg.get<sol::object>()).get<std::string>();
+                                  }
+                                  MIR_LOG_INFO("[lua] {}", line);
+                              });
 
             RegisterEntityBindings(mLua);
             RegisterWorldBindings(mLua);
+            RegisterTerrainBindings(mLua);
 
             RegisterInputBindings(mLua);
             RegisterPhysicsBindings(mLua);
@@ -76,7 +79,8 @@ namespace mir
             }
 
             const int32_t ref = mNextInstanceRef++;
-            mInstances.emplace(ref, ScriptInstance{std::string(scriptName), NewInstanceData(it->second.as<sol::table>(), scriptName)});
+            mInstances.emplace(
+                ref, ScriptInstance{std::string(scriptName), NewInstanceData(it->second.as<sol::table>(), scriptName)});
             return ref;
         }
 
