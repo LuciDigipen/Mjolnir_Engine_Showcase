@@ -41,7 +41,6 @@
 #include <renderer/ComponentRegistration.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/RenderSystem.h>
-#include <scene/EntitySnapshot.h>
 #include <scene/SceneIO.h>
 #include <script/ComponentRegistration.h>
 #include <script/ScriptSystem.h>
@@ -49,10 +48,9 @@
 #include <terrain/TerrainScene.h>
 
 #if MIR_WITH_EDITOR
+#include "AppSceneOps.h"
 #include <core/platform/Process.h>
-#include <editor/EntityBaseline.h>
 #include <editor/IdeSettings.h>
-#include <editor/Selection.h>
 #endif
 
 #include <algorithm>
@@ -162,7 +160,8 @@ namespace mir
 
     #if MIR_WITH_EDITOR
         mSplash.SetProgress("Initializing editor...", 0.5f);
-        if (!mEditor.Initialize(mImGui, *mWindow, mProject.mProjectSettingsPath, mWorld))
+        mSceneOps = std::make_unique<AppSceneOps>(*this);
+        if (!mEditor.Initialize(mImGui, *mWindow, mProject.mProjectSettingsPath, mWorld, *mSceneOps))
         {
             MIR_LOG_ERROR("Editor initialization failed");
             mImGui.Shutdown(mRenderer);
@@ -294,6 +293,7 @@ namespace mir
 
         UnloadCurrentScene();
         mScene = mir::NewScene(std::move(name));
+        ClearHistory();
     }
 
     bool App::SaveScene()
@@ -323,6 +323,7 @@ namespace mir
 
         UnloadCurrentScene();
         mScene = mir::LoadScene(mWorld, mProject.mSceneDir);
+        ClearHistory();
 
         // saved names to script instances
         ResolveSceneScripts(mWorld, mScriptHost, mScriptReloadWatcher, Assets(), mProject.mAssetIdRoot);
@@ -339,6 +340,7 @@ namespace mir
         mTerrain->Refresh(0.0f, true);
 
         mPlaySnapshot = CaptureWorld(mWorld);
+        ClearHistory();
 
         SetPlayState(mWorld, PlayState::Running);
         SetEngineMode(mWorld, EngineMode::Play);
@@ -353,6 +355,7 @@ namespace mir
         mScriptSystem->StopAllScripts(context);
 
         mScene = RestoreWorld(mWorld, mPlaySnapshot);
+        ClearHistory();
 
         // Play's entities are gone and the restored ones hold no handles yet
         mModelSystem->Reset();
@@ -415,6 +418,13 @@ namespace mir
         mWindow->ToggleFullscreen();
 
         mRenderer.RequestSwapchainRecreate();
+    }
+
+    void App::ClearHistory()
+    {
+    #if MIR_WITH_EDITOR
+        mEditor.ClearHistory();
+    #endif
     }
 
     void App::UnloadCurrentScene()
@@ -629,8 +639,6 @@ namespace mir
             break;
         }
 
-        ApplyEntityAction(actions.mEntity);
-
         bool assetActionAccepted = true;
         if (actions.mAssetImport.mKind == AssetImportActionKind::Remove)
         {
@@ -695,64 +703,6 @@ namespace mir
             CreateGameProject(actions.mCreateProjectName, actions.mCreateProjectRayTracing))
         {
             RequestOpenProject("games/" + actions.mCreateProjectName);
-        }
-    }
-
-    void App::ApplyEntityAction(const EntityAction &action)
-    {
-        Selection &selection = mWorld.Resource<Selection>();
-
-        switch (action.mKind)
-        {
-        case EntityActionKind::Create:
-            {
-                const EntityPresetDesc *preset = action.mPreset;
-                if (preset != nullptr && preset->mCanCreate != nullptr && !preset->mCanCreate(mWorld))
-                    return;
-
-                const Entity entity = CreateSceneEntity(mWorld, mScene);
-                if (preset != nullptr)
-                    preset->mCreate(mWorld, entity);
-
-                // after the preset
-                AddMissingBaseline(mWorld, entity);
-
-                selection.mSelected = { entity };
-                break;
-            }
-        case EntityActionKind::Delete:
-            {
-                const Entity neighbor = NeighborInHierarchy(mWorld, action.mTarget);
-                if (DestroySceneEntity(mWorld, mScene, action.mTarget) && selection.Contains(action.mTarget))
-                    selection.mSelected = neighbor.IsNull() ? std::vector<Entity>{} : std::vector<Entity>{ neighbor };
-                break;
-            }
-        case EntityActionKind::Duplicate:
-            if (const Entity copy = DuplicateSceneEntity(mWorld, mScene, action.mTarget); !copy.IsNull())
-                selection.mSelected = { copy };
-            break;
-        case EntityActionKind::Reparent:
-            {
-                // one invalid entity refuses the whole drop
-                if (!CanSetParentAll(mWorld, action.mTargets, action.mParent, action.mBefore))
-                    return;
-
-                const std::vector<Entity> moved = TopmostInHierarchyOrder(mWorld, action.mTargets);
-
-                for (const Entity entity : moved)
-                {
-                    if (action.mBefore.IsNull() && ParentOf(mWorld, entity) == action.mParent)
-                        MoveToLastSibling(mWorld, entity);
-                    else
-                        SetParent(mWorld, entity, action.mParent, action.mBefore);
-                }
-
-                if (!moved.empty())
-                    selection.mSelected = moved;
-                break;
-            }
-        case EntityActionKind::None:
-            break;
         }
     }
 

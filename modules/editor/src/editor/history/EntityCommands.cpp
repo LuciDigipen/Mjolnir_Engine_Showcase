@@ -300,7 +300,7 @@ namespace mir
             {
                 World &world = context.mWorld;
 
-                //one entity that cannot move refuses the whole drop
+                
                 if (!CanSetParentAll(world, mTargets, mParentEntity, mBeforeEntity))
                     return false;
 

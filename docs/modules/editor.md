@@ -1,9 +1,10 @@
 # editor
 
-The Slate editor shell — dockspace, default panel layout, the File, Project and
-Debug menus — drawn into the ImGui context `imguiruntime` owns. It owns no part
-of that context's lifetime: no `CreateContext`, no fonts, no backend. See
-[imguiruntime.md](imguiruntime.md).
+The Slate editor shell — dockspace, default panel layout, the File, Edit, Project
+and Debug menus — drawn into the ImGui context `imguiruntime` owns. It owns no
+part of that context's lifetime: no `CreateContext`, no fonts, no backend. See
+[imguiruntime.md](imguiruntime.md). Undo and redo have their own page,
+[editor-history.md](editor-history.md).
 
 `mir::editor` · depends `mir::imguiruntime`, `mir::renderer`, `mir::window` (public); `mir::core`, `mir::editortheme`, `imgui`, `imguizmo`, `iconfontcppheaders` (private) · API `modules/editor/include/editor/` · maintainer Sumin Park · reviewed 2026-09-17
 
@@ -31,14 +32,17 @@ if (IsEditing(world))                                   // Play shows the World'
 ```
 
 `DrawLayout` returns `EditorActions`: the `SceneMenuAction` the File menu or the
-Play/Pause/Stop toolbar picked this frame, the `EntityAction` the Hierarchy asked
-for, and the directory of a game picked under Project > Open Project and
-confirmed. The editor decides what was asked for and `App` decides what it means,
-so this module never touches `SceneIO`, `PlaySnapshot`, a `LoadedScene` or a
-`GameProject` — `EngineModeState` is read-only here, just to draw the toolbar's
-current label. `HierarchyPanel` reads the `World`'s entities (see below) to
-display and select them. It never creates, destroys or duplicates one itself.
-Each of those also changes the `LoadedScene`, and only `App` holds it.
+Play/Pause/Stop toolbar picked this frame, and the directory of a game picked
+under Project > Open Project and confirmed. The editor decides what was asked for
+and `App` decides what it means, so this module never touches `SceneIO`,
+`PlaySnapshot`, a `LoadedScene` or a `GameProject` — `EngineModeState` is
+read-only here, just to draw the toolbar's current label. `HierarchyPanel` reads
+the `World`'s entities (see below) to display and select them. It never creates,
+destroys or duplicates one itself. Each of those also changes the `LoadedScene`,
+and only `App` holds it. `Editor` turns the `EntityAction` the Hierarchy returns
+into a command for its `History`, which reaches the scene through the
+`ISceneOps` `App` passed to `Initialize` (see
+[editor-history.md](editor-history.md)).
 
 Project > Open Project lists the `ProjectMenuEntry` values `App` passes in — each
 game's name, with its directory in the shortcut column — and ticks the one whose
@@ -51,7 +55,8 @@ does the restart.
 bottom with `DockBuilderSplitNode`, keeps the centre undocked through
 `ImGuiDockNodeFlags_PassthruCentralNode`, docks `Hierarchy`, `Inspector` and
 `Output` into the splits, draws a Play/Pause/Stop toolbar strip and the menu bar,
-and optionally the Style Editor and Project Settings windows.
+and optionally the Style Editor and Project Settings windows. Last, it runs
+`History::Flush`, the frame's one safe point for undoable changes.
 
 Passing `false` skips all of that and resets `SceneViewportRect()` to zero
 extent, which the renderer reads as "use the full swapchain". An ImGui context
@@ -71,8 +76,10 @@ itself is handling doesn't also move it.
 
 ```cpp
 bool Initialize(const ImGuiRuntime &imgui, Window &window, std::filesystem::path projectSettingsPath,
-                World &world);    // false if imgui is not initialized
+                World &world, ISceneOps &sceneOps);    // false if imgui is not initialized
 void Shutdown();                  // before ImGuiRuntime::Shutdown
+
+void ClearHistory();              // App calls it on New, Load, Play and Stop
 
 // between ImGuiRuntime::BeginFrame and EndFrame
 EditorActions DrawLayout(bool enableLayout, InputMap &inputMap, RenderSettings &renderSettings,
@@ -91,11 +98,11 @@ EditorCamera &SceneCamera();
 |---|---|---|
 | `SceneMenuAction` | `editor/Editor.h` | `None`/`New`/`Save`/`Load`/`Play`/`TogglePause`/`Stop` |
 | `ProjectMenuEntry` | `editor/Editor.h` | `{mDir, mName}` for one game in Open Project |
-| `EditorActions` | `editor/Editor.h` | `{mScene, mEntity, mOpenProject, mAssetImport, mContentBrowser, ...}`, what the menus and toolbar asked for this frame |
+| `EditorActions` | `editor/Editor.h` | `{mScene, mOpenProject, mAssetImport, mContentBrowser, ...}`, what the menus and toolbar asked for this frame |
 | `ContentBrowserView`, `ContentBrowserEntryView` | `editor/panels/ContentBrowserPanel.h` | The open project's content root as a flat list of files/directories, plus `mLastRenamedFrom`/`mLastRenamedTo` for one tick when a same-tick remove+add looks like a rename |
 | `ContentBrowserAction`, `ContentBrowserActionKind` | `editor/panels/ContentBrowserPanel.h` | `{mKind, mTargetPath, mNewName}`: `CreateFolder`, `Rename`, `Delete` or `OpenInIde`, for `App` to carry out (see [app.md](app.md)) |
 | `IdeSettings`, `DetectDefaultIde` | `editor/IdeSettings.h` | The `project_settings.json` "ide.path" string (empty: auto-detect VS Code), edited from `ProjectSettingsPanel`'s External Tools section |
-| `EntityAction`, `EntityActionKind` | `editor/panels/HierarchyPanel.h` | `{mKind, mPreset, mTarget, mTargets, mParent, mBefore}`: `Create` (null `mPreset` = New), `Delete`, `Duplicate`, or `Reparent` (a list moved under `mParent` before `mBefore`), for `App` to carry out |
+| `EntityAction`, `EntityActionKind` | `editor/panels/HierarchyPanel.h` | `{mKind, mPreset, mTarget, mTargets, mParent, mBefore}`: `Create` (null `mPreset` = New), `Delete`, `Duplicate`, or `Reparent` (a list moved under `mParent` before `mBefore`), which `MakeEntityCommand` turns into a command (see [editor-history.md](editor-history.md)) |
 | `NeighborInHierarchy` | `editor/panels/HierarchyPanel.h` | The entity to select after deleting one: next sibling, else previous, else the parent |
 | `IsBaselineComponent`, `AddMissingBaseline` | `editor/EntityBaseline.h` | The components every editor-created entity has: `Transform`, `WorldTransform`, `Name` |
 | `EditorCamera` | `editor/EditorCamera.h` | Free-fly scene camera, `WorldPosition` + yaw/pitch (`Pose()`, `Translate`, `FocusOn`), outside the `World` |
@@ -117,9 +124,9 @@ entry list on the left, and a file/folder table for the selected folder on
 the right — directories are explicit entries, so an empty or just-created one
 still shows up. Clicking selects, double-clicking a folder navigates into it,
 and a row's context menu offers Rename and Delete; Delete goes through a
-confirm modal (no undo exists anywhere in this engine - see [app.md](app.md)
-for `ContentBrowserWatcher`, which actually watches the disk and carries out
-the mutations). This closes #152: the panel never caches a stale listing, so
+confirm modal (file changes are outside undo, which covers only scene edits -
+see [app.md](app.md) for `ContentBrowserWatcher`, which actually watches the
+disk and carries out the mutations). This closes #152: the panel never caches a stale listing, so
 a file added, removed or renamed outside the editor shows up on the watcher's
 next poll with no restart.
 
@@ -162,10 +169,11 @@ creates an entity from no preset, and the items below it come from
 `EntityPresetRegistry`. Right-clicking a row opens Duplicate and Delete for that
 entity, and selects it first if it was not already selected. The Delete key and
 Ctrl+D do the same for `Selection::Primary()`, while the panel has focus and no
-text field is active. Each of these only fills `EntityAction`.
-`App::ApplyEntityAction` carries it out (see [app.md](app.md)) and selects the
-result. After a delete it selects `NeighborInHierarchy`, computed before the
-entity is gone.
+text field is active. Each of these only fills `EntityAction`. `Editor` turns
+it into a command and `History` runs it at the end of `DrawLayout` (see
+[editor-history.md](editor-history.md)), so Ctrl+Z undoes it. The command
+selects the result. After a delete it selects `NeighborInHierarchy`, computed
+before the entity is gone.
 
 Dragging a row reparents or reorders. The drag carries the whole selection, or
 only the grabbed row if a Ctrl-press removed it from the selection. Each row
@@ -181,10 +189,10 @@ A press on a row that is already part of a multi-selection waits for the
 release, as in Explorer and Unity. A release without a drag then collapses the
 selection to that row, and a drag carries the whole selection instead.
 
-`App::ApplyEntityAction` puts the dragged list in hierarchy order and drops any
+The ReParent command puts the dragged list in hierarchy order and drops any
 entity whose ancestor is also listed, so a subtree moves once and siblings keep
 their order. It moves each through `SetParent`, which keeps the world pose, and
-selects them. A drop after the last sibling under the current parent is
+selects them. The whole drop is one step. A drop after the last sibling under the current parent is
 `MoveToLastSibling`. On the next frame the panel opens their ancestors and
 scrolls the last one into view, only as far as needed.
 
@@ -304,8 +312,8 @@ from `PlaySnapshot`, so it discards them along with everything else Play changed
 
 **A drop is checked by the same code that refuses it.** Every row target calls
 `CanSetParentAll`, the check `SetParent` makes. One entity that cannot move
-refuses the whole drop, and `App` runs the same check again before moving
-anything. An invalid row still takes the payload, so the root target behind it
+refuses the whole drop, and the ReParent command runs the same check again
+before moving anything. An invalid row still takes the payload, so the root target behind it
 does not light up. It draws nothing and shows the not-allowed cursor.
 
 **Row targets accept with `AcceptBeforeDelivery`.** Without it,
@@ -319,9 +327,9 @@ payload to the smallest target that accepts it, so a row wins over the panel's
 whole area. Each row's target is stretched by half the gap above and below, so a
 drop between two rows never falls through to the root.
 
-**The reveal runs one frame late.** `App` applies the action after `Draw`
-returns, so the panel keeps the dropped list and opens the new ancestors on the
-next `Draw`, when the graph has changed.
+**The reveal runs one frame late.** `History` applies the action at the end of
+`DrawLayout`, after `Draw` returns, so the panel keeps the dropped list and opens
+the new ancestors on the next `Draw`, when the graph has changed.
 
 ## State
 
@@ -345,8 +353,14 @@ entity: the right-clicked row, or `Selection::Primary()`.
 *As of 2026-10-09.* `Hierarchy` reparents and reorders by drag and drop, for
 the whole selection, and the order survives save and Play.
 
-No tests. It needs a device and a display. `smoke.switch` covers the restart that
-Open Project asks for, but not the menu or the dialog themselves.
+*As of 2026-10-19.* Create, Delete, Duplicate and reparenting in `Hierarchy`
+can be undone and redone, with Ctrl+Z, Ctrl+Y or the Edit menu. `Inspector`
+edits and the gizmo cannot yet (see [editor-history.md](editor-history.md)).
+
+The panels and menus have no tests. They need a device and a display.
+`smoke.switch` covers the restart that Open Project asks for, but not the menu
+or the dialog themselves. History needs neither, and its tests are in
+`modules/editor/tests/`.
 
 ## Backlog
 
@@ -378,6 +392,14 @@ Open Project asks for, but not the menu or the dialog themselves.
    deleted, not everything recursively under a deleted folder.
 
 ## Changed
+
+*2026-10-19* — **Entity operations go through undo history.** Was: `DrawLayout`
+returned the Hierarchy's `EntityAction` in `EditorActions::mEntity`, and
+`App::ApplyEntityAction` carried it out on the spot. Nothing could be undone.
+Now: `Editor` owns a `History`, turns the action into a command with
+`MakeEntityCommand`, and runs it at the end of `DrawLayout`. `Initialize` takes
+the `ISceneOps` `App` implements, and an Edit menu sits between File and
+Project. See [editor-history.md](editor-history.md).
 
 *2026-10-10* — **Double-clicking a `.lua` or `.json` file in the Content
 Browser opens the whole project folder as the workspace root, in a new IDE

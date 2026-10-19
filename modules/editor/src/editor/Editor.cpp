@@ -20,6 +20,7 @@
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
 #include <editor/Selection.h>
+#include <editor/history/EntityCommands.h>
 #include <editortheme/EditorTheme.h>
 #include <renderer/CameraMath.h>
 #include <renderer/ViewSubmission.h>
@@ -149,7 +150,7 @@ namespace mir
     Editor::~Editor() {}
 
     bool Editor::Initialize(const ImGuiRuntime &imgui, Window &window, std::filesystem::path projectSettingsPath,
-        World &world)
+        World &world, ISceneOps &sceneOps)
     {
         if (!imgui.IsInitialized())
         {
@@ -180,6 +181,7 @@ namespace mir
         }
 
         mWindow = &window;
+        mSceneOps = &sceneOps;
         mInitialized = true;
         return true;
     }
@@ -904,7 +906,7 @@ namespace mir
             }
 
             if (ImGui::Begin("Hierarchy"))
-                actions.mEntity = mHierarchyPanel.Draw(world);
+                mHistory.Submit(MakeEntityCommand(mHierarchyPanel.Draw(world)));
             ImGui::End();
 
             if (ImGui::Begin("Inspector"))
@@ -937,6 +939,7 @@ namespace mir
 
             UpdateViewportPicking(mode, world);
             FocusSelection(mode, world);
+            UpdateHistoryShortcuts();
             DrawSelectionHighlights(mode, world);
             DrawComponentGizmos(mode, world);
             DrawViewportGizmo(mode, world);
@@ -960,6 +963,11 @@ namespace mir
                     if (ImGui::MenuItem("New Project..."))
                         mNewProjectRequested = true;
                     DrawOpenProjectMenu(projects, currentProject);
+                    ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("Edit"))
+                {
+                    DrawEditMenu();
                     ImGui::EndMenu();
                 }
                 if (ImGui::BeginMenu("Project"))
@@ -1070,7 +1078,38 @@ namespace mir
             mSceneViewportRect = VkRect2D{};
         }
 
+        
+        if (mSceneOps != nullptr)
+            mHistory.Flush(world, *mSceneOps);
+
         return actions;
+    }
+
+    void Editor::DrawEditMenu()
+    {
+
+        //keeps the item's id while the step name in its label changes
+        const std::string undo = mHistory.CanUndo() ? "Undo " + mHistory.UndoName() : std::string("Undo");
+
+        if (ImGui::MenuItem((undo + "###Undo").c_str(), "Ctrl+Z", false, mHistory.CanUndo()))
+            mHistory.RequestUndo();
+
+        const std::string redo = mHistory.CanRedo() ? "Redo " + mHistory.RedoName() : std::string("Redo");
+
+        if (ImGui::MenuItem((redo + "###Redo").c_str(), "Ctrl+Y", false, mHistory.CanRedo()))
+            mHistory.RequestRedo();
+    }
+
+    void Editor::UpdateHistoryShortcuts()
+    {
+        const ImGuiIO &io = ImGui::GetIO();
+        if (io.WantTextInput || !io.KeyCtrl)
+            return;
+
+        if (ImGui::IsKeyPressed(ImGuiKey_Z))
+            mHistory.RequestUndo();
+        else if (ImGui::IsKeyPressed(ImGuiKey_Y))
+            mHistory.RequestRedo();
     }
 
     bool Editor::WantsCaptureKeyboard() const { return ImGui::GetIO().WantCaptureKeyboard; }

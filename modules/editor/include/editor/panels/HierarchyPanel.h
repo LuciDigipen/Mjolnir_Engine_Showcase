@@ -53,7 +53,8 @@ namespace mir
         // the hovered target's action, shown in the drag tooltip
         std::string mDropHint;
 
-        // dropped last frame; App moved them after that Draw, so they are revealed in this one
+        //entities dropped last frame. They only move after Draw returns,
+        //so the next Draw opens their new parents and scrolls them into view
         std::vector<Entity> mReveal;
 
         // a collapsed row hovered this long during a drag opens; a failed drop closes it again

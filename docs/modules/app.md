@@ -179,21 +179,21 @@ replaces whatever `Scene()` currently holds. `NewScene`, `LoadScene` and
 `StopScene` release the discarded entities' GPU meshes and materials. Game
 control is `RequestOpenProject(dir)`, and the switch itself is a restart.
 
-In an editor build, `ApplyEditorActions` passes the frame's `EntityAction` (see
-[editor.md](editor.md)) to the private `ApplyEntityAction`. Create runs
-`CreateSceneEntity`, then the preset, then `AddMissingBaseline`. Delete runs
-`DestroySceneEntity`, and Duplicate runs `DuplicateSceneEntity` (see
-[scene.md](scene.md)). Each one goes through `Scene()`, so the entity is saved or
-dropped with the scene, and the result becomes the `Selection`.
+In an editor build, the Hierarchy's create, delete, duplicate and reparent run
+inside the editor, as undoable commands (see
+[editor-history.md](editor-history.md)). They reach the scene through the
+private `AppSceneOps`, the `ISceneOps` `App` hands to `Editor::Initialize`. It
+creates with `CreateSceneEntity`, destroys with `DestroySceneEntity`, duplicates
+with `DuplicateSceneEntity`, and captures and restores with `CaptureEntity` and
+`RestoreEntityAt` (see [scene.md](scene.md)). Each goes through `Scene()`, so the
+entity is saved or dropped with the scene. After a restore or a duplicate it
+runs `ResolveSceneScripts`, because a copied or restored `ScriptRef` has no
+script instance and `ScriptSystem` skips it.
 
-Reparent checks the whole list with `CanSetParentAll` and does nothing if any
-entity fails. It then moves the list in hierarchy order through `SetParent`,
-which keeps each world pose, and selects what moved. A null `mBefore` under the
-entity's current parent means after the last sibling, so that case runs
-`MoveToLastSibling` (see [core.md](core.md)). Reparent changes no
-`LoadedScene` entry, because save reads each parent from `HierarchyIndex`. Unlike
-`NewScene`/`SaveScene`/`LoadScene`, these run during Play too, and Stop discards
-them with the rest of Play's changes.
+`NewScene`, `LoadScene`, `PlayScene` and `StopScene` call
+`Editor::ClearHistory`, since each replaces the entities that history's steps
+point at. Unlike `NewScene`/`SaveScene`/`LoadScene`, the entity operations run
+during Play too, and Stop discards them with the rest of Play's changes.
 
 ### Ownership and order
 
@@ -203,6 +203,7 @@ them with the rest of Play's changes.
 | `mWindow` | early | late | the renderer's surface is built from it |
 | `mRenderer` | after the window | before it | holds `VkSurfaceKHR` and the device |
 | `mEditor` | after the renderer | before it | its Vulkan backend needs a live device, its GLFW backend a live window |
+| `mSceneOps` (`AppSceneOps`, editor builds only) | just before `mEditor.Initialize` | with `App` | holds only a reference to `App`; the editor keeps a pointer to it |
 | `mContentBrowser` (`ContentBrowserWatcher`, editor builds only) | with `App` | with `App` | owns no OS handle - a poll-based watcher only, so no explicit `Shutdown` |
 | `mCommands` | before `mWorld` | after it | outlives the world it records against |
 | `mWorld`, `mScheduler`, `mScriptHost`, `mScene` | with `App` | with `App` | no external resources |
@@ -430,6 +431,13 @@ is tested in `terrain` (`TerrainScene.tests.cpp`) and the collider assembly in
    left for later; the panel's confirm modal is the primary safety net.
 
 ## Changed
+
+*2026-10-19* — **The editor's entity operations moved into its undo history.**
+Was: the private `ApplyEntityAction` carried out each `EntityAction` the
+Hierarchy returned. Now: the editor runs them as commands and reaches the scene
+through the private `AppSceneOps`. A restored or duplicated entity gets its
+script instance from `ResolveSceneScripts`, which a duplicate used to miss until
+the next Load or Stop. New, Load, Play and Stop clear the history.
 
 *2026-10-09* — **Added `ContentBrowserWatcher`.** Editor-side owner for the
 new Content Browser panel (see [editor.md](editor.md)): polls the open
