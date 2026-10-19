@@ -20,11 +20,13 @@
 #include "vulkan/MaterialStore.h"
 #include "vulkan/MeshUploader.h"
 #include "vulkan/ModelDescriptors.h"
+#include "vulkan/MotionBlur.h"
 #include "vulkan/PostProcess.h"
 #include "vulkan/RayTracer.h"
 #include "vulkan/ResourceStore.h"
 #include "vulkan/ShadowMaps.h"
 #include "vulkan/Swapchain.h"
+#include "vulkan/VelocityPass.h"
 #include "vulkan/VulkanConstants.h"
 #include "vulkan/VulkanUtil.h"
 #include "vulkan/VulkanPushConstants.h"
@@ -191,9 +193,29 @@ namespace mir
             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
             VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
 
+        if (mMotionBlurEnabled)
+        {
+            vk::ImageBarrier(cmd, mSwapchain->DepthImage(frame), VK_IMAGE_ASPECT_DEPTH_BIT,
+                VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT);
+
+            mVelocityCameraOffsets.clear();
+            const size_t motionViewCount = std::min<size_t>(views.size(), vk::kMaxViewsPerFrame);
+            for (size_t i = 0; i < motionViewCount; ++i)
+                mVelocityCameraOffsets.push_back(WriteCameraData(views[i], static_cast<uint32_t>(i)));
+
+            mDevice->BeginLabel(cmd, "Velocity Pass", { 0.0f, 1.0f, 0.5f, 1.0f });
+            mVelocityPass->Record(cmd, frame, views.subspan(0, motionViewCount), mCameraBuffer->Set(frame),
+                mVelocityCameraOffsets, mSwapchain->DepthView(frame), extent, *mResources);
+            mDevice->EndLabel(cmd);
+        }
+
         vk::ImageBarrier(cmd, mSwapchain->DepthImage(frame), VK_IMAGE_ASPECT_DEPTH_BIT,
             VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+            VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
             VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
 
         VkImageView colorSource = mSwapchain->HdrColorView(frame);
@@ -206,6 +228,14 @@ namespace mir
                 /*isLinearDepth*/ false, nearZ, farZ, extent);
             mDevice->EndLabel(cmd);
             colorSource = mDepthOfField->OutputView(frame);
+        }
+
+        if (mMotionBlurEnabled)
+        {
+            mDevice->BeginLabel(cmd, "Motion Blur Pass", { 0.0f, 1.0f, 0.5f, 1.0f });
+            mMotionBlur->Record(cmd, frame, colorSource, mVelocityPass->OutputView(frame), extent);
+            mDevice->EndLabel(cmd);
+            colorSource = mMotionBlur->OutputView(frame);
         }
 
         if (mBloomEnabled)
@@ -318,6 +348,14 @@ namespace mir
                 /*isLinearDepth*/ true, view.nearZ, view.farZ, mSwapchain->Extent());
             mDevice->EndLabel(cmd);
             colorSource = mDepthOfField->OutputView(frame);
+        }
+
+        if (hasRect && mMotionBlurEnabled)
+        {
+            mDevice->BeginLabel(cmd, "Motion Blur Pass", { 0.0f, 1.0f, 0.5f, 1.0f });
+            mMotionBlur->Record(cmd, frame, colorSource, mRayTracer->VelocityView(frame), mSwapchain->Extent());
+            mDevice->EndLabel(cmd);
+            colorSource = mMotionBlur->OutputView(frame);
         }
 
         if (hasRect && mBloomEnabled)

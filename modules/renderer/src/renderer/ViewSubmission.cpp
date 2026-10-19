@@ -31,7 +31,7 @@ namespace mir
                 return std::nullopt;
             const glm::dvec3 steps = glm::dvec3(offset->Meters()) / double(grid);
             if (!(std::abs(steps.x) <= kExactGridSteps && std::abs(steps.y) <= kExactGridSteps &&
-                  std::abs(steps.z) <= kExactGridSteps))
+                std::abs(steps.z) <= kExactGridSteps))
                 return pose.TryMatrixRelativeTo(camera);
 
             glm::mat4 m(pose.linear);
@@ -46,7 +46,7 @@ namespace mir
     }
 
     size_t BuildViewDrawItems(std::span<const WorldDrawItem> items, WorldPosition viewportCamera,
-                              const glm::mat4 &viewProj, std::vector<DrawItem> &out)
+        const glm::mat4 &viewProj, std::vector<DrawItem> &out)
     {
         out.clear();
         out.reserve(items.size());
@@ -55,16 +55,23 @@ namespace mir
         for (const WorldDrawItem &item : items)
         {
             const std::optional<glm::mat4> model = item.translationGrid > 0.0f
-                                                       ? GridMatrixRelativeTo(item.pose, viewportCamera,
-                                                                              item.translationGrid)
-                                                       : item.pose.TryMatrixRelativeTo(viewportCamera);
+                ? GridMatrixRelativeTo(item.pose, viewportCamera,
+                    item.translationGrid)
+                : item.pose.TryMatrixRelativeTo(viewportCamera);
             if (!model)
             {
                 ++skipped;
                 continue;
             }
+
+            const WorldPose &previousPose = item.previousPose.value_or(item.pose);
+            const std::optional<glm::mat4> previousModel = item.translationGrid > 0.0f
+                ? GridMatrixRelativeTo(previousPose, viewportCamera,
+                    item.translationGrid)
+                : previousPose.TryMatrixRelativeTo(viewportCamera);
+
             out.push_back(DrawItem{ item.mesh, *model, item.normalMatrix, item.tint, item.material,
-                                    item.deformation, item.transparent });
+                                    item.deformation, item.transparent, previousModel.value_or(*model) });
         }
 
         std::stable_sort(out.begin(), out.end(),

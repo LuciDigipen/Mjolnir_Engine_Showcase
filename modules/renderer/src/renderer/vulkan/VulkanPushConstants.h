@@ -98,4 +98,17 @@ namespace mir::vk
         float _pad0;
         glm::vec2 invTargetExtent;
     };
+
+    struct VelocityPushConstants
+    {
+        glm::mat4 model;     // 64
+        glm::mat4 prevModel; // 64
+    };
+
+    struct MotionBlurPushConstants
+    {
+        float shutterStrength;
+        uint32_t sampleCount;
+        glm::vec2 invExtent;
+    };
 }

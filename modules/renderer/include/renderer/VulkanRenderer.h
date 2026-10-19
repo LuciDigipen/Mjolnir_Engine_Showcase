@@ -50,6 +50,8 @@ namespace mir::vk
     class PostProcess;
     class Bloom;
     class DepthOfField;
+    class VelocityPass;
+    class MotionBlur;
     class FrameCapture;
     class ImGuiOverlay;
     class MeshUploader;
@@ -91,6 +93,11 @@ namespace mir
 
         // Power-of-two meters the camera-relative translation snaps to; 0 = none.
         float translationGrid = 0.0f;
+
+        // Last frame's pose, for motion blur's velocity buffer. nullopt means
+        // "no history" (new this frame, or the producer doesn't track it) -
+        // BuildViewDrawItems then falls back to `pose` itself, i.e. zero velocity.
+        std::optional<WorldPose> previousPose;
     };
 
     // One draw call's worth of data for one viewport. Temporary: it lives only
@@ -112,6 +119,12 @@ namespace mir
         std::span<const glm::vec4> deformation;
 
         bool transparent = false;
+
+        // Last frame's pose narrowed the same way as `model`, but relative to
+        // THIS frame's camera (not last frame's) - see BuildViewDrawItems.
+        // Equal to `model` when there is no history, so a still object under a
+        // still camera comes out to exactly zero velocity.
+        glm::mat4 previousModel{ 1.0f };
     };
 
     // Draw items produced outside the MeshRenderer query (by ModelSystem),
@@ -241,6 +254,8 @@ namespace mir
 
         void SetDepthOfField(bool enabled, float focusDistance, float aperture, float maxBlur);
 
+        void SetMotionBlur(bool enabled, float shutterStrength, uint32_t sampleCount);
+
         void SetFilm(bool enabled, float grain, float contrast, float saturation, float vignetteStrength,
             float vignetteRadius);
 
@@ -298,8 +313,15 @@ namespace mir
         std::unique_ptr<vk::PostProcess> mPostProcess;
         std::unique_ptr<vk::Bloom> mBloom;
         bool mBloomEnabled = false;
+
         std::unique_ptr<vk::DepthOfField> mDepthOfField;
         bool mDepthOfFieldEnabled = false;
+
+        std::unique_ptr<vk::VelocityPass> mVelocityPass;
+        std::unique_ptr<vk::MotionBlur> mMotionBlur;
+        bool mMotionBlurEnabled = false;
+
+        std::vector<uint32_t> mVelocityCameraOffsets;
 
         std::unique_ptr<vk::FrameCapture> mCapture;
 

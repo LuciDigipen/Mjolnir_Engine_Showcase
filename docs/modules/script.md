@@ -97,8 +97,8 @@ end
 ### Post-processing
 
 `world:set_fog/get_fog`, `world:set_hdr/get_hdr`, `world:set_bloom/get_bloom`,
-`world:set_depth_of_field/get_depth_of_field` and `world:set_film/get_film`
-reach `PostProcessingSettings`
+`world:set_depth_of_field/get_depth_of_field`, `world:set_film/get_film` and
+`world:set_motion_blur/get_motion_blur` reach `PostProcessingSettings`
 - one resource shared by the whole render, not a per-`Camera` component, so
 (like `set_state`) these take no entity. Each `set_*` takes one table; every
 field is optional and defaults to that effect's *current* live value, so a
@@ -115,6 +115,7 @@ world:set_hdr({ exposure = 1.0, tonemapOperator = "aces" })  -- "none" | "reinha
 world:set_depth_of_field({ enabled = true, focusDistance = 10.0, aperture = 0.1, maxBlur = 16.0 })
 world:set_film({ enabled = true, grain = 0.05, contrast = 1.0, saturation = 1.0,
                  vignetteStrength = 0.3, vignetteRadius = 1.0 })
+world:set_motion_blur({ enabled = true, shutterStrength = 0.5, sampleCount = 8 })
 
 local bloom = world:get_bloom()
 if bloom.enabled then
@@ -124,9 +125,9 @@ end
 
 `ReadFogParams`/`WriteFogParams`/`ReadHdrParams`/`WriteHdrParams`/
 `ReadBloomParams`/`WriteBloomParams`/`ReadDepthOfFieldParams`/`WriteDepthOfFieldParams`/
-`ReadFilmParams`/`WriteFilmParams`
+`ReadFilmParams`/`WriteFilmParams`/`ReadMotionBlurParams`/`WriteMotionBlurParams`
 (`renderer/FogEffect.h`, `renderer/HdrEffect.h`, `renderer/BloomEffect.h`,
-`renderer/DepthOfFieldEffect.h`, `renderer/FilmEffect.h`) are the same functions
+`renderer/DepthOfFieldEffect.h`, `renderer/FilmEffect.h`, `renderer/MotionBlurEffect.h`) are the same functions
 the Post-Processing panel itself reads and writes - this binding can't drift
 from what the panel shows, in either direction.
 
@@ -293,6 +294,16 @@ than something this module or `scene` does.
    flavour underneath.
 
 ## Changed
+
+*2026-10-19* — **`world:set_motion_blur/get_motion_blur` joins the
+post-processing bindings (#212).** Was: the five effects above. Now: Motion
+blur followed the exact same shape - a sixth `PostEffectRegistry` entry, two
+more functions in `PostProcessingBindings.cpp` reading/writing through
+`ReadMotionBlurParams`/`WriteMotionBlurParams`, clamping `shutterStrength` to
+`>= 0` and `sampleCount` to `>= 1` the same way the others clamp their own
+fields. Because: same reasoning as Film's entry below - a post-processing
+effect the panel exposes and gameplay code can't reach is the gap this file
+exists to close.
 
 *2026-10-19* — **`world:set_film/get_film` joins the post-processing
 bindings (#213).** Was: the four effects below. Now: Film followed the exact

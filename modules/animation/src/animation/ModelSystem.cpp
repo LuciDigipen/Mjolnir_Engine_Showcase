@@ -148,7 +148,7 @@ namespace mir
                     if (materialFailed)
                     {
                         MIR_LOG_ERROR("Model {:016x}: '{}' material creation failed, using error material", id.value,
-                                      desc.shaderName);
+                            desc.shaderName);
                         if (gpu.material.IsNull())
                             gpu.material = mRenderer.ErrorMaterial();
                         if (gpu.mirrored.IsNull())
@@ -156,8 +156,8 @@ namespace mir
                     }
                     // Magenta, not white: the ray tracer reads only the tint, never the texture.
                     gpu.factor = materialFailed || desc.baseColorTexture == mRenderer.ErrorTexture()
-                                     ? glm::vec4(1, 0, 1, 1)
-                                     : material.baseColor;
+                        ? glm::vec4(1, 0, 1, 1)
+                        : material.baseColor;
                     gpu.transparent = !materialFailed && material.alpha == MaterialAlpha::Blend;
                     primitives.push_back(gpu);
                     if (gpu.mesh.IsNull())
@@ -248,6 +248,7 @@ namespace mir
         auto &draws = context.world.Resource<ModelDrawItems>();
         draws.items.clear();
         mDeformations.clear();
+        mCurrentPoses.clear();
         auto *overrides = context.world.TryResource<ModelMorphOverrides>();
         std::unordered_set<uint64_t> alive;
         context.world.GetOrCreateQuery<ModelPlayer, const WorldTransform>().ForEach(
@@ -341,6 +342,10 @@ namespace mir
                         auto matrices = SkinMatrices(data.resources.model, pose, uint32_t(i));
                         const auto &mesh = data.resources.meshes.at(node.mesh.value);
                         const auto &gpu = data.meshes.at(node.mesh.value);
+                        const uint64_t poseKey = packed * 1000003ull + static_cast<uint64_t>(i);
+                        const auto previousPose = mPreviousPoses.find(poseKey);
+                        mCurrentPoses[poseKey] = *world;
+
                         for (size_t p = 0; p < mesh.primitives.size(); ++p)
                         {
                             mDeformations.push_back(
@@ -352,6 +357,8 @@ namespace mir
                                                det < 0 ? gpu[p].mirrored : gpu[p].material,
                                                mDeformations.back() };
                             item.transparent = gpu[p].transparent;
+                            if (previousPose != mPreviousPoses.end())
+                                item.previousPose = previousPose->second;
                             draws.items.push_back(item);
                         }
                     }
@@ -366,5 +373,6 @@ namespace mir
             std::erase_if(overrides->instances, [&](const auto &p) { return !alive.contains(p.first); });
         std::erase_if(mFailed, [&](auto key) { return !alive.contains(key); });
         std::erase_if(mRequestedModels, [&](const auto &entry) { return !alive.contains(entry.first); });
+        std::swap(mPreviousPoses, mCurrentPoses);
     }
 } // namespace mir

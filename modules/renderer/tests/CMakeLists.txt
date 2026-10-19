@@ -6,6 +6,7 @@ engine_add_module_tests(renderer
     MeshStreaming.tests.cpp
     FogEffect.tests.cpp
     HdrEffect.tests.cpp
+    MotionBlurEffect.tests.cpp
     PostEffectRegistry.tests.cpp
     PostProcessingSettings.tests.cpp
     RenderSettings.tests.cpp

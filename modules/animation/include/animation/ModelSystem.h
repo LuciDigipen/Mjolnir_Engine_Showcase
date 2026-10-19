@@ -25,8 +25,7 @@ namespace mir
     public:
         ModelSystem(VulkanRenderer &renderer, AssetCache *assets, std::string root)
             : mRenderer(renderer), mAssets(assets), mRoot(std::move(root))
-        {
-        }
+        {}
         void Reset();
         bool PrepareReload(AssetCache &assets, std::string &error);
         void CommitReload(AssetCache *assets);
@@ -38,7 +37,7 @@ namespace mir
         {
             MeshHandle mesh;
             MaterialHandle material, mirrored;
-            glm::vec4 factor{1};
+            glm::vec4 factor{ 1 };
             bool transparent = false;
         };
         struct Loaded
@@ -59,5 +58,7 @@ namespace mir
         std::unordered_set<uint64_t> mFailed;
         std::unordered_map<uint64_t, uint64_t> mRequestedModels;
         std::vector<std::vector<glm::vec4>> mDeformations;
+        std::unordered_map<uint64_t, WorldPose> mPreviousPoses;
+        std::unordered_map<uint64_t, WorldPose> mCurrentPoses;
     };
 } // namespace mir

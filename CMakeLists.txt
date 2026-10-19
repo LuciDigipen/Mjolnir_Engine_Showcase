@@ -118,6 +118,14 @@ engine_add_shaders(MjolnirEngine
     ENTRIES vertexMain:vertex cocMain:fragment nearBlurMain:fragment farBlurMain:fragment compositeMain:fragment)
 
 engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/velocity.slang
+    ENTRIES vertexMain:vertex fragmentMain:fragment)
+
+engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/motionBlur.slang
+    ENTRIES vertexMain:vertex compositeMain:fragment)
+
+engine_add_shaders(MjolnirEngine
     SOURCE assets/shaders/shadowDepth.slang
     ENTRIES vertexMain:vertex)
 

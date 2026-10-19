@@ -93,6 +93,8 @@ namespace mir::vk
 
         VkImageView DistanceView(uint32_t frame) const { return mDistanceViews[frame]; }
 
+        VkImageView VelocityView(uint32_t frame) const { return mVelocityViews[frame]; }
+
     private:
         bool CreateAccelerationStructureObject(VkDeviceSize size, VkAccelerationStructureTypeKHR type,
             VkBuffer &outBuffer, VmaAllocation &outAllocation, VkAccelerationStructureKHR &outAS);
@@ -135,6 +137,10 @@ namespace mir::vk
         VkImage mDistanceImages[kFramesInFlight]{};
         VmaAllocation mDistanceAllocations[kFramesInFlight]{};
         VkImageView mDistanceViews[kFramesInFlight]{};
+
+        VkImage mVelocityImages[kFramesInFlight]{};
+        VmaAllocation mVelocityAllocations[kFramesInFlight]{};
+        VkImageView mVelocityViews[kFramesInFlight]{};
 
         VkAccelerationStructureKHR mTlas[kFramesInFlight]{};
         VkBuffer mTlasBuffers[kFramesInFlight]{};

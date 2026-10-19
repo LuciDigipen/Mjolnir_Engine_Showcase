@@ -26,9 +26,11 @@ subsystem holds a pointer to the facade or to another subsystem.
 | `CameraBuffer` | set 1: per-view camera data and light list, plus the directional light, ambient, fog and atmosphere |
 | `ModelDescriptors` | set 2: per-draw model data, reset each frame |
 | `ShadowMaps` | set 3: Sun, spot and point shadow maps, their pipelines and casters |
-| `RayTracer` | a BLAS per mesh slot, a TLAS per frame, the RT pipeline, SBT and output images, plus a linear-distance output image alongside color |
-| `DepthOfField` | the CoC, near/far blur and composite pipelines and their half/full-res working images - reads whatever linear-HDR color and depth/distance `DrawFrame`/`TraceFrame` hand it; its output becomes what `Bloom` and `PostProcess` read from there on |
-| `Bloom` | the bright-pass extract, downsample and additive-upsample pipelines and mip chain - reads whatever linear-HDR source `DrawFrame`/`TraceFrame` hand it (`DepthOfField`'s result when it's enabled), ahead of `PostProcess` |
+| `RayTracer` | a BLAS per mesh slot, a TLAS per frame, the RT pipeline, SBT and output images, plus linear-distance and per-pixel velocity output images alongside color |
+| `DepthOfField` | the CoC, near/far blur and composite pipelines and their half/full-res working images - reads whatever linear-HDR color and depth/distance `DrawFrame`/`TraceFrame` hand it; its output becomes what `MotionBlur`, `Bloom` and `PostProcess` read from there on |
+| `VelocityPass` | raster-only: a second, depth-equal (no write) walk of the same `DrawItem`s the Scene Pass just drew, through `velocity.slang`, into its own per-pixel velocity image - the same shape as `ShadowMaps`' depth-only pass, not a screen-space one |
+| `MotionBlur` | the composite pipeline that samples color along whatever velocity buffer it's handed (`VelocityPass`'s output on raster, `RayTracer`'s `gVelocity` on ray tracing) - reads `DepthOfField`'s result when enabled, ahead of `Bloom` |
+| `Bloom` | the bright-pass extract, downsample and additive-upsample pipelines and mip chain - reads whatever linear-HDR source `DrawFrame`/`TraceFrame` hand it (`DepthOfField`'s or `MotionBlur`'s result when enabled), ahead of `PostProcess` |
 | `PostProcess` | the tonemap pipeline and per-frame descriptor sets - the one shared post-process hook point both `DrawFrame` and `TraceFrame` sample their scene color (and `Bloom`'s result) through; the same `tonemap.slang` pass also carries the film look (contrast, saturation, vignette, animated grain), applied after the tonemap itself |
 | `FrameCapture` | the `CaptureNextFrame` buffer and the PNG it writes |
 | `ImGuiOverlay` | ImGui's Vulkan backend and the draw data it overlays |
@@ -123,6 +125,7 @@ void SetTonemap(float exposure, int tonemapOperator);         // tonemapOperator
 void SetBloom(bool enabled, float threshold, float intensity, float radius); // enabled false skips the GPU chain
 void SetDepthOfField(bool enabled, float focusDistance, float aperture, float maxBlur); // enabled false skips the GPU chain
 void SetFilm(bool enabled, float grain, float contrast, float saturation, float vignetteStrength, float vignetteRadius); // enabled false neutralizes it
+void SetMotionBlur(bool enabled, float shutterStrength, uint32_t sampleCount); // enabled false skips the GPU chain
 void SetImGuiDrawData(ImDrawData *drawData);
 VkExtent2D SwapchainExtent() const; 
 
@@ -648,6 +651,46 @@ Everything that needs a device is verified by the smoke tests and
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-10-19* — **Motion blur (#212).** Was: no per-pixel velocity existed on
+either pipeline, so there was nothing to blur along. Now: a velocity buffer
+drives a single shared composite, `MotionBlur` (`vulkan/MotionBlur.h`,
+`assets/shaders/motionBlur.slang`), the same hand-off shape `DepthOfField`
+already uses - it reads whatever color and velocity that frame's caller hands
+it and becomes the new `colorSource` ahead of `Bloom`. Producing a true
+per-object velocity (not just a depth-reconstructed camera one, which would
+silently miss every moving object) took a different shape on each pipeline.
+Raster: a new `VelocityPass` subsystem re-walks the exact same `DrawItem`s the
+Scene Pass just drew, depth-tested `EQUAL`/no-write against the depth buffer
+already resolved (so only the fragment that actually won depth there
+contributes), through a dedicated `velocity.slang` - the same shape as
+`ShadowMaps`' depth-only pass, not a screen-space one. Its push constants
+carry only `model`/`prevModel` (128 bytes, Vulkan's guaranteed minimum,
+unchanged from before); `viewProj`/`prevViewProj` ride along in `CameraBuffer`'s
+existing per-view UBO instead, which `VelocityPass` binds directly - no other
+material shader needed to change. Ray traced: `RayTracer` gained a `gVelocity`
+storage image (same `gDistance` pattern DoF added) and `RtInstanceInfo` gained
+a `prevModel`; `closestHitMain` reprojects the object-space hit position
+through it to get the previous clip position, alongside the current one it
+already computes, entirely inside the existing hit shader. Both reduce to the
+same formula: `currentClip - previousClip`, where both model matrices are
+narrowed against *this* frame's camera (not each one's own), so a still
+object under a still camera comes out to exactly zero - camera panning and
+object motion both fall out of the one formula instead of needing separate
+code paths. The one new piece of state this needed and didn't have:
+`DrawItem`/`WorldDrawItem` gained `previousPose`/`previousModel`;
+`RenderSystem` and `ModelSystem` each keep a double-buffered
+`unordered_map<PackEntity(entity), WorldPose>` (swapped every frame, so an
+entity that disappears drops out for free) and set it per draw. A camera
+whose own matrix has no history yet (a brand new viewport) or an object whose
+history no longer fits float both fall back to the current value - zero
+velocity rather than a pop, the same "new = stationary" rule used throughout.
+`MotionBlurEffect.h`/`.cpp`, registered the same way as the other three, is
+`{shutterStrength=0.5, sampleCount=8}`; **the default is disabled**.
+`RenderSystem::OnUpdate` reads it and calls the new
+`VulkanRenderer::SetMotionBlur(enabled, shutterStrength, sampleCount)`.
+Because: issue #212 - blur pixels along their motion for the frame, camera
+and object, in both pipelines, adjustable from the Post-Processing panel.
 
 *2026-10-19* — **Film look: grain, contrast, saturation, vignette (#213).**
 Was: #207's Post-Processing panel named this grouping but nothing implemented
