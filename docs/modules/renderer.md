@@ -26,9 +26,10 @@ subsystem holds a pointer to the facade or to another subsystem.
 | `CameraBuffer` | set 1: per-view camera data and light list, plus the directional light, ambient, fog and atmosphere |
 | `ModelDescriptors` | set 2: per-draw model data, reset each frame |
 | `ShadowMaps` | set 3: Sun, spot and point shadow maps, their pipelines and casters |
-| `RayTracer` | a BLAS per mesh slot, a TLAS per frame, the RT pipeline, SBT and output images |
-| `Bloom` | the bright-pass extract, downsample and additive-upsample pipelines and mip chain - reads whatever linear-HDR source `DrawFrame`/`TraceFrame` hand it, ahead of `PostProcess` |
-| `PostProcess` | the tonemap pipeline and per-frame descriptor sets - the one shared post-process hook point both `DrawFrame` and `TraceFrame` sample their own HDR target (and `Bloom`'s result) through |
+| `RayTracer` | a BLAS per mesh slot, a TLAS per frame, the RT pipeline, SBT and output images, plus a linear-distance output image alongside color |
+| `DepthOfField` | the CoC, near/far blur and composite pipelines and their half/full-res working images - reads whatever linear-HDR color and depth/distance `DrawFrame`/`TraceFrame` hand it; its output becomes what `Bloom` and `PostProcess` read from there on |
+| `Bloom` | the bright-pass extract, downsample and additive-upsample pipelines and mip chain - reads whatever linear-HDR source `DrawFrame`/`TraceFrame` hand it (`DepthOfField`'s result when it's enabled), ahead of `PostProcess` |
+| `PostProcess` | the tonemap pipeline and per-frame descriptor sets - the one shared post-process hook point both `DrawFrame` and `TraceFrame` sample their scene color (and `Bloom`'s result) through |
 | `FrameCapture` | the `CaptureNextFrame` buffer and the PNG it writes |
 | `ImGuiOverlay` | ImGui's Vulkan backend and the draw data it overlays |
 | `MeshUploader` | the persistent staging ring, queued mesh uploads and their BLAS builds, and retired GPU objects until their last frame (#127) |
@@ -120,6 +121,7 @@ void SetAmbientColor(const glm::vec3 &color);
 void SetFog(const glm::vec3 &color, float density);          // density <= 0 disables fog
 void SetTonemap(float exposure, int tonemapOperator);         // tonemapOperator matches TonemapOperator in HdrEffect.h
 void SetBloom(bool enabled, float threshold, float intensity, float radius); // enabled false skips the GPU chain
+void SetDepthOfField(bool enabled, float focusDistance, float aperture, float maxBlur); // enabled false skips the GPU chain
 void SetImGuiDrawData(ImDrawData *drawData);
 VkExtent2D SwapchainExtent() const; 
 
@@ -645,6 +647,54 @@ Everything that needs a device is verified by the smoke tests and
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-10-18* — **Depth of field (#209).** Was: no screen-space DoF existed,
+and ray tracing had no depth output at all to build one from. Now: a new
+`vk::DepthOfField` subsystem (`vulkan/DepthOfField.h`, `assets/shaders/depthOfField.slang`)
+runs a half-res CoC pass, separate near/far gather blurs and a full-res
+composite, reading whatever linear-HDR color and depth/distance that frame's
+caller hands it - the same hand-off shape Bloom and `PostProcess` already
+use. Its output then *becomes* what Bloom and `PostProcess` read as the scene
+color from there on - one swap point (`colorSource` in both `RecordCommands`
+and `RecordRtFrame`) gets bloom highlights blurring correctly with DoF for
+free, no Bloom-specific plumbing. Getting a comparable depth source on both
+pipelines took real work: raster already had `Swapchain::DepthView`, but nothing
+sampled it before now, so `CreateDepthResources` gained `VK_IMAGE_USAGE_SAMPLED_BIT`
+and a format-support check for it; ray tracing had no depth output of any kind -
+`RayPayload` gained a `distance` field (`closestHitMain` sets it to
+`RayTCurrent()`, a miss leaves the far-plane default `rayGenMain` seeded it
+with), written to a new `gDistance` storage image with its own
+`mDistanceImages`/views in `RayTracer`, cleared to a far sentinel (not black -
+see Bloom's own RT-garbage fix, above) before every trace for the same
+sub-rect reason. One shader, `LinearizeDepth`, handles both: raster's
+reverse-Z buffer via the near/far branch derived from `CameraMath`'s own
+projection (`viewDist = n·f / (n + d·(f−n))`, or `n/d` with no far plane), ray
+tracing's distance passed straight through. The near and far layers are kept
+separate deliberately: acceptance criteria rule out both failure modes a
+single-layer gather would hit - the near layer gathers at a *fixed* radius
+(correct foreground bokeh spreading over a sharp subject) with each tap
+weighted by its own CoC and its coverage mask falling out of that same
+weighted average (smooth by construction, so no hard-edged halo); the far
+layer gathers at a radius scaled by the center pixel's own CoC, each tap
+additionally weighted by whether *its own* CoC can reach back to the center,
+which is what keeps a sharp foreground edge from bleeding into the blurred
+background behind it. `DepthOfFieldEffect.h`/`.cpp`, registered into
+`PostEffectRegistry` as `"DepthOfField"` the same way the other three
+register, is `{focusDistance=10, aperture=0.1, maxBlur=16}`; **the default is
+disabled**, same reasoning as HDR's and Bloom's. `RenderSystem::OnUpdate`
+reads it the same way and calls the new
+`VulkanRenderer::SetDepthOfField(enabled, focusDistance, aperture, maxBlur)`.
+One real implementation trap worth recording: GLM's `vec2` asks for only
+4-byte alignment, but slang's push constant blocks give a `vec2` member
+8-byte *base* alignment - a struct mixing a lone leading scalar with a `vec2`
+(`DepthOfFieldBlurPushConstants`) silently disagreed on that member's byte
+*offset* between C++ and the shader, not just the block's total size (which
+is the only thing `vkCreateGraphicsPipelines`'s validation actually catches).
+Found it by bisecting with a solid-color debug return in the composite shader
+until the whole screen showed it uniformly, rather than trusting "no
+validation errors" as proof of a correct layout. Because: issue #209 - blur
+what the camera isn't focused on, adjustable from the Post-Processing panel,
+in both pipelines, without a foreground halo or a bled focus edge.
 
 *2026-10-18* — **Bloom (#208).** Was: no screen-space bloom existed; the
 panel had nothing to toggle for it. Now: a new `vk::Bloom` subsystem

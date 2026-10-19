@@ -1,8 +1,8 @@
 /**
  * @file PostProcessingBindings.tests.cpp
  * @author Rahul Nair
- * @brief Tests for the Lua world:set_fog/get_fog, set_hdr/get_hdr and
- *        set_bloom/get_bloom bindings.
+ * @brief Tests for the Lua world:set_fog/get_fog, set_hdr/get_hdr,
+ *        set_bloom/get_bloom and set_depth_of_field/get_depth_of_field bindings.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -14,6 +14,7 @@
 #include <core/ecs/World.h>
 
 #include <renderer/BloomEffect.h>
+#include <renderer/DepthOfFieldEffect.h>
 #include <renderer/FogEffect.h>
 #include <renderer/HdrEffect.h>
 #include <renderer/PostProcessingSettings.h>
@@ -30,12 +31,14 @@ namespace
     using mir::CommandBuffer;
     using mir::ComponentOps;
     using mir::ComponentRegistry;
+    using mir::DepthOfFieldParams;
     using mir::Entity;
     using mir::FieldKind;
     using mir::FogParams;
     using mir::HdrParams;
     using mir::PostProcessingSettings;
     using mir::ReadBloomParams;
+    using mir::ReadDepthOfFieldParams;
     using mir::ReadFogParams;
     using mir::ReadHdrParams;
     using mir::RuntimeFieldDecl;
@@ -56,6 +59,9 @@ namespace
             { "fogColorX", FieldKind::Float },
             { "hdrExposure", FieldKind::Float },
             { "hdrOperatorIsAces", FieldKind::Bool },
+            { "dofFocusDistance", FieldKind::Float },
+            { "dofAperture", FieldKind::Float },
+            { "dofMaxBlur", FieldKind::Float },
             { "reached", FieldKind::Bool },
         };
         return ComponentRegistry::Instance().RegisterRuntime("PostProcessingBindingsProbe", fields);
@@ -112,10 +118,12 @@ function T.OnStart(self, world, entity)
         and world:set_fog({ enabled = true, color = { x = 0.1, y = 0.2, z = 0.3 },
                              density = 0.02, startDistance = 5.0, endDistance = 50.0 })
         and world:set_hdr({ enabled = true, exposure = 1.5, tonemapOperator = "aces" })
+        and world:set_depth_of_field({ enabled = true, focusDistance = 12.5, aperture = 0.3, maxBlur = 24.0 })
 
     local bloom = world:get_bloom()
     local fog = world:get_fog()
     local hdr = world:get_hdr()
+    local dof = world:get_depth_of_field()
 
     world:set(entity, "PostProcessingBindingsProbe", "setOk", ok)
     world:set(entity, "PostProcessingBindingsProbe", "bloomEnabled", bloom.enabled)
@@ -128,6 +136,9 @@ function T.OnStart(self, world, entity)
     world:set(entity, "PostProcessingBindingsProbe", "fogColorX", fog.color.x)
     world:set(entity, "PostProcessingBindingsProbe", "hdrExposure", hdr.exposure)
     world:set(entity, "PostProcessingBindingsProbe", "hdrOperatorIsAces", hdr.tonemapOperator == "aces")
+    world:set(entity, "PostProcessingBindingsProbe", "dofFocusDistance", dof.focusDistance)
+    world:set(entity, "PostProcessingBindingsProbe", "dofAperture", dof.aperture)
+    world:set(entity, "PostProcessingBindingsProbe", "dofMaxBlur", dof.maxBlur)
     world:set(entity, "PostProcessingBindingsProbe", "reached", true)
 end
 
@@ -169,6 +180,7 @@ function T.OnStart(self, world, entity)
     local anySucceeded = world:set_bloom({ threshold = "bright" })
         or world:set_fog({ color = "red" })
         or world:set_hdr({ tonemapOperator = "nonsense" })
+        or world:set_depth_of_field({ focusDistance = "close" })
 
     local bloom = world:get_bloom()
     world:set(entity, "PostProcessingBindingsProbe", "setOk", not anySucceeded)
@@ -198,7 +210,7 @@ return T
 )LUA";
 }
 
-TEST_CASE("set_bloom/set_fog/set_hdr write PostProcessingSettings and get_* reads it back",
+TEST_CASE("set_bloom/set_fog/set_hdr/set_depth_of_field write PostProcessingSettings and get_* reads it back",
     "[script][postprocessing]")
 {
     Fixture fixture(kSetAndGetEverything, "postfx_set_and_get");
@@ -220,6 +232,10 @@ TEST_CASE("set_bloom/set_fog/set_hdr write PostProcessingSettings and get_* read
     CHECK(ReadProbeField<float>(fixture.world, fixture.entity, "hdrExposure") == 1.5f);
     CHECK(ReadProbeField<bool>(fixture.world, fixture.entity, "hdrOperatorIsAces"));
 
+    CHECK(ReadProbeField<float>(fixture.world, fixture.entity, "dofFocusDistance") == 12.5f);
+    CHECK(ReadProbeField<float>(fixture.world, fixture.entity, "dofAperture") == 0.3f);
+    CHECK(ReadProbeField<float>(fixture.world, fixture.entity, "dofMaxBlur") == 24.0f);
+
     // Also verify straight from the resource - the Lua round-trip isn't the only witness.
     const PostProcessingSettings &settings = fixture.world.Resource<PostProcessingSettings>();
     const BloomParams bloom = ReadBloomParams(settings.effects.at("Bloom").params);
@@ -228,6 +244,8 @@ TEST_CASE("set_bloom/set_fog/set_hdr write PostProcessingSettings and get_* read
     CHECK(fog.end == 50.0f);
     const HdrParams hdr = ReadHdrParams(settings.effects.at("HDR").params);
     CHECK(hdr.exposure == 1.5f);
+    const DepthOfFieldParams dof = ReadDepthOfFieldParams(settings.effects.at("DepthOfField").params);
+    CHECK(dof.maxBlur == 24.0f);
 }
 
 TEST_CASE("a partial set_bloom table only touches the fields it names", "[script][postprocessing]")

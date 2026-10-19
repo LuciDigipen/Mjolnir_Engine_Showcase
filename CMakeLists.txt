@@ -114,6 +114,10 @@ engine_add_shaders(MjolnirEngine
     ENTRIES vertexMain:vertex brightpassMain:fragment downsampleMain:fragment upsampleMain:fragment)
 
 engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/depthOfField.slang
+    ENTRIES vertexMain:vertex cocMain:fragment nearBlurMain:fragment farBlurMain:fragment compositeMain:fragment)
+
+engine_add_shaders(MjolnirEngine
     SOURCE assets/shaders/shadowDepth.slang
     ENTRIES vertexMain:vertex)
 

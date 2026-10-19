@@ -29,30 +29,6 @@ namespace mir::vk
 {
     namespace
     {
-        void ToColorAttachment(VkCommandBuffer cmd, VkImage image, bool firstUse)
-        {
-            ImageBarrier(cmd, image, VK_IMAGE_ASPECT_COLOR_BIT,
-                firstUse ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                firstUse ? VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT : VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                firstUse ? 0 : VK_ACCESS_2_SHADER_READ_BIT,
-                VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT);
-        }
-
-        void ToShaderReadOnly(VkCommandBuffer cmd, VkImage image)
-        {
-            ImageBarrier(cmd, image, VK_IMAGE_ASPECT_COLOR_BIT,
-                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
-        }
-
-        glm::vec2 InvExtent(VkExtent2D extent)
-        {
-            return { 1.0f / static_cast<float>(extent.width), 1.0f / static_cast<float>(extent.height) };
-        }
-
         constexpr uint32_t kSetsPerFrame = 1 + 2 * (kBloomMipLevels - 1);
     }
 
@@ -111,14 +87,7 @@ namespace mir::vk
         }
 
         const auto allocate = [&](VkDescriptorSet &outSet)
-            {
-                const VkDescriptorSetAllocateInfo allocInfo{
-                    .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-                    .descriptorPool = mPool,
-                    .descriptorSetCount = 1,
-                    .pSetLayouts = &mSetLayout };
-                return vkAllocateDescriptorSets(mDevice->Handle(), &allocInfo, &outSet) == VK_SUCCESS;
-            };
+            { return AllocateDescriptorSet(mDevice->Handle(), mPool, mSetLayout, outSet); };
 
         for (uint32_t frame = 0; frame < kFramesInFlight; ++frame)
         {
@@ -183,29 +152,6 @@ namespace mir::vk
 
         if (ok)
         {
-            const VkPipelineVertexInputStateCreateInfo vertexInput{
-                .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
-
-            const VkPipelineInputAssemblyStateCreateInfo inputAssembly{
-                .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
-                .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST };
-
-            const VkPipelineViewportStateCreateInfo viewportState{
-                .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
-                .viewportCount = 1,
-                .scissorCount = 1 };
-
-            const VkPipelineRasterizationStateCreateInfo rasterizer{
-                .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-                .polygonMode = VK_POLYGON_MODE_FILL,
-                .cullMode = VK_CULL_MODE_NONE,
-                .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
-                .lineWidth = 1.0f };
-
-            const VkPipelineMultisampleStateCreateInfo multisample{
-                .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-                .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT };
-
             const VkPipelineColorBlendAttachmentState overwriteBlend{
                 .blendEnable = VK_FALSE,
                 .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
@@ -224,57 +170,17 @@ namespace mir::vk
                 .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                                   VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT };
 
-            const VkDynamicState dynamicStates[]{ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
-            const VkPipelineDynamicStateCreateInfo dynamicState{
-                .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-                .dynamicStateCount = 2,
-                .pDynamicStates = dynamicStates };
-
-            const VkPipelineRenderingCreateInfo renderingInfo{
-                .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-                .colorAttachmentCount = 1,
-                .pColorAttachmentFormats = &kHdrColorFormat };
-
             const auto makePipeline = [&](VkShaderModule fragModule, const char *fragEntry,
                 const VkPipelineColorBlendAttachmentState &blendAttachment, const char *debugName, VkPipeline &outPipeline)
                 {
-                    const VkPipelineShaderStageCreateInfo stages[]{
-                        { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-                         .stage = VK_SHADER_STAGE_VERTEX_BIT,
-                         .module = vertModule,
-                         .pName = "vertexMain" },
-                        { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-                         .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
-                         .module = fragModule,
-                         .pName = fragEntry } };
-
-                    const VkPipelineColorBlendStateCreateInfo colorBlend{
-                        .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-                        .attachmentCount = 1,
-                        .pAttachments = &blendAttachment };
-
-                    const VkGraphicsPipelineCreateInfo pipelineInfo{
-                        .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-                        .pNext = &renderingInfo,
-                        .stageCount = 2,
-                        .pStages = stages,
-                        .pVertexInputState = &vertexInput,
-                        .pInputAssemblyState = &inputAssembly,
-                        .pViewportState = &viewportState,
-                        .pRasterizationState = &rasterizer,
-                        .pMultisampleState = &multisample,
-                        .pColorBlendState = &colorBlend,
-                        .pDynamicState = &dynamicState,
-                        .layout = mPipelineLayout };
-
-                    if (vkCreateGraphicsPipelines(mDevice->Handle(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr,
-                        &outPipeline) != VK_SUCCESS)
-                    {
-                        MIR_LOG_CRITICAL("CreatePipelines: vkCreateGraphicsPipelines failed for {}", debugName);
-                        return false;
-                    }
-                    mDevice->NameObject(VK_OBJECT_TYPE_PIPELINE, reinterpret_cast<uint64_t>(outPipeline), debugName);
-                    return true;
+                    const FullscreenPipelineDesc desc{
+                        .vertModule = vertModule,
+                        .fragModule = fragModule,
+                        .fragEntry = fragEntry,
+                        .layout = mPipelineLayout,
+                        .blendAttachment = &blendAttachment,
+                        .colorFormat = kHdrColorFormat };
+                    return CreateFullscreenPipeline(*mDevice, desc, debugName, outPipeline);
                 };
 
             ok = makePipeline(extractModule, "brightpassMain", overwriteBlend, "Bloom extract pipeline", mExtractPipeline);
@@ -515,7 +421,7 @@ namespace mir::vk
 
         for (uint32_t level = 0; level < kBloomMipLevels; ++level)
         {
-            ToColorAttachment(cmd, mMipImages[frame][level], /*firstUse*/ true);
+            ColorAttachmentBarrier(cmd, mMipImages[frame][level], /*firstUse*/ true);
 
             const VkRenderingAttachmentInfo attachment{
                 .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -545,14 +451,14 @@ namespace mir::vk
             }
 
             vkCmdEndRendering(cmd);
-            ToShaderReadOnly(cmd, mMipImages[frame][level]);
+            ShaderReadOnlyBarrier(cmd, mMipImages[frame][level]);
         }
 
         for (uint32_t levelPlusOne = kBloomMipLevels - 1; levelPlusOne > 0; --levelPlusOne)
         {
             const uint32_t level = levelPlusOne - 1;
 
-            ToColorAttachment(cmd, mMipImages[frame][level], /*firstUse*/ false);
+            ColorAttachmentBarrier(cmd, mMipImages[frame][level], /*firstUse*/ false);
 
             const VkRenderingAttachmentInfo attachment{
                 .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -574,7 +480,7 @@ namespace mir::vk
             drawFullscreen(mMipExtents[level], mUpsamplePipeline, mUpsampleSets[frame][level], &push, sizeof(push));
 
             vkCmdEndRendering(cmd);
-            ToShaderReadOnly(cmd, mMipImages[frame][level]);
+            ShaderReadOnlyBarrier(cmd, mMipImages[frame][level]);
         }
     }
 }

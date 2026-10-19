@@ -49,6 +49,7 @@ namespace mir::vk
     class RayTracer;
     class PostProcess;
     class Bloom;
+    class DepthOfField;
     class FrameCapture;
     class ImGuiOverlay;
     class MeshUploader;
@@ -190,7 +191,7 @@ namespace mir
         // CreateMesh and DestroyMesh stay synchronous. Configure once before queueing.
         bool ConfigureMeshStreaming(const MeshStreamingDesc &desc);
         MeshHandle QueueMesh(std::vector<Vertex> vertices, std::vector<uint32_t> indices,
-                             const MeshUploadOptions &options);
+            const MeshUploadOptions &options);
         MeshUploadState MeshState(MeshHandle handle) const;
         // The handle goes stale at once; false when it already was.
         bool RetireMesh(MeshHandle handle);
@@ -237,6 +238,8 @@ namespace mir
 
         // enabled false skips the GPU chain for the frame and the panel's bloom contribution.
         void SetBloom(bool enabled, float threshold, float intensity, float radius);
+
+        void SetDepthOfField(bool enabled, float focusDistance, float aperture, float maxBlur);
 
         void SetAtmosphere(const Sky &sky);
 
@@ -292,6 +295,8 @@ namespace mir
         std::unique_ptr<vk::PostProcess> mPostProcess;
         std::unique_ptr<vk::Bloom> mBloom;
         bool mBloomEnabled = false;
+        std::unique_ptr<vk::DepthOfField> mDepthOfField;
+        bool mDepthOfFieldEnabled = false;
 
         std::unique_ptr<vk::FrameCapture> mCapture;
 

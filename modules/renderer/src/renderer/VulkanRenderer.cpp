@@ -9,6 +9,7 @@
 #include <renderer/VulkanRenderer.h>
 #include "vulkan/Bloom.h"
 #include "vulkan/CameraBuffer.h"
+#include "vulkan/DepthOfField.h"
 #include "vulkan/Device.h"
 #include "vulkan/FrameCapture.h"
 #include "vulkan/FrameSync.h"
@@ -39,6 +40,7 @@ namespace mir
         mRayTracer(std::make_unique<vk::RayTracer>()),
         mPostProcess(std::make_unique<vk::PostProcess>()),
         mBloom(std::make_unique<vk::Bloom>()),
+        mDepthOfField(std::make_unique<vk::DepthOfField>()),
         mCapture(std::make_unique<vk::FrameCapture>()),
         mImGuiOverlay(std::make_unique<vk::ImGuiOverlay>()),
         mMeshUploads(std::make_unique<vk::MeshUploader>())
@@ -106,6 +108,9 @@ namespace mir
         if (!mBloom->Initialize(*mDevice, mSwapchain->Extent()))
             return false;
 
+        if (!mDepthOfField->Initialize(*mDevice, mSwapchain->Extent()))
+            return false;
+
         return true;
     }
 
@@ -116,7 +121,8 @@ namespace mir
         // The swapchain cannot reach ray tracing, so the facade resizes its output images.
         if (!mSwapchain->Recreate(*mWindow) ||
             (mDevice->RayTracingSupported() && !mRayTracer->Resize(mSwapchain->Extent())) ||
-            !mBloom->Resize(mSwapchain->Extent()))
+            !mBloom->Resize(mSwapchain->Extent()) ||
+            !mDepthOfField->Resize(mSwapchain->Extent()))
         {
             // Recreate may have cleared the flag already; set it so the next frame retries.
             mSwapchain->MarkOutOfDate();
@@ -136,6 +142,7 @@ namespace mir
 
             mMeshUploads->Shutdown(*mRayTracer);
 
+            mDepthOfField->Shutdown();
             mBloom->Shutdown();
             mPostProcess->Shutdown();
             mMaterialStore->Shutdown();
@@ -365,6 +372,12 @@ namespace mir
     {
         mBloomEnabled = enabled;
         mBloom->SetParams(threshold, enabled ? intensity : 0.0f, radius);
+    }
+
+    void VulkanRenderer::SetDepthOfField(bool enabled, float focusDistance, float aperture, float maxBlur)
+    {
+        mDepthOfFieldEnabled = enabled;
+        mDepthOfField->SetParams(focusDistance, aperture, maxBlur);
     }
 
     void VulkanRenderer::SetAtmosphere(const Sky &sky)
