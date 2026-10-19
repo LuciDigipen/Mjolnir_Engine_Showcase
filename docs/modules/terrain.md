@@ -275,9 +275,8 @@ TerrainResult<TerrainRegionMesh> mesh = DecodeTerrainRegion(index, *record, *byt
 The index record already has what selection needs before any read: the valid
 extent, the height range of the mesh, the cell spacing and `maxDeviation`.
 
-**Prototype.** `terrain_region_experiment`
-(`-DMJOLNIR_TERRAIN_REGION_EXPERIMENT=ON`) bakes
-`tools/TerrainTool/experiments/region-prototype.terrain.json`: 64 x 64 tiles
+**Prototype results.** A local Region size/resolution comparison bakes
+a prototype map of 64 x 64 tiles
 of 256 m (about 16.25 x 16.17 km, signed and clipped edges), 8 m by default
 with 1, 2 and 4 m blocks, 23.6 MB of final heights. Release, Ryzen 7 5800H:
 
@@ -308,8 +307,8 @@ pixels of silhouette change; 64 cells reach 0.75 and 2.05 px, 256 cells 0.23
 and 0.41 px with 8% to 19% more vertices. With 8192 m the same rule refines
 every Region of this 16 km map down to tiles. The straight-down view has no
 background pixel in any selection, including tile, level 0 and level 1
-borders, so the edges are crack-free on the GPU too. The GPU probe is local
-measurement tooling; the optional CPU comparison above is included in this branch.
+borders, so the edges are crack-free on the GPU too. Both CPU and GPU
+measurement tools and the prototype recipe remain local; only their results are retained here.
 
 **Choice: level 0 = 4096 m (16 tiles), 128 cells.** At 1280 x 720 and a 60
 degree field of view, the 5.8 m bound projects to one pixel at about 3.6 km,

@@ -215,8 +215,7 @@ namespace mir::vk
                                                    VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, blas.mBuffer,
                                                    blas.mAllocation, blas.mBlas))
             {
-                MIR_LOG_ERROR("RecordMeshBlases: acceleration structure creation failed, mesh {} will raster only",
-                              build.meshIndex);
+                MIR_LOG_ERROR("RecordMeshBlases: acceleration structure creation failed for mesh {}", build.meshIndex);
                 continue;
             }
             info.dstAccelerationStructure = blas.mBlas;
@@ -234,8 +233,7 @@ namespace mir::vk
 
         if (!CreateScratchBuffer(batch.scratchBytes, batch.scratchBuffer, batch.scratchAllocation))
         {
-            MIR_LOG_ERROR("RecordMeshBlases: scratch buffer allocation failed, {} meshes will raster only",
-                          slots.size());
+            MIR_LOG_ERROR("RecordMeshBlases: scratch buffer allocation failed for {} meshes", slots.size());
             for (const uint32_t slot : slots)
                 DestroyBLAS(mBlases[slot]);
             return BlasBatch{};
@@ -268,6 +266,11 @@ namespace mir::vk
         }
         batch.built = slots.size();
         return batch;
+    }
+
+    bool RayTracer::HasMeshBlas(uint32_t meshIndex) const
+    {
+        return meshIndex < mBlases.size() && mBlases[meshIndex].mBlas != VK_NULL_HANDLE;
     }
 
     RayTracer::BlasSizes RayTracer::MeshBlasSizes(uint32_t vertexCount, uint32_t indexCount) const

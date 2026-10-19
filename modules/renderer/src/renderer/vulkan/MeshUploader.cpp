@@ -127,7 +127,8 @@ namespace mir::vk
             garbage.buffers.emplace_back(taken.mVertexBuffer, taken.mVertexAllocation);
         if (taken.mIndexBuffer != VK_NULL_HANDLE)
             garbage.buffers.emplace_back(taken.mIndexBuffer, taken.mIndexAllocation);
-        mRetired.Push(lastUse, taken.mState == GpuMeshState::Failed ? 0 : taken.mBytes, std::move(garbage));
+        const bool allocated = !garbage.buffers.empty() || garbage.blas.mBuffer != VK_NULL_HANDLE;
+        mRetired.Push(lastUse, allocated ? taken.mBytes : 0, std::move(garbage));
         ++mRetiredCount;
         return true;
     }
@@ -236,6 +237,14 @@ namespace mir::vk
         if (!builds.empty())
         {
             const RayTracer::BlasBatch batch = rayTracer.RecordMeshBlases(cmd, builds);
+            // A requested BLAS is part of readiness; failed copies still retire after this frame completes.
+            for (const RayTracer::MeshBlasBuild &build : builds)
+                if (!rayTracer.HasMeshBlas(build.meshIndex))
+                    if (GpuMesh *mesh = resources.FindMeshSlot({build.meshIndex, build.mesh->mGeneration}))
+                    {
+                        mesh->mState = GpuMeshState::Failed;
+                        ++mFailed;
+                    }
             mBlasBuilt += batch.built;
             mBlasBytes += batch.blasBytes;
             if (batch.scratchBuffer != VK_NULL_HANDLE)

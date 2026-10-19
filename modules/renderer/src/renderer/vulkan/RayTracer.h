@@ -71,8 +71,9 @@ namespace mir::vk
             VkDeviceSize scratchBytes = 0;
         };
 
-        // One copy-to-build barrier, then every build in one call; a mesh whose BLAS fails rasters only.
+        // One copy-to-build barrier, then every build in one call; callers check which BLASes were created.
         BlasBatch RecordMeshBlases(VkCommandBuffer cmd, std::span<const MeshBlasBuild> builds);
+        bool HasMeshBlas(uint32_t meshIndex) const;
         BlasSizes MeshBlasSizes(uint32_t vertexCount, uint32_t indexCount) const;
         // No-op for a slot that never had a BLAS.
         void DestroyMeshBlas(uint32_t meshIndex);

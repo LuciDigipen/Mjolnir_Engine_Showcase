@@ -668,14 +668,17 @@ namespace mir
 
     void TerrainRuntime::Collide(PhysicsWorld *physics, double stepSeconds)
     {
+        const auto &settings = Streamer()->Settings().collision;
+        TerrainCollisionPolicy effective{settings.spacingsMeters, settings.maxErrorMeters};
         if (const TerrainCollisionPolicy *policy = mWorld->TryResource<TerrainCollisionPolicy>())
         {
             if (ValidTerrainCollisionPolicy(*policy))
-                mCollision->SetPolicy(*policy);
+                effective = *policy;
             else
                 Report("Terrain collision: the World's TerrainCollisionPolicy is invalid, so the streaming settings' "
                        "spacings and error apply");
         }
+        mCollision->SetPolicy(effective);
         CollectSources(physics);
         mCollision->Update(mSources, *Streamer(), Now(), stepSeconds);
         if (TerrainCollisionSources *game = mWorld->TryResource<TerrainCollisionSources>())
