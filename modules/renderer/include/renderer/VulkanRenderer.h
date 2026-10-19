@@ -47,6 +47,7 @@ namespace mir::vk
     class ShadowMaps;
     class ModelDescriptors;
     class RayTracer;
+    class PostProcess;
     class FrameCapture;
     class ImGuiOverlay;
     class MeshUploader;
@@ -231,6 +232,8 @@ namespace mir
 
         void SetFog(const glm::vec3 &color, float density, float start, float end);
 
+        void SetTonemap(float exposure, int tonemapOperator);
+
         void SetAtmosphere(const Sky &sky);
 
         void SetSkyVisible(bool visible) { mSkyVisible = visible; }
@@ -281,6 +284,8 @@ namespace mir
         std::unique_ptr<vk::ModelDescriptors> mModelDescriptors;
         // Initialized only on a device with ray tracing; its Shutdown is a no-op otherwise.
         std::unique_ptr<vk::RayTracer> mRayTracer;
+
+        std::unique_ptr<vk::PostProcess> mPostProcess;
 
         std::unique_ptr<vk::FrameCapture> mCapture;
 

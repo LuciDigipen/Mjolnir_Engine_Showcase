@@ -19,7 +19,7 @@ subsystem holds a pointer to the facade or to another subsystem.
 | Subsystem | Owns |
 |---|---|
 | `Device` | instance, debug messenger, surface, physical and logical device, queue, VMA allocator, cached device properties |
-| `Swapchain` | swapchain images and views, one depth image per frame in flight, render-complete semaphores, acquire and present |
+| `Swapchain` | swapchain images and views, one depth image and one HDR color image per frame in flight, render-complete semaphores, acquire and present |
 | `FrameSync` | command pools and buffers, image-acquired semaphores, the frame timeline with `kFramesInFlight = 2` |
 | `ResourceStore` | meshes, textures, samplers and the three built-in textures (white, flat normal, error magenta), behind slot/generation handles |
 | `MaterialStore` | materials and their pipelines, set 0, the pipeline layout every material shares, the sky pipeline |
@@ -27,6 +27,7 @@ subsystem holds a pointer to the facade or to another subsystem.
 | `ModelDescriptors` | set 2: per-draw model data, reset each frame |
 | `ShadowMaps` | set 3: Sun, spot and point shadow maps, their pipelines and casters |
 | `RayTracer` | a BLAS per mesh slot, a TLAS per frame, the RT pipeline, SBT and output images |
+| `PostProcess` | the tonemap pipeline and per-frame descriptor sets - the one shared post-process hook point both `DrawFrame` and `TraceFrame` sample their own HDR target through |
 | `FrameCapture` | the `CaptureNextFrame` buffer and the PNG it writes |
 | `ImGuiOverlay` | ImGui's Vulkan backend and the draw data it overlays |
 | `MeshUploader` | the persistent staging ring, queued mesh uploads and their BLAS builds, and retired GPU objects until their last frame (#127) |
@@ -116,6 +117,7 @@ void SetClearColor(const glm::vec4 &color);
 void SetDirectionalLight(const glm::vec3 &direction, const glm::vec3 &color); // direction points *toward* the light
 void SetAmbientColor(const glm::vec3 &color);
 void SetFog(const glm::vec3 &color, float density);          // density <= 0 disables fog
+void SetTonemap(float exposure, int tonemapOperator);         // tonemapOperator matches TonemapOperator in HdrEffect.h
 void SetImGuiDrawData(ImDrawData *drawData);
 VkExtent2D SwapchainExtent() const; 
 
@@ -642,6 +644,65 @@ Everything that needs a device is verified by the smoke tests and
 
 ## Changed
 
+*2026-10-18* — **HDR: a floating-point scene target and a shared tonemap
+pass, both pipelines (#211).** Was: raster wrote scene color straight into
+the swapchain's 8-bit UNORM/SRGB image (bright values clipped at the
+framebuffer, before anything could tonemap them), and ray tracing's output
+image was `R8G8B8A8_UNORM`, blitted onto the swapchain directly - no shared
+post-process hook point existed (see the note this entry replaces, from
+#207). Now: every scene pipeline (default/unlit/model/error materials, the
+sky) and ray tracing's output image are `vk::kHdrColorFormat`
+(`R16G16B16A16_SFLOAT`, a new `VulkanConstants.h` constant) - raster's own
+copy lives in `Swapchain` (`HdrColorImage`/`HdrColorView`, one per frame in
+flight, same resize cadence as its depth images); ray tracing's is its
+existing per-frame output image, just reformatted. A new subsystem,
+`vk::PostProcess` (`vulkan/PostProcess.h`), is the one shared hook point
+both funnel through: built once against the swapchain's own format (its
+target format never changes, so unlike the HDR images it samples it needs
+no `Resize`), it owns a fullscreen-triangle tonemap pipeline
+(`assets/shaders/tonemap.slang`) and rewrites a per-frame-in-flight
+descriptor to whichever HDR view that frame's caller hands it -
+`Swapchain::HdrColorView` for `RecordCommands`, `RayTracer::OutputView` for
+`RecordRtFrame` - right before binding it (safe: that frame-in-flight slot's
+prior submission has already finished, same guarantee `CameraBuffer`'s
+per-frame writes rely on). `RecordCommands` now runs two passes: the
+existing scene pass (same per-`RenderView` loop and sky draw, color
+attachment switched from the swapchain to the HDR target) and a second pass
+over the whole swapchain extent where `PostProcess::Record` samples it,
+applies exposure and the selected operator, and ImGui composites
+(`ImGuiOverlay::RecordInPass`) - same shared stage both paths now use.
+`RecordRtFrame` drops its manual whole-image clear + `vkCmdBlitImage`
+entirely: it opens the same kind of swapchain-targeting pass (`LOAD_OP_CLEAR`
+over the full extent, same "editor's other docked panels still see the
+clear color" guarantee the blit's pre-clear used to provide), sets
+viewport/scissor to the traced `rect` the same way raster's per-view scissor
+does, and calls `PostProcess::Record` there too - `ImGuiOverlay::RecordOver`
+is gone, its only caller. The tonemap fragment shader reads the destination
+pixel from `SV_Position` (always the absolute screen pixel, even when the
+ray traced path's viewport is a sub-rect) scaled by `1/extent`, rather than a
+vertex-interpolated UV, so one formula samples correctly whether the source
+image's valid content fills the whole frame (raster) or only a sub-rect
+written at an offset (`RtPushConstants::outputOffset`). `sky.slang`'s
+fragment shader and `raytrace.slang`'s `missMain` stop calling
+`TonemapReinhard` (moved out of `AtmosphereCommon.slang`, now dead there -
+it had exactly one caller each) and return raw, unbounded Nishita radiance -
+the shared tonemap pass clamps/tonemaps the sky along with everything else,
+instead of the sky always hard-coding Reinhard regardless of what's
+selected. `HdrEffect.h`/`.cpp`, registered into `PostEffectRegistry` as
+`"HDR"` the same way `FogEffect` registers `"Fog"`, is `{exposure,
+TonemapOperator}` (`None`/`Reinhard`/`ACES`) round-tripped through
+`PostEffectState::params` as `{exposure, tonemapOperator}` (the operator as
+a lowercase string, falling back to `Reinhard` for anything unrecognized).
+`RenderSystem::OnUpdate` reads it the same way it reads Fog and calls the
+new `VulkanRenderer::SetTonemap(exposure, int)` - unlike Fog, **the default
+is disabled**, which maps to `{exposure=1, None}` (plain `saturate`), chosen
+so a project that has never touched the panel renders bit-for-bit the same
+intent as before this issue (round-trip through a lossless float buffer,
+then clamp) rather than merely a close approximation. Because: issue #211 -
+bright values (specular highlights, the sky near the sun disc) clipped
+before anything could tonemap them, and the panel had no exposure or
+operator to expose in the first place.
+
 *2026-10-18* — **Distance fog moved to the Post-Processing panel, with real
 controls (#210).** Was: `RenderSettings::fog` was one on/off flag in Project
 Settings, applied at a hardcoded color/density with no exposed start/end.
@@ -690,16 +751,14 @@ own every post effect's toggle and parameters instead of Project Settings,
 and that only works if effects can register into it without each one
 redesigning storage.
 
-Note for whoever adds the first real screen-space effect (bloom, depth of
-field, motion blur): raster and ray tracing do not share a post-process hook
-point today. Raster draws straight into the swapchain image in the same pass
-as ImGui (`VulkanRendererFrame.cpp:121-184`); ray tracing renders to its own
-offscreen image and blits it onto the swapchain
-(`VulkanRendererFrame.cpp:214-266`). A true screen-space effect needs an
-offscreen raster color target mirroring RT's, plus a shared post stage before
-blit/present. An effect that can instead ride the existing shared
-`CameraData` UBO both pipelines already read identically (as fog does) needs
-none of that.
+Resolved by #211 (see Changed, above): raster and ray tracing now share one
+post-process hook point, `vk::PostProcess`'s tonemap pass. A future
+screen-space effect (bloom, depth of field, motion blur, film grading) that
+needs the pre-tonemap HDR buffer reads `Swapchain::HdrColorView`/
+`RayTracer::OutputView` the same way `PostProcess` does; one that belongs
+after tonemapping extends `PostProcess::Record` itself. An effect that can
+instead ride the existing shared `CameraData` UBO both pipelines already
+read identically (as fog does) still needs none of that.
 
 *2026-10-18* — **`Shapes.h` gained a primitive per editor shape, plus a
 reserved-name dispatcher.** Was: `MakeTriangle`/`MakeQuad`/`MakeCube`, authored

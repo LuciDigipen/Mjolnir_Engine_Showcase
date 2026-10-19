@@ -106,6 +106,10 @@ engine_add_shaders(MjolnirEngine
     ENTRIES vertexMain:vertex fragmentMain:fragment)
 
 engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/tonemap.slang
+    ENTRIES vertexMain:vertex fragmentMain:fragment)
+
+engine_add_shaders(MjolnirEngine
     SOURCE assets/shaders/shadowDepth.slang
     ENTRIES vertexMain:vertex)
 

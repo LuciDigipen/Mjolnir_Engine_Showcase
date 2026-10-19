@@ -17,6 +17,7 @@
 #include <core/ecs/components/WorldTransform.h>
 #include <core/log/Log.h>
 #include <renderer/FogEffect.h>
+#include <renderer/HdrEffect.h>
 #include <renderer/PostProcessingSettings.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/components/Camera.h>
@@ -118,6 +119,13 @@ namespace mir
                 fogIt != postProcessing.effects.end() ? ReadFogParams(fogIt->second.params) : FogParams{};
             const bool fogEnabled = fogIt != postProcessing.effects.end() && fogIt->second.enabled;
             mRenderer.SetFog(fog.color, fogEnabled ? fog.density : 0.0f, fog.start, fog.end);
+
+            const auto hdrIt = postProcessing.effects.find(std::string(kHdrEffectName));
+            const HdrParams hdr =
+                hdrIt != postProcessing.effects.end() ? ReadHdrParams(hdrIt->second.params) : HdrParams{};
+            const bool hdrEnabled = hdrIt != postProcessing.effects.end() && hdrIt->second.enabled;
+            mRenderer.SetTonemap(hdrEnabled ? hdr.exposure : 1.0f,
+                static_cast<int>(hdrEnabled ? hdr.op : TonemapOperator::None));
 
             bool haveSunLight = false;
             glm::vec3 sunDirWS{ 0.0f, 1.0f, 0.0f };

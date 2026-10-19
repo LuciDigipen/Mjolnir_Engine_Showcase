@@ -15,10 +15,12 @@
 #include "vulkan/MaterialStore.h"
 #include "vulkan/MeshUploader.h"
 #include "vulkan/ModelDescriptors.h"
+#include "vulkan/PostProcess.h"
 #include "vulkan/RayTracer.h"
 #include "vulkan/ResourceStore.h"
 #include "vulkan/ShadowMaps.h"
 #include "vulkan/Swapchain.h"
+#include "vulkan/VulkanConstants.h"
 
 #include <core/log/Log.h>
 
@@ -29,7 +31,8 @@ namespace mir
           mFrameSync(std::make_unique<vk::FrameSync>()), mResources(std::make_unique<vk::ResourceStore>()),
           mMaterialStore(std::make_unique<vk::MaterialStore>()), mCameraBuffer(std::make_unique<vk::CameraBuffer>()),
           mShadowMaps(std::make_unique<vk::ShadowMaps>()), mModelDescriptors(std::make_unique<vk::ModelDescriptors>()),
-          mRayTracer(std::make_unique<vk::RayTracer>()), mCapture(std::make_unique<vk::FrameCapture>()),
+          mRayTracer(std::make_unique<vk::RayTracer>()), mPostProcess(std::make_unique<vk::PostProcess>()),
+          mCapture(std::make_unique<vk::FrameCapture>()),
           mImGuiOverlay(std::make_unique<vk::ImGuiOverlay>()), mMeshUploads(std::make_unique<vk::MeshUploader>())
     {}
     VulkanRenderer::~VulkanRenderer() = default;
@@ -80,7 +83,7 @@ namespace mir
         if (!mModelDescriptors->Initialize(*mDevice))
             return false;
 
-        if (!mMaterialStore->Initialize(*mDevice, *mResources, mSwapchain->Format(),
+        if (!mMaterialStore->Initialize(*mDevice, *mResources, vk::kHdrColorFormat,
             { mCameraBuffer->SetLayout(), mModelDescriptors->SetLayout(), mShadowMaps->SetLayout() }))
             return false;
 
@@ -89,6 +92,9 @@ namespace mir
             return false;
 
         mMeshUploads->Initialize(*mDevice);
+        if (!mPostProcess->Initialize(*mDevice, mSwapchain->Format()))
+            return false;
+
         return true;
     }
 
@@ -117,6 +123,7 @@ namespace mir
             mFrameSync->Shutdown();
 
             mMeshUploads->Shutdown(*mRayTracer);
+            mPostProcess->Shutdown();
             mMaterialStore->Shutdown();
             mRayTracer->Shutdown();
             mResources->Shutdown();
@@ -232,7 +239,7 @@ namespace mir
 
     MaterialHandle VulkanRenderer::CreateMaterial(const MaterialDesc &desc)
     {
-        return mMaterialStore->CreateMaterial(desc, *mResources, mSwapchain->Format());
+        return mMaterialStore->CreateMaterial(desc, *mResources, vk::kHdrColorFormat);
     }
 
     MaterialHandle VulkanRenderer::ErrorMaterial() const
@@ -333,6 +340,11 @@ namespace mir
     void VulkanRenderer::SetFog(const glm::vec3 &color, float density, float start, float end)
     {
         mCameraBuffer->SetFog(color, density, start, end);
+    }
+
+    void VulkanRenderer::SetTonemap(float exposure, int tonemapOperator)
+    {
+        mPostProcess->SetParams(exposure, tonemapOperator);
     }
 
     void VulkanRenderer::SetAtmosphere(const Sky &sky)
