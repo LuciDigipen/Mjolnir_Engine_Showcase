@@ -41,13 +41,19 @@ namespace mir::vk
         glm::mat4 model;    // 64
     };
 
-    // Must match TonemapOperator in renderer/HdrEffect.h.
+    // Must match TonemapOperator in renderer/HdrEffect.h and PushConstants in tonemap.slang.
     struct TonemapPushConstants
     {
         float exposure;
         uint32_t tonemapOperator;
         glm::vec2 invExtent;
         float bloomIntensity;
+        float grain;
+        float contrast;
+        float saturation;
+        float vignetteStrength;
+        float vignetteRadius;
+        float grainSeed;
     };
 
     struct BloomExtractPushConstants

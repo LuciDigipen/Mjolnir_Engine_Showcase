@@ -40,6 +40,7 @@ target_sources(engine_renderer PRIVATE
     src/renderer/CameraMath.cpp
     src/renderer/ComponentRegistration.cpp
     src/renderer/DepthOfFieldEffect.cpp
+    src/renderer/FilmEffect.cpp
     src/renderer/MeshStreaming.cpp
     src/renderer/FogEffect.cpp
     src/renderer/HdrEffect.cpp

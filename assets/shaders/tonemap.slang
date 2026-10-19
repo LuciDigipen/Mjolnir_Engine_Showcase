@@ -29,6 +29,12 @@ struct PushConstants
     uint tonemapOperator;
     float2 invExtent;
     float bloomIntensity;
+    float grain;
+    float contrast;
+    float saturation;
+    float vignetteStrength;
+    float vignetteRadius;
+    float grainSeed;
 }
 
 [[vk::push_constant]]
@@ -54,6 +60,13 @@ float3 TonemapAces(float3 color)
     return saturate((color * (a * color + b)) / (color * (c * color + d) + e));
 }
 
+// Cheap per-pixel-per-frame white noise - varies with grainSeed so grain
+// animates instead of sitting as a static pattern.
+float FilmGrainNoise(float2 pixel, float seed)
+{
+    return frac(sin(dot(pixel + seed, float2(12.9898, 78.233))) * 43758.5453);
+}
+
 [shader("fragment")]
 float4 fragmentMain(VSOutput input) : SV_Target
 {
@@ -69,5 +82,18 @@ float4 fragmentMain(VSOutput input) : SV_Target
     else
         ldr = saturate(hdr);
 
-    return float4(ldr, 1.0);
+    // Film look, applied after tonemap: contrast -> saturation -> vignette -> grain.
+    ldr = (ldr - 0.5) * pushData.contrast + 0.5;
+
+    float luma = dot(ldr, float3(0.2126, 0.7152, 0.0722));
+    ldr = lerp(float3(luma, luma, luma), ldr, pushData.saturation);
+
+    float2 vig2 = uv * (1.0 - uv);
+    float vig = saturate(pow(vig2.x * vig2.y * 16.0, pushData.vignetteRadius));
+    ldr *= lerp(1.0, vig, pushData.vignetteStrength);
+
+    float noise = FilmGrainNoise(input.position.xy, pushData.grainSeed);
+    ldr += (noise - 0.5) * pushData.grain;
+
+    return float4(saturate(ldr), 1.0);
 }

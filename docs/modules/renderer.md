@@ -29,7 +29,7 @@ subsystem holds a pointer to the facade or to another subsystem.
 | `RayTracer` | a BLAS per mesh slot, a TLAS per frame, the RT pipeline, SBT and output images, plus a linear-distance output image alongside color |
 | `DepthOfField` | the CoC, near/far blur and composite pipelines and their half/full-res working images - reads whatever linear-HDR color and depth/distance `DrawFrame`/`TraceFrame` hand it; its output becomes what `Bloom` and `PostProcess` read from there on |
 | `Bloom` | the bright-pass extract, downsample and additive-upsample pipelines and mip chain - reads whatever linear-HDR source `DrawFrame`/`TraceFrame` hand it (`DepthOfField`'s result when it's enabled), ahead of `PostProcess` |
-| `PostProcess` | the tonemap pipeline and per-frame descriptor sets - the one shared post-process hook point both `DrawFrame` and `TraceFrame` sample their scene color (and `Bloom`'s result) through |
+| `PostProcess` | the tonemap pipeline and per-frame descriptor sets - the one shared post-process hook point both `DrawFrame` and `TraceFrame` sample their scene color (and `Bloom`'s result) through; the same `tonemap.slang` pass also carries the film look (contrast, saturation, vignette, animated grain), applied after the tonemap itself |
 | `FrameCapture` | the `CaptureNextFrame` buffer and the PNG it writes |
 | `ImGuiOverlay` | ImGui's Vulkan backend and the draw data it overlays |
 | `MeshUploader` | the persistent staging ring, queued mesh uploads and their BLAS builds, and retired GPU objects until their last frame (#127) |
@@ -122,6 +122,7 @@ void SetFog(const glm::vec3 &color, float density);          // density <= 0 dis
 void SetTonemap(float exposure, int tonemapOperator);         // tonemapOperator matches TonemapOperator in HdrEffect.h
 void SetBloom(bool enabled, float threshold, float intensity, float radius); // enabled false skips the GPU chain
 void SetDepthOfField(bool enabled, float focusDistance, float aperture, float maxBlur); // enabled false skips the GPU chain
+void SetFilm(bool enabled, float grain, float contrast, float saturation, float vignetteStrength, float vignetteRadius); // enabled false neutralizes it
 void SetImGuiDrawData(ImDrawData *drawData);
 VkExtent2D SwapchainExtent() const; 
 
@@ -647,6 +648,36 @@ Everything that needs a device is verified by the smoke tests and
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-10-19* — **Film look: grain, contrast, saturation, vignette (#213).**
+Was: #207's Post-Processing panel named this grouping but nothing implemented
+it. Now: no new subsystem, no new working images - `PostProcess` is already
+*the* single hook point both `DrawFrame` and `TraceFrame` funnel their scene
+color through right after tonemapping, so the film look is pure math appended
+to `tonemap.slang`'s `fragmentMain`, in order: contrast (pivoted around 0.5),
+saturation (lerp toward luma), vignette (the cheap `uv*(1-uv)` parabola,
+raised to `vignetteRadius` and blended in by `vignetteStrength`, so strength=0
+is a no-op regardless of radius), then animated grain last, added on top of
+the graded, vignetted image like a sensor artifact rather than a static
+overlay. Grain's "varies over time" requirement ruled out a static noise
+texture or a per-pixel-only hash; the renderer has no engine-wide clock
+reaching this deep, so `vk::PostProcess` grew its own `mGrainFrame` counter,
+incremented once per `Record()` call (called exactly once per rendered frame
+regardless of which pipeline drew it) and pushed down as a `sin`/`dot` hash
+seed - cheap, self-contained, no new resource needed. `FilmEffect.h`/`.cpp`,
+registered into `PostEffectRegistry` as `"Film"` the same way the other four
+register, is `{grain=0, contrast=1, saturation=1, vignetteStrength=0,
+vignetteRadius=1}` - unlike Bloom/DoF's "on-like" defaults, every Film field
+defaults to a literal no-op so leaving it enabled with untouched sliders
+changes nothing (acceptance criterion, not incidental). `RenderSystem::OnUpdate`
+reads it the same way as the other effects and calls the new
+`VulkanRenderer::SetFilm(enabled, grain, contrast, saturation,
+vignetteStrength, vignetteRadius)`, which forces grain/contrast/saturation/
+vignetteStrength back to neutral when disabled (same trick `SetBloom` uses
+for intensity) rather than threading a separate enabled flag into the shader.
+Because: issue #213 - grain, contrast, saturation and vignette, adjustable
+from the panel, animated grain, neutral by default, after the tonemap, in
+both pipelines.
 
 *2026-10-18* — **Depth of field (#209).** Was: no screen-space DoF existed,
 and ray tracing had no depth output at all to build one from. Now: a new

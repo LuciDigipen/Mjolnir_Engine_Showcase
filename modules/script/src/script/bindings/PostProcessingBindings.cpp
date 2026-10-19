@@ -2,8 +2,8 @@
  * @file PostProcessingBindings.cpp
  * @author Rahul Nair
  * @brief The Lua post-processing surface: world:set_fog/get_fog, set_hdr/get_hdr,
- *        set_bloom/get_bloom, set_depth_of_field/get_depth_of_field - one
- *        global stack, see PostProcessingBindings.h.
+ *        set_bloom/get_bloom, set_depth_of_field/get_depth_of_field and
+ *        set_film/get_film - one global stack, see PostProcessingBindings.h.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -15,6 +15,7 @@
 
 #include <renderer/BloomEffect.h>
 #include <renderer/DepthOfFieldEffect.h>
+#include <renderer/FilmEffect.h>
 #include <renderer/FogEffect.h>
 #include <renderer/HdrEffect.h>
 #include <renderer/PostProcessingSettings.h>
@@ -290,6 +291,56 @@ namespace mir
             out["maxBlur"] = dof.maxBlur;
             return out;
         }
+
+        bool WorldSetFilm(World &world, const sol::table &args)
+        {
+            PostProcessingSettings *settings = ResolveSettings(world, "set_film");
+            if (settings == nullptr)
+                return false;
+
+            PostEffectState &state = settings->effects[std::string(kFilmEffectName)];
+            FilmParams film = ReadFilmParams(state.params);
+            bool enabled = state.enabled;
+
+            if (!GetOptionalBool(args, "enabled", "set_film", enabled) ||
+                !GetOptionalFloat(args, "grain", "set_film", film.grain) ||
+                !GetOptionalFloat(args, "contrast", "set_film", film.contrast) ||
+                !GetOptionalFloat(args, "saturation", "set_film", film.saturation) ||
+                !GetOptionalFloat(args, "vignetteStrength", "set_film", film.vignetteStrength) ||
+                !GetOptionalFloat(args, "vignetteRadius", "set_film", film.vignetteRadius))
+                return false;
+
+            film.grain = std::max(film.grain, 0.0f);
+            film.contrast = std::max(film.contrast, 0.0f);
+            film.saturation = std::max(film.saturation, 0.0f);
+            film.vignetteStrength = std::max(film.vignetteStrength, 0.0f);
+            film.vignetteRadius = std::max(film.vignetteRadius, 0.0f);
+
+            state.enabled = enabled;
+            WriteFilmParams(state.params, film);
+            return true;
+        }
+
+        sol::object WorldGetFilm(World &world, sol::this_state luaState)
+        {
+            sol::state_view lua(luaState);
+            PostProcessingSettings *settings = ResolveSettings(world, "get_film");
+            if (settings == nullptr)
+                return sol::nil;
+
+            const auto it = settings->effects.find(std::string(kFilmEffectName));
+            const bool enabled = it != settings->effects.end() && it->second.enabled;
+            const FilmParams film = it != settings->effects.end() ? ReadFilmParams(it->second.params) : FilmParams{};
+
+            sol::table out = lua.create_table();
+            out["enabled"] = enabled;
+            out["grain"] = film.grain;
+            out["contrast"] = film.contrast;
+            out["saturation"] = film.saturation;
+            out["vignetteStrength"] = film.vignetteStrength;
+            out["vignetteRadius"] = film.vignetteRadius;
+            return out;
+        }
     }
 
     void RegisterPostProcessingBindings(sol::state &lua)
@@ -303,5 +354,7 @@ namespace mir
         worldType.set_function("get_bloom", &WorldGetBloom);
         worldType.set_function("set_depth_of_field", &WorldSetDepthOfField);
         worldType.set_function("get_depth_of_field", &WorldGetDepthOfField);
+        worldType.set_function("set_film", &WorldSetFilm);
+        worldType.set_function("get_film", &WorldGetFilm);
     }
 }

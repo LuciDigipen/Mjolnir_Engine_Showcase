@@ -18,6 +18,7 @@
 #include <core/log/Log.h>
 #include <renderer/BloomEffect.h>
 #include <renderer/DepthOfFieldEffect.h>
+#include <renderer/FilmEffect.h>
 #include <renderer/FogEffect.h>
 #include <renderer/HdrEffect.h>
 #include <renderer/PostProcessingSettings.h>
@@ -141,6 +142,13 @@ namespace mir
                                                        : DepthOfFieldParams{};
             const bool dofEnabled = dofIt != postProcessing.effects.end() && dofIt->second.enabled;
             mRenderer.SetDepthOfField(dofEnabled, dof.focusDistance, dof.aperture, dof.maxBlur);
+
+            const auto filmIt = postProcessing.effects.find(std::string(kFilmEffectName));
+            const FilmParams film =
+                filmIt != postProcessing.effects.end() ? ReadFilmParams(filmIt->second.params) : FilmParams{};
+            const bool filmEnabled = filmIt != postProcessing.effects.end() && filmIt->second.enabled;
+            mRenderer.SetFilm(filmEnabled, film.grain, film.contrast, film.saturation, film.vignetteStrength,
+                film.vignetteRadius);
 
             bool haveSunLight = false;
             glm::vec3 sunDirWS{ 0.0f, 1.0f, 0.0f };
