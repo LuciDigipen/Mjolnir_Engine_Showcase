@@ -33,6 +33,8 @@ namespace mir
         // Call at ReleaseSceneResources
         void Reset();
 
+        void CommitReload(AssetCache *assets);
+
         void OnUpdate(SystemContext &context) override;
 
     private:
