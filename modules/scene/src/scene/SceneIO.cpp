@@ -27,6 +27,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -155,43 +156,6 @@ namespace mir
                 }
                 const Entity entity = entityIt->second;
 
-                for (const SceneFieldPatch &fieldPatch : patch.mFields)
-                {
-                    const ComponentOps *ops = registry.Find(fieldPatch.mComponent);
-                    if (ops == nullptr || !ops->Has(world, entity))
-                    {
-                        MIR_LOG_WARN("LoadScene: patch has an unknown component '{}', kept", fieldPatch.mComponent);
-                        continue;
-                    }
-
-                    const FieldDesc *field = ops->FindField(fieldPatch.mField);
-                    if (field == nullptr)
-                    {
-                        MIR_LOG_WARN("LoadScene: patch has an unknown field '{}.{}', kept", fieldPatch.mComponent,
-                            fieldPatch.mField);
-                        continue;
-                    }
-
-                    void *component = ops->GetComponent(world, entity);
-                    if (component == nullptr)
-                        continue;
-
-                    if (field->mKind == FieldKind::EntityRef)
-                    {
-                        pendingRefs.push_back({ entity, ops, fieldPatch.mField, fieldPatch.mValue });
-                        continue;
-                    }
-
-                    FieldBuffer buffer{};
-                    if (!JsonToField(field->mKind, fieldPatch.mValue, buffer.mBytes))
-                    {
-                        MIR_LOG_WARN("LoadScene: patch '{}.{}' has a value this field cannot hold, left at template value",
-                            fieldPatch.mComponent, fieldPatch.mField);
-                        continue;
-                    }
-                    field->Write(component, buffer.mBytes);
-                }
-
                 for (const SceneComponentRecord &added : patch.mAddedComponents)
                 {
                     const ComponentOps *ops = registry.Find(added.mType);
@@ -231,6 +195,44 @@ namespace mir
                         }
                         field->Write(component, buffer.mBytes);
                     }
+                }
+
+                // Added components must exist before their field overrides are applied.
+                for (const SceneFieldPatch &fieldPatch : patch.mFields)
+                {
+                    const ComponentOps *ops = registry.Find(fieldPatch.mComponent);
+                    if (ops == nullptr || !ops->Has(world, entity))
+                    {
+                        MIR_LOG_WARN("LoadScene: patch has an unknown component '{}', kept", fieldPatch.mComponent);
+                        continue;
+                    }
+
+                    const FieldDesc *field = ops->FindField(fieldPatch.mField);
+                    if (field == nullptr)
+                    {
+                        MIR_LOG_WARN("LoadScene: patch has an unknown field '{}.{}', kept", fieldPatch.mComponent,
+                            fieldPatch.mField);
+                        continue;
+                    }
+
+                    void *component = ops->GetComponent(world, entity);
+                    if (component == nullptr)
+                        continue;
+
+                    if (field->mKind == FieldKind::EntityRef)
+                    {
+                        pendingRefs.push_back({ entity, ops, fieldPatch.mField, fieldPatch.mValue });
+                        continue;
+                    }
+
+                    FieldBuffer buffer{};
+                    if (!JsonToField(field->mKind, fieldPatch.mValue, buffer.mBytes))
+                    {
+                        MIR_LOG_WARN("LoadScene: patch '{}.{}' has a value this field cannot hold, left at template value",
+                            fieldPatch.mComponent, fieldPatch.mField);
+                        continue;
+                    }
+                    field->Write(component, buffer.mBytes);
                 }
 
                 for (const std::string &removed : patch.mRemovedComponents)
@@ -288,6 +290,14 @@ namespace mir
 
                         Entity target = kNullEntity;
                         field.Read(component, &target);
+
+                        // A missing template is not a user clearing this field.
+                        // SetInstanceEntityRef removes this marker on an explicit edit.
+                        if (target.IsNull() && !scene.mUnresolvedEntityRefs.empty() && scene.mUnresolvedEntityRefs.contains(
+                            { stableId, std::string(ops->mType.name), std::string(field.mName) }))
+                        {
+                            continue;
+                        }
 
                         StableId worldValue = kNullStableId;
                         if (!target.IsNull())
@@ -407,7 +417,28 @@ namespace mir
 
             entityFiles.insert(id);
             // a file outlives this run, so a reference outside the scene is written null
-            if (!WriteJsonFile(EntityFilePath(sceneDir, id), EntityToJson(world, entity, id, ids, false)))
+            json file = EntityToJson(world, entity, id, ids, false);
+            if (!scene.mUnresolvedEntityRefs.empty())
+            {
+                for (json &component : file["components"])
+                {
+                    const std::string type = component["type"].get<std::string>();
+                    for (auto &[field, value] : component["fields"].items())
+                    {
+                        const auto unresolved = scene.mUnresolvedEntityRefs.find({ id, type, field });
+                        if (unresolved == scene.mUnresolvedEntityRefs.end())
+                            continue;
+
+                        const ComponentOps *ops = ComponentRegistry::Instance().Find(type);
+                        const FieldDesc *desc = ops->FindField(field);
+                        Entity current = kNullEntity;
+                        desc->Read(ops->GetComponent(world, entity), &current);
+                        if (current.IsNull())
+                            value = unresolved->second;
+                    }
+                }
+            }
+            if (!WriteJsonFile(EntityFilePath(sceneDir, id), file))
             {
                 MIR_LOG_ERROR("SaveScene: could not write entity file for id {}", id);
                 return false;
@@ -518,18 +549,6 @@ namespace mir
             }
         }
 
-        std::vector<std::pair<StableId, json>> entities;
-        for (StableId id : listedEntityIds)
-        {
-            std::optional<json> entityJson = ReadJsonFile(EntityFilePath(sceneDir, id));
-            if (!entityJson || !entityJson->is_object())
-            {
-                MIR_LOG_ERROR("LoadScene: entity file for id {} listed in manifest but missing or unreadable", id);
-                continue; // 0030 leaves this failure mode open; skip rather than abort the load
-            }
-            entities.emplace_back(id, std::move(*entityJson));
-        }
-
         const auto instancesIt = manifest.find("instances");
         if (instancesIt != manifest.end())
         {
@@ -575,6 +594,30 @@ namespace mir
             }
         }
 
+        // Bindings own member ids, even if the prefab is currently unavailable.
+        // Read them before entity files so stale flattened members cannot shadow them.
+        std::set<StableId> memberIds;
+        for (const auto &[root, instance] : loaded.mInstances)
+        {
+            for (const auto &[address, id] : instance.mBindings)
+                memberIds.insert(id);
+        }
+
+        std::vector<std::pair<StableId, json>> entities;
+        for (StableId id : listedEntityIds)
+        {
+            if (memberIds.contains(id))
+                continue;
+
+            std::optional<json> entityJson = ReadJsonFile(EntityFilePath(sceneDir, id));
+            if (!entityJson || !entityJson->is_object())
+            {
+                MIR_LOG_ERROR("LoadScene: entity file for id {} listed in manifest but missing or unreadable", id);
+                continue; // 0030 leaves this failure mode open; skip rather than abort the load
+            }
+            entities.emplace_back(id, std::move(*entityJson));
+        }
+
         const auto raiseNextId = [&loaded](StableId id)
             {
                 if (id != std::numeric_limits<StableId>::max())
@@ -589,10 +632,6 @@ namespace mir
             for (const auto &[address, id] : instance.mBindings)
                 raiseNextId(id);
         }
-
-        std::set<StableId> ordinaryIds;
-        for (const auto &[id, entityJson] : entities)
-            ordinaryIds.insert(id);
 
         std::set<StableId> earlierIds;
         std::set<StableId> materializeRoots;
@@ -615,9 +654,9 @@ namespace mir
 
             for (StableId id : bindingIds)
             {
-                if (ordinaryIds.contains(id) || earlierIds.contains(id))
+                if (earlierIds.contains(id))
                 {
-                    MIR_LOG_ERROR("LoadScene: instance {} StableId {} collides with another scene entity", root, id);
+                    MIR_LOG_ERROR("LoadScene: instance {} StableId {} collides with an earlier instance", root, id);
                     valid = false;
                 }
             }
@@ -645,8 +684,8 @@ namespace mir
             items.push_back(SpawnItem{ root, record.mSiblingIndex, true, nullptr });
         }
 
-        // Creation order sets root order and parent replay order sets child order,
-        // so one sort by (siblingIndex, id) restores both
+        // Create roots in their saved order; parent replay also inserts external
+        // children among the members already attached by the prefab resolver.
         std::sort(items.begin(), items.end(), [](const SpawnItem &a, const SpawnItem &b)
             {
                 return std::pair(a.mSiblingIndex, a.mId) < std::pair(b.mSiblingIndex, b.mId);
@@ -660,6 +699,7 @@ namespace mir
         {
             Entity mEntity;
             StableId mParent;
+            uint32_t mSiblingIndex;
         };
         std::vector<PendingParent> pendingParents;
 
@@ -678,7 +718,7 @@ namespace mir
                     if (parent)
                     {
                         if (*parent != kNullStableId)
-                            pendingParents.push_back({ entity, *parent });
+                            pendingParents.push_back({ entity, *parent, item.mSiblingIndex });
                     }
                     else
                     {
@@ -759,10 +799,16 @@ namespace mir
             ApplyInstancePatches(world, loaded, instance, pendingRefs);
 
             if (instance.mParent != kNullStableId)
-                pendingParents.push_back({ rootEntity, instance.mParent });
+                pendingParents.push_back({ rootEntity, instance.mParent, item.mSiblingIndex });
         }
 
+        EntityIdMap ids;
+        for (const auto &[id, entity] : loaded.mEntities)
+            ids[PackEntity(entity)] = id;
+
         // resolve parent ids
+        const HierarchyIndex &hierarchy = InstallHierarchy(world);
+        std::map<StableId, std::size_t> nextSiblingIndices;
         for (const auto &pending : pendingParents)
         {
             const auto parentIt = loaded.mEntities.find(pending.mParent);
@@ -771,12 +817,49 @@ namespace mir
                 MIR_LOG_WARN("LoadScene: parent id {} not found in this scene, leaving unparented", pending.mParent);
                 continue;
             }
+            // Preserve (index, id) order for tied indices as well as template
+            // members whose positions are implicit in the prefab graph.
+            const std::size_t insertionIndex = std::max<std::size_t>(
+                pending.mSiblingIndex, nextSiblingIndices[pending.mParent]);
+            nextSiblingIndices[pending.mParent] = insertionIndex + 1;
+            Entity before = kNullEntity;
+            const auto siblings = hierarchy.ChildrenOf(parentIt->second);
+            // Ordinary scenes append in sorted order without scanning all earlier children.
+            if (insertionIndex < siblings.size())
+            {
+                std::size_t position = 0;
+                for (Entity sibling : siblings)
+                {
+                    if (!ids.contains(PackEntity(sibling)))
+                        continue;
+                    if (position++ == insertionIndex)
+                    {
+                        before = sibling;
+                        break;
+                    }
+                }
+            }
             // saved values are already parent-local
-            SetParent(world, pending.mEntity, parentIt->second, kNullEntity, false);
+            SetParent(world, pending.mEntity, parentIt->second, before, false);
         }
 
         // patch EntityRef fields
         ResolvePendingEntityRefs(world, pendingRefs, loaded.mEntities, false);
+
+        // Remember unresolved member identities separately from the null runtime
+        // handles. Later entries win, matching ResolvePendingEntityRefs.
+        for (const PendingEntityRef &pending : pendingRefs)
+        {
+            const auto owner = ids.find(PackEntity(pending.mEntity));
+            if (owner == ids.end() || !pending.mOps->Has(world, pending.mEntity))
+                continue;
+
+            const auto key = std::make_tuple(owner->second, std::string(pending.mOps->mType.name), pending.mField);
+            loaded.mUnresolvedEntityRefs.erase(key);
+            const std::optional<StableId> target = ReadStableIdJson(pending.mTarget);
+            if (target && memberIds.contains(*target) && !loaded.mEntities.contains(*target))
+                loaded.mUnresolvedEntityRefs[key] = *target;
+        }
 
         return loaded;
     }
@@ -833,6 +916,7 @@ namespace mir
             return false;
 
         fieldDesc->Write(componentBytes, &targetEntity);
+        scene.mUnresolvedEntityRefs.erase({ bindingIt->second, std::string(component), std::string(field) });
 
         SceneFieldPatch *fieldPatch = FindInstanceFieldPatch(instance, node, component, field);
         if (fieldPatch != nullptr)

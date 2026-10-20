@@ -17,6 +17,7 @@
 #include <map>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <unordered_set>
 #include <vector>
 
@@ -79,6 +80,10 @@ namespace mir
         // keyed by root StableId
         std::map<StableId, ScenePrefabInstance> mInstances;
 
+        // Runtime-only: (owner StableId, component, field) -> unavailable member.
+        // Keep the saved target while its runtime EntityRef is temporarily null.
+        std::map<std::tuple<StableId, std::string, std::string>, StableId> mUnresolvedEntityRefs;
+
         // next id handed out, persisted in scene.json so a deleted entity's id
         // is never reissued
         StableId mNextId = 1;
@@ -115,11 +120,19 @@ namespace mir
         ForEachDescendant(world, root, [&](Entity entity) { doomed.insert(PackEntity(entity)); });
 
         bool erasedInstance = false;
+        std::unordered_set<StableId> removedIds;
+        for (const auto &[id, entity] : scene.mEntities)
+        {
+            if (doomed.contains(PackEntity(entity)))
+                removedIds.insert(id);
+        }
         for (auto it = scene.mInstances.begin(); it != scene.mInstances.end();)
         {
             const auto entityIt = scene.mEntities.find(it->first);
             if (entityIt != scene.mEntities.end() && doomed.contains(PackEntity(entityIt->second)))
             {
+                for (const auto &[address, id] : it->second.mBindings)
+                    removedIds.insert(id);
                 it = scene.mInstances.erase(it);
                 erasedInstance = true;
             }
@@ -132,6 +145,8 @@ namespace mir
             scene.mDirty = true;
 
         std::erase_if(scene.mEntities, [&](const auto &entry) { return doomed.contains(PackEntity(entry.second)); });
+        std::erase_if(scene.mUnresolvedEntityRefs, [&](const auto &entry)
+            { return removedIds.contains(std::get<0>(entry.first)) || removedIds.contains(entry.second); });
 
         // the hierarchy's destroy hook takes the descendants with it
         world.DestroyEntity(root);

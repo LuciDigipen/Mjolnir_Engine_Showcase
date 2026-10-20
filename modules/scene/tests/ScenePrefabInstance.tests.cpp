@@ -96,10 +96,11 @@ namespace
     {
         bool mAvailable = true;
         bool mExtraNode = false;
+        StableId mUnavailableRoot = kNullStableId;
 
-        std::map<SceneNodeAddress, Entity> Materialize(World &world, const ScenePrefabInstance &) override
+        std::map<SceneNodeAddress, Entity> Materialize(World &world, const ScenePrefabInstance &instance) override
         {
-            if (!mAvailable)
+            if (!mAvailable || (mUnavailableRoot != kNullStableId && instance.mRoot == mUnavailableRoot))
                 return {};
 
             const Entity root = world.CreateEntity();
@@ -654,4 +655,183 @@ TEST_CASE("An unchanged instance scene round-trips to identical files", "[scene]
     REQUIRE(mir::SaveScene(loadedWorld, second.mPath, loaded, &resolver));
 
     CHECK(SnapshotFiles(first.mPath) == SnapshotFiles(second.mPath));
+}
+
+TEST_CASE("Unavailable members retain incoming reference identities across saves", "[scene][prefab]")
+{
+    mir::RegisterCoreComponents();
+    LinkOps();
+    RefOps();
+
+    World world;
+    LoadedScene scene = NewScene("test");
+    const Entity ordinary = CreateSceneEntity(world, scene);
+    RefOps().AddDefault(world, ordinary);
+    FakeSceneResolver resolver;
+    const StableId rootA = PlaceInstance(world, scene, resolver);
+    const StableId rootB = PlaceInstance(world, scene, resolver);
+    const StableId target = scene.mInstances.at(rootB).mBindings.at(SceneNodeAddress{ 2 });
+    REQUIRE(mir::SetInstanceEntityRef(world, scene, rootA, SceneNodeAddress{ 1 },
+        "ScenePrefabTestLink", "target", target));
+    REQUIRE(mir::SetInstanceEntityRef(world, scene, rootA, SceneNodeAddress{ 1 },
+        "ScenePrefabTestLink", "other", target));
+    SetEntityField(world, ordinary, RefOps(), "target", scene.mEntities.at(target));
+
+    TempSceneDir first("missing_reference_first");
+    REQUIRE(mir::SaveScene(world, first.mPath, scene, &resolver));
+    FakeSceneResolver unavailable;
+    unavailable.mUnavailableRoot = rootB;
+    World partialWorld;
+    LoadedScene partial = mir::LoadScene(partialWorld, first.mPath, &unavailable);
+    REQUIRE(partial.mEntities.contains(rootA));
+    CHECK_FALSE(partial.mEntities.contains(target));
+    CHECK(EntityField(partialWorld, partial.mEntities.at(rootA), LinkOps(), "target").IsNull());
+    CHECK(EntityField(partialWorld, partial.mEntities.at(rootA), LinkOps(), "other").IsNull());
+    CHECK(EntityField(partialWorld, partial.mEntities.at(1), RefOps(), "target").IsNull());
+    CHECK(partial.mUnresolvedEntityRefs.size() == 3);
+
+    StableId expectedTarget = target;
+    SECTION("An unchanged null handle keeps its saved target")
+    {
+        CHECK_FALSE(partial.mDirty);
+    }
+    SECTION("An explicit clear replaces an unresolved reference")
+    {
+        REQUIRE(mir::SetInstanceEntityRef(partialWorld, partial, rootA, SceneNodeAddress{ 1 },
+            "ScenePrefabTestLink", "target", kNullStableId));
+        REQUIRE(mir::SetInstanceEntityRef(partialWorld, partial, rootA, SceneNodeAddress{ 1 },
+            "ScenePrefabTestLink", "other", kNullStableId));
+        CHECK(partial.mUnresolvedEntityRefs.size() == 1);
+        expectedTarget = kNullStableId;
+    }
+    SECTION("Retargeting to a live entity replaces the unresolved identity")
+    {
+        REQUIRE(mir::SetInstanceEntityRef(partialWorld, partial, rootA, SceneNodeAddress{ 1 },
+            "ScenePrefabTestLink", "target", StableId{ 1 }));
+        REQUIRE(mir::SetInstanceEntityRef(partialWorld, partial, rootA, SceneNodeAddress{ 1 },
+            "ScenePrefabTestLink", "other", StableId{ 1 }));
+        CHECK(partial.mUnresolvedEntityRefs.size() == 1);
+        expectedTarget = 1;
+    }
+
+    TempSceneDir second("missing_reference_second");
+    REQUIRE(mir::SaveScene(partialWorld, second.mPath, partial, &unavailable));
+    // Saving without a resolver must also preserve ordinary incoming references.
+    World stillPartialWorld;
+    const LoadedScene stillPartial = mir::LoadScene(stillPartialWorld, second.mPath, &unavailable);
+    TempSceneDir third("missing_reference_third");
+    REQUIRE(mir::SaveScene(stillPartialWorld, third.mPath, stillPartial));
+
+    World restoredWorld;
+    const LoadedScene restored = mir::LoadScene(restoredWorld, third.mPath, &resolver);
+    REQUIRE(restored.mEntities.contains(target));
+    const Entity expected = expectedTarget == kNullStableId ? kNullEntity : restored.mEntities.at(expectedTarget);
+    CHECK(EntityField(restoredWorld, restored.mEntities.at(rootA), LinkOps(), "target") == expected);
+    CHECK(EntityField(restoredWorld, restored.mEntities.at(rootA), LinkOps(), "other") == expected);
+    CHECK(EntityField(restoredWorld, restored.mEntities.at(1), RefOps(), "target") == restored.mEntities.at(target));
+    CHECK(restored.mUnresolvedEntityRefs.empty());
+}
+
+TEST_CASE("Field edits override the initial values of instance-added components", "[scene][prefab]")
+{
+    mir::RegisterCoreComponents();
+    LinkOps();
+    RefOps();
+
+    World world;
+    LoadedScene scene = NewScene("test");
+    CreateSceneEntity(world, scene);
+    CreateSceneEntity(world, scene);
+    FakeSceneResolver resolver;
+    const StableId root = PlaceInstance(world, scene, resolver);
+    mir::SceneInstancePatch patch;
+    patch.mTarget = SceneNodeAddress{ 1 };
+    patch.mAddedComponents.push_back(mir::SceneComponentRecord{
+        "ScenePrefabTestRef", json{ { "target", StableId{ 1 } } } });
+    scene.mInstances.at(root).mPatches.push_back(std::move(patch));
+
+    TempSceneDir first("added_reference_first");
+    REQUIRE(mir::SaveScene(world, first.mPath, scene, &resolver));
+    World loadedWorld;
+    LoadedScene loaded = mir::LoadScene(loadedWorld, first.mPath, &resolver);
+    CHECK(EntityField(loadedWorld, loaded.mEntities.at(root), RefOps(), "target") == loaded.mEntities.at(1));
+    REQUIRE(mir::SetInstanceEntityRef(loadedWorld, loaded, root, SceneNodeAddress{ 1 },
+        "ScenePrefabTestRef", "target", StableId{ 2 }));
+
+    TempSceneDir second("added_reference_second");
+    REQUIRE(mir::SaveScene(loadedWorld, second.mPath, loaded, &resolver));
+    World reloadedWorld;
+    const LoadedScene reloaded = mir::LoadScene(reloadedWorld, second.mPath, &resolver);
+    CHECK(EntityField(reloadedWorld, reloaded.mEntities.at(root), RefOps(), "target") == reloaded.mEntities.at(2));
+}
+
+TEST_CASE("External children retain their positions among prefab members", "[scene][prefab][order]")
+{
+    mir::RegisterCoreComponents();
+    LinkOps();
+
+    World world;
+    LoadedScene scene = NewScene("test");
+    FakeSceneResolver resolver;
+    const StableId root = PlaceInstance(world, scene, resolver);
+    const auto bindings = scene.mInstances.at(root).mBindings;
+    const Entity rootEntity = scene.mEntities.at(root);
+    const Entity first = scene.mEntities.at(bindings.at(SceneNodeAddress{ 2 }));
+    const Entity second = scene.mEntities.at(bindings.at(SceneNodeAddress{ 3 }));
+    const StableId ordinaryId = scene.mNextId;
+    const Entity ordinary = CreateSceneEntity(world, scene);
+    REQUIRE(SetParent(world, ordinary, rootEntity, first, false));
+    const StableId nestedRoot = PlaceInstance(world, scene, resolver);
+    REQUIRE(SetParent(world, scene.mEntities.at(nestedRoot), rootEntity, second, false));
+
+    TempSceneDir dir("mixed_member_order");
+    REQUIRE(mir::SaveScene(world, dir.mPath, scene, &resolver));
+    World loadedWorld;
+    const LoadedScene loaded = mir::LoadScene(loadedWorld, dir.mPath, &resolver);
+    std::vector<Entity> children;
+    mir::ForEachChild(loadedWorld, loaded.mEntities.at(root), [&](Entity entity) { children.push_back(entity); });
+    const std::vector<Entity> expected{
+        loaded.mEntities.at(ordinaryId), loaded.mEntities.at(bindings.at(SceneNodeAddress{ 2 })),
+        loaded.mEntities.at(nestedRoot), loaded.mEntities.at(bindings.at(SceneNodeAddress{ 3 })),
+    };
+    CHECK(children == expected);
+}
+
+TEST_CASE("Instance bindings take precedence over stale member entity files", "[scene][prefab]")
+{
+    mir::RegisterCoreComponents();
+    LinkOps();
+
+    World world;
+    LoadedScene scene = NewScene("test");
+    FakeSceneResolver resolver;
+    const StableId root = PlaceInstance(world, scene, resolver);
+    TempSceneDir dir("stale_member_files");
+    REQUIRE(mir::SaveScene(world, dir.mPath, scene, &resolver));
+    for (const auto &[address, id] : scene.mInstances.at(root).mBindings)
+    {
+        REQUIRE(mir::WriteJsonFile(dir.mPath / "entities" / (std::to_string(id) + ".json"),
+            json{ { "id", id }, { "parent", 0 }, { "components", json::array() } }));
+    }
+
+    SECTION("An available instance materializes once")
+    {
+        World loadedWorld;
+        const LoadedScene loaded = mir::LoadScene(loadedWorld, dir.mPath, &resolver);
+        REQUIRE(loaded.mEntities.size() == 3);
+        const Entity loadedRoot = loaded.mEntities.at(root);
+        CHECK(LinkOps().Has(loadedWorld, loadedRoot));
+        for (const SceneNodeAddress &address : { SceneNodeAddress{ 2 }, SceneNodeAddress{ 3 } })
+        {
+            const StableId member = scene.mInstances.at(root).mBindings.at(address);
+            CHECK(mir::ParentOf(loadedWorld, loaded.mEntities.at(member)) == loadedRoot);
+        }
+    }
+    SECTION("An unavailable instance does not load flattened stand-ins")
+    {
+        World loadedWorld;
+        const LoadedScene loaded = mir::LoadScene(loadedWorld, dir.mPath);
+        CHECK(loaded.mEntities.empty());
+        CHECK(loaded.mInstances.size() == 1);
+    }
 }
