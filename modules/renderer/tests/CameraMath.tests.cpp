@@ -8,6 +8,7 @@
  */
 #include <renderer/CameraMath.h>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <glm/glm.hpp>
@@ -274,4 +275,34 @@ TEST_CASE("A camera ray does not depend on the lens's clip planes", "[renderer]"
             CHECK(glm::length(glm::cross(glm::dvec3(ray.direction), expected)) <= 1e-6);
         }
     }
+}
+
+TEST_CASE("HaltonJitter stays within +/-0.5 of a pixel", "[renderer]")
+{
+    for (uint32_t i = 0; i < 64; ++i)
+    {
+        const glm::vec2 jitter = mir::HaltonJitter(i);
+        CHECK(jitter.x >= -0.5f);
+        CHECK(jitter.x < 0.5f);
+        CHECK(jitter.y >= -0.5f);
+        CHECK(jitter.y < 0.5f);
+    }
+}
+
+TEST_CASE("HaltonJitter matches the known first terms of Halton(2,3)", "[renderer]")
+{
+    // Base-2/base-3 radical inverses of 1,2,3, centered to +/-0.5 (HaltonJitter is 1-indexed).
+    const glm::vec2 first = mir::HaltonJitter(0);
+    CHECK(first.x == Catch::Approx(0.5f - 0.5f));
+    CHECK(first.y == Catch::Approx(1.0f / 3.0f - 0.5f));
+
+    const glm::vec2 second = mir::HaltonJitter(1);
+    CHECK(second.x == Catch::Approx(0.25f - 0.5f));
+    CHECK(second.y == Catch::Approx(2.0f / 3.0f - 0.5f));
+}
+
+TEST_CASE("HaltonJitter is deterministic and varies across indices", "[renderer]")
+{
+    CHECK(mir::HaltonJitter(5) == mir::HaltonJitter(5));
+    CHECK(mir::HaltonJitter(5) != mir::HaltonJitter(6));
 }

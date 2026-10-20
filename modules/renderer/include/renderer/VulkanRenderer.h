@@ -294,7 +294,7 @@ namespace mir
         void RecordCommands(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views);
         void RecordView(VkCommandBuffer cmd, const RenderView &view, uint32_t viewIndex);
         // Writes set 1 and set 3's per-view data; returns the camera's dynamic offset.
-        uint32_t WriteCameraData(const RenderView &view, uint32_t viewIndex);
+        uint32_t WriteCameraData(const RenderView &view, uint32_t viewIndex, bool applyJitter = false);
 
     private:
         glm::vec4 mClearColor{ 0.02f, 0.02f, 0.02f, 1.0f };

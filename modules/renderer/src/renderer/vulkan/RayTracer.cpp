@@ -586,7 +586,7 @@ namespace mir::vk
         const std::array<VkDescriptorSetLayout, 2> setLayouts{ mSetLayout, cameraSetLayout };
 
         const VkPushConstantRange pushConstantRange{
-            .stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR,
+            .stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,
             .offset = 0,
             .size = sizeof(RtPushConstants) };
 
@@ -1119,7 +1119,7 @@ namespace mir::vk
 
     void RayTracer::Record(VkCommandBuffer cmd, uint32_t frame, std::span<const DrawItem> items, const VkRect2D &rect,
         VkDescriptorSet cameraSet, uint32_t cameraOffset, const ResourceStore &resources,
-        const MaterialStore &materials)
+        const MaterialStore &materials, AntiAliasingMode aaMode, uint32_t rtSampleCount)
     {
         ImageBarrier(cmd, mOutputImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
@@ -1178,8 +1178,11 @@ namespace mir::vk
                 0, static_cast<uint32_t>(sets.size()), sets.data(), 1, &cameraOffset);
 
             const RtPushConstants pushConstants{
-                .outputOffset{ static_cast<uint32_t>(rect.offset.x), static_cast<uint32_t>(rect.offset.y) } };
-            vkCmdPushConstants(cmd, mPipelineLayout, VK_SHADER_STAGE_RAYGEN_BIT_KHR,
+                .outputOffset{ static_cast<uint32_t>(rect.offset.x), static_cast<uint32_t>(rect.offset.y) },
+                .aaMode = static_cast<uint32_t>(aaMode),
+                .sampleCount = rtSampleCount };
+            vkCmdPushConstants(cmd, mPipelineLayout,
+                VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,
                 0, sizeof(RtPushConstants), &pushConstants);
 
             vkCmdTraceRaysKHR(cmd, &mSbtRaygenRegion, &mSbtMissRegion, &mSbtHitRegion, &mSbtCallableRegion,

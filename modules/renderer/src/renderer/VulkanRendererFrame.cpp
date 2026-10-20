@@ -374,11 +374,12 @@ namespace mir
         const VkRect2D rect = vk::ResolveViewRect(view.rect, mSwapchain->Extent());
         const uint32_t frame = mFrameSync->Index();
 
-        const uint32_t cameraOffset = WriteCameraData(view, 0);
+        const bool applyJitter = mAntiAliasingMode == AntiAliasingMode::Dlss;
+        const uint32_t cameraOffset = WriteCameraData(view, 0, applyJitter);
 
         mDevice->BeginLabel(cmd, "Ray Trace Pass", { 0.0f, 1.0f, 1.0f, 1.0f });
         mRayTracer->Record(cmd, frame, view.items, rect, mCameraBuffer->Set(frame),
-            cameraOffset, *mResources, *mMaterialStore);
+            cameraOffset, *mResources, *mMaterialStore, mAntiAliasingMode, mAntiAliasingRtSampleCount);
         mDevice->EndLabel(cmd);
 
         const bool hasRect = rect.extent.width > 0 && rect.extent.height > 0;
@@ -475,10 +476,10 @@ namespace mir
         mFrameSync->End(*mSwapchain, *frame);
     }
 
-    uint32_t VulkanRenderer::WriteCameraData(const RenderView &view, uint32_t viewIndex)
+    uint32_t VulkanRenderer::WriteCameraData(const RenderView &view, uint32_t viewIndex, bool applyJitter)
     {
         const uint32_t frame = mFrameSync->Index();
         const vk::ViewShadowInfo shadow = mShadowMaps->WriteView(frame, view, viewIndex);
-        return mCameraBuffer->WriteView(frame, view, viewIndex, shadow);
+        return mCameraBuffer->WriteView(frame, view, viewIndex, shadow, applyJitter);
     }
 }

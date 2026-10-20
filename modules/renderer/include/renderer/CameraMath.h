@@ -19,6 +19,7 @@
 #include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
 
+#include <cstdint>
 #include <optional>
 
 namespace mir
@@ -61,4 +62,7 @@ namespace mir
     // narrows, so neither end is rounded to a far float position.
     std::optional<float> RayIntersectsBox(const WorldRay &ray, const WorldPose &box,
         const glm::vec3 &localMin, const glm::vec3 &localMax);
+
+    // The index'th term of the Halton(2,3) low-discrepancy sequence.
+    glm::vec2 HaltonJitter(uint32_t index);
 }

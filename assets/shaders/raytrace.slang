@@ -49,11 +49,27 @@ cbuffer CameraData
     float4 atmosphereMisc;
     float4 lightingMeta; // x = this view's count in gLights, y = its first index
     float4x4 prevViewProj;
+    float4x4 sunShadowViewProj; // unused here; declared to keep the prefix contiguous - see jitterAndPad
+    float4 jitterAndPad;        // xy = this frame's sub-pixel jitter in pixels, Dlss anti-aliasing only
+};
+
+static const uint kAaModeOff = 0;
+static const uint kAaModeMsaa = 2;
+static const uint kAaModeDlss = 3;
+
+// D3D's standard 8x rotated-grid sample pattern, 16ths of a pixel from center - the ray-traced
+// multi-sample anti-aliasing fallback's spatial supersample offsets.
+static const uint kMaxMsaaSamples = 8;
+static const float2 kMsaaOffsets[kMaxMsaaSamples] = {
+    float2(1.0, -3.0), float2(-1.0, 3.0), float2(5.0, 1.0), float2(-3.0, -5.0),
+    float2(-5.0, 5.0), float2(-7.0, -1.0), float2(3.0, 7.0), float2(7.0, -7.0)
 };
 
 struct RtPushConstants
 {
     uint2 outputOffset;
+    uint aaMode;
+    uint sampleCount;
 };
 
 [[vk::push_constant]]
@@ -105,30 +121,51 @@ void rayGenMain()
     const uint2 pixel = DispatchRaysIndex().xy;
     const uint2 dims = DispatchRaysDimensions().xy;
 
-    const float2 ndc = (float2(pixel) + 0.5) / float2(dims) * 2.0 - 1.0;
+    const uint sampleCount = pushData.aaMode == kAaModeMsaa
+                                 ? clamp(pushData.sampleCount, 1u, kMaxMsaaSamples)
+                                 : 1u;
 
-    const float4 onNearPlane = mul(invViewProj, float4(ndc, 1.0, 1.0));
-    const float3 toNearPlane = onNearPlane.xyz / onNearPlane.w - cameraPos.xyz;
-    const float3 rayDir = normalize(toNearPlane);
+    float3 colorSum = float3(0.0, 0.0, 0.0);
+    float centerDistance = 0.0;
+    float2 centerVelocity = float2(0.0, 0.0);
 
-    const float toFarPlane = clipPlanes.y * length(toNearPlane) / clipPlanes.x;
+    for (uint i = 0; i < sampleCount; i++)
+    {
+        const float2 msaaOffset = pushData.aaMode == kAaModeMsaa ? kMsaaOffsets[i] / 16.0 : float2(0.0, 0.0);
+        const float2 pixelOffset = msaaOffset + jitterAndPad.xy;
 
-    RayDesc ray;
-    ray.Origin = cameraPos.xyz;
-    ray.Direction = rayDir;
-    ray.TMin = 0.001;
-    ray.TMax = clipPlanes.y > 0.0 ? toFarPlane : 1.0e30;
+        const float2 ndc = (float2(pixel) + 0.5 + pixelOffset) / float2(dims) * 2.0 - 1.0;
 
-    RayPayload payload;
-    payload.color = float3(0.0, 0.0, 0.0);
-    payload.distance = clipPlanes.y > 0.0 ? toFarPlane : 1.0e8;
-    payload.velocity = float2(0.0, 0.0); // a miss (sky) is treated as stationary
+        const float4 onNearPlane = mul(invViewProj, float4(ndc, 1.0, 1.0));
+        const float3 toNearPlane = onNearPlane.xyz / onNearPlane.w - cameraPos.xyz;
+        const float3 rayDir = normalize(toNearPlane);
 
-    TraceRay(gTlas, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, 0xFF, 0, 0, 0, ray, payload);
+        const float toFarPlane = clipPlanes.y * length(toNearPlane) / clipPlanes.x;
 
-    gOutput[pixel + pushData.outputOffset] = float4(payload.color, 1.0);
-    gDistance[pixel + pushData.outputOffset] = payload.distance;
-    gVelocity[pixel + pushData.outputOffset] = float4(payload.velocity, 0.0, 0.0);
+        RayDesc ray;
+        ray.Origin = cameraPos.xyz;
+        ray.Direction = rayDir;
+        ray.TMin = 0.001;
+        ray.TMax = clipPlanes.y > 0.0 ? toFarPlane : 1.0e30;
+
+        RayPayload payload;
+        payload.color = float3(0.0, 0.0, 0.0);
+        payload.distance = clipPlanes.y > 0.0 ? toFarPlane : 1.0e8;
+        payload.velocity = float2(0.0, 0.0); // a miss (sky) is treated as stationary
+
+        TraceRay(gTlas, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, 0xFF, 0, 0, 0, ray, payload);
+
+        colorSum += payload.color;
+        if (i == 0)
+        {
+            centerDistance = payload.distance;
+            centerVelocity = payload.velocity;
+        }
+    }
+
+    gOutput[pixel + pushData.outputOffset] = float4(colorSum / float(sampleCount), 1.0);
+    gDistance[pixel + pushData.outputOffset] = centerDistance;
+    gVelocity[pixel + pushData.outputOffset] = float4(centerVelocity, 0.0, 0.0);
 }
 
 [shader("miss")]

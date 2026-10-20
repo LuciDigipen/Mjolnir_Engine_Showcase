@@ -28,10 +28,14 @@ namespace mir::vk
         glm::vec4 tint;       // 16
     };
 
-    // Ray gen writes at outputOffset so each view traces only its own rect.
+    // Ray gen writes at outputOffset so each view traces only its own rect. aaMode mirrors
+    // mir::AntiAliasingMode (Off=0, Fxaa=1 never reaches here, Msaa=2, Dlss=3); sampleCount is
+    // the Msaa fallback's per-pixel ray count, unused otherwise.
     struct RtPushConstants
     {
         glm::uvec2 outputOffset;
+        uint32_t aaMode;
+        uint32_t sampleCount;
     };
 
     // Shadow depth passes have no camera UBO, so the light's viewProj rides along.

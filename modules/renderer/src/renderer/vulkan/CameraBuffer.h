@@ -50,7 +50,8 @@ namespace mir::vk
         void SetAtmosphere(const Sky &sky) { mAtmosphere = sky; }
 
         // Fills this view's slice of the frame's buffers; returns its dynamic offset into binding 0.
-        uint32_t WriteView(uint32_t frame, const RenderView &view, uint32_t viewIndex, const ViewShadowInfo &shadow);
+        uint32_t WriteView(uint32_t frame, const RenderView &view, uint32_t viewIndex, const ViewShadowInfo &shadow,
+            bool applyJitter);
 
         VkDescriptorSetLayout SetLayout() const { return mSetLayout; }
         VkDescriptorSet Set(uint32_t frame) const { return mSets[frame]; }
@@ -89,5 +90,8 @@ namespace mir::vk
 
         glm::mat4 mPreviousViewProj[kMaxViewsPerFrame]{};
         bool mHasPreviousViewProj[kMaxViewsPerFrame]{};
+
+        // One Halton(2,3) index per view slot, advanced once per applyJitter=true WriteView call.
+        uint32_t mJitterIndex[kMaxViewsPerFrame]{};
     };
 }

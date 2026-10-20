@@ -84,9 +84,12 @@ namespace mir::vk
 
         // Builds the frame's TLAS from `items` and traces `rect` into the output image,
         // which ends in SHADER_READ_ONLY for the caller to sample (PostProcess's tonemap pass).
+        // aaMode selects rayGenMain's branch: Off/Dlss trace one sample per pixel (Dlss's jitter
+        // already rode in through cameraSet's CameraData), Msaa loops rtSampleCount rotated-grid
+        // sub-pixel samples and averages color only - distance/velocity keep the first sample.
         void Record(VkCommandBuffer cmd, uint32_t frame, std::span<const DrawItem> items, const VkRect2D &rect,
             VkDescriptorSet cameraSet, uint32_t cameraOffset, const ResourceStore &resources,
-            const MaterialStore &materials);
+            const MaterialStore &materials, AntiAliasingMode aaMode, uint32_t rtSampleCount);
 
         VkImage OutputImage(uint32_t frame) const { return mOutputImages[frame]; }
         VkImageView OutputView(uint32_t frame) const { return mOutputViews[frame]; }
