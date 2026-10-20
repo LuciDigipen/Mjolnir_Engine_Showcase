@@ -305,6 +305,13 @@ namespace mir
                     return false;
 
                 const std::vector<Entity> moved = TopmostInHierarchyOrder(world, mTargets);
+
+                
+                const auto placeOf = [&world](Entity entity) { return std::pair(ParentOf(world, entity), NextSibling(world, entity)); };
+                std::vector<std::pair<Entity, Entity>> placesBefore;
+                for (const Entity entity : moved)
+                    placesBefore.push_back(placeOf(entity));
+
                 for (const Entity entity : moved)
                 {
                     Move move;
@@ -313,7 +320,7 @@ namespace mir
                     move.mOldNext = context.mIds.IdOf(NextSibling(world, entity));
                     move.mBefore = ReadTransform(world, entity);
 
-                    //keeps the world pose
+                    
                     if (mBeforeEntity.IsNull() && ParentOf(world, entity) == mParentEntity)
                         MoveToLastSibling(world, entity);
                     else
@@ -322,8 +329,16 @@ namespace mir
                     move.mAfter = ReadTransform(world, entity);
                     mMoves.push_back(std::move(move));
                 }
-                if (mMoves.empty())
+                bool changed = false;
+                for (std::size_t i = 0; i < moved.size(); ++i)
+                    changed |= placeOf(moved[i]) != placesBefore[i];
+
+               
+                if (!changed)
+                {
+                    mMoves.clear();
                     return false;
+                }
 
                 mParent = context.mIds.IdOf(mParentEntity);
                 mBefore = context.mIds.IdOf(mBeforeEntity);

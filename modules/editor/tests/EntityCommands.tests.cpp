@@ -454,6 +454,48 @@ TEST_CASE("A reparent is one step and undoes in place", "[editor][history]")
     CHECK(Differences(e.Saved(), original) == std::vector<std::string>{});
 }
 
+TEST_CASE("A drop that moves nothing records no step", "[editor][history]")
+{
+    Editing e;
+    const Sample s = BuildSample(e);
+
+    std::vector<Entity> targets;
+    Entity parent = kNullEntity;
+    Entity before = kNullEntity;
+    SECTION("before its own next sibling")
+    {
+        targets = { s.x };
+        parent = s.a;
+        before = s.y;
+    }
+    SECTION("to the end it is already at")
+    {
+        targets = { s.z };
+        parent = s.a;
+    }
+    SECTION("two neighbors before the one after them")
+    {
+        targets = { s.x, s.y };
+        parent = s.a;
+        before = s.z;
+    }
+    SECTION("a root before its own next root")
+    {
+        targets = { s.b };
+        before = s.a;
+    }
+    SECTION("the last root to the end of the roots")
+    {
+        targets = { s.a };
+    }
+
+    const Files original = e.Saved();
+    e.Run(MakeReParentCommand(targets, parent, before));
+
+    CHECK(e.mHistory.StepCount() == 0);
+    CHECK(Differences(e.Saved(), original) == std::vector<std::string>{});
+}
+
 TEST_CASE("Delete selects the neighbor, and undo selects the entity again", "[editor][history]")
 {
     Editing e;

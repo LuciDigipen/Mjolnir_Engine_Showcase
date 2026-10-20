@@ -88,9 +88,9 @@ goes stale the first time its entity is deleted and restored, and the generation
 check then turns it into nothing.
 
 **`Do` returns false when nothing changed, and no step is recorded.** That
-covers a preset whose `mCanCreate` refuses, a drop `CanSetParentAll` rejects, and
-a target that is already dead. The redo steps survive, because nothing new
-happened.
+covers a preset whose `mCanCreate` refuses, a drop `CanSetParentAll` rejects, a
+drop that leaves every entity with the same parent and next sibling, and a target
+that is already dead. The redo steps survive, because nothing new happened.
 
 **Undoing a delete gives the entities back their `StableId`s.** Saving after a
 delete and its undo leaves every scene file unchanged. Undoing a create or a
