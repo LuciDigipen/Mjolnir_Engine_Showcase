@@ -85,6 +85,46 @@ namespace
         bool mDone = false;
     };
 
+    // sets Value too, but folds into an open step for the same key, as a field drag does
+    class DragValue final : public mir::ICommand
+    {
+    public:
+        DragValue(int key, int value) : mKey(key), mAfter(value) {}
+
+        bool Do(CommandContext &context) override
+        {
+            Value &value = context.mWorld.Resource<Value>();
+            if (!mDone)
+            {
+                mBefore = value.mValue;
+                mDone = true;
+            }
+            value.mValue = mAfter;
+            return true;
+        }
+
+        void Undo(CommandContext &context) override { context.mWorld.Resource<Value>().mValue = mBefore; }
+
+        std::size_t Size() const override { return 16; }
+        std::string Name() const override { return "Drag " + std::to_string(mKey); }
+        void CollectIds(std::vector<HistoryId> &) const override {}
+
+        bool TryMerge(const mir::ICommand &next) override
+        {
+            const auto *other = dynamic_cast<const DragValue *>(&next);
+            if (other == nullptr || other->mKey != mKey)
+                return false;
+            mAfter = other->mAfter;
+            return true;
+        }
+
+    private:
+        int mKey;
+        int mBefore = 0;
+        int mAfter;
+        bool mDone = false;
+    };
+
     class NoSceneOps final : public mir::ISceneOps
     {
     public:
@@ -122,6 +162,19 @@ namespace
         void Redo()
         {
             mHistory.RequestRedo();
+            Flush();
+        }
+
+        // one frame of a held widget
+        void Drag(int key, int value)
+        {
+            mHistory.Submit(std::make_unique<DragValue>(key, value));
+            Flush();
+        }
+
+        void Release()
+        {
+            mHistory.EndStep();
             Flush();
         }
 
@@ -366,4 +419,66 @@ TEST_CASE("EntityIds keeps an id across Unbind and Rebind", "[editor][history]")
     ids.Retain(keep);
     CHECK(ids.Size() == 1);
     CHECK(ids.EntityOf(id) == b);
+}
+
+TEST_CASE("A drag folds into one step, and undo goes back to where it started", "[editor][history]")
+{
+    Fixture f;
+    f.Drag(1, 5);
+    f.Drag(1, 6);
+    f.Drag(1, 7);
+
+    CHECK(f.mHistory.StepCount() == 1);
+    CHECK(f.Current() == 7);
+
+    f.Undo();
+    CHECK(f.Current() == 0);
+
+    f.Redo();
+    CHECK(f.Current() == 7);
+}
+
+TEST_CASE("Two separate edits to the same field are two steps", "[editor][history]")
+{
+    Fixture f;
+
+    SECTION("released in a later frame")
+    {
+        f.Drag(1, 5);
+        f.Release();
+    }
+    SECTION("released in the frame of the change")
+    {
+        f.mHistory.Submit(std::make_unique<DragValue>(1, 5));
+        f.mHistory.EndStep();
+        f.Flush();
+    }
+    f.Drag(1, 6);
+    f.Release();
+
+    CHECK(f.mHistory.StepCount() == 2);
+    f.Undo();
+    CHECK(f.Current() == 5);
+}
+
+TEST_CASE("A drag on another field starts a new step", "[editor][history]")
+{
+    Fixture f;
+    f.Drag(1, 5);
+    f.Drag(2, 6);
+
+    CHECK(f.mHistory.StepCount() == 2);
+}
+
+TEST_CASE("Undo and redo close the open step", "[editor][history]")
+{
+    Fixture f;
+    f.Drag(1, 5);
+    f.Undo();
+    f.Redo();
+    f.Drag(1, 6);
+
+    CHECK(f.mHistory.StepCount() == 2);
+    f.Undo();
+    CHECK(f.Current() == 5);
 }

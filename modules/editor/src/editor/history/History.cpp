@@ -31,6 +31,10 @@ namespace mir
         for (std::unique_ptr<ICommand> &command : queue)
             Apply(std::move(command), context);
 
+        
+        if (std::exchange(mEndStep, false) || mPending != 0)
+            CloseOpenStep();
+
         for (; mPending < 0 && CanUndo(); ++mPending)
             Undo(context);
 
@@ -53,6 +57,7 @@ namespace mir
         mCursor = 0;
         mQueue.clear();
         mPending = 0;
+        mEndStep = false;
         mIds.Clear();
         mIdsStale = false;
         mUsed = 0;
@@ -77,17 +82,35 @@ namespace mir
             return;
         }
 
+        
+        if (mCursor == mSteps.size() && !mSteps.empty() && mSteps.back().mOpen &&
+            mSteps.back().mCommand->TryMerge(*command))
+        {
+            Step &open = mSteps.back();
+            open.mSelectionAfter = SelectionIds(context.mWorld);
+            Measure(open);
+            return;
+        }
+
         DropStepsFrom(mCursor);
+        CloseOpenStep();
 
         Step step;
         step.mSerial = mNextSerial++;
         step.mCommand = std::move(command);
         step.mSelectionBefore = std::move(before);
         step.mSelectionAfter = SelectionIds(context.mWorld);
+        step.mOpen = true;
         Measure(step);
 
         mSteps.push_back(std::move(step));
         mCursor = mSteps.size();
+    }
+
+    void History::CloseOpenStep()
+    {
+        if (!mSteps.empty())
+            mSteps.back().mOpen = false;
     }
 
     void History::Undo(CommandContext &context)

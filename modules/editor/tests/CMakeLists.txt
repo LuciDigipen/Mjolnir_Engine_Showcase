@@ -1,4 +1,5 @@
 engine_add_module_tests(editor
+    ComponentCommands.tests.cpp
     EntityCommands.tests.cpp
     History.tests.cpp
 )
