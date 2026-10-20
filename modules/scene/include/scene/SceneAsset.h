@@ -11,10 +11,14 @@
 #include "core/ecs/TransformHierarchy.h"
 #include "core/ecs/World.h"
 
+#include <nlohmann/json.hpp>
+
 #include <cstdint>
 #include <map>
 #include <string>
+#include <string_view>
 #include <unordered_set>
+#include <vector>
 
 namespace mir
 {
@@ -26,6 +30,44 @@ namespace mir
     // The "no entity" value for a StableId field
     inline constexpr StableId kNullStableId = 0;
 
+    // Nested occurrence ids, then the final entity node id.
+    using SceneNodeAddress = std::vector<uint64_t>;
+
+    struct SceneFieldPatch
+    {
+        std::string mComponent;
+        std::string mField;
+        nlohmann::json mValue;
+    };
+
+    struct SceneComponentRecord
+    {
+        std::string mType;
+        nlohmann::json mFields = nlohmann::json::object();
+    };
+
+    struct SceneInstancePatch
+    {
+        SceneNodeAddress mTarget;
+        std::vector<SceneFieldPatch> mFields;
+        std::vector<SceneComponentRecord> mAddedComponents;
+        std::vector<std::string> mRemovedComponents;
+    };
+
+    struct ScenePrefabInstance
+    {
+        std::string mPrefab;
+        StableId mRoot = kNullStableId;
+        StableId mParent = kNullStableId;
+        uint32_t mSiblingIndex = 0;
+        nlohmann::json mPlacement = nlohmann::json::object();
+
+        // every member including the root
+        std::map<SceneNodeAddress, StableId> mBindings;
+
+        std::vector<SceneInstancePatch> mPatches;
+    };
+
     struct LoadedScene
     {
         std::string mName;
@@ -34,9 +76,14 @@ namespace mir
         // save with no change produces no diff
         std::map<StableId, Entity> mEntities;
 
+        // keyed by root StableId
+        std::map<StableId, ScenePrefabInstance> mInstances;
+
         // next id handed out, persisted in scene.json so a deleted entity's id
         // is never reissued
         StableId mNextId = 1;
+
+        bool mDirty = false;
     };
 
     // Not backed by a file until the first save.
@@ -67,10 +114,31 @@ namespace mir
         std::unordered_set<uint64_t> doomed{ PackEntity(root) };
         ForEachDescendant(world, root, [&](Entity entity) { doomed.insert(PackEntity(entity)); });
 
+        bool erasedInstance = false;
+        for (auto it = scene.mInstances.begin(); it != scene.mInstances.end();)
+        {
+            const auto entityIt = scene.mEntities.find(it->first);
+            if (entityIt != scene.mEntities.end() && doomed.contains(PackEntity(entityIt->second)))
+            {
+                it = scene.mInstances.erase(it);
+                erasedInstance = true;
+            }
+            else
+            {
+                ++it;
+            }
+        }
+        if (erasedInstance)
+            scene.mDirty = true;
+
         std::erase_if(scene.mEntities, [&](const auto &entry) { return doomed.contains(PackEntity(entry.second)); });
 
         // the hierarchy's destroy hook takes the descendants with it
         world.DestroyEntity(root);
         return true;
     }
+
+    // Writes the member's World field and stores the override in its instance record.
+    bool SetInstanceEntityRef(World &world, LoadedScene &scene, StableId root, const SceneNodeAddress &node,
+        std::string_view component, std::string_view field, StableId target);
 }
