@@ -10,7 +10,9 @@
 #include "core/ecs/Entity.h"
 #include "scene/SceneAsset.h"
 
+#include <span>
 #include <string>
+#include <vector>
 
 namespace mir
 {
@@ -21,10 +23,18 @@ namespace mir
         std::string mData;
     };
 
+    
+    std::vector<Entity> SnapshotMembers(World &world, Entity root);
+
     EntitySnapshot CaptureEntity(World &world, Entity root);
 
     Entity RestoreEntity(World &world, const EntitySnapshot &snapshot, LoadedScene &scene,
         Entity parent = kNullEntity);
+
+    //For undo, i gets stableIds[i] back, kNullStableId leaves it unregistered.
+    //returns the members in SnapshotMembers order.
+    std::vector<Entity> RestoreEntityAt(World &world, const EntitySnapshot &snapshot, LoadedScene &scene,
+        std::span<const StableId> stableIds, Entity parent = kNullEntity, Entity before = kNullEntity);
 
     Entity DuplicateSceneEntity(World &world, LoadedScene &scene, Entity source);
 }

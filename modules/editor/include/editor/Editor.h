@@ -14,6 +14,7 @@
 #include <editor/BackgroundImage.h>
 #include <editor/EditorCamera.h>
 #include <editor/EditorPreferences.h>
+#include <editor/history/History.h>
 #include <editor/panels/AssetImportPanel.h>
 #include <editor/panels/ContentBrowserPanel.h>
 #include <editor/panels/HierarchyPanel.h>
@@ -71,7 +72,6 @@ namespace mir
     struct EditorActions
     {
         SceneMenuAction mScene = SceneMenuAction::None;
-        EntityAction mEntity;
         std::string mOpenProject;
 
         // non-empty mCreateProjectName requests CreateGameProject(name, RT),
@@ -95,7 +95,7 @@ namespace mir
 
         // imgui must already be initialized; the editor never owns the context
         bool Initialize(const ImGuiRuntime &imgui, Window &window, std::filesystem::path projectSettingsPath,
-                        World &world);
+                        World &world, ISceneOps &sceneOps);
 
         //before ImGuiRuntime::Shutdown
         void Shutdown();
@@ -118,6 +118,8 @@ namespace mir
         bool WantsCaptureKeyboard() const;
         bool WantsCaptureMouse() const;
 
+        void ClearHistory() { mHistory.Clear(); }
+
     private:
         void DrawTitleBar();
         void DrawOpenProjectMenu(std::span<const ProjectMenuEntry> projects, std::string_view currentProject);
@@ -129,6 +131,8 @@ namespace mir
         void DrawSelectionHighlights(const EngineModeState &mode, World &world);
         void DrawComponentGizmos(const EngineModeState &mode, World &world);
         void DrawNewProjectModal(EditorActions &actions, std::span<const ProjectMenuEntry> projects);
+        void DrawEditMenu();
+        void UpdateHistoryShortcuts();
 
         SceneMenuAction DrawPlayControls(const EngineModeState &mode);
 
@@ -162,6 +166,9 @@ namespace mir
         PostProcessingPanel mPostProcessingPanel;
         ProfilerPanel mProfilerPanel;
         EditorCamera mCamera;
+
+        History mHistory;
+        ISceneOps *mSceneOps = nullptr;
 
         std::filesystem::path mPreferencesPath;
         EditorPreferences mPreferences;

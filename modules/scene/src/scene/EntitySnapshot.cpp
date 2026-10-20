@@ -20,6 +20,7 @@
 #include <map>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -30,9 +31,36 @@ namespace mir
         using nlohmann::json;
 
         constexpr StableId kRootLocalId = 1;
+
+        //keyed by snapshot local id, empty when the snapshot is empty or malformed
+        std::map<StableId, Entity> SpawnSnapshot(World &world, const EntitySnapshot &snapshot, std::string_view caller)
+        {
+            if (snapshot.mData.empty())
+                return {};
+
+            std::optional<json> parsed = ParseJson(snapshot.mData, "EntitySnapshot");
+            if (!parsed || !parsed->is_array())
+            {
+                MIR_LOG_ERROR("{}: snapshot is not an entity array, nothing restored", caller);
+                return {};
+            }
+
+            std::vector<std::pair<StableId, json>> entities;
+            entities.reserve(parsed->size());
+            for (json &entity : *parsed)
+            {
+                if (!entity.is_object())
+                    continue;
+
+                const StableId id = entity.value("id", kNullStableId);
+                entities.emplace_back(id, std::move(entity));
+            }
+
+            return SpawnEntities(world, entities, true);
+        }
     }
 
-    EntitySnapshot CaptureEntity(World &world, Entity root)
+    std::vector<Entity> SnapshotMembers(World &world, Entity root)
     {
         if (!world.IsAlive(root))
             return {};
@@ -40,6 +68,14 @@ namespace mir
         // parents precede children, so replaying SetParent in this order keeps sibling order
         std::vector<Entity> members{ root };
         ForEachDescendant(world, root, [&](Entity entity) { members.push_back(entity); });
+        return members;
+    }
+
+    EntitySnapshot CaptureEntity(World &world, Entity root)
+    {
+        const std::vector<Entity> members = SnapshotMembers(world, root);
+        if (members.empty())
+            return {};
 
         EntityIdMap ids;
         ids.reserve(members.size());
@@ -57,28 +93,7 @@ namespace mir
 
     Entity RestoreEntity(World &world, const EntitySnapshot &snapshot, LoadedScene &scene, Entity parent)
     {
-        if (snapshot.mData.empty())
-            return kNullEntity;
-
-        std::optional<json> parsed = ParseJson(snapshot.mData, "EntitySnapshot");
-        if (!parsed || !parsed->is_array())
-        {
-            MIR_LOG_ERROR("RestoreEntity: snapshot is not an entity array, nothing restored");
-            return kNullEntity;
-        }
-
-        std::vector<std::pair<StableId, json>> entities;
-        entities.reserve(parsed->size());
-        for (json &entity : *parsed)
-        {
-            if (!entity.is_object())
-                continue;
-
-            const StableId id = entity.value("id", kNullStableId);
-            entities.emplace_back(id, std::move(entity));
-        }
-
-        const std::map<StableId, Entity> spawned = SpawnEntities(world, entities, true);
+        const std::map<StableId, Entity> spawned = SpawnSnapshot(world, snapshot, "RestoreEntity");
 
         for (const auto &[localId, entity] : spawned)
             scene.mEntities[AllocateStableId(scene)] = entity;
@@ -90,6 +105,49 @@ namespace mir
         if (!parent.IsNull())
             SetParent(world, root->second, parent, kNullEntity, false);
         return root->second;
+    }
+
+    std::vector<Entity> RestoreEntityAt(World &world, const EntitySnapshot &snapshot, LoadedScene &scene,
+        std::span<const StableId> stableIds, Entity parent, Entity before)
+    {
+        const std::map<StableId, Entity> spawned = SpawnSnapshot(world, snapshot, "RestoreEntityAt");
+        const auto root = spawned.find(kRootLocalId);
+        if (root == spawned.end())
+            return {};
+
+        if (spawned.size() != stableIds.size())
+            MIR_LOG_WARN("RestoreEntityAt: {} members but {} StableIds, the extra members stay unregistered",
+                spawned.size(), stableIds.size());
+
+        std::vector<Entity> members;
+        members.reserve(spawned.size());
+        for (const auto &[localId, entity] : spawned)
+        {
+            members.push_back(entity);
+
+            const std::size_t index = static_cast<std::size_t>(localId - kRootLocalId);
+            StableId id = index < stableIds.size() ? stableIds[index] : kNullStableId;
+            if (id == kNullStableId)
+                continue;
+
+            if (scene.mEntities.contains(id))
+            {
+                MIR_LOG_WARN("RestoreEntityAt: StableId {} is already in use, the restored entity gets a new one", id);
+                id = AllocateStableId(scene);
+            }
+            
+            scene.mEntities[id] = entity;
+            scene.mNextId = std::max(scene.mNextId, id + 1);
+        }
+
+
+        if (!before.IsNull() && SetParent(world, root->second, parent, before, false))
+            return members;
+
+        if (!parent.IsNull())
+            SetParent(world, root->second, parent, kNullEntity, false);
+
+        return members;
     }
 
     Entity DuplicateSceneEntity(World &world, LoadedScene &scene, Entity source)

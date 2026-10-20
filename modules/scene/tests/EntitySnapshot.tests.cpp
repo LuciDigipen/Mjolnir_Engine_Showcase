@@ -37,7 +37,10 @@ namespace
     using mir::NewScene;
     using mir::ParentOf;
     using mir::RestoreEntity;
+    using mir::RestoreEntityAt;
     using mir::RuntimeFieldDecl;
+    using mir::SnapshotMembers;
+    using mir::StableId;
     using mir::Transform;
     using mir::World;
 
@@ -78,6 +81,23 @@ namespace
         std::vector<Entity> children;
         mir::ForEachChild(world, parent, [&](Entity child) { children.push_back(child); });
         return children;
+    }
+
+    // kNullStableId for an entity the scene does not hold
+    std::vector<StableId> StableIdsOf(const LoadedScene &scene, std::span<const Entity> entities)
+    {
+        std::vector<StableId> ids;
+        for (const Entity entity : entities)
+        {
+            StableId found = mir::kNullStableId;
+            for (const auto &[id, candidate] : scene.mEntities)
+            {
+                if (candidate == entity)
+                    found = id;
+            }
+            ids.push_back(found);
+        }
+        return ids;
     }
 }
 
@@ -349,4 +369,135 @@ TEST_CASE("DuplicateSceneEntity returns null for an entity that is not alive", "
     world.DestroyEntity(source);
 
     CHECK(mir::DuplicateSceneEntity(world, scene, source).IsNull());
+}
+
+TEST_CASE("SnapshotMembers lists the root, then its descendants", "[scene][snapshot]")
+{
+    World world;
+    LoadedScene scene = NewScene("test");
+    Entity root = CreateSceneEntity(world, scene);
+    Entity first = CreateSceneEntity(world, scene, root);
+    Entity second = CreateSceneEntity(world, scene, root);
+    Entity grandchild = CreateSceneEntity(world, scene, first);
+
+    CHECK(SnapshotMembers(world, root) == std::vector<Entity>{ root, first, second, grandchild });
+
+    world.DestroyEntity(root);
+    CHECK(SnapshotMembers(world, root).empty());
+}
+
+TEST_CASE("RestoreEntityAt gives every member its StableId back", "[scene][snapshot]")
+{
+    mir::RegisterCoreComponents();
+
+    World world;
+    LoadedScene scene = NewScene("test");
+    CreateSceneEntity(world, scene);
+    Entity root = CreateSceneEntity(world, scene);
+    Entity child = CreateSceneEntity(world, scene, root);
+    CreateSceneEntity(world, scene, child);
+    SetName(world, child, "child");
+
+    const std::vector<StableId> ids = StableIdsOf(scene, SnapshotMembers(world, root));
+    const EntitySnapshot snapshot = CaptureEntity(world, root);
+    const StableId nextBefore = scene.mNextId;
+    REQUIRE(mir::DestroySceneEntity(world, scene, root));
+
+    const std::vector<Entity> restored = RestoreEntityAt(world, snapshot, scene, ids);
+
+    REQUIRE(restored.size() == 3);
+    CHECK(StableIdsOf(scene, restored) == ids);
+    CHECK(scene.mEntities.size() == 4);
+    CHECK(scene.mNextId == nextBefore);
+    CHECK(ParentOf(world, restored[1]) == restored[0]);
+    CHECK(ParentOf(world, restored[2]) == restored[1]);
+    CHECK(std::strcmp(world.GetComponent<Name>(restored[1])->mValue, "child") == 0);
+}
+
+TEST_CASE("RestoreEntityAt puts the root back before its old next sibling", "[scene][snapshot]")
+{
+    World world;
+    LoadedScene scene = NewScene("test");
+    Entity parent = CreateSceneEntity(world, scene);
+    Entity first = CreateSceneEntity(world, scene, parent);
+    Entity middle = CreateSceneEntity(world, scene, parent);
+    Entity last = CreateSceneEntity(world, scene, parent);
+    Entity otherRoot = CreateSceneEntity(world, scene);
+
+    const auto removeAndRestore = [&](Entity target, Entity newParent, Entity before)
+        {
+            const std::vector<StableId> ids = StableIdsOf(scene, SnapshotMembers(world, target));
+            const EntitySnapshot snapshot = CaptureEntity(world, target);
+            REQUIRE(mir::DestroySceneEntity(world, scene, target));
+            const std::vector<Entity> restored = RestoreEntityAt(world, snapshot, scene, ids, newParent, before);
+            REQUIRE_FALSE(restored.empty());
+            return restored.front();
+        };
+
+    SECTION("among children")
+    {
+        const Entity restored = removeAndRestore(middle, parent, last);
+        CHECK(ChildrenOf(world, parent) == std::vector<Entity>{ first, restored, last });
+    }
+    SECTION("as the last child")
+    {
+        const Entity restored = removeAndRestore(last, parent, mir::kNullEntity);
+        CHECK(ChildrenOf(world, parent) == std::vector<Entity>{ first, middle, restored });
+    }
+    SECTION("among roots")
+    {
+        const Entity restored = removeAndRestore(parent, mir::kNullEntity, otherRoot);
+        const std::span<const Entity> roots = world.Resource<mir::HierarchyIndex>().Roots();
+        CHECK(std::vector<Entity>(roots.begin(), roots.end()) == std::vector<Entity>{ restored, otherRoot });
+        CHECK(ChildrenOf(world, restored).size() == 3);
+    }
+}
+
+TEST_CASE("RestoreEntityAt keeps the root under its parent when the anchor is gone", "[scene][snapshot]")
+{
+    World world;
+    LoadedScene scene = NewScene("test");
+    Entity parent = CreateSceneEntity(world, scene);
+    Entity first = CreateSceneEntity(world, scene, parent);
+    Entity anchor = CreateSceneEntity(world, scene, parent);
+    Entity last = CreateSceneEntity(world, scene, parent);
+
+    const std::vector<StableId> ids = StableIdsOf(scene, std::vector<Entity>{ first });
+    const EntitySnapshot snapshot = CaptureEntity(world, first);
+    REQUIRE(mir::DestroySceneEntity(world, scene, first));
+    REQUIRE(mir::DestroySceneEntity(world, scene, anchor));
+
+    const std::vector<Entity> restored = RestoreEntityAt(world, snapshot, scene, ids, parent, anchor);
+
+    REQUIRE(restored.size() == 1);
+    CHECK(ChildrenOf(world, parent) == std::vector<Entity>{ last, restored[0] });
+}
+
+TEST_CASE("RestoreEntityAt with a missing or taken StableId", "[scene][snapshot]")
+{
+    World world;
+    LoadedScene scene = NewScene("test");
+    Entity entity = CreateSceneEntity(world, scene);
+    const StableId id = scene.mEntities.begin()->first;
+    const EntitySnapshot snapshot = CaptureEntity(world, entity);
+    const StableId nextBefore = scene.mNextId;
+
+    SECTION("a null id leaves the member unregistered")
+    {
+        const std::vector<StableId> ids{ mir::kNullStableId };
+        const std::vector<Entity> restored = RestoreEntityAt(world, snapshot, scene, ids);
+
+        REQUIRE(restored.size() == 1);
+        CHECK(world.IsAlive(restored[0]));
+        CHECK(scene.mEntities.size() == 1);
+    }
+    SECTION("an id still in use gets a new one")
+    {
+        const std::vector<StableId> ids{ id };
+        const std::vector<Entity> restored = RestoreEntityAt(world, snapshot, scene, ids);
+
+        REQUIRE(restored.size() == 1);
+        CHECK(scene.mEntities.at(id) == entity);
+        CHECK(scene.mEntities.at(nextBefore) == restored[0]);
+    }
 }

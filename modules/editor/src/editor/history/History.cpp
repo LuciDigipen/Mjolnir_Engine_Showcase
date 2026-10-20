@@ -1,0 +1,188 @@
+/**
+ * @file History.cpp
+ * @author Dong Ta
+ * @brief The editor's undo/redo steps, run once a frame at the end of DrawLayout.
+ *
+ * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
+ *
+ */
+#include <editor/history/History.h>
+
+#include <editor/Selection.h>
+
+#include <core/ecs/World.h>
+#include <core/log/Log.h>
+
+#include <utility>
+
+namespace mir
+{
+    void History::Submit(std::unique_ptr<ICommand> command)
+    {
+        if (command)
+            mQueue.push_back(std::move(command));
+    }
+
+    void History::Flush(World &world, ISceneOps &scene)
+    {
+        CommandContext context{ world, mIds, scene };
+
+        std::vector<std::unique_ptr<ICommand>> queue = std::exchange(mQueue, {});
+        for (std::unique_ptr<ICommand> &command : queue)
+            Apply(std::move(command), context);
+
+        for (; mPending < 0 && CanUndo(); ++mPending)
+            Undo(context);
+
+        for (; mPending > 0 && CanRedo(); --mPending)
+        {
+            if (!Redo(context))
+                break;
+        }
+        mPending = 0;
+
+        Trim();
+        
+        if (mIdsStale)
+            DropUnusedIds();
+    }
+
+    void History::Clear()
+    {
+        mSteps.clear();
+        mCursor = 0;
+        mQueue.clear();
+        mPending = 0;
+        mIds.Clear();
+        mIdsStale = false;
+        mUsed = 0;
+    }
+
+    std::string History::UndoName() const
+    {
+        return CanUndo() ? mSteps[mCursor - 1].mCommand->Name() : std::string();
+    }
+
+    std::string History::RedoName() const
+    {
+        return CanRedo() ? mSteps[mCursor].mCommand->Name() : std::string();
+    }
+
+    void History::Apply(std::unique_ptr<ICommand> command, CommandContext &context)
+    {
+        std::vector<HistoryId> before = SelectionIds(context.mWorld);
+        if (!command->Do(context))
+        {
+            mIdsStale = true;
+            return;
+        }
+
+        DropStepsFrom(mCursor);
+
+        Step step;
+        step.mSerial = mNextSerial++;
+        step.mCommand = std::move(command);
+        step.mSelectionBefore = std::move(before);
+        step.mSelectionAfter = SelectionIds(context.mWorld);
+        Measure(step);
+
+        mSteps.push_back(std::move(step));
+        mCursor = mSteps.size();
+    }
+
+    void History::Undo(CommandContext &context)
+    {
+        Step &step = mSteps[--mCursor];
+        step.mCommand->Undo(context);
+        Measure(step);
+        Select(context.mWorld, step.mSelectionBefore);
+    }
+
+    bool History::Redo(CommandContext &context)
+    {
+        Step &step = mSteps[mCursor];
+        if (!step.mCommand->Do(context))
+        {
+            MIR_LOG_WARN("History: could not redo '{}'", step.mCommand->Name());
+            return false;
+        }
+
+        Measure(step);
+        Select(context.mWorld, step.mSelectionAfter);
+        ++mCursor;
+        return true;
+    }
+
+    void History::DropStepsFrom(std::size_t index)
+    {
+        if (index >= mSteps.size())
+            return;
+
+        for (auto it = mSteps.begin() + index; it != mSteps.end(); ++it)
+            mUsed -= it->mBytes;
+        mSteps.erase(mSteps.begin() + index, mSteps.end());
+        mIdsStale = true;
+    }
+
+   
+    void History::Trim()
+    {
+        while (mUsed > mBudget && mSteps.size() > 1 && mCursor > 0)
+        {
+            mUsed -= mSteps.front().mBytes;
+            mSteps.pop_front();
+            --mCursor;
+            mIdsStale = true;
+        }
+    }
+
+    
+    void History::Measure(Step &step)
+    {
+        mUsed -= step.mBytes;
+        step.mBytes = sizeof(Step) + step.mCommand->Size() +
+            (step.mSelectionBefore.size() + step.mSelectionAfter.size()) * sizeof(HistoryId);
+        mUsed += step.mBytes;
+    }
+
+    void History::DropUnusedIds()
+    {
+        std::vector<HistoryId> used;
+        for (const Step &step : mSteps)
+        {
+            step.mCommand->CollectIds(used);
+            used.insert(used.end(), step.mSelectionBefore.begin(), step.mSelectionBefore.end());
+            used.insert(used.end(), step.mSelectionAfter.begin(), step.mSelectionAfter.end());
+        }
+        mIds.Retain(used);
+        mIdsStale = false;
+    }
+
+    std::vector<HistoryId> History::SelectionIds(World &world)
+    {
+        std::vector<HistoryId> ids;
+        if (const Selection *selection = world.TryResource<Selection>())
+        {
+            for (const Entity entity : selection->mSelected)
+            {
+                if (world.IsAlive(entity))
+                    ids.push_back(mIds.IdOf(entity));
+            }
+        }
+        return ids;
+    }
+
+    void History::Select(World &world, std::span<const HistoryId> ids) const
+    {
+        Selection *selection = world.TryResource<Selection>();
+        if (selection == nullptr)
+            return;
+
+        selection->mSelected.clear();
+        for (const HistoryId id : ids)
+        {
+            if (const Entity entity = mIds.EntityOf(id); world.IsAlive(entity))
+                selection->mSelected.push_back(entity);
+        }
+    }
+}
