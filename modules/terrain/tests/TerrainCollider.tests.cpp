@@ -152,7 +152,10 @@ namespace
         PhysicsWorld world;
         REQUIRE(terrain.AddCollider(world).IsValid());
         const glm::dvec3 dropAt{-200.25, 3.0, 30.75};
-        const BodyHandle sphere = world.CreateDynamicSphere(At(terrain.World(dropAt)), kRadius);
+        const BodyHandle sphere = world.CreateBody({.mMotion = PhysicsMotion::Dynamic,
+                                                    .mShape = PhysicsShape::Sphere,
+                                                    .mPosition = At(terrain.World(dropAt)),
+                                                    .mRadius = kRadius});
         for (int i = 0; i < 240; ++i)
             world.Step(kStep);
 
@@ -233,7 +236,10 @@ namespace
         REQUIRE(ground.IsValid());
         world.SetBodyEntity(ground, kTerrainEntity);
         const glm::dvec3 dropAt{-200.25, 3.0, 30.75};
-        const BodyHandle sphere = world.CreateDynamicSphere(At(terrain.World(dropAt)), kRadius);
+        const BodyHandle sphere = world.CreateBody({.mMotion = PhysicsMotion::Dynamic,
+                                                    .mShape = PhysicsShape::Sphere,
+                                                    .mPosition = At(terrain.World(dropAt)),
+                                                    .mRadius = kRadius});
         world.SetBodyEntity(sphere, kSphereEntity);
 
         // Long enough to land and fall asleep, which drops Jolt's contacts.

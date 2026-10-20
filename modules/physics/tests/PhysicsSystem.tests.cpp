@@ -227,7 +227,7 @@ TEST_CASE("Step gates see new bodies and teleports before the step and can hold 
 {
     PhysicsFixture fixture;
     RecordingGate gate;
-    fixture.world.EmplaceResource<mir::PhysicsStepGates>().gates.push_back(&gate);
+    fixture.world.EmplaceResource<mir::PhysicsStepGates>().mGates.push_back(&gate);
     const mir::Entity entity = fixture.Add(glm::vec3(0.0f, 5.0f, 0.0f), kDynamicSphere);
 
     fixture.Run(30);

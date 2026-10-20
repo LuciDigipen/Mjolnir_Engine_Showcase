@@ -30,25 +30,26 @@ namespace mir
 
         BodyHandle CreateBodyFor(PhysicsWorld &physics, const RigidBody &rigidBody, const Transform &transform)
         {
-            const bool dynamic = rigidBody.motion == PhysicsMotion::Dynamic;
-            const WorldPosition position = BodyWorldPosition(transform);
-
-            if (rigidBody.shape == PhysicsShape::Sphere)
-            {
-                return dynamic
-                    ? physics.CreateDynamicSphere(position, rigidBody.radius, transform.Rotation())
-                    : physics.CreateStaticSphere(position, rigidBody.radius, transform.Rotation());
-            }
-
-            return dynamic
-                ? physics.CreateDynamicBox(position, rigidBody.halfExtent, transform.Rotation())
-                : physics.CreateStaticBox(position, rigidBody.halfExtent, transform.Rotation());
+            return physics.CreateBody({.mMotion = rigidBody.motion,
+                                       .mShape = rigidBody.shape,
+                                       .mPosition = BodyWorldPosition(transform),
+                                       .mRotation = transform.Rotation(),
+                                       .mHalfExtent = rigidBody.halfExtent,
+                                       .mRadius = rigidBody.radius});
         }
 
         void ResetStepPoses(RigidBody &rigidBody, const Transform &transform)
         {
             rigidBody.previousPosition = rigidBody.currentPosition = transform.Position();
             rigidBody.previousRotation = rigidBody.currentRotation = transform.Rotation();
+        }
+
+        // Spawns and teleports are already in the world, so they pass the gates like any move.
+        void RunStepGates(World &world, PhysicsWorld &physics, float dt)
+        {
+            if (PhysicsStepGates *gates = world.TryResource<PhysicsStepGates>())
+                for (PhysicsStepGate *gate : gates->mGates)
+                    gate->BeforeStep(world, physics, dt);
         }
     }
 
@@ -67,6 +68,19 @@ namespace mir
         if (physics == nullptr)
             return;
 
+        PushTransforms(context.world, *physics);
+        RunStepGates(context.world, *physics, context.dt);
+        physics->Step(context.dt);
+        PullPoses(*physics);
+    }
+
+    void PhysicsSystem::OnStop(SystemContext &context)
+    {
+        context.world.RemoveDestroyHook(&PhysicsSystem::OnEntityDestroyed, this);
+    }
+
+    void PhysicsSystem::PushTransforms(World &world, PhysicsWorld &physics)
+    {
         mQuery->ForEach(
             [&](Entity entity, Transform &transform, RigidBody &rigidBody)
             {
@@ -74,7 +88,7 @@ namespace mir
                 {
                     // Jolt is world space and Transform is parent space, so a
                     // parented body would drift. Warned once, at creation.
-                    if (ParentOf(context.world, entity) != kNullEntity)
+                    if (ParentOf(world, entity) != kNullEntity)
                     {
                         MIR_LOG_WARN("PhysicsSystem: entity {} has a parent; its RigidBody is simulated "
                                      "in world space and will not follow the parent",
@@ -83,31 +97,27 @@ namespace mir
 
                     // This runs after ScriptSystem PreUpdate phase,
                     // meaning OnStart() in a script can never find a body.
-                    rigidBody.body = CreateBodyFor(*physics, rigidBody, transform);
-                    physics->SetBodyEntity(rigidBody.body, entity);
+                    rigidBody.body = CreateBodyFor(physics, rigidBody, transform);
+                    physics.SetBodyEntity(rigidBody.body, entity);
                     ResetStepPoses(rigidBody, transform);
                 }
                 else if (transform.Version() != rigidBody.transformVersion)
                 {
-                    // if is a teleport.
-                    physics->SetBodyTransform(rigidBody.body, BodyWorldPosition(transform), transform.Rotation());
+                    // Moved by something other than physics since the last step.
+                    physics.SetBodyTransform(rigidBody.body, BodyWorldPosition(transform), transform.Rotation());
                     ResetStepPoses(rigidBody, transform);
                 }
 
                 rigidBody.transformVersion = transform.Version();
             });
+    }
 
-        // Spawns and teleports above are already in the world, so they pass the gates like any move.
-        if (PhysicsStepGates *gates = context.world.TryResource<PhysicsStepGates>())
-            for (PhysicsStepGate *gate : gates->gates)
-                gate->BeforeStep(context.world, *physics, context.dt);
-
-        physics->Step(context.dt);
-
+    void PhysicsSystem::PullPoses(PhysicsWorld &physics)
+    {
         mQuery->ForEach(
             [&](Entity, Transform &transform, RigidBody &rigidBody)
             {
-                if (!rigidBody.body.IsValid() || rigidBody.motion != PhysicsMotion::Dynamic)
+                if (!HasDynamicBody(rigidBody))
                     return;
 
                 rigidBody.previousPosition = rigidBody.currentPosition;
@@ -115,11 +125,11 @@ namespace mir
 
                 // A body Jolt left at a non-finite position keeps its last
                 // Transform instead of writing that back.
-                const std::optional<WorldPosition> position = physics->BodyPosition(rigidBody.body);
+                const std::optional<WorldPosition> position = physics.BodyPosition(rigidBody.body);
                 if (position && position->Meters() != transform.Position())
                     transform.SetPosition(position->Meters());
 
-                const glm::quat rotation = physics->BodyRotation(rigidBody.body);
+                const glm::quat rotation = physics.BodyRotation(rigidBody.body);
                 if (rotation != transform.Rotation())
                     transform.SetRotation(rotation);
 
@@ -127,11 +137,6 @@ namespace mir
                 rigidBody.currentRotation = transform.Rotation();
                 rigidBody.transformVersion = transform.Version();
             });
-    }
-
-    void PhysicsSystem::OnStop(SystemContext &context)
-    {
-        context.world.RemoveDestroyHook(&PhysicsSystem::OnEntityDestroyed, this);
     }
 
     void PhysicsSystem::OnEntityDestroyed(World &world, Entity entity, void *)

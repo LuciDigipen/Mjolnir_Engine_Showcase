@@ -33,8 +33,7 @@ namespace mir
         mQuery->ForEach(
             [&](Entity, Transform &transform, RigidBody &rigidBody)
             {
-                if (!rigidBody.interpolate || !rigidBody.body.IsValid() ||
-                    rigidBody.motion != PhysicsMotion::Dynamic)
+                if (!rigidBody.interpolate || !HasDynamicBody(rigidBody))
                     return;
 
                 if (transform.Version() != rigidBody.transformVersion)

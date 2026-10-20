@@ -10,6 +10,8 @@
  */
 #include "PostProcessingBindings.h"
 
+#include "BindingHelpers.h"
+
 #include <core/ecs/World.h>
 #include <core/log/Log.h>
 
@@ -104,15 +106,6 @@ namespace mir
 
             value = op;
             return true;
-        }
-
-        sol::table Vec3ToLua(sol::state_view lua, const glm::vec3 &v)
-        {
-            sol::table out = lua.create_table();
-            out["x"] = v.x;
-            out["y"] = v.y;
-            out["z"] = v.z;
-            return out;
         }
 
         bool WorldSetFog(World &world, const sol::table &args)

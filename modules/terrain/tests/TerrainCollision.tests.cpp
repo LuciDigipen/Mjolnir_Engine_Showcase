@@ -292,10 +292,14 @@ namespace
         const double lift = shape == 0 ? 0.5 * norm : 0.25 + 0.5 * (std::abs(kPlaneX) + std::abs(kPlaneZ));
         const auto body =
             shape == 0
-                ? world.CreateDynamicSphere(fixture.World({start.x, Plane(start.x, start.y) + lift + 0.005, start.y}),
-                                            0.5f)
-                : world.CreateDynamicBox(fixture.World({start.x, Plane(start.x, start.y) + lift + 0.005, start.y}),
-                                         {0.5f, 0.25f, 0.5f});
+                ? world.CreateBody({.mMotion = PhysicsMotion::Dynamic,
+                                    .mShape = PhysicsShape::Sphere,
+                                    .mPosition = fixture.World({start.x, Plane(start.x, start.y) + lift + 0.005, start.y}),
+                                    .mRadius = 0.5f})
+                : world.CreateBody({.mMotion = PhysicsMotion::Dynamic,
+                                    .mShape = PhysicsShape::Box,
+                                    .mPosition = fixture.World({start.x, Plane(start.x, start.y) + lift + 0.005, start.y}),
+                                    .mHalfExtent = {0.5f, 0.25f, 0.5f}});
         REQUIRE(body.IsValid());
         const glm::vec3 initial = glm::normalize(glm::vec3(dir.x, kPlaneX * dir.x + kPlaneZ * dir.y, dir.y)) * 8.0f;
         world.SetBodyLinearVelocity(body, initial);
@@ -586,7 +590,10 @@ TEST_CASE("Height-field metadata measures actual quantization, stride, holes and
     CHECK(info->mExtentZ == double(0.9f * 2 * 3));
     world.DestroyBody(body);
     CHECK_FALSE(world.HeightFieldInfoOf(body));
-    const auto sphere = world.CreateStaticSphere(At({0, 0, 0}), 1);
+    const auto sphere = world.CreateBody({.mMotion = PhysicsMotion::Static,
+                                          .mShape = PhysicsShape::Sphere,
+                                          .mPosition = At({0, 0, 0}),
+                                          .mRadius = 1});
     CHECK_FALSE(world.HeightFieldInfoOf(sphere));
 }
 
@@ -647,8 +654,14 @@ TEST_CASE("Mixed hills support representative resting sphere and box contacts wi
     for (int shape = 0; shape < 2; ++shape)
     {
         const auto body = shape == 0
-                              ? world.CreateDynamicSphere(fixture.World({pitX, best + 2, pitZ}), 0.5f)
-                              : world.CreateDynamicBox(fixture.World({pitX, best + 2, pitZ}), {0.5f, 0.25f, 0.5f});
+                              ? world.CreateBody({.mMotion = PhysicsMotion::Dynamic,
+                                                  .mShape = PhysicsShape::Sphere,
+                                                  .mPosition = fixture.World({pitX, best + 2, pitZ}),
+                                                  .mRadius = 0.5f})
+                              : world.CreateBody({.mMotion = PhysicsMotion::Dynamic,
+                                                  .mShape = PhysicsShape::Box,
+                                                  .mPosition = fixture.World({pitX, best + 2, pitZ}),
+                                                  .mHalfExtent = {0.5f, 0.25f, 0.5f}});
         REQUIRE(body.IsValid());
         double minGap = 1e9, maxGap = -1e9;
         for (int step = 0; step < 600; ++step)

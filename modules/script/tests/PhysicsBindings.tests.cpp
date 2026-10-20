@@ -1,7 +1,7 @@
 /**
  * @file PhysicsBindings.tests.cpp
  * @author Jackey Cen
- * @brief Tests for the Lua world:apply_force/apply_torque/velocity bindings.
+ * @brief Tests for the Lua world:add_force/add_torque/velocity bindings.
  *
  * No window and no renderer: a bare World plus the slice of App::Initialize a
  * PhysicsSystem needs, with ScriptHost driven by hand where App would have run
@@ -55,9 +55,9 @@ namespace
     const mir::ComponentOps &ProbeOps()
     {
         static const mir::RuntimeFieldDecl fields[] = {
-            {"linear", mir::FieldKind::Vec3},
-            {"angular", mir::FieldKind::Vec3},
-            {"ok", mir::FieldKind::Bool},
+            { "linear", mir::FieldKind::Vec3 },
+            { "angular", mir::FieldKind::Vec3 },
+            { "ok", mir::FieldKind::Bool },
         };
         return mir::ComponentRegistry::Instance().RegisterRuntime("PhysicsBindingsProbe", fields);
     }
@@ -159,7 +159,7 @@ function T.NewInstanceData()
 end
 
 function T.OnUpdate(self, world, entity, dt)
-    world:apply_force(entity, { x = 0.0, y = 0.0, z = 5000.0 })
+    world:add_force(entity, { x = 0.0, y = 0.0, z = 5000.0 })
 end
 
 return T
@@ -173,7 +173,7 @@ function T.NewInstanceData()
 end
 
 function T.OnUpdate(self, world, entity, dt)
-    world:apply_force(entity, { x = 0.0, y = 0.0, z = 1000.0 }, { x = 1.0, y = 0.0, z = 0.0 })
+    world:add_force(entity, { x = 0.0, y = 0.0, z = 1000.0 }, { x = 1.0, y = 0.0, z = 0.0 })
 end
 
 return T
@@ -187,7 +187,7 @@ function T.NewInstanceData()
 end
 
 function T.OnUpdate(self, world, entity, dt)
-    world:apply_torque(entity, { x = 0.0, y = 500.0, z = 0.0 })
+    world:add_torque(entity, { x = 0.0, y = 500.0, z = 0.0 })
 end
 
 return T
@@ -205,7 +205,7 @@ end
 function T.OnUpdate(self, world, entity, dt)
     world:set(entity, "PhysicsBindingsProbe", "linear", world:linear_velocity(entity))
     world:set(entity, "PhysicsBindingsProbe", "angular", world:angular_velocity(entity))
-    world:apply_force(entity, { x = 0.0, y = 0.0, z = 5000.0 }, { x = 1.0, y = 0.0, z = 0.0 })
+    world:add_force(entity, { x = 0.0, y = 0.0, z = 5000.0 }, { x = 1.0, y = 0.0, z = 0.0 })
 end
 
 return T
@@ -236,8 +236,8 @@ function T.NewInstanceData()
 end
 
 function T.OnStart(self, world, entity)
-    world:apply_impulse(entity, { x = 0.0, y = 0.0, z = 1000.0 })
-    world:apply_angular_impulse(entity, { x = 0.0, y = 100.0, z = 0.0 })
+    world:add_impulse(entity, { x = 0.0, y = 0.0, z = 1000.0 })
+    world:add_angular_impulse(entity, { x = 0.0, y = 100.0, z = 0.0 })
 end
 
 return T
@@ -251,7 +251,7 @@ function T.NewInstanceData()
 end
 
 function T.OnStart(self, world, entity)
-    world:apply_impulse(entity, { x = 0.0, y = 0.0, z = 1000.0 }, { x = 1.0, y = 0.0, z = 0.0 })
+    world:add_impulse(entity, { x = 0.0, y = 0.0, z = 1000.0 }, { x = 1.0, y = 0.0, z = 0.0 })
 end
 
 return T
@@ -270,12 +270,12 @@ end
 function T.OnStart(self, world, entity)
     local v = { x = 1.0, y = 2.0, z = 3.0 }
 
-    local anySucceeded = world:apply_force(entity, v)
-        or world:apply_force(entity, v, v)
-        or world:apply_torque(entity, v)
-        or world:apply_impulse(entity, v)
-        or world:apply_impulse(entity, v, v)
-        or world:apply_angular_impulse(entity, v)
+    local anySucceeded = world:add_force(entity, v)
+        or world:add_force(entity, v, v)
+        or world:add_torque(entity, v)
+        or world:add_impulse(entity, v)
+        or world:add_impulse(entity, v, v)
+        or world:add_angular_impulse(entity, v)
         or world:set_linear_velocity(entity, v)
         or world:set_angular_velocity(entity, v)
         or world:add_linear_velocity(entity, v)
@@ -290,7 +290,7 @@ return T
 )LUA";
 }
 
-TEST_CASE("world:apply_force with no offset pushes the center of mass", "[script][physics]")
+TEST_CASE("world:add_force with no offset pushes the center of mass", "[script][physics]")
 {
     Fixture fixture(kPushForward);
 
@@ -305,7 +305,7 @@ TEST_CASE("world:apply_force with no offset pushes the center of mass", "[script
     CHECK(glm::length(fixture.Angular()) < kStill);
 }
 
-TEST_CASE("world:apply_force at an offset also torques the body", "[script][physics]")
+TEST_CASE("world:add_force at an offset also torques the body", "[script][physics]")
 {
     Fixture fixture(kPushForwardAtOffset);
 
@@ -321,7 +321,7 @@ TEST_CASE("world:apply_force at an offset also torques the body", "[script][phys
     CHECK(fixture.Linear().z > 0.01f);
 }
 
-TEST_CASE("world:apply_torque spins the body in place", "[script][physics]")
+TEST_CASE("world:add_torque spins the body in place", "[script][physics]")
 {
     Fixture fixture(kTwist);
 
@@ -371,7 +371,7 @@ TEST_CASE("world:set_/add_ velocity write through to the body", "[script][physic
     CHECK(std::abs(angular.z) < kStill);
 }
 
-TEST_CASE("world:apply_impulse changes velocity without waiting for a step", "[script][physics]")
+TEST_CASE("world:add_impulse changes velocity without waiting for a step", "[script][physics]")
 {
     Fixture fixture(kImpulses);
 
@@ -381,7 +381,7 @@ TEST_CASE("world:apply_impulse changes velocity without waiting for a step", "[s
     CHECK(fixture.Angular().y > 0.0f);
 }
 
-TEST_CASE("world:apply_impulse at an offset spins the body too", "[script][physics]")
+TEST_CASE("world:add_impulse at an offset spins the body too", "[script][physics]")
 {
     Fixture fixture(kOffsetImpulse);
 
@@ -412,15 +412,15 @@ namespace
     // Jolt's height quantization plus the float hit fraction.
     constexpr double kFieldTolerance = 0.0025;
 
-    const glm::dvec3 kFar{150000.5, -20.0, -75000.25};
+    const glm::dvec3 kFar{ 150000.5, -20.0, -75000.25 };
 
     const mir::ComponentOps &RaycastProbeOps()
     {
         static const mir::RuntimeFieldDecl fields[] = {
-            {"ran", mir::FieldKind::Bool},         {"hit", mir::FieldKind::Bool},
-            {"bare", mir::FieldKind::Bool},        {"point", mir::FieldKind::WorldPosition},
-            {"normal", mir::FieldKind::Vec3},      {"distance", mir::FieldKind::Float},
-            {"hasEntity", mir::FieldKind::Bool},   {"entity", mir::FieldKind::EntityRef},
+            { "ran", mir::FieldKind::Bool },{ "hit", mir::FieldKind::Bool },
+            { "bare", mir::FieldKind::Bool },{ "point", mir::FieldKind::WorldPosition },
+            { "normal", mir::FieldKind::Vec3 },{ "distance", mir::FieldKind::Float },
+            { "hasEntity", mir::FieldKind::Bool },{ "entity", mir::FieldKind::EntityRef },
         };
         return mir::ComponentRegistry::Instance().RegisterRuntime("RaycastProbe", fields);
     }
@@ -569,13 +569,13 @@ TEST_CASE("world:raycast hits a terrain height field and names its entity", "[sc
     const mir::Entity terrain = fixture.world.CreateEntity();
     fixture.AddField(glm::dvec3(0.0), terrain);
 
-    const RaycastResult hit = fixture.Cast(Table({37.5, 100.0, 61.25}) + ", { x = 0, y = -3, z = 0 }");
+    const RaycastResult hit = fixture.Cast(Table({ 37.5, 100.0, 61.25 }) + ", { x = 0, y = -3, z = 0 }");
     CheckFieldHit(hit, glm::dvec3(0.0), 37.5, 61.25, 100.0);
     CHECK(hit.hasEntity);
     CHECK(hit.entity == terrain);
 }
 
-TEST_CASE("world:raycast far from the origin is as precise as at the origin","[script][physics][lwc]")
+TEST_CASE("world:raycast far from the origin is as precise as at the origin", "[script][physics][lwc]")
 {
     if (!mir::kLargeWorld)
         SKIP("float world positions (MIR_LARGE_WORLD=OFF) cannot hold this");
@@ -633,9 +633,9 @@ TEST_CASE("world:raycast stops at maxDistance or its default", "[script][physics
 
     CHECK_FALSE(fixture.Cast("{ x = 37.5, y = 100, z = 61.25 }, { x = 0, y = -1, z = 0 }, 10").hit);
     CheckFieldHit(fixture.Cast("{ x = 37.5, y = 100, z = 61.25 }, { x = 0, y = -1, z = 0 }"), glm::dvec3(0.0), 37.5,
-                  61.25, 100.0);
+        61.25, 100.0);
     CheckFieldHit(fixture.Cast("{ x = 37.5, y = 100, z = 61.25 }, { x = 0, y = -1, z = 0 }, nil"), glm::dvec3(0.0),
-                  37.5, 61.25, 100.0);
+        37.5, 61.25, 100.0);
 
     CHECK_FALSE(fixture.Cast("{ x = 37.5, y = 1100, z = 61.25 }, { x = 0, y = -1, z = 0 }").hit);
     CHECK(fixture.Cast("{ x = 37.5, y = 1100, z = 61.25 }, { x = 0, y = -1, z = 0 }, 2000").hit);
@@ -648,7 +648,7 @@ TEST_CASE("world:raycast refuses bad arguments with a miss, never an assert", "[
 
     const std::string down = "{ x = 0, y = -1, z = 0 }";
     const std::string above = "{ x = 37.5, y = 100, z = 61.25 }";
-    for (const std::string &args : {
+    for (const std::string &args :{
              "42, " + down,
              "nil, " + down,
              "{ x = 1/0, y = 100, z = 10 }, " + down,
@@ -662,7 +662,7 @@ TEST_CASE("world:raycast refuses bad arguments with a miss, never an assert", "[
              above + ", " + down + ", 0/0",
              above + ", " + down + ", 1/0",
              above + ", " + down + ", 'far'",
-         })
+        })
     {
         INFO(args);
         const RaycastResult result = fixture.Cast(args);

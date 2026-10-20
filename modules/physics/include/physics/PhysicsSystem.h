@@ -20,6 +20,8 @@
 
 namespace mir
 {
+    class PhysicsWorld;
+
     class PhysicsSystem final : public ISystem
     {
     public:
@@ -28,6 +30,10 @@ namespace mir
         void OnStop(SystemContext &context) override;
 
     private:
+        // New bodies and Transform edits reach Jolt before the step; Jolt's poses come back after it.
+        void PushTransforms(World &world, PhysicsWorld &physics);
+        void PullPoses(PhysicsWorld &physics);
+
         static void OnEntityDestroyed(World &world, Entity entity, void *user);
 
         Query<Transform, RigidBody> *mQuery = nullptr;
