@@ -13,6 +13,7 @@ target_sources(engine_prefab PRIVATE
     src/prefab/PrefabFormat.cpp
     src/prefab/PrefabId.cpp
     src/prefab/PrefabInstantiate.cpp
+    src/prefab/PrefabOverrides.cpp
     src/prefab/PrefabRegistry.cpp
     src/prefab/PrefabSceneInstance.cpp
 )

@@ -89,14 +89,9 @@ namespace mir
             return std::nullopt;
         }
 
-        SceneInstancePatch *FindPatch(std::vector<SceneInstancePatch> &patches, const SceneNodeAddress &target)
+        bool IsInstancePatchEmpty(const SceneInstancePatch &patch)
         {
-            for (SceneInstancePatch &patch : patches)
-            {
-                if (patch.mTarget == target)
-                    return &patch;
-            }
-            return nullptr;
+            return patch.mFields.empty() && patch.mAddedComponents.empty() && patch.mRemovedComponents.empty();
         }
     }
 
@@ -327,9 +322,29 @@ namespace mir
         return instance;
     }
 
+    SceneInstancePatch *FindInstancePatch(ScenePrefabInstance &instance, const SceneNodeAddress &target)
+    {
+        for (SceneInstancePatch &patch : instance.mPatches)
+        {
+            if (patch.mTarget == target)
+                return &patch;
+        }
+        return nullptr;
+    }
+
+    const SceneInstancePatch *FindInstancePatch(const ScenePrefabInstance &instance, const SceneNodeAddress &target)
+    {
+        for (const SceneInstancePatch &patch : instance.mPatches)
+        {
+            if (patch.mTarget == target)
+                return &patch;
+        }
+        return nullptr;
+    }
+
     SceneInstancePatch &GetOrAddInstancePatch(ScenePrefabInstance &instance, const SceneNodeAddress &target)
     {
-        if (SceneInstancePatch *patch = FindPatch(instance.mPatches, target))
+        if (SceneInstancePatch *patch = FindInstancePatch(instance, target))
             return *patch;
 
         SceneInstancePatch patch;
@@ -341,16 +356,29 @@ namespace mir
     SceneFieldPatch *FindInstanceFieldPatch(ScenePrefabInstance &instance, const SceneNodeAddress &target,
         std::string_view component, std::string_view field)
     {
-        for (SceneInstancePatch &patch : instance.mPatches)
-        {
-            if (patch.mTarget != target)
-                continue;
+        SceneInstancePatch *patch = FindInstancePatch(instance, target);
+        if (patch == nullptr)
+            return nullptr;
 
-            for (SceneFieldPatch &fieldPatch : patch.mFields)
-            {
-                if (fieldPatch.mComponent == component && fieldPatch.mField == field)
-                    return &fieldPatch;
-            }
+        for (SceneFieldPatch &fieldPatch : patch->mFields)
+        {
+            if (fieldPatch.mComponent == component && fieldPatch.mField == field)
+                return &fieldPatch;
+        }
+        return nullptr;
+    }
+
+    const SceneFieldPatch *FindInstanceFieldPatch(const ScenePrefabInstance &instance, const SceneNodeAddress &target,
+        std::string_view component, std::string_view field)
+    {
+        const SceneInstancePatch *patch = FindInstancePatch(instance, target);
+        if (patch == nullptr)
+            return nullptr;
+
+        for (const SceneFieldPatch &fieldPatch : patch->mFields)
+        {
+            if (fieldPatch.mComponent == component && fieldPatch.mField == field)
+                return &fieldPatch;
         }
         return nullptr;
     }
@@ -371,7 +399,98 @@ namespace mir
             if (patch->mFields.size() == before)
                 return false;
 
-            if (patch->mFields.empty() && patch->mAddedComponents.empty() && patch->mRemovedComponents.empty())
+            if (IsInstancePatchEmpty(*patch))
+                instance.mPatches.erase(patch);
+            return true;
+        }
+        return false;
+    }
+
+    SceneComponentRecord *FindAddedComponent(ScenePrefabInstance &instance, const SceneNodeAddress &target,
+        std::string_view component)
+    {
+        SceneInstancePatch *patch = FindInstancePatch(instance, target);
+        if (patch == nullptr)
+            return nullptr;
+
+        for (SceneComponentRecord &record : patch->mAddedComponents)
+        {
+            if (record.mType == component)
+                return &record;
+        }
+        return nullptr;
+    }
+
+    const SceneComponentRecord *FindAddedComponent(const ScenePrefabInstance &instance, const SceneNodeAddress &target,
+        std::string_view component)
+    {
+        const SceneInstancePatch *patch = FindInstancePatch(instance, target);
+        if (patch == nullptr)
+            return nullptr;
+
+        for (const SceneComponentRecord &record : patch->mAddedComponents)
+        {
+            if (record.mType == component)
+                return &record;
+        }
+        return nullptr;
+    }
+
+    bool EraseAddedComponent(ScenePrefabInstance &instance, const SceneNodeAddress &target,
+        std::string_view component)
+    {
+        for (auto patch = instance.mPatches.begin(); patch != instance.mPatches.end(); ++patch)
+        {
+            if (patch->mTarget != target)
+                continue;
+
+            const std::size_t before = patch->mAddedComponents.size();
+            std::erase_if(patch->mAddedComponents, [&](const SceneComponentRecord &record)
+                {
+                    return record.mType == component;
+                });
+            if (patch->mAddedComponents.size() == before)
+                return false;
+
+            if (IsInstancePatchEmpty(*patch))
+                instance.mPatches.erase(patch);
+            return true;
+        }
+        return false;
+    }
+
+    bool HasRemovedComponent(const ScenePrefabInstance &instance, const SceneNodeAddress &target,
+        std::string_view component)
+    {
+        const SceneInstancePatch *patch = FindInstancePatch(instance, target);
+        if (patch == nullptr)
+            return false;
+
+        for (const std::string &removed : patch->mRemovedComponents)
+        {
+            if (removed == component)
+                return true;
+        }
+        return false;
+    }
+
+    bool EraseRemovedComponent(ScenePrefabInstance &instance, const SceneNodeAddress &target,
+        std::string_view component)
+    {
+        for (auto patch = instance.mPatches.begin(); patch != instance.mPatches.end(); ++patch)
+        {
+            if (patch->mTarget != target)
+                continue;
+
+            const std::size_t before = patch->mRemovedComponents.size();
+            std::erase_if(patch->mRemovedComponents, [&](const std::string &removed)
+                {
+                    return removed == component;
+                });
+            if (patch->mRemovedComponents.size() == before)
+                return false;
+
+            if (IsInstancePatchEmpty(*patch))
                 instance.mPatches.erase(patch);
             return true;
         }

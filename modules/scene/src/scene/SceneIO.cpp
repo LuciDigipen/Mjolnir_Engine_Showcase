@@ -315,32 +315,18 @@ namespace mir
                                 expected = bindingIt->second;
                         }
 
-                        const SceneFieldPatch *existing = FindInstanceFieldPatch(out, address, ops->mType.name,
-                            field.mName);
-                        std::optional<StableId> existingValue;
-                        if (existing != nullptr)
-                            existingValue = ReadStableIdJson(existing->mValue);
-
-                        if (worldValue == expected)
-                        {
-                            if (!(worldValue == kNullStableId && existingValue && *existingValue == kNullStableId))
-                            {
-                                EraseInstanceFieldPatch(out, address, ops->mType.name, field.mName);
-                            }
-                            continue;
-                        }
-
                         SceneFieldPatch *fieldPatch = FindInstanceFieldPatch(out, address, ops->mType.name,
                             field.mName);
                         if (fieldPatch != nullptr)
                         {
                             fieldPatch->mValue = worldValue;
+                            continue;
                         }
-                        else
-                        {
-                            GetOrAddInstancePatch(out, address).mFields.push_back(SceneFieldPatch{
-                                std::string(ops->mType.name), std::string(field.mName), worldValue });
-                        }
+                        if (worldValue == expected)
+                            continue;
+
+                        GetOrAddInstancePatch(out, address).mFields.push_back(SceneFieldPatch{
+                            std::string(ops->mType.name), std::string(field.mName), worldValue });
                     }
                 }
             }
@@ -904,6 +890,26 @@ namespace mir
 
         Entity current = kNullEntity;
         fieldDesc->Read(componentBytes, &current);
+
+        if (SceneComponentRecord *added = FindAddedComponent(instance, node, component))
+        {
+            bool recordMatches = false;
+            const auto fieldIt = added->mFields.find(std::string(field));
+            if (fieldIt != added->mFields.end())
+            {
+                const std::optional<StableId> existingValue = ReadStableIdJson(*fieldIt);
+                recordMatches = existingValue && *existingValue == target;
+            }
+
+            if (current == targetEntity && recordMatches)
+                return false;
+
+            fieldDesc->Write(componentBytes, &targetEntity);
+            scene.mUnresolvedEntityRefs.erase({ bindingIt->second, std::string(component), std::string(field) });
+            added->mFields[std::string(field)] = target;
+            scene.mDirty = true;
+            return true;
+        }
 
         bool patchMatches = false;
         if (const SceneFieldPatch *existing = FindInstanceFieldPatch(instance, node, component, field))

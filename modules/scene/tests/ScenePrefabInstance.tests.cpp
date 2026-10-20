@@ -532,6 +532,39 @@ TEST_CASE("An explicit null reference override survives save and load", "[scene]
     CHECK(EntityField(secondWorld, second.mEntities.at(root), LinkOps(), "target").IsNull());
 }
 
+TEST_CASE("An equal reference override survives save and load", "[scene][prefab]")
+{
+    mir::RegisterCoreComponents();
+    LinkOps();
+
+    World world;
+    LoadedScene scene = NewScene("test");
+    FakeSceneResolver resolver;
+    const StableId root = PlaceInstance(world, scene, resolver);
+    REQUIRE(root != kNullStableId);
+
+    const StableId target = scene.mInstances.at(root).mBindings.at(SceneNodeAddress{ 3 });
+    REQUIRE(mir::SetInstanceEntityRef(world, scene, root, SceneNodeAddress{ 1 }, "ScenePrefabTestLink", "target",
+        target));
+
+    TempSceneDir first("equal_reference_first");
+    REQUIRE(mir::SaveScene(world, first.mPath, scene, &resolver));
+
+    World loadedWorld;
+    const LoadedScene loaded = mir::LoadScene(loadedWorld, first.mPath, &resolver);
+    const ScenePrefabInstance &instance = loaded.mInstances.at(root);
+    REQUIRE(instance.mPatches.size() == 1);
+    REQUIRE(instance.mPatches.at(0).mFields.size() == 1);
+    CHECK(instance.mPatches.at(0).mFields.at(0).mComponent == "ScenePrefabTestLink");
+    CHECK(instance.mPatches.at(0).mFields.at(0).mField == "target");
+    CHECK(instance.mPatches.at(0).mFields.at(0).mValue == target);
+    CHECK(EntityField(loadedWorld, loaded.mEntities.at(root), LinkOps(), "target") == loaded.mEntities.at(target));
+
+    TempSceneDir second("equal_reference_second");
+    REQUIRE(mir::SaveScene(loadedWorld, second.mPath, loaded, &resolver));
+    CHECK(SnapshotFiles(first.mPath) == SnapshotFiles(second.mPath));
+}
+
 TEST_CASE("EntityRefs resolve only after ordinary entities and members exist", "[scene][prefab]")
 {
     mir::RegisterCoreComponents();
