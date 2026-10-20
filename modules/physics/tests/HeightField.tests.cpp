@@ -300,8 +300,14 @@ namespace
             PhysicsWorld world;
             const std::vector<float> area = terrain.Area();
             REQUIRE(terrain.AddArea(world, area).IsValid());
-            const BodyHandle body = shape == 0 ? world.CreateDynamicSphere(At(terrain.World(above)), 0.5f)
-                                               : world.CreateDynamicBox(At(terrain.World(above)), half);
+            const BodyHandle body = shape == 0 ? world.CreateBody({.mMotion = PhysicsMotion::Dynamic,
+                                                                   .mShape = PhysicsShape::Sphere,
+                                                                   .mPosition = At(terrain.World(above)),
+                                                                   .mRadius = 0.5f})
+                                               : world.CreateBody({.mMotion = PhysicsMotion::Dynamic,
+                                                                   .mShape = PhysicsShape::Box,
+                                                                   .mPosition = At(terrain.World(above)),
+                                                                   .mHalfExtent = half});
             for (int i = 0; i < 300; ++i)
                 world.Step(kStep);
 
@@ -355,8 +361,14 @@ namespace
         const glm::dvec3 local{start.x, Plane(start.x, start.y) + lift + 0.005, start.y};
         const glm::vec3 velocity = glm::normalize(glm::vec3(glm::dvec3(dir.x, kPlaneX * dir.x + kPlaneZ * dir.y, dir.y))) * 8.0f;
         const glm::vec3 half(0.5f, 0.25f, 0.5f);
-        const BodyHandle body = shape == 0 ? world.CreateDynamicSphere(At(terrain.World(local)), 0.5f)
-                                           : world.CreateDynamicBox(At(terrain.World(local)), half);
+        const BodyHandle body = shape == 0 ? world.CreateBody({.mMotion = PhysicsMotion::Dynamic,
+                                                               .mShape = PhysicsShape::Sphere,
+                                                               .mPosition = At(terrain.World(local)),
+                                                               .mRadius = 0.5f})
+                                           : world.CreateBody({.mMotion = PhysicsMotion::Dynamic,
+                                                               .mShape = PhysicsShape::Box,
+                                                               .mPosition = At(terrain.World(local)),
+                                                               .mHalfExtent = half});
         world.SetBodyLinearVelocity(body, velocity);
 
         const auto gapOf = [&](const glm::dvec3 &p) { return (p.y - Plane(p.x, p.z)) / norm; };
@@ -669,7 +681,10 @@ TEST_CASE("Stepping never rebuilds a height field", "[physics][heightfield]")
     REQUIRE(before);
     CHECK(world.HeightFieldsBuilt() == 1);
 
-    const BodyHandle ball = world.CreateDynamicSphere(At({10.0, terrain.Surface({10.0, 0.0, 10.0}).height + 2.0, 10.0}), 0.5f);
+    const BodyHandle ball = world.CreateBody({.mMotion = PhysicsMotion::Dynamic,
+                                              .mShape = PhysicsShape::Sphere,
+                                              .mPosition = At({10.0, terrain.Surface({10.0, 0.0, 10.0}).height + 2.0, 10.0}),
+                                              .mRadius = 0.5f});
     world.SetBodyLinearVelocity(ball, glm::vec3(4.0f, 0.0f, 3.0f));
     for (int i = 0; i < 120; ++i)
         world.Step(kStep);
@@ -690,7 +705,10 @@ TEST_CASE("Destroying a height field between steps drops what rested on it", "[p
     const std::vector<float> area = terrain.Area();
     const BodyHandle field = terrain.AddArea(world, area);
     const glm::dvec3 spot{10.5, 0.0, 20.5};
-    const BodyHandle box = world.CreateDynamicBox(At({spot.x, Plane(spot.x, spot.z) + 0.6, spot.z}), glm::vec3(0.5f, 0.25f, 0.5f));
+    const BodyHandle box = world.CreateBody({.mMotion = PhysicsMotion::Dynamic,
+                                             .mShape = PhysicsShape::Box,
+                                             .mPosition = At({spot.x, Plane(spot.x, spot.z) + 0.6, spot.z}),
+                                             .mHalfExtent = glm::vec3(0.5f, 0.25f, 0.5f)});
 
     for (int i = 0; i < 240; ++i)
         world.Step(kStep);

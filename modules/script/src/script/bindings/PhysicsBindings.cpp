@@ -17,11 +17,8 @@
 #include <physics/PhysicsWorld.h>
 #include <physics/components/RigidBody.h>
 
-#include <glm/geometric.hpp>
-
 #include <sol/sol.hpp>
 
-#include <cmath>
 #include <optional>
 #include <string_view>
 
@@ -29,44 +26,31 @@ namespace mir
 {
     namespace
     {
-        constexpr float kRaycastDefaultMaxDistance = 1000.0f;
-
-        sol::table Vec3ToLua(sol::state_view lua, const glm::vec3 &value)
-        {
-            sol::table out = lua.create_table();
-            out["x"] = value.x;
-            out["y"] = value.y;
-            out["z"] = value.z;
-            return out;
-        }
-        bool ToVec3(const sol::object &value, glm::vec3 &out)
-        {
-            if (!value.is<sol::table>())
-                return false;
-
-            const sol::table t = value.as<sol::table>();
-            out = glm::vec3(t.get_or("x", 0.0f), t.get_or("y", 0.0f), t.get_or("z", 0.0f));
-            return true;
-        }
+        constexpr float kRayCastDefaultMaxDistance = 1000.0f;
 
         bool Given(const sol::optional<sol::object> &argument)
         {
             return argument.has_value() && argument->valid();
         }
 
-        // Helper to ensure the handle is looked up on every lua call
-        PhysicsWorld *ResolveBody(World &world, Entity entity, BodyHandle &outBody)
+        struct BodyRef
+        {
+            PhysicsWorld &physics;
+            BodyHandle body;
+        };
+
+        // Looked up on every Lua call, so nothing caches a body.
+        std::optional<BodyRef> ResolveBody(World &world, Entity entity)
         {
             PhysicsWorld *physics = world.TryResource<PhysicsWorld>();
             if (physics == nullptr)
-                return nullptr;
+                return std::nullopt;
 
             const RigidBody *rigidBody = world.GetComponent<RigidBody>(entity);
             if (rigidBody == nullptr || !rigidBody->body.IsValid())
-                return nullptr;
+                return std::nullopt;
 
-            outBody = rigidBody->body;
-            return physics;
+            return BodyRef{*physics, rigidBody->body};
         }
 
         using BodyRead = glm::vec3 (PhysicsWorld::*)(BodyHandle) const;
@@ -75,11 +59,9 @@ namespace mir
 
         sol::table ReadVector(World &world, Entity entity, sol::this_state state, BodyRead read)
         {
-            BodyHandle body{};
-            const PhysicsWorld *physics = ResolveBody(world, entity, body);
+            const std::optional<BodyRef> ref = ResolveBody(world, entity);
 
-            return Vec3ToLua(sol::state_view(state),
-                             physics != nullptr ? (physics->*read)(body) : glm::vec3(0.0f));
+            return Vec3ToLua(sol::state_view(state), ref ? (ref->physics.*read)(ref->body) : glm::vec3(0.0f));
         }
 
         bool WriteVector(World &world, Entity entity, std::string_view name, const sol::object &value,
@@ -92,12 +74,11 @@ namespace mir
                 return false;
             }
 
-            BodyHandle body{};
-            PhysicsWorld *physics = ResolveBody(world, entity, body);
-            if (physics == nullptr)
+            const std::optional<BodyRef> ref = ResolveBody(world, entity);
+            if (!ref)
                 return false;
 
-            (physics->*write)(body, vector);
+            (ref->physics.*write)(ref->body, vector);
             return true;
         }
 
@@ -116,12 +97,11 @@ namespace mir
                 return false;
             }
 
-            BodyHandle body{};
-            PhysicsWorld *physics = ResolveBody(world, entity, body);
-            if (physics == nullptr)
+            const std::optional<BodyRef> ref = ResolveBody(world, entity);
+            if (!ref)
                 return false;
 
-            (physics->*writeAtOffset)(body, vector, localOffset);
+            (ref->physics.*writeAtOffset)(ref->body, vector, localOffset);
             return true;
         }
 
@@ -161,37 +141,31 @@ namespace mir
 
         // The force is world space; only the offset is in body space. A script
         // that wants a body-local thrust rotates it by Transform.rotation first.
-        bool WorldApplyForce(World &world, Entity entity, const sol::object &force,
-                             sol::optional<sol::object> offset)
+        bool WorldAddForce(World &world, Entity entity, const sol::object &force, sol::optional<sol::object> offset)
         {
-            return WriteVectorAtOffset(world, entity, "apply_force", force, offset, &PhysicsWorld::AddForce,
+            return WriteVectorAtOffset(world, entity, "add_force", force, offset, &PhysicsWorld::AddForce,
                                        &PhysicsWorld::AddForceAtOffset);
         }
 
-        bool WorldApplyTorque(World &world, Entity entity, const sol::object &torque)
+        bool WorldAddTorque(World &world, Entity entity, const sol::object &torque)
         {
-            return WriteVector(world, entity, "apply_torque", torque, &PhysicsWorld::AddTorque);
+            return WriteVector(world, entity, "add_torque", torque, &PhysicsWorld::AddTorque);
         }
 
-        bool WorldApplyImpulse(World &world, Entity entity, const sol::object &impulse,
-                               sol::optional<sol::object> offset)
+        bool WorldAddImpulse(World &world, Entity entity, const sol::object &impulse,
+                             sol::optional<sol::object> offset)
         {
-            return WriteVectorAtOffset(world, entity, "apply_impulse", impulse, offset,
-                                       &PhysicsWorld::AddImpulse, &PhysicsWorld::AddImpulseAtOffset);
+            return WriteVectorAtOffset(world, entity, "add_impulse", impulse, offset, &PhysicsWorld::AddImpulse,
+                                       &PhysicsWorld::AddImpulseAtOffset);
         }
 
-        bool WorldApplyAngularImpulse(World &world, Entity entity, const sol::object &impulse)
+        bool WorldAddAngularImpulse(World &world, Entity entity, const sol::object &impulse)
         {
-            return WriteVector(world, entity, "apply_angular_impulse", impulse,
-                               &PhysicsWorld::AddAngularImpulse);
+            return WriteVector(world, entity, "add_angular_impulse", impulse, &PhysicsWorld::AddAngularImpulse);
         }
 
-        bool IsFinite(const glm::vec3 &v)
-        {
-            return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
-        }
-
-        sol::table WorldRaycast(World &world, const sol::object &origin, const sol::object &direction,
+        // Only converts; PhysicsWorld::RayCast refuses, and logs, a bad direction or distance.
+        sol::table WorldRayCast(World &world, const sol::object &origin, const sol::object &direction,
                                 sol::optional<sol::object> maxDistance, sol::this_state state)
         {
             sol::state_view lua(state);
@@ -206,23 +180,21 @@ namespace mir
             }
 
             glm::vec3 dir{};
-            const float length = ToVec3(direction, dir) ? glm::length(dir) : 0.0f;
-            if (!IsFinite(dir) || !(length > 0.0f) || !IsFinite(dir / length))
+            if (!ToVec3(direction, dir))
             {
-                MIR_LOG_ERROR("script: world:raycast needs a finite, non-zero direction table with x, y and z");
+                MIR_LOG_ERROR("script: world:raycast needs a direction table with x, y and z");
                 return result;
             }
 
-            float distance = kRaycastDefaultMaxDistance;
+            float distance = kRayCastDefaultMaxDistance;
             if (Given(maxDistance))
             {
-                const double given = maxDistance->get_type() == sol::type::number ? maxDistance->as<double>() : 0.0;
-                distance = static_cast<float>(given);
-                if (!std::isfinite(distance) || !(distance > 0.0f))
+                if (maxDistance->get_type() != sol::type::number)
                 {
-                    MIR_LOG_ERROR("script: world:raycast needs a finite, positive maxDistance");
+                    MIR_LOG_ERROR("script: world:raycast needs a number for maxDistance");
                     return result;
                 }
+                distance = static_cast<float>(maxDistance->as<double>());
             }
 
             const PhysicsWorld *physics = world.TryResource<PhysicsWorld>();
@@ -233,7 +205,7 @@ namespace mir
             if (!position)
                 return result;
 
-            const std::optional<RayHit> hit = physics->RayCast(*position, dir / length, distance);
+            const std::optional<RayHit> hit = physics->RayCast(*position, dir, distance);
             if (!hit)
                 return result;
 
@@ -246,10 +218,7 @@ namespace mir
                 result["entity"] = entity;
             return result;
         }
-    }
 
-    namespace
-    {
         // From entity's side: normal points from other toward it; other is nil when untagged or dead.
         sol::table WorldCollisions(World &world, Entity entity, sol::this_state state)
         {
@@ -289,11 +258,11 @@ namespace mir
         worldType.set_function("set_angular_velocity", &WorldSetAngularVelocity);
         worldType.set_function("add_linear_velocity", &WorldAddLinearVelocity);
         worldType.set_function("add_angular_velocity", &WorldAddAngularVelocity);
-        worldType.set_function("apply_force", &WorldApplyForce);
-        worldType.set_function("apply_torque", &WorldApplyTorque);
-        worldType.set_function("apply_impulse", &WorldApplyImpulse);
-        worldType.set_function("apply_angular_impulse", &WorldApplyAngularImpulse);
-        worldType.set_function("raycast", &WorldRaycast);
+        worldType.set_function("add_force", &WorldAddForce);
+        worldType.set_function("add_torque", &WorldAddTorque);
+        worldType.set_function("add_impulse", &WorldAddImpulse);
+        worldType.set_function("add_angular_impulse", &WorldAddAngularImpulse);
+        worldType.set_function("raycast", &WorldRayCast);
         worldType.set_function("collisions", &WorldCollisions);
     }
 }

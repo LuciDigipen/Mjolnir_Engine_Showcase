@@ -522,8 +522,8 @@ scene camera, which sees both, so the per-viewport selection draws, streams and
 traces them; a sphere on each map is held until its ground is collidable and
 then lands on it. The terrain state machine
 is tested in `terrain` (`TerrainScene.tests.cpp`), the collider assembly in
-`physics` (`TerrainCollider.tests.cpp`), and collision residency in `terrain`
-with a fake physics side and in `physics` (`TerrainCollisionResidency.tests.cpp`)
+`terrain` (`TerrainCollider.tests.cpp`), and collision residency in `terrain`
+with a fake physics side and with Jolt (`TerrainCollisionResidencyJolt.tests.cpp`)
 with Jolt bodies held and resumed the way `TerrainRuntime` does it; the release
 switch in `terrain` (`TerrainReleaseSwitch.tests.cpp`) through the same
 composition with gated reads; the Play/publish/Stop sequence through

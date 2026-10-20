@@ -12,6 +12,7 @@
 #pragma once
 
 #include <physics/CollisionEvents.h>
+#include <physics/HeightField.h>
 #include <physics/PhysicsTypes.h>
 
 #include <core/ecs/Entity.h>
@@ -22,7 +23,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -30,68 +30,16 @@
 
 namespace mir
 {
-    inline const glm::quat kIdentityRotation{1.0f, 0.0f, 0.0f, 0.0f};
-
-    // Drops every triangle touching the sample (Jolt's cNoCollisionValue).
-    inline constexpr float kHeightFieldHole = std::numeric_limits<float>::max();
-
-    // Cells split along (x, z)-(x+1, z+1), the terrain surface's diagonal.
-    struct HeightFieldDesc
+    struct BodyDesc
     {
-        // x fastest.
-        std::span<const float> mSamples;
-        uint32_t mCountX = 0;
-        uint32_t mCountZ = 0;
-        float mSpacing = 1.0f;
-        // Sample (0, 0) at height 0.
-        WorldPosition mOrigin;
-
-        // Uses every stride-th sample; count - 1 must be a multiple of it.
-        uint32_t mSampleStride = 1;
-
-        // Jolt's block size; 4 takes ~55% of the memory for ~1.6x the error.
-        uint32_t mBlockSize = 2;
-        uint32_t mBitsPerSample = 8;
-
-        // Jolt's 16-bit height range; shapes given one range decode a sample they share alike away from
-        // their max sides. NaN takes the samples' own range.
-        float mQuantizationMin = std::numeric_limits<float>::quiet_NaN();
-        float mQuantizationMax = std::numeric_limits<float>::quiet_NaN();
+        PhysicsMotion mMotion = PhysicsMotion::Dynamic;
+        PhysicsShape mShape = PhysicsShape::Box;
+        WorldPosition mPosition;
+        glm::quat mRotation = kIdentityRotation;
+        // Only the field the shape uses is read.
+        glm::vec3 mHalfExtent{0.5f};
+        float mRadius = 0.5f;
     };
-
-    struct HeightFieldInfo
-    {
-        // Jolt's square side, padded with holes.
-        uint32_t mSampleCount = 0;
-        std::size_t mMemoryBytes = 0;
-        double mMaxQuantizationError = 0.0;
-        double mMaxHorizontalError = 0.0;
-        uint64_t mValidSamples = 0;
-        double mExtentX = 0.0;
-        double mExtentZ = 0.0;
-    };
-
-    // A built height field shape that static bodies at any number of places share. Immutable.
-    class SharedHeightField
-    {
-      public:
-        bool IsValid() const
-        {
-            return mData != nullptr;
-        }
-        // Null for a shape Jolt did not make a height field of.
-        const HeightFieldInfo *Info() const;
-
-      private:
-        friend class PhysicsWorld;
-        friend SharedHeightField BuildHeightField(const HeightFieldDesc &desc);
-
-        struct Data;
-        std::shared_ptr<const Data> mData;
-    };
-
-    // Any thread; mOrigin is not used. Invalid (logged) on bad input.
-    SharedHeightField BuildHeightField(const HeightFieldDesc &desc);
 
     struct RayHit
     {
@@ -125,16 +73,8 @@ namespace mir
         PhysicsWorld(PhysicsWorld &&) = delete;
         PhysicsWorld &operator=(PhysicsWorld &&) = delete;
 
-        // Bodies live in the fixed Scene world coordinate system
-        BodyHandle CreateStaticBox(WorldPosition position, const glm::vec3 &halfExtent,
-                                   const glm::quat &rotation = kIdentityRotation);
-        BodyHandle CreateStaticSphere(WorldPosition position, float radius,
-                                      const glm::quat &rotation = kIdentityRotation);
-
-        BodyHandle CreateDynamicBox(WorldPosition position, const glm::vec3 &halfExtent,
-                                    const glm::quat &rotation = kIdentityRotation);
-        BodyHandle CreateDynamicSphere(WorldPosition position, float radius,
-                                       const glm::quat &rotation = kIdentityRotation);
+        // Bodies live in the fixed Scene world coordinate system. Invalid handle (logged) on a non-positive size.
+        BodyHandle CreateBody(const BodyDesc &desc);
 
         // Builds the shape once; Step never rebuilds it. Invalid handle (logged) on bad input.
         BodyHandle CreateStaticHeightField(const HeightFieldDesc &desc);
@@ -185,6 +125,7 @@ namespace mir
         Entity BodyEntity(BodyHandle body) const;
 
         // Closest hit within maxDistance. Jolt's float fraction resolves ~6e-8 * maxDistance.
+        // nullopt, logged, for a zero or non-finite direction or a non-positive maxDistance.
         std::optional<RayHit> RayCast(WorldPosition origin, const glm::vec3 &direction, float maxDistance) const;
 
         // nullopt unless body is a live height field.

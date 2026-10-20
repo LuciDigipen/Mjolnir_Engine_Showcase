@@ -1,13 +1,13 @@
 /**
- * @file TerrainCollisionResidency.tests.cpp
+ * @file TerrainCollisionResidencyJolt.tests.cpp
  * @author Jackey Cen
  * @brief Tests for terrain/TerrainCollisionResidency driving physics/PhysicsWorld bodies.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
-#include "../../terrain/tests/TerrainPackTestSupport.h"
-#include "../../terrain/tests/TerrainStreamingTestSupport.h"
+#include "TerrainPackTestSupport.h"
+#include "TerrainStreamingTestSupport.h"
 
 #include <physics/PhysicsWorld.h>
 #include <terrain/TerrainCollisionResidency.h>
@@ -202,7 +202,10 @@ namespace
         size_t AddSphere(const glm::dvec3 &at, double radius, const glm::vec3 &velocity = glm::vec3(0.0f))
         {
             Body body;
-            body.handle = world.CreateDynamicSphere(At(at), float(radius));
+            body.handle = world.CreateBody({.mMotion = PhysicsMotion::Dynamic,
+                                            .mShape = PhysicsShape::Sphere,
+                                            .mPosition = At(at),
+                                            .mRadius = float(radius)});
             world.SetBodyLinearVelocity(body.handle, velocity);
             body.radius = radius;
             bodies.push_back(body);
@@ -212,7 +215,10 @@ namespace
         size_t AddBox(const glm::dvec3 &at, const glm::vec3 &half, const glm::vec3 &velocity)
         {
             Body body;
-            body.handle = world.CreateDynamicBox(At(at), half);
+            body.handle = world.CreateBody({.mMotion = PhysicsMotion::Dynamic,
+                                            .mShape = PhysicsShape::Box,
+                                            .mPosition = At(at),
+                                            .mHalfExtent = half});
             world.SetBodyLinearVelocity(body.handle, velocity);
             body.radius = glm::length(half);
             body.half = half;

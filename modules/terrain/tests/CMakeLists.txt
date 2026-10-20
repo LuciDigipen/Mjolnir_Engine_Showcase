@@ -1,7 +1,10 @@
 engine_add_module_tests(terrain
     TerrainAreaSamples.tests.cpp
     TerrainAssetPath.tests.cpp
+    TerrainCollider.tests.cpp
+    TerrainCollision.tests.cpp
     TerrainCollisionResidency.tests.cpp
+    TerrainCollisionResidencyJolt.tests.cpp
     TerrainHeightQuery.tests.cpp
     TerrainIdentity.tests.cpp
     TerrainLayout.tests.cpp
@@ -21,5 +24,8 @@ engine_add_module_tests(terrain
     TileHeights.tests.cpp
 )
 
-# TerrainInstance must round-trip SceneIO; terrain itself never links scene.
-target_link_libraries(engine_terrain_tests PRIVATE mir::scene)
+# TerrainInstance must round-trip SceneIO, and the collision tests check contact against
+# real Jolt bodies; terrain itself never links scene or physics.
+target_link_libraries(engine_terrain_tests PRIVATE mir::scene mir::physics terrain_bake)
+target_compile_definitions(engine_terrain_tests PRIVATE
+    TERRAIN_COLLISION_RECIPE="${PROJECT_SOURCE_DIR}/tools/TerrainTool/tests/fixtures/mixed-2x2.terrain.json")
