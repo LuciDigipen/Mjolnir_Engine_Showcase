@@ -53,6 +53,8 @@ namespace mir
 
     bool VulkanRenderer::RayTracingSupported() const { return mDevice->RayTracingSupported(); }
 
+    bool VulkanRenderer::NgxSupported() const { return mDevice->NgxSupported(); }
+
     VulkanRenderer::GpuMemoryUsage VulkanRenderer::GetGpuMemoryUsage() const
     {
         const vk::Device::MemoryBudget budget = mDevice->GpuMemoryBudget();
@@ -398,6 +400,12 @@ namespace mir
     {
         mMotionBlurEnabled = enabled;
         mMotionBlur->SetParams(shutterStrength, sampleCount);
+    }
+
+    void VulkanRenderer::SetAntiAliasing(AntiAliasingMode mode, uint32_t rtSampleCount)
+    {
+        mAntiAliasingMode = mode;
+        mAntiAliasingRtSampleCount = rtSampleCount;
     }
 
     void VulkanRenderer::SetFilm(bool enabled, float grain, float contrast, float saturation,

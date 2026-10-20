@@ -46,6 +46,8 @@ namespace mir::vk
         bool RayTracingSupported() const { return mRayTracingSupported; }
         const VkPhysicalDeviceRayTracingPipelinePropertiesKHR &RtProperties() const { return mRtProperties; }
 
+        bool NgxSupported() const { return mNgxSupported; }
+
         struct MemoryBudget
         {
             uint64_t mUsageBytes = 0;
@@ -97,6 +99,8 @@ namespace mir::vk
 
         bool mRayTracingSupported = false;
         VkPhysicalDeviceRayTracingPipelinePropertiesKHR mRtProperties{};
+
+        bool mNgxSupported = false;
 
         bool mMemoryBudgetSupported = false;
 

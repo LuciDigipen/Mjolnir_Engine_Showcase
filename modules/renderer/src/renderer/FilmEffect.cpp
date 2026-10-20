@@ -19,7 +19,7 @@ namespace mir
 {
     namespace
     {
-        void DrawFilmParams(nlohmann::json &params)
+        void DrawFilmParams(nlohmann::json &params, const PostEffectContext &)
         {
             FilmParams film = ReadFilmParams(params);
             bool changed = false;

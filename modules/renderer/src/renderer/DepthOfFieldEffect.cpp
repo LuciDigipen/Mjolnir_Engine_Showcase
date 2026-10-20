@@ -19,7 +19,7 @@ namespace mir
 {
     namespace
     {
-        void DrawDepthOfFieldParams(nlohmann::json &params)
+        void DrawDepthOfFieldParams(nlohmann::json &params, const PostEffectContext &)
         {
             DepthOfFieldParams dof = ReadDepthOfFieldParams(params);
             bool changed = false;

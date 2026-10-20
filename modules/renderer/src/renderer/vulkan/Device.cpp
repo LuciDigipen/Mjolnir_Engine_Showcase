@@ -490,6 +490,8 @@ namespace mir::vk
 
         mMemoryBudgetSupported = HasDeviceExtension(mPhysical, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
 
+        mNgxSupported = false;
+
         return true;
     }
 

@@ -36,6 +36,7 @@ target_compile_definitions(engine_renderer PRIVATE
 )
 
 target_sources(engine_renderer PRIVATE
+    src/renderer/AntiAliasingEffect.cpp
     src/renderer/BloomEffect.cpp
     src/renderer/CameraMath.cpp
     src/renderer/ComponentRegistration.cpp

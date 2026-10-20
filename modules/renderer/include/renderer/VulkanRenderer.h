@@ -11,6 +11,7 @@
 #include <core/ecs/components/WorldTransform.h>
 #include <core/math/WorldCoordinates.h>
 #include <core/platform/Surface.h>
+#include <renderer/AntiAliasingEffect.h>
 #include <renderer/Material.h>
 #include <renderer/Mesh.h>
 #include <renderer/MeshStreaming.h>
@@ -222,6 +223,8 @@ namespace mir
 
         bool RayTracingSupported() const;
 
+        bool NgxSupported() const;
+
         struct GpuMemoryUsage
         {
             uint64_t mUsageBytes = 0;
@@ -255,6 +258,8 @@ namespace mir
         void SetDepthOfField(bool enabled, float focusDistance, float aperture, float maxBlur);
 
         void SetMotionBlur(bool enabled, float shutterStrength, uint32_t sampleCount);
+
+        void SetAntiAliasing(AntiAliasingMode mode, uint32_t rtSampleCount);
 
         void SetFilm(bool enabled, float grain, float contrast, float saturation, float vignetteStrength,
             float vignetteRadius);
@@ -320,6 +325,9 @@ namespace mir
         std::unique_ptr<vk::VelocityPass> mVelocityPass;
         std::unique_ptr<vk::MotionBlur> mMotionBlur;
         bool mMotionBlurEnabled = false;
+
+        AntiAliasingMode mAntiAliasingMode = AntiAliasingMode::Off;
+        uint32_t mAntiAliasingRtSampleCount = 4;
 
         std::vector<uint32_t> mVelocityCameraOffsets;
 

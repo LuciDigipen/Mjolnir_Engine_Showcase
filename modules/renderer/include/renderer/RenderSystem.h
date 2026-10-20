@@ -16,6 +16,7 @@
 #include <core/ecs/System.h>
 #include <core/ecs/components/WorldTransform.h>
 #include <core/log/Log.h>
+#include <renderer/AntiAliasingEffect.h>
 #include <renderer/BloomEffect.h>
 #include <renderer/DepthOfFieldEffect.h>
 #include <renderer/FilmEffect.h>
@@ -152,6 +153,18 @@ namespace mir
             const bool motionBlurEnabled = motionBlurIt != postProcessing.effects.end() && motionBlurIt->second.enabled;
             mRenderer.SetMotionBlur(motionBlurEnabled, motionBlur.shutterStrength,
                 static_cast<uint32_t>(std::max(motionBlur.sampleCount, 1)));
+
+            const auto antiAliasingIt = postProcessing.effects.find(std::string(kAntiAliasingEffectName));
+            AntiAliasingParams antiAliasing = antiAliasingIt != postProcessing.effects.end()
+                ? ReadAntiAliasingParams(antiAliasingIt->second.params)
+                : AntiAliasingParams{};
+            const bool antiAliasingEnabled =
+                antiAliasingIt != postProcessing.effects.end() && antiAliasingIt->second.enabled;
+            if (!antiAliasingEnabled)
+                antiAliasing.mode = AntiAliasingMode::Off;
+            antiAliasing.mode = ClampAntiAliasingMode(antiAliasing.mode, renderSettings.rayTracing,
+                mRenderer.NgxSupported());
+            mRenderer.SetAntiAliasing(antiAliasing.mode, static_cast<uint32_t>(std::max(antiAliasing.rtSampleCount, 1)));
 
             const auto filmIt = postProcessing.effects.find(std::string(kFilmEffectName));
             const FilmParams film =

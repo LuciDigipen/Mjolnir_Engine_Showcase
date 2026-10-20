@@ -1040,7 +1040,8 @@ namespace mir
             if (mShowPostProcessing)
             {
                 if (ImGui::Begin("Post-Processing", &mShowPostProcessing))
-                    mPostProcessingPanel.Draw(postProcessingSettings, mProjectSettingsPath);
+                    mPostProcessingPanel.Draw(postProcessingSettings, mProjectSettingsPath,
+                        PostEffectContext{ renderSettings.rayTracing, renderer.NgxSupported() });
                 ImGui::End();
             }
             else

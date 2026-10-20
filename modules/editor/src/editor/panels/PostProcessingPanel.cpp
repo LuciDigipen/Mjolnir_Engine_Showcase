@@ -16,7 +16,8 @@
 
 namespace mir
 {
-    void PostProcessingPanel::Draw(PostProcessingSettings &settings, const std::filesystem::path &savePath)
+    void PostProcessingPanel::Draw(PostProcessingSettings &settings, const std::filesystem::path &savePath,
+        const PostEffectContext &context)
     {
         if (!mDraftLoaded)
         {
@@ -42,7 +43,7 @@ namespace mir
                 if (state.enabled && desc.mDrawParams != nullptr)
                 {
                     ImGui::Indent();
-                    desc.mDrawParams(state.params);
+                    desc.mDrawParams(state.params, context);
                     ImGui::Unindent();
                 }
 

@@ -1,4 +1,5 @@
 engine_add_module_tests(renderer
+    AntiAliasingEffect.tests.cpp
     BloomEffect.tests.cpp
     CameraMath.tests.cpp
     DepthOfFieldEffect.tests.cpp
