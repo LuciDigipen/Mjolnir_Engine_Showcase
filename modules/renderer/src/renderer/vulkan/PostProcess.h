@@ -16,6 +16,8 @@
 
 #include <cstdint>
 
+VK_DEFINE_HANDLE(VmaAllocation)
+
 namespace mir::vk
 {
     class Device;
@@ -23,8 +25,11 @@ namespace mir::vk
     class PostProcess
     {
     public:
-        bool Initialize(Device &device, VkFormat swapchainFormat);
+        bool Initialize(Device &device, VkFormat swapchainFormat, VkExtent2D extent);
         void Shutdown();
+
+        // Resizes the FXAA intermediate target (see mLdrImages) to match the new swapchain extent.
+        bool Resize(VkExtent2D extent);
 
         void SetParams(float exposure, int tonemapOperator)
         {
@@ -45,8 +50,20 @@ namespace mir::vk
         void Record(VkCommandBuffer cmd, uint32_t frame, VkImageView source, VkImageView bloom,
             float bloomIntensity, VkExtent2D extent);
 
+        VkImageView IntermediateView(uint32_t frame) const { return mLdrViews[frame]; }
+        VkImage IntermediateImage(uint32_t frame) const { return mLdrImages[frame]; }
+
     private:
+        bool CreateLdrImage(VkExtent2D extent);
+        void DestroyLdrImage();
+
         Device *mDevice = nullptr;
+
+        VkFormat mSwapchainFormat = VK_FORMAT_UNDEFINED;
+
+        VkImage mLdrImages[kFramesInFlight]{};
+        VmaAllocation mLdrAllocations[kFramesInFlight]{};
+        VkImageView mLdrViews[kFramesInFlight]{};
 
         VkSampler mSampler = VK_NULL_HANDLE;
 

@@ -13,6 +13,7 @@
 #include "vulkan/Device.h"
 #include "vulkan/FrameCapture.h"
 #include "vulkan/FrameSync.h"
+#include "vulkan/Fxaa.h"
 #include "vulkan/ImGuiOverlay.h"
 #include "vulkan/MaterialStore.h"
 #include "vulkan/MeshUploader.h"
@@ -41,6 +42,7 @@ namespace mir
         mModelDescriptors(std::make_unique<vk::ModelDescriptors>()),
         mRayTracer(std::make_unique<vk::RayTracer>()),
         mPostProcess(std::make_unique<vk::PostProcess>()),
+        mFxaa(std::make_unique<vk::Fxaa>()),
         mBloom(std::make_unique<vk::Bloom>()),
         mDepthOfField(std::make_unique<vk::DepthOfField>()),
         mVelocityPass(std::make_unique<vk::VelocityPass>()),
@@ -108,7 +110,10 @@ namespace mir
             return false;
 
         mMeshUploads->Initialize(*mDevice);
-        if (!mPostProcess->Initialize(*mDevice, mSwapchain->Format()))
+        if (!mPostProcess->Initialize(*mDevice, mSwapchain->Format(), mSwapchain->Extent()))
+            return false;
+
+        if (!mFxaa->Initialize(*mDevice, mSwapchain->Format()))
             return false;
 
         if (!mBloom->Initialize(*mDevice, mSwapchain->Extent()))
@@ -133,6 +138,7 @@ namespace mir
         // The swapchain cannot reach ray tracing, so the facade resizes its output images.
         if (!mSwapchain->Recreate(*mWindow) ||
             (mDevice->RayTracingSupported() && !mRayTracer->Resize(mSwapchain->Extent())) ||
+            !mPostProcess->Resize(mSwapchain->Extent()) ||
             !mBloom->Resize(mSwapchain->Extent()) ||
             !mDepthOfField->Resize(mSwapchain->Extent()) ||
             !mVelocityPass->Resize(mSwapchain->Extent()) ||
@@ -160,6 +166,7 @@ namespace mir
             mVelocityPass->Shutdown();
             mDepthOfField->Shutdown();
             mBloom->Shutdown();
+            mFxaa->Shutdown();
             mPostProcess->Shutdown();
             mMaterialStore->Shutdown();
             mRayTracer->Shutdown();

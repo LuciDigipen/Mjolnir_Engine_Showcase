@@ -111,4 +111,9 @@ namespace mir::vk
         uint32_t sampleCount;
         glm::vec2 invExtent;
     };
+
+    struct FxaaPushConstants
+    {
+        glm::vec2 invExtent;
+    };
 }

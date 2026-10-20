@@ -60,6 +60,7 @@ target_sources(engine_renderer PRIVATE
     src/renderer/vulkan/Device.cpp
     src/renderer/vulkan/FrameCapture.cpp
     src/renderer/vulkan/FrameSync.cpp
+    src/renderer/vulkan/Fxaa.cpp
     src/renderer/vulkan/ImGuiOverlay.cpp
     src/renderer/vulkan/MaterialStore.cpp
     src/renderer/vulkan/MeshUploader.cpp

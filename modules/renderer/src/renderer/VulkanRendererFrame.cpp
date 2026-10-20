@@ -16,6 +16,7 @@
 #include "vulkan/Device.h"
 #include "vulkan/FrameCapture.h"
 #include "vulkan/FrameSync.h"
+#include "vulkan/Fxaa.h"
 #include "vulkan/ImGuiOverlay.h"
 #include "vulkan/MaterialStore.h"
 #include "vulkan/MeshUploader.h"
@@ -245,6 +246,45 @@ namespace mir
             mDevice->EndLabel(cmd);
         }
 
+        const bool fxaaActive = mAntiAliasingMode == AntiAliasingMode::Fxaa;
+        if (fxaaActive)
+        {
+            vk::ColorAttachmentBarrier(cmd, mPostProcess->IntermediateImage(frame));
+
+            const VkRenderingAttachmentInfo intermediateAttachment{
+                .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+                .imageView = mPostProcess->IntermediateView(frame),
+                .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+                .storeOp = VK_ATTACHMENT_STORE_OP_STORE };
+            const VkRenderingInfo intermediateRenderingInfo{
+                .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+                .renderArea{ .offset{ 0, 0 }, .extent = extent },
+                .layerCount = 1,
+                .colorAttachmentCount = 1,
+                .pColorAttachments = &intermediateAttachment };
+
+            vkCmdBeginRendering(cmd, &intermediateRenderingInfo);
+            mDevice->BeginLabel(cmd, "Tonemap Pass", { 1.0f, 1.0f, 0.0f, 1.0f });
+
+            const VkViewport intermediateViewport{
+                .x = 0.0f, .y = 0.0f,
+                .width = static_cast<float>(extent.width),
+                .height = static_cast<float>(extent.height),
+                .minDepth = 0.0f, .maxDepth = 1.0f };
+            const VkRect2D intermediateScissor{ .offset{ 0, 0 }, .extent = extent };
+            vkCmdSetViewport(cmd, 0, 1, &intermediateViewport);
+            vkCmdSetScissor(cmd, 0, 1, &intermediateScissor);
+
+            mPostProcess->Record(cmd, frame, colorSource, mBloom->OutputView(frame),
+                mBloom->Intensity(), extent);
+
+            mDevice->EndLabel(cmd);
+            vkCmdEndRendering(cmd);
+
+            vk::ShaderReadOnlyBarrier(cmd, mPostProcess->IntermediateImage(frame));
+        }
+
         vk::ImageBarrier(cmd, mSwapchain->Image(imageIndex), VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_UNDEFINED,
             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -256,7 +296,7 @@ namespace mir
             .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
             .imageView = mSwapchain->View(imageIndex),
             .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            // Every pixel is about to be overwritten by the fullscreen tonemap triangle.
+            // Every pixel is about to be overwritten by the fullscreen tonemap/FXAA triangle.
             .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
             .storeOp = VK_ATTACHMENT_STORE_OP_STORE };
 
@@ -268,7 +308,7 @@ namespace mir
             .pColorAttachments = &swapchainAttachment };
 
         vkCmdBeginRendering(cmd, &tonemapRenderingInfo);
-        mDevice->BeginLabel(cmd, "Tonemap Pass", { 1.0f, 1.0f, 0.0f, 1.0f });
+        mDevice->BeginLabel(cmd, fxaaActive ? "FXAA Pass" : "Tonemap Pass", { 1.0f, 1.0f, 0.0f, 1.0f });
 
         const VkViewport viewport{
             .x = 0.0f, .y = 0.0f,
@@ -279,8 +319,11 @@ namespace mir
         vkCmdSetViewport(cmd, 0, 1, &viewport);
         vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-        mPostProcess->Record(cmd, frame, colorSource, mBloom->OutputView(frame),
-            mBloom->Intensity(), extent);
+        if (fxaaActive)
+            mFxaa->Record(cmd, frame, mPostProcess->IntermediateView(frame), extent);
+        else
+            mPostProcess->Record(cmd, frame, colorSource, mBloom->OutputView(frame),
+                mBloom->Intensity(), extent);
 
         mImGuiOverlay->RecordInPass(cmd);
 

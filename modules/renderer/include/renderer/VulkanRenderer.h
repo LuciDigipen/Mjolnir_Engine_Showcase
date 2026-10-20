@@ -49,6 +49,7 @@ namespace mir::vk
     class ModelDescriptors;
     class RayTracer;
     class PostProcess;
+    class Fxaa;
     class Bloom;
     class DepthOfField;
     class VelocityPass;
@@ -316,6 +317,7 @@ namespace mir
         std::unique_ptr<vk::RayTracer> mRayTracer;
 
         std::unique_ptr<vk::PostProcess> mPostProcess;
+        std::unique_ptr<vk::Fxaa> mFxaa;
         std::unique_ptr<vk::Bloom> mBloom;
         bool mBloomEnabled = false;
 
