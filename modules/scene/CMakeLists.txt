@@ -1,15 +1,15 @@
 engine_add_module(scene)
 
 target_sources(engine_scene PRIVATE
+    src/scene/ComponentJson.cpp
     src/scene/EntityCodec.cpp
     src/scene/EntitySnapshot.cpp
     src/scene/SceneIO.cpp
     src/scene/PlaySnapshot.cpp)
 
-# core's Entity/World types are in scene's public headers (SceneIO.h)
-target_link_libraries(engine_scene PUBLIC mir::core)
-
-target_link_libraries(engine_scene PRIVATE mir::serial)
+# core's Entity/World types and nlohmann::json are in scene's public headers
+target_link_libraries(engine_scene PUBLIC mir::core
+                                             mir::serial)
 
 if(BUILD_TESTING)
     add_subdirectory(tests)
