@@ -86,5 +86,8 @@ namespace mir::vk
         float mFogStart = 0.0f;
         float mFogEnd = 0.0f;
         Sky mAtmosphere{};
+
+        glm::mat4 mPreviousViewProj[kMaxViewsPerFrame]{};
+        bool mHasPreviousViewProj[kMaxViewsPerFrame]{};
     };
 }

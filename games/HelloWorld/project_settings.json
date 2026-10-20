@@ -13,6 +13,14 @@
           "threshold": 1.0
         }
       },
+      "DepthOfField": {
+        "enabled": false,
+        "params": {}
+      },
+      "Film": {
+        "enabled": false,
+        "params": {}
+      },
       "Fog": {
         "enabled": true,
         "params": {}
@@ -23,6 +31,10 @@
           "exposure": 1.0,
           "tonemapOperator": "aces"
         }
+      },
+      "MotionBlur": {
+        "enabled": false,
+        "params": {}
       }
     }
   },

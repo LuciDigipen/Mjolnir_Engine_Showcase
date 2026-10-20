@@ -41,6 +41,7 @@ namespace mir::vk
             glm::vec4 normalCol2;
             uint32_t unlit;
             uint32_t pad[3];
+            glm::mat4 prevModel;
         };
 
         VkTransformMatrixKHR ToTransformMatrixKHR(const glm::mat4 &m)
@@ -394,6 +395,47 @@ namespace mir::vk
 
             mDevice->NameObject(VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64_t>(mDistanceImages[i]),
                 std::format("RT distance image {}", i).c_str());
+
+            const VkImageCreateInfo velocityImageInfo{
+                .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                .imageType = VK_IMAGE_TYPE_2D,
+                .format = kHdrColorFormat,
+                .extent{ extent.width, extent.height, 1 },
+                .mipLevels = 1,
+                .arrayLayers = 1,
+                .samples = VK_SAMPLE_COUNT_1_BIT,
+                .tiling = VK_IMAGE_TILING_OPTIMAL,
+                .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
+
+            if (vmaCreateImage(mDevice->Allocator(), &velocityImageInfo, &allocInfo,
+                &mVelocityImages[i], &mVelocityAllocations[i], nullptr) != VK_SUCCESS)
+            {
+                MIR_LOG_CRITICAL("CreateOutputImages: vmaCreateImage failed for RT velocity image {}", i);
+                return false;
+            }
+
+            const VkImageViewCreateInfo velocityViewInfo{
+                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                .image = mVelocityImages[i],
+                .viewType = VK_IMAGE_VIEW_TYPE_2D,
+                .format = kHdrColorFormat,
+                .subresourceRange{
+                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                    .baseMipLevel = 0,
+                    .levelCount = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount = 1 } };
+
+            if (vkCreateImageView(mDevice->Handle(), &velocityViewInfo, nullptr, &mVelocityViews[i]) != VK_SUCCESS)
+            {
+                MIR_LOG_CRITICAL("CreateOutputImages: vkCreateImageView failed for RT velocity image {}", i);
+                return false;
+            }
+
+            mDevice->NameObject(VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64_t>(mVelocityImages[i]),
+                std::format("RT velocity image {}", i).c_str());
         }
 
         return true;
@@ -426,6 +468,18 @@ namespace mir::vk
                 mDistanceImages[i] = VK_NULL_HANDLE;
                 mDistanceAllocations[i] = VK_NULL_HANDLE;
             }
+
+            if (mVelocityViews[i] != VK_NULL_HANDLE)
+            {
+                vkDestroyImageView(mDevice->Handle(), mVelocityViews[i], nullptr);
+                mVelocityViews[i] = VK_NULL_HANDLE;
+            }
+            if (mVelocityImages[i] != VK_NULL_HANDLE)
+            {
+                vmaDestroyImage(mDevice->Allocator(), mVelocityImages[i], mVelocityAllocations[i]);
+                mVelocityImages[i] = VK_NULL_HANDLE;
+                mVelocityAllocations[i] = VK_NULL_HANDLE;
+            }
         }
     }
 
@@ -450,7 +504,7 @@ namespace mir::vk
             return false;
         }
 
-        const std::array<VkDescriptorSetLayoutBinding, 4> setBindings{ {
+        const std::array<VkDescriptorSetLayoutBinding, 5> setBindings{ {
             { .binding = 0,
              .descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR,
              .descriptorCount = 1,
@@ -465,6 +519,10 @@ namespace mir::vk
              .stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR },
             // DepthOfField's linear-distance output - see gDistance in raytrace.slang.
             { .binding = 3,
+             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR },
+            { .binding = 4,
              .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
              .descriptorCount = 1,
              .stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR } } };
@@ -486,8 +544,8 @@ namespace mir::vk
 
         const std::array<VkDescriptorPoolSize, 3> poolSizes{ {
             { .type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, .descriptorCount = kFramesInFlight },
-            // Two storage images per set now: gOutput and gDistance.
-            { .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = kFramesInFlight * 2 },
+            // Three storage images per set now: gOutput, gDistance and gVelocity.
+            { .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = kFramesInFlight * 3 },
             { .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = kFramesInFlight } } };
 
         const VkDescriptorPoolCreateInfo poolInfo{
@@ -679,12 +737,16 @@ namespace mir::vk
                 .imageView = mDistanceViews[i],
                 .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
 
+            const VkDescriptorImageInfo velocityImageInfo{
+                .imageView = mVelocityViews[i],
+                .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
+
             const VkDescriptorBufferInfo instanceInfoBufferInfo{
                 .buffer = mInstanceInfoBuffers[i],
                 .offset = 0,
                 .range = VK_WHOLE_SIZE };
 
-            const std::array<VkWriteDescriptorSet, 4> writes{ {
+            const std::array<VkWriteDescriptorSet, 5> writes{ {
                 { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                  .pNext = &accelWrite,
                  .dstSet = mSets[i],
@@ -708,7 +770,13 @@ namespace mir::vk
                  .dstBinding = 3,
                  .descriptorCount = 1,
                  .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                 .pImageInfo = &distanceImageInfo } } };
+                 .pImageInfo = &distanceImageInfo },
+                { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                 .dstSet = mSets[i],
+                 .dstBinding = 4,
+                 .descriptorCount = 1,
+                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                 .pImageInfo = &velocityImageInfo } } };
 
             vkUpdateDescriptorSets(mDevice->Handle(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
         }
@@ -868,7 +936,8 @@ namespace mir::vk
                 .normalCol0 = glm::vec4(item.normalMatrix[0], 0.0f),
                 .normalCol1 = glm::vec4(item.normalMatrix[1], 0.0f),
                 .normalCol2 = glm::vec4(item.normalMatrix[2], 0.0f),
-                .unlit = (material != nullptr && material->mUnlit) ? 1u : 0u };
+                .unlit = (material != nullptr && material->mUnlit) ? 1u : 0u,
+                .prevModel = item.previousModel };
 
             ++instanceCount;
         }
@@ -1060,6 +1129,10 @@ namespace mir::vk
             VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
             VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
             VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        ImageBarrier(cmd, mVelocityImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
+            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+            VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
+            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
 
         const VkClearColorValue blackClear{ .float32 = { 0.0f, 0.0f, 0.0f, 0.0f } };
         const VkImageSubresourceRange outputRange{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
@@ -1067,12 +1140,17 @@ namespace mir::vk
 
         const VkClearColorValue farClear{ .float32 = { 1.0e8f, 0.0f, 0.0f, 0.0f } };
         vkCmdClearColorImage(cmd, mDistanceImages[frame], VK_IMAGE_LAYOUT_GENERAL, &farClear, 1, &outputRange);
+        vkCmdClearColorImage(cmd, mVelocityImages[frame], VK_IMAGE_LAYOUT_GENERAL, &blackClear, 1, &outputRange);
 
         ImageBarrier(cmd, mOutputImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
             VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
             VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
         ImageBarrier(cmd, mDistanceImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
+            VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+            VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+        ImageBarrier(cmd, mVelocityImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
             VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
             VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
@@ -1113,6 +1191,10 @@ namespace mir::vk
             VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
             VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
         ImageBarrier(cmd, mDistanceImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
+            VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+        ImageBarrier(cmd, mVelocityImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
             VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
             VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);

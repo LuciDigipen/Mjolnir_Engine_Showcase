@@ -17,11 +17,13 @@
 #include "vulkan/MaterialStore.h"
 #include "vulkan/MeshUploader.h"
 #include "vulkan/ModelDescriptors.h"
+#include "vulkan/MotionBlur.h"
 #include "vulkan/PostProcess.h"
 #include "vulkan/RayTracer.h"
 #include "vulkan/ResourceStore.h"
 #include "vulkan/ShadowMaps.h"
 #include "vulkan/Swapchain.h"
+#include "vulkan/VelocityPass.h"
 #include "vulkan/VulkanConstants.h"
 
 #include <core/log/Log.h>
@@ -41,6 +43,8 @@ namespace mir
         mPostProcess(std::make_unique<vk::PostProcess>()),
         mBloom(std::make_unique<vk::Bloom>()),
         mDepthOfField(std::make_unique<vk::DepthOfField>()),
+        mVelocityPass(std::make_unique<vk::VelocityPass>()),
+        mMotionBlur(std::make_unique<vk::MotionBlur>()),
         mCapture(std::make_unique<vk::FrameCapture>()),
         mImGuiOverlay(std::make_unique<vk::ImGuiOverlay>()),
         mMeshUploads(std::make_unique<vk::MeshUploader>())
@@ -111,6 +115,12 @@ namespace mir
         if (!mDepthOfField->Initialize(*mDevice, mSwapchain->Extent()))
             return false;
 
+        if (!mVelocityPass->Initialize(*mDevice, mCameraBuffer->SetLayout(), mSwapchain->Extent()))
+            return false;
+
+        if (!mMotionBlur->Initialize(*mDevice, mSwapchain->Extent()))
+            return false;
+
         return true;
     }
 
@@ -122,7 +132,9 @@ namespace mir
         if (!mSwapchain->Recreate(*mWindow) ||
             (mDevice->RayTracingSupported() && !mRayTracer->Resize(mSwapchain->Extent())) ||
             !mBloom->Resize(mSwapchain->Extent()) ||
-            !mDepthOfField->Resize(mSwapchain->Extent()))
+            !mDepthOfField->Resize(mSwapchain->Extent()) ||
+            !mVelocityPass->Resize(mSwapchain->Extent()) ||
+            !mMotionBlur->Resize(mSwapchain->Extent()))
         {
             // Recreate may have cleared the flag already; set it so the next frame retries.
             mSwapchain->MarkOutOfDate();
@@ -142,6 +154,8 @@ namespace mir
 
             mMeshUploads->Shutdown(*mRayTracer);
 
+            mMotionBlur->Shutdown();
+            mVelocityPass->Shutdown();
             mDepthOfField->Shutdown();
             mBloom->Shutdown();
             mPostProcess->Shutdown();
@@ -378,6 +392,19 @@ namespace mir
     {
         mDepthOfFieldEnabled = enabled;
         mDepthOfField->SetParams(focusDistance, aperture, maxBlur);
+    }
+
+    void VulkanRenderer::SetMotionBlur(bool enabled, float shutterStrength, uint32_t sampleCount)
+    {
+        mMotionBlurEnabled = enabled;
+        mMotionBlur->SetParams(shutterStrength, sampleCount);
+    }
+
+    void VulkanRenderer::SetFilm(bool enabled, float grain, float contrast, float saturation,
+        float vignetteStrength, float vignetteRadius)
+    {
+        mPostProcess->SetFilmParams(enabled ? grain : 0.0f, enabled ? contrast : 1.0f,
+            enabled ? saturation : 1.0f, enabled ? vignetteStrength : 0.0f, vignetteRadius);
     }
 
     void VulkanRenderer::SetAtmosphere(const Sky &sky)

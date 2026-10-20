@@ -46,6 +46,7 @@ namespace mir::vk
             glm::vec4 atmosphereMisc;       // x = Mie anisotropy g, y = sun intensity
             glm::vec4 lightingMeta;         // x = this view's Point/Spot/Area count, y = its first index in gLights,
                                             // z = 1 if the Sun casts a shadow, w = this view's first spot shadow matrix
+            glm::mat4 prevViewProj;         // last frame's viewProj for this view slot; this frame's own when there was none
             glm::mat4 sunShadowViewProj;
         };
 
@@ -236,6 +237,15 @@ namespace mir::vk
         const uint32_t firstLight = viewIndex * kMaxLights;
         const uint32_t lightCount = WriteViewLights(frame, view, viewIndex);
 
+        const bool hasHistory = viewIndex < kMaxViewsPerFrame;
+        const glm::mat4 prevViewProj =
+            hasHistory && mHasPreviousViewProj[viewIndex] ? mPreviousViewProj[viewIndex] : view.viewProj;
+        if (hasHistory)
+        {
+            mPreviousViewProj[viewIndex] = view.viewProj;
+            mHasPreviousViewProj[viewIndex] = true;
+        }
+
         const CameraData data{
             .viewProj = view.viewProj,
             .lightDirWS = glm::vec4(mLightDirection, 0.0f),
@@ -253,6 +263,7 @@ namespace mir::vk
             .atmosphereMisc = glm::vec4(mAtmosphere.mMieG, mAtmosphere.mSunIntensity, 0.0f, 0.0f),
             .lightingMeta = glm::vec4(static_cast<float>(lightCount), static_cast<float>(firstLight),
                 shadow.hasSunShadow ? 1.0f : 0.0f, static_cast<float>(shadow.spotShadowBase)),
+            .prevViewProj = prevViewProj,
             .sunShadowViewProj = shadow.sunShadowViewProj };
         const VkDeviceSize offset = static_cast<VkDeviceSize>(viewIndex) * mCameraAlignedSize;
 

@@ -32,8 +32,18 @@ namespace mir::vk
             mTonemapOperator = tonemapOperator;
         }
 
+        void SetFilmParams(float grain, float contrast, float saturation, float vignetteStrength,
+            float vignetteRadius)
+        {
+            mGrain = grain;
+            mContrast = contrast;
+            mSaturation = saturation;
+            mVignetteStrength = vignetteStrength;
+            mVignetteRadius = vignetteRadius;
+        }
+
         void Record(VkCommandBuffer cmd, uint32_t frame, VkImageView source, VkImageView bloom,
-            float bloomIntensity, VkExtent2D extent) const;
+            float bloomIntensity, VkExtent2D extent);
 
     private:
         Device *mDevice = nullptr;
@@ -51,5 +61,14 @@ namespace mir::vk
 
         float mExposure = 1.0f;
         int mTonemapOperator = 0;
+
+        float mGrain = 0.0f;
+        float mContrast = 1.0f;
+        float mSaturation = 1.0f;
+        float mVignetteStrength = 0.0f;
+        float mVignetteRadius = 1.0f;
+
+        // Advances once per Record() so grain reads as animated noise, not a static pattern.
+        uint32_t mGrainFrame = 0;
     };
 }

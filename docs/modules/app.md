@@ -254,6 +254,13 @@ Removing the `MeshRenderer` removes `MeshBounds` too. `Reset()` empties the
 caches and runs wherever `ReleaseSceneResources` does: `StopScene` and
 `UnloadCurrentScene`.
 
+`ApplyImportedAssets` calls `CommitReload` with the new `AssetCache`, after
+`ModelSystem`'s. It frees the cached meshes and forgets every entity's names, so
+the next `PostUpdate` resolves every renderer from the new cache, including one
+whose mesh failed before the import. That runs before `Render`, so no freed mesh
+is drawn. A mesh file that is not valid JSON, lacks a vertex field, or has an
+index past its vertices logs an error and resolves to no mesh.
+
 A `materialShader` whose `CreateMaterial` fails logs an error and resolves to the
 renderer's error material. The mesh then draws magenta, rather than the default
 grey a null handle would give it.

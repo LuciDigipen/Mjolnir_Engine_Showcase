@@ -2,9 +2,11 @@ engine_add_module_tests(renderer
     BloomEffect.tests.cpp
     CameraMath.tests.cpp
     DepthOfFieldEffect.tests.cpp
+    FilmEffect.tests.cpp
     MeshStreaming.tests.cpp
     FogEffect.tests.cpp
     HdrEffect.tests.cpp
+    MotionBlurEffect.tests.cpp
     PostEffectRegistry.tests.cpp
     PostProcessingSettings.tests.cpp
     RenderSettings.tests.cpp
