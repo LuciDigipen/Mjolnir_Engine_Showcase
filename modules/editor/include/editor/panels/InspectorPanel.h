@@ -18,11 +18,13 @@
 namespace mir
 {
     struct ComponentOps;
+    class History;
 
     class InspectorPanel
     {
     public:
-        void Draw(World &world, const AssetImportView &assets);
+        
+        void Draw(World &world, const AssetImportView &assets, History &history);
 
         // One field's value
         struct alignas(16) FieldBuffer
@@ -38,6 +40,10 @@ namespace mir
         };
 
     private:
+        
+        void EndEditIfReleased(History &history);
+
         Clipboard mClipboard;
+        bool mEditing = false;
     };
 } // namespace mir

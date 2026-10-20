@@ -6,7 +6,7 @@ undo. It is part of `editor` (see [editor.md](editor.md)). It never links
 `mir::scene`, and it reaches the scene only through `ISceneOps`, which `App`
 implements.
 
-`mir::editor` · depends `mir::core` · API `modules/editor/include/editor/history/` · maintainer Dong Ta · reviewed 2026-10-19
+`mir::editor` · depends `mir::core` · API `modules/editor/include/editor/history/` · maintainer Dong Ta · reviewed 2026-10-20
 
 ## Model
 
@@ -25,9 +25,18 @@ if (mSceneOps != nullptr)
     mHistory.Flush(world, *mSceneOps);
 ```
 
+The Hierarchy, the Inspector and the viewport gizmo all submit this way, so no
+editor panel writes the `World` for a scene edit itself.
+
 `Flush` runs this frame's commands in order, then the undos and redos asked for
 this frame. A command whose `Do` returns true becomes a step. Ctrl+Z undoes one
 step and Ctrl+Y redoes it.
+
+A drag submits a command every frame, and one press-to-release drag has to be one
+step. So the newest step stays open, and while it is open a new command whose
+`TryMerge` it accepts folds into it: the step keeps its first before and takes
+the newest after. The panel calls `EndStep` when the widget or the gizmo is let
+go, and the next submit starts a new step.
 
 History is one list of steps plus a cursor, the number of steps applied. Undo
 runs `Undo` on the step before the cursor and moves the cursor back. Redo runs
@@ -55,15 +64,16 @@ private `AppSceneOps` and hands it to `Editor::Initialize`.
 
 | Type | Header | Role |
 |---|---|---|
-| `History`, `kHistoryBudget` | `editor/history/History.h` | Steps, cursor, queue and budget: `Submit`, `RequestUndo`, `RequestRedo`, `Flush`, `Clear`, and the names the Edit menu shows |
-| `ICommand`, `CommandContext` | `editor/history/Command.h` | One undoable change, and the `{World, EntityIds, ISceneOps}` it receives when it runs |
+| `History`, `kHistoryBudget` | `editor/history/History.h` | Steps, cursor, queue and budget: `Submit`, `EndStep`, `RequestUndo`, `RequestRedo`, `Flush`, `Clear`, and the names the Edit menu shows |
+| `ICommand`, `CommandContext` | `editor/history/Command.h` | One undoable change, and the `{World, EntityIds, ISceneOps}` it receives when it runs; `TryMerge` folds the next command of a drag into it |
+| `FieldValue`, `MakeSetFieldsCommand`, `MakeAddComponentCommand`, `MakeRemoveComponentCommand` | `editor/history/ComponentCommands.h` | The Inspector's and the gizmo's edits as commands; a `FieldValue` is one field's new bytes, by index into `ComponentOps::mFields` |
 | `EntityIds`, `HistoryId`, `kNullHistoryId` | `editor/history/EntityIds.h` | History id to current `Entity`; `IdOf`, `EntityOf`, `Rebind`, `Unbind`, `Retain` |
 | `ISceneOps`, `CapturedSubtree` | `editor/history/SceneOps.h` | The scene calls history needs, and a captured subtree: its snapshot text, members and their `StableId`s |
 | `MakeCreateCommand`, `MakeDeleteCommand`, `MakeDuplicateCommand`, `MakeReParentCommand`, `MakeEntityCommand` | `editor/history/EntityCommands.h` | The Hierarchy's four entity operations as commands; `MakeEntityCommand` maps an `EntityAction` and returns null for `None` |
 
-The command classes are private to `EntityCommands.cpp`. Callers only ever hold
-a `unique_ptr<ICommand>`, and `SubtreeRecord`, in `src/editor/history/`, stays
-out of the public headers.
+The command classes are private to `EntityCommands.cpp` and
+`ComponentCommands.cpp`. Callers only ever hold a `unique_ptr<ICommand>`, and
+`SubtreeRecord`, in `src/editor/history/`, stays out of the public headers.
 
 | Command | First `Do` | `Undo` | Redo |
 |---|---|---|---|
@@ -71,6 +81,14 @@ out of the public headers.
 | Delete | removes the subtree; selects `NeighborInHierarchy` if the target was selected | restores it | removes it again |
 | Duplicate | `Duplicate`; selects the copy | removes the copy | restores it |
 | ReParent | moves each entity as the Hierarchy asked; selects them | moves them back in reverse order | moves them again |
+| Set fields | reads each field's before, writes the new values | writes the befores | writes the new values |
+| Add component | adds it with its defaults, then any pasted values | removes it | adds it again |
+| Remove component | reads every writable field, then removes it | adds it back with those values | reads and removes it again |
+
+Set fields is every field edit: one field from an Inspector widget, the one
+`Transform` channel a gizmo operation moves, the picked asset plus the fields its
+`mResetOnChange` clears, or every field Paste Values writes. Paste onto an entity
+that lacks the component is Add component with the copied values.
 
 `SubtreeRecord` is the remove and restore that Create, Delete and Duplicate
 share. Remove captures the subtree through `ISceneOps::Capture`, gives each
@@ -89,8 +107,27 @@ check then turns it into nothing.
 
 **`Do` returns false when nothing changed, and no step is recorded.** That
 covers a preset whose `mCanCreate` refuses, a drop `CanSetParentAll` rejects, a
-drop that leaves every entity with the same parent and next sibling, and a target
-that is already dead. The redo steps survive, because nothing new happened.
+drop that leaves every entity with the same parent and next sibling, a field set
+to the value it already has, adding a component the entity has, removing one it
+lacks, and a target that is already dead. The redo steps survive, because
+nothing new happened.
+
+**One press-to-release drag is one step, and two drags are two.** Only the newest
+step is open, and only while the cursor is at the end. Set fields merges when the
+next command edits the same fields of the same component on the same entity.
+`EndStep` closes the step after the frame's queue has run, so a release in the
+same frame as the last change still keeps that change. Undo and redo close it
+too. The Inspector calls `EndStep` once no ImGui item is active after it
+submitted, which covers drags, typing, checkboxes, combos and menu items alike.
+The gizmo calls it when `ImGuizmo::IsUsing()` turns false. Without the call, a
+second drag of the same field would fold into the first, which is what the
+two-steps test catches.
+
+**Field values go through `FieldDesc::Write`, never as raw component bytes.**
+`Transform`'s setters bump its version, so `WorldTransform` rebuilds; copying
+the bytes would copy the version too. An `EntityRef` value is kept as a history
+id, not a handle, so a field pointing at an entity that is deleted and restored
+in between still finds it.
 
 **Undoing a delete gives the entities back their `StableId`s.** Saving after a
 delete and its undo leaves every scene file unchanged. Undoing a create or a
@@ -140,6 +177,8 @@ Explorer is the editor's UI reference.
 GPU resources are rebuilt by their systems, as after a load. Scripts are the
 exception, because `ScriptSystem` skips a `ScriptRef` without an instance. So
 `AppSceneOps` runs `ResolveSceneScripts` after a restore and after a duplicate.
+Undoing Remove Component on a `ScriptRef` is not covered: it comes back with
+no instance, as Add Component's does.
 
 ## State
 
@@ -147,37 +186,42 @@ exception, because `ScriptSystem` skips a `ScriptRef` without an instance. So
 go through history (#203), with Ctrl+Z, Ctrl+Y and the Edit menu. History
 clears on New, Load, Play and Stop.
 
-Inspector field edits, the gizmo, Add and Remove Component and Paste Values
-still write the `World` directly, so they cannot be undone (#204). No unsaved
-marker reads the step serial yet (#206).
+*As of 2026-10-20.* Inspector field edits, Paste Values, Add Component, Remove
+Component and the gizmo's move, rotate and scale go through history too (#204).
+No unsaved marker reads the step serial yet (#206).
 
 Tests are in `modules/editor/tests/`. `History.tests.cpp` covers the cursor,
-dropped redo steps, refused commands, step names, selection, the budget and id
-clean-up, through a fake command. `EntityCommands.tests.cpp` runs every command
-through Do, Undo and Redo against a `TestSceneOps` built on the real
-`mir::scene` functions. It compares the saved scene files at each stage, rather
-than component bytes, because a restored entity has new handles. The shortcuts,
-the Edit menu and `AppSceneOps` itself have no unit test; the `smoke.<game>`
+dropped redo steps, refused commands, step names, selection, the budget, id
+clean-up and merging, through fake commands. `EntityCommands.tests.cpp` and
+`ComponentCommands.tests.cpp` run every command through Do, Undo and Redo
+against a `TestSceneOps` built on the real `mir::scene` functions, set up in
+`EditingFixture.h`. They compare the saved scene files at each stage, rather
+than component bytes, because a restored entity has new handles. The parts that
+need ImGui or `App` have no unit test: where the Inspector and the gizmo call
+`EndStep`, the shortcuts, the Edit menu and `AppSceneOps`. The `smoke.<game>`
 runs start the editor with them in place.
 
 ## Backlog
 
-1. **Value commands for #204**: set field and set component, merged into one
-   step while a widget or the gizmo is held (`TryMerge`, plus an `EndStep` the
-   panel calls on release). An `EntityRef` field in their before and after
-   bytes needs the same treatment as Remove's reference links, or its target
-   comes back stale.
-2. **Add and Remove Component** as structural commands.
-3. **The unsaved marker (#206)** from the step serial and a save point.
-4. **Delete and Duplicate act on one entity**, as the Hierarchy does today
+1. **The unsaved marker (#206)** from the step serial and a save point.
+2. **Delete and Duplicate act on one entity**, as the Hierarchy does today
    (editor.md backlog). Doing the whole selection would want one command that
    holds several records, so it stays one step.
-5. **A preset that spawns entities outside the new entity's subtree** would
+3. **A preset that spawns entities outside the new entity's subtree** would
    leave them behind on undo, because only the subtree is captured. No preset
    does today.
-6. **Pick the budget from measured snapshot sizes.** 64 MiB is a guess.
+4. **Pick the budget from measured snapshot sizes.** 64 MiB is a guess.
+5. **A removed `ScriptRef` comes back without its script instance.** Resolving
+   scripts after Add and Remove Component would need a scene op for it.
 
 ## Changed
+
+*2026-10-20* — **Inspector and gizmo edits are undoable (#204).** Was: the
+Inspector called `FieldDesc::Write`, `AddDefault` and `Remove` on the `World`
+itself, and the gizmo called `Transform`'s setters, so none of it could be
+undone. Now: they submit Set fields, Add component and Remove component
+commands, and `History` merges the frames of one drag into one step through
+`TryMerge` and `EndStep`.
 
 *2026-10-19* — **Added.** Was: no undo anywhere in the engine. The Hierarchy
 returned an `EntityAction` through `EditorActions`, and `App::ApplyEntityAction`

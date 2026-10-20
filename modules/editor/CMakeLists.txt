@@ -32,6 +32,7 @@ target_sources(engine_editor PRIVATE
     src/editor/EditorCamera.cpp
     src/editor/EditorPreferences.cpp
     src/editor/EntityBaseline.cpp
+    src/editor/history/ComponentCommands.cpp
     src/editor/history/EntityCommands.cpp
     src/editor/history/EntityIds.cpp
     src/editor/history/History.cpp

@@ -209,21 +209,24 @@ save a scene, and why it treats a C++ and a script-declared runtime component
 identically: both surface through the same `ComponentOps`/`FieldDesc` tables.
 Each field reads into a 64-byte scratch buffer (large enough for a `Mat4`,
 `FieldKind`'s biggest kind), an ImGui control drawn over the copy per
-`FieldKind`, and `FieldDesc::Write` called on the live component only if the
-control reports an edit — so a component with a custom accessor (`Transform`'s
-`SetPosition` and friends) runs through it rather than being memcpy'd under
-it. A `FieldDesc::ReadOnly` field (`WorldTransform.matrix`) still shows its
+`FieldKind`. Only when the control reports an edit does the new value go to
+`History` as a Set fields command, which calls `FieldDesc::Write` at the end of
+the frame — so a component with a custom accessor (`Transform`'s `SetPosition`
+and friends) runs through it rather than being memcpy'd under it (see
+[editor-history.md](editor-history.md)). A `FieldDesc::ReadOnly` field (`WorldTransform.matrix`) still shows its
 current value, greyed out via `ImGui::BeginDisabled`. (A 3D transform gizmo
 does exist, drawn over the viewport by `DrawViewportGizmo` via ImGuizmo - it's
 a separate, `Selection`-driven overlay, not part of `InspectorPanel`'s
 field-table drawing described here.)
 
-Component edits happen inside `InspectorPanel`, on the `World` directly. They
-change no `LoadedScene` entry, so unlike entity actions there is nothing for
-`App` to do. The Add Component button below the components lists every
-registered component the entity lacks, except the baseline, and picking one
-calls `ComponentOps::AddDefault`. Right-clicking a component's header opens
-Copy Values, Paste Values and Remove Component. Copy Values reads every field
+Component edits go to `History` as commands, like entity actions, so each one
+can be undone. They change no `LoadedScene` entry, so `App` has nothing to do
+for them. Once no ImGui item is active after an edit, the panel calls
+`History::EndStep`, so one drag, one typed value or one click is one step. The
+Add Component button below the components lists every registered component the
+entity lacks, except the baseline, and picking one submits Add component.
+Right-clicking a component's header opens Copy Values, Paste Values and Remove
+Component. Copy Values reads every field
 through `FieldDesc::Read` into the panel's `Clipboard`. Paste Values is enabled
 only on a component of the copied type. When the entity lacks that type, Add
 Component offers "Paste <type>" at the top instead, which adds the component
@@ -291,6 +294,7 @@ wins over the default `Entity<index>`. `IsBaselineComponent` keeps the three out
 of Add Component and greys out their Remove Component.
 
 **Paste writes field by field through `FieldDesc::Write`, never as raw bytes.**
+Its Set fields command does the writing, and so do the gizmo's.
 Copying `Transform`'s bytes would copy its version stamp too.
 `WorldTransform` is rebuilt only when that stamp differs from the one it was
 built from, so a pasted position could be skipped. Writing each field runs
@@ -301,11 +305,15 @@ fields are persisted data, so skipping them would paste half a component. A
 `ReadOnly` field is skipped. An `EntityRef` keeps its target, so a pasted
 reference points where the copied one did.
 
-**Remove Component runs after the component loop.** Removing a component moves
-the entity to another archetype, which invalidates the component pointers the
-rest of the loop draws from. Add Component is drawn after the loop for the same
-reason. Paste runs inside the loop, because writing into a component of the same
-type moves nothing.
+**Nothing the Inspector submits changes the `World` while it draws.** History
+applies every command at the end of `DrawLayout`. Removing or adding a component
+moves the entity to another archetype, which would invalidate the component
+pointers the rest of the loop draws from, so it must not happen mid-loop.
+
+**The gizmo's drag is one step.** `DrawViewportGizmo` submits the one channel
+the operation moves (position, rotation or scale) every frame the gizmo
+changes it, and calls `History::EndStep` on the frame `ImGuizmo::IsUsing()`
+turns false.
 
 **Entity and component edits are allowed during Play.** Stop restores the `World`
 from `PlaySnapshot`, so it discards them along with everything else Play changed.
@@ -354,8 +362,11 @@ entity: the right-clicked row, or `Selection::Primary()`.
 the whole selection, and the order survives save and Play.
 
 *As of 2026-10-19.* Create, Delete, Duplicate and reparenting in `Hierarchy`
-can be undone and redone, with Ctrl+Z, Ctrl+Y or the Edit menu. `Inspector`
-edits and the gizmo cannot yet (see [editor-history.md](editor-history.md)).
+can be undone and redone, with Ctrl+Z, Ctrl+Y or the Edit menu (see
+[editor-history.md](editor-history.md)).
+
+*As of 2026-10-20.* So can every `Inspector` edit and the gizmo's move, rotate
+and scale. No panel writes the scene's `World` directly any more.
 
 The panels and menus have no tests. They need a device and a display.
 `smoke.switch` covers the restart that Open Project asks for, but not the menu
@@ -392,6 +403,13 @@ or the dialog themselves. History needs neither, and its tests are in
    deleted, not everything recursively under a deleted folder.
 
 ## Changed
+
+*2026-10-20* — **Inspector and gizmo edits go through undo history (#204).**
+Was: `InspectorPanel` wrote fields, pasted, added and removed components on the
+`World` itself, and `DrawViewportGizmo` called `Transform`'s setters. Remove
+Component waited until after the component loop for that reason. Now: both
+submit commands to `History`, `InspectorPanel::Draw` takes the `History`, and
+each drag is one step. See [editor-history.md](editor-history.md).
 
 *2026-10-19* — **Entity operations go through undo history.** Was: `DrawLayout`
 returned the Hierarchy's `EntityAction` in `EditorActions::mEntity`, and

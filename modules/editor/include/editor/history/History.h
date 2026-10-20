@@ -35,6 +35,9 @@ namespace mir
         void RequestUndo() { --mPending; }
         void RequestRedo() { ++mPending; }
 
+       
+        void EndStep() { mEndStep = true; }
+
         //runs this frame's commands, then the requested undos and redos
         void Flush(World &world, ISceneOps &scene);
 
@@ -58,9 +61,11 @@ namespace mir
             std::vector<HistoryId> mSelectionBefore;
             std::vector<HistoryId> mSelectionAfter;
             std::size_t mBytes = 0;
+            bool mOpen = false; // still taking merges
         };
 
         void Apply(std::unique_ptr<ICommand> command, CommandContext &context);
+        void CloseOpenStep();
         void Undo(CommandContext &context);
         bool Redo(CommandContext &context);
 
@@ -76,6 +81,7 @@ namespace mir
         std::size_t mCursor = 0;
         std::vector<std::unique_ptr<ICommand>> mQueue;
         int mPending = 0; // below 0 undoes, above 0 redoes
+        bool mEndStep = false;
 
         EntityIds mIds;
         bool mIdsStale = false;

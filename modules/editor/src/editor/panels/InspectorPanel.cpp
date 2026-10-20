@@ -16,6 +16,8 @@
 #include <core/math/WorldReal.h>
 #include <editor/EntityBaseline.h>
 #include <editor/Selection.h>
+#include <editor/history/ComponentCommands.h>
+#include <editor/history/History.h>
 
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -28,9 +30,12 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace mir
 {
@@ -38,6 +43,27 @@ namespace mir
     {
         using FieldBuffer = InspectorPanel::FieldBuffer;
         using Clipboard = InspectorPanel::Clipboard;
+
+        
+        struct Edits
+        {
+            History &mHistory;
+            bool mSubmitted = false;
+
+            void Submit(std::unique_ptr<ICommand> command)
+            {
+                mHistory.Submit(std::move(command));
+                mSubmitted = true;
+            }
+        };
+
+        FieldValue ToValue(uint32_t field, const FieldBuffer &buffer)
+        {
+            FieldValue value;
+            value.mField = field;
+            std::memcpy(value.mBytes, buffer.mBytes, sizeof(value.mBytes));
+            return value;
+        }
 
         bool DrawFieldWidget(const FieldDesc &field, void *bytes)
         {
@@ -172,12 +198,13 @@ namespace mir
             return changed;
         }
 
-        void ResetFields(const ComponentOps &ops, void *component, std::span<const std::string_view> names)
+        
+        void AddResetValues(const ComponentOps &ops, std::span<const std::string_view> names,
+            std::vector<FieldValue> &values)
         {
-            FieldBuffer empty{};
             for (std::string_view name : names)
                 if (const FieldDesc *field = ops.FindField(name))
-                    field->Write(component, empty.mBytes);
+                    values.push_back(ToValue(static_cast<uint32_t>(field - ops.mFields.data()), FieldBuffer{}));
         }
 
         Clipboard CopyValues(World &world, const ComponentOps &ops, Entity entity)
@@ -195,52 +222,50 @@ namespace mir
             return clipboard;
         }
 
-        void PasteValues(World &world, const Clipboard &clipboard, Entity entity)
+        
+        void PasteValues(World &world, const Clipboard &clipboard, Entity entity, Edits &edits)
         {
             const ComponentOps &ops = *clipboard.mOps;
-            if (!ops.Has(world, entity))
-                ops.AddDefault(world, entity);
 
-            void *component = ops.GetComponent(world, entity);
-            if (component == nullptr)
-                return; // a tag: adding it was the whole paste
-
+            std::vector<FieldValue> values;
             for (std::size_t i = 0; i < ops.mFields.size() && i < clipboard.mValues.size(); ++i)
-            {
-                if (!ops.mFields[i].ReadOnly())
-                    ops.mFields[i].Write(component, clipboard.mValues[i].mBytes);
-            }
+                values.push_back(ToValue(static_cast<uint32_t>(i), clipboard.mValues[i]));
+
+            if (ops.Has(world, entity))
+                edits.Submit(MakeSetFieldsCommand(entity, ops, std::move(values),
+                    "Paste " + std::string(ops.mType.name) + " Values"));
+            else
+                edits.Submit(MakeAddComponentCommand(entity, ops, std::move(values)));
         }
 
         // right-click menu on a component header
         void DrawComponentMenu(World &world, const ComponentOps &ops, Entity entity, Clipboard &clipboard,
-            const ComponentOps *&removeRequested)
+            Edits &edits)
         {
             if (!ImGui::BeginPopupContextItem("ComponentMenu"))
                 return;
 
             if (ImGui::MenuItem("Copy Values"))
                 clipboard = CopyValues(world, ops, entity);
-            // pasting into a component of the same type changes no archetype, so it is safe mid-loop
             if (ImGui::MenuItem("Paste Values", nullptr, false, clipboard.mOps == &ops))
-                PasteValues(world, clipboard, entity);
+                PasteValues(world, clipboard, entity, edits);
 
             ImGui::Separator();
 
             // shown disabled rather than hidden, so the baseline's protection is visible
             if (ImGui::MenuItem("Remove Component", nullptr, false, !IsBaselineComponent(ops.mType)))
-                removeRequested = &ops;
+                edits.Submit(MakeRemoveComponentCommand(entity, ops));
 
             ImGui::EndPopup();
         }
 
         void DrawComponent(World &world, const ComponentOps &ops, Entity entity, const AssetImportView &assets,
-            Clipboard &clipboard, const ComponentOps *&removeRequested)
+            Clipboard &clipboard, Edits &edits)
         {
             ImGui::PushID(static_cast<int>(ops.mType.seq));
 
             const bool open = ImGui::CollapsingHeader(ops.mType.name.data(), ImGuiTreeNodeFlags_DefaultOpen);
-            DrawComponentMenu(world, ops, entity, clipboard, removeRequested);
+            DrawComponentMenu(world, ops, entity, clipboard, edits);
 
             if (open)
             {
@@ -252,8 +277,9 @@ namespace mir
                 else
                 {
                     ImGui::Indent();
-                    for (const FieldDesc &field : ops.mFields)
+                    for (uint32_t index = 0; index < ops.mFields.size(); ++index)
                     {
+                        const FieldDesc &field = ops.mFields[index];
                         if (field.mHidden)
                             continue;
 
@@ -285,9 +311,10 @@ namespace mir
 
                         if (edited && !readOnly)
                         {
-                            field.Write(component, buffer.mBytes);
+                            std::vector<FieldValue> values{ ToValue(index, buffer) };
                             if (field.mWidget == FieldWidget::AssetRef)
-                                ResetFields(ops, component, field.mResetOnChange);
+                                AddResetValues(ops, field.mResetOnChange, values);
+                            edits.Submit(MakeSetFieldsCommand(entity, ops, std::move(values)));
                         }
                     }
                     ImGui::Unindent();
@@ -298,7 +325,7 @@ namespace mir
         }
 
         // drawn after the component loop
-        void DrawAddComponent(World &world, Entity entity, const Clipboard &clipboard)
+        void DrawAddComponent(World &world, Entity entity, const Clipboard &clipboard, Edits &edits)
         {
             ImGui::Separator();
             if (ImGui::Button("Add Component", ImVec2(-FLT_MIN, 0.0f)))
@@ -312,7 +339,7 @@ namespace mir
             {
                 const std::string label = "Paste " + std::string(clipboard.mOps->mType.name);
                 if (ImGui::Selectable(label.c_str()))
-                    PasteValues(world, clipboard, entity);
+                    PasteValues(world, clipboard, entity, edits);
                 ImGui::Separator();
             }
 
@@ -324,7 +351,7 @@ namespace mir
 
                 any = true;
                 if (ImGui::Selectable(ops->mType.name.data()))
-                    ops->AddDefault(world, entity);
+                    edits.Submit(MakeAddComponentCommand(entity, *ops));
             }
             if (!any)
                 ImGui::TextDisabled("Every component is already added.");
@@ -333,8 +360,10 @@ namespace mir
         }
     } // namespace
 
-    void InspectorPanel::Draw(World &world, const AssetImportView &assets)
+    void InspectorPanel::Draw(World &world, const AssetImportView &assets, History &history)
     {
+        EndEditIfReleased(history);
+
         const Selection *selection = world.TryResource<Selection>();
         const size_t selectedCount = selection != nullptr ? selection->mSelected.size() : 0;
 
@@ -358,18 +387,28 @@ namespace mir
             ImGui::Text("Entity %u", entity.mIndex);
         ImGui::Separator();
 
-        const ComponentOps *removeRequested = nullptr;
+        //history applies these at the end of the frame, so nothing below makes a change to archety midway
+        Edits edits{ history };
         for (const ComponentOps *ops : ComponentRegistry::Instance().All())
         {
             if (!ops->Has(world, entity))
                 continue;
 
-            DrawComponent(world, *ops, entity, assets, mClipboard, removeRequested);
+            DrawComponent(world, *ops, entity, assets, mClipboard, edits);
         }
 
-        if (removeRequested != nullptr)
-            removeRequested->Remove(world, entity);
+        DrawAddComponent(world, entity, mClipboard, edits);
 
-        DrawAddComponent(world, entity, mClipboard);
+        mEditing |= edits.mSubmitted;
+        EndEditIfReleased(history);
+    }
+
+    void InspectorPanel::EndEditIfReleased(History &history)
+    {
+        if (!mEditing || ImGui::IsAnyItemActive())
+            return;
+
+        history.EndStep();
+        mEditing = false;
     }
 } // namespace mir

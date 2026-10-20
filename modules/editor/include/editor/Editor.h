@@ -183,6 +183,9 @@ namespace mir
 
         bool mMouseWasDown = false;
 
+        // last frame's ImGuizmo::IsUsing
+        bool mGizmoWasUsing = false;
+
         // New Project modal
         bool mNewProjectRequested = false;
         char mNewProjectName[64] = {};
