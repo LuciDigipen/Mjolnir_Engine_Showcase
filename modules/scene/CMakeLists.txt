@@ -4,7 +4,6 @@ target_sources(engine_scene PRIVATE
     src/scene/ComponentJson.cpp
     src/scene/EntityCodec.cpp
     src/scene/EntitySnapshot.cpp
-    src/scene/SceneInstanceCodec.cpp
     src/scene/SceneIO.cpp
     src/scene/PlaySnapshot.cpp)
 

@@ -40,6 +40,24 @@ namespace mir
         // Missing on scenes saved before sibling order; sorts after every saved index, then by id
         constexpr uint32_t kNoSiblingIndex = std::numeric_limits<uint32_t>::max();
 
+        // Position among the siblings this save writes, so entities outside it leave no gaps
+        uint32_t SiblingIndexOf(const World &world, Entity entity, const EntityIdMap &ids)
+        {
+            const HierarchyIndex *index = world.TryResource<HierarchyIndex>();
+            if (index == nullptr)
+                return 0;
+
+            uint32_t position = 0;
+            for (const Entity sibling : index->SiblingsOf(entity))
+            {
+                if (sibling == entity)
+                    break;
+                if (ids.contains(PackEntity(sibling)))
+                    ++position;
+            }
+            return position;
+        }
+
         json RefToJson(Entity ref, const EntityIdMap &ids, bool keepOutsideRefs)
         {
             if (ref.IsNull())
@@ -57,20 +75,15 @@ namespace mir
         {
             if (target.is_number_integer())
             {
-                const std::optional<StableId> id = ReadStableIdJson(target);
-                if (!id)
-                {
-                    MIR_LOG_WARN("SpawnEntities: EntityRef id is out of range, left null");
-                    return kNullEntity;
-                }
-                if (*id == kNullStableId)
+                const StableId id = target.get<StableId>();
+                if (id == kNullStableId)
                     return kNullEntity;
 
-                const auto it = spawned.find(*id);
+                const auto it = spawned.find(id);
                 if (it != spawned.end())
                     return it->second;
 
-                MIR_LOG_WARN("SpawnEntities: EntityRef target id {} not found in this set", *id);
+                MIR_LOG_WARN("SpawnEntities: EntityRef target id {} not found in this set", id);
                 return kNullEntity;
             }
 
@@ -87,131 +100,6 @@ namespace mir
 
             MIR_LOG_WARN("SpawnEntities: EntityRef '{}' is not an id this load resolves, left null", target.dump());
             return kNullEntity;
-        }
-    }
-
-    uint32_t SiblingIndexOf(const World &world, Entity entity, const EntityIdMap &ids)
-    {
-        const HierarchyIndex *index = world.TryResource<HierarchyIndex>();
-        if (index == nullptr)
-            return 0;
-
-        uint32_t position = 0;
-        for (const Entity sibling : index->SiblingsOf(entity))
-        {
-            if (sibling == entity)
-                break;
-            if (ids.contains(PackEntity(sibling)))
-                ++position;
-        }
-        return position;
-    }
-
-    uint32_t EntitySiblingIndexFromJson(const json &entityJson)
-    {
-        const auto it = entityJson.find(kSiblingIndexKey);
-        if (it == entityJson.end())
-            return kNoSiblingIndex;
-
-        if (it->is_number_unsigned())
-        {
-            const uint64_t value = it->get<uint64_t>();
-            return value <= std::numeric_limits<uint32_t>::max() ? static_cast<uint32_t>(value) : kNoSiblingIndex;
-        }
-        if (it->is_number_integer())
-        {
-            const int64_t value = it->get<int64_t>();
-            if (value >= 0 && value <= std::numeric_limits<uint32_t>::max())
-                return static_cast<uint32_t>(value);
-        }
-        return kNoSiblingIndex;
-    }
-
-    std::optional<StableId> ReadStableIdJson(const json &value)
-    {
-        if (value.is_number_unsigned())
-            return value.get<StableId>();
-        if (!value.is_number_integer())
-            return std::nullopt;
-
-        const int64_t raw = value.get<int64_t>();
-        if (raw < 0)
-            return std::nullopt;
-        return static_cast<StableId>(raw);
-    }
-
-    void ApplyEntityComponents(World &world, Entity entity, const json &entityJson, StableId id,
-        std::vector<PendingEntityRef> &pendingRefs)
-    {
-        const auto componentsIt = entityJson.find("components");
-        if (componentsIt == entityJson.end() || !componentsIt->is_array())
-            return;
-
-        ComponentRegistry &registry = ComponentRegistry::Instance();
-
-        for (const json &blob : *componentsIt)
-        {
-            if (!blob.is_object())
-                continue;
-
-            const auto typeIt = blob.find("type");
-            if (typeIt == blob.end() || !typeIt->is_string())
-            {
-                MIR_LOG_WARN("SpawnEntities: entity {} has a component without a type, skipped", id);
-                continue;
-            }
-
-            const std::string typeName = typeIt->get<std::string>();
-            const ComponentOps *ops = registry.Find(typeName);
-            if (ops == nullptr)
-            {
-                MIR_LOG_WARN("SpawnEntities: unknown component '{}', skipped", typeName);
-                continue; // forward compatibility: a name this build doesn't know
-            }
-
-            ops->AddCopy(world, entity, ops->mDefaultValue.data());
-            void *component = ops->GetComponent(world, entity);
-
-            const auto fieldsIt = blob.find("fields");
-            if (fieldsIt == blob.end() || !fieldsIt->is_object())
-                continue;
-
-            const json &fields = *fieldsIt;
-            for (const FieldDesc &field : ops->mFields)
-            {
-                auto it = fields.find(std::string(field.mName));
-                if (it == fields.end())
-                    continue;
-
-                if (field.mKind == FieldKind::EntityRef)
-                {
-                    pendingRefs.push_back({ entity, ops, std::string(field.mName), *it });
-                    continue;
-                }
-
-                FieldBuffer buffer{};
-                if (!JsonToField(field.mKind, *it, buffer.mBytes))
-                {
-                    MIR_LOG_ERROR("SpawnEntities: entity {} '{}.{}' has a value this field cannot hold, left at default",
-                        id, typeName, field.mName);
-                    continue;
-                }
-                field.Write(component, buffer.mBytes);
-            }
-        }
-    }
-
-    void ResolvePendingEntityRefs(World &world, const std::vector<PendingEntityRef> &pendingRefs,
-        const std::map<StableId, Entity> &spawned, bool resolveOutsideRefs)
-    {
-        for (const PendingEntityRef &pending : pendingRefs)
-        {
-            const Entity resolved = ResolveRef(world, pending.mTarget, spawned, resolveOutsideRefs);
-
-            void *component = pending.mOps->GetComponent(world, pending.mEntity);
-            const FieldDesc *field = pending.mOps->FindField(pending.mField);
-            if (component != nullptr && field != nullptr)
-                field->Write(component, &resolved);
         }
     }
 
@@ -270,7 +158,17 @@ namespace mir
         InstallHierarchy(world);
 
         std::map<StableId, Entity> spawned;
-        std::vector<PendingEntityRef> pendingRefs;
+        ComponentRegistry &registry = ComponentRegistry::Instance();
+
+        // recorded in pass 1, applied in pass 3
+        struct PendingRef
+        {
+            Entity mEntity;
+            const ComponentOps *mOps;
+            std::string mField;
+            json mTarget; // a copy: value() hands back temporaries
+        };
+        std::vector<PendingRef> pendingRefs;
 
         struct PendingParent
         {
@@ -286,10 +184,14 @@ namespace mir
         for (const auto &entry : entities)
             ordered.push_back(&entry);
 
-        std::sort(ordered.begin(), ordered.end(), [](const auto *a, const auto *b)
+        const auto siblingIndex = [](const json &ejson)
             {
-                return std::pair(EntitySiblingIndexFromJson(a->second), a->first) <
-                    std::pair(EntitySiblingIndexFromJson(b->second), b->first);
+                const auto it = ejson.find(kSiblingIndexKey);
+                return it != ejson.end() && it->is_number_unsigned() ? it->get<uint32_t>() : kNoSiblingIndex;
+            };
+        std::sort(ordered.begin(), ordered.end(), [&siblingIndex](const auto *a, const auto *b)
+            {
+                return std::pair(siblingIndex(a->second), a->first) < std::pair(siblingIndex(b->second), b->first);
             });
 
         // 1. spawn every entity, add its components, write every non-EntityRef field
@@ -299,22 +201,46 @@ namespace mir
             Entity entity = world.CreateEntity();
             spawned[id] = entity;
 
-            const auto parentIt = ejson.find("parent");
-            if (parentIt != ejson.end())
+            StableId parent = ejson.value("parent", kNullStableId);
+            if (parent != kNullStableId)
+                pendingParents.push_back({ entity, parent });
+
+            for (const auto &blob : ejson.value("components", json::array()))
             {
-                const std::optional<StableId> parent = ReadStableIdJson(*parentIt);
-                if (parent)
+                std::string typeName = blob.at("type").get<std::string>();
+                const ComponentOps *ops = registry.Find(typeName);
+                if (ops == nullptr)
                 {
-                    if (*parent != kNullStableId)
-                        pendingParents.push_back({ entity, *parent });
+                    MIR_LOG_WARN("SpawnEntities: unknown component '{}', skipped", typeName);
+                    continue; // forward compatibility: a name this build doesn't know
                 }
-                else
+
+                ops->AddCopy(world, entity, ops->mDefaultValue.data());
+                void *component = ops->GetComponent(world, entity);
+
+                const json &fields = blob.value("fields", json::object());
+                for (const FieldDesc &field : ops->mFields)
                 {
-                    MIR_LOG_WARN("SpawnEntities: entity {} has a malformed parent, left unparented", id);
+                    auto it = fields.find(std::string(field.mName));
+                    if (it == fields.end())
+                        continue;
+
+                    if (field.mKind == FieldKind::EntityRef)
+                    {
+                        pendingRefs.push_back({ entity, ops, std::string(field.mName), *it });
+                        continue;
+                    }
+
+                    FieldBuffer buffer{};
+                    if (!JsonToField(field.mKind, *it, buffer.mBytes))
+                    {
+                        MIR_LOG_ERROR("SpawnEntities: entity {} '{}.{}' has a value this field cannot hold, left at default",
+                            id, typeName, field.mName);
+                        continue;
+                    }
+                    field.Write(component, buffer.mBytes);
                 }
             }
-
-            ApplyEntityComponents(world, entity, ejson, id, pendingRefs);
         }
 
         // 2. resolve parent ids
@@ -331,7 +257,15 @@ namespace mir
         }
 
         // 3. patch EntityRef fields
-        ResolvePendingEntityRefs(world, pendingRefs, spawned, resolveOutsideRefs);
+        for (const auto &r : pendingRefs)
+        {
+            Entity resolved = ResolveRef(world, r.mTarget, spawned, resolveOutsideRefs);
+
+            void *component = r.mOps->GetComponent(world, r.mEntity);
+            const FieldDesc *field = r.mOps->FindField(r.mField);
+            if (component != nullptr && field != nullptr)
+                field->Write(component, &resolved);
+        }
 
         return spawned;
     }
