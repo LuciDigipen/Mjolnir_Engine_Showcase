@@ -11,6 +11,8 @@
 #include "scene/SceneAsset.h"
 
 #include <filesystem>
+#include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -24,9 +26,29 @@ namespace mir
     // decide whether a directory holds a scene at all.
     std::filesystem::path SceneManifestPath(const std::filesystem::path &sceneDir);
 
-    bool SaveScene(World &world, const std::filesystem::path &sceneDir, const LoadedScene &scene);
+    class ScenePrefabResolver
+    {
+    public:
+        virtual ~ScenePrefabResolver() = default;
 
-    LoadedScene LoadScene(World &world, const std::filesystem::path &sceneDir);
+        // An empty map means the prefab is unavailable.
+        virtual std::map<SceneNodeAddress, Entity> Materialize(World &world, const ScenePrefabInstance &instance) = 0;
+
+        // False when the prefab is unavailable or the node, component or field
+        // is not an EntityRef of the template.
+        virtual bool TemplateEntityRef(const ScenePrefabInstance &instance, const SceneNodeAddress &node,
+            std::string_view component, std::string_view field,
+            std::optional<SceneNodeAddress> &outTarget) const = 0;
+    };
+
+    // The root's Transform fields as an instance record's placement; empty when it has no Transform.
+    nlohmann::json InstancePlacementFromWorld(World &world, Entity root);
+
+    bool SaveScene(World &world, const std::filesystem::path &sceneDir, const LoadedScene &scene,
+        const ScenePrefabResolver *resolver = nullptr);
+
+    LoadedScene LoadScene(World &world, const std::filesystem::path &sceneDir,
+        ScenePrefabResolver *resolver = nullptr);
 
     // Destroy all entity in scene
     void UnloadScene(World &world, const LoadedScene &loaded);
