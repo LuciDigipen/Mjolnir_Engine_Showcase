@@ -313,6 +313,7 @@ namespace mir
         if (!mir::SaveScene(mWorld, mProject.mSceneDir, mScene))
             return false;
 
+        mScene.mDirty = false;
         SetSceneUnsaved(false);
         return true;
     }
