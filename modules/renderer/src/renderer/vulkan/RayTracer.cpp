@@ -399,7 +399,7 @@ namespace mir::vk
             const VkImageCreateInfo velocityImageInfo{
                 .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
                 .imageType = VK_IMAGE_TYPE_2D,
-                .format = kHdrColorFormat,
+                .format = kRtVelocityFormat,
                 .extent{ extent.width, extent.height, 1 },
                 .mipLevels = 1,
                 .arrayLayers = 1,
@@ -420,7 +420,7 @@ namespace mir::vk
                 .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
                 .image = mVelocityImages[i],
                 .viewType = VK_IMAGE_VIEW_TYPE_2D,
-                .format = kHdrColorFormat,
+                .format = kRtVelocityFormat,
                 .subresourceRange{
                     .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
                     .baseMipLevel = 0,
@@ -447,7 +447,7 @@ namespace mir::vk
                 .arrayLayers = 1,
                 .samples = VK_SAMPLE_COUNT_1_BIT,
                 .tiling = VK_IMAGE_TILING_OPTIMAL,
-                .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                 .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
                 .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
 
@@ -488,7 +488,7 @@ namespace mir::vk
                 .arrayLayers = 1,
                 .samples = VK_SAMPLE_COUNT_1_BIT,
                 .tiling = VK_IMAGE_TILING_OPTIMAL,
-                .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                 .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
                 .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
 
@@ -519,6 +519,88 @@ namespace mir::vk
 
             mDevice->NameObject(VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64_t>(mNormalImages[i]),
                 std::format("RT normal image {}", i).c_str());
+
+            const VkImageCreateInfo specularAlbedoImageInfo{
+                .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                .imageType = VK_IMAGE_TYPE_2D,
+                .format = kHdrColorFormat,
+                .extent{ extent.width, extent.height, 1 },
+                .mipLevels = 1,
+                .arrayLayers = 1,
+                .samples = VK_SAMPLE_COUNT_1_BIT,
+                .tiling = VK_IMAGE_TILING_OPTIMAL,
+                .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
+
+            if (vmaCreateImage(mDevice->Allocator(), &specularAlbedoImageInfo, &allocInfo,
+                &mSpecularAlbedoImages[i], &mSpecularAlbedoAllocations[i], nullptr) != VK_SUCCESS)
+            {
+                MIR_LOG_CRITICAL("CreateOutputImages: vmaCreateImage failed for RT specularAlbedo image {}", i);
+                return false;
+            }
+
+            const VkImageViewCreateInfo specularAlbedoViewInfo{
+                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                .image = mSpecularAlbedoImages[i],
+                .viewType = VK_IMAGE_VIEW_TYPE_2D,
+                .format = kHdrColorFormat,
+                .subresourceRange{
+                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                    .baseMipLevel = 0,
+                    .levelCount = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount = 1 } };
+
+            if (vkCreateImageView(mDevice->Handle(), &specularAlbedoViewInfo, nullptr, &mSpecularAlbedoViews[i]) != VK_SUCCESS)
+            {
+                MIR_LOG_CRITICAL("CreateOutputImages: vkCreateImageView failed for RT specularAlbedo image {}", i);
+                return false;
+            }
+
+            mDevice->NameObject(VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64_t>(mSpecularAlbedoImages[i]),
+                std::format("RT specularAlbedo image {}", i).c_str());
+
+            const VkImageCreateInfo dlssDepthImageInfo{
+                .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                .imageType = VK_IMAGE_TYPE_2D,
+                .format = kDistanceFormat,
+                .extent{ extent.width, extent.height, 1 },
+                .mipLevels = 1,
+                .arrayLayers = 1,
+                .samples = VK_SAMPLE_COUNT_1_BIT,
+                .tiling = VK_IMAGE_TILING_OPTIMAL,
+                .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
+
+            if (vmaCreateImage(mDevice->Allocator(), &dlssDepthImageInfo, &allocInfo,
+                &mDlssDepthImages[i], &mDlssDepthAllocations[i], nullptr) != VK_SUCCESS)
+            {
+                MIR_LOG_CRITICAL("CreateOutputImages: vmaCreateImage failed for RT dlssDepth image {}", i);
+                return false;
+            }
+
+            const VkImageViewCreateInfo dlssDepthViewInfo{
+                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                .image = mDlssDepthImages[i],
+                .viewType = VK_IMAGE_VIEW_TYPE_2D,
+                .format = kDistanceFormat,
+                .subresourceRange{
+                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                    .baseMipLevel = 0,
+                    .levelCount = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount = 1 } };
+
+            if (vkCreateImageView(mDevice->Handle(), &dlssDepthViewInfo, nullptr, &mDlssDepthViews[i]) != VK_SUCCESS)
+            {
+                MIR_LOG_CRITICAL("CreateOutputImages: vkCreateImageView failed for RT dlssDepth image {}", i);
+                return false;
+            }
+
+            mDevice->NameObject(VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64_t>(mDlssDepthImages[i]),
+                std::format("RT dlssDepth image {}", i).c_str());
         }
 
         return true;
@@ -587,6 +669,28 @@ namespace mir::vk
                 mNormalImages[i] = VK_NULL_HANDLE;
                 mNormalAllocations[i] = VK_NULL_HANDLE;
             }
+            if (mSpecularAlbedoViews[i] != VK_NULL_HANDLE)
+            {
+                vkDestroyImageView(mDevice->Handle(), mSpecularAlbedoViews[i], nullptr);
+                mSpecularAlbedoViews[i] = VK_NULL_HANDLE;
+            }
+            if (mSpecularAlbedoImages[i] != VK_NULL_HANDLE)
+            {
+                vmaDestroyImage(mDevice->Allocator(), mSpecularAlbedoImages[i], mSpecularAlbedoAllocations[i]);
+                mSpecularAlbedoImages[i] = VK_NULL_HANDLE;
+                mSpecularAlbedoAllocations[i] = VK_NULL_HANDLE;
+            }
+            if (mDlssDepthViews[i] != VK_NULL_HANDLE)
+            {
+                vkDestroyImageView(mDevice->Handle(), mDlssDepthViews[i], nullptr);
+                mDlssDepthViews[i] = VK_NULL_HANDLE;
+            }
+            if (mDlssDepthImages[i] != VK_NULL_HANDLE)
+            {
+                vmaDestroyImage(mDevice->Allocator(), mDlssDepthImages[i], mDlssDepthAllocations[i]);
+                mDlssDepthImages[i] = VK_NULL_HANDLE;
+                mDlssDepthAllocations[i] = VK_NULL_HANDLE;
+            }
         }
     }
 
@@ -611,7 +715,7 @@ namespace mir::vk
             return false;
         }
 
-        const std::array<VkDescriptorSetLayoutBinding, 7> setBindings{ {
+        const std::array<VkDescriptorSetLayoutBinding, 9> setBindings{ {
             { .binding = 0,
              .descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR,
              .descriptorCount = 1,
@@ -642,7 +746,15 @@ namespace mir::vk
             { .binding = 6,
              .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
              .descriptorCount = 1,
-             .stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR } } };
+             .stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR },
+            { .binding = 7,
+             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR },
+            { .binding = 8,
+             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR } } };
 
         const VkDescriptorSetLayoutCreateInfo setLayoutInfo{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -661,8 +773,8 @@ namespace mir::vk
 
         const std::array<VkDescriptorPoolSize, 3> poolSizes{ {
             { .type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, .descriptorCount = kFramesInFlight },
-            // Five storage images per set now: gOutput, gDistance, gVelocity, gAlbedo and gNormal.
-            { .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = kFramesInFlight * 5 },
+            // Color, distance, velocity, diffuse/specular albedo, normal/roughness and RR depth.
+            { .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = kFramesInFlight * 7 },
             { .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = kFramesInFlight } } };
 
         const VkDescriptorPoolCreateInfo poolInfo{
@@ -866,12 +978,17 @@ namespace mir::vk
                 .imageView = mNormalViews[i],
                 .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
 
+            const VkDescriptorImageInfo specularAlbedoImageInfo{
+                .imageView = mSpecularAlbedoViews[i], .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
+            const VkDescriptorImageInfo dlssDepthImageInfo{
+                .imageView = mDlssDepthViews[i], .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
+
             const VkDescriptorBufferInfo instanceInfoBufferInfo{
                 .buffer = mInstanceInfoBuffers[i],
                 .offset = 0,
                 .range = VK_WHOLE_SIZE };
 
-            const std::array<VkWriteDescriptorSet, 7> writes{ {
+            const std::array<VkWriteDescriptorSet, 9> writes{ {
                 { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                  .pNext = &accelWrite,
                  .dstSet = mSets[i],
@@ -913,7 +1030,15 @@ namespace mir::vk
                  .dstBinding = 6,
                  .descriptorCount = 1,
                  .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                 .pImageInfo = &normalImageInfo } } };
+                 .pImageInfo = &normalImageInfo },
+                { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                 .dstSet = mSets[i], .dstBinding = 7, .descriptorCount = 1,
+                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                 .pImageInfo = &specularAlbedoImageInfo },
+                { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                 .dstSet = mSets[i], .dstBinding = 8, .descriptorCount = 1,
+                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                 .pImageInfo = &dlssDepthImageInfo } } };
 
             vkUpdateDescriptorSets(mDevice->Handle(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
         }
@@ -1283,6 +1408,14 @@ namespace mir::vk
             VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
             VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
             VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        ImageBarrier(cmd, mSpecularAlbedoImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
+            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+            VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
+            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        ImageBarrier(cmd, mDlssDepthImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
+            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+            VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
+            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
 
         // Guide buffers only matter while Dlss is the active path - only their clear below is
         // conditional on it (matching the AC's "only produced when active"); every layout
@@ -1306,6 +1439,8 @@ namespace mir::vk
         {
             vkCmdClearColorImage(cmd, mAlbedoImages[frame], VK_IMAGE_LAYOUT_GENERAL, &blackClear, 1, &outputRange);
             vkCmdClearColorImage(cmd, mNormalImages[frame], VK_IMAGE_LAYOUT_GENERAL, &blackClear, 1, &outputRange);
+            vkCmdClearColorImage(cmd, mSpecularAlbedoImages[frame], VK_IMAGE_LAYOUT_GENERAL, &blackClear, 1, &outputRange);
+            vkCmdClearColorImage(cmd, mDlssDepthImages[frame], VK_IMAGE_LAYOUT_GENERAL, &blackClear, 1, &outputRange);
         }
 
         ImageBarrier(cmd, mOutputImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
@@ -1325,6 +1460,14 @@ namespace mir::vk
             VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
             VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
         ImageBarrier(cmd, mNormalImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
+            VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+            VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+        ImageBarrier(cmd, mSpecularAlbedoImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
+            VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+            VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+        ImageBarrier(cmd, mDlssDepthImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
             VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
             VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
@@ -1376,16 +1519,22 @@ namespace mir::vk
             VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
             VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
 
-        // gAlbedo/gNormal stay VK_IMAGE_LAYOUT_GENERAL (NGX's Resource_VK wraps them directly,
-        // not through a sampler) - still need a visibility barrier before whatever reads them
-        // next (vk::DlssRayReconstruction::Record, opaque third-party GPU work whose own
-        // synchronization isn't ours to barrier precisely, hence ALL_COMMANDS on the dst side).
+        // Guides remain GENERAL here. The RR pass transitions them to sampled-image
+        // layouts and synchronizes both shader writes and transfer-cleared background.
         // Unconditional for the same reason as the transitions above - harmless when !dlssActive.
         ImageBarrier(cmd, mAlbedoImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
             VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
             VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_SHADER_READ_BIT);
         ImageBarrier(cmd, mNormalImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
+            VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+            VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+            VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+        ImageBarrier(cmd, mSpecularAlbedoImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
+            VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
+            VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+            VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+        ImageBarrier(cmd, mDlssDepthImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
             VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
             VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_SHADER_READ_BIT);

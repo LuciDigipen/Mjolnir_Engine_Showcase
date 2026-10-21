@@ -105,6 +105,10 @@ namespace mir::vk
         VkImageView AlbedoView(uint32_t frame) const { return mAlbedoViews[frame]; }
         VkImage NormalImage(uint32_t frame) const { return mNormalImages[frame]; }
         VkImageView NormalView(uint32_t frame) const { return mNormalViews[frame]; }
+        VkImage SpecularAlbedoImage(uint32_t frame) const { return mSpecularAlbedoImages[frame]; }
+        VkImageView SpecularAlbedoView(uint32_t frame) const { return mSpecularAlbedoViews[frame]; }
+        VkImage DlssDepthImage(uint32_t frame) const { return mDlssDepthImages[frame]; }
+        VkImageView DlssDepthView(uint32_t frame) const { return mDlssDepthViews[frame]; }
 
     private:
         bool CreateAccelerationStructureObject(VkDeviceSize size, VkAccelerationStructureTypeKHR type,
@@ -160,6 +164,13 @@ namespace mir::vk
         VkImage mNormalImages[kFramesInFlight]{};
         VmaAllocation mNormalAllocations[kFramesInFlight]{};
         VkImageView mNormalViews[kFramesInFlight]{};
+
+        VkImage mSpecularAlbedoImages[kFramesInFlight]{};
+        VmaAllocation mSpecularAlbedoAllocations[kFramesInFlight]{};
+        VkImageView mSpecularAlbedoViews[kFramesInFlight]{};
+        VkImage mDlssDepthImages[kFramesInFlight]{};
+        VmaAllocation mDlssDepthAllocations[kFramesInFlight]{};
+        VkImageView mDlssDepthViews[kFramesInFlight]{};
 
         VkAccelerationStructureKHR mTlas[kFramesInFlight]{};
         VkBuffer mTlasBuffers[kFramesInFlight]{};

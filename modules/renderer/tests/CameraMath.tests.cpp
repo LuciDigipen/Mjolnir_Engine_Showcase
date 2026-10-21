@@ -277,6 +277,36 @@ TEST_CASE("A camera ray does not depend on the lens's clip planes", "[renderer]"
     }
 }
 
+TEST_CASE("Previous-frame reprojection preserves camera translation at local and map-edge origins", "[renderer]")
+{
+    for (const glm::dvec3 origin : {glm::dvec3(0.0), kEdgeA, kEdgeB})
+    {
+        const auto oldCamera = At(origin);
+        const auto newCamera = At(origin + glm::dvec3(2.0, 0.5, 1.0));
+        const auto stationaryPoint = At(origin + glm::dvec3(1.0, 2.0, -30.0));
+        const glm::mat4 rotation = glm::mat4_cast(glm::angleAxis(glm::radians(15.0f), glm::vec3(0, 1, 0)));
+        const glm::mat4 previous = mir::MakeViewProjection(rotation, kLens, 1.5f);
+        const auto rebased = mir::RebaseViewProjection(previous, oldCamera, newCamera);
+        REQUIRE(rebased);
+        const auto oldRelative = mir::TryCameraRelativeFloat(stationaryPoint, oldCamera);
+        const auto newRelative = mir::TryCameraRelativeFloat(stationaryPoint, newCamera);
+        REQUIRE(oldRelative);
+        REQUIRE(newRelative);
+
+        const glm::vec4 expected = previous * glm::vec4(*oldRelative, 1.0f);
+        const glm::vec4 actual = *rebased * glm::vec4(*newRelative, 1.0f);
+        for (int component = 0; component < 4; ++component)
+            CHECK(actual[component] == Catch::Approx(expected[component]).margin(1e-5f));
+
+        // Omitting the rebase loses camera translation, even for a stationary object.
+        const glm::vec4 uncorrected = previous * glm::vec4(*newRelative, 1.0f);
+        CHECK(std::abs(actual.x / actual.w - uncorrected.x / uncorrected.w) > 0.01f);
+        // Directions at infinity must remain independent of camera translation.
+        const glm::vec4 sky(0.2f, 0.3f, -1.0f, 0.0f);
+        CHECK(*rebased * sky == previous * sky);
+    }
+}
+
 TEST_CASE("HaltonJitter stays within +/-0.5 of a pixel", "[renderer]")
 {
     for (uint32_t i = 0; i < 64; ++i)

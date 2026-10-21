@@ -89,6 +89,7 @@ namespace mir::vk
         Sky mAtmosphere{};
 
         glm::mat4 mPreviousViewProj[kMaxViewsPerFrame]{};
+        WorldPosition mPreviousCameraPosition[kMaxViewsPerFrame]{};
         bool mHasPreviousViewProj[kMaxViewsPerFrame]{};
 
         // One Halton(2,3) index per view slot, advanced once per applyJitter=true WriteView call.

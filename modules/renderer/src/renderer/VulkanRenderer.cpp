@@ -154,9 +154,6 @@ namespace mir
         // The swapchain cannot reach ray tracing, so the facade resizes its output images.
         if (!mSwapchain->Recreate(*mWindow) ||
             (mDevice->RayTracingSupported() && !mRayTracer->Resize(mSwapchain->Extent())) ||
-        #if MIR_WITH_DLSS
-            (mDlssReady && !mDlss->Resize(mSwapchain->Extent())) ||
-        #endif
             !mPostProcess->Resize(mSwapchain->Extent()) ||
             !mBloom->Resize(mSwapchain->Extent()) ||
             !mDepthOfField->Resize(mSwapchain->Extent()) ||
@@ -168,6 +165,13 @@ namespace mir
             return false;
         }
 
+#if MIR_WITH_DLSS
+        if (mDlssReady && !mDlss->Resize(mSwapchain->Extent()))
+        {
+            mDlssReady = false;
+            MIR_LOG_WARN("DLSS Ray Reconstruction resize failed; using ray-traced multi-sampling");
+        }
+#endif
         return true;
     }
 
@@ -342,6 +346,10 @@ namespace mir
         // in-flight frames may still use them
         mDevice->WaitIdle();
 
+#if MIR_WITH_DLSS
+        mDlss->ResetHistory();
+#endif
+
         mMeshUploads->Clear(*mRayTracer);
         mRayTracer->DestroyBlases();
         const std::size_t meshCount = mResources->ReleaseMeshes();
@@ -434,6 +442,10 @@ namespace mir
 
     void VulkanRenderer::SetAntiAliasing(AntiAliasingMode mode, uint32_t rtSampleCount)
     {
+#if MIR_WITH_DLSS
+        if (mode != mAntiAliasingMode)
+            mDlss->ResetHistory();
+#endif
         mAntiAliasingMode = mode;
         mAntiAliasingRtSampleCount = rtSampleCount;
     }

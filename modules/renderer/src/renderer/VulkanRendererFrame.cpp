@@ -377,13 +377,23 @@ namespace mir
         const VkRect2D rect = vk::ResolveViewRect(view.rect, mSwapchain->Extent());
         const uint32_t frame = mFrameSync->Index();
 
-        const bool applyJitter = mAntiAliasingMode == AntiAliasingMode::Dlss;
+        AntiAliasingMode effectiveAaMode = mAntiAliasingMode;
+        if (effectiveAaMode == AntiAliasingMode::Dlss)
+        {
+            bool canReconstruct = false;
+#if MIR_WITH_DLSS
+            canReconstruct = mDlssReady;
+#endif
+            if (!canReconstruct)
+                effectiveAaMode = AntiAliasingMode::Msaa;
+        }
+        const bool applyJitter = effectiveAaMode == AntiAliasingMode::Dlss;
         glm::vec2 jitterPixels{ 0.0f };
         const uint32_t cameraOffset = WriteCameraData(view, 0, applyJitter, &jitterPixels);
 
         mDevice->BeginLabel(cmd, "Ray Trace Pass", { 0.0f, 1.0f, 1.0f, 1.0f });
         mRayTracer->Record(cmd, frame, view.items, rect, mCameraBuffer->Set(frame),
-            cameraOffset, *mResources, *mMaterialStore, mAntiAliasingMode, mAntiAliasingRtSampleCount);
+            cameraOffset, *mResources, *mMaterialStore, effectiveAaMode, mAntiAliasingRtSampleCount);
         mDevice->EndLabel(cmd);
 
         const bool hasRect = rect.extent.width > 0 && rect.extent.height > 0;
@@ -392,24 +402,29 @@ namespace mir
 
     #if MIR_WITH_DLSS
             // The ray-tracing path has no denoiser today - Ray Reconstruction becomes its denoiser and upscaler
-        if (hasRect && mAntiAliasingMode == AntiAliasingMode::Dlss && mDlssReady)
+        if (hasRect && effectiveAaMode == AntiAliasingMode::Dlss && mDlssReady)
         {
             mDevice->BeginLabel(cmd, "Dlss Ray Reconstruction Pass", { 0.0f, 0.5f, 1.0f, 1.0f });
             const vk::DlssRayReconstruction::Inputs dlssInputs{
                 .colorImage = mRayTracer->OutputImage(frame),
                 .colorView = mRayTracer->OutputView(frame),
-                .depthImage = mRayTracer->DistanceImage(frame),
-                .depthView = mRayTracer->DistanceView(frame),
+                .depthImage = mRayTracer->DlssDepthImage(frame),
+                .depthView = mRayTracer->DlssDepthView(frame),
                 .velocityImage = mRayTracer->VelocityImage(frame),
                 .velocityView = mRayTracer->VelocityView(frame),
                 .albedoImage = mRayTracer->AlbedoImage(frame),
                 .albedoView = mRayTracer->AlbedoView(frame),
                 .normalImage = mRayTracer->NormalImage(frame),
                 .normalView = mRayTracer->NormalView(frame),
+                .specularAlbedoImage = mRayTracer->SpecularAlbedoImage(frame),
+                .specularAlbedoView = mRayTracer->SpecularAlbedoView(frame),
                 .jitterPixels = jitterPixels };
-            mDlss->Record(cmd, frame, dlssInputs, mSwapchain->Extent());
+            const bool reconstructed = mDlss->Record(cmd, frame, dlssInputs, mSwapchain->Extent(), rect);
             mDevice->EndLabel(cmd);
-            colorSource = mDlss->OutputView(frame);
+            if (reconstructed)
+                colorSource = mDlss->OutputView(frame);
+            else
+                mDlssReady = false;
         }
     #endif
 
@@ -482,7 +497,9 @@ namespace mir
         mDevice->EndLabel(cmd);
         vkCmdEndRendering(cmd);
 
-        mSwapchain->RecordPresentTransition(cmd, imageIndex, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        const bool captured = mCapture->Record(cmd, *mSwapchain, imageIndex);
+        mSwapchain->RecordPresentTransition(cmd, imageIndex,
+            captured ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     }
 
     void VulkanRenderer::TraceFrame(std::span<const RenderView> views)
@@ -501,7 +518,8 @@ namespace mir
             return;
 
         RecordRtFrame(frame->cmd, frame->imageIndex, views);
-        mFrameSync->End(*mSwapchain, *frame);
+        const bool submitted = mFrameSync->End(*mSwapchain, *frame);
+        mCapture->Finish(submitted, *mSwapchain);
     }
 
     uint32_t VulkanRenderer::WriteCameraData(const RenderView &view, uint32_t viewIndex, bool applyJitter,

@@ -241,11 +241,16 @@ namespace mir::vk
         const uint32_t lightCount = WriteViewLights(frame, view, viewIndex);
 
         const bool hasHistory = viewIndex < kMaxViewsPerFrame;
-        const glm::mat4 prevViewProj =
-            hasHistory && mHasPreviousViewProj[viewIndex] ? mPreviousViewProj[viewIndex] : view.viewProj;
+        glm::mat4 prevViewProj = view.viewProj;
+        if (hasHistory && mHasPreviousViewProj[viewIndex])
+        {
+            prevViewProj = RebaseViewProjection(mPreviousViewProj[viewIndex],
+                mPreviousCameraPosition[viewIndex], view.cameraPosition).value_or(view.viewProj);
+        }
         if (hasHistory)
         {
             mPreviousViewProj[viewIndex] = view.viewProj;
+            mPreviousCameraPosition[viewIndex] = view.cameraPosition;
             mHasPreviousViewProj[viewIndex] = true;
         }
 

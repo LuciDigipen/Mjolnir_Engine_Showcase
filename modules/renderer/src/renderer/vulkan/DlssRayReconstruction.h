@@ -37,7 +37,7 @@ namespace mir::vk
         {
             VkImage colorImage;
             VkImageView colorView;
-            VkImage depthImage; // RayTracer's gDistance (linear distance) - see .cpp
+            VkImage depthImage; // Reversed-Z projected depth, separate from DoF's ray distance.
             VkImageView depthView;
             VkImage velocityImage;
             VkImageView velocityView;
@@ -45,10 +45,13 @@ namespace mir::vk
             VkImageView albedoView;
             VkImage normalImage;
             VkImageView normalView;
+            VkImage specularAlbedoImage;
+            VkImageView specularAlbedoView;
             glm::vec2 jitterPixels;
         };
 
-        void Record(VkCommandBuffer cmd, uint32_t frame, const Inputs &inputs, VkExtent2D extent);
+        bool Record(VkCommandBuffer cmd, uint32_t frame, const Inputs &inputs, VkExtent2D extent, VkRect2D rect);
+        void ResetHistory() { mResetHistory = true; }
 
         VkImageView OutputView(uint32_t frame) const { return mOutputViews[frame]; }
 
@@ -62,6 +65,9 @@ namespace mir::vk
 
         NVSDK_NGX_Parameter *mParams = nullptr;
         NVSDK_NGX_Handle *mHandle = nullptr;
+        bool mResetHistory = true;
+        VkExtent2D mFeatureExtent{};
+        VkRect2D mLastRect{};
 
         VkImage mOutputImages[kFramesInFlight]{};
         VmaAllocation mOutputAllocations[kFramesInFlight]{};

@@ -30,6 +30,11 @@ namespace mir
     // only at infinity.
     glm::mat4 MakeViewProjection(const glm::mat4 &cameraWorld, const Camera &lens, float aspectRatio);
 
+    // Use a projection built relative to oldOrigin with positions relative to newOrigin.
+    // Subtract origins in world precision before narrowing to renderer floats.
+    std::optional<glm::mat4> RebaseViewProjection(const glm::mat4 &viewProj,
+        WorldPosition oldOrigin, WorldPosition newOrigin);
+
     // A ray in a bounded float space, such as a mesh's local space.
     struct Ray
     {

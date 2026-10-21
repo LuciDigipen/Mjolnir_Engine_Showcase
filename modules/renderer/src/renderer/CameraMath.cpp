@@ -69,6 +69,17 @@ namespace mir
         return proj * view;
     }
 
+    std::optional<glm::mat4> RebaseViewProjection(const glm::mat4 &viewProj,
+        WorldPosition oldOrigin, WorldPosition newOrigin)
+    {
+        const auto delta = TryCameraRelativeFloat(newOrigin, oldOrigin);
+        if (!delta)
+            return std::nullopt;
+        glm::mat4 translation(1.0f);
+        translation[3] = glm::vec4(*delta, 1.0f);
+        return viewProj * translation;
+    }
+
     std::optional<float> RayIntersectsAABB(const Ray &ray, const glm::vec3 &boxMin, const glm::vec3 &boxMax)
     {
         float tMin = 0.0f;
