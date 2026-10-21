@@ -3,6 +3,7 @@ engine_add_module_tests(core
     FileIO.tests.cpp
     Process.tests.cpp
     LogHistory.tests.cpp
+    SetupError.tests.cpp
     Archetype.tests.cpp
     Query.tests.cpp
     CommandBuffer.tests.cpp

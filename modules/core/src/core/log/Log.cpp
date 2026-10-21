@@ -7,6 +7,7 @@
  *
  */
 #include "core/log/Log.h"
+#include "core/fs/Paths.h"
 #include "core/log/Assert.h"
 #include "core/log/LogHistory.h"
 
@@ -24,6 +25,7 @@ namespace mir
     namespace
     {
         bool s_initialized = false;
+        std::filesystem::path s_filePath;
 
         spdlog::level::level_enum ToSpd(LogLevel level)
         {
@@ -97,8 +99,10 @@ namespace mir
         auto console = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
         console->set_level(ToSpd(config.consoleLevel));
 
+        s_filePath = std::filesystem::absolute(
+            config.filePath.empty() ? LogDir() / "engine.log" : std::filesystem::path(config.filePath));
         auto file = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-            config.filePath, config.maxFileBytes, config.maxFiles);
+            s_filePath.string(), config.maxFileBytes, config.maxFiles);
         file->set_level(ToSpd(config.fileLevel));
 
         auto uiHistory = std::make_shared<UiHistorySink>();
@@ -114,6 +118,11 @@ namespace mir
 
         spdlog::set_default_logger(std::move(logger));
         s_initialized = true;
+    }
+
+    const std::filesystem::path &LogFilePath()
+    {
+        return s_filePath;
     }
 
     void FlushLog()
