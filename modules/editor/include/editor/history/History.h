@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <deque>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -41,7 +42,15 @@ namespace mir
         //runs this frame's commands, then the requested undos and redos
         void Flush(World &world, ISceneOps &scene);
 
+       
         void Clear();
+
+        //true when the scene differs from its last save
+        bool IsUnsaved() const { return !mSavedSerial || *mSavedSerial != CurrentSerial(); }
+
+        //false = the scene counts as saved from now on (call it after a save).
+        //true = unsaved until the next save
+        void SetUnsaved(bool unsaved);
 
         bool CanUndo() const { return mCursor > 0; }
         bool CanRedo() const { return mCursor < mSteps.size(); }
@@ -63,6 +72,9 @@ namespace mir
             std::size_t mBytes = 0;
             bool mOpen = false; // still taking merges
         };
+
+        //the serial of the step before the cursor, or of the bottom of history
+        uint64_t CurrentSerial() const { return mCursor > 0 ? mSteps[mCursor - 1].mSerial : mBaseSerial; }
 
         void Apply(std::unique_ptr<ICommand> command, CommandContext &context);
         void CloseOpenStep();
@@ -89,5 +101,9 @@ namespace mir
         std::size_t mUsed = 0;
         std::size_t mBudget;
         uint64_t mNextSerial = 1;
+
+        //serials only go up, so a serial dropped from history never matches again
+        uint64_t mBaseSerial = 0;
+        std::optional<uint64_t> mSavedSerial = 0; // empty = the saved state is out of reach
     };
 }

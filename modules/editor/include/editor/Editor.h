@@ -120,6 +120,13 @@ namespace mir
 
         void ClearHistory() { mHistory.Clear(); }
 
+        // true while the scene has changes since its last save, shown as the title bar's *
+        bool IsSceneUnsaved() const { return mHistory.IsUnsaved(); }
+
+        // false: the scene counts as saved from now on, so the * disapears
+        // true: the * stays until the next save
+        void SetSceneUnsaved(bool unsaved) { mHistory.SetUnsaved(unsaved); }
+
     private:
         void DrawTitleBar();
         void DrawOpenProjectMenu(std::span<const ProjectMenuEntry> projects, std::string_view currentProject);

@@ -318,6 +318,14 @@ namespace mir
         ImGui::SetCursorPosY((barHeight - ImGui::GetTextLineHeight()) * 0.5f);
         ImGui::TextUnformatted(mWindow->Title());
 
+        // the unsaved-changes marker (*)
+        if (mHistory.IsUnsaved())
+        {
+            ImGui::SameLine(0.0f, 0.0f);
+            ImGui::TextUnformatted("*");
+            ImGui::SetItemTooltip("The scene has changes since it was last saved");
+        }
+
         mTitleBarInteractiveRects.clear();
         const float buttonWidth = barHeight * 0.9f;
         const float buttonHeight = barHeight * 0.65f;

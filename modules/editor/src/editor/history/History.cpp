@@ -53,6 +53,8 @@ namespace mir
 
     void History::Clear()
     {
+        const bool unsaved = IsUnsaved();
+
         mSteps.clear();
         mCursor = 0;
         mQueue.clear();
@@ -61,6 +63,22 @@ namespace mir
         mIds.Clear();
         mIdsStale = false;
         mUsed = 0;
+
+        
+        mBaseSerial = mNextSerial++;
+        SetUnsaved(unsaved);
+    }
+
+    void History::SetUnsaved(bool unsaved)
+    {
+        if (unsaved)
+        {
+            mSavedSerial.reset();
+            return;
+        }
+
+        CloseOpenStep();
+        mSavedSerial = CurrentSerial();
     }
 
     std::string History::UndoName() const
@@ -152,6 +170,12 @@ namespace mir
     {
         while (mUsed > mBudget && mSteps.size() > 1 && mCursor > 0)
         {
+            
+            const uint64_t dropped = mSteps.front().mSerial;
+            if (mSavedSerial == mBaseSerial || mSavedSerial == dropped)
+                mSavedSerial.reset();
+            mBaseSerial = dropped;
+
             mUsed -= mSteps.front().mBytes;
             mSteps.pop_front();
             --mCursor;

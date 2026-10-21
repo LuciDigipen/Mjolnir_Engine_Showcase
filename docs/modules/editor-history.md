@@ -42,11 +42,13 @@ History is one list of steps plus a cursor, the number of steps applied. Undo
 runs `Undo` on the step before the cursor and moves the cursor back. Redo runs
 `Do` on the step at the cursor and moves it forward. A new step first drops
 every step from the cursor on. One list rather than an undo stack and a redo
-stack, so the budget, the Edit menu labels and a future save point all read one
+stack, so the budget, the Edit menu labels and the save point all read one
 container.
 
 A step holds its command, the selection before and after it, its size and a
-serial number.
+serial number. Serials only go up, and the unsaved marker is built on them: a
+save records the serial of the step before the cursor, and the scene is unsaved
+whenever the step before the cursor has another serial.
 
 Deleting an entity frees its handle (`Entity {index, generation}`), and undo
 brings it back under a new one. So a command never holds an `Entity` past its
@@ -64,7 +66,7 @@ private `AppSceneOps` and hands it to `Editor::Initialize`.
 
 | Type | Header | Role |
 |---|---|---|
-| `History`, `kHistoryBudget` | `editor/history/History.h` | Steps, cursor, queue and budget: `Submit`, `EndStep`, `RequestUndo`, `RequestRedo`, `Flush`, `Clear`, and the names the Edit menu shows |
+| `History`, `kHistoryBudget` | `editor/history/History.h` | Steps, cursor, queue and budget: `Submit`, `EndStep`, `RequestUndo`, `RequestRedo`, `Flush`, `Clear`, the names the Edit menu shows, and the unsaved marker (`IsUnsaved`, `SetUnsaved`) |
 | `ICommand`, `CommandContext` | `editor/history/Command.h` | One undoable change, and the `{World, EntityIds, ISceneOps}` it receives when it runs; `TryMerge` folds the next command of a drag into it |
 | `FieldValue`, `MakeSetFieldsCommand`, `MakeAddComponentCommand`, `MakeRemoveComponentCommand` | `editor/history/ComponentCommands.h` | The Inspector's and the gizmo's edits as commands; a `FieldValue` is one field's new bytes, by index into `ComponentOps::mFields` |
 | `EntityIds`, `HistoryId`, `kNullHistoryId` | `editor/history/EntityIds.h` | History id to current `Entity`; `IdOf`, `EntityOf`, `Rebind`, `Unbind`, `Retain` |
@@ -169,6 +171,21 @@ Play snapshot, so every handle history holds is dead afterwards. Edits made
 during Play are undoable until Stop. Opening another project restarts the
 process, which drops history with it.
 
+**The unsaved marker follows the save point, not the steps.** `SetUnsaved(false)`,
+which App calls after a save, records the serial of the step before the cursor
+and closes the open step, so a drag after the save makes a new step with a new
+serial. Undoing back to that step clears the marker, and undoing or redoing
+past it shows it again. A saved step can drop out of history two ways: trimmed
+for the budget, or dropped as a redo step by a new edit. Either way the marker
+stays on until the next save, even if undo reaches a state that matches the
+file, because history can no longer prove it does. `Clear` keeps the marker as
+it was: an empty history gets a fresh serial, which is the save point when the
+scene was saved and nothing when it was not. New and Load then call
+`SetUnsaved(false)`, since the scene matches its file. Play remembers the
+marker and Stop puts it back, because Stop puts the `World` back as it was at
+Play; edits made during Play show the marker until then. The marker counts only
+what goes through history.
+
 **Ctrl+Z and Ctrl+Y do nothing while a text field is active.** The field has
 its own undo. Holding either key repeats it. Ctrl+Y is redo because Windows
 Explorer is the editor's UI reference.
@@ -188,7 +205,8 @@ clears on New, Load, Play and Stop.
 
 *As of 2026-10-20.* Inspector field edits, Paste Values, Add Component, Remove
 Component and the gizmo's move, rotate and scale go through history too (#204).
-No unsaved marker reads the step serial yet (#206).
+The title bar shows `*` after the game's title while the scene is unsaved
+(#206).
 
 Tests are in `modules/editor/tests/`. `History.tests.cpp` covers the cursor,
 dropped redo steps, refused commands, step names, selection, the budget, id
@@ -203,7 +221,9 @@ runs start the editor with them in place.
 
 ## Backlog
 
-1. **The unsaved marker (#206)** from the step serial and a save point.
+1. **Warn about unsaved changes before they are lost.** New Scene, Load Scene
+   and Open Project could ask first while the marker is on; today only Open
+   Project warns, and it always does.
 2. **Delete and Duplicate act on one entity**, as the Hierarchy does today
    (editor.md backlog). Doing the whole selection would want one command that
    holds several records, so it stays one step.
@@ -215,6 +235,11 @@ runs start the editor with them in place.
    scripts after Add and Remove Component would need a scene op for it.
 
 ## Changed
+
+*2026-10-20* — **Unsaved-changes marker (#206).** Was: each step had a serial
+that nothing read, and nothing showed whether the scene differed from its file.
+Now: `History` keeps a save point by serial, App sets it on Save, New and Load
+and restores it on Stop, and the title bar shows `*` while the scene is unsaved.
 
 *2026-10-20* — **Inspector and gizmo edits are undoable (#204).** Was: the
 Inspector called `FieldDesc::Write`, `AddDefault` and `Remove` on the `World`
