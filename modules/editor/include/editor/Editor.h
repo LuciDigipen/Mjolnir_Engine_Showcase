@@ -127,6 +127,13 @@ namespace mir
         // true: the * stays until the next save
         void SetSceneUnsaved(bool unsaved) { mHistory.SetUnsaved(unsaved); }
 
+        
+        bool IsDocumentUnsaved(DocumentId document) const { return mHistory.IsUnsaved(document); }
+        void SetDocumentUnsaved(DocumentId document, bool unsaved) { mHistory.SetUnsaved(document, unsaved); }
+
+        
+        void SetAuthoringBackend(IAuthoringBackend *backend) { mHistory.SetAuthoringBackend(backend); }
+
     private:
         void DrawTitleBar();
         void DrawOpenProjectMenu(std::span<const ProjectMenuEntry> projects, std::string_view currentProject);

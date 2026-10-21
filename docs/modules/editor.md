@@ -82,6 +82,9 @@ void Shutdown();                  // before ImGuiRuntime::Shutdown
 void ClearHistory();              // App calls it on New, Load, Play and Stop
 bool IsSceneUnsaved() const;      // the title bar's * marker
 void SetSceneUnsaved(bool unsaved);  // false: the scene as it is now is the saved one
+bool IsDocumentUnsaved(DocumentId document) const;              // the same for a Prefab or other document
+void SetDocumentUnsaved(DocumentId document, bool unsaved);
+void SetAuthoringBackend(IAuthoringBackend *backend);           // App's authoring documents (#249)
 
 // between ImGuiRuntime::BeginFrame and EndFrame
 EditorActions DrawLayout(bool enableLayout, InputMap &inputMap, RenderSettings &renderSettings,
@@ -408,6 +411,11 @@ or the dialog themselves. History needs neither, and its tests are in
    deleted, not everything recursively under a deleted folder.
 
 ## Changed
+
+*2026-10-21* — **History knows about documents other than the scene (#243).**
+`Editor` gained `IsDocumentUnsaved`, `SetDocumentUnsaved` and
+`SetAuthoringBackend`, which pass through to `History`. The title bar still
+shows the scene's marker only. See [editor-history.md](editor-history.md).
 
 *2026-10-20* — **The title bar marks an unsaved scene (#206).** Was: nothing
 showed whether the scene had changed since it was saved. Now: `DrawTitleBar`

@@ -13,6 +13,7 @@
 #include <core/ecs/World.h>
 #include <core/log/Log.h>
 
+#include <algorithm>
 #include <utility>
 
 namespace mir
@@ -25,7 +26,7 @@ namespace mir
 
     void History::Flush(World &world, ISceneOps &scene)
     {
-        CommandContext context{ world, mIds, scene };
+        CommandContext context{ world, mIds, scene, mAuthoring };
 
         std::vector<std::unique_ptr<ICommand>> queue = std::exchange(mQueue, {});
         for (std::unique_ptr<ICommand> &command : queue)
@@ -36,7 +37,10 @@ namespace mir
             CloseOpenStep();
 
         for (; mPending < 0 && CanUndo(); ++mPending)
-            Undo(context);
+        {
+            if (!Undo(context))
+                break;
+        }
 
         for (; mPending > 0 && CanRedo(); --mPending)
         {
@@ -53,7 +57,9 @@ namespace mir
 
     void History::Clear()
     {
-        const bool unsaved = IsUnsaved();
+        std::vector<std::pair<DocumentId, bool>> moved;
+        for (const auto &[document, state] : mDocuments)
+            moved.emplace_back(document, MovedFromSave(document));
 
         mSteps.clear();
         mCursor = 0;
@@ -64,21 +70,63 @@ namespace mir
         mIdsStale = false;
         mUsed = 0;
 
-        
-        mBaseSerial = mNextSerial++;
-        SetUnsaved(unsaved);
+        //a fresh serial, so no old save point can match the empty history
+        const uint64_t base = mNextSerial++;
+        for (const auto &[document, wasMoved] : moved)
+        {
+            DocumentState &state = mDocuments[document];
+            state.mBaseSerial = base;
+            state.mSavedSerial = wasMoved ? std::nullopt : std::optional<uint64_t>(base);
+        }
     }
 
-    void History::SetUnsaved(bool unsaved)
+    bool History::IsUnsaved(DocumentId document) const
     {
+        const auto it = mDocuments.find(document);
+        return MovedFromSave(document) || (it != mDocuments.end() && it->second.mMaintained);
+    }
+
+    void History::SetUnsaved(DocumentId document, bool unsaved)
+    {
+        DocumentState &state = mDocuments[document];
         if (unsaved)
         {
-            mSavedSerial.reset();
+            state.mSavedSerial.reset();
             return;
         }
 
         CloseOpenStep();
-        mSavedSerial = CurrentSerial();
+        state.mSavedSerial = CurrentSerial(document);
+        state.mMaintained = false;
+    }
+
+    uint64_t History::CurrentSerial(DocumentId document) const
+    {
+        for (std::size_t i = mCursor; i > 0; --i)
+        {
+            const Step &step = mSteps[i - 1];
+            if (std::find(step.mDocuments.begin(), step.mDocuments.end(), document) != step.mDocuments.end())
+                return step.mSerial;
+        }
+
+        const auto it = mDocuments.find(document);
+        return it != mDocuments.end() ? it->second.mBaseSerial : 0;
+    }
+
+    bool History::MovedFromSave(DocumentId document) const
+    {
+        const auto it = mDocuments.find(document);
+        const std::optional<uint64_t> saved =
+            it != mDocuments.end() ? it->second.mSavedSerial : std::optional<uint64_t>(0);
+        return !saved || *saved != CurrentSerial(document);
+    }
+
+    void History::MarkMaintained(const ICommand &command)
+    {
+        std::vector<DocumentId> maintained;
+        command.CollectMaintained(maintained);
+        for (const DocumentId document : maintained)
+            mDocuments[document].mMaintained = true;
     }
 
     std::string History::UndoName() const
@@ -99,6 +147,7 @@ namespace mir
             mIdsStale = true;
             return;
         }
+        MarkMaintained(*command);
 
         
         if (mCursor == mSteps.size() && !mSteps.empty() && mSteps.back().mOpen &&
@@ -115,6 +164,9 @@ namespace mir
 
         Step step;
         step.mSerial = mNextSerial++;
+        command->CollectDocuments(step.mDocuments);
+        for (const DocumentId document : step.mDocuments)
+            mDocuments.try_emplace(document);
         step.mCommand = std::move(command);
         step.mSelectionBefore = std::move(before);
         step.mSelectionAfter = SelectionIds(context.mWorld);
@@ -131,12 +183,20 @@ namespace mir
             mSteps.back().mOpen = false;
     }
 
-    void History::Undo(CommandContext &context)
+    //a refused undo leaves the cursor where it was
+    bool History::Undo(CommandContext &context)
     {
-        Step &step = mSteps[--mCursor];
-        step.mCommand->Undo(context);
+        Step &step = mSteps[mCursor - 1];
+        if (!step.mCommand->Undo(context))
+        {
+            MIR_LOG_WARN("History: could not undo '{}'", step.mCommand->Name());
+            return false;
+        }
+
+        --mCursor;
         Measure(step);
         Select(context.mWorld, step.mSelectionBefore);
+        return true;
     }
 
     bool History::Redo(CommandContext &context)
@@ -148,6 +208,7 @@ namespace mir
             return false;
         }
 
+        MarkMaintained(*step.mCommand);
         Measure(step);
         Select(context.mWorld, step.mSelectionAfter);
         ++mCursor;
@@ -170,11 +231,14 @@ namespace mir
     {
         while (mUsed > mBudget && mSteps.size() > 1 && mCursor > 0)
         {
-            
-            const uint64_t dropped = mSteps.front().mSerial;
-            if (mSavedSerial == mBaseSerial || mSavedSerial == dropped)
-                mSavedSerial.reset();
-            mBaseSerial = dropped;
+            const Step &dropped = mSteps.front();
+            for (const DocumentId document : dropped.mDocuments)
+            {
+                DocumentState &state = mDocuments[document];
+                if (state.mSavedSerial == state.mBaseSerial || state.mSavedSerial == dropped.mSerial)
+                    state.mSavedSerial.reset();
+                state.mBaseSerial = dropped.mSerial;
+            }
 
             mUsed -= mSteps.front().mBytes;
             mSteps.pop_front();
