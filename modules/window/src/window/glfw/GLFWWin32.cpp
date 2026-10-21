@@ -50,7 +50,7 @@ namespace mir
             return ::GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi) + ::GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
         }
 
-        LRESULT CALLBACK TitleBarWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+        LRESULT CALLBACK TitleBarWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) noexcept
         {
             auto *state = static_cast<TitleBarHookState *>(::GetPropW(hwnd, kTitleBarPropName));
             if (state == nullptr)

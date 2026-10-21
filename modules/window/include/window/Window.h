@@ -78,6 +78,7 @@ namespace mir
         // Like the scroll delta, they live for exactly one frame.
         virtual std::span<const std::string> DroppedFiles() const { return {}; }
 
+        // Never null; throws SetupError when the window cannot be created
         static std::unique_ptr<Window> Create(const WindowDesc &desc);
 
     protected:

@@ -25,7 +25,8 @@ namespace
     std::mutex gRuntimeMutex;
     int gRuntimeRefCount = 0;
 
-    void TraceImpl(const char *format, ...)
+    // Jolt calls these through function pointers, from its job threads too
+    void TraceImpl(const char *format, ...) noexcept
     {
         char buffer[1024];
 
@@ -38,7 +39,7 @@ namespace
     }
 
 #ifdef JPH_ENABLE_ASSERTS
-    bool AssertFailedImpl(const char *expression, const char *message, const char *file, JPH::uint line)
+    bool AssertFailedImpl(const char *expression, const char *message, const char *file, JPH::uint line) noexcept
     {
         MIR_LOG_ERROR("Jolt assert at {}:{}: ({}) {}",
             file, line, expression, message != nullptr ? message : "");
