@@ -198,6 +198,11 @@ script instance and `ScriptSystem` skips it.
 point at. Unlike `NewScene`/`SaveScene`/`LoadScene`, the entity operations run
 during Play too, and Stop discards them with the rest of Play's changes.
 
+The editor's unsaved marker is set from here too. A successful `SaveScene`, and
+`NewScene` and `LoadScene` after clearing, call `Editor::SetSceneUnsaved(false)`.
+`PlayScene` remembers whether the scene was unsaved, and `StopScene` puts that
+back, because `RestoreWorld` returns the `World` to the moment Play began.
+
 ### Ownership and order
 
 | Member | Created | Destroyed | Because |
@@ -551,6 +556,11 @@ composition with gated reads; the Play/publish/Stop sequence through
    left for later; the panel's confirm modal is the primary safety net.
 
 ## Changed
+
+*2026-10-20* — **Save, New, Load, Play and Stop set the unsaved marker (#206).**
+Was: `SaveScene` returned `mir::SaveScene`'s result and nothing tracked whether
+the scene matched its file. Now: a successful save, New and Load mark the scene
+saved, and Stop restores the marker Play found, through `Editor::SetSceneUnsaved`.
 
 *2026-10-19* — **The editor's entity operations moved into its undo history.**
 Was: the private `ApplyEntityAction` carried out each `EntityAction` the

@@ -80,6 +80,8 @@ bool Initialize(const ImGuiRuntime &imgui, Window &window, std::filesystem::path
 void Shutdown();                  // before ImGuiRuntime::Shutdown
 
 void ClearHistory();              // App calls it on New, Load, Play and Stop
+bool IsSceneUnsaved() const;      // the title bar's * marker
+void SetSceneUnsaved(bool unsaved);  // false: the scene as it is now is the saved one
 
 // between ImGuiRuntime::BeginFrame and EndFrame
 EditorActions DrawLayout(bool enableLayout, InputMap &inputMap, RenderSettings &renderSettings,
@@ -366,7 +368,10 @@ can be undone and redone, with Ctrl+Z, Ctrl+Y or the Edit menu (see
 [editor-history.md](editor-history.md)).
 
 *As of 2026-10-20.* So can every `Inspector` edit and the gizmo's move, rotate
-and scale. No panel writes the scene's `World` directly any more.
+and scale. No panel writes the scene's `World` directly any more. The title bar
+shows `*` after the game's title while the scene differs from its last save, with
+a tooltip saying so; the save point lives in `History` (see
+[editor-history.md](editor-history.md)).
 
 The panels and menus have no tests. They need a device and a display.
 `smoke.switch` covers the restart that Open Project asks for, but not the menu
@@ -403,6 +408,11 @@ or the dialog themselves. History needs neither, and its tests are in
    deleted, not everything recursively under a deleted folder.
 
 ## Changed
+
+*2026-10-20* — **The title bar marks an unsaved scene (#206).** Was: nothing
+showed whether the scene had changed since it was saved. Now: `DrawTitleBar`
+adds `*` after the title while `History::IsUnsaved()`, and `Editor` exposes
+`IsSceneUnsaved`/`SetSceneUnsaved` for `App` to set the save point.
 
 *2026-10-20* — **Inspector and gizmo edits go through undo history (#204).**
 Was: `InspectorPanel` wrote fields, pasted, added and removed components on the

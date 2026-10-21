@@ -299,6 +299,7 @@ namespace mir
         UnloadCurrentScene();
         mScene = mir::NewScene(std::move(name));
         ClearHistory();
+        SetSceneUnsaved(false);
     }
 
     bool App::SaveScene()
@@ -309,7 +310,11 @@ namespace mir
             return false;
         }
 
-        return mir::SaveScene(mWorld, mProject.mSceneDir, mScene);
+        if (!mir::SaveScene(mWorld, mProject.mSceneDir, mScene))
+            return false;
+
+        SetSceneUnsaved(false);
+        return true;
     }
 
     bool App::LoadScene()
@@ -329,6 +334,7 @@ namespace mir
         UnloadCurrentScene();
         mScene = mir::LoadScene(mWorld, mProject.mSceneDir);
         ClearHistory();
+        SetSceneUnsaved(false);
 
         // saved names to script instances
         ResolveSceneScripts(mWorld, mScriptHost, mScriptReloadWatcher, Assets(), mProject.mAssetIdRoot);
@@ -346,6 +352,7 @@ namespace mir
         mTerrain->BeginPlay();
 
         mPlaySnapshot = CaptureWorld(mWorld);
+        mUnsavedBeforePlay = SceneUnsaved();
         ClearHistory();
 
         SetPlayState(mWorld, PlayState::Running);
@@ -362,6 +369,9 @@ namespace mir
 
         mScene = RestoreWorld(mWorld, mPlaySnapshot);
         ClearHistory();
+
+        //the World is back as it was at Play, Play's edits gone, so the marker goes back too
+        SetSceneUnsaved(mUnsavedBeforePlay);
 
         // Play's entities are gone and the restored ones hold no handles yet
         mModelSystem->Reset();
@@ -430,6 +440,22 @@ namespace mir
     {
     #if MIR_WITH_EDITOR
         mEditor.ClearHistory();
+    #endif
+    }
+
+    bool App::SceneUnsaved() const
+    {
+    #if MIR_WITH_EDITOR
+        return mEditor.IsSceneUnsaved();
+    #else
+        return false;
+    #endif
+    }
+
+    void App::SetSceneUnsaved([[maybe_unused]] bool unsaved)
+    {
+    #if MIR_WITH_EDITOR
+        mEditor.SetSceneUnsaved(unsaved);
     #endif
     }
 

@@ -482,3 +482,155 @@ TEST_CASE("Undo and redo close the open step", "[editor][history]")
     f.Undo();
     CHECK(f.Current() == 5);
 }
+
+TEST_CASE("A change shows the unsaved marker and a save clears it", "[editor][history][unsaved]")
+{
+    Fixture f;
+    CHECK_FALSE(f.mHistory.IsUnsaved());
+
+    f.Set(1);
+    CHECK(f.mHistory.IsUnsaved());
+
+    f.mHistory.SetUnsaved(false);
+    CHECK_FALSE(f.mHistory.IsUnsaved());
+}
+
+TEST_CASE("Undoing back to the saved step clears the marker, and redoing past it shows it again",
+    "[editor][history][unsaved]")
+{
+    Fixture f;
+    f.Set(1);
+    f.Set(2);
+    f.mHistory.SetUnsaved(false);
+    f.Set(3);
+    CHECK(f.mHistory.IsUnsaved());
+
+    f.Undo();
+    CHECK_FALSE(f.mHistory.IsUnsaved());
+
+    f.Undo();
+    CHECK(f.mHistory.IsUnsaved());
+
+    f.Redo();
+    CHECK_FALSE(f.mHistory.IsUnsaved());
+
+    f.Redo();
+    CHECK(f.mHistory.IsUnsaved());
+}
+
+TEST_CASE("A save closes the open step, so the rest of a drag is a new step", "[editor][history][unsaved]")
+{
+    Fixture f;
+    f.Drag(1, 5);
+    f.mHistory.SetUnsaved(false);
+    f.Drag(1, 6);
+
+    CHECK(f.mHistory.StepCount() == 2);
+    CHECK(f.mHistory.IsUnsaved());
+
+    f.Undo();
+    CHECK(f.Current() == 5);
+    CHECK_FALSE(f.mHistory.IsUnsaved());
+}
+
+TEST_CASE("Once the saved step is dropped from history, the marker stays until the next save",
+    "[editor][history][unsaved]")
+{
+    Fixture f(2500);
+    const auto submit = [&f](int value)
+        {
+            f.mHistory.Submit(std::make_unique<SetValue>(value, kNullEntity, 1000));
+            f.Flush();
+        };
+
+    SECTION("the saved step trimmed for the budget")
+    {
+        submit(1);
+        f.mHistory.SetUnsaved(false);
+        submit(2);
+        submit(3);
+        REQUIRE(f.mHistory.StepCount() == 2);
+
+        // back to the saved value, but past the trimmed step undo cannot prove it
+        f.Undo();
+        f.Undo();
+        CHECK(f.Current() == 1);
+    }
+    SECTION("saved with no steps, then the first one trimmed")
+    {
+        f.mHistory.SetUnsaved(false);
+        submit(1);
+        submit(2);
+        submit(3);
+        REQUIRE(f.mHistory.StepCount() == 2);
+
+        f.Undo();
+        f.Undo();
+    }
+    SECTION("the saved step dropped as a redo step")
+    {
+        f.Set(1);
+        f.Set(2);
+        f.mHistory.SetUnsaved(false);
+        f.Undo();
+        f.Set(3);
+
+        f.Undo();
+        CHECK(f.Current() == 1);
+    }
+
+    CHECK(f.mHistory.IsUnsaved());
+
+    f.mHistory.SetUnsaved(false);
+    CHECK_FALSE(f.mHistory.IsUnsaved());
+}
+
+TEST_CASE("Clearing history keeps the marker as it was", "[editor][history][unsaved]")
+{
+    Fixture f;
+
+    SECTION("saved")
+    {
+        f.Set(1);
+        f.mHistory.SetUnsaved(false);
+        f.mHistory.Clear();
+        CHECK_FALSE(f.mHistory.IsUnsaved());
+
+        f.Set(2);
+        CHECK(f.mHistory.IsUnsaved());
+    }
+    SECTION("unsaved")
+    {
+        f.Set(1);
+        f.mHistory.Clear();
+        CHECK(f.mHistory.IsUnsaved());
+
+        f.Set(2);
+        f.Undo();
+        CHECK(f.mHistory.IsUnsaved());
+    }
+}
+
+TEST_CASE("Setting the marker by hand", "[editor][history][unsaved]")
+{
+    Fixture f;
+    f.Set(1);
+
+    SECTION("off, as New and Load do after clearing")
+    {
+        f.mHistory.Clear();
+        f.mHistory.SetUnsaved(false);
+        CHECK_FALSE(f.mHistory.IsUnsaved());
+    }
+    SECTION("on, as Stop does for a scene unsaved before Play")
+    {
+        f.mHistory.SetUnsaved(false);
+        f.mHistory.Clear();
+        f.mHistory.SetUnsaved(true);
+        CHECK(f.mHistory.IsUnsaved());
+
+        f.Set(2);
+        f.Undo();
+        CHECK(f.mHistory.IsUnsaved());
+    }
+}
