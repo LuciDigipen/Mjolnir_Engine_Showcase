@@ -7,6 +7,7 @@
  *
  */
 #include <scene/SceneIO.h>
+#include <scene/SceneInstancePatch.h>
 
 #include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/TransformHierarchy.h>
@@ -22,6 +23,7 @@
 #include <iterator>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -97,34 +99,60 @@ namespace
         bool mAvailable = true;
         bool mExtraNode = false;
         StableId mUnavailableRoot = kNullStableId;
+        std::set<SceneNodeAddress> mTemplateNodes = {
+            SceneNodeAddress{ 1 }, SceneNodeAddress{ 2 }, SceneNodeAddress{ 3 } };
 
         std::map<SceneNodeAddress, Entity> Materialize(World &world, const ScenePrefabInstance &instance) override
         {
             if (!mAvailable || (mUnavailableRoot != kNullStableId && instance.mRoot == mUnavailableRoot))
                 return {};
 
-            const Entity root = world.CreateEntity();
-            const Entity first = world.CreateEntity();
-            const Entity second = world.CreateEntity();
+            std::set<SceneNodeAddress> nodes = mTemplateNodes;
+            if (mExtraNode)
+                nodes.insert(SceneNodeAddress{ 4 });
+            if (!nodes.contains(SceneNodeAddress{ 1 }))
+                return {};
 
+            std::map<SceneNodeAddress, Entity> members;
+            const Entity root = world.CreateEntity();
             mir::AddTransform(world, root, Transform{ WorldVec3(1.0, 2.0, 3.0) });
-            mir::AddTransform(world, first, Transform{ WorldVec3(0.0, 4.0, 0.0) }, root);
-            mir::AddTransform(world, second, Transform{ WorldVec3(0.0, 0.0, 5.0) }, root);
+            members[SceneNodeAddress{ 1 }] = root;
+
+            for (const SceneNodeAddress &address : nodes)
+            {
+                if (address == SceneNodeAddress{ 1 })
+                    continue;
+
+                const Entity entity = world.CreateEntity();
+                if (address == SceneNodeAddress{ 2 })
+                    mir::AddTransform(world, entity, Transform{ WorldVec3(0.0, 4.0, 0.0) }, root);
+                else if (address == SceneNodeAddress{ 3 })
+                    mir::AddTransform(world, entity, Transform{ WorldVec3(0.0, 0.0, 5.0) }, root);
+                members[address] = entity;
+            }
 
             const ComponentOps &link = LinkOps();
             link.AddDefault(world, root);
             void *component = link.GetComponent(world, root);
             float speed = 1.5f;
             link.FindField("speed")->Write(component, &speed);
-            link.FindField("target")->Write(component, &second);
 
-            std::map<SceneNodeAddress, Entity> members;
-            members[SceneNodeAddress{ 1 }] = root;
-            members[SceneNodeAddress{ 2 }] = first;
-            members[SceneNodeAddress{ 3 }] = second;
-            if (mExtraNode)
-                members[SceneNodeAddress{ 4 }] = world.CreateEntity();
+            Entity target = kNullEntity;
+            if (const auto second = members.find(SceneNodeAddress{ 3 }); second != members.end())
+                target = second->second;
+            link.FindField("target")->Write(component, &target);
             return members;
+        }
+
+        bool TemplateNodes(const ScenePrefabInstance &instance, std::set<SceneNodeAddress> &outNodes) const override
+        {
+            if (!mAvailable || (mUnavailableRoot != kNullStableId && instance.mRoot == mUnavailableRoot))
+                return false;
+
+            outNodes = mTemplateNodes;
+            if (mExtraNode)
+                outNodes.insert(SceneNodeAddress{ 4 });
+            return true;
         }
 
         bool TemplateEntityRef(const ScenePrefabInstance &, const SceneNodeAddress &node,
@@ -369,6 +397,7 @@ TEST_CASE("LoadScene counts StableIds that only appear in bindings", "[scene][pr
 
     World world;
     FakeSceneResolver resolver;
+    resolver.mTemplateNodes.insert(SceneNodeAddress{ 4 });
     LoadedScene loaded = mir::LoadScene(world, dir.mPath, &resolver);
 
     REQUIRE(loaded.mInstances.size() == 1);
@@ -463,6 +492,96 @@ TEST_CASE("LoadScene keeps a record whose prefab is unavailable", "[scene][prefa
     REQUIRE(loaded.mInstances.size() == 1);
     CHECK(loaded.mInstances.at(root).mBindings.size() == 3);
     CHECK_FALSE(loaded.mDirty);
+}
+
+TEST_CASE("LoadScene keeps saved references when the prefab is unavailable", "[scene][prefab]")
+{
+    mir::RegisterCoreComponents();
+    LinkOps();
+    RefOps();
+
+    World world;
+    LoadedScene scene = NewScene("test");
+    const Entity ordinary = CreateSceneEntity(world, scene);
+    mir::AddTransform(world, ordinary, Transform{});
+    RefOps().AddDefault(world, ordinary);
+
+    FakeSceneResolver resolver;
+    const StableId root = PlaceInstance(world, scene, resolver);
+    REQUIRE(root != kNullStableId);
+    const StableId target = scene.mInstances.at(root).mBindings.at(SceneNodeAddress{ 3 });
+    REQUIRE(mir::SetInstanceEntityRef(world, scene, root, SceneNodeAddress{ 1 }, "ScenePrefabTestLink", "target",
+        target));
+    SetEntityField(world, ordinary, RefOps(), "target", scene.mEntities.at(target));
+
+    TempSceneDir dir("unavailable_references");
+    REQUIRE(mir::SaveScene(world, dir.mPath, scene, &resolver));
+
+    FakeSceneResolver unavailable;
+    unavailable.mAvailable = false;
+
+    World loadedWorld;
+    const LoadedScene loaded = mir::LoadScene(loadedWorld, dir.mPath, &unavailable);
+
+    REQUIRE(loaded.mInstances.size() == 1);
+    const ScenePrefabInstance &instance = loaded.mInstances.at(root);
+    CHECK(instance.mBindings.size() == 3);
+    CHECK_FALSE(loaded.mDirty);
+
+    const mir::SceneFieldPatch *patch =
+        mir::FindInstanceFieldPatch(instance, SceneNodeAddress{ 1 }, "ScenePrefabTestLink", "target");
+    REQUIRE(patch != nullptr);
+    CHECK(patch->mValue == target);
+
+    const auto unresolved = loaded.mUnresolvedEntityRefs.find({ 1, "ScenePrefabTestRef", "target" });
+    REQUIRE(unresolved != loaded.mUnresolvedEntityRefs.end());
+    CHECK(unresolved->second == target);
+    CHECK(EntityField(loadedWorld, loaded.mEntities.at(1), RefOps(), "target").IsNull());
+}
+
+TEST_CASE("LoadScene clears references into a binding its compiled prefab dropped", "[scene][prefab]")
+{
+    mir::RegisterCoreComponents();
+    LinkOps();
+    RefOps();
+
+    World world;
+    LoadedScene scene = NewScene("test");
+    const Entity ordinary = CreateSceneEntity(world, scene);
+    mir::AddTransform(world, ordinary, Transform{});
+    RefOps().AddDefault(world, ordinary);
+
+    FakeSceneResolver resolver;
+    const StableId root = PlaceInstance(world, scene, resolver);
+    REQUIRE(root != kNullStableId);
+    const StableId removed = scene.mInstances.at(root).mBindings.at(SceneNodeAddress{ 3 });
+    REQUIRE(mir::SetInstanceEntityRef(world, scene, root, SceneNodeAddress{ 1 }, "ScenePrefabTestLink", "target",
+        removed));
+    SetEntityField(world, ordinary, RefOps(), "target", scene.mEntities.at(removed));
+
+    TempSceneDir dir("confirmed_deletion");
+    REQUIRE(mir::SaveScene(world, dir.mPath, scene, &resolver));
+
+    FakeSceneResolver dropped;
+    dropped.mTemplateNodes.erase(SceneNodeAddress{ 3 });
+
+    World loadedWorld;
+    const LoadedScene loaded = mir::LoadScene(loadedWorld, dir.mPath, &dropped);
+
+    REQUIRE(loaded.mInstances.size() == 1);
+    const ScenePrefabInstance &instance = loaded.mInstances.at(root);
+    CHECK_FALSE(instance.mBindings.contains(SceneNodeAddress{ 3 }));
+    CHECK_FALSE(loaded.mEntities.contains(removed));
+    CHECK(loaded.mDirty);
+
+    const Entity loadedRoot = loaded.mEntities.at(root);
+    CHECK(EntityField(loadedWorld, loadedRoot, LinkOps(), "target").IsNull());
+    const mir::SceneFieldPatch *patch =
+        mir::FindInstanceFieldPatch(instance, SceneNodeAddress{ 1 }, "ScenePrefabTestLink", "target");
+    REQUIRE(patch != nullptr);
+    CHECK(patch->mValue.is_null());
+
+    CHECK(EntityField(loadedWorld, loaded.mEntities.at(1), RefOps(), "target").IsNull());
 }
 
 TEST_CASE("LoadScene skips a malformed instance file without throwing", "[scene][prefab]")

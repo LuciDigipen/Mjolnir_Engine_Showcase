@@ -15,6 +15,7 @@ target_link_libraries(engine_app
             mir::animation
             mir::audio
             mir::physics
+            mir::prefab
             mir::serial
             mir::terrain
 )

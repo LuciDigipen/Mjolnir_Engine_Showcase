@@ -5,6 +5,7 @@ engine_add_module_tests(script
     CollisionBindings.tests.cpp
     AudioBindings.tests.cpp
     PostProcessingBindings.tests.cpp
+    ScriptSystem.tests.cpp
     TerrainContactScript.tests.cpp
     TerrainBindings.tests.cpp
 )
