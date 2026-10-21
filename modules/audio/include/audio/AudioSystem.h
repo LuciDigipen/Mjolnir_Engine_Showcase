@@ -15,26 +15,27 @@
 namespace mir::audio
 {
 
-    bool Init(const std::filesystem::path &bankDir);
+    // Throws SetupError on any failure
+    void Init(const std::filesystem::path &bankDir);
 
     void Update();
-    
 
+    // Safe without Init and safe to call twice
     void Terminate();
 
     uint64_t RegisterEmitter(const char *debugName);
-    
+
     void UnregisterEmitter(uint64_t gameObject);
 
     // Wwise positions are double, so world positions go in unnarrowed.
     void SetEmitterPosition(uint64_t gameObject,
-                            WorldPosition position,
-                            const glm::vec3 &front,
-                            const glm::vec3 &up);
+        WorldPosition position,
+        const glm::vec3 &front,
+        const glm::vec3 &up);
 
     void SetListenerPosition(WorldPosition position,
-                            const glm::vec3 &front,
-                            const glm::vec3 &up);
+        const glm::vec3 &front,
+        const glm::vec3 &up);
 
     bool PostEvent(const char *eventName);
 
