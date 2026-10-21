@@ -94,9 +94,17 @@ namespace mir::vk
         VkImage OutputImage(uint32_t frame) const { return mOutputImages[frame]; }
         VkImageView OutputView(uint32_t frame) const { return mOutputViews[frame]; }
 
+        VkImage DistanceImage(uint32_t frame) const { return mDistanceImages[frame]; }
         VkImageView DistanceView(uint32_t frame) const { return mDistanceViews[frame]; }
 
+        VkImage VelocityImage(uint32_t frame) const { return mVelocityImages[frame]; }
         VkImageView VelocityView(uint32_t frame) const { return mVelocityViews[frame]; }
+
+        // Ray Reconstruction's guide buffers
+        VkImage AlbedoImage(uint32_t frame) const { return mAlbedoImages[frame]; }
+        VkImageView AlbedoView(uint32_t frame) const { return mAlbedoViews[frame]; }
+        VkImage NormalImage(uint32_t frame) const { return mNormalImages[frame]; }
+        VkImageView NormalView(uint32_t frame) const { return mNormalViews[frame]; }
 
     private:
         bool CreateAccelerationStructureObject(VkDeviceSize size, VkAccelerationStructureTypeKHR type,
@@ -144,6 +152,14 @@ namespace mir::vk
         VkImage mVelocityImages[kFramesInFlight]{};
         VmaAllocation mVelocityAllocations[kFramesInFlight]{};
         VkImageView mVelocityViews[kFramesInFlight]{};
+
+        VkImage mAlbedoImages[kFramesInFlight]{};
+        VmaAllocation mAlbedoAllocations[kFramesInFlight]{};
+        VkImageView mAlbedoViews[kFramesInFlight]{};
+
+        VkImage mNormalImages[kFramesInFlight]{};
+        VmaAllocation mNormalAllocations[kFramesInFlight]{};
+        VkImageView mNormalViews[kFramesInFlight]{};
 
         VkAccelerationStructureKHR mTlas[kFramesInFlight]{};
         VkBuffer mTlasBuffers[kFramesInFlight]{};

@@ -11,6 +11,9 @@
 #include "vulkan/CameraBuffer.h"
 #include "vulkan/DepthOfField.h"
 #include "vulkan/Device.h"
+#if MIR_WITH_DLSS
+#include "vulkan/DlssRayReconstruction.h"
+#endif
 #include "vulkan/FrameCapture.h"
 #include "vulkan/FrameSync.h"
 #include "vulkan/Fxaa.h"
@@ -41,6 +44,9 @@ namespace mir
         mShadowMaps(std::make_unique<vk::ShadowMaps>()),
         mModelDescriptors(std::make_unique<vk::ModelDescriptors>()),
         mRayTracer(std::make_unique<vk::RayTracer>()),
+    #if MIR_WITH_DLSS
+        mDlss(std::make_unique<vk::DlssRayReconstruction>()),
+    #endif
         mPostProcess(std::make_unique<vk::PostProcess>()),
         mFxaa(std::make_unique<vk::Fxaa>()),
         mBloom(std::make_unique<vk::Bloom>()),
@@ -109,6 +115,16 @@ namespace mir
             !mRayTracer->Initialize(*mDevice, mSwapchain->Extent(), mCameraBuffer->SetLayout()))
             return false;
 
+    #if MIR_WITH_DLSS
+        if (mDevice->NgxSupported())
+        {
+            mDlssReady = mDlss->Initialize(*mDevice, mSwapchain->Extent());
+            if (!mDlssReady)
+                MIR_LOG_ERROR("Initialize: DLSS Ray Reconstruction failed to initialize despite "
+                    "NgxSupported() - falling back to Msaa whenever Dlss is requested");
+        }
+    #endif
+
         mMeshUploads->Initialize(*mDevice);
         if (!mPostProcess->Initialize(*mDevice, mSwapchain->Format(), mSwapchain->Extent()))
             return false;
@@ -138,6 +154,9 @@ namespace mir
         // The swapchain cannot reach ray tracing, so the facade resizes its output images.
         if (!mSwapchain->Recreate(*mWindow) ||
             (mDevice->RayTracingSupported() && !mRayTracer->Resize(mSwapchain->Extent())) ||
+        #if MIR_WITH_DLSS
+            (mDlssReady && !mDlss->Resize(mSwapchain->Extent())) ||
+        #endif
             !mPostProcess->Resize(mSwapchain->Extent()) ||
             !mBloom->Resize(mSwapchain->Extent()) ||
             !mDepthOfField->Resize(mSwapchain->Extent()) ||
@@ -169,6 +188,10 @@ namespace mir
             mFxaa->Shutdown();
             mPostProcess->Shutdown();
             mMaterialStore->Shutdown();
+        #if MIR_WITH_DLSS
+            mDlss->Shutdown();
+            mDlssReady = false;
+        #endif
             mRayTracer->Shutdown();
             mResources->Shutdown();
             mCapture->Shutdown();

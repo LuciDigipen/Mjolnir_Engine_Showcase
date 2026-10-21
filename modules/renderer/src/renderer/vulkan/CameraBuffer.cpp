@@ -230,7 +230,7 @@ namespace mir::vk
     }
 
     uint32_t CameraBuffer::WriteView(uint32_t frame, const RenderView &view, uint32_t viewIndex,
-        const ViewShadowInfo &shadow, bool applyJitter)
+        const ViewShadowInfo &shadow, bool applyJitter, glm::vec2 *outJitter)
     {
         // The atmosphere needs the camera's altitude over its planet, where
         // float's 1/64 m at the map edge is invisible; no geometry reads it.
@@ -257,6 +257,8 @@ namespace mir::vk
             if (hasHistory)
                 mJitterIndex[viewIndex] = jitterIndex + 1;
         }
+        if (outJitter != nullptr)
+            *outJitter = jitter;
 
         const CameraData data{
             .viewProj = view.viewProj,

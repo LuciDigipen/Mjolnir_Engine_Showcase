@@ -11,6 +11,8 @@
 #include <volk.h>
 
 #include <cstdint>
+#include <string>
+#include <vector>
 
 VK_DEFINE_HANDLE(VmaAllocator)
 
@@ -101,6 +103,8 @@ namespace mir::vk
         VkPhysicalDeviceRayTracingPipelinePropertiesKHR mRtProperties{};
 
         bool mNgxSupported = false;
+        bool mNgxInstanceExtensionsSupported = false;
+        std::vector<std::string> mNgxDeviceExtensions;
 
         bool mMemoryBudgetSupported = false;
 

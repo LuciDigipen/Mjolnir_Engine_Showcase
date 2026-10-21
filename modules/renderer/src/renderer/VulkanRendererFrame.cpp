@@ -14,6 +14,9 @@
 #include "vulkan/CameraBuffer.h"
 #include "vulkan/DepthOfField.h"
 #include "vulkan/Device.h"
+#if MIR_WITH_DLSS
+#include "vulkan/DlssRayReconstruction.h"
+#endif
 #include "vulkan/FrameCapture.h"
 #include "vulkan/FrameSync.h"
 #include "vulkan/Fxaa.h"
@@ -375,7 +378,8 @@ namespace mir
         const uint32_t frame = mFrameSync->Index();
 
         const bool applyJitter = mAntiAliasingMode == AntiAliasingMode::Dlss;
-        const uint32_t cameraOffset = WriteCameraData(view, 0, applyJitter);
+        glm::vec2 jitterPixels{ 0.0f };
+        const uint32_t cameraOffset = WriteCameraData(view, 0, applyJitter, &jitterPixels);
 
         mDevice->BeginLabel(cmd, "Ray Trace Pass", { 0.0f, 1.0f, 1.0f, 1.0f });
         mRayTracer->Record(cmd, frame, view.items, rect, mCameraBuffer->Set(frame),
@@ -385,10 +389,34 @@ namespace mir
         const bool hasRect = rect.extent.width > 0 && rect.extent.height > 0;
 
         VkImageView colorSource = mRayTracer->OutputView(frame);
+
+    #if MIR_WITH_DLSS
+            // The ray-tracing path has no denoiser today - Ray Reconstruction becomes its denoiser and upscaler
+        if (hasRect && mAntiAliasingMode == AntiAliasingMode::Dlss && mDlssReady)
+        {
+            mDevice->BeginLabel(cmd, "Dlss Ray Reconstruction Pass", { 0.0f, 0.5f, 1.0f, 1.0f });
+            const vk::DlssRayReconstruction::Inputs dlssInputs{
+                .colorImage = mRayTracer->OutputImage(frame),
+                .colorView = mRayTracer->OutputView(frame),
+                .depthImage = mRayTracer->DistanceImage(frame),
+                .depthView = mRayTracer->DistanceView(frame),
+                .velocityImage = mRayTracer->VelocityImage(frame),
+                .velocityView = mRayTracer->VelocityView(frame),
+                .albedoImage = mRayTracer->AlbedoImage(frame),
+                .albedoView = mRayTracer->AlbedoView(frame),
+                .normalImage = mRayTracer->NormalImage(frame),
+                .normalView = mRayTracer->NormalView(frame),
+                .jitterPixels = jitterPixels };
+            mDlss->Record(cmd, frame, dlssInputs, mSwapchain->Extent());
+            mDevice->EndLabel(cmd);
+            colorSource = mDlss->OutputView(frame);
+        }
+    #endif
+
         if (hasRect && mDepthOfFieldEnabled)
         {
             mDevice->BeginLabel(cmd, "Depth Of Field Pass", { 0.5f, 0.0f, 1.0f, 1.0f });
-            mDepthOfField->Record(cmd, frame, mRayTracer->OutputView(frame), mRayTracer->DistanceView(frame),
+            mDepthOfField->Record(cmd, frame, colorSource, mRayTracer->DistanceView(frame),
                 /*isLinearDepth*/ true, view.nearZ, view.farZ, mSwapchain->Extent());
             mDevice->EndLabel(cmd);
             colorSource = mDepthOfField->OutputView(frame);
@@ -476,10 +504,11 @@ namespace mir
         mFrameSync->End(*mSwapchain, *frame);
     }
 
-    uint32_t VulkanRenderer::WriteCameraData(const RenderView &view, uint32_t viewIndex, bool applyJitter)
+    uint32_t VulkanRenderer::WriteCameraData(const RenderView &view, uint32_t viewIndex, bool applyJitter,
+        glm::vec2 *outJitter)
     {
         const uint32_t frame = mFrameSync->Index();
         const vk::ViewShadowInfo shadow = mShadowMaps->WriteView(frame, view, viewIndex);
-        return mCameraBuffer->WriteView(frame, view, viewIndex, shadow, applyJitter);
+        return mCameraBuffer->WriteView(frame, view, viewIndex, shadow, applyJitter, outJitter);
     }
 }

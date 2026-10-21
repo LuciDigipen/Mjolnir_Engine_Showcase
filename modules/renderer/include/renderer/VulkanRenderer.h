@@ -12,6 +12,7 @@
 #include <core/math/WorldCoordinates.h>
 #include <core/platform/Surface.h>
 #include <renderer/AntiAliasingEffect.h>
+#include <renderer/DlssConfig.h>
 #include <renderer/Material.h>
 #include <renderer/Mesh.h>
 #include <renderer/MeshStreaming.h>
@@ -23,6 +24,7 @@
 #include <glm/geometric.hpp>
 #include <glm/mat3x3.hpp>
 #include <glm/mat4x4.hpp>
+#include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 
@@ -48,6 +50,9 @@ namespace mir::vk
     class ShadowMaps;
     class ModelDescriptors;
     class RayTracer;
+#if MIR_WITH_DLSS
+    class DlssRayReconstruction;
+#endif
     class PostProcess;
     class Fxaa;
     class Bloom;
@@ -293,8 +298,8 @@ namespace mir
 
         void RecordCommands(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views);
         void RecordView(VkCommandBuffer cmd, const RenderView &view, uint32_t viewIndex);
-        // Writes set 1 and set 3's per-view data; returns the camera's dynamic offset.
-        uint32_t WriteCameraData(const RenderView &view, uint32_t viewIndex, bool applyJitter = false);
+        uint32_t WriteCameraData(const RenderView &view, uint32_t viewIndex, bool applyJitter = false,
+            glm::vec2 *outJitter = nullptr);
 
     private:
         glm::vec4 mClearColor{ 0.02f, 0.02f, 0.02f, 1.0f };
@@ -315,6 +320,11 @@ namespace mir
         std::unique_ptr<vk::ModelDescriptors> mModelDescriptors;
         // Initialized only on a device with ray tracing; its Shutdown is a no-op otherwise.
         std::unique_ptr<vk::RayTracer> mRayTracer;
+
+    #if MIR_WITH_DLSS
+        std::unique_ptr<vk::DlssRayReconstruction> mDlss;
+        bool mDlssReady = false;
+    #endif
 
         std::unique_ptr<vk::PostProcess> mPostProcess;
         std::unique_ptr<vk::Fxaa> mFxaa;

@@ -13,6 +13,13 @@ RWTexture2D<float> gDistance;
 [[vk::binding(4, 0)]]
 RWTexture2D<float4> gVelocity;
 
+// Ray Reconstruction's guide buffers
+[[vk::binding(5, 0)]]
+RWTexture2D<float4> gAlbedo; // rgb = diffuse albedo, a = specular scalar
+
+[[vk::binding(6, 0)]]
+RWTexture2D<float4> gNormal; // xyz = world normal, w = roughness
+
 struct RtInstanceInfo
 {
     float *vertexAddress;
@@ -90,6 +97,9 @@ struct ShadowPayload
 static const float3 kAlbedo = float3(0.5, 0.5, 0.5);
 static const float kSpecularStrength = 0.04;
 static const float kShininess = 32.0;
+// No per-material roughness exists yet (MaterialDesc has none) - same fixed-constant
+// simplification kShininess already is, standing in for Ray Reconstruction's roughness guide.
+static const float kPlaceholderRoughness = 0.5;
 // pos(3) + color(3) + normal(3) + uv(2) + alpha(1) + tangent(4); keep in sync with mir::Vertex.
 static const uint kVertexStrideFloats = 16;
 
@@ -258,6 +268,13 @@ void closestHitMain(inout RayPayload payload, in BuiltInTriangleIntersectionAttr
         const float3 albedo = kAlbedo * info.tint.rgb;
         color = albedo * ambientColor.rgb +
                 (albedo * lightColor.rgb * diffuse + lightColor.rgb * kSpecularStrength * specular) * sunVisibility;
+
+        if (pushData.aaMode == kAaModeDlss)
+        {
+            const uint2 guidePixel = DispatchRaysIndex().xy + pushData.outputOffset;
+            gAlbedo[guidePixel] = float4(albedo, kSpecularStrength);
+            gNormal[guidePixel] = float4(N, kPlaceholderRoughness);
+        }
 
         const int firstLight = int(lightingMeta.y);
         const int lightCount = int(lightingMeta.x);

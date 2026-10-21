@@ -22,6 +22,9 @@ namespace mir::vk
 
     constexpr VkFormat kDistanceFormat = VK_FORMAT_R32_SFLOAT;
 
+    // Ray Reconstruction's diffuse-albedo guide buffer: rgb albedo, a = specular scalar.
+    constexpr VkFormat kAlbedoFormat = VK_FORMAT_R8G8B8A8_UNORM;
+
     constexpr uint32_t kBloomMipLevels = 6;
 
     // Sizes the per-view slices of the camera, light and spot matrix buffers.
