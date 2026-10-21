@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <map>
 #include <memory>
 #include <optional>
 #include <span>
@@ -22,6 +23,7 @@
 
 namespace mir
 {
+    class IAuthoringBackend;
     class ISceneOps;
     class World;
 
@@ -42,15 +44,19 @@ namespace mir
         //runs this frame's commands, then the requested undos and redos
         void Flush(World &world, ISceneOps &scene);
 
-       
+        
+        void SetAuthoringBackend(IAuthoringBackend *backend) { mAuthoring = backend; }
+
+        
         void Clear();
 
-        //true when the scene differs from its last save
-        bool IsUnsaved() const { return !mSavedSerial || *mSavedSerial != CurrentSerial(); }
+        //true when the document differs from its last save, or kept a change Undo does not reverse
+        bool IsUnsaved(DocumentId document = kSceneDocument) const;
 
-        //false = the scene counts as saved from now on (call it after a save).
+        //false = the document counts as saved from now on (call it after a save).
         //true = unsaved until the next save
-        void SetUnsaved(bool unsaved);
+        void SetUnsaved(bool unsaved) { SetUnsaved(kSceneDocument, unsaved); }
+        void SetUnsaved(DocumentId document, bool unsaved);
 
         bool CanUndo() const { return mCursor > 0; }
         bool CanRedo() const { return mCursor < mSteps.size(); }
@@ -71,14 +77,24 @@ namespace mir
             std::vector<HistoryId> mSelectionAfter;
             std::size_t mBytes = 0;
             bool mOpen = false; // still taking merges
+            std::vector<DocumentId> mDocuments;
         };
 
-        //the serial of the step before the cursor, or of the bottom of history
-        uint64_t CurrentSerial() const { return mCursor > 0 ? mSteps[mCursor - 1].mSerial : mBaseSerial; }
+        struct DocumentState
+        {
+            uint64_t mBaseSerial = 0;                 
+            std::optional<uint64_t> mSavedSerial = 0; // empty = the saved state is out of reach
+            bool mMaintained = false;                 
+        };
+
+        //the newest applied step that changed the document, or the document's bottom of history
+        uint64_t CurrentSerial(DocumentId document) const;
+        bool MovedFromSave(DocumentId document) const;
+        void MarkMaintained(const ICommand &command);
 
         void Apply(std::unique_ptr<ICommand> command, CommandContext &context);
         void CloseOpenStep();
-        void Undo(CommandContext &context);
+        bool Undo(CommandContext &context);
         bool Redo(CommandContext &context);
 
         void DropStepsFrom(std::size_t index);
@@ -103,7 +119,8 @@ namespace mir
         uint64_t mNextSerial = 1;
 
         //serials only go up, so a serial dropped from history never matches again
-        uint64_t mBaseSerial = 0;
-        std::optional<uint64_t> mSavedSerial = 0; // empty = the saved state is out of reach
+        std::map<DocumentId, DocumentState> mDocuments;
+
+        IAuthoringBackend *mAuthoring = nullptr;
     };
 }

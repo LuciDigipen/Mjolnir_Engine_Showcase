@@ -64,7 +64,11 @@ namespace
             return true;
         }
 
-        void Undo(CommandContext &context) override { context.mWorld.Resource<Value>().mValue = mBefore; }
+        bool Undo(CommandContext &context) override
+        {
+            context.mWorld.Resource<Value>().mValue = mBefore;
+            return true;
+        }
 
         std::size_t Size() const override { return mSize; }
         std::string Name() const override { return "Set " + std::to_string(mAfter); }
@@ -103,7 +107,11 @@ namespace
             return true;
         }
 
-        void Undo(CommandContext &context) override { context.mWorld.Resource<Value>().mValue = mBefore; }
+        bool Undo(CommandContext &context) override
+        {
+            context.mWorld.Resource<Value>().mValue = mBefore;
+            return true;
+        }
 
         std::size_t Size() const override { return 16; }
         std::string Name() const override { return "Drag " + std::to_string(mKey); }

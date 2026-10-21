@@ -3,10 +3,11 @@
 The editor's undo and redo: one history of steps, the commands that make them,
 and the id table that lets a step find its entity again after a delete and its
 undo. It is part of `editor` (see [editor.md](editor.md)). It never links
-`mir::scene`, and it reaches the scene only through `ISceneOps`, which `App`
-implements.
+`mir::scene` or `mir::prefab`. It reaches the scene's entities only through
+`ISceneOps`, and authored state in any document, such as Prefab overrides,
+only through `IAuthoringBackend`. `App` supplies both.
 
-`mir::editor` · depends `mir::core` · API `modules/editor/include/editor/history/` · maintainer Dong Ta · reviewed 2026-10-20
+`mir::editor` · depends `mir::core` · API `modules/editor/include/editor/history/` · maintainer Dong Ta · reviewed 2026-10-21
 
 ## Model
 
@@ -45,10 +46,22 @@ every step from the cursor on. One list rather than an undo stack and a redo
 stack, so the budget, the Edit menu labels and the save point all read one
 container.
 
-A step holds its command, the selection before and after it, its size and a
-serial number. Serials only go up, and the unsaved marker is built on them: a
-save records the serial of the step before the cursor, and the scene is unsaved
-whenever the step before the cursor has another serial.
+A step holds its command, the selection before and after it, its size, a
+serial number and the documents it changes. Serials only go up, and the unsaved
+marker is built on them: a save records, for its document, the serial of the
+newest applied step that changed that document, and the document is unsaved
+whenever that serial is another one. Scene commands change the scene document,
+`kSceneDocument`.
+
+Prefabs add more documents than the scene (see the Prefab design, #230). An
+authored command changes authored entries, not `World` data: an override's
+presence and value, a component's added or removed-inherited state, or an
+object's own record. Each entry is keyed by document, logical object (an address
+the backend defines, such as an instance root `StableId` followed by a Prefab
+node address), component and field. The command reads its befores and writes
+its changes through `IAuthoringBackend`, which validates the whole batch across
+its documents and writes all of it or none. One Apply that writes a Prefab and
+clears the scene's override is one step.
 
 Deleting an entity frees its handle (`Entity {index, generation}`), and undo
 brings it back under a new one. So a command never holds an `Entity` past its
@@ -66,15 +79,17 @@ private `AppSceneOps` and hands it to `Editor::Initialize`.
 
 | Type | Header | Role |
 |---|---|---|
-| `History`, `kHistoryBudget` | `editor/history/History.h` | Steps, cursor, queue and budget: `Submit`, `EndStep`, `RequestUndo`, `RequestRedo`, `Flush`, `Clear`, the names the Edit menu shows, and the unsaved marker (`IsUnsaved`, `SetUnsaved`) |
-| `ICommand`, `CommandContext` | `editor/history/Command.h` | One undoable change, and the `{World, EntityIds, ISceneOps}` it receives when it runs; `TryMerge` folds the next command of a drag into it |
+| `History`, `kHistoryBudget` | `editor/history/History.h` | Steps, cursor, queue and budget: `Submit`, `EndStep`, `RequestUndo`, `RequestRedo`, `Flush`, `Clear`, the names the Edit menu shows, each document's unsaved marker (`IsUnsaved`, `SetUnsaved`), and `SetAuthoringBackend` |
+| `ICommand`, `CommandContext` | `editor/history/Command.h` | One undoable change, and the `{World, EntityIds, ISceneOps, IAuthoringBackend*}` it receives when it runs; `TryMerge` folds the next command of a drag into it; `CollectDocuments` and `CollectMaintained` name the documents it changes |
+| `DocumentId`, `kSceneDocument` | `editor/history/DocumentId.h` | 128 bits naming an authoring document, so a Prefab's UUID fits; the null id is the scene |
+| `AuthoredObject`, `AuthoredKey`, `AuthoredEntry`, `AuthoringWrite`, `IAuthoringBackend`, `MakeAuthoredCommand` | `editor/history/Authoring.h` | The authored-state seam: what an entry is keyed by, the backend App supplies, and the command that changes entries across documents |
 | `FieldValue`, `MakeSetFieldsCommand`, `MakeAddComponentCommand`, `MakeRemoveComponentCommand` | `editor/history/ComponentCommands.h` | The Inspector's and the gizmo's edits as commands; a `FieldValue` is one field's new bytes, by index into `ComponentOps::mFields` |
 | `EntityIds`, `HistoryId`, `kNullHistoryId` | `editor/history/EntityIds.h` | History id to current `Entity`; `IdOf`, `EntityOf`, `Rebind`, `Unbind`, `Retain` |
 | `ISceneOps`, `CapturedSubtree` | `editor/history/SceneOps.h` | The scene calls history needs, and a captured subtree: its snapshot text, members and their `StableId`s |
 | `MakeCreateCommand`, `MakeDeleteCommand`, `MakeDuplicateCommand`, `MakeReParentCommand`, `MakeEntityCommand` | `editor/history/EntityCommands.h` | The Hierarchy's four entity operations as commands; `MakeEntityCommand` maps an `EntityAction` and returns null for `None` |
 
-The command classes are private to `EntityCommands.cpp` and
-`ComponentCommands.cpp`. Callers only ever hold a `unique_ptr<ICommand>`, and
+The command classes are private to `EntityCommands.cpp`, `ComponentCommands.cpp`
+and `AuthoredCommand.cpp`. Callers only ever hold a `unique_ptr<ICommand>`, and
 `SubtreeRecord`, in `src/editor/history/`, stays out of the public headers.
 
 | Command | First `Do` | `Undo` | Redo |
@@ -86,6 +101,7 @@ The command classes are private to `EntityCommands.cpp` and
 | Set fields | reads each field's before, writes the new values | writes the befores | writes the new values |
 | Add component | adds it with its defaults, then any pasted values | removes it | adds it again |
 | Remove component | reads every writable field, then removes it | adds it back with those values | reads and removes it again |
+| Authored change | reads the befores of the keys it names, then writes its changes and any maintenance as one batch | writes the befores, not the maintenance | writes the changes and maintenance again |
 
 Set fields is every field edit: one field from an Inspector widget, the one
 `Transform` channel a gizmo operation moves, the picked asset plus the fields its
@@ -114,9 +130,16 @@ to the value it already has, adding a component the entity has, removing one it
 lacks, and a target that is already dead. The redo steps survive, because
 nothing new happened.
 
+**`Undo` returning false leaves the cursor where it was.** So does a failed
+redo. An authored command fails when the backend refuses its batch, and then
+nothing in any document changed. Scene commands always report success: a target
+that is gone is skipped with a warning, as before #243.
+
 **One press-to-release drag is one step, and two drags are two.** Only the newest
 step is open, and only while the cursor is at the end. Set fields merges when the
-next command edits the same fields of the same component on the same entity.
+next command edits the same fields of the same component on the same entity. An
+authored change merges when every entry has the same document, object,
+component and field, and neither side carries maintenance.
 `EndStep` closes the step after the frame's queue has run, so a release in the
 same frame as the last change still keeps that change. Undo and redo close it
 too. The Inspector calls `EndStep` once no ImGui item is active after it
@@ -130,6 +153,15 @@ two-steps test catches.
 the bytes would copy the version too. An `EntityRef` value is kept as a history
 id, not a handle, so a field pointing at an entity that is deleted and restored
 in between still finds it.
+
+**An authored command captures only the keys it names, and presence counts.**
+It never reads a whole component, so untouched fields and runtime state such as
+resolved handles never become overrides. An entry's state is presence plus
+value: adding an override equal to the inherited value is a change, undo makes
+that field inherit again rather than keep an equal override, and writing the
+override an entry already has is no step. A missing object refuses the whole
+batch before anything is written. Without a backend, every authored command is
+refused.
 
 **Undoing a delete gives the entities back their `StableId`s.** Saving after a
 delete and its undo leaves every scene file unchanged. Undoing a create or a
@@ -186,6 +218,18 @@ marker and Stop puts it back, because Stop puts the `World` back as it was at
 Play; edits made during Play show the marker until then. The marker counts only
 what goes through history.
 
+**Each document has its own save point, and maintenance keeps it unsaved.** A
+step moves the save state of the documents it changes and no others, so an
+edit to a Prefab leaves the scene's marker alone. Maintenance is a persistent
+change Undo deliberately leaves, such as clearing a scene's reference into a
+deleted Prefab node (#230's source-deletion rule). An authored command declares
+it alongside its changes, or the backend reports it from a write; either way
+its documents stay unsaved until they are saved, even after Undo has returned
+every other document to its save point. Undoing such a deletion writes back
+only the command's own entries, so the cleared reference stays null. #203's
+scene Delete is not affected: its undo still restores references into the
+deleted entities.
+
 **Ctrl+Z and Ctrl+Y do nothing while a text field is active.** The field has
 its own undo. Holding either key repeats it. Ctrl+Y is redo because Windows
 Explorer is the editor's UI reference.
@@ -208,7 +252,16 @@ Component and the gizmo's move, rotate and scale go through history too (#204).
 The title bar shows `*` after the game's title while the scene is unsaved
 (#206).
 
-Tests are in `modules/editor/tests/`. `History.tests.cpp` covers the cursor,
+*As of 2026-10-21.* The authored-state seam exists (#243): document-qualified
+authored commands, atomic batches across documents, refusable undo and redo,
+and a save point plus maintenance flag per document. App supplies no backend
+yet, so nothing submits authored commands until the Prefab side's backend lands
+(#249).
+
+Tests are in `modules/editor/tests/`. `Authoring.tests.cpp` runs authored
+commands against a fake backend: inherited and equal-value overrides, component
+states, batches across documents, failed targets, refused undo and redo,
+merges, and per-document dirty state with maintenance. `History.tests.cpp` covers the cursor,
 dropped redo steps, refused commands, step names, selection, the budget, id
 clean-up and merging, through fake commands. `EntityCommands.tests.cpp` and
 `ComponentCommands.tests.cpp` run every command through Do, Undo and Redo
@@ -233,8 +286,23 @@ runs start the editor with them in place.
 4. **Pick the budget from measured snapshot sizes.** 64 MiB is a guess.
 5. **A removed `ScriptRef` comes back without its script instance.** Resolving
    scripts after Add and Remove Component would need a scene op for it.
+6. **App's authoring backend (#249).** `Editor::SetAuthoringBackend` is the hook;
+   until App calls it, authored commands are refused.
+7. **Undoing a scene Delete of a Prefab instance loses its instance record.**
+   `DestroySceneEntity` erases the `ScenePrefabInstance` with its bindings and
+   patches, and `SubtreeRecord` captures only entities. After Delete and Undo,
+   a save writes plain entities. `ISceneOps::Capture` and `Restore` should carry
+   the subtree's instance records too.
 
 ## Changed
+
+*2026-10-21* — **Authored-state history across documents (#243).** Was: every
+step changed the scene, history had one save point, and `ICommand::Undo`
+returned nothing, so an undo always moved the cursor. Now: `Authoring.h` adds
+the backend seam and `MakeAuthoredCommand`; steps record the documents they
+change; each document has its own save point and maintenance flag; and `Undo`
+returns false to leave the cursor in place. The scene's marker and every scene
+command behave as before.
 
 *2026-10-20* — **Unsaved-changes marker (#206).** Was: each step had a serial
 that nothing read, and nothing showed whether the scene differed from its file.

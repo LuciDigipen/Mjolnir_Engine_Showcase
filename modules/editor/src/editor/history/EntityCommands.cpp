@@ -96,10 +96,12 @@ namespace mir
                 return true;
             }
 
-            void Undo(CommandContext &context) 
+            //a gone entity is skipped, not a failure, so the cursor still moves past it
+            bool Undo(CommandContext &context) override
             {
                 if (!mRecord.Remove(context, context.mIds.EntityOf(mRoot)))
                     MIR_LOG_WARN("History: '{}' cannot be undone, the entity is gone", mName);
+                return true;
             }
 
             std::size_t Size() const final { return sizeof(*this) + mRecord.Size() + mName.size(); }
@@ -197,10 +199,11 @@ namespace mir
                 return true;
             }
 
-            void Undo(CommandContext &context) override
+            bool Undo(CommandContext &context) override
             {
                 if (mRecord.Restore(context).IsNull())
                     MIR_LOG_WARN("History: '{}' cannot be undone, nothing was restored", mName);
+                return true;
             }
 
             std::size_t Size() const override { return sizeof(*this) + mRecord.Size() + mName.size(); }
@@ -252,7 +255,7 @@ namespace mir
             }
 
             
-            void Undo(CommandContext &context) override
+            bool Undo(CommandContext &context) override
             {
                 World &world = context.mWorld;
                 for (auto it = mMoves.rbegin(); it != mMoves.rend(); ++it)
@@ -265,6 +268,7 @@ namespace mir
                         LiveEntity(world, context.mIds, it->mOldNext));
                     WriteTransform(world, entity, it->mBefore);
                 }
+                return true;
             }
 
             std::size_t Size() const override

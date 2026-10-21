@@ -125,13 +125,14 @@ namespace mir
                 return true;
             }
 
-            void Undo(CommandContext &context) override
+            bool Undo(CommandContext &context) override
             {
                 if (void *component = LiveComponent(context, *mOps, mEntity))
                 {
                     for (const Change &change : mChanges)
                         WriteField(context, *mOps, component, change.mBefore);
                 }
+                return true;
             }
 
             std::size_t Size() const override { return sizeof(*this) + mChanges.size() * sizeof(Change) + mName.size(); }
@@ -261,11 +262,12 @@ namespace mir
                 return true;
             }
 
-            void Undo(CommandContext &context) override
+            bool Undo(CommandContext &context) override
             {
                 const Entity entity = LiveEntity(context.mWorld, context.mIds, mEntity);
                 if (!entity.IsNull() && mOps->Has(context.mWorld, entity))
                     mOps->Remove(context.mWorld, entity);
+                return true;
             }
 
             std::size_t Size() const override { return sizeof(*this) + mFields.size() * sizeof(Stored) + mName.size(); }
@@ -324,12 +326,12 @@ namespace mir
                 return true;
             }
 
-            void Undo(CommandContext &context) override
+            bool Undo(CommandContext &context) override
             {
                 World &world = context.mWorld;
                 const Entity entity = LiveEntity(world, context.mIds, mEntity);
                 if (entity.IsNull() || mOps->Has(world, entity))
-                    return;
+                    return true;
 
                 mOps->AddDefault(world, entity);
                 if (void *component = mOps->GetComponent(world, entity))
@@ -337,6 +339,7 @@ namespace mir
                     for (const Stored &stored : mFields)
                         WriteField(context, *mOps, component, stored);
                 }
+                return true;
             }
 
             std::size_t Size() const override { return sizeof(*this) + mFields.size() * sizeof(Stored) + mName.size(); }
