@@ -79,6 +79,7 @@ around them.
 | `LoadedScene` | `scene/SceneAsset.h` | `{mName, std::map<StableId, Entity>, mNextId}` |
 | `NewScene`, `AllocateStableId`, `CreateSceneEntity`, `DestroySceneEntity` | `scene/SceneAsset.h` | Authoring entry points |
 | `SaveScene`, `LoadScene`, `UnloadScene` | `scene/SceneIO.h` | Directory in, directory out, scoped destroy |
+| `ProbeScene`, `SceneProbe` | `scene/SceneIO.h` | What `LoadScene` would skip, found without a `World` |
 | `PlaySnapshot`, `CaptureWorld`, `RestoreWorld`, `DiscardSnapshot` | `scene/PlaySnapshot.h` | Whole-World capture/restore around a Play session, built on `SaveScene`/`LoadScene`; `DiscardSnapshot` removes its directory |
 | `EntitySnapshot`, `CaptureEntity`, `RestoreEntity`, `DuplicateSceneEntity` | `scene/EntitySnapshot.h` | One entity and its descendants as in-memory data, restored into new entities registered in a `LoadedScene` |
 
@@ -166,6 +167,12 @@ never lists a file the sweep removed. A crash before the sweep leaves stale
 files, which load ignores. Only names of the
 form `<number>.json` are touched, so anything else put in `entities/` survives. A
 file that cannot be deleted logs a warning, and the save still succeeds.
+
+**`LoadScene` is lenient, and `ProbeScene` says what it would skip.** An
+unreadable `scene.json` loads an empty scene, and an unreadable entity file is
+skipped. `ProbeScene` reads the same files without touching a `World` and
+reports both cases. A caller probes first when it must decide before anything is
+unloaded, which is what `App` does at startup and on the scene menu.
 
 ## State
 

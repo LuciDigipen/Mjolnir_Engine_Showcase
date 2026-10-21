@@ -22,6 +22,7 @@
 #include <renderer/VulkanRenderer.h>
 #include <scene/PlaySnapshot.h>
 #include <scene/SceneAsset.h>
+#include <scene/SceneIO.h>
 #include <script/ScriptHost.h>
 #include <script/ScriptReloadWatcher.h>
 #include <window/Splash.h>
@@ -77,6 +78,9 @@ namespace mir
         // debug: draw UIDemoScreen, every core widget, as the game UI
         bool mUIDemo = false;
 
+        // for automated cases
+        bool mNonInteractive = false;
+
         // the game Initialize opens
         GameProject mProject;
 
@@ -99,8 +103,11 @@ namespace mir
         App(App &&) = delete;
         App &operator=(App &&) = delete;
 
-        bool Initialize(const AppDesc &desc);
+        // Throws SetupError on any startup failure; the destructor then cleans up what was built
+        void Initialize(const AppDesc &desc);
         void Run();
+
+        // Safe on a partial Initialize and safe to call twice
         void Shutdown();
 
         World &GetWorld() { return mWorld; }
@@ -114,7 +121,7 @@ namespace mir
         // Startup splash
         SplashScreen &Splash() { return mSplash; }
 
-        // The asset cache, loading the manifest on first use
+        // Never null after Initialize; empty until a build or import cooks something
         AssetCache *Assets();
 
         // The scene currently in the World
@@ -139,8 +146,8 @@ namespace mir
         // Writes Scene() to the game's scene directory. False on I/O failure
         bool SaveScene();
 
-        // Replaces Scene() with the game's saved scene and resolves it. False without
-        // a scene.json
+        // Replaces Scene() with the game's saved scene and resolves it. False without a
+        // scene.json, or when the user keeps the current scene over a broken one
         bool LoadScene();
 
         // Edit -> Play
@@ -166,8 +173,24 @@ namespace mir
         // UnloadScene, then free the GPU resources
         void UnloadCurrentScene();
 
-        // LoadScene if the game has a scene.json
+        // LoadScene if the game has a scene.json; throws SetupError for a broken one the user won't open
         void LoadProjectScene();
+
+        enum class SceneLoadChoice
+        {
+            Load,
+            StartEmpty,
+            Refuse,
+        };
+
+        // Asks what to do with a scene ProbeScene found broken; Refuse when nobody can answer
+        SceneLoadChoice ChooseSceneLoad(const SceneProbe &probe, bool atStartup) const;
+
+        // Unload, load and resolve, with no checks
+        void ReplaceSceneFromDisk();
+
+        // The manifest the build or an import cooked; empty when there is none yet
+        void LoadAssetManifest();
 
         // the mSwitchProjectTo test hook
         void RunSwitchHook();
@@ -230,7 +253,6 @@ namespace mir
         // maintain order of mAssetCache -> mAssetCache
         std::optional<AssetManifest> mAssetManifest;
         std::optional<AssetCache> mAssetCache;
-        bool mAssetLoadFailed = false;
         bool mInitialized = false;
     };
 } // namespace mir

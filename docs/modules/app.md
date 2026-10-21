@@ -78,27 +78,32 @@ load, resolve order only holds while `App` is the one calling them.
 
 ```cpp
 mir::InitLog();                 // outside App: early failures must still log
+mir::ClearErrorReport();        // a report on disk always belongs to this run
 
-std::optional<mir::GameProject> project = mir::ResolveGameProject("games/HelloWorld");
-if (!project)
-    return 1;
-
-mir::App app;
-
-mir::AppDesc desc{};
-desc.mProject = *project;
-
-if (!app.Initialize(desc))      // loads the game's scene too
+try
 {
-    mir::FlushLog();
-    return -1;
+    mir::GameProject project = mir::ResolveGameProject("games/HelloWorld", mir::ErrorCategory::Usage);
+
+    mir::App app;
+    mir::AppDesc desc{};
+    desc.mProject = project;
+
+    try
+    {
+        app.Initialize(desc);   // loads the game's scene too
+        app.Run();
+    }
+    catch (const mir::SetupError &error)
+    {
+        return mir::ReportFatal(error);   // while app is alive; ~App tears down after
+    }
+
+    app.Shutdown();             // idempotent; the destructor would do it too
 }
-
-app.Run();
-app.Shutdown();                 // idempotent; the destructor would do it too
-
-// app.ProjectToOpen() set: relaunch with --game, as main.cpp does
-mir::FlushLog();
+catch (const mir::SetupError &error)
+{
+    return mir::ReportFatal(error);
+}
 ```
 
 Systems are registered on `app.Systems()` between `Initialize` and `Run`.
@@ -158,8 +163,17 @@ switched to at a later Edit frame boundary.
 | `GameProject` | `app/GameProject.h` | `{mDir, mName, mTitle, mAssetIdRoot, mRootDir, mSceneDir, mProjectSettingsPath}` for one game directory; `mRootDir` is where it is read from (the source tree in a development build), so terrain releases are found under `TerrainReleasesRoot(mRootDir)` |
 
 `app/GameProject.h` also declares `ReadDefaultGame`, `NormalizeGameDir`,
-`LoadGameProject`, `ResolveGameProject` (normalize, then load) and
-`DiscoverGameProjects` (every `games/*/game.json` next to the executable).
+`LoadGameProject`, `ResolveGameProject` (normalize, then load),
+`EnsureGameDirectories` and `DiscoverGameProjects` (every `games/*/game.json`
+next to the executable). All but `DiscoverGameProjects` throw a `SetupError`.
+The caller passes the category for a game that is not found: Usage when the name
+came from `--game`, Project data when it came from `engine.json`.
+`DiscoverGameProjects` skips a broken game with a logged error, so one bad
+`game.json` does not hide the others from the project menu.
+
+`app/ErrorReport.h` declares `ReportFatal`, which logs a `SetupError`, writes
+`logs/last-error.json`, starts `MjolnirErrorReporter` and returns the exit code.
+It also declares `ClearErrorReport` and `ErrorReportPath`.
 
 `mAppName` stays caller-set even though each game has its own title — it is the
 Vulkan instance name, engine-level, and nothing user-facing ever sees it.
@@ -211,7 +225,7 @@ them with the rest of Play's changes.
 | `mWorld`, `mScheduler`, `mScriptHost`, `mScene` | with `App` | with `App` | no external resources |
 | `mTerrain` (`TerrainRuntime`, private) | in `Initialize`, after `RenderSystem` | with `App` | holds handles only: its meshes go with the renderer, its height field bodies with the World's `PhysicsWorld`; it unregisters itself from the `ViewDrawSources` and `PhysicsStepGates` resources |
 | `mProject`, `mAvailableProjects`, `mProjectToOpen` | with `App` | with `App` | plain data |
-| `mAssetManifest` | first `Assets()` | after the cache | owns the parsed manifest |
+| `mAssetManifest` | in `Initialize`, after the editor | after the cache | owns the parsed manifest; empty when the build cooked nothing |
 | `mAssetCache` | with the manifest | before it | holds a raw pointer into it |
 
 The manifest and cache pair is the one real aliasing hazard, and it is handled
@@ -386,15 +400,38 @@ shape.
 **Register systems before `Run`.** `Run` calls `SystemScheduler::Start`, and a
 system added after that never gets `OnStart`.
 
-**`Initialize` comes before anything else.** `Run` and `Shutdown` return
-immediately and silently when it has not run, so a caller that ignores the `bool`
-gets a process that exits successfully having done nothing.
+**`Initialize` throws on any failure.** Every step that fails throws a
+`SetupError` with its fix, and nothing in `Initialize` unwinds by hand. `Run`
+returns immediately when `Initialize` did not finish.
 
-**`Initialize` cleans up after itself.** A renderer failure resets the window
-before returning `false`, so a failed `Initialize` leaves no half-built state.
+**`Shutdown` is safe on a partial `Initialize`, it is idempotent, and the
+destructor calls it.** Each service's own shutdown is a no-op on what it never
+built, so `Shutdown` always runs in full in the same hand-written order. Calling
+it explicitly is the documented style, and forgetting it is not a leak.
 
-**`Shutdown` is idempotent, and the destructor calls it.** Calling it explicitly
-is the documented style, and forgetting it is not a leak.
+**Setup creates the directories a game points at.** `EnsureGameDirectories`
+creates a missing assets, scene or SoundBank directory before any service reads
+it.
+
+**`project_settings.json` is checked once, at setup.** A missing file means no
+settings yet. A malformed one is fatal, because each settings section falls back
+to its defaults on its own and would otherwise lose them all without a word.
+
+### Errors
+
+| Category | Raised when |
+|---|---|
+| Usage | A bad command line, or a `--game` that is not a game |
+| Project data | `game.json`, `engine.json`'s `defaultGame`, `project_settings.json` or the scene is broken |
+| Build output | The cooked manifest is corrupt, `engine.json`, `asset_workspace.json`, AssetCooker or the fonts are missing |
+| System | A game directory cannot be created or watched, or the Vulkan renderer cannot start |
+| Internal | ImGui or the editor fails for a reason other than missing fonts, or an exception that is not a `SetupError` reaches `main` |
+
+**A broken scene asks before it fails.** `ProbeScene` runs before anything is
+unloaded. In an editor build, a corrupt `scene.json` offers an empty scene, and
+missing entity files offer to open without them. At startup No quits with the
+error. From the menu No keeps the current scene. A game build never asks, and
+`--non-interactive` answers No.
 
 **Systems stop before subsystems die.** `Shutdown` runs `Stop` first, so `OnStop`
 still sees a live world. The renderer and window are already on their way out by
@@ -418,9 +455,13 @@ entities, and `ScriptSystem`'s destroy hook only drops each Lua instance.
 game added while the engine runs would still need a build to cook its assets, and
 the asset manifest is never re-read.
 
-**`Assets()` may return `nullptr`, and the failure is sticky.** With no manifest,
-the disk is not re-checked every frame. `Shutdown` clears the flag so a later
-`Initialize` retries.
+**The asset manifest loads eagerly, and a missing one is empty.** A build with
+no assets writes no manifest and is still a correct build, so `Assets()` is
+never null after `Initialize`. A corrupt manifest is fatal. In an editor build
+with no manifest but with source assets, `AssetImportManager` queues a full cook,
+and `ApplyImportedAssets` swaps the result in once it finishes. The first frames
+run without those assets. The swap resolves scripts again, and only the scripts
+still unresolved load.
 
 **`dt` is clamped, and `mElapsed` accumulates the clamped value.** After a
 breakpoint or a window drag it is behind the wall clock on purpose, because it is
@@ -438,10 +479,6 @@ members through `SystemContext`.
 `MakeContext(0.0f)` is used for both `Start` and `Stop`, since neither is a frame
 and a nonzero `dt` there would be a lie. `mFrame` increments after the update, so
 the first tick runs as frame 0.
-
-The `if (!mWindow)` branch after `Window::Create` is currently unreachable,
-because the GLFW backend aborts through `MIR_CHECK` instead of returning null.
-See [window.md](window.md).
 
 **`PlayScene`/`StopScene`/`TogglePause` are the only way `EngineModeState`
 changes.** `StopScene` calls `StopAllScripts` before `RestoreWorld` runs,
@@ -535,8 +572,8 @@ composition with gated reads; the Play/publish/Stop sequence through
    prerequisite for any test in this module, and for making `Editor` optional.
 2. **No frame limiter**, and no window-event handling beyond the renderer
    re-querying size.
-3. **`Initialize` after `Shutdown`** is written to work — the sticky asset flag
-   and the explicit resets exist for it — but nothing exercises it.
+3. **`Initialize` after `Shutdown`** is written to work — the explicit resets
+   exist for it — but nothing exercises it.
 4. One `App` per process is assumed everywhere, and nothing enforces it.
 5. **A second viewport for Play+Paused**, showing the editor camera alongside
    the game view. `RenderSystem::AddViewport` exists (see
@@ -548,8 +585,21 @@ composition with gated reads; the Play/publish/Stop sequence through
    deleted** against live `ModelPlayer` references, not every asset
    recursively under a deleted folder. A full recursive reference scan was
    left for later; the panel's confirm modal is the primary safety net.
+8. **A scene opened without its missing entities is not marked unsaved.** The
+   editor has no dirty flag, so the prompt's warning is the only notice that the
+   next save drops them.
 
 ## Changed
+
+*2026-10-20* — **Setup failures throw, and the asset manifest loads eagerly.**
+Was: `Initialize` returned `bool` and unwound each failure by hand, a malformed
+`game.json` kept its defaults, `Assets()` loaded the manifest lazily and stayed
+null after a failure, and a broken scene loaded empty or partial without a word.
+Now: every failure throws a `SetupError`, `Shutdown` is safe on a partial setup,
+a missing manifest is an empty one, and a broken scene asks first or fails.
+Because: a silent degraded start hid broken data, and the reader had no fix to
+act on. The lazy manifest dates from 2026-09-01, when a missing manifest had to
+cost an asset rather than the application; an empty manifest keeps that.
 
 *2026-10-18* — **`MeshResolveSystem` resolves builtin primitives without
 touching the asset cache.** Was: `ResolveMesh` always turned `meshName` into
@@ -695,7 +745,8 @@ and `"project_settings.json"` were literals spread across the file. Now they cal
 `LoadGameProject` tests for `game.json` with `is_regular_file` before reading it.
 `ReadJsonFile` returns `nullopt` for both a missing and a malformed file, and this
 function needs them apart: a missing manifest means the directory is not a game,
-while a malformed one means a game whose manifest falls back to defaults.
+while a malformed one was a game whose manifest fell back to defaults. Since
+2026-10-20 a malformed one is fatal instead.
 
 `App` no longer spells `"scene.json"` or `"manifest.blob"`. It asks
 `SceneManifestPath` (see [scene.md](scene.md)) and uses `kAssetManifestFileName`

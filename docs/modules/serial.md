@@ -95,8 +95,8 @@ survives a power cut, because the flush reaches the operating system rather than
 the disk.
 
 **`json::value()` is not safe on an unchecked node.** It throws `type_error 306`
-when the receiver is not an object, and engine code does not catch exceptions, so
-that reaches `std::terminate` through `main`. Every caller checks `is_object()`
+when the receiver is not an object, and nothing between the caller and `main`
+catches it, so the engine stops with an Internal error. Every caller checks `is_object()`
 on a node before reading keys out of it. `InputMap::LoadFile` checks at three
 levels — the document root, the `"input"` value, and each element of `"actions"`
 and `"bindings"` — because a hand-edited file can put a scalar at any of them.

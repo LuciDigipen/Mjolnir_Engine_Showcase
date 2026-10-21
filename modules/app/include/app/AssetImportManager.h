@@ -26,8 +26,15 @@ namespace mir
     class AssetImportManager
     {
     public:
-        bool Initialize(const GameProject &project);
+        // Throws SetupError when the import workflow cannot run
+        void Initialize(const GameProject &project);
+
+        // Safe without Initialize; stops a running AssetCooker
         void Shutdown();
+
+        // Cooks every source asset in the next batch, for a build that has no manifest yet
+        void QueueFullCook();
+        bool SourceHasAssets() const;
         void Handle(const AssetImportAction &action);
         void Update(bool editing);
 
@@ -45,10 +52,13 @@ namespace mir
             std::set<std::string> removals;
             std::map<std::string, std::filesystem::path> moves;
             bool force = false;
+            // no --model arguments: AssetCooker cooks everything and writes a fresh manifest
+            bool fullCook = false;
             std::filesystem::path importSource, packageRoot, targetDirectory;
             bool Empty() const
             {
-                return models.empty() && changed.empty() && removals.empty() && moves.empty() && importSource.empty();
+                return models.empty() && changed.empty() && removals.empty() && moves.empty() && importSource.empty() &&
+                       !fullCook;
             }
             void Clear() { *this = {}; }
         };

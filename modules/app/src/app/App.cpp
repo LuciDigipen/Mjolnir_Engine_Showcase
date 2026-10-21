@@ -10,6 +10,8 @@
 #include <app/App.h>
 
 #include "MeshResolveSystem.h"
+#include "ProjectSettings.h"
+#include "Prompt.h"
 #include "SceneResolve.h"
 #include "TerrainRuntime.h"
 #include <animation/ModelPlayer.h>
@@ -28,6 +30,7 @@
 #include <core/ecs/TransformHierarchy.h>
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
+#include <core/log/SetupError.h>
 #include <input/DefaultInputMap.h>
 #include <input/InputMap.h>
 #include <input/InputState.h>
@@ -60,6 +63,7 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <string>
 #include <system_error>
 #include <utility>
 
@@ -87,7 +91,7 @@ namespace mir
 
     App::~App() { Shutdown(); }
 
-    bool App::Initialize(const AppDesc &desc)
+    void App::Initialize(const AppDesc &desc)
     {
         mDesc = desc;
         mProject = desc.mProject;
@@ -95,15 +99,10 @@ namespace mir
         mSwitchHookFired = false;
         mFixedTimestep = FixedTimestep{ .mStep = desc.mFixedDeltaSeconds, .mMaxSteps = desc.mMaxFixedSteps };
 
-        //audio teardown to call when other things fail to initialize
-        const auto fail = [this]
-            {
-            #if MIR_WITH_EDITOR
-                mAssetImport.Shutdown();
-            #endif
-                audio::Terminate();
-                return false;
-            };
+        // A failure anywhere below throws; ~App runs Shutdown, which is safe on whatever got built
+
+        EnsureGameDirectories(mProject);
+        ReadProjectSettings(mProject.mProjectSettingsPath);
 
     #if MIR_WITH_EDITOR
         mAssetImport.Initialize(mProject);
@@ -118,14 +117,11 @@ namespace mir
 
         EnsureDpiAware();
 
-        if (!mSplash.Show({ .mEngineName = desc.mAppName,
-                           .mVersion = kEngineVersion,
-                           .mCopyright = kEngineCopyright,
-                           .mStatus = "Creating window...",
-                           .mProgress = 0.0f }))
-        {
-            MIR_LOG_WARN("Splash screen failed to show, continuing without it");
-        }
+        mSplash.Show({ .mEngineName = desc.mAppName,
+                       .mVersion = kEngineVersion,
+                       .mCopyright = kEngineCopyright,
+                       .mStatus = "Creating window...",
+                       .mProgress = 0.0f });
 
         WindowDesc windowDesc{};
         windowDesc.mWidth = desc.mWidth;
@@ -136,45 +132,45 @@ namespace mir
         windowDesc.mStartHidden = true;
 
         mWindow = Window::Create(windowDesc);
-        if (!mWindow)
-        {
-            MIR_LOG_ERROR("Window creation failed");
-            return fail();
-        }
 
         mSplash.SetProgress("Initializing renderer...", 0.2f);
         if (!mRenderer.Initialize(
             { .window = mWindow.get(), .appName = desc.mAppName, .enableValidation = desc.mEnableValidation }))
         {
-            MIR_LOG_ERROR("Renderer initialization failed");
-            // Frees whatever Initialize created before it failed; the window must outlive the surface.
-            mRenderer.Shutdown();
-            mWindow.reset();
-            return fail();
+            throw SetupError(ErrorCategory::System, "The Vulkan renderer could not start", {},
+                "the log above names the step that failed and its VkResult",
+                "Update the GPU driver, and check that the GPU supports Vulkan.");
         }
 
         mSplash.SetProgress("Initializing UI...", 0.4f);
         if (!mImGui.Initialize(*mWindow, mRenderer))
         {
-            MIR_LOG_ERROR("ImGui initialization failed");
-            mRenderer.Shutdown();
-            mWindow.reset();
-            return fail();
+            // fonts are copied by the build; any other failure is ImGui's backend, which is ours
+            const std::filesystem::path fontsDir = ExecutableDir() / "fonts";
+            std::error_code ec;
+            if (!std::filesystem::is_directory(fontsDir, ec))
+            {
+                throw SetupError(ErrorCategory::BuildOutput, "The UI fonts are missing", fontsDir,
+                    "the fonts directory next to the engine does not exist", "Rebuild to copy the fonts.");
+            }
+            throw SetupError(ErrorCategory::Internal, "The UI layer could not start", {},
+                "the log above names the ImGui step that failed",
+                "This is an engine bug. Report it with the log attached: " + LogFilePath().string());
         }
 
     #if MIR_WITH_EDITOR
         mSplash.SetProgress("Initializing editor...", 0.5f);
         if (!mEditor.Initialize(mImGui, *mWindow, mProject.mProjectSettingsPath, mWorld))
         {
-            MIR_LOG_ERROR("Editor initialization failed");
-            mImGui.Shutdown(mRenderer);
-            mRenderer.Shutdown();
-            mWindow.reset();
-            return fail();
+            throw SetupError(ErrorCategory::Internal, "The editor could not start", {},
+                "the log above names the step that failed",
+                "This is an engine bug. Report it with the log attached: " + LogFilePath().string());
         }
     #endif
 
         mInitialized = true;
+
+        LoadAssetManifest();
 
         mSplash.SetProgress("Registering components...", 0.75f);
 
@@ -265,7 +261,6 @@ namespace mir
             PlayScene();
 
         mWindow->Show();
-        return true;
     }
 
     bool App::RequestOpenProject(const std::string &requestedDir)
@@ -274,17 +269,19 @@ namespace mir
             return false;
 
         // validate before closing; not ResolveGameProject, which logs "Loading game"
-        const std::optional<std::filesystem::path> gameDir = NormalizeGameDir(requestedDir);
-        std::optional<GameProject> project = gameDir.has_value() ? LoadGameProject(*gameDir) : std::nullopt;
-        if (!project.has_value())
+        try
         {
-            MIR_LOG_ERROR("App::RequestOpenProject: '{}' is not a game, '{}' stays open", requestedDir, mProject.mDir);
+            mProjectToOpen = LoadGameProject(NormalizeGameDir(requestedDir, ErrorCategory::Usage));
+        }
+        catch (const SetupError &error)
+        {
+            MIR_LOG_ERROR("App::RequestOpenProject: '{}' cannot be opened ({}: {}), '{}' stays open", requestedDir,
+                error.What(), error.Cause(), mProject.mDir);
             return false;
         }
 
         // one game per process: main.cpp relaunches after Run returns
-        MIR_LOG_INFO("Closing '{}' to open '{}'", mProject.mDir, project->mDir);
-        mProjectToOpen = std::move(project);
+        MIR_LOG_INFO("Closing '{}' to open '{}'", mProject.mDir, mProjectToOpen->mDir);
         mWindow->RequestClose();
         return true;
     }
@@ -326,13 +323,64 @@ namespace mir
             return false;
         }
 
+        // probed before unloading, so refusing keeps the current scene intact
+        switch (ChooseSceneLoad(ProbeScene(mProject.mSceneDir), false))
+        {
+        case SceneLoadChoice::Refuse:
+            MIR_LOG_WARN("App::LoadScene: kept the current scene over the broken one in '{}'",
+                mProject.mSceneDir.string());
+            return false;
+        case SceneLoadChoice::StartEmpty:
+            NewScene();
+            return true;
+        case SceneLoadChoice::Load:
+            break;
+        }
+
+        ReplaceSceneFromDisk();
+        return true;
+    }
+
+    void App::ReplaceSceneFromDisk()
+    {
         UnloadCurrentScene();
         mScene = mir::LoadScene(mWorld, mProject.mSceneDir);
 
         // saved names to script instances
         ResolveSceneScripts(mWorld, mScriptHost, mScriptReloadWatcher, Assets(), mProject.mAssetIdRoot);
         mTerrain->Load();
-        return true;
+    }
+
+    App::SceneLoadChoice App::ChooseSceneLoad(const SceneProbe &probe, bool atStartup) const
+    {
+        if (probe.Ok())
+            return SceneLoadChoice::Load;
+
+        // a game build has nobody who could repair the scene, so it never offers to
+        if (!kHasEditor)
+            return SceneLoadChoice::Refuse;
+
+        const std::string refuse = atStartup ? "Choose No to quit." : "Choose No to keep the current scene.";
+        const std::string manifest = SceneManifestPath(mProject.mSceneDir).string();
+
+        if (!probe.mManifestError.empty())
+        {
+            const std::string message = manifest + " cannot be read (" + probe.mManifestError +
+                ").\n\nStart with an empty scene? Saving it will overwrite the broken file; restore it from git "
+                "first if you need it.\n\n" + refuse;
+            return AskYesNo("Scene file is corrupt", message, mDesc.mNonInteractive) ? SceneLoadChoice::StartEmpty
+                                                                                     : SceneLoadChoice::Refuse;
+        }
+
+        std::string ids;
+        for (const StableId id : probe.mMissingEntities)
+            ids += (ids.empty() ? "" : ", ") + std::to_string(id);
+        const std::string message = std::to_string(probe.mMissingEntities.size()) +
+            " entity file(s) listed in " + manifest + " are missing or unreadable (ids " + ids +
+            ").\n\nOpen the scene without them? Saving it will drop them for good; restore them from git first "
+            "if you need them.\n\n" + refuse;
+        return AskYesNo("Scene has missing entities", message, mDesc.mNonInteractive) ? SceneLoadChoice::Load
+                                                                                        : SceneLoadChoice::Refuse;
     }
 
     void App::PlayScene()
@@ -442,11 +490,41 @@ namespace mir
 
     void App::LoadProjectScene()
     {
+        const std::filesystem::path manifest = SceneManifestPath(mProject.mSceneDir);
+
         std::error_code ec;
-        if (std::filesystem::exists(SceneManifestPath(mProject.mSceneDir), ec))
-            LoadScene();
-        else
+        if (!std::filesystem::exists(manifest, ec))
+        {
             MIR_LOG_INFO("No {} in '{}', starting with an empty scene", kSceneManifestFileName, mProject.mSceneDir.string());
+            return;
+        }
+
+        const SceneProbe probe = ProbeScene(mProject.mSceneDir);
+        switch (ChooseSceneLoad(probe, true))
+        {
+        case SceneLoadChoice::StartEmpty:
+            MIR_LOG_WARN("Starting with an empty scene over the corrupt '{}'", manifest.string());
+            return;
+        case SceneLoadChoice::Load:
+            ReplaceSceneFromDisk();
+            return;
+        case SceneLoadChoice::Refuse:
+            break;
+        }
+
+        if (!probe.mManifestError.empty())
+        {
+            throw SetupError(ErrorCategory::ProjectData, "scene.json is corrupt", manifest, probe.mManifestError,
+                "Restore " + manifest.string() + " from git.");
+        }
+
+        std::string files;
+        for (const StableId id : probe.mMissingEntities)
+            files += (files.empty() ? "" : ", ") + std::to_string(id) + ".json";
+        throw SetupError(ErrorCategory::ProjectData,
+            std::to_string(probe.mMissingEntities.size()) + " entity file(s) of the scene are missing or unreadable",
+            mProject.mSceneDir / "entities", "missing or unreadable: " + files,
+            "Restore those files from git, or open the scene in the editor and choose to load it without them.");
     }
 
     void App::RunSwitchHook()
@@ -464,26 +542,40 @@ namespace mir
 
     AssetCache *App::Assets()
     {
-        if (mAssetCache.has_value())
-            return &*mAssetCache;
+        return mAssetCache.has_value() ? &*mAssetCache : nullptr;
+    }
 
-        if (mAssetLoadFailed)
-            return nullptr; // already tried and logged; do not re-stat the disk every
-                            // call
-
+    void App::LoadAssetManifest()
+    {
         const std::filesystem::path manifestPath = CookedAssetsDir() / kAssetManifestFileName;
-        mAssetManifest = AssetManifest::LoadFile(manifestPath);
-        if (!mAssetManifest.has_value())
+
+        // A build with no assets writes no manifest, and that build is still correct
+        std::error_code ec;
+        const bool exists = std::filesystem::exists(manifestPath, ec);
+        if (exists)
         {
-            MIR_LOG_ERROR("Asset manifest load failed, assets unavailable: {}", manifestPath.string());
-            mAssetLoadFailed = true;
-            return nullptr;
+            mAssetManifest = AssetManifest::LoadFile(manifestPath);
+            if (!mAssetManifest.has_value())
+            {
+                throw SetupError(ErrorCategory::BuildOutput, "The cooked asset manifest is corrupt", manifestPath,
+                    "it could not be parsed as an asset manifest", "Rebuild to re-cook the assets.");
+            }
+        }
+        else
+        {
+            mAssetManifest.emplace();
+            MIR_LOG_INFO("No asset manifest at '{}', starting with no cooked assets", manifestPath.string());
         }
 
         // after the manifest is engaged, never before: the cache stores a raw
         // pointer to it
         mAssetCache.emplace(&*mAssetManifest, CookedAssetsDir());
-        return &*mAssetCache;
+
+    #if MIR_WITH_EDITOR
+        // The first frames run without assets; ApplyImportedAssets swaps them in once cooked
+        if (!exists && mAssetImport.SourceHasAssets())
+            mAssetImport.QueueFullCook();
+    #endif
     }
 
     SystemContext App::MakeContext(float dt)
@@ -788,7 +880,9 @@ namespace mir
             mModelSystem->CommitReload(&*mAssetCache);
         if (mMeshResolveSystem)
             mMeshResolveSystem->CommitReload(&*mAssetCache);
-        mAssetLoadFailed = false;
+
+        // a script whose asset arrived with this cook resolves now; resolved ones are skipped
+        ResolveSceneScripts(mWorld, mScriptHost, mScriptReloadWatcher, Assets(), mProject.mAssetIdRoot);
         mAssetImport.MarkApplied();
         MIR_LOG_INFO("Applied imported assets at an Edit frame boundary");
     }
@@ -824,13 +918,9 @@ namespace mir
     }
 #endif
 
+    // Runs in full after a partial Initialize too: every step below is a no-op on what was never built
     void App::Shutdown()
     {
-        if (!mInitialized)
-        {
-            return;
-        }
-
         // let all the systems stop first
         SystemContext stopContext = MakeContext(0.0f);
         mScheduler.Stop(stopContext);
@@ -846,7 +936,6 @@ namespace mir
         // Cache before manifest
         mAssetCache.reset();
         mAssetManifest.reset();
-        mAssetLoadFailed = false;
 
         DiscardSnapshot(mPlaySnapshot);
 
@@ -857,7 +946,15 @@ namespace mir
 
         mRenderer.Shutdown();
         mWindow.reset();
+
+        // the systems Reset destroyed
+        mRenderSystem = nullptr;
+        mScriptSystem = nullptr;
+        mModelSystem = nullptr;
+        mMeshResolveSystem = nullptr;
+
+        if (mInitialized)
+            MIR_LOG_INFO("App shut down");
         mInitialized = false;
-        MIR_LOG_INFO("App shut down");
     }
 } // namespace mir

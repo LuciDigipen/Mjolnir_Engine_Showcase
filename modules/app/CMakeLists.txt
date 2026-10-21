@@ -19,9 +19,16 @@ target_link_libraries(engine_app
             mir::terrain
 )
 
+# App's yes/no prompts
+find_package(tinyfiledialogs CONFIG REQUIRED)
+target_link_libraries(engine_app PRIVATE tinyfiledialogs::tinyfiledialogs)
+
 target_sources(engine_app PRIVATE
     src/app/App.cpp
+    src/app/ErrorReport.cpp
     src/app/GameProject.cpp
+    src/app/ProjectSettings.cpp
+    src/app/Prompt.cpp
     src/app/MeshResolveSystem.cpp
     src/app/SceneResolve.cpp
     src/app/TerrainRender.cpp

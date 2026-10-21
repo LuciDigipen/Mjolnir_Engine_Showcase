@@ -70,8 +70,7 @@ TEST_CASE("ContentBrowserWatcher lists the content root on Initialize", "[app][c
     temp.Write("project_settings.json");
 
     ContentBrowserWatcher watcher;
-    REQUIRE(watcher.Initialize(temp.Project()));
-    CHECK(watcher.View().mAvailable);
+    REQUIRE_NOTHROW(watcher.Initialize(temp.Project()));
     CHECK(HasEntry(watcher.View(), "assets/model.glb"));
     CHECK(HasEntry(watcher.View(), "project_settings.json"));
     CHECK(HasEntry(watcher.View(), "assets"));
@@ -84,7 +83,7 @@ TEST_CASE("ContentBrowserWatcher reflects an external add, delete and rename wit
     temp.Write("assets/keep.txt");
 
     ContentBrowserWatcher watcher;
-    REQUIRE(watcher.Initialize(temp.Project()));
+    REQUIRE_NOTHROW(watcher.Initialize(temp.Project()));
 
     temp.Write("assets/added.txt");
     WaitForNextPoll();
@@ -111,7 +110,7 @@ TEST_CASE("ContentBrowserWatcher creates, renames and deletes through Handle", "
     TempProject temp;
 
     ContentBrowserWatcher watcher;
-    REQUIRE(watcher.Initialize(temp.Project()));
+    REQUIRE_NOTHROW(watcher.Initialize(temp.Project()));
 
     ContentBrowserAction create;
     create.mKind = ContentBrowserActionKind::CreateFolder;
@@ -143,7 +142,7 @@ TEST_CASE("ContentBrowserWatcher resolves an asset-relative logical path only un
     TempProject temp;
 
     ContentBrowserWatcher watcher;
-    REQUIRE(watcher.Initialize(temp.Project()));
+    REQUIRE_NOTHROW(watcher.Initialize(temp.Project()));
 
     const std::optional<std::string> underAssets = watcher.AssetLogicalPath("assets/models/duck.glb");
     REQUIRE(underAssets.has_value());
@@ -151,4 +150,24 @@ TEST_CASE("ContentBrowserWatcher resolves an asset-relative logical path only un
 
     CHECK_FALSE(watcher.AssetLogicalPath("project_settings.json").has_value());
     CHECK_FALSE(watcher.AssetLogicalPath("scenes/default/scene.json").has_value());
+}
+
+TEST_CASE("ContentBrowserWatcher throws a System SetupError when the game directory is gone", "[app][content-browser]")
+{
+    GameProject project;
+    project.mDir = "games/Missing";
+    project.mRootDir = std::filesystem::temp_directory_path() / "content-browser-test-missing-root";
+    std::filesystem::remove_all(project.mRootDir);
+
+    ContentBrowserWatcher watcher;
+    try
+    {
+        watcher.Initialize(project);
+        FAIL("Initialize did not throw");
+    }
+    catch (const SetupError &error)
+    {
+        CHECK(error.Category() == ErrorCategory::System);
+        CHECK(error.Path() == project.mRootDir);
+    }
 }

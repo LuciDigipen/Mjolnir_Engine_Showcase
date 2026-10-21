@@ -8,15 +8,23 @@
  */
 #include <app/AssetImportManager.h>
 
+#include "ProjectSettings.h"
+
 #include <assets/AssetPath.h>
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
+#include <core/log/SetupError.h>
+#include <serial/JsonFile.h>
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <optional>
 #include <stdexcept>
+#include <string>
+#include <system_error>
 
 namespace mir
 {
@@ -68,40 +76,79 @@ namespace mir
         }
     } // namespace
 
-    bool AssetImportManager::Initialize(const GameProject &project)
+    void AssetImportManager::Initialize(const GameProject &project)
     {
         mProject = project;
         mView = {};
+
+        const std::filesystem::path bindingPath = ExecutableDir() / "asset_workspace.json";
+        std::string bindingError;
+        const std::optional<Json> binding = ReadJsonFile(bindingPath, &bindingError);
+        if (!binding || !binding->is_object() || binding->value("version", 0) != 1 ||
+            !binding->contains("sourceRoot") || !binding->contains("assetCooker"))
+        {
+            throw SetupError(ErrorCategory::BuildOutput, "asset_workspace.json is missing or unusable", bindingPath,
+                binding ? "it needs version 1, sourceRoot and assetCooker" : bindingError,
+                "Rebuild: CMake writes asset_workspace.json next to the editor. Running the editor outside "
+                "its build tree is not supported.");
+        }
+
         try
         {
-            const Json binding = ReadJson(ExecutableDir() / "asset_workspace.json");
-            if (binding.value("version", 0) != 1)
-                throw std::runtime_error("asset_workspace.json is missing or has an unsupported version");
-            mSourceRoot = binding.at("sourceRoot").get<std::string>();
-            mCooker = binding.at("assetCooker").get<std::string>();
-            mCookedRoot = CookedAssetsDir();
-            mSourceAssetRoot = mSourceRoot / std::filesystem::path(project.mAssetIdRoot);
-            mSourceSettingsPath = mSourceRoot / std::filesystem::path(project.mDir) / "project_settings.json";
-            mResultPath = mCookedRoot / ".asset-import-result.json";
-            if (!std::filesystem::is_directory(mSourceAssetRoot))
-                throw std::runtime_error("source asset root does not exist: " + mSourceAssetRoot.string());
-            if (!std::filesystem::is_regular_file(mCooker))
-                throw std::runtime_error("AssetCooker executable does not exist: " + mCooker.string());
-            mView.mAvailable = true;
-            mView.mWatchedRoot = mSourceAssetRoot.generic_string();
-            const Json settings = ReadJson(mSourceSettingsPath);
-            mView.mAutoImport = settings.value("assets", Json::object()).value("autoImport", false);
-            RefreshView();
-            PollWatcher();
-            return true;
+            mSourceRoot = binding->at("sourceRoot").get<std::string>();
+            mCooker = binding->at("assetCooker").get<std::string>();
         }
-        catch (const std::exception &error)
+        catch (const Json::exception &error)
         {
-            mView.mAvailable = false;
-            mView.mUnavailableReason = error.what();
-            MIR_LOG_WARN("Asset importing unavailable: {}", error.what());
-            return false;
+            throw SetupError(ErrorCategory::BuildOutput, "asset_workspace.json has a key of the wrong type",
+                bindingPath, error.what(), "Rebuild: CMake writes asset_workspace.json next to the editor.");
         }
+
+        mCookedRoot = CookedAssetsDir();
+        mSourceAssetRoot = mSourceRoot / std::filesystem::path(project.mAssetIdRoot);
+        mSourceSettingsPath = mSourceRoot / std::filesystem::path(project.mDir) / "project_settings.json";
+        mResultPath = mCookedRoot / ".asset-import-result.json";
+
+        std::error_code ec;
+        if (!std::filesystem::is_directory(mSourceAssetRoot, ec))
+        {
+            throw SetupError(ErrorCategory::System, "The source asset directory is missing", mSourceAssetRoot,
+                "it should have been created at startup", "Create the directory, or check its parent is writable.");
+        }
+        if (!std::filesystem::is_regular_file(mCooker, ec))
+        {
+            throw SetupError(ErrorCategory::BuildOutput, "AssetCooker is missing", mCooker,
+                "asset_workspace.json points at a file that does not exist", "Rebuild to produce AssetCooker.");
+        }
+
+        const std::optional<Json> settings = ReadProjectSettings(mSourceSettingsPath);
+
+        mView.mWatchedRoot = mSourceAssetRoot.generic_string();
+        if (settings)
+        {
+            const Json assets = settings->value("assets", Json::object());
+            mView.mAutoImport = assets.is_object() && assets.value("autoImport", false);
+        }
+        RefreshView();
+        PollWatcher();
+    }
+
+    void AssetImportManager::QueueFullCook()
+    {
+        mQueued.fullCook = true;
+        MIR_LOG_INFO("Asset import: no cooked manifest, cooking every asset under '{}'", mSourceAssetRoot.string());
+    }
+
+    bool AssetImportManager::SourceHasAssets() const
+    {
+        std::error_code ec;
+        for (const auto &entry : std::filesystem::recursive_directory_iterator(mSourceAssetRoot, ec))
+        {
+            std::error_code entryEc;
+            if (entry.is_regular_file(entryEc) && entry.path().filename() != ".gitkeep")
+                return true;
+        }
+        return false;
     }
 
     void AssetImportManager::Shutdown()
@@ -120,34 +167,11 @@ namespace mir
 
     void AssetImportManager::Handle(const AssetImportAction &action)
     {
-        if (action.mKind == AssetImportActionKind::BindWorkspace)
-        {
-            try
-            {
-                const std::filesystem::path source = std::filesystem::weakly_canonical(action.mWorkspaceRoot);
-                if (!std::filesystem::is_directory(source / "games"))
-                    throw std::runtime_error("the selected directory has no games directory");
-                const auto cooker = ExecutableDir() / "tools" / "AssetCooker" / "AssetCooker.exe";
-                if (!std::filesystem::is_regular_file(cooker))
-                    throw std::runtime_error("AssetCooker is not available in this build");
-                WriteJson(ExecutableDir() / "asset_workspace.json", {{"version", 1},
-                                                                     {"sourceRoot", source.generic_string()},
-                                                                     {"assetCooker", cooker.generic_string()}});
-                Initialize(mProject);
-            }
-            catch (const std::exception &error)
-            {
-                mView.mUnavailableReason = error.what();
-            }
-            return;
-        }
-        if (!mView.mAvailable || action.mKind == AssetImportActionKind::None)
+        if (action.mKind == AssetImportActionKind::None)
             return;
         mView.mLastError.clear();
         switch (action.mKind)
         {
-        case AssetImportActionKind::BindWorkspace:
-            break;
         case AssetImportActionKind::Import:
             QueueExternalImport(action);
             break;
@@ -264,8 +288,23 @@ namespace mir
             return;
         mRunning = std::move(mQueued);
         mQueued.Clear();
-        std::vector<std::string> args = {"--source-dir", mSourceAssetRoot.string(), "--id-root", mProject.mAssetIdRoot,
-                                         "--out",        mCookedRoot.string(),      "--result",  mResultPath.string()};
+        std::vector<std::string> args = {"--out", mCookedRoot.string(), "--result", mResultPath.string()};
+        if (mRunning.fullCook)
+        {
+            // a full cook rewrites the manifest from its roots alone, so it needs every root the build cooks
+            std::vector<std::string> idRoots = {"assets"};
+            for (const GameProject &game : DiscoverGameProjects())
+                idRoots.push_back(game.mAssetIdRoot);
+            std::error_code ec;
+            for (const std::string &idRoot : idRoots)
+            {
+                // the build skips missing roots too, AssetCooker fails on them
+                if (std::filesystem::is_directory(mSourceRoot / idRoot, ec))
+                    args.insert(args.end(), {"--source-dir", (mSourceRoot / idRoot).string(), "--id-root", idRoot});
+            }
+        }
+        else
+            args.insert(args.end(), {"--source-dir", mSourceAssetRoot.string(), "--id-root", mProject.mAssetIdRoot});
         for (const auto &model : mRunning.models)
         {
             args.push_back("--model");
@@ -353,7 +392,8 @@ namespace mir
                                                                 : (editing ? AssetImportStatus::Applied
                                                                            : AssetImportStatus::WaitingForStop));
                     }
-                    mPendingApply |= cooked && !mRunningStale;
+                    // a full cook replaces a missing manifest, so it applies even when no model changed
+                    mPendingApply |= (cooked || mRunning.fullCook) && !mRunningStale;
                 }
             }
             catch (const std::exception &error)
@@ -366,6 +406,7 @@ namespace mir
         {
             mQueued.models.insert(mRunning.models.begin(), mRunning.models.end());
             mQueued.changed.insert(mRunning.changed.begin(), mRunning.changed.end());
+            mQueued.fullCook |= mRunning.fullCook;
         }
         if (!mRunning.importSource.empty() || !mRunning.moves.empty())
         {
@@ -379,8 +420,6 @@ namespace mir
 
     void AssetImportManager::PollWatcher()
     {
-        if (!mView.mAvailable)
-            return;
         const auto now = std::chrono::steady_clock::now();
         if (mLastWatchPoll != std::chrono::steady_clock::time_point{} &&
             now - mLastWatchPoll < std::chrono::milliseconds(250))
@@ -445,8 +484,6 @@ namespace mir
 
     void AssetImportManager::Update(bool editing)
     {
-        if (!mView.mAvailable)
-            return;
         PollWatcher();
         if (mView.mProcessRunning)
             if (auto code = mProcess.Poll())
@@ -458,8 +495,6 @@ namespace mir
 
     void AssetImportManager::RefreshView()
     {
-        if (!mView.mAvailable)
-            return;
         std::map<std::string, AssetImportModelView> models;
         for (const auto &entry : std::filesystem::recursive_directory_iterator(mSourceAssetRoot))
             if (entry.is_regular_file() && IsModel(entry.path()))

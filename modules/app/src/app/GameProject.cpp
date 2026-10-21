@@ -11,6 +11,7 @@
 #include <assets/AssetPath.h>
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
+#include <core/log/SetupError.h>
 #include <renderer/RenderSettings.h>
 #include <scene/SceneIO.h>
 
@@ -38,35 +39,38 @@ namespace mir
                 const std::filesystem::path source = binding->value("sourceRoot", "");
                 std::error_code ec;
                 if (std::filesystem::is_directory(source / "games", ec))
-                    return source;
+                    // normalized so paths in messages read one way
+                    return source.lexically_normal();
             }
 
             return ExecutableDir();
         }
     } // namespace
 
-    std::optional<std::string> ReadDefaultGame()
+    std::string ReadDefaultGame()
     {
         const std::filesystem::path path = ExecutableDir() / kEngineManifestFileName;
 
-        const std::optional<nlohmann::json> json = ReadJsonFile(path);
+        std::string error;
+        const std::optional<nlohmann::json> json = ReadJsonFile(path, &error);
         if (!json)
         {
-            MIR_LOG_ERROR("no --game given and could not read '{}'", path.string());
-            return std::nullopt;
+            throw SetupError(ErrorCategory::BuildOutput, "No --game given and engine.json could not be read", path,
+                error, "Rebuild: the build copies engine.json next to the engine. Or pass --game <dir>.");
         }
 
-        const auto it = json->find("defaultGame");
+        const auto it = json->is_object() ? json->find("defaultGame") : json->end();
         if (it == json->end() || !it->is_string() || it->get<std::string>().empty())
         {
-            MIR_LOG_ERROR("no --game given and '{}' names no defaultGame", path.string());
-            return std::nullopt;
+            throw SetupError(ErrorCategory::ProjectData, "No --game given and engine.json names no defaultGame", path,
+                "defaultGame is missing or not a non-empty string",
+                "Set defaultGame in engine.json (e.g. games/HelloWorld), or pass --game <dir>.");
         }
 
         return it->get<std::string>();
     }
 
-    std::optional<std::filesystem::path> NormalizeGameDir(const std::string &requested)
+    std::filesystem::path NormalizeGameDir(const std::string &requested, ErrorCategory notFound)
     {
         const std::filesystem::path rootDir = ProjectRoot();
 
@@ -80,21 +84,22 @@ namespace mir
 
         if (dir.empty() || dir == "." || dir.has_root_path() || *dir.begin() == "..")
         {
-            MIR_LOG_ERROR("game directory '{}' is not inside '{}'", requested, rootDir.string());
-            return std::nullopt;
+            throw SetupError(notFound, "Game directory '" + requested + "' is not inside the project root", rootDir,
+                "games are looked up under the project root only",
+                "Name a game under " + (rootDir / "games").string() + ", e.g. games/HelloWorld.");
         }
 
         std::error_code ec;
         if (!std::filesystem::is_directory(rootDir / dir, ec))
         {
-            MIR_LOG_ERROR("game directory '{}' does not exist", (rootDir / dir).string());
-            return std::nullopt;
+            throw SetupError(notFound, "Game directory '" + requested + "' does not exist", rootDir / dir,
+                "no such directory", "Name an existing game under " + (rootDir / "games").string() + ".");
         }
 
         return dir;
     }
 
-    std::optional<GameProject> LoadGameProject(const std::filesystem::path &gameDir)
+    GameProject LoadGameProject(const std::filesystem::path &gameDir, ErrorCategory notFound)
     {
         const std::filesystem::path root = ProjectRoot() / gameDir;
         const std::filesystem::path manifestPath = root / kGameManifestFileName;
@@ -102,8 +107,17 @@ namespace mir
         std::error_code manifestEc;
         if (!std::filesystem::is_regular_file(manifestPath, manifestEc))
         {
-            MIR_LOG_ERROR("LoadGameProject: no {} in '{}', not a game directory", kGameManifestFileName, root.string());
-            return std::nullopt;
+            throw SetupError(notFound, "'" + gameDir.generic_string() + "' is not a game directory", manifestPath,
+                "it has no game.json", "Name a directory that holds a game.json, or add one.");
+        }
+
+        std::string parseError;
+        const std::optional<nlohmann::json> json = ReadJsonFile(manifestPath, &parseError);
+        if (!json || !json->is_object())
+        {
+            throw SetupError(ErrorCategory::ProjectData, "game.json is not a valid JSON object", manifestPath,
+                json ? "the top level is not an object" : parseError,
+                "Fix the JSON in " + manifestPath.string() + ", or restore it from git.");
         }
 
         GameProject project;
@@ -115,14 +129,20 @@ namespace mir
         std::string sceneDir = "scenes/default";
         std::string soundBanksRoot = "assets/audio/SoundBanks";
 
-        // A malformed manifest keeps the defaults; ReadJsonFile logged why.
-        if (const std::optional<nlohmann::json> json = ReadJsonFile(manifestPath); json && json->is_object())
+        // value() throws on a key of the wrong type; say which file did it
+        try
         {
             project.mName = json->value("name", project.mName);
             project.mTitle = json->value("title", project.mTitle);
             assetsRoot = json->value("assetsRoot", assetsRoot);
             sceneDir = json->value("sceneDir", sceneDir);
             soundBanksRoot = json->value("soundBanksRoot", soundBanksRoot);
+        }
+        catch (const nlohmann::json::exception &e)
+        {
+            throw SetupError(ErrorCategory::ProjectData, "game.json has a key of the wrong type", manifestPath,
+                e.what(), "Make name, title, assetsRoot, sceneDir and soundBanksRoot strings in " +
+                manifestPath.string() + ".");
         }
 
         if (project.mName.empty())
@@ -132,28 +152,44 @@ namespace mir
         AssetPathResult idRoot = MakeLogicalAssetPath(gameDir.generic_string(), assetsRoot);
         if (!idRoot.Ok())
         {
-            MIR_LOG_ERROR("LoadGameProject: assetsRoot '{}' in '{}': {}", assetsRoot, manifestPath.string(),
-                          Describe(idRoot.error));
-            return std::nullopt;
+            throw SetupError(ErrorCategory::ProjectData, "game.json has an unusable assetsRoot '" + assetsRoot + "'",
+                manifestPath, std::string(Describe(idRoot.error)),
+                "Make assetsRoot a relative path inside the game directory, e.g. assets.");
         }
 
         project.mAssetIdRoot = std::move(idRoot.path);
         project.mRootDir = root;
-        project.mSceneDir = root / sceneDir;
+        project.mAssetsDir = (ProjectRoot() / project.mAssetIdRoot).lexically_normal();
+        project.mSceneDir = (root / sceneDir).lexically_normal();
         project.mProjectSettingsPath = root / kProjectSettingsFileName;
-        project.mSoundBankDir = root / soundBanksRoot;
+        project.mSoundBankDir = (root / soundBanksRoot).lexically_normal();
 
         return project;
     }
 
-    std::optional<GameProject> ResolveGameProject(const std::string &requested)
+    GameProject ResolveGameProject(const std::string &requested, ErrorCategory notFound)
     {
-        const std::optional<std::filesystem::path> gameDir = NormalizeGameDir(requested);
-        if (!gameDir.has_value())
-            return std::nullopt;
+        const std::filesystem::path gameDir = NormalizeGameDir(requested, notFound);
+        MIR_LOG_INFO("Loading game '{}'", gameDir.generic_string());
+        return LoadGameProject(gameDir, notFound);
+    }
 
-        MIR_LOG_INFO("Loading game '{}'", gameDir->generic_string());
-        return LoadGameProject(*gameDir);
+    void EnsureGameDirectories(const GameProject &project)
+    {
+        for (const std::filesystem::path &dir :{ project.mAssetsDir, project.mSceneDir, project.mSoundBankDir })
+        {
+            std::error_code ec;
+            if (std::filesystem::is_directory(dir, ec))
+                continue;
+
+            std::filesystem::create_directories(dir, ec);
+            if (ec)
+            {
+                throw SetupError(ErrorCategory::System, "Could not create a game directory", dir, ec.message(),
+                    "Check that " + dir.parent_path().string() + " is writable, or create the directory by hand.");
+            }
+            MIR_LOG_INFO("Created missing directory '{}'", dir.string());
+        }
     }
 
     std::vector<GameProject> DiscoverGameProjects()
@@ -170,8 +206,16 @@ namespace mir
                 !std::filesystem::is_regular_file(entry.path() / kGameManifestFileName, entryEc))
                 continue;
 
-            if (std::optional<GameProject> project = LoadGameProject(std::filesystem::path("games") / entry.path().filename()))
-                projects.push_back(std::move(*project));
+            // one broken game must not hide the others from the project menu
+            try
+            {
+                projects.push_back(LoadGameProject(std::filesystem::path("games") / entry.path().filename()));
+            }
+            catch (const SetupError &error)
+            {
+                MIR_LOG_ERROR("DiscoverGameProjects: skipping '{}': {} ({})", entry.path().string(), error.What(),
+                    error.Cause());
+            }
         }
 
         if (ec)
