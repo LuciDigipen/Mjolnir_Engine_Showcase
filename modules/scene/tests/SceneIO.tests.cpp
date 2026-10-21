@@ -774,3 +774,90 @@ TEST_CASE("Tied and missing sibling indices fall back to id order", "[scene][ord
 
     CHECK(IdsOf(world.Resource<mir::HierarchyIndex>().Roots(), loaded) == std::vector<StableId>{ 3, 4, 2, 1 });
 }
+
+TEST_CASE("ProbeScene passes a scene LoadScene would load in full", "[scene]")
+{
+    TempSceneDir dir("probe_ok");
+    std::filesystem::create_directories(dir.mPath / "entities");
+    {
+        std::ofstream manifest(dir.mPath / "scene.json");
+        manifest << R"({"name":"test","nextId":2,"entities":[1]})";
+    }
+    {
+        std::ofstream entityFile(dir.mPath / "entities" / "1.json");
+        entityFile << R"({"id":1,"parent":0,"components":[]})";
+    }
+
+    CHECK(mir::ProbeScene(dir.mPath).Ok());
+}
+
+TEST_CASE("ProbeScene reports a malformed scene.json", "[scene]")
+{
+    TempSceneDir dir("probe_malformed_manifest");
+    std::filesystem::create_directories(dir.mPath);
+    {
+        std::ofstream manifest(dir.mPath / "scene.json");
+        manifest << R"({"name":"test","entities":[1)";
+    }
+
+    const mir::SceneProbe probe = mir::ProbeScene(dir.mPath);
+    CHECK_FALSE(probe.mManifestError.empty());
+    CHECK_FALSE(probe.Ok());
+}
+
+TEST_CASE("ProbeScene reports a non-id in the entity list instead of throwing", "[scene]")
+{
+    TempSceneDir dir("probe_bad_id");
+    std::filesystem::create_directories(dir.mPath);
+    {
+        std::ofstream manifest(dir.mPath / "scene.json");
+        manifest << R"({"name":"test","entities":["one"]})";
+    }
+
+    CHECK_FALSE(mir::ProbeScene(dir.mPath).mManifestError.empty());
+}
+
+TEST_CASE("ProbeScene rejects a wrongly typed name or nextId, and LoadScene does not throw on it", "[scene]")
+{
+    mir::RegisterCoreComponents();
+
+    const char *manifests[] = {
+        R"({"name":5,"entities":[]})",
+        R"({"name":"test","nextId":"two","entities":[]})",
+    };
+    for (const char *text : manifests)
+    {
+        TempSceneDir dir("probe_bad_header");
+        std::filesystem::create_directories(dir.mPath);
+        {
+            std::ofstream manifest(dir.mPath / "scene.json");
+            manifest << text;
+        }
+
+        CHECK_FALSE(mir::ProbeScene(dir.mPath).mManifestError.empty());
+        World world;
+        CHECK_NOTHROW(mir::LoadScene(world, dir.mPath));
+    }
+}
+
+TEST_CASE("ProbeScene lists entities whose file is missing or unreadable", "[scene]")
+{
+    TempSceneDir dir("probe_missing_entities");
+    std::filesystem::create_directories(dir.mPath / "entities");
+    {
+        std::ofstream manifest(dir.mPath / "scene.json");
+        manifest << R"({"name":"test","nextId":4,"entities":[1,2,3]})";
+    }
+    {
+        std::ofstream entityFile(dir.mPath / "entities" / "1.json");
+        entityFile << R"({"id":1,"parent":0,"components":[]})";
+    }
+    {
+        std::ofstream entityFile(dir.mPath / "entities" / "3.json");
+        entityFile << R"({"id": 3, "parent": 0, "components": [)";
+    }
+
+    const mir::SceneProbe probe = mir::ProbeScene(dir.mPath);
+    CHECK(probe.mManifestError.empty());
+    CHECK(probe.mMissingEntities == std::vector<StableId>{ 2, 3 });
+}

@@ -188,18 +188,6 @@ namespace mir
     AssetImportAction AssetImportPanel::Draw(const AssetImportView &view, std::span<const std::string> dropped)
     {
         AssetImportAction action;
-        if (!view.mAvailable)
-        {
-            ImGui::TextWrapped("Asset importing is unavailable: %s", view.mUnavailableReason.c_str());
-            ImGui::InputText("Source project root", mWorkspaceRoot, sizeof(mWorkspaceRoot));
-            if (mWorkspaceRoot[0] != '\0' && ImGui::Button("Bind source project"))
-            {
-                action.mKind = AssetImportActionKind::BindWorkspace;
-                action.mWorkspaceRoot = mWorkspaceRoot;
-            }
-            return action;
-        }
-
         AcceptDrops(dropped);
 
         const char *hint = "Drop a .gltf / .glb file - or the folder that holds one - on this panel";

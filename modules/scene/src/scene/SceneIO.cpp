@@ -67,6 +67,71 @@ namespace mir
                     MIR_LOG_WARN("SaveScene: could not remove stale '{}': {}", file.string(), removeEc.message());
             }
         }
+
+        struct SceneManifest
+        {
+            std::string mName;
+            StableId mNextId = 1;
+            std::vector<StableId> mEntities;
+        };
+
+        // ProbeScene and LoadScene both read through this, so whatever the probe passes the load can read
+        std::optional<SceneManifest> ReadManifest(const fs::path &sceneDir, std::string &error)
+        {
+            const std::optional<json> manifest = ReadJsonFile(SceneManifestPath(sceneDir), &error);
+            if (!manifest)
+                return std::nullopt;
+            if (!manifest->is_object())
+            {
+                error = "the top level is not an object";
+                return std::nullopt;
+            }
+
+            SceneManifest read;
+            if (const auto name = manifest->find("name"); name != manifest->end())
+            {
+                if (!name->is_string())
+                {
+                    error = "\"name\" is not a string";
+                    return std::nullopt;
+                }
+                read.mName = name->get<std::string>();
+            }
+            if (const auto nextId = manifest->find("nextId"); nextId != manifest->end())
+            {
+                if (!nextId->is_number_unsigned())
+                {
+                    error = "\"nextId\" is not an entity id";
+                    return std::nullopt;
+                }
+                read.mNextId = nextId->get<StableId>();
+            }
+
+            const json entities = manifest->value("entities", json::array());
+            if (!entities.is_array())
+            {
+                error = "\"entities\" is not an array";
+                return std::nullopt;
+            }
+            for (const json &idJson : entities)
+            {
+                if (!idJson.is_number_unsigned())
+                {
+                    error = "\"entities\" holds something other than an entity id";
+                    return std::nullopt;
+                }
+                read.mEntities.push_back(idJson.get<StableId>());
+            }
+            return read;
+        }
+
+        std::optional<json> ReadEntityFile(const fs::path &sceneDir, StableId id)
+        {
+            std::optional<json> entity = ReadJsonFile(EntityFilePath(sceneDir, id));
+            if (!entity || !entity->is_object())
+                return std::nullopt;
+            return entity;
+        }
     }
 
     fs::path SceneManifestPath(const fs::path &sceneDir)
@@ -117,28 +182,43 @@ namespace mir
         return true;
     }
 
+    SceneProbe ProbeScene(const fs::path &sceneDir)
+    {
+        SceneProbe probe;
+
+        const std::optional<SceneManifest> manifest = ReadManifest(sceneDir, probe.mManifestError);
+        if (!manifest)
+            return probe;
+
+        for (const StableId id : manifest->mEntities)
+        {
+            if (!ReadEntityFile(sceneDir, id))
+                probe.mMissingEntities.push_back(id);
+        }
+
+        return probe;
+    }
+
     LoadedScene LoadScene(World &world, const fs::path &sceneDir)
     {
         LoadedScene loaded;
 
-        const std::optional<json> manifestJson = ReadJsonFile(SceneManifestPath(sceneDir));
-        if (!manifestJson || !manifestJson->is_object())
+        std::string error;
+        const std::optional<SceneManifest> manifest = ReadManifest(sceneDir, error);
+        if (!manifest)
         {
-            MIR_LOG_ERROR("LoadScene: '{}' has no usable {}, loading an empty scene", sceneDir.string(),
-                kSceneManifestFileName);
+            MIR_LOG_ERROR("LoadScene: '{}' has no usable {} ({}), loading an empty scene", sceneDir.string(),
+                kSceneManifestFileName, error);
             return loaded;
         }
-        const json &manifest = *manifestJson;
-        loaded.mName = manifest.value("name", "");
-        loaded.mNextId = manifest.value("nextId", StableId{ 1 });
+        loaded.mName = manifest->mName;
+        loaded.mNextId = manifest->mNextId;
 
         std::vector<std::pair<StableId, json>> entities;
-        for (const auto &idJson : manifest.value("entities", json::array()))
+        for (const StableId id : manifest->mEntities)
         {
-            StableId id = idJson.get<StableId>();
-
-            std::optional<json> entityJson = ReadJsonFile(EntityFilePath(sceneDir, id));
-            if (!entityJson || !entityJson->is_object())
+            std::optional<json> entityJson = ReadEntityFile(sceneDir, id);
+            if (!entityJson)
             {
                 MIR_LOG_ERROR("LoadScene: entity file for id {} listed in manifest but missing or unreadable", id);
                 continue; // 0030 leaves this failure mode open; skip rather than abort the load
