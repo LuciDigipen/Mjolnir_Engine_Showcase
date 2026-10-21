@@ -4,4 +4,5 @@ engine_add_module_tests(prefab
     PrefabId.tests.cpp
     PrefabInstantiate.tests.cpp
     PrefabRegistry.tests.cpp
+    PrefabScene.tests.cpp
 )
