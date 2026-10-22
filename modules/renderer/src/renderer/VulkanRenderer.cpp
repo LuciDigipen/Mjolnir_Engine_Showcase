@@ -7,27 +7,19 @@
  *
  */
 #include <renderer/VulkanRenderer.h>
-#include "vulkan/Bloom.h"
 #include "vulkan/CameraBuffer.h"
-#include "vulkan/DepthOfField.h"
 #include "vulkan/Device.h"
-#if MIR_WITH_DLSS
-#include "vulkan/DlssRayReconstruction.h"
-#endif
 #include "vulkan/FrameCapture.h"
 #include "vulkan/FrameSync.h"
-#include "vulkan/Fxaa.h"
 #include "vulkan/ImGuiOverlay.h"
 #include "vulkan/MaterialStore.h"
 #include "vulkan/MeshUploader.h"
 #include "vulkan/ModelDescriptors.h"
-#include "vulkan/MotionBlur.h"
-#include "vulkan/PostProcess.h"
+#include "vulkan/PostProcessingStack.h"
 #include "vulkan/RayTracer.h"
 #include "vulkan/ResourceStore.h"
 #include "vulkan/ShadowMaps.h"
 #include "vulkan/Swapchain.h"
-#include "vulkan/VelocityPass.h"
 #include "vulkan/VulkanConstants.h"
 
 #include <core/log/Log.h>
@@ -44,15 +36,7 @@ namespace mir
         mShadowMaps(std::make_unique<vk::ShadowMaps>()),
         mModelDescriptors(std::make_unique<vk::ModelDescriptors>()),
         mRayTracer(std::make_unique<vk::RayTracer>()),
-    #if MIR_WITH_DLSS
-        mDlss(std::make_unique<vk::DlssRayReconstruction>()),
-    #endif
-        mPostProcess(std::make_unique<vk::PostProcess>()),
-        mFxaa(std::make_unique<vk::Fxaa>()),
-        mBloom(std::make_unique<vk::Bloom>()),
-        mDepthOfField(std::make_unique<vk::DepthOfField>()),
-        mVelocityPass(std::make_unique<vk::VelocityPass>()),
-        mMotionBlur(std::make_unique<vk::MotionBlur>()),
+        mPostProcessing(std::make_unique<vk::PostProcessingStack>()),
         mCapture(std::make_unique<vk::FrameCapture>()),
         mImGuiOverlay(std::make_unique<vk::ImGuiOverlay>()),
         mMeshUploads(std::make_unique<vk::MeshUploader>())
@@ -63,14 +47,7 @@ namespace mir
 
     bool VulkanRenderer::RayTracingActive(bool requested) const { return requested && RayTracingSupported(); }
 
-    bool VulkanRenderer::DlssAvailable() const
-    {
-    #if MIR_WITH_DLSS
-        return mDlssReady;
-    #else
-        return false;
-    #endif
-    }
+    bool VulkanRenderer::DlssAvailable() const { return mPostProcessing->DlssAvailable(); }
 
     VulkanRenderer::GpuMemoryUsage VulkanRenderer::GetGpuMemoryUsage() const
     {
@@ -124,36 +101,10 @@ namespace mir
             !mRayTracer->Initialize(*mDevice, mSwapchain->Extent(), mCameraBuffer->SetLayout()))
             return false;
 
-    #if MIR_WITH_DLSS
-        if (mDevice->NgxSupported())
-        {
-            mDlssReady = mDlss->Initialize(*mDevice);
-            if (!mDlssReady)
-                MIR_LOG_ERROR("Initialize: DLSS Ray Reconstruction failed to initialize despite "
-                    "NgxSupported() - Dlss is no longer offered and a Dlss request clamps to Off");
-        }
-    #endif
-
         mMeshUploads->Initialize(*mDevice);
-        if (!mPostProcess->Initialize(*mDevice, mSwapchain->Format()))
-            return false;
 
-        if (!mFxaa->Initialize(*mDevice, mSwapchain->Format()))
-            return false;
-
-        if (!mBloom->Initialize(*mDevice, mSwapchain->Extent()))
-            return false;
-
-        if (!mDepthOfField->Initialize(*mDevice, mSwapchain->Extent()))
-            return false;
-
-        if (!mVelocityPass->Initialize(*mDevice, mCameraBuffer->SetLayout(), mSwapchain->Extent()))
-            return false;
-
-        if (!mMotionBlur->Initialize(*mDevice, mSwapchain->Extent()))
-            return false;
-
-        return true;
+        return mPostProcessing->Initialize(*mDevice, mSwapchain->Format(), mSwapchain->Extent(),
+            mCameraBuffer->SetLayout());
     }
 
     bool VulkanRenderer::RecreateSwapchain()
@@ -163,25 +114,12 @@ namespace mir
         // The swapchain cannot reach ray tracing, so the facade resizes its output images.
         if (!mSwapchain->Recreate(*mWindow) ||
             (mDevice->RayTracingSupported() && !mRayTracer->Resize(mSwapchain->Extent())) ||
-            !mFxaa->Resize(mSwapchain->Extent()) ||
-            !mBloom->Resize(mSwapchain->Extent()) ||
-            !mDepthOfField->Resize(mSwapchain->Extent()) ||
-            !mVelocityPass->Resize(mSwapchain->Extent()) ||
-            !mMotionBlur->Resize(mSwapchain->Extent()))
+            !mPostProcessing->Resize(mSwapchain->Extent()))
         {
             // Recreate may have cleared the flag already; set it so the next frame retries.
             mSwapchain->MarkOutOfDate();
             return false;
         }
-
-    #if MIR_WITH_DLSS
-        if (mDlssReady && !mDlss->Resize(mSwapchain->Extent()))
-        {
-            mDlssReady = false;
-            MIR_LOG_WARN("DLSS Ray Reconstruction resize failed; Dlss is no longer offered and a Dlss "
-                "request clamps to Off");
-        }
-    #endif
         return true;
     }
 
@@ -195,17 +133,8 @@ namespace mir
 
             mMeshUploads->Shutdown(*mRayTracer);
 
-            mMotionBlur->Shutdown();
-            mVelocityPass->Shutdown();
-            mDepthOfField->Shutdown();
-            mBloom->Shutdown();
-            mFxaa->Shutdown();
-            mPostProcess->Shutdown();
+            mPostProcessing->Shutdown();
             mMaterialStore->Shutdown();
-        #if MIR_WITH_DLSS
-            mDlss->Shutdown();
-            mDlssReady = false;
-        #endif
             mRayTracer->Shutdown();
             mResources->Shutdown();
             mCapture->Shutdown();
@@ -356,9 +285,7 @@ namespace mir
         // in-flight frames may still use them
         mDevice->WaitIdle();
 
-    #if MIR_WITH_DLSS
-        mDlss->ResetHistory();
-    #endif
+        mPostProcessing->ResetHistory();
 
         mMeshUploads->Clear(*mRayTracer);
         mRayTracer->DestroyBlases();
@@ -426,65 +353,7 @@ namespace mir
     {
         mCameraBuffer->SetFog(state.fog.color, state.fog.density, state.fog.start, state.fog.end);
 
-        mPostProcess->SetParams(state.hdr.exposure, static_cast<int>(state.hdr.op));
-
-        mBloomEnabled = state.bloomEnabled;
-        mBloom->SetParams(state.bloom.threshold, state.bloom.intensity, state.bloom.radius);
-
-        mDepthOfFieldEnabled = state.depthOfFieldEnabled;
-        mDepthOfField->SetParams(state.depthOfField.focusDistance, state.depthOfField.aperture,
-            state.depthOfField.maxBlur);
-
-        mMotionBlurEnabled = state.motionBlurEnabled;
-        mMotionBlur->SetParams(state.motionBlur.shutterStrength,
-            static_cast<uint32_t>(state.motionBlur.sampleCount));
-
-        ApplyAntiAliasing(state.antiAliasing.mode, static_cast<uint32_t>(state.antiAliasing.rtSampleCount));
-
-        mPostProcess->SetFilmParams(state.film.grain, state.film.contrast, state.film.saturation,
-            state.film.vignetteStrength, state.film.vignetteRadius);
-    }
-
-    void VulkanRenderer::ApplyAntiAliasing(AntiAliasingMode mode, uint32_t rtSampleCount)
-    {
-        mAntiAliasingRtSampleCount = rtSampleCount;
-        if (mode == mAntiAliasingMode)
-            return;
-        mAntiAliasingMode = mode;
-
-        if (mDevice->Handle() == VK_NULL_HANDLE)
-            return;
-
-        // Each mode's images exist only while it is active; in-flight frames may still use them.
-        mDevice->WaitIdle();
-
-        if (mode == AntiAliasingMode::Fxaa)
-        {
-            if (!mFxaa->CreateIntermediate(mSwapchain->Extent()))
-                MIR_LOG_ERROR("ApplyAntiAliasing: FXAA intermediate allocation failed; rendering without FXAA");
-        }
-        else
-        {
-            mFxaa->DestroyIntermediate();
-        }
-
-    #if MIR_WITH_DLSS
-        mDlss->ResetHistory();
-        if (mode == AntiAliasingMode::Dlss && mDlssReady)
-        {
-            if (!mRayTracer->CreateDlssGuides() || !mDlss->Activate(mSwapchain->Extent()))
-            {
-                mDlssReady = false;
-                MIR_LOG_ERROR("ApplyAntiAliasing: DLSS Ray Reconstruction resources failed to allocate; Dlss is "
-                    "no longer offered and a Dlss request clamps to Off");
-            }
-        }
-        if (mode != AntiAliasingMode::Dlss || !mDlssReady)
-        {
-            mDlss->Deactivate();
-            mRayTracer->DestroyDlssGuides();
-        }
-    #endif
+        mPostProcessing->Apply(state, *mRayTracer, mSwapchain->Extent());
     }
 
     void VulkanRenderer::SetAtmosphere(const Sky &sky)
