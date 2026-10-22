@@ -84,3 +84,16 @@ TEST_CASE("AntiAliasingEffect: ClampAntiAliasingMode allows Dlss only on ray tra
     CHECK(mir::ClampAntiAliasingMode(mir::AntiAliasingMode::Dlss, true, false) == mir::AntiAliasingMode::Off);
     CHECK(mir::ClampAntiAliasingMode(mir::AntiAliasingMode::Dlss, false, true) == mir::AntiAliasingMode::Off);
 }
+
+TEST_CASE("AntiAliasingEffect: ClampRtSampleCount rounds up to a standard sample pattern size", "[renderer]")
+{
+    CHECK(mir::ClampRtSampleCount(-3) == 1);
+    CHECK(mir::ClampRtSampleCount(0) == 1);
+    CHECK(mir::ClampRtSampleCount(1) == 1);
+    CHECK(mir::ClampRtSampleCount(2) == 2);
+    CHECK(mir::ClampRtSampleCount(3) == 4);
+    CHECK(mir::ClampRtSampleCount(4) == 4);
+    CHECK(mir::ClampRtSampleCount(5) == 8);
+    CHECK(mir::ClampRtSampleCount(8) == 8);
+    CHECK(mir::ClampRtSampleCount(64) == 8);
+}

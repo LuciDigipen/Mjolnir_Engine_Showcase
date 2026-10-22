@@ -74,8 +74,21 @@ namespace mir
 
             if (aa.mode == AntiAliasingMode::Msaa)
             {
-                changed |= ImGui::DragInt("Ray Samples", &aa.rtSampleCount, 0.1f, 1, 4, "%d",
-                    ImGuiSliderFlags_AlwaysClamp);
+                // Only the sizes the shader has a standard sample pattern for.
+                constexpr std::array<int, 4> kSampleCounts{ 1, 2, 4, 8 };
+                constexpr std::array<const char *, kSampleCounts.size()> kSampleCountNames{ "1x", "2x", "4x", "8x" };
+                const int current = ClampRtSampleCount(aa.rtSampleCount);
+                int sampleIndex = 0;
+                for (int i = 0; i < static_cast<int>(kSampleCounts.size()); ++i)
+                    if (kSampleCounts[static_cast<size_t>(i)] == current)
+                        sampleIndex = i;
+
+                if (ImGui::Combo("Ray Samples", &sampleIndex, kSampleCountNames.data(),
+                    static_cast<int>(kSampleCountNames.size())))
+                {
+                    aa.rtSampleCount = kSampleCounts[static_cast<size_t>(sampleIndex)];
+                    changed = true;
+                }
             }
 
             if (changed)
@@ -128,6 +141,17 @@ namespace mir
     {
         return ModeAllowed(requested, PostEffectContext{ rayTracing, dlssAvailable }) ? requested
             : AntiAliasingMode::Off;
+    }
+
+    int ClampRtSampleCount(int requested)
+    {
+        if (requested <= 1)
+            return 1;
+        if (requested <= 2)
+            return 2;
+        if (requested <= 4)
+            return 4;
+        return 8;
     }
 
     void RegisterAntiAliasingPostEffect()

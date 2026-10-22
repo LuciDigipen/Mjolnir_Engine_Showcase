@@ -164,7 +164,8 @@ namespace mir
                 antiAliasing.mode = AntiAliasingMode::Off;
             antiAliasing.mode = ClampAntiAliasingMode(antiAliasing.mode,
                 mRenderer.RayTracingActive(renderSettings.rayTracing), mRenderer.DlssAvailable());
-            mRenderer.SetAntiAliasing(antiAliasing.mode, static_cast<uint32_t>(std::max(antiAliasing.rtSampleCount, 1)));
+            mRenderer.SetAntiAliasing(antiAliasing.mode,
+                static_cast<uint32_t>(ClampRtSampleCount(antiAliasing.rtSampleCount)));
 
             const auto filmIt = postProcessing.effects.find(std::string(kFilmEffectName));
             const FilmParams film =

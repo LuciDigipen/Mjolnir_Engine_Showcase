@@ -51,5 +51,8 @@ namespace mir
     // and "Off renders the scene unchanged, in both pipelines". Falls back to Off.
     AntiAliasingMode ClampAntiAliasingMode(AntiAliasingMode requested, bool rayTracing, bool dlssAvailable);
 
+    // Rounds the Msaa fallback's sample count up to a standard sample pattern size: 1, 2, 4 or 8.
+    int ClampRtSampleCount(int requested);
+
     void RegisterAntiAliasingPostEffect();
 }

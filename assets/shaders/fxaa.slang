@@ -1,3 +1,5 @@
+#include "FilmGrain.slang"
+
 struct VSOutput
 {
     float4 position : SV_Position;
@@ -23,6 +25,8 @@ Sampler2D<float4> gColor;
 struct FxaaPushConstants
 {
     float2 invExtent;
+    float grain;
+    float grainSeed;
 }
 
 [[vk::push_constant]]
@@ -39,10 +43,9 @@ float Luma(float3 linearRgb)
     return sqrt(dot(linearRgb, float3(0.299, 0.587, 0.114)));
 }
 
-[shader("fragment")]
-float4 fragmentMain(VSOutput input) : SV_Target
+float3 Fxaa(float2 pixel)
 {
-    const float2 uv = input.position.xy * pushData.invExtent;
+    const float2 uv = pixel * pushData.invExtent;
     const float3 colorCenter = gColor.SampleLevel(uv, 0).rgb;
 
     const float lumaCenter = Luma(colorCenter);
@@ -57,7 +60,7 @@ float4 fragmentMain(VSOutput input) : SV_Target
 
     // Flat region or sub-threshold contrast: cheapest exit, color untouched.
     if (lumaRange < max(kEdgeThresholdMin, lumaMax * kEdgeThreshold))
-        return float4(colorCenter, 1.0);
+        return colorCenter;
 
     // Diagonal taps, for edge orientation.
     const float lumaDownLeft = Luma(gColor.SampleLevel(uv + float2(-pushData.invExtent.x, pushData.invExtent.y), 0).rgb);
@@ -104,5 +107,13 @@ float4 fragmentMain(VSOutput input) : SV_Target
     else
         finalUv.x += stepLength * finalOffset;
 
-    return float4(gColor.SampleLevel(finalUv, 0).rgb, 1.0);
+    return gColor.SampleLevel(finalUv, 0).rgb;
+}
+
+[shader("fragment")]
+float4 fragmentMain(VSOutput input) : SV_Target
+{
+    // Grain after anti-aliasing, so the edge blend never smears it.
+    const float3 color = ApplyFilmGrain(Fxaa(input.position.xy), input.position.xy, pushData.grain, pushData.grainSeed);
+    return float4(saturate(color), 1.0);
 }

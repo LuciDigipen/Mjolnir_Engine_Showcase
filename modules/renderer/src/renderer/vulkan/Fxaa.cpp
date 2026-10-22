@@ -195,7 +195,7 @@ namespace mir::vk
         }
     }
 
-    void Fxaa::Record(VkCommandBuffer cmd, uint32_t frame, VkImageView source, VkExtent2D extent)
+    void Fxaa::Record(VkCommandBuffer cmd, uint32_t frame, VkImageView source, FilmGrain grain, VkExtent2D extent)
     {
         const VkDescriptorImageInfo imageInfo{
             .sampler = mSampler, .imageView = source, .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
@@ -212,7 +212,7 @@ namespace mir::vk
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mPipeline);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mPipelineLayout, 0, 1, &mSets[frame], 0, nullptr);
 
-        const FxaaPushConstants pushData{ InvExtent(extent) };
+        const FxaaPushConstants pushData{ InvExtent(extent), grain.amount, grain.seed };
         vkCmdPushConstants(cmd, mPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pushData), &pushData);
 
         vkCmdDraw(cmd, 3, 1, 0, 0);

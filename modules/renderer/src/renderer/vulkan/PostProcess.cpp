@@ -263,7 +263,7 @@ namespace mir::vk
     }
 
     void PostProcess::Record(VkCommandBuffer cmd, uint32_t frame, VkImageView source, VkImageView bloom,
-        float bloomIntensity, VkExtent2D extent)
+        float bloomIntensity, FilmGrain grain, VkExtent2D extent)
     {
         const VkDescriptorImageInfo imageInfos[]{
             { .sampler = mSampler, .imageView = source, .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
@@ -289,11 +289,9 @@ namespace mir::vk
 
         const TonemapPushConstants pushConstants{ mExposure, static_cast<uint32_t>(mTonemapOperator),
             glm::vec2(1.0f / static_cast<float>(extent.width), 1.0f / static_cast<float>(extent.height)),
-            bloomIntensity, mGrain, mContrast, mSaturation, mVignetteStrength, mVignetteRadius,
-            static_cast<float>(mGrainFrame) };
+            bloomIntensity, grain.amount, mContrast, mSaturation, mVignetteStrength, mVignetteRadius,
+            grain.seed };
         vkCmdPushConstants(cmd, mPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pushConstants), &pushConstants);
-
-        ++mGrainFrame;
 
         vkCmdDraw(cmd, 3, 1, 0, 0);
     }

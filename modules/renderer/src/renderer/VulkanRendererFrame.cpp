@@ -250,6 +250,7 @@ namespace mir
         }
 
         const bool fxaaActive = mAntiAliasingMode == AntiAliasingMode::Fxaa && mFxaa->HasIntermediate();
+        const vk::FilmGrain grain = mPostProcess->NextFilmGrain();
         if (fxaaActive)
         {
             vk::ColorAttachmentBarrier(cmd, mFxaa->IntermediateImage(frame));
@@ -257,7 +258,7 @@ namespace mir
             mDevice->BeginLabel(cmd, "Tonemap Pass", { 1.0f, 1.0f, 0.0f, 1.0f });
 
             mPostProcess->Record(cmd, frame, colorSource, mBloom->OutputView(frame),
-                mBloom->Intensity(), extent);
+                mBloom->Intensity(), vk::FilmGrain{}, extent);
 
             mDevice->EndLabel(cmd);
             vkCmdEndRendering(cmd);
@@ -277,10 +278,10 @@ namespace mir
         mDevice->BeginLabel(cmd, fxaaActive ? "FXAA Pass" : "Tonemap Pass", { 1.0f, 1.0f, 0.0f, 1.0f });
 
         if (fxaaActive)
-            mFxaa->Record(cmd, frame, mFxaa->IntermediateView(frame), extent);
+            mFxaa->Record(cmd, frame, mFxaa->IntermediateView(frame), grain, extent);
         else
             mPostProcess->Record(cmd, frame, colorSource, mBloom->OutputView(frame),
-                mBloom->Intensity(), extent);
+                mBloom->Intensity(), grain, extent);
 
         mImGuiOverlay->RecordInPass(cmd);
 
@@ -437,7 +438,7 @@ namespace mir
             vkCmdSetScissor(cmd, 0, 1, &rect);
 
             mPostProcess->Record(cmd, frame, colorSource, mBloom->OutputView(frame),
-                mBloom->Intensity(), mSwapchain->Extent());
+                mBloom->Intensity(), mPostProcess->NextFilmGrain(), mSwapchain->Extent());
         }
 
         mImGuiOverlay->RecordInPass(cmd);

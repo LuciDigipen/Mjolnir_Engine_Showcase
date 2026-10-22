@@ -116,8 +116,11 @@ namespace mir::vk
         glm::vec2 invExtent;
     };
 
+    // Must match FxaaPushConstants in fxaa.slang.
     struct FxaaPushConstants
     {
         glm::vec2 invExtent;
+        float grain;
+        float grainSeed;
     };
 }

@@ -1,3 +1,5 @@
+#include "FilmGrain.slang"
+
 struct VSOutput
 {
     float4 position : SV_Position;
@@ -60,13 +62,6 @@ float3 TonemapAces(float3 color)
     return saturate((color * (a * color + b)) / (color * (c * color + d) + e));
 }
 
-// Cheap per-pixel-per-frame white noise - varies with grainSeed so grain
-// animates instead of sitting as a static pattern.
-float FilmGrainNoise(float2 pixel, float seed)
-{
-    return frac(sin(dot(pixel + seed, float2(12.9898, 78.233))) * 43758.5453);
-}
-
 [shader("fragment")]
 float4 fragmentMain(VSOutput input) : SV_Target
 {
@@ -92,8 +87,8 @@ float4 fragmentMain(VSOutput input) : SV_Target
     float vig = saturate(pow(vig2.x * vig2.y * 16.0, pushData.vignetteRadius));
     ldr *= lerp(1.0, vig, pushData.vignetteStrength);
 
-    float noise = FilmGrainNoise(input.position.xy, pushData.grainSeed);
-    ldr += (noise - 0.5) * pushData.grain;
+    // grain is 0 here while FXAA runs - it would smear the noise, so fxaa.slang applies it instead.
+    ldr = ApplyFilmGrain(ldr, input.position.xy, pushData.grain, pushData.grainSeed);
 
     return float4(saturate(ldr), 1.0);
 }

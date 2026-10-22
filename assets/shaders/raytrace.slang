@@ -70,13 +70,23 @@ static const uint kAaModeOff = 0;
 static const uint kAaModeMsaa = 2;
 static const uint kAaModeDlss = 3;
 
-// D3D's standard 8x rotated-grid sample pattern, 16ths of a pixel from center - the ray-traced
-// multi-sample anti-aliasing fallback's spatial supersample offsets.
+// D3D's standard 1x/2x/4x/8x sample patterns, 16ths of a pixel from center - the ray-traced
+// multi-sample anti-aliasing fallback's spatial supersample offsets. Packed back to back, so
+// the pattern for n samples starts at index n - 1.
 static const uint kMaxMsaaSamples = 8;
-static const float2 kMsaaOffsets[kMaxMsaaSamples] = {
+static const float2 kMsaaOffsets[2 * kMaxMsaaSamples - 1] = {
+    float2(0.0, 0.0),
+    float2(4.0, 4.0), float2(-4.0, -4.0),
+    float2(-2.0, -6.0), float2(6.0, -2.0), float2(-6.0, 2.0), float2(2.0, 6.0),
     float2(1.0, -3.0), float2(-1.0, 3.0), float2(5.0, 1.0), float2(-3.0, -5.0),
     float2(-5.0, 5.0), float2(-7.0, -1.0), float2(3.0, 7.0), float2(7.0, -7.0)
 };
+
+// The CPU already rounds to a pattern size (ClampRtSampleCount); this keeps a bad value in range.
+uint MsaaPatternSize(uint requested)
+{
+    return requested <= 1u ? 1u : requested <= 2u ? 2u : requested <= 4u ? 4u : kMaxMsaaSamples;
+}
 
 struct RtPushConstants
 {
@@ -138,9 +148,7 @@ void rayGenMain()
     const uint2 pixel = DispatchRaysIndex().xy;
     const uint2 dims = DispatchRaysDimensions().xy;
 
-    const uint sampleCount = pushData.aaMode == kAaModeMsaa
-                                 ? clamp(pushData.sampleCount, 1u, kMaxMsaaSamples)
-                                 : 1u;
+    const uint sampleCount = pushData.aaMode == kAaModeMsaa ? MsaaPatternSize(pushData.sampleCount) : 1u;
 
     float3 colorSum = float3(0.0, 0.0, 0.0);
     float centerDistance = 0.0;
@@ -149,7 +157,8 @@ void rayGenMain()
 
     for (uint i = 0; i < sampleCount; i++)
     {
-        const float2 msaaOffset = pushData.aaMode == kAaModeMsaa ? kMsaaOffsets[i] / 16.0 : float2(0.0, 0.0);
+        const float2 msaaOffset =
+            pushData.aaMode == kAaModeMsaa ? kMsaaOffsets[sampleCount - 1u + i] / 16.0 : float2(0.0, 0.0);
         const float2 pixelOffset = msaaOffset + jitterAndPad.xy;
 
         const float2 ndc = (float2(pixel) + 0.5 + pixelOffset) / float2(dims) * 2.0 - 1.0;

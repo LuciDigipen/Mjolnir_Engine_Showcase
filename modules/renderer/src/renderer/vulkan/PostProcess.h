@@ -20,6 +20,14 @@ namespace mir::vk
 {
     class Device;
 
+    // One frame's film grain. Whichever pass runs last before the swapchain applies it -
+    // tonemap normally, FXAA when active (grain after AA, so the edge blend can't smear it).
+    struct FilmGrain
+    {
+        float amount = 0.0f;
+        float seed = 0.0f;
+    };
+
     class PostProcess
     {
     public:
@@ -42,8 +50,12 @@ namespace mir::vk
             mVignetteRadius = vignetteRadius;
         }
 
+        // Call once per frame; the seed advances so grain reads as animated noise.
+        FilmGrain NextFilmGrain() { return { mGrain, static_cast<float>(mGrainFrame++) }; }
+
+        // grain.amount 0 leaves grain to a later pass.
         void Record(VkCommandBuffer cmd, uint32_t frame, VkImageView source, VkImageView bloom,
-            float bloomIntensity, VkExtent2D extent);
+            float bloomIntensity, FilmGrain grain, VkExtent2D extent);
 
     private:
         Device *mDevice = nullptr;
@@ -68,7 +80,7 @@ namespace mir::vk
         float mVignetteStrength = 0.0f;
         float mVignetteRadius = 1.0f;
 
-        // Advances once per Record() so grain reads as animated noise, not a static pattern.
+        // Advanced by NextFilmGrain.
         uint32_t mGrainFrame = 0;
     };
 }

@@ -12,6 +12,7 @@
 #pragma once
 
 #include "Image2D.h"
+#include "PostProcess.h"
 #include "VulkanConstants.h"
 
 #include <volk.h>
@@ -40,7 +41,7 @@ namespace mir::vk
         VkImage IntermediateImage(uint32_t frame) const { return mIntermediate[frame].image; }
         VkImageView IntermediateView(uint32_t frame) const { return mIntermediate[frame].view; }
 
-        void Record(VkCommandBuffer cmd, uint32_t frame, VkImageView source, VkExtent2D extent);
+        void Record(VkCommandBuffer cmd, uint32_t frame, VkImageView source, FilmGrain grain, VkExtent2D extent);
 
     private:
         Device *mDevice = nullptr;
