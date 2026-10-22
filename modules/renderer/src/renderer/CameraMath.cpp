@@ -127,12 +127,28 @@ namespace mir
         return WorldRay{ camera.position, glm::normalize(nearPoint) };
     }
 
+    namespace
+    {
+        struct OrthographicBasis
+        {
+            glm::vec3 fwd;
+            glm::vec3 right;
+            glm::vec3 up;
+        };
+
+        OrthographicBasis MakeOrthographicBasis(const glm::vec3 &direction)
+        {
+            const glm::vec3 fwd = glm::normalize(direction);
+            const glm::vec3 upHint =
+                std::abs(fwd.y) > 0.99f ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
+            const glm::vec3 right = glm::normalize(glm::cross(upHint, -fwd));
+            return OrthographicBasis{ fwd, right, glm::cross(-fwd, right) };
+        }
+    }
+
     glm::mat4 MakeOrthographicViewProjection(const glm::vec3 &direction, float halfExtent, float nearZ)
     {
-        const glm::vec3 fwd = glm::normalize(direction);
-        const glm::vec3 upHint = std::abs(fwd.y) > 0.99f ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
-        const glm::vec3 right = glm::normalize(glm::cross(upHint, -fwd));
-        const glm::vec3 up = glm::cross(-fwd, right);
+        const auto [fwd, right, up] = MakeOrthographicBasis(direction);
 
         glm::mat4 cameraWorld{ 1.0f };
         cameraWorld[0] = glm::vec4(right, 0.0f);
@@ -151,6 +167,23 @@ namespace mir
         proj[3][3] = 1.0f;
 
         return proj * view;
+    }
+
+    WorldPosition SnapToShadowTexels(WorldPosition anchor, const glm::vec3 &direction, float texelSize)
+    {
+        if (!(texelSize > 0.0f))
+            return anchor;
+
+        const auto [fwd, right, up] = MakeOrthographicBasis(direction);
+        const WorldVec3 meters = anchor.Meters();
+        const WorldReal cell = static_cast<WorldReal>(texelSize);
+
+        const auto correction = [&](const glm::vec3 &axis)
+            {
+                const WorldReal along = glm::dot(meters, WorldVec3(axis));
+                return WorldVec3(axis) * (std::round(along / cell) * cell - along);
+            };
+        return WorldPosition::FromMeters(meters + correction(right) + correction(up)).value_or(anchor);
     }
 
     glm::mat4 MakeForwardZPerspectiveViewProjection(const glm::vec3 &forward, const glm::vec3 &up,

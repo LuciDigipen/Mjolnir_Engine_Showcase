@@ -53,13 +53,14 @@ namespace mir::vk
         constexpr static uint32_t kMaxSpotShadows = VulkanRenderer::kMaxSpotShadows;
         constexpr static uint32_t kMaxPointShadows = VulkanRenderer::kMaxPointShadows;
 
-        constexpr static uint32_t kSunShadowResolution = 2048;
+        constexpr static uint32_t kSunShadowResolution = VulkanRenderer::kSunShadowResolution;
         constexpr static uint32_t kSpotShadowResolution = 1024;
         constexpr static uint32_t kPointShadowResolution = 512;
 
         Device *mDevice = nullptr;
 
-        VkSampler mSampler = VK_NULL_HANDLE;
+        VkSampler mSampler = VK_NULL_HANDLE;        // point maps
+        VkSampler mCompareSampler = VK_NULL_HANDLE; // Sun/spot depth compare
 
         VkDescriptorSetLayout mSetLayout = VK_NULL_HANDLE;
         VkDescriptorPool mPool = VK_NULL_HANDLE;

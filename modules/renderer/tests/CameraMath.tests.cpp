@@ -336,3 +336,28 @@ TEST_CASE("HaltonJitter is deterministic and varies across indices", "[renderer]
     CHECK(mir::HaltonJitter(5) == mir::HaltonJitter(5));
     CHECK(mir::HaltonJitter(5) != mir::HaltonJitter(6));
 }
+
+TEST_CASE("SnapToShadowTexels moves an anchor only across the light, onto a world-fixed grid", "[renderer]")
+{
+    const glm::vec3 direction = glm::normalize(glm::vec3(0.3f, -0.8f, 0.5f));
+    const float texel = 50.0f / 2048.0f;
+
+    for (const glm::dvec3 &origin : { glm::dvec3(0.0), kEdgeA, kEdgeB })
+    {
+        // A float world can't hold a map-edge position to a fraction of a texel.
+        if (!mir::kLargeWorld && origin != glm::dvec3(0.0))
+            continue;
+
+        const WorldPosition anchor = At(origin + glm::dvec3(0.0071, 0.0, -0.0043));
+        const WorldPosition snapped = mir::SnapToShadowTexels(anchor, direction, texel);
+        const glm::dvec3 moved = glm::dvec3(snapped.Meters()) - glm::dvec3(anchor.Meters());
+
+        CHECK(glm::dot(moved, glm::dvec3(direction)) == Catch::Approx(0.0).margin(1e-6));
+        CHECK(glm::length(moved) <= std::sqrt(0.5) * texel + 1e-6);
+
+        const WorldPosition nudged = At(glm::dvec3(anchor.Meters()) + glm::dvec3(direction) * 3.0);
+        const glm::dvec3 nudgedMoved =
+            glm::dvec3(mir::SnapToShadowTexels(nudged, direction, texel).Meters()) - glm::dvec3(snapped.Meters());
+        CHECK(glm::length(nudgedMoved - glm::dvec3(direction) * 3.0) == Catch::Approx(0.0).margin(1e-6));
+    }
+}

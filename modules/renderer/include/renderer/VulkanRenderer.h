@@ -138,7 +138,7 @@ namespace mir
         glm::vec3 direction{ 0.0f, -1.0f, 0.0f };
         float spotCos = -1.0f; // cos(half-angle); -1 = no cone (Point/Area)
         glm::vec3 color{ 0.0f }; // color * intensity
-        int32_t shadowSlot = -1;
+        int32_t shadowSlot = -1; // -1 = none, -2 = Area (never shadowed)
     };
 
     struct PointShadowFace
@@ -239,6 +239,7 @@ namespace mir
         constexpr static uint32_t kMaxSpotShadows = 4;
         constexpr static uint32_t kMaxPointShadows = 2;
 
+        constexpr static uint32_t kSunShadowResolution = 2048;
         constexpr static float kSunShadowHalfExtent = 25.0f;
         constexpr static float kSunShadowNearZ = 0.5f;
 

@@ -269,9 +269,6 @@ namespace mir
                 assignNearest(/*wantSpot*/ true, VulkanRenderer::kMaxSpotShadows);
                 assignNearest(/*wantSpot*/ false, VulkanRenderer::kMaxPointShadows);
             }
-            for (LightItem &item : mLightItems)
-                if (item.shadowSlot == -2)
-                    item.shadowSlot = -1;
             mRenderer.SetLights(mLightItems);
 
             mDrawItems.clear();
@@ -303,9 +300,11 @@ namespace mir
             {
                 const glm::mat4 sunShadowViewProj = MakeOrthographicViewProjection(
                     -sunDirWS, VulkanRenderer::kSunShadowHalfExtent, VulkanRenderer::kSunShadowNearZ);
-                BuildViewDrawItems(shadowCasters(shadowCameraPose.position, sunShadowViewProj),
-                    shadowCameraPose.position, sunShadowViewProj, mSunShadowItems);
-                mRenderer.SetSunShadowCaster(true, sunShadowViewProj, shadowCameraPose.position, mSunShadowItems);
+                const WorldPosition sunAnchor = SnapToShadowTexels(shadowCameraPose.position, -sunDirWS,
+                    2.0f * VulkanRenderer::kSunShadowHalfExtent / VulkanRenderer::kSunShadowResolution);
+                BuildViewDrawItems(shadowCasters(sunAnchor, sunShadowViewProj),
+                    sunAnchor, sunShadowViewProj, mSunShadowItems);
+                mRenderer.SetSunShadowCaster(true, sunShadowViewProj, sunAnchor, mSunShadowItems);
             }
             else
             {
