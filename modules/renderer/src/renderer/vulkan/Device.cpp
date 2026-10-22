@@ -21,7 +21,7 @@
 #include <vector>
 
 #if MIR_WITH_DLSS
-#include <nvsdk_ngx_vk.h>
+#include "NgxIdentity.h"
 #endif
 
 namespace mir::vk
@@ -177,7 +177,6 @@ namespace mir::vk
         }
 
     #if MIR_WITH_DLSS
-            // Extension discovery, support detection and initialization share this identity.
         NVSDK_NGX_FeatureDiscoveryInfo NgxDiscoveryInfo()
         {
             return NVSDK_NGX_FeatureDiscoveryInfo{
@@ -187,9 +186,9 @@ namespace mir::vk
                     .IdentifierType = NVSDK_NGX_Application_Identifier_Type_Project_Id,
                     .v{ .ProjectDesc{
                         .ProjectId = kNgxProjectId,
-                        .EngineType = NVSDK_NGX_ENGINE_TYPE_CUSTOM,
-                        .EngineVersion = "1.0" } } },
-                .ApplicationDataPath = L".",
+                        .EngineType = kNgxEngineType,
+                        .EngineVersion = kNgxEngineVersion } } },
+                .ApplicationDataPath = kNgxApplicationDataPath,
                 .FeatureInfo = nullptr };
         }
 

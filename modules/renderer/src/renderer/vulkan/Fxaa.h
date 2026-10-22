@@ -11,13 +11,12 @@
  */
 #pragma once
 
+#include "Image2D.h"
 #include "VulkanConstants.h"
 
 #include <volk.h>
 
 #include <cstdint>
-
-VK_DEFINE_HANDLE(VmaAllocation)
 
 namespace mir::vk
 {
@@ -33,13 +32,13 @@ namespace mir::vk
         // device before either call.
         bool CreateIntermediate(VkExtent2D extent);
         void DestroyIntermediate();
-        bool HasIntermediate() const { return mIntermediateImages[0] != VK_NULL_HANDLE; }
+        bool HasIntermediate() const { return mIntermediate[0].image != VK_NULL_HANDLE; }
 
         // Recreates the intermediate at the new swapchain extent, if it exists.
         bool Resize(VkExtent2D extent);
 
-        VkImage IntermediateImage(uint32_t frame) const { return mIntermediateImages[frame]; }
-        VkImageView IntermediateView(uint32_t frame) const { return mIntermediateViews[frame]; }
+        VkImage IntermediateImage(uint32_t frame) const { return mIntermediate[frame].image; }
+        VkImageView IntermediateView(uint32_t frame) const { return mIntermediate[frame].view; }
 
         void Record(VkCommandBuffer cmd, uint32_t frame, VkImageView source, VkExtent2D extent);
 
@@ -49,9 +48,7 @@ namespace mir::vk
         // The swapchain's format, so the tonemap pipeline can target it unchanged.
         VkFormat mColorFormat = VK_FORMAT_UNDEFINED;
 
-        VkImage mIntermediateImages[kFramesInFlight]{};
-        VmaAllocation mIntermediateAllocations[kFramesInFlight]{};
-        VkImageView mIntermediateViews[kFramesInFlight]{};
+        Image2D mIntermediate[kFramesInFlight]{};
 
         VkSampler mSampler = VK_NULL_HANDLE;
 

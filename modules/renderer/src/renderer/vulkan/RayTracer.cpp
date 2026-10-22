@@ -335,134 +335,24 @@ namespace mir::vk
         return taken;
     }
 
+    namespace
+    {
+        // Every RT target is written as a storage image, sampled downstream and cleared by transfer.
+        constexpr VkImageUsageFlags kRtImageUsage =
+            VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    }
+
     bool RayTracer::CreateOutputImages(VkExtent2D extent)
     {
         for (uint32_t i = 0; i < kFramesInFlight; ++i)
         {
-            const VkImageCreateInfo imageInfo{
-                .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-                .imageType = VK_IMAGE_TYPE_2D,
-                .format = kHdrColorFormat,
-                .extent{ extent.width, extent.height, 1 },
-                .mipLevels = 1,
-                .arrayLayers = 1,
-                .samples = VK_SAMPLE_COUNT_1_BIT,
-                .tiling = VK_IMAGE_TILING_OPTIMAL,
-                .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
-
-            const VmaAllocationCreateInfo allocInfo{ .usage = VMA_MEMORY_USAGE_AUTO };
-
-            if (vmaCreateImage(mDevice->Allocator(), &imageInfo, &allocInfo,
-                &mOutputImages[i], &mOutputAllocations[i], nullptr) != VK_SUCCESS)
-            {
-                MIR_LOG_CRITICAL("CreateOutputImages: vmaCreateImage failed for RT output image {}", i);
+            if (!CreateImage2D(*mDevice, kHdrColorFormat, extent, kRtImageUsage,
+                    std::format("RT output image {}", i).c_str(), mOutput[i]) ||
+                !CreateImage2D(*mDevice, kDistanceFormat, extent, kRtImageUsage,
+                    std::format("RT distance image {}", i).c_str(), mDistance[i]) ||
+                !CreateImage2D(*mDevice, kRtVelocityFormat, extent, kRtImageUsage,
+                    std::format("RT velocity image {}", i).c_str(), mVelocity[i]))
                 return false;
-            }
-
-            const VkImageViewCreateInfo viewInfo{
-                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-                .image = mOutputImages[i],
-                .viewType = VK_IMAGE_VIEW_TYPE_2D,
-                .format = kHdrColorFormat,
-                .subresourceRange{
-                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                    .baseMipLevel = 0,
-                    .levelCount = 1,
-                    .baseArrayLayer = 0,
-                    .layerCount = 1 } };
-
-            if (vkCreateImageView(mDevice->Handle(), &viewInfo, nullptr, &mOutputViews[i]) != VK_SUCCESS)
-            {
-                MIR_LOG_CRITICAL("CreateOutputImages: vkCreateImageView failed for RT output image {}", i);
-                return false;
-            }
-
-            mDevice->NameObject(VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64_t>(mOutputImages[i]),
-                std::format("RT output image {}", i).c_str());
-
-            const VkImageCreateInfo distanceImageInfo{
-                .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-                .imageType = VK_IMAGE_TYPE_2D,
-                .format = kDistanceFormat,
-                .extent{ extent.width, extent.height, 1 },
-                .mipLevels = 1,
-                .arrayLayers = 1,
-                .samples = VK_SAMPLE_COUNT_1_BIT,
-                .tiling = VK_IMAGE_TILING_OPTIMAL,
-                .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
-
-            if (vmaCreateImage(mDevice->Allocator(), &distanceImageInfo, &allocInfo,
-                &mDistanceImages[i], &mDistanceAllocations[i], nullptr) != VK_SUCCESS)
-            {
-                MIR_LOG_CRITICAL("CreateOutputImages: vmaCreateImage failed for RT distance image {}", i);
-                return false;
-            }
-
-            const VkImageViewCreateInfo distanceViewInfo{
-                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-                .image = mDistanceImages[i],
-                .viewType = VK_IMAGE_VIEW_TYPE_2D,
-                .format = kDistanceFormat,
-                .subresourceRange{
-                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                    .baseMipLevel = 0,
-                    .levelCount = 1,
-                    .baseArrayLayer = 0,
-                    .layerCount = 1 } };
-
-            if (vkCreateImageView(mDevice->Handle(), &distanceViewInfo, nullptr, &mDistanceViews[i]) != VK_SUCCESS)
-            {
-                MIR_LOG_CRITICAL("CreateOutputImages: vkCreateImageView failed for RT distance image {}", i);
-                return false;
-            }
-
-            mDevice->NameObject(VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64_t>(mDistanceImages[i]),
-                std::format("RT distance image {}", i).c_str());
-
-            const VkImageCreateInfo velocityImageInfo{
-                .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-                .imageType = VK_IMAGE_TYPE_2D,
-                .format = kRtVelocityFormat,
-                .extent{ extent.width, extent.height, 1 },
-                .mipLevels = 1,
-                .arrayLayers = 1,
-                .samples = VK_SAMPLE_COUNT_1_BIT,
-                .tiling = VK_IMAGE_TILING_OPTIMAL,
-                .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
-
-            if (vmaCreateImage(mDevice->Allocator(), &velocityImageInfo, &allocInfo,
-                &mVelocityImages[i], &mVelocityAllocations[i], nullptr) != VK_SUCCESS)
-            {
-                MIR_LOG_CRITICAL("CreateOutputImages: vmaCreateImage failed for RT velocity image {}", i);
-                return false;
-            }
-
-            const VkImageViewCreateInfo velocityViewInfo{
-                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-                .image = mVelocityImages[i],
-                .viewType = VK_IMAGE_VIEW_TYPE_2D,
-                .format = kRtVelocityFormat,
-                .subresourceRange{
-                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                    .baseMipLevel = 0,
-                    .levelCount = 1,
-                    .baseArrayLayer = 0,
-                    .layerCount = 1 } };
-
-            if (vkCreateImageView(mDevice->Handle(), &velocityViewInfo, nullptr, &mVelocityViews[i]) != VK_SUCCESS)
-            {
-                MIR_LOG_CRITICAL("CreateOutputImages: vkCreateImageView failed for RT velocity image {}", i);
-                return false;
-            }
-
-            mDevice->NameObject(VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64_t>(mVelocityImages[i]),
-                std::format("RT velocity image {}", i).c_str());
         }
 
         mExtent = extent;
@@ -471,173 +361,17 @@ namespace mir::vk
 
     bool RayTracer::CreateGuideImages()
     {
-        const VmaAllocationCreateInfo allocInfo{ .usage = VMA_MEMORY_USAGE_AUTO };
-        const VkExtent2D extent = mExtent;
         for (uint32_t i = 0; i < kFramesInFlight; ++i)
         {
-            const VkImageCreateInfo albedoImageInfo{
-                .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-                .imageType = VK_IMAGE_TYPE_2D,
-                .format = kAlbedoFormat,
-                .extent{ extent.width, extent.height, 1 },
-                .mipLevels = 1,
-                .arrayLayers = 1,
-                .samples = VK_SAMPLE_COUNT_1_BIT,
-                .tiling = VK_IMAGE_TILING_OPTIMAL,
-                .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
-
-            if (vmaCreateImage(mDevice->Allocator(), &albedoImageInfo, &allocInfo,
-                &mAlbedoImages[i], &mAlbedoAllocations[i], nullptr) != VK_SUCCESS)
-            {
-                MIR_LOG_CRITICAL("CreateGuideImages: vmaCreateImage failed for RT albedo image {}", i);
+            if (!CreateImage2D(*mDevice, kAlbedoFormat, mExtent, kRtImageUsage,
+                    std::format("RT albedo image {}", i).c_str(), mAlbedo[i]) ||
+                !CreateImage2D(*mDevice, kHdrColorFormat, mExtent, kRtImageUsage,
+                    std::format("RT normal image {}", i).c_str(), mNormal[i]) ||
+                !CreateImage2D(*mDevice, kHdrColorFormat, mExtent, kRtImageUsage,
+                    std::format("RT specularAlbedo image {}", i).c_str(), mSpecularAlbedo[i]) ||
+                !CreateImage2D(*mDevice, kDistanceFormat, mExtent, kRtImageUsage,
+                    std::format("RT dlssDepth image {}", i).c_str(), mDlssDepth[i]))
                 return false;
-            }
-
-            const VkImageViewCreateInfo albedoViewInfo{
-                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-                .image = mAlbedoImages[i],
-                .viewType = VK_IMAGE_VIEW_TYPE_2D,
-                .format = kAlbedoFormat,
-                .subresourceRange{
-                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                    .baseMipLevel = 0,
-                    .levelCount = 1,
-                    .baseArrayLayer = 0,
-                    .layerCount = 1 } };
-
-            if (vkCreateImageView(mDevice->Handle(), &albedoViewInfo, nullptr, &mAlbedoViews[i]) != VK_SUCCESS)
-            {
-                MIR_LOG_CRITICAL("CreateGuideImages: vkCreateImageView failed for RT albedo image {}", i);
-                return false;
-            }
-
-            mDevice->NameObject(VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64_t>(mAlbedoImages[i]),
-                std::format("RT albedo image {}", i).c_str());
-
-            const VkImageCreateInfo normalImageInfo{
-                .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-                .imageType = VK_IMAGE_TYPE_2D,
-                .format = kHdrColorFormat,
-                .extent{ extent.width, extent.height, 1 },
-                .mipLevels = 1,
-                .arrayLayers = 1,
-                .samples = VK_SAMPLE_COUNT_1_BIT,
-                .tiling = VK_IMAGE_TILING_OPTIMAL,
-                .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
-
-            if (vmaCreateImage(mDevice->Allocator(), &normalImageInfo, &allocInfo,
-                &mNormalImages[i], &mNormalAllocations[i], nullptr) != VK_SUCCESS)
-            {
-                MIR_LOG_CRITICAL("CreateGuideImages: vmaCreateImage failed for RT normal image {}", i);
-                return false;
-            }
-
-            const VkImageViewCreateInfo normalViewInfo{
-                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-                .image = mNormalImages[i],
-                .viewType = VK_IMAGE_VIEW_TYPE_2D,
-                .format = kHdrColorFormat,
-                .subresourceRange{
-                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                    .baseMipLevel = 0,
-                    .levelCount = 1,
-                    .baseArrayLayer = 0,
-                    .layerCount = 1 } };
-
-            if (vkCreateImageView(mDevice->Handle(), &normalViewInfo, nullptr, &mNormalViews[i]) != VK_SUCCESS)
-            {
-                MIR_LOG_CRITICAL("CreateGuideImages: vkCreateImageView failed for RT normal image {}", i);
-                return false;
-            }
-
-            mDevice->NameObject(VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64_t>(mNormalImages[i]),
-                std::format("RT normal image {}", i).c_str());
-
-            const VkImageCreateInfo specularAlbedoImageInfo{
-                .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-                .imageType = VK_IMAGE_TYPE_2D,
-                .format = kHdrColorFormat,
-                .extent{ extent.width, extent.height, 1 },
-                .mipLevels = 1,
-                .arrayLayers = 1,
-                .samples = VK_SAMPLE_COUNT_1_BIT,
-                .tiling = VK_IMAGE_TILING_OPTIMAL,
-                .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
-
-            if (vmaCreateImage(mDevice->Allocator(), &specularAlbedoImageInfo, &allocInfo,
-                &mSpecularAlbedoImages[i], &mSpecularAlbedoAllocations[i], nullptr) != VK_SUCCESS)
-            {
-                MIR_LOG_CRITICAL("CreateGuideImages: vmaCreateImage failed for RT specularAlbedo image {}", i);
-                return false;
-            }
-
-            const VkImageViewCreateInfo specularAlbedoViewInfo{
-                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-                .image = mSpecularAlbedoImages[i],
-                .viewType = VK_IMAGE_VIEW_TYPE_2D,
-                .format = kHdrColorFormat,
-                .subresourceRange{
-                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                    .baseMipLevel = 0,
-                    .levelCount = 1,
-                    .baseArrayLayer = 0,
-                    .layerCount = 1 } };
-
-            if (vkCreateImageView(mDevice->Handle(), &specularAlbedoViewInfo, nullptr, &mSpecularAlbedoViews[i]) != VK_SUCCESS)
-            {
-                MIR_LOG_CRITICAL("CreateGuideImages: vkCreateImageView failed for RT specularAlbedo image {}", i);
-                return false;
-            }
-
-            mDevice->NameObject(VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64_t>(mSpecularAlbedoImages[i]),
-                std::format("RT specularAlbedo image {}", i).c_str());
-
-            const VkImageCreateInfo dlssDepthImageInfo{
-                .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-                .imageType = VK_IMAGE_TYPE_2D,
-                .format = kDistanceFormat,
-                .extent{ extent.width, extent.height, 1 },
-                .mipLevels = 1,
-                .arrayLayers = 1,
-                .samples = VK_SAMPLE_COUNT_1_BIT,
-                .tiling = VK_IMAGE_TILING_OPTIMAL,
-                .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
-
-            if (vmaCreateImage(mDevice->Allocator(), &dlssDepthImageInfo, &allocInfo,
-                &mDlssDepthImages[i], &mDlssDepthAllocations[i], nullptr) != VK_SUCCESS)
-            {
-                MIR_LOG_CRITICAL("CreateGuideImages: vmaCreateImage failed for RT dlssDepth image {}", i);
-                return false;
-            }
-
-            const VkImageViewCreateInfo dlssDepthViewInfo{
-                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-                .image = mDlssDepthImages[i],
-                .viewType = VK_IMAGE_VIEW_TYPE_2D,
-                .format = kDistanceFormat,
-                .subresourceRange{
-                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                    .baseMipLevel = 0,
-                    .levelCount = 1,
-                    .baseArrayLayer = 0,
-                    .layerCount = 1 } };
-
-            if (vkCreateImageView(mDevice->Handle(), &dlssDepthViewInfo, nullptr, &mDlssDepthViews[i]) != VK_SUCCESS)
-            {
-                MIR_LOG_CRITICAL("CreateGuideImages: vkCreateImageView failed for RT dlssDepth image {}", i);
-                return false;
-            }
-
-            mDevice->NameObject(VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64_t>(mDlssDepthImages[i]),
-                std::format("RT dlssDepth image {}", i).c_str());
         }
 
         return true;
@@ -647,41 +381,9 @@ namespace mir::vk
     {
         for (uint32_t i = 0; i < kFramesInFlight; ++i)
         {
-            if (mOutputViews[i] != VK_NULL_HANDLE)
-            {
-                vkDestroyImageView(mDevice->Handle(), mOutputViews[i], nullptr);
-                mOutputViews[i] = VK_NULL_HANDLE;
-            }
-            if (mOutputImages[i] != VK_NULL_HANDLE)
-            {
-                vmaDestroyImage(mDevice->Allocator(), mOutputImages[i], mOutputAllocations[i]);
-                mOutputImages[i] = VK_NULL_HANDLE;
-                mOutputAllocations[i] = VK_NULL_HANDLE;
-            }
-
-            if (mDistanceViews[i] != VK_NULL_HANDLE)
-            {
-                vkDestroyImageView(mDevice->Handle(), mDistanceViews[i], nullptr);
-                mDistanceViews[i] = VK_NULL_HANDLE;
-            }
-            if (mDistanceImages[i] != VK_NULL_HANDLE)
-            {
-                vmaDestroyImage(mDevice->Allocator(), mDistanceImages[i], mDistanceAllocations[i]);
-                mDistanceImages[i] = VK_NULL_HANDLE;
-                mDistanceAllocations[i] = VK_NULL_HANDLE;
-            }
-
-            if (mVelocityViews[i] != VK_NULL_HANDLE)
-            {
-                vkDestroyImageView(mDevice->Handle(), mVelocityViews[i], nullptr);
-                mVelocityViews[i] = VK_NULL_HANDLE;
-            }
-            if (mVelocityImages[i] != VK_NULL_HANDLE)
-            {
-                vmaDestroyImage(mDevice->Allocator(), mVelocityImages[i], mVelocityAllocations[i]);
-                mVelocityImages[i] = VK_NULL_HANDLE;
-                mVelocityAllocations[i] = VK_NULL_HANDLE;
-            }
+            DestroyImage2D(*mDevice, mOutput[i]);
+            DestroyImage2D(*mDevice, mDistance[i]);
+            DestroyImage2D(*mDevice, mVelocity[i]);
         }
     }
 
@@ -689,51 +391,10 @@ namespace mir::vk
     {
         for (uint32_t i = 0; i < kFramesInFlight; ++i)
         {
-            if (mAlbedoViews[i] != VK_NULL_HANDLE)
-            {
-                vkDestroyImageView(mDevice->Handle(), mAlbedoViews[i], nullptr);
-                mAlbedoViews[i] = VK_NULL_HANDLE;
-            }
-            if (mAlbedoImages[i] != VK_NULL_HANDLE)
-            {
-                vmaDestroyImage(mDevice->Allocator(), mAlbedoImages[i], mAlbedoAllocations[i]);
-                mAlbedoImages[i] = VK_NULL_HANDLE;
-                mAlbedoAllocations[i] = VK_NULL_HANDLE;
-            }
-
-            if (mNormalViews[i] != VK_NULL_HANDLE)
-            {
-                vkDestroyImageView(mDevice->Handle(), mNormalViews[i], nullptr);
-                mNormalViews[i] = VK_NULL_HANDLE;
-            }
-            if (mNormalImages[i] != VK_NULL_HANDLE)
-            {
-                vmaDestroyImage(mDevice->Allocator(), mNormalImages[i], mNormalAllocations[i]);
-                mNormalImages[i] = VK_NULL_HANDLE;
-                mNormalAllocations[i] = VK_NULL_HANDLE;
-            }
-            if (mSpecularAlbedoViews[i] != VK_NULL_HANDLE)
-            {
-                vkDestroyImageView(mDevice->Handle(), mSpecularAlbedoViews[i], nullptr);
-                mSpecularAlbedoViews[i] = VK_NULL_HANDLE;
-            }
-            if (mSpecularAlbedoImages[i] != VK_NULL_HANDLE)
-            {
-                vmaDestroyImage(mDevice->Allocator(), mSpecularAlbedoImages[i], mSpecularAlbedoAllocations[i]);
-                mSpecularAlbedoImages[i] = VK_NULL_HANDLE;
-                mSpecularAlbedoAllocations[i] = VK_NULL_HANDLE;
-            }
-            if (mDlssDepthViews[i] != VK_NULL_HANDLE)
-            {
-                vkDestroyImageView(mDevice->Handle(), mDlssDepthViews[i], nullptr);
-                mDlssDepthViews[i] = VK_NULL_HANDLE;
-            }
-            if (mDlssDepthImages[i] != VK_NULL_HANDLE)
-            {
-                vmaDestroyImage(mDevice->Allocator(), mDlssDepthImages[i], mDlssDepthAllocations[i]);
-                mDlssDepthImages[i] = VK_NULL_HANDLE;
-                mDlssDepthAllocations[i] = VK_NULL_HANDLE;
-            }
+            DestroyImage2D(*mDevice, mAlbedo[i]);
+            DestroyImage2D(*mDevice, mNormal[i]);
+            DestroyImage2D(*mDevice, mSpecularAlbedo[i]);
+            DestroyImage2D(*mDevice, mDlssDepth[i]);
         }
     }
 
@@ -1013,29 +674,29 @@ namespace mir::vk
                 .pAccelerationStructures = &mTlas[i] };
 
             const VkDescriptorImageInfo imageInfo{
-                .imageView = mOutputViews[i],
+                .imageView = mOutput[i].view,
                 .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
 
             const VkDescriptorImageInfo distanceImageInfo{
-                .imageView = mDistanceViews[i],
+                .imageView = mDistance[i].view,
                 .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
 
             const VkDescriptorImageInfo velocityImageInfo{
-                .imageView = mVelocityViews[i],
+                .imageView = mVelocity[i].view,
                 .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
 
             const VkDescriptorImageInfo albedoImageInfo{
-                .imageView = mAlbedoViews[i],
+                .imageView = mAlbedo[i].view,
                 .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
 
             const VkDescriptorImageInfo normalImageInfo{
-                .imageView = mNormalViews[i],
+                .imageView = mNormal[i].view,
                 .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
 
             const VkDescriptorImageInfo specularAlbedoImageInfo{
-                .imageView = mSpecularAlbedoViews[i], .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
+                .imageView = mSpecularAlbedo[i].view, .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
             const VkDescriptorImageInfo dlssDepthImageInfo{
-                .imageView = mDlssDepthViews[i], .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
+                .imageView = mDlssDepth[i].view, .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
 
             const VkDescriptorBufferInfo instanceInfoBufferInfo{
                 .buffer = mInstanceInfoBuffers[i],
@@ -1440,95 +1101,45 @@ namespace mir::vk
         VkDescriptorSet cameraSet, uint32_t cameraOffset, const ResourceStore &resources,
         const MaterialStore &materials, AntiAliasingMode aaMode, uint32_t rtSampleCount)
     {
-        ImageBarrier(cmd, mOutputImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
-            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-            VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
-            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
-        ImageBarrier(cmd, mDistanceImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
-            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-            VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
-            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
-        ImageBarrier(cmd, mVelocityImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
-            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-            VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
-            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
-
         // Without guide images bindings 5-8 are unwritten, so the shader's Dlss branches must not run.
         if (aaMode == AntiAliasingMode::Dlss && !HasDlssGuides())
             aaMode = AntiAliasingMode::Msaa;
         const bool dlssActive = aaMode == AntiAliasingMode::Dlss;
 
-        if (dlssActive)
-        {
-            ImageBarrier(cmd, mAlbedoImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
+        // gOutput/gDistance/gVelocity every frame, then the guide buffers while Dlss is active.
+        const std::array<VkImage, 7> images{ mOutput[frame].image, mDistance[frame].image, mVelocity[frame].image,
+            mAlbedo[frame].image, mNormal[frame].image, mSpecularAlbedo[frame].image, mDlssDepth[frame].image };
+        constexpr size_t kOutputCount = 3;
+        const std::span<const VkImage> written = std::span(images).first(dlssActive ? images.size() : kOutputCount);
+        const std::span<const VkImage> outputs = written.first(kOutputCount);
+        const std::span<const VkImage> guides = written.subspan(kOutputCount);
+
+        for (VkImage image : written)
+            ImageBarrier(cmd, image, VK_IMAGE_ASPECT_COLOR_BIT,
                 VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
                 VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
                 VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
-            ImageBarrier(cmd, mNormalImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
-                VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-                VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
-                VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
-            ImageBarrier(cmd, mSpecularAlbedoImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
-                VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-                VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
-                VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
-            ImageBarrier(cmd, mDlssDepthImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
-                VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-                VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
-                VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
-        }
 
         const VkClearColorValue blackClear{ .float32 = { 0.0f, 0.0f, 0.0f, 0.0f } };
         const VkImageSubresourceRange outputRange{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-        vkCmdClearColorImage(cmd, mOutputImages[frame], VK_IMAGE_LAYOUT_GENERAL, &blackClear, 1, &outputRange);
+        vkCmdClearColorImage(cmd, mOutput[frame].image, VK_IMAGE_LAYOUT_GENERAL, &blackClear, 1, &outputRange);
 
         const VkClearColorValue farClear{ .float32 = { 1.0e8f, 0.0f, 0.0f, 0.0f } };
-        vkCmdClearColorImage(cmd, mDistanceImages[frame], VK_IMAGE_LAYOUT_GENERAL, &farClear, 1, &outputRange);
-        vkCmdClearColorImage(cmd, mVelocityImages[frame], VK_IMAGE_LAYOUT_GENERAL, &blackClear, 1, &outputRange);
+        vkCmdClearColorImage(cmd, mDistance[frame].image, VK_IMAGE_LAYOUT_GENERAL, &farClear, 1, &outputRange);
+        vkCmdClearColorImage(cmd, mVelocity[frame].image, VK_IMAGE_LAYOUT_GENERAL, &blackClear, 1, &outputRange);
 
         // Background (miss) pixels never run closestHitMain, so without this clear a sky pixel's
         // guide data would be whatever the image last held - garbage on the very first frame,
         // stale shading data on every frame after. Neutral zero: zero albedo, zero normal/
         // roughness - a background pixel's guide data just doesn't mean much to Ray Reconstruction.
-        if (dlssActive)
-        {
-            vkCmdClearColorImage(cmd, mAlbedoImages[frame], VK_IMAGE_LAYOUT_GENERAL, &blackClear, 1, &outputRange);
-            vkCmdClearColorImage(cmd, mNormalImages[frame], VK_IMAGE_LAYOUT_GENERAL, &blackClear, 1, &outputRange);
-            vkCmdClearColorImage(cmd, mSpecularAlbedoImages[frame], VK_IMAGE_LAYOUT_GENERAL, &blackClear, 1, &outputRange);
-            vkCmdClearColorImage(cmd, mDlssDepthImages[frame], VK_IMAGE_LAYOUT_GENERAL, &blackClear, 1, &outputRange);
-        }
+        for (VkImage image : guides)
+            vkCmdClearColorImage(cmd, image, VK_IMAGE_LAYOUT_GENERAL, &blackClear, 1, &outputRange);
 
-        ImageBarrier(cmd, mOutputImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
-            VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
-            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-            VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
-        ImageBarrier(cmd, mDistanceImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
-            VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
-            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-            VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
-        ImageBarrier(cmd, mVelocityImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
-            VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
-            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-            VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
-        if (dlssActive)
-        {
-            ImageBarrier(cmd, mAlbedoImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
+        for (VkImage image : written)
+            ImageBarrier(cmd, image, VK_IMAGE_ASPECT_COLOR_BIT,
                 VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
                 VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                 VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
-            ImageBarrier(cmd, mNormalImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
-                VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
-                VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
-            ImageBarrier(cmd, mSpecularAlbedoImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
-                VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
-                VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
-            ImageBarrier(cmd, mDlssDepthImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
-                VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
-                VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
-        }
 
         RecordTlasBuild(cmd, frame, items, resources, materials);
 
@@ -1564,39 +1175,18 @@ namespace mir::vk
                 rect.extent.width, rect.extent.height, 1);
         }
 
-        ImageBarrier(cmd, mOutputImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
-            VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
-        ImageBarrier(cmd, mDistanceImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
-            VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
-        ImageBarrier(cmd, mVelocityImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
-            VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+        for (VkImage image : outputs)
+            ImageBarrier(cmd, image, VK_IMAGE_ASPECT_COLOR_BIT,
+                VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
 
         // Guides remain GENERAL here. The RR pass transitions them to sampled-image
         // layouts and synchronizes both shader writes and transfer-cleared background.
-        if (dlssActive)
-        {
-            ImageBarrier(cmd, mAlbedoImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
+        for (VkImage image : guides)
+            ImageBarrier(cmd, image, VK_IMAGE_ASPECT_COLOR_BIT,
                 VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
                 VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
                 VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_SHADER_READ_BIT);
-            ImageBarrier(cmd, mNormalImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
-                VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
-                VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-                VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_SHADER_READ_BIT);
-            ImageBarrier(cmd, mSpecularAlbedoImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
-                VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
-                VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-                VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_SHADER_READ_BIT);
-            ImageBarrier(cmd, mDlssDepthImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
-                VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
-                VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-                VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_SHADER_READ_BIT);
-        }
     }
 }

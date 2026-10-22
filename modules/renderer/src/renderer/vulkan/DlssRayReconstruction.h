@@ -10,6 +10,7 @@
  */
 #pragma once
 
+#include "Image2D.h"
 #include "VulkanConstants.h"
 
 #include <glm/vec2.hpp>
@@ -18,8 +19,6 @@
 
 struct NVSDK_NGX_Handle;
 struct NVSDK_NGX_Parameter;
-
-VK_DEFINE_HANDLE(VmaAllocation)
 
 namespace mir::vk
 {
@@ -36,7 +35,7 @@ namespace mir::vk
         // Record at the viewport rect's size. The caller idles the device before either.
         bool Activate(VkExtent2D extent);
         void Deactivate();
-        bool IsActive() const { return mOutputImages[0] != VK_NULL_HANDLE; }
+        bool IsActive() const { return mOutput[0].image != VK_NULL_HANDLE; }
 
         // Recreates the output images if active. The feature is sized by the rect, not the
         // swapchain, so Record rebuilds it only if the rect actually changed.
@@ -62,7 +61,7 @@ namespace mir::vk
         bool Record(VkCommandBuffer cmd, uint32_t frame, const Inputs &inputs, VkExtent2D extent, VkRect2D rect);
         void ResetHistory() { mResetHistory = true; }
 
-        VkImageView OutputView(uint32_t frame) const { return mOutputViews[frame]; }
+        VkImageView OutputView(uint32_t frame) const { return mOutput[frame].view; }
 
     private:
         bool CreateOutputImages(VkExtent2D extent);
@@ -78,8 +77,6 @@ namespace mir::vk
         VkExtent2D mFeatureExtent{};
         VkRect2D mLastRect{};
 
-        VkImage mOutputImages[kFramesInFlight]{};
-        VmaAllocation mOutputAllocations[kFramesInFlight]{};
-        VkImageView mOutputViews[kFramesInFlight]{};
+        Image2D mOutput[kFramesInFlight]{};
     };
 }

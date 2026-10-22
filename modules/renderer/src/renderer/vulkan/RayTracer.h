@@ -9,6 +9,7 @@
 #pragma once
 
 #include <renderer/VulkanRenderer.h>
+#include "Image2D.h"
 #include "VulkanConstants.h"
 
 #include <volk.h>
@@ -91,30 +92,30 @@ namespace mir::vk
             VkDescriptorSet cameraSet, uint32_t cameraOffset, const ResourceStore &resources,
             const MaterialStore &materials, AntiAliasingMode aaMode, uint32_t rtSampleCount);
 
-        VkImage OutputImage(uint32_t frame) const { return mOutputImages[frame]; }
-        VkImageView OutputView(uint32_t frame) const { return mOutputViews[frame]; }
+        VkImage OutputImage(uint32_t frame) const { return mOutput[frame].image; }
+        VkImageView OutputView(uint32_t frame) const { return mOutput[frame].view; }
 
-        VkImage DistanceImage(uint32_t frame) const { return mDistanceImages[frame]; }
-        VkImageView DistanceView(uint32_t frame) const { return mDistanceViews[frame]; }
+        VkImage DistanceImage(uint32_t frame) const { return mDistance[frame].image; }
+        VkImageView DistanceView(uint32_t frame) const { return mDistance[frame].view; }
 
-        VkImage VelocityImage(uint32_t frame) const { return mVelocityImages[frame]; }
-        VkImageView VelocityView(uint32_t frame) const { return mVelocityViews[frame]; }
+        VkImage VelocityImage(uint32_t frame) const { return mVelocity[frame].image; }
+        VkImageView VelocityView(uint32_t frame) const { return mVelocity[frame].view; }
 
         // Ray Reconstruction's guide buffers. They exist only while Dlss is the active mode -
         // bindings 5-8 are partially bound, so the set stays valid without them. The caller
         // idles the device first; Resize keeps whichever state it finds.
         bool CreateDlssGuides();
         void DestroyDlssGuides();
-        bool HasDlssGuides() const { return mAlbedoImages[0] != VK_NULL_HANDLE; }
+        bool HasDlssGuides() const { return mAlbedo[0].image != VK_NULL_HANDLE; }
 
-        VkImage AlbedoImage(uint32_t frame) const { return mAlbedoImages[frame]; }
-        VkImageView AlbedoView(uint32_t frame) const { return mAlbedoViews[frame]; }
-        VkImage NormalImage(uint32_t frame) const { return mNormalImages[frame]; }
-        VkImageView NormalView(uint32_t frame) const { return mNormalViews[frame]; }
-        VkImage SpecularAlbedoImage(uint32_t frame) const { return mSpecularAlbedoImages[frame]; }
-        VkImageView SpecularAlbedoView(uint32_t frame) const { return mSpecularAlbedoViews[frame]; }
-        VkImage DlssDepthImage(uint32_t frame) const { return mDlssDepthImages[frame]; }
-        VkImageView DlssDepthView(uint32_t frame) const { return mDlssDepthViews[frame]; }
+        VkImage AlbedoImage(uint32_t frame) const { return mAlbedo[frame].image; }
+        VkImageView AlbedoView(uint32_t frame) const { return mAlbedo[frame].view; }
+        VkImage NormalImage(uint32_t frame) const { return mNormal[frame].image; }
+        VkImageView NormalView(uint32_t frame) const { return mNormal[frame].view; }
+        VkImage SpecularAlbedoImage(uint32_t frame) const { return mSpecularAlbedo[frame].image; }
+        VkImageView SpecularAlbedoView(uint32_t frame) const { return mSpecularAlbedo[frame].view; }
+        VkImage DlssDepthImage(uint32_t frame) const { return mDlssDepth[frame].image; }
+        VkImageView DlssDepthView(uint32_t frame) const { return mDlssDepth[frame].view; }
 
     private:
         bool CreateAccelerationStructureObject(VkDeviceSize size, VkAccelerationStructureTypeKHR type,
@@ -156,32 +157,18 @@ namespace mir::vk
 
         VkExtent2D mExtent{};
 
-        VkImage mOutputImages[kFramesInFlight]{};
-        VmaAllocation mOutputAllocations[kFramesInFlight]{};
-        VkImageView mOutputViews[kFramesInFlight]{};
+        Image2D mOutput[kFramesInFlight]{};
 
-        VkImage mDistanceImages[kFramesInFlight]{};
-        VmaAllocation mDistanceAllocations[kFramesInFlight]{};
-        VkImageView mDistanceViews[kFramesInFlight]{};
+        Image2D mDistance[kFramesInFlight]{};
 
-        VkImage mVelocityImages[kFramesInFlight]{};
-        VmaAllocation mVelocityAllocations[kFramesInFlight]{};
-        VkImageView mVelocityViews[kFramesInFlight]{};
+        Image2D mVelocity[kFramesInFlight]{};
 
-        VkImage mAlbedoImages[kFramesInFlight]{};
-        VmaAllocation mAlbedoAllocations[kFramesInFlight]{};
-        VkImageView mAlbedoViews[kFramesInFlight]{};
+        Image2D mAlbedo[kFramesInFlight]{};
 
-        VkImage mNormalImages[kFramesInFlight]{};
-        VmaAllocation mNormalAllocations[kFramesInFlight]{};
-        VkImageView mNormalViews[kFramesInFlight]{};
+        Image2D mNormal[kFramesInFlight]{};
 
-        VkImage mSpecularAlbedoImages[kFramesInFlight]{};
-        VmaAllocation mSpecularAlbedoAllocations[kFramesInFlight]{};
-        VkImageView mSpecularAlbedoViews[kFramesInFlight]{};
-        VkImage mDlssDepthImages[kFramesInFlight]{};
-        VmaAllocation mDlssDepthAllocations[kFramesInFlight]{};
-        VkImageView mDlssDepthViews[kFramesInFlight]{};
+        Image2D mSpecularAlbedo[kFramesInFlight]{};
+        Image2D mDlssDepth[kFramesInFlight]{};
 
         VkAccelerationStructureKHR mTlas[kFramesInFlight]{};
         VkBuffer mTlasBuffers[kFramesInFlight]{};

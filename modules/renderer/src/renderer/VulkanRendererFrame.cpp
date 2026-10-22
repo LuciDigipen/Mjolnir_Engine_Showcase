@@ -253,31 +253,8 @@ namespace mir
         if (fxaaActive)
         {
             vk::ColorAttachmentBarrier(cmd, mFxaa->IntermediateImage(frame));
-
-            const VkRenderingAttachmentInfo intermediateAttachment{
-                .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-                .imageView = mFxaa->IntermediateView(frame),
-                .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-                .storeOp = VK_ATTACHMENT_STORE_OP_STORE };
-            const VkRenderingInfo intermediateRenderingInfo{
-                .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-                .renderArea{ .offset{ 0, 0 }, .extent = extent },
-                .layerCount = 1,
-                .colorAttachmentCount = 1,
-                .pColorAttachments = &intermediateAttachment };
-
-            vkCmdBeginRendering(cmd, &intermediateRenderingInfo);
+            vk::BeginFullscreenPass(cmd, mFxaa->IntermediateView(frame), extent);
             mDevice->BeginLabel(cmd, "Tonemap Pass", { 1.0f, 1.0f, 0.0f, 1.0f });
-
-            const VkViewport intermediateViewport{
-                .x = 0.0f, .y = 0.0f,
-                .width = static_cast<float>(extent.width),
-                .height = static_cast<float>(extent.height),
-                .minDepth = 0.0f, .maxDepth = 1.0f };
-            const VkRect2D intermediateScissor{ .offset{ 0, 0 }, .extent = extent };
-            vkCmdSetViewport(cmd, 0, 1, &intermediateViewport);
-            vkCmdSetScissor(cmd, 0, 1, &intermediateScissor);
 
             mPostProcess->Record(cmd, frame, colorSource, mBloom->OutputView(frame),
                 mBloom->Intensity(), extent);
@@ -295,32 +272,9 @@ namespace mir
             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
 
-        const VkRenderingAttachmentInfo swapchainAttachment{
-            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView = mSwapchain->View(imageIndex),
-            .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            // Every pixel is about to be overwritten by the fullscreen tonemap/FXAA triangle.
-            .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-            .storeOp = VK_ATTACHMENT_STORE_OP_STORE };
-
-        const VkRenderingInfo tonemapRenderingInfo{
-            .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-            .renderArea{ .offset{ 0, 0 }, .extent = extent },
-            .layerCount = 1,
-            .colorAttachmentCount = 1,
-            .pColorAttachments = &swapchainAttachment };
-
-        vkCmdBeginRendering(cmd, &tonemapRenderingInfo);
+        // Every pixel is about to be overwritten by the fullscreen tonemap/FXAA triangle.
+        vk::BeginFullscreenPass(cmd, mSwapchain->View(imageIndex), extent);
         mDevice->BeginLabel(cmd, fxaaActive ? "FXAA Pass" : "Tonemap Pass", { 1.0f, 1.0f, 0.0f, 1.0f });
-
-        const VkViewport viewport{
-            .x = 0.0f, .y = 0.0f,
-            .width = static_cast<float>(extent.width),
-            .height = static_cast<float>(extent.height),
-            .minDepth = 0.0f, .maxDepth = 1.0f };
-        const VkRect2D scissor{ .offset{ 0, 0 }, .extent = extent };
-        vkCmdSetViewport(cmd, 0, 1, &viewport);
-        vkCmdSetScissor(cmd, 0, 1, &scissor);
 
         if (fxaaActive)
             mFxaa->Record(cmd, frame, mFxaa->IntermediateView(frame), extent);
@@ -466,22 +420,9 @@ namespace mir
             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
 
-        const VkRenderingAttachmentInfo colorAttachment{
-            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView = mSwapchain->View(imageIndex),
-            .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-            .clearValue{ .color{ { mClearColor.r, mClearColor.g, mClearColor.b, mClearColor.a } } } };
-
-        const VkRenderingInfo renderingInfo{
-            .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-            .renderArea{ .offset{ 0, 0 }, .extent = mSwapchain->Extent() },
-            .layerCount = 1,
-            .colorAttachmentCount = 1,
-            .pColorAttachments = &colorAttachment };
-
-        vkCmdBeginRendering(cmd, &renderingInfo);
+        // Cleared: outside the view rect nothing else draws.
+        vk::BeginFullscreenPass(cmd, mSwapchain->View(imageIndex), mSwapchain->Extent(), VK_ATTACHMENT_LOAD_OP_CLEAR,
+            VkClearColorValue{ { mClearColor.r, mClearColor.g, mClearColor.b, mClearColor.a } });
         mDevice->BeginLabel(cmd, "Tonemap Pass", { 1.0f, 1.0f, 0.0f, 1.0f });
 
         if (hasRect)

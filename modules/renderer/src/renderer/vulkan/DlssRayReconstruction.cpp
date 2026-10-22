@@ -23,6 +23,8 @@
 #include <nvsdk_ngx_helpers_vk.h>
 #include <nvsdk_ngx_helpers_dlssd_vk.h>
 
+#include "NgxIdentity.h"
+
 #include <format>
 
 namespace mir::vk
@@ -55,8 +57,8 @@ namespace mir::vk
         const NVSDK_NGX_FeatureCommonInfo featureInfo{ .LoggingInfo = loggingInfo };
 
         const NVSDK_NGX_Result initResult = NVSDK_NGX_VULKAN_Init_with_ProjectID(
-            kNgxProjectId, NVSDK_NGX_ENGINE_TYPE_CUSTOM, "1.0",
-            L".", mDevice->Instance(), mDevice->Physical(), mDevice->Handle(),
+            kNgxProjectId, kNgxEngineType, kNgxEngineVersion,
+            kNgxApplicationDataPath, mDevice->Instance(), mDevice->Physical(), mDevice->Handle(),
             vkGetInstanceProcAddr, vkGetDeviceProcAddr, &featureInfo);
         if (!NVSDK_NGX_SUCCEED(initResult))
         {
@@ -100,70 +102,18 @@ namespace mir::vk
     bool DlssRayReconstruction::CreateOutputImages(VkExtent2D extent)
     {
         for (uint32_t frame = 0; frame < kFramesInFlight; ++frame)
-        {
-            const VkImageCreateInfo imageInfo{
-                .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-                .imageType = VK_IMAGE_TYPE_2D,
-                .format = kHdrColorFormat,
-                .extent{ extent.width, extent.height, 1 },
-                .mipLevels = 1,
-                .arrayLayers = 1,
-                .samples = VK_SAMPLE_COUNT_1_BIT,
-                .tiling = VK_IMAGE_TILING_OPTIMAL,
-                .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
-
-            const VmaAllocationCreateInfo allocInfo{ .usage = VMA_MEMORY_USAGE_AUTO };
-
-            if (vmaCreateImage(mDevice->Allocator(), &imageInfo, &allocInfo,
-                &mOutputImages[frame], &mOutputAllocations[frame], nullptr) != VK_SUCCESS)
-            {
-                MIR_LOG_CRITICAL("CreateOutputImages: vmaCreateImage failed for Dlss output {}", frame);
+            if (!CreateImage2D(*mDevice, kHdrColorFormat, extent,
+                    VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                    std::format("Dlss Ray Reconstruction output ({})", frame).c_str(), mOutput[frame]))
                 return false;
-            }
-
-            const VkImageViewCreateInfo viewInfo{
-                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-                .image = mOutputImages[frame],
-                .viewType = VK_IMAGE_VIEW_TYPE_2D,
-                .format = kHdrColorFormat,
-                .subresourceRange{
-                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                    .baseMipLevel = 0,
-                    .levelCount = 1,
-                    .baseArrayLayer = 0,
-                    .layerCount = 1 } };
-
-            if (vkCreateImageView(mDevice->Handle(), &viewInfo, nullptr, &mOutputViews[frame]) != VK_SUCCESS)
-            {
-                MIR_LOG_CRITICAL("CreateOutputImages: vkCreateImageView failed for Dlss output {}", frame);
-                return false;
-            }
-
-            mDevice->NameObject(VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64_t>(mOutputImages[frame]),
-                std::format("Dlss Ray Reconstruction output ({})", frame).c_str());
-        }
 
         return true;
     }
 
     void DlssRayReconstruction::DestroyOutputImages()
     {
-        for (uint32_t frame = 0; frame < kFramesInFlight; ++frame)
-        {
-            if (mOutputViews[frame] != VK_NULL_HANDLE)
-            {
-                vkDestroyImageView(mDevice->Handle(), mOutputViews[frame], nullptr);
-                mOutputViews[frame] = VK_NULL_HANDLE;
-            }
-            if (mOutputImages[frame] != VK_NULL_HANDLE)
-            {
-                vmaDestroyImage(mDevice->Allocator(), mOutputImages[frame], mOutputAllocations[frame]);
-                mOutputImages[frame] = VK_NULL_HANDLE;
-                mOutputAllocations[frame] = VK_NULL_HANDLE;
-            }
-        }
+        for (Image2D &image : mOutput)
+            DestroyImage2D(*mDevice, image);
     }
 
     bool DlssRayReconstruction::CreateFeature(VkExtent2D extent)
@@ -271,7 +221,7 @@ namespace mir::vk
                 VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
                 VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT);
 
-        ImageBarrier(cmd, mOutputImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
+        ImageBarrier(cmd, mOutput[frame].image, VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
             VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
             VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
@@ -297,7 +247,7 @@ namespace mir::vk
         auto specularRes = WrapInput(inputs.specularAlbedoView, inputs.specularAlbedoImage, kHdrColorFormat, extent);
         const VkImageSubresourceRange outputRange{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
         auto outputRes = NVSDK_NGX_Create_ImageView_Resource_VK(
-            mOutputViews[frame], mOutputImages[frame], outputRange, kHdrColorFormat,
+            mOutput[frame].view, mOutput[frame].image, outputRange, kHdrColorFormat,
             extent.width, extent.height, /*readWrite*/ true);
 
         NVSDK_NGX_VK_DLSSD_Eval_Params evalParams{};
@@ -338,7 +288,7 @@ namespace mir::vk
             mResetHistory = false;
         }
 
-        ImageBarrier(cmd, mOutputImages[frame], VK_IMAGE_ASPECT_COLOR_BIT,
+        ImageBarrier(cmd, mOutput[frame].image, VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
             VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
             VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
