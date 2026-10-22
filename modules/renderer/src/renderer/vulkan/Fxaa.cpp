@@ -14,11 +14,16 @@
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
 
+#include <vk_mem_alloc.h>
+
+#include <format>
+
 namespace mir::vk
 {
     bool Fxaa::Initialize(Device &device, VkFormat colorFormat)
     {
         mDevice = &device;
+        mColorFormat = colorFormat;
 
         const VkSamplerCreateInfo samplerInfo{
             .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
@@ -123,10 +128,97 @@ namespace mir::vk
         return pipelineOk;
     }
 
+    bool Fxaa::CreateIntermediate(VkExtent2D extent)
+    {
+        if (HasIntermediate())
+            return true;
+
+        for (uint32_t frame = 0; frame < kFramesInFlight; ++frame)
+        {
+            const VkImageCreateInfo imageInfo{
+                .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                .imageType = VK_IMAGE_TYPE_2D,
+                .format = mColorFormat,
+                .extent{ extent.width, extent.height, 1 },
+                .mipLevels = 1,
+                .arrayLayers = 1,
+                .samples = VK_SAMPLE_COUNT_1_BIT,
+                .tiling = VK_IMAGE_TILING_OPTIMAL,
+                .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
+
+            const VmaAllocationCreateInfo allocInfo{ .usage = VMA_MEMORY_USAGE_AUTO };
+
+            if (vmaCreateImage(mDevice->Allocator(), &imageInfo, &allocInfo,
+                &mIntermediateImages[frame], &mIntermediateAllocations[frame], nullptr) != VK_SUCCESS)
+            {
+                MIR_LOG_CRITICAL("CreateIntermediate: vmaCreateImage failed for frame {}", frame);
+                DestroyIntermediate();
+                return false;
+            }
+
+            const VkImageViewCreateInfo viewInfo{
+                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                .image = mIntermediateImages[frame],
+                .viewType = VK_IMAGE_VIEW_TYPE_2D,
+                .format = mColorFormat,
+                .subresourceRange{
+                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                    .baseMipLevel = 0,
+                    .levelCount = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount = 1 } };
+
+            if (vkCreateImageView(mDevice->Handle(), &viewInfo, nullptr, &mIntermediateViews[frame]) != VK_SUCCESS)
+            {
+                MIR_LOG_CRITICAL("CreateIntermediate: vkCreateImageView failed for frame {}", frame);
+                DestroyIntermediate();
+                return false;
+            }
+
+            mDevice->NameObject(VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64_t>(mIntermediateImages[frame]),
+                std::format("FXAA LDR intermediate ({})", frame).c_str());
+        }
+
+        return true;
+    }
+
+    void Fxaa::DestroyIntermediate()
+    {
+        if (mDevice == nullptr)
+            return;
+
+        for (uint32_t frame = 0; frame < kFramesInFlight; ++frame)
+        {
+            if (mIntermediateViews[frame] != VK_NULL_HANDLE)
+            {
+                vkDestroyImageView(mDevice->Handle(), mIntermediateViews[frame], nullptr);
+                mIntermediateViews[frame] = VK_NULL_HANDLE;
+            }
+            if (mIntermediateImages[frame] != VK_NULL_HANDLE)
+            {
+                vmaDestroyImage(mDevice->Allocator(), mIntermediateImages[frame], mIntermediateAllocations[frame]);
+                mIntermediateImages[frame] = VK_NULL_HANDLE;
+                mIntermediateAllocations[frame] = VK_NULL_HANDLE;
+            }
+        }
+    }
+
+    bool Fxaa::Resize(VkExtent2D extent)
+    {
+        if (!HasIntermediate())
+            return true;
+        DestroyIntermediate();
+        return CreateIntermediate(extent);
+    }
+
     void Fxaa::Shutdown()
     {
         if (mDevice == nullptr)
             return;
+
+        DestroyIntermediate();
 
         if (mPipeline != VK_NULL_HANDLE)
         {

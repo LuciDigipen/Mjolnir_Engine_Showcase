@@ -44,7 +44,7 @@ namespace mir::vk
         }
     }
 
-    bool DlssRayReconstruction::Initialize(Device &device, VkExtent2D extent)
+    bool DlssRayReconstruction::Initialize(Device &device)
     {
         mDevice = &device;
 
@@ -73,7 +73,28 @@ namespace mir::vk
             return false;
         }
 
-        return CreateOutputImages(extent) && CreateFeature(extent);
+        return true;
+    }
+
+    bool DlssRayReconstruction::Activate(VkExtent2D extent)
+    {
+        if (IsActive())
+            return true;
+        if (!CreateOutputImages(extent))
+        {
+            DestroyOutputImages();
+            return false;
+        }
+        mResetHistory = true;
+        return true;
+    }
+
+    void DlssRayReconstruction::Deactivate()
+    {
+        if (mDevice == nullptr)
+            return;
+        DestroyFeature();
+        DestroyOutputImages();
     }
 
     bool DlssRayReconstruction::CreateOutputImages(VkExtent2D extent)
@@ -188,13 +209,16 @@ namespace mir::vk
             NVSDK_NGX_VULKAN_ReleaseFeature(mHandle);
             mHandle = nullptr;
         }
+        mFeatureExtent = {};
     }
 
     bool DlssRayReconstruction::Resize(VkExtent2D extent)
     {
-        DestroyFeature();
+        if (!IsActive())
+            return true;
         DestroyOutputImages();
-        return CreateOutputImages(extent) && CreateFeature(extent);
+        mResetHistory = true;
+        return CreateOutputImages(extent);
     }
 
     void DlssRayReconstruction::Shutdown()
@@ -221,7 +245,9 @@ namespace mir::vk
         // at that viewport's size; resource wrappers still describe the full images.
         if (rect.extent.width != mFeatureExtent.width || rect.extent.height != mFeatureExtent.height)
         {
-            mDevice->WaitIdle();
+            // Only a live feature can still be in use by an in-flight frame.
+            if (mHandle != nullptr)
+                mDevice->WaitIdle();
             DestroyFeature();
             if (!CreateFeature(rect.extent))
                 return false;

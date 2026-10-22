@@ -249,14 +249,14 @@ namespace mir
             mDevice->EndLabel(cmd);
         }
 
-        const bool fxaaActive = mAntiAliasingMode == AntiAliasingMode::Fxaa;
+        const bool fxaaActive = mAntiAliasingMode == AntiAliasingMode::Fxaa && mFxaa->HasIntermediate();
         if (fxaaActive)
         {
-            vk::ColorAttachmentBarrier(cmd, mPostProcess->IntermediateImage(frame));
+            vk::ColorAttachmentBarrier(cmd, mFxaa->IntermediateImage(frame));
 
             const VkRenderingAttachmentInfo intermediateAttachment{
                 .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-                .imageView = mPostProcess->IntermediateView(frame),
+                .imageView = mFxaa->IntermediateView(frame),
                 .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                 .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
                 .storeOp = VK_ATTACHMENT_STORE_OP_STORE };
@@ -285,7 +285,7 @@ namespace mir
             mDevice->EndLabel(cmd);
             vkCmdEndRendering(cmd);
 
-            vk::ShaderReadOnlyBarrier(cmd, mPostProcess->IntermediateImage(frame));
+            vk::ShaderReadOnlyBarrier(cmd, mFxaa->IntermediateImage(frame));
         }
 
         vk::ImageBarrier(cmd, mSwapchain->Image(imageIndex), VK_IMAGE_ASPECT_COLOR_BIT,
@@ -323,7 +323,7 @@ namespace mir
         vkCmdSetScissor(cmd, 0, 1, &scissor);
 
         if (fxaaActive)
-            mFxaa->Record(cmd, frame, mPostProcess->IntermediateView(frame), extent);
+            mFxaa->Record(cmd, frame, mFxaa->IntermediateView(frame), extent);
         else
             mPostProcess->Record(cmd, frame, colorSource, mBloom->OutputView(frame),
                 mBloom->Intensity(), extent);
@@ -382,7 +382,7 @@ namespace mir
         {
             bool canReconstruct = false;
 #if MIR_WITH_DLSS
-            canReconstruct = mDlssReady;
+            canReconstruct = mDlssReady && mDlss->IsActive();
 #endif
             if (!canReconstruct)
                 effectiveAaMode = AntiAliasingMode::Msaa;

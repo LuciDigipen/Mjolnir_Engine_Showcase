@@ -145,9 +145,14 @@ namespace mir::vk
             VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtPipelineFeatures{
                 .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR };
 
+            // RayTracer leaves its Dlss guide bindings unwritten while Dlss is inactive.
+            VkPhysicalDeviceVulkan12Features features12{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
+
             VkPhysicalDeviceAccelerationStructureFeaturesKHR accelFeatures{
                 .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR,
                 .pNext = &rtPipelineFeatures };
+            rtPipelineFeatures.pNext = &features12;
 
             VkPhysicalDeviceFeatures2 features{
                 .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
@@ -156,7 +161,8 @@ namespace mir::vk
             vkGetPhysicalDeviceFeatures2(device, &features);
 
             if (accelFeatures.accelerationStructure != VK_TRUE ||
-                rtPipelineFeatures.rayTracingPipeline != VK_TRUE)
+                rtPipelineFeatures.rayTracingPipeline != VK_TRUE ||
+                features12.descriptorBindingPartiallyBound != VK_TRUE)
                 return false;
 
             outProps = VkPhysicalDeviceRayTracingPipelinePropertiesKHR{
@@ -646,6 +652,7 @@ namespace mir::vk
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
             .pNext = &features13,
             .descriptorIndexing = VK_TRUE,
+            .descriptorBindingPartiallyBound = mRayTracingSupported ? VK_TRUE : VK_FALSE,
             .timelineSemaphore = VK_TRUE,
             .bufferDeviceAddress = VK_TRUE };
 

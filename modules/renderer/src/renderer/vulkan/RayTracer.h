@@ -100,7 +100,13 @@ namespace mir::vk
         VkImage VelocityImage(uint32_t frame) const { return mVelocityImages[frame]; }
         VkImageView VelocityView(uint32_t frame) const { return mVelocityViews[frame]; }
 
-        // Ray Reconstruction's guide buffers
+        // Ray Reconstruction's guide buffers. They exist only while Dlss is the active mode -
+        // bindings 5-8 are partially bound, so the set stays valid without them. The caller
+        // idles the device first; Resize keeps whichever state it finds.
+        bool CreateDlssGuides();
+        void DestroyDlssGuides();
+        bool HasDlssGuides() const { return mAlbedoImages[0] != VK_NULL_HANDLE; }
+
         VkImage AlbedoImage(uint32_t frame) const { return mAlbedoImages[frame]; }
         VkImageView AlbedoView(uint32_t frame) const { return mAlbedoViews[frame]; }
         VkImage NormalImage(uint32_t frame) const { return mNormalImages[frame]; }
@@ -115,6 +121,9 @@ namespace mir::vk
             VkBuffer &outBuffer, VmaAllocation &outAllocation, VkAccelerationStructureKHR &outAS);
         bool CreateOutputImages(VkExtent2D extent);
         void DestroyOutputImages();
+        // At mExtent, which CreateOutputImages records.
+        bool CreateGuideImages();
+        void DestroyGuideImages();
         bool CreateScene();
         void DestroyScene();
         bool CreatePipeline(VkDescriptorSetLayout cameraSetLayout);
@@ -144,6 +153,8 @@ namespace mir::vk
 
         constexpr static uint32_t kMaxInstances = 16384;
         bool mWarnedInstanceCap = false;
+
+        VkExtent2D mExtent{};
 
         VkImage mOutputImages[kFramesInFlight]{};
         VmaAllocation mOutputAllocations[kFramesInFlight]{};

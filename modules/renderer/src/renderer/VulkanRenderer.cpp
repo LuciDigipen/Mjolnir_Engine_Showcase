@@ -129,7 +129,7 @@ namespace mir
     #if MIR_WITH_DLSS
         if (mDevice->NgxSupported())
         {
-            mDlssReady = mDlss->Initialize(*mDevice, mSwapchain->Extent());
+            mDlssReady = mDlss->Initialize(*mDevice);
             if (!mDlssReady)
                 MIR_LOG_ERROR("Initialize: DLSS Ray Reconstruction failed to initialize despite "
                     "NgxSupported() - Dlss is no longer offered and a Dlss request clamps to Off");
@@ -137,7 +137,7 @@ namespace mir
     #endif
 
         mMeshUploads->Initialize(*mDevice);
-        if (!mPostProcess->Initialize(*mDevice, mSwapchain->Format(), mSwapchain->Extent()))
+        if (!mPostProcess->Initialize(*mDevice, mSwapchain->Format()))
             return false;
 
         if (!mFxaa->Initialize(*mDevice, mSwapchain->Format()))
@@ -165,7 +165,7 @@ namespace mir
         // The swapchain cannot reach ray tracing, so the facade resizes its output images.
         if (!mSwapchain->Recreate(*mWindow) ||
             (mDevice->RayTracingSupported() && !mRayTracer->Resize(mSwapchain->Extent())) ||
-            !mPostProcess->Resize(mSwapchain->Extent()) ||
+            !mFxaa->Resize(mSwapchain->Extent()) ||
             !mBloom->Resize(mSwapchain->Extent()) ||
             !mDepthOfField->Resize(mSwapchain->Extent()) ||
             !mVelocityPass->Resize(mSwapchain->Extent()) ||
@@ -454,12 +454,44 @@ namespace mir
 
     void VulkanRenderer::SetAntiAliasing(AntiAliasingMode mode, uint32_t rtSampleCount)
     {
-    #if MIR_WITH_DLSS
-        if (mode != mAntiAliasingMode)
-            mDlss->ResetHistory();
-    #endif
-        mAntiAliasingMode = mode;
         mAntiAliasingRtSampleCount = rtSampleCount;
+        if (mode == mAntiAliasingMode)
+            return;
+        mAntiAliasingMode = mode;
+
+        if (mDevice->Handle() == VK_NULL_HANDLE)
+            return;
+
+        // Each mode's images exist only while it is active; in-flight frames may still use them.
+        mDevice->WaitIdle();
+
+        if (mode == AntiAliasingMode::Fxaa)
+        {
+            if (!mFxaa->CreateIntermediate(mSwapchain->Extent()))
+                MIR_LOG_ERROR("SetAntiAliasing: FXAA intermediate allocation failed; rendering without FXAA");
+        }
+        else
+        {
+            mFxaa->DestroyIntermediate();
+        }
+
+    #if MIR_WITH_DLSS
+        mDlss->ResetHistory();
+        if (mode == AntiAliasingMode::Dlss && mDlssReady)
+        {
+            if (!mRayTracer->CreateDlssGuides() || !mDlss->Activate(mSwapchain->Extent()))
+            {
+                mDlssReady = false;
+                MIR_LOG_ERROR("SetAntiAliasing: DLSS Ray Reconstruction resources failed to allocate; Dlss is "
+                    "no longer offered and a Dlss request clamps to Off");
+            }
+        }
+        if (mode != AntiAliasingMode::Dlss || !mDlssReady)
+        {
+            mDlss->Deactivate();
+            mRayTracer->DestroyDlssGuides();
+        }
+    #endif
     }
 
     void VulkanRenderer::SetFilm(bool enabled, float grain, float contrast, float saturation,

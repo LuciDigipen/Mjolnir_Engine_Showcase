@@ -16,16 +16,11 @@
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
 
-#include <vk_mem_alloc.h>
-
-#include <format>
-
 namespace mir::vk
 {
-    bool PostProcess::Initialize(Device &device, VkFormat swapchainFormat, VkExtent2D extent)
+    bool PostProcess::Initialize(Device &device, VkFormat swapchainFormat)
     {
         mDevice = &device;
-        mSwapchainFormat = swapchainFormat;
 
         const VkSamplerCreateInfo samplerInfo{
             .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
@@ -221,90 +216,13 @@ namespace mir::vk
 
         mDevice->NameObject(VK_OBJECT_TYPE_PIPELINE, reinterpret_cast<uint64_t>(mPipeline), "Tonemap pipeline");
 
-        return CreateLdrImage(extent);
-    }
-
-    bool PostProcess::CreateLdrImage(VkExtent2D extent)
-    {
-        for (uint32_t frame = 0; frame < kFramesInFlight; ++frame)
-        {
-            const VkImageCreateInfo imageInfo{
-                .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-                .imageType = VK_IMAGE_TYPE_2D,
-                .format = mSwapchainFormat,
-                .extent{ extent.width, extent.height, 1 },
-                .mipLevels = 1,
-                .arrayLayers = 1,
-                .samples = VK_SAMPLE_COUNT_1_BIT,
-                .tiling = VK_IMAGE_TILING_OPTIMAL,
-                .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
-
-            const VmaAllocationCreateInfo allocInfo{ .usage = VMA_MEMORY_USAGE_AUTO };
-
-            if (vmaCreateImage(mDevice->Allocator(), &imageInfo, &allocInfo,
-                &mLdrImages[frame], &mLdrAllocations[frame], nullptr) != VK_SUCCESS)
-            {
-                MIR_LOG_CRITICAL("CreateLdrImage: vmaCreateImage failed for frame {}", frame);
-                return false;
-            }
-
-            const VkImageViewCreateInfo viewInfo{
-                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-                .image = mLdrImages[frame],
-                .viewType = VK_IMAGE_VIEW_TYPE_2D,
-                .format = mSwapchainFormat,
-                .subresourceRange{
-                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                    .baseMipLevel = 0,
-                    .levelCount = 1,
-                    .baseArrayLayer = 0,
-                    .layerCount = 1 } };
-
-            if (vkCreateImageView(mDevice->Handle(), &viewInfo, nullptr, &mLdrViews[frame]) != VK_SUCCESS)
-            {
-                MIR_LOG_CRITICAL("CreateLdrImage: vkCreateImageView failed for frame {}", frame);
-                return false;
-            }
-
-            mDevice->NameObject(VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64_t>(mLdrImages[frame]),
-                std::format("PostProcess LDR intermediate ({})", frame).c_str());
-        }
-
         return true;
-    }
-
-    void PostProcess::DestroyLdrImage()
-    {
-        for (uint32_t frame = 0; frame < kFramesInFlight; ++frame)
-        {
-            if (mLdrViews[frame] != VK_NULL_HANDLE)
-            {
-                vkDestroyImageView(mDevice->Handle(), mLdrViews[frame], nullptr);
-                mLdrViews[frame] = VK_NULL_HANDLE;
-            }
-            if (mLdrImages[frame] != VK_NULL_HANDLE)
-            {
-                vmaDestroyImage(mDevice->Allocator(), mLdrImages[frame], mLdrAllocations[frame]);
-                mLdrImages[frame] = VK_NULL_HANDLE;
-                mLdrAllocations[frame] = VK_NULL_HANDLE;
-            }
-        }
-    }
-
-    bool PostProcess::Resize(VkExtent2D extent)
-    {
-        DestroyLdrImage();
-        return CreateLdrImage(extent);
     }
 
     void PostProcess::Shutdown()
     {
         if (mDevice == nullptr)
             return;
-
-        DestroyLdrImage();
 
         if (mPipeline != VK_NULL_HANDLE)
         {

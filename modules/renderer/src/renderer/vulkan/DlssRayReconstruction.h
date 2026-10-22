@@ -28,9 +28,18 @@ namespace mir::vk
     class DlssRayReconstruction
     {
     public:
-        bool Initialize(Device &device, VkExtent2D extent);
+        // NGX itself only - output images and the feature wait for Activate.
+        bool Initialize(Device &device);
         void Shutdown();
 
+        // Allocates the output images while Dlss is the active mode; the feature is built by
+        // Record at the viewport rect's size. The caller idles the device before either.
+        bool Activate(VkExtent2D extent);
+        void Deactivate();
+        bool IsActive() const { return mOutputImages[0] != VK_NULL_HANDLE; }
+
+        // Recreates the output images if active. The feature is sized by the rect, not the
+        // swapchain, so Record rebuilds it only if the rect actually changed.
         bool Resize(VkExtent2D extent);
 
         struct Inputs
