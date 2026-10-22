@@ -26,22 +26,25 @@ subsystem holds a pointer to the facade or to another subsystem.
 | `CameraBuffer` | set 1: per-view camera data and light list, plus the directional light, ambient, fog and atmosphere |
 | `ModelDescriptors` | set 2: per-draw model data, reset each frame |
 | `ShadowMaps` | set 3: Sun, spot and point shadow maps, their pipelines and casters |
-| `RayTracer` | a BLAS per mesh slot, a TLAS per frame, the RT pipeline, SBT and output images, plus linear-distance and per-pixel velocity output images alongside color, and Ray Reconstruction's guide buffers (albedo, normal/roughness, specular albedo, projected depth) while Dlss is active |
-| `DlssRayReconstruction` | `MIR_WITH_DLSS` builds only: NGX, the Ray Reconstruction feature and its output images - denoises and anti-aliases `RayTracer`'s output at native resolution, ahead of `DepthOfField` |
-| `DepthOfField` | the CoC, near/far blur and composite pipelines and their half/full-res working images - reads whatever linear-HDR color and depth/distance `DrawFrame`/`TraceFrame` hand it; its output becomes what `MotionBlur`, `Bloom` and `PostProcess` read from there on |
-| `VelocityPass` | raster-only: a second, depth-equal (no write) walk of the same `DrawItem`s the Scene Pass just drew, through `velocity.slang`, into its own per-pixel velocity image - the same shape as `ShadowMaps`' depth-only pass, not a screen-space one |
-| `MotionBlur` | the composite pipeline that samples color along whatever velocity buffer it's handed (`VelocityPass`'s output on raster, `RayTracer`'s `gVelocity` on ray tracing) - reads `DepthOfField`'s result when enabled, ahead of `Bloom` |
-| `Bloom` | the bright-pass extract, downsample and additive-upsample pipelines and mip chain - reads whatever linear-HDR source `DrawFrame`/`TraceFrame` hand it (`DepthOfField`'s or `MotionBlur`'s result when enabled), ahead of `PostProcess` |
-| `PostProcess` | the tonemap pipeline and per-frame descriptor sets - the one shared post-process hook point both `DrawFrame` and `TraceFrame` sample their scene color (and `Bloom`'s result) through; the same `tonemap.slang` pass also carries the film look (contrast, saturation, vignette, animated grain), applied after the tonemap itself - grain moves to `Fxaa` while FXAA runs |
-| `Fxaa` | raster only: the FXAA pipeline and, while Fxaa is the active mode, the LDR intermediate the tonemap pass writes into ahead of it |
+| `RayTracer` | a BLAS per mesh slot, a TLAS per frame, the RT pipeline and SBT, and every image the trace writes, one row each in `RayTracer.cpp`'s `kRtImages` table (format, binding, clear value, stage), addressed by `RtImage`: color, linear distance and per-pixel velocity always, plus Ray Reconstruction's guide buffers (albedo, normal/roughness, specular albedo, projected depth) while Dlss is active |
+| `PostProcessingStack` | every screen-space effect between the scene/trace pass and the swapchain, behind one `Initialize`/`Resize`/`Shutdown`, one `Apply` of the frame's `PostProcessingState`, and one record call per pipeline (`RecordRaster`/`RecordRayTraced`, then `PrepareComposite`/`RecordComposite`). It owns the effect subsystems below by value, plus their enabled flags, the active AA mode and sample count, and whether Ray Reconstruction is still available. `RayTracer` is passed in per call, never stored |
+| ↳ `DlssRayReconstruction` | `MIR_WITH_DLSS` builds only: NGX, the Ray Reconstruction feature and its output images - denoises and anti-aliases `RayTracer`'s output at native resolution, ahead of `DepthOfField` |
+| ↳ `DepthOfField` | the CoC, near/far blur and composite pipelines and their half/full-res working images - reads whatever linear-HDR color and depth/distance the stack hands it; its output becomes what `MotionBlur`, `Bloom` and `PostProcess` read from there on |
+| ↳ `VelocityPass` | raster-only: a second, depth-equal (no write) walk of the same `DrawItem`s the Scene Pass just drew, through `velocity.slang`, into its own per-pixel velocity image - the same shape as `ShadowMaps`' depth-only pass, not a screen-space one |
+| ↳ `MotionBlur` | the composite pipeline that samples color along whatever velocity buffer it's handed (`VelocityPass`'s output on raster, `RayTracer`'s `RtImage::Velocity` on ray tracing) - reads `DepthOfField`'s result when enabled, ahead of `Bloom` |
+| ↳ `Bloom` | the bright-pass extract, downsample and additive-upsample pipelines and mip chain - reads whatever linear-HDR source the stack hands it (`DepthOfField`'s or `MotionBlur`'s result when enabled), ahead of `PostProcess` |
+| ↳ `PostProcess` | the tonemap pipeline and per-frame descriptor sets - the composite both pipelines end in, sampling the scene color (and `Bloom`'s result); the same `tonemap.slang` pass also carries the film look (contrast, saturation, vignette, animated grain), applied after the tonemap itself - grain moves to `Fxaa` while FXAA runs |
+| ↳ `Fxaa` | raster only: the FXAA pipeline and, while Fxaa is the active mode, the LDR intermediate the tonemap pass writes into ahead of it |
 | `FrameCapture` | the `CaptureNextFrame` buffer and the PNG it writes |
 | `ImGuiOverlay` | ImGui's Vulkan backend and the draw data it overlays |
 | `MeshUploader` | the persistent staging ring, queued mesh uploads and their BLAS builds, and retired GPU objects until their last frame (#127) |
 
 The facade's own code is `VulkanRenderer.cpp`, which holds initialize, shutdown,
 the resource calls and the setters, and `VulkanRendererFrame.cpp`, which holds the
-frame loop and pass recording. Pass recording stays on the facade because one
-pass reads six subsystems at once.
+frame loop and pass recording. The scene, shadow and trace passes record on the
+facade because they read several subsystems at once; everything after them -
+the post effects and the tonemap/FXAA composite - is one `PostProcessingStack`
+call per step, so a new screen-space effect never touches the facade.
 
 A frame starts in `BeginFrame`. It recreates the swapchain when the window
 changed size, or when `RequestSwapchainRecreate` asked for it, then `FrameSync::Begin` waits for the frame slot, acquires an image
@@ -122,13 +125,7 @@ bool RayTracingSupported() const;                     // detected once at device
 void SetClearColor(const glm::vec4 &color);
 void SetDirectionalLight(const glm::vec3 &direction, const glm::vec3 &color); // direction points *toward* the light
 void SetAmbientColor(const glm::vec3 &color);
-void SetFog(const glm::vec3 &color, float density);          // density <= 0 disables fog
-void SetTonemap(float exposure, int tonemapOperator);         // tonemapOperator matches TonemapOperator in HdrEffect.h
-void SetBloom(bool enabled, float threshold, float intensity, float radius); // enabled false skips the GPU chain
-void SetDepthOfField(bool enabled, float focusDistance, float aperture, float maxBlur); // enabled false skips the GPU chain
-void SetFilm(bool enabled, float grain, float contrast, float saturation, float vignetteStrength, float vignetteRadius); // enabled false neutralizes it
-void SetMotionBlur(bool enabled, float shutterStrength, uint32_t sampleCount); // enabled false skips the GPU chain
-void SetAntiAliasing(AntiAliasingMode mode, uint32_t rtSampleCount); // already clamped; a change allocates/frees that mode's images
+void SetPostProcessing(const PostProcessingState &state);    // every Post-Processing effect, from ResolvePostProcessing; an AA mode change allocates/frees that mode's images
 bool RayTracingActive(bool requested) const;          // requested && RayTracingSupported() - what TraceFrame dispatch uses
 bool DlssAvailable() const;                           // NGX initialized and Ray Reconstruction hasn't failed since
 void SetImGuiDrawData(ImDrawData *drawData);
@@ -165,7 +162,8 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `Ray`, `RayIntersectsAABB`, `WorldRay`, `MakeCameraRay`, `RayIntersectsBox` | `renderer/CameraMath.h` | `WorldRay` is a camera ray with a double `WorldPosition` origin and a float direction; `RayIntersectsBox` places a `WorldPose` box relative to that origin in double, then runs the local ray/AABB slab test — the same file `MakeViewProjection` lives in, so both stay in the same Vulkan-convention math |
 | `RenderSystem` | `renderer/RenderSystem.h` | The ECS-to-renderer bridge, `SystemPhase::Render` |
 | `Shapes.h` | `renderer/Shapes.h` | `MakeCube()` and friends — plain vectors, no Vulkan |
-| `AntiAliasingMode`, `AntiAliasingParams`, `ClampAntiAliasingMode`, `ClampRtSampleCount` | `renderer/AntiAliasingEffect.h` | Off/Fxaa/Msaa/Dlss and `rtSampleCount`; the Post-Processing entry's json shape; the mode and sample-count enforcement `RenderSystem` applies every frame - see Rules |
+| `AntiAliasingMode`, `AntiAliasingParams`, `ClampAntiAliasingMode`, `ClampRtSampleCount` | `renderer/AntiAliasingEffect.h` | Off/Fxaa/Msaa/Dlss and `rtSampleCount`; the Post-Processing entry's json shape; the mode and sample-count enforcement `ResolvePostProcessing` applies every frame - see Rules |
+| `PostProcessingState`, `ResolvePostProcessing` | `renderer/PostProcessingState.h` | `PostProcessingSettings` resolved into the exact values `SetPostProcessing` applies: defaults for a missing entry, neutral values for a disabled one (fog density 0, exposure 1/None, bloom intensity 0, neutral film), motion blur's sample count at least 1, AA clamped. Pure, so it is unit-tested without a device |
 | `DlssConfig.h` | `renderer/DlssConfig.h` (generated) | `MIR_WITH_DLSS`/`kDlssCompiledIn` and the NGX project id |
 | `RenderSettings` | `renderer/RenderSettings.h` | Project Settings' `"rendering"` section (`rayTracing: bool`, `fog: bool`); `LoadFile`/`SaveFile`, a World resource loaded in `App::Initialize` |
 
@@ -331,8 +329,8 @@ the same pattern `mWarnedNoCamera` already uses.
 
 **Anti-aliasing has four modes, and `ClampAntiAliasingMode` decides which one
 runs.** Fxaa is raster only; Msaa (extra rays per pixel) and Dlss (Ray
-Reconstruction) are ray tracing only; Off is valid everywhere. `RenderSystem`
-clamps the Post-Processing entry's mode every frame against
+Reconstruction) are ray tracing only; Off is valid everywhere. `ResolvePostProcessing`
+(called by `RenderSystem`) clamps the Post-Processing entry's mode every frame against
 `RayTracingActive(rayTracing)` and `DlssAvailable()`, and the panel offers only
 modes that pass the same check, so a hand-edited or cross-machine
 `project_settings.json` can never select something this device can't run - it
@@ -344,14 +342,15 @@ D3D sample patterns for (packed back to back - the pattern for n samples starts
 at index n - 1).
 
 **Each mode's GPU resources exist only while it is the active mode.**
-`SetAntiAliasing` is the one place they come and go: on a mode change it idles
+`PostProcessingStack::Apply` is the one place they come and go: on a mode change it idles
 the device (mode switches are rare; in-flight frames may still read the old
 images), then creates or frees `Fxaa`'s LDR intermediate, `RayTracer`'s four
 guide buffers and `DlssRayReconstruction`'s output images. Ray Reconstruction's
 NGX feature is built later still, by `DlssRayReconstruction::Record` at the
 viewport rect's size, and rebuilt only when that size changes - a swapchain
-resize only recreates the output images. `RayTracer`'s guide bindings (5-8)
-are `PARTIALLY_BOUND`, so the descriptor set stays valid with them unwritten;
+resize only recreates the output images. `RayTracer`'s guide bindings (5-8,
+the `kRtImages` rows marked `guide`) are `PARTIALLY_BOUND`, so the descriptor
+set stays valid with them unwritten;
 the shader only touches them on its Dlss branches, and `RayTracer::Record`
 downgrades a Dlss trace to Msaa if the guides are missing. That flag is why
 ray tracing support now also requires `descriptorBindingPartiallyBound`.
@@ -360,8 +359,13 @@ ray tracing support now also requires `descriptorBindingPartiallyBound`.
 then tonemap - with Fxaa active the tonemap writes into `Fxaa`'s intermediate
 and the FXAA pass draws to the swapchain. Ray traced: trace (jittered under
 Dlss), Ray Reconstruction, then the same depth of field, motion blur, bloom and
-tonemap. Film grain is always the last thing applied: `PostProcess::NextFilmGrain`
-hands out one amount and seed per frame, and with Fxaa active the tonemap pass
+tonemap. Everything after scene/trace is `PostProcessingStack`'s:
+`RecordRaster` or `RecordRayTraced` returns the color the composite reads,
+`PrepareComposite` (raster) renders the FXAA intermediate, and
+`RecordComposite` draws inside the facade's swapchain pass, ahead of ImGui.
+Film grain is always the last thing applied: `PostProcess::NextFilmGrain`
+hands out one amount and seed per frame - `RecordComposite` is its only caller,
+once per frame - and with Fxaa active the tonemap pass
 gets an amount of 0 and `fxaa.slang` adds the grain after its edge blend
 (`FilmGrain.slang` is shared by both shaders), so FXAA never smears it. FXAA
 reads an sRGB intermediate, so its samples arrive linear; it takes the square
@@ -731,6 +735,30 @@ Everything that needs a device is verified by the smoke tests and
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-10-22* — **Post-processing behind one orchestrator (#269).** Was: every
+post effect was wired separately at four layers - a `unique_ptr`, enabled flag
+and `Set*` call per effect on `VulkanRenderer`; construct/`Initialize`/`Resize`/
+`Shutdown` lines per effect; an `if (xEnabled)` block per effect in both
+`RecordCommands` and `RecordRtFrame`, with DLSS and FXAA plumbing inline and
+`#if MIR_WITH_DLSS` scattered through the facade; seven near-identical
+find/read/enabled/call blocks in `RenderSystem::OnUpdate`; and each ray-traced
+output image edited in four places in `RayTracer`. Now:
+`ResolvePostProcessing` (`renderer/PostProcessingState.h`) turns
+`PostProcessingSettings` into a `PostProcessingState` that
+`VulkanRenderer::SetPostProcessing` applies in one call, replacing `SetFog`,
+`SetTonemap`, `SetBloom`, `SetDepthOfField`, `SetMotionBlur`, `SetAntiAliasing`
+and `SetFilm`; `vk::PostProcessingStack` owns `PostProcess`, `Fxaa`, `Bloom`,
+`DepthOfField`, `VelocityPass`, `MotionBlur` and `DlssRayReconstruction` with
+their state, so the facade holds one member and makes one call per lifecycle
+and record step, with no `MIR_WITH_DLSS` left in it; and `RayTracer`'s images
+come from one `kRtImages` table addressed by `RtImage`, replacing its fourteen
+named accessors with `Image`/`View(RtImage, frame)`. No behavior change. A new
+screen-space effect now needs its effect header and `vk::` subsystem, its
+`ComponentRegistration.cpp` line, a field in `PostProcessingState` and its
+lines inside the stack - nothing in `VulkanRenderer` or `RenderSystem`.
+Because: the plumbing was most of each effect's diff, and it grew with every
+effect.
 
 *2026-10-21* — **Anti-aliasing: FXAA, ray-traced MSAA and DLSS Ray
 Reconstruction (PR #278).** Was: no anti-aliasing on either pipeline. Now: a

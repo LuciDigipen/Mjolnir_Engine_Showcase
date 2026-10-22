@@ -11,11 +11,10 @@
 #include <core/ecs/components/WorldTransform.h>
 #include <core/math/WorldCoordinates.h>
 #include <core/platform/Surface.h>
-#include <renderer/AntiAliasingEffect.h>
-#include <renderer/DlssConfig.h>
 #include <renderer/Material.h>
 #include <renderer/Mesh.h>
 #include <renderer/MeshStreaming.h>
+#include <renderer/PostProcessingState.h>
 #include <renderer/Texture.h>
 #include <renderer/components/Sky.h>
 
@@ -50,15 +49,7 @@ namespace mir::vk
     class ShadowMaps;
     class ModelDescriptors;
     class RayTracer;
-#if MIR_WITH_DLSS
-    class DlssRayReconstruction;
-#endif
-    class PostProcess;
-    class Fxaa;
-    class Bloom;
-    class DepthOfField;
-    class VelocityPass;
-    class MotionBlur;
+    class PostProcessingStack;
     class FrameCapture;
     class ImGuiOverlay;
     class MeshUploader;
@@ -260,21 +251,9 @@ namespace mir
 
         void SetAmbientColor(const glm::vec3 &color);
 
-        void SetFog(const glm::vec3 &color, float density, float start, float end);
-
-        void SetTonemap(float exposure, int tonemapOperator);
-
-        // enabled false skips the GPU chain for the frame and the panel's bloom contribution.
-        void SetBloom(bool enabled, float threshold, float intensity, float radius);
-
-        void SetDepthOfField(bool enabled, float focusDistance, float aperture, float maxBlur);
-
-        void SetMotionBlur(bool enabled, float shutterStrength, uint32_t sampleCount);
-
-        void SetAntiAliasing(AntiAliasingMode mode, uint32_t rtSampleCount);
-
-        void SetFilm(bool enabled, float grain, float contrast, float saturation, float vignetteStrength,
-            float vignetteRadius);
+        // Every Post-Processing effect for the frame, already resolved by ResolvePostProcessing.
+        // A disabled Bloom/DepthOfField/MotionBlur skips its GPU chain for the frame.
+        void SetPostProcessing(const PostProcessingState &state);
 
         void SetAtmosphere(const Sky &sky);
 
@@ -327,27 +306,8 @@ namespace mir
         // Initialized only on a device with ray tracing; its Shutdown is a no-op otherwise.
         std::unique_ptr<vk::RayTracer> mRayTracer;
 
-    #if MIR_WITH_DLSS
-        std::unique_ptr<vk::DlssRayReconstruction> mDlss;
-        bool mDlssReady = false;
-    #endif
-
-        std::unique_ptr<vk::PostProcess> mPostProcess;
-        std::unique_ptr<vk::Fxaa> mFxaa;
-        std::unique_ptr<vk::Bloom> mBloom;
-        bool mBloomEnabled = false;
-
-        std::unique_ptr<vk::DepthOfField> mDepthOfField;
-        bool mDepthOfFieldEnabled = false;
-
-        std::unique_ptr<vk::VelocityPass> mVelocityPass;
-        std::unique_ptr<vk::MotionBlur> mMotionBlur;
-        bool mMotionBlurEnabled = false;
-
-        AntiAliasingMode mAntiAliasingMode = AntiAliasingMode::Off;
-        uint32_t mAntiAliasingRtSampleCount = 4;
-
-        std::vector<uint32_t> mVelocityCameraOffsets;
+        // Every screen-space effect between the scene/trace pass and the swapchain.
+        std::unique_ptr<vk::PostProcessingStack> mPostProcessing;
 
         std::unique_ptr<vk::FrameCapture> mCapture;
 

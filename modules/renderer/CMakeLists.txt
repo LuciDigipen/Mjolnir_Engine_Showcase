@@ -54,6 +54,7 @@ target_sources(engine_renderer PRIVATE
     src/renderer/MotionBlurEffect.cpp
     src/renderer/PostEffectRegistry.cpp
     src/renderer/PostProcessingSettings.cpp
+    src/renderer/PostProcessingState.cpp
     src/renderer/Renderer.cpp
     src/renderer/RenderSettings.cpp
     src/renderer/Shapes.cpp
@@ -73,6 +74,7 @@ target_sources(engine_renderer PRIVATE
     src/renderer/vulkan/ModelDescriptors.cpp
     src/renderer/vulkan/MotionBlur.cpp
     src/renderer/vulkan/PostProcess.cpp
+    src/renderer/vulkan/PostProcessingStack.cpp
     src/renderer/vulkan/RayTracer.cpp
     src/renderer/vulkan/ResourceStore.cpp
     src/renderer/vulkan/ShadowMaps.cpp

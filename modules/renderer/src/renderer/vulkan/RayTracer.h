@@ -28,6 +28,24 @@ namespace mir::vk
     class MaterialStore;
     struct GpuMesh;
 
+    // Every image the trace writes, one per frame in flight each. Adding one is a row in
+    // RayTracer.cpp's kRtImages (format, binding, clear value, stage) plus the shader side.
+    // The always-present outputs come first, then Ray Reconstruction's guide buffers.
+    enum class RtImage : uint32_t
+    {
+        Output,
+        // DepthOfField's linear ray distance.
+        Distance,
+        // MotionBlur's and Ray Reconstruction's per-pixel motion.
+        Velocity,
+        Albedo,
+        Normal,
+        SpecularAlbedo,
+        // Reversed-Z projected depth, separate from Distance.
+        DlssDepth,
+        Count
+    };
+
     // Only initialized when the device supports ray tracing.
     class RayTracer
     {
@@ -92,39 +110,30 @@ namespace mir::vk
             VkDescriptorSet cameraSet, uint32_t cameraOffset, const ResourceStore &resources,
             const MaterialStore &materials, AntiAliasingMode aaMode, uint32_t rtSampleCount);
 
-        VkImage OutputImage(uint32_t frame) const { return mOutput[frame].image; }
-        VkImageView OutputView(uint32_t frame) const { return mOutput[frame].view; }
-
-        VkImage DistanceImage(uint32_t frame) const { return mDistance[frame].image; }
-        VkImageView DistanceView(uint32_t frame) const { return mDistance[frame].view; }
-
-        VkImage VelocityImage(uint32_t frame) const { return mVelocity[frame].image; }
-        VkImageView VelocityView(uint32_t frame) const { return mVelocity[frame].view; }
+        // VK_NULL_HANDLE for a guide buffer while Dlss is inactive.
+        VkImage Image(RtImage image, uint32_t frame) const { return Slot(image, frame).image; }
+        VkImageView View(RtImage image, uint32_t frame) const { return Slot(image, frame).view; }
 
         // Ray Reconstruction's guide buffers. They exist only while Dlss is the active mode -
-        // bindings 5-8 are partially bound, so the set stays valid without them. The caller
+        // their bindings are partially bound, so the set stays valid without them. The caller
         // idles the device first; Resize keeps whichever state it finds.
         bool CreateDlssGuides();
         void DestroyDlssGuides();
-        bool HasDlssGuides() const { return mAlbedo[0].image != VK_NULL_HANDLE; }
-
-        VkImage AlbedoImage(uint32_t frame) const { return mAlbedo[frame].image; }
-        VkImageView AlbedoView(uint32_t frame) const { return mAlbedo[frame].view; }
-        VkImage NormalImage(uint32_t frame) const { return mNormal[frame].image; }
-        VkImageView NormalView(uint32_t frame) const { return mNormal[frame].view; }
-        VkImage SpecularAlbedoImage(uint32_t frame) const { return mSpecularAlbedo[frame].image; }
-        VkImageView SpecularAlbedoView(uint32_t frame) const { return mSpecularAlbedo[frame].view; }
-        VkImage DlssDepthImage(uint32_t frame) const { return mDlssDepth[frame].image; }
-        VkImageView DlssDepthView(uint32_t frame) const { return mDlssDepth[frame].view; }
+        bool HasDlssGuides() const { return Image(RtImage::Albedo, 0) != VK_NULL_HANDLE; }
 
     private:
         bool CreateAccelerationStructureObject(VkDeviceSize size, VkAccelerationStructureTypeKHR type,
             VkBuffer &outBuffer, VmaAllocation &outAllocation, VkAccelerationStructureKHR &outAS);
+        const Image2D &Slot(RtImage image, uint32_t frame) const
+        {
+            return mImages[static_cast<uint32_t>(image)][frame];
+        }
+        // The always-present outputs or the guide buffers, at extent.
+        bool CreateImages(bool guides, VkExtent2D extent);
+        void DestroyImages(bool guides);
         bool CreateOutputImages(VkExtent2D extent);
-        void DestroyOutputImages();
         // At mExtent, which CreateOutputImages records.
-        bool CreateGuideImages();
-        void DestroyGuideImages();
+        bool CreateGuideImages() { return CreateImages(true, mExtent); }
         bool CreateScene();
         void DestroyScene();
         bool CreatePipeline(VkDescriptorSetLayout cameraSetLayout);
@@ -157,18 +166,7 @@ namespace mir::vk
 
         VkExtent2D mExtent{};
 
-        Image2D mOutput[kFramesInFlight]{};
-
-        Image2D mDistance[kFramesInFlight]{};
-
-        Image2D mVelocity[kFramesInFlight]{};
-
-        Image2D mAlbedo[kFramesInFlight]{};
-
-        Image2D mNormal[kFramesInFlight]{};
-
-        Image2D mSpecularAlbedo[kFramesInFlight]{};
-        Image2D mDlssDepth[kFramesInFlight]{};
+        Image2D mImages[static_cast<uint32_t>(RtImage::Count)][kFramesInFlight]{};
 
         VkAccelerationStructureKHR mTlas[kFramesInFlight]{};
         VkBuffer mTlasBuffers[kFramesInFlight]{};

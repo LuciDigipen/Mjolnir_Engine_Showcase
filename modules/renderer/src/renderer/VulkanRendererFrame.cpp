@@ -10,27 +10,19 @@
 #define NOMINMAX
 #endif
 #include <renderer/VulkanRenderer.h>
-#include "vulkan/Bloom.h"
 #include "vulkan/CameraBuffer.h"
-#include "vulkan/DepthOfField.h"
 #include "vulkan/Device.h"
-#if MIR_WITH_DLSS
-#include "vulkan/DlssRayReconstruction.h"
-#endif
 #include "vulkan/FrameCapture.h"
 #include "vulkan/FrameSync.h"
-#include "vulkan/Fxaa.h"
 #include "vulkan/ImGuiOverlay.h"
 #include "vulkan/MaterialStore.h"
 #include "vulkan/MeshUploader.h"
 #include "vulkan/ModelDescriptors.h"
-#include "vulkan/MotionBlur.h"
-#include "vulkan/PostProcess.h"
+#include "vulkan/PostProcessingStack.h"
 #include "vulkan/RayTracer.h"
 #include "vulkan/ResourceStore.h"
 #include "vulkan/ShadowMaps.h"
 #include "vulkan/Swapchain.h"
-#include "vulkan/VelocityPass.h"
 #include "vulkan/VulkanConstants.h"
 #include "vulkan/VulkanUtil.h"
 #include "vulkan/VulkanPushConstants.h"
@@ -40,6 +32,7 @@
 #include <glm/glm.hpp>
 
 #include <algorithm>
+#include <array>
 
 namespace mir
 {
@@ -197,74 +190,23 @@ namespace mir
             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
             VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
 
-        if (mMotionBlurEnabled)
-        {
-            vk::ImageBarrier(cmd, mSwapchain->DepthImage(frame), VK_IMAGE_ASPECT_DEPTH_BIT,
-                VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT);
+        const std::span<const RenderView> drawnViews = views.subspan(0, viewCount);
+        std::array<uint32_t, vk::kMaxViewsPerFrame> velocityCameraOffsets{};
+        if (mPostProcessing->NeedsVelocity())
+            for (size_t i = 0; i < viewCount; ++i)
+                velocityCameraOffsets[i] = WriteCameraData(views[i], static_cast<uint32_t>(i));
 
-            mVelocityCameraOffsets.clear();
-            const size_t motionViewCount = std::min<size_t>(views.size(), vk::kMaxViewsPerFrame);
-            for (size_t i = 0; i < motionViewCount; ++i)
-                mVelocityCameraOffsets.push_back(WriteCameraData(views[i], static_cast<uint32_t>(i)));
+        const VkImageView colorSource = mPostProcessing->RecordRaster(cmd, frame, {
+            .sceneColor = mSwapchain->HdrColorView(frame),
+            .depthImage = mSwapchain->DepthImage(frame),
+            .depthView = mSwapchain->DepthView(frame),
+            .views = drawnViews,
+            .cameraSet = mCameraBuffer->Set(frame),
+            .cameraOffsets = std::span(velocityCameraOffsets).first(viewCount),
+            .resources = mResources.get(),
+            .extent = extent });
 
-            mDevice->BeginLabel(cmd, "Velocity Pass", { 0.0f, 1.0f, 0.5f, 1.0f });
-            mVelocityPass->Record(cmd, frame, views.subspan(0, motionViewCount), mCameraBuffer->Set(frame),
-                mVelocityCameraOffsets, mSwapchain->DepthView(frame), extent, *mResources);
-            mDevice->EndLabel(cmd);
-        }
-
-        vk::ImageBarrier(cmd, mSwapchain->DepthImage(frame), VK_IMAGE_ASPECT_DEPTH_BIT,
-            VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-            VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
-
-        VkImageView colorSource = mSwapchain->HdrColorView(frame);
-        if (mDepthOfFieldEnabled)
-        {
-            mDevice->BeginLabel(cmd, "Depth Of Field Pass", { 0.5f, 0.0f, 1.0f, 1.0f });
-            const float nearZ = views.empty() ? 0.1f : views[0].nearZ;
-            const float farZ = views.empty() ? 0.0f : views[0].farZ;
-            mDepthOfField->Record(cmd, frame, mSwapchain->HdrColorView(frame), mSwapchain->DepthView(frame),
-                /*isLinearDepth*/ false, nearZ, farZ, extent);
-            mDevice->EndLabel(cmd);
-            colorSource = mDepthOfField->OutputView(frame);
-        }
-
-        if (mMotionBlurEnabled)
-        {
-            mDevice->BeginLabel(cmd, "Motion Blur Pass", { 0.0f, 1.0f, 0.5f, 1.0f });
-            mMotionBlur->Record(cmd, frame, colorSource, mVelocityPass->OutputView(frame), extent);
-            mDevice->EndLabel(cmd);
-            colorSource = mMotionBlur->OutputView(frame);
-        }
-
-        if (mBloomEnabled)
-        {
-            mDevice->BeginLabel(cmd, "Bloom Pass", { 1.0f, 0.5f, 0.0f, 1.0f });
-            mBloom->Record(cmd, frame, colorSource, extent);
-            mDevice->EndLabel(cmd);
-        }
-
-        const bool fxaaActive = mAntiAliasingMode == AntiAliasingMode::Fxaa && mFxaa->HasIntermediate();
-        const vk::FilmGrain grain = mPostProcess->NextFilmGrain();
-        if (fxaaActive)
-        {
-            vk::ColorAttachmentBarrier(cmd, mFxaa->IntermediateImage(frame));
-            vk::BeginFullscreenPass(cmd, mFxaa->IntermediateView(frame), extent);
-            mDevice->BeginLabel(cmd, "Tonemap Pass", { 1.0f, 1.0f, 0.0f, 1.0f });
-
-            mPostProcess->Record(cmd, frame, colorSource, mBloom->OutputView(frame),
-                mBloom->Intensity(), vk::FilmGrain{}, extent);
-
-            mDevice->EndLabel(cmd);
-            vkCmdEndRendering(cmd);
-
-            vk::ShaderReadOnlyBarrier(cmd, mFxaa->IntermediateImage(frame));
-        }
+        const bool fxaaActive = mPostProcessing->PrepareComposite(cmd, frame, colorSource, extent);
 
         vk::ImageBarrier(cmd, mSwapchain->Image(imageIndex), VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_UNDEFINED,
@@ -277,11 +219,7 @@ namespace mir
         vk::BeginFullscreenPass(cmd, mSwapchain->View(imageIndex), extent);
         mDevice->BeginLabel(cmd, fxaaActive ? "FXAA Pass" : "Tonemap Pass", { 1.0f, 1.0f, 0.0f, 1.0f });
 
-        if (fxaaActive)
-            mFxaa->Record(cmd, frame, mFxaa->IntermediateView(frame), grain, extent);
-        else
-            mPostProcess->Record(cmd, frame, colorSource, mBloom->OutputView(frame),
-                mBloom->Intensity(), grain, extent);
+        mPostProcessing->RecordComposite(cmd, frame, colorSource, fxaaActive, extent);
 
         mImGuiOverlay->RecordInPass(cmd);
 
@@ -332,87 +270,22 @@ namespace mir
         const VkRect2D rect = vk::ResolveViewRect(view.rect, mSwapchain->Extent());
         const uint32_t frame = mFrameSync->Index();
 
-        AntiAliasingMode effectiveAaMode = mAntiAliasingMode;
-        if (effectiveAaMode == AntiAliasingMode::Dlss)
-        {
-            bool canReconstruct = false;
-#if MIR_WITH_DLSS
-            canReconstruct = mDlssReady && mDlss->IsActive();
-#endif
-            if (!canReconstruct)
-                effectiveAaMode = AntiAliasingMode::Msaa;
-        }
+        const AntiAliasingMode effectiveAaMode = mPostProcessing->RtAntiAliasingMode();
         const bool applyJitter = effectiveAaMode == AntiAliasingMode::Dlss;
         glm::vec2 jitterPixels{ 0.0f };
         const uint32_t cameraOffset = WriteCameraData(view, 0, applyJitter, &jitterPixels);
 
         mDevice->BeginLabel(cmd, "Ray Trace Pass", { 0.0f, 1.0f, 1.0f, 1.0f });
         mRayTracer->Record(cmd, frame, view.items, rect, mCameraBuffer->Set(frame),
-            cameraOffset, *mResources, *mMaterialStore, effectiveAaMode, mAntiAliasingRtSampleCount);
+            cameraOffset, *mResources, *mMaterialStore, effectiveAaMode, mPostProcessing->RtSampleCount());
         mDevice->EndLabel(cmd);
 
         const bool hasRect = rect.extent.width > 0 && rect.extent.height > 0;
 
-        VkImageView colorSource = mRayTracer->OutputView(frame);
-
-    #if MIR_WITH_DLSS
-            // The ray-tracing path has no denoiser today - Ray Reconstruction becomes its denoiser and upscaler
-        if (hasRect && effectiveAaMode == AntiAliasingMode::Dlss && mDlssReady)
-        {
-            mDevice->BeginLabel(cmd, "Dlss Ray Reconstruction Pass", { 0.0f, 0.5f, 1.0f, 1.0f });
-            const vk::DlssRayReconstruction::Inputs dlssInputs{
-                .colorImage = mRayTracer->OutputImage(frame),
-                .colorView = mRayTracer->OutputView(frame),
-                .depthImage = mRayTracer->DlssDepthImage(frame),
-                .depthView = mRayTracer->DlssDepthView(frame),
-                .velocityImage = mRayTracer->VelocityImage(frame),
-                .velocityView = mRayTracer->VelocityView(frame),
-                .albedoImage = mRayTracer->AlbedoImage(frame),
-                .albedoView = mRayTracer->AlbedoView(frame),
-                .normalImage = mRayTracer->NormalImage(frame),
-                .normalView = mRayTracer->NormalView(frame),
-                .specularAlbedoImage = mRayTracer->SpecularAlbedoImage(frame),
-                .specularAlbedoView = mRayTracer->SpecularAlbedoView(frame),
-                .jitterPixels = jitterPixels };
-            const bool reconstructed = mDlss->Record(cmd, frame, dlssInputs, mSwapchain->Extent(), rect);
-            mDevice->EndLabel(cmd);
-            if (reconstructed)
-            {
-                colorSource = mDlss->OutputView(frame);
-            }
-            else
-            {
-                // DlssAvailable() now reports false, so the next frame's clamp and the panel drop Dlss.
-                mDlssReady = false;
-                MIR_LOG_WARN("DLSS Ray Reconstruction failed; Dlss is no longer offered and a Dlss request "
-                    "clamps to Off");
-            }
-        }
-    #endif
-
-        if (hasRect && mDepthOfFieldEnabled)
-        {
-            mDevice->BeginLabel(cmd, "Depth Of Field Pass", { 0.5f, 0.0f, 1.0f, 1.0f });
-            mDepthOfField->Record(cmd, frame, colorSource, mRayTracer->DistanceView(frame),
-                /*isLinearDepth*/ true, view.nearZ, view.farZ, mSwapchain->Extent());
-            mDevice->EndLabel(cmd);
-            colorSource = mDepthOfField->OutputView(frame);
-        }
-
-        if (hasRect && mMotionBlurEnabled)
-        {
-            mDevice->BeginLabel(cmd, "Motion Blur Pass", { 0.0f, 1.0f, 0.5f, 1.0f });
-            mMotionBlur->Record(cmd, frame, colorSource, mRayTracer->VelocityView(frame), mSwapchain->Extent());
-            mDevice->EndLabel(cmd);
-            colorSource = mMotionBlur->OutputView(frame);
-        }
-
-        if (hasRect && mBloomEnabled)
-        {
-            mDevice->BeginLabel(cmd, "Bloom Pass", { 1.0f, 0.5f, 0.0f, 1.0f });
-            mBloom->Record(cmd, frame, colorSource, mSwapchain->Extent());
-            mDevice->EndLabel(cmd);
-        }
+        const VkImageView colorSource = hasRect
+            ? mPostProcessing->RecordRayTraced(cmd, frame, *mRayTracer, rect, jitterPixels, view.nearZ, view.farZ,
+                mSwapchain->Extent())
+            : mRayTracer->View(vk::RtImage::Output, frame);
 
         vk::ImageBarrier(cmd, mSwapchain->Image(imageIndex), VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_UNDEFINED,
@@ -437,8 +310,7 @@ namespace mir
             vkCmdSetViewport(cmd, 0, 1, &viewport);
             vkCmdSetScissor(cmd, 0, 1, &rect);
 
-            mPostProcess->Record(cmd, frame, colorSource, mBloom->OutputView(frame),
-                mBloom->Intensity(), mPostProcess->NextFilmGrain(), mSwapchain->Extent());
+            mPostProcessing->RecordComposite(cmd, frame, colorSource, /*fxaa*/ false, mSwapchain->Extent());
         }
 
         mImGuiOverlay->RecordInPass(cmd);

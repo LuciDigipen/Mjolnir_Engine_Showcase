@@ -10,6 +10,7 @@ engine_add_module_tests(renderer
     MotionBlurEffect.tests.cpp
     PostEffectRegistry.tests.cpp
     PostProcessingSettings.tests.cpp
+    PostProcessingState.tests.cpp
     RenderSettings.tests.cpp
     Shapes.tests.cpp
     ViewSubmission.tests.cpp
