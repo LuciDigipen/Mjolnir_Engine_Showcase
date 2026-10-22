@@ -54,6 +54,7 @@ target_sources(engine_renderer PRIVATE
     src/renderer/MotionBlurEffect.cpp
     src/renderer/PostEffectRegistry.cpp
     src/renderer/PostProcessingSettings.cpp
+    src/renderer/PostProcessingState.cpp
     src/renderer/Renderer.cpp
     src/renderer/RenderSettings.cpp
     src/renderer/Shapes.cpp

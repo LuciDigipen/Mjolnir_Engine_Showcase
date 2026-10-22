@@ -422,35 +422,30 @@ namespace mir
         mCameraBuffer->SetAmbientColor(color);
     }
 
-    void VulkanRenderer::SetFog(const glm::vec3 &color, float density, float start, float end)
+    void VulkanRenderer::SetPostProcessing(const PostProcessingState &state)
     {
-        mCameraBuffer->SetFog(color, density, start, end);
+        mCameraBuffer->SetFog(state.fog.color, state.fog.density, state.fog.start, state.fog.end);
+
+        mPostProcess->SetParams(state.hdr.exposure, static_cast<int>(state.hdr.op));
+
+        mBloomEnabled = state.bloomEnabled;
+        mBloom->SetParams(state.bloom.threshold, state.bloom.intensity, state.bloom.radius);
+
+        mDepthOfFieldEnabled = state.depthOfFieldEnabled;
+        mDepthOfField->SetParams(state.depthOfField.focusDistance, state.depthOfField.aperture,
+            state.depthOfField.maxBlur);
+
+        mMotionBlurEnabled = state.motionBlurEnabled;
+        mMotionBlur->SetParams(state.motionBlur.shutterStrength,
+            static_cast<uint32_t>(state.motionBlur.sampleCount));
+
+        ApplyAntiAliasing(state.antiAliasing.mode, static_cast<uint32_t>(state.antiAliasing.rtSampleCount));
+
+        mPostProcess->SetFilmParams(state.film.grain, state.film.contrast, state.film.saturation,
+            state.film.vignetteStrength, state.film.vignetteRadius);
     }
 
-    void VulkanRenderer::SetTonemap(float exposure, int tonemapOperator)
-    {
-        mPostProcess->SetParams(exposure, tonemapOperator);
-    }
-
-    void VulkanRenderer::SetBloom(bool enabled, float threshold, float intensity, float radius)
-    {
-        mBloomEnabled = enabled;
-        mBloom->SetParams(threshold, enabled ? intensity : 0.0f, radius);
-    }
-
-    void VulkanRenderer::SetDepthOfField(bool enabled, float focusDistance, float aperture, float maxBlur)
-    {
-        mDepthOfFieldEnabled = enabled;
-        mDepthOfField->SetParams(focusDistance, aperture, maxBlur);
-    }
-
-    void VulkanRenderer::SetMotionBlur(bool enabled, float shutterStrength, uint32_t sampleCount)
-    {
-        mMotionBlurEnabled = enabled;
-        mMotionBlur->SetParams(shutterStrength, sampleCount);
-    }
-
-    void VulkanRenderer::SetAntiAliasing(AntiAliasingMode mode, uint32_t rtSampleCount)
+    void VulkanRenderer::ApplyAntiAliasing(AntiAliasingMode mode, uint32_t rtSampleCount)
     {
         mAntiAliasingRtSampleCount = rtSampleCount;
         if (mode == mAntiAliasingMode)
@@ -466,7 +461,7 @@ namespace mir
         if (mode == AntiAliasingMode::Fxaa)
         {
             if (!mFxaa->CreateIntermediate(mSwapchain->Extent()))
-                MIR_LOG_ERROR("SetAntiAliasing: FXAA intermediate allocation failed; rendering without FXAA");
+                MIR_LOG_ERROR("ApplyAntiAliasing: FXAA intermediate allocation failed; rendering without FXAA");
         }
         else
         {
@@ -480,7 +475,7 @@ namespace mir
             if (!mRayTracer->CreateDlssGuides() || !mDlss->Activate(mSwapchain->Extent()))
             {
                 mDlssReady = false;
-                MIR_LOG_ERROR("SetAntiAliasing: DLSS Ray Reconstruction resources failed to allocate; Dlss is "
+                MIR_LOG_ERROR("ApplyAntiAliasing: DLSS Ray Reconstruction resources failed to allocate; Dlss is "
                     "no longer offered and a Dlss request clamps to Off");
             }
         }
@@ -490,13 +485,6 @@ namespace mir
             mRayTracer->DestroyDlssGuides();
         }
     #endif
-    }
-
-    void VulkanRenderer::SetFilm(bool enabled, float grain, float contrast, float saturation,
-        float vignetteStrength, float vignetteRadius)
-    {
-        mPostProcess->SetFilmParams(enabled ? grain : 0.0f, enabled ? contrast : 1.0f,
-            enabled ? saturation : 1.0f, enabled ? vignetteStrength : 0.0f, vignetteRadius);
     }
 
     void VulkanRenderer::SetAtmosphere(const Sky &sky)

@@ -16,6 +16,7 @@
 #include <renderer/Material.h>
 #include <renderer/Mesh.h>
 #include <renderer/MeshStreaming.h>
+#include <renderer/PostProcessingState.h>
 #include <renderer/Texture.h>
 #include <renderer/components/Sky.h>
 
@@ -260,21 +261,9 @@ namespace mir
 
         void SetAmbientColor(const glm::vec3 &color);
 
-        void SetFog(const glm::vec3 &color, float density, float start, float end);
-
-        void SetTonemap(float exposure, int tonemapOperator);
-
-        // enabled false skips the GPU chain for the frame and the panel's bloom contribution.
-        void SetBloom(bool enabled, float threshold, float intensity, float radius);
-
-        void SetDepthOfField(bool enabled, float focusDistance, float aperture, float maxBlur);
-
-        void SetMotionBlur(bool enabled, float shutterStrength, uint32_t sampleCount);
-
-        void SetAntiAliasing(AntiAliasingMode mode, uint32_t rtSampleCount);
-
-        void SetFilm(bool enabled, float grain, float contrast, float saturation, float vignetteStrength,
-            float vignetteRadius);
+        // Every Post-Processing effect for the frame, already resolved by ResolvePostProcessing.
+        // A disabled Bloom/DepthOfField/MotionBlur skips its GPU chain for the frame.
+        void SetPostProcessing(const PostProcessingState &state);
 
         void SetAtmosphere(const Sky &sky);
 
@@ -295,6 +284,8 @@ namespace mir
 
     private:
         bool RecreateSwapchain();
+        // Allocates the new mode's images and frees the old one's; a no-op while the mode is unchanged.
+        void ApplyAntiAliasing(AntiAliasingMode mode, uint32_t rtSampleCount);
         // Shared prelude of DrawFrame and TraceFrame; nullopt skips the frame.
         std::optional<vk::FrameContext> BeginFrame();
         // No wait: the caller idles the device first. False for a null or stale handle.
