@@ -1,0 +1,23 @@
+/**
+ * @file DlssConfig.h
+ * @author Rahul Nair
+ * @brief Generated from DlssConfig.h.in by CMake: the MIR_WITH_DLSS option.
+ *
+ * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
+ *
+ */
+#pragma once
+
+// 1: the NGX/DLSS-RR SDK was fetched and DLSS Ray Reconstruction is compiled in.
+// 0: default - no network fetch, no NVIDIA SDK dependency, Dlss anti-aliasing stays
+// unreachable (DlssAvailable() stays false, same posture as an unsupported device).
+#cmakedefine01 MIR_WITH_DLSS
+
+namespace mir
+{
+    inline constexpr bool kDlssCompiledIn = MIR_WITH_DLSS != 0;
+
+    // No NVIDIA-issued application ID - NGX's documented fallback for a project
+    // without one, a GUID-like string under NVSDK_NGX_ENGINE_TYPE_CUSTOM.
+    inline constexpr const char *kNgxProjectId = "a4e7a2c4-6b1b-4b8e-9b0a-6c1f1b0a2e4f";
+}

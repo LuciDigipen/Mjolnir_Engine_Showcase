@@ -1,5 +1,11 @@
 engine_add_module(renderer)
 
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/DlssConfig.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/generated_include/renderer/DlssConfig.h
+    @ONLY)
+target_include_directories(engine_renderer PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/generated_include)
+
 # volk: function pointers w/o boiler plate
 find_package(volk CONFIG REQUIRED)
 # VMA : vulkan memory manager
@@ -36,6 +42,7 @@ target_compile_definitions(engine_renderer PRIVATE
 )
 
 target_sources(engine_renderer PRIVATE
+    src/renderer/AntiAliasingEffect.cpp
     src/renderer/BloomEffect.cpp
     src/renderer/CameraMath.cpp
     src/renderer/ComponentRegistration.cpp
@@ -59,6 +66,7 @@ target_sources(engine_renderer PRIVATE
     src/renderer/vulkan/Device.cpp
     src/renderer/vulkan/FrameCapture.cpp
     src/renderer/vulkan/FrameSync.cpp
+    src/renderer/vulkan/Fxaa.cpp
     src/renderer/vulkan/ImGuiOverlay.cpp
     src/renderer/vulkan/MaterialStore.cpp
     src/renderer/vulkan/MeshUploader.cpp
@@ -73,6 +81,12 @@ target_sources(engine_renderer PRIVATE
     src/renderer/vulkan/VmaImpl.cpp
     src/renderer/vulkan/VulkanUtil.cpp
 )
+if(MIR_WITH_DLSS)
+    include(FindNGX)
+    target_sources(engine_renderer PRIVATE src/renderer/vulkan/DlssRayReconstruction.cpp)
+    target_link_libraries(engine_renderer PRIVATE NGX::NGX)
+endif()
+
 if(ENGINE_FAMILY_DESKTOP)
     if(ENGINE_PLATFORM STREQUAL "Windows")
     target_sources(engine_renderer PRIVATE src/renderer/vulkan/VulkanSurfaceWin32.cpp)

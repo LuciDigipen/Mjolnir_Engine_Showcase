@@ -21,6 +21,10 @@ namespace mir::vk
     constexpr VkFormat kHdrColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 
     constexpr VkFormat kDistanceFormat = VK_FORMAT_R32_SFLOAT;
+    constexpr VkFormat kRtVelocityFormat = VK_FORMAT_R16G16_SFLOAT;
+
+    // Ray Reconstruction's diffuse-albedo guide buffer; specular reflectance is separate.
+    constexpr VkFormat kAlbedoFormat = VK_FORMAT_R8G8B8A8_UNORM;
 
     constexpr uint32_t kBloomMipLevels = 6;
 

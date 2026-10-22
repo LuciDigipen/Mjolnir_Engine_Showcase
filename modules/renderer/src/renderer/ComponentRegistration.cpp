@@ -13,6 +13,7 @@
 #include "renderer/components/Light.h"
 #include "renderer/components/MeshRenderer.h"
 #include "renderer/components/Sky.h"
+#include "renderer/AntiAliasingEffect.h"
 #include "renderer/BloomEffect.h"
 #include "renderer/DepthOfFieldEffect.h"
 #include "renderer/FilmEffect.h"
@@ -239,5 +240,6 @@ namespace mir
         RegisterDepthOfFieldPostEffect();
         RegisterFilmPostEffect();
         RegisterMotionBlurPostEffect();
+        RegisterAntiAliasingPostEffect();
     }
 }

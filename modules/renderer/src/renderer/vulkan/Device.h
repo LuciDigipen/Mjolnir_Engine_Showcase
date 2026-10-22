@@ -11,6 +11,8 @@
 #include <volk.h>
 
 #include <cstdint>
+#include <string>
+#include <vector>
 
 VK_DEFINE_HANDLE(VmaAllocator)
 
@@ -45,6 +47,8 @@ namespace mir::vk
 
         bool RayTracingSupported() const { return mRayTracingSupported; }
         const VkPhysicalDeviceRayTracingPipelinePropertiesKHR &RtProperties() const { return mRtProperties; }
+
+        bool NgxSupported() const { return mNgxSupported; }
 
         struct MemoryBudget
         {
@@ -97,6 +101,10 @@ namespace mir::vk
 
         bool mRayTracingSupported = false;
         VkPhysicalDeviceRayTracingPipelinePropertiesKHR mRtProperties{};
+
+        bool mNgxSupported = false;
+        bool mNgxInstanceExtensionsSupported = false;
+        std::vector<std::string> mNgxDeviceExtensions;
 
         bool mMemoryBudgetSupported = false;
 

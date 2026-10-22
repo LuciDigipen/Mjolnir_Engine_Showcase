@@ -19,7 +19,7 @@ namespace mir
 {
     namespace
     {
-        void DrawMotionBlurParams(nlohmann::json &params)
+        void DrawMotionBlurParams(nlohmann::json &params, const PostEffectContext &)
         {
             MotionBlurParams motionBlur = ReadMotionBlurParams(params);
             bool changed = false;

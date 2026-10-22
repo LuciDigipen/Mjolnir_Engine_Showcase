@@ -9,6 +9,7 @@
 #pragma once
 
 #include <renderer/VulkanRenderer.h>
+#include "Image2D.h"
 #include "VulkanConstants.h"
 
 #include <volk.h>
@@ -84,22 +85,46 @@ namespace mir::vk
 
         // Builds the frame's TLAS from `items` and traces `rect` into the output image,
         // which ends in SHADER_READ_ONLY for the caller to sample (PostProcess's tonemap pass).
+        // aaMode selects rayGenMain's branch: Off/Dlss trace one sample per pixel (Dlss's jitter
+        // already rode in through cameraSet's CameraData), Msaa loops rtSampleCount (1/2/4/8) standard-pattern
+        // sub-pixel samples and averages color only - distance/velocity keep the first sample.
         void Record(VkCommandBuffer cmd, uint32_t frame, std::span<const DrawItem> items, const VkRect2D &rect,
             VkDescriptorSet cameraSet, uint32_t cameraOffset, const ResourceStore &resources,
-            const MaterialStore &materials);
+            const MaterialStore &materials, AntiAliasingMode aaMode, uint32_t rtSampleCount);
 
-        VkImage OutputImage(uint32_t frame) const { return mOutputImages[frame]; }
-        VkImageView OutputView(uint32_t frame) const { return mOutputViews[frame]; }
+        VkImage OutputImage(uint32_t frame) const { return mOutput[frame].image; }
+        VkImageView OutputView(uint32_t frame) const { return mOutput[frame].view; }
 
-        VkImageView DistanceView(uint32_t frame) const { return mDistanceViews[frame]; }
+        VkImage DistanceImage(uint32_t frame) const { return mDistance[frame].image; }
+        VkImageView DistanceView(uint32_t frame) const { return mDistance[frame].view; }
 
-        VkImageView VelocityView(uint32_t frame) const { return mVelocityViews[frame]; }
+        VkImage VelocityImage(uint32_t frame) const { return mVelocity[frame].image; }
+        VkImageView VelocityView(uint32_t frame) const { return mVelocity[frame].view; }
+
+        // Ray Reconstruction's guide buffers. They exist only while Dlss is the active mode -
+        // bindings 5-8 are partially bound, so the set stays valid without them. The caller
+        // idles the device first; Resize keeps whichever state it finds.
+        bool CreateDlssGuides();
+        void DestroyDlssGuides();
+        bool HasDlssGuides() const { return mAlbedo[0].image != VK_NULL_HANDLE; }
+
+        VkImage AlbedoImage(uint32_t frame) const { return mAlbedo[frame].image; }
+        VkImageView AlbedoView(uint32_t frame) const { return mAlbedo[frame].view; }
+        VkImage NormalImage(uint32_t frame) const { return mNormal[frame].image; }
+        VkImageView NormalView(uint32_t frame) const { return mNormal[frame].view; }
+        VkImage SpecularAlbedoImage(uint32_t frame) const { return mSpecularAlbedo[frame].image; }
+        VkImageView SpecularAlbedoView(uint32_t frame) const { return mSpecularAlbedo[frame].view; }
+        VkImage DlssDepthImage(uint32_t frame) const { return mDlssDepth[frame].image; }
+        VkImageView DlssDepthView(uint32_t frame) const { return mDlssDepth[frame].view; }
 
     private:
         bool CreateAccelerationStructureObject(VkDeviceSize size, VkAccelerationStructureTypeKHR type,
             VkBuffer &outBuffer, VmaAllocation &outAllocation, VkAccelerationStructureKHR &outAS);
         bool CreateOutputImages(VkExtent2D extent);
         void DestroyOutputImages();
+        // At mExtent, which CreateOutputImages records.
+        bool CreateGuideImages();
+        void DestroyGuideImages();
         bool CreateScene();
         void DestroyScene();
         bool CreatePipeline(VkDescriptorSetLayout cameraSetLayout);
@@ -130,17 +155,20 @@ namespace mir::vk
         constexpr static uint32_t kMaxInstances = 16384;
         bool mWarnedInstanceCap = false;
 
-        VkImage mOutputImages[kFramesInFlight]{};
-        VmaAllocation mOutputAllocations[kFramesInFlight]{};
-        VkImageView mOutputViews[kFramesInFlight]{};
+        VkExtent2D mExtent{};
 
-        VkImage mDistanceImages[kFramesInFlight]{};
-        VmaAllocation mDistanceAllocations[kFramesInFlight]{};
-        VkImageView mDistanceViews[kFramesInFlight]{};
+        Image2D mOutput[kFramesInFlight]{};
 
-        VkImage mVelocityImages[kFramesInFlight]{};
-        VmaAllocation mVelocityAllocations[kFramesInFlight]{};
-        VkImageView mVelocityViews[kFramesInFlight]{};
+        Image2D mDistance[kFramesInFlight]{};
+
+        Image2D mVelocity[kFramesInFlight]{};
+
+        Image2D mAlbedo[kFramesInFlight]{};
+
+        Image2D mNormal[kFramesInFlight]{};
+
+        Image2D mSpecularAlbedo[kFramesInFlight]{};
+        Image2D mDlssDepth[kFramesInFlight]{};
 
         VkAccelerationStructureKHR mTlas[kFramesInFlight]{};
         VkBuffer mTlasBuffers[kFramesInFlight]{};

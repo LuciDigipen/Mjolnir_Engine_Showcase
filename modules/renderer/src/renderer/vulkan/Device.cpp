@@ -9,6 +9,7 @@
 #include "Device.h"
 #include "VulkanSurface.h"
 
+#include <renderer/DlssConfig.h>
 #include <renderer/VulkanRenderer.h>
 
 #include <core/log/Log.h>
@@ -18,6 +19,10 @@
 
 #include <cstring>
 #include <vector>
+
+#if MIR_WITH_DLSS
+#include "NgxIdentity.h"
+#endif
 
 namespace mir::vk
 {
@@ -80,6 +85,14 @@ namespace mir::vk
             return false;
         }
 
+        void AddExtension(std::vector<const char *> &extensions, const char *name)
+        {
+            for (const char *existing : extensions)
+                if (std::strcmp(existing, name) == 0)
+                    return;
+            extensions.push_back(name);
+        }
+
         bool HasDeviceExtension(VkPhysicalDevice device, const char *name)
         {
             uint32_t count = 0;
@@ -132,9 +145,14 @@ namespace mir::vk
             VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtPipelineFeatures{
                 .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR };
 
+            // RayTracer leaves its Dlss guide bindings unwritten while Dlss is inactive.
+            VkPhysicalDeviceVulkan12Features features12{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
+
             VkPhysicalDeviceAccelerationStructureFeaturesKHR accelFeatures{
                 .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR,
                 .pNext = &rtPipelineFeatures };
+            rtPipelineFeatures.pNext = &features12;
 
             VkPhysicalDeviceFeatures2 features{
                 .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
@@ -143,7 +161,8 @@ namespace mir::vk
             vkGetPhysicalDeviceFeatures2(device, &features);
 
             if (accelFeatures.accelerationStructure != VK_TRUE ||
-                rtPipelineFeatures.rayTracingPipeline != VK_TRUE)
+                rtPipelineFeatures.rayTracingPipeline != VK_TRUE ||
+                features12.descriptorBindingPartiallyBound != VK_TRUE)
                 return false;
 
             outProps = VkPhysicalDeviceRayTracingPipelinePropertiesKHR{
@@ -156,6 +175,45 @@ namespace mir::vk
             vkGetPhysicalDeviceProperties2(device, &props);
             return true;
         }
+
+    #if MIR_WITH_DLSS
+        NVSDK_NGX_FeatureDiscoveryInfo NgxDiscoveryInfo()
+        {
+            return NVSDK_NGX_FeatureDiscoveryInfo{
+                .SDKVersion = NVSDK_NGX_Version_API,
+                .FeatureID = NVSDK_NGX_Feature_RayReconstruction,
+                .Identifier{
+                    .IdentifierType = NVSDK_NGX_Application_Identifier_Type_Project_Id,
+                    .v{ .ProjectDesc{
+                        .ProjectId = kNgxProjectId,
+                        .EngineType = kNgxEngineType,
+                        .EngineVersion = kNgxEngineVersion } } },
+                .ApplicationDataPath = kNgxApplicationDataPath,
+                .FeatureInfo = nullptr };
+        }
+
+        bool HasNgxSupport(VkInstance instance, VkPhysicalDevice device)
+        {
+            const auto discoveryInfo = NgxDiscoveryInfo();
+            NVSDK_NGX_FeatureRequirement requirement{};
+            const NVSDK_NGX_Result result =
+                NVSDK_NGX_VULKAN_GetFeatureRequirements(instance, device, &discoveryInfo, &requirement);
+
+            return NVSDK_NGX_SUCCEED(result) &&
+                requirement.FeatureSupported == NVSDK_NGX_FeatureSupportResult_Supported;
+        }
+
+        bool HasPushDescriptorSupport(VkPhysicalDevice device)
+        {
+            VkPhysicalDeviceVulkan14Features features14{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES };
+            VkPhysicalDeviceFeatures2 features{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+                .pNext = &features14 };
+            vkGetPhysicalDeviceFeatures2(device, &features);
+            return features14.pushDescriptor == VK_TRUE;
+        }
+    #endif
 
         bool HasSurfaceSupport(VkPhysicalDevice device, VkSurfaceKHR surface)
         {
@@ -315,6 +373,28 @@ namespace mir::vk
 
         extensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
         extensions.push_back(platformExt);
+
+    #if MIR_WITH_DLSS
+        const auto discoveryInfo = NgxDiscoveryInfo();
+        uint32_t ngxExtensionCount = 0;
+        VkExtensionProperties *ngxExtensions = nullptr;
+        const auto ngxResult = NVSDK_NGX_VULKAN_GetFeatureInstanceExtensionRequirements(
+            &discoveryInfo, &ngxExtensionCount, &ngxExtensions);
+        mNgxInstanceExtensionsSupported = NVSDK_NGX_SUCCEED(ngxResult);
+        if (!mNgxInstanceExtensionsSupported)
+            MIR_LOG_WARN("NGX: instance extension query failed: {:#x}", static_cast<unsigned>(ngxResult));
+        for (uint32_t i = 0; mNgxInstanceExtensionsSupported && i < ngxExtensionCount; ++i)
+        {
+            if (!HasExtension(availableExts, ngxExtensions[i].extensionName))
+            {
+                MIR_LOG_WARN("NGX: required instance extension unavailable: {}", ngxExtensions[i].extensionName);
+                mNgxInstanceExtensionsSupported = false;
+            }
+        }
+        if (mNgxInstanceExtensionsSupported)
+            for (uint32_t i = 0; i < ngxExtensionCount; ++i)
+                AddExtension(extensions, ngxExtensions[i].extensionName);
+    #endif
 
         for (const char *name : extensions)
         {
@@ -490,6 +570,43 @@ namespace mir::vk
 
         mMemoryBudgetSupported = HasDeviceExtension(mPhysical, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
 
+    #if MIR_WITH_DLSS
+        mNgxDeviceExtensions.clear();
+        mNgxSupported = mRayTracingSupported && mNgxInstanceExtensionsSupported &&
+            HasNgxSupport(mInstance, mPhysical) && HasPushDescriptorSupport(mPhysical);
+        if (mNgxSupported)
+        {
+            const auto discoveryInfo = NgxDiscoveryInfo();
+            uint32_t ngxExtensionCount = 0;
+            VkExtensionProperties *ngxExtensions = nullptr;
+            const auto result = NVSDK_NGX_VULKAN_GetFeatureDeviceExtensionRequirements(
+                mInstance, mPhysical, &discoveryInfo, &ngxExtensionCount, &ngxExtensions);
+            mNgxSupported = NVSDK_NGX_SUCCEED(result);
+            if (!mNgxSupported)
+                MIR_LOG_WARN("NGX: device extension query failed: {:#x}", static_cast<unsigned>(result));
+            for (uint32_t i = 0; mNgxSupported && i < ngxExtensionCount; ++i)
+            {
+                const char *name = ngxExtensions[i].extensionName;
+                if (!HasDeviceExtension(mPhysical, name))
+                {
+                    MIR_LOG_WARN("NGX: required device extension unavailable: {}", name);
+                    mNgxSupported = false;
+                }
+                else
+                    mNgxDeviceExtensions.emplace_back(name);
+            }
+            if (!mNgxSupported)
+                mNgxDeviceExtensions.clear();
+        }
+        if (mNgxSupported)
+            MIR_LOG_INFO("NGX: {} supports DLSS Ray Reconstruction", props.deviceName);
+        else
+            MIR_LOG_INFO("FindPhysicalDevice: NGX/DLSS Ray Reconstruction unavailable on {} - "
+                "Anti-Aliasing's Dlss option stays hidden", props.deviceName);
+    #else
+        mNgxSupported = false;
+    #endif
+
         return true;
     }
 
@@ -517,6 +634,14 @@ namespace mir::vk
         if (mMemoryBudgetSupported)
             deviceExtensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
 
+        // Keep extension aliases even when promoted to core
+        if (mNgxSupported)
+            for (const std::string &name : mNgxDeviceExtensions)
+            {
+                AddExtension(deviceExtensions, name.c_str());
+                MIR_LOG_INFO("NGX: enabling device extension {}", name);
+            }
+
         VkPhysicalDeviceVulkan13Features features13{
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
             .synchronization2 = VK_TRUE,
@@ -526,6 +651,7 @@ namespace mir::vk
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
             .pNext = &features13,
             .descriptorIndexing = VK_TRUE,
+            .descriptorBindingPartiallyBound = mRayTracingSupported ? VK_TRUE : VK_FALSE,
             .timelineSemaphore = VK_TRUE,
             .bufferDeviceAddress = VK_TRUE };
 
@@ -544,9 +670,24 @@ namespace mir::vk
             .pNext = &rtPipelineFeatures,
             .accelerationStructure = VK_TRUE };
 
+        void *rtOrCoreChain = mRayTracingSupported ? static_cast<void *>(&accelFeatures)
+            : static_cast<void *>(&features11);
+
+    #if MIR_WITH_DLSS
+            // NGX's own internal descriptor-set creation for Ray Reconstruction needs this core
+            // Vulkan 1.4 feature bit - see HasPushDescriptorSupport, which NgxSupported() already
+            // folded in, so mNgxSupported alone decides whether to request it here.
+        VkPhysicalDeviceVulkan14Features features14{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES,
+            .pNext = rtOrCoreChain,
+            .pushDescriptor = VK_TRUE };
+        if (mNgxSupported)
+            rtOrCoreChain = &features14;
+    #endif
+
         VkPhysicalDeviceFeatures2 features{
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-            .pNext = mRayTracingSupported ? static_cast<void *>(&accelFeatures) : static_cast<void *>(&features11),
+            .pNext = rtOrCoreChain,
             .features{ .imageCubeArray = VK_TRUE } };
 
         const VkDeviceCreateInfo deviceInfo{

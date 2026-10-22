@@ -12,12 +12,13 @@
 
 namespace
 {
+    using mir::PostEffectContext;
     using mir::PostEffectDesc;
     using mir::PostEffectRegistry;
 
     bool gDrawParamsCalled = false;
 
-    void DrawRegistryProbeParams(nlohmann::json &params)
+    void DrawRegistryProbeParams(nlohmann::json &params, const PostEffectContext &)
     {
         gDrawParamsCalled = true;
         params["touched"] = true;
@@ -56,7 +57,7 @@ TEST_CASE("PostEffectRegistry: registered effects appear in All(), in registrati
 
     REQUIRE(probeB->mDrawParams != nullptr);
     nlohmann::json params = nlohmann::json::object();
-    probeB->mDrawParams(params);
+    probeB->mDrawParams(params, PostEffectContext{});
     CHECK(gDrawParamsCalled);
     CHECK(params.value("touched", false));
 }

@@ -412,6 +412,16 @@ or the dialog themselves. History needs neither, and its tests are in
 
 ## Changed
 
+*2026-10-21* — **`PostProcessingPanel::Draw` takes a `PostEffectContext`
+(PR #278).** Was: every effect's params UI drew the same regardless of
+pipeline or hardware. Now: `Editor` passes `{ RayTracingActive(rayTracing),
+DlssAvailable() }` through to each effect's draw callback, so the
+anti-aliasing entry's Mode combo lists only the modes this device can run
+right now - the same flags `RenderSystem` clamps the mode against (see
+[renderer.md](renderer.md)'s anti-aliasing rules). Because: a combo offering
+Dlss on a machine that can't run it would save a mode that silently renders
+as Off.
+
 *2026-10-21* — **History knows about documents other than the scene (#243).**
 `Editor` gained `IsDocumentUnsaved`, `SetDocumentUnsaved` and
 `SetAuthoringBackend`, which pass through to `History`. The title bar still

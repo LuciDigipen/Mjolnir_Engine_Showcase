@@ -11,6 +11,8 @@
 #include <core/ecs/components/WorldTransform.h>
 #include <core/math/WorldCoordinates.h>
 #include <core/platform/Surface.h>
+#include <renderer/AntiAliasingEffect.h>
+#include <renderer/DlssConfig.h>
 #include <renderer/Material.h>
 #include <renderer/Mesh.h>
 #include <renderer/MeshStreaming.h>
@@ -22,6 +24,7 @@
 #include <glm/geometric.hpp>
 #include <glm/mat3x3.hpp>
 #include <glm/mat4x4.hpp>
+#include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 
@@ -47,7 +50,11 @@ namespace mir::vk
     class ShadowMaps;
     class ModelDescriptors;
     class RayTracer;
+#if MIR_WITH_DLSS
+    class DlssRayReconstruction;
+#endif
     class PostProcess;
+    class Fxaa;
     class Bloom;
     class DepthOfField;
     class VelocityPass;
@@ -222,6 +229,14 @@ namespace mir
 
         bool RayTracingSupported() const;
 
+        // Whether a frame with Ray Tracing requested actually goes down the TraceFrame path -
+        // the one flag AA mode clamping and the panel must agree with dispatch on.
+        bool RayTracingActive(bool requested) const;
+
+        // NGX support and a Ray Reconstruction feature that hasn't failed. Goes false for good
+        // after an init/resize/evaluate failure, so Dlss stops being offered or selected.
+        bool DlssAvailable() const;
+
         struct GpuMemoryUsage
         {
             uint64_t mUsageBytes = 0;
@@ -256,6 +271,8 @@ namespace mir
 
         void SetMotionBlur(bool enabled, float shutterStrength, uint32_t sampleCount);
 
+        void SetAntiAliasing(AntiAliasingMode mode, uint32_t rtSampleCount);
+
         void SetFilm(bool enabled, float grain, float contrast, float saturation, float vignetteStrength,
             float vignetteRadius);
 
@@ -287,8 +304,8 @@ namespace mir
 
         void RecordCommands(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views);
         void RecordView(VkCommandBuffer cmd, const RenderView &view, uint32_t viewIndex);
-        // Writes set 1 and set 3's per-view data; returns the camera's dynamic offset.
-        uint32_t WriteCameraData(const RenderView &view, uint32_t viewIndex);
+        uint32_t WriteCameraData(const RenderView &view, uint32_t viewIndex, bool applyJitter = false,
+            glm::vec2 *outJitter = nullptr);
 
     private:
         glm::vec4 mClearColor{ 0.02f, 0.02f, 0.02f, 1.0f };
@@ -310,7 +327,13 @@ namespace mir
         // Initialized only on a device with ray tracing; its Shutdown is a no-op otherwise.
         std::unique_ptr<vk::RayTracer> mRayTracer;
 
+    #if MIR_WITH_DLSS
+        std::unique_ptr<vk::DlssRayReconstruction> mDlss;
+        bool mDlssReady = false;
+    #endif
+
         std::unique_ptr<vk::PostProcess> mPostProcess;
+        std::unique_ptr<vk::Fxaa> mFxaa;
         std::unique_ptr<vk::Bloom> mBloom;
         bool mBloomEnabled = false;
 
@@ -320,6 +343,9 @@ namespace mir
         std::unique_ptr<vk::VelocityPass> mVelocityPass;
         std::unique_ptr<vk::MotionBlur> mMotionBlur;
         bool mMotionBlurEnabled = false;
+
+        AntiAliasingMode mAntiAliasingMode = AntiAliasingMode::Off;
+        uint32_t mAntiAliasingRtSampleCount = 4;
 
         std::vector<uint32_t> mVelocityCameraOffsets;
 

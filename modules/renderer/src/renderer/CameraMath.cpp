@@ -20,6 +20,23 @@
 
 namespace mir
 {
+    namespace
+    {
+        // Van der Corput radical inverse.
+        float RadicalInverse(uint32_t index, uint32_t base)
+        {
+            float result = 0.0f;
+            float f = 1.0f / static_cast<float>(base);
+            while (index > 0)
+            {
+                result += f * static_cast<float>(index % base);
+                index /= base;
+                f /= static_cast<float>(base);
+            }
+            return result;
+        }
+    }
+
     glm::mat4 MakeViewProjection(const glm::mat4 &cameraWorld, const Camera &lens, float aspectRatio)
     {
         const glm::mat4 view = glm::inverse(cameraWorld);
@@ -50,6 +67,17 @@ namespace mir
         }
 
         return proj * view;
+    }
+
+    std::optional<glm::mat4> RebaseViewProjection(const glm::mat4 &viewProj,
+        WorldPosition oldOrigin, WorldPosition newOrigin)
+    {
+        const auto delta = TryCameraRelativeFloat(newOrigin, oldOrigin);
+        if (!delta)
+            return std::nullopt;
+        glm::mat4 translation(1.0f);
+        translation[3] = glm::vec4(*delta, 1.0f);
+        return viewProj * translation;
     }
 
     std::optional<float> RayIntersectsAABB(const Ray &ray, const glm::vec3 &boxMin, const glm::vec3 &boxMax)
@@ -165,5 +193,11 @@ namespace mir
         const glm::vec3 localDirection = glm::mat3(toLocal) * ray.direction;
 
         return RayIntersectsAABB(Ray{ localOrigin, localDirection }, localMin, localMax);
+    }
+
+    glm::vec2 HaltonJitter(uint32_t index)
+    {
+        const uint32_t n = index + 1;
+        return glm::vec2(RadicalInverse(n, 2) - 0.5f, RadicalInverse(n, 3) - 0.5f);
     }
 }

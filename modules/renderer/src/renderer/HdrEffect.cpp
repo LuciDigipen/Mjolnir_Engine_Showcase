@@ -22,7 +22,7 @@ namespace mir
 {
     namespace
     {
-        void DrawHdrParams(nlohmann::json &params)
+        void DrawHdrParams(nlohmann::json &params, const PostEffectContext &)
         {
             HdrParams hdr = ReadHdrParams(params);
             bool changed = false;

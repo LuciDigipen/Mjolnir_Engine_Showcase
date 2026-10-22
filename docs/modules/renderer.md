@@ -26,12 +26,14 @@ subsystem holds a pointer to the facade or to another subsystem.
 | `CameraBuffer` | set 1: per-view camera data and light list, plus the directional light, ambient, fog and atmosphere |
 | `ModelDescriptors` | set 2: per-draw model data, reset each frame |
 | `ShadowMaps` | set 3: Sun, spot and point shadow maps, their pipelines and casters |
-| `RayTracer` | a BLAS per mesh slot, a TLAS per frame, the RT pipeline, SBT and output images, plus linear-distance and per-pixel velocity output images alongside color |
+| `RayTracer` | a BLAS per mesh slot, a TLAS per frame, the RT pipeline, SBT and output images, plus linear-distance and per-pixel velocity output images alongside color, and Ray Reconstruction's guide buffers (albedo, normal/roughness, specular albedo, projected depth) while Dlss is active |
+| `DlssRayReconstruction` | `MIR_WITH_DLSS` builds only: NGX, the Ray Reconstruction feature and its output images - denoises and anti-aliases `RayTracer`'s output at native resolution, ahead of `DepthOfField` |
 | `DepthOfField` | the CoC, near/far blur and composite pipelines and their half/full-res working images - reads whatever linear-HDR color and depth/distance `DrawFrame`/`TraceFrame` hand it; its output becomes what `MotionBlur`, `Bloom` and `PostProcess` read from there on |
 | `VelocityPass` | raster-only: a second, depth-equal (no write) walk of the same `DrawItem`s the Scene Pass just drew, through `velocity.slang`, into its own per-pixel velocity image - the same shape as `ShadowMaps`' depth-only pass, not a screen-space one |
 | `MotionBlur` | the composite pipeline that samples color along whatever velocity buffer it's handed (`VelocityPass`'s output on raster, `RayTracer`'s `gVelocity` on ray tracing) - reads `DepthOfField`'s result when enabled, ahead of `Bloom` |
 | `Bloom` | the bright-pass extract, downsample and additive-upsample pipelines and mip chain - reads whatever linear-HDR source `DrawFrame`/`TraceFrame` hand it (`DepthOfField`'s or `MotionBlur`'s result when enabled), ahead of `PostProcess` |
-| `PostProcess` | the tonemap pipeline and per-frame descriptor sets - the one shared post-process hook point both `DrawFrame` and `TraceFrame` sample their scene color (and `Bloom`'s result) through; the same `tonemap.slang` pass also carries the film look (contrast, saturation, vignette, animated grain), applied after the tonemap itself |
+| `PostProcess` | the tonemap pipeline and per-frame descriptor sets - the one shared post-process hook point both `DrawFrame` and `TraceFrame` sample their scene color (and `Bloom`'s result) through; the same `tonemap.slang` pass also carries the film look (contrast, saturation, vignette, animated grain), applied after the tonemap itself - grain moves to `Fxaa` while FXAA runs |
+| `Fxaa` | raster only: the FXAA pipeline and, while Fxaa is the active mode, the LDR intermediate the tonemap pass writes into ahead of it |
 | `FrameCapture` | the `CaptureNextFrame` buffer and the PNG it writes |
 | `ImGuiOverlay` | ImGui's Vulkan backend and the draw data it overlays |
 | `MeshUploader` | the persistent staging ring, queued mesh uploads and their BLAS builds, and retired GPU objects until their last frame (#127) |
@@ -126,6 +128,9 @@ void SetBloom(bool enabled, float threshold, float intensity, float radius); // 
 void SetDepthOfField(bool enabled, float focusDistance, float aperture, float maxBlur); // enabled false skips the GPU chain
 void SetFilm(bool enabled, float grain, float contrast, float saturation, float vignetteStrength, float vignetteRadius); // enabled false neutralizes it
 void SetMotionBlur(bool enabled, float shutterStrength, uint32_t sampleCount); // enabled false skips the GPU chain
+void SetAntiAliasing(AntiAliasingMode mode, uint32_t rtSampleCount); // already clamped; a change allocates/frees that mode's images
+bool RayTracingActive(bool requested) const;          // requested && RayTracingSupported() - what TraceFrame dispatch uses
+bool DlssAvailable() const;                           // NGX initialized and Ray Reconstruction hasn't failed since
 void SetImGuiDrawData(ImDrawData *drawData);
 VkExtent2D SwapchainExtent() const; 
 
@@ -160,6 +165,8 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `Ray`, `RayIntersectsAABB`, `WorldRay`, `MakeCameraRay`, `RayIntersectsBox` | `renderer/CameraMath.h` | `WorldRay` is a camera ray with a double `WorldPosition` origin and a float direction; `RayIntersectsBox` places a `WorldPose` box relative to that origin in double, then runs the local ray/AABB slab test — the same file `MakeViewProjection` lives in, so both stay in the same Vulkan-convention math |
 | `RenderSystem` | `renderer/RenderSystem.h` | The ECS-to-renderer bridge, `SystemPhase::Render` |
 | `Shapes.h` | `renderer/Shapes.h` | `MakeCube()` and friends — plain vectors, no Vulkan |
+| `AntiAliasingMode`, `AntiAliasingParams`, `ClampAntiAliasingMode`, `ClampRtSampleCount` | `renderer/AntiAliasingEffect.h` | Off/Fxaa/Msaa/Dlss and `rtSampleCount`; the Post-Processing entry's json shape; the mode and sample-count enforcement `RenderSystem` applies every frame - see Rules |
+| `DlssConfig.h` | `renderer/DlssConfig.h` (generated) | `MIR_WITH_DLSS`/`kDlssCompiledIn` and the NGX project id |
 | `RenderSettings` | `renderer/RenderSettings.h` | Project Settings' `"rendering"` section (`rayTracing: bool`, `fog: bool`); `LoadFile`/`SaveFile`, a World resource loaded in `App::Initialize` |
 
 ## Rules
@@ -174,7 +181,9 @@ a project that is not shipping to consumers.
 **Ray tracing (`VK_KHR_acceleration_structure` + `VK_KHR_ray_tracing_pipeline`)
 is detected, never a rejection gate.** `FindPhysicalDevice` probes the winning
 device for the 3 extensions (the two above plus their
-`VK_KHR_deferred_host_operations` dependency) and the two feature bits,
+`VK_KHR_deferred_host_operations` dependency), the two feature bits and
+`descriptorBindingPartiallyBound` (the Dlss guide bindings need it - see the
+anti-aliasing rules),
 storing the result in `mRayTracingSupported` and logging either way - a GPU
 lacking them stays fully usable for raster, same floor as today.
 `CreateLogicalDevice` only requests the 3 extensions and splices
@@ -313,11 +322,78 @@ since the blit only ever touches its own rect. A collapsed viewport
 rather than issuing a zero-sized dispatch - the clear alone still runs, so
 the window still shows the clear color instead of stale/undefined content.
 `RenderSystem::OnUpdate` calls `TraceFrame` instead of `DrawFrame` when
-`RenderSettings::rayTracing` is on *and* `RayTracingSupported()` - the
+`RayTracingActive(RenderSettings::rayTracing)` - the checkbox on *and*
+`RayTracingSupported()`, the same flag anti-aliasing clamps against - the
 `rayTracing` Project Settings checkbox existed already (see Changed on
 2026-09-17) but was wired to nothing until now. On unsupported hardware
 with the checkbox on, it falls back to `DrawFrame` with a one-shot warning,
 the same pattern `mWarnedNoCamera` already uses.
+
+**Anti-aliasing has four modes, and `ClampAntiAliasingMode` decides which one
+runs.** Fxaa is raster only; Msaa (extra rays per pixel) and Dlss (Ray
+Reconstruction) are ray tracing only; Off is valid everywhere. `RenderSystem`
+clamps the Post-Processing entry's mode every frame against
+`RayTracingActive(rayTracing)` and `DlssAvailable()`, and the panel offers only
+modes that pass the same check, so a hand-edited or cross-machine
+`project_settings.json` can never select something this device can't run - it
+falls back to Off. The flags must be the effective ones: clamping against the
+raw `rayTracing` checkbox would reject Fxaa on a GPU without ray tracing even
+though those frames are rendered raster. `ClampRtSampleCount` rounds Msaa's
+`rtSampleCount` up to 1, 2, 4 or 8, the sizes `raytrace.slang` has standard
+D3D sample patterns for (packed back to back - the pattern for n samples starts
+at index n - 1).
+
+**Each mode's GPU resources exist only while it is the active mode.**
+`SetAntiAliasing` is the one place they come and go: on a mode change it idles
+the device (mode switches are rare; in-flight frames may still read the old
+images), then creates or frees `Fxaa`'s LDR intermediate, `RayTracer`'s four
+guide buffers and `DlssRayReconstruction`'s output images. Ray Reconstruction's
+NGX feature is built later still, by `DlssRayReconstruction::Record` at the
+viewport rect's size, and rebuilt only when that size changes - a swapchain
+resize only recreates the output images. `RayTracer`'s guide bindings (5-8)
+are `PARTIALLY_BOUND`, so the descriptor set stays valid with them unwritten;
+the shader only touches them on its Dlss branches, and `RayTracer::Record`
+downgrades a Dlss trace to Msaa if the guides are missing. That flag is why
+ray tracing support now also requires `descriptorBindingPartiallyBound`.
+
+**Pass order.** Raster: scene, velocity, depth of field, motion blur, bloom,
+then tonemap - with Fxaa active the tonemap writes into `Fxaa`'s intermediate
+and the FXAA pass draws to the swapchain. Ray traced: trace (jittered under
+Dlss), Ray Reconstruction, then the same depth of field, motion blur, bloom and
+tonemap. Film grain is always the last thing applied: `PostProcess::NextFilmGrain`
+hands out one amount and seed per frame, and with Fxaa active the tonemap pass
+gets an amount of 0 and `fxaa.slang` adds the grain after its edge blend
+(`FilmGrain.slang` is shared by both shaders), so FXAA never smears it. FXAA
+reads an sRGB intermediate, so its samples arrive linear; it takes the square
+root of luma before the edge thresholds, or dark edges would fall under them.
+
+**Only Dlss jitters the camera, and the jitter rides in `CameraData`.**
+`CameraBuffer::WriteView` advances a Halton(2,3) index per view slot
+(`HaltonJitter`) only when asked to, writes the pixel offset to
+`jitterAndPad.xy`, and returns it so `TraceFrame` can hand NGX the matching
+`InJitterOffset`. Off and Msaa trace with a zero offset. Separately - and in
+every mode, Off included - `prevViewProj` is rebased from last frame's camera
+origin to this frame's (`RebaseViewProjection`, subtracting in world
+precision), RT sky pixels get a real camera velocity from `prevViewProj`
+rather than zero, and `RayTracer`'s velocity image is `R16G16_SFLOAT`. Ray
+Reconstruction needs all three; motion blur benefits from them. So Off means
+no anti-aliasing work, not the exact pre-AA frame.
+
+**A Ray Reconstruction failure turns Dlss off for the session.** If NGX init,
+resource allocation, a resize or an evaluation fails, `mDlssReady` goes false
+and `DlssAvailable()` with it. The next frame's clamp turns a Dlss request into
+Off, the panel stops offering Dlss, and that mode change frees its resources.
+The frame whose evaluation failed shows the raw (jittered, one-ray) trace.
+Each failure is logged.
+
+**`MIR_WITH_DLSS` is a CMake option, off by default.** Off: no network fetch, no
+NVIDIA SDK, `DlssRayReconstruction.cpp` isn't compiled and `DlssAvailable()` is
+always false - the same behaviour as unsupported hardware. On:
+`cmake/FindNGX.cmake` fetches the public NVIDIA DLSS SDK at a pinned tag,
+links the `_d` (dynamic-CRT) import libs to match this project's `/MD`, and
+copies `nvngx_dlssd.dll` next to the executable. Extension discovery, support
+detection (`Device`) and initialization (`DlssRayReconstruction`) all present
+one NGX identity, `vulkan/NgxIdentity.h` plus `kNgxProjectId`.
 
 **`closestHitMain` gets no interpolated vertex attributes for free the way
 rasterization does - it fetches them itself, off the mesh's own vertex/
@@ -581,9 +657,13 @@ back to the World's default camera in Play.
 `Renderer.h` is still an empty abstraction placeholder, so `App` names
 `VulkanRenderer` directly.
 
-`engine_renderer_tests` covers the parts that need no device: camera math,
-render settings, view submission and the asynchronous mesh bookkeeping
+`engine_renderer_tests` covers the parts that need no device: camera math
+(including `HaltonJitter` and `RebaseViewProjection`), render settings, view
+submission, anti-aliasing's json shape, mode clamping and sample-count rounding
+(`AntiAliasingEffect.tests.cpp`) and the asynchronous mesh bookkeeping
 (`MeshStreaming`: staging ring, frame budget, cancellation, retirement by frame).
+None of the anti-aliasing passes themselves, nor their resource lifetimes, have
+an automated test.
 Everything that needs a device is verified by the smoke tests and
 `TerrainRenderProbe`.
 
@@ -651,6 +731,20 @@ Everything that needs a device is verified by the smoke tests and
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-10-21* — **Anti-aliasing: FXAA, ray-traced MSAA and DLSS Ray
+Reconstruction (PR #278).** Was: no anti-aliasing on either pipeline. Now: a
+Post-Processing entry with four modes - Off, Fxaa (raster: `Fxaa`,
+`fxaa.slang`), Msaa (ray tracing: 1/2/4/8 rays per pixel on standard D3D
+sample patterns, inside `rayGenMain`) and Dlss (ray tracing:
+`DlssRayReconstruction`, NGX's Ray Reconstruction at native resolution, behind
+the `MIR_WITH_DLSS` build option). `ClampAntiAliasingMode` keeps an
+unsupported mode from ever running; each mode's images and NGX feature exist
+only while that mode is active; only Dlss jitters the camera; film grain moved
+after FXAA. See Rules for each. The velocity fixes Ray Reconstruction needed
+(`prevViewProj` rebase, sky velocity, `R16G16_SFLOAT` RT velocity) apply in
+every mode. Because: aliasing on both pipelines, and the ray tracer had no
+denoiser - Ray Reconstruction is both.
 
 *2026-10-19* — **Motion blur (#212).** Was: no per-pixel velocity existed on
 either pipeline, so there was nothing to blur along. Now: a velocity buffer

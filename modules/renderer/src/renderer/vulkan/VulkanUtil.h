@@ -59,6 +59,11 @@ namespace mir::vk
     // Transitions a 2D color image from color-attachment back to shader-read-only.
     void ShaderReadOnlyBarrier(VkCommandBuffer cmd, VkImage image);
 
+    // Begins dynamic rendering into one color attachment (already in COLOR_ATTACHMENT_OPTIMAL)
+    // covering all of `extent`, and sets a matching viewport and scissor. The caller ends it.
+    void BeginFullscreenPass(VkCommandBuffer cmd, VkImageView view, VkExtent2D extent,
+        VkAttachmentLoadOp loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE, VkClearColorValue clear = {});
+
     // VK_NULL_HANDLE on failure, already logged.
     VkShaderModule CreateShaderModule(VkDevice device, const std::filesystem::path &path);
 

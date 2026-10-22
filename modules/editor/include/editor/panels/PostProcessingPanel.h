@@ -9,6 +9,7 @@
  */
 #pragma once
 
+#include <renderer/PostEffectRegistry.h>
 #include <renderer/PostProcessingSettings.h>
 
 #include <filesystem>
@@ -19,7 +20,8 @@ namespace mir
     class PostProcessingPanel
     {
     public:
-        void Draw(PostProcessingSettings &settings, const std::filesystem::path &savePath);
+        void Draw(PostProcessingSettings &settings, const std::filesystem::path &savePath,
+            const PostEffectContext &context);
 
         void OnHidden()
         {

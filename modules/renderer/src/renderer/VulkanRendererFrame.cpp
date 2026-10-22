@@ -14,8 +14,12 @@
 #include "vulkan/CameraBuffer.h"
 #include "vulkan/DepthOfField.h"
 #include "vulkan/Device.h"
+#if MIR_WITH_DLSS
+#include "vulkan/DlssRayReconstruction.h"
+#endif
 #include "vulkan/FrameCapture.h"
 #include "vulkan/FrameSync.h"
+#include "vulkan/Fxaa.h"
 #include "vulkan/ImGuiOverlay.h"
 #include "vulkan/MaterialStore.h"
 #include "vulkan/MeshUploader.h"
@@ -245,6 +249,23 @@ namespace mir
             mDevice->EndLabel(cmd);
         }
 
+        const bool fxaaActive = mAntiAliasingMode == AntiAliasingMode::Fxaa && mFxaa->HasIntermediate();
+        const vk::FilmGrain grain = mPostProcess->NextFilmGrain();
+        if (fxaaActive)
+        {
+            vk::ColorAttachmentBarrier(cmd, mFxaa->IntermediateImage(frame));
+            vk::BeginFullscreenPass(cmd, mFxaa->IntermediateView(frame), extent);
+            mDevice->BeginLabel(cmd, "Tonemap Pass", { 1.0f, 1.0f, 0.0f, 1.0f });
+
+            mPostProcess->Record(cmd, frame, colorSource, mBloom->OutputView(frame),
+                mBloom->Intensity(), vk::FilmGrain{}, extent);
+
+            mDevice->EndLabel(cmd);
+            vkCmdEndRendering(cmd);
+
+            vk::ShaderReadOnlyBarrier(cmd, mFxaa->IntermediateImage(frame));
+        }
+
         vk::ImageBarrier(cmd, mSwapchain->Image(imageIndex), VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_UNDEFINED,
             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -252,35 +273,15 @@ namespace mir
             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
 
-        const VkRenderingAttachmentInfo swapchainAttachment{
-            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView = mSwapchain->View(imageIndex),
-            .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            // Every pixel is about to be overwritten by the fullscreen tonemap triangle.
-            .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-            .storeOp = VK_ATTACHMENT_STORE_OP_STORE };
+        // Every pixel is about to be overwritten by the fullscreen tonemap/FXAA triangle.
+        vk::BeginFullscreenPass(cmd, mSwapchain->View(imageIndex), extent);
+        mDevice->BeginLabel(cmd, fxaaActive ? "FXAA Pass" : "Tonemap Pass", { 1.0f, 1.0f, 0.0f, 1.0f });
 
-        const VkRenderingInfo tonemapRenderingInfo{
-            .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-            .renderArea{ .offset{ 0, 0 }, .extent = extent },
-            .layerCount = 1,
-            .colorAttachmentCount = 1,
-            .pColorAttachments = &swapchainAttachment };
-
-        vkCmdBeginRendering(cmd, &tonemapRenderingInfo);
-        mDevice->BeginLabel(cmd, "Tonemap Pass", { 1.0f, 1.0f, 0.0f, 1.0f });
-
-        const VkViewport viewport{
-            .x = 0.0f, .y = 0.0f,
-            .width = static_cast<float>(extent.width),
-            .height = static_cast<float>(extent.height),
-            .minDepth = 0.0f, .maxDepth = 1.0f };
-        const VkRect2D scissor{ .offset{ 0, 0 }, .extent = extent };
-        vkCmdSetViewport(cmd, 0, 1, &viewport);
-        vkCmdSetScissor(cmd, 0, 1, &scissor);
-
-        mPostProcess->Record(cmd, frame, colorSource, mBloom->OutputView(frame),
-            mBloom->Intensity(), extent);
+        if (fxaaActive)
+            mFxaa->Record(cmd, frame, mFxaa->IntermediateView(frame), grain, extent);
+        else
+            mPostProcess->Record(cmd, frame, colorSource, mBloom->OutputView(frame),
+                mBloom->Intensity(), grain, extent);
 
         mImGuiOverlay->RecordInPass(cmd);
 
@@ -331,20 +332,68 @@ namespace mir
         const VkRect2D rect = vk::ResolveViewRect(view.rect, mSwapchain->Extent());
         const uint32_t frame = mFrameSync->Index();
 
-        const uint32_t cameraOffset = WriteCameraData(view, 0);
+        AntiAliasingMode effectiveAaMode = mAntiAliasingMode;
+        if (effectiveAaMode == AntiAliasingMode::Dlss)
+        {
+            bool canReconstruct = false;
+#if MIR_WITH_DLSS
+            canReconstruct = mDlssReady && mDlss->IsActive();
+#endif
+            if (!canReconstruct)
+                effectiveAaMode = AntiAliasingMode::Msaa;
+        }
+        const bool applyJitter = effectiveAaMode == AntiAliasingMode::Dlss;
+        glm::vec2 jitterPixels{ 0.0f };
+        const uint32_t cameraOffset = WriteCameraData(view, 0, applyJitter, &jitterPixels);
 
         mDevice->BeginLabel(cmd, "Ray Trace Pass", { 0.0f, 1.0f, 1.0f, 1.0f });
         mRayTracer->Record(cmd, frame, view.items, rect, mCameraBuffer->Set(frame),
-            cameraOffset, *mResources, *mMaterialStore);
+            cameraOffset, *mResources, *mMaterialStore, effectiveAaMode, mAntiAliasingRtSampleCount);
         mDevice->EndLabel(cmd);
 
         const bool hasRect = rect.extent.width > 0 && rect.extent.height > 0;
 
         VkImageView colorSource = mRayTracer->OutputView(frame);
+
+    #if MIR_WITH_DLSS
+            // The ray-tracing path has no denoiser today - Ray Reconstruction becomes its denoiser and upscaler
+        if (hasRect && effectiveAaMode == AntiAliasingMode::Dlss && mDlssReady)
+        {
+            mDevice->BeginLabel(cmd, "Dlss Ray Reconstruction Pass", { 0.0f, 0.5f, 1.0f, 1.0f });
+            const vk::DlssRayReconstruction::Inputs dlssInputs{
+                .colorImage = mRayTracer->OutputImage(frame),
+                .colorView = mRayTracer->OutputView(frame),
+                .depthImage = mRayTracer->DlssDepthImage(frame),
+                .depthView = mRayTracer->DlssDepthView(frame),
+                .velocityImage = mRayTracer->VelocityImage(frame),
+                .velocityView = mRayTracer->VelocityView(frame),
+                .albedoImage = mRayTracer->AlbedoImage(frame),
+                .albedoView = mRayTracer->AlbedoView(frame),
+                .normalImage = mRayTracer->NormalImage(frame),
+                .normalView = mRayTracer->NormalView(frame),
+                .specularAlbedoImage = mRayTracer->SpecularAlbedoImage(frame),
+                .specularAlbedoView = mRayTracer->SpecularAlbedoView(frame),
+                .jitterPixels = jitterPixels };
+            const bool reconstructed = mDlss->Record(cmd, frame, dlssInputs, mSwapchain->Extent(), rect);
+            mDevice->EndLabel(cmd);
+            if (reconstructed)
+            {
+                colorSource = mDlss->OutputView(frame);
+            }
+            else
+            {
+                // DlssAvailable() now reports false, so the next frame's clamp and the panel drop Dlss.
+                mDlssReady = false;
+                MIR_LOG_WARN("DLSS Ray Reconstruction failed; Dlss is no longer offered and a Dlss request "
+                    "clamps to Off");
+            }
+        }
+    #endif
+
         if (hasRect && mDepthOfFieldEnabled)
         {
             mDevice->BeginLabel(cmd, "Depth Of Field Pass", { 0.5f, 0.0f, 1.0f, 1.0f });
-            mDepthOfField->Record(cmd, frame, mRayTracer->OutputView(frame), mRayTracer->DistanceView(frame),
+            mDepthOfField->Record(cmd, frame, colorSource, mRayTracer->DistanceView(frame),
                 /*isLinearDepth*/ true, view.nearZ, view.farZ, mSwapchain->Extent());
             mDevice->EndLabel(cmd);
             colorSource = mDepthOfField->OutputView(frame);
@@ -372,22 +421,9 @@ namespace mir
             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
 
-        const VkRenderingAttachmentInfo colorAttachment{
-            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView = mSwapchain->View(imageIndex),
-            .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-            .clearValue{ .color{ { mClearColor.r, mClearColor.g, mClearColor.b, mClearColor.a } } } };
-
-        const VkRenderingInfo renderingInfo{
-            .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-            .renderArea{ .offset{ 0, 0 }, .extent = mSwapchain->Extent() },
-            .layerCount = 1,
-            .colorAttachmentCount = 1,
-            .pColorAttachments = &colorAttachment };
-
-        vkCmdBeginRendering(cmd, &renderingInfo);
+        // Cleared: outside the view rect nothing else draws.
+        vk::BeginFullscreenPass(cmd, mSwapchain->View(imageIndex), mSwapchain->Extent(), VK_ATTACHMENT_LOAD_OP_CLEAR,
+            VkClearColorValue{ { mClearColor.r, mClearColor.g, mClearColor.b, mClearColor.a } });
         mDevice->BeginLabel(cmd, "Tonemap Pass", { 1.0f, 1.0f, 0.0f, 1.0f });
 
         if (hasRect)
@@ -402,7 +438,7 @@ namespace mir
             vkCmdSetScissor(cmd, 0, 1, &rect);
 
             mPostProcess->Record(cmd, frame, colorSource, mBloom->OutputView(frame),
-                mBloom->Intensity(), mSwapchain->Extent());
+                mBloom->Intensity(), mPostProcess->NextFilmGrain(), mSwapchain->Extent());
         }
 
         mImGuiOverlay->RecordInPass(cmd);
@@ -410,7 +446,9 @@ namespace mir
         mDevice->EndLabel(cmd);
         vkCmdEndRendering(cmd);
 
-        mSwapchain->RecordPresentTransition(cmd, imageIndex, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        const bool captured = mCapture->Record(cmd, *mSwapchain, imageIndex);
+        mSwapchain->RecordPresentTransition(cmd, imageIndex,
+            captured ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     }
 
     void VulkanRenderer::TraceFrame(std::span<const RenderView> views)
@@ -429,13 +467,15 @@ namespace mir
             return;
 
         RecordRtFrame(frame->cmd, frame->imageIndex, views);
-        mFrameSync->End(*mSwapchain, *frame);
+        const bool submitted = mFrameSync->End(*mSwapchain, *frame);
+        mCapture->Finish(submitted, *mSwapchain);
     }
 
-    uint32_t VulkanRenderer::WriteCameraData(const RenderView &view, uint32_t viewIndex)
+    uint32_t VulkanRenderer::WriteCameraData(const RenderView &view, uint32_t viewIndex, bool applyJitter,
+        glm::vec2 *outJitter)
     {
         const uint32_t frame = mFrameSync->Index();
         const vk::ViewShadowInfo shadow = mShadowMaps->WriteView(frame, view, viewIndex);
-        return mCameraBuffer->WriteView(frame, view, viewIndex, shadow);
+        return mCameraBuffer->WriteView(frame, view, viewIndex, shadow, applyJitter, outJitter);
     }
 }
