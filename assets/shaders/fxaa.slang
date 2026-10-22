@@ -34,9 +34,9 @@ static const float kEdgeThresholdMin = 0.0312;
 static const float kEdgeThreshold = 0.125;
 static const float kSubpixelQuality = 0.75;
 
-float Luma(float3 rgb)
+float Luma(float3 linearRgb)
 {
-    return dot(rgb, float3(0.299, 0.587, 0.114));
+    return sqrt(dot(linearRgb, float3(0.299, 0.587, 0.114)));
 }
 
 [shader("fragment")]
@@ -65,19 +65,20 @@ float4 fragmentMain(VSOutput input) : SV_Target
     const float lumaUpLeft = Luma(gColor.SampleLevel(uv + float2(-pushData.invExtent.x, -pushData.invExtent.y), 0).rgb);
     const float lumaDownRight = Luma(gColor.SampleLevel(uv + float2(pushData.invExtent.x, pushData.invExtent.y), 0).rgb);
 
-    const float edgeHorizontal = abs(lumaUpLeft + lumaUpRight - 2.0 * lumaUp) +
-        2.0 * abs(lumaLeft + lumaRight - 2.0 * lumaCenter) +
-        abs(lumaDownLeft + lumaDownRight - 2.0 * lumaDown);
-    const float edgeVertical = abs(lumaUpLeft + lumaDownLeft - 2.0 * lumaLeft) +
-        2.0 * abs(lumaUp + lumaDown - 2.0 * lumaCenter) +
-        abs(lumaUpRight + lumaDownRight - 2.0 * lumaRight);
+    const float edgeHorizontal = abs(lumaUpLeft + lumaDownLeft - 2.0 * lumaLeft) +
+                                 2.0 * abs(lumaUp + lumaDown - 2.0 * lumaCenter) +
+                                 abs(lumaUpRight + lumaDownRight - 2.0 * lumaRight);
+    const float edgeVertical = abs(lumaUpLeft + lumaUpRight - 2.0 * lumaUp) +
+                               2.0 * abs(lumaLeft + lumaRight - 2.0 * lumaCenter) +
+                               abs(lumaDownLeft + lumaDownRight - 2.0 * lumaDown);
     const bool isHorizontal = edgeHorizontal >= edgeVertical;
 
     // The two neighbors straddling the edge, perpendicular to it - whichever
     // one differs more from the center decides the step's sign and the local
     // average this pixel's subpixel blend factor is measured against.
-    const float luma1 = isHorizontal ? lumaDown : lumaLeft;
-    const float luma2 = isHorizontal ? lumaUp : lumaRight;
+    // luma1 is always the negative-direction neighbor (up is -Y, left is -X).
+    const float luma1 = isHorizontal ? lumaUp : lumaLeft;
+    const float luma2 = isHorizontal ? lumaDown : lumaRight;
     const float gradient1 = luma1 - lumaCenter;
     const float gradient2 = luma2 - lumaCenter;
     const bool is1Steepest = abs(gradient1) >= abs(gradient2);

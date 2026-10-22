@@ -162,8 +162,8 @@ namespace mir
                 antiAliasingIt != postProcessing.effects.end() && antiAliasingIt->second.enabled;
             if (!antiAliasingEnabled)
                 antiAliasing.mode = AntiAliasingMode::Off;
-            antiAliasing.mode = ClampAntiAliasingMode(antiAliasing.mode, renderSettings.rayTracing,
-                mRenderer.NgxSupported());
+            antiAliasing.mode = ClampAntiAliasingMode(antiAliasing.mode,
+                mRenderer.RayTracingActive(renderSettings.rayTracing), mRenderer.DlssAvailable());
             mRenderer.SetAntiAliasing(antiAliasing.mode, static_cast<uint32_t>(std::max(antiAliasing.rtSampleCount, 1)));
 
             const auto filmIt = postProcessing.effects.find(std::string(kFilmEffectName));
@@ -470,7 +470,7 @@ namespace mir
                 mWarnedSkippedItems = true;
             }
 
-            const bool traceable = renderSettings.rayTracing && mRenderer.RayTracingSupported();
+            const bool traceable = mRenderer.RayTracingActive(renderSettings.rayTracing);
             if (traceable && mRenderViews.size() == 1)
             {
                 mRenderer.TraceFrame(mRenderViews);

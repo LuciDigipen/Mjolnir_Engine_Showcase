@@ -63,6 +63,17 @@ namespace mir
 
     bool VulkanRenderer::NgxSupported() const { return mDevice->NgxSupported(); }
 
+    bool VulkanRenderer::RayTracingActive(bool requested) const { return requested && RayTracingSupported(); }
+
+    bool VulkanRenderer::DlssAvailable() const
+    {
+    #if MIR_WITH_DLSS
+        return mDlssReady;
+    #else
+        return false;
+    #endif
+    }
+
     VulkanRenderer::GpuMemoryUsage VulkanRenderer::GetGpuMemoryUsage() const
     {
         const vk::Device::MemoryBudget budget = mDevice->GpuMemoryBudget();
@@ -121,7 +132,7 @@ namespace mir
             mDlssReady = mDlss->Initialize(*mDevice, mSwapchain->Extent());
             if (!mDlssReady)
                 MIR_LOG_ERROR("Initialize: DLSS Ray Reconstruction failed to initialize despite "
-                    "NgxSupported() - falling back to Msaa whenever Dlss is requested");
+                    "NgxSupported() - Dlss is no longer offered and a Dlss request clamps to Off");
         }
     #endif
 
@@ -165,13 +176,14 @@ namespace mir
             return false;
         }
 
-#if MIR_WITH_DLSS
+    #if MIR_WITH_DLSS
         if (mDlssReady && !mDlss->Resize(mSwapchain->Extent()))
         {
             mDlssReady = false;
-            MIR_LOG_WARN("DLSS Ray Reconstruction resize failed; using ray-traced multi-sampling");
+            MIR_LOG_WARN("DLSS Ray Reconstruction resize failed; Dlss is no longer offered and a Dlss "
+                "request clamps to Off");
         }
-#endif
+    #endif
         return true;
     }
 
@@ -346,9 +358,9 @@ namespace mir
         // in-flight frames may still use them
         mDevice->WaitIdle();
 
-#if MIR_WITH_DLSS
+    #if MIR_WITH_DLSS
         mDlss->ResetHistory();
-#endif
+    #endif
 
         mMeshUploads->Clear(*mRayTracer);
         mRayTracer->DestroyBlases();
@@ -442,10 +454,10 @@ namespace mir
 
     void VulkanRenderer::SetAntiAliasing(AntiAliasingMode mode, uint32_t rtSampleCount)
     {
-#if MIR_WITH_DLSS
+    #if MIR_WITH_DLSS
         if (mode != mAntiAliasingMode)
             mDlss->ResetHistory();
-#endif
+    #endif
         mAntiAliasingMode = mode;
         mAntiAliasingRtSampleCount = rtSampleCount;
     }

@@ -1041,7 +1041,8 @@ namespace mir
             {
                 if (ImGui::Begin("Post-Processing", &mShowPostProcessing))
                     mPostProcessingPanel.Draw(postProcessingSettings, mProjectSettingsPath,
-                        PostEffectContext{ renderSettings.rayTracing, renderer.NgxSupported() });
+                        PostEffectContext{ renderer.RayTracingActive(renderSettings.rayTracing),
+                            renderer.DlssAvailable() });
                 ImGui::End();
             }
             else

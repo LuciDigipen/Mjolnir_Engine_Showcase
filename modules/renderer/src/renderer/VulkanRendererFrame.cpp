@@ -422,9 +422,16 @@ namespace mir
             const bool reconstructed = mDlss->Record(cmd, frame, dlssInputs, mSwapchain->Extent(), rect);
             mDevice->EndLabel(cmd);
             if (reconstructed)
+            {
                 colorSource = mDlss->OutputView(frame);
+            }
             else
+            {
+                // DlssAvailable() now reports false, so the next frame's clamp and the panel drop Dlss.
                 mDlssReady = false;
+                MIR_LOG_WARN("DLSS Ray Reconstruction failed; Dlss is no longer offered and a Dlss request "
+                    "clamps to Off");
+            }
         }
     #endif
 

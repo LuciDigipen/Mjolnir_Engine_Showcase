@@ -19,7 +19,7 @@ namespace mir
     struct PostEffectContext
     {
         bool rayTracing = false;
-        bool ngxSupported = false;
+        bool dlssAvailable = false;
     };
 
     struct PostEffectDesc

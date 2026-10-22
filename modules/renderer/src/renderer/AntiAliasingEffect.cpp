@@ -35,7 +35,7 @@ namespace mir
             case AntiAliasingMode::Msaa:
                 return context.rayTracing;
             case AntiAliasingMode::Dlss:
-                return context.rayTracing && context.ngxSupported;
+                return context.rayTracing && context.dlssAvailable;
             }
             return false;
         }
@@ -124,9 +124,9 @@ namespace mir
         params["rtSampleCount"] = aa.rtSampleCount;
     }
 
-    AntiAliasingMode ClampAntiAliasingMode(AntiAliasingMode requested, bool rayTracing, bool ngxSupported)
+    AntiAliasingMode ClampAntiAliasingMode(AntiAliasingMode requested, bool rayTracing, bool dlssAvailable)
     {
-        return ModeAllowed(requested, PostEffectContext{ rayTracing, ngxSupported }) ? requested
+        return ModeAllowed(requested, PostEffectContext{ rayTracing, dlssAvailable }) ? requested
             : AntiAliasingMode::Off;
     }
 

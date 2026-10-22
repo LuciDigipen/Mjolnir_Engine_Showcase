@@ -49,7 +49,7 @@ namespace mir
     // right now, but a hand-edited or cross-machine project_settings.json isn't bound by that -
     // this is the actual enforcement point for "a device without NGX/RTX support never fails"
     // and "Off renders the scene unchanged, in both pipelines". Falls back to Off.
-    AntiAliasingMode ClampAntiAliasingMode(AntiAliasingMode requested, bool rayTracing, bool ngxSupported);
+    AntiAliasingMode ClampAntiAliasingMode(AntiAliasingMode requested, bool rayTracing, bool dlssAvailable);
 
     void RegisterAntiAliasingPostEffect();
 }

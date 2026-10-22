@@ -231,6 +231,14 @@ namespace mir
 
         bool NgxSupported() const;
 
+        // Whether a frame with Ray Tracing requested actually goes down the TraceFrame path -
+        // the one flag AA mode clamping and the panel must agree with dispatch on.
+        bool RayTracingActive(bool requested) const;
+
+        // NGX support and a Ray Reconstruction feature that hasn't failed. Goes false for good
+        // after an init/resize/evaluate failure, so Dlss stops being offered or selected.
+        bool DlssAvailable() const;
+
         struct GpuMemoryUsage
         {
             uint64_t mUsageBytes = 0;
