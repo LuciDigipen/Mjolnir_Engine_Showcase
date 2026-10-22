@@ -379,6 +379,16 @@ Open Project asks for, but not the menu or the dialog themselves.
 
 ## Changed
 
+*2026-10-21* — **`PostProcessingPanel::Draw` takes a `PostEffectContext`
+(PR #278).** Was: every effect's params UI drew the same regardless of
+pipeline or hardware. Now: `Editor` passes `{ RayTracingActive(rayTracing),
+DlssAvailable() }` through to each effect's draw callback, so the
+anti-aliasing entry's Mode combo lists only the modes this device can run
+right now - the same flags `RenderSystem` clamps the mode against (see
+[renderer.md](renderer.md)'s anti-aliasing rules). Because: a combo offering
+Dlss on a machine that can't run it would save a mode that silently renders
+as Off.
+
 *2026-10-18* — **A standalone Post-Processing panel (#207).** Was: no place
 for post-effect controls other than Project Settings. Now: `PostProcessingPanel`
 (`editor/panels/PostProcessingPanel.h`), opened from Project >

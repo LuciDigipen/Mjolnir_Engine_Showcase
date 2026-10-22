@@ -47,8 +47,10 @@ namespace mir
 
     // The panel's combo (see AntiAliasingEffect.cpp) only ever lets a user select a mode valid
     // right now, but a hand-edited or cross-machine project_settings.json isn't bound by that -
-    // this is the actual enforcement point for "a device without NGX/RTX support never fails"
-    // and "Off renders the scene unchanged, in both pipelines". Falls back to Off.
+    // this is the actual enforcement point for "a device without NGX/RTX support never fails".
+    // Falls back to Off. Off means no AA pass, no extra rays and no camera jitter; it does not
+    // undo the velocity changes this feature made for every mode (prevViewProj rebased to the
+    // current camera origin, sky velocity on ray tracing, RG16F RT velocity).
     AntiAliasingMode ClampAntiAliasingMode(AntiAliasingMode requested, bool rayTracing, bool dlssAvailable);
 
     // Rounds the Msaa fallback's sample count up to a standard sample pattern size: 1, 2, 4 or 8.

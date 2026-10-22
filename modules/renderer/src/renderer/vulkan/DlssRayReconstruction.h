@@ -1,9 +1,9 @@
 /**
  * @file DlssRayReconstruction.h
  * @author Rahul Nair
- * @brief NVIDIA NGX DLSS Ray Reconstruction: denoise, upscale (native-res here -
- *        see renderer.md's Scope note) and anti-alias the ray-traced image in
- *        one pass.
+ * @brief NVIDIA NGX DLSS Ray Reconstruction: denoise and anti-alias the
+ *        ray-traced image in one pass, at native resolution (DLAA preset, no
+ *        upscale ratio).
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
