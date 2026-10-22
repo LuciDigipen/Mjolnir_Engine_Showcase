@@ -36,6 +36,9 @@ namespace mir::vk
         bool mUnlit = false;
         VkCullModeFlags mCullMode = VK_CULL_MODE_BACK_BIT;
         VkFrontFace mFrontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        VkImageView mBaseColorView = VK_NULL_HANDLE;
+        VkSampler mSampler = VK_NULL_HANDLE;
+        bool mError = false;
     };
 
     // Destroy* and Release* do not wait: the caller idles the device first,

@@ -34,15 +34,26 @@ struct RtInstanceInfo
     float4 normalCol0;
     float4 normalCol1;
     float4 normalCol2;
-    uint unlit;
+    uint flags;            // kInstance* bits
+    uint baseColorTexture; // index into gTextures; read only with kInstanceTextured
+    float alphaCutoff;     // read only with kInstanceAlphaTest
     uint pad0;
-    uint pad1;
-    uint pad2;
     float4x4 prevModel; // camera-relative to THIS frame's camera - see DrawItem::previousModel
 };
 
 [[vk::binding(2, 0)]]
 StructuredBuffer<RtInstanceInfo> gInstances;
+
+// RtInstanceInfo::flags; keep in sync with RayTracer.cpp.
+static const uint kInstanceUnlit = 1u;
+static const uint kInstanceTextured = 2u; // the model shader: base color = texture * vertex color * tint
+static const uint kInstanceError = 4u;
+static const uint kInstanceAlphaTest = 8u;
+static const uint kInstanceDoubleSided = 16u;
+static const uint kMaxRtTextures = 1024;
+
+[[vk::binding(9, 0)]]
+Sampler2D<float4> gTextures[kMaxRtTextures];
 
 [[vk::binding(0, 1)]]
 cbuffer CameraData
@@ -85,7 +96,9 @@ static const float2 kMsaaOffsets[2 * kMaxMsaaSamples - 1] = {
 // The CPU already rounds to a pattern size (ClampRtSampleCount); this keeps a bad value in range.
 uint MsaaPatternSize(uint requested)
 {
-    return requested <= 1u ? 1u : requested <= 2u ? 2u : requested <= 4u ? 4u : kMaxMsaaSamples;
+    return requested <= 1u ? 1u : requested <= 2u ? 2u
+                              : requested <= 4u   ? 4u
+                                                  : kMaxMsaaSamples;
 }
 
 struct RtPushConstants
@@ -119,6 +132,66 @@ static const float kShininess = 32.0;
 static const float kMaterialRoughness = pow(2.0 / (kShininess + 2.0), 0.25);
 // pos(3) + color(3) + normal(3) + uv(2) + alpha(1) + tangent(4); keep in sync with mir::Vertex.
 static const uint kVertexStrideFloats = 16;
+static const uint kColorOffset = 3;
+static const uint kNormalOffset = 6;
+static const uint kUvOffset = 9;
+static const uint kAlphaOffset = 11;
+
+uint3 TriangleIndices(RtInstanceInfo info)
+{
+    const uint primBase = PrimitiveIndex() * 3;
+    return uint3(info.indexAddress[primBase + 0], info.indexAddress[primBase + 1], info.indexAddress[primBase + 2]);
+}
+
+float3 Barycentrics(BuiltInTriangleIntersectionAttributes attribs)
+{
+    return float3(1.0 - attribs.barycentrics.x - attribs.barycentrics.y, attribs.barycentrics.x, attribs.barycentrics.y);
+}
+
+float3 LoadFloat3(RtInstanceInfo info, uint vertex, uint offset)
+{
+    const uint b = vertex * kVertexStrideFloats + offset;
+    return float3(info.vertexAddress[b], info.vertexAddress[b + 1], info.vertexAddress[b + 2]);
+}
+
+float3 InterpolateFloat3(RtInstanceInfo info, uint3 indices, float3 barycentrics, uint offset)
+{
+    return LoadFloat3(info, indices.x, offset) * barycentrics.x + LoadFloat3(info, indices.y, offset) * barycentrics.y +
+           LoadFloat3(info, indices.z, offset) * barycentrics.z;
+}
+
+// xy = uv, z = vertex alpha.
+float3 InterpolateUvAlpha(RtInstanceInfo info, uint3 indices, float3 barycentrics)
+{
+    float3 result = float3(0.0, 0.0, 0.0);
+    for (uint k = 0; k < 3; k++)
+    {
+        const uint b = indices[k] * kVertexStrideFloats;
+        result += float3(info.vertexAddress[b + kUvOffset], info.vertexAddress[b + kUvOffset + 1],
+                         info.vertexAddress[b + kAlphaOffset]) *
+                  barycentrics[k];
+    }
+    return result;
+}
+
+// model.slang's base color: texture * vertex color and alpha * tint.
+float4 ModelBaseColor(RtInstanceInfo info, uint3 indices, float3 barycentrics)
+{
+    const float3 uvAlpha = InterpolateUvAlpha(info, indices, barycentrics);
+    const float3 vertexColor = InterpolateFloat3(info, indices, barycentrics, kColorOffset);
+    // Level 0: there are no ray differentials yet to pick a mip from.
+    const float4 texel = gTextures[NonUniformResourceIndex(info.baseColorTexture)].SampleLevel(uvAlpha.xy, 0.0);
+    return texel * float4(vertexColor, uvAlpha.z) * info.tint;
+}
+
+// model.slang discards below the cutoff. Blend materials are cut the same way, since a trace has no blending.
+bool AlphaTestPasses(BuiltInTriangleIntersectionAttributes attribs)
+{
+    const RtInstanceInfo info = gInstances[InstanceID()];
+    if ((info.flags & kInstanceAlphaTest) == 0)
+        return true;
+    return ModelBaseColor(info, TriangleIndices(info), Barycentrics(attribs)).a >= info.alphaCutoff;
+}
 
 // Self-shadowing bias: the origin is nudged along the surface normal before tracing.
 static const float kShadowNormalBias = 0.01;
@@ -135,9 +208,8 @@ float TraceShadowRay(float3 origin, float3 direction, float tMax)
     shadowRay.TMin = 0.001;
     shadowRay.TMax = max(tMax, shadowRay.TMin);
 
-    TraceRay(gTlas,
-             RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
-             0xFF, 0, 0, 1, shadowRay, shadowPayload);
+    TraceRay(gTlas, RAY_FLAG_SKIP_CLOSEST_HIT_SHADER | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
+             0xFF, 1, 0, 1, shadowRay, shadowPayload);
 
     return shadowPayload.visibility;
 }
@@ -225,44 +297,43 @@ void shadowMissMain(inout ShadowPayload payload)
     payload.visibility = 1.0;
 }
 
+[shader("anyhit")]
+void anyHitMain(inout RayPayload payload, in BuiltInTriangleIntersectionAttributes attribs)
+{
+    if (!AlphaTestPasses(attribs))
+        IgnoreHit();
+}
+
+[shader("anyhit")]
+void shadowAnyHitMain(inout ShadowPayload payload, in BuiltInTriangleIntersectionAttributes attribs)
+{
+    if (!AlphaTestPasses(attribs))
+        IgnoreHit();
+}
+
 [shader("closesthit")]
 void closestHitMain(inout RayPayload payload, in BuiltInTriangleIntersectionAttributes attribs)
 {
     const RtInstanceInfo info = gInstances[InstanceID()];
+    const float3 barycentrics = Barycentrics(attribs);
+    const uint3 indices = TriangleIndices(info);
 
-    const float3 barycentrics = float3(
-        1.0 - attribs.barycentrics.x - attribs.barycentrics.y,
-        attribs.barycentrics.x,
-        attribs.barycentrics.y);
-
-    const uint primBase = PrimitiveIndex() * 3;
-    const uint i0 = info.indexAddress[primBase + 0];
-    const uint i1 = info.indexAddress[primBase + 1];
-    const uint i2 = info.indexAddress[primBase + 2];
-
-    // Object-space hit position (pos is floats 0-2 of each vertex) - needed
-    // by both branches below, to reproject through info.prevModel for velocity.
-    const uint pb0 = i0 * kVertexStrideFloats;
-    const uint pb1 = i1 * kVertexStrideFloats;
-    const uint pb2 = i2 * kVertexStrideFloats;
-    const float3 op0 = float3(info.vertexAddress[pb0], info.vertexAddress[pb0 + 1], info.vertexAddress[pb0 + 2]);
-    const float3 op1 = float3(info.vertexAddress[pb1], info.vertexAddress[pb1 + 1], info.vertexAddress[pb1 + 2]);
-    const float3 op2 = float3(info.vertexAddress[pb2], info.vertexAddress[pb2 + 1], info.vertexAddress[pb2 + 2]);
+    // Object-space hit position - needed by both branches below, to reproject
+    // through info.prevModel for velocity.
+    const float3 op0 = LoadFloat3(info, indices.x, 0);
+    const float3 op1 = LoadFloat3(info, indices.y, 0);
+    const float3 op2 = LoadFloat3(info, indices.z, 0);
     const float3 objectPos = op0 * barycentrics.x + op1 * barycentrics.y + op2 * barycentrics.z;
     const float3 hitWorldPos = WorldRayOrigin() + RayTCurrent() * WorldRayDirection();
+    const bool isError = (info.flags & kInstanceError) != 0;
 
     float3 color;
 
-    if (info.unlit != 0)
+    if ((info.flags & (kInstanceUnlit | kInstanceError)) != 0)
     {
-        const uint b0 = i0 * kVertexStrideFloats + 3;
-        const uint b1 = i1 * kVertexStrideFloats + 3;
-        const uint b2 = i2 * kVertexStrideFloats + 3;
-        const float3 c0 = float3(info.vertexAddress[b0], info.vertexAddress[b0 + 1], info.vertexAddress[b0 + 2]);
-        const float3 c1 = float3(info.vertexAddress[b1], info.vertexAddress[b1 + 1], info.vertexAddress[b1 + 2]);
-        const float3 c2 = float3(info.vertexAddress[b2], info.vertexAddress[b2 + 1], info.vertexAddress[b2 + 2]);
-        const float3 vertexColor = c0 * barycentrics.x + c1 * barycentrics.y + c2 * barycentrics.z;
-        color = vertexColor * info.tint.rgb;
+        // error.slang's solid magenta, or unlit.slang's vertex color * tint.
+        color = isError ? float3(1.0, 0.0, 1.0)
+                        : InterpolateFloat3(info, indices, barycentrics, kColorOffset) * info.tint.rgb;
         if (pushData.aaMode == kAaModeDlss)
         {
             const uint2 guidePixel = DispatchRaysIndex().xy + pushData.outputOffset;
@@ -276,18 +347,15 @@ void closestHitMain(inout RayPayload payload, in BuiltInTriangleIntersectionAttr
     }
     else
     {
-        const uint b0 = i0 * kVertexStrideFloats + 6;
-        const uint b1 = i1 * kVertexStrideFloats + 6;
-        const uint b2 = i2 * kVertexStrideFloats + 6;
-        const float3 n0 = float3(info.vertexAddress[b0], info.vertexAddress[b0 + 1], info.vertexAddress[b0 + 2]);
-        const float3 n1 = float3(info.vertexAddress[b1], info.vertexAddress[b1 + 1], info.vertexAddress[b1 + 2]);
-        const float3 n2 = float3(info.vertexAddress[b2], info.vertexAddress[b2 + 1], info.vertexAddress[b2 + 2]);
-        const float3 objNormal = n0 * barycentrics.x + n1 * barycentrics.y + n2 * barycentrics.z;
+        const float3 objNormal = InterpolateFloat3(info, indices, barycentrics, kNormalOffset);
 
-        const float3 N = normalize(
+        float3 N = normalize(
             info.normalCol0.xyz * objNormal.x +
             info.normalCol1.xyz * objNormal.y +
             info.normalCol2.xyz * objNormal.z);
+        // model.slang lights a double-sided back face with the flipped normal.
+        if ((info.flags & kInstanceDoubleSided) != 0 && dot(N, WorldRayDirection()) > 0.0)
+            N = -N;
 
         const float3 shadowOrigin = hitWorldPos + N * kShadowNormalBias;
         const float3 L = normalize(lightDirWS.xyz);
@@ -299,7 +367,9 @@ void closestHitMain(inout RayPayload payload, in BuiltInTriangleIntersectionAttr
 
         const float sunVisibility = TraceShadowRay(shadowOrigin, L, kSunShadowDistance);
 
-        const float3 albedo = kAlbedo * info.tint.rgb;
+        const float3 albedo = (info.flags & kInstanceTextured) != 0
+                                  ? ModelBaseColor(info, indices, barycentrics).rgb
+                                  : kAlbedo * info.tint.rgb;
         color = albedo * ambientColor.rgb +
                 (albedo * lightColor.rgb * diffuse + lightColor.rgb * kSpecularStrength * specular) * sunVisibility;
 
@@ -334,7 +404,8 @@ void closestHitMain(inout RayPayload payload, in BuiltInTriangleIntersectionAttr
     }
 
     const float clampedDist = clamp(RayTCurrent(), fogRange.x, fogRange.y);
-    const float fogFactor = clamp(1.0 - exp(-fogColor.a * (clampedDist - fogRange.x)), 0.0, 1.0);
+    // error.slang draws no fog.
+    const float fogFactor = isError ? 0.0 : clamp(1.0 - exp(-fogColor.a * (clampedDist - fogRange.x)), 0.0, 1.0);
     payload.color = lerp(color, fogColor.rgb, fogFactor);
     payload.distance = RayTCurrent();
 

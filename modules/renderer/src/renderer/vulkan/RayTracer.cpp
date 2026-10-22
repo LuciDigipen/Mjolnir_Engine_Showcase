@@ -25,6 +25,8 @@
 #include <array>
 #include <cstring>
 #include <format>
+#include <map>
+#include <utility>
 #include <vector>
 
 namespace mir::vk
@@ -39,10 +41,21 @@ namespace mir::vk
             glm::vec4 normalCol0;
             glm::vec4 normalCol1;
             glm::vec4 normalCol2;
-            uint32_t unlit;
-            uint32_t pad[3];
+            uint32_t flags; // kInstance* bits
+            uint32_t baseColorTexture;
+            float alphaCutoff;
+            uint32_t pad;
             glm::mat4 prevModel;
         };
+
+        // RtInstanceInfo::flags; keep in sync with raytrace.slang.
+        constexpr uint32_t kInstanceUnlit = 1u;
+        constexpr uint32_t kInstanceTextured = 2u;
+        constexpr uint32_t kInstanceError = 4u;
+        constexpr uint32_t kInstanceAlphaTest = 8u;
+        constexpr uint32_t kInstanceDoubleSided = 16u;
+        constexpr uint32_t kTextureBinding = 9;
+        constexpr uint32_t kMaxRtTextures = 1024;
 
         VkTransformMatrixKHR ToTransformMatrixKHR(const glm::mat4 &m)
         {
@@ -397,7 +410,7 @@ namespace mir::vk
         for (uint32_t frame = 0; frame < kFramesInFlight; ++frame)
             for (uint32_t i = FirstImage(guides); i < EndImage(guides); ++i)
                 if (!CreateImage2D(*mDevice, kRtImages[i].format, extent, kRtImageUsage,
-                        std::format("RT {} image {}", kRtImages[i].name, frame).c_str(), mImages[i][frame]))
+                    std::format("RT {} image {}", kRtImages[i].name, frame).c_str(), mImages[i][frame]))
                     return false;
 
         return true;
@@ -421,26 +434,36 @@ namespace mir::vk
 
     bool RayTracer::CreatePipeline(VkDescriptorSetLayout cameraSetLayout)
     {
-        VkShaderModule raygenModule = CreateShaderModule(mDevice->Handle(), ShaderPath("raytrace.rayGenMain.spv"));
-        VkShaderModule missModule = CreateShaderModule(mDevice->Handle(), ShaderPath("raytrace.missMain.spv"));
-        VkShaderModule shadowMissModule = CreateShaderModule(mDevice->Handle(), ShaderPath("raytrace.shadowMissMain.spv"));
-        VkShaderModule hitModule = CreateShaderModule(mDevice->Handle(), ShaderPath("raytrace.closestHitMain.spv"));
+        // Indexed by stage: raygen, miss, shadow miss, closest hit, any hit, shadow any hit.
+        constexpr std::array<const char *, 6> kEntryPoints{
+            "rayGenMain", "missMain", "shadowMissMain", "closestHitMain", "anyHitMain", "shadowAnyHitMain" };
+        constexpr std::array<VkShaderStageFlagBits, 6> kStages{
+            VK_SHADER_STAGE_RAYGEN_BIT_KHR, VK_SHADER_STAGE_MISS_BIT_KHR, VK_SHADER_STAGE_MISS_BIT_KHR,
+            VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, VK_SHADER_STAGE_ANY_HIT_BIT_KHR, VK_SHADER_STAGE_ANY_HIT_BIT_KHR };
 
-        if (raygenModule == VK_NULL_HANDLE || missModule == VK_NULL_HANDLE ||
-            shadowMissModule == VK_NULL_HANDLE || hitModule == VK_NULL_HANDLE)
+        std::array<VkShaderModule, kEntryPoints.size()> modules{};
+        const auto destroyModules = [&]
+            {
+                for (VkShaderModule module : modules)
+                    if (module != VK_NULL_HANDLE)
+                        vkDestroyShaderModule(mDevice->Handle(), module, nullptr);
+            };
+
+        for (size_t i = 0; i < modules.size(); ++i)
         {
-            if (raygenModule != VK_NULL_HANDLE)
-                vkDestroyShaderModule(mDevice->Handle(), raygenModule, nullptr);
-            if (missModule != VK_NULL_HANDLE)
-                vkDestroyShaderModule(mDevice->Handle(), missModule, nullptr);
-            if (shadowMissModule != VK_NULL_HANDLE)
-                vkDestroyShaderModule(mDevice->Handle(), shadowMissModule, nullptr);
-            if (hitModule != VK_NULL_HANDLE)
-                vkDestroyShaderModule(mDevice->Handle(), hitModule, nullptr);
-            return false;
+            modules[i] = CreateShaderModule(mDevice->Handle(), ShaderPath(std::format("raytrace.{}.spv", kEntryPoints[i])));
+            if (modules[i] == VK_NULL_HANDLE)
+            {
+                destroyModules();
+                return false;
+            }
         }
 
-        std::array<VkDescriptorSetLayoutBinding, 2 + kRtImageCount> setBindings{ {
+        constexpr VkShaderStageFlags kHitStages = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
+
+        // The TLAS, the instance info, every image, then the texture array.
+        constexpr uint32_t kBindingCount = 3 + kRtImageCount;
+        std::array<VkDescriptorSetLayoutBinding, kBindingCount> setBindings{ {
             { .binding = 0,
              .descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR,
              .descriptorCount = 1,
@@ -448,11 +471,12 @@ namespace mir::vk
             { .binding = 2,
              .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
              .descriptorCount = 1,
-             .stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR } } };
+             .stageFlags = kHitStages } } };
 
         // The guide buffers are only allocated while Dlss is active, and the shader only
-        // touches them on its Dlss branches, so they may be left unwritten.
-        std::array<VkDescriptorBindingFlags, 2 + kRtImageCount> bindingFlags{};
+        // touches them on its Dlss branches, so they may be left unwritten. So may the
+        // texture array past the frame's last texture.
+        std::array<VkDescriptorBindingFlags, kBindingCount> bindingFlags{};
 
         for (uint32_t i = 0; i < kRtImageCount; ++i)
         {
@@ -463,6 +487,14 @@ namespace mir::vk
                 .stageFlags = kRtImages[i].stages };
             bindingFlags[2 + i] = kRtImages[i].guide ? VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT : 0;
         }
+
+        setBindings[kBindingCount - 1] = {
+            .binding = kTextureBinding,
+            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .descriptorCount = kMaxRtTextures,
+            .stageFlags = kHitStages };
+        bindingFlags[kBindingCount - 1] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
+
         const VkDescriptorSetLayoutBindingFlagsCreateInfo bindingFlagsInfo{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
             .bindingCount = static_cast<uint32_t>(bindingFlags.size()),
@@ -477,17 +509,15 @@ namespace mir::vk
         if (vkCreateDescriptorSetLayout(mDevice->Handle(), &setLayoutInfo, nullptr, &mSetLayout) != VK_SUCCESS)
         {
             MIR_LOG_CRITICAL("CreatePipeline: vkCreateDescriptorSetLayout failed");
-            vkDestroyShaderModule(mDevice->Handle(), raygenModule, nullptr);
-            vkDestroyShaderModule(mDevice->Handle(), missModule, nullptr);
-            vkDestroyShaderModule(mDevice->Handle(), shadowMissModule, nullptr);
-            vkDestroyShaderModule(mDevice->Handle(), hitModule, nullptr);
+            destroyModules();
             return false;
         }
 
-        const std::array<VkDescriptorPoolSize, 3> poolSizes{ {
+        const std::array<VkDescriptorPoolSize, 4> poolSizes{ {
             { .type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, .descriptorCount = kFramesInFlight },
             { .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = kFramesInFlight * kRtImageCount },
-            { .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = kFramesInFlight } } };
+            { .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = kFramesInFlight },
+            { .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = kFramesInFlight * kMaxRtTextures } } };
 
         const VkDescriptorPoolCreateInfo poolInfo{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
@@ -498,10 +528,7 @@ namespace mir::vk
         if (vkCreateDescriptorPool(mDevice->Handle(), &poolInfo, nullptr, &mPool) != VK_SUCCESS)
         {
             MIR_LOG_CRITICAL("CreatePipeline: vkCreateDescriptorPool failed");
-            vkDestroyShaderModule(mDevice->Handle(), raygenModule, nullptr);
-            vkDestroyShaderModule(mDevice->Handle(), missModule, nullptr);
-            vkDestroyShaderModule(mDevice->Handle(), shadowMissModule, nullptr);
-            vkDestroyShaderModule(mDevice->Handle(), hitModule, nullptr);
+            destroyModules();
             return false;
         }
 
@@ -516,10 +543,7 @@ namespace mir::vk
             if (vkAllocateDescriptorSets(mDevice->Handle(), &setAllocInfo, &mSets[i]) != VK_SUCCESS)
             {
                 MIR_LOG_CRITICAL("CreatePipeline: descriptor set allocation failed for frame {}", i);
-                vkDestroyShaderModule(mDevice->Handle(), raygenModule, nullptr);
-                vkDestroyShaderModule(mDevice->Handle(), missModule, nullptr);
-                vkDestroyShaderModule(mDevice->Handle(), shadowMissModule, nullptr);
-                vkDestroyShaderModule(mDevice->Handle(), hitModule, nullptr);
+                destroyModules();
                 return false;
             }
         }
@@ -541,56 +565,42 @@ namespace mir::vk
         if (vkCreatePipelineLayout(mDevice->Handle(), &pipelineLayoutInfo, nullptr, &mPipelineLayout) != VK_SUCCESS)
         {
             MIR_LOG_CRITICAL("CreatePipeline: vkCreatePipelineLayout failed");
-            vkDestroyShaderModule(mDevice->Handle(), raygenModule, nullptr);
-            vkDestroyShaderModule(mDevice->Handle(), missModule, nullptr);
-            vkDestroyShaderModule(mDevice->Handle(), shadowMissModule, nullptr);
-            vkDestroyShaderModule(mDevice->Handle(), hitModule, nullptr);
+            destroyModules();
             return false;
         }
 
-        const std::array<VkPipelineShaderStageCreateInfo, 4> stages{ {
-            { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-             .stage = VK_SHADER_STAGE_RAYGEN_BIT_KHR,
-             .module = raygenModule,
-             .pName = "rayGenMain" },
-            { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-             .stage = VK_SHADER_STAGE_MISS_BIT_KHR,
-             .module = missModule,
-             .pName = "missMain" },
-            { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-             .stage = VK_SHADER_STAGE_MISS_BIT_KHR,
-             .module = shadowMissModule,
-             .pName = "shadowMissMain" },
-            { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-             .stage = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,
-             .module = hitModule,
-             .pName = "closestHitMain" } } };
+        std::array<VkPipelineShaderStageCreateInfo, kEntryPoints.size()> stages{};
+        for (size_t i = 0; i < stages.size(); ++i)
+            stages[i] = { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                         .stage = kStages[i],
+                         .module = modules[i],
+                         .pName = kEntryPoints[i] };
 
-        const std::array<VkRayTracingShaderGroupCreateInfoKHR, 4> groups{ {
-            { .sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR,
-             .type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR,
-             .generalShader = 0,
-             .closestHitShader = VK_SHADER_UNUSED_KHR,
-             .anyHitShader = VK_SHADER_UNUSED_KHR,
-             .intersectionShader = VK_SHADER_UNUSED_KHR },
-            { .sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR,
-             .type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR,
-             .generalShader = 1,
-             .closestHitShader = VK_SHADER_UNUSED_KHR,
-             .anyHitShader = VK_SHADER_UNUSED_KHR,
-             .intersectionShader = VK_SHADER_UNUSED_KHR },
-            { .sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR,
-             .type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR,
-             .generalShader = 2,
-             .closestHitShader = VK_SHADER_UNUSED_KHR,
-             .anyHitShader = VK_SHADER_UNUSED_KHR,
-             .intersectionShader = VK_SHADER_UNUSED_KHR },
-            { .sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR,
-             .type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR,
-             .generalShader = VK_SHADER_UNUSED_KHR,
-             .closestHitShader = 3,
-             .anyHitShader = VK_SHADER_UNUSED_KHR,
-             .intersectionShader = VK_SHADER_UNUSED_KHR } } };
+        const auto generalGroup = [](uint32_t shader)
+            {
+                return VkRayTracingShaderGroupCreateInfoKHR{
+                    .sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR,
+                    .type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR,
+                    .generalShader = shader,
+                    .closestHitShader = VK_SHADER_UNUSED_KHR,
+                    .anyHitShader = VK_SHADER_UNUSED_KHR,
+                    .intersectionShader = VK_SHADER_UNUSED_KHR };
+            };
+        const auto hitGroup = [](uint32_t closestHit, uint32_t anyHit)
+            {
+                return VkRayTracingShaderGroupCreateInfoKHR{
+                    .sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR,
+                    .type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR,
+                    .generalShader = VK_SHADER_UNUSED_KHR,
+                    .closestHitShader = closestHit,
+                    .anyHitShader = anyHit,
+                    .intersectionShader = VK_SHADER_UNUSED_KHR };
+            };
+
+        // Raygen, the two misses, then a hit group per ray type: TraceRay's hit group
+        // offset picks 0 for camera rays and 1 for shadow rays (see TraceShadowRay).
+        const std::array<VkRayTracingShaderGroupCreateInfoKHR, 5> groups{
+            generalGroup(0), generalGroup(1), generalGroup(2), hitGroup(3, 4), hitGroup(VK_SHADER_UNUSED_KHR, 5) };
 
         const VkRayTracingPipelineCreateInfoKHR pipelineInfo{
             .sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR,
@@ -604,10 +614,7 @@ namespace mir::vk
         const VkResult pipelineResult = vkCreateRayTracingPipelinesKHR(
             mDevice->Handle(), VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &mPipeline);
 
-        vkDestroyShaderModule(mDevice->Handle(), raygenModule, nullptr);
-        vkDestroyShaderModule(mDevice->Handle(), missModule, nullptr);
-        vkDestroyShaderModule(mDevice->Handle(), shadowMissModule, nullptr);
-        vkDestroyShaderModule(mDevice->Handle(), hitModule, nullptr);
+        destroyModules();
 
         if (pipelineResult != VK_SUCCESS)
         {
@@ -615,7 +622,7 @@ namespace mir::vk
             return false;
         }
 
-        constexpr uint32_t kGroupCount = 4;
+        const uint32_t kGroupCount = static_cast<uint32_t>(groups.size());
         const uint32_t handleSize = mDevice->RtProperties().shaderGroupHandleSize;
         const uint32_t handleSizeAligned = AlignUp(handleSize, mDevice->RtProperties().shaderGroupHandleAlignment);
         const VkDeviceSize regionSize = AlignUp(handleSizeAligned, mDevice->RtProperties().shaderGroupBaseAlignment);
@@ -655,7 +662,7 @@ namespace mir::vk
         const VkDeviceAddress sbtBase = GetBufferAddress(mDevice->Handle(), mSbtBuffer);
         mSbtRaygenRegion = { .deviceAddress = sbtBase + 0 * regionSize, .stride = regionSize, .size = regionSize };
         mSbtMissRegion = { .deviceAddress = sbtBase + 1 * regionSize, .stride = regionSize, .size = 2 * regionSize };
-        mSbtHitRegion = { .deviceAddress = sbtBase + 3 * regionSize, .stride = regionSize, .size = regionSize };
+        mSbtHitRegion = { .deviceAddress = sbtBase + 3 * regionSize, .stride = regionSize, .size = 2 * regionSize };
         mSbtCallableRegion = {};
 
         return true;
@@ -823,6 +830,10 @@ namespace mir::vk
         auto *const instances = reinterpret_cast<VkAccelerationStructureInstanceKHR *>(mInstanceMapped[frameIndex]);
         auto *const instanceInfos = reinterpret_cast<RtInstanceInfo *>(mInstanceInfoMapped[frameIndex]);
 
+        // Each distinct base color texture and sampler pair this frame's instances sample, in gTextures order.
+        mTextureInfos.clear();
+        std::map<std::pair<VkImageView, VkSampler>, uint32_t> textureSlots;
+
         uint32_t instanceCount = 0;
         for (const DrawItem &item : items)
         {
@@ -847,12 +858,59 @@ namespace mir::vk
             if (!facing)
                 continue;
 
+            // Only the model shader samples its texture and reads its alpha and side parameters.
+            uint32_t flags = 0;
+            uint32_t textureSlot = 0;
+            if (material != nullptr)
+            {
+                if (material->mUnlit)
+                    flags |= kInstanceUnlit;
+                if (material->mError)
+                    flags |= kInstanceError;
+                if (material->mModelShader)
+                {
+                    const auto key = std::make_pair(material->mBaseColorView, material->mSampler);
+                    const auto found = textureSlots.find(key);
+                    if (found != textureSlots.end())
+                    {
+                        textureSlot = found->second;
+                        flags |= kInstanceTextured;
+                    }
+                    else if (mTextureInfos.size() < kMaxRtTextures)
+                    {
+                        textureSlot = static_cast<uint32_t>(mTextureInfos.size());
+                        textureSlots.emplace(key, textureSlot);
+                        mTextureInfos.push_back(VkDescriptorImageInfo{
+                            .sampler = material->mSampler,
+                            .imageView = material->mBaseColorView,
+                            .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL });
+                        flags |= kInstanceTextured;
+                    }
+                    else if (!mWarnedTextureCap)
+                    {
+                        MIR_LOG_WARN("RecordTlasBuild: more than {} textures; the rest are traced untextured",
+                            kMaxRtTextures);
+                        mWarnedTextureCap = true;
+                    }
+
+                    if (static_cast<MaterialAlphaMode>(static_cast<uint32_t>(material->mParameters.x)) !=
+                        MaterialAlphaMode::Opaque)
+                        flags |= kInstanceAlphaTest;
+                    if (material->mParameters.z > 0.0f)
+                        flags |= kInstanceDoubleSided;
+                }
+            }
+
+            // Non-opaque instances run the any-hit shaders, which do the alpha test.
+            const VkGeometryInstanceFlagsKHR opacity =
+                (flags & kInstanceAlphaTest) != 0 ? VK_GEOMETRY_INSTANCE_FORCE_NO_OPAQUE_BIT_KHR : 0;
+
             instances[instanceCount] = VkAccelerationStructureInstanceKHR{
                 .transform = ToTransformMatrixKHR(item.model),
                 .instanceCustomIndex = instanceCount,
                 .mask = 0xFF,
                 .instanceShaderBindingTableRecordOffset = 0,
-                .flags = *facing,
+                .flags = *facing | opacity,
                 .accelerationStructureReference = mBlases[item.mesh.mIndex].mAddress };
 
             instanceInfos[instanceCount] = RtInstanceInfo{
@@ -862,7 +920,9 @@ namespace mir::vk
                 .normalCol0 = glm::vec4(item.normalMatrix[0], 0.0f),
                 .normalCol1 = glm::vec4(item.normalMatrix[1], 0.0f),
                 .normalCol2 = glm::vec4(item.normalMatrix[2], 0.0f),
-                .unlit = (material != nullptr && material->mUnlit) ? 1u : 0u,
+                .flags = flags,
+                .baseColorTexture = textureSlot,
+                .alphaCutoff = material != nullptr ? material->mParameters.y : 0.0f,
                 .prevModel = item.previousModel };
 
             ++instanceCount;
@@ -1078,6 +1138,18 @@ namespace mir::vk
                 VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
 
         RecordTlasBuild(cmd, frame, items, resources, materials);
+
+        if (!mTextureInfos.empty())
+        {
+            const VkWriteDescriptorSet textureWrite{
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstSet = mSets[frame],
+                .dstBinding = kTextureBinding,
+                .descriptorCount = static_cast<uint32_t>(mTextureInfos.size()),
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .pImageInfo = mTextureInfos.data() };
+            vkUpdateDescriptorSets(mDevice->Handle(), 1, &textureWrite, 0, nullptr);
+        }
 
         const VkMemoryBarrier2 tlasBarrier{
             .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
