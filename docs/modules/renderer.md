@@ -181,7 +181,8 @@ is detected, never a rejection gate.** `FindPhysicalDevice` probes the winning
 device for the 3 extensions (the two above plus their
 `VK_KHR_deferred_host_operations` dependency), the two feature bits and
 `descriptorBindingPartiallyBound` (the Dlss guide bindings need it - see the
-anti-aliasing rules),
+anti-aliasing rules) and `shaderSampledImageArrayNonUniformIndexing` (the
+per-instance index into `gTextures`),
 storing the result in `mRayTracingSupported` and logging either way - a GPU
 lacking them stays fully usable for raster, same floor as today.
 `CreateLogicalDevice` only requests the 3 extensions and splices
@@ -727,14 +728,31 @@ Everything that needs a device is verified by the smoke tests and
    own active light count); only the two shaders that exist
    (`default`/`unlit`) get RT parity, so a third custom material shader
    would trace with whichever of those two `GpuMaterial::mUnlit` happens to
-   pick, not its own look; `closestHitMain` samples no textures, so its colour
-   is the vertex colour or albedo times the draw's tint, a textured model
-   traces untextured, and the error texture and error material trace as the
-   draw's tint rather than magenta; and `TraceFrame` only ever traces `views[0]` - a
+   pick, not its own look; textures are sampled at mip 0 only (no ray cones
+   yet), and a Blend material is alpha-tested at its cutoff rather than
+   blended; and `TraceFrame` only ever traces `views[0]` - a
    second viewport on screen at once is backlog item 6 regardless of
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-10-22* — **Textures in the ray-tracing pipeline (#216).** Was:
+`closestHitMain` sampled no textures, so a textured model traced as its tint
+times a flat grey, Mask materials traced as solid quads and cast solid
+shadows, and the error material traced grey. Now: `GpuMaterial` keeps its base
+color view and sampler; `RecordTlasBuild` gathers each distinct pair this
+frame's model-shader instances use into set 0's `gTextures` array (binding 9,
+`kMaxRtTextures` = 1024, partially bound, written per frame) and gives each
+instance its slot, alpha cutoff and `kInstance*` flags in `RtInstanceInfo`.
+`closestHitMain` takes a model draw's albedo from `model.slang`'s base color,
+texture * vertex color * tint, flips a double-sided back face's normal, and
+traces the error material magenta. Alpha-tested instances are marked
+`FORCE_NO_OPAQUE`, so `anyHitMain` (hit group 0, camera rays) and
+`shadowAnyHitMain` (hit group 1, which shadow rays now pick, no longer forced
+opaque) discard below the cutoff. Ray tracing now also requires
+`shaderSampledImageArrayNonUniformIndexing`. Because: both pipelines must
+render a scene the same way. Lighting still differs for model draws, since
+`model.slang` uses a fixed light (#217).
 
 *2026-10-22* — **Post-processing behind one orchestrator (#269).** Was: every
 post effect was wired separately at four layers - a `unique_ptr`, enabled flag

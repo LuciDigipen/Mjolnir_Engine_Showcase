@@ -146,7 +146,8 @@ engine_add_shaders(MjolnirEngine
 
 engine_add_shaders(MjolnirEngine
     SOURCE assets/shaders/raytrace.slang
-    ENTRIES rayGenMain:raygeneration missMain:miss closestHitMain:closesthit shadowMissMain:miss)
+    ENTRIES rayGenMain:raygeneration missMain:miss closestHitMain:closesthit shadowMissMain:miss
+            anyHitMain:anyhit shadowAnyHitMain:anyhit)
 
 # Every games/*/ with a game.json is a game; its assetsRoot gets cooked
 file(GLOB game_manifests CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/games/*/game.json")

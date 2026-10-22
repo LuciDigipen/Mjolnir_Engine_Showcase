@@ -164,6 +164,9 @@ namespace mir::vk
         constexpr static uint32_t kMaxInstances = 16384;
         bool mWarnedInstanceCap = false;
 
+        std::vector<VkDescriptorImageInfo> mTextureInfos;
+        bool mWarnedTextureCap = false;
+
         VkExtent2D mExtent{};
 
         Image2D mImages[static_cast<uint32_t>(RtImage::Count)][kFramesInFlight]{};
