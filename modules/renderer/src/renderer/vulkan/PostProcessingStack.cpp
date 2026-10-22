@@ -215,7 +215,7 @@ namespace mir::vk
     VkImageView PostProcessingStack::RecordRayTraced(VkCommandBuffer cmd, uint32_t frame, const RayTracer &rayTracer,
         VkRect2D rect, glm::vec2 jitterPixels, float nearZ, float farZ, VkExtent2D extent)
     {
-        VkImageView colorSource = rayTracer.OutputView(frame);
+        VkImageView colorSource = rayTracer.View(RtImage::Output, frame);
 
     #if MIR_WITH_DLSS
         // The ray-tracing path has no denoiser today - Ray Reconstruction becomes its denoiser and upscaler
@@ -223,18 +223,18 @@ namespace mir::vk
         {
             mDevice->BeginLabel(cmd, "Dlss Ray Reconstruction Pass", { 0.0f, 0.5f, 1.0f, 1.0f });
             const DlssRayReconstruction::Inputs dlssInputs{
-                .colorImage = rayTracer.OutputImage(frame),
-                .colorView = rayTracer.OutputView(frame),
-                .depthImage = rayTracer.DlssDepthImage(frame),
-                .depthView = rayTracer.DlssDepthView(frame),
-                .velocityImage = rayTracer.VelocityImage(frame),
-                .velocityView = rayTracer.VelocityView(frame),
-                .albedoImage = rayTracer.AlbedoImage(frame),
-                .albedoView = rayTracer.AlbedoView(frame),
-                .normalImage = rayTracer.NormalImage(frame),
-                .normalView = rayTracer.NormalView(frame),
-                .specularAlbedoImage = rayTracer.SpecularAlbedoImage(frame),
-                .specularAlbedoView = rayTracer.SpecularAlbedoView(frame),
+                .colorImage = rayTracer.Image(RtImage::Output, frame),
+                .colorView = rayTracer.View(RtImage::Output, frame),
+                .depthImage = rayTracer.Image(RtImage::DlssDepth, frame),
+                .depthView = rayTracer.View(RtImage::DlssDepth, frame),
+                .velocityImage = rayTracer.Image(RtImage::Velocity, frame),
+                .velocityView = rayTracer.View(RtImage::Velocity, frame),
+                .albedoImage = rayTracer.Image(RtImage::Albedo, frame),
+                .albedoView = rayTracer.View(RtImage::Albedo, frame),
+                .normalImage = rayTracer.Image(RtImage::Normal, frame),
+                .normalView = rayTracer.View(RtImage::Normal, frame),
+                .specularAlbedoImage = rayTracer.Image(RtImage::SpecularAlbedo, frame),
+                .specularAlbedoView = rayTracer.View(RtImage::SpecularAlbedo, frame),
                 .jitterPixels = jitterPixels };
             const bool reconstructed = mDlss.Record(cmd, frame, dlssInputs, extent, rect);
             mDevice->EndLabel(cmd);
@@ -258,7 +258,7 @@ namespace mir::vk
         if (mDepthOfFieldEnabled)
         {
             mDevice->BeginLabel(cmd, "Depth Of Field Pass", { 0.5f, 0.0f, 1.0f, 1.0f });
-            mDepthOfField.Record(cmd, frame, colorSource, rayTracer.DistanceView(frame),
+            mDepthOfField.Record(cmd, frame, colorSource, rayTracer.View(RtImage::Distance, frame),
                 /*isLinearDepth*/ true, nearZ, farZ, extent);
             mDevice->EndLabel(cmd);
             colorSource = mDepthOfField.OutputView(frame);
@@ -267,7 +267,7 @@ namespace mir::vk
         if (mMotionBlurEnabled)
         {
             mDevice->BeginLabel(cmd, "Motion Blur Pass", { 0.0f, 1.0f, 0.5f, 1.0f });
-            mMotionBlur.Record(cmd, frame, colorSource, rayTracer.VelocityView(frame), extent);
+            mMotionBlur.Record(cmd, frame, colorSource, rayTracer.View(RtImage::Velocity, frame), extent);
             mDevice->EndLabel(cmd);
             colorSource = mMotionBlur.OutputView(frame);
         }

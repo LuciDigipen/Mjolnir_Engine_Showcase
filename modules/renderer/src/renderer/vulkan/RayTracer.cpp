@@ -136,15 +136,15 @@ namespace mir::vk
             mSetLayout = VK_NULL_HANDLE;
         }
 
-        DestroyGuideImages();
-        DestroyOutputImages();
+        DestroyImages(/*guides*/ true);
+        DestroyImages(/*guides*/ false);
     }
 
     bool RayTracer::Resize(VkExtent2D extent)
     {
         const bool hadGuides = HasDlssGuides();
-        DestroyGuideImages();
-        DestroyOutputImages();
+        DestroyImages(/*guides*/ true);
+        DestroyImages(/*guides*/ false);
         if (!CreateOutputImages(extent) || (hadGuides && !CreateGuideImages()))
             return false;
 
@@ -160,7 +160,7 @@ namespace mir::vk
             return true;
         if (!CreateGuideImages())
         {
-            DestroyGuideImages();
+            DestroyImages(/*guides*/ true);
             return false;
         }
 
@@ -170,10 +170,10 @@ namespace mir::vk
 
     void RayTracer::DestroyDlssGuides()
     {
-        // Bindings 5-8 keep pointing at the destroyed views; partially bound makes that legal
+        // The guide bindings keep pointing at the destroyed views; partially bound makes that legal
         // as long as no Dlss-mode trace runs, and Record never traces Dlss without guides.
         if (mDevice != nullptr)
-            DestroyGuideImages();
+            DestroyImages(/*guides*/ true);
     }
 
     bool RayTracer::BuildMeshBlas(uint32_t meshIndex, const GpuMesh &mesh, uint32_t vertexCount)
@@ -340,62 +340,83 @@ namespace mir::vk
         // Every RT target is written as a storage image, sampled downstream and cleared by transfer.
         constexpr VkImageUsageFlags kRtImageUsage =
             VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+
+        constexpr VkClearColorValue kBlackClear{ .float32 = { 0.0f, 0.0f, 0.0f, 0.0f } };
+        // Past any real hit, so a miss pixel reads as infinitely far to DepthOfField.
+        constexpr VkClearColorValue kFarClear{ .float32 = { 1.0e8f, 0.0f, 0.0f, 0.0f } };
+
+        constexpr VkShaderStageFlags kRaygen = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+        constexpr VkShaderStageFlags kClosestHit = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+
+        struct RtImageDesc
+        {
+            const char *name;
+            VkFormat format;
+            // Set 0 binding; see raytrace.slang. 0 and 2 are the TLAS and instance info.
+            uint32_t binding;
+            VkShaderStageFlags stages;
+            VkClearColorValue clear;
+            // Allocated only while Dlss is active, so its binding is partially bound.
+            bool guide;
+        };
+
+        constexpr uint32_t kRtImageCount = static_cast<uint32_t>(RtImage::Count);
+
+        // Indexed by RtImage.
+        constexpr std::array<RtImageDesc, kRtImageCount> kRtImages{ {
+            { "output", kHdrColorFormat, 1, kRaygen, kBlackClear, false },
+            { "distance", kDistanceFormat, 3, kRaygen, kFarClear, false },
+            { "velocity", kRtVelocityFormat, 4, kRaygen, kBlackClear, false },
+            // Guides are written by closestHitMain only - see gAlbedo/gNormal in raytrace.slang.
+            // Background (miss) pixels never run it, so without the clear a sky pixel's guide
+            // data would be whatever the image last held. Neutral zero: zero albedo, zero normal/
+            // roughness - a background pixel's guide data just doesn't mean much to Ray Reconstruction.
+            { "albedo", kAlbedoFormat, 5, kClosestHit, kBlackClear, true },
+            { "normal", kHdrColorFormat, 6, kClosestHit, kBlackClear, true },
+            { "specularAlbedo", kHdrColorFormat, 7, kClosestHit, kBlackClear, true },
+            { "dlssDepth", kDistanceFormat, 8, kRaygen, kBlackClear, true } } };
+
+        // The always-present outputs, which precede the guides.
+        constexpr uint32_t kOutputImageCount = static_cast<uint32_t>(RtImage::Albedo);
+
+        constexpr bool OutputsPrecedeGuides()
+        {
+            for (uint32_t i = 0; i < kRtImageCount; ++i)
+                if (kRtImages[i].guide != (i >= kOutputImageCount))
+                    return false;
+            return true;
+        }
+        static_assert(OutputsPrecedeGuides(), "kRtImages: outputs first, then guides, matching RtImage");
+
+        uint32_t FirstImage(bool guides) { return guides ? kOutputImageCount : 0; }
+        uint32_t EndImage(bool guides) { return guides ? kRtImageCount : kOutputImageCount; }
+    }
+
+    bool RayTracer::CreateImages(bool guides, VkExtent2D extent)
+    {
+        for (uint32_t frame = 0; frame < kFramesInFlight; ++frame)
+            for (uint32_t i = FirstImage(guides); i < EndImage(guides); ++i)
+                if (!CreateImage2D(*mDevice, kRtImages[i].format, extent, kRtImageUsage,
+                        std::format("RT {} image {}", kRtImages[i].name, frame).c_str(), mImages[i][frame]))
+                    return false;
+
+        return true;
+    }
+
+    void RayTracer::DestroyImages(bool guides)
+    {
+        for (uint32_t frame = 0; frame < kFramesInFlight; ++frame)
+            for (uint32_t i = FirstImage(guides); i < EndImage(guides); ++i)
+                DestroyImage2D(*mDevice, mImages[i][frame]);
     }
 
     bool RayTracer::CreateOutputImages(VkExtent2D extent)
     {
-        for (uint32_t i = 0; i < kFramesInFlight; ++i)
-        {
-            if (!CreateImage2D(*mDevice, kHdrColorFormat, extent, kRtImageUsage,
-                    std::format("RT output image {}", i).c_str(), mOutput[i]) ||
-                !CreateImage2D(*mDevice, kDistanceFormat, extent, kRtImageUsage,
-                    std::format("RT distance image {}", i).c_str(), mDistance[i]) ||
-                !CreateImage2D(*mDevice, kRtVelocityFormat, extent, kRtImageUsage,
-                    std::format("RT velocity image {}", i).c_str(), mVelocity[i]))
-                return false;
-        }
+        if (!CreateImages(/*guides*/ false, extent))
+            return false;
 
         mExtent = extent;
         return true;
-    }
-
-    bool RayTracer::CreateGuideImages()
-    {
-        for (uint32_t i = 0; i < kFramesInFlight; ++i)
-        {
-            if (!CreateImage2D(*mDevice, kAlbedoFormat, mExtent, kRtImageUsage,
-                    std::format("RT albedo image {}", i).c_str(), mAlbedo[i]) ||
-                !CreateImage2D(*mDevice, kHdrColorFormat, mExtent, kRtImageUsage,
-                    std::format("RT normal image {}", i).c_str(), mNormal[i]) ||
-                !CreateImage2D(*mDevice, kHdrColorFormat, mExtent, kRtImageUsage,
-                    std::format("RT specularAlbedo image {}", i).c_str(), mSpecularAlbedo[i]) ||
-                !CreateImage2D(*mDevice, kDistanceFormat, mExtent, kRtImageUsage,
-                    std::format("RT dlssDepth image {}", i).c_str(), mDlssDepth[i]))
-                return false;
-        }
-
-        return true;
-    }
-
-    void RayTracer::DestroyOutputImages()
-    {
-        for (uint32_t i = 0; i < kFramesInFlight; ++i)
-        {
-            DestroyImage2D(*mDevice, mOutput[i]);
-            DestroyImage2D(*mDevice, mDistance[i]);
-            DestroyImage2D(*mDevice, mVelocity[i]);
-        }
-    }
-
-    void RayTracer::DestroyGuideImages()
-    {
-        for (uint32_t i = 0; i < kFramesInFlight; ++i)
-        {
-            DestroyImage2D(*mDevice, mAlbedo[i]);
-            DestroyImage2D(*mDevice, mNormal[i]);
-            DestroyImage2D(*mDevice, mSpecularAlbedo[i]);
-            DestroyImage2D(*mDevice, mDlssDepth[i]);
-        }
     }
 
     bool RayTracer::CreatePipeline(VkDescriptorSetLayout cameraSetLayout)
@@ -419,52 +440,29 @@ namespace mir::vk
             return false;
         }
 
-        const std::array<VkDescriptorSetLayoutBinding, 9> setBindings{ {
+        std::array<VkDescriptorSetLayoutBinding, 2 + kRtImageCount> setBindings{ {
             { .binding = 0,
              .descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR,
              .descriptorCount = 1,
              .stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR },
-            { .binding = 1,
-             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-             .descriptorCount = 1,
-             .stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR },
             { .binding = 2,
              .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
              .descriptorCount = 1,
-             .stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR },
-            // DepthOfField's linear-distance output - see gDistance in raytrace.slang.
-            { .binding = 3,
-             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-             .descriptorCount = 1,
-             .stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR },
-            { .binding = 4,
-             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-             .descriptorCount = 1,
-             .stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR },
-            // Ray Reconstruction's guide buffers - written by closestHitMain only, see gAlbedo/
-            // gNormal in raytrace.slang.
-            { .binding = 5,
-             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-             .descriptorCount = 1,
-             .stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR },
-            { .binding = 6,
-             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-             .descriptorCount = 1,
-             .stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR },
-            { .binding = 7,
-             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-             .descriptorCount = 1,
-             .stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR },
-            { .binding = 8,
-             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-             .descriptorCount = 1,
-             .stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR } } };
+             .stageFlags = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR } } };
 
-        // The guide buffers (5-8) are only allocated while Dlss is active, and the shader only
+        // The guide buffers are only allocated while Dlss is active, and the shader only
         // touches them on its Dlss branches, so they may be left unwritten.
-        constexpr VkDescriptorBindingFlags kGuideFlags = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
-        const std::array<VkDescriptorBindingFlags, 9> bindingFlags{
-            0, 0, 0, 0, 0, kGuideFlags, kGuideFlags, kGuideFlags, kGuideFlags };
+        std::array<VkDescriptorBindingFlags, 2 + kRtImageCount> bindingFlags{};
+
+        for (uint32_t i = 0; i < kRtImageCount; ++i)
+        {
+            setBindings[2 + i] = {
+                .binding = kRtImages[i].binding,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                .descriptorCount = 1,
+                .stageFlags = kRtImages[i].stages };
+            bindingFlags[2 + i] = kRtImages[i].guide ? VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT : 0;
+        }
         const VkDescriptorSetLayoutBindingFlagsCreateInfo bindingFlagsInfo{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
             .bindingCount = static_cast<uint32_t>(bindingFlags.size()),
@@ -488,8 +486,7 @@ namespace mir::vk
 
         const std::array<VkDescriptorPoolSize, 3> poolSizes{ {
             { .type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, .descriptorCount = kFramesInFlight },
-            // Color, distance, velocity, diffuse/specular albedo, normal/roughness and RR depth.
-            { .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = kFramesInFlight * 7 },
+            { .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = kFramesInFlight * kRtImageCount },
             { .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = kFramesInFlight } } };
 
         const VkDescriptorPoolCreateInfo poolInfo{
@@ -673,37 +670,13 @@ namespace mir::vk
                 .accelerationStructureCount = 1,
                 .pAccelerationStructures = &mTlas[i] };
 
-            const VkDescriptorImageInfo imageInfo{
-                .imageView = mOutput[i].view,
-                .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
-
-            const VkDescriptorImageInfo distanceImageInfo{
-                .imageView = mDistance[i].view,
-                .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
-
-            const VkDescriptorImageInfo velocityImageInfo{
-                .imageView = mVelocity[i].view,
-                .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
-
-            const VkDescriptorImageInfo albedoImageInfo{
-                .imageView = mAlbedo[i].view,
-                .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
-
-            const VkDescriptorImageInfo normalImageInfo{
-                .imageView = mNormal[i].view,
-                .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
-
-            const VkDescriptorImageInfo specularAlbedoImageInfo{
-                .imageView = mSpecularAlbedo[i].view, .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
-            const VkDescriptorImageInfo dlssDepthImageInfo{
-                .imageView = mDlssDepth[i].view, .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
-
             const VkDescriptorBufferInfo instanceInfoBufferInfo{
                 .buffer = mInstanceInfoBuffers[i],
                 .offset = 0,
                 .range = VK_WHOLE_SIZE };
 
-            const std::array<VkWriteDescriptorSet, 9> writes{ {
+            std::array<VkDescriptorImageInfo, kRtImageCount> imageInfos{};
+            std::array<VkWriteDescriptorSet, 2 + kRtImageCount> writes{ {
                 { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                  .pNext = &accelWrite,
                  .dstSet = mSets[i],
@@ -712,53 +685,26 @@ namespace mir::vk
                  .descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR },
                 { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                  .dstSet = mSets[i],
-                 .dstBinding = 1,
-                 .descriptorCount = 1,
-                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                 .pImageInfo = &imageInfo },
-                { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                 .dstSet = mSets[i],
                  .dstBinding = 2,
                  .descriptorCount = 1,
                  .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                 .pBufferInfo = &instanceInfoBufferInfo },
-                { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                 .dstSet = mSets[i],
-                 .dstBinding = 3,
-                 .descriptorCount = 1,
-                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                 .pImageInfo = &distanceImageInfo },
-                { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                 .dstSet = mSets[i],
-                 .dstBinding = 4,
-                 .descriptorCount = 1,
-                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                 .pImageInfo = &velocityImageInfo },
-                { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                 .dstSet = mSets[i],
-                 .dstBinding = 5,
-                 .descriptorCount = 1,
-                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                 .pImageInfo = &albedoImageInfo },
-                { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                 .dstSet = mSets[i],
-                 .dstBinding = 6,
-                 .descriptorCount = 1,
-                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                 .pImageInfo = &normalImageInfo },
-                { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                 .dstSet = mSets[i], .dstBinding = 7, .descriptorCount = 1,
-                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                 .pImageInfo = &specularAlbedoImageInfo },
-                { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                 .dstSet = mSets[i], .dstBinding = 8, .descriptorCount = 1,
-                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                 .pImageInfo = &dlssDepthImageInfo } } };
+                 .pBufferInfo = &instanceInfoBufferInfo } } };
 
-            // The guide writes are last, so dropping them leaves bindings 5-8 as they were.
-            constexpr uint32_t kGuideWriteCount = 4;
-            const uint32_t writeCount = static_cast<uint32_t>(writes.size()) - (HasDlssGuides() ? 0 : kGuideWriteCount);
-            vkUpdateDescriptorSets(mDevice->Handle(), writeCount, writes.data(), 0, nullptr);
+            // Without guides their bindings are left as they were.
+            const uint32_t imageCount = EndImage(HasDlssGuides());
+            for (uint32_t image = 0; image < imageCount; ++image)
+            {
+                imageInfos[image] = { .imageView = mImages[image][i].view, .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
+                writes[2 + image] = {
+                    .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .dstSet = mSets[i],
+                    .dstBinding = kRtImages[image].binding,
+                    .descriptorCount = 1,
+                    .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                    .pImageInfo = &imageInfos[image] };
+            }
+
+            vkUpdateDescriptorSets(mDevice->Handle(), 2 + imageCount, writes.data(), 0, nullptr);
         }
     }
 
@@ -1101,18 +1047,19 @@ namespace mir::vk
         VkDescriptorSet cameraSet, uint32_t cameraOffset, const ResourceStore &resources,
         const MaterialStore &materials, AntiAliasingMode aaMode, uint32_t rtSampleCount)
     {
-        // Without guide images bindings 5-8 are unwritten, so the shader's Dlss branches must not run.
+        // Without guide images their bindings are unwritten, so the shader's Dlss branches must not run.
         if (aaMode == AntiAliasingMode::Dlss && !HasDlssGuides())
             aaMode = AntiAliasingMode::Msaa;
         const bool dlssActive = aaMode == AntiAliasingMode::Dlss;
 
-        // gOutput/gDistance/gVelocity every frame, then the guide buffers while Dlss is active.
-        const std::array<VkImage, 7> images{ mOutput[frame].image, mDistance[frame].image, mVelocity[frame].image,
-            mAlbedo[frame].image, mNormal[frame].image, mSpecularAlbedo[frame].image, mDlssDepth[frame].image };
-        constexpr size_t kOutputCount = 3;
-        const std::span<const VkImage> written = std::span(images).first(dlssActive ? images.size() : kOutputCount);
-        const std::span<const VkImage> outputs = written.first(kOutputCount);
-        const std::span<const VkImage> guides = written.subspan(kOutputCount);
+        // The outputs every frame, then the guide buffers while Dlss is active.
+        const uint32_t writtenCount = EndImage(dlssActive);
+        std::array<VkImage, kRtImageCount> images{};
+        for (uint32_t i = 0; i < writtenCount; ++i)
+            images[i] = mImages[i][frame].image;
+        const std::span<const VkImage> written = std::span(images).first(writtenCount);
+        const std::span<const VkImage> outputs = written.first(kOutputImageCount);
+        const std::span<const VkImage> guides = written.subspan(kOutputImageCount);
 
         for (VkImage image : written)
             ImageBarrier(cmd, image, VK_IMAGE_ASPECT_COLOR_BIT,
@@ -1120,20 +1067,9 @@ namespace mir::vk
                 VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
                 VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
 
-        const VkClearColorValue blackClear{ .float32 = { 0.0f, 0.0f, 0.0f, 0.0f } };
         const VkImageSubresourceRange outputRange{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-        vkCmdClearColorImage(cmd, mOutput[frame].image, VK_IMAGE_LAYOUT_GENERAL, &blackClear, 1, &outputRange);
-
-        const VkClearColorValue farClear{ .float32 = { 1.0e8f, 0.0f, 0.0f, 0.0f } };
-        vkCmdClearColorImage(cmd, mDistance[frame].image, VK_IMAGE_LAYOUT_GENERAL, &farClear, 1, &outputRange);
-        vkCmdClearColorImage(cmd, mVelocity[frame].image, VK_IMAGE_LAYOUT_GENERAL, &blackClear, 1, &outputRange);
-
-        // Background (miss) pixels never run closestHitMain, so without this clear a sky pixel's
-        // guide data would be whatever the image last held - garbage on the very first frame,
-        // stale shading data on every frame after. Neutral zero: zero albedo, zero normal/
-        // roughness - a background pixel's guide data just doesn't mean much to Ray Reconstruction.
-        for (VkImage image : guides)
-            vkCmdClearColorImage(cmd, image, VK_IMAGE_LAYOUT_GENERAL, &blackClear, 1, &outputRange);
+        for (uint32_t i = 0; i < writtenCount; ++i)
+            vkCmdClearColorImage(cmd, images[i], VK_IMAGE_LAYOUT_GENERAL, &kRtImages[i].clear, 1, &outputRange);
 
         for (VkImage image : written)
             ImageBarrier(cmd, image, VK_IMAGE_ASPECT_COLOR_BIT,
