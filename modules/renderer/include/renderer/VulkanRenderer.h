@@ -229,8 +229,6 @@ namespace mir
 
         bool RayTracingSupported() const;
 
-        bool NgxSupported() const;
-
         // Whether a frame with Ray Tracing requested actually goes down the TraceFrame path -
         // the one flag AA mode clamping and the panel must agree with dispatch on.
         bool RayTracingActive(bool requested) const;

@@ -10,7 +10,7 @@
 
 // 1: the NGX/DLSS-RR SDK was fetched and DLSS Ray Reconstruction is compiled in.
 // 0: default - no network fetch, no NVIDIA SDK dependency, Dlss anti-aliasing stays
-// unreachable (NgxSupported() stays false, same posture as an unsupported device).
+// unreachable (DlssAvailable() stays false, same posture as an unsupported device).
 #cmakedefine01 MIR_WITH_DLSS
 
 namespace mir

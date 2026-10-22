@@ -61,8 +61,6 @@ namespace mir
 
     bool VulkanRenderer::RayTracingSupported() const { return mDevice->RayTracingSupported(); }
 
-    bool VulkanRenderer::NgxSupported() const { return mDevice->NgxSupported(); }
-
     bool VulkanRenderer::RayTracingActive(bool requested) const { return requested && RayTracingSupported(); }
 
     bool VulkanRenderer::DlssAvailable() const

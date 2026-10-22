@@ -130,7 +130,6 @@ void SetFilm(bool enabled, float grain, float contrast, float saturation, float 
 void SetMotionBlur(bool enabled, float shutterStrength, uint32_t sampleCount); // enabled false skips the GPU chain
 void SetAntiAliasing(AntiAliasingMode mode, uint32_t rtSampleCount); // already clamped; a change allocates/frees that mode's images
 bool RayTracingActive(bool requested) const;          // requested && RayTracingSupported() - what TraceFrame dispatch uses
-bool NgxSupported() const;                            // the device passed NGX's Ray Reconstruction check
 bool DlssAvailable() const;                           // NGX initialized and Ray Reconstruction hasn't failed since
 void SetImGuiDrawData(ImDrawData *drawData);
 VkExtent2D SwapchainExtent() const; 
