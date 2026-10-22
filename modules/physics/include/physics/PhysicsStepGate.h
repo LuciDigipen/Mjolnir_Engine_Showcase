@@ -28,6 +28,6 @@ namespace mir
     // World resource; a gate removes itself before it goes.
     struct PhysicsStepGates
     {
-        std::vector<PhysicsStepGate *> gates;
+        std::vector<PhysicsStepGate *> mGates;
     };
 } // namespace mir

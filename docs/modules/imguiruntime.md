@@ -14,7 +14,7 @@ context it owns, and none of them owns any part of that context's lifetime.
 
 ```cpp
 mImGui.Initialize(*mWindow, mRenderer);                 // after the renderer
-mEditor.Initialize(mImGui, *mWindow, projectSettingsPath, mWorld);
+mEditor.Initialize(mImGui, *mWindow, projectSettingsPath, mWorld, *mSceneOps);
 
 // each frame
 mImGui.BeginFrame();                                    // the NewFrame trio

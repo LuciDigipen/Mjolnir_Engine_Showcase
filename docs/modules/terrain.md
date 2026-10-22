@@ -1741,8 +1741,9 @@ reads discarded; candidates dropped when `current` moves on or back or the asset
 leaves; an unreadable pointer reported once; an asset with nothing loaded
 resolved again; a staged Eager release using only room left; staged pieces built
 but placed only once active).
-`engine_terrain_tests` links `mir::scene` for that last file only. Jolt-backed
-collision residency is tested in `modules/physics/tests/TerrainCollisionResidency.tests.cpp`
+`engine_terrain_tests` links `mir::scene` for that last file only, and `mir::physics`
+and `terrain_bake` for the Jolt-backed collision tests. Jolt-backed collision residency
+is tested in `TerrainCollisionResidencyJolt.tests.cpp`
 (bodies held over Eager terrain until placed, a body resting on A while B's
 height field is built beside it and on B after the switch, a fast descent held
 short of unloaded ground, low runs over ridges with hard turns, a failed piece

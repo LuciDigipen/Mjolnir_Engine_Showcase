@@ -60,7 +60,10 @@ namespace
     // A wide, thin slab centred on `center`; its top surface is 0.5 above it.
     mir::BodyHandle AddFloor(mir::PhysicsWorld &world, const mir::WorldVec3 &center = mir::WorldVec3(0.0))
     {
-        return world.CreateStaticBox(At(center), glm::vec3(10.0f, 0.5f, 10.0f));
+        return world.CreateBody({.mMotion = mir::PhysicsMotion::Static,
+                                 .mShape = mir::PhysicsShape::Box,
+                                 .mPosition = At(center),
+                                 .mHalfExtent = glm::vec3(10.0f, 0.5f, 10.0f)});
     }
 }
 
@@ -82,7 +85,10 @@ TEST_CASE("A dynamic sphere falls under gravity", "[physics]")
 {
     mir::PhysicsWorld world;
 
-    const mir::BodyHandle sphere = world.CreateDynamicSphere(At(0.0, 5.0, 0.0), 0.5f);
+    const mir::BodyHandle sphere = world.CreateBody({.mMotion = mir::PhysicsMotion::Dynamic,
+                                                     .mShape = mir::PhysicsShape::Sphere,
+                                                     .mPosition = At(0.0, 5.0, 0.0),
+                                                     .mRadius = 0.5f});
     REQUIRE(sphere.IsValid());
 
     StepFor(world, 30);
@@ -98,7 +104,10 @@ TEST_CASE("A dynamic sphere comes to rest on a static floor", "[physics]")
     mir::PhysicsWorld world;
 
     AddFloor(world);
-    const mir::BodyHandle sphere = world.CreateDynamicSphere(At(0.0, 3.0, 0.0), 0.5f);
+    const mir::BodyHandle sphere = world.CreateBody({.mMotion = mir::PhysicsMotion::Dynamic,
+                                                     .mShape = mir::PhysicsShape::Sphere,
+                                                     .mPosition = At(0.0, 3.0, 0.0),
+                                                     .mRadius = 0.5f});
     REQUIRE(world.BodyCount() == 2);
 
     StepFor(world, 180);
@@ -116,7 +125,10 @@ TEST_CASE("Gravity is taken from the description", "[physics]")
 
     mir::PhysicsWorld world(desc);
 
-    const mir::BodyHandle sphere = world.CreateDynamicSphere(At(0.0, 5.0, 0.0), 0.5f);
+    const mir::BodyHandle sphere = world.CreateBody({.mMotion = mir::PhysicsMotion::Dynamic,
+                                                     .mShape = mir::PhysicsShape::Sphere,
+                                                     .mPosition = At(0.0, 5.0, 0.0),
+                                                     .mRadius = 0.5f});
     StepFor(world, 30);
 
     REQUIRE(std::abs(MetersOf(world, sphere).y - 5.0) < 0.01);
@@ -127,7 +139,10 @@ TEST_CASE("DestroyBody drops the body", "[physics]")
     mir::PhysicsWorld world;
 
     const mir::BodyHandle floor = AddFloor(world);
-    const mir::BodyHandle sphere = world.CreateDynamicSphere(At(0.0, 3.0, 0.0), 0.5f);
+    const mir::BodyHandle sphere = world.CreateBody({.mMotion = mir::PhysicsMotion::Dynamic,
+                                                     .mShape = mir::PhysicsShape::Sphere,
+                                                     .mPosition = At(0.0, 3.0, 0.0),
+                                                     .mRadius = 0.5f});
     REQUIRE(world.BodyCount() == 2);
 
     world.DestroyBody(sphere);
@@ -147,7 +162,10 @@ TEST_CASE("Destroying a body wakes what slept on it", "[physics]")
     mir::PhysicsWorld world;
 
     const mir::BodyHandle floor = AddFloor(world);
-    const mir::BodyHandle box = world.CreateDynamicBox(At(0.0, 1.0, 0.0), glm::vec3(0.5f, 0.25f, 0.5f));
+    const mir::BodyHandle box = world.CreateBody({.mMotion = mir::PhysicsMotion::Dynamic,
+                                                  .mShape = mir::PhysicsShape::Box,
+                                                  .mPosition = At(0.0, 1.0, 0.0),
+                                                  .mHalfExtent = glm::vec3(0.5f, 0.25f, 0.5f)});
 
     // Jolt puts a body to sleep after half a second at rest.
     StepFor(world, 120);
@@ -174,7 +192,10 @@ TEST_CASE("RayCast reports the closest hit", "[physics]")
     CHECK(std::abs(hit->mDistance - 4.5f) <= 1e-5f);
 
     // A body in the way is hit first.
-    const mir::BodyHandle sphere = world.CreateDynamicSphere(At(1.0, 2.0, 2.0), 0.5f);
+    const mir::BodyHandle sphere = world.CreateBody({.mMotion = mir::PhysicsMotion::Dynamic,
+                                                     .mShape = mir::PhysicsShape::Sphere,
+                                                     .mPosition = At(1.0, 2.0, 2.0),
+                                                     .mRadius = 0.5f});
     const std::optional<mir::RayHit> first = world.RayCast(At(1.0, 5.0, 2.0), down, 10.0f);
     REQUIRE(first);
     CHECK(first->mBody == sphere);
@@ -219,7 +240,10 @@ TEST_CASE("A bad handle has no position instead of crashing", "[physics]")
     REQUIRE(world.BodyLinearVelocity(invalid) == glm::vec3(0.0f));
 
     // the Scene origin is a real place, so a body that is gone must not report it
-    const mir::BodyHandle destroyed = world.CreateDynamicSphere(At(0.0, 3.0, 0.0), 0.5f);
+    const mir::BodyHandle destroyed = world.CreateBody({.mMotion = mir::PhysicsMotion::Dynamic,
+                                                        .mShape = mir::PhysicsShape::Sphere,
+                                                        .mPosition = At(0.0, 3.0, 0.0),
+                                                        .mRadius = 0.5f});
     world.DestroyBody(destroyed);
     REQUIRE_FALSE(world.BodyPosition(destroyed));
 }
@@ -229,7 +253,10 @@ TEST_CASE("A body carries the entity it was tagged with", "[physics]")
     mir::PhysicsWorld world;
 
     const mir::BodyHandle floor = AddFloor(world);
-    const mir::BodyHandle sphere = world.CreateDynamicSphere(At(0.0, 3.0, 0.0), 0.5f);
+    const mir::BodyHandle sphere = world.CreateBody({.mMotion = mir::PhysicsMotion::Dynamic,
+                                                     .mShape = mir::PhysicsShape::Sphere,
+                                                     .mPosition = At(0.0, 3.0, 0.0),
+                                                     .mRadius = 0.5f});
     CHECK(world.BodyEntity(floor) == mir::kNullEntity);
 
     // Entity{0, 0} packs to Jolt's default user data.
@@ -257,7 +284,10 @@ TEST_CASE("A body carries the entity it was tagged with", "[physics]")
     CHECK(world.BodyEntity(sphere) == mir::kNullEntity);
 
     // A new body in the destroyed one's slot starts untagged.
-    const mir::BodyHandle reused = world.CreateDynamicSphere(At(0.0, 3.0, 0.0), 0.5f);
+    const mir::BodyHandle reused = world.CreateBody({.mMotion = mir::PhysicsMotion::Dynamic,
+                                                     .mShape = mir::PhysicsShape::Sphere,
+                                                     .mPosition = At(0.0, 3.0, 0.0),
+                                                     .mRadius = 0.5f});
     CHECK(world.BodyEntity(reused) == mir::kNullEntity);
 }
 
@@ -265,9 +295,18 @@ TEST_CASE("Degenerate shapes are rejected, not asserted on", "[physics]")
 {
     mir::PhysicsWorld world;
 
-    REQUIRE_FALSE(world.CreateStaticSphere(mir::WorldPosition{}, 0.0f).IsValid());
-    REQUIRE_FALSE(world.CreateDynamicSphere(mir::WorldPosition{}, -1.0f).IsValid());
-    REQUIRE_FALSE(world.CreateStaticBox(mir::WorldPosition{}, glm::vec3(1.0f, 0.0f, 1.0f)).IsValid());
+    REQUIRE_FALSE(world.CreateBody({.mMotion = mir::PhysicsMotion::Static,
+                                    .mShape = mir::PhysicsShape::Sphere,
+                                    .mPosition = mir::WorldPosition{},
+                                    .mRadius = 0.0f}).IsValid());
+    REQUIRE_FALSE(world.CreateBody({.mMotion = mir::PhysicsMotion::Dynamic,
+                                    .mShape = mir::PhysicsShape::Sphere,
+                                    .mPosition = mir::WorldPosition{},
+                                    .mRadius = -1.0f}).IsValid());
+    REQUIRE_FALSE(world.CreateBody({.mMotion = mir::PhysicsMotion::Static,
+                                    .mShape = mir::PhysicsShape::Box,
+                                    .mPosition = mir::WorldPosition{},
+                                    .mHalfExtent = glm::vec3(1.0f, 0.0f, 1.0f)}).IsValid());
     REQUIRE(world.BodyCount() == 0);
 }
 
@@ -275,7 +314,10 @@ TEST_CASE("A non-positive step does nothing", "[physics]")
 {
     mir::PhysicsWorld world;
 
-    const mir::BodyHandle sphere = world.CreateDynamicSphere(At(0.0, 5.0, 0.0), 0.5f);
+    const mir::BodyHandle sphere = world.CreateBody({.mMotion = mir::PhysicsMotion::Dynamic,
+                                                     .mShape = mir::PhysicsShape::Sphere,
+                                                     .mPosition = At(0.0, 5.0, 0.0),
+                                                     .mRadius = 0.5f});
 
     world.Step(0.0f);
     world.Step(-1.0f);
@@ -290,8 +332,14 @@ TEST_CASE("Several worlds can exist at once", "[physics]")
         mir::PhysicsWorld first;
         mir::PhysicsWorld second;
 
-        const mir::BodyHandle a = first.CreateDynamicSphere(At(0.0, 5.0, 0.0), 0.5f);
-        const mir::BodyHandle b = second.CreateStaticSphere(At(0.0, 5.0, 0.0), 0.5f);
+        const mir::BodyHandle a = first.CreateBody({.mMotion = mir::PhysicsMotion::Dynamic,
+                                                    .mShape = mir::PhysicsShape::Sphere,
+                                                    .mPosition = At(0.0, 5.0, 0.0),
+                                                    .mRadius = 0.5f});
+        const mir::BodyHandle b = second.CreateBody({.mMotion = mir::PhysicsMotion::Static,
+                                                     .mShape = mir::PhysicsShape::Sphere,
+                                                     .mPosition = At(0.0, 5.0, 0.0),
+                                                     .mRadius = 0.5f});
 
         StepFor(first, 30);
         StepFor(second, 30);
@@ -308,7 +356,10 @@ TEST_CASE("Several worlds can exist at once", "[physics]")
     // Both refs are gone, so the Jolt globals were torn down; building another
     // world has to bring them back up.
     mir::PhysicsWorld third;
-    REQUIRE(third.CreateDynamicSphere(At(0.0, 5.0, 0.0), 0.5f).IsValid());
+    REQUIRE(third.CreateBody({.mMotion = mir::PhysicsMotion::Dynamic,
+                              .mShape = mir::PhysicsShape::Sphere,
+                              .mPosition = At(0.0, 5.0, 0.0),
+                              .mRadius = 0.5f}).IsValid());
     third.Step(kStep);
 }
 
@@ -322,7 +373,10 @@ TEST_CASE("A body keeps a millimeter at the map edge", "[physics][lwc]")
         mir::PhysicsWorld world;
 
         // fails with a float Jolt, or with a float cast anywhere on the way in or out
-        const mir::BodyHandle body = world.CreateStaticSphere(At(edge + kNudge), 0.5f);
+        const mir::BodyHandle body = world.CreateBody({.mMotion = mir::PhysicsMotion::Static,
+                                                       .mShape = mir::PhysicsShape::Sphere,
+                                                       .mPosition = At(edge + kNudge),
+                                                       .mRadius = 0.5f});
         CHECK(MetersOf(world, body) == edge + kNudge);
 
         world.SetBodyTransform(body, At(edge + kNudge + kNudge), mir::kIdentityRotation);
@@ -350,7 +404,10 @@ TEST_CASE("A slow body at the map edge moves as it does at the origin", "[physic
         desc.mGravity = glm::vec3(0.0f);
         mir::PhysicsWorld world(desc);
 
-        const mir::BodyHandle sphere = world.CreateDynamicSphere(At(starts[i]), 0.5f);
+        const mir::BodyHandle sphere = world.CreateBody({.mMotion = mir::PhysicsMotion::Dynamic,
+                                                         .mShape = mir::PhysicsShape::Sphere,
+                                                         .mPosition = At(starts[i]),
+                                                         .mRadius = 0.5f});
         world.SetBodyLinearVelocity(sphere, glm::vec3(0.05f, 0.0f, -0.025f));
         StepFor(world, 20);
 
@@ -375,7 +432,10 @@ TEST_CASE("Bodies collide at the map edge as they do at the origin", "[physics][
         mir::PhysicsWorld world;
 
         AddFloor(world, floors[i]);
-        const mir::BodyHandle sphere = world.CreateDynamicSphere(At(floors[i] + mir::WorldVec3(0.0, 3.0, 0.0)), 0.5f);
+        const mir::BodyHandle sphere = world.CreateBody({.mMotion = mir::PhysicsMotion::Dynamic,
+                                                         .mShape = mir::PhysicsShape::Sphere,
+                                                         .mPosition = At(floors[i] + mir::WorldVec3(0.0, 3.0, 0.0)),
+                                                         .mRadius = 0.5f});
         StepFor(world, 180);
 
         const mir::WorldVec3 rest = MetersOf(world, sphere) - floors[i];
@@ -396,7 +456,10 @@ TEST_CASE("A held body keeps its pose and its velocities until it resumes", "[ph
 {
     mir::PhysicsWorld world;
     AddFloor(world);
-    const mir::BodyHandle sphere = world.CreateDynamicSphere(At(0.0, 6.0, 0.0), 0.5f);
+    const mir::BodyHandle sphere = world.CreateBody({.mMotion = mir::PhysicsMotion::Dynamic,
+                                                     .mShape = mir::PhysicsShape::Sphere,
+                                                     .mPosition = At(0.0, 6.0, 0.0),
+                                                     .mRadius = 0.5f});
     world.SetBodyLinearVelocity(sphere, glm::vec3(1.0f, -2.0f, 0.5f));
     world.SetBodyAngularVelocity(sphere, glm::vec3(0.0f, 3.0f, 0.0f));
     const mir::WorldVec3 before = MetersOf(world, sphere);
@@ -424,8 +487,14 @@ TEST_CASE("A held body takes velocity changes and impulses into its kept velocit
     mir::PhysicsWorldDesc weightless;
     weightless.mGravity = glm::vec3(0.0f);
     mir::PhysicsWorld world(weightless);
-    const mir::BodyHandle held = world.CreateDynamicBox(At(0.0, 0.0, 0.0), glm::vec3(0.5f, 0.25f, 0.5f));
-    const mir::BodyHandle free = world.CreateDynamicBox(At(10.0, 0.0, 0.0), glm::vec3(0.5f, 0.25f, 0.5f));
+    const mir::BodyHandle held = world.CreateBody({.mMotion = mir::PhysicsMotion::Dynamic,
+                                                   .mShape = mir::PhysicsShape::Box,
+                                                   .mPosition = At(0.0, 0.0, 0.0),
+                                                   .mHalfExtent = glm::vec3(0.5f, 0.25f, 0.5f)});
+    const mir::BodyHandle free = world.CreateBody({.mMotion = mir::PhysicsMotion::Dynamic,
+                                                   .mShape = mir::PhysicsShape::Box,
+                                                   .mPosition = At(10.0, 0.0, 0.0),
+                                                   .mHalfExtent = glm::vec3(0.5f, 0.25f, 0.5f)});
     world.HoldBody(held);
 
     for (const mir::BodyHandle body : {held, free})
@@ -461,7 +530,10 @@ TEST_CASE("Only dynamic bodies are held, and destroying a held body forgets it",
     world.HoldBody(mir::BodyHandle{});
     CHECK_FALSE(world.IsBodyHeld(mir::BodyHandle{}));
 
-    const mir::BodyHandle sphere = world.CreateDynamicSphere(At(0.0, 3.0, 0.0), 0.5f);
+    const mir::BodyHandle sphere = world.CreateBody({.mMotion = mir::PhysicsMotion::Dynamic,
+                                                     .mShape = mir::PhysicsShape::Sphere,
+                                                     .mPosition = At(0.0, 3.0, 0.0),
+                                                     .mRadius = 0.5f});
     world.HoldBody(sphere);
     world.HoldBody(sphere);
     world.DestroyBody(sphere);
@@ -475,9 +547,18 @@ TEST_CASE("A restricted static body stops only the dynamic bodies allowed to tou
     mir::PhysicsWorld world;
     const mir::BodyHandle floor = AddFloor(world);
     world.RestrictBody(floor);
-    const mir::BodyHandle allowed = world.CreateDynamicSphere(At(-3.0, 3.0, 0.0), 0.5f);
-    const mir::BodyHandle refused = world.CreateDynamicSphere(At(0.0, 3.0, 0.0), 0.5f);
-    const mir::BodyHandle unrestricted = world.CreateDynamicSphere(At(3.0, 3.0, 0.0), 0.5f);
+    const mir::BodyHandle allowed = world.CreateBody({.mMotion = mir::PhysicsMotion::Dynamic,
+                                                      .mShape = mir::PhysicsShape::Sphere,
+                                                      .mPosition = At(-3.0, 3.0, 0.0),
+                                                      .mRadius = 0.5f});
+    const mir::BodyHandle refused = world.CreateBody({.mMotion = mir::PhysicsMotion::Dynamic,
+                                                      .mShape = mir::PhysicsShape::Sphere,
+                                                      .mPosition = At(0.0, 3.0, 0.0),
+                                                      .mRadius = 0.5f});
+    const mir::BodyHandle unrestricted = world.CreateBody({.mMotion = mir::PhysicsMotion::Dynamic,
+                                                           .mShape = mir::PhysicsShape::Sphere,
+                                                           .mPosition = At(3.0, 3.0, 0.0),
+                                                           .mRadius = 0.5f});
     world.RestrictContacts(allowed, std::span<const mir::BodyHandle>(&floor, 1));
     world.RestrictContacts(refused, {});
 

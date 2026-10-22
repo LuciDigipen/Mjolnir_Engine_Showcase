@@ -14,6 +14,7 @@
 #include <editor/BackgroundImage.h>
 #include <editor/EditorCamera.h>
 #include <editor/EditorPreferences.h>
+#include <editor/history/History.h>
 #include <editor/panels/AssetImportPanel.h>
 #include <editor/panels/ContentBrowserPanel.h>
 #include <editor/panels/HierarchyPanel.h>
@@ -71,7 +72,6 @@ namespace mir
     struct EditorActions
     {
         SceneMenuAction mScene = SceneMenuAction::None;
-        EntityAction mEntity;
         std::string mOpenProject;
 
         // non-empty mCreateProjectName requests CreateGameProject(name, RT),
@@ -95,7 +95,7 @@ namespace mir
 
         // imgui must already be initialized; the editor never owns the context
         bool Initialize(const ImGuiRuntime &imgui, Window &window, std::filesystem::path projectSettingsPath,
-                        World &world);
+                        World &world, ISceneOps &sceneOps);
 
         //before ImGuiRuntime::Shutdown
         void Shutdown();
@@ -118,6 +118,22 @@ namespace mir
         bool WantsCaptureKeyboard() const;
         bool WantsCaptureMouse() const;
 
+        void ClearHistory() { mHistory.Clear(); }
+
+        // true while the scene has changes since its last save, shown as the title bar's *
+        bool IsSceneUnsaved() const { return mHistory.IsUnsaved(); }
+
+        // false: the scene counts as saved from now on, so the * disapears
+        // true: the * stays until the next save
+        void SetSceneUnsaved(bool unsaved) { mHistory.SetUnsaved(unsaved); }
+
+        
+        bool IsDocumentUnsaved(DocumentId document) const { return mHistory.IsUnsaved(document); }
+        void SetDocumentUnsaved(DocumentId document, bool unsaved) { mHistory.SetUnsaved(document, unsaved); }
+
+        
+        void SetAuthoringBackend(IAuthoringBackend *backend) { mHistory.SetAuthoringBackend(backend); }
+
     private:
         void DrawTitleBar();
         void DrawOpenProjectMenu(std::span<const ProjectMenuEntry> projects, std::string_view currentProject);
@@ -129,6 +145,8 @@ namespace mir
         void DrawSelectionHighlights(const EngineModeState &mode, World &world);
         void DrawComponentGizmos(const EngineModeState &mode, World &world);
         void DrawNewProjectModal(EditorActions &actions, std::span<const ProjectMenuEntry> projects);
+        void DrawEditMenu();
+        void UpdateHistoryShortcuts();
 
         SceneMenuAction DrawPlayControls(const EngineModeState &mode);
 
@@ -163,6 +181,9 @@ namespace mir
         ProfilerPanel mProfilerPanel;
         EditorCamera mCamera;
 
+        History mHistory;
+        ISceneOps *mSceneOps = nullptr;
+
         std::filesystem::path mPreferencesPath;
         EditorPreferences mPreferences;
         BackgroundImage mBackground;
@@ -175,6 +196,9 @@ namespace mir
         GizmoSpace mGizmoSpace = GizmoSpace::Local;
 
         bool mMouseWasDown = false;
+
+        // last frame's ImGuizmo::IsUsing
+        bool mGizmoWasUsing = false;
 
         // New Project modal
         bool mNewProjectRequested = false;

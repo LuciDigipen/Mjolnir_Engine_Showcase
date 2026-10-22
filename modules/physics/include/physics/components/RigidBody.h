@@ -25,36 +25,37 @@ namespace mir
 {
     struct RigidBody
     {
-        BodyHandle body;
-
-        uint32_t transformVersion = 0;
-
         PhysicsMotion motion = PhysicsMotion::Dynamic;
         PhysicsShape shape = PhysicsShape::Box;
-
         glm::vec3 halfExtent{ 0.5f, 0.5f, 0.5f };
         float radius = 0.5f;
-
-
         bool interpolate = false;
 
-
+        // Runtime state PhysicsSystem keeps; not in the field table, so never saved.
+        BodyHandle body;
+        uint32_t transformVersion = 0;
         WorldVec3 previousPosition{ 0 };
         WorldVec3 currentPosition{ 0 };
-        glm::quat previousRotation{ 1.0f, 0.0f, 0.0f, 0.0f };
-        glm::quat currentRotation{ 1.0f, 0.0f, 0.0f, 0.0f };
+        glm::quat previousRotation = kIdentityRotation;
+        glm::quat currentRotation = kIdentityRotation;
     };
 
     MIR_ASSERT_COMPONENT(RigidBody);
 
+    // A body the simulation moves, as opposed to one it only collides against.
+    inline bool HasDynamicBody(const RigidBody &rigidBody)
+    {
+        return rigidBody.body.IsValid() && rigidBody.motion == PhysicsMotion::Dynamic;
+    }
+
     inline constexpr FieldDesc kRigidBodyFields[] = {
-        {.mName = "motion", .mKind = FieldKind::Int, .mOffset = offsetof(RigidBody, motion),
-         .mWidget = FieldWidget::Enum, .mEnumNames = kPhysicsMotionNames},
-        {.mName = "shape", .mKind = FieldKind::Int, .mOffset = offsetof(RigidBody, shape),
-         .mWidget = FieldWidget::Enum, .mEnumNames = kPhysicsShapeNames},
-        {.mName = "halfExtent", .mKind = FieldKind::Vec3, .mOffset = offsetof(RigidBody, halfExtent)},
-        {.mName = "radius", .mKind = FieldKind::Float, .mOffset = offsetof(RigidBody, radius),
-         .mClamped = true, .mMin = 0.01f, .mMax = FLT_MAX}, // 0 would mean a degenerate, collision-less sphere
-        {.mName = "interpolate", .mKind = FieldKind::Bool, .mOffset = offsetof(RigidBody, interpolate)},
+        { .mName = "motion", .mKind = FieldKind::Int, .mOffset = offsetof(RigidBody, motion),
+         .mWidget = FieldWidget::Enum, .mEnumNames = kPhysicsMotionNames },
+        { .mName = "shape", .mKind = FieldKind::Int, .mOffset = offsetof(RigidBody, shape),
+         .mWidget = FieldWidget::Enum, .mEnumNames = kPhysicsShapeNames },
+        { .mName = "halfExtent", .mKind = FieldKind::Vec3, .mOffset = offsetof(RigidBody, halfExtent) },
+        { .mName = "radius", .mKind = FieldKind::Float, .mOffset = offsetof(RigidBody, radius),
+         .mClamped = true, .mMin = 0.01f, .mMax = FLT_MAX }, // 0 would mean a degenerate, collision-less sphere
+        { .mName = "interpolate", .mKind = FieldKind::Bool, .mOffset = offsetof(RigidBody, interpolate) },
     };
 }

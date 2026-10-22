@@ -15,11 +15,14 @@
 #include <core/ecs/Query.h>
 #include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/World.h>
+#include <core/ecs/components/Name.h>
 #include <core/ecs/components/Transform.h>
 #include <core/ecs/components/WorldTransform.h>
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
 #include <editor/Selection.h>
+#include <editor/history/ComponentCommands.h>
+#include <editor/history/EntityCommands.h>
 #include <editortheme/EditorTheme.h>
 #include <renderer/CameraMath.h>
 #include <renderer/ViewSubmission.h>
@@ -38,8 +41,11 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstring>
+#include <format>
 #include <limits>
 #include <optional>
+#include <string_view>
 #include <system_error>
 #include <utility>
 
@@ -66,6 +72,25 @@ namespace mir
                 return ImGuizmo::SCALE;
             }
             return ImGuizmo::TRANSLATE;
+        }
+
+        
+        template <typename T>
+        std::unique_ptr<ICommand> SetTransformField(World &world, Entity entity, std::string_view fieldName, const T &value, std::string_view verb)
+        {
+            const ComponentOps *ops = ComponentRegistry::Instance().FindBySeq(TypeIdOf<Transform>().seq);
+            const FieldDesc *field = ops != nullptr ? ops->FindField(fieldName) : nullptr;
+            if (field == nullptr)
+                return nullptr;
+
+            FieldValue fieldValue;
+            fieldValue.mField = static_cast<uint32_t>(field - ops->mFields.data());
+            static_assert(sizeof(T) <= sizeof(fieldValue.mBytes));
+            std::memcpy(fieldValue.mBytes, &value, sizeof(T));
+
+            const Name *name = world.GetComponent<Name>(entity);
+            return MakeSetFieldsCommand(entity, *ops, { fieldValue },
+                std::format("{} {}", verb, name != nullptr ? name->mValue : "Entity"));
         }
 
         // Radius around the entity's origin that holds its scaled mesh box.
@@ -149,7 +174,7 @@ namespace mir
     Editor::~Editor() {}
 
     bool Editor::Initialize(const ImGuiRuntime &imgui, Window &window, std::filesystem::path projectSettingsPath,
-        World &world)
+        World &world, ISceneOps &sceneOps)
     {
         if (!imgui.IsInitialized())
         {
@@ -180,6 +205,7 @@ namespace mir
         }
 
         mWindow = &window;
+        mSceneOps = &sceneOps;
         mInitialized = true;
         return true;
     }
@@ -291,6 +317,14 @@ namespace mir
 
         ImGui::SetCursorPosY((barHeight - ImGui::GetTextLineHeight()) * 0.5f);
         ImGui::TextUnformatted(mWindow->Title());
+
+        // the unsaved-changes marker (*)
+        if (mHistory.IsUnsaved())
+        {
+            ImGui::SameLine(0.0f, 0.0f);
+            ImGui::TextUnformatted("*");
+            ImGui::SetItemTooltip("The scene has changes since it was last saved");
+        }
 
         mTitleBarInteractiveRects.clear();
         const float buttonWidth = barHeight * 0.9f;
@@ -454,8 +488,7 @@ namespace mir
         if (entity.IsNull() || !world.IsAlive(entity))
             return;
 
-        Transform *transform = world.GetComponent<Transform>(entity);
-        if (transform == nullptr)
+        if (world.GetComponent<Transform>(entity) == nullptr)
             return;
 
         const float x = static_cast<float>(mSceneViewportRect.offset.x);
@@ -525,8 +558,16 @@ namespace mir
         ImGuizmo::SetRect(x, y, width, height);
 
         const ImGuizmo::MODE gizmoMode = mGizmoSpace == GizmoSpace::Local ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
-        if (!ImGuizmo::Manipulate(glm::value_ptr(view), glm::value_ptr(proj), ToImGuizmoOperation(mGizmoOperation),
-            gizmoMode, glm::value_ptr(gizmoMatrix)))
+        const bool changed = ImGuizmo::Manipulate(glm::value_ptr(view), glm::value_ptr(proj),
+            ToImGuizmoOperation(mGizmoOperation), gizmoMode, glm::value_ptr(gizmoMatrix));
+
+        
+        const bool usingGizmo = ImGuizmo::IsUsing();
+        if (mGizmoWasUsing && !usingGizmo)
+            mHistory.EndStep();
+        mGizmoWasUsing = usingGizmo;
+
+        if (!changed)
             return;
 
         // A root composes under the identity at the Scene origin.
@@ -544,7 +585,7 @@ namespace mir
             const std::optional<ParentLocalTranslation> local =
                 moved ? TryWorldToParentLocal(parentPose, *moved) : std::nullopt;
             if (local)
-                transform->SetPosition(local->Meters());
+                mHistory.Submit(SetTransformField(world, entity, "position", local->Meters(), "Move"));
             return;
         }
 
@@ -556,9 +597,9 @@ namespace mir
         DecomposeRotationScale(glm::inverse(parentPose.linear) * glm::mat3(gizmoMatrix), rotation, scale);
 
         if (mGizmoOperation == GizmoOperation::Rotate)
-            transform->SetRotation(rotation);
+            mHistory.Submit(SetTransformField(world, entity, "rotation", rotation, "Rotate"));
         else
-            transform->SetScale(scale);
+            mHistory.Submit(SetTransformField(world, entity, "scale", scale, "Scale"));
     }
 
     void Editor::FocusSelection(const EngineModeState &mode, World &world)
@@ -904,11 +945,11 @@ namespace mir
             }
 
             if (ImGui::Begin("Hierarchy"))
-                actions.mEntity = mHierarchyPanel.Draw(world);
+                mHistory.Submit(MakeEntityCommand(mHierarchyPanel.Draw(world)));
             ImGui::End();
 
             if (ImGui::Begin("Inspector"))
-                mInspectorPanel.Draw(world, assetImport);
+                mInspectorPanel.Draw(world, assetImport, mHistory);
             ImGui::End();
 
             if (ImGui::Begin("Output"))
@@ -937,6 +978,7 @@ namespace mir
 
             UpdateViewportPicking(mode, world);
             FocusSelection(mode, world);
+            UpdateHistoryShortcuts();
             DrawSelectionHighlights(mode, world);
             DrawComponentGizmos(mode, world);
             DrawViewportGizmo(mode, world);
@@ -960,6 +1002,11 @@ namespace mir
                     if (ImGui::MenuItem("New Project..."))
                         mNewProjectRequested = true;
                     DrawOpenProjectMenu(projects, currentProject);
+                    ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("Edit"))
+                {
+                    DrawEditMenu();
                     ImGui::EndMenu();
                 }
                 if (ImGui::BeginMenu("Project"))
@@ -1084,7 +1131,38 @@ namespace mir
             mSceneViewportRect = VkRect2D{};
         }
 
+        
+        if (mSceneOps != nullptr)
+            mHistory.Flush(world, *mSceneOps);
+
         return actions;
+    }
+
+    void Editor::DrawEditMenu()
+    {
+
+        //keeps the item's id while the step name in its label changes
+        const std::string undo = mHistory.CanUndo() ? "Undo " + mHistory.UndoName() : std::string("Undo");
+
+        if (ImGui::MenuItem((undo + "###Undo").c_str(), "Ctrl+Z", false, mHistory.CanUndo()))
+            mHistory.RequestUndo();
+
+        const std::string redo = mHistory.CanRedo() ? "Redo " + mHistory.RedoName() : std::string("Redo");
+
+        if (ImGui::MenuItem((redo + "###Redo").c_str(), "Ctrl+Y", false, mHistory.CanRedo()))
+            mHistory.RequestRedo();
+    }
+
+    void Editor::UpdateHistoryShortcuts()
+    {
+        const ImGuiIO &io = ImGui::GetIO();
+        if (io.WantTextInput || !io.KeyCtrl)
+            return;
+
+        if (ImGui::IsKeyPressed(ImGuiKey_Z))
+            mHistory.RequestUndo();
+        else if (ImGui::IsKeyPressed(ImGuiKey_Y))
+            mHistory.RequestRedo();
     }
 
     bool Editor::WantsCaptureKeyboard() const { return ImGui::GetIO().WantCaptureKeyboard; }

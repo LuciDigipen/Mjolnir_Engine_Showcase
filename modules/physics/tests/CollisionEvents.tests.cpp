@@ -96,7 +96,10 @@ namespace
         explicit Resting(const glm::dvec3 &corner = glm::dvec3(-8.0, 0.0, -8.0))
         {
             ground = AddGround(world, corner);
-            ball = world.CreateDynamicSphere(At(corner + glm::dvec3(8.25, 1.0, 8.25)), kRadius);
+            ball = world.CreateBody({.mMotion = PhysicsMotion::Dynamic,
+                                     .mShape = PhysicsShape::Sphere,
+                                     .mPosition = At(corner + glm::dvec3(8.25, 1.0, 8.25)),
+                                     .mRadius = kRadius});
             world.SetBodyEntity(ball, kBallEntity);
 
             const std::vector<CollisionEvent> events = StepAndCollect(world, 300);
@@ -111,7 +114,10 @@ TEST_CASE("A body resting on the ground begins one collision and keeps it while 
     PhysicsWorld world;
     const glm::dvec3 corner(-8.0, 0.0, -8.0);
     const BodyHandle ground = AddGround(world, corner);
-    const BodyHandle ball = world.CreateDynamicSphere(At({ 0.25, 2.0, 0.25 }), kRadius);
+    const BodyHandle ball = world.CreateBody({.mMotion = PhysicsMotion::Dynamic,
+                                              .mShape = PhysicsShape::Sphere,
+                                              .mPosition = At({ 0.25, 2.0, 0.25 }),
+                                              .mRadius = kRadius});
     world.SetBodyEntity(ball, kBallEntity);
 
     // Long enough for the ball to fall asleep, which drops its contacts.
@@ -150,7 +156,10 @@ TEST_CASE("Lifting a body off the ground ends its collision once", "[physics][co
     {
         PhysicsWorld world;
         const BodyHandle ground = AddGround(world, { -8.0, 0.0, -8.0 });
-        const BodyHandle ball = world.CreateDynamicSphere(At({ 0.25, 0.6, 0.25 }), kRadius);
+        const BodyHandle ball = world.CreateBody({.mMotion = PhysicsMotion::Dynamic,
+                                                  .mShape = PhysicsShape::Sphere,
+                                                  .mPosition = At({ 0.25, 0.6, 0.25 }),
+                                                  .mRadius = kRadius});
         REQUIRE(StepAndCollect(world, 15).size() == 1);
 
         world.SetBodyTransform(ball, At({ 0.25, 3.0, 0.25 }), kIdentityRotation);
@@ -176,7 +185,10 @@ TEST_CASE("Destroying a body in contact ends its collision once", "[physics][col
 
         CHECK(StepAndCollect(resting.world, 60).empty());
 
-        const BodyHandle again = resting.world.CreateDynamicSphere(At({ 0.25, 0.6, 0.25 }), kRadius);
+        const BodyHandle again = resting.world.CreateBody({.mMotion = PhysicsMotion::Dynamic,
+                                                           .mShape = PhysicsShape::Sphere,
+                                                           .mPosition = At({ 0.25, 0.6, 0.25 }),
+                                                           .mRadius = kRadius});
         events = StepAndCollect(resting.world, 30);
         REQUIRE(events.size() == 1);
         CHECK(events[0].mPhase == CollisionPhase::Begin);
@@ -201,8 +213,14 @@ TEST_CASE("Destroying a body in contact ends its collision once", "[physics][col
 TEST_CASE("Two dynamic bodies colliding begin one collision naming both", "[physics][collision]")
 {
     PhysicsWorld world(PhysicsWorldDesc{ .mGravity = glm::vec3(0.0f) });
-    const BodyHandle left = world.CreateDynamicSphere(At({ 0.0, 0.0, 0.0 }), kRadius);
-    const BodyHandle right = world.CreateDynamicBox(At({ 3.0, 0.0, 0.0 }), glm::vec3(0.5f));
+    const BodyHandle left = world.CreateBody({.mMotion = PhysicsMotion::Dynamic,
+                                              .mShape = PhysicsShape::Sphere,
+                                              .mPosition = At({ 0.0, 0.0, 0.0 }),
+                                              .mRadius = kRadius});
+    const BodyHandle right = world.CreateBody({.mMotion = PhysicsMotion::Dynamic,
+                                               .mShape = PhysicsShape::Box,
+                                               .mPosition = At({ 3.0, 0.0, 0.0 }),
+                                               .mHalfExtent = glm::vec3(0.5f)});
     const Entity leftEntity{ 10, 1 };
     const Entity rightEntity{ 11, 1 };
     world.SetBodyEntity(left, leftEntity);
@@ -222,11 +240,20 @@ TEST_CASE("Two dynamic bodies colliding begin one collision naming both", "[phys
 TEST_CASE("Static bodies never report collisions with each other", "[physics][collision]")
 {
     PhysicsWorld world;
-    world.CreateStaticBox(At({ 0.0, 0.0, 0.0 }), glm::vec3(1.0f));
-    world.CreateStaticSphere(At({ 0.5, 0.0, 0.0 }), 1.0f);
+    world.CreateBody({.mMotion = PhysicsMotion::Static,
+                      .mShape = PhysicsShape::Box,
+                      .mPosition = At({ 0.0, 0.0, 0.0 }),
+                      .mHalfExtent = glm::vec3(1.0f)});
+    world.CreateBody({.mMotion = PhysicsMotion::Static,
+                      .mShape = PhysicsShape::Sphere,
+                      .mPosition = At({ 0.5, 0.0, 0.0 }),
+                      .mRadius = 1.0f});
     AddGround(world, { -8.0, -0.5, -8.0 });
     // Something awake, so Jolt runs a full update.
-    world.CreateDynamicSphere(At({ 100.0, 50.0, 0.0 }), kRadius);
+    world.CreateBody({.mMotion = PhysicsMotion::Dynamic,
+                      .mShape = PhysicsShape::Sphere,
+                      .mPosition = At({ 100.0, 50.0, 0.0 }),
+                      .mRadius = kRadius});
 
     CHECK(StepAndCollect(world, 60).empty());
 }

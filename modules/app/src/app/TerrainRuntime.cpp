@@ -167,7 +167,7 @@ namespace mir
         if (ViewDrawSources *sources = mWorld->TryResource<ViewDrawSources>())
             std::erase(sources->sources, static_cast<IViewDrawSource *>(this));
         if (PhysicsStepGates *gates = mWorld->TryResource<PhysicsStepGates>())
-            std::erase(gates->gates, static_cast<PhysicsStepGate *>(this));
+            std::erase(gates->mGates, static_cast<PhysicsStepGate *>(this));
         if (mCollision)
             mCollision->Clear();
     }
@@ -222,7 +222,7 @@ namespace mir
         PhysicsStepGates *gates = world.TryResource<PhysicsStepGates>();
         if (!gates)
             gates = &world.EmplaceResource<PhysicsStepGates>();
-        gates->gates.push_back(this);
+        gates->mGates.push_back(this);
         std::string spacings;
         for (const double spacing : collision.spacingsMeters)
             spacings += std::format("{}{}", spacings.empty() ? "" : "/", spacing);
@@ -641,7 +641,7 @@ namespace mir
         {
             const double gravity = glm::length(physics->Gravity());
             mWorld->GetOrCreateQuery<RigidBody>().ForEach([&](Entity entity, RigidBody &rigidBody) {
-                if (!rigidBody.body.IsValid() || rigidBody.motion != PhysicsMotion::Dynamic)
+                if (!HasDynamicBody(rigidBody))
                     return;
                 const std::optional<WorldPosition> at = physics->BodyPosition(rigidBody.body);
                 if (!at)

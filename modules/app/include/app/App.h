@@ -52,6 +52,7 @@ namespace mir
     class ModelSystem;
     class TerrainRuntime;
     class MeshResolveSystem;
+    class AppSceneOps;
 
     struct AppDesc
     {
@@ -166,6 +167,16 @@ namespace mir
         // UnloadScene, then free the GPU resources
         void UnloadCurrentScene();
 
+        //every handle the editor's undo history holds dies with the scene it came from
+        void ClearHistory();
+
+        //true while the scene has changes since its last save, shown as the title bar's *
+        bool SceneUnsaved() const;
+
+        //false = the scene counts as saved from now on, so the * disapears
+        //true = the * stays until the next save
+        void SetSceneUnsaved(bool unsaved);
+
         // LoadScene if the game has a scene.json
         void LoadProjectScene();
 
@@ -178,7 +189,6 @@ namespace mir
     #if MIR_WITH_EDITOR
             //what the editor's menus, toolbar and panels asked for this frame
         void ApplyEditorActions(const EditorActions &actions);
-        void ApplyEntityAction(const EntityAction &action);
         void ApplyImportedAssets();
         void OpenInExternalIde(const std::string &relativePath);
     #endif
@@ -189,7 +199,10 @@ namespace mir
         ImGuiRuntime mImGui;
     #if MIR_WITH_EDITOR
         Editor mEditor;
+        std::unique_ptr<AppSceneOps> mSceneOps;
     #endif
+        // Stop puts the World back as it was at Play, so it puts this back too
+        bool mUnsavedBeforePlay = false;
         UIContext mGameUI;
         UIDemoScreen mUIDemo;
         GameShell mGameShell;

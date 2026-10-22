@@ -1,0 +1,9 @@
+engine_add_module_tests(prefab
+    PrefabCompile.tests.cpp
+    PrefabFormat.tests.cpp
+    PrefabId.tests.cpp
+    PrefabInstantiate.tests.cpp
+    PrefabOverrides.tests.cpp
+    PrefabRegistry.tests.cpp
+    PrefabScene.tests.cpp
+)
