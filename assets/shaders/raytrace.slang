@@ -55,28 +55,6 @@ static const uint kMaxRtTextures = 1024;
 [[vk::binding(9, 0)]]
 Sampler2D<float4> gTextures[kMaxRtTextures];
 
-[[vk::binding(0, 1)]]
-cbuffer CameraData
-{
-    float4x4 viewProj;
-    float4 lightDirWS;
-    float4 lightColor;
-    float4 ambientColor;
-    float4x4 invViewProj;
-    float4 cameraPos; // the origin: the TLAS is built relative to this view's camera
-    float4 fogColor;
-    float4 fogRange;       // x = start distance, y = end distance
-    float4 cameraWorldPos; // absolute camera position, for the atmosphere only
-    float4 clipPlanes;     // x = near, y = far, or 0 for no far plane
-    float4 atmosphereScattering;
-    float4 atmosphereRadii;
-    float4 atmosphereMisc;
-    float4 lightingMeta; // x = this view's count in gLights, y = its first index
-    float4x4 prevViewProj;
-    float4x4 sunShadowViewProj; // unused here; declared to keep the prefix contiguous - see jitterAndPad
-    float4 jitterAndPad;        // xy = this frame's sub-pixel jitter in pixels, Dlss anti-aliasing only
-};
-
 static const uint kAaModeOff = 0;
 static const uint kAaModeMsaa = 2;
 static const uint kAaModeDlss = 3;
@@ -124,9 +102,6 @@ struct ShadowPayload
     float visibility;
 };
 
-static const float3 kAlbedo = float3(0.5, 0.5, 0.5);
-static const float kSpecularStrength = 0.04;
-static const float kShininess = 32.0;
 // No per-material roughness exists yet (MaterialDesc has none) - same fixed-constant
 // simplification kShininess already is, standing in for Ray Reconstruction's roughness guide.
 static const float kMaterialRoughness = pow(2.0 / (kShininess + 2.0), 0.25);
@@ -193,8 +168,9 @@ bool AlphaTestPasses(BuiltInTriangleIntersectionAttributes attribs)
     return ModelBaseColor(info, TriangleIndices(info), Barycentrics(attribs)).a >= info.alphaCutoff;
 }
 
-// Self-shadowing bias: the origin is nudged along the surface normal before tracing.
+// Shadow ray origin offset; grows with distance, where floats get coarser.
 static const float kShadowNormalBias = 0.01;
+static const float kShadowNormalBiasPerDistance = 1e-4;
 static const float kSunShadowDistance = 10000.0;
 
 float TraceShadowRay(float3 origin, float3 direction, float tMax)
@@ -212,6 +188,32 @@ float TraceShadowRay(float3 origin, float3 direction, float tMax)
              0xFF, 1, 0, 1, shadowRay, shadowPayload);
 
     return shadowPayload.visibility;
+}
+
+// Traces every Point/Spot, not only those with a raster shadow slot.
+struct RayVisibility : IShadowVisibility
+{
+    float3 origin; // biased off the surface
+
+    float Sun(float3 L)
+    {
+        return TraceShadowRay(origin, L, kSunShadowDistance);
+    }
+
+    float Local(GpuLight light, float3 Lp, float dist)
+    {
+        if (light.color.w == kAreaLightSlot)
+            return 1.0;
+        return TraceShadowRay(origin, Lp, dist);
+    }
+}
+
+float3 FaceNormal(RtInstanceInfo info, float3 op0, float3 op1, float3 op2)
+{
+    const float3 n = cross(op1 - op0, op2 - op0);
+    const float3 worldNormal =
+        normalize(info.normalCol0.xyz * n.x + info.normalCol1.xyz * n.y + info.normalCol2.xyz * n.z);
+    return dot(worldNormal, WorldRayDirection()) > 0.0 ? -worldNormal : worldNormal;
 }
 
 [shader("raygeneration")]
@@ -339,10 +341,7 @@ void closestHitMain(inout RayPayload payload, in BuiltInTriangleIntersectionAttr
             const uint2 guidePixel = DispatchRaysIndex().xy + pushData.outputOffset;
             gAlbedo[guidePixel] = float4(color, 1.0);
             gSpecularAlbedo[guidePixel] = float4(0.0, 0.0, 0.0, 0.0);
-            const float3 faceNormal = normalize(cross(op1 - op0, op2 - op0));
-            const float3 worldNormal = normalize(info.normalCol0.xyz * faceNormal.x +
-                                                 info.normalCol1.xyz * faceNormal.y + info.normalCol2.xyz * faceNormal.z);
-            gNormal[guidePixel] = float4(worldNormal, 1.0);
+            gNormal[guidePixel] = float4(FaceNormal(info, op0, op1, op2), 1.0);
         }
     }
     else
@@ -357,21 +356,14 @@ void closestHitMain(inout RayPayload payload, in BuiltInTriangleIntersectionAttr
         if ((info.flags & kInstanceDoubleSided) != 0 && dot(N, WorldRayDirection()) > 0.0)
             N = -N;
 
-        const float3 shadowOrigin = hitWorldPos + N * kShadowNormalBias;
-        const float3 L = normalize(lightDirWS.xyz);
-        const float3 V = normalize(cameraPos.xyz - hitWorldPos);
-        const float3 H = normalize(L + V);
-
-        const float diffuse = max(dot(N, L), 0.0);
-        const float specular = (diffuse > 0.0) ? pow(max(dot(N, H), 0.0), kShininess) : 0.0;
-
-        const float sunVisibility = TraceShadowRay(shadowOrigin, L, kSunShadowDistance);
-
         const float3 albedo = (info.flags & kInstanceTextured) != 0
                                   ? ModelBaseColor(info, indices, barycentrics).rgb
-                                  : kAlbedo * info.tint.rgb;
-        color = albedo * ambientColor.rgb +
-                (albedo * lightColor.rgb * diffuse + lightColor.rgb * kSpecularStrength * specular) * sunVisibility;
+                                  : kDefaultAlbedo * info.tint.rgb;
+
+        RayVisibility visibility;
+        visibility.origin = hitWorldPos + FaceNormal(info, op0, op1, op2) *
+                                              max(kShadowNormalBias, length(hitWorldPos) * kShadowNormalBiasPerDistance);
+        color = ShadeLit(visibility, albedo, N, hitWorldPos);
 
         if (pushData.aaMode == kAaModeDlss)
         {
@@ -380,33 +372,10 @@ void closestHitMain(inout RayPayload payload, in BuiltInTriangleIntersectionAttr
             gSpecularAlbedo[guidePixel] = float4(kSpecularStrength.xxx, 1.0);
             gNormal[guidePixel] = float4(N, kMaterialRoughness);
         }
-
-        const int firstLight = int(lightingMeta.y);
-        const int lightCount = int(lightingMeta.x);
-        for (int i = 0; i < lightCount; i++)
-        {
-            GpuLight light = gLights[firstLight + i];
-            const float3 toLight = light.positionAndRange.xyz - hitWorldPos;
-            const float dist = length(toLight);
-            const float range = light.positionAndRange.w;
-            const float3 Lp = toLight / max(dist, 1e-5);
-
-            float atten = clamp(1.0 - dist / max(range, 1e-5), 0.0, 1.0);
-            const float cosAngle = dot(-Lp, light.directionAndSpotCos.xyz);
-            atten *= (cosAngle >= light.directionAndSpotCos.w) ? 1.0 : 0.0;
-
-            const float diffuseP = max(dot(N, Lp), 0.0);
-
-            const float visibility = light.color.w >= 0.0 ? TraceShadowRay(shadowOrigin, Lp, dist) : 1.0;
-
-            color += albedo * light.color.rgb * atten * diffuseP * visibility;
-        }
     }
 
-    const float clampedDist = clamp(RayTCurrent(), fogRange.x, fogRange.y);
     // error.slang draws no fog.
-    const float fogFactor = isError ? 0.0 : clamp(1.0 - exp(-fogColor.a * (clampedDist - fogRange.x)), 0.0, 1.0);
-    payload.color = lerp(color, fogColor.rgb, fogFactor);
+    payload.color = isError ? color : ApplyFog(color, RayTCurrent());
     payload.distance = RayTCurrent();
 
     // hitWorldPos is already this frame's camera-relative space (cameraPos is

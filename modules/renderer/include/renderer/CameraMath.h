@@ -58,6 +58,9 @@ namespace mir
     // A fixed-size, non-cascaded shadow frustum
     glm::mat4 MakeOrthographicViewProjection(const glm::vec3 &direction, float halfExtent, float nearZ);
 
+    // Snaps `anchor` across the light onto a world-fixed texel grid, so shadow edges don't crawl.
+    WorldPosition SnapToShadowTexels(WorldPosition anchor, const glm::vec3 &direction, float texelSize);
+
     // A Spot/Point shadow frustum
     glm::mat4 MakeForwardZPerspectiveViewProjection(const glm::vec3 &forward, const glm::vec3 &up,
         float fovYDegrees, float nearZ, float farZ);

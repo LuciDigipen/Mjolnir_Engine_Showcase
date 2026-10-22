@@ -528,8 +528,11 @@ duplicated across views like the rest of that struct.
 **`CameraData`'s field order is append-only.** `viewProj`/`lightDirWS`/
 `lightColor`/`ambientColor` must stay first, in that order — inserting a
 field before that prefix silently corrupts what it *does* read (this broke
-lit shading once, while adding the sky pass — see Changed). `default.slang`
-and `sky.slang` both declare the full struct - `default.slang` for
+lit shading once, while adding the sky pass — see Changed).
+`LightingCommon.slang` declares it once for `default.slang`, `model.slang` and
+`raytrace.slang`; `sky.slang` (which binds it at set 0) and
+`unlit.slang`/`error.slang` keep their own shorter prefixes. Historically
+`default.slang` and `sky.slang` both declared the full struct - `default.slang` for
 `cameraPosWS` (its specular view vector), `sky.slang` for both
 `invViewProj` and `cameraPosWS` (reconstructing a world-space ray per
 pixel) - so anything new still goes after `cameraPosWS`, never in the
@@ -694,10 +697,12 @@ Everything that needs a device is verified by the smoke tests and
    separately capped per light type — `kMaxSpotShadows` (4) and
    `kMaxPointShadows` (2), beyond `kMaxLights` itself — since each caster is
    a real render target and draw pass, not just a buffer slot; a light
-   beyond its cap simply casts no shadow (same "nearest to the primary
-   camera wins" selection as everything else that's capped here). No PCF
-   yet either — single-tap sampling, soft-edge filtering is a documented
-   follow-up, not built.
+   beyond its cap simply casts no shadow under raster (same "nearest to the
+   primary camera wins" selection as everything else that's capped here);
+   ray tracing has no caps and shadows every Point and Spot light. Raster
+   filters each lookup with 3x3 PCF (`kPcfTapSpacing`, about two texels of softening), while
+   ray-traced shadows stay hard; the Sun map is still one fixed 50 m box
+   around the camera, with no cascades.
 4. **Per-config shader output paths.** Release currently ships unoptimised
    shaders, and the debug flags cannot become conditional while both
    configurations write to a path that carries no configuration component.
@@ -723,10 +728,12 @@ Everything that needs a device is verified by the smoke tests and
    `RayTracer::kMaxInstances` (256) is a fixed cap with no overflow handling beyond
    silently dropping the rest; the TLAS rebuilds fully every `TraceFrame`
    call with no dirty-tracking (see the Rules section above - correct, just
-   not efficient; shadow occlusion rays add up to `1 + lightingMeta.x` extra
-   `TraceRay` calls per shaded pixel on top of that, bounded by the view's
-   own active light count); only the two shaders that exist
-   (`default`/`unlit`) get RT parity, so a third custom material shader
+   not efficient; shadow occlusion rays add one `TraceRay` per shaded pixel
+   for each light that reaches it - the Sun when the surface faces it, plus
+   every Point/Spot whose range and cone hold the pixel - so the cost grows
+   with how many lights overlap, not with the scene's light count); only the
+   shaders that exist (`default`/`model`/`unlit`/`error`) get RT parity, so a
+   third custom material shader
    would trace with whichever of those two `GpuMaterial::mUnlit` happens to
    pick, not its own look; textures are sampled at mip 0 only (no ray cones
    yet), and a Blend material is alpha-tested at its cutoff rather than
@@ -735,6 +742,38 @@ Everything that needs a device is verified by the smoke tests and
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-10-22* — **Lights and shadows match between ray tracing and rasterization
+(#217).** Was: `model.slang` lit every model draw with a fixed hard-coded
+direction - no Sun, ambient, Point/Spot lights, shadows, specular or fog - while
+`raytrace.slang` lit the same draws fully, so any model looked different per
+pipeline; `default.slang` and `raytrace.slang` each kept their own copy of the
+shading; raster sun and spot shadows relied on hardware depth bias alone (acne
+at grazing angles), raster point shadows on a `range * 0.01` distance bias
+(contact shadows detached by tens of centimetres on a large light), and ray
+tracing offset its shadow rays a fixed 1 cm along the interpolated normal.
+Now: `LightingCommon.slang` declares `CameraData` once and holds `ShadeLit`
+(ambient, Sun Blinn-Phong, the Point/Spot/Area loop) and `ApplyFog`, generic
+over an `IShadowVisibility`; `ShadowMapCommon.slang`'s `ShadowMapVisibility`
+reads set 3 for `default.slang` and `model.slang`, and `raytrace.slang`'s
+`RayVisibility` traces. Visibility is only asked for where a light adds
+something (`N.L > 0`, inside range and cone). Raster looks a receiver up from a
+point pushed off the triangle's own normal by 0.5-2 shadow-map texels (more at
+grazing light), and point shadows are biased by one texel of distance. Ray
+tracing offsets along the triangle's normal by 1 cm or `1e-4` of the hit's
+distance from the camera, whichever is more, and traces every Point and Spot
+light rather than only those with a raster slot; Area lights keep `-2` in
+`GpuLight.color.w` so both pipelines leave them unshadowed. Raster shadow edges
+were also jagged: each lookup was one pass/fail test, and the Sun map slid with
+the camera, so its edges crawled. Sun and spot maps are now read through a second,
+comparison sampler (`ShadowMaps::mCompareSampler`, `LESS_OR_EQUAL`) as
+`Sampler2DShadow`/`Sampler2DArrayShadow`, averaging a 3x3 grid of 2x2-filtered
+taps half a texel apart; point maps average nine manual distance tests across the cube face. The
+Sun's anchor goes through `SnapToShadowTexels`, which moves it onto a
+world-fixed grid of texels across the light, and `kSunShadowResolution` moved to
+`VulkanRenderer` beside `kSunShadowHalfExtent`. Resolutions are unchanged:
+filtering, not more texels, was what the edges needed. Because: switching
+pipeline must not change a scene's lighting beyond what ray tracing adds.
 
 *2026-10-22* — **Textures in the ray-tracing pipeline (#216).** Was:
 `closestHitMain` sampled no textures, so a textured model traced as its tint
