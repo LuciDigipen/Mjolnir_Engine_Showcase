@@ -18,6 +18,7 @@
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/World.h>
+#include <core/ecs/components/Transform.h>
 #include <core/log/Log.h>
 #include <editor/Selection.h>
 #include <prefab/PrefabSave.h>
@@ -25,6 +26,7 @@
 #include <renderer/VulkanRenderer.h>
 #include <renderer/ViewDrawSource.h>
 #include <scene/SceneAsset.h>
+#include <scene/SceneIO.h>
 
 #include <cstddef>
 #include <utility>
@@ -184,6 +186,61 @@ namespace mir
     std::optional<PrefabId> PrefabWorkspace::FindByPath(const std::filesystem::path &path) const
     {
         return mCoordinator.Registry().IdAtPath(path);
+    }
+
+    Entity PrefabWorkspace::Place(World &world, PrefabId id, Entity parent, const WorldVec3 &position)
+    {
+        const PrefabDocument *document = mCoordinator.Registry().Find(id);
+        if (document == nullptr)
+        {
+            MIR_LOG_ERROR("Place Prefab: '{}' is not registered", ToString(id));
+            return kNullEntity;
+        }
+
+        // A recompile would bump the revision and refresh every placed instance
+        std::shared_ptr<const CompiledPrefab> prefab = mCoordinator.Cache().Find(id);
+        if (!prefab)
+        {
+            const std::vector<PrefabDiagnostic> diagnostics = mCoordinator.Cache().Compile(*document);
+            for (const PrefabDiagnostic &diagnostic : diagnostics)
+                MIR_LOG_ERROR("Place Prefab: {}", diagnostic.mMessage);
+            if (HasPrefabErrors(diagnostics))
+                return kNullEntity;
+            prefab = mCoordinator.Cache().Find(id);
+        }
+        if (!prefab)
+            return kNullEntity;
+
+        LoadedScene *scene = mCoordinator.Scene();
+        if (scene == nullptr)
+            return kNullEntity;
+
+        const StableId rootId = PlacePrefabInstance(world, *scene, *prefab, parent);
+        if (rootId == kNullStableId)
+            return kNullEntity;
+
+        const Entity root = scene->mEntities.at(rootId);
+        if (Transform *transform = world.GetComponent<Transform>(root))
+            transform->SetPosition(position);
+        else
+            AddTransform(world, root, Transform(position));
+
+        const auto instance = scene->mInstances.find(rootId);
+        if (instance != scene->mInstances.end())
+            instance->second.mPlacement = InstancePlacementFromWorld(world, root);
+        return root;
+    }
+
+    void PrefabWorkspace::CloseMissingDocuments()
+    {
+        std::vector<PrefabId> removed;
+        for (const PrefabId id : mOpenOrder)
+        {
+            if (mCoordinator.Registry().Find(id) == nullptr)
+                removed.push_back(id);
+        }
+        for (const PrefabId id : removed)
+            Close(id);
     }
 
     World *PrefabWorkspace::PreviewWorld(PrefabId id) const

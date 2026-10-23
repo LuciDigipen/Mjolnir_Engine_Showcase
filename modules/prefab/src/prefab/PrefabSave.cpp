@@ -12,6 +12,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <system_error>
 #include <utility>
 
 namespace mir
@@ -115,6 +116,16 @@ namespace mir
             if (document == nullptr)
             {
                 AddError(result.mDiagnostics, "prefab " + ToString(step.mPrefab) + " is not in the registry");
+                return result;
+            }
+
+            std::error_code ec;
+            if (!step.mPath.parent_path().empty())
+                std::filesystem::create_directories(step.mPath.parent_path(), ec);
+            if (ec)
+            {
+                AddError(result.mDiagnostics, "prefab " + ToString(step.mPrefab) +
+                    " could not create its directory: " + ec.message());
                 return result;
             }
 

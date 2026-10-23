@@ -102,6 +102,9 @@ namespace mir
             return result;
         }
 
+        // Captures an ordinary scene entity as one new Prefab document.
+        virtual AuthoredAction CreatePrefab(Entity entity) = 0;
+
         // True when removing the component deletes it from the active document
         // instead of hiding one the template provides.
         virtual bool WritesComponentDirectly(Entity entity, std::string_view component) = 0;

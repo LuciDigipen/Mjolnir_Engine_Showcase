@@ -56,6 +56,10 @@ namespace mir
 {
     namespace
     {
+        constexpr float kPrefabDropDistance = 10.0f;
+        constexpr float kPrefabDropPlaneLimit = 1000.0f;
+        constexpr float kPrefabDropMinRate = 1e-4f;
+
         // ImGui text is UTF-8; path::string() is the ANSI code page on Windows
         std::string ToUtf8(const std::filesystem::path &path)
         {
@@ -689,6 +693,79 @@ namespace mir
             mHistory.Submit(SetTransformField(world, entity, "scale", scale, "Scale", mAuthoredEntities));
     }
 
+    void Editor::DrawViewportPrefabDrop()
+    {
+        const ImGuiPayload *active = ImGui::GetDragDropPayload();
+        if (active == nullptr || !active->IsDataType(kPrefabContentPayload))
+            return;
+        if (mSceneViewportRect.extent.width == 0 || mSceneViewportRect.extent.height == 0)
+            return;
+
+        const ImVec2 min(static_cast<float>(mSceneViewportRect.offset.x),
+            static_cast<float>(mSceneViewportRect.offset.y));
+        const ImVec2 max(min.x + static_cast<float>(mSceneViewportRect.extent.width),
+            min.y + static_cast<float>(mSceneViewportRect.extent.height));
+
+        ImGui::SetNextWindowPos(min);
+        ImGui::SetNextWindowSize(ImVec2(max.x - min.x, max.y - min.y));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav |
+            ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoBringToFrontOnFocus |
+            ImGuiWindowFlags_NoBackground;
+        if (ImGui::Begin("##ViewportPrefabDrop", nullptr, flags))
+        {
+            if (ImGui::BeginDragDropTargetCustom(ImRect(min, max), ImGui::GetID("##PrefabDrop")))
+            {
+                const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kPrefabContentPayload,
+                    ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect);
+                if (payload != nullptr)
+                {
+                    if (!payload->IsDelivery())
+                    {
+                        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    }
+                    else
+                    {
+                        const ImVec2 mouse = ImGui::GetMousePos();
+                        const float x = mouse.x - min.x;
+                        const float y = mouse.y - min.y;
+                        const float width = static_cast<float>(mSceneViewportRect.extent.width);
+                        const float height = static_cast<float>(mSceneViewportRect.extent.height);
+                        if (x >= 0.0f && y >= 0.0f && x < width && y < height)
+                        {
+                            const glm::vec2 ndc{ (x / width) * 2.0f - 1.0f, (y / height) * 2.0f - 1.0f };
+                            const WorldRay ray = MakeCameraRay(mCamera.Pose(), mCamera.mLens, width / height, ndc);
+
+                            WorldReal distance = kPrefabDropDistance;
+                            if (std::abs(ray.direction.y) > kPrefabDropMinRate)
+                            {
+                                const WorldReal crossing = -ray.origin.Meters().y / ray.direction.y;
+                                if (crossing > 0.0f && crossing <= kPrefabDropPlaneLimit)
+                                    distance = crossing;
+                            }
+
+                            const std::optional<WorldOffset> offset =
+                                WorldOffset::FromMeters(WorldVec3(ray.direction) * distance);
+                            const std::optional<WorldPosition> point =
+                                offset ? TryTranslateWorld(ray.origin, *offset) : std::nullopt;
+                            if (point)
+                            {
+                                mHistory.Submit(MakePlacePrefabCommand(
+                                    std::string(static_cast<const char *>(payload->Data), payload->DataSize),
+                                    kNullEntity, point->Meters()));
+                            }
+                        }
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+        }
+        ImGui::End();
+        ImGui::PopStyleVar(2);
+    }
+
     void Editor::FocusSelection(const EngineModeState &mode, World &world)
     {
         if (mode.mMode != EngineMode::Edit)
@@ -1045,10 +1122,20 @@ namespace mir
             if (ImGui::Begin("Hierarchy"))
             {
                 const EntityAction entityAction = mHierarchyPanel.Draw(activeWorld, mAuthoredEntities, documentTab);
-                if (documentTab && mAuthoredEntities != nullptr)
+                if (!documentTab && entityAction.mKind == EntityActionKind::CreatePrefab)
+                {
+                    if (mAuthoredEntities != nullptr)
+                        mHistory.Submit(MakeCreatePrefabCommand(*mAuthoredEntities, entityAction.mTarget));
+                }
+                else if (documentTab && mAuthoredEntities != nullptr)
+                {
                     mHistory.Submit(MakeDocumentEntityCommand(entityAction, *mAuthoredEntities, activeWorld));
-                else
+                }
+                else if (documentTab || entityAction.mKind != EntityActionKind::PlacePrefab ||
+                    mode.mMode == EngineMode::Edit)
+                {
                     mHistory.Submit(MakeEntityCommand(entityAction));
+                }
             }
             ImGui::End();
 
@@ -1075,6 +1162,9 @@ namespace mir
                     .extent{ static_cast<uint32_t>(std::max(centralNode->Size.x, 0.0f)),
                             static_cast<uint32_t>(viewportHeight) } };
             }
+
+            if (!documentTab && mode.mMode == EngineMode::Edit)
+                DrawViewportPrefabDrop();
 
             // the dock area below the bars, minus the scene viewport
             if (const ImGuiDockNode *rootNode = ImGui::DockBuilderGetNode(dockspaceId);

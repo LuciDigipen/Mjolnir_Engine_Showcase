@@ -13,6 +13,7 @@
 #include <prefab/PrefabAuthoring.h>
 #include <prefab/PrefabSave.h>
 
+#include <filesystem>
 #include <functional>
 #include <optional>
 #include <span>
@@ -28,7 +29,8 @@ namespace mir
     class PrefabAuthoringAdapter final : public IAuthoringBackend, public IAuthoredEntities
     {
     public:
-        PrefabAuthoringAdapter(World &world, PrefabCoordinator &coordinator);
+        PrefabAuthoringAdapter(World &world, PrefabCoordinator &coordinator,
+            std::filesystem::path prefabsDir);
 
         std::optional<std::vector<AuthoredEntry>> Read(std::span<const AuthoredKey> keys) override;
         AuthoringWrite Write(std::span<const AuthoredEntry> entries) override;
@@ -52,6 +54,7 @@ namespace mir
             const EntityPresetDesc *preset = nullptr) override;
         AuthoredAction DeleteNodes(std::span<const Entity> nodes) override;
         AuthoredAction ReparentNode(Entity node, Entity parent, std::size_t siblingIndex) override;
+        AuthoredAction CreatePrefab(Entity entity) override;
 
         AuthoredAction ReparentNodes(std::span<const Entity> nodes, Entity parent, std::size_t siblingIndex) override;
 
@@ -64,7 +67,12 @@ namespace mir
             const std::function<void(PrefabId)> &saved);
 
     private:
+        std::optional<std::string> DocumentValue(PrefabId id) const;
+        bool ApplyDocumentEntry(const AuthoredEntry &entry);
+
+        World &mWorld;
         PrefabCoordinator &mCoordinator;
         PrefabAuthoring mAuthoring;
+        std::filesystem::path mPrefabsDir;
     };
 }

@@ -140,4 +140,13 @@ namespace mir
         return MakeAuthoredCommand(action.mName.empty() ? "Apply to Prefab" : action.mName,
             std::move(action.mEntries));
     }
+
+    std::unique_ptr<ICommand> MakeCreatePrefabCommand(IAuthoredEntities &authored, Entity entity)
+    {
+        AuthoredAction action = authored.CreatePrefab(entity);
+        if (!action.mAllowed)
+            return RefusedCommand("Create Prefab", action);
+        return MakeAuthoredCommand(action.mName.empty() ? "Create Prefab" : action.mName,
+            std::move(action.mEntries));
+    }
 }

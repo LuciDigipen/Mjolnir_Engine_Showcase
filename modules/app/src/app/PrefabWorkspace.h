@@ -11,6 +11,9 @@
 #include <prefab/PrefabCoordinator.h>
 #include <prefab/PrefabId.h>
 
+#include <core/ecs/Entity.h>
+#include <core/math/WorldCoordinates.h>
+
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -60,6 +63,12 @@ namespace mir
         std::string LabelOf(PrefabId id) const;
 
         std::optional<PrefabId> FindByPath(const std::filesystem::path &path) const;
+
+        // Places a linked instance at position, local to parent or in the world for a root.
+        Entity Place(World &world, PrefabId id, Entity parent, const WorldVec3 &position);
+
+        // Closes the tabs of documents Undo removed from the registry.
+        void CloseMissingDocuments();
 
         std::optional<PrefabId> ActiveDocument() const { return mActive; }
         World *PreviewWorld(PrefabId id) const;

@@ -176,6 +176,7 @@ namespace mir
         void DrawOpenProjectConfirm(EditorActions &actions);
         void DrawViewportGizmo(const EngineModeState &mode, World &world, EditorActions &actions,
             bool prefabDocument);
+        void DrawViewportPrefabDrop();
         void UpdateViewportPicking(const EngineModeState &mode, World &world);
         // F moves the scene camera next to the primary selection.
         void FocusSelection(const EngineModeState &mode, World &world);

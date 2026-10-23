@@ -16,6 +16,7 @@
 #include <editor/EditorWidgets.h>
 #include <editor/Selection.h>
 #include <editor/history/AuthoredView.h>
+#include <editor/panels/ContentBrowserPanel.h>
 
 #include <editortheme/EditorTheme.h>
 
@@ -53,6 +54,11 @@ namespace mir
                     action = { EntityActionKind::Duplicate, nullptr, entity };
                 if (role != AuthoredInstanceRole::Ordinary && ImGui::MenuItem("Copy as Ordinary Object"))
                     action = { EntityActionKind::CopyAsOrdinaryObject, nullptr, entity };
+                if (authored != nullptr && role == AuthoredInstanceRole::Ordinary &&
+                    ImGui::MenuItem("Create Prefab"))
+                {
+                    action = { EntityActionKind::CreatePrefab, nullptr, entity };
+                }
             }
             if (ImGui::MenuItem("Delete", "Del"))
                 action = { EntityActionKind::Delete, nullptr, entity };
@@ -73,6 +79,8 @@ namespace mir
             Child,
             After,
             Root,
+            PlaceChild,
+            PlaceRoot,
             Blocked,
         };
 
@@ -137,6 +145,10 @@ namespace mir
                 return "Move after " + LabelOf(world, preview.mTarget);
             case DropKind::Root:
                 return "Move to root";
+            case DropKind::PlaceChild:
+                return "Place in " + LabelOf(world, preview.mTarget);
+            case DropKind::PlaceRoot:
+                return "Place at the world origin";
             case DropKind::Blocked:
                 return "Can't move here";
             case DropKind::None:
@@ -155,8 +167,11 @@ namespace mir
                 drawList->AddLine(ImVec2(r.Min.x, r.Min.y), ImVec2(r.Max.x, r.Min.y), color, 2.0f);
             else if (preview.mKind == DropKind::After)
                 drawList->AddLine(ImVec2(r.Min.x, r.Max.y), ImVec2(r.Max.x, r.Max.y), color, 2.0f);
-            else if (preview.mKind == DropKind::Child)
+            else if (preview.mKind == DropKind::Child || preview.mKind == DropKind::PlaceChild ||
+                preview.mKind == DropKind::PlaceRoot)
+            {
                 drawList->AddRect(r.Min, r.Max, color, 0.0f, 0, 2.0f);
+            }
         }
 
         // The first sibling after row that is not being dragged, or null for last
@@ -228,6 +243,13 @@ namespace mir
             context.dropDelivered = true;
         }
 
+        void DeliverPrefabDrop(DrawContext &context, const ImGuiPayload &payload, Entity parent)
+        {
+            context.action = { EntityActionKind::PlacePrefab, nullptr, kNullEntity, {}, parent, kNullEntity };
+            context.action.mPrefabPath.assign(static_cast<const char *>(payload.Data), payload.DataSize);
+            context.dropDelivered = true;
+        }
+
         // Before, child or after, split 25 / 50 / 25 over the row and half the gap on each side
         void DropTargetForRow(DrawContext &context, Entity entity, bool collapsed)
         {
@@ -238,6 +260,22 @@ namespace mir
             // ImGui never lets the drag source be its own target, so the row needs a separate id
             if (!ImGui::BeginDragDropTargetCustom(rect, ImGui::GetIDWithSeed("##RowDrop", nullptr, ImGui::GetItemID())))
                 return;
+
+            if (const ImGuiPayload *active = ImGui::GetDragDropPayload();
+                active != nullptr && active->IsDataType(kPrefabContentPayload))
+            {
+                const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kPrefabContentPayload,
+                    ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect);
+                if (payload != nullptr)
+                {
+                    context.hoveredRow = entity;
+                    context.preview = { DropKind::PlaceChild, ImRect(itemMin, itemMax), entity };
+                    if (payload->IsDelivery())
+                        DeliverPrefabDrop(context, *payload, entity);
+                }
+                ImGui::EndDragDropTarget();
+                return;
+            }
 
             const float t = (ImGui::GetMousePos().y - rect.Min.y) / rect.GetHeight();
             DropKind kind = DropKind::Before;
@@ -290,6 +328,20 @@ namespace mir
             ImGuiWindow *window = ImGui::GetCurrentWindow();
             if (!ImGui::BeginDragDropTargetCustom(window->InnerRect, window->GetID("##HierarchyRootDrop")))
                 return;
+
+            if (const ImGuiPayload *active = ImGui::GetDragDropPayload();
+                active != nullptr && active->IsDataType(kPrefabContentPayload))
+            {
+                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kPrefabContentPayload,
+                    ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect))
+                {
+                    context.preview = { DropKind::PlaceRoot, window->InnerRect, kNullEntity };
+                    if (payload->IsDelivery())
+                        DeliverPrefabDrop(context, *payload, kNullEntity);
+                }
+                ImGui::EndDragDropTarget();
+                return;
+            }
 
             if (CanSetParentAll(context.world, context.dragged, kNullEntity, kNullEntity))
             {
@@ -408,7 +460,8 @@ namespace mir
 
         const HierarchyIndex &index = world.HierarchyIndex();
         const ImGuiPayload *activePayload = ImGui::GetDragDropPayload();
-        const bool dragging = activePayload != nullptr && activePayload->IsDataType(kEntityPayload);
+        const bool dragging = activePayload != nullptr &&
+            (activePayload->IsDataType(kEntityPayload) || activePayload->IsDataType(kPrefabContentPayload));
 
         // reveal last frame's drop: open every ancestor, scroll to the last moved entity
         std::unordered_set<uint64_t> openRows;

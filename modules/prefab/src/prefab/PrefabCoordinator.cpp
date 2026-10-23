@@ -689,6 +689,16 @@ namespace mir
         return true;
     }
 
+    bool PrefabCoordinator::SetDocument(const PrefabDocument &doc, const std::filesystem::path &intendedPath,
+        std::vector<PrefabDiagnostic> *diagnostics)
+    {
+        if (!mRegistry.SetDocument(doc, intendedPath, diagnostics))
+            return false;
+
+        mPendingDocuments.insert(doc.mId);
+        return true;
+    }
+
     bool PrefabCoordinator::RemoveDocument(PrefabId id)
     {
         mPendingDocuments.erase(id);

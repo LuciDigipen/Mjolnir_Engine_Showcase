@@ -1,5 +1,6 @@
 engine_add_module_tests(prefab
     PrefabAuthoring.tests.cpp
+    PrefabCapture.tests.cpp
     PrefabCompile.tests.cpp
     PrefabCoordinator.tests.cpp
     PrefabFormat.tests.cpp

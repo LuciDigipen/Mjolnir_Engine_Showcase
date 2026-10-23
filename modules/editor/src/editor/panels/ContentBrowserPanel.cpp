@@ -274,10 +274,20 @@ namespace mir
                     if (selected)
                         flags |= ImGuiTreeNodeFlags_Selected;
                     const int selectionColors = widgets::PushRowSelectionColors(selected);
-                    ImGui::TreeNodeEx("##entry", flags, "%s  %s", icon, entry.mName.c_str());
+                    ImGui::TreeNodeEx("##entry", flags, "%s  %s%s", icon, entry.mName.c_str(),
+                        entry.mUnsaved ? "  (unsaved)" : "");
                     ImGui::PopStyleColor(selectionColors);
                     if (ImGui::IsItemClicked())
                         mSelectedPath = entry.mRelativePath;
+
+                    if (entry.mKind == ContentBrowserEntryKind::File && IsPrefabFile(entry.mName) &&
+                        ImGui::BeginDragDropSource())
+                    {
+                        ImGui::SetDragDropPayload(kPrefabContentPayload, entry.mRelativePath.data(),
+                            entry.mRelativePath.size());
+                        ImGui::TextUnformatted(entry.mName.c_str());
+                        ImGui::EndDragDropSource();
+                    }
                     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
                     {
                         if (entry.mKind == ContentBrowserEntryKind::Directory)

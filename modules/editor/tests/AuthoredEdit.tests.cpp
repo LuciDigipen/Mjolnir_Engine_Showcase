@@ -148,10 +148,29 @@ namespace
         AuthoredAction DeleteNodes(std::span<const Entity>) override { return Refused(); }
         AuthoredAction ReparentNode(Entity, Entity, std::size_t) override { return Refused(); }
 
+        AuthoredAction CreatePrefab(Entity) override
+        {
+            AuthoredAction action;
+            if (mRefuseCreatePrefab)
+            {
+                action.mAllowed = false;
+                action.mReason = "not an ordinary entity";
+                action.mName = "Create Prefab";
+                return action;
+            }
+
+            action.mName = "Create Prefab";
+            AuthoredKey key;
+            key.mObject.mDocument = mir::DocumentId{ 7, 9 };
+            action.mEntries.push_back(AuthoredEntry{ key, std::string("{\"path\":\"Chair.prefab\"}") });
+            return action;
+        }
+
         bool WritesComponentDirectly(Entity, std::string_view) override { return false; }
 
         std::set<uint64_t> mMembers;
         bool mRefuseApply = false;
+        bool mRefuseCreatePrefab = false;
 
     private:
         static AuthoredAction Refused()
@@ -182,6 +201,7 @@ namespace
         CapturedSubtree Capture(Entity) override { return {}; }
         std::vector<Entity> Restore(const CapturedSubtree &, Entity, Entity) override { return {}; }
         bool Destroy(Entity) override { return false; }
+        Entity PlacePrefab(std::string_view, Entity, const mir::WorldVec3 &) override { return kNullEntity; }
     };
 
     const ComponentOps &DataOps()
@@ -285,6 +305,33 @@ TEST_CASE("Add and remove component route to authored entries for a member", "[e
     CHECK(fixture.mBackend.mWritten.front().mComponent == "AuthoredEditTestData");
     CHECK(fixture.mBackend.At(fixture.mBackend.mWritten.front()) == "null");
     CHECK(DataOps().Has(fixture.mWorld, fixture.mEntity));
+}
+
+TEST_CASE("Create Prefab is one authored command that undo removes", "[editor][history][authored-edit]")
+{
+    Fixture fixture;
+
+    fixture.Run(mir::MakeCreatePrefabCommand(fixture.mView, fixture.mEntity));
+    REQUIRE(fixture.mHistory.StepCount() == 1);
+    REQUIRE(fixture.mBackend.mWritten.size() == 1);
+
+    const AuthoredKey key = fixture.mBackend.mWritten.front();
+    CHECK(key.mObject.mAddress.empty());
+    CHECK(key.mComponent.empty());
+    CHECK(key.mField.empty());
+    CHECK(fixture.mBackend.At(key) == "{\"path\":\"Chair.prefab\"}");
+    CHECK(fixture.mHistory.IsUnsaved(key.mObject.mDocument));
+
+    fixture.mHistory.RequestUndo();
+    fixture.mHistory.Flush(fixture.mWorld, fixture.mScene);
+    CHECK_FALSE(fixture.mBackend.At(key).has_value());
+
+    fixture.mHistory.RequestRedo();
+    fixture.mHistory.Flush(fixture.mWorld, fixture.mScene);
+    CHECK(fixture.mBackend.At(key) == "{\"path\":\"Chair.prefab\"}");
+
+    fixture.mView.mRefuseCreatePrefab = true;
+    CHECK(mir::MakeCreatePrefabCommand(fixture.mView, fixture.mEntity) == nullptr);
 }
 
 TEST_CASE("Revert submits one command and a refused Apply submits none", "[editor][history][authored-edit]")

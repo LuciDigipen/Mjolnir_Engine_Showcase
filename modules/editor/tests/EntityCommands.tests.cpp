@@ -24,6 +24,7 @@ namespace
     using mir::MakeCreateCommand;
     using mir::MakeDeleteCommand;
     using mir::MakeDuplicateCommand;
+    using mir::MakePlacePrefabCommand;
     using mir::MakeReParentCommand;
     using mir::SceneNodeAddress;
     using mir::ScenePrefabInstance;
@@ -180,6 +181,46 @@ TEST_CASE("Create, undo and redo round-trip the scene files", "[editor][history]
     e.Redo();
     CHECK(Differences(e.Saved(), created) == std::vector<std::string>{});
     CHECK(e.mHistory.UndoName() == (preset != nullptr ? "Create Thing" : "Create Entity"));
+}
+
+TEST_CASE("Placing a Prefab is one step that keeps its identity through undo and redo", "[editor][history]")
+{
+    Editing e;
+    const mir::WorldVec3 position(2.0, 0.0, 3.0);
+
+    e.Run(MakePlacePrefabCommand("assets/prefabs/Chair.prefab", kNullEntity, position));
+    REQUIRE(e.mHistory.StepCount() == 1);
+    REQUIRE(e.Selected().size() == 1);
+
+    const Entity root = e.Selected().front();
+    const StableId rootId = e.IdOf(root);
+    REQUIRE(rootId != kNullStableId);
+    REQUIRE(e.mScene.mInstances.contains(rootId));
+    const ScenePrefabInstance record = e.mScene.mInstances.at(rootId);
+    CHECK(record.mPrefab == "assets/prefabs/Chair.prefab");
+    CHECK(e.mWorld.GetComponent<Transform>(root)->Position() == position);
+    const Files placed = e.Saved();
+
+    e.Undo();
+    CHECK_FALSE(e.mWorld.IsAlive(root));
+    CHECK_FALSE(e.mScene.mInstances.contains(rootId));
+
+    e.Redo();
+    REQUIRE(e.mScene.mEntities.contains(rootId));
+    CHECK(e.mWorld.IsAlive(e.mScene.mEntities.at(rootId)));
+    REQUIRE(e.mScene.mInstances.contains(rootId));
+    CHECK(e.mScene.mInstances.at(rootId).mPrefab == record.mPrefab);
+    CHECK(e.mScene.mInstances.at(rootId).mBindings == record.mBindings);
+    CHECK(Differences(e.Saved(), placed) == std::vector<std::string>{});
+}
+
+TEST_CASE("A Prefab that cannot be placed records no step", "[editor][history]")
+{
+    Editing e;
+    e.mOps.mPlaceFails = true;
+
+    e.Run(MakePlacePrefabCommand("assets/prefabs/Missing.prefab", kNullEntity, mir::WorldVec3(0.0)));
+    CHECK(e.mHistory.StepCount() == 0);
 }
 
 TEST_CASE("Duplicate, undo and redo round-trip the scene files", "[editor][history]")

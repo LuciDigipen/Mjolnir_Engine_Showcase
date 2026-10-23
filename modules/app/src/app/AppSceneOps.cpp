@@ -8,16 +8,21 @@
  */
 #include "AppSceneOps.h"
 
+#include "PrefabWorkspace.h"
 #include "SceneResolve.h"
 
 #include <app/App.h>
 #include <core/log/Log.h>
+#include <prefab/PrefabId.h>
 #include <scene/EntitySnapshot.h>
 #include <scene/SceneAsset.h>
 #include <scene/SceneDuplicate.h>
 #include <scene/SceneIO.h>
 
+#include <filesystem>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <unordered_map>
 
 namespace mir
@@ -113,6 +118,29 @@ namespace mir
         }
 
         return DestroySceneEntity(mApp.GetWorld(), scene, root);
+    }
+
+    Entity AppSceneOps::PlacePrefab(std::string_view contentPath, Entity parent, const WorldVec3 &position)
+    {
+        PrefabWorkspace *documents = mApp.OpenPrefabs();
+        if (documents == nullptr)
+        {
+            MIR_LOG_ERROR("Place Prefab: Prefab documents are unavailable");
+            return kNullEntity;
+        }
+
+        const std::optional<PrefabId> id =
+            documents->FindByPath(mApp.Project().mRootDir / std::filesystem::path(std::string(contentPath)));
+        if (!id)
+        {
+            MIR_LOG_ERROR("Place Prefab: '{}' is not a registered Prefab", contentPath);
+            return kNullEntity;
+        }
+
+        const Entity root = documents->Place(mApp.GetWorld(), *id, parent, position);
+        if (!root.IsNull())
+            ResolveScripts();
+        return root;
     }
 
     bool AppSceneOps::CanReparent(std::span<const Entity> entities, Entity parent)

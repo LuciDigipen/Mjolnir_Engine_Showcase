@@ -147,8 +147,29 @@ namespace mir
         return true;
     }
 
+    bool PrefabRegistry::SetDocument(const PrefabDocument &doc, const std::filesystem::path &intendedPath,
+        std::vector<PrefabDiagnostic> *diagnostics)
+    {
+        if (!SetDocument(doc, diagnostics))
+            return false;
+        mIntendedPaths[doc.mId] = intendedPath;
+        return true;
+    }
+
+    bool PrefabRegistry::SetIntendedPath(PrefabId id, std::optional<std::filesystem::path> path)
+    {
+        if (!mMemory.contains(id))
+            return false;
+        if (path)
+            mIntendedPaths[id] = std::move(*path);
+        else
+            mIntendedPaths.erase(id);
+        return true;
+    }
+
     bool PrefabRegistry::RemoveDocument(PrefabId id)
     {
+        mIntendedPaths.erase(id);
         return mMemory.erase(id) > 0;
     }
 
@@ -171,16 +192,30 @@ namespace mir
 
     std::optional<std::filesystem::path> PrefabRegistry::PathOf(PrefabId id) const
     {
-        const auto it = mDiskPaths.find(id);
-        if (it == mDiskPaths.end())
+        const auto disk = mDiskPaths.find(id);
+        if (disk != mDiskPaths.end())
+            return disk->second;
+        const auto intended = mIntendedPaths.find(id);
+        if (intended == mIntendedPaths.end())
             return std::nullopt;
-        return it->second;
+        return intended->second;
+    }
+
+    std::optional<std::filesystem::path> PrefabRegistry::IntendedPathOf(PrefabId id) const
+    {
+        const auto it = mIntendedPaths.find(id);
+        return it != mIntendedPaths.end() ? std::optional<std::filesystem::path>(it->second) : std::nullopt;
     }
 
     std::optional<PrefabId> PrefabRegistry::IdAtPath(const std::filesystem::path &path) const
     {
         const std::filesystem::path wanted = path.lexically_normal();
         for (const auto &[id, candidate] : mDiskPaths)
+        {
+            if (candidate.lexically_normal() == wanted)
+                return id;
+        }
+        for (const auto &[id, candidate] : mIntendedPaths)
         {
             if (candidate.lexically_normal() == wanted)
                 return id;
@@ -192,6 +227,7 @@ namespace mir
     {
         mDisk[doc.mId] = doc;
         mDiskPaths[doc.mId] = path;
+        mIntendedPaths.erase(doc.mId);
     }
 
     std::optional<PrefabDocument> PrefabRegistry::CopyAsNew(const PrefabDocument &doc) const

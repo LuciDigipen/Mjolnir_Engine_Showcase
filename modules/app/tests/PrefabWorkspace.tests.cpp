@@ -11,6 +11,7 @@
 
 #include <editor/history/AuthoredEdit.h>
 #include <editor/history/Authoring.h>
+#include <editor/history/EntityCommands.h>
 #include <editor/history/History.h>
 #include <editor/history/DocumentNodeCommands.h>
 #include <editor/panels/HierarchyPanel.h>
@@ -24,10 +25,13 @@
 #include <core/ecs/World.h>
 #include <core/ecs/components/Name.h>
 #include <core/ecs/components/Transform.h>
+#include <core/ecs/components/WorldTransform.h>
 #include <prefab/PrefabCoordinator.h>
 #include <prefab/PrefabFormat.h>
 #include <prefab/PrefabSceneInstance.h>
+#include <scene/EntitySnapshot.h>
 #include <scene/SceneAsset.h>
+#include <scene/SceneDuplicate.h>
 #include <scene/SceneIO.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -80,6 +84,7 @@ namespace
     using mir::PrefabSystem;
     using mir::RuntimeFieldDecl;
     using mir::SceneNodeAddress;
+    using mir::ScenePrefabInstance;
     using mir::StableId;
     using mir::SystemContext;
     using mir::ToString;
@@ -142,6 +147,64 @@ namespace
         CapturedSubtree Capture(Entity) override { return {}; }
         std::vector<Entity> Restore(const CapturedSubtree &, Entity, Entity) override { return {}; }
         bool Destroy(Entity) override { return false; }
+        Entity PlacePrefab(std::string_view, Entity, const mir::WorldVec3 &) override { return kNullEntity; }
+    };
+
+    class DocumentSceneOps final : public mir::ISceneOps
+    {
+    public:
+        DocumentSceneOps(World &world, LoadedScene &scene, PrefabWorkspace &documents, PrefabId prefab)
+            : mWorld(world), mScene(scene), mDocuments(documents), mPrefab(prefab)
+        {
+        }
+
+        Entity CreateEntity() override { return mir::CreateSceneEntity(mWorld, mScene); }
+        Entity Duplicate(Entity source) override { return mir::DuplicateSceneEntitySubtree(mWorld, mScene, source); }
+        Entity CopyAsOrdinaryObject(Entity source) override
+        {
+            return mir::CopyInstanceMemberAsOrdinary(mWorld, mScene, source);
+        }
+
+        CapturedSubtree Capture(Entity root) override
+        {
+            CapturedSubtree subtree;
+            subtree.mMembers = mir::SnapshotMembers(mWorld, root);
+            subtree.mData = mir::CaptureEntity(mWorld, root).mData;
+            for (const Entity member : subtree.mMembers)
+            {
+                StableId id = kNullStableId;
+                for (const auto &[candidate, entity] : mScene.mEntities)
+                {
+                    if (entity == member)
+                        id = candidate;
+                }
+                subtree.mStableIds.push_back(id);
+            }
+            subtree.mInstances = mir::CaptureInstanceRecords(mScene, subtree.mStableIds);
+            return subtree;
+        }
+
+        std::vector<Entity> Restore(const CapturedSubtree &subtree, Entity parent, Entity before) override
+        {
+            std::vector<Entity> members = mir::RestoreEntityAt(mWorld, mir::EntitySnapshot{ subtree.mData }, mScene,
+                subtree.mStableIds, parent, before);
+            if (!members.empty())
+                mir::RestoreInstanceRecords(mScene, subtree.mInstances);
+            return members;
+        }
+
+        bool Destroy(Entity root) override { return mir::DestroySceneEntity(mWorld, mScene, root); }
+
+        Entity PlacePrefab(std::string_view, Entity parent, const mir::WorldVec3 &position) override
+        {
+            return mDocuments.Place(mWorld, mPrefab, parent, position);
+        }
+
+    private:
+        World &mWorld;
+        LoadedScene &mScene;
+        PrefabWorkspace &mDocuments;
+        PrefabId mPrefab;
     };
 
     const std::string &ProcessToken()
@@ -222,6 +285,7 @@ namespace
         World mWorld;
         LoadedScene mScene = NewScene("main");
         PrefabCoordinator *mCoordinator = nullptr;
+        TempDir mPrefabsDir;
         std::unique_ptr<PrefabAuthoringAdapter> mAdapter;
         std::unique_ptr<PrefabWorkspace> mDocuments;
         History mHistory;
@@ -240,9 +304,10 @@ namespace
 
             mDocument = Document();
             REQUIRE(mCoordinator->Registry().SetDocument(mDocument));
+            mCoordinator->Bind(mScene);
             mDocumentId = DocumentId{ mDocument.mId.mHigh, mDocument.mId.mLow };
 
-            mAdapter = std::make_unique<PrefabAuthoringAdapter>(mWorld, *mCoordinator);
+            mAdapter = std::make_unique<PrefabAuthoringAdapter>(mWorld, *mCoordinator, mPrefabsDir.mPath);
             mHistory.SetAuthoringBackend(mAdapter.get());
             mDocuments = std::make_unique<PrefabWorkspace>(*mCoordinator, *mAdapter);
         }
@@ -636,6 +701,72 @@ TEST_CASE("Save Prefab writes its file and clears only its unsaved state", "[app
     CHECK(ReadText(path).find("42.0") != std::string::npos);
 }
 
+TEST_CASE("An unsaved prefab's intended path opens and labels its document", "[app][prefabs]")
+{
+    Fixture fixture;
+    const std::filesystem::path path = fixture.mPrefabsDir.mPath / "Chair.prefab";
+    REQUIRE(fixture.mCoordinator->Registry().SetIntendedPath(fixture.mDocument.mId, path));
+
+    CHECK(fixture.mDocuments->FindByPath(path) == fixture.mDocument.mId);
+    CHECK(fixture.mDocuments->LabelOf(fixture.mDocument.mId) == "Chair");
+    CHECK_FALSE(fixture.mCoordinator->Registry().HasSavedFile(fixture.mDocument.mId));
+
+    REQUIRE(fixture.mDocuments->Open(fixture.mDocument.mId));
+    CHECK(fixture.mDocuments->IsOpen(fixture.mDocument.mId));
+    CHECK(fixture.mDocuments->PreviewScene(fixture.mDocument.mId) != nullptr);
+}
+
+TEST_CASE("Placing a Prefab is one step that keeps its StableIds and record", "[app][prefabs]")
+{
+    Fixture fixture;
+    DocumentSceneOps ops(fixture.mWorld, fixture.mScene, *fixture.mDocuments, fixture.mDocument.mId);
+    History history;
+    const mir::WorldVec3 position(2.0, 0.0, 3.0);
+
+    history.Submit(mir::MakePlacePrefabCommand("assets/prefabs/Chair.prefab", kNullEntity, position));
+    history.Flush(fixture.mWorld, ops);
+    REQUIRE(history.StepCount() == 1);
+    REQUIRE(fixture.mScene.mInstances.size() == 1);
+
+    const StableId rootId = fixture.mScene.mInstances.begin()->first;
+    REQUIRE(fixture.mScene.mEntities.contains(rootId));
+    const Entity root = fixture.mScene.mEntities.at(rootId);
+    CHECK(fixture.mWorld.GetComponent<mir::Transform>(root)->Position() == position);
+    const ScenePrefabInstance record = fixture.mScene.mInstances.at(rootId);
+    CHECK(record.mPrefab == ToString(fixture.mDocument.mId));
+    CHECK(record.mPlacement.at("position") == nlohmann::json::array({ 2.0, 0.0, 3.0 }));
+
+    history.RequestUndo();
+    history.Flush(fixture.mWorld, ops);
+    CHECK_FALSE(fixture.mScene.mEntities.contains(rootId));
+    CHECK_FALSE(fixture.mScene.mInstances.contains(rootId));
+
+    history.RequestRedo();
+    history.Flush(fixture.mWorld, ops);
+    REQUIRE(fixture.mScene.mEntities.contains(rootId));
+    CHECK(fixture.mWorld.IsAlive(fixture.mScene.mEntities.at(rootId)));
+    REQUIRE(fixture.mScene.mInstances.contains(rootId));
+    CHECK(fixture.mScene.mInstances.at(rootId).mBindings == record.mBindings);
+    CHECK(fixture.mScene.mInstances.at(rootId).mPlacement == record.mPlacement);
+}
+
+TEST_CASE("Placing a Prefab again keeps its compiled revision", "[app][prefabs]")
+{
+    Fixture fixture;
+    DocumentSceneOps ops(fixture.mWorld, fixture.mScene, *fixture.mDocuments, fixture.mDocument.mId);
+    History history;
+
+    history.Submit(mir::MakePlacePrefabCommand("assets/prefabs/Chair.prefab", kNullEntity, mir::WorldVec3(0.0)));
+    history.Flush(fixture.mWorld, ops);
+    REQUIRE(fixture.mCoordinator->Cache().Find(fixture.mDocument.mId) != nullptr);
+    const uint64_t revision = fixture.mCoordinator->Cache().Find(fixture.mDocument.mId)->Revision();
+
+    history.Submit(mir::MakePlacePrefabCommand("assets/prefabs/Chair.prefab", kNullEntity, mir::WorldVec3(1.0)));
+    history.Flush(fixture.mWorld, ops);
+    CHECK(fixture.mScene.mInstances.size() == 2);
+    CHECK(fixture.mCoordinator->Cache().Find(fixture.mDocument.mId)->Revision() == revision);
+}
+
 TEST_CASE("Save Scene writes unsaved prefabs first and stops before the scene on failure", "[app][prefabs]")
 {
     Fixture fixture;
@@ -764,4 +895,42 @@ TEST_CASE("A multi-node Prefab drop before a sibling preserves the requested ord
     fixture.Commit();
     children = world.HierarchyIndex().ChildrenOf(root);
     CHECK(std::vector<Entity>(children.begin(), children.end()) == std::vector<Entity>{ second, fourth, third });
+}
+
+TEST_CASE("Opening a captured Prefab previews members with WorldTransform", "[app][prefabs]")
+{
+    Fixture fixture;
+    const Entity root = mir::CreateSceneEntity(fixture.mWorld, fixture.mScene);
+    mir::AddTransform(fixture.mWorld, root, mir::Transform(mir::WorldVec3(1.0, 2.0, 3.0)));
+    const Entity child = mir::CreateSceneEntity(fixture.mWorld, fixture.mScene, root);
+    mir::AddTransform(fixture.mWorld, child, mir::Transform(mir::WorldVec3(4.0, 5.0, 6.0)));
+
+    REQUIRE(fixture.mAdapter->CreatePrefab(root).mAllowed);
+    fixture.Run(mir::MakeCreatePrefabCommand(*fixture.mAdapter, root));
+
+    std::optional<PrefabId> created;
+    for (const PrefabId id : fixture.mCoordinator->Registry().Ids())
+    {
+        if (id != fixture.mDocument.mId)
+            created = id;
+    }
+    REQUIRE(created.has_value());
+    REQUIRE(fixture.mDocuments->Open(*created));
+
+    World *world = fixture.mDocuments->PreviewWorld(*created);
+    const LoadedScene *preview = fixture.mDocuments->PreviewScene(*created);
+    REQUIRE(world != nullptr);
+    REQUIRE(preview != nullptr);
+    REQUIRE(preview->mInstances.size() == 1);
+
+    std::size_t transforms = 0;
+    for (const auto &[address, id] : preview->mInstances.begin()->second.mBindings)
+    {
+        (void)address;
+        const Entity member = preview->mEntities.at(id);
+        CHECK(world->Has<mir::Transform>(member) == world->Has<mir::WorldTransform>(member));
+        if (world->Has<mir::Transform>(member))
+            ++transforms;
+    }
+    CHECK(transforms == 2);
 }

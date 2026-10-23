@@ -64,6 +64,7 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <set>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -122,7 +123,7 @@ namespace mir
         {
             return [editor = &editor, prefabs = &prefabs](PrefabId id)
                 {
-                    return !prefabs->Registry().PathOf(id).has_value() ||
+                    return !prefabs->Registry().HasSavedFile(id) ||
                         editor->IsDocumentUnsaved(DocumentId{ id.mHigh, id.mLow });
                 };
         }
@@ -247,7 +248,8 @@ namespace mir
         mWorld.EmplaceResource<EntityChangeListeners>();
         PrefabCoordinator &prefabs = mWorld.EmplaceResource<PrefabCoordinator>();
     #if MIR_WITH_EDITOR
-        mPrefabAuthoring = std::make_unique<PrefabAuthoringAdapter>(mWorld, prefabs);
+        mPrefabAuthoring = std::make_unique<PrefabAuthoringAdapter>(mWorld, prefabs,
+            PrefabSourceDir(mProject));
         mEditor.SetAuthoringBackend(mPrefabAuthoring.get());
         mEditor.SetAuthoredEntities(mPrefabAuthoring.get());
         mPrefabWorkspace = std::make_unique<PrefabWorkspace>(prefabs, *mPrefabAuthoring);
@@ -841,7 +843,9 @@ namespace mir
                     mDesc.mEnableEditorLayout, mWorld.Resource<InputMap>(), mWorld.Resource<RenderSettings>(),
                     mWorld.Resource<PostProcessingSettings>(), mWorld.Resource<EngineModeState>(), mProjectMenu,
                     mProject.mDir, viewWorld != nullptr ? *viewWorld : mWorld, mWorld, MakeEditorDocuments(),
-                    mAssetImport.View(), mRenderer, mContentBrowser.View());
+                    mAssetImport.View(), mRenderer, MakeContentBrowserView());
+                if (mPrefabWorkspace != nullptr)
+                    mPrefabWorkspace->CloseMissingDocuments();
             #endif
 
                 mGameUI.BeginFrame(GameUIArea(), mWorld.Resource<InputState>(), mWorld.Resource<InputMap>(),
@@ -1105,7 +1109,7 @@ namespace mir
             for (const PrefabId id : mPrefabWorkspace->OpenDocuments())
             {
                 const DocumentId document{ id.mHigh, id.mLow };
-                const bool unsaved = prefabs == nullptr || !prefabs->Registry().PathOf(id).has_value() ||
+                const bool unsaved = prefabs == nullptr || !prefabs->Registry().HasSavedFile(id) ||
                     mEditor.IsDocumentUnsaved(document);
                 documents.mTabs.push_back(
                     EditorDocumentTab{ document, mPrefabWorkspace->LabelOf(id), unsaved, true });
@@ -1115,6 +1119,54 @@ namespace mir
                 documents.mActive = DocumentId{ active->mHigh, active->mLow };
         }
         return documents;
+    }
+
+    ContentBrowserView App::MakeContentBrowserView()
+    {
+        ContentBrowserView view = mContentBrowser.View();
+        const PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>();
+        if (prefabs == nullptr)
+            return view;
+
+        std::set<std::string> known;
+        for (const ContentBrowserEntryView &entry : view.mEntries)
+            known.insert(entry.mRelativePath);
+
+        for (const PrefabId id : prefabs->DocumentIds())
+        {
+            if (!prefabs->Registry().HasMemoryDocument(id) || prefabs->Registry().HasSavedFile(id))
+                continue;
+            const std::optional<std::filesystem::path> intended = prefabs->Registry().IntendedPathOf(id);
+            if (!intended)
+                continue;
+
+            const std::string relative = intended->lexically_relative(mProject.mRootDir).generic_string();
+            if (relative.empty() || relative.rfind("..", 0) == 0)
+                continue;
+
+            for (std::size_t slash = relative.find('/'); slash != std::string::npos;
+                 slash = relative.find('/', slash + 1))
+            {
+                const std::string directory = relative.substr(0, slash);
+                if (!known.insert(directory).second)
+                    continue;
+                ContentBrowserEntryView entry;
+                entry.mRelativePath = directory;
+                entry.mName = std::filesystem::path(directory).filename().string();
+                entry.mKind = ContentBrowserEntryKind::Directory;
+                view.mEntries.push_back(std::move(entry));
+            }
+
+            if (!known.insert(relative).second)
+                continue;
+            ContentBrowserEntryView entry;
+            entry.mRelativePath = relative;
+            entry.mName = intended->filename().string();
+            entry.mKind = ContentBrowserEntryKind::File;
+            entry.mUnsaved = true;
+            view.mEntries.push_back(std::move(entry));
+        }
+        return view;
     }
 
     void App::ApplyImportedAssets()

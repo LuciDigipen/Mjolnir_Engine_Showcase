@@ -28,18 +28,23 @@ namespace mir
         Duplicate,
         CopyAsOrdinaryObject,
         Reparent,
+        CreatePrefab,
+        PlacePrefab,
     };
 
     struct EntityAction
     {
         EntityActionKind mKind = EntityActionKind::None;
         const EntityPresetDesc *mPreset = nullptr; // for create
-        Entity mTarget = kNullEntity;              // for delete, duplicate
+        Entity mTarget = kNullEntity;              // for delete, duplicate, create prefab
 
         // for reparent: a null mBefore means last, and under the current parent that is MoveToLastSibling
         std::vector<Entity> mTargets;
         Entity mParent = kNullEntity;
         Entity mBefore = kNullEntity;
+
+        // for place prefab
+        std::string mPrefabPath;
     };
 
     class HierarchyPanel

@@ -204,6 +204,50 @@ TEST_CASE("A write failure stops the plan and leaves the old file", "[prefab][sa
     CHECK(firstAfter.find("Changed") != std::string::npos);
 }
 
+TEST_CASE("Saving an unsaved prefab writes its intended path", "[prefab][save]")
+{
+    Fixture fixture;
+    const PrefabDocument document = Named(mir::NewPrefabDocument(), "Intended");
+    const std::filesystem::path path = fixture.mDir.mPath / "prefabs" / "Intended.prefab";
+    REQUIRE(fixture.mRegistry.SetDocument(document, path));
+
+    CHECK(fixture.mRegistry.PathOf(document.mId) == path);
+    CHECK(fixture.mRegistry.IntendedPathOf(document.mId) == path);
+    CHECK_FALSE(fixture.mRegistry.HasSavedFile(document.mId));
+    CHECK(fixture.mRegistry.IdAtPath(path) == document.mId);
+
+    const PrefabSavePlan plan = PlanSavePrefab(fixture.mRegistry, document.mId, [](PrefabId) { return true; });
+    REQUIRE_FALSE(HasPrefabErrors(plan.mDiagnostics));
+    REQUIRE(plan.mSteps.size() == 1);
+    CHECK(plan.mSteps[0].mPath == path);
+
+    const PrefabSaveResult result = ExecuteSavePlan(fixture.mRegistry, plan);
+    CHECK(result.mSucceeded);
+    CHECK(std::filesystem::exists(path));
+    CHECK(fixture.mRegistry.HasSavedFile(document.mId));
+    CHECK(fixture.mRegistry.PathOf(document.mId) == path);
+}
+
+TEST_CASE("Saving a scene writes an unsaved prefab to its intended path", "[prefab][save]")
+{
+    Fixture fixture;
+    const PrefabDocument document = Named(mir::NewPrefabDocument(), "SceneIntended");
+    const std::filesystem::path path = fixture.mDir.mPath / "prefabs" / "SceneIntended.prefab";
+    REQUIRE(fixture.mRegistry.SetDocument(document, path));
+
+    LoadedScene scene = NewScene("scene");
+    scene.mInstances[1].mPrefab = ToString(document.mId);
+
+    const PrefabSavePlan plan = PlanSaveScene(fixture.mRegistry, scene, [](PrefabId) { return true; });
+    REQUIRE_FALSE(HasPrefabErrors(plan.mDiagnostics));
+    REQUIRE(plan.mSteps.size() == 1);
+    CHECK(plan.mSteps[0].mPath == path);
+
+    const PrefabSaveResult result = ExecuteSavePlan(fixture.mRegistry, plan);
+    CHECK(result.mSucceeded);
+    CHECK(std::filesystem::exists(path));
+}
+
 TEST_CASE("A prefab without a file path is reported and nothing is written", "[prefab][save]")
 {
     PrefabRegistry registry;
