@@ -53,6 +53,7 @@
 #if MIR_WITH_EDITOR
 #include "AppSceneOps.h"
 #include "PrefabAuthoring.h"
+#include "PrefabDocuments.h"
 #include <core/platform/Process.h>
 #include <editor/IdeSettings.h>
 #endif
@@ -217,6 +218,8 @@ namespace mir
         mPrefabAuthoring = std::make_unique<PrefabAuthoringAdapter>(mWorld, prefabs);
         mEditor.SetAuthoringBackend(mPrefabAuthoring.get());
         mEditor.SetAuthoredEntities(mPrefabAuthoring.get());
+        mPrefabDocuments = std::make_unique<PrefabDocuments>(prefabs, *mPrefabAuthoring);
+        mPrefabDocuments->BindResolveSystems(&mRenderer, Assets(), mProject.mAssetIdRoot);
     #endif
         const std::filesystem::path prefabsDir = PrefabSourceDir(mProject);
         std::error_code prefabEc;
@@ -341,14 +344,39 @@ namespace mir
         }
 
         const PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>();
-        const bool saved = mir::SaveScene(mWorld, mProject.mSceneDir, mScene,
-            prefabs != nullptr ? &prefabs->Resolver() : nullptr);
-        if (saved)
+        const auto writeScene = [&]()
+            {
+                return mir::SaveScene(mWorld, mProject.mSceneDir, mScene,
+                    prefabs != nullptr ? &prefabs->Resolver() : nullptr);
+            };
+
+    #if MIR_WITH_EDITOR
+        if (mPrefabDocuments != nullptr && prefabs != nullptr)
         {
-            mScene.mDirty = false;
-            SetSceneUnsaved(false);
+            const auto unsaved = [this, prefabs](PrefabId id)
+                {
+                    return !prefabs->Registry().PathOf(id).has_value() ||
+                        mEditor.IsDocumentUnsaved(DocumentId{ id.mHigh, id.mLow });
+                };
+            const auto markSaved = [this](PrefabId id)
+                {
+                    mEditor.SetDocumentUnsaved(DocumentId{ id.mHigh, id.mLow }, false);
+                };
+            if (!mPrefabDocuments->SaveScene(mScene, unsaved, markSaved, writeScene))
+                return false;
         }
-        return saved;
+        else if (!writeScene())
+        {
+            return false;
+        }
+    #else
+        if (!writeScene())
+            return false;
+    #endif
+
+        mScene.mDirty = false;
+        SetSceneUnsaved(false);
+        return true;
     }
 
     bool App::LoadScene()
@@ -421,6 +449,10 @@ namespace mir
         mWorld.Resource<ModelMorphOverrides>().instances.clear();
         mTerrain->ForgetMeshes();
         mRenderer.ReleaseSceneResources();
+    #if MIR_WITH_EDITOR
+        if (mPrefabDocuments != nullptr)
+            mPrefabDocuments->ResetResolve();
+    #endif
 
         ResolveSceneScripts(mWorld, mScriptHost, mScriptReloadWatcher, Assets(), mProject.mAssetIdRoot);
 
@@ -515,6 +547,10 @@ namespace mir
             overrides->instances.clear();
         mTerrain->Unload();
         mRenderer.ReleaseSceneResources();
+    #if MIR_WITH_EDITOR
+        if (mPrefabDocuments != nullptr)
+            mPrefabDocuments->ResetResolve();
+    #endif
     }
 
     void App::LoadProjectScene()
@@ -663,6 +699,12 @@ namespace mir
             if (!mDesc.mCapturePath.empty() && mFrame + 1 == mDesc.mMaxFrames)
                 mRenderer.CaptureNextFrame(mDesc.mCapturePath);
             mScheduler.Update(context, fixedSteps, mFixedTimestep.mStep);
+
+        #if MIR_WITH_EDITOR
+            // after PrefabSystem committed their documents at this safe point
+            if (IsEditing(mWorld) && mPrefabDocuments != nullptr)
+                mPrefabDocuments->Update(dt, mElapsed, mFrame);
+        #endif
 
             // reference clearing and binding changes at the safe point happen outside History
             if (PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>())
@@ -878,6 +920,7 @@ namespace mir
 
     #if MIR_WITH_EDITOR
         mEditor.Shutdown();
+        mPrefabDocuments.reset();
         mPrefabAuthoring.reset();
     #endif
         mImGui.Shutdown(mRenderer);

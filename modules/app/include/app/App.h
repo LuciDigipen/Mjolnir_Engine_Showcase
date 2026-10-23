@@ -54,6 +54,7 @@ namespace mir
     class MeshResolveSystem;
     class AppSceneOps;
     class PrefabAuthoringAdapter;
+    class PrefabDocuments;
 
     struct AppDesc
     {
@@ -121,6 +122,11 @@ namespace mir
 
         // The scene currently in the World
         LoadedScene &Scene() { return mScene; }
+
+    #if MIR_WITH_EDITOR
+        // Open Prefab documents and their preview Worlds, for the editor's tabs
+        PrefabDocuments *OpenPrefabs() { return mPrefabDocuments.get(); }
+    #endif
 
         // The game currently open
         const GameProject &Project() const { return mProject; }
@@ -226,6 +232,11 @@ namespace mir
         ScriptHost mScriptHost;
         ScriptReloadWatcher mScriptReloadWatcher{ mScriptHost };
         LoadedScene mScene;
+
+    #if MIR_WITH_EDITOR
+        // Before mScene and mWorld, after the editor stopped using them
+        std::unique_ptr<PrefabDocuments> mPrefabDocuments;
+    #endif
 
         // Handles only, freed with the renderer and the World
         std::unique_ptr<TerrainRuntime> mTerrain;

@@ -144,10 +144,24 @@ namespace
             return action;
         }
 
+        AuthoredAction CreateNode(Entity, std::size_t) override { return Refused(); }
+        AuthoredAction DeleteNodes(std::span<const Entity>) override { return Refused(); }
+        AuthoredAction ReparentNode(Entity, Entity, std::size_t) override { return Refused(); }
+
+        bool WritesComponentDirectly(Entity, std::string_view) override { return false; }
+
         std::set<uint64_t> mMembers;
         bool mRefuseApply = false;
 
     private:
+        static AuthoredAction Refused()
+        {
+            AuthoredAction action;
+            action.mAllowed = false;
+            action.mReason = "not a document view";
+            return action;
+        }
+
         static AuthoredKey Key(Entity entity, std::string_view component, std::string_view field)
         {
             AuthoredKey key;

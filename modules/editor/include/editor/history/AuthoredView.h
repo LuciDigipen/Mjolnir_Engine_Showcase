@@ -13,8 +13,10 @@
 #include <core/ecs/ComponentFields.h>
 #include <core/ecs/Entity.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -72,5 +74,14 @@ namespace mir
         // One command's entries; a refused action carries a reason instead.
         virtual AuthoredAction Revert(const AuthoredKey &key) = 0;
         virtual AuthoredAction Apply(const AuthoredKey &key) = 0;
+
+        // Node edits on the active document; a null parent means the document root.
+        virtual AuthoredAction CreateNode(Entity parent, std::size_t siblingIndex) = 0;
+        virtual AuthoredAction DeleteNodes(std::span<const Entity> nodes) = 0;
+        virtual AuthoredAction ReparentNode(Entity node, Entity parent, std::size_t siblingIndex) = 0;
+
+        // True when removing the component deletes it from the active document
+        // instead of hiding one the template provides.
+        virtual bool WritesComponentDirectly(Entity entity, std::string_view component) = 0;
     };
 }

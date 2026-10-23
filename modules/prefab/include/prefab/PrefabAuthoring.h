@@ -14,6 +14,7 @@
 #include <core/ecs/ComponentFields.h>
 #include <core/ecs/Entity.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -90,6 +91,20 @@ namespace mir
         PrefabAuthoredAction Revert(const PrefabAuthoredKey &key) const;
         PrefabAuthoredAction Apply(const PrefabAuthoredKey &key) const;
 
+        // The document preview entities resolve against; empty authors through the bound scene.
+        void SetActiveDocument(std::optional<PrefabId> prefab) { mActiveDocument = prefab; }
+        std::optional<PrefabId> ActiveDocument() const { return mActiveDocument; }
+
+        std::optional<PrefabNodeId> NodeIdOf(Entity entity) const;
+
+        // One command each, on the active document; the editor wraps the entries in History.
+        PrefabAuthoredAction CreateNode(PrefabNodeId parent, std::size_t siblingIndex);
+        PrefabAuthoredAction DeleteNodes(std::span<const PrefabNodeId> nodes);
+        PrefabAuthoredAction ReparentNode(PrefabNodeId node, PrefabNodeId parent, std::size_t siblingIndex);
+
+        // True when the component lives directly in the active document.
+        bool WritesComponentDirectly(Entity entity, std::string_view component) const;
+
     private:
         struct Member
         {
@@ -97,11 +112,22 @@ namespace mir
             SceneNodeAddress mNode;
             const ScenePrefabInstance *mInstance = nullptr;
             Entity mEntity = kNullEntity;
+            std::optional<PrefabId> mPrefab;
         };
 
+        struct Context
+        {
+            World *mWorld = nullptr;
+            LoadedScene *mScene = nullptr;
+            std::optional<PrefabId> mPrefab;
+        };
+
+        std::optional<Context> CurrentContext() const;
         std::optional<Member> FindMember(Entity entity) const;
+        const PrefabDocument *ActivePrefabDocument() const;
 
         World &mWorld;
         PrefabCoordinator &mCoordinator;
+        std::optional<PrefabId> mActiveDocument;
     };
 }

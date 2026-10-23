@@ -42,6 +42,9 @@ namespace mir
         const PrefabDocument *Find(PrefabId id) const;
         std::optional<std::filesystem::path> PathOf(PrefabId id) const;
 
+        // Call only after the file at @p path holds @p doc.
+        void MarkSaved(const PrefabDocument &doc, const std::filesystem::path &path);
+
         // Same nodes and high-water mark under a fresh unused PrefabId.
         std::optional<PrefabDocument> CopyAsNew(const PrefabDocument &doc) const;
 

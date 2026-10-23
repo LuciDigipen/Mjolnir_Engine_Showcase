@@ -1,0 +1,80 @@
+/**
+ * @file PrefabDocuments.h
+ * @author Jackey Cen
+ * @brief The open Prefab documents, each with an isolated preview World, and their saves.
+ *
+ * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
+ *
+ */
+#pragma once
+
+#include <prefab/PrefabCoordinator.h>
+#include <prefab/PrefabId.h>
+
+#include <cstdint>
+#include <functional>
+#include <map>
+#include <memory>
+#include <optional>
+#include <string>
+
+namespace mir
+{
+    class AssetCache;
+    struct LoadedScene;
+    class PrefabAuthoringAdapter;
+    class VulkanRenderer;
+    class World;
+
+    class PrefabDocuments
+    {
+    public:
+        using PrefabUnsaved = std::function<bool(PrefabId)>;
+        using PrefabSaved = std::function<void(PrefabId)>;
+
+        PrefabDocuments(PrefabCoordinator &coordinator, PrefabAuthoringAdapter &authoring);
+        ~PrefabDocuments();
+
+        PrefabDocuments(const PrefabDocuments &) = delete;
+        PrefabDocuments &operator=(const PrefabDocuments &) = delete;
+        PrefabDocuments(PrefabDocuments &&) = delete;
+        PrefabDocuments &operator=(PrefabDocuments &&) = delete;
+
+        // Null renderer or assets skips the mesh and model systems of every preview.
+        void BindResolveSystems(VulkanRenderer *renderer, AssetCache *assets, std::string assetIdRoot);
+
+        // Focuses an open document, or creates its preview World and one instance.
+        bool Open(PrefabId id);
+        bool Close(PrefabId id);
+        bool IsOpen(PrefabId id) const;
+
+        std::optional<PrefabId> ActiveDocument() const { return mActive; }
+        World *PreviewWorld(PrefabId id) const;
+        const LoadedScene *PreviewScene(PrefabId id) const;
+
+        // Runs each preview's transform, mesh-resolve and model systems once.
+        void Update(float dt, double elapsed, uint64_t frame);
+
+        // After App released the scene's GPU resources.
+        void ResetResolve();
+
+        // @p unsaved also has to report a prefab with no file yet; @p markSaved
+        // runs once per file that was written.
+        bool SavePrefab(PrefabId id, const PrefabUnsaved &unsaved, const PrefabSaved &markSaved);
+
+        // Writes the unsaved prefabs the scene uses, then calls @p writeScene.
+        bool SaveScene(const LoadedScene &scene, const PrefabUnsaved &unsaved, const PrefabSaved &markSaved,
+            const std::function<bool()> &writeScene);
+
+    private:
+        struct Document;
+
+        PrefabCoordinator &mCoordinator;
+        PrefabAuthoringAdapter &mAuthoring;
+        std::map<PrefabId, std::unique_ptr<Document>> mDocuments;
+        std::optional<PrefabId> mActive;
+        VulkanRenderer *mRenderer = nullptr;
+        AssetCache *mAssets = nullptr;
+        std::string mAssetIdRoot;
+    };
+}

@@ -135,6 +135,12 @@ namespace mir
         return it->second;
     }
 
+    void PrefabRegistry::MarkSaved(const PrefabDocument &doc, const std::filesystem::path &path)
+    {
+        mDisk[doc.mId] = doc;
+        mDiskPaths[doc.mId] = path;
+    }
+
     std::optional<PrefabDocument> PrefabRegistry::CopyAsNew(const PrefabDocument &doc) const
     {
         if (HasPrefabErrors(ValidatePrefab(doc)))

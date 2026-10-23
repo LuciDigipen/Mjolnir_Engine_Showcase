@@ -45,6 +45,15 @@ namespace mir
         AuthoredAction Revert(const AuthoredKey &key) override;
         AuthoredAction Apply(const AuthoredKey &key) override;
 
+        AuthoredAction CreateNode(Entity parent, std::size_t siblingIndex) override;
+        AuthoredAction DeleteNodes(std::span<const Entity> nodes) override;
+        AuthoredAction ReparentNode(Entity node, Entity parent, std::size_t siblingIndex) override;
+
+        bool WritesComponentDirectly(Entity entity, std::string_view component) override;
+
+        void SetActiveDocument(std::optional<PrefabId> prefab) { mAuthoring.SetActiveDocument(prefab); }
+        std::optional<PrefabId> ActiveDocument() const { return mAuthoring.ActiveDocument(); }
+
     private:
         PrefabAuthoring mAuthoring;
     };

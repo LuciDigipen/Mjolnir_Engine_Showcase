@@ -128,6 +128,76 @@ namespace mir
             return nullptr;
         }
 
+        std::vector<PrefabNodeId> DescendantsOf(const PrefabDocument &document, PrefabNodeId root)
+        {
+            std::vector<PrefabNodeId> descendants;
+            std::vector<PrefabNodeId> pending{ root };
+            while (!pending.empty())
+            {
+                const PrefabNodeId parent = pending.back();
+                pending.pop_back();
+                for (const PrefabNode &node : document.mNodes)
+                {
+                    if (node.mParent != parent)
+                        continue;
+                    descendants.push_back(node.mId);
+                    pending.push_back(node.mId);
+                }
+            }
+            return descendants;
+        }
+
+        // Index in the array after the moving node is gone, so a record's index
+        // survives the erase-then-insert in ApplyDocumentEntry.
+        std::size_t InsertionIndex(const PrefabDocument &document, PrefabNodeId parent, std::size_t siblingIndex,
+            PrefabNodeId moving)
+        {
+            std::vector<PrefabNodeId> order;
+            order.reserve(document.mNodes.size());
+            for (const PrefabNode &node : document.mNodes)
+            {
+                if (node.mId != moving)
+                    order.push_back(node.mId);
+            }
+
+            const auto indexOf = [&order](PrefabNodeId id)
+                {
+                    const auto it = std::find(order.begin(), order.end(), id);
+                    return it == order.end() ? order.size()
+                                             : static_cast<std::size_t>(std::distance(order.begin(), it));
+                };
+
+            std::vector<PrefabNodeId> siblings;
+            for (PrefabNodeId id : order)
+            {
+                const auto it = std::find_if(document.mNodes.begin(), document.mNodes.end(),
+                    [id](const PrefabNode &node) { return node.mId == id; });
+                if (it != document.mNodes.end() && it->mParent == parent)
+                    siblings.push_back(id);
+            }
+
+            if (siblingIndex < siblings.size())
+                return indexOf(siblings[siblingIndex]);
+            if (!siblings.empty())
+                return indexOf(siblings.back()) + 1;
+            return std::min(indexOf(parent) + 1, order.size());
+        }
+
+        json NewNodeRecord(const PrefabDocument &document, PrefabNodeId id, PrefabNodeId parent,
+            std::size_t siblingIndex)
+        {
+            json components = json::array();
+            components.push_back(json{ { "type", "Transform" }, { "fields", json::object() } });
+            components.push_back(json{ { "type", "WorldTransform" }, { "fields", json::object() } });
+            components.push_back(json{ { "type", "Name" }, { "fields", json{ { "name", "Entity" } } } });
+
+            json record = json::object();
+            record["index"] = InsertionIndex(document, parent, siblingIndex, kNullPrefabNodeId);
+            record["parent"] = std::to_string(parent);
+            record["components"] = std::move(components);
+            return record;
+        }
+
         bool ValueFitsField(const FieldDesc &field, const json &value)
         {
             if (field.mKind == FieldKind::EntityRef)
@@ -300,6 +370,8 @@ namespace mir
                 if (existing)
                     document.mNodes.erase(document.mNodes.begin() + static_cast<std::ptrdiff_t>(*existing));
                 index = std::min(index, document.mNodes.size());
+                if (id >= document.mNextNodeId)
+                    document.mNextNodeId = id + 1;
                 document.mNodes.insert(document.mNodes.begin() + static_cast<std::ptrdiff_t>(index), std::move(node));
                 return true;
             }
@@ -643,18 +715,35 @@ namespace mir
     {
     }
 
+    std::optional<PrefabAuthoring::Context> PrefabAuthoring::CurrentContext() const
+    {
+        if (mActiveDocument)
+        {
+            World *world = mCoordinator.PreviewWorld(*mActiveDocument);
+            LoadedScene *scene = mCoordinator.PreviewScene(*mActiveDocument);
+            if (world == nullptr || scene == nullptr)
+                return std::nullopt;
+            return Context{ world, scene, mActiveDocument };
+        }
+
+        LoadedScene *scene = mCoordinator.Scene();
+        if (scene == nullptr)
+            return std::nullopt;
+        return Context{ &mWorld, scene, std::nullopt };
+    }
+
     std::optional<PrefabAuthoring::Member> PrefabAuthoring::FindMember(Entity entity) const
     {
-        const LoadedScene *scene = mCoordinator.Scene();
-        if (scene == nullptr || !mWorld.IsAlive(entity))
+        const std::optional<Context> context = CurrentContext();
+        if (!context || !context->mWorld->IsAlive(entity))
             return std::nullopt;
 
-        for (const auto &[root, instance] : scene->mInstances)
+        for (const auto &[root, instance] : context->mScene->mInstances)
         {
             for (const auto &[address, id] : instance.mBindings)
             {
-                const auto it = scene->mEntities.find(id);
-                if (it == scene->mEntities.end() || it->second != entity)
+                const auto it = context->mScene->mEntities.find(id);
+                if (it == context->mScene->mEntities.end() || it->second != entity)
                     continue;
 
                 Member member;
@@ -662,10 +751,34 @@ namespace mir
                 member.mNode = address;
                 member.mInstance = &instance;
                 member.mEntity = entity;
+                member.mPrefab = context->mPrefab;
                 return member;
             }
         }
         return std::nullopt;
+    }
+
+    const PrefabDocument *PrefabAuthoring::ActivePrefabDocument() const
+    {
+        return mActiveDocument ? mCoordinator.Registry().Find(*mActiveDocument) : nullptr;
+    }
+
+    std::optional<PrefabNodeId> PrefabAuthoring::NodeIdOf(Entity entity) const
+    {
+        const std::optional<Member> member = FindMember(entity);
+        if (!member || !member->mPrefab || member->mNode.size() != 1)
+            return std::nullopt;
+        return member->mNode.front();
+    }
+
+    bool PrefabAuthoring::WritesComponentDirectly(Entity entity, std::string_view component) const
+    {
+        const std::optional<Member> member = FindMember(entity);
+        if (!member || !member->mPrefab || !mActiveDocument || *member->mPrefab != *mActiveDocument)
+            return false;
+        const PrefabDocument *document = ActivePrefabDocument();
+        const PrefabNode *node = document != nullptr ? FindNode(*document, member->mNode) : nullptr;
+        return node != nullptr && FindComponent(*node, component) != nullptr;
     }
 
     std::optional<PrefabAuthoredKey> PrefabAuthoring::FieldKey(Entity entity, std::string_view component,
@@ -675,12 +788,21 @@ namespace mir
         if (!member)
             return std::nullopt;
 
+        PrefabAuthoredKey key;
+        if (member->mPrefab)
+        {
+            key.mPrefab = member->mPrefab;
+            key.mAddress = member->mNode;
+            key.mComponent = component;
+            key.mField = field;
+            return key;
+        }
+
         const LoadedScene &scene = *mCoordinator.Scene();
         const auto root = scene.mEntities.find(member->mInstance->mRoot);
         if (component == "Transform" && root != scene.mEntities.end() && root->second == entity)
             return std::nullopt;
 
-        PrefabAuthoredKey key;
         key.mAddress.reserve(member->mNode.size() + 1);
         key.mAddress.push_back(member->mRoot);
         key.mAddress.insert(key.mAddress.end(), member->mNode.begin(), member->mNode.end());
@@ -695,12 +817,20 @@ namespace mir
         if (!member)
             return std::nullopt;
 
+        PrefabAuthoredKey key;
+        if (member->mPrefab)
+        {
+            key.mPrefab = member->mPrefab;
+            key.mAddress = member->mNode;
+            key.mComponent = component;
+            return key;
+        }
+
         const LoadedScene &scene = *mCoordinator.Scene();
         const auto root = scene.mEntities.find(member->mInstance->mRoot);
         if (component == "Transform" && root != scene.mEntities.end() && root->second == entity)
             return std::nullopt;
 
-        PrefabAuthoredKey key;
         key.mAddress.reserve(member->mNode.size() + 1);
         key.mAddress.push_back(member->mRoot);
         key.mAddress.insert(key.mAddress.end(), member->mNode.begin(), member->mNode.end());
@@ -712,6 +842,9 @@ namespace mir
     {
         if (key.mPrefab)
         {
+            if (mActiveDocument && *mActiveDocument == *key.mPrefab)
+                return PrefabFieldState::Inherited;
+
             const PrefabDocument *document = mCoordinator.Registry().Find(*key.mPrefab);
             if (document == nullptr)
                 return PrefabFieldState::Inherited;
@@ -744,6 +877,15 @@ namespace mir
         std::optional<Member> member = FindMember(entity);
         if (!member)
             return PrefabComponentState::Absent;
+
+        if (member->mPrefab)
+        {
+            const PrefabDocument *document = ActivePrefabDocument();
+            const PrefabNode *node = document != nullptr ? FindNode(*document, member->mNode) : nullptr;
+            return node != nullptr && FindComponent(*node, component) != nullptr ? PrefabComponentState::Inherited
+                                                                                 : PrefabComponentState::Absent;
+        }
+
         return InstanceComponentState(mCoordinator.Registry(), *mCoordinator.Scene(), member->mRoot, member->mNode,
             component);
     }
@@ -764,7 +906,7 @@ namespace mir
     {
         std::vector<std::string> removed;
         std::optional<Member> member = FindMember(entity);
-        if (!member)
+        if (!member || member->mPrefab)
             return removed;
 
         const std::optional<PrefabId> id = ParsePrefabId(member->mInstance->mPrefab);
@@ -790,6 +932,13 @@ namespace mir
             return FieldToJson(kind, bytes).dump();
 
         const Entity entity = *static_cast<const Entity *>(bytes);
+        if (const std::optional<Member> member = FindMember(entity); member && member->mPrefab)
+        {
+            if (member->mNode.size() != 1)
+                return std::string("null");
+            return json::array({ std::to_string(member->mNode.front()) }).dump();
+        }
+
         StableId id = kNullStableId;
         if (const LoadedScene *scene = mCoordinator.Scene())
         {
@@ -1059,8 +1208,10 @@ namespace mir
             }
         }
 
-        const bool sceneDirtyBefore = scene->mDirty;
-        const auto unresolvedBefore = scene->mUnresolvedEntityRefs;
+        const bool sceneDirtyBefore = scene != nullptr && scene->mDirty;
+        decltype(LoadedScene::mUnresolvedEntityRefs) unresolvedBefore;
+        if (scene != nullptr)
+            unresolvedBefore = scene->mUnresolvedEntityRefs;
         const auto writeEdit = [&](const SceneEdit &edit)
             {
                 return IsFieldKey(edit.mEntry->mKey)
@@ -1151,6 +1302,8 @@ namespace mir
 
         for (const auto &[id, addresses] : removedNodes)
         {
+            if (scene == nullptr)
+                break;
             for (const SceneNodeAddress &address : addresses)
             {
                 if (SceneBindsAddress(*scene, id, address))
@@ -1398,6 +1551,122 @@ namespace mir
         }
 
         action.mRefusal = "the component has no local change to apply";
+        return action;
+    }
+
+    PrefabAuthoredAction PrefabAuthoring::CreateNode(PrefabNodeId parent, std::size_t siblingIndex)
+    {
+        PrefabAuthoredAction action;
+        if (!mActiveDocument)
+        {
+            action.mRefusal = "no prefab document is active";
+            return action;
+        }
+
+        const PrefabDocument *document = ActivePrefabDocument();
+        const PrefabNode *parentNode = document != nullptr ? FindNode(*document, SceneNodeAddress{ parent }) : nullptr;
+        if (parentNode == nullptr || parentNode->mKind != PrefabNodeKind::Entity)
+        {
+            action.mRefusal = "the parent node is missing";
+            return action;
+        }
+
+        PrefabDocument copy = *document;
+        const std::optional<PrefabNodeId> id = AllocateNodeId(copy);
+        if (!id)
+        {
+            action.mRefusal = "the document has no free node id";
+            return action;
+        }
+
+        PrefabAuthoredKey key;
+        key.mPrefab = *mActiveDocument;
+        key.mAddress = { *id };
+        action.mEntries.push_back(PrefabAuthoredEntry{ key,
+            NewNodeRecord(*document, *id, parent, siblingIndex).dump() });
+        return action;
+    }
+
+    PrefabAuthoredAction PrefabAuthoring::DeleteNodes(std::span<const PrefabNodeId> nodes)
+    {
+        PrefabAuthoredAction action;
+        const PrefabDocument *document = ActivePrefabDocument();
+        if (!mActiveDocument || document == nullptr || nodes.empty())
+        {
+            action.mRefusal = "no prefab document is active";
+            return action;
+        }
+
+        std::vector<PrefabNodeId> doomed;
+        for (PrefabNodeId id : nodes)
+        {
+            if (id == document->mRootNode)
+            {
+                action.mRefusal = "the prefab root cannot be deleted";
+                return action;
+            }
+            if (FindNodeIndex(*document, id) == std::nullopt)
+            {
+                action.mRefusal = "the node is missing";
+                return action;
+            }
+            doomed.push_back(id);
+            const std::vector<PrefabNodeId> descendants = DescendantsOf(*document, id);
+            doomed.insert(doomed.end(), descendants.begin(), descendants.end());
+        }
+
+        std::set<PrefabNodeId> seen;
+        for (PrefabNodeId id : doomed)
+        {
+            if (!seen.insert(id).second)
+                continue;
+            PrefabAuthoredKey key;
+            key.mPrefab = *mActiveDocument;
+            key.mAddress = { id };
+            action.mEntries.push_back(PrefabAuthoredEntry{ key, std::nullopt });
+        }
+        return action;
+    }
+
+    PrefabAuthoredAction PrefabAuthoring::ReparentNode(PrefabNodeId node, PrefabNodeId parent,
+        std::size_t siblingIndex)
+    {
+        PrefabAuthoredAction action;
+        const PrefabDocument *document = ActivePrefabDocument();
+        if (!mActiveDocument || document == nullptr)
+        {
+            action.mRefusal = "no prefab document is active";
+            return action;
+        }
+
+        const std::optional<std::size_t> nodeIndex = FindNodeIndex(*document, node);
+        if (!nodeIndex || node == document->mRootNode)
+        {
+            action.mRefusal = "the node cannot be reparented";
+            return action;
+        }
+        const PrefabNode *parentNode = FindNode(*document, SceneNodeAddress{ parent });
+        if (parentNode == nullptr || parentNode->mKind != PrefabNodeKind::Entity)
+        {
+            action.mRefusal = "the parent node is missing";
+            return action;
+        }
+
+        const std::vector<PrefabNodeId> descendants = DescendantsOf(*document, node);
+        if (std::find(descendants.begin(), descendants.end(), parent) != descendants.end())
+        {
+            action.mRefusal = "a node cannot be parented under its own descendant";
+            return action;
+        }
+
+        json record = NodeRecord(*document, document->mNodes[*nodeIndex]);
+        record["parent"] = std::to_string(parent);
+        record["index"] = InsertionIndex(*document, parent, siblingIndex, node);
+
+        PrefabAuthoredKey key;
+        key.mPrefab = *mActiveDocument;
+        key.mAddress = { node };
+        action.mEntries.push_back(PrefabAuthoredEntry{ key, record.dump() });
         return action;
     }
 }
