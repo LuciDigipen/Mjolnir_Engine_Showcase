@@ -18,6 +18,16 @@ namespace mir
     {
         PreferencesRequest request;
 
+        ImGui::SeparatorText("Theme");
+        const char *themeNames[] = {"Midnight", "Slate"};
+        int theme = static_cast<int>(preferences.theme);
+        if (ImGui::Combo("Editor theme", &theme, themeNames, IM_ARRAYSIZE(themeNames)))
+        {
+            preferences.theme = static_cast<EditorThemeChoice>(theme);
+            request.mSave = true;
+            request.mApplyTheme = true;
+        }
+
         ImGui::SeparatorText("Background Image");
         ImGui::TextDisabled("Saved for this user only, not in the project.");
 

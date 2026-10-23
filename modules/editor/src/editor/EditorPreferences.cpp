@@ -31,6 +31,7 @@ namespace mir
 
         constexpr const char *kFitNames[] = {"cover", "contain", "stretch"};
         constexpr const char *kPanelsNames[] = {"theme", "black", "transparent"};
+        constexpr const char *kThemeNames[] = {"midnight", "slate"};
 
         // leaves @p value alone unless @p key holds one of @p names
         template <typename Enum, size_t N>
@@ -62,6 +63,8 @@ namespace mir
             MIR_LOG_WARN("Editor preferences '{}' are unreadable; using defaults", path.string());
             return prefs;
         }
+
+        ReadEnum(*root, "theme", kThemeNames, prefs.theme);
 
         const auto background = root->find("background");
         if (background == root->end() || !background->is_object())
@@ -101,7 +104,8 @@ namespace mir
             return false;
         }
 
-        const json root{{"background",
+        const json root{{"theme", kThemeNames[static_cast<size_t>(theme)]},
+                        {"background",
                          {{"enabled", backgroundEnabled},
                           {"file", backgroundFile},
                           {"strength", backgroundStrength},

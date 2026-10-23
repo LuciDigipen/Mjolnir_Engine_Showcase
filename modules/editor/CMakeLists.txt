@@ -31,6 +31,7 @@ target_sources(engine_editor PRIVATE
     src/editor/Editor.cpp
     src/editor/EditorCamera.cpp
     src/editor/EditorPreferences.cpp
+    src/editor/EditorWidgets.cpp
     src/editor/EntityBaseline.cpp
     src/editor/history/AuthoredCommand.cpp
     src/editor/history/ComponentCommands.cpp

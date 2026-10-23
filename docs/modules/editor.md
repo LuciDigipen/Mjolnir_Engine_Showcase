@@ -111,6 +111,7 @@ EditorCamera &SceneCamera();
 | `NeighborInHierarchy` | `editor/panels/HierarchyPanel.h` | The entity to select after deleting one: next sibling, else previous, else the parent |
 | `IsBaselineComponent`, `AddMissingBaseline` | `editor/EntityBaseline.h` | The components every editor-created entity has: `Transform`, `WorldTransform`, `Name` |
 | `EditorCamera` | `editor/EditorCamera.h` | Free-fly scene camera, `WorldPosition` + yaw/pitch (`Pose()`, `Translate`, `FocusOn`), outside the `World` |
+| `widgets::*` | `editor/EditorWidgets.h` | The editor's UE5-style ImGui widgets: `CategoryHeader`, `BeginPropertyGrid`/`PropertyRow`/`EndPropertyGrid`, `AxisDragN` (X/Y/Z/W colour-tagged fields), `SearchBox`, `ToolbarButton`, `IconTextButton`, `PushRowSelectionColors`, `MatchesFilter`. Colours come from `EditorTheme` |
 | `Selection` | `editor/Selection.h` | `{mSelected, mAnchor}` (a `vector<Entity>`, ordered by selection - `.back()` is primary - and the shift-click range start), the `World` resource `Hierarchy` and viewport picking write and `Inspector`/the gizmo read |
 
 `LogPanel`, in `src/editor/panels/LogPanel.cpp`, renders `core`'s `LogHistory`
@@ -228,8 +229,12 @@ Component edits go to `History` as commands, like entity actions, so each one
 can be undone. They change no `LoadedScene` entry, so `App` has nothing to do
 for them. Once no ImGui item is active after an edit, the panel calls
 `History::EndStep`, so one drag, one typed value or one click is one step. The
-Add Component button below the components lists every registered component the
-entity lacks, except the baseline, and picking one submits Add component.
+"+ Add" button at the right of the header row lists every registered component the
+entity lacks, except the baseline, and picking one submits Add component. Below
+it, Search Details filters by component or field name: a matching component name
+shows all its fields, otherwise only the matching fields show. Each component is a
+category bar over a label|value grid; every grid in the panel shares one column
+splitter.
 Right-clicking a component's header opens Copy Values, Paste Values and Remove
 Component. Copy Values reads every field
 through `FieldDesc::Read` into the panel's `Clipboard`. Paste Values is enabled
@@ -411,6 +416,22 @@ or the dialog themselves. History needs neither, and its tests are in
    deleted, not everything recursively under a deleted folder.
 
 ## Changed
+
+*2026-10-22* — **Theme preference; `Initialize` takes `srgbOutput`.**
+`EditorPreferences::theme` (`"theme": "midnight" | "slate"`) picks the editor
+theme, set from Preferences and applied at the start of the next frame.
+`Editor::Initialize` gained `bool srgbOutput` (App passes
+`VulkanRenderer::SwapchainIsSrgb()`) so the theme shows its colours as written.
+
+*2026-10-22* — **UE5-style panels.** Was: Inspector fields drew as ImGui's
+value-then-label widgets under collapsing headers, Add Component sat at the bottom,
+and the Hierarchy was a bare tree. Now: the Inspector is laid out like UE5's
+Details panel (header row with "+ Add", Search Details, category bars,
+label|value grids, X/Y/Z-tagged vector fields), the Hierarchy has a search box
+that keeps the matches' ancestors, an "Item Label" header and its own scrolling
+row area, the gizmo toolbar is icons, and Play/Stop carry coloured icons. The
+shared pieces live in `editor/EditorWidgets.h`. Because: the editor moved to a
+UE5-like look (see [editortheme.md](editortheme.md)).
 
 *2026-10-21* — **`PostProcessingPanel::Draw` takes a `PostEffectContext`
 (PR #278).** Was: every effect's params UI drew the same regardless of

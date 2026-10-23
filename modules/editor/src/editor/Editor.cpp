@@ -20,6 +20,7 @@
 #include <core/ecs/components/WorldTransform.h>
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
+#include <editor/EditorWidgets.h>
 #include <editor/Selection.h>
 #include <editor/history/ComponentCommands.h>
 #include <editor/history/EntityCommands.h>
@@ -174,7 +175,7 @@ namespace mir
     Editor::~Editor() {}
 
     bool Editor::Initialize(const ImGuiRuntime &imgui, Window &window, std::filesystem::path projectSettingsPath,
-        World &world, ISceneOps &sceneOps)
+        World &world, ISceneOps &sceneOps, bool srgbOutput)
     {
         if (!imgui.IsInitialized())
         {
@@ -192,11 +193,13 @@ namespace mir
         mImGuiIniPath = (ExecutableDir() / "imgui.ini").string();
         io.IniFilename = mImGuiIniPath.c_str();
 
-        EditorTheme::Apply();
-        EditorTheme::ScaleForDpi(window.ContentScale());
-
         mPreferencesPath = EditorPreferencesPath();
         mPreferences = EditorPreferences::LoadFile(mPreferencesPath);
+
+        mWindow = &window;
+        mSrgbOutput = srgbOutput;
+        ApplyTheme();
+
         if (!mPreferences.backgroundFile.empty())
         {
             std::string error;
@@ -204,14 +207,22 @@ namespace mir
                 MIR_LOG_WARN("Editor background image '{}': {}", mPreferences.backgroundFile, error);
         }
 
-        mWindow = &window;
         mSceneOps = &sceneOps;
         mInitialized = true;
         return true;
     }
 
+    void Editor::ApplyTheme()
+    {
+        const EditorThemeKind kind =
+            mPreferences.theme == EditorThemeChoice::Slate ? EditorThemeKind::Slate : EditorThemeKind::Midnight;
+        EditorTheme::Apply(kind, mSrgbOutput);
+        EditorTheme::ScaleForDpi(mWindow->ContentScale());
+    }
+
     void Editor::ApplyPreferencesRequest(const PreferencesRequest &request)
     {
+        mThemePending |= request.mApplyTheme;
         bool save = request.mSave;
         if (request.mPickImage)
         {
@@ -336,6 +347,7 @@ namespace mir
         ImGui::SetWindowFontScale(0.65f);
 
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
 
         const auto controlButton = [&](const char *icon)
             {
@@ -359,6 +371,7 @@ namespace mir
         if (controlButton(ICON_FA_XMARK))
             mWindow->RequestClose();
 
+        ImGui::PopStyleVar();
         ImGui::PopStyleColor();
         ImGui::SetWindowFontScale(1.0f);
 
@@ -374,13 +387,17 @@ namespace mir
         const bool playing = mode.mMode == EngineMode::Play;
         const bool paused = playing && mode.mPlayState == PlayState::Paused;
 
-        const char *primaryLabel = playing ? (paused ? ICON_FA_PLAY " Resume" : ICON_FA_PAUSE " Pause") : ICON_FA_PLAY " Play";
+        const char *primaryIcon = playing && !paused ? ICON_FA_PAUSE : ICON_FA_PLAY;
+        const char *primaryText = playing ? (paused ? "Resume" : "Pause") : "Play";
+        const ImVec4 primaryColor = playing && !paused ? EditorTheme::Color(StatusColor::Warning)
+                                                       : EditorTheme::Color(ThemeColor::Success);
         const ImGuiStyle &style = ImGui::GetStyle();
 
-        const float buttonWidth = std::max({ ImGui::CalcTextSize(ICON_FA_PLAY " Play").x,
-                                              ImGui::CalcTextSize(ICON_FA_PLAY " Resume").x,
-                                              ImGui::CalcTextSize(ICON_FA_PAUSE " Pause").x,
-                                              ImGui::CalcTextSize(ICON_FA_STOP " Stop").x }) +
+        const float buttonWidth = std::max({ ImGui::CalcTextSize(ICON_FA_PLAY).x, ImGui::CalcTextSize(ICON_FA_PAUSE).x,
+                                              ImGui::CalcTextSize(ICON_FA_STOP).x }) +
+            style.ItemInnerSpacing.x * 1.5f +
+            std::max({ ImGui::CalcTextSize("Play").x, ImGui::CalcTextSize("Resume").x,
+                       ImGui::CalcTextSize("Pause").x, ImGui::CalcTextSize("Stop").x }) +
             style.FramePadding.x * 2.0f;
 
         float rowWidth = buttonWidth;
@@ -391,17 +408,13 @@ namespace mir
         ImGui::SetCursorPosX((ImGui::GetWindowWidth() - rowWidth) * 0.5f);
 
         const ImVec2 buttonSize(buttonWidth, 0.0f);
-        if (!playing)
+        if (widgets::IconTextButton("##play", primaryIcon, primaryText, primaryColor, buttonSize))
+            action = playing ? SceneMenuAction::TogglePause : SceneMenuAction::Play;
+        if (playing)
         {
-            if (ImGui::Button(primaryLabel, buttonSize))
-                action = SceneMenuAction::Play;
-        }
-        else
-        {
-            if (ImGui::Button(primaryLabel, buttonSize))
-                action = SceneMenuAction::TogglePause;
             ImGui::SameLine();
-            if (ImGui::Button(ICON_FA_STOP " Stop", buttonSize))
+            if (widgets::IconTextButton("##stop", ICON_FA_STOP, "Stop", EditorTheme::Color(StatusColor::Danger),
+                buttonSize))
                 action = SceneMenuAction::Stop;
         }
 
@@ -497,38 +510,37 @@ namespace mir
         const float height = static_cast<float>(mSceneViewportRect.extent.height);
 
         ImGui::SetNextWindowPos(ImVec2(x + 8.0f, y + 8.0f), ImGuiCond_Always);
-        ImGui::SetNextWindowBgAlpha(0.6f);
+        ImGui::SetNextWindowBgAlpha(0.75f);
+        const float dpi = mWindow->ContentScale();
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4.0f * dpi, 4.0f * dpi));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f * dpi, 2.0f * dpi));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f * dpi);
         if (ImGui::Begin("##GizmoToolbar", nullptr,
             ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoNav |
             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
             ImGuiWindowFlags_NoFocusOnAppearing))
         {
-            const auto modeButton = [&](const char *label, GizmoOperation op)
+            const auto modeButton = [&](const char *icon, const char *tooltip, GizmoOperation op)
                 {
-                    const bool active = mGizmoOperation == op;
-                    if (active)
-                        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-                    if (ImGui::Button(label))
+                    if (widgets::ToolbarButton(icon, tooltip, mGizmoOperation == op))
                         mGizmoOperation = op;
-                    if (active)
-                        ImGui::PopStyleColor();
+                    ImGui::SameLine();
                 };
 
-            modeButton("Translate", GizmoOperation::Translate);
+            modeButton(ICON_FA_ARROWS_UP_DOWN_LEFT_RIGHT, "Translate (W)", GizmoOperation::Translate);
+            modeButton(ICON_FA_ROTATE, "Rotate (E)", GizmoOperation::Rotate);
+            modeButton(ICON_FA_UP_RIGHT_AND_DOWN_LEFT_FROM_CENTER, "Scale (R)", GizmoOperation::Scale);
+
+            ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
             ImGui::SameLine();
-            modeButton("Rotate", GizmoOperation::Rotate);
-            ImGui::SameLine();
-            modeButton("Scale", GizmoOperation::Scale);
-            ImGui::SameLine();
-            ImGui::PushStyleColor(ImGuiCol_Button, EditorTheme::Color(StatusColor::Info, 0.35f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, EditorTheme::Color(StatusColor::Info, 0.5f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, EditorTheme::Color(StatusColor::Info, 0.7f));
-            if (ImGui::Button(mGizmoSpace == GizmoSpace::Local ? "Local" : "Global"))
-                mGizmoSpace = mGizmoSpace == GizmoSpace::Local ? GizmoSpace::World : GizmoSpace::Local;
-            ImGui::PopStyleColor(3);
-            ImGui::SetItemTooltip("Toggle the gizmo between local and world axes");
+
+            const bool local = mGizmoSpace == GizmoSpace::Local;
+            if (widgets::ToolbarButton(local ? ICON_FA_CUBE : ICON_FA_GLOBE,
+                local ? "Local axes (click for world)" : "World axes (click for local)"))
+                mGizmoSpace = local ? GizmoSpace::World : GizmoSpace::Local;
         }
         ImGui::End();
+        ImGui::PopStyleVar(3);
 
         // ImGuizmo works in the scene viewport's camera-relative space: the
         // camera is the origin, so its float matrices stay small however far
@@ -888,6 +900,12 @@ namespace mir
         const AssetImportView &assetImport, const VulkanRenderer &renderer, const ContentBrowserView &contentBrowser)
     {
         EditorActions actions;
+
+        if (mThemePending)
+        {
+            ApplyTheme();
+            mThemePending = false;
+        }
 
         if (enableLayout)
         {

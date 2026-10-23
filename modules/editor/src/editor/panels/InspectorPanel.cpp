@@ -14,16 +14,20 @@
 #include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/components/Name.h>
 #include <core/math/WorldReal.h>
+#include <editor/EditorWidgets.h>
 #include <editor/EntityBaseline.h>
 #include <editor/Selection.h>
 #include <editor/history/ComponentCommands.h>
 #include <editor/history/History.h>
+#include <editortheme/EditorTheme.h>
 
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
+#include <IconsFontAwesome6.h>
 #include <imgui.h>
 
+#include <algorithm>
 #include <cfloat>
 #include <cmath>
 #include <cstddef>
@@ -65,9 +69,11 @@ namespace mir
             return value;
         }
 
+        constexpr const char *kValueId = "##value";
+
         bool DrawFieldWidget(const FieldDesc &field, void *bytes)
         {
-            const char *label = field.mName.data();
+            const char *label = kValueId;
 
             switch (field.mKind)
             {
@@ -78,26 +84,28 @@ namespace mir
             case FieldKind::Float:
                 return ImGui::DragFloat(label, static_cast<float *>(bytes), 0.1f);
             case FieldKind::Vec3:
-                return ImGui::DragFloat3(label, glm::value_ptr(*static_cast<glm::vec3 *>(bytes)), 0.1f);
+                return widgets::AxisDragN(label, ImGuiDataType_Float, glm::value_ptr(*static_cast<glm::vec3 *>(bytes)),
+                    3, 0.1f, "%.3f");
             case FieldKind::WorldPosition:
                 {
 // NoRoundToFormat: a drag must not snap a far position to the 4 shown decimals
                     WorldVec3 &value = *static_cast<WorldVec3 *>(bytes);
                     constexpr ImGuiDataType kWorldDataType = kLargeWorld ? ImGuiDataType_Double : ImGuiDataType_Float;
-                    if (!ImGui::DragScalarN(label, kWorldDataType, glm::value_ptr(value), 3, 0.1f, nullptr,
-                        nullptr, "%.4f", ImGuiSliderFlags_NoRoundToFormat))
+                    if (!widgets::AxisDragN(label, kWorldDataType, glm::value_ptr(value), 3, 0.1f, "%.4f",
+                        ImGuiSliderFlags_NoRoundToFormat))
                         return false;
                     // typed text such as 1e400 parses to inf, which Transform's setter drops silently
                     return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
                 }
             case FieldKind::Vec4:
-                return ImGui::DragFloat4(label, glm::value_ptr(*static_cast<glm::vec4 *>(bytes)), 0.1f);
+                return widgets::AxisDragN(label, ImGuiDataType_Float, glm::value_ptr(*static_cast<glm::vec4 *>(bytes)),
+                    4, 0.1f, "%.3f");
             case FieldKind::Quat:
                 {
 // Editing quaternion components directly can denormalize them
                     glm::quat &quat = *static_cast<glm::quat *>(bytes);
                     glm::vec3 euler = glm::degrees(glm::eulerAngles(quat));
-                    if (ImGui::DragFloat3(label, glm::value_ptr(euler), 0.5f))
+                    if (widgets::AxisDragN(label, ImGuiDataType_Float, glm::value_ptr(euler), 3, 0.5f, "%.3f"))
                     {
                         quat = glm::quat(glm::radians(euler));
                         return true;
@@ -106,12 +114,12 @@ namespace mir
                 }
             case FieldKind::Mat4:
                 {
-                    ImGui::TextUnformatted(label);
                     bool changed = false;
                     float *m = glm::value_ptr(*static_cast<glm::mat4 *>(bytes));
                     for (int row = 0; row < 4; ++row)
                     {
                         ImGui::PushID(row);
+                        ImGui::SetNextItemWidth(-FLT_MIN);
                         changed |= ImGui::DragFloat4("##row", m + row * 4, 0.1f);
                         ImGui::PopID();
                     }
@@ -120,7 +128,8 @@ namespace mir
             case FieldKind::EntityRef:
                 {
                     const Entity *ref = static_cast<const Entity *>(bytes);
-                    ImGui::Text("%s: Entity %u", label, ref->mIndex);
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::Text("Entity %u", ref->mIndex);
                     return false;
                 }
             case FieldKind::Handle:
@@ -139,7 +148,7 @@ namespace mir
                 : "?";
 
             bool changed = false;
-            if (ImGui::BeginCombo(field.mName.data(), preview))
+            if (ImGui::BeginCombo(kValueId, preview))
             {
                 for (size_t i = 0; i < field.mEnumNames.size(); ++i)
                 {
@@ -158,8 +167,8 @@ namespace mir
         bool DrawColorWidget(const FieldDesc &field, void *bytes)
         {
             float *color = reinterpret_cast<float *>(bytes);
-            return field.mKind == FieldKind::Vec4 ? ImGui::ColorEdit4(field.mName.data(), color)
-                : ImGui::ColorEdit3(field.mName.data(), color);
+            return field.mKind == FieldKind::Vec4 ? ImGui::ColorEdit4(kValueId, color)
+                : ImGui::ColorEdit3(kValueId, color);
         }
 
         // Only AssetKind::Model exists today; add a branch per new AssetKind here.
@@ -179,7 +188,7 @@ namespace mir
             }
 
             bool changed = false;
-            if (ImGui::BeginCombo(field.mName.data(), preview))
+            if (ImGui::BeginCombo(kValueId, preview))
             {
                 for (const auto &model : assets.mModels)
                     if (model.mAssetId != 0 && ImGui::Selectable(model.mPath.c_str()))
@@ -259,12 +268,31 @@ namespace mir
             ImGui::EndPopup();
         }
 
-        void DrawComponent(World &world, const ComponentOps &ops, Entity entity, const AssetImportView &assets,
-            Clipboard &clipboard, Edits &edits)
+        bool FieldVisible(const ComponentOps &ops, const FieldDesc &field, std::string_view filter)
         {
+            return !field.mHidden &&
+                (widgets::MatchesFilter(ops.mType.name, filter) || widgets::MatchesFilter(field.mName, filter));
+        }
+
+        bool ComponentVisible(const ComponentOps &ops, std::string_view filter)
+        {
+            if (widgets::MatchesFilter(ops.mType.name, filter))
+                return true;
+            for (const FieldDesc &field : ops.mFields)
+                if (FieldVisible(ops, field, filter))
+                    return true;
+            return false;
+        }
+
+        void DrawComponent(World &world, const ComponentOps &ops, Entity entity, const AssetImportView &assets,
+            std::string_view filter, Clipboard &clipboard, Edits &edits)
+        {
+            if (!ComponentVisible(ops, filter))
+                return;
+
             ImGui::PushID(static_cast<int>(ops.mType.seq));
 
-            const bool open = ImGui::CollapsingHeader(ops.mType.name.data(), ImGuiTreeNodeFlags_DefaultOpen);
+            const bool open = widgets::CategoryHeader(ops.mType.name.data());
             DrawComponentMenu(world, ops, entity, clipboard, edits);
 
             if (open)
@@ -274,20 +302,21 @@ namespace mir
                 {
                     ImGui::TextDisabled("(tag - no fields)");
                 }
-                else
+                else if (widgets::BeginPropertyGrid("##details"))
                 {
-                    ImGui::Indent();
                     for (uint32_t index = 0; index < ops.mFields.size(); ++index)
                     {
                         const FieldDesc &field = ops.mFields[index];
-                        if (field.mHidden)
+                        if (!FieldVisible(ops, field, filter))
                             continue;
 
+                        ImGui::PushID(static_cast<int>(index));
                         FieldBuffer buffer{};
                         field.Read(component, buffer.mBytes);
 
                         const bool readOnly = field.ReadOnly();
                         ImGui::BeginDisabled(readOnly);
+                        widgets::PropertyRow(field.mName.data());
                         bool edited = false;
                         switch (field.mWidget)
                         {
@@ -302,7 +331,7 @@ namespace mir
                             break;
                         case FieldWidget::Default:
                             edited = field.mClamped
-                                ? ImGui::DragFloat(field.mName.data(), reinterpret_cast<float *>(buffer.mBytes),
+                                ? ImGui::DragFloat(kValueId, reinterpret_cast<float *>(buffer.mBytes),
                                     0.05f, field.mMin, field.mMax, "%.3f", ImGuiSliderFlags_AlwaysClamp)
                                 : DrawFieldWidget(field, buffer.mBytes);
                             break;
@@ -316,20 +345,27 @@ namespace mir
                                 AddResetValues(ops, field.mResetOnChange, values);
                             edits.Submit(MakeSetFieldsCommand(entity, ops, std::move(values)));
                         }
+                        ImGui::PopID();
                     }
-                    ImGui::Unindent();
+                    widgets::EndPropertyGrid();
                 }
             }
 
             ImGui::PopID();
         }
 
-        // drawn after the component loop
         void DrawAddComponent(World &world, Entity entity, const Clipboard &clipboard, Edits &edits)
         {
-            ImGui::Separator();
-            if (ImGui::Button("Add Component", ImVec2(-FLT_MIN, 0.0f)))
+            const ImGuiStyle &style = ImGui::GetStyle();
+            const float width = ImGui::CalcTextSize(ICON_FA_PLUS "Add").x + style.FramePadding.x * 2.0f +
+                style.ItemInnerSpacing.x * 1.5f;
+            const float nameEnd =
+                ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + ImGui::GetScrollX() + style.ItemSpacing.x;
+            ImGui::SameLine(std::max(nameEnd, ImGui::GetWindowContentRegionMax().x - width));
+            if (widgets::IconTextButton("##add-component", ICON_FA_PLUS, "Add",
+                EditorTheme::Color(ThemeColor::Success), ImVec2(width, 0.0f)))
                 ImGui::OpenPopup("AddComponent");
+            ImGui::SetItemTooltip("Add a component to this entity");
 
             if (!ImGui::BeginPopup("AddComponent"))
                 return;
@@ -381,23 +417,26 @@ namespace mir
             return;
         }
 
-        if (const Name *name = world.GetComponent<Name>(entity))
-            ImGui::Text("%s", name->mValue);
-        else
-            ImGui::Text("Entity %u", entity.mIndex);
-        ImGui::Separator();
-
         //history applies these at the end of the frame, so nothing below makes a change to archety midway
         Edits edits{ history };
+
+        ImGui::AlignTextToFramePadding();
+        if (const Name *name = world.GetComponent<Name>(entity))
+            ImGui::Text(ICON_FA_CUBE "  %s", name->mValue);
+        else
+            ImGui::Text(ICON_FA_CUBE "  Entity %u", entity.mIndex);
+        DrawAddComponent(world, entity, mClipboard, edits);
+
+        widgets::SearchBox("##details-search", mFilter, sizeof(mFilter), "Search Details");
+        ImGui::Spacing();
+
         for (const ComponentOps *ops : ComponentRegistry::Instance().All())
         {
             if (!ops->Has(world, entity))
                 continue;
 
-            DrawComponent(world, *ops, entity, assets, mClipboard, edits);
+            DrawComponent(world, *ops, entity, assets, mFilter, mClipboard, edits);
         }
-
-        DrawAddComponent(world, entity, mClipboard, edits);
 
         mEditing |= edits.mSubmitted;
         EndEditIfReleased(history);

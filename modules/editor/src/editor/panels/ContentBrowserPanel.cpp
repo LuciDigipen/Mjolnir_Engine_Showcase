@@ -8,6 +8,7 @@
  */
 #include <editor/panels/ContentBrowserPanel.h>
 
+#include <editor/EditorWidgets.h>
 #include <editortheme/EditorTheme.h>
 
 #include <IconsFontAwesome6.h>
@@ -118,10 +119,13 @@ namespace mir
                 ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
                 if (child.mChildren.empty())
                     flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
-                if (currentFolder == child.mRelativePath)
+                const bool selected = currentFolder == child.mRelativePath;
+                if (selected)
                     flags |= ImGuiTreeNodeFlags_Selected;
+                const int selectionColors = widgets::PushRowSelectionColors(selected);
                 const bool open =
                     ImGui::TreeNodeEx(child.mName.c_str(), flags, ICON_FA_FOLDER " %s", child.mName.c_str());
+                ImGui::PopStyleColor(selectionColors);
                 if (ImGui::IsItemClicked())
                     currentFolder = child.mRelativePath;
                 if (open && !child.mChildren.empty())
@@ -171,8 +175,10 @@ namespace mir
                 ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth;
             if (mCurrentFolder.empty())
                 rootFlags |= ImGuiTreeNodeFlags_Selected;
+            const int selectionColors = widgets::PushRowSelectionColors(mCurrentFolder.empty());
             const bool rootOpen = ImGui::TreeNodeEx("##content-root", rootFlags, ICON_FA_FOLDER_TREE " %s",
                 view.mContentRoot.empty() ? "Content" : view.mContentRoot.c_str());
+            ImGui::PopStyleColor(selectionColors);
             if (ImGui::IsItemClicked())
                 mCurrentFolder.clear();
             if (rootOpen)
@@ -264,9 +270,12 @@ namespace mir
                         entry.mKind == ContentBrowserEntryKind::Directory ? ICON_FA_FOLDER : IconFor(entry.mName);
                     ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen |
                         ImGuiTreeNodeFlags_SpanAllColumns;
-                    if (entry.mRelativePath == mSelectedPath)
+                    const bool selected = entry.mRelativePath == mSelectedPath;
+                    if (selected)
                         flags |= ImGuiTreeNodeFlags_Selected;
+                    const int selectionColors = widgets::PushRowSelectionColors(selected);
                     ImGui::TreeNodeEx("##entry", flags, "%s  %s", icon, entry.mName.c_str());
+                    ImGui::PopStyleColor(selectionColors);
                     if (ImGui::IsItemClicked())
                         mSelectedPath = entry.mRelativePath;
                     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))

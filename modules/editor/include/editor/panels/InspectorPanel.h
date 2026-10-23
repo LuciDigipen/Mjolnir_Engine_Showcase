@@ -45,5 +45,6 @@ namespace mir
 
         Clipboard mClipboard;
         bool mEditing = false;
+        char mFilter[128] = {};
     };
 } // namespace mir

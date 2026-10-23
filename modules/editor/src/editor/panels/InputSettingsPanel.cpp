@@ -10,6 +10,8 @@
 
 #include <editor/panels/InputSettingsPanel.h>
 
+#include <editor/EditorWidgets.h>
+
 #include <imgui.h>
 
 namespace mir
@@ -196,7 +198,7 @@ namespace mir
 
         bool removeAction = false;
 
-        if (ImGui::CollapsingHeader(action.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+        if (widgets::CategoryHeader(action.name.c_str()))
         {
             ImGui::Indent();
 

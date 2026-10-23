@@ -324,6 +324,13 @@ namespace mir
         return mImGuiOverlay->Initialize(*mDevice, *mSwapchain);
     }
 
+    bool VulkanRenderer::SwapchainIsSrgb() const
+    {
+        const VkFormat format = mSwapchain->Format();
+        return format == VK_FORMAT_B8G8R8A8_SRGB || format == VK_FORMAT_R8G8B8A8_SRGB ||
+            format == VK_FORMAT_A8B8G8R8_SRGB_PACK32;
+    }
+
     void VulkanRenderer::ShutdownImGuiVulkanBackend()
     {
         mImGuiOverlay->Shutdown();

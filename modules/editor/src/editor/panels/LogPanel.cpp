@@ -10,6 +10,7 @@
 #include <editor/panels/LogPanel.h>
 
 #include <core/log/LogHistory.h>
+#include <editor/EditorWidgets.h>
 #include <editortheme/EditorTheme.h>
 
 #include <imgui.h>
@@ -101,8 +102,7 @@ namespace mir
         }
 
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(200.0f);
-        ImGui::InputTextWithHint("##Search", "Search...", mSearchBuf, sizeof(mSearchBuf));
+        widgets::SearchBox("##Search", mSearchBuf, sizeof(mSearchBuf), "Search Log", 200.0f);
 
         const std::vector<LogEntry> entries = LogHistory::Snapshot();
 
@@ -148,8 +148,11 @@ namespace mir
 
                 ImGui::PushID(row);
                 const ImVec2 rowPos = ImGui::GetCursorScreenPos();
-                if (ImGui::Selectable("##row", rowSelected, ImGuiSelectableFlags_None,
-                                       ImVec2(ImGui::GetContentRegionAvail().x, ImGui::GetTextLineHeightWithSpacing())))
+                const int selectionColors = widgets::PushRowSelectionColors(rowSelected);
+                const bool rowClicked = ImGui::Selectable("##row", rowSelected, ImGuiSelectableFlags_None,
+                    ImVec2(ImGui::GetContentRegionAvail().x, ImGui::GetTextLineHeightWithSpacing()));
+                ImGui::PopStyleColor(selectionColors);
+                if (rowClicked)
                 {
                     if (ImGui::GetIO().KeyShift && mSelectionAnchor >= 0)
                         mSelectionEnd = row;
