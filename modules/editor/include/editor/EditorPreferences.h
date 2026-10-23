@@ -20,6 +20,13 @@ namespace mir
         Stretch,
     };
 
+    // mirrors EditorThemeKind; editortheme is private to editor
+    enum class EditorThemeChoice
+    {
+        Midnight,
+        Slate,
+    };
+
     // what the dock panels are filled with while the image shows
     enum class BackgroundPanels
     {
@@ -30,6 +37,8 @@ namespace mir
 
     struct EditorPreferences
     {
+        EditorThemeChoice theme = EditorThemeChoice::Midnight;
+
         bool backgroundEnabled = false;
         // file name inside EditorPreferencesDir(); empty is no image
         std::string backgroundFile;

@@ -169,6 +169,7 @@ namespace mir
 
         bool InitImGuiVulkanBackend();
         void ShutdownImGuiVulkanBackend();
+        bool SwapchainIsSrgb() const;
 
         // abstraction from imgui
         void SetImGuiDrawData(ImDrawData *drawData);

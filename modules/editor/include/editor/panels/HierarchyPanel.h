@@ -13,10 +13,13 @@
 
 #include <cstdint>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace mir
 {
+    class HierarchyIndex;
+
     enum class EntityActionKind
     {
         None,
@@ -44,6 +47,10 @@ namespace mir
         EntityAction Draw(World &world);
 
     private:
+        static constexpr double kFilterRefreshSeconds = 0.25;
+
+        void RebuildFilter(const World &world, const HierarchyIndex *index);
+
         // a plain click on an already-selected row waits for release, so a drag can carry the selection
         Entity mDeferredClick = kNullEntity;
 
@@ -62,6 +69,13 @@ namespace mir
         double mHoverStart = 0.0;
         std::vector<uint32_t> mOpenedDuringDrag; // ImGuiID
         bool mDropDelivered = false;
+
+        char mFilter[128] = {};
+        std::unordered_set<uint64_t> mFiltered;
+        std::string mFilterBuiltFor;
+        double mFilterBuiltAt = 0.0;
+        int mSearchScope = 0;
+        bool mWasFiltering = false;
     };
 
     Entity NeighborInHierarchy(const World &world, Entity entity);

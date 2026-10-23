@@ -19,6 +19,7 @@ namespace mir
     struct PreferencesRequest
     {
         bool mSave = false;
+        bool mApplyTheme = false;
         bool mPickImage = false;
         bool mClearImage = false;
     };

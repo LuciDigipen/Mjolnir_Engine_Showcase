@@ -95,7 +95,7 @@ namespace mir
 
         // imgui must already be initialized; the editor never owns the context
         bool Initialize(const ImGuiRuntime &imgui, Window &window, std::filesystem::path projectSettingsPath,
-                        World &world, ISceneOps &sceneOps);
+                        World &world, ISceneOps &sceneOps, bool srgbOutput);
 
         //before ImGuiRuntime::Shutdown
         void Shutdown();
@@ -151,6 +151,7 @@ namespace mir
         SceneMenuAction DrawPlayControls(const EngineModeState &mode);
 
         void ApplyPreferencesRequest(const PreferencesRequest &request);
+        void ApplyTheme();
         // copies @p source into EditorPreferencesDir() and shows it; false keeps the current image
         bool SetBackgroundImage(const std::filesystem::path &source);
         void ClearBackgroundImage();
@@ -187,6 +188,9 @@ namespace mir
         std::filesystem::path mPreferencesPath;
         EditorPreferences mPreferences;
         BackgroundImage mBackground;
+        bool mSrgbOutput = true;
+        // applied at the next DrawLayout, before any style is pushed
+        bool mThemePending = false;
 
         // waiting on the confirm dialog
         ProjectMenuEntry mPendingProject;

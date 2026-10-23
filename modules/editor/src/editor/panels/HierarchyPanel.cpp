@@ -13,8 +13,10 @@
 #include <core/ecs/HierarchyIndex.h>
 #include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/components/Name.h>
+#include <editor/EditorWidgets.h>
 #include <editor/Selection.h>
 
+#include <IconsFontAwesome6.h>
 #include <imgui.h>
 #include <imgui_internal.h>
 
@@ -92,6 +94,9 @@ namespace mir
             Entity hoveredRow = kNullEntity;
             std::vector<uint32_t> &openedDuringDrag;
             bool &dropDelivered;
+
+            // null: no search
+            const std::unordered_set<uint64_t> *filtered;
 
             // drawn rows top to bottom; a shift-click waits for all of them before taking its range
             std::vector<Entity> visibleRows;
@@ -293,25 +298,37 @@ namespace mir
         {
             World &world = context.world;
             Selection &selection = context.selection;
+            if (context.filtered != nullptr && !context.filtered->contains(PackEntity(entity)))
+                return;
+
             const std::span<const Entity> children =
                 context.index != nullptr ? context.index->ChildrenOf(entity) : std::span<const Entity>{};
+            const bool hasChildren = context.filtered == nullptr
+                ? !children.empty()
+                : std::any_of(children.begin(), children.end(),
+                    [&](Entity child) { return context.filtered->contains(PackEntity(child)); });
 
             ImGuiTreeNodeFlags flags =
                 ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_SpanAvailWidth;
-            if (children.empty())
+            if (!hasChildren)
                 flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
             if (selection.Contains(entity))
                 flags |= ImGuiTreeNodeFlags_Selected;
 
             // unique across index/generation reuse, distinct from the label text
             void *id = reinterpret_cast<void *>(static_cast<uintptr_t>(PackEntity(entity)));
-            if (!children.empty() && context.openRows.contains(PackEntity(entity)))
+            if (hasChildren && context.openRows.contains(PackEntity(entity)))
                 ImGui::SetNextItemOpen(true);
+            // per-search ID scope: opens once, leaves the unfiltered open state alone
+            else if (hasChildren && context.filtered != nullptr)
+                ImGui::SetNextItemOpen(true, ImGuiCond_Once);
 
+            const int selectionColors = widgets::PushRowSelectionColors(selection.Contains(entity));
             const Name *name = world.GetComponent<Name>(entity);
             const bool open = name != nullptr
-                ? ImGui::TreeNodeEx(id, flags, "%s", name->mValue)
-                : ImGui::TreeNodeEx(id, flags, "Entity %u", entity.mIndex);
+                ? ImGui::TreeNodeEx(id, flags, ICON_FA_CUBE "  %s", name->mValue)
+                : ImGui::TreeNodeEx(id, flags, ICON_FA_CUBE "  Entity %u", entity.mIndex);
+            ImGui::PopStyleColor(selectionColors);
 
             context.visibleRows.push_back(entity);
             if (entity == context.scrollTo)
@@ -319,11 +336,11 @@ namespace mir
 
             HandleRowClick(context, entity);
             DragSourceForRow(context, entity);
-            DropTargetForRow(context, entity, !children.empty() && !open);
+            DropTargetForRow(context, entity, hasChildren && !open);
 
             DrawEntityMenu(selection, entity, context.action);
 
-            if (!children.empty() && open)
+            if (hasChildren && open)
             {
                 for (const Entity child : children)
                     DrawEntity(context, child);
@@ -373,19 +390,6 @@ namespace mir
         const ImGuiPayload *activePayload = ImGui::GetDragDropPayload();
         const bool dragging = activePayload != nullptr && activePayload->IsDataType(kEntityPayload);
 
-        // the drag ended: rows it opened stay open only if it dropped
-        if (!dragging)
-        {
-            if (!mDropDelivered)
-            {
-                for (const uint32_t opened : mOpenedDuringDrag)
-                    ImGui::TreeNodeSetOpen(opened, false);
-            }
-            mOpenedDuringDrag.clear();
-            mDropDelivered = false;
-            mHoverRow = kNullEntity;
-        }
-
         // reveal last frame's drop: open every ancestor, scroll to the last moved entity
         std::unordered_set<uint64_t> openRows;
         Entity scrollTo = kNullEntity;
@@ -402,9 +406,44 @@ namespace mir
         }
         mReveal.clear();
 
+        widgets::SearchBox("##outliner-search", mFilter, sizeof(mFilter), "Search...");
+
+        const bool filtering = mFilter[0] != '\0';
+        if (filtering && !mWasFiltering)
+            ++mSearchScope;
+        mWasFiltering = filtering;
+        if (filtering)
+            RebuildFilter(world, index);
+
+        if (ImGui::BeginTable("##outliner-header", 1))
+        {
+            ImGui::TableSetupColumn("Item Label");
+            ImGui::TableHeadersRow();
+            ImGui::EndTable();
+        }
+
+        ImGui::BeginChild("##outliner-rows");
+
+        // the drag ended: rows it opened stay open only if it dropped; open state lives in this child
+        if (!dragging)
+        {
+            if (!mDropDelivered)
+            {
+                for (const uint32_t opened : mOpenedDuringDrag)
+                    ImGui::TreeNodeSetOpen(opened, false);
+            }
+            mOpenedDuringDrag.clear();
+            mDropDelivered = false;
+            mHoverRow = kNullEntity;
+        }
+
+        if (filtering)
+            ImGui::PushID(mSearchScope);
+
         DropPreview preview;
         DrawContext context{ world, index, selection, action, mDeferredClick, mDragged, mDropHint, preview, mReveal, openRows,
-            scrollTo, mHoverRow, mHoverStart, kNullEntity, mOpenedDuringDrag, mDropDelivered };
+            scrollTo, mHoverRow, mHoverStart, kNullEntity, mOpenedDuringDrag, mDropDelivered,
+            filtering ? &mFiltered : nullptr };
 
         if (index != nullptr)
         {
@@ -418,6 +457,9 @@ namespace mir
 
         if (!context.rangeClick.IsNull())
             ApplyRangeClick(selection, context.rangeClick, context.visibleRows, context.rangeKeep);
+
+        if (filtering)
+            ImGui::PopID();
 
         // after the rows, so a row's smaller target wins the payload over this one
         DropTargetForRoot(context);
@@ -495,7 +537,33 @@ namespace mir
             ImGui::EndPopup();
         }
 
+        ImGui::EndChild();
         return action;
+    }
+
+    void HierarchyPanel::RebuildFilter(const World &world, const HierarchyIndex *index)
+    {
+        const double now = ImGui::GetTime();
+        if (mFilterBuiltFor == mFilter && now - mFilterBuiltAt < kFilterRefreshSeconds)
+            return;
+        mFilterBuiltFor = mFilter;
+        mFilterBuiltAt = now;
+
+        mFiltered.clear();
+        world.ForEachAliveEntity([&](Entity entity)
+            {
+                const Name *name = world.GetComponent<Name>(entity);
+                const bool matches = name != nullptr
+                    ? widgets::MatchesFilter(name->mValue, mFilter)
+                    : widgets::MatchesFilter("Entity " + std::to_string(entity.mIndex), mFilter);
+                if (!matches)
+                    return;
+                mFiltered.insert(PackEntity(entity));
+                if (index != nullptr)
+                    for (Entity ancestor = index->ParentOf(entity); !ancestor.IsNull(); ancestor = index->ParentOf(ancestor))
+                        if (!mFiltered.insert(PackEntity(ancestor)).second)
+                            break;
+            });
     }
 
     Entity NeighborInHierarchy(const World &world, Entity entity)

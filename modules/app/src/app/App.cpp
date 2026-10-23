@@ -163,7 +163,8 @@ namespace mir
     #if MIR_WITH_EDITOR
         mSplash.SetProgress("Initializing editor...", 0.5f);
         mSceneOps = std::make_unique<AppSceneOps>(*this);
-        if (!mEditor.Initialize(mImGui, *mWindow, mProject.mProjectSettingsPath, mWorld, *mSceneOps))
+        if (!mEditor.Initialize(mImGui, *mWindow, mProject.mProjectSettingsPath, mWorld, *mSceneOps,
+                mRenderer.SwapchainIsSrgb()))
         {
             MIR_LOG_ERROR("Editor initialization failed");
             mImGui.Shutdown(mRenderer);

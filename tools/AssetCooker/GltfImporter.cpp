@@ -36,15 +36,16 @@ namespace mir::cook
         std::string Hash(const std::string &s) { return std::to_string(Fnv1a64(s)); }
         struct Ids
         {
-            Json data = {{"version", 2}, {"next", 1}, {"objects", Json::object()}};
+            Json data = { { "version", 2 },{ "next", 1 },{ "objects", Json::object() } };
             std::string root;
             std::set<std::string> used;
-            std::string Key(const std::string &kind, const std::string &name, const std::string &fingerprint)
+            std::string Key(const std::string &kind, const std::string &name, const std::string &fingerprint,
+                bool shareContent)
             {
                 const std::string match = kind + ":" + (name.empty() ? "hash/" + Hash(fingerprint) : "name/" + name);
-                Require(used.insert(match).second,
-                        "Ambiguous " + kind + " identity '" + name +
-                            "'; give indistinguishable objects unique names before importing");
+                Require(used.insert(match).second || (shareContent && name.empty()),
+                    "Ambiguous " + kind + " identity '" + name +
+                    "'; give indistinguishable objects unique names before importing");
                 auto &objects = data["objects"];
                 if (!objects.contains(match))
                 {
@@ -69,7 +70,7 @@ namespace mir::cook
         }
         template <class T>
         std::vector<T> Attribute(const fastgltf::Asset &a, const auto &attributes, std::string_view name, size_t count,
-                                 T fallback)
+            T fallback)
         {
             for (const auto &at : attributes)
                 if (at.name == name)
@@ -83,34 +84,36 @@ namespace mir::cook
         std::vector<std::byte> BufferBytes(const fastgltf::DataSource &source)
         {
             return std::visit(
-                [](const auto &s) -> std::vector<std::byte> {
+                [](const auto &s) -> std::vector<std::byte>
+                {
                     if constexpr (requires { s.bytes; })
-                        return {s.bytes.begin(), s.bytes.end()};
+                        return { s.bytes.begin(), s.bytes.end() };
                     else
                         throw std::runtime_error("unloaded buffer/image source");
                 },
                 source);
         }
         std::vector<std::filesystem::path> CheckPaths(const fastgltf::Asset &a, const std::filesystem::path &dir,
-                                                      const std::vector<std::filesystem::path> &roots)
+            const std::vector<std::filesystem::path> &roots)
         {
             std::vector<std::filesystem::path> dependencies;
-            auto check = [&](const fastgltf::DataSource &src) {
-                if (const auto *uri = std::get_if<fastgltf::sources::URI>(&src))
+            auto check = [&](const fastgltf::DataSource &src)
                 {
-                    Require(uri->uri.isLocalPath(), "only local asset URIs are supported");
-                    const auto path = std::filesystem::weakly_canonical(dir / uri->uri.fspath());
-                    bool inside = false;
-                    for (const auto &root : roots)
+                    if (const auto *uri = std::get_if<fastgltf::sources::URI>(&src))
                     {
-                        const auto relative = path.lexically_relative(std::filesystem::weakly_canonical(root));
-                        if (!relative.empty() && !relative.is_absolute() && *relative.begin() != "..")
-                            inside = true;
+                        Require(uri->uri.isLocalPath(), "only local asset URIs are supported");
+                        const auto path = std::filesystem::weakly_canonical(dir / uri->uri.fspath());
+                        bool inside = false;
+                        for (const auto &root : roots)
+                        {
+                            const auto relative = path.lexically_relative(std::filesystem::weakly_canonical(root));
+                            if (!relative.empty() && !relative.is_absolute() && *relative.begin() != "..")
+                                inside = true;
+                        }
+                        Require(inside, "external dependency is outside cooked roots: " + path.string());
+                        dependencies.push_back(path);
                     }
-                    Require(inside, "external dependency is outside cooked roots: " + path.string());
-                    dependencies.push_back(path);
-                }
-            };
+                };
             for (const auto &b : a.buffers)
                 check(b.data);
             for (const auto &i : a.images)
@@ -125,9 +128,10 @@ namespace mir::cook
             for (const auto &b : a.buffers)
             {
                 auto bytes = std::visit(
-                    [](const auto &s) -> std::span<const std::byte> {
+                    [](const auto &s) -> std::span<const std::byte>
+                    {
                         if constexpr (requires { s.bytes; })
-                            return {s.bytes.data(), s.bytes.size()};
+                            return { s.bytes.data(), s.bytes.size() };
                         else
                             throw std::runtime_error("unloaded buffer");
                     },
@@ -139,16 +143,17 @@ namespace mir::cook
             {
                 Require(v.bufferIndex < buffers.size(), "invalid buffer reference");
                 Require(v.byteOffset <= buffers[v.bufferIndex].size() &&
-                            v.byteLength <= buffers[v.bufferIndex].size() - v.byteOffset,
-                        "buffer view outside buffer");
+                    v.byteLength <= buffers[v.bufferIndex].size() - v.byteOffset,
+                    "buffer view outside buffer");
             }
-            auto range = [&](size_t view, size_t offset, size_t count, size_t stride, size_t element) {
-                Require(view < a.bufferViews.size(), "invalid buffer view reference");
-                const auto &v = a.bufferViews[view];
-                Require(count > 0 && stride >= element && offset <= v.byteLength && element <= v.byteLength - offset &&
-                            count - 1 <= (v.byteLength - offset - element) / stride,
+            auto range = [&](size_t view, size_t offset, size_t count, size_t stride, size_t element)
+                {
+                    Require(view < a.bufferViews.size(), "invalid buffer view reference");
+                    const auto &v = a.bufferViews[view];
+                    Require(count > 0 && stride >= element && offset <= v.byteLength && element <= v.byteLength - offset &&
+                        count - 1 <= (v.byteLength - offset - element) / stride,
                         "accessor outside buffer view");
-            };
+                };
             for (const auto &ac : a.accessors)
             {
                 const size_t size = fastgltf::getElementByteSize(ac.type, ac.componentType);
@@ -163,7 +168,7 @@ namespace mir::cook
                     const auto &s = *ac.sparse;
                     const size_t indexSize = fastgltf::getComponentByteSize(s.indexComponentType);
                     Require(s.count <= ac.count && (indexSize == 1 || indexSize == 2 || indexSize == 4),
-                            "invalid sparse count/index type");
+                        "invalid sparse count/index type");
                     range(s.indicesBufferView, s.indicesByteOffset, s.count, indexSize, indexSize);
                     range(s.valuesBufferView, s.valuesByteOffset, s.count, size, size);
                     const auto &v = a.bufferViews[s.indicesBufferView];
@@ -184,7 +189,7 @@ namespace mir::cook
         {
             auto src = p.indices;
             p.indices.clear();
-            auto add = [&](uint32_t a, uint32_t b, uint32_t c) { p.indices.insert(p.indices.end(), {a, b, c}); };
+            auto add = [&](uint32_t a, uint32_t b, uint32_t c) { p.indices.insert(p.indices.end(), { a, b, c }); };
             if (mode == 0)
             {
                 p.topology = MeshTopology::Points;
@@ -202,9 +207,9 @@ namespace mir::cook
                 {
                     Require(src.size() >= 2, "line strip too short");
                     for (size_t i = 1; i < src.size(); ++i)
-                        p.indices.insert(p.indices.end(), {src[i - 1], src[i]});
+                        p.indices.insert(p.indices.end(), { src[i - 1], src[i] });
                     if (mode == 2)
-                        p.indices.insert(p.indices.end(), {src.back(), src.front()});
+                        p.indices.insert(p.indices.end(), { src.back(), src.front() });
                 }
             }
             else
@@ -248,7 +253,7 @@ namespace mir::cook
             for (size_t i = 0; i < old.indices.size(); i += 3)
             {
                 const auto a = old.vertices[old.indices[i]].position, b = old.vertices[old.indices[i + 1]].position,
-                           c = old.vertices[old.indices[i + 2]].position;
+                    c = old.vertices[old.indices[i + 2]].position;
                 auto n = glm::cross(b - a, c - a);
                 n = glm::dot(n, n) > 1e-20f ? glm::normalize(n) : glm::vec3(0, 1, 0);
                 for (size_t j = 0; j < 3; ++j)
@@ -272,15 +277,15 @@ namespace mir::cook
     } // namespace
 
     std::vector<std::filesystem::path> InspectGltfDependencies(const std::filesystem::path &path,
-                                                               const std::vector<std::filesystem::path> &allowedRoots)
+        const std::vector<std::filesystem::path> &allowedRoots)
     {
         auto file = fastgltf::GltfDataBuffer::FromPath(path);
         Require(file.error() == fastgltf::Error::None, "cannot read glTF");
         fastgltf::Parser parser;
         auto inspected = parser.loadGltf(file.get(), path.parent_path());
         Require(inspected.error() == fastgltf::Error::None,
-                "glTF parse failed (or unsupported required extension): " +
-                    std::to_string(static_cast<uint32_t>(inspected.error())));
+            "glTF parse failed (or unsupported required extension): " +
+            std::to_string(static_cast<uint32_t>(inspected.error())));
         auto dependencies = CheckPaths(inspected.get(), path.parent_path(), allowedRoots);
         dependencies.push_back(std::filesystem::weakly_canonical(path));
         std::sort(dependencies.begin(), dependencies.end());
@@ -289,7 +294,7 @@ namespace mir::cook
     }
 
     GltfImport ImportGltf(const std::filesystem::path &path, const std::string &assetPath,
-                          const std::vector<std::filesystem::path> &roots)
+        const std::vector<std::filesystem::path> &roots)
     {
         GltfImport result;
         result.metadataPath = path.string() + ".import.json";
@@ -304,7 +309,7 @@ namespace mir::cook
             {
                 ids.data["version"] = 2;
                 ids.data["identityPath"] = assetPath;
-                ids.data["aliases"] = Json::array({assetPath});
+                ids.data["aliases"] = Json::array({ assetPath });
             }
         }
         if (!ids.data.contains("identityPath"))
@@ -326,73 +331,85 @@ namespace mir::cook
         // First parse inspects dependencies before allowing any external I/O.
         auto inspected = parser.loadGltf(file.get(), path.parent_path());
         Require(inspected.error() == fastgltf::Error::None,
-                "glTF parse failed (or unsupported required extension): " +
-                    std::to_string(static_cast<uint32_t>(inspected.error())));
+            "glTF parse failed (or unsupported required extension): " +
+            std::to_string(static_cast<uint32_t>(inspected.error())));
         result.dependencies = CheckPaths(inspected.get(), path.parent_path(), roots);
         result.dependencies.push_back(std::filesystem::weakly_canonical(path));
         std::sort(result.dependencies.begin(), result.dependencies.end());
         result.dependencies.erase(std::unique(result.dependencies.begin(), result.dependencies.end()),
-                                  result.dependencies.end());
+            result.dependencies.end());
         file.get().reset();
 
         // Second parse starts LoadExternalBuffers/Images
         auto loaded = parser.loadGltf(file.get(), path.parent_path(),
-                                      fastgltf::Options::LoadExternalBuffers | fastgltf::Options::LoadExternalImages);
+            fastgltf::Options::LoadExternalBuffers | fastgltf::Options::LoadExternalImages);
         Require(loaded.error() == fastgltf::Error::None,
-                "glTF buffer/image load failed: " + std::string(fastgltf::getErrorName(loaded.error())));
+            "glTF buffer/image load failed: " + std::string(fastgltf::getErrorName(loaded.error())));
         const auto &a = loaded.get();
         Require(fastgltf::validate(a) == fastgltf::Error::None, "glTF validation failed");
         CheckAccessors(a);
+        std::set<uint64_t> emitted;
         auto emit = [&](AssetId id, const auto &data, std::string kind = {}, std::string name = {},
-                        uint32_t index = 0) {
-            result.blobs.push_back({id, BuildTypedAsset(data)});
-            if (kind.empty())
-                return;
-            if (name.empty())
-                name = kind + " " + std::to_string(index);
-            result.contents.push_back({id, std::move(kind), std::move(name), index});
-        };
-        auto keys = [&](const auto &objects, const std::string &kind, auto fingerprint) {
-            std::map<std::string, size_t> counts;
-            for (const auto &o : objects)
-                ++counts[std::string(o.name)];
-            std::vector<std::string> out;
-            for (size_t i = 0; i < objects.size(); ++i)
+            uint32_t index = 0)
             {
-                const std::string name(objects[i].name);
-                out.push_back(ids.Key(kind, counts[name] == 1 ? name : "", fingerprint(i)));
-            }
-            return out;
-        };
+                // shared-content duplicates resolve to one id; cook it once
+                if (!emitted.insert(id.value).second)
+                    return;
+                result.blobs.push_back({ id, BuildTypedAsset(data) });
+                if (kind.empty())
+                    return;
+                if (name.empty())
+                    name = kind + " " + std::to_string(index);
+                result.contents.push_back({ id, std::move(kind), std::move(name), index });
+            };
+        auto keys = [&](const auto &objects, const std::string &kind, auto fingerprint, bool shareContent = false)
+            {
+                std::map<std::string, size_t> counts;
+                for (const auto &o : objects)
+                    ++counts[std::string(o.name)];
+                std::vector<std::string> out;
+                for (size_t i = 0; i < objects.size(); ++i)
+                {
+                    const std::string name(objects[i].name);
+                    // a repeated name stays ambiguous; only unnamed objects share
+                    out.push_back(ids.Key(kind, counts[name] == 1 ? name : "", fingerprint(i),
+                        shareContent && name.empty()));
+                }
+                return out;
+            };
 
-        auto imageKeys = keys(a.images, "image", [&](size_t i) {
-            const auto &s = a.images[i].data;
-            if (auto *v = std::get_if<fastgltf::sources::BufferView>(&s))
+        auto imageKeys = keys(a.images, "image", [&](size_t i)
             {
-                const auto &bv = a.bufferViews.at(v->bufferViewIndex);
-                auto bytes = BufferBytes(a.buffers.at(bv.bufferIndex).data);
-                return std::to_string(Fnv1a64(std::span(bytes).subspan(bv.byteOffset, bv.byteLength)));
-            }
-            return std::to_string(Fnv1a64(BufferBytes(s)));
-        });
+                const auto &s = a.images[i].data;
+                if (auto *v = std::get_if<fastgltf::sources::BufferView>(&s))
+                {
+                    const auto &bv = a.bufferViews.at(v->bufferViewIndex);
+                    auto bytes = BufferBytes(a.buffers.at(bv.bufferIndex).data);
+                    return std::to_string(Fnv1a64(std::span(bytes).subspan(bv.byteOffset, bv.byteLength)));
+                }
+                return std::to_string(Fnv1a64(BufferBytes(s)));
+            }, true);
 
         std::vector<AssetId> images;
         for (size_t i = 0; i < a.images.size(); ++i)
         {
+            auto id = ids.Id(imageKeys[i]);
+            images.push_back(id);
+            if (emitted.contains(id.value))
+                continue;
+
             std::vector<std::byte> bytes;
             if (auto *view = std::get_if<fastgltf::sources::BufferView>(&a.images[i].data))
             {
                 const auto &bv = a.bufferViews.at(view->bufferViewIndex);
                 auto buffer = BufferBytes(a.buffers.at(bv.bufferIndex).data);
                 Require(bv.byteOffset <= buffer.size() && bv.byteLength <= buffer.size() - bv.byteOffset,
-                        "image buffer view out of bounds");
+                    "image buffer view out of bounds");
                 bytes.assign(buffer.begin() + bv.byteOffset, buffer.begin() + bv.byteOffset + bv.byteLength);
             }
             else
                 bytes = BufferBytes(a.images[i].data);
             const TextureAsset tex = DecodeImage(bytes);
-            auto id = ids.Id(imageKeys[i]);
-            images.push_back(id);
             emit(id, tex, "texture", std::string(a.images[i].name), uint32_t(i));
         }
 
@@ -405,9 +422,9 @@ namespace mir::cook
                 mat.baseColor[c] = m.pbrData.baseColorFactor[c];
             mat.doubleSided = m.doubleSided;
             mat.alphaCutoff = m.alphaCutoff;
-            mat.alpha = m.alphaMode == fastgltf::AlphaMode::Mask    ? MaterialAlpha::Mask
-                        : m.alphaMode == fastgltf::AlphaMode::Blend ? MaterialAlpha::Blend
-                                                                    : MaterialAlpha::Opaque;
+            mat.alpha = m.alphaMode == fastgltf::AlphaMode::Mask ? MaterialAlpha::Mask
+                : m.alphaMode == fastgltf::AlphaMode::Blend ? MaterialAlpha::Blend
+                : MaterialAlpha::Opaque;
             if (m.pbrData.baseColorTexture)
             {
                 const auto &tex = a.textures.at(m.pbrData.baseColorTexture->textureIndex);
@@ -425,7 +442,7 @@ namespace mir::cook
             materials.push_back(mat);
         }
         auto materialKeys = keys(a.materials, "material",
-                                 [&](size_t i) { return std::to_string(Fnv1a64(BuildTypedAsset(materials[i]))); });
+            [&](size_t i) { return std::to_string(Fnv1a64(BuildTypedAsset(materials[i]))); }, true);
         for (size_t i = 0; i < materials.size(); ++i)
             emit(ids.Id(materialKeys[i]), materials[i], "material", std::string(a.materials[i].name), uint32_t(i));
 
@@ -452,10 +469,10 @@ namespace mir::cook
                     q.baseColorTexture = materials.at(index).baseColorTexture;
                     if (a.materials[index].pbrData.baseColorTexture)
                         uvName =
-                            "TEXCOORD_" + std::to_string(a.materials[index].pbrData.baseColorTexture->texCoordIndex);
+                        "TEXCOORD_" + std::to_string(a.materials[index].pbrData.baseColorTexture->texCoordIndex);
                 }
                 Require(q.baseColorTexture.IsNull() || p.findAttribute(uvName) != p.attributes.end(),
-                        "base color texture references missing UV set");
+                    "base color texture references missing UV set");
                 auto uv = Attribute(a, p.attributes, uvName, count, glm::vec2(0));
                 std::vector<glm::vec4> color(count, glm::vec4(1));
                 if (const auto *at = p.findAttribute("COLOR_0"); at != p.attributes.end())
@@ -474,7 +491,7 @@ namespace mir::cook
                     }
                 }
                 for (size_t j = 0; j < count; ++j)
-                    q.vertices.push_back({pos[j], normals[j], tangents[j], color[j], uv[j]});
+                    q.vertices.push_back({ pos[j], normals[j], tangents[j], color[j], uv[j] });
                 if (p.indicesAccessor)
                     q.indices = Read<uint32_t>(a, *p.indicesAccessor);
                 else
@@ -506,7 +523,7 @@ namespace mir::cook
                         {
                             Require(std::isfinite(w[j][k]) && w[j][k] >= 0, "invalid joint weight");
                             if (w[j][k] > 0)
-                                influences[j].push_back({joints[j][k], w[j][k]});
+                                influences[j].push_back({ joints[j][k], w[j][k] });
                         }
                 }
                 Require(jointSets == weightSets, "unpaired JOINTS/WEIGHTS attributes");
@@ -517,7 +534,7 @@ namespace mir::cook
                         for (auto x : v)
                             sum += x.weight;
                         Require(sum > 0, "zero skin weights");
-                        q.influenceRanges.push_back({uint32_t(q.influences.size()), uint32_t(v.size())});
+                        q.influenceRanges.push_back({ uint32_t(q.influences.size()), uint32_t(v.size()) });
                         for (auto x : v)
                         {
                             x.weight /= sum;
@@ -525,9 +542,9 @@ namespace mir::cook
                         }
                     }
                 for (const auto &target : p.targets)
-                    q.morphTargets.push_back({Attribute(a, target, "POSITION", count, glm::vec3(0)),
+                    q.morphTargets.push_back({ Attribute(a, target, "POSITION", count, glm::vec3(0)),
                                               Attribute(a, target, "NORMAL", count, glm::vec3(0)),
-                                              Attribute(a, target, "TANGENT", count, glm::vec3(0))});
+                                              Attribute(a, target, "TANGENT", count, glm::vec3(0)) });
                 if (p.findAttribute("NORMAL") == p.attributes.end())
                     FlatNormals(q);
                 if (out.weights.empty())
@@ -537,35 +554,37 @@ namespace mir::cook
             meshes.push_back(std::move(out));
         }
         auto meshKeys =
-            keys(a.meshes, "mesh", [&](size_t i) { return std::to_string(Fnv1a64(BuildTypedAsset(meshes[i]))); });
+            keys(a.meshes, "mesh", [&](size_t i) { return std::to_string(Fnv1a64(BuildTypedAsset(meshes[i]))); }, true);
         for (size_t i = 0; i < meshes.size(); ++i)
             emit(ids.Id(meshKeys[i]), meshes[i], "mesh", meshes[i].name, uint32_t(i));
 
         ModelAsset model;
         model.nodes.resize(a.nodes.size());
-        auto nodeKeys = keys(a.nodes, "node", [&](size_t i) {
-            const auto &n = a.nodes[i];
-            std::string f = n.meshIndex ? meshKeys[*n.meshIndex] : "";
-            std::visit(
-                [&](const auto &t) {
-                    using T = std::decay_t<decltype(t)>;
-                    if constexpr (std::is_same_v<T, fastgltf::TRS>)
+        auto nodeKeys = keys(a.nodes, "node", [&](size_t i)
+            {
+                const auto &n = a.nodes[i];
+                std::string f = n.meshIndex ? meshKeys[*n.meshIndex] : "";
+                std::visit(
+                    [&](const auto &t)
                     {
-                        for (int j = 0; j < 3; ++j)
-                            f += "," + std::to_string(t.translation[j]) + "," + std::to_string(t.scale[j]);
-                        for (int j = 0; j < 4; ++j)
-                            f += "," + std::to_string(t.rotation[j]);
-                    }
-                    else
-                        for (int c = 0; c < 4; ++c)
-                            for (int r = 0; r < 4; ++r)
-                                f += "," + std::to_string(t[c][r]);
-                },
-                n.transform);
-            for (auto c : n.children)
-                f += "/child:" + std::string(a.nodes[c].name);
-            return f;
-        });
+                        using T = std::decay_t<decltype(t)>;
+                        if constexpr (std::is_same_v<T, fastgltf::TRS>)
+                        {
+                            for (int j = 0; j < 3; ++j)
+                                f += "," + std::to_string(t.translation[j]) + "," + std::to_string(t.scale[j]);
+                            for (int j = 0; j < 4; ++j)
+                                f += "," + std::to_string(t.rotation[j]);
+                        }
+                        else
+                            for (int c = 0; c < 4; ++c)
+                                for (int r = 0; r < 4; ++r)
+                                    f += "," + std::to_string(t[c][r]);
+                    },
+                    n.transform);
+                for (auto c : n.children)
+                    f += "/child:" + std::string(a.nodes[c].name);
+                return f;
+            });
         for (size_t i = 0; i < a.nodes.size(); ++i)
         {
             const auto &n = a.nodes[i];
@@ -580,7 +599,8 @@ namespace mir::cook
             if (n.meshIndex)
                 Require(v.weights.size() == meshes[*n.meshIndex].weights.size(), "node morph count mismatch");
             std::visit(
-                [&](const auto &t) {
+                [&](const auto &t)
+                {
                     using T = std::decay_t<decltype(t)>;
                     if constexpr (std::is_same_v<T, fastgltf::TRS>)
                     {
@@ -623,12 +643,13 @@ namespace mir::cook
             model.scenes.push_back(std::move(s));
         }
         model.defaultScene = uint32_t(a.defaultScene.value_or(0));
-        auto skinKeys = keys(a.skins, "skeleton", [&](size_t i) {
-            std::string s;
-            for (auto j : a.skins[i].joints)
-                s += nodeKeys[j] + ";";
-            return s;
-        });
+        auto skinKeys = keys(a.skins, "skeleton", [&](size_t i)
+            {
+                std::string s;
+                for (auto j : a.skins[i].joints)
+                    s += nodeKeys[j] + ";";
+                return s;
+            });
         for (size_t i = 0; i < a.skins.size(); ++i)
         {
             const auto &s = a.skins[i];
@@ -650,7 +671,7 @@ namespace mir::cook
                 binding.jointKeys.push_back(nodeKeys[j]);
             }
             binding.inverseBindMatrices = s.inverseBindMatrices ? Read<glm::mat4>(a, *s.inverseBindMatrices)
-                                                                : std::vector<glm::mat4>(s.joints.size(), glm::mat4(1));
+                : std::vector<glm::mat4>(s.joints.size(), glm::mat4(1));
             emit(binding.skeleton, skeleton, "skeleton", skeleton.name, uint32_t(i));
             model.skins.push_back(std::move(binding));
         }
@@ -697,12 +718,12 @@ namespace mir::cook
                     throw std::runtime_error("unsupported animation path");
                 }
                 Require(t.path == AnimationPath::Weights || !model.nodes[node].hasMatrix,
-                        "TRS animation targets matrix node");
+                    "TRS animation targets matrix node");
                 t.interpolation = s.interpolation == fastgltf::AnimationInterpolation::Step
-                                      ? AnimationInterpolation::Step
-                                  : s.interpolation == fastgltf::AnimationInterpolation::CubicSpline
-                                      ? AnimationInterpolation::CubicSpline
-                                      : AnimationInterpolation::Linear;
+                    ? AnimationInterpolation::Step
+                    : s.interpolation == fastgltf::AnimationInterpolation::CubicSpline
+                    ? AnimationInterpolation::CubicSpline
+                    : AnimationInterpolation::Linear;
                 t.times = Read<float>(a, s.inputAccessor);
                 if (!t.times.empty())
                     clip.duration = std::max(clip.duration, t.times.back());
@@ -730,7 +751,7 @@ namespace mir::cook
             clips.push_back(std::move(clip));
         }
         auto animationKeys = keys(a.animations, "animation",
-                                  [&](size_t i) { return std::to_string(Fnv1a64(BuildTypedAsset(clips[i]))); });
+            [&](size_t i) { return std::to_string(Fnv1a64(BuildTypedAsset(clips[i]))); }, true);
         for (size_t i = 0; i < clips.size(); ++i)
         {
             auto id = ids.Id(animationKeys[i]);
@@ -740,10 +761,10 @@ namespace mir::cook
 
         emit(result.modelId, model, "model", std::filesystem::path(result.identityPath).filename().string());
         for (size_t i = 0; i < model.scenes.size(); ++i)
-            result.contents.push_back({kNullAssetId, "scene",
+            result.contents.push_back({ kNullAssetId, "scene",
                                        model.scenes[i].name.empty() ? "scene " + std::to_string(i)
                                                                     : model.scenes[i].name,
-                                       uint32_t(i)});
+                                       uint32_t(i) });
         result.metadata = ids.data.dump(2) + "\n";
         return result;
     }
