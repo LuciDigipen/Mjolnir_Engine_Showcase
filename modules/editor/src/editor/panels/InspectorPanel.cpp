@@ -17,6 +17,7 @@
 #include <editor/EditorWidgets.h>
 #include <editor/EntityBaseline.h>
 #include <editor/Selection.h>
+#include <editor/history/AuthoredEdit.h>
 #include <editor/history/ComponentCommands.h>
 #include <editor/history/History.h>
 #include <editortheme/EditorTheme.h>
@@ -35,6 +36,7 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -52,6 +54,7 @@ namespace mir
         struct Edits
         {
             History &mHistory;
+            IAuthoredEntities *mAuthored = nullptr;
             bool mSubmitted = false;
 
             void Submit(std::unique_ptr<ICommand> command)
@@ -232,6 +235,21 @@ namespace mir
         }
 
         
+        void DrawAuthoredActions(Edits &edits, const AuthoredKey &key, bool canRevert)
+        {
+            IAuthoredEntities &authored = *edits.mAuthored;
+            if (ImGui::MenuItem("Revert", nullptr, false, canRevert))
+                edits.Submit(MakeRevertAuthoredCommand(authored, key));
+
+            const AuthoredAction apply = authored.Apply(key);
+            ImGui::BeginDisabled(!apply.mAllowed);
+            if (ImGui::MenuItem("Apply to Prefab"))
+                edits.Submit(MakeApplyAuthoredCommand(authored, key));
+            ImGui::EndDisabled();
+            if (!apply.mAllowed)
+                ImGui::SetItemTooltip("%s", apply.mReason.c_str());
+        }
+
         void PasteValues(World &world, const Clipboard &clipboard, Entity entity, Edits &edits)
         {
             const ComponentOps &ops = *clipboard.mOps;
@@ -241,10 +259,10 @@ namespace mir
                 values.push_back(ToValue(static_cast<uint32_t>(i), clipboard.mValues[i]));
 
             if (ops.Has(world, entity))
-                edits.Submit(MakeSetFieldsCommand(entity, ops, std::move(values),
-                    "Paste " + std::string(ops.mType.name) + " Values"));
+                edits.Submit(MakeSetFieldsEditCommand(entity, ops, std::move(values),
+                    "Paste " + std::string(ops.mType.name) + " Values", edits.mAuthored));
             else
-                edits.Submit(MakeAddComponentCommand(entity, ops, std::move(values)));
+                edits.Submit(MakeAddComponentEditCommand(entity, ops, std::move(values), edits.mAuthored));
         }
 
         // right-click menu on a component header
@@ -259,11 +277,21 @@ namespace mir
             if (ImGui::MenuItem("Paste Values", nullptr, false, clipboard.mOps == &ops))
                 PasteValues(world, clipboard, entity, edits);
 
+            if (edits.mAuthored != nullptr)
+            {
+                const std::optional<AuthoredKey> key = edits.mAuthored->ComponentKeyOf(entity, ops.mType.name);
+                if (key && edits.mAuthored->ComponentState(entity, ops.mType.name) == AuthoredComponentState::Added)
+                {
+                    ImGui::Separator();
+                    DrawAuthoredActions(edits, *key, true);
+                }
+            }
+
             ImGui::Separator();
 
             // shown disabled rather than hidden, so the baseline's protection is visible
             if (ImGui::MenuItem("Remove Component", nullptr, false, !IsBaselineComponent(ops.mType)))
-                edits.Submit(MakeRemoveComponentCommand(entity, ops));
+                edits.Submit(MakeRemoveComponentEditCommand(entity, ops, edits.mAuthored));
 
             ImGui::EndPopup();
         }
@@ -292,7 +320,14 @@ namespace mir
 
             ImGui::PushID(static_cast<int>(ops.mType.seq));
 
-            const bool open = widgets::CategoryHeader(ops.mType.name.data());
+            const AuthoredComponentState componentState = edits.mAuthored != nullptr
+                ? edits.mAuthored->ComponentState(entity, ops.mType.name)
+                : AuthoredComponentState::Absent;
+            std::string header(ops.mType.name);
+            if (componentState == AuthoredComponentState::Added)
+                header += "  " ICON_FA_PLUS;
+
+            const bool open = widgets::CategoryHeader(header.c_str());
             DrawComponentMenu(world, ops, entity, clipboard, edits);
 
             if (open)
@@ -314,9 +349,22 @@ namespace mir
                         FieldBuffer buffer{};
                         field.Read(component, buffer.mBytes);
 
+                        std::optional<AuthoredKey> fieldKey;
+                        AuthoredFieldState fieldState = AuthoredFieldState::Inherited;
+                        if (edits.mAuthored != nullptr)
+                        {
+                            fieldKey = edits.mAuthored->KeyOf(entity, ops.mType.name, field.mName);
+                            if (fieldKey)
+                                fieldState = edits.mAuthored->FieldState(*fieldKey);
+                        }
+
+                        std::string fieldLabel(field.mName);
+                        if (fieldState == AuthoredFieldState::Overridden)
+                            fieldLabel += "  " ICON_FA_PEN;
+
                         const bool readOnly = field.ReadOnly();
                         ImGui::BeginDisabled(readOnly);
-                        widgets::PropertyRow(field.mName.data());
+                        widgets::PropertyRow(fieldLabel.c_str());
                         bool edited = false;
                         switch (field.mWidget)
                         {
@@ -338,12 +386,20 @@ namespace mir
                         }
                         ImGui::EndDisabled();
 
+                        if (fieldKey && ImGui::BeginPopupContextItem("##authored-field"))
+                        {
+                            DrawAuthoredActions(edits, *fieldKey,
+                                fieldState == AuthoredFieldState::Overridden);
+                            ImGui::EndPopup();
+                        }
+
                         if (edited && !readOnly)
                         {
                             std::vector<FieldValue> values{ ToValue(index, buffer) };
                             if (field.mWidget == FieldWidget::AssetRef)
                                 AddResetValues(ops, field.mResetOnChange, values);
-                            edits.Submit(MakeSetFieldsCommand(entity, ops, std::move(values)));
+                            edits.Submit(MakeSetFieldsEditCommand(entity, ops, std::move(values), "",
+                                edits.mAuthored));
                         }
                         ImGui::PopID();
                     }
@@ -387,16 +443,55 @@ namespace mir
 
                 any = true;
                 if (ImGui::Selectable(ops->mType.name.data()))
-                    edits.Submit(MakeAddComponentCommand(entity, *ops));
+                    edits.Submit(MakeAddComponentEditCommand(entity, *ops, {}, edits.mAuthored));
             }
             if (!any)
                 ImGui::TextDisabled("Every component is already added.");
 
             ImGui::EndPopup();
         }
+
+        void DrawRemovedComponents(Entity entity, Edits &edits)
+        {
+            if (edits.mAuthored == nullptr)
+                return;
+
+            const std::vector<std::string> removed = edits.mAuthored->RemovedComponents(entity);
+            if (removed.empty())
+                return;
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::TextDisabled("Removed Components");
+            for (const std::string &component : removed)
+            {
+                const std::optional<AuthoredKey> key = edits.mAuthored->ComponentKeyOf(entity, component);
+                if (!key)
+                    continue;
+
+                ImGui::PushID(component.c_str());
+                ImGui::Text(ICON_FA_MINUS "  %s", component.c_str());
+
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Revert"))
+                    edits.Submit(MakeRevertAuthoredCommand(*edits.mAuthored, *key));
+
+                ImGui::SameLine();
+                const AuthoredAction apply = edits.mAuthored->Apply(*key);
+                ImGui::BeginDisabled(!apply.mAllowed);
+                if (ImGui::SmallButton("Apply to Prefab"))
+                    edits.Submit(MakeApplyAuthoredCommand(*edits.mAuthored, *key));
+                ImGui::EndDisabled();
+                if (!apply.mAllowed)
+                    ImGui::SetItemTooltip("%s", apply.mReason.c_str());
+
+                ImGui::PopID();
+            }
+        }
     } // namespace
 
-    void InspectorPanel::Draw(World &world, const AssetImportView &assets, History &history)
+    void InspectorPanel::Draw(World &world, const AssetImportView &assets, History &history,
+        IAuthoredEntities *authored)
     {
         EndEditIfReleased(history);
 
@@ -418,7 +513,7 @@ namespace mir
         }
 
         //history applies these at the end of the frame, so nothing below makes a change to archety midway
-        Edits edits{ history };
+        Edits edits{ history, authored };
 
         ImGui::AlignTextToFramePadding();
         if (const Name *name = world.GetComponent<Name>(entity))
@@ -437,6 +532,8 @@ namespace mir
 
             DrawComponent(world, *ops, entity, assets, mFilter, mClipboard, edits);
         }
+
+        DrawRemovedComponents(entity, edits);
 
         mEditing |= edits.mSubmitted;
         EndEditIfReleased(history);

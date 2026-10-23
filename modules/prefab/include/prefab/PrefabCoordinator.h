@@ -61,6 +61,10 @@ namespace mir
         // True once after a Commit published instance data to the scene.
         bool ConsumePublishedChanges();
 
+        // True once after a Commit changed the bound scene's authored data outside History:
+        // references cleared, or instance bindings dropped or added.
+        bool ConsumeSceneMaintenance();
+
         // Zero when no compiled template has been published to that instance.
         uint64_t PublishedRevision(StableId root) const;
 
@@ -82,6 +86,7 @@ namespace mir
         std::set<PrefabId> mPendingDocuments;
         std::map<StableId, PublishedInstance> mPublished;
         bool mPublishedChanges = false;
+        bool mSceneMaintenance = false;
     };
 
     // Runs at PreUpdate, before any other system, and commits only while editing.

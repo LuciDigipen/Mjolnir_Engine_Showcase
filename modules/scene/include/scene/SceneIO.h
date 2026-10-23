@@ -14,8 +14,10 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace mir
 {
@@ -49,6 +51,18 @@ namespace mir
 
     // The root's Transform fields as an instance record's placement; empty when it has no Transform.
     nlohmann::json InstancePlacementFromWorld(World &world, Entity root);
+
+    // The prefab instance record rooted at root as JSON text; empty when the scene has none.
+    std::string CaptureInstanceRecord(const LoadedScene &scene, StableId root);
+
+    // Puts a captured instance record back under its root id; false when the text is malformed.
+    bool RestoreInstanceRecord(LoadedScene &scene, std::string_view text);
+
+    // Every instance record whose root is one of members, as JSON text.
+    std::vector<std::string> CaptureInstanceRecords(const LoadedScene &scene, std::span<const StableId> members);
+
+    // Puts every record back; false when one text is malformed.
+    bool RestoreInstanceRecords(LoadedScene &scene, std::span<const std::string> records);
 
     bool SaveScene(World &world, const std::filesystem::path &sceneDir, const LoadedScene &scene,
         const ScenePrefabResolver *resolver = nullptr);

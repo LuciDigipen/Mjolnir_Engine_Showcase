@@ -19,12 +19,14 @@ namespace mir
 {
     struct ComponentOps;
     class History;
+    class IAuthoredEntities;
 
     class InspectorPanel
     {
     public:
         
-        void Draw(World &world, const AssetImportView &assets, History &history);
+        void Draw(World &world, const AssetImportView &assets, History &history,
+            IAuthoredEntities *authored = nullptr);
 
         // One field's value
         struct alignas(16) FieldBuffer

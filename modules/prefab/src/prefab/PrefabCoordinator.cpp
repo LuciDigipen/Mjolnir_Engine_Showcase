@@ -785,11 +785,13 @@ namespace mir
         for (const InstancePlan &plan : plans)
             removedIds.insert(plan.mRemovedMemberIds.begin(), plan.mRemovedMemberIds.end());
 
+        bool maintained = false;
         if (!removedIds.empty())
         {
             const std::vector<StableId> ids(removedIds.begin(), removedIds.end());
             std::vector<ClearedSceneEntityRef> cleared;
             ClearSceneEntityRefsTo(world, *mScene, ids, &cleared);
+            maintained = !cleared.empty();
             for (const ClearedSceneEntityRef &entry : cleared)
             {
                 if (const ComponentOps *ops = ComponentRegistry::Instance().Find(entry.mType.name))
@@ -804,9 +806,13 @@ namespace mir
         EntityChangeSet afterChanges = beforeChanges;
         for (InstancePlan &plan : plans)
         {
+            maintained |= !plan.mRemovedMemberIds.empty() || !plan.mAddedNodes.empty();
             ApplyPlan(world, *mScene, plan, afterChanges);
             mPublished[plan.mRoot] = PublishedInstance{ plan.mNew->Id(), plan.mNew->Revision(), plan.mNew };
         }
+
+        if (maintained)
+            mSceneMaintenance = true;
 
         if (listeners != nullptr && HasChanges(afterChanges))
             listeners->NotifyAfterChange(world, afterChanges);
@@ -815,6 +821,11 @@ namespace mir
     bool PrefabCoordinator::ConsumePublishedChanges()
     {
         return std::exchange(mPublishedChanges, false);
+    }
+
+    bool PrefabCoordinator::ConsumeSceneMaintenance()
+    {
+        return std::exchange(mSceneMaintenance, false);
     }
 
     bool PrefabCoordinator::HasPendingWork() const
