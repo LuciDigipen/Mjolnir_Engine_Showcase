@@ -32,6 +32,7 @@ namespace mir
 
         virtual Entity CreateEntity() = 0;
         virtual Entity Duplicate(Entity source) = 0;
+        virtual Entity CopyAsOrdinaryObject(Entity source) = 0;
         virtual CapturedSubtree Capture(Entity root) = 0;
 
         //members get their StableIds back; returned in capture order

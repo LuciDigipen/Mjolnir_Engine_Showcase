@@ -748,6 +748,18 @@ namespace mir
             component);
     }
 
+    PrefabInstanceRole PrefabAuthoring::InstanceRole(Entity entity) const
+    {
+        const std::optional<Member> member = FindMember(entity);
+        if (!member)
+            return PrefabInstanceRole::Ordinary;
+
+        const LoadedScene &scene = *mCoordinator.Scene();
+        const auto root = scene.mEntities.find(member->mRoot);
+        return root != scene.mEntities.end() && root->second == entity ? PrefabInstanceRole::Root
+                                                                      : PrefabInstanceRole::Member;
+    }
+
     std::vector<std::string> PrefabAuthoring::RemovedComponents(Entity entity) const
     {
         std::vector<std::string> removed;

@@ -12,16 +12,23 @@
 #include <editor/panels/HierarchyPanel.h>
 
 #include <core/ecs/EntityPresetRegistry.h>
+#include <scene/SceneInstancePatch.h>
 
 namespace
 {
     using mir::EntityAction;
     using mir::EntityActionKind;
     using mir::EntityPresetDesc;
+    using mir::FindInstanceFieldPatch;
+    using mir::MakeCopyAsOrdinaryObjectCommand;
     using mir::MakeCreateCommand;
     using mir::MakeDeleteCommand;
     using mir::MakeDuplicateCommand;
     using mir::MakeReParentCommand;
+    using mir::SceneNodeAddress;
+    using mir::ScenePrefabInstance;
+    using mir::SceneInstancePatch;
+    using mir::SceneFieldPatch;
 
     void Thing(World &world, Entity entity)
     {
@@ -31,6 +38,53 @@ namespace
     bool Never(const World &)
     {
         return false;
+    }
+
+    // a and its children as the members of one instance; w stays an ordinary child under y
+    StableId MakeInstance(Editing &e, const Sample &s)
+    {
+        const StableId root = e.IdOf(s.a);
+        const StableId y = e.IdOf(s.y);
+
+        SetTarget(e.mWorld, s.a, s.y);
+
+        ScenePrefabInstance instance;
+        instance.mPrefab = "11111111-2222-4333-8444-555555555555";
+        instance.mRoot = root;
+        instance.mBindings[SceneNodeAddress{ 1 }] = root;
+        instance.mBindings[SceneNodeAddress{ 2 }] = e.IdOf(s.x);
+        instance.mBindings[SceneNodeAddress{ 3 }] = y;
+        instance.mBindings[SceneNodeAddress{ 4 }] = e.IdOf(s.z);
+
+        SceneInstancePatch patch;
+        patch.mTarget = SceneNodeAddress{ 1 };
+        patch.mFields.push_back(SceneFieldPatch{ "EditorHistoryTestRef", "target", nlohmann::json(y) });
+        instance.mPatches.push_back(std::move(patch));
+
+        e.mScene.mInstances[root] = std::move(instance);
+        return root;
+    }
+
+    bool BindsMember(const LoadedScene &scene, StableId member)
+    {
+        for (const auto &[root, instance] : scene.mInstances)
+        {
+            (void)root;
+            for (const auto &[address, id] : instance.mBindings)
+            {
+                (void)address;
+                if (id == member)
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    std::vector<Entity> ChildrenOf(World &world, Entity parent)
+    {
+        std::vector<Entity> children;
+        mir::ForEachChild(world, parent, [&](Entity child) { children.push_back(child); });
+        return children;
     }
 }
 
@@ -290,4 +344,111 @@ TEST_CASE("MakeEntityCommand turns each EntityAction into a command", "[editor][
 
     e.Run(mir::MakeEntityCommand(EntityAction{ EntityActionKind::Duplicate, nullptr, s.b }));
     CHECK(e.mHistory.UndoName() == "Duplicate b");
+}
+
+TEST_CASE("Duplicating an instance root keeps the record through undo and redo", "[editor][history]")
+{
+    Editing e;
+    const Sample s = BuildSample(e);
+    const StableId sourceRoot = MakeInstance(e, s);
+    const StableId sourceY = e.IdOf(s.y);
+
+    const Files before = e.Saved();
+    e.Run(MakeDuplicateCommand(s.a));
+    const Files duplicated = e.Saved();
+
+    CHECK(e.mHistory.StepCount() == 1);
+    REQUIRE(e.Selected().size() == 1);
+    const Entity copy = e.Selected().front();
+    const StableId copyRoot = e.IdOf(copy);
+    REQUIRE(copyRoot != kNullStableId);
+    REQUIRE(e.mScene.mInstances.contains(copyRoot));
+
+    const ScenePrefabInstance &copyRecord = e.mScene.mInstances.at(copyRoot);
+    CHECK(copyRecord.mPrefab == e.mScene.mInstances.at(sourceRoot).mPrefab);
+    CHECK(copyRecord.mRoot == copyRoot);
+    CHECK(copyRecord.mBindings.at(SceneNodeAddress{ 2 }) != e.mScene.mInstances.at(sourceRoot).mBindings.at(
+        SceneNodeAddress{ 2 }));
+    CHECK(copyRecord.mBindings.at(SceneNodeAddress{ 3 }) != sourceY);
+    CHECK(copyRecord.mBindings.size() == 4);
+
+    const auto patch = FindInstanceFieldPatch(copyRecord, SceneNodeAddress{ 1 }, "EditorHistoryTestRef", "target");
+    REQUIRE(patch != nullptr);
+    CHECK(patch->mValue == nlohmann::json(copyRecord.mBindings.at(SceneNodeAddress{ 3 })));
+    CHECK(TargetOf(e.mWorld, copy) == e.Find(copyRecord.mBindings.at(SceneNodeAddress{ 3 })));
+    CHECK(TargetOf(e.mWorld, s.a) == s.y);
+
+    e.Undo();
+    CHECK(e.mHistory.StepCount() == 1);
+    CHECK(e.mScene.mInstances.size() == 1);
+    CHECK(e.mScene.mInstances.contains(sourceRoot));
+    CHECK(Differences(WithoutNextId(e.Saved()), WithoutNextId(before)) == std::vector<std::string>{});
+    CHECK(e.Selected().empty());
+
+    e.Redo();
+    CHECK(e.mScene.mInstances.size() == 2);
+    REQUIRE(e.mScene.mInstances.contains(copyRoot));
+    CHECK(Differences(e.Saved(), duplicated) == std::vector<std::string>{});
+    REQUIRE(e.Selected().size() == 1);
+    CHECK(e.IdOf(e.Selected().front()) == copyRoot);
+}
+
+TEST_CASE("Duplicating an instance member records no step", "[editor][history]")
+{
+    Editing e;
+    const Sample s = BuildSample(e);
+    const std::size_t entities = e.mScene.mEntities.size();
+    MakeInstance(e, s);
+
+    e.Run(MakeDuplicateCommand(s.y));
+
+    CHECK(e.mHistory.StepCount() == 0);
+    CHECK(e.mScene.mEntities.size() == entities);
+    CHECK(e.mScene.mInstances.size() == 1);
+}
+
+TEST_CASE("Copy as Ordinary Object is one step that undo and redo restore", "[editor][history]")
+{
+    Editing e;
+    const Sample s = BuildSample(e);
+    const StableId sourceRoot = MakeInstance(e, s);
+    const StableId sourceY = e.IdOf(s.y);
+    const StableId sourceW = e.IdOf(s.w);
+    const std::size_t instances = e.mScene.mInstances.size();
+
+    const Files before = e.Saved();
+    e.Run(MakeCopyAsOrdinaryObjectCommand(s.y));
+    const Files copied = e.Saved();
+
+    CHECK(e.mHistory.StepCount() == 1);
+    REQUIRE(e.Selected().size() == 1);
+    const Entity copy = e.Selected().front();
+    const StableId copyId = e.IdOf(copy);
+    REQUIRE(copyId != kNullStableId);
+    CHECK(copyId != sourceY);
+
+    CHECK(e.mScene.mInstances.size() == instances);
+    CHECK_FALSE(BindsMember(e.mScene, copyId));
+    CHECK(mir::ParentOf(e.mWorld, copy) == mir::ParentOf(e.mWorld, s.a));
+    CHECK(mir::ResolveWorld(e.mWorld, copy).position.Meters() == mir::ResolveWorld(e.mWorld, s.y).position.Meters());
+
+    const std::vector<Entity> copiedChildren = ChildrenOf(e.mWorld, copy);
+    REQUIRE(copiedChildren.size() == 1);
+    CHECK(TargetOf(e.mWorld, copy) == copiedChildren.front());
+    CHECK(TargetOf(e.mWorld, copiedChildren.front()) == s.x);
+
+    CHECK(TargetOf(e.mWorld, s.y) == s.w);
+    CHECK(mir::ParentOf(e.mWorld, s.w) == s.y);
+    CHECK(e.mScene.mInstances.contains(sourceRoot));
+    CHECK(e.mScene.mInstances.at(sourceRoot).mBindings.at(SceneNodeAddress{ 3 }) == sourceY);
+    CHECK(sourceW != copyId);
+
+    e.Undo();
+    CHECK(e.Selected().empty());
+    CHECK(Differences(WithoutNextId(e.Saved()), WithoutNextId(before)) == std::vector<std::string>{});
+
+    e.Redo();
+    CHECK(Differences(e.Saved(), copied) == std::vector<std::string>{});
+    REQUIRE(e.Selected().size() == 1);
+    CHECK(e.IdOf(e.Selected().front()) == copyId);
 }

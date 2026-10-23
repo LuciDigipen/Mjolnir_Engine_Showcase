@@ -55,6 +55,13 @@ namespace mir
         std::string mRefusal; // non-empty: the action is refused
     };
 
+    enum class PrefabInstanceRole : uint8_t
+    {
+        Ordinary,
+        Root,
+        Member,
+    };
+
     // Editor-independent authored state over the coordinator's documents, its bound scene and the World.
     class PrefabAuthoring
     {
@@ -66,6 +73,8 @@ namespace mir
 
         // Validates the whole batch on copies first; a refused batch changes nothing.
         PrefabAuthoredWrite Write(std::span<const PrefabAuthoredEntry> entries);
+
+        PrefabInstanceRole InstanceRole(Entity entity) const;
 
         std::optional<PrefabAuthoredKey> FieldKey(Entity entity, std::string_view component,
             std::string_view field) const;

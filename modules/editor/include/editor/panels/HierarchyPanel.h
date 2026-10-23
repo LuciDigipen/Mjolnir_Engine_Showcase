@@ -19,6 +19,7 @@
 namespace mir
 {
     class HierarchyIndex;
+    class IAuthoredEntities;
 
     enum class EntityActionKind
     {
@@ -26,6 +27,7 @@ namespace mir
         Create,
         Delete,
         Duplicate,
+        CopyAsOrdinaryObject,
         Reparent,
     };
 
@@ -44,7 +46,7 @@ namespace mir
     class HierarchyPanel
     {
     public:
-        EntityAction Draw(World &world);
+        EntityAction Draw(World &world, IAuthoredEntities *authored = nullptr);
 
     private:
         static constexpr double kFilterRefreshSeconds = 0.25;

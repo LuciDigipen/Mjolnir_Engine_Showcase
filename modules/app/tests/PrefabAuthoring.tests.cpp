@@ -23,6 +23,7 @@
 #include <prefab/PrefabFormat.h>
 #include <prefab/PrefabSceneInstance.h>
 #include <scene/SceneAsset.h>
+#include <scene/SceneDuplicate.h>
 #include <scene/SceneInstancePatch.h>
 #include <scene/SceneIO.h>
 
@@ -47,6 +48,7 @@ namespace
     using mir::AuthoredComponentState;
     using mir::AuthoredEntry;
     using mir::AuthoredFieldState;
+    using mir::AuthoredInstanceRole;
     using mir::AuthoredKey;
     using mir::CapturedSubtree;
     using mir::CommandBuffer;
@@ -55,6 +57,7 @@ namespace
     using mir::ComponentRegistry;
     using mir::CreateSceneEntity;
     using mir::DocumentId;
+    using mir::DuplicateSceneEntitySubtree;
     using mir::Entity;
     using mir::FieldDesc;
     using mir::FieldKind;
@@ -107,6 +110,7 @@ namespace
     public:
         Entity CreateEntity() override { return kNullEntity; }
         Entity Duplicate(Entity) override { return kNullEntity; }
+        Entity CopyAsOrdinaryObject(Entity) override { return kNullEntity; }
         CapturedSubtree Capture(Entity) override { return {}; }
         std::vector<Entity> Restore(const CapturedSubtree &, Entity, Entity) override { return {}; }
         bool Destroy(Entity) override { return false; }
@@ -293,6 +297,16 @@ namespace
     }
 
     std::string FloatJson(float value) { return nlohmann::json(value).dump(); }
+
+    StableId StableIdIn(const LoadedScene &scene, Entity entity)
+    {
+        for (const auto &[id, candidate] : scene.mEntities)
+        {
+            if (candidate == entity)
+                return id;
+        }
+        return kNullStableId;
+    }
 }
 
 TEST_CASE("A field override is one History step and survives undo and redo", "[app][authoring]")
@@ -697,4 +711,46 @@ TEST_CASE("Undoing an override edit back to the save point leaves the scene save
     fixture.Bridge();
     CHECK_FALSE(fixture.mHistory.IsUnsaved(kSceneDocument));
     CHECK_FALSE(fixture.mCoordinator->ConsumeSceneMaintenance());
+}
+
+TEST_CASE("The authored view reports the instance root and its members", "[app][authoring]")
+{
+    Fixture fixture;
+    CHECK(fixture.mAdapter->InstanceRole(fixture.Member(SceneNodeAddress{ 1 })) == AuthoredInstanceRole::Root);
+    CHECK(fixture.mAdapter->InstanceRole(fixture.Member(SceneNodeAddress{ 2 })) == AuthoredInstanceRole::Member);
+
+    const Entity ordinary = CreateSceneEntity(fixture.mWorld, fixture.mScene);
+    CHECK(fixture.mAdapter->InstanceRole(ordinary) == AuthoredInstanceRole::Ordinary);
+    CHECK(fixture.mAdapter->InstanceRole(kNullEntity) == AuthoredInstanceRole::Ordinary);
+}
+
+TEST_CASE("A linked duplicate keeps the Prefab and remaps its own references", "[app][authoring]")
+{
+    Fixture fixture;
+    const SceneNodeAddress first{ 1 };
+    const SceneNodeAddress second{ 2 };
+    const StableId secondId = fixture.Binding(second);
+
+    REQUIRE(SetInstanceEntityRef(fixture.mWorld, fixture.mScene, fixture.mRoot, first,
+        "AppAuthoringTestData", "target", secondId));
+
+    const Entity copy = DuplicateSceneEntitySubtree(fixture.mWorld, fixture.mScene, fixture.Member(first));
+    REQUIRE(fixture.mWorld.IsAlive(copy));
+
+    const StableId copyRoot = StableIdIn(fixture.mScene, copy);
+    REQUIRE(copyRoot != kNullStableId);
+    REQUIRE(fixture.mScene.mInstances.contains(copyRoot));
+
+    const ScenePrefabInstance &copyRecord = fixture.mScene.mInstances.at(copyRoot);
+    CHECK(copyRecord.mPrefab == fixture.mScene.mInstances.at(fixture.mRoot).mPrefab);
+    CHECK(copyRecord.mBindings.at(second) != secondId);
+
+    const mir::SceneFieldPatch *target =
+        FindInstanceFieldPatch(copyRecord, first, "AppAuthoringTestData", "target");
+    REQUIRE(target != nullptr);
+    CHECK(target->mValue == nlohmann::json(copyRecord.mBindings.at(second)));
+
+    const Entity copiedMember = fixture.mScene.mEntities.at(copyRecord.mBindings.at(second));
+    CHECK(EntityField(fixture.mWorld, copy, DataOps(), "target") == copiedMember);
+    CHECK(EntityField(fixture.mWorld, fixture.Member(first), DataOps(), "target") == fixture.Member(second));
 }

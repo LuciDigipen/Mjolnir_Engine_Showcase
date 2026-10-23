@@ -31,6 +31,7 @@ namespace
     using mir::AuthoredComponentState;
     using mir::AuthoredEntry;
     using mir::AuthoredFieldState;
+    using mir::AuthoredInstanceRole;
     using mir::AuthoredKey;
     using mir::AuthoringWrite;
     using mir::CapturedSubtree;
@@ -112,6 +113,8 @@ namespace
 
         std::vector<std::string> RemovedComponents(Entity) override { return {}; }
 
+        AuthoredInstanceRole InstanceRole(Entity) override { return AuthoredInstanceRole::Ordinary; }
+
         std::string EncodeField(FieldKind kind, const void *bytes) override
         {
             if (kind == FieldKind::Float)
@@ -161,6 +164,7 @@ namespace
     public:
         Entity CreateEntity() override { return kNullEntity; }
         Entity Duplicate(Entity) override { return kNullEntity; }
+        Entity CopyAsOrdinaryObject(Entity) override { return kNullEntity; }
         CapturedSubtree Capture(Entity) override { return {}; }
         std::vector<Entity> Restore(const CapturedSubtree &, Entity, Entity) override { return {}; }
         bool Destroy(Entity) override { return false; }

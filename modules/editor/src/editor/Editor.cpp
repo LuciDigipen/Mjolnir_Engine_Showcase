@@ -966,7 +966,7 @@ namespace mir
             }
 
             if (ImGui::Begin("Hierarchy"))
-                mHistory.Submit(MakeEntityCommand(mHierarchyPanel.Draw(world)));
+                mHistory.Submit(MakeEntityCommand(mHierarchyPanel.Draw(world, mAuthoredEntities)));
             ImGui::End();
 
             if (ImGui::Begin("Inspector"))
