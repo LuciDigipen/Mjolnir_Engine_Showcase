@@ -46,7 +46,8 @@ namespace mir
         CreateFolder,
         Rename,
         Delete,
-        OpenInIde, // double-clicked a script file - mTargetPath is the file
+        OpenInIde,    // double-clicked a script file - mTargetPath is the file
+        OpenPrefab,   // double-clicked a Prefab - mTargetPath is the file
     };
 
     struct ContentBrowserAction

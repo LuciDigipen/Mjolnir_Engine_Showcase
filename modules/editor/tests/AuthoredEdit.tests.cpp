@@ -144,7 +144,7 @@ namespace
             return action;
         }
 
-        AuthoredAction CreateNode(Entity, std::size_t) override { return Refused(); }
+        AuthoredAction CreateNode(Entity, std::size_t, const mir::EntityPresetDesc *) override { return Refused(); }
         AuthoredAction DeleteNodes(std::span<const Entity>) override { return Refused(); }
         AuthoredAction ReparentNode(Entity, Entity, std::size_t) override { return Refused(); }
 

@@ -17,8 +17,10 @@
 #include <core/ecs/CommandBuffer.h>
 #include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/EngineMode.h>
+#include <core/ecs/EntityPresetRegistry.h>
 #include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/World.h>
+#include <core/ecs/components/Name.h>
 #include <core/ecs/components/Transform.h>
 #include <prefab/PrefabCoordinator.h>
 #include <prefab/PrefabFormat.h>
@@ -29,6 +31,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -88,6 +91,44 @@ namespace
             { "target", FieldKind::EntityRef },
         };
         return ComponentRegistry::Instance().RegisterRuntime("AppDocumentsTestData", fields);
+    }
+
+    void CreatePresetEntity(World &world, Entity entity)
+    {
+        mir::AddTransform(world, entity);
+        world.AddComponent<mir::Name>(entity, mir::MakeName("Preset Node"));
+
+        const ComponentOps &ops = DataOps();
+        alignas(16) std::byte data[64]{};
+        const float amount = 7.0f;
+        const float bonus = 4.0f;
+        ops.FindField("amount")->Write(data, &amount);
+        ops.FindField("bonus")->Write(data, &bonus);
+        ops.AddCopy(world, entity, data);
+    }
+
+    bool CanCreateNothing(const World &) { return false; }
+
+    const mir::EntityPresetDesc &TestPreset()
+    {
+        static const mir::EntityPresetDesc preset{ "Test/Preset", &CreatePresetEntity, nullptr };
+        static const bool registered = []
+            {
+                mir::EntityPresetRegistry::Instance().Register(preset.mName, preset.mCreate, preset.mCanCreate);
+                return true;
+            }();
+        (void)registered;
+        return preset;
+    }
+
+    const PrefabComponentInstance *FindComponent(const PrefabNode &node, std::string_view type)
+    {
+        for (const PrefabComponentInstance &component : node.mComponents)
+        {
+            if (component.mType == type)
+                return &component;
+        }
+        return nullptr;
     }
 
     class NoSceneOps final : public mir::ISceneOps
@@ -449,6 +490,125 @@ TEST_CASE("Node create, delete and reparent are one undoable command each", "[ap
     const AuthoredAction rootDelete = fixture.mAdapter->DeleteNodes(std::vector<Entity>{ root });
     CHECK_FALSE(rootDelete.mAllowed);
     CHECK(fixture.mDocuments->PreviewWorld(fixture.mDocument.mId)->IsAlive(root));
+}
+
+TEST_CASE("A preset creates its document node as one undoable step", "[app][prefabs]")
+{
+    Fixture fixture;
+    REQUIRE(fixture.mDocuments->Open(fixture.mDocument.mId));
+
+    const AuthoredAction created =
+        fixture.mAdapter->CreateNode(fixture.PreviewEntity(SceneNodeAddress{ 1 }), 0, &TestPreset());
+    REQUIRE(created.mAllowed);
+    CHECK(created.mName == "Create Preset");
+
+    fixture.Run(MakeAuthoredCommand(created.mName, created.mEntries));
+    CHECK(fixture.mHistory.StepCount() == 1);
+    fixture.Commit();
+
+    const PrefabDocument *document = fixture.mCoordinator->Registry().Find(fixture.mDocument.mId);
+    REQUIRE(document != nullptr);
+    REQUIRE(document->mNodes.size() == 5);
+    const PrefabNode &node = document->mNodes[1];
+    const mir::PrefabNodeId createdId = node.mId;
+    CHECK(node.mParent == 1);
+    CHECK(node.mKind == mir::PrefabNodeKind::Entity);
+
+    const PrefabComponentInstance *data = FindComponent(node, "AppDocumentsTestData");
+    REQUIRE(data != nullptr);
+    CHECK(data->mFields.at("amount") == 7.0);
+    CHECK(data->mFields.at("bonus") == 4.0);
+    CHECK(data->mFields.at("target").is_null());
+    const PrefabComponentInstance *name = FindComponent(node, "Name");
+    REQUIRE(name != nullptr);
+    CHECK(name->mFields.at("name") == "Preset Node");
+    const PrefabComponentInstance *worldTransform = FindComponent(node, "WorldTransform");
+    REQUIRE(worldTransform != nullptr);
+    CHECK(worldTransform->mFields.empty());
+
+    World *previewWorld = fixture.mDocuments->PreviewWorld(fixture.mDocument.mId);
+    REQUIRE(previewWorld != nullptr);
+    const Entity createdEntity = fixture.PreviewEntity(SceneNodeAddress{ createdId });
+    REQUIRE(DataOps().Has(*previewWorld, createdEntity));
+    float amount = 0.0f;
+    DataOps().FindField("amount")->Read(DataOps().GetComponent(*previewWorld, createdEntity), &amount);
+    CHECK(amount == 7.0f);
+
+    fixture.Undo();
+    fixture.Commit();
+    document = fixture.mCoordinator->Registry().Find(fixture.mDocument.mId);
+    REQUIRE(document != nullptr);
+    CHECK(document->mNodes.size() == 4);
+    CHECK(fixture.mHistory.StepCount() == 1);
+
+    fixture.Redo();
+    fixture.Commit();
+    document = fixture.mCoordinator->Registry().Find(fixture.mDocument.mId);
+    REQUIRE(document != nullptr);
+    CHECK(document->mNodes.size() == 5);
+    CHECK(fixture.PreviewEntity(SceneNodeAddress{ createdId }) != kNullEntity);
+}
+
+TEST_CASE("A preset that refuses the active World creates no node", "[app][prefabs]")
+{
+    Fixture fixture;
+    REQUIRE(fixture.mDocuments->Open(fixture.mDocument.mId));
+    const mir::EntityPresetDesc refused{ "Test/Refused", &CreatePresetEntity, &CanCreateNothing };
+
+    const AuthoredAction created =
+        fixture.mAdapter->CreateNode(fixture.PreviewEntity(SceneNodeAddress{ 1 }), 0, &refused);
+    CHECK_FALSE(created.mAllowed);
+    CHECK(created.mEntries.empty());
+    CHECK(fixture.mCoordinator->Registry().Find(fixture.mDocument.mId)->mNodes.size() == 4);
+}
+
+TEST_CASE("One document is active and the Scene tab clears it", "[app][prefabs]")
+{
+    Fixture fixture;
+    PrefabDocument second = Document();
+    second.mId = mir::GeneratePrefabId();
+    REQUIRE(fixture.mCoordinator->Registry().SetDocument(second));
+
+    REQUIRE(fixture.mDocuments->Open(fixture.mDocument.mId));
+    REQUIRE(fixture.mDocuments->Open(second.mId));
+    CHECK(fixture.mDocuments->ActiveDocument() == second.mId);
+    CHECK(fixture.mDocuments->OpenDocuments() == std::vector<PrefabId>{ fixture.mDocument.mId, second.mId });
+
+    fixture.mDocuments->ActivateScene();
+    CHECK(fixture.mDocuments->ActiveDocument() == std::nullopt);
+    CHECK_FALSE(fixture.mAdapter->ActiveDocument().has_value());
+    CHECK(fixture.mDocuments->IsOpen(fixture.mDocument.mId));
+    CHECK(fixture.mDocuments->IsOpen(second.mId));
+
+    REQUIRE(fixture.mDocuments->Open(fixture.mDocument.mId));
+    CHECK(fixture.mDocuments->ActiveDocument() == fixture.mDocument.mId);
+}
+
+TEST_CASE("A tab is labelled by its file or a short id before it has one", "[app][prefabs]")
+{
+    Fixture fixture;
+    PrefabDocument second = Document();
+    second.mId = mir::GeneratePrefabId();
+    REQUIRE(fixture.mCoordinator->Registry().SetDocument(second));
+
+    TempDir directory;
+    REQUIRE(mir::WritePrefabFile(directory.mPath / "Prefab One.prefab", fixture.mDocument));
+    CHECK(fixture.mCoordinator->Registry().Scan(directory.mPath).empty());
+
+    CHECK(fixture.mDocuments->LabelOf(fixture.mDocument.mId) == "Prefab One");
+    CHECK(fixture.mDocuments->LabelOf(second.mId) == ToString(second.mId).substr(0, 8));
+}
+
+TEST_CASE("A content path resolves to its prefab", "[app][prefabs]")
+{
+    Fixture fixture;
+    TempDir directory;
+    const std::filesystem::path file = directory.mPath / (ToString(fixture.mDocument.mId) + ".prefab");
+    REQUIRE(mir::WritePrefabFile(file, fixture.mDocument));
+    CHECK(fixture.mCoordinator->Registry().Scan(directory.mPath).empty());
+
+    CHECK(fixture.mDocuments->FindByPath(file) == fixture.mDocument.mId);
+    CHECK_FALSE(fixture.mDocuments->FindByPath(directory.mPath / "missing.prefab").has_value());
 }
 
 TEST_CASE("Save Prefab writes its file and clears only its unsaved state", "[app][prefabs]")

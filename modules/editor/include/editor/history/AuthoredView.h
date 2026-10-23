@@ -23,6 +23,8 @@
 
 namespace mir
 {
+    struct EntityPresetDesc;
+
     enum class AuthoredFieldState : uint8_t
     {
         Inherited,
@@ -68,6 +70,9 @@ namespace mir
 
         virtual AuthoredInstanceRole InstanceRole(Entity entity) = 0;
 
+        // Every live entity a Prefab occurrence binds in the current context.
+        virtual std::vector<Entity> PrefabLinkedEntities() { return {}; }
+
         // The field's value in the backend's encoding.
         virtual std::string EncodeField(FieldKind kind, const void *bytes) = 0;
 
@@ -76,7 +81,9 @@ namespace mir
         virtual AuthoredAction Apply(const AuthoredKey &key) = 0;
 
         // Node edits on the active document; a null parent means the document root.
-        virtual AuthoredAction CreateNode(Entity parent, std::size_t siblingIndex) = 0;
+        // A preset fills the new node with the components it creates on a fresh entity.
+        virtual AuthoredAction CreateNode(Entity parent, std::size_t siblingIndex,
+            const EntityPresetDesc *preset = nullptr) = 0;
         virtual AuthoredAction DeleteNodes(std::span<const Entity> nodes) = 0;
         virtual AuthoredAction ReparentNode(Entity node, Entity parent, std::size_t siblingIndex) = 0;
 

@@ -8,6 +8,8 @@
  */
 #include "PrefabAuthoring.h"
 
+#include <core/ecs/EntityPresetRegistry.h>
+
 #include <utility>
 
 namespace mir
@@ -171,6 +173,11 @@ namespace mir
         return AuthoredInstanceRole::Ordinary;
     }
 
+    std::vector<Entity> PrefabAuthoringAdapter::PrefabLinkedEntities()
+    {
+        return mAuthoring.PrefabLinkedEntities();
+    }
+
     std::string PrefabAuthoringAdapter::EncodeField(FieldKind kind, const void *bytes)
     {
         return mAuthoring.EncodeField(kind, bytes);
@@ -186,12 +193,17 @@ namespace mir
         return ToEditorAction(mAuthoring.Apply(ToPrefabKey(key)), "Apply to Prefab");
     }
 
-    AuthoredAction PrefabAuthoringAdapter::CreateNode(Entity parent, std::size_t siblingIndex)
+    AuthoredAction PrefabAuthoringAdapter::CreateNode(Entity parent, std::size_t siblingIndex,
+        const EntityPresetDesc *preset)
     {
         const std::optional<PrefabNodeId> parentNode = mAuthoring.NodeIdOf(parent);
         if (!parentNode)
             return RefusedAction("Create Node", "the parent is not part of the active prefab document");
-        return ToEditorAction(mAuthoring.CreateNode(*parentNode, siblingIndex), "Create Node");
+
+        std::string name = "Create Node";
+        if (preset != nullptr)
+            name = "Create " + std::string(preset->mName.substr(preset->mName.find('/') + 1));
+        return ToEditorAction(mAuthoring.CreateNode(*parentNode, siblingIndex, preset), std::move(name));
     }
 
     AuthoredAction PrefabAuthoringAdapter::DeleteNodes(std::span<const Entity> nodes)

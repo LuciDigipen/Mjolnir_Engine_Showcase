@@ -39,13 +39,15 @@ namespace mir
         std::vector<std::string> RemovedComponents(Entity entity) override;
 
         AuthoredInstanceRole InstanceRole(Entity entity) override;
+        std::vector<Entity> PrefabLinkedEntities() override;
 
         std::string EncodeField(FieldKind kind, const void *bytes) override;
 
         AuthoredAction Revert(const AuthoredKey &key) override;
         AuthoredAction Apply(const AuthoredKey &key) override;
 
-        AuthoredAction CreateNode(Entity parent, std::size_t siblingIndex) override;
+        AuthoredAction CreateNode(Entity parent, std::size_t siblingIndex,
+            const EntityPresetDesc *preset = nullptr) override;
         AuthoredAction DeleteNodes(std::span<const Entity> nodes) override;
         AuthoredAction ReparentNode(Entity node, Entity parent, std::size_t siblingIndex) override;
 

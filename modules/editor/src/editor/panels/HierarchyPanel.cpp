@@ -17,6 +17,8 @@
 #include <editor/Selection.h>
 #include <editor/history/AuthoredView.h>
 
+#include <editortheme/EditorTheme.h>
+
 #include <IconsFontAwesome6.h>
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -34,7 +36,8 @@ namespace mir
 {
     namespace
     {
-        void DrawEntityMenu(Selection &selection, Entity entity, IAuthoredEntities *authored, EntityAction &action)
+        void DrawEntityMenu(Selection &selection, Entity entity, IAuthoredEntities *authored, bool authoredDocument,
+            EntityAction &action)
         {
             if (!ImGui::BeginPopupContextItem())
                 return;
@@ -44,10 +47,13 @@ namespace mir
 
             const AuthoredInstanceRole role =
                 authored != nullptr ? authored->InstanceRole(entity) : AuthoredInstanceRole::Ordinary;
-            if (role != AuthoredInstanceRole::Member && ImGui::MenuItem("Duplicate", "Ctrl+D"))
-                action = { EntityActionKind::Duplicate, nullptr, entity };
-            if (role != AuthoredInstanceRole::Ordinary && ImGui::MenuItem("Copy as Ordinary Object"))
-                action = { EntityActionKind::CopyAsOrdinaryObject, nullptr, entity };
+            if (!authoredDocument)
+            {
+                if (role != AuthoredInstanceRole::Member && ImGui::MenuItem("Duplicate", "Ctrl+D"))
+                    action = { EntityActionKind::Duplicate, nullptr, entity };
+                if (role != AuthoredInstanceRole::Ordinary && ImGui::MenuItem("Copy as Ordinary Object"))
+                    action = { EntityActionKind::CopyAsOrdinaryObject, nullptr, entity };
+            }
             if (ImGui::MenuItem("Delete", "Del"))
                 action = { EntityActionKind::Delete, nullptr, entity };
 
@@ -83,6 +89,8 @@ namespace mir
             const HierarchyIndex *index;
             Selection &selection;
             IAuthoredEntities *authored;
+            bool authoredDocument;
+            const std::unordered_set<uint64_t> &prefabLinked;
             EntityAction &action;
             Entity &deferredClick;
             std::vector<Entity> &dragged;
@@ -329,13 +337,10 @@ namespace mir
             else if (hasChildren && context.filtered != nullptr)
                 ImGui::SetNextItemOpen(true, ImGuiCond_Once);
 
-            const int selectionColors = widgets::PushRowSelectionColors(selection.Contains(entity));
-            const Name *name = world.GetComponent<Name>(entity);
-            const bool open = name != nullptr
-                ? ImGui::TreeNodeEx(id, flags, ICON_FA_CUBE "  %s", name->mValue)
-                : ImGui::TreeNodeEx(id, flags, ICON_FA_CUBE "  Entity %u", entity.mIndex);
-            ImGui::PopStyleColor(selectionColors);
+            const bool prefabLinked = context.prefabLinked.contains(PackEntity(entity));
 
+            const int selectionColors = widgets::PushRowSelectionColors(selection.Contains(entity));
+            const bool open = ImGui::TreeNodeEx(id, flags, "%s", "");
             context.visibleRows.push_back(entity);
             if (entity == context.scrollTo)
                 ImGui::ScrollToItem(ImGuiScrollFlags_KeepVisibleEdgeY);
@@ -344,7 +349,20 @@ namespace mir
             DragSourceForRow(context, entity);
             DropTargetForRow(context, entity, hasChildren && !open);
 
-            DrawEntityMenu(selection, entity, context.authored, context.action);
+            DrawEntityMenu(selection, entity, context.authored, context.authoredDocument, context.action);
+
+            ImGui::SameLine(0.0f, 0.0f);
+            if (prefabLinked)
+                ImGui::PushStyleColor(ImGuiCol_Text, EditorTheme::Color(ThemeColor::Prefab));
+            ImGui::TextUnformatted(ICON_FA_CUBE);
+            if (prefabLinked)
+                ImGui::PopStyleColor();
+            ImGui::SameLine(0.0f, 8.0f);
+            if (const Name *name = world.GetComponent<Name>(entity))
+                ImGui::TextUnformatted(name->mValue);
+            else
+                ImGui::Text("Entity %u", entity.mIndex);
+            ImGui::PopStyleColor(selectionColors);
 
             if (hasChildren && open)
             {
@@ -385,7 +403,7 @@ namespace mir
         }
     }
 
-    EntityAction HierarchyPanel::Draw(World &world, IAuthoredEntities *authored)
+    EntityAction HierarchyPanel::Draw(World &world, IAuthoredEntities *authored, bool authoredDocument)
     {
         EntityAction action;
 
@@ -446,10 +464,19 @@ namespace mir
         if (filtering)
             ImGui::PushID(mSearchScope);
 
+        std::unordered_set<uint64_t> prefabLinked;
+        if (authored != nullptr)
+        {
+            const std::vector<Entity> linked = authored->PrefabLinkedEntities();
+            prefabLinked.reserve(linked.size());
+            for (const Entity entity : linked)
+                prefabLinked.insert(PackEntity(entity));
+        }
+
         DropPreview preview;
-        DrawContext context{ world, index, selection, authored, action, mDeferredClick, mDragged, mDropHint, preview,
-            mReveal, openRows, scrollTo, mHoverRow, mHoverStart, kNullEntity, mOpenedDuringDrag, mDropDelivered,
-            filtering ? &mFiltered : nullptr };
+        DrawContext context{ world, index, selection, authored, authoredDocument, prefabLinked, action, mDeferredClick,
+            mDragged, mDropHint, preview, mReveal, openRows, scrollTo, mHoverRow, mHoverStart, kNullEntity,
+            mOpenedDuringDrag, mDropDelivered, filtering ? &mFiltered : nullptr };
 
         if (index != nullptr)
         {
@@ -503,7 +530,7 @@ namespace mir
         {
             if (ImGui::IsKeyPressed(ImGuiKey_Delete, false))
                 action = { EntityActionKind::Delete, nullptr, primary };
-            else if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D, false))
+            else if (!authoredDocument && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D, false))
                 action = { EntityActionKind::Duplicate, nullptr, primary };
         }
 
@@ -515,6 +542,7 @@ namespace mir
             {
                 if (ImGui::MenuItem("New"))
                     action = { EntityActionKind::Create, nullptr };
+
                 ImGui::Separator();
 
                 for (const MenuTop &top : BuildCreateMenu(EntityPresetRegistry::Instance().All()))

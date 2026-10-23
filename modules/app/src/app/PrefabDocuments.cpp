@@ -26,11 +26,17 @@
 #include <renderer/ViewDrawSource.h>
 #include <scene/SceneAsset.h>
 
+#include <cstddef>
 #include <utility>
 #include <vector>
 
 namespace mir
 {
+    namespace
+    {
+        constexpr std::size_t kShortIdLength = 8;
+    }
+
     struct PrefabDocuments::Document
     {
         World mWorld;
@@ -118,6 +124,7 @@ namespace mir
         preview->mScheduler.Start(context);
 
         mDocuments.emplace(id, std::move(preview));
+        mOpenOrder.push_back(id);
         mActive = id;
         mAuthoring.SetActiveDocument(id);
         return true;
@@ -140,6 +147,7 @@ namespace mir
         document.mWorld.Resource<ModelMorphOverrides>().instances.clear();
 
         mDocuments.erase(open);
+        std::erase(mOpenOrder, id);
         if (mActive == id)
         {
             mActive.reset();
@@ -151,6 +159,34 @@ namespace mir
     bool PrefabDocuments::IsOpen(PrefabId id) const
     {
         return mDocuments.contains(id);
+    }
+
+    void PrefabDocuments::ActivateScene()
+    {
+        mActive.reset();
+        mAuthoring.SetActiveDocument(std::nullopt);
+    }
+
+    std::vector<PrefabId> PrefabDocuments::OpenDocuments() const
+    {
+        return mOpenOrder;
+    }
+
+    std::string PrefabDocuments::LabelOf(PrefabId id) const
+    {
+        if (const std::optional<std::filesystem::path> path = mCoordinator.Registry().PathOf(id))
+        {
+            const std::u8string stem = path->stem().u8string();
+            return std::string(stem.begin(), stem.end());
+        }
+
+        const std::string uuid = ToString(id);
+        return uuid.substr(0, kShortIdLength);
+    }
+
+    std::optional<PrefabId> PrefabDocuments::FindByPath(const std::filesystem::path &path) const
+    {
+        return mCoordinator.Registry().IdAtPath(path);
     }
 
     World *PrefabDocuments::PreviewWorld(PrefabId id) const

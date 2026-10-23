@@ -92,6 +92,25 @@ namespace mir
             }
             return project.mRootDir / "assets" / std::string(kPrefabDirectoryName);
         }
+
+    #if MIR_WITH_EDITOR
+        PrefabDocuments::PrefabUnsaved UnsavedPrefabs(const Editor &editor, const PrefabCoordinator &prefabs)
+        {
+            return [editor = &editor, prefabs = &prefabs](PrefabId id)
+                {
+                    return !prefabs->Registry().PathOf(id).has_value() ||
+                        editor->IsDocumentUnsaved(DocumentId{ id.mHigh, id.mLow });
+                };
+        }
+
+        PrefabDocuments::PrefabSaved MarkSavedPrefabs(Editor &editor)
+        {
+            return [editor = &editor](PrefabId id)
+                {
+                    editor->SetDocumentUnsaved(DocumentId{ id.mHigh, id.mLow }, false);
+                };
+        }
+    #endif
     }
 
     // Never null; does nothing until Initialize binds it.
@@ -353,16 +372,8 @@ namespace mir
     #if MIR_WITH_EDITOR
         if (mPrefabDocuments != nullptr && prefabs != nullptr)
         {
-            const auto unsaved = [this, prefabs](PrefabId id)
-                {
-                    return !prefabs->Registry().PathOf(id).has_value() ||
-                        mEditor.IsDocumentUnsaved(DocumentId{ id.mHigh, id.mLow });
-                };
-            const auto markSaved = [this](PrefabId id)
-                {
-                    mEditor.SetDocumentUnsaved(DocumentId{ id.mHigh, id.mLow }, false);
-                };
-            if (!mPrefabDocuments->SaveScene(mScene, unsaved, markSaved, writeScene))
+            if (!mPrefabDocuments->SaveScene(mScene, UnsavedPrefabs(mEditor, *prefabs), MarkSavedPrefabs(mEditor),
+                    writeScene))
                 return false;
         }
         else if (!writeScene())
@@ -377,6 +388,34 @@ namespace mir
         mScene.mDirty = false;
         SetSceneUnsaved(false);
         return true;
+    }
+
+    bool App::SaveActiveDocument()
+    {
+        if (IsPlaying(mWorld))
+        {
+            MIR_LOG_WARN("App::SaveActiveDocument: ignored while Play is running (Stop first)");
+            return false;
+        }
+
+    #if MIR_WITH_EDITOR
+        if (mPrefabDocuments != nullptr)
+        {
+            if (const std::optional<PrefabId> active = mPrefabDocuments->ActiveDocument())
+            {
+                PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>();
+                if (prefabs == nullptr)
+                {
+                    MIR_LOG_ERROR("App::SaveActiveDocument: the prefab registry is missing");
+                    return false;
+                }
+                return mPrefabDocuments->SavePrefab(*active, UnsavedPrefabs(mEditor, *prefabs),
+                    MarkSavedPrefabs(mEditor));
+            }
+        }
+    #endif
+
+        return SaveScene();
     }
 
     bool App::LoadScene()
@@ -411,6 +450,16 @@ namespace mir
     {
         if (IsPlaying(mWorld))
             return;
+
+    #if MIR_WITH_EDITOR
+        if (mPrefabDocuments != nullptr)
+        {
+            const std::optional<PrefabId> active = mPrefabDocuments->ActiveDocument();
+            mPrefabBeforePlay = active ? std::optional<DocumentId>(DocumentId{ active->mHigh, active->mLow })
+                                       : std::nullopt;
+            mPrefabDocuments->ActivateScene();
+        }
+    #endif
 
         // Play pins the terrain releases present on entry
         mTerrain->Refresh(0.0f, true);
@@ -458,6 +507,16 @@ namespace mir
 
         SetEngineMode(mWorld, EngineMode::Edit);
         SetPlayState(mWorld, PlayState::Running);
+
+    #if MIR_WITH_EDITOR
+        if (mPrefabBeforePlay.has_value() && mPrefabDocuments != nullptr)
+        {
+            const DocumentId document = *mPrefabBeforePlay;
+            if (!mPrefabDocuments->Open(PrefabId{ document.mHigh, document.mLow }))
+                MIR_LOG_WARN("App::StopScene: could not reopen the prefab document");
+        }
+        mPrefabBeforePlay.reset();
+    #endif
 
         // Starts checking a release published during Play
         mTerrain->Refresh(0.0f, true);
@@ -644,10 +703,12 @@ namespace mir
             if (mWindow->Width() != 0 && mWindow->Height() != 0)
             {
             #if MIR_WITH_EDITOR
+                World *viewWorld = ActivePreviewWorld();
                 const EditorActions actions = mEditor.DrawLayout(
                     mDesc.mEnableEditorLayout, mWorld.Resource<InputMap>(), mWorld.Resource<RenderSettings>(),
                     mWorld.Resource<PostProcessingSettings>(), mWorld.Resource<EngineModeState>(), mProjectMenu,
-                    mProject.mDir, mWorld, mAssetImport.View(), mRenderer, mContentBrowser.View());
+                    mProject.mDir, viewWorld != nullptr ? *viewWorld : mWorld, mWorld, MakeEditorDocuments(),
+                    mAssetImport.View(), mRenderer, mContentBrowser.View());
             #endif
 
                 mGameUI.BeginFrame(GameUIArea(), mWorld.Resource<InputState>(), mWorld.Resource<InputMap>(),
@@ -672,7 +733,8 @@ namespace mir
             mRenderSystem->SetViewportRect(0, mDesc.mEnableEditorLayout ? mEditor.SceneViewportRect() : VkRect2D{});
 
             // Only feed EditorCamera input in Edit.
-            if (IsEditing(mWorld) && mDesc.mEnableEditorLayout)
+            const bool editorView = IsEditing(mWorld) && mDesc.mEnableEditorLayout;
+            if (editorView)
             {
                 mEditor.UpdateCamera(dt);
                 const EditorCamera &camera = mEditor.SceneCamera();
@@ -682,6 +744,7 @@ namespace mir
             {
                 mRenderSystem->SetViewportCamera(0, kNullEntity);
             }
+            mRenderSystem->SetSourceWorld(editorView ? ActivePreviewWorld() : nullptr);
 
             mWorld.Resource<InputState>().SetUiCapture(mEditor.WantsCaptureKeyboard(), mEditor.WantsCaptureMouse());
         #else
@@ -748,7 +811,7 @@ namespace mir
             NewScene();
             break;
         case SceneMenuAction::Save:
-            SaveScene();
+            SaveActiveDocument();
             break;
         case SceneMenuAction::Load:
             LoadScene();
@@ -794,6 +857,11 @@ namespace mir
         {
             OpenInExternalIde(actions.mContentBrowser.mTargetPath);
         }
+        else if (actions.mContentBrowser.mKind == ContentBrowserActionKind::OpenPrefab)
+        {
+            if (IsEditing(mWorld))
+                OpenPrefabAsset(actions.mContentBrowser.mTargetPath);
+        }
         else
         {
             bool contentBrowserActionAccepted = true;
@@ -831,6 +899,89 @@ namespace mir
         {
             RequestOpenProject("games/" + actions.mCreateProjectName);
         }
+
+        if (mPrefabDocuments != nullptr && IsEditing(mWorld))
+        {
+            const DocumentId document = actions.mDocument.mDocument;
+            const PrefabId prefab{ document.mHigh, document.mLow };
+            switch (actions.mDocument.mKind)
+            {
+            case EditorDocumentActionKind::Activate:
+                if (document == kSceneDocument)
+                    mPrefabDocuments->ActivateScene();
+                else
+                    mPrefabDocuments->Open(prefab);
+                break;
+            case EditorDocumentActionKind::Close:
+                if (document != kSceneDocument)
+                    mPrefabDocuments->Close(prefab);
+                break;
+            case EditorDocumentActionKind::None:
+                break;
+            }
+        }
+
+        if (actions.mSaveActiveDocument)
+            SaveActiveDocument();
+    }
+
+    void App::OpenPrefabAsset(const std::string &relativePath)
+    {
+        if (mPrefabDocuments == nullptr)
+        {
+            MIR_LOG_ERROR("Content browser: no Prefab documents are available for '{}'", relativePath);
+            return;
+        }
+
+        const std::optional<PrefabId> id = mPrefabDocuments->FindByPath(mProject.mRootDir / relativePath);
+        if (!id.has_value())
+        {
+            MIR_LOG_ERROR("Content browser: '{}' is not a registered Prefab", relativePath);
+            mContentBrowser.Reject(relativePath, "not a registered Prefab");
+            return;
+        }
+
+        if (!mPrefabDocuments->Open(*id))
+        {
+            MIR_LOG_ERROR("Content browser: could not open '{}'", relativePath);
+            mContentBrowser.Reject(relativePath, "could not open this Prefab");
+        }
+    }
+
+    World *App::ActivePreviewWorld()
+    {
+        if (IsEditing(mWorld) && mPrefabDocuments != nullptr)
+        {
+            if (const std::optional<PrefabId> active = mPrefabDocuments->ActiveDocument())
+                return mPrefabDocuments->PreviewWorld(*active);
+        }
+        return nullptr;
+    }
+
+    EditorDocuments App::MakeEditorDocuments()
+    {
+        EditorDocuments documents;
+        documents.mTabs.push_back(
+            EditorDocumentTab{ kSceneDocument, mScene.mName, mEditor.IsSceneUnsaved(), false });
+        documents.mActive = kSceneDocument;
+        documents.mEnabled = IsEditing(mWorld);
+
+        if (mPrefabDocuments != nullptr)
+        {
+            const PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>();
+            for (const PrefabId id : mPrefabDocuments->OpenDocuments())
+            {
+                const DocumentId document{ id.mHigh, id.mLow };
+                const bool unsaved = prefabs == nullptr || !prefabs->Registry().PathOf(id).has_value() ||
+                    mEditor.IsDocumentUnsaved(document);
+                documents.mTabs.push_back(
+                    EditorDocumentTab{ document, mPrefabDocuments->LabelOf(id), unsaved, true });
+            }
+
+            if (const std::optional<PrefabId> active = mPrefabDocuments->ActiveDocument())
+                documents.mActive = DocumentId{ active->mHigh, active->mLow };
+        }
+        return documents;
     }
 
     void App::ApplyImportedAssets()

@@ -25,6 +25,7 @@
 namespace mir
 {
     class World;
+    struct EntityPresetDesc;
 
     struct PrefabAuthoredKey
     {
@@ -77,6 +78,9 @@ namespace mir
 
         PrefabInstanceRole InstanceRole(Entity entity) const;
 
+        // Every live bound entity: all of them in the scene, a preview's nested occurrences only.
+        std::vector<Entity> PrefabLinkedEntities() const;
+
         std::optional<PrefabAuthoredKey> FieldKey(Entity entity, std::string_view component,
             std::string_view field) const;
         std::optional<PrefabAuthoredKey> ComponentKey(Entity entity, std::string_view component) const;
@@ -98,7 +102,9 @@ namespace mir
         std::optional<PrefabNodeId> NodeIdOf(Entity entity) const;
 
         // One command each, on the active document; the editor wraps the entries in History.
-        PrefabAuthoredAction CreateNode(PrefabNodeId parent, std::size_t siblingIndex);
+        // A preset fills the new node with the components it creates on a fresh entity.
+        PrefabAuthoredAction CreateNode(PrefabNodeId parent, std::size_t siblingIndex,
+            const EntityPresetDesc *preset = nullptr);
         PrefabAuthoredAction DeleteNodes(std::span<const PrefabNodeId> nodes);
         PrefabAuthoredAction ReparentNode(PrefabNodeId node, PrefabNodeId parent, std::size_t siblingIndex);
 

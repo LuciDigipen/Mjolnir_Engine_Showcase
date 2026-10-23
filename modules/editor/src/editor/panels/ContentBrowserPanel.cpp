@@ -62,6 +62,12 @@ namespace mir
             return extension == ".lua" || extension == ".json";
         }
 
+        bool IsPrefabFile(const std::string &name)
+        {
+            const auto dot = name.find_last_of('.');
+            return dot != std::string::npos && Lowered(name.substr(dot)) == ".prefab";
+        }
+
         std::string FormatSize(uint64_t bytes)
         {
             constexpr const char *kUnits[] = { "B", "KB", "MB", "GB", "TB" };
@@ -282,6 +288,11 @@ namespace mir
                     {
                         if (entry.mKind == ContentBrowserEntryKind::Directory)
                             mCurrentFolder = entry.mRelativePath;
+                        else if (IsPrefabFile(entry.mName))
+                        {
+                            action.mKind = ContentBrowserActionKind::OpenPrefab;
+                            action.mTargetPath = entry.mRelativePath;
+                        }
                         else if (IsTextFile(entry.mName))
                         {
                             action.mKind = ContentBrowserActionKind::OpenInIde;

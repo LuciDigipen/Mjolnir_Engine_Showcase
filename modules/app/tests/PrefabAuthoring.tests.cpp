@@ -31,6 +31,7 @@
 
 #include <glm/vec3.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -722,6 +723,22 @@ TEST_CASE("The authored view reports the instance root and its members", "[app][
     const Entity ordinary = CreateSceneEntity(fixture.mWorld, fixture.mScene);
     CHECK(fixture.mAdapter->InstanceRole(ordinary) == AuthoredInstanceRole::Ordinary);
     CHECK(fixture.mAdapter->InstanceRole(kNullEntity) == AuthoredInstanceRole::Ordinary);
+}
+
+TEST_CASE("The authored view lists every scene entity a Prefab binds", "[app][authoring]")
+{
+    Fixture fixture;
+    const std::vector<Entity> linked = fixture.mAdapter->PrefabLinkedEntities();
+    const auto contains = [&](Entity entity)
+        {
+            return std::find(linked.begin(), linked.end(), entity) != linked.end();
+        };
+    CHECK(contains(fixture.Member(SceneNodeAddress{ 1 })));
+    CHECK(contains(fixture.Member(SceneNodeAddress{ 2 })));
+    CHECK(linked.size() == 4);
+
+    const Entity ordinary = CreateSceneEntity(fixture.mWorld, fixture.mScene);
+    CHECK_FALSE(contains(ordinary));
 }
 
 TEST_CASE("A linked duplicate keeps the Prefab and remaps its own references", "[app][authoring]")

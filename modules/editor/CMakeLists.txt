@@ -36,6 +36,7 @@ target_sources(engine_editor PRIVATE
     src/editor/history/AuthoredCommand.cpp
     src/editor/history/AuthoredEdit.cpp
     src/editor/history/ComponentCommands.cpp
+    src/editor/history/DocumentNodeCommands.cpp
     src/editor/history/EntityCommands.cpp
     src/editor/history/EntityIds.cpp
     src/editor/history/History.cpp

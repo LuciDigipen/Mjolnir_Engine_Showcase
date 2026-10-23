@@ -193,11 +193,19 @@ namespace mir
         //the game UI's area: the editor's scene viewport, or the whole window
         UIRect GameUIArea() const;
 
+        // Save Scene on the Scene tab, Save Prefab on a Prefab tab
+        bool SaveActiveDocument();
+
     #if MIR_WITH_EDITOR
             //what the editor's menus, toolbar and panels asked for this frame
         void ApplyEditorActions(const EditorActions &actions);
         void ApplyImportedAssets();
         void OpenInExternalIde(const std::string &relativePath);
+        void OpenPrefabAsset(const std::string &relativePath);
+
+        // The World the scene viewport and the editing panels draw and edit.
+        World *ActivePreviewWorld();
+        EditorDocuments MakeEditorDocuments();
     #endif
 
         SplashScreen mSplash;
@@ -236,6 +244,7 @@ namespace mir
     #if MIR_WITH_EDITOR
         // Before mScene and mWorld, after the editor stopped using them
         std::unique_ptr<PrefabDocuments> mPrefabDocuments;
+        std::optional<DocumentId> mPrefabBeforePlay;
     #endif
 
         // Handles only, freed with the renderer and the World

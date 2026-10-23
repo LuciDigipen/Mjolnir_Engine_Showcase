@@ -12,11 +12,13 @@
 #include <prefab/PrefabId.h>
 
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace mir
 {
@@ -48,6 +50,17 @@ namespace mir
         bool Close(PrefabId id);
         bool IsOpen(PrefabId id) const;
 
+        // The Scene tab: no document is active, so edits author the bound scene.
+        void ActivateScene();
+
+        // Open documents in tab order (by id).
+        std::vector<PrefabId> OpenDocuments() const;
+
+        // The file stem, or a short UUID before the document has a file.
+        std::string LabelOf(PrefabId id) const;
+
+        std::optional<PrefabId> FindByPath(const std::filesystem::path &path) const;
+
         std::optional<PrefabId> ActiveDocument() const { return mActive; }
         World *PreviewWorld(PrefabId id) const;
         const LoadedScene *PreviewScene(PrefabId id) const;
@@ -72,6 +85,8 @@ namespace mir
         PrefabCoordinator &mCoordinator;
         PrefabAuthoringAdapter &mAuthoring;
         std::map<PrefabId, std::unique_ptr<Document>> mDocuments;
+        // Tab order: the order the documents were opened
+        std::vector<PrefabId> mOpenOrder;
         std::optional<PrefabId> mActive;
         VulkanRenderer *mRenderer = nullptr;
         AssetCache *mAssets = nullptr;
