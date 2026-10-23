@@ -282,7 +282,8 @@ namespace
 
             mDocument = Document();
             REQUIRE(mCoordinator->Registry().SetDocument(mDocument));
-            REQUIRE_FALSE(HasPrefabErrors(mCoordinator->Cache().Compile(mDocument)));
+            REQUIRE_FALSE(HasPrefabErrors(
+                mCoordinator->Cache().Compile(mDocument, mir::RegistryLookup(mCoordinator->Registry()))));
 
             mScene = NewScene("test");
             const std::shared_ptr<const CompiledPrefab> prefab = mCoordinator->Cache().Find(mDocument.mId);
@@ -1037,7 +1038,8 @@ TEST_CASE("Copied unresolved references survive saving until their target is ava
     PrefabDocument targetDocument = fixture.mDocument;
     targetDocument.mId = mir::GeneratePrefabId();
     REQUIRE(fixture.mCoordinator->SetDocument(targetDocument));
-    REQUIRE_FALSE(HasPrefabErrors(fixture.mCoordinator->Cache().Compile(targetDocument)));
+    REQUIRE_FALSE(HasPrefabErrors(
+        fixture.mCoordinator->Cache().Compile(targetDocument, mir::RegistryLookup(fixture.mCoordinator->Registry()))));
     const auto targetTemplate = fixture.mCoordinator->Cache().Find(targetDocument.mId);
     REQUIRE(targetTemplate != nullptr);
     const StableId targetRoot = PlacePrefabInstance(fixture.mWorld, fixture.mScene, *targetTemplate);

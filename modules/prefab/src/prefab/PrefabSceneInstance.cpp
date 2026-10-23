@@ -69,7 +69,7 @@ namespace mir
             return nullptr;
         }
 
-        const std::vector<PrefabDiagnostic> diagnostics = mCache.Compile(*document);
+        const std::vector<PrefabDiagnostic> diagnostics = mCache.Compile(*document, RegistryLookup(mRegistry));
         if (HasPrefabErrors(diagnostics))
         {
             MIR_LOG_WARN("PrefabSceneResolver: prefab '{}' did not compile", ToString(*id));

@@ -219,7 +219,7 @@ TEST_CASE("Capture keeps the hierarchy and internal references", "[prefab][captu
     CHECK(rootWorldTransform->mFields.empty());
     CHECK(FindComponent(document.mNodes[1], "WorldTransform") != nullptr);
     CHECK_FALSE(HasPrefabErrors(ValidatePrefab(document)));
-    const mir::PrefabCompileResult compiled = mir::CompilePrefab(document);
+    const mir::PrefabCompileResult compiled = mir::CompilePrefab(document, mir::PrefabDocumentLookup{});
     REQUIRE(compiled.mPrefab != nullptr);
 
     const StableId capturedRoot = mir::PlacePrefabInstance(fixture.mWorld, fixture.mScene, *compiled.mPrefab);

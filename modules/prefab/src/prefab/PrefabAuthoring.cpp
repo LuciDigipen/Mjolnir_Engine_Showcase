@@ -111,6 +111,30 @@ namespace mir
             return index ? &document.mNodes[*index] : nullptr;
         }
 
+        const PrefabNode *FindDocumentNode(const PrefabRegistry &registry, const PrefabDocument &document,
+            const SceneNodeAddress &address)
+        {
+            const PrefabDocument *current = &document;
+            for (std::size_t i = 0; i < address.size(); ++i)
+            {
+                const std::optional<std::size_t> index =
+                    current != nullptr ? FindNodeIndex(*current, address[i]) : std::nullopt;
+                if (!index)
+                    return nullptr;
+
+                const PrefabNode &node = current->mNodes[*index];
+                if (i + 1 == address.size())
+                    return node.mKind == PrefabNodeKind::Entity ? &node : nullptr;
+                if (node.mKind != PrefabNodeKind::Prefab)
+                    return nullptr;
+
+                current = registry.Find(node.mPrefab);
+                if (current == nullptr)
+                    return nullptr;
+            }
+            return nullptr;
+        }
+
         const PrefabComponentInstance *FindComponent(const PrefabNode &node, std::string_view type)
         {
             for (const PrefabComponentInstance &component : node.mComponents)
@@ -610,14 +634,14 @@ namespace mir
         };
 
         bool PrepareSceneEdit(const PrefabAuthoredEntry &entry, const LoadedScene &scene, World &world,
-            const std::function<const PrefabDocument *(PrefabId)> &documents, SceneEdit &out)
+            const PrefabDocumentLookup &documents, SceneEdit &out)
         {
-            if (entry.mKey.mAddress.size() != 2)
+            if (entry.mKey.mAddress.size() < 2)
                 return false;
 
             out.mEntry = &entry;
             out.mRoot = entry.mKey.mAddress.front();
-            out.mNode = SceneNodeAddress{ entry.mKey.mAddress.back() };
+            out.mNode = SceneNodeAddress(entry.mKey.mAddress.begin() + 1, entry.mKey.mAddress.end());
 
             if (!DecodeValue(entry.mValue, out.mValue))
                 return false;
@@ -814,12 +838,10 @@ namespace mir
             {
                 if (id != *target)
                     continue;
-                if (address.size() != 1)
-                {
-                    reason = "targets a nested prefab node, which is not supported";
-                    return false;
-                }
-                outValue = json::array({ std::to_string(address.front()) });
+
+                outValue = json::array();
+                for (uint64_t segment : address)
+                    outValue.push_back(std::to_string(segment));
                 return true;
             }
 
@@ -1085,8 +1107,10 @@ namespace mir
         if (!id)
             return removed;
 
-        const PrefabDocument *document = mCoordinator.Registry().Find(*id);
-        const PrefabNode *node = document != nullptr ? FindNode(*document, member->mNode) : nullptr;
+        const PrefabRegistry &registry = mCoordinator.Registry();
+        const PrefabDocument *document = registry.Find(*id);
+        const PrefabNode *node =
+            document != nullptr ? FindDocumentNode(registry, *document, member->mNode) : nullptr;
         if (node == nullptr)
             return removed;
 
@@ -1094,6 +1118,18 @@ namespace mir
         {
             if (HasRemovedComponent(*member->mInstance, member->mNode, component.mType))
                 removed.push_back(component.mType);
+        }
+
+        // A component an outer occurrence added is not in the inner node.
+        for (const SceneInstancePatch &patch : member->mInstance->mPatches)
+        {
+            if (patch.mTarget != member->mNode)
+                continue;
+            for (const std::string &type : patch.mRemovedComponents)
+            {
+                if (std::find(removed.begin(), removed.end(), type) == removed.end())
+                    removed.push_back(type);
+            }
         }
         return removed;
     }
@@ -1177,11 +1213,11 @@ namespace mir
             }
             else
             {
-                if (scene == nullptr || key.mAddress.size() != 2)
+                if (scene == nullptr || key.mAddress.size() < 2)
                     return std::nullopt;
 
                 const StableId root = key.mAddress.front();
-                const SceneNodeAddress node{ key.mAddress.back() };
+                const SceneNodeAddress node(key.mAddress.begin() + 1, key.mAddress.end());
                 const auto instance = scene->mInstances.find(root);
                 if (instance == scene->mInstances.end())
                     return std::nullopt;
@@ -1286,6 +1322,11 @@ namespace mir
             {
                 if (!entry.mKey.mPrefab || *entry.mKey.mPrefab != id)
                     continue;
+                if (entry.mKey.mAddress.size() != 1)
+                {
+                    MIR_LOG_WARN("Prefab authoring: a nested occurrence member is edited in its own Prefab document");
+                    return result;
+                }
                 if (IsNodeKey(entry.mKey) && entry.mValue)
                 {
                     nodeInsertions.push_back(&entry);
@@ -1320,7 +1361,7 @@ namespace mir
                 }
             }
 
-            const PrefabCompileResult compiled = CompilePrefab(document);
+            const PrefabCompileResult compiled = CompilePrefab(document, RegistryLookup(mCoordinator.Registry()));
             if (!compiled.mPrefab)
             {
                 for (const PrefabDiagnostic &diagnostic : compiled.mDiagnostics)
@@ -1349,11 +1390,11 @@ namespace mir
 
             for (const PrefabAuthoredEntry &entry : sceneBatch)
             {
-                if (entry.mKey.mAddress.size() != 2)
+                if (entry.mKey.mAddress.size() < 2)
                     continue;
 
                 const StableId root = entry.mKey.mAddress.front();
-                const SceneNodeAddress node{ entry.mKey.mAddress.back() };
+                const SceneNodeAddress node(entry.mKey.mAddress.begin() + 1, entry.mKey.mAddress.end());
                 const auto instance = scene->mInstances.find(root);
                 if (instance == scene->mInstances.end())
                     continue;
@@ -1432,7 +1473,7 @@ namespace mir
             };
 
         // Scene entries are checked against the documents as this batch leaves them.
-        const std::function<const PrefabDocument *(PrefabId)> batchDocument =
+        const PrefabDocumentLookup batchDocument =
             [&documents, this](PrefabId id) -> const PrefabDocument *
         {
             const auto edited = documents.find(id);
@@ -1502,14 +1543,14 @@ namespace mir
         }
 
         const LoadedScene *scene = mCoordinator.Scene();
-        if (scene == nullptr || key.mPrefab || key.mAddress.size() != 2)
+        if (scene == nullptr || key.mPrefab || key.mAddress.size() < 2)
         {
             action.mRefusal = "only an instance member has a local override to revert";
             return action;
         }
 
         const StableId root = key.mAddress.front();
-        const SceneNodeAddress node{ key.mAddress.back() };
+        const SceneNodeAddress node(key.mAddress.begin() + 1, key.mAddress.end());
         const auto instance = scene->mInstances.find(root);
         if (instance == scene->mInstances.end() ||
             !instance->second.mBindings.contains(node))
@@ -1558,9 +1599,14 @@ namespace mir
         }
 
         const LoadedScene *scene = mCoordinator.Scene();
-        if (scene == nullptr || key.mPrefab || key.mAddress.size() != 2)
+        if (scene == nullptr || key.mPrefab || key.mAddress.size() < 2)
         {
             action.mRefusal = "only an instance member can be applied to its prefab";
+            return action;
+        }
+        if (key.mAddress.size() > 2)
+        {
+            action.mRefusal = "a nested occurrence member is applied in its own Prefab document";
             return action;
         }
 

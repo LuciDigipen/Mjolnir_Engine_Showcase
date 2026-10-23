@@ -142,8 +142,14 @@ namespace mir
             const PrefabDocument *document = registry.Find(id);
             if (document == nullptr)
                 return nullptr;
-            cache.Compile(*document);
+            cache.Compile(*document, RegistryLookup(registry));
             return cache.Find(id);
+        }
+
+        bool NestsPrefab(const PrefabDocument &document, PrefabId id)
+        {
+            return std::any_of(document.mNodes.begin(), document.mNodes.end(), [id](const PrefabNode &node)
+                { return node.mKind == PrefabNodeKind::Prefab && node.mPrefab == id; });
         }
 
         void RecordFieldChange(EntityChangeSet &changes, Entity entity, const ComponentOps &ops,
@@ -685,7 +691,7 @@ namespace mir
         if (!mRegistry.SetDocument(doc, diagnostics))
             return false;
 
-        mPendingDocuments.insert(doc.mId);
+        AddPendingDocument(doc.mId);
         return true;
     }
 
@@ -695,8 +701,56 @@ namespace mir
         if (!mRegistry.SetDocument(doc, intendedPath, diagnostics))
             return false;
 
-        mPendingDocuments.insert(doc.mId);
+        AddPendingDocument(doc.mId);
         return true;
+    }
+
+    void PrefabCoordinator::AddPendingDocument(PrefabId id)
+    {
+        mPendingDocuments.insert(id);
+        for (PrefabId dependent : mCache.Dependents(id))
+            mPendingDocuments.insert(dependent);
+
+        // Also by document: an outer Prefab that has not compiled yet has no template to list it.
+        const std::vector<PrefabId> ids = mRegistry.Ids();
+        std::set<PrefabId> visited{ id };
+        std::vector<PrefabId> changed{ id };
+        while (!changed.empty())
+        {
+            const PrefabId inner = changed.back();
+            changed.pop_back();
+            for (PrefabId candidate : ids)
+            {
+                const PrefabDocument *document = mRegistry.Find(candidate);
+                if (document == nullptr || !NestsPrefab(*document, inner) || !visited.insert(candidate).second)
+                    continue;
+                mPendingDocuments.insert(candidate);
+                changed.push_back(candidate);
+            }
+        }
+    }
+
+    std::vector<PrefabId> PrefabCoordinator::PendingInDependencyOrder() const
+    {
+        std::vector<PrefabId> pending(mPendingDocuments.begin(), mPendingDocuments.end());
+        std::stable_sort(pending.begin(), pending.end(), [this](PrefabId a, PrefabId b)
+            {
+                const auto dependencyCount = [this](PrefabId id)
+                    {
+                        const std::shared_ptr<const CompiledPrefab> prefab = mCache.Find(id);
+                        if (!prefab)
+                            return std::size_t{ 0 };
+                        std::size_t count = 0;
+                        for (PrefabId dependency : prefab->Dependencies())
+                        {
+                            if (mPendingDocuments.contains(dependency))
+                                ++count;
+                        }
+                        return count;
+                    };
+                return dependencyCount(a) < dependencyCount(b);
+            });
+        return pending;
     }
 
     bool PrefabCoordinator::RemoveDocument(PrefabId id)
@@ -773,7 +827,7 @@ namespace mir
                 continue;
             }
             if (mRegistry.Find(id) != nullptr)
-                mPendingDocuments.insert(id);
+                AddPendingDocument(id);
         }
     }
 
@@ -840,13 +894,13 @@ namespace mir
                 ReconcilePublished(*preview.mScene, preview.mPublished);
         }
 
-        for (PrefabId id : mPendingDocuments)
+        for (PrefabId id : PendingInDependencyOrder())
         {
             const PrefabDocument *document = mRegistry.Find(id);
             if (document == nullptr)
                 continue;
 
-            const std::vector<PrefabDiagnostic> diagnostics = mCache.Compile(*document);
+            const std::vector<PrefabDiagnostic> diagnostics = mCache.Compile(*document, RegistryLookup(mRegistry));
             if (HasPrefabErrors(diagnostics))
                 MIR_LOG_WARN("PrefabCoordinator: prefab '{}' did not compile; its instances keep the last template",
                     ToString(id));

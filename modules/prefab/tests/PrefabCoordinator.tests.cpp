@@ -14,6 +14,7 @@
 #include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/World.h>
 #include <core/ecs/components/Transform.h>
+#include <prefab/PrefabAuthoring.h>
 #include <prefab/PrefabFormat.h>
 #include <prefab/PrefabOverrides.h>
 #include <prefab/PrefabSceneInstance.h>
@@ -64,7 +65,10 @@ namespace
     using mir::PrefabComponentInstance;
     using mir::PrefabCoordinator;
     using mir::PrefabDocument;
+    using mir::PrefabFieldOverride;
+    using mir::PrefabId;
     using mir::PrefabNode;
+    using mir::PrefabPatch;
     using mir::PrefabNodeKind;
     using mir::PrefabSystem;
     using mir::RemoveInstanceComponent;
@@ -265,7 +269,8 @@ namespace
 
             mDocument = Document();
             REQUIRE(mCoordinator->Registry().SetDocument(mDocument));
-            REQUIRE_FALSE(HasPrefabErrors(mCoordinator->Cache().Compile(mDocument)));
+            REQUIRE_FALSE(HasPrefabErrors(
+                mCoordinator->Cache().Compile(mDocument, mir::RegistryLookup(mCoordinator->Registry()))));
 
             mScene = NewScene("test");
             const std::shared_ptr<const CompiledPrefab> prefab = mCoordinator->Cache().Find(mDocument.mId);
@@ -338,7 +343,8 @@ namespace
             mCoordinator->ScanSources(mPrefabs.mPath);
             const PrefabDocument *loaded = mCoordinator->Registry().Find(mDocument.mId);
             REQUIRE(loaded != nullptr);
-            REQUIRE_FALSE(HasPrefabErrors(mCoordinator->Cache().Compile(*loaded)));
+            REQUIRE_FALSE(HasPrefabErrors(
+                mCoordinator->Cache().Compile(*loaded, mir::RegistryLookup(mCoordinator->Registry()))));
 
             mScene = NewScene("test");
             const std::shared_ptr<const CompiledPrefab> prefab = mCoordinator->Cache().Find(mDocument.mId);
@@ -351,6 +357,136 @@ namespace
         Entity Member(const SceneNodeAddress &address) const
         {
             return mScene.mEntities.at(mScene.mInstances.at(mRoot).mBindings.at(address));
+        }
+
+        void Commit()
+        {
+            PrefabSystem system;
+            SystemContext context{ mWorld, mCommands };
+            system.OnUpdate(context);
+        }
+    };
+
+    PrefabDocument NestedInnerDocument()
+    {
+        PrefabDocument document = mir::NewPrefabDocument();
+        document.mNodes[0].mComponents.push_back(PrefabComponentInstance{
+            "PrefabCoordinatorTestData",
+            json{ { "amount", 1.0 }, { "bonus", 2.0 }, { "target", json::array({ "2" }) } } });
+        document.mNodes[0].mComponents.push_back(PrefabComponentInstance{
+            "Transform", json{ { "position", json::array({ 0.0, 0.0, 0.0 }) } } });
+
+        PrefabNode child;
+        child.mId = 2;
+        child.mParent = 1;
+        child.mComponents.push_back(PrefabComponentInstance{
+            "PrefabCoordinatorTestData",
+            json{ { "amount", 3.0 }, { "bonus", 4.0 }, { "target", nullptr } } });
+        document.mNodes.push_back(std::move(child));
+        document.mNextNodeId = 3;
+        return document;
+    }
+
+    PrefabDocument NestedOuterDocument(PrefabId inner)
+    {
+        PrefabDocument document = mir::NewPrefabDocument();
+        document.mNodes[0].mComponents.push_back(PrefabComponentInstance{
+            "PrefabCoordinatorTestData",
+            json{ { "amount", 10.0 }, { "bonus", 20.0 }, { "target", nullptr } } });
+
+        PrefabNode first;
+        first.mId = 2;
+        first.mKind = PrefabNodeKind::Prefab;
+        first.mParent = 1;
+        first.mPrefab = inner;
+
+        PrefabPatch reference;
+        reference.mTarget = { 1 };
+        reference.mFields.push_back(PrefabFieldOverride{
+            "PrefabCoordinatorTestData", "target", json::array({ "2", "2" }) });
+        first.mPatches.push_back(std::move(reference));
+
+        PrefabPatch amount;
+        amount.mTarget = { 2 };
+        amount.mFields.push_back(PrefabFieldOverride{ "PrefabCoordinatorTestData", "amount", 20.0 });
+        first.mPatches.push_back(std::move(amount));
+
+        PrefabNode second;
+        second.mId = 3;
+        second.mKind = PrefabNodeKind::Prefab;
+        second.mParent = 1;
+        second.mPrefab = inner;
+
+        PrefabPatch otherAmount;
+        otherAmount.mTarget = { 2 };
+        otherAmount.mFields.push_back(PrefabFieldOverride{ "PrefabCoordinatorTestData", "amount", 30.0 });
+        second.mPatches.push_back(std::move(otherAmount));
+
+        PrefabPatch outerReference;
+        outerReference.mTarget = { 1 };
+        outerReference.mFields.push_back(
+            PrefabFieldOverride{ "PrefabCoordinatorTestData", "target", json::array({ "1" }) });
+        second.mPatches.push_back(std::move(outerReference));
+
+        document.mNodes.push_back(std::move(first));
+        document.mNodes.push_back(std::move(second));
+        document.mNextNodeId = 4;
+        return document;
+    }
+
+    struct NestedFixture
+    {
+        World mWorld;
+        LoadedScene mScene;
+        PrefabCoordinator *mCoordinator = nullptr;
+        PrefabDocument mInner;
+        PrefabDocument mOuter;
+        CommandBuffer mCommands;
+        StableId mOuterRoot = kNullStableId;
+        StableId mInnerRoot = kNullStableId;
+
+        NestedFixture()
+        {
+            mir::RegisterCoreComponents();
+            DataOps();
+            ExtraOps();
+
+            mWorld.EmplaceResource<mir::EngineModeState>();
+            mWorld.EmplaceResource<EntityChangeListeners>();
+            mCoordinator = &mWorld.EmplaceResource<PrefabCoordinator>();
+
+            mInner = NestedInnerDocument();
+            mOuter = NestedOuterDocument(mInner.mId);
+            REQUIRE(mCoordinator->Registry().SetDocument(mInner));
+            REQUIRE(mCoordinator->Registry().SetDocument(mOuter));
+            REQUIRE_FALSE(HasPrefabErrors(mCoordinator->Cache().Compile(mInner, Lookup())));
+            REQUIRE_FALSE(HasPrefabErrors(mCoordinator->Cache().Compile(mOuter, Lookup())));
+
+            mScene = NewScene("nested");
+            const std::shared_ptr<const CompiledPrefab> outer = mCoordinator->Cache().Find(mOuter.mId);
+            const std::shared_ptr<const CompiledPrefab> inner = mCoordinator->Cache().Find(mInner.mId);
+            REQUIRE(outer != nullptr);
+            REQUIRE(inner != nullptr);
+            mOuterRoot = PlacePrefabInstance(mWorld, mScene, *outer);
+            REQUIRE(mOuterRoot != kNullStableId);
+            mInnerRoot = PlacePrefabInstance(mWorld, mScene, *inner);
+            REQUIRE(mInnerRoot != kNullStableId);
+            mCoordinator->Bind(mScene);
+        }
+
+        mir::PrefabDocumentLookup Lookup() const
+        {
+            return mir::RegistryLookup(mCoordinator->Registry());
+        }
+
+        StableId Binding(StableId root, const SceneNodeAddress &address) const
+        {
+            return mScene.mInstances.at(root).mBindings.at(address);
+        }
+
+        Entity Member(StableId root, const SceneNodeAddress &address) const
+        {
+            return mScene.mEntities.at(Binding(root, address));
         }
 
         void Commit()
@@ -999,4 +1135,339 @@ TEST_CASE("Play and Stop leave an unchanged saved scene byte-identical", "[prefa
         "PrefabCoordinatorTestData", "target") != nullptr);
 
     mir::DiscardSnapshot(snapshot);
+}
+
+TEST_CASE("Nested occurrences compose inner defaults, outer patches and scene overrides", "[prefab][coordinator][nesting]")
+{
+    NestedFixture fixture;
+    const SceneNodeAddress innerRoot{ 2, 1 };
+    const SceneNodeAddress innerChild{ 2, 2 };
+    const SceneNodeAddress otherChild{ 3, 2 };
+
+    CHECK(FloatField(fixture.mWorld, fixture.Member(fixture.mOuterRoot, innerRoot), DataOps(), "amount") == 1.0f);
+    CHECK(FloatField(fixture.mWorld, fixture.Member(fixture.mOuterRoot, innerChild), DataOps(), "amount") == 20.0f);
+    CHECK(FloatField(fixture.mWorld, fixture.Member(fixture.mOuterRoot, otherChild), DataOps(), "amount") == 30.0f);
+    CHECK(EntityField(fixture.mWorld, fixture.Member(fixture.mOuterRoot, innerRoot), DataOps(), "target") ==
+        fixture.Member(fixture.mOuterRoot, innerChild));
+    CHECK(EntityField(fixture.mWorld, fixture.Member(fixture.mOuterRoot, SceneNodeAddress{ 3, 1 }),
+        DataOps(), "target") == fixture.Member(fixture.mOuterRoot, SceneNodeAddress{ 1 }));
+    CHECK(EntityField(fixture.mWorld, fixture.Member(fixture.mInnerRoot, SceneNodeAddress{ 1 }),
+        DataOps(), "target") == fixture.Member(fixture.mInnerRoot, SceneNodeAddress{ 2 }));
+    CHECK(fixture.Binding(fixture.mOuterRoot, SceneNodeAddress{ 2, 2 }) !=
+        fixture.Binding(fixture.mOuterRoot, SceneNodeAddress{ 3, 2 }));
+
+    REQUIRE(SetInstanceFieldOverride(fixture.mWorld, fixture.mScene, fixture.mCoordinator->Registry(),
+        fixture.mOuterRoot, innerChild, "PrefabCoordinatorTestData", "amount", 45.0));
+    CHECK(FloatField(fixture.mWorld, fixture.Member(fixture.mOuterRoot, innerChild), DataOps(), "amount") == 45.0f);
+    CHECK(mir::InstanceFieldState(fixture.mScene, fixture.mOuterRoot, innerChild,
+        "PrefabCoordinatorTestData", "amount") == mir::PrefabFieldState::Overridden);
+
+    REQUIRE(mir::RevertInstancePatch(fixture.mWorld, fixture.mCoordinator->Registry(),
+        fixture.mCoordinator->Cache(), fixture.mScene, fixture.mOuterRoot,
+        mir::PrefabPatchSelection{ innerChild, mir::PrefabPatchKind::Field,
+            "PrefabCoordinatorTestData", "amount" }));
+    CHECK(FloatField(fixture.mWorld, fixture.Member(fixture.mOuterRoot, innerChild), DataOps(), "amount") == 20.0f);
+
+    REQUIRE(SetInstanceFieldOverride(fixture.mWorld, fixture.mScene, fixture.mCoordinator->Registry(),
+        fixture.mOuterRoot, innerChild, "PrefabCoordinatorTestData", "amount", 45.0));
+
+    const StableId otherId = fixture.Binding(fixture.mOuterRoot, otherChild);
+    REQUIRE(SetInstanceFieldOverride(fixture.mWorld, fixture.mScene, fixture.mCoordinator->Registry(),
+        fixture.mOuterRoot, innerRoot, "PrefabCoordinatorTestData", "target", otherId));
+    CHECK(EntityField(fixture.mWorld, fixture.Member(fixture.mOuterRoot, innerRoot), DataOps(), "target") ==
+        fixture.Member(fixture.mOuterRoot, otherChild));
+
+    TempDir dir;
+    REQUIRE(mir::SaveScene(fixture.mWorld, dir.mPath, fixture.mScene, &fixture.mCoordinator->Resolver()));
+
+    World loadedWorld;
+    const LoadedScene loaded = mir::LoadScene(loadedWorld, dir.mPath, &fixture.mCoordinator->Resolver());
+
+    CHECK(loaded.mInstances.at(fixture.mOuterRoot).mBindings ==
+        fixture.mScene.mInstances.at(fixture.mOuterRoot).mBindings);
+    CHECK(mir::InstanceFieldState(loaded, fixture.mOuterRoot, innerRoot,
+        "PrefabCoordinatorTestData", "target") == mir::PrefabFieldState::Overridden);
+    CHECK(mir::InstanceFieldState(loaded, fixture.mOuterRoot, innerChild,
+        "PrefabCoordinatorTestData", "amount") == mir::PrefabFieldState::Overridden);
+    CHECK(FloatField(loadedWorld, loaded.mEntities.at(fixture.Binding(fixture.mOuterRoot, innerChild)),
+        DataOps(), "amount") == 45.0f);
+    CHECK(EntityField(loadedWorld, loaded.mEntities.at(fixture.Binding(fixture.mOuterRoot, innerRoot)),
+        DataOps(), "target") == loaded.mEntities.at(loaded.mInstances.at(fixture.mOuterRoot).mBindings.at(otherChild)));
+    CHECK(FloatField(loadedWorld, loaded.mEntities.at(fixture.Binding(fixture.mOuterRoot, otherChild)),
+        DataOps(), "amount") == 30.0f);
+
+    TempDir second;
+    REQUIRE(mir::SaveScene(loadedWorld, second.mPath, loaded, &fixture.mCoordinator->Resolver()));
+    CHECK(SnapshotFiles(dir.mPath) == SnapshotFiles(second.mPath));
+}
+
+TEST_CASE("Scene components on a nested member add, remove and revert", "[prefab][coordinator][nesting]")
+{
+    NestedFixture fixture;
+    const SceneNodeAddress child{ 2, 2 };
+
+    REQUIRE(AddInstanceComponent(fixture.mWorld, fixture.mScene, fixture.mCoordinator->Registry(),
+        fixture.mOuterRoot, child, "PrefabCoordinatorTestExtra"));
+    CHECK(ExtraOps().Has(fixture.mWorld, fixture.Member(fixture.mOuterRoot, child)));
+    CHECK(mir::InstanceComponentState(fixture.mCoordinator->Registry(), fixture.mScene, fixture.mOuterRoot, child,
+        "PrefabCoordinatorTestExtra") == mir::PrefabComponentState::Added);
+
+    REQUIRE(RemoveInstanceComponent(fixture.mWorld, fixture.mScene, fixture.mCoordinator->Registry(),
+        fixture.mOuterRoot, child, "PrefabCoordinatorTestData"));
+    CHECK_FALSE(DataOps().Has(fixture.mWorld, fixture.Member(fixture.mOuterRoot, child)));
+    CHECK(mir::InstanceComponentState(fixture.mCoordinator->Registry(), fixture.mScene, fixture.mOuterRoot, child,
+        "PrefabCoordinatorTestData") == mir::PrefabComponentState::Removed);
+
+    REQUIRE(mir::RevertInstancePatch(fixture.mWorld, fixture.mCoordinator->Registry(),
+        fixture.mCoordinator->Cache(), fixture.mScene, fixture.mOuterRoot,
+        mir::PrefabPatchSelection{ child, mir::PrefabPatchKind::RemovedComponent,
+            "PrefabCoordinatorTestData", {} }));
+    CHECK(DataOps().Has(fixture.mWorld, fixture.Member(fixture.mOuterRoot, child)));
+    CHECK(FloatField(fixture.mWorld, fixture.Member(fixture.mOuterRoot, child), DataOps(), "amount") == 20.0f);
+}
+
+TEST_CASE("A component an outer occurrence adds is inherited by the scene member", "[prefab][coordinator][nesting]")
+{
+    NestedFixture fixture;
+    const SceneNodeAddress child{ 3, 2 };
+
+    PrefabDocument edited = fixture.mOuter;
+    PrefabNode *occurrence = FindNode(edited, 3);
+    REQUIRE(occurrence != nullptr);
+    occurrence->mPatches.front().mAddedComponents.push_back(
+        PrefabComponentInstance{ "PrefabCoordinatorTestExtra", json::object() });
+    REQUIRE(fixture.mCoordinator->SetDocument(edited));
+    fixture.Commit();
+
+    const mir::PrefabRegistry &registry = fixture.mCoordinator->Registry();
+    REQUIRE(ExtraOps().Has(fixture.mWorld, fixture.Member(fixture.mOuterRoot, child)));
+    CHECK(mir::InstanceComponentState(registry, fixture.mScene, fixture.mOuterRoot, child,
+        "PrefabCoordinatorTestExtra") == mir::PrefabComponentState::Inherited);
+    CHECK_FALSE(AddInstanceComponent(fixture.mWorld, fixture.mScene, registry, fixture.mOuterRoot, child,
+        "PrefabCoordinatorTestExtra"));
+
+    REQUIRE(RemoveInstanceComponent(fixture.mWorld, fixture.mScene, registry, fixture.mOuterRoot, child,
+        "PrefabCoordinatorTestExtra"));
+    CHECK_FALSE(ExtraOps().Has(fixture.mWorld, fixture.Member(fixture.mOuterRoot, child)));
+    CHECK(mir::InstanceComponentState(registry, fixture.mScene, fixture.mOuterRoot, child,
+        "PrefabCoordinatorTestExtra") == mir::PrefabComponentState::Removed);
+}
+
+TEST_CASE("An outer prefab compiles once its missing inner prefab arrives", "[prefab][coordinator][nesting]")
+{
+    mir::RegisterCoreComponents();
+    DataOps();
+
+    World world;
+    world.EmplaceResource<mir::EngineModeState>();
+    world.EmplaceResource<EntityChangeListeners>();
+    PrefabCoordinator &coordinator = world.EmplaceResource<PrefabCoordinator>();
+    CommandBuffer commands;
+    SystemContext context{ world, commands };
+    PrefabSystem system;
+
+    const PrefabDocument inner = NestedInnerDocument();
+    const PrefabDocument outer = NestedOuterDocument(inner.mId);
+    REQUIRE(coordinator.SetDocument(outer));
+    system.OnUpdate(context);
+    CHECK(coordinator.Cache().Find(outer.mId) == nullptr);
+
+    REQUIRE(coordinator.SetDocument(inner));
+    system.OnUpdate(context);
+    CHECK(coordinator.Cache().Find(outer.mId) != nullptr);
+}
+
+TEST_CASE("Changing an inner prefab refreshes dependent instances in one commit", "[prefab][coordinator][nesting]")
+{
+    NestedFixture fixture;
+    const SceneNodeAddress child{ 2, 2 };
+    const Entity outerChild = fixture.Member(fixture.mOuterRoot, child);
+    const Entity outerRoot = fixture.Member(fixture.mOuterRoot, SceneNodeAddress{ 2, 1 });
+    const Entity innerChild = fixture.Member(fixture.mInnerRoot, SceneNodeAddress{ 2 });
+    const StableId binding = fixture.Binding(fixture.mOuterRoot, child);
+
+    PrefabDocument edited = fixture.mInner;
+    PrefabNode *childNode = FindNode(edited, 2);
+    REQUIRE(childNode != nullptr);
+    childNode->mComponents.front().mFields["bonus"] = 9.0;
+    REQUIRE(fixture.mCoordinator->SetDocument(edited));
+
+    fixture.Commit();
+
+    CHECK(FloatField(fixture.mWorld, outerChild, DataOps(), "bonus") == 9.0f);
+    CHECK(FloatField(fixture.mWorld, innerChild, DataOps(), "bonus") == 9.0f);
+    CHECK(FloatField(fixture.mWorld, fixture.Member(fixture.mOuterRoot, SceneNodeAddress{ 3, 2 }), DataOps(),
+        "bonus") == 9.0f);
+    CHECK(fixture.Member(fixture.mOuterRoot, child) == outerChild);
+    CHECK(fixture.Member(fixture.mOuterRoot, SceneNodeAddress{ 2, 1 }) == outerRoot);
+    CHECK(fixture.Binding(fixture.mOuterRoot, child) == binding);
+    CHECK_FALSE(fixture.mCoordinator->HasPendingWork());
+}
+
+TEST_CASE("A nested occurrence root Transform is template content", "[prefab][coordinator][nesting]")
+{
+    NestedFixture fixture;
+    const Entity nestedRoot = fixture.Member(fixture.mOuterRoot, SceneNodeAddress{ 2, 1 });
+    const Entity directRoot = fixture.Member(fixture.mInnerRoot, SceneNodeAddress{ 1 });
+    REQUIRE(PositionX(fixture.mWorld, nestedRoot) == 0.0);
+    REQUIRE(PositionX(fixture.mWorld, directRoot) == 0.0);
+
+    PrefabDocument edited = fixture.mInner;
+    PrefabNode *root = FindNode(edited, 1);
+    REQUIRE(root != nullptr);
+    for (PrefabComponentInstance &component : root->mComponents)
+    {
+        if (component.mType == "Transform")
+            component.mFields["position"] = json::array({ 5.0, 0.0, 0.0 });
+    }
+    REQUIRE(fixture.mCoordinator->SetDocument(edited));
+
+    fixture.Commit();
+
+    CHECK(PositionX(fixture.mWorld, nestedRoot) == 5.0);
+    CHECK(PositionX(fixture.mWorld, directRoot) == 0.0);
+}
+
+TEST_CASE("Deleting an inner node clears nested references permanently", "[prefab][coordinator][nesting]")
+{
+    NestedFixture fixture;
+    const SceneNodeAddress innerRoot{ 2, 1 };
+    const SceneNodeAddress innerChild{ 2, 2 };
+    const StableId removed = fixture.Binding(fixture.mOuterRoot, innerChild);
+    const Entity removedEntity = fixture.Member(fixture.mOuterRoot, innerChild);
+
+    REQUIRE(SetInstanceEntityRef(fixture.mWorld, fixture.mScene, fixture.mOuterRoot, innerRoot,
+        "PrefabCoordinatorTestData", "target", removed));
+
+    const Entity ordinary = CreateSceneEntity(fixture.mWorld, fixture.mScene);
+    DataOps().AddDefault(fixture.mWorld, ordinary);
+    SetEntityField(fixture.mWorld, ordinary, DataOps(), "target", removedEntity);
+
+    PrefabDocument edited = fixture.mInner;
+    PrefabNode *editedRoot = FindNode(edited, 1);
+    REQUIRE(editedRoot != nullptr);
+    editedRoot->mComponents.front().mFields["target"] = nullptr;
+    std::erase_if(edited.mNodes, [](const PrefabNode &node) { return node.mId == 2; });
+    REQUIRE(fixture.mCoordinator->SetDocument(edited));
+    fixture.mScene.mDirty = false;
+
+    fixture.Commit();
+
+    CHECK_FALSE(fixture.mWorld.IsAlive(removedEntity));
+    CHECK_FALSE(fixture.mScene.mInstances.at(fixture.mOuterRoot).mBindings.contains(innerChild));
+    CHECK(EntityField(fixture.mWorld, fixture.Member(fixture.mOuterRoot, innerRoot), DataOps(), "target").IsNull());
+    CHECK(EntityField(fixture.mWorld, ordinary, DataOps(), "target").IsNull());
+    const mir::SceneFieldPatch *cleared = FindInstanceFieldPatch(fixture.mScene.mInstances.at(fixture.mOuterRoot),
+        innerRoot, "PrefabCoordinatorTestData", "target");
+    REQUIRE(cleared != nullptr);
+    CHECK(cleared->mValue.is_null());
+    CHECK(fixture.mCoordinator->ConsumeSceneMaintenance());
+
+    PrefabNode restored;
+    restored.mId = 2;
+    restored.mParent = 1;
+    restored.mComponents.push_back(PrefabComponentInstance{
+        "PrefabCoordinatorTestData", json{ { "amount", 3.0 }, { "bonus", 4.0 }, { "target", nullptr } } });
+    edited.mNodes.push_back(std::move(restored));
+    REQUIRE(fixture.mCoordinator->SetDocument(edited));
+    fixture.Commit();
+
+    const StableId restoredId = fixture.Binding(fixture.mOuterRoot, innerChild);
+    CHECK(restoredId != removed);
+    CHECK(EntityField(fixture.mWorld, fixture.Member(fixture.mOuterRoot, innerRoot), DataOps(), "target").IsNull());
+
+    TempDir dir;
+    REQUIRE(mir::SaveScene(fixture.mWorld, dir.mPath, fixture.mScene, &fixture.mCoordinator->Resolver()));
+    World loadedWorld;
+    const LoadedScene loaded = mir::LoadScene(loadedWorld, dir.mPath, &fixture.mCoordinator->Resolver());
+    CHECK(EntityField(loadedWorld, loaded.mEntities.at(fixture.Binding(fixture.mOuterRoot, innerRoot)),
+        DataOps(), "target").IsNull());
+    CHECK(loaded.mInstances.at(fixture.mOuterRoot).mBindings.at(innerChild) == restoredId);
+}
+
+TEST_CASE("A nested scene instance saves and loads bindings and patches unchanged", "[prefab][coordinator][nesting]")
+{
+    NestedFixture fixture;
+    const SceneNodeAddress innerRoot{ 2, 1 };
+    const SceneNodeAddress innerChild{ 2, 2 };
+    const SceneNodeAddress otherChild{ 3, 2 };
+
+    REQUIRE(SetInstanceFieldOverride(fixture.mWorld, fixture.mScene, fixture.mCoordinator->Registry(),
+        fixture.mOuterRoot, innerChild, "PrefabCoordinatorTestData", "amount", 45.0));
+    REQUIRE(SetInstanceFieldOverride(fixture.mWorld, fixture.mScene, fixture.mCoordinator->Registry(),
+        fixture.mOuterRoot, innerRoot, "PrefabCoordinatorTestData", "target",
+        fixture.Binding(fixture.mOuterRoot, otherChild)));
+
+    const ScenePrefabInstance &before = fixture.mScene.mInstances.at(fixture.mOuterRoot);
+    const std::map<SceneNodeAddress, StableId> bindings = before.mBindings;
+    const std::size_t patchCount = before.mPatches.size();
+
+    TempDir dir;
+    REQUIRE(mir::SaveScene(fixture.mWorld, dir.mPath, fixture.mScene, &fixture.mCoordinator->Resolver()));
+
+    World loadedWorld;
+    const LoadedScene loaded = mir::LoadScene(loadedWorld, dir.mPath, &fixture.mCoordinator->Resolver());
+    const ScenePrefabInstance &after = loaded.mInstances.at(fixture.mOuterRoot);
+
+    CHECK(after.mBindings == bindings);
+    CHECK(after.mPatches.size() == patchCount);
+    CHECK(mir::InstanceFieldState(loaded, fixture.mOuterRoot, innerChild,
+        "PrefabCoordinatorTestData", "amount") == mir::PrefabFieldState::Overridden);
+    CHECK(mir::InstanceFieldState(loaded, fixture.mOuterRoot, innerRoot,
+        "PrefabCoordinatorTestData", "target") == mir::PrefabFieldState::Overridden);
+
+    const mir::SceneFieldPatch *amount = FindInstanceFieldPatch(after, innerChild,
+        "PrefabCoordinatorTestData", "amount");
+    REQUIRE(amount != nullptr);
+    CHECK(amount->mValue == 45.0);
+
+    const StableId otherId = after.mBindings.at(otherChild);
+    const mir::SceneFieldPatch *target = FindInstanceFieldPatch(after, innerRoot,
+        "PrefabCoordinatorTestData", "target");
+    REQUIRE(target != nullptr);
+    CHECK(target->mValue == json(otherId));
+    CHECK(EntityField(loadedWorld, loaded.mEntities.at(bindings.at(innerRoot)), DataOps(), "target") ==
+        loaded.mEntities.at(otherId));
+
+    TempDir second;
+    REQUIRE(mir::SaveScene(loadedWorld, second.mPath, loaded, &fixture.mCoordinator->Resolver()));
+    CHECK(SnapshotFiles(dir.mPath) == SnapshotFiles(second.mPath));
+}
+
+TEST_CASE("Nested occurrence members refuse to apply or edit through the outer document", "[prefab][coordinator][nesting]")
+{
+    NestedFixture fixture;
+    mir::PrefabAuthoring authoring(fixture.mWorld, *fixture.mCoordinator);
+
+    mir::PrefabAuthoredKey sceneKey;
+    sceneKey.mAddress = { fixture.mOuterRoot, 2, 2 };
+    sceneKey.mComponent = "PrefabCoordinatorTestData";
+    sceneKey.mField = "amount";
+
+    const mir::PrefabAuthoredAction apply = authoring.Apply(sceneKey);
+    CHECK_FALSE(apply.mRefusal.empty());
+    CHECK(apply.mEntries.empty());
+
+    mir::PrefabAuthoredKey documentKey;
+    documentKey.mPrefab = fixture.mInner.mId;
+    documentKey.mAddress = { 2, 2 };
+    documentKey.mComponent = "PrefabCoordinatorTestData";
+    documentKey.mField = "amount";
+
+    const mir::PrefabAuthoredEntry entry{ documentKey, std::string("5.0") };
+    const mir::PrefabAuthoredWrite write = authoring.Write(std::span<const mir::PrefabAuthoredEntry>(&entry, 1));
+    CHECK_FALSE(write.mApplied);
+    CHECK(FloatField(fixture.mWorld, fixture.Member(fixture.mOuterRoot, SceneNodeAddress{ 2, 2 }), DataOps(),
+        "amount") == 20.0f);
+
+    REQUIRE(SetInstanceFieldOverride(fixture.mWorld, fixture.mScene, fixture.mCoordinator->Registry(),
+        fixture.mOuterRoot, SceneNodeAddress{ 2, 2 }, "PrefabCoordinatorTestData", "amount", 55.0));
+    const mir::PrefabAuthoredAction revert = authoring.Revert(sceneKey);
+    CHECK(revert.mRefusal.empty());
+    REQUIRE(revert.mEntries.size() == 1);
+    const mir::PrefabAuthoredWrite reverted =
+        authoring.Write(std::span<const mir::PrefabAuthoredEntry>(revert.mEntries));
+    CHECK(reverted.mApplied);
+    CHECK(FloatField(fixture.mWorld, fixture.Member(fixture.mOuterRoot, SceneNodeAddress{ 2, 2 }), DataOps(),
+        "amount") == 20.0f);
 }

@@ -84,7 +84,8 @@ namespace mir
 
         if (!mCoordinator.Cache().Find(id))
         {
-            const std::vector<PrefabDiagnostic> diagnostics = mCoordinator.Cache().Compile(*document);
+            const std::vector<PrefabDiagnostic> diagnostics =
+                mCoordinator.Cache().Compile(*document, RegistryLookup(mCoordinator.Registry()));
             if (HasPrefabErrors(diagnostics))
                 return false;
         }
@@ -201,7 +202,8 @@ namespace mir
         std::shared_ptr<const CompiledPrefab> prefab = mCoordinator.Cache().Find(id);
         if (!prefab)
         {
-            const std::vector<PrefabDiagnostic> diagnostics = mCoordinator.Cache().Compile(*document);
+            const std::vector<PrefabDiagnostic> diagnostics =
+                mCoordinator.Cache().Compile(*document, RegistryLookup(mCoordinator.Registry()));
             for (const PrefabDiagnostic &diagnostic : diagnostics)
                 MIR_LOG_ERROR("Place Prefab: {}", diagnostic.mMessage);
             if (HasPrefabErrors(diagnostics))

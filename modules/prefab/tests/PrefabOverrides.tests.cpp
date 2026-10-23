@@ -312,7 +312,8 @@ namespace
 
             mDocument = ParseDocument(DocumentJson());
             REQUIRE(mRegistry.SetDocument(mDocument));
-            REQUIRE_FALSE(HasPrefabErrors(mCache.Compile(mDocument)));
+            REQUIRE_FALSE(HasPrefabErrors(
+                mCache.Compile(mDocument, mir::RegistryLookup(mRegistry))));
             mResolver = std::make_unique<PrefabSceneResolver>(mRegistry, mCache);
 
             const std::shared_ptr<const CompiledPrefab> prefab = mCache.Find(mDocument.mId);
@@ -353,7 +354,8 @@ namespace
                 }
             }
             REQUIRE(mRegistry.SetDocument(mDocument));
-            REQUIRE_FALSE(HasPrefabErrors(mCache.Compile(mDocument)));
+            REQUIRE_FALSE(HasPrefabErrors(
+                mCache.Compile(mDocument, mir::RegistryLookup(mRegistry))));
         }
     };
 }

@@ -126,7 +126,7 @@ namespace
     const CompiledPrefab &CompileDocument()
     {
         static const PrefabDocument doc = ParseDocument(InstantiateDocumentJson());
-        static const PrefabCompileResult result = mir::CompilePrefab(doc);
+        static const PrefabCompileResult result = mir::CompilePrefab(doc, mir::PrefabDocumentLookup{});
         REQUIRE(result.mPrefab != nullptr);
         return *result.mPrefab;
     }
@@ -271,7 +271,7 @@ TEST_CASE("InstantiatePrefab keeps authored far positions exact", "[prefab]")
     doc.mNodes[0].mComponents.push_back(PrefabComponentInstance{
         "Transform", json{ { "position", json::array({ 1000000000.5, -2000000000.25, 3000000000.125 }) } } });
 
-    const PrefabCompileResult compiled = mir::CompilePrefab(doc);
+    const PrefabCompileResult compiled = mir::CompilePrefab(doc, mir::PrefabDocumentLookup{});
     REQUIRE(compiled.mPrefab != nullptr);
 
     World world;
