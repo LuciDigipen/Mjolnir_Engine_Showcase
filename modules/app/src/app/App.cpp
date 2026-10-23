@@ -107,6 +107,7 @@ namespace mir
             return files;
         }
 
+    #if MIR_WITH_EDITOR
         std::filesystem::path PrefabSourceDir(const GameProject &project)
         {
             const std::string prefix = project.mDir + "/";
@@ -118,7 +119,6 @@ namespace mir
             return project.mRootDir / "assets" / std::string(kPrefabDirectoryName);
         }
 
-    #if MIR_WITH_EDITOR
         PrefabWorkspace::PrefabUnsaved UnsavedPrefabs(const Editor &editor, const PrefabCoordinator &prefabs)
         {
             return [editor = &editor, prefabs = &prefabs](PrefabId id)
@@ -254,11 +254,17 @@ namespace mir
         mEditor.SetAuthoredEntities(mPrefabAuthoring.get());
         mPrefabWorkspace = std::make_unique<PrefabWorkspace>(prefabs, *mPrefabAuthoring);
         mPrefabWorkspace->BindResolveSystems(&mRenderer, Assets(), mProject.mAssetIdRoot);
-    #endif
+
         const std::filesystem::path prefabsDir = PrefabSourceDir(mProject);
         std::error_code prefabEc;
         if (std::filesystem::is_directory(prefabsDir, prefabEc))
             prefabs.ScanSources(prefabsDir);
+    #else
+        // Without the editor the source tree is not shipped; the registry is
+        // rebuilt from the cooked manifest instead.
+        if (AssetCache *assets = Assets())
+            prefabs.LoadCooked(*mAssetManifest, *assets);
+    #endif
 
         // defers structural change
         mWorld.EmplaceResource<FrameCommands>(FrameCommands{ &mCommands });

@@ -20,6 +20,7 @@
 
 namespace mir
 {
+    class AssetCache;
     class AssetManifest;
 
     // "prefab:<uuid>" can never collide with a path-derived id string: ':' is
@@ -35,6 +36,10 @@ namespace mir
         // document was added, removed or rewritten.
         std::vector<PrefabDiagnostic> Scan(const std::filesystem::path &prefabsDir,
             std::vector<PrefabId> *changed = nullptr);
+
+        // Rebuilds the disk table from the manifest's cooked Prefab entries,
+        // which carry no source path. Bad blobs contribute diagnostics only.
+        std::vector<PrefabDiagnostic> LoadCooked(const AssetManifest &manifest, AssetCache &cache);
 
         // Unsaved in-memory documents, resolved before disk. An invalid
         // document is rejected and the registry is left unchanged.

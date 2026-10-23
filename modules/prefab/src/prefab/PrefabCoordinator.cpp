@@ -8,6 +8,7 @@
  */
 #include "prefab/PrefabCoordinator.h"
 
+#include "assets/AssetCache.h"
 #include "core/ecs/ComponentFields.h"
 #include "core/ecs/ComponentRegistry.h"
 #include "core/ecs/EntityChanges.h"
@@ -682,6 +683,17 @@ namespace mir
                     DestroySceneEntity(world, scene, entity);
             }
         }
+
+        void LogDiagnostics(const std::vector<PrefabDiagnostic> &diagnostics)
+        {
+            for (const PrefabDiagnostic &diagnostic : diagnostics)
+            {
+                if (diagnostic.mSeverity == PrefabDiagnosticSeverity::Error)
+                    MIR_LOG_ERROR("Prefab '{}': {}", diagnostic.mPath, diagnostic.mMessage);
+                else
+                    MIR_LOG_WARN("Prefab '{}': {}", diagnostic.mPath, diagnostic.mMessage);
+            }
+        }
     }
 
     PrefabCoordinator::PrefabCoordinator() : mResolver(mRegistry, mCache) {}
@@ -771,14 +783,12 @@ namespace mir
 
     void PrefabCoordinator::ScanSources(const std::filesystem::path &prefabsDir)
     {
-        const std::vector<PrefabDiagnostic> diagnostics = mRegistry.Scan(prefabsDir);
-        for (const PrefabDiagnostic &diagnostic : diagnostics)
-        {
-            if (diagnostic.mSeverity == PrefabDiagnosticSeverity::Error)
-                MIR_LOG_ERROR("Prefab '{}': {}", diagnostic.mPath, diagnostic.mMessage);
-            else
-                MIR_LOG_WARN("Prefab '{}': {}", diagnostic.mPath, diagnostic.mMessage);
-        }
+        LogDiagnostics(mRegistry.Scan(prefabsDir));
+    }
+
+    void PrefabCoordinator::LoadCooked(const AssetManifest &manifest, AssetCache &cache)
+    {
+        LogDiagnostics(mRegistry.LoadCooked(manifest, cache));
     }
 
     void PrefabCoordinator::RescanSources(const std::filesystem::path &prefabsDir)

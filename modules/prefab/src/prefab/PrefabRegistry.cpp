@@ -8,7 +8,9 @@
  */
 #include "prefab/PrefabRegistry.h"
 
+#include "assets/AssetCache.h"
 #include "assets/AssetManifest.h"
+#include "prefab/PrefabAsset.h"
 
 #include <algorithm>
 #include <iterator>
@@ -131,6 +133,51 @@ namespace mir
                 ids.push_back(id);
         }
         return ids;
+    }
+
+    std::vector<PrefabDiagnostic> PrefabRegistry::LoadCooked(const AssetManifest &manifest, AssetCache &cache)
+    {
+        std::vector<PrefabDiagnostic> diagnostics;
+        std::unordered_map<PrefabId, PrefabDocument> disk;
+        for (const AssetManifestEntry &entry : manifest.Entries())
+        {
+            if (entry.typeTag != kPrefabAssetTypeTag)
+                continue;
+
+            const std::string path(manifest.PathOf(entry));
+            const AssetBlobView *blob = cache.Load(entry.id);
+            if (blob == nullptr)
+            {
+                diagnostics.push_back({ PrefabDiagnosticSeverity::Error, path,
+                    "cooked prefab could not be loaded" });
+                continue;
+            }
+
+            PrefabAssetParseResult parsed = ReadPrefabAsset(*blob);
+            for (PrefabDiagnostic &diagnostic : parsed.mDiagnostics)
+            {
+                if (diagnostic.mPath.empty())
+                    diagnostic.mPath = path;
+            }
+            diagnostics.insert(diagnostics.end(),
+                std::make_move_iterator(parsed.mDiagnostics.begin()),
+                std::make_move_iterator(parsed.mDiagnostics.end()));
+            if (!parsed.mAsset.has_value())
+                continue;
+
+            const PrefabId id = parsed.mAsset->mDocument.mId;
+            if (PrefabAssetId(id) != entry.id)
+            {
+                diagnostics.push_back({ PrefabDiagnosticSeverity::Error, path,
+                    "cooked prefab " + ToString(id) + " is stored under another AssetId" });
+                continue;
+            }
+            disk.emplace(id, std::move(parsed.mAsset->mDocument));
+        }
+
+        mDisk = std::move(disk);
+        mDiskPaths.clear();
+        return diagnostics;
     }
 
     bool PrefabRegistry::SetDocument(const PrefabDocument &doc, std::vector<PrefabDiagnostic> *diagnostics)
