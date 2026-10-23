@@ -717,6 +717,56 @@ namespace mir
         }
     }
 
+    void PrefabCoordinator::RescanSources(const std::filesystem::path &prefabsDir)
+    {
+        if (mFrozen)
+        {
+            mQueuedRescan = prefabsDir;
+            return;
+        }
+        ApplyRescan(prefabsDir);
+    }
+
+    void PrefabCoordinator::ApplyRescan(const std::filesystem::path &prefabsDir)
+    {
+        // A memory document still equal to its disk version holds no unsaved edit.
+        std::set<PrefabId> savedMemory;
+        for (const PrefabId id : mRegistry.Ids())
+        {
+            const PrefabDocument *disk = mRegistry.FindOnDisk(id);
+            if (mRegistry.HasMemoryDocument(id) && disk != nullptr &&
+                PrefabToJson(*mRegistry.Find(id)) == PrefabToJson(*disk))
+            {
+                savedMemory.insert(id);
+            }
+        }
+
+        std::vector<PrefabId> changed;
+        const std::vector<PrefabDiagnostic> diagnostics = mRegistry.Scan(prefabsDir, &changed);
+        for (const PrefabDiagnostic &diagnostic : diagnostics)
+        {
+            if (diagnostic.mSeverity == PrefabDiagnosticSeverity::Error)
+                MIR_LOG_ERROR("Prefab '{}': {}", diagnostic.mPath, diagnostic.mMessage);
+            else
+                MIR_LOG_WARN("Prefab '{}': {}", diagnostic.mPath, diagnostic.mMessage);
+        }
+
+        for (PrefabId id : changed)
+        {
+            if (savedMemory.contains(id))
+            {
+                mRegistry.RemoveDocument(id);
+            }
+            else if (mRegistry.HasMemoryDocument(id))
+            {
+                MIR_LOG_WARN("Prefab '{}' changed on disk; keeping its unsaved in-memory document", ToString(id));
+                continue;
+            }
+            if (mRegistry.Find(id) != nullptr)
+                mPendingDocuments.insert(id);
+        }
+    }
+
     void PrefabCoordinator::Bind(LoadedScene &scene)
     {
         mScene = &scene;
@@ -760,6 +810,15 @@ namespace mir
 
     void PrefabCoordinator::Commit(World &world)
     {
+        if (mFrozen)
+            return;
+
+        if (!mQueuedRescan.empty())
+        {
+            const std::filesystem::path prefabsDir = std::exchange(mQueuedRescan, {});
+            ApplyRescan(prefabsDir);
+        }
+
         // Before compiling, so an instance placed since the last Commit keeps
         // the revision it was materialized from.
         if (mScene != nullptr)
@@ -885,7 +944,7 @@ namespace mir
 
     bool PrefabCoordinator::HasPendingWork() const
     {
-        if (!mPendingDocuments.empty())
+        if (!mQueuedRescan.empty() || !mPendingDocuments.empty())
             return true;
         if (SceneHasPendingWork(mScene, mPublished))
             return true;

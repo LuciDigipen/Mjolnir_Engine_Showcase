@@ -36,6 +36,7 @@
 #if MIR_WITH_EDITOR
 #include <app/AssetImportManager.h>
 #include <app/ContentBrowserWatcher.h>
+#include <app/PrefabPlayMarks.h>
 #include <editor/Editor.h>
 #endif
 
@@ -239,6 +240,7 @@ namespace mir
         Editor mEditor;
         std::unique_ptr<AppSceneOps> mSceneOps;
         std::unique_ptr<PrefabAuthoringAdapter> mPrefabAuthoring;
+        PrefabPlayMarks mPrefabMarksBeforePlay;
     #endif
         // Stop puts the World back as it was at Play, so it puts this back too
         bool mUnsavedBeforePlay = false;

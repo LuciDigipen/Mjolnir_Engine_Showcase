@@ -526,9 +526,29 @@ namespace mir
         mTerrain->Refresh(0.0f, true);
         mTerrain->BeginPlay();
 
-        const PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>();
+        PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>();
+        if (prefabs != nullptr)
+        {
+            prefabs->Commit(mWorld);
+            if (prefabs->ConsumePublishedChanges())
+                ResolveSceneScripts(mWorld, mScriptHost, mScriptReloadWatcher, Assets(), mProject.mAssetIdRoot);
+            prefabs->SetFrozen(true);
+            if (prefabs->ConsumeSceneMaintenance() && !SceneUnsaved())
+                SetSceneUnsaved(true);
+        }
+
         mPlaySnapshot = CaptureWorld(mWorld, mScene, prefabs != nullptr ? &prefabs->Resolver() : nullptr);
         mUnsavedBeforePlay = SceneUnsaved();
+    #if MIR_WITH_EDITOR
+        if (prefabs != nullptr)
+        {
+            std::vector<DocumentId> documents;
+            for (const PrefabId id : prefabs->DocumentIds())
+                documents.push_back(DocumentId{ id.mHigh, id.mLow });
+            mPrefabMarksBeforePlay = CapturePrefabPlayMarks(documents,
+                [this](DocumentId document) { return mEditor.IsDocumentUnsaved(document); });
+        }
+    #endif
         ClearHistory();
 
         SetPlayState(mWorld, PlayState::Running);
@@ -548,9 +568,15 @@ namespace mir
         if (prefabs != nullptr)
             prefabs->Bind(mScene);
         ClearHistory();
+        if (prefabs != nullptr)
+            prefabs->SetFrozen(false);
 
         //the World is back as it was at Play, Play's edits gone, so the marker goes back too
         SetSceneUnsaved(mUnsavedBeforePlay);
+    #if MIR_WITH_EDITOR
+        RestorePrefabPlayMarks(mPrefabMarksBeforePlay,
+            [this](DocumentId document) { mEditor.SetDocumentUnsaved(document, true); });
+    #endif
 
         // Play's entities are gone and the restored ones hold no handles yet
         mModelSystem->Reset();
@@ -791,6 +817,11 @@ namespace mir
             if (mAssetImport.PendingApply() && IsEditing(mWorld))
                 ApplyImportedAssets();
             mContentBrowser.Update();
+            if (mContentBrowser.ConsumePrefabSourceChange())
+            {
+                if (PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>())
+                    prefabs->RescanSources(PrefabSourceDir(mProject));
+            }
         #endif
 
             // Every mode, before any system runs
@@ -990,14 +1021,7 @@ namespace mir
                 }
             }
             if (contentBrowserActionAccepted)
-            {
                 mContentBrowser.Handle(actions.mContentBrowser);
-                if (actions.mContentBrowser.mKind == ContentBrowserActionKind::Rename)
-                {
-                    if (PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>())
-                        prefabs->ScanSources(PrefabSourceDir(mProject));
-                }
-            }
         }
 
         if (!actions.mOpenProject.empty())
