@@ -51,6 +51,25 @@ editor restarts with that game and that unsaved scene changes will be lost. Only
 its Open button puts the directory into `EditorActions::mOpenProject`; `App`
 does the restart.
 
+The tab bar starts with the Scene and adds one tab per open Prefab document.
+`DrawLayout` takes both Worlds because they are separate: `activeWorld` is the
+document being edited, `sceneWorld` is always the scene. The active document's
+viewport uses that document's camera, and opening a Prefab focuses its root once.
+`EditorActions::mDocument` asks to activate or close a tab, and
+`mSaveActiveDocument` asks for Save on whichever tab is active. The editor never
+opens or closes an actual document; `App` owns the preview Worlds and the
+registry, and reports the tabs back through `EditorDocuments`.
+
+A Prefab tab's entities author through `IAuthoredEntities`, not the World.
+`MakeSetFieldsEditCommand`, `MakeAddComponentEditCommand` and
+`MakeRemoveComponentEditCommand` choose a Prefab-document command for an
+instance member and a World command for an ordinary entity, so the Inspector and
+the gizmo need no branch of their own. The Inspector shows an inherited field
+greyed, an override with Revert, and a changed instance member with Apply to
+Prefab. The Hierarchy's Create Prefab turns a scene subtree into a new document,
+and dropping a Prefab row from the Content Browser into the Hierarchy or the
+scene viewport places a linked instance.
+
 `DrawLayout(true)` builds the dockspace once. It splits into left, right and
 bottom with `DockBuilderSplitNode`, keeps the centre undocked through
 `ImGuiDockNodeFlags_PassthruCentralNode`, docks `Hierarchy`, `Inspector` and
@@ -76,7 +95,7 @@ itself is handling doesn't also move it.
 
 ```cpp
 bool Initialize(const ImGuiRuntime &imgui, Window &window, std::filesystem::path projectSettingsPath,
-                World &world, ISceneOps &sceneOps);    // false if imgui is not initialized
+                World &world, ISceneOps &sceneOps, bool srgbOutput);    // false if imgui is not initialized
 void Shutdown();                  // before ImGuiRuntime::Shutdown
 
 void ClearHistory();              // App calls it on New, Load, Play and Stop
@@ -85,12 +104,15 @@ void SetSceneUnsaved(bool unsaved);  // false: the scene as it is now is the sav
 bool IsDocumentUnsaved(DocumentId document) const;              // the same for a Prefab or other document
 void SetDocumentUnsaved(DocumentId document, bool unsaved);
 void SetAuthoringBackend(IAuthoringBackend *backend);           // App's authoring documents (#249)
+void SetAuthoredEntities(IAuthoredEntities *authored);          // App's instance overrides
 
 // between ImGuiRuntime::BeginFrame and EndFrame
 EditorActions DrawLayout(bool enableLayout, InputMap &inputMap, RenderSettings &renderSettings,
-                         const EngineModeState &mode, std::span<const ProjectMenuEntry> projects,
-                         std::string_view currentProject, World &world, const AssetImportView &assetImport,
-                         const VulkanRenderer &renderer, const ContentBrowserView &contentBrowser);
+                         PostProcessingSettings &postProcessingSettings, const EngineModeState &mode,
+                         std::span<const ProjectMenuEntry> projects, std::string_view currentProject,
+                         World &activeWorld, World &sceneWorld, const EditorDocuments &documents,
+                         const AssetImportView &assetImport, const VulkanRenderer &renderer,
+                         const ContentBrowserView &contentBrowser);
 
 VkRect2D SceneViewportRect() const;
 bool IsInitialized() const;
@@ -103,11 +125,16 @@ EditorCamera &SceneCamera();
 |---|---|---|
 | `SceneMenuAction` | `editor/Editor.h` | `None`/`New`/`Save`/`Load`/`Play`/`TogglePause`/`Stop` |
 | `ProjectMenuEntry` | `editor/Editor.h` | `{mDir, mName}` for one game in Open Project |
-| `EditorActions` | `editor/Editor.h` | `{mScene, mOpenProject, mAssetImport, mContentBrowser, ...}`, what the menus and toolbar asked for this frame |
+| `EditorActions` | `editor/Editor.h` | `{mScene, mOpenProject, mCreateProjectName, mAssetImport, mContentBrowser, mDocument, mSaveActiveDocument}`, what the menus and toolbar asked for this frame |
+| `EditorDocuments`, `EditorDocumentTab`, `EditorDocumentAction`, `EditorDocumentActionKind` | `editor/Editor.h` | The Scene tab plus every open Prefab tab; `Activate` and `Close` requests, and `SaveActiveDocument` |
+| `IAuthoredEntities`, `AuthoredAction`, `AuthoredKey`, `AuthoredFieldState`, `AuthoredComponentState` | `editor/history/AuthoredView.h` | The editor's view of Prefab-instance overrides, without a Prefab type |
+| `MakeDocumentEntityCommand` | `editor/history/DocumentNodeCommands.h` | Create, delete and reparent nodes of the active Prefab document as one command each |
+| `MakeSetFieldsEditCommand`, `MakeAddComponentEditCommand`, `MakeRemoveComponentEditCommand`, `MakeCreatePrefabCommand`, `MakeRevertAuthoredCommand`, `MakeApplyAuthoredCommand` | `editor/history/AuthoredEdit.h` | Routes an Inspector, gizmo or Hierarchy edit to a Prefab document when the entity is an instance member |
 | `ContentBrowserView`, `ContentBrowserEntryView` | `editor/panels/ContentBrowserPanel.h` | The open project's content root as a flat list of files/directories, plus `mLastRenamedFrom`/`mLastRenamedTo` for one tick when a same-tick remove+add looks like a rename |
-| `ContentBrowserAction`, `ContentBrowserActionKind` | `editor/panels/ContentBrowserPanel.h` | `{mKind, mTargetPath, mNewName}`: `CreateFolder`, `Rename`, `Delete` or `OpenInIde`, for `App` to carry out (see [app.md](app.md)) |
+| `ContentBrowserAction`, `ContentBrowserActionKind` | `editor/panels/ContentBrowserPanel.h` | `{mKind, mTargetPath, mNewName}`: `CreateFolder`, `Rename`, `Delete`, `OpenInIde` or `OpenPrefab`, for `App` to carry out (see [app.md](app.md)) |
+| `kPrefabContentPayload` | `editor/panels/ContentBrowserPanel.h` | The drag payload a Prefab row carries into the Hierarchy or the scene viewport |
 | `IdeSettings`, `DetectDefaultIde` | `editor/IdeSettings.h` | The `project_settings.json` "ide.path" string (empty: auto-detect VS Code), edited from `ProjectSettingsPanel`'s External Tools section |
-| `EntityAction`, `EntityActionKind` | `editor/panels/HierarchyPanel.h` | `{mKind, mPreset, mTarget, mTargets, mParent, mBefore}`: `Create` (null `mPreset` = New), `Delete`, `Duplicate`, or `Reparent` (a list moved under `mParent` before `mBefore`), which `MakeEntityCommand` turns into a command (see [editor-history.md](editor-history.md)) |
+| `EntityAction`, `EntityActionKind` | `editor/panels/HierarchyPanel.h` | `{mKind, mPreset, mTarget, mTargets, mParent, mBefore}`: `Create` (null `mPreset` = New), `Delete`, `Duplicate`, `CopyAsOrdinaryObject`, `Reparent`, `CreatePrefab` or `PlacePrefab`, which `MakeEntityCommand` or `MakeDocumentEntityCommand` turns into a command (see [editor-history.md](editor-history.md)) |
 | `NeighborInHierarchy` | `editor/panels/HierarchyPanel.h` | The entity to select after deleting one: next sibling, else previous, else the parent |
 | `IsBaselineComponent`, `AddMissingBaseline` | `editor/EntityBaseline.h` | The components every editor-created entity has: `Transform`, `WorldTransform`, `Name` |
 | `EditorCamera` | `editor/EditorCamera.h` | Free-fly scene camera, `WorldPosition` + yaw/pitch (`Pose()`, `Translate`, `FocusOn`), outside the `World` |
@@ -381,6 +408,15 @@ shows `*` after the game's title while the scene differs from its last save, wit
 a tooltip saying so; the save point lives in `History` (see
 [editor-history.md](editor-history.md)).
 
+*As of 2026-10-23.* The document bar shows the Scene plus one tab per open
+Prefab, each with its own camera and unsaved marker. `Hierarchy` offers Create
+Prefab and a Prefab drag target, `ContentBrowser` opens a Prefab on double-click
+and drags one into the scene, and `Inspector` reverts or applies instance
+overrides through `IAuthoredEntities`. Node create, delete and reparent in a
+Prefab document are undoable commands. Prefab tabs and overrides have no unit
+test here; `smoke.<game>` starts the editor path that opens them, and the
+app-side preview and document logic is tested in `modules/app/tests/`.
+
 The panels and menus have no tests. They need a device and a display.
 `smoke.switch` covers the restart that Open Project asks for, but not the menu
 or the dialog themselves. History needs neither, and its tests are in
@@ -416,6 +452,13 @@ or the dialog themselves. History needs neither, and its tests are in
    deleted, not everything recursively under a deleted folder.
 
 ## Changed
+
+*2026-10-23* — **Prefab document tabs.** Was: the editor drew the scene only.
+Now: the document bar shows the Scene plus every open Prefab, the active
+document supplies the viewport World and camera, and `DrawLayout` takes both
+Worlds. Prefab-node actions, override edits, Create Prefab and Prefab placement
+go through the authored commands in `editor-history.md`; the editor still never
+holds a Prefab type or a `LoadedScene`.
 
 *2026-10-22* — **Theme preference; `Initialize` takes `srgbOutput`.**
 `EditorPreferences::theme` (`"theme": "midnight" | "slate"`) picks the editor

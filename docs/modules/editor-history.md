@@ -87,6 +87,8 @@ private `AppSceneOps` and hands it to `Editor::Initialize`.
 | `EntityIds`, `HistoryId`, `kNullHistoryId` | `editor/history/EntityIds.h` | History id to current `Entity`; `IdOf`, `EntityOf`, `Rebind`, `Unbind`, `Retain` |
 | `ISceneOps`, `CapturedSubtree` | `editor/history/SceneOps.h` | The scene calls history needs, and a captured subtree: its snapshot text, members and their `StableId`s |
 | `MakeCreateCommand`, `MakeDeleteCommand`, `MakeDuplicateCommand`, `MakeReParentCommand`, `MakeEntityCommand` | `editor/history/EntityCommands.h` | The Hierarchy's four entity operations as commands; `MakeEntityCommand` maps an `EntityAction` and returns null for `None` |
+| `MakeDocumentEntityCommand` | `editor/history/DocumentNodeCommands.h` | Create, delete and reparent nodes in the active Prefab document as one authored command each |
+| `MakeSetFieldsEditCommand`, `MakeAddComponentEditCommand`, `MakeRemoveComponentEditCommand`, `MakeCreatePrefabCommand`, `MakeRevertAuthoredCommand`, `MakeApplyAuthoredCommand` | `editor/history/AuthoredEdit.h` | Routes an Inspector, gizmo or Hierarchy edit to the authored backend for an instance member, and makes Create Prefab one step |
 
 The command classes are private to `EntityCommands.cpp`, `ComponentCommands.cpp`
 and `AuthoredCommand.cpp`. Callers only ever hold a `unique_ptr<ICommand>`, and
@@ -254,14 +256,24 @@ The title bar shows `*` after the game's title while the scene is unsaved
 
 *As of 2026-10-21.* The authored-state seam exists (#243): document-qualified
 authored commands, atomic batches across documents, refusable undo and redo,
-and a save point plus maintenance flag per document. App supplies no backend
-yet, so nothing submits authored commands until the Prefab side's backend lands
-(#249).
+and a save point plus maintenance flag per document.
+
+*As of 2026-10-23.* App supplies the backend (#249):
+`PrefabAuthoringAdapter` implements both `IAuthoringBackend` and
+`IAuthoredEntities`, so Inspector overrides, Apply to Prefab, Revert and
+component changes on instance members are authored steps. `DocumentNodeCommands`
+makes node create, delete and reparent in the active Prefab document undoable,
+and `MakeCreatePrefabCommand` makes Create Prefab one step over its new
+document. Undoing a source-node deletion restores the nodes but leaves the
+references it cleared null, as maintenance, until a later save.
 
 Tests are in `modules/editor/tests/`. `Authoring.tests.cpp` runs authored
 commands against a fake backend: inherited and equal-value overrides, component
 states, batches across documents, failed targets, refused undo and redo,
-merges, and per-document dirty state with maintenance. `History.tests.cpp` covers the cursor,
+merges, and per-document dirty state with maintenance. `DocumentNodeCommands.tests.cpp`
+covers node create, delete and reparent in a document. `App`'s real backend and
+open-document previews are tested in `modules/app/tests/PrefabAuthoringAdapter.tests.cpp`
+and `modules/app/tests/PrefabWorkspace.tests.cpp`. `History.tests.cpp` covers the cursor,
 dropped redo steps, refused commands, step names, selection, the budget, id
 clean-up and merging, through fake commands. `EntityCommands.tests.cpp` and
 `ComponentCommands.tests.cpp` run every command through Do, Undo and Redo
@@ -286,15 +298,19 @@ runs start the editor with them in place.
 4. **Pick the budget from measured snapshot sizes.** 64 MiB is a guess.
 5. **A removed `ScriptRef` comes back without its script instance.** Resolving
    scripts after Add and Remove Component would need a scene op for it.
-6. **App's authoring backend (#249).** `Editor::SetAuthoringBackend` is the hook;
-   until App calls it, authored commands are refused.
-7. **Undoing a scene Delete of a Prefab instance loses its instance record.**
+6. **Undoing a scene Delete of a Prefab instance loses its instance record.**
    `DestroySceneEntity` erases the `ScenePrefabInstance` with its bindings and
    patches, and `SubtreeRecord` captures only entities. After Delete and Undo,
    a save writes plain entities. `ISceneOps::Capture` and `Restore` should carry
    the subtree's instance records too.
 
 ## Changed
+
+*2026-10-23* — **The Prefab backend is connected (#249).** Was: authored
+commands had a seam but no implementation, so they were refused. Now: App's
+`PrefabAuthoringAdapter` supplies both interfaces, Inspector and gizmo edits on
+instance members are authored steps, and Prefab node create/delete/reparent and
+Create Prefab join the same history with their own document save points.
 
 *2026-10-21* — **Authored-state history across documents (#243).** Was: every
 step changed the scene, history had one save point, and `ICommand::Undo`

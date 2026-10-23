@@ -198,6 +198,12 @@ foreach(manifest IN LISTS game_manifests)
             list(APPEND game_copy_commands COMMAND "${CMAKE_COMMAND}" -E copy_directory_if_different
                  "${CMAKE_SOURCE_DIR}/${assets_rel}" "$<TARGET_FILE_DIR:MjolnirEngine>/${assets_rel}")
 
+            # A game build can only read cooked Prefabs, never the source tree.
+            if(NOT MJOLNIR_WITH_EDITOR)
+                list(APPEND game_copy_commands COMMAND "${CMAKE_COMMAND}" -E rm -rf
+                     "$<TARGET_FILE_DIR:MjolnirEngine>/${assets_rel}/prefabs")
+            endif()
+
             # Releases live outside assetsRoot, so they are never cooked or copied with the assets.
             file(GLOB game_terrain_recipes CONFIGURE_DEPENDS
                  "${CMAKE_SOURCE_DIR}/${assets_rel}/terrain/*.terrain.json")

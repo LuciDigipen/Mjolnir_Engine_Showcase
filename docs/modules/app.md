@@ -5,7 +5,7 @@ other module exists. It contains no gameplay and no subsystem of its own, and it
 is not a framework — there is no registry, no service locator, and no virtual
 `Game` to subclass.
 
-`mir::app` · depends `mir::core`, `assets`, `window`, `renderer`, `editor`, `imguiruntime`, `scene`, `script`, all public; `input`, `audio`, `physics`, `serial`, `terrain` private · API `modules/app/include/app/` · maintainer Sumin Park · reviewed 2026-09-18
+`mir::app` · depends `mir::core`, `assets`, `window`, `renderer`, `editor`, `imguiruntime`, `scene`, `script`, all public; `input`, `audio`, `physics`, `prefab`, `serial`, `terrain` private · API `modules/app/include/app/` · maintainer Sumin Park · reviewed 2026-09-18
 
 ## Model
 
@@ -131,6 +131,12 @@ forced off; the scene viewport is the whole window through the World's camera;
 and nothing sets `InputState::SetUiCapture`, since there is no editor UI to
 want the input. Everything else, the game UI included, is the same code.
 
+The Prefab registry is the one load path that differs. An editor build scans
+`assets/prefabs` sources; a game build calls `PrefabCoordinator::LoadCooked` with
+the cooked manifest, because the build removes that source folder next to the
+executable. Both produce the same `PrefabId` lookup for a scene's instance
+records.
+
 ```cpp
 PlayScene()    // Edit -> Play. Captures the World first (PlaySnapshot).
 StopScene()    // Play -> Edit. Stops every started script, then restores the capture.
@@ -143,6 +149,27 @@ its `OnStop`, a Unity-style cleanup hook) *before* calling
 be destroyed wholesale. It then releases the Play session's GPU resources and
 resolves scripts and meshes again, same as `LoadScene` — `RestoreWorld`'s entities come from `LoadScene` under the hood,
 with the same only-names-round-trip gap.
+
+### Prefab documents
+
+`Initialize` puts a `PrefabCoordinator` in the World and registers
+`PrefabSystem`. With the editor it also creates the private `PrefabAuthoringAdapter`
+and `PrefabWorkspace`, hands both to `Editor`, and scans the game's
+`assets/prefabs` folder. Without the editor it fills the registry from the
+cooked asset manifest instead.
+
+`PrefabWorkspace` owns one open document per tab and one isolated preview World
+and `LoadedScene` per document. The Scene tab clears the active document, so
+edits author the scene itself. `OpenPrefabAsset` opens the file a Content
+Browser row named; `Place` puts a linked instance into the scene through
+`PlacePrefabInstance`. `SaveActiveDocument` saves the active Prefab or the
+scene, and `SaveScene` writes the scene's unsaved Prefab dependencies first.
+
+`PlayScene` commits pending Prefab documents before `CaptureWorld`, then
+freezes the coordinator; `StopScene` unfreezes it after restoring the snapshot.
+`StopScene` also reopens the Prefab tab that was active before Play. A Prefab
+source changed on disk is rescanned at an Edit safe point, and `PrefabSystem`
+publishes it at that frame boundary, never during Play.
 
 Terrain is pinned for the whole Play (terrain ADR 0018, local). `PlayScene` runs
 the terrain safe point once more before the snapshot, which puts in place a newer
@@ -466,6 +493,12 @@ happens in the next process.
 entities, and `ScriptSystem`'s `ScriptRef` OnRemove hook only drops each Lua
 instance.
 
+**Prefab publication happens only at an Edit safe point.** `PrefabSystem` runs
+first in `PreUpdate`, but a Play session freezes the coordinator before
+`CaptureWorld`; a commit there would restructure entities the snapshot owns.
+Editor preview Worlds are separate and stay editable while the scene is
+frozen.
+
 **The game list is read once.** `DiscoverGameProjects` runs in `Initialize`. A
 game added while the engine runs would still need a build to cook its assets, and
 the asset manifest is never re-read.
@@ -605,6 +638,13 @@ composition with gated reads; the Play/publish/Stop sequence through
    next save drops them.
 
 ## Changed
+
+*2026-10-23* — **Prefab documents and cooked Prefab loading.** Was: a scene's
+Prefab instances loaded through the editor's source scan only, and the editor
+had no document tabs. Now: `PrefabWorkspace` owns open documents and isolated
+previews, the scene saves its unsaved Prefab dependencies first, and a
+no-editor build fills the registry from the cooked manifest after the build
+removed the copied Prefab sources.
 
 *2026-10-20* — **Setup failures throw, and the asset manifest loads eagerly.**
 Was: `Initialize` returned `bool` and unwound each failure by hand, a malformed

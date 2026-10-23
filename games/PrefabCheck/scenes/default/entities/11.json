@@ -1,0 +1,60 @@
+{
+  "id": 11,
+  "parent": 0,
+  "siblingIndex": 4,
+  "components": [
+    {
+      "type": "Transform",
+      "fields": {
+        "position": [
+          -3,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "type": "WorldTransform",
+      "fields": {
+        "position": [
+          -3,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "type": "Name",
+      "fields": {
+        "name": "CrateCopy"
+      }
+    },
+    {
+      "type": "CameraController",
+      "fields": {
+        "mode": 1,
+        "target": 12,
+        "offset": [
+          0,
+          0,
+          0
+        ],
+        "offsetInTargetSpace": false,
+        "stiffness": 0,
+        "snapDistance": 0,
+        "lookAtTarget": false
+      }
+    }
+  ]
+}

@@ -1,0 +1,80 @@
+{
+  "root": 6,
+  "prefab": "9e3a4f5c-6d7e-4f80-a1b2-3456789abcde",
+  "parent": 0,
+  "siblingIndex": 3,
+  "placement": {
+    "position": [
+      0.0,
+      0.0,
+      -4.0
+    ],
+    "rotation": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "scale": [
+      1.0,
+      1.0,
+      1.0
+    ]
+  },
+  "bindings": [
+    {
+      "address": [
+        "1"
+      ],
+      "id": 6
+    },
+    {
+      "address": [
+        "2",
+        "1"
+      ],
+      "id": 7
+    },
+    {
+      "address": [
+        "2",
+        "2"
+      ],
+      "id": 8
+    },
+    {
+      "address": [
+        "3",
+        "1"
+      ],
+      "id": 9
+    },
+    {
+      "address": [
+        "3",
+        "2"
+      ],
+      "id": 10
+    }
+  ],
+  "patches": [
+    {
+      "target": [
+        "2",
+        "1"
+      ],
+      "fields": [
+        {
+          "component": "Name",
+          "field": "name",
+          "value": "DoorScened"
+        },
+        {
+          "component": "CameraController",
+          "field": "target",
+          "value": 0
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,119 @@
+{
+  "formatVersion": 1,
+  "prefabId": "7c1e2d3a-4b5c-4d6e-8f90-123456789abc",
+  "nextNodeId": "3",
+  "rootNode": "1",
+  "nodes": [
+    {
+      "id": "1",
+      "kind": "entity",
+      "components": [
+        {
+          "type": "Transform",
+          "fields": {
+            "position": [
+              0,
+              0,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          }
+        },
+        {
+          "type": "WorldTransform",
+          "fields": {}
+        },
+        {
+          "type": "Name",
+          "fields": {
+            "name": "Crate"
+          }
+        },
+        {
+          "type": "CameraController",
+          "fields": {
+            "mode": 1,
+            "target": [
+              "2"
+            ],
+            "offset": [
+              0,
+              0,
+              0
+            ],
+            "offsetInTargetSpace": false,
+            "stiffness": 0,
+            "snapDistance": 0,
+            "lookAtTarget": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "2",
+      "kind": "entity",
+      "parent": "1",
+      "components": [
+        {
+          "type": "Transform",
+          "fields": {
+            "position": [
+              0,
+              1,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          }
+        },
+        {
+          "type": "WorldTransform",
+          "fields": {}
+        },
+        {
+          "type": "Name",
+          "fields": {
+            "name": "CrateChild"
+          }
+        },
+        {
+          "type": "CameraController",
+          "fields": {
+            "mode": 1,
+            "target": [
+              "1"
+            ],
+            "offset": [
+              0,
+              0,
+              0
+            ],
+            "offsetInTargetSpace": false,
+            "stiffness": 0,
+            "snapDistance": 0,
+            "lookAtTarget": false
+          }
+        }
+      ]
+    }
+  ]
+}

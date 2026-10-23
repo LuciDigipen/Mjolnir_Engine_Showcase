@@ -1,0 +1,52 @@
+{
+  "root": 4,
+  "prefab": "7c1e2d3a-4b5c-4d6e-8f90-123456789abc",
+  "parent": 0,
+  "siblingIndex": 2,
+  "placement": {
+    "position": [
+      3.0,
+      0.0,
+      0.0
+    ],
+    "rotation": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "scale": [
+      1.0,
+      1.0,
+      1.0
+    ]
+  },
+  "bindings": [
+    {
+      "address": [
+        "1"
+      ],
+      "id": 4
+    },
+    {
+      "address": [
+        "2"
+      ],
+      "id": 5
+    }
+  ],
+  "patches": [
+    {
+      "target": [
+        "2"
+      ],
+      "fields": [
+        {
+          "component": "CameraController",
+          "field": "target",
+          "value": 2
+        }
+      ]
+    }
+  ]
+}

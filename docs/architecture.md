@@ -74,16 +74,20 @@ the pieces depend on each other.
       |        |         |        |             |
    assets    scene    script    editor      gameshell
       |        |         |      |    |          |
-      |        |         |      | editortheme gameui
-      |        |         |      |               |
-      |        |         |   imguiruntime     input
-      |        |         |     |      |         |
-      |        |         |  window  renderer    |
-      |        |         |     |      |         |
-      +--------+---------+-----+------+---------+
-                         |
-                       core
+      |      prefab      |      | editortheme gameui
+      |      /    \      |      |               |
+      +-----+      +-----+ imguiruntime      input
+                         |     |      |         |
+                         |  window  renderer    |
+                         |     |      |         |
+                         +-----+------+---------+
+                               |
+                             core
 ```
+
+`prefab` sits under `app`: it links `assets` and `scene`, reads its documents
+through `serial` privately, and exposes no editor type. `app` supplies the
+editor's authoring backend, so `editor` never links `prefab`.
 
 `app` also links `window`, `renderer` and `imguiruntime` directly, because it
 constructs them. It links `editor` only when `MJOLNIR_WITH_EDITOR` is on; a
@@ -107,6 +111,7 @@ through it for anything touching a JSON file.
 | `assets` | Cooked blobs, manifest, cache | [assets.md](modules/assets.md) |
 | `animation` | Model pose sampling and per-instance playback data | [animation.md](modules/animation.md) |
 | `scene` | Scene save and load | [scene.md](modules/scene.md) |
+| `prefab` | Prefab identity, documents, compiled templates and scene instances | [prefab.md](modules/prefab.md) |
 | `serial` | JSON documents on disk | [serial.md](modules/serial.md) |
 | `script` | Lua embedding and ECS bindings | [script.md](modules/script.md) |
 | `audio` | Wwise lifetime and the per-frame pump | [audio.md](modules/audio.md) |
@@ -235,6 +240,10 @@ bodies whose ground is not collidable yet (#128). `TransformPropagateSystem` run
 runs in `Render`, after all of them, so every `WorldTransform` it reads is
 already current for the frame being drawn.
 
+`PrefabSystem` also runs first in `PreUpdate`, but publishes compiled Prefab
+changes only in Edit; Play freezes the registry and every instance. A Prefab
+source rescan during Play waits for the next Edit commit.
+
 The scheduler flushes the command buffer at each phase boundary and after each
 `FixedUpdate` substep, never in the middle of a system.
 
@@ -344,6 +353,13 @@ The cooked roots are the engine's `assets/` plus each game's `assetsRoot`. The
 root CMakeLists reads those from every `games/*/game.json` at configure time, so
 adding a game adds its assets without touching CMake.
 
+A `*.prefab` file is cooked to a typed payload under the id
+`prefab:<uuid>`, not the path hash every other asset uses. An editor build scans
+the source `prefabs/` folder and reads the files directly; a build without the
+editor removes that copied source folder next to the executable and fills the
+Prefab registry from the cooked manifest instead. Both reach the same lookup by
+`PrefabId`, so a scene's instance record never names a source path.
+
 An `AssetId` is the FNV-1a 64 hash of the source path relative to the repository
 root. That is why `engine_cook_assets` rejects an absolute cook root: the root
 string is part of what gets hashed, so an absolute path would bake one machine's
@@ -355,10 +371,20 @@ and copied next to the executable separately.
 ### A scene
 
 `scene/SceneIO.h` writes a scene as a directory. `scene.json` lists `StableId`s
-in load order, and `entities/<id>-<name>.json` holds one entity each.
+in load order, `entities/<id>.json` holds one ordinary entity each, and
+`instances/<root>.json` holds a Prefab instance: its Prefab UUID, placement,
+one binding per compiled node address, and the scene's overrides.
 
 Splitting by entity keeps a diff proportional to what changed, and lets two
-people edit different entities in the same scene without conflicting.
+people edit different entities in the same scene without conflicting. A Prefab
+instance is one record because its members come from a template; saving every
+member separately would make the template and the instance fight over the same
+component values.
+
+`LoadScene` materializes instances through `ScenePrefabResolver`, which
+compiles the template in `prefab` and builds one entity per bound address. The
+resolver reports each template `EntityRef` default, so a save can write a patch
+only where the scene differs.
 
 Components round-trip generically, through the `FieldDesc` tables registered in
 `ComponentRegistry`. Giving a component a field table is therefore the entire
@@ -377,6 +403,26 @@ whatever the running editor last saved the moment the project is next
 rebuilt.
 
 The three load passes are in [scene.md](modules/scene.md).
+
+### A Prefab
+
+A `.prefab` source becomes a `PrefabDocument`, then a `CompiledPrefab`. The
+compile flattens every nested occurrence into one node list, with addresses that
+prepend the occurrence ids, and turns every `EntityRef` into a relocation to
+another compiled node. `CompiledPrefabCache` keeps that template until a newer
+document compiles.
+
+A scene instance is the bridge back to `StableId`s. Its record binds each
+compiled address to one, and its patches hold only what the scene overrides.
+`PrefabCoordinator` binds that scene, and its `PrefabSystem` publishes compiled
+edits and nested dependency changes at the next Edit frame boundary. During
+Play it is frozen, so no template change can restructure entities the Play
+snapshot owns.
+
+An open Prefab document gets its own preview World and `LoadedScene`, so the
+editor can edit it without touching the scene. `PrefabAuthoring` records the
+authored entries for both, and `app` saves a Prefab's unsaved dependencies
+before the scene that uses them.
 
 ### A script
 

@@ -1,0 +1,93 @@
+{
+  "formatVersion": 1,
+  "prefabId": "9e3a4f5c-6d7e-4f80-a1b2-3456789abcde",
+  "nextNodeId": "4",
+  "rootNode": "1",
+  "nodes": [
+    {
+      "id": "1",
+      "kind": "entity",
+      "components": [
+        {
+          "type": "Transform",
+          "fields": {
+            "position": [
+              0,
+              0,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "scale": [
+              1,
+              1,
+              1
+            ]
+          }
+        },
+        {
+          "type": "WorldTransform",
+          "fields": {}
+        },
+        {
+          "type": "Name",
+          "fields": {
+            "name": "House"
+          }
+        }
+      ]
+    },
+    {
+      "id": "2",
+      "kind": "prefab",
+      "parent": "1",
+      "prefab": "8d2f3e4b-5c6d-4e7f-90a1-23456789abcd",
+      "patches": [
+        {
+          "target": [
+            "1"
+          ],
+          "fields": [
+            {
+              "component": "Transform",
+              "field": "position",
+              "value": [
+                -2,
+                0,
+                0
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "3",
+      "kind": "prefab",
+      "parent": "1",
+      "prefab": "8d2f3e4b-5c6d-4e7f-90a1-23456789abcd",
+      "patches": [
+        {
+          "target": [
+            "1"
+          ],
+          "fields": [
+            {
+              "component": "Transform",
+              "field": "position",
+              "value": [
+                2,
+                0,
+                0
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
