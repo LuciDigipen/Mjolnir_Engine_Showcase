@@ -249,7 +249,7 @@ namespace mir
         PrefabCoordinator &prefabs = mWorld.EmplaceResource<PrefabCoordinator>();
     #if MIR_WITH_EDITOR
         mPrefabAuthoring = std::make_unique<PrefabAuthoringAdapter>(mWorld, prefabs,
-            PrefabSourceDir(mProject));
+            mProject.mRootDir, PrefabSourceDir(mProject));
         mEditor.SetAuthoringBackend(mPrefabAuthoring.get());
         mEditor.SetAuthoredEntities(mPrefabAuthoring.get());
         mPrefabWorkspace = std::make_unique<PrefabWorkspace>(prefabs, *mPrefabAuthoring);

@@ -109,10 +109,11 @@ namespace mir
     }
 
     PrefabAuthoringAdapter::PrefabAuthoringAdapter(World &world, PrefabCoordinator &coordinator,
-        std::filesystem::path prefabsDir)
+        std::filesystem::path projectRoot, std::filesystem::path prefabsDir)
         : mWorld(world)
         , mCoordinator(coordinator)
         , mAuthoring(world, coordinator)
+        , mProjectRoot(std::move(projectRoot))
         , mPrefabsDir(std::move(prefabsDir))
     {
     }
@@ -280,6 +281,19 @@ namespace mir
         return ToEditorAction(mAuthoring.Apply(ToPrefabKey(key)), "Apply to Prefab");
     }
 
+    AuthoredAction PrefabAuthoringAdapter::Apply(const AuthoredKey &key, std::size_t target)
+    {
+        return ToEditorAction(mAuthoring.Apply(ToPrefabKey(key), target), "Apply to Prefab");
+    }
+
+    std::vector<AuthoredApplyTarget> PrefabAuthoringAdapter::ApplyTargets(const AuthoredKey &key)
+    {
+        std::vector<AuthoredApplyTarget> targets;
+        for (const PrefabApplyTarget &target : mAuthoring.ApplyTargets(ToPrefabKey(key)))
+            targets.push_back(AuthoredApplyTarget{ target.mLabel, target.mOverrides });
+        return targets;
+    }
+
     AuthoredAction PrefabAuthoringAdapter::CreateNode(Entity parent, std::size_t siblingIndex,
         const EntityPresetDesc *preset)
     {
@@ -291,6 +305,21 @@ namespace mir
         if (preset != nullptr)
             name = "Create " + std::string(preset->mName.substr(preset->mName.find('/') + 1));
         return ToEditorAction(mAuthoring.CreateNode(*parentNode, siblingIndex, preset), std::move(name));
+    }
+
+    AuthoredAction PrefabAuthoringAdapter::PlacePrefabNode(std::string_view contentPath, Entity parent,
+        std::size_t siblingIndex, const std::optional<WorldVec3> &placement)
+    {
+        const std::optional<PrefabNodeId> parentNode = mAuthoring.NodeIdOf(parent);
+        if (!parentNode)
+            return RefusedAction("Place Prefab", "the parent is not part of the active prefab document");
+
+        const std::optional<PrefabId> id = mCoordinator.Registry().IdAtPath(
+            mProjectRoot / std::filesystem::path(std::string(contentPath)));
+        if (!id)
+            return RefusedAction("Place Prefab", "'" + std::string(contentPath) + "' is not a registered Prefab");
+
+        return ToEditorAction(mAuthoring.PlacePrefabNode(*parentNode, *id, siblingIndex, placement), "Place Prefab");
     }
 
     AuthoredAction PrefabAuthoringAdapter::DeleteNodes(std::span<const Entity> nodes)

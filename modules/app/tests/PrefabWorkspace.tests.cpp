@@ -11,11 +11,13 @@
 
 #include <editor/history/AuthoredEdit.h>
 #include <editor/history/Authoring.h>
+#include <editor/history/DocumentNodeCommands.h>
 #include <editor/history/EntityCommands.h>
 #include <editor/history/History.h>
 #include <editor/history/DocumentNodeCommands.h>
 #include <editor/panels/HierarchyPanel.h>
 #include <editor/history/SceneOps.h>
+#include <editor/panels/HierarchyPanel.h>
 
 #include <core/ecs/CommandBuffer.h>
 #include <core/ecs/ComponentRegistry.h>
@@ -36,9 +38,11 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -58,6 +62,7 @@ namespace
     using nlohmann::json;
     using mir::AuthoredAction;
     using mir::AuthoredEntry;
+    using mir::AuthoredInstanceRole;
     using mir::AuthoredKey;
     using mir::CapturedSubtree;
     using mir::CommandBuffer;
@@ -280,11 +285,49 @@ namespace
         return document;
     }
 
+    PrefabDocument OuterDocument(PrefabId inner)
+    {
+        PrefabDocument document = mir::NewPrefabDocument();
+        document.mNodes[0].mComponents.push_back(PrefabComponentInstance{ "Transform", json::object() });
+
+        PrefabNode occurrence;
+        occurrence.mId = 2;
+        occurrence.mKind = mir::PrefabNodeKind::Prefab;
+        occurrence.mParent = 1;
+        occurrence.mPrefab = inner;
+        document.mNodes.push_back(std::move(occurrence));
+        document.mNextNodeId = 3;
+        return document;
+    }
+
+    float FloatField(World &world, Entity entity, const ComponentOps &ops, std::string_view field)
+    {
+        void *component = ops.GetComponent(world, entity);
+        REQUIRE(component != nullptr);
+        const mir::FieldDesc *desc = ops.FindField(field);
+        REQUIRE(desc != nullptr);
+        float value = 0.0f;
+        desc->Read(component, &value);
+        return value;
+    }
+
+    Entity EntityField(World &world, Entity entity, const ComponentOps &ops, std::string_view field)
+    {
+        void *component = ops.GetComponent(world, entity);
+        REQUIRE(component != nullptr);
+        const mir::FieldDesc *desc = ops.FindField(field);
+        REQUIRE(desc != nullptr);
+        Entity value = kNullEntity;
+        desc->Read(component, &value);
+        return value;
+    }
+
     struct Fixture
     {
         World mWorld;
         LoadedScene mScene = NewScene("main");
         PrefabCoordinator *mCoordinator = nullptr;
+        TempDir mContentRoot;
         TempDir mPrefabsDir;
         std::unique_ptr<PrefabAuthoringAdapter> mAdapter;
         std::unique_ptr<PrefabWorkspace> mDocuments;
@@ -307,7 +350,8 @@ namespace
             mCoordinator->Bind(mScene);
             mDocumentId = DocumentId{ mDocument.mId.mHigh, mDocument.mId.mLow };
 
-            mAdapter = std::make_unique<PrefabAuthoringAdapter>(mWorld, *mCoordinator, mPrefabsDir.mPath);
+            mAdapter = std::make_unique<PrefabAuthoringAdapter>(mWorld, *mCoordinator, mContentRoot.mPath,
+                mPrefabsDir.mPath);
             mHistory.SetAuthoringBackend(mAdapter.get());
             mDocuments = std::make_unique<PrefabWorkspace>(*mCoordinator, *mAdapter);
         }
@@ -595,10 +639,7 @@ TEST_CASE("A preset creates its document node as one undoable step", "[app][pref
     World *previewWorld = fixture.mDocuments->PreviewWorld(fixture.mDocument.mId);
     REQUIRE(previewWorld != nullptr);
     const Entity createdEntity = fixture.PreviewEntity(SceneNodeAddress{ createdId });
-    REQUIRE(DataOps().Has(*previewWorld, createdEntity));
-    float amount = 0.0f;
-    DataOps().FindField("amount")->Read(DataOps().GetComponent(*previewWorld, createdEntity), &amount);
-    CHECK(amount == 7.0f);
+    CHECK(FloatField(*previewWorld, createdEntity, DataOps(), "amount") == 7.0f);
 
     fixture.Undo();
     fixture.Commit();
@@ -626,6 +667,53 @@ TEST_CASE("A preset that refuses the active World creates no node", "[app][prefa
     CHECK_FALSE(created.mAllowed);
     CHECK(created.mEntries.empty());
     CHECK(fixture.mCoordinator->Registry().Find(fixture.mDocument.mId)->mNodes.size() == 4);
+}
+
+TEST_CASE("Preview roles mark the nested occurrence, not the document", "[app][prefabs]")
+{
+    Fixture fixture;
+    const PrefabDocument outer = OuterDocument(fixture.mDocument.mId);
+    REQUIRE(fixture.mCoordinator->Registry().SetDocument(outer));
+    REQUIRE(fixture.mDocuments->Open(outer.mId));
+
+    const LoadedScene &preview = *fixture.mDocuments->PreviewScene(outer.mId);
+    const StableId rootId = preview.mInstances.begin()->first;
+    const auto entityAt = [&](const SceneNodeAddress &address)
+        {
+            return preview.mEntities.at(preview.mInstances.at(rootId).mBindings.at(address));
+        };
+
+    CHECK(fixture.mAdapter->InstanceRole(entityAt(SceneNodeAddress{ 1 })) == AuthoredInstanceRole::Ordinary);
+    CHECK(fixture.mAdapter->InstanceRole(entityAt(SceneNodeAddress{ 2, 1 })) == AuthoredInstanceRole::Root);
+    CHECK(fixture.mAdapter->InstanceRole(entityAt(SceneNodeAddress{ 2, 2 })) == AuthoredInstanceRole::Member);
+    CHECK(fixture.mAdapter->InstanceRole(kNullEntity) == AuthoredInstanceRole::Ordinary);
+}
+
+TEST_CASE("Prefab-linked rows cover a document's nested occurrences only", "[app][prefabs]")
+{
+    Fixture fixture;
+    const PrefabDocument outer = OuterDocument(fixture.mDocument.mId);
+    REQUIRE(fixture.mCoordinator->Registry().SetDocument(outer));
+    REQUIRE(fixture.mDocuments->Open(outer.mId));
+
+    const LoadedScene &preview = *fixture.mDocuments->PreviewScene(outer.mId);
+    const StableId rootId = preview.mInstances.begin()->first;
+    const auto entityAt = [&](const SceneNodeAddress &address)
+        {
+            return preview.mEntities.at(preview.mInstances.at(rootId).mBindings.at(address));
+        };
+
+    const std::vector<Entity> linked = fixture.mAdapter->PrefabLinkedEntities();
+    const auto contains = [&](Entity entity)
+        {
+            return std::find(linked.begin(), linked.end(), entity) != linked.end();
+        };
+    CHECK_FALSE(contains(entityAt(SceneNodeAddress{ 1 })));
+    CHECK(contains(entityAt(SceneNodeAddress{ 2, 1 })));
+    CHECK(contains(entityAt(SceneNodeAddress{ 2, 2 })));
+    CHECK(contains(entityAt(SceneNodeAddress{ 2, 3 })));
+    CHECK(contains(entityAt(SceneNodeAddress{ 2, 4 })));
+    CHECK(linked.size() == 4);
 }
 
 TEST_CASE("One document is active and the Scene tab clears it", "[app][prefabs]")
@@ -933,4 +1021,309 @@ TEST_CASE("Opening a captured Prefab previews members with WorldTransform", "[ap
             ++transforms;
     }
     CHECK(transforms == 2);
+}
+
+TEST_CASE("Deleting a nested occurrence root is one undoable step", "[app][prefabs]")
+{
+    Fixture fixture;
+    const PrefabDocument outer = OuterDocument(fixture.mDocument.mId);
+    REQUIRE(fixture.mCoordinator->Registry().SetDocument(outer));
+    REQUIRE(fixture.mDocuments->Open(outer.mId));
+
+    const DocumentId outerDocument{ outer.mId.mHigh, outer.mId.mLow };
+    const SceneNodeAddress nestedMember{ 2, 2 };
+    World *previewWorld = fixture.mDocuments->PreviewWorld(outer.mId);
+    const LoadedScene *previewScene = fixture.mDocuments->PreviewScene(outer.mId);
+    REQUIRE(previewWorld != nullptr);
+    REQUIRE(previewScene != nullptr);
+    const StableId previewRoot = previewScene->mInstances.begin()->first;
+    const Entity occurrenceRoot =
+        previewScene->mEntities.at(previewScene->mInstances.at(previewRoot).mBindings.at(SceneNodeAddress{ 2, 1 }));
+
+    AuthoredKey amount;
+    amount.mObject.mDocument = outerDocument;
+    amount.mObject.mAddress = nestedMember;
+    amount.mComponent = "AppDocumentsTestData";
+    amount.mField = "amount";
+    fixture.Run(MakeAuthoredCommand("Edit amount", { AuthoredEntry{ amount, std::string("21.0") } }));
+    fixture.Commit();
+
+    const LoadedScene &savedPreview = *fixture.mDocuments->PreviewScene(outer.mId);
+    const StableId savedRoot = savedPreview.mInstances.begin()->first;
+    const Entity savedMember =
+        savedPreview.mEntities.at(savedPreview.mInstances.at(savedRoot).mBindings.at(nestedMember));
+    CHECK(FloatField(*previewWorld, savedMember, DataOps(), "amount") == 21.0f);
+
+    const AuthoredAction deleted = fixture.mAdapter->DeleteNodes(std::vector<Entity>{ occurrenceRoot });
+    REQUIRE(deleted.mAllowed);
+    REQUIRE(deleted.mEntries.size() == 1);
+    fixture.Run(MakeAuthoredCommand(deleted.mName, deleted.mEntries));
+    fixture.Commit();
+
+    const PrefabDocument *document = fixture.mCoordinator->Registry().Find(outer.mId);
+    REQUIRE(document != nullptr);
+    CHECK(document->mNodes.size() == 1);
+
+    fixture.Undo();
+    fixture.Commit();
+
+    document = fixture.mCoordinator->Registry().Find(outer.mId);
+    REQUIRE(document != nullptr);
+    REQUIRE(document->mNodes.size() == 2);
+    const PrefabNode &restored = document->mNodes.back();
+    CHECK(restored.mKind == mir::PrefabNodeKind::Prefab);
+    CHECK(restored.mPrefab == fixture.mDocument.mId);
+    REQUIRE(restored.mPatches.size() == 1);
+    CHECK(restored.mPatches.front().mTarget == SceneNodeAddress{ 2 });
+    REQUIRE(restored.mPatches.front().mFields.size() == 1);
+    CHECK(restored.mPatches.front().mFields.front().mValue == 21.0);
+
+    const LoadedScene &after = *fixture.mDocuments->PreviewScene(outer.mId);
+    const StableId rootAfter = after.mInstances.begin()->first;
+    const Entity restoredMember = after.mEntities.at(after.mInstances.at(rootAfter).mBindings.at(nestedMember));
+    CHECK(FloatField(*previewWorld, restoredMember, DataOps(), "amount") == 21.0f);
+}
+
+TEST_CASE("Pasting a nested reference in a Prefab tab keeps the link", "[app][prefabs]")
+{
+    Fixture fixture;
+    const PrefabDocument outer = OuterDocument(fixture.mDocument.mId);
+    REQUIRE(fixture.mCoordinator->Registry().SetDocument(outer));
+    REQUIRE(fixture.mDocuments->Open(outer.mId));
+
+    const LoadedScene &preview = *fixture.mDocuments->PreviewScene(outer.mId);
+    const StableId previewRoot = preview.mInstances.begin()->first;
+    const ScenePrefabInstance &instance = preview.mInstances.at(previewRoot);
+    const Entity source = preview.mEntities.at(instance.mBindings.at(SceneNodeAddress{ 2, 2 }));
+    const Entity destination = preview.mEntities.at(instance.mBindings.at(SceneNodeAddress{ 2, 1 }));
+
+    const std::string encoded = fixture.mAdapter->EncodeField(FieldKind::EntityRef, &source);
+    CHECK(json::parse(encoded) == json::array({ "2", "2" }));
+
+    mir::FieldValue value;
+    value.mField = static_cast<uint32_t>(DataOps().FindField("target") - DataOps().mFields.data());
+    std::memcpy(value.mBytes, &source, sizeof(source));
+    CHECK(json::parse(fixture.mAdapter->EncodeField(FieldKind::EntityRef, value.mBytes)) ==
+        json::array({ "2", "2" }));
+    const std::optional<AuthoredKey> destinationKey =
+        fixture.mAdapter->KeyOf(destination, "AppDocumentsTestData", "target");
+    REQUIRE(destinationKey.has_value());
+    CHECK(destinationKey->mObject.mAddress == SceneNodeAddress{ 2, 1 });
+    fixture.Run(MakeSetFieldsEditCommand(destination, DataOps(), { value }, "Paste Values",
+        fixture.mAdapter.get()));
+    fixture.Commit();
+
+    const PrefabDocument *document = fixture.mCoordinator->Registry().Find(outer.mId);
+    REQUIRE(document != nullptr);
+    REQUIRE(document->mNodes.size() == 2);
+    const PrefabNode &occurrence = document->mNodes.back();
+    REQUIRE(occurrence.mPatches.size() == 1);
+    CHECK(occurrence.mPatches.front().mTarget == SceneNodeAddress{ 1 });
+    REQUIRE(occurrence.mPatches.front().mFields.size() == 1);
+    CHECK(occurrence.mPatches.front().mFields.front().mValue == json::array({ "2", "2" }));
+
+    const LoadedScene &after = *fixture.mDocuments->PreviewScene(outer.mId);
+    const StableId rootAfter = after.mInstances.begin()->first;
+    const ScenePrefabInstance &rebuilt = after.mInstances.at(rootAfter);
+    const Entity sourceAfter = after.mEntities.at(rebuilt.mBindings.at(SceneNodeAddress{ 2, 2 }));
+    const Entity destinationAfter = after.mEntities.at(rebuilt.mBindings.at(SceneNodeAddress{ 2, 1 }));
+    CHECK(EntityField(*fixture.mDocuments->PreviewWorld(outer.mId), destinationAfter, DataOps(), "target") ==
+        sourceAfter);
+}
+
+TEST_CASE("Undo of removing a nested member's component restores its occurrence overrides", "[app][prefabs]")
+{
+    Fixture fixture;
+    const PrefabDocument outer = OuterDocument(fixture.mDocument.mId);
+    REQUIRE(fixture.mCoordinator->Registry().SetDocument(outer));
+    REQUIRE(fixture.mDocuments->Open(outer.mId));
+
+    const SceneNodeAddress nestedMember{ 2, 2 };
+    const auto member = [&]
+        {
+            const LoadedScene &preview = *fixture.mDocuments->PreviewScene(outer.mId);
+            const StableId root = preview.mInstances.begin()->first;
+            return preview.mEntities.at(preview.mInstances.at(root).mBindings.at(nestedMember));
+        };
+    World &previewWorld = *fixture.mDocuments->PreviewWorld(outer.mId);
+
+    AuthoredKey amount;
+    amount.mObject.mDocument = DocumentId{ outer.mId.mHigh, outer.mId.mLow };
+    amount.mObject.mAddress = nestedMember;
+    amount.mComponent = "AppDocumentsTestData";
+    amount.mField = "amount";
+    fixture.Run(MakeAuthoredCommand("Edit amount", { AuthoredEntry{ amount, std::string("21.0") } }));
+    fixture.Commit();
+
+    fixture.Run(mir::MakeRemoveComponentEditCommand(member(), DataOps(), fixture.mAdapter.get()));
+    fixture.Commit();
+    CHECK_FALSE(DataOps().Has(previewWorld, member()));
+
+    fixture.Undo();
+    fixture.Commit();
+
+    const PrefabDocument *document = fixture.mCoordinator->Registry().Find(outer.mId);
+    REQUIRE(document != nullptr);
+    const PrefabNode &occurrence = document->mNodes.back();
+    REQUIRE(occurrence.mPatches.size() == 1);
+    CHECK(occurrence.mPatches.front().mRemovedComponents.empty());
+    CHECK(occurrence.mPatches.front().mAddedComponents.empty());
+    REQUIRE(occurrence.mPatches.front().mFields.size() == 1);
+    CHECK(occurrence.mPatches.front().mFields.front().mValue == 21.0);
+    CHECK(FloatField(previewWorld, member(), DataOps(), "amount") == 21.0f);
+}
+
+TEST_CASE("Dropping a Prefab in a Prefab tab nests it as one undoable step", "[app][prefabs]")
+{
+    Fixture fixture;
+    PrefabDocument inner = Document();
+    REQUIRE(fixture.mCoordinator->Registry().SetDocument(inner));
+    REQUIRE(fixture.mCoordinator->Registry().SetIntendedPath(inner.mId,
+        fixture.mContentRoot.mPath / "assets" / "prefabs" / "Inner.prefab"));
+    REQUIRE(fixture.mDocuments->Open(fixture.mDocument.mId));
+
+    World *world = fixture.mDocuments->PreviewWorld(fixture.mDocument.mId);
+    REQUIRE(world != nullptr);
+
+    mir::EntityAction action;
+    action.mKind = mir::EntityActionKind::PlacePrefab;
+    action.mParent = fixture.PreviewEntity(SceneNodeAddress{ 2 });
+    action.mPrefabPath = "assets/prefabs/Inner.prefab";
+    fixture.Run(mir::MakeDocumentEntityCommand(action, *fixture.mAdapter, *world));
+    CHECK(fixture.mHistory.StepCount() == 1);
+
+    const PrefabDocument *document = fixture.mCoordinator->Registry().Find(fixture.mDocument.mId);
+    REQUIRE(document != nullptr);
+    REQUIRE(document->mNodes.size() == 5);
+    const PrefabNode *occurrence = nullptr;
+    for (const PrefabNode &node : document->mNodes)
+    {
+        if (node.mKind == mir::PrefabNodeKind::Prefab)
+            occurrence = &node;
+    }
+    REQUIRE(occurrence != nullptr);
+    const mir::PrefabNodeId newId = occurrence->mId;
+    CHECK(occurrence->mPrefab == inner.mId);
+    CHECK(occurrence->mParent == 2);
+    CHECK(occurrence->mPatches.empty());
+
+    fixture.Commit();
+    const SceneNodeAddress nestedRoot{ newId, inner.mRootNode };
+    const LoadedScene &preview = fixture.PreviewScene();
+    REQUIRE(preview.mInstances.at(fixture.PreviewRoot()).mBindings.contains(nestedRoot));
+    CHECK(world->IsAlive(preview.mEntities.at(preview.mInstances.at(fixture.PreviewRoot()).mBindings.at(
+        nestedRoot))));
+
+    fixture.Undo();
+    fixture.Commit();
+    CHECK(fixture.mCoordinator->Registry().Find(fixture.mDocument.mId)->mNodes.size() == 4);
+    CHECK_FALSE(fixture.PreviewScene().mInstances.at(fixture.PreviewRoot()).mBindings.contains(nestedRoot));
+
+    fixture.Redo();
+    fixture.Commit();
+    CHECK(fixture.mCoordinator->Registry().Find(fixture.mDocument.mId)->mNodes.size() == 5);
+    CHECK(fixture.PreviewScene().mInstances.at(fixture.PreviewRoot()).mBindings.contains(nestedRoot));
+}
+
+TEST_CASE("A viewport Prefab drop in a Prefab tab writes the inner root position", "[app][prefabs]")
+{
+    Fixture fixture;
+    PrefabDocument inner = Document();
+    REQUIRE(fixture.mCoordinator->Registry().SetDocument(inner));
+    REQUIRE(fixture.mCoordinator->Registry().SetIntendedPath(inner.mId,
+        fixture.mContentRoot.mPath / "assets" / "prefabs" / "Inner.prefab"));
+    REQUIRE(fixture.mDocuments->Open(fixture.mDocument.mId));
+
+    World *world = fixture.mDocuments->PreviewWorld(fixture.mDocument.mId);
+    REQUIRE(world != nullptr);
+
+    const mir::WorldVec3 position(2.0, 3.0, 4.0);
+    mir::EntityAction action;
+    action.mKind = mir::EntityActionKind::PlacePrefab;
+    action.mPrefabPath = "assets/prefabs/Inner.prefab";
+    action.mPlacement = position;
+    fixture.Run(mir::MakeDocumentEntityCommand(action, *fixture.mAdapter, *world));
+    CHECK(fixture.mHistory.StepCount() == 1);
+
+    const PrefabDocument *document = fixture.mCoordinator->Registry().Find(fixture.mDocument.mId);
+    REQUIRE(document != nullptr);
+    REQUIRE(document->mNodes.size() == 5);
+    const PrefabNode *occurrence = nullptr;
+    for (const PrefabNode &node : document->mNodes)
+    {
+        if (node.mKind == mir::PrefabNodeKind::Prefab)
+            occurrence = &node;
+    }
+    REQUIRE(occurrence != nullptr);
+    const mir::PrefabNodeId newId = occurrence->mId;
+    CHECK(occurrence->mParent == document->mRootNode);
+    REQUIRE(occurrence->mPatches.size() == 1);
+    CHECK(occurrence->mPatches.front().mTarget == SceneNodeAddress{ inner.mRootNode });
+
+    fixture.Commit();
+    const LoadedScene &preview = fixture.PreviewScene();
+    const SceneNodeAddress nestedRoot{ newId, inner.mRootNode };
+    REQUIRE(preview.mInstances.at(fixture.PreviewRoot()).mBindings.contains(nestedRoot));
+    const Entity root =
+        preview.mEntities.at(preview.mInstances.at(fixture.PreviewRoot()).mBindings.at(nestedRoot));
+    const mir::Transform *transform = world->GetComponent<mir::Transform>(root);
+    REQUIRE(transform != nullptr);
+    CHECK(transform->Position() == position);
+}
+
+TEST_CASE("A Prefab drop that would nest the active document is refused", "[app][prefabs]")
+{
+    Fixture fixture;
+    const PrefabDocument cycle = OuterDocument(fixture.mDocument.mId);
+    REQUIRE(fixture.mCoordinator->Registry().SetDocument(cycle));
+    REQUIRE(fixture.mCoordinator->Registry().SetIntendedPath(cycle.mId,
+        fixture.mContentRoot.mPath / "assets" / "prefabs" / "Cycle.prefab"));
+    REQUIRE(fixture.mDocuments->Open(fixture.mDocument.mId));
+
+    World *world = fixture.mDocuments->PreviewWorld(fixture.mDocument.mId);
+    REQUIRE(world != nullptr);
+
+    mir::EntityAction action;
+    action.mKind = mir::EntityActionKind::PlacePrefab;
+    action.mPrefabPath = "assets/prefabs/Cycle.prefab";
+    CHECK(mir::MakeDocumentEntityCommand(action, *fixture.mAdapter, *world) == nullptr);
+    CHECK(fixture.mHistory.StepCount() == 0);
+    CHECK(fixture.mCoordinator->Registry().Find(fixture.mDocument.mId)->mNodes.size() == 4);
+
+    action.mPrefabPath = "assets/prefabs/Missing.prefab";
+    CHECK(mir::MakeDocumentEntityCommand(action, *fixture.mAdapter, *world) == nullptr);
+    CHECK(fixture.mHistory.StepCount() == 0);
+}
+
+TEST_CASE("A Prefab drop on a nested occurrence is refused", "[app][prefabs]")
+{
+    Fixture fixture;
+    PrefabDocument inner = Document();
+    REQUIRE(fixture.mCoordinator->Registry().SetDocument(inner));
+    REQUIRE(fixture.mCoordinator->Registry().SetIntendedPath(inner.mId,
+        fixture.mContentRoot.mPath / "assets" / "prefabs" / "Inner.prefab"));
+    const PrefabDocument outer = OuterDocument(inner.mId);
+    REQUIRE(fixture.mCoordinator->Registry().SetDocument(outer));
+    REQUIRE(fixture.mDocuments->Open(outer.mId));
+
+    World *world = fixture.mDocuments->PreviewWorld(outer.mId);
+    REQUIRE(world != nullptr);
+    const LoadedScene &preview = *fixture.mDocuments->PreviewScene(outer.mId);
+    const StableId root = preview.mInstances.begin()->first;
+    const Entity occurrenceRoot =
+        preview.mEntities.at(preview.mInstances.at(root).mBindings.at(SceneNodeAddress{ 2, inner.mRootNode }));
+
+    mir::EntityAction action;
+    action.mKind = mir::EntityActionKind::PlacePrefab;
+    action.mParent = occurrenceRoot;
+    action.mPrefabPath = "assets/prefabs/Inner.prefab";
+    CHECK(mir::MakeDocumentEntityCommand(action, *fixture.mAdapter, *world) == nullptr);
+    CHECK(fixture.mHistory.StepCount() == 0);
+    CHECK(fixture.mCoordinator->Registry().Find(outer.mId)->mNodes.size() == 2);
+
+    action.mParent =
+        preview.mEntities.at(preview.mInstances.at(root).mBindings.at(SceneNodeAddress{ 2, 2 }));
+    CHECK(mir::MakeDocumentEntityCommand(action, *fixture.mAdapter, *world) == nullptr);
+    CHECK(fixture.mHistory.StepCount() == 0);
+    CHECK(fixture.mCoordinator->Registry().Find(outer.mId)->mNodes.size() == 2);
 }

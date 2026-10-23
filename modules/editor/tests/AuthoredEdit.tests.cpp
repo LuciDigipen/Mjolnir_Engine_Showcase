@@ -144,7 +144,20 @@ namespace
             return action;
         }
 
+        std::vector<mir::AuthoredApplyTarget> ApplyTargets(const AuthoredKey &) override { return mTargets; }
+
+        AuthoredAction Apply(const AuthoredKey &key, std::size_t target) override
+        {
+            mAppliedTarget = target;
+            return Apply(key);
+        }
+
         AuthoredAction CreateNode(Entity, std::size_t, const mir::EntityPresetDesc *) override { return Refused(); }
+        AuthoredAction PlacePrefabNode(std::string_view, Entity, std::size_t,
+            const std::optional<mir::WorldVec3> &) override
+        {
+            return Refused();
+        }
         AuthoredAction DeleteNodes(std::span<const Entity>) override { return Refused(); }
         AuthoredAction ReparentNode(Entity, Entity, std::size_t) override { return Refused(); }
 
@@ -169,6 +182,8 @@ namespace
         bool WritesComponentDirectly(Entity, std::string_view) override { return false; }
 
         std::set<uint64_t> mMembers;
+        std::vector<mir::AuthoredApplyTarget> mTargets;
+        std::size_t mAppliedTarget = 0;
         bool mRefuseApply = false;
         bool mRefuseCreatePrefab = false;
 
@@ -348,4 +363,22 @@ TEST_CASE("Revert submits one command and a refused Apply submits none", "[edito
     fixture.mView.mRefuseApply = true;
     CHECK(mir::MakeApplyAuthoredCommand(fixture.mView, key) == nullptr);
     CHECK(fixture.mHistory.StepCount() == 1);
+}
+
+TEST_CASE("Apply routes to the chosen layer", "[editor][history][authored-edit]")
+{
+    Fixture fixture;
+    fixture.mView.mMembers.insert(mir::PackEntity(fixture.mEntity));
+    const AuthoredKey key = *fixture.mView.KeyOf(fixture.mEntity, "AuthoredEditTestData", "amount");
+    fixture.mView.mTargets = { mir::AuthoredApplyTarget{ "Outer", false },
+        mir::AuthoredApplyTarget{ "Inner", true } };
+
+    REQUIRE(fixture.mView.ApplyTargets(key).size() == 2);
+    std::unique_ptr<mir::ICommand> command = mir::MakeApplyAuthoredCommand(fixture.mView, key, 1);
+    REQUIRE(command != nullptr);
+    CHECK(fixture.mView.mAppliedTarget == 1);
+
+    fixture.Run(std::move(command));
+    CHECK(fixture.mHistory.StepCount() == 1);
+    CHECK(fixture.mBackend.mWritten.size() == 1);
 }

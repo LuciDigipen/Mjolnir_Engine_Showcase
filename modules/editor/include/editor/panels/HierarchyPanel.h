@@ -10,8 +10,10 @@
 
 #include <core/ecs/EntityPresetRegistry.h>
 #include <core/ecs/World.h>
+#include <core/math/WorldReal.h>
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -45,6 +47,7 @@ namespace mir
 
         // for place prefab
         std::string mPrefabPath;
+        std::optional<WorldVec3> mPlacement; // parent-local; a Hierarchy drop leaves it empty
     };
 
     class HierarchyPanel

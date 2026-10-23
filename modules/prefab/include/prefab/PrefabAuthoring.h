@@ -13,6 +13,7 @@
 
 #include <core/ecs/ComponentFields.h>
 #include <core/ecs/Entity.h>
+#include <core/math/WorldReal.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -57,6 +58,14 @@ namespace mir
         std::string mRefusal; // non-empty: the action is refused
     };
 
+    // One document an override can be applied into, outermost first.
+    struct PrefabApplyTarget
+    {
+        PrefabId mPrefab{};
+        std::string mLabel;
+        bool mOverrides = false;
+    };
+
     enum class PrefabInstanceRole : uint8_t
     {
         Ordinary,
@@ -93,7 +102,12 @@ namespace mir
         std::string EncodeField(FieldKind kind, const void *bytes) const;
 
         PrefabAuthoredAction Revert(const PrefabAuthoredKey &key) const;
-        PrefabAuthoredAction Apply(const PrefabAuthoredKey &key) const;
+
+        // Every layer below the origin that can take the selected override, outermost first.
+        std::vector<PrefabApplyTarget> ApplyTargets(const PrefabAuthoredKey &key) const;
+
+        // Writes the selected override into the chosen target and removes only the origin patch.
+        PrefabAuthoredAction Apply(const PrefabAuthoredKey &key, std::size_t target = 0) const;
 
         // The document preview entities resolve against; empty authors through the bound scene.
         void SetActiveDocument(std::optional<PrefabId> prefab) { mActiveDocument = prefab; }
@@ -105,6 +119,8 @@ namespace mir
         // A preset fills the new node with the components it creates on a fresh entity.
         PrefabAuthoredAction CreateNode(PrefabNodeId parent, std::size_t siblingIndex,
             const EntityPresetDesc *preset = nullptr);
+        PrefabAuthoredAction PlacePrefabNode(PrefabNodeId parent, PrefabId prefab, std::size_t siblingIndex,
+            std::optional<WorldVec3> position = std::nullopt);
         PrefabAuthoredAction DeleteNodes(std::span<const PrefabNodeId> nodes);
         PrefabAuthoredAction ReparentNode(PrefabNodeId node, PrefabNodeId parent, std::size_t siblingIndex);
 

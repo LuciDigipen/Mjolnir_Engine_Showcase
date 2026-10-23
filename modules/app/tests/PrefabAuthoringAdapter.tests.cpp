@@ -262,6 +262,7 @@ namespace
         World mWorld;
         LoadedScene mScene;
         PrefabCoordinator *mCoordinator = nullptr;
+        TempDir mContentRoot;
         TempDir mPrefabsDir;
         std::unique_ptr<PrefabAuthoringAdapter> mAdapter;
         NoSceneOps mSceneOps;
@@ -292,7 +293,8 @@ namespace
             REQUIRE(mRoot != kNullStableId);
             mCoordinator->Bind(mScene);
 
-            mAdapter = std::make_unique<PrefabAuthoringAdapter>(mWorld, *mCoordinator, mPrefabsDir.mPath);
+            mAdapter = std::make_unique<PrefabAuthoringAdapter>(mWorld, *mCoordinator, mContentRoot.mPath,
+                mPrefabsDir.mPath);
             mHistory.SetAuthoringBackend(mAdapter.get());
             mPrefabDocument = DocumentId{ mDocument.mId.mHigh, mDocument.mId.mLow };
         }
@@ -1131,4 +1133,127 @@ TEST_CASE("A frozen authored view reports no overrides and refuses actions", "[a
 
     fixture.mCoordinator->SetFrozen(false);
     CHECK(fixture.mAdapter->KeyOf(member, "AppAuthoringTestData", "amount").has_value());
+}
+
+TEST_CASE("Applying to an inner layer is one step across both documents", "[app][authoring]")
+{
+    Fixture fixture;
+
+    PrefabDocument outer = mir::NewPrefabDocument();
+    outer.mNodes[0].mComponents.push_back(PrefabComponentInstance{ "Transform", json::object() });
+    PrefabNode occurrence;
+    occurrence.mId = 2;
+    occurrence.mKind = mir::PrefabNodeKind::Prefab;
+    occurrence.mParent = 1;
+    occurrence.mPrefab = fixture.mDocument.mId;
+    outer.mNodes.push_back(std::move(occurrence));
+    outer.mNextNodeId = 3;
+    REQUIRE(fixture.mCoordinator->Registry().SetDocument(outer));
+
+    const std::vector<mir::PrefabDiagnostic> diagnostics =
+        fixture.mCoordinator->Cache().Compile(outer, mir::RegistryLookup(fixture.mCoordinator->Registry()));
+    CHECK_FALSE(HasPrefabErrors(diagnostics));
+
+    const std::shared_ptr<const CompiledPrefab> outerCompiled = fixture.mCoordinator->Cache().Find(outer.mId);
+    REQUIRE(outerCompiled != nullptr);
+    const StableId outerRoot = PlacePrefabInstance(fixture.mWorld, fixture.mScene, *outerCompiled);
+    REQUIRE(outerRoot != kNullStableId);
+
+    const SceneNodeAddress member{ 2, 2 };
+    const ScenePrefabInstance &instance = fixture.mScene.mInstances.at(outerRoot);
+    const Entity memberEntity = fixture.mScene.mEntities.at(instance.mBindings.at(member));
+    REQUIRE(SetInstanceFieldOverride(fixture.mWorld, fixture.mScene, fixture.mCoordinator->Registry(), outerRoot,
+        member, "AppAuthoringTestData", "amount", 33.0));
+
+    const std::optional<AuthoredKey> key =
+        fixture.mAdapter->KeyOf(memberEntity, "AppAuthoringTestData", "amount");
+    REQUIRE(key.has_value());
+    CHECK(fixture.mAdapter->ApplyTargets(*key).size() == 2);
+
+    const AuthoredAction applied = fixture.mAdapter->Apply(*key, 1);
+    REQUIRE(applied.mAllowed);
+    REQUIRE(applied.mEntries.size() == 2);
+    fixture.Save(kSceneDocument);
+    fixture.Save(fixture.mPrefabDocument);
+    fixture.Run(MakeAuthoredCommand(applied.mName, applied.mEntries));
+
+    const PrefabDocument *inner = fixture.mCoordinator->Registry().Find(fixture.mDocument.mId);
+    REQUIRE(inner != nullptr);
+    CHECK(inner->mNodes[1].mComponents.front().mFields.at("amount") == 33.0);
+    CHECK(fixture.mAdapter->FieldState(*key) == AuthoredFieldState::Inherited);
+    CHECK(fixture.mHistory.IsUnsaved(kSceneDocument));
+    CHECK(fixture.mHistory.IsUnsaved(fixture.mPrefabDocument));
+
+    fixture.Undo();
+    inner = fixture.mCoordinator->Registry().Find(fixture.mDocument.mId);
+    REQUIRE(inner != nullptr);
+    CHECK(inner->mNodes[1].mComponents.front().mFields.at("amount") == 9.0);
+    CHECK(fixture.mAdapter->FieldState(*key) == AuthoredFieldState::Overridden);
+    CHECK(FloatField(fixture.mWorld, memberEntity, DataOps(), "amount") == 33.0f);
+
+    fixture.Redo();
+    inner = fixture.mCoordinator->Registry().Find(fixture.mDocument.mId);
+    REQUIRE(inner != nullptr);
+    CHECK(inner->mNodes[1].mComponents.front().mFields.at("amount") == 33.0);
+    CHECK(fixture.mAdapter->FieldState(*key) == AuthoredFieldState::Inherited);
+}
+
+TEST_CASE("Create Prefab with a whole instance is one step over a nested document", "[app][authoring]")
+{
+    Fixture fixture;
+    const Entity holder = CreateSceneEntity(fixture.mWorld, fixture.mScene);
+    fixture.mWorld.AddComponent<mir::Name>(holder, mir::MakeName("Holder"));
+    mir::AddTransform(fixture.mWorld, holder,
+        mir::Transform(glm::vec3(1.0f, 2.0f, 3.0f)));
+    const StableId holderId = StableIdIn(fixture.mScene, holder);
+
+    const std::shared_ptr<const CompiledPrefab> prefab =
+        fixture.mCoordinator->Cache().Find(fixture.mDocument.mId);
+    REQUIRE(prefab != nullptr);
+    const StableId instanceRoot = PlacePrefabInstance(fixture.mWorld, fixture.mScene, *prefab, holder);
+    REQUIRE(instanceRoot != kNullStableId);
+    const ScenePrefabInstance &instance = fixture.mScene.mInstances.at(instanceRoot);
+    const StableId firstMember = instance.mBindings.at(SceneNodeAddress{ 1 });
+    const StableId thirdMember = instance.mBindings.at(SceneNodeAddress{ 3 });
+    REQUIRE(SetInstanceEntityRef(fixture.mWorld, fixture.mScene, instanceRoot,
+        SceneNodeAddress{ 1 }, "AppAuthoringTestData", "target", thirdMember));
+
+    fixture.Run(mir::MakeCreatePrefabCommand(*fixture.mAdapter, holder));
+    REQUIRE(fixture.mHistory.StepCount() == 1);
+
+    std::optional<PrefabId> created;
+    for (const PrefabId id : fixture.mCoordinator->Registry().Ids())
+    {
+        if (id != fixture.mDocument.mId)
+            created = id;
+    }
+    REQUIRE(created.has_value());
+    const PrefabId createdId = *created;
+    const DocumentId createdDocument{ created->mHigh, created->mLow };
+
+    const PrefabDocument *document = fixture.mCoordinator->Registry().Find(createdId);
+    REQUIRE(document != nullptr);
+    REQUIRE(document->mNodes.size() == 2);
+    CHECK(document->mNodes.front().mKind == mir::PrefabNodeKind::Entity);
+    CHECK(document->mNodes.back().mKind == mir::PrefabNodeKind::Prefab);
+    CHECK(document->mNodes.back().mPrefab == fixture.mDocument.mId);
+    CHECK(document->mNodes.back().mParent == document->mRootNode);
+    REQUIRE(document->mNodes.back().mPatches.size() == 1);
+    const std::string occurrence = std::to_string(document->mNodes.back().mId);
+    CHECK(document->mNodes.back().mPatches.front().mFields.front().mValue ==
+        json::array({ occurrence, "3" }));
+    CHECK(instanceRoot != kNullStableId);
+    CHECK(fixture.mScene.mInstances.contains(instanceRoot));
+    CHECK(fixture.mScene.mInstances.at(instanceRoot).mBindings.at(SceneNodeAddress{ 1 }) == firstMember);
+    CHECK(holderId != kNullStableId);
+    CHECK(fixture.mHistory.IsUnsaved(createdDocument));
+
+    fixture.Undo();
+    CHECK(fixture.mCoordinator->Registry().Find(createdId) == nullptr);
+
+    fixture.Redo();
+    document = fixture.mCoordinator->Registry().Find(createdId);
+    REQUIRE(document != nullptr);
+    CHECK(document->mNodes.size() == 2);
+    CHECK(document->mNodes.back().mPrefab == fixture.mDocument.mId);
 }

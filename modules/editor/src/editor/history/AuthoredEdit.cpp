@@ -132,9 +132,10 @@ namespace mir
             std::move(action.mEntries));
     }
 
-    std::unique_ptr<ICommand> MakeApplyAuthoredCommand(IAuthoredEntities &authored, const AuthoredKey &key)
+    std::unique_ptr<ICommand> MakeApplyAuthoredCommand(IAuthoredEntities &authored, const AuthoredKey &key,
+        std::size_t target)
     {
-        AuthoredAction action = authored.Apply(key);
+        AuthoredAction action = authored.Apply(key, target);
         if (!action.mAllowed)
             return RefusedCommand("Apply to Prefab", action);
         return MakeAuthoredCommand(action.mName.empty() ? "Apply to Prefab" : action.mName,

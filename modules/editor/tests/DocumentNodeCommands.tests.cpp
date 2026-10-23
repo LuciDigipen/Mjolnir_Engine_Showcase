@@ -85,6 +85,17 @@ namespace
             return NodeAction("Create Node", kCreateAddress);
         }
 
+        AuthoredAction PlacePrefabNode(std::string_view contentPath, Entity parent, std::size_t siblingIndex,
+            const std::optional<mir::WorldVec3> &placement) override
+        {
+            ++mPlaceCalls;
+            mPrefabPath.assign(contentPath);
+            mParent = parent;
+            mSiblingIndex = siblingIndex;
+            mPlacement = placement;
+            return NodeAction("Place Prefab", kPlaceAddress);
+        }
+
         AuthoredAction DeleteNodes(std::span<const Entity> nodes) override
         {
             ++mDeleteCalls;
@@ -108,10 +119,13 @@ namespace
         int mCreateCalls = 0;
         int mDeleteCalls = 0;
         int mReparentCalls = 0;
+        int mPlaceCalls = 0;
         Entity mParent = kNullEntity;
         Entity mReparented = kNullEntity;
         const mir::EntityPresetDesc *mPreset = nullptr;
         std::size_t mSiblingIndex = 0;
+        std::string mPrefabPath;
+        std::optional<mir::WorldVec3> mPlacement;
         std::vector<Entity> mDeleted;
         bool mRefuse = false;
 
@@ -119,6 +133,7 @@ namespace
         static constexpr std::uint64_t kCreateAddress = 100;
         static constexpr std::uint64_t kDeleteAddress = 200;
         static constexpr std::uint64_t kReparentAddress = 300;
+        static constexpr std::uint64_t kPlaceAddress = 400;
 
         AuthoredAction NodeAction(std::string name, std::uint64_t address) const
         {
@@ -280,6 +295,45 @@ TEST_CASE("A drop on the hierarchy root reparents under the document root", "[ed
 
     CHECK(fixture.mAuthored.mParent == fixture.mRoot);
     CHECK(fixture.mAuthored.mSiblingIndex == children - 1);
+}
+
+TEST_CASE("A content Prefab drop in a document places an occurrence under the drop target", "[editor][prefabs]")
+{
+    Fixture fixture;
+    const std::size_t children = fixture.mWorld.HierarchyIndex().ChildrenOf(fixture.mOther).size();
+
+    fixture.Run(mir::MakeDocumentEntityCommand(
+        EntityAction{ .mKind = EntityActionKind::PlacePrefab, .mParent = fixture.mOther,
+            .mPrefabPath = "assets/prefabs/Chair.prefab" },
+        fixture.mAuthored, fixture.mWorld));
+
+    CHECK(fixture.mAuthored.mPlaceCalls == 1);
+    CHECK(fixture.mAuthored.mPrefabPath == "assets/prefabs/Chair.prefab");
+    CHECK(fixture.mAuthored.mParent == fixture.mOther);
+    CHECK(fixture.mAuthored.mSiblingIndex == children);
+    CHECK_FALSE(fixture.mAuthored.mPlacement.has_value());
+    CHECK(fixture.mHistory.StepCount() == 1);
+
+    const mir::WorldVec3 position(2.0, 0.0, 3.0);
+    fixture.Run(mir::MakeDocumentEntityCommand(
+        EntityAction{ .mKind = EntityActionKind::PlacePrefab, .mPrefabPath = "assets/prefabs/Chair.prefab",
+            .mPlacement = position },
+        fixture.mAuthored, fixture.mWorld));
+
+    CHECK(fixture.mAuthored.mPlaceCalls == 2);
+    CHECK(fixture.mAuthored.mParent == fixture.mRoot);
+    CHECK(fixture.mAuthored.mPlacement == position);
+}
+
+TEST_CASE("A refused document Prefab drop leaves History and the document alone", "[editor][prefabs]")
+{
+    Fixture fixture;
+    fixture.mAuthored.mRefuse = true;
+    CHECK(mir::MakeDocumentEntityCommand(
+        EntityAction{ .mKind = EntityActionKind::PlacePrefab, .mPrefabPath = "assets/prefabs/Chair.prefab" },
+        fixture.mAuthored, fixture.mWorld) == nullptr);
+    CHECK(fixture.mHistory.StepCount() == 0);
+    CHECK(fixture.mAuthored.mPlaceCalls == 1);
 }
 
 TEST_CASE("A document does not offer duplicate, copy as ordinary or a refused action", "[editor][prefabs]")

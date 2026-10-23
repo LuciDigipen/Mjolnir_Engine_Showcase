@@ -47,6 +47,15 @@ namespace mir
 
     PrefabParseResult ParsePrefab(const nlohmann::json &root, std::string_view path = {});
     nlohmann::json PrefabToJson(const PrefabDocument &doc);
+
+    // One node in the .prefab node shape, without the document envelope.
+    nlohmann::json PrefabNodeToJson(const PrefabDocument &doc, const PrefabNode &node);
+
+    // Parses one PrefabNodeToJson record; errors are appended to diagnostics.
+    std::optional<PrefabNode> ParsePrefabNode(const nlohmann::json &blob,
+        std::vector<PrefabDiagnostic> &diagnostics, std::string_view path = {},
+        std::string_view context = "node record");
+
     std::vector<PrefabDiagnostic> ValidatePrefab(const PrefabDocument &doc, std::string_view path = {});
 
     PrefabParseResult ReadPrefabFile(const std::filesystem::path &path);
