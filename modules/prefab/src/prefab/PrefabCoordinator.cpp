@@ -99,6 +99,21 @@ namespace mir
             return kNoIndex;
         }
 
+        // The top root node's Transform is scene placement; a nested occurrence root's is template content.
+        bool IsPlacementTransform(const CompiledPrefabNode &node, std::string_view type)
+        {
+            return !node.mParent.has_value() && type == "Transform";
+        }
+
+        std::optional<SceneNodeAddress> RelocationTargetAddress(const RelocationIndex &index,
+            std::span<const CompiledPrefabNode> nodes, std::size_t node, std::size_t component, std::size_t field)
+        {
+            const std::optional<std::size_t> target = RelocationTarget(index, node, component, field);
+            if (!target)
+                return std::nullopt;
+            return nodes[*target].mAddress;
+        }
+
         Entity MemberEntity(const LoadedScene &scene, World &world, const ScenePrefabInstance &instance,
             const SceneNodeAddress &address)
         {
@@ -311,6 +326,8 @@ namespace mir
                     const std::size_t newComponent = FindComponent(newNode, ops.mType.name);
                     if (newComponent == kNoIndex)
                     {
+                        if (IsPlacementTransform(newNode, ops.mType.name))
+                            continue;
                         if (ops.Has(world, entity) && FindAddedComponent(instance, address, ops.mType.name) == nullptr)
                         {
                             plan.mComponentRemovals.push_back(ComponentOp{ entity, &ops });
@@ -327,6 +344,8 @@ namespace mir
                     const CompiledPrefabComponent &newComp = newNode.mComponents[newComponent];
                     if (!ops.Has(world, entity))
                     {
+                        if (IsPlacementTransform(newNode, ops.mType.name))
+                            continue;
                         plan.mComponentAdditions.push_back(ComponentAddition{ entity, newIndex, newComponent });
                         RecordAddedComponent(beforeChanges, entity, ops);
                         for (std::size_t fieldIndex = 0; fieldIndex < ops.mFields.size(); ++fieldIndex)
@@ -341,6 +360,9 @@ namespace mir
                     if (liveComponent == nullptr)
                         continue;
 
+                    if (IsPlacementTransform(newNode, ops.mType.name))
+                        continue;
+
                     for (std::size_t fieldIndex = 0; fieldIndex < ops.mFields.size(); ++fieldIndex)
                     {
                         const FieldDesc &field = ops.mFields[fieldIndex];
@@ -351,10 +373,10 @@ namespace mir
 
                         if (field.mKind == FieldKind::EntityRef)
                         {
-                            const std::optional<std::size_t> oldTarget =
-                                RelocationTarget(oldRelocations, oldIndex, oldComponent, fieldIndex);
-                            const std::optional<std::size_t> newTarget =
-                                RelocationTarget(plan.mNewRelocations, newIndex, newComponent, fieldIndex);
+                            const std::optional<SceneNodeAddress> oldTarget = RelocationTargetAddress(
+                                oldRelocations, oldNodes, oldIndex, oldComponent, fieldIndex);
+                            const std::optional<SceneNodeAddress> newTarget = RelocationTargetAddress(
+                                plan.mNewRelocations, newNodes, newIndex, newComponent, fieldIndex);
                             if (oldTarget == newTarget)
                                 continue;
 
@@ -364,8 +386,11 @@ namespace mir
                             write.mField = &field;
                             write.mEntityRef = true;
                             write.mOwner = owner;
-                            if (newTarget)
-                                write.mTargetNode = *newTarget;
+                            if (const std::optional<std::size_t> targetNode = RelocationTarget(plan.mNewRelocations,
+                                newIndex, newComponent, fieldIndex))
+                            {
+                                write.mTargetNode = *targetNode;
+                            }
                             plan.mFieldWrites.push_back(std::move(write));
                             RecordFieldChange(beforeChanges, entity, ops, field.mName);
                             continue;
@@ -401,6 +426,9 @@ namespace mir
                     if (ops.Has(world, entity))
                         continue;
 
+                    if (IsPlacementTransform(newNode, ops.mType.name))
+                        continue;
+
                     plan.mComponentAdditions.push_back(ComponentAddition{ entity, newIndex, newComponent });
                     RecordAddedComponent(beforeChanges, entity, ops);
                     for (std::size_t fieldIndex = 0; fieldIndex < ops.mFields.size(); ++fieldIndex)
@@ -429,6 +457,53 @@ namespace mir
 
             scene.mEntities.erase(binding->second);
             instance.mBindings.erase(binding);
+        }
+
+        void ApplySiblingOrder(World &world, LoadedScene &scene, const ScenePrefabInstance &instance,
+            std::span<const CompiledPrefabNode> newNodes)
+        {
+            std::map<SceneNodeAddress, std::vector<Entity>> desired;
+            for (const CompiledPrefabNode &node : newNodes)
+            {
+                if (!node.mParent.has_value())
+                    continue;
+                const Entity entity = MemberEntity(scene, world, instance, node.mAddress);
+                if (entity.IsNull())
+                    continue;
+                desired[newNodes[*node.mParent].mAddress].push_back(entity);
+            }
+
+            const HierarchyIndex *index = world.TryResource<HierarchyIndex>();
+            if (index == nullptr)
+                return;
+
+            for (const auto &[parentAddress, children] : desired)
+            {
+                if (children.size() < 2)
+                    continue;
+                const Entity parent = MemberEntity(scene, world, instance, parentAddress);
+                if (parent.IsNull())
+                    continue;
+
+                const std::span<const Entity> current = index->ChildrenOf(parent);
+                std::size_t next = 0;
+                for (const Entity child : current)
+                {
+                    if (std::find(children.begin(), children.end(), child) == children.end())
+                        continue;
+                    if (next >= children.size() || children[next] != child)
+                        break;
+                    ++next;
+                }
+                if (next == children.size())
+                    continue;
+
+                for (std::size_t i = children.size(); i > 0; --i)
+                {
+                    const Entity before = i < children.size() ? children[i] : kNullEntity;
+                    SetParent(world, children[i - 1], parent, before, false);
+                }
+            }
         }
 
         void ApplyPlan(World &world, LoadedScene &scene, InstancePlan &plan, EntityChangeSet &afterChanges)
@@ -570,6 +645,8 @@ namespace mir
                 SetParent(world, entity, sceneParent, kNullEntity, false);
             }
 
+            ApplySiblingOrder(world, scene, instance, newNodes);
+
             for (const FieldWrite &write : plan.mFieldWrites)
             {
                 if (!world.IsAlive(write.mEntity) || !write.mOps->Has(world, write.mEntity))
@@ -692,6 +769,8 @@ namespace mir
         if (plans.empty())
             return;
 
+        mPublishedChanges = true;
+
         std::set<uint64_t> removedEntityKeys;
         for (const InstancePlan &plan : plans)
         {
@@ -731,6 +810,11 @@ namespace mir
 
         if (listeners != nullptr && HasChanges(afterChanges))
             listeners->NotifyAfterChange(world, afterChanges);
+    }
+
+    bool PrefabCoordinator::ConsumePublishedChanges()
+    {
+        return std::exchange(mPublishedChanges, false);
     }
 
     bool PrefabCoordinator::HasPendingWork() const

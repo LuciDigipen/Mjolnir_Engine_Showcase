@@ -150,6 +150,8 @@ namespace
         document.mNodes[0].mComponents.push_back(PrefabComponentInstance{
             "PrefabCoordinatorTestData",
             json{ { "amount", 1.0 }, { "bonus", 2.0 }, { "target", json::array({ "2" }) } } });
+        document.mNodes[0].mComponents.push_back(PrefabComponentInstance{
+            "Transform", json{ { "position", json::array({ 100.0, 0.0, 0.0 }) } } });
 
         PrefabNode second;
         second.mId = 2;
@@ -222,6 +224,22 @@ namespace
         const FieldDesc *desc = ops.FindField(field);
         REQUIRE(desc != nullptr);
         REQUIRE(desc->Write(component, &value));
+    }
+
+    double PositionX(World &world, Entity entity)
+    {
+        const mir::Transform *transform = world.GetComponent<mir::Transform>(entity);
+        REQUIRE(transform != nullptr);
+        return static_cast<double>(transform->Position().x);
+    }
+
+    std::vector<Entity> ChildrenOf(World &world, Entity parent)
+    {
+        const mir::HierarchyIndex *index = world.TryResource<mir::HierarchyIndex>();
+        if (index == nullptr)
+            return {};
+        const std::span<const Entity> children = index->ChildrenOf(parent);
+        return std::vector<Entity>(children.begin(), children.end());
     }
 
     struct Fixture
@@ -414,6 +432,77 @@ TEST_CASE("A publication keeps overrides and local component edits", "[prefab][c
     CHECK_FALSE(ExtraOps().Has(fixture.mWorld, fixture.Member(fixture.mRoot, thirdAddress)));
     CHECK(ExtraOps().Has(fixture.mWorld, fixture.Member(fixture.mSecondRoot, thirdAddress)));
     CHECK(FloatField(fixture.mWorld, fixture.Member(fixture.mSecondRoot, thirdAddress), ExtraOps(), "value") == 11.0f);
+}
+
+TEST_CASE("A published root Transform keeps the instance placement", "[prefab][coordinator]")
+{
+    Fixture fixture;
+    const Entity root = fixture.Member(fixture.mRoot, SceneNodeAddress{ 1 });
+    const Entity child = fixture.Member(fixture.mRoot, SceneNodeAddress{ 2 });
+    REQUIRE(PositionX(fixture.mWorld, root) == 100.0);
+
+    fixture.SetTemplateField(1, "Transform", "position", json::array({ 7.0, 0.0, 0.0 }));
+    fixture.SetTemplateField(1, "PrefabCoordinatorTestData", "amount", 23.0);
+    fixture.SetTemplateField(2, "PrefabCoordinatorTestData", "amount", 24.0);
+    fixture.Commit();
+
+    CHECK(PositionX(fixture.mWorld, root) == 100.0);
+    CHECK(FloatField(fixture.mWorld, root, DataOps(), "amount") == 23.0f);
+    CHECK(FloatField(fixture.mWorld, child, DataOps(), "amount") == 24.0f);
+}
+
+TEST_CASE("A retargeted reference follows the node address across a reorder", "[prefab][coordinator]")
+{
+    Fixture fixture;
+    const Entity root = fixture.Member(fixture.mRoot, SceneNodeAddress{ 1 });
+    const Entity oldTarget = fixture.Member(fixture.mRoot, SceneNodeAddress{ 2 });
+    const Entity newTarget = fixture.Member(fixture.mRoot, SceneNodeAddress{ 3 });
+    REQUIRE(EntityField(fixture.mWorld, root, DataOps(), "target") == oldTarget);
+
+    fixture.SetTemplateField(1, "PrefabCoordinatorTestData", "target", json::array({ "3" }));
+    std::swap(fixture.mDocument.mNodes[1], fixture.mDocument.mNodes[2]);
+    REQUIRE(fixture.mCoordinator->SetDocument(fixture.mDocument));
+
+    fixture.Commit();
+
+    CHECK(EntityField(fixture.mWorld, root, DataOps(), "target") == newTarget);
+    CHECK(fixture.Member(fixture.mRoot, SceneNodeAddress{ 1 }) == root);
+}
+
+TEST_CASE("A sibling reorder in the source publishes to the instance", "[prefab][coordinator]")
+{
+    Fixture fixture;
+    const Entity root = fixture.Member(fixture.mRoot, SceneNodeAddress{ 1 });
+    const Entity second = fixture.Member(fixture.mRoot, SceneNodeAddress{ 2 });
+    const Entity third = fixture.Member(fixture.mRoot, SceneNodeAddress{ 3 });
+    const std::map<SceneNodeAddress, StableId> bindings = fixture.mScene.mInstances.at(fixture.mRoot).mBindings;
+    REQUIRE(ChildrenOf(fixture.mWorld, root) == std::vector<Entity>{ second, third });
+
+    std::swap(fixture.mDocument.mNodes[1], fixture.mDocument.mNodes[2]);
+    REQUIRE(fixture.mCoordinator->SetDocument(fixture.mDocument));
+    fixture.Commit();
+
+    const std::vector<Entity> children = ChildrenOf(fixture.mWorld, root);
+    REQUIRE(children.size() == 2);
+    CHECK(children[0] == third);
+    CHECK(children[1] == second);
+    CHECK(fixture.Member(fixture.mRoot, SceneNodeAddress{ 2 }) == second);
+    CHECK(fixture.Member(fixture.mRoot, SceneNodeAddress{ 3 }) == third);
+    CHECK(fixture.mScene.mInstances.at(fixture.mRoot).mBindings == bindings);
+}
+
+TEST_CASE("A publication reports script resolve work once", "[prefab][coordinator]")
+{
+    Fixture fixture;
+    CHECK_FALSE(fixture.mCoordinator->ConsumePublishedChanges());
+    fixture.Commit();
+    CHECK_FALSE(fixture.mCoordinator->ConsumePublishedChanges());
+
+    fixture.SetTemplateField(1, "PrefabCoordinatorTestData", "amount", 63.0);
+    fixture.Commit();
+
+    CHECK(fixture.mCoordinator->ConsumePublishedChanges());
+    CHECK_FALSE(fixture.mCoordinator->ConsumePublishedChanges());
 }
 
 TEST_CASE("A node added to the prefab appears in every instance with a fresh StableId", "[prefab][coordinator]")
