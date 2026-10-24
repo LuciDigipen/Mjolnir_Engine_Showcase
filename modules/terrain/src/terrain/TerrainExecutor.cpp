@@ -36,7 +36,7 @@ namespace mir
         mWake.notify_one();
     }
 
-    void TerrainWorkerPool::Work(std::stop_token stop)
+    void TerrainWorkerPool::Work(std::stop_token stop) noexcept
     {
         for (;;)
         {

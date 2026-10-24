@@ -7,5 +7,6 @@ engine_add_module_tests(prefab
     PrefabInstantiate.tests.cpp
     PrefabOverrides.tests.cpp
     PrefabRegistry.tests.cpp
+    PrefabSave.tests.cpp
     PrefabScene.tests.cpp
 )

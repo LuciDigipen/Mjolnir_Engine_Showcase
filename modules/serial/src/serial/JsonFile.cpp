@@ -25,7 +25,7 @@ namespace mir
         using json = nlohmann::json;
     }
 
-    std::optional<json> ParseJson(std::string_view text, std::string_view context)
+    std::optional<json> ParseJson(std::string_view text, std::string_view context, std::string *error)
     {
         try
         {
@@ -34,21 +34,31 @@ namespace mir
         catch (const json::exception &e)
         {
             MIR_LOG_ERROR("ParseJson: '{}' is not valid JSON ({})", context, e.what());
+            if (error != nullptr)
+                *error = e.what();
             return std::nullopt;
         }
     }
 
-    std::optional<json> ReadJsonFile(const std::filesystem::path &path)
+    std::optional<json> ReadJsonFile(const std::filesystem::path &path, std::string *error)
     {
         std::error_code ec;
         if (!std::filesystem::exists(path, ec))
+        {
+            if (error != nullptr)
+                *error = "file does not exist";
             return std::nullopt;
+        }
 
         const std::optional<std::string> text = ReadText(path);
         if (!text)
+        {
+            if (error != nullptr)
+                *error = "file could not be read";
             return std::nullopt; // ReadText already logged why
+        }
 
-        return ParseJson(*text, path.string());
+        return ParseJson(*text, path.string(), error);
     }
 
     bool WriteJsonFile(const std::filesystem::path &path, const json &root, int indent)

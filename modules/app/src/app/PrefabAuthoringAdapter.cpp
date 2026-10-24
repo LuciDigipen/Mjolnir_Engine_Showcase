@@ -1,12 +1,14 @@
 /**
- * @file PrefabAuthoring.cpp
+ * @file PrefabAuthoringAdapter.cpp
  * @author Jackey Cen
  * @brief App's adapter between the editor's authored commands and the prefab module's authored state.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
-#include "PrefabAuthoring.h"
+#include "PrefabAuthoringAdapter.h"
+
+#include <core/log/Log.h>
 
 #include <utility>
 
@@ -76,7 +78,7 @@ namespace mir
     }
 
     PrefabAuthoringAdapter::PrefabAuthoringAdapter(World &world, PrefabCoordinator &coordinator)
-        : mAuthoring(world, coordinator)
+        : mCoordinator(coordinator), mAuthoring(world, coordinator)
     {
     }
 
@@ -175,5 +177,17 @@ namespace mir
     AuthoredAction PrefabAuthoringAdapter::Apply(const AuthoredKey &key)
     {
         return ToEditorAction(mAuthoring.Apply(ToPrefabKey(key)), "Apply to Prefab");
+    }
+
+    bool PrefabAuthoringAdapter::SaveScenePrefabs(const LoadedScene &scene, const PrefabUnsavedPredicate &unsaved,
+        const std::function<void(PrefabId)> &saved)
+    {
+        const PrefabSavePlan plan = PlanSaveScene(mCoordinator.Registry(), scene, unsaved);
+        const PrefabSaveResult result = ExecuteSavePlan(mCoordinator.Registry(), plan);
+        for (PrefabId id : result.mWritten)
+            saved(id);
+        for (const PrefabDiagnostic &diagnostic : result.mDiagnostics)
+            MIR_LOG_WARN("Prefab save: {}", diagnostic.mMessage);
+        return result.mSucceeded;
     }
 }

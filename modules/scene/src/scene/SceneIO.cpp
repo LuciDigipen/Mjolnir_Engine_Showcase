@@ -333,6 +333,131 @@ namespace mir
                 }
             }
         }
+
+        struct SceneManifest
+        {
+            std::string mName;
+            StableId mNextId = 1;
+            std::vector<StableId> mEntities;
+            std::vector<StableId> mInstances;
+        };
+
+        // false for anything but an array of non-null ids
+        bool ReadIdList(const json &manifest, const char *key, std::vector<StableId> &out, std::string &error)
+        {
+            const auto list = manifest.find(key);
+            if (list == manifest.end())
+                return true;
+            if (!list->is_array())
+            {
+                error = std::string("\"") + key + "\" is not an array";
+                return false;
+            }
+            for (const json &idJson : *list)
+            {
+                const std::optional<StableId> id = ReadStableIdJson(idJson);
+                if (!id || *id == kNullStableId)
+                {
+                    error = std::string("\"") + key + "\" holds something other than an entity id";
+                    return false;
+                }
+                out.push_back(*id);
+            }
+            return true;
+        }
+
+        // ProbeScene and LoadScene both read through this, so whatever the probe passes the load can read
+        std::optional<SceneManifest> ReadManifest(const fs::path &sceneDir, std::string &error)
+        {
+            const std::optional<json> manifest = ReadJsonFile(SceneManifestPath(sceneDir), &error);
+            if (!manifest)
+                return std::nullopt;
+            if (!manifest->is_object())
+            {
+                error = "the top level is not an object";
+                return std::nullopt;
+            }
+
+            SceneManifest read;
+            if (const auto name = manifest->find("name"); name != manifest->end())
+            {
+                if (!name->is_string())
+                {
+                    error = "\"name\" is not a string";
+                    return std::nullopt;
+                }
+                read.mName = name->get<std::string>();
+            }
+            if (const auto nextId = manifest->find("nextId"); nextId != manifest->end())
+            {
+                const std::optional<StableId> value = ReadStableIdJson(*nextId);
+                if (!value)
+                {
+                    error = "\"nextId\" is not an entity id";
+                    return std::nullopt;
+                }
+                read.mNextId = std::max<StableId>(1, *value);
+            }
+
+            if (!ReadIdList(*manifest, "entities", read.mEntities, error) ||
+                !ReadIdList(*manifest, "instances", read.mInstances, error))
+                return std::nullopt;
+
+            std::set<StableId> instances;
+            for (const StableId id : read.mInstances)
+            {
+                if (!instances.insert(id).second)
+                {
+                    error = "\"instances\" lists " + std::to_string(id) + " more than once";
+                    return std::nullopt;
+                }
+            }
+            return read;
+        }
+
+        std::optional<json> ReadEntityFile(const fs::path &sceneDir, StableId id)
+        {
+            std::optional<json> entity = ReadJsonFile(EntityFilePath(sceneDir, id));
+            if (!entity || !entity->is_object())
+                return std::nullopt;
+            return entity;
+        }
+
+        std::optional<ScenePrefabInstance> ReadInstanceFile(const fs::path &sceneDir, StableId id, std::string &error)
+        {
+            const fs::path path = InstanceFilePath(sceneDir, id);
+            const std::optional<json> instanceJson = ReadJsonFile(path);
+            if (!instanceJson || !instanceJson->is_object())
+            {
+                error = "is missing or unreadable";
+                return std::nullopt;
+            }
+
+            std::optional<ScenePrefabInstance> record = InstanceFromJson(*instanceJson, path.string());
+            if (!record)
+            {
+                error = "is not an instance record";
+                return std::nullopt;
+            }
+            if (record->mRoot != id)
+            {
+                error = "names root " + std::to_string(record->mRoot);
+                return std::nullopt;
+            }
+            return record;
+        }
+
+        // Bindings own member ids, even if the prefab is currently unavailable; members have no entity file
+        std::set<StableId> MemberIdsOf(const std::map<StableId, ScenePrefabInstance> &instances)
+        {
+            std::set<StableId> memberIds;
+            for (const auto &[root, instance] : instances)
+            {
+                for (const auto &[address, id] : instance.mBindings)
+                    memberIds.insert(id);
+            }
+            return memberIds;
+        }
     }
 
     fs::path SceneManifestPath(const fs::path &sceneDir)
@@ -390,12 +515,7 @@ namespace mir
         for (const auto &[id, entity] : scene.mEntities)
             ids[PackEntity(entity)] = id;
 
-        std::set<StableId> memberIds;
-        for (const auto &[root, instance] : scene.mInstances)
-        {
-            for (const auto &[address, id] : instance.mBindings)
-                memberIds.insert(id);
-        }
+        const std::set<StableId> memberIds = MemberIdsOf(scene.mInstances);
 
         std::set<StableId> entityFiles;
         for (const auto &[id, entity] : scene.mEntities)
@@ -487,118 +607,73 @@ namespace mir
         return true;
     }
 
+    SceneProbe ProbeScene(const fs::path &sceneDir)
+    {
+        SceneProbe probe;
+
+        const std::optional<SceneManifest> manifest = ReadManifest(sceneDir, probe.mManifestError);
+        if (!manifest)
+            return probe;
+
+        std::map<StableId, ScenePrefabInstance> instances;
+        for (const StableId id : manifest->mInstances)
+        {
+            std::string error;
+            if (std::optional<ScenePrefabInstance> record = ReadInstanceFile(sceneDir, id, error))
+                instances.emplace(id, std::move(*record));
+            else
+                probe.mMissingInstances.push_back(id);
+        }
+
+        const std::set<StableId> memberIds = MemberIdsOf(instances);
+        for (const StableId id : manifest->mEntities)
+        {
+            if (!memberIds.contains(id) && !ReadEntityFile(sceneDir, id))
+                probe.mMissingEntities.push_back(id);
+        }
+
+        return probe;
+    }
+
     LoadedScene LoadScene(World &world, const fs::path &sceneDir, ScenePrefabResolver *resolver)
     {
         LoadedScene loaded;
 
-        const std::optional<json> manifestJson = ReadJsonFile(SceneManifestPath(sceneDir));
-        if (!manifestJson || !manifestJson->is_object())
+        std::string error;
+        const std::optional<SceneManifest> manifest = ReadManifest(sceneDir, error);
+        if (!manifest)
         {
-            MIR_LOG_ERROR("LoadScene: '{}' has no usable {}, loading an empty scene", sceneDir.string(),
-                kSceneManifestFileName);
+            MIR_LOG_ERROR("LoadScene: '{}' has no usable {} ({}), loading an empty scene", sceneDir.string(),
+                kSceneManifestFileName, error);
             return loaded;
         }
-        const json &manifest = *manifestJson;
+        loaded.mName = manifest->mName;
+        loaded.mNextId = manifest->mNextId;
 
-        const auto nameIt = manifest.find("name");
-        if (nameIt != manifest.end() && nameIt->is_string())
-            loaded.mName = nameIt->get<std::string>();
-
-        const auto nextIdIt = manifest.find("nextId");
-        if (nextIdIt != manifest.end())
+        for (const StableId id : manifest->mInstances)
         {
-            const std::optional<StableId> nextId = ReadStableIdJson(*nextIdIt);
-            if (nextId)
-                loaded.mNextId = std::max<StableId>(1, *nextId);
-            else
-                MIR_LOG_WARN("LoadScene: manifest nextId is not a StableId, using 1");
+            std::string instanceError;
+            std::optional<ScenePrefabInstance> record = ReadInstanceFile(sceneDir, id, instanceError);
+            if (!record)
+            {
+                MIR_LOG_ERROR("LoadScene: instance file '{}' {}, skipped", InstanceFilePath(sceneDir, id).string(),
+                    instanceError);
+                continue;
+            }
+            loaded.mInstances.emplace(id, std::move(*record));
         }
 
-        std::vector<StableId> listedEntityIds;
-        const auto entitiesIt = manifest.find("entities");
-        if (entitiesIt != manifest.end())
-        {
-            if (!entitiesIt->is_array())
-            {
-                MIR_LOG_WARN("LoadScene: manifest entities is not an array");
-            }
-            else
-            {
-                for (const json &idJson : *entitiesIt)
-                {
-                    const std::optional<StableId> id = ReadStableIdJson(idJson);
-                    if (!id || *id == kNullStableId)
-                    {
-                        MIR_LOG_WARN("LoadScene: manifest lists an invalid entity id, skipped");
-                        continue;
-                    }
-                    listedEntityIds.push_back(*id);
-                }
-            }
-        }
-
-        const auto instancesIt = manifest.find("instances");
-        if (instancesIt != manifest.end())
-        {
-            if (!instancesIt->is_array())
-            {
-                MIR_LOG_WARN("LoadScene: manifest instances is not an array");
-            }
-            else
-            {
-                for (const json &idJson : *instancesIt)
-                {
-                    const std::optional<StableId> id = ReadStableIdJson(idJson);
-                    if (!id || *id == kNullStableId)
-                    {
-                        MIR_LOG_WARN("LoadScene: manifest lists an invalid instance id, skipped");
-                        continue;
-                    }
-                    if (loaded.mInstances.contains(*id))
-                    {
-                        MIR_LOG_WARN("LoadScene: manifest lists instance {} more than once, skipped", *id);
-                        continue;
-                    }
-
-                    const fs::path path = InstanceFilePath(sceneDir, *id);
-                    const std::optional<json> instanceJson = ReadJsonFile(path);
-                    if (!instanceJson || !instanceJson->is_object())
-                    {
-                        MIR_LOG_ERROR("LoadScene: instance file '{}' is missing or unreadable, skipped", path.string());
-                        continue;
-                    }
-
-                    std::optional<ScenePrefabInstance> record = InstanceFromJson(*instanceJson, path.string());
-                    if (!record)
-                        continue;
-                    if (record->mRoot != *id)
-                    {
-                        MIR_LOG_ERROR("LoadScene: instance file '{}' names root {} instead of {}, skipped",
-                            path.string(), record->mRoot, *id);
-                        continue;
-                    }
-                    loaded.mInstances.emplace(*id, std::move(*record));
-                }
-            }
-        }
-
-        // Bindings own member ids, even if the prefab is currently unavailable.
-        // Read them before entity files so stale flattened members cannot shadow them.
-        std::set<StableId> memberIds;
-        for (const auto &[root, instance] : loaded.mInstances)
-        {
-            for (const auto &[address, id] : instance.mBindings)
-                memberIds.insert(id);
-        }
+        // Read before entity files so stale flattened members cannot shadow them
+        const std::set<StableId> memberIds = MemberIdsOf(loaded.mInstances);
 
         std::vector<std::pair<StableId, json>> entities;
-        for (StableId id : listedEntityIds)
+        for (const StableId id : manifest->mEntities)
         {
             if (memberIds.contains(id))
                 continue;
 
-            std::optional<json> entityJson = ReadJsonFile(EntityFilePath(sceneDir, id));
-            if (!entityJson || !entityJson->is_object())
+            std::optional<json> entityJson = ReadEntityFile(sceneDir, id);
+            if (!entityJson)
             {
                 MIR_LOG_ERROR("LoadScene: entity file for id {} listed in manifest but missing or unreadable", id);
                 continue; // 0030 leaves this failure mode open; skip rather than abort the load
@@ -612,7 +687,7 @@ namespace mir
                     loaded.mNextId = std::max(loaded.mNextId, id + 1);
             };
 
-        for (StableId id : listedEntityIds)
+        for (const StableId id : manifest->mEntities)
             raiseNextId(id);
         for (const auto &[root, instance] : loaded.mInstances)
         {

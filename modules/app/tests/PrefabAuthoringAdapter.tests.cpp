@@ -1,12 +1,12 @@
 /**
- * @file PrefabAuthoring.tests.cpp
+ * @file PrefabAuthoringAdapter.tests.cpp
  * @author Jackey Cen
- * @brief Tests for app/PrefabAuthoring.
+ * @brief Tests for app/PrefabAuthoringAdapter.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
-#include "../src/app/PrefabAuthoring.h"
+#include "../src/app/PrefabAuthoringAdapter.h"
 
 #include <editor/history/AuthoredEdit.h>
 #include <editor/history/Authoring.h>
@@ -19,6 +19,7 @@
 #include <core/ecs/TypeId.h>
 #include <core/ecs/World.h>
 #include <core/ecs/components/Transform.h>
+#include <core/fs/FileIO.h>
 #include <prefab/PrefabCoordinator.h>
 #include <prefab/PrefabFormat.h>
 #include <prefab/PrefabSceneInstance.h>
@@ -33,6 +34,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <span>
@@ -307,6 +309,113 @@ namespace
         }
         return kNullStableId;
     }
+
+    struct TempDir
+    {
+        std::filesystem::path mPath = std::filesystem::temp_directory_path() /
+            ("mir_app_authoring_" + mir::ToString(mir::GeneratePrefabId()));
+
+        TempDir() { std::filesystem::create_directories(mPath); }
+        ~TempDir()
+        {
+            std::error_code ec;
+            std::filesystem::remove_all(mPath, ec);
+        }
+
+        TempDir(const TempDir &) = delete;
+        TempDir &operator=(const TempDir &) = delete;
+    };
+
+    bool SaveScene(Fixture &fixture, const std::filesystem::path &path)
+    {
+        const bool prefabsSaved = fixture.mAdapter->SaveScenePrefabs(fixture.mScene,
+            [&](mir::PrefabId id)
+            {
+                return fixture.mHistory.IsUnsaved(DocumentId{ id.mHigh, id.mLow });
+            },
+            [&](mir::PrefabId id)
+            {
+                fixture.mHistory.SetUnsaved(DocumentId{ id.mHigh, id.mLow }, false);
+            });
+        if (!prefabsSaved || !mir::SaveScene(fixture.mWorld, path, fixture.mScene, &fixture.mCoordinator->Resolver()))
+            return false;
+        fixture.mScene.mDirty = false;
+        fixture.Save(kSceneDocument);
+        return true;
+    }
+}
+
+TEST_CASE("Apply survives Save Scene and reload without saving implicitly", "[app][authoring][save]")
+{
+    TempDir dir;
+    Fixture fixture;
+    const std::filesystem::path prefabsDir = dir.mPath / "prefabs";
+    const std::filesystem::path prefabPath = prefabsDir / "test.prefab";
+    const std::filesystem::path sceneDir = dir.mPath / "scene";
+    std::filesystem::create_directories(prefabsDir);
+    REQUIRE(mir::WritePrefabFile(prefabPath, fixture.mDocument));
+    REQUIRE_FALSE(HasPrefabErrors(fixture.mCoordinator->Registry().Scan(prefabsDir)));
+    const auto sourceBefore = mir::ReadText(prefabPath);
+
+    const SceneNodeAddress second{ 2 };
+    const AuthoredKey amount = SceneEditKey(fixture, second, "AppAuthoringTestData", "amount");
+    fixture.Run(MakeAuthoredCommand("Override", { AuthoredEntry{ amount, std::string("12.0") } }));
+    const AuthoredAction apply = fixture.mAdapter->Apply(amount);
+    REQUIRE(apply.mAllowed);
+    fixture.Run(MakeAuthoredCommand(apply.mName, apply.mEntries));
+    CHECK(mir::ReadText(prefabPath) == sourceBefore);
+    REQUIRE(fixture.mHistory.IsUnsaved(fixture.mPrefabDocument));
+    REQUIRE(fixture.mHistory.IsUnsaved(kSceneDocument));
+
+    REQUIRE(SaveScene(fixture, sceneDir));
+    CHECK_FALSE(fixture.mHistory.IsUnsaved(fixture.mPrefabDocument));
+    CHECK_FALSE(fixture.mHistory.IsUnsaved(kSceneDocument));
+    CHECK(fixture.mHistory.StepCount() == 2);
+
+    World loadedWorld;
+    PrefabCoordinator loadedCoordinator;
+    REQUIRE_FALSE(HasPrefabErrors(loadedCoordinator.Registry().Scan(prefabsDir)));
+    const LoadedScene loaded = mir::LoadScene(loadedWorld, sceneDir, &loadedCoordinator.Resolver());
+    const ScenePrefabInstance &instance = loaded.mInstances.at(fixture.mRoot);
+    CHECK(FindInstanceFieldPatch(instance, second, "AppAuthoringTestData", "amount") == nullptr);
+    const Entity member = loaded.mEntities.at(instance.mBindings.at(second));
+    CHECK(FloatField(loadedWorld, member, DataOps(), "amount") == 12.0f);
+
+    fixture.Undo();
+    CHECK(fixture.mHistory.IsUnsaved(fixture.mPrefabDocument));
+    CHECK(fixture.mAdapter->FieldState(amount) == AuthoredFieldState::Overridden);
+    CHECK(mir::ReadText(prefabPath) != sourceBefore);
+    fixture.Redo();
+    CHECK_FALSE(fixture.mHistory.IsUnsaved(fixture.mPrefabDocument));
+    CHECK_FALSE(fixture.mHistory.IsUnsaved(kSceneDocument));
+}
+
+TEST_CASE("A failed Prefab save preserves the saved scene and dirty state", "[app][authoring][save]")
+{
+    TempDir dir;
+    Fixture fixture;
+    const std::filesystem::path prefabsDir = dir.mPath / "prefabs";
+    const std::filesystem::path prefabPath = prefabsDir / "test.prefab";
+    const std::filesystem::path sceneDir = dir.mPath / "scene";
+    std::filesystem::create_directories(prefabsDir);
+    REQUIRE(mir::WritePrefabFile(prefabPath, fixture.mDocument));
+    REQUIRE_FALSE(HasPrefabErrors(fixture.mCoordinator->Registry().Scan(prefabsDir)));
+    REQUIRE(SaveScene(fixture, sceneDir));
+    const auto sceneBefore = mir::ReadText(sceneDir / "scene.json");
+
+    const AuthoredKey amount = SceneEditKey(fixture, SceneNodeAddress{ 2 }, "AppAuthoringTestData", "amount");
+    fixture.Run(MakeAuthoredCommand("Override", { AuthoredEntry{ amount, std::string("12.0") } }));
+    const AuthoredAction apply = fixture.mAdapter->Apply(amount);
+    REQUIRE(apply.mAllowed);
+    fixture.Run(MakeAuthoredCommand(apply.mName, apply.mEntries));
+    std::filesystem::remove(prefabPath);
+    std::filesystem::create_directory(prefabPath);
+
+    CHECK_FALSE(SaveScene(fixture, sceneDir));
+    CHECK(mir::ReadText(sceneDir / "scene.json") == sceneBefore);
+    CHECK(fixture.mHistory.IsUnsaved(fixture.mPrefabDocument));
+    CHECK(fixture.mHistory.IsUnsaved(kSceneDocument));
+    CHECK(fixture.mScene.mDirty);
 }
 
 TEST_CASE("A field override is one History step and survives undo and redo", "[app][authoring]")

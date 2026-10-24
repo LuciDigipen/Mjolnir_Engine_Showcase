@@ -43,12 +43,16 @@ An `AssetId` is a hash of the source path relative to the repository root, so th
 same file gets the same id on every machine, and any code can compute an id from
 a path.
 
-**Failures return a value.**
+**Setup failures are fatal, and they tell the reader the fix.**
 
-Engine code does not use exceptions.
+Any step of `App::Initialize` that fails throws a `SetupError` naming the fix.
+`main` turns it into an exit code per category, `logs/last-error.json` and an
+error box, so a person or an agent can fix the launch without reading engine
+code.
 
-An operation that can fail returns `false`, `nullptr` or `std::optional`, and
-logs the reason.
+Exceptions are allowed, except across a C callback or out of a thread's entry
+function. At runtime, an operation that can fail still returns `false`,
+`nullptr` or `std::optional`, and logs the reason.
 
 Programmer error uses assertions instead. `MIR_ASSERT` is for development errors and stripped in Release.
 `MIR_CHECK` is not stripped an used for runtime-errors for bad inputs. [conventions.md](conventions.md) has the full rule.
@@ -405,6 +409,13 @@ table. See [script.md](modules/script.md).
    [modules/assets.md](modules/assets.md)).
 
 ## Changed
+
+*2026-10-20* — **Setup failures are fatal and reported.** Was: failures returned
+a value, a failed startup exited with `-1` and no message, and several services
+continued degraded (no audio, no splash, no asset import). Now: every setup
+failure throws a `SetupError`, and `main` reports it through an exit code, a
+report file and a box. Because: a degraded start hid broken data, and a silent
+exit gave the reader nothing to act on. See [conventions.md](conventions.md#errors).
 
 *2026-10-02* — **The editor is optional.** Was: `app` linked `editor`
 unconditionally. Now: `MJOLNIR_WITH_EDITOR` OFF, set by the

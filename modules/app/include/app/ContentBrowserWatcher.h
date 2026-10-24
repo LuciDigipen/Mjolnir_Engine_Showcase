@@ -24,7 +24,8 @@ namespace mir
     class ContentBrowserWatcher
     {
     public:
-        bool Initialize(const GameProject &project);
+        // Throws SetupError when the game directory cannot be watched
+        void Initialize(const GameProject &project);
         void Update();
         void Handle(const ContentBrowserAction &action);
         void Reject(const std::string &path, std::string diagnostic);

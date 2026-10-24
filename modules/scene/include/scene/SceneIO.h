@@ -70,6 +70,24 @@ namespace mir
     LoadedScene LoadScene(World &world, const std::filesystem::path &sceneDir,
         ScenePrefabResolver *resolver = nullptr);
 
+    // Scene error checker
+    struct SceneProbe
+    {
+        // non-empty: scene.json cannot be read as a scene, so LoadScene would give an empty one
+        std::string mManifestError;
+
+        // listed in scene.json, but the entity file is missing or unreadable
+        std::vector<StableId> mMissingEntities;
+
+        // listed in scene.json, but the instance file is missing, unreadable or names another root
+        std::vector<StableId> mMissingInstances;
+
+        bool Ok() const { return mManifestError.empty() && mMissingEntities.empty() && mMissingInstances.empty(); }
+    };
+
+    // Reads scene.json and every entity and instance file it lists; call before unloading what LoadScene replaces
+    SceneProbe ProbeScene(const std::filesystem::path &sceneDir);
+
     // Destroy all entity in scene
     void UnloadScene(World &world, const LoadedScene &loaded);
 }

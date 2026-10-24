@@ -60,11 +60,12 @@ namespace mir
         std::span<const PixelRect> TitleBarInteractiveRects() const { return mTitleBarInteractiveRects; }
 
     private:
-        static void OnFramebufferSize(GLFWwindow *handle, int width, int height);
+        // GLFW calls these from C: nothing may escape them
+        static void OnFramebufferSize(GLFWwindow *handle, int width, int height) noexcept;
 
-        static void OnScroll(GLFWwindow *handle, double xoffset, double yoffset);
+        static void OnScroll(GLFWwindow *handle, double xoffset, double yoffset) noexcept;
 
-        static void OnDrop(GLFWwindow *handle, int count, const char **paths);
+        static void OnDrop(GLFWwindow *handle, int count, const char **paths) noexcept;
 
         // Win32 only: installs/removes the WndProc subclass answering
         // WM_NCCALCSIZE / WM_NCHITTEST / WM_NCACTIVATE for the custom title

@@ -251,7 +251,7 @@ More info: [extending.md](extending.md).
 ## Verify
 
 `MjolnirEngine` opens HelloWorld and renders the scene, `ctest` is all green, and
-`logs/engine.log` has trace output.
+`logs/engine.log` next to the executable has trace output.
 
 ## Troubleshooting
 
@@ -265,6 +265,8 @@ More info: [extending.md](extending.md).
 | IntelliSense misses a new dependency | **CMake: Delete Cache and Reconfigure**. |
 | A header gets no IntelliSense at all | `C_Cpp.intelliSenseEngineFallback` is off, so a header no compiled `.cpp` reaches gets nothing. Include it from a test. |
 | `cl.exe` not found in a plain terminal | MSVC environment not loaded. Use a Developer PowerShell or prefix with `vcvars64.bat`. |
+| The engine exits with code 10-14 | A fatal startup error. `logs/last-error.json` next to the executable holds its cause and fix; the codes are in [conventions.md](conventions.md#exit-codes-and-the-error-report). |
+| A fatal error shows no box | `MjolnirErrorReporter` is missing next to the engine. Rebuild; the log and exit code still carry the error. |
 
 ## Changed
 

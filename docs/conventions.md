@@ -129,10 +129,58 @@ program depends on.
 rather than from C++
 
 Recoverable failure returns `false`, `nullptr` or `std::optional`, and logs once.
-Initialization returns `bool` and leaves the caller to decide whether that is
-fatal.
 
-Engine code uses no exceptions, and nothing outside `tools/` uses `iostream`.
+Every setup failure is fatal. Setup is everything inside `App::Initialize`,
+including the first scene load. A failing step throws a `SetupError`
+(`core/log/SetupError.h`) instead of returning. `main` catches it while `App` is
+still alive, so the report is written before anything is torn down. `~App` then
+runs `App::Shutdown`, which every service makes safe on a partial setup.
+
+A `SetupError` carries what failed, the path, the cause and the fix. The fix
+names a concrete action, such as the file to restore or the command to run. The
+reader is a person or an agent without the engine's source, so the fix must be
+enough on its own. Native codes (`AKRESULT`, `VkResult`, a Win32 or GLFW error,
+a JSON parse position) go into the cause.
+
+Exceptions are allowed anywhere, with three limits. An exception must never
+cross a C callback, because unwinding through a C library's frames is undefined.
+An exception must never leave a thread's entry function, because that calls
+`std::terminate`. So every GLFW, Win32, Vulkan, Wwise and Jolt callback, and
+every thread entry, catches or is `noexcept`. The third limit is about state: at
+runtime, catch only to report and exit, or around an operation that leaves
+nothing half-done, such as a model load. A catch that carries on mid-frame can
+leave the `World` or a command buffer half-updated.
+
+Nothing outside `tools/` uses `iostream`.
+
+### Exit codes and the error report
+
+A fatal error ends the process with the exit code of its category. The category
+says what the reader does next. These numbers are a public contract that scripts
+and agents branch on, so a number is never reused.
+
+| Exit | Category | What to do |
+|---|---|---|
+| 0 | | Success |
+| 1 | | A `--frames` run logged an error, or a project switch could not relaunch |
+| 10 | Usage | Fix the command line |
+| 11 | Project data | Fix or restore the game's files: `game.json`, the scene, `project_settings.json`, SoundBanks |
+| 12 | Build output | Rebuild: the manifest, AssetCooker, `asset_workspace.json`, `engine.json`, the fonts |
+| 13 | System | Fix the machine: GPU driver, display, audio device, permissions |
+| 14 | Internal | Report a bug with the log attached |
+
+The log is `logs/engine.log` next to the executable, whatever the launch
+directory. Its absolute path is the first line the engine prints. A fatal error
+also writes `logs/last-error.json` with the same fields as the `SetupError`. Each
+run deletes the previous one at startup, so a report on disk belongs to the
+latest run.
+
+A person sees the error in a box. `MjolnirErrorReporter`, shipped next to the
+engine, shows it after the engine has already exited, so the engine never waits
+on a click. A prompt the engine needs answered, such as opening a scene with
+missing entity files, takes its safe answer under `--non-interactive`.
+
+Each module's doc lists the categories it raises under Rules → Errors.
 
 Log levels: `Trace` and `Debug` for per-frame detail, `Info` for lifecycle,
 `Warn` for degraded, `Error` for a failed operation, `Critical` for
@@ -176,6 +224,14 @@ Run `ctest --test-dir builds/windows-msvc-debug --output-on-failure` before
 pushing.
 
 ## Changed
+
+*2026-10-20* — **Setup failures throw a `SetupError`, and exceptions are
+allowed.** Was: initialization returned `bool` and left the caller to decide,
+and engine code used no exceptions. Now: every setup failure is fatal, it throws
+a `SetupError` with a fix, and `main` turns it into an exit code, a report file
+and a box. Because: a `bool` carried no reason, so a failed launch showed nothing
+and the fix lived only in the code. Exceptions were already thrown inside the
+asset and animation code, and a constructor can only fail by throwing.
 
 *2026-09-01* — **Members are `mPascalCase`.** Was: three conventions, roughly by
 the age of the code. `core/ecs` and `assets` used `mPascalCase`, `renderer` used

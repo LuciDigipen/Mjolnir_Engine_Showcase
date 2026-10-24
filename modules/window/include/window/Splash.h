@@ -38,6 +38,7 @@ namespace mir
         static constexpr int kWidth = 1280;
         static constexpr int kHeight = 720;
 
+        // True when shown, or when the platform has no splash. Throws SetupError if it cannot show.
         bool Show(const SplashDesc &desc);
 
         void SetProgress(const char *status, float progress);

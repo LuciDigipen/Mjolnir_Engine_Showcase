@@ -23,4 +23,7 @@ namespace mir
     std::filesystem::path BrandingPath(std::string_view name);
 
     std::filesystem::path CookedAssetsDir();
+
+    // engine.log and last-error.json; beside the exe so it never depends on the launch directory
+    std::filesystem::path LogDir();
 }
