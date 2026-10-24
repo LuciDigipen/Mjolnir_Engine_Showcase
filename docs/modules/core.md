@@ -148,7 +148,10 @@ component it is losing. Tags fire hooks too.
 
 An OnAdd hook may change its own entity, for example to add a companion
 component. An OnRemove hook must not change its own entity, and that asserts. It
-may destroy other entities. Neither kind may set or clear hooks, because that
+may destroy other entities, an ancestor included. When a `RemoveComponent` hook
+destroys an ancestor, the cascade takes its own entity too. That destroy skips
+the hook already running, so each OnRemove fires exactly once, and the removal
+ends with the destroy. Neither kind may set or clear hooks, because that
 could resize the hook slots or destroy the running hook. World counts the hooks
 that are running, so `SetComponentHooks` and `ClearComponentHooks` assert inside
 one, and in Release they log an error and do nothing.
@@ -156,15 +159,17 @@ one, and in Release they log an error and do nothing.
 **`DestroyEntity` is bottom-up.** Children are destroyed fully first, last
 child first. Each child stays linked until its own removal, so its hooks still
 read its parent. The loop drains the live child list, so a sibling a hook
-already destroyed is gone from it, and a child a hook adds is destroyed too.
+already destroyed is gone from it.
 Then the entity's OnRemove hooks run in bit order, and the row drops once after
 the last one, so every hook reads all of the entity's data.
 
 **A destroy already in progress finishes its own entity.** A hook that destroys
 an entity already being destroyed is ignored with a warning. A child that is
 mid-destroy further up the stack is cut loose from its parent first, so its own
-removal never reaches a parent that is gone. `SetParent` asserts on a child that
-is being destroyed, and `CanSetParent` answers `false` for it.
+removal never reaches a parent that is gone. A dying entity takes no part in new
+links, as a child or as a parent. `SetParent` asserts and returns `false` for
+either, and `CanSetParent` answers `false`. During a drain the child list can
+therefore only shrink.
 
 A dead entity left in the graph, or a child whose destroy did not unlink it, is
 a bug. Both assert in Debug. In Release the child is cut loose and the destroy

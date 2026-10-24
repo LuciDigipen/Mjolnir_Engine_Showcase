@@ -49,11 +49,14 @@ namespace mir
     };
 
     // entity position of entity's archetype
+    inline constexpr uint16_t kNoRemovingBit = 0xFFFF;
+
     struct EntityRecord
     {
         Archetype *archetype = nullptr;
         uint32_t row = 0;
-        bool destroying = false; // set while DestroyEntity runs its hooks
+        bool destroying = false;                 // set while DestroyEntity runs its hooks
+        uint16_t removingBit = kNoRemovingBit;   // set while RemoveComponent runs that bit's OnRemove
     };
 
     namespace detail
@@ -183,10 +186,11 @@ namespace mir
             }
 
             // children first, so the destroy is bottom-up. Each stays linked until its own
-            // Remove, so its hooks still read its parent. Draining the live list also takes
-            // children a hook added, and skips siblings a hook already destroyed
+            // Remove, so its hooks still read its parent. Draining the live list skips
+            // siblings a hook already destroyed
             while (!mHierarchy.ChildrenOf(entity).empty())
             {
+                [[maybe_unused]] const std::size_t before = mHierarchy.ChildrenOf(entity).size();
                 const Entity child = mHierarchy.ChildrenOf(entity).back();
 
                 const bool alive = mPool.IsAlive(child);
@@ -194,20 +198,23 @@ namespace mir
                 if (alive)
                     DestroyEntity(child);
 
-                // by membership, not size: the child's hooks may have added a sibling.
+                // a dying parent accepts no children, so the list only shrinks.
                 // In Release a child left linked would loop forever, so cut it loose
                 const std::span<const Entity> left = mHierarchy.ChildrenOf(entity);
                 const bool unlinked = std::find(left.begin(), left.end(), child) == left.end();
-                MIR_ASSERT(!alive || unlinked, "World::DestroyEntity: destroying a child did not unlink it");
+                MIR_ASSERT(!alive || (unlinked && left.size() < before),
+                    "World::DestroyEntity: destroying a child did not unlink it");
                 if (!unlinked)
                     detail::HierarchyMutator::DetachChild(mHierarchy, entity, child);
             }
 
             // in bit order, and the row drops once after the last, so every hook reads all the data
+            // a removal already running this bit's hook skips it, so each hook fires once
             const Signature signature = mRecords[entity.mIndex].archetype->GetSignature();
+            const uint16_t removing = mRecords[entity.mIndex].removingBit;
             for (std::size_t bit = 0; bit < mComponentHooks.size(); ++bit)
             {
-                if (signature.test(bit))
+                if (signature.test(bit) && bit != removing)
                     RunOnRemove(entity, bit);
             }
 
@@ -533,7 +540,16 @@ namespace mir
 
         void RemoveTableComponentRaw(Entity entity, TypeId type)
         {
-            RunOnRemove(entity, ComponentBitOf(type));
+            // the hook may destroy an ancestor, whose cascade takes this entity too.
+            // The mark makes that destroy skip this hook, and then the removal is done
+            {
+                const RemovingMark mark{ *this, entity, static_cast<uint16_t>(ComponentBitOf(type)) };
+                RunOnRemove(entity, ComponentBitOf(type));
+            }
+
+            // by handle, since a hook may have reused the slot for a new entity
+            if (!mPool.IsAlive(entity))
+                return;
 
             // move entityset to different table
             const EntityRecord from = mRecords[entity.mIndex];
@@ -603,6 +619,25 @@ namespace mir
             ~DestroyingMark() { records[index].destroying = false; }
         };
 
+        // marks the bit whose OnRemove a RemoveComponent is running, and clears it on
+        // every exit. Once the entity is gone its record was reset, so there is nothing to clear
+        struct RemovingMark
+        {
+            World &world;
+            Entity entity;
+
+            RemovingMark(World &owner, Entity target, uint16_t bit) : world(owner), entity(target)
+            {
+                world.mRecords[entity.mIndex].removingBit = bit;
+            }
+
+            ~RemovingMark()
+            {
+                if (world.mPool.IsAlive(entity))
+                    world.mRecords[entity.mIndex].removingBit = kNoRemovingBit;
+            }
+        };
+
         void RunOnRemove(Entity entity, std::size_t bit)
         {
             if (bit >= mComponentHooks.size() || !mComponentHooks[bit].hooks.onRemove)
@@ -614,8 +649,9 @@ namespace mir
                 mComponentHooks[bit].hooks.onRemove(*this, entity);
             }
 
-            // other entities may go, which can shift this entity's row but not its table
-            MIR_ASSERT(mPool.IsAlive(entity) && mRecords[entity.mIndex].archetype == before,
+            // other entities may go, which can shift this entity's row but not its table.
+            // Gone entirely is allowed: a destroyed ancestor takes it in its cascade
+            MIR_ASSERT(!mPool.IsAlive(entity) || mRecords[entity.mIndex].archetype == before,
                 "World: the OnRemove hook of {} changed its own entity. Record the change "
                 "into a CommandBuffer instead",
                 mComponentHooks[bit].name);

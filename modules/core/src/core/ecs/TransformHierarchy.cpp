@@ -194,10 +194,13 @@ namespace mir
             return false;
         }
 
-        // its destroy has already cut it loose; a new link could put it under a parent that is draining
-        const bool destroying = world.IsDestroying(child);
-        MIR_ASSERT(!destroying, "SetParent: child is being destroyed");
-        if (destroying)
+        // a dying entity takes no part in new links: its destroy already cut it loose as a
+        // child, and as a parent it has drained or is draining its children
+        const bool childDying = world.IsDestroying(child);
+        const bool parentDying = !parent.IsNull() && world.IsDestroying(parent);
+        MIR_ASSERT(!childDying, "SetParent: child is being destroyed");
+        MIR_ASSERT(!parentDying, "SetParent: parent is being destroyed");
+        if (childDying || parentDying)
             return false;
 
         HierarchyIndex &index = world.HierarchyIndex();
@@ -237,7 +240,10 @@ namespace mir
 
     bool CanSetParent(const World &world, Entity child, Entity parent, Entity before)
     {
-        if (!world.IsAlive(child) || (!parent.IsNull() && !world.IsAlive(parent)) || world.IsDestroying(child))
+        if (!world.IsAlive(child) || (!parent.IsNull() && !world.IsAlive(parent)))
+            return false;
+
+        if (world.IsDestroying(child) || (!parent.IsNull() && world.IsDestroying(parent)))
             return false;
 
         return world.HierarchyIndex().CanSetParent(child, parent, before);

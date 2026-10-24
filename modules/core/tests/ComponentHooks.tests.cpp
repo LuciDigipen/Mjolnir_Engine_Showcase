@@ -340,26 +340,68 @@ TEST_CASE("A child whose OnRemove destroys its parent leaves no hang and a clean
     CHECK(world.HierarchyIndex().ChildrenOf(fresh).empty());
 }
 
-TEST_CASE("A child a hook adds to the dying parent is destroyed too", "[ecs][hooks][destroy]")
+TEST_CASE("A dying parent accepts no children, and the would-be child stays a clean root", "[ecs][hooks][destroy]")
 {
+    // SetParent asserts here; CanSetParent gives the same answer without asserting
     World world;
     const Entity parent = world.CreateEntity();
-    const Entity child = world.CreateEntity();
-    world.AddComponent(child, HPosition{});
-    REQUIRE(mir::SetParent(world, child, parent));
+    world.AddComponent(parent, HPosition{});
 
     Entity added = mir::kNullEntity;
-    world.SetComponentHooks<HPosition>({ .onRemove = [parent, &added](World &w, Entity)
+    bool attachable = true;
+    world.SetComponentHooks<HPosition>({ .onRemove = [parent, &added, &attachable](World &w, Entity)
         {
             added = w.CreateEntity();
-            mir::SetParent(w, added, parent);
+            attachable = mir::CanSetParent(w, added, parent);
         } });
 
     world.DestroyEntity(parent);
 
     REQUIRE_FALSE(added.IsNull());
-    CHECK_FALSE(world.IsAlive(added));
+    CHECK_FALSE(attachable);
+    CHECK(world.IsAlive(added));
+    CHECK(mir::ParentOf(world, added).IsNull());
+    CHECK(world.HierarchyIndex().Roots().size() == 1);
+    CHECK(world.HierarchyIndex().Roots().front() == added);
+}
+
+TEST_CASE("A removal hook that destroys the parent fires once and leaves both destroyed", "[ecs][hooks][destroy]")
+{
+    World world;
+    const Entity parent = world.CreateEntity();
+    const Entity entity = world.CreateEntity();
+    world.AddComponent(entity, HPosition{});
+    REQUIRE(mir::SetParent(world, entity, parent));
+
+    int removes = 0;
+    world.SetComponentHooks<HPosition>({ .onRemove = [parent, &removes](World &w, Entity)
+        {
+            ++removes;
+            if (w.IsAlive(parent))
+                w.DestroyEntity(parent);
+        } });
+
+    world.RemoveComponent<HPosition>(entity);
+
+    CHECK(removes == 1);
+    CHECK_FALSE(world.IsAlive(parent));
+    CHECK_FALSE(world.IsAlive(entity));
     CHECK(world.HierarchyIndex().Roots().empty());
+}
+
+TEST_CASE("A finished removal leaves no mark, so a later destroy fires every hook", "[ecs][hooks][destroy]")
+{
+    World world;
+    int removes = 0;
+    world.SetComponentHooks<HPosition>({ .onRemove = [&removes](World &, Entity) { ++removes; } });
+
+    const Entity entity = world.CreateEntity();
+    world.AddComponent(entity, HPosition{});
+    world.RemoveComponent<HPosition>(entity);
+    world.AddComponent(entity, HPosition{});
+    world.DestroyEntity(entity);
+
+    CHECK(removes == 2);
 }
 
 TEST_CASE("An entity being destroyed cannot be attached", "[ecs][hooks][destroy]")
