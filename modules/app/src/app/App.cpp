@@ -52,7 +52,7 @@
 
 #if MIR_WITH_EDITOR
 #include "AppSceneOps.h"
-#include "PrefabAuthoring.h"
+#include "PrefabAuthoringAdapter.h"
 #include <core/platform/Process.h>
 #include <editor/IdeSettings.h>
 #endif
@@ -339,6 +339,19 @@ namespace mir
             MIR_LOG_WARN("App::SaveScene: ignored while Play is running (Stop first)");
             return false;
         }
+
+    #if MIR_WITH_EDITOR
+        if (mPrefabAuthoring != nullptr && !mPrefabAuthoring->SaveScenePrefabs(mScene,
+                [this](PrefabId id)
+                {
+                    return mEditor.IsDocumentUnsaved(DocumentId{ id.mHigh, id.mLow });
+                },
+                [this](PrefabId id)
+                {
+                    mEditor.SetDocumentUnsaved(DocumentId{ id.mHigh, id.mLow }, false);
+                }))
+            return false;
+    #endif
 
         const PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>();
         const bool saved = mir::SaveScene(mWorld, mProject.mSceneDir, mScene,

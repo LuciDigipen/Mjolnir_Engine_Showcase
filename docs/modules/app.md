@@ -182,6 +182,14 @@ replaces whatever `Scene()` currently holds. `NewScene`, `LoadScene` and
 `StopScene` release the discarded entities' GPU meshes and materials. Game
 control is `RequestOpenProject(dir)`, and the switch itself is a restart.
 
+`PrefabAuthoringAdapter` bridges editor History and the prefab module's authored
+state; `prefab/PrefabAuthoring` owns the edits themselves. Apply and Revert do not
+write files. On Save Scene, the adapter plans and atomically saves the modified
+Prefab sources used by the scene before the scene files are written. Each
+successful Prefab write updates its saved marker without clearing History. A
+missing source path or failed write stops the save and leaves the scene unsaved;
+files already written by that save remain saved.
+
 In an editor build, the Hierarchy's create, delete, duplicate and reparent run
 inside the editor, as undoable commands (see
 [editor-history.md](editor-history.md)). They reach the scene through the

@@ -1,5 +1,5 @@
 /**
- * @file PrefabAuthoring.h
+ * @file PrefabAuthoringAdapter.h
  * @author Jackey Cen
  * @brief App's adapter between the editor's authored commands and the prefab module's authored state.
  *
@@ -11,7 +11,9 @@
 #include <editor/history/AuthoredView.h>
 #include <editor/history/Authoring.h>
 #include <prefab/PrefabAuthoring.h>
+#include <prefab/PrefabSave.h>
 
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -43,7 +45,11 @@ namespace mir
         AuthoredAction Revert(const AuthoredKey &key) override;
         AuthoredAction Apply(const AuthoredKey &key) override;
 
+        bool SaveScenePrefabs(const LoadedScene &scene, const PrefabUnsavedPredicate &unsaved,
+            const std::function<void(PrefabId)> &saved);
+
     private:
+        PrefabCoordinator &mCoordinator;
         PrefabAuthoring mAuthoring;
     };
 }

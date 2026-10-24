@@ -1047,8 +1047,9 @@ namespace mir
             }
         }
 
-        const bool sceneDirtyBefore = scene->mDirty;
-        const auto unresolvedBefore = scene->mUnresolvedEntityRefs;
+        const bool sceneDirtyBefore = scene != nullptr && scene->mDirty;
+        const auto unresolvedBefore = scene != nullptr ? scene->mUnresolvedEntityRefs
+                                                      : decltype(LoadedScene::mUnresolvedEntityRefs){};
         const auto writeEdit = [&](const SceneEdit &edit)
             {
                 return IsFieldKey(edit.mEntry->mKey)
@@ -1057,7 +1058,7 @@ namespace mir
             };
         const auto rollbackScene = [&]()
             {
-                if (!sceneBefore)
+                if (scene == nullptr || !sceneBefore)
                     return;
 
                 for (const auto &[root, record] : instancesBefore)
@@ -1141,7 +1142,7 @@ namespace mir
         {
             for (const SceneNodeAddress &address : addresses)
             {
-                if (SceneBindsAddress(*scene, id, address))
+                if (scene != nullptr && SceneBindsAddress(*scene, id, address))
                     result.mSceneMaintained = true;
             }
         }
