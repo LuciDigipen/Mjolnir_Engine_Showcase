@@ -21,6 +21,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <tuple>
 #include <type_traits>
@@ -46,6 +47,12 @@ namespace mir
         void *user = nullptr;
 
         bool operator==(const EntityHook &) const = default;
+    };
+
+    struct ComponentHooks
+    {
+        std::function<void(World &world, Entity entity)> onAdd;
+        std::function<void(World &world, Entity entity)> onRemove;
     };
 
     // entity position of entity's archetype
@@ -145,6 +152,28 @@ namespace mir
         void RemoveDestroyHook(void (*fn)(World &, Entity, void *), void *user = nullptr)
         {
             std::erase(mDestroyHooks, EntityHook{ fn, user });
+        }
+
+        template <typename T>
+        void SetComponentHooks(ComponentHooks hooks)
+        {
+            MIR_ASSERT_COMPONENT(T);
+            const std::size_t bit = ComponentBit<T>();
+
+            if (bit >= mComponentHooks.size())
+                mComponentHooks.resize(bit + 1);
+
+            MIR_ASSERT(!mComponentHooks[bit].onAdd && !mComponentHooks[bit].onRemove,
+                "World::SetComponentHooks: {} already has hooks", TrimTypeName<T>());
+            mComponentHooks[bit] = std::move(hooks);
+        }
+
+        template <typename T>
+        void ClearComponentHooks()
+        {
+            const std::size_t bit = ComponentBit<T>();
+            if (bit < mComponentHooks.size())
+                mComponentHooks[bit] = ComponentHooks{};
         }
 
         // reset record, remove from both storages, remove from pool
@@ -463,11 +492,33 @@ namespace mir
 
             RemoveRow(*from.archetype, from.row);
             mRecords[entity.mIndex] = EntityRecord{ &target, row };
-            return slot;
+
+            const ComponentHooks *hooks = FindHooks(type);
+            if (hooks == nullptr || !hooks->onAdd)
+                return slot;
+
+            hooks->onAdd(*this, entity);
+
+            // the hook may have moved the entity to another table
+            MIR_ASSERT(mPool.IsAlive(entity) && HasRaw(entity, type),
+                "World: the OnAdd hook of {} removed it or destroyed its entity", type.name);
+            return GetRaw(entity, type);
         }
 
         void RemoveTableComponentRaw(Entity entity, TypeId type)
         {
+            if (const ComponentHooks *hooks = FindHooks(type); hooks != nullptr && hooks->onRemove)
+            {
+                [[maybe_unused]] const Archetype *before = mRecords[entity.mIndex].archetype;
+                hooks->onRemove(*this, entity);
+
+                // other entities may go, which can shift this entity's row but not its table
+                MIR_ASSERT(mPool.IsAlive(entity) && mRecords[entity.mIndex].archetype == before,
+                    "World: the OnRemove hook of {} changed its own entity. Record the change "
+                    "into a CommandBuffer instead",
+                    type.name);
+            }
+
             // move entityset to different table
             const EntityRecord from = mRecords[entity.mIndex];
             Signature signature = from.archetype->GetSignature();
@@ -495,6 +546,13 @@ namespace mir
         void RemoveTableComponent(Entity entity)
         {
             RemoveTableComponentRaw(entity, TypeIdOf<T>());
+        }
+
+        // null when the type never had hooks set
+        const ComponentHooks *FindHooks(TypeId type) const
+        {
+            const std::size_t bit = ComponentBitOf(type);
+            return bit < mComponentHooks.size() ? &mComponentHooks[bit] : nullptr;
         }
 
         static void AddHook(std::vector<EntityHook> &hooks, const EntityHook &hook)
@@ -611,6 +669,7 @@ namespace mir
         std::unordered_map<uint32_t, std::unique_ptr<detail::IQuery>> mQueries; // by detail::QueryKeyOf
         std::vector<EntityHook> mCreateHooks;
         std::vector<EntityHook> mDestroyHooks;
+        std::vector<ComponentHooks> mComponentHooks; // by component bit
 
         // intentionally declared last as it must be destroyed first.
         std::unordered_map<uint32_t, std::unique_ptr<detail::IResource>> mResources; // by detail::ResourceIdOf
