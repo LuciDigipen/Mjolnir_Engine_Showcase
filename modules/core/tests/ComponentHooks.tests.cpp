@@ -11,6 +11,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <stdexcept>
 #include <vector>
 
 namespace
@@ -242,6 +243,22 @@ TEST_CASE("DestroyEntity fires a child's OnRemove before its parent's", "[ecs][h
     CHECK(order == std::vector<Entity>{ child, parent });
 }
 
+TEST_CASE("A child's OnRemove still reads its parent during the cascade", "[ecs][hooks][destroy]")
+{
+    World world;
+    Entity seenParent = mir::kNullEntity;
+    world.SetComponentHooks<HVelocity>({ .onRemove = [&seenParent](World &w, Entity e) { seenParent = mir::ParentOf(w, e); } });
+
+    const Entity parent = world.CreateEntity();
+    const Entity child = world.CreateEntity();
+    world.AddComponent(child, HVelocity{});
+    REQUIRE(mir::SetParent(world, child, parent));
+
+    world.DestroyEntity(parent);
+
+    CHECK(seenParent == parent);
+}
+
 TEST_CASE("An OnRemove fired by DestroyEntity may destroy another entity", "[ecs][hooks][destroy]")
 {
     World world;
@@ -254,5 +271,66 @@ TEST_CASE("An OnRemove fired by DestroyEntity may destroy another entity", "[ecs
     world.DestroyEntity(entity);
 
     CHECK_FALSE(world.IsAlive(other));
+    CHECK_FALSE(world.IsAlive(entity));
+}
+
+TEST_CASE("Two hooks destroying each other's entity end with both destroyed", "[ecs][hooks][destroy]")
+{
+    World world;
+    const Entity a = world.CreateEntity();
+    const Entity b = world.CreateEntity();
+    world.AddComponent(a, HPosition{});
+    world.AddComponent(b, HPosition{});
+    world.SetComponentHooks<HPosition>({ .onRemove = [a, b](World &w, Entity e)
+        {
+            const Entity partner = e == a ? b : a;
+            if (w.IsAlive(partner))
+                w.DestroyEntity(partner);
+        } });
+
+    world.DestroyEntity(a);
+
+    CHECK_FALSE(world.IsAlive(a));
+    CHECK_FALSE(world.IsAlive(b));
+}
+
+TEST_CASE("A hook destroying its own entity mid-destroy is ignored", "[ecs][hooks][destroy]")
+{
+    World world;
+    int removes = 0;
+    world.SetComponentHooks<HPosition>({ .onRemove = [&removes](World &w, Entity e)
+        {
+            ++removes;
+            w.DestroyEntity(e);
+        } });
+
+    const Entity entity = world.CreateEntity();
+    world.AddComponent(entity, HPosition{});
+    world.DestroyEntity(entity);
+
+    CHECK(removes == 1);
+    CHECK_FALSE(world.IsAlive(entity));
+}
+
+TEST_CASE("A hook that throws mid-destroy leaves the entity destroyable", "[ecs][hooks][destroy]")
+{
+    World world;
+    bool thrown = false;
+    world.SetComponentHooks<HPosition>({ .onRemove = [&thrown](World &, Entity)
+        {
+            if (!thrown)
+            {
+                thrown = true;
+                throw std::runtime_error("hook failed");
+            }
+        } });
+
+    const Entity entity = world.CreateEntity();
+    world.AddComponent(entity, HPosition{});
+    REQUIRE_THROWS_AS(world.DestroyEntity(entity), std::runtime_error);
+    REQUIRE(world.IsAlive(entity));
+
+    world.DestroyEntity(entity);
+
     CHECK_FALSE(world.IsAlive(entity));
 }

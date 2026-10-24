@@ -24,6 +24,7 @@
 #include <cstring>
 #include <functional>
 #include <memory>
+#include <span>
 #include <string_view>
 #include <tuple>
 #include <type_traits>
@@ -62,6 +63,7 @@ namespace mir
     {
         Archetype *archetype = nullptr;
         uint32_t row = 0;
+        bool destroying = false; // set while DestroyEntity runs its hooks
     };
 
     namespace detail
@@ -187,8 +189,24 @@ namespace mir
             MIR_ASSERT(mPool.IsAlive(entity), "World::DestroyEntity: entity is not alive");
             AssertSafeToMutate("DestroyEntity");
 
-            // children first, so the destroy is bottom-up
-            for (const Entity child : detail::HierarchyMutator::DetachChildren(mHierarchy, entity))
+            // a hook destroyed it again, e.g. two hooks destroying each other's entity;
+            // the outer call finishes it
+            if (mRecords[entity.mIndex].destroying)
+            {
+                MIR_LOG_WARN("World::DestroyEntity: entity {} is already being destroyed; a hook "
+                    "destroyed it again, ignored",
+                    entity.mIndex);
+                return;
+            }
+
+            mRecords[entity.mIndex].destroying = true;
+            const DestroyingMark mark{ mRecords, entity.mIndex };
+
+            // children first, so the destroy is bottom-up. Each stays linked until its own
+            // Remove, so its hooks still read its parent. A copy, since each Remove edits the list
+            const std::span<const Entity> linked = mHierarchy.ChildrenOf(entity);
+            const std::vector<Entity> children(linked.begin(), linked.end());
+            for (const Entity child : children)
             {
                 MIR_ASSERT(mPool.IsAlive(child), "World::DestroyEntity: dead entity left in the scene graph");
 
@@ -198,18 +216,7 @@ namespace mir
 
             // allowed to destroy other entities inside hooks
             for (std::size_t i = 0; i < mDestroyHooks.size(); ++i)
-            {
-                // check for each hook if target entity is stil alive for hook execution
-                if (!mPool.IsAlive(entity))
-                    return;
-
                 mDestroyHooks[i].fn(*this, entity, mDestroyHooks[i].user);
-            }
-
-            // A cascade can reach this entity from another direction and
-            // destroy it before we get here. Already gone is success.
-            if (!mPool.IsAlive(entity))
-                return;
 
             // in bit order, and the row drops once after the last, so every hook reads all the data
             const Signature signature = mRecords[entity.mIndex].archetype->GetSignature();
@@ -572,6 +579,16 @@ namespace mir
             const std::size_t bit = ComponentBitOf(type);
             return bit < mComponentHooks.size() ? &mComponentHooks[bit].hooks : nullptr;
         }
+
+        // clears the destroying mark on every exit, a throwing hook included.
+        // by index, since hooks may create entities and grow mRecords
+        struct DestroyingMark
+        {
+            std::vector<EntityRecord> &records;
+            uint32_t index;
+
+            ~DestroyingMark() { records[index].destroying = false; }
+        };
 
         void RunOnRemove(Entity entity, std::size_t bit)
         {

@@ -62,11 +62,9 @@ namespace mir
         // False when `entity` is not in the graph
         bool MoveToLastSibling(Entity entity);
 
-        // Detatches `entity` from hierarchy
-        // children are removed through hook
+        // Detaches `entity` from the hierarchy.
+        // World destroys its children first, so normally none are left
         void Remove(Entity entity);
-
-        std::vector<Entity> DetachChildren(Entity entity);
 
         // Appends a newly created entity to the roots
         void AddRoot(Entity entity);
