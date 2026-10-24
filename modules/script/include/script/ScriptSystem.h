@@ -11,6 +11,7 @@
 
 #include <script/components/ScriptRef.h>
 
+#include <core/ecs/EntityChanges.h>
 #include <core/ecs/Query.h>
 #include <core/ecs/System.h>
 
@@ -42,6 +43,8 @@ namespace mir
 
     private:
         static void OnEntityDestroyed(World &world, Entity entity, void *user);
+        static void OnBeforeRemove(World &world, const EntityChangeSet &changes, void *user);
+        void ReleaseScript(World &world, Entity entity);
 
         IScriptHost &mHost;
         Query<ScriptRef> *mQuery = nullptr;

@@ -14,6 +14,7 @@ engine_add_module_tests(core
     TransformHierarchy.tests.cpp
     Resources.tests.cpp
     Entity.tests.cpp
+    EntityChanges.tests.cpp
     ComponentRegistry.tests.cpp
     EntityPresetRegistry.tests.cpp
     RuntimeQuery.tests.cpp

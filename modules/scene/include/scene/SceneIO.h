@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -34,6 +35,11 @@ namespace mir
 
         // An empty map means the prefab is unavailable.
         virtual std::map<SceneNodeAddress, Entity> Materialize(World &world, const ScenePrefabInstance &instance) = 0;
+
+        // Every node address of the instance's compiled template. False when the
+        // prefab is unavailable or did not compile, which confirms nothing about
+        // an address the template might have dropped.
+        virtual bool TemplateNodes(const ScenePrefabInstance &instance, std::set<SceneNodeAddress> &outNodes) const = 0;
 
         // False when the prefab is unavailable or the node, component or field
         // is not an EntityRef of the template.

@@ -96,6 +96,20 @@ namespace mir
         return InstantiatePrefab(world, *prefab).mEntities;
     }
 
+    bool PrefabSceneResolver::TemplateNodes(const ScenePrefabInstance &instance,
+        std::set<SceneNodeAddress> &outNodes) const
+    {
+        outNodes.clear();
+
+        const std::shared_ptr<const CompiledPrefab> prefab = FindOrCompile(instance);
+        if (!prefab)
+            return false;
+
+        for (const CompiledPrefabNode &node : prefab->Nodes())
+            outNodes.insert(node.mAddress);
+        return true;
+    }
+
     bool PrefabSceneResolver::TemplateEntityRef(const ScenePrefabInstance &instance, const SceneNodeAddress &node,
         std::string_view component, std::string_view field, std::optional<SceneNodeAddress> &outTarget) const
     {

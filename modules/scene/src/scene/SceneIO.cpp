@@ -14,6 +14,7 @@
 #include "core/ecs/World.h"
 #include "core/log/Log.h"
 #include "scene/ComponentJson.h"
+#include "scene/SceneEntityRefs.h"
 #include "EntityCodec.h"
 #include "SceneInstanceCodec.h"
 
@@ -764,6 +765,8 @@ namespace mir
         };
         std::vector<PendingParent> pendingParents;
 
+        std::set<StableId> confirmedDeletedIds;
+
         for (const SpawnItem &item : items)
         {
             if (!item.mIsInstance)
@@ -831,6 +834,40 @@ namespace mir
                 continue;
             }
             const Entity rootEntity = rootIt->second;
+
+            std::set<SceneNodeAddress> templateNodes;
+            if (resolver->TemplateNodes(instance, templateNodes))
+            {
+                std::vector<SceneNodeAddress> removedAddresses;
+                for (auto binding = instance.mBindings.begin(); binding != instance.mBindings.end();)
+                {
+                    if (templateNodes.contains(binding->first))
+                    {
+                        ++binding;
+                        continue;
+                    }
+
+                    removedAddresses.push_back(binding->first);
+                    confirmedDeletedIds.insert(binding->second);
+                    loaded.mEntities.erase(binding->second);
+                    binding = instance.mBindings.erase(binding);
+                }
+
+                for (const SceneNodeAddress &address : removedAddresses)
+                    std::erase_if(instance.mPatches, [&](const SceneInstancePatch &patch)
+                        {
+                            return patch.mTarget == address;
+                        });
+
+                if (!removedAddresses.empty())
+                {
+                    std::erase_if(loaded.mUnresolvedEntityRefs, [&](const auto &entry)
+                        {
+                            return confirmedDeletedIds.contains(std::get<0>(entry.first));
+                        });
+                    loaded.mDirty = true;
+                }
+            }
 
             for (const auto &[address, entity] : members)
             {
@@ -918,8 +955,17 @@ namespace mir
             const auto key = std::make_tuple(owner->second, std::string(pending.mOps->mType.name), pending.mField);
             loaded.mUnresolvedEntityRefs.erase(key);
             const std::optional<StableId> target = ReadStableIdJson(pending.mTarget);
-            if (target && memberIds.contains(*target) && !loaded.mEntities.contains(*target))
+            if (target && memberIds.contains(*target) && !loaded.mEntities.contains(*target) &&
+                !confirmedDeletedIds.contains(*target))
+            {
                 loaded.mUnresolvedEntityRefs[key] = *target;
+            }
+        }
+
+        if (!confirmedDeletedIds.empty())
+        {
+            const std::vector<StableId> removed(confirmedDeletedIds.begin(), confirmedDeletedIds.end());
+            ClearSceneEntityRefsTo(world, loaded, removed);
         }
 
         return loaded;

@@ -13,6 +13,7 @@
 #include <assets/AssetId.h>
 #include <assets/AssetPath.h>
 #include <core/ecs/Query.h>
+#include <core/ecs/TypeId.h>
 #include <core/ecs/World.h>
 #include <core/log/Log.h>
 #include <renderer/Shapes.h>
@@ -117,6 +118,47 @@ namespace mir
         mAssets = assets;
         mMeshes.clear();
         mResolved.clear();
+    }
+
+    void MeshResolveSystem::OnStart(SystemContext &context)
+    {
+        if (EntityChangeListeners *listeners = context.world.TryResource<EntityChangeListeners>())
+            listeners->AddBeforeRemove(&MeshResolveSystem::OnBeforeRemove, this);
+    }
+
+    void MeshResolveSystem::OnStop(SystemContext &context)
+    {
+        if (EntityChangeListeners *listeners = context.world.TryResource<EntityChangeListeners>())
+            listeners->RemoveBeforeRemove(&MeshResolveSystem::OnBeforeRemove, this);
+    }
+
+    void MeshResolveSystem::OnBeforeRemove(World &, const EntityChangeSet &changes, void *user)
+    {
+        auto *self = static_cast<MeshResolveSystem *>(user);
+        const TypeId meshType = TypeIdOf<MeshRenderer>();
+
+        for (Entity entity : changes.mRemovedEntities)
+            self->mResolved.erase(PackEntity(entity));
+
+        for (const EntityComponentRef &component : changes.mRemovedComponents)
+        {
+            if (component.mType == meshType)
+                self->mResolved.erase(PackEntity(component.mEntity));
+        }
+
+        for (const EntityComponentChange &change : changes.mChangedComponents)
+        {
+            if (!(change.mType == meshType))
+                continue;
+
+            for (const std::string &field : change.mFields)
+            {
+                if (field != "meshName" && field != "materialShader")
+                    continue;
+                self->mResolved.erase(PackEntity(change.mEntity));
+                break;
+            }
+        }
     }
 
     const MeshResolveSystem::CachedMesh &MeshResolveSystem::ResolveMesh(const std::string &meshName)
