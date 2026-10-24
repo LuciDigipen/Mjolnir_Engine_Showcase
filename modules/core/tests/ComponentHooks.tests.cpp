@@ -6,6 +6,7 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
+#include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/World.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -150,7 +151,12 @@ TEST_CASE("Removing from a shared table keeps the other entities' data", "[ecs][
     world.AddComponent(entity, HPosition{ 7.0f });
     world.AddComponent(entity, HVelocity{ 8.0f });
 
-    world.SetComponentHooks<HVelocity>({ .onRemove = [&neighbours](World &w, Entity) { w.DestroyEntity(neighbours[0]); } });
+    // the neighbour has HVelocity too, so its own destroy fires this hook again
+    world.SetComponentHooks<HVelocity>({ .onRemove = [&neighbours, entity](World &w, Entity e)
+        {
+            if (e == entity)
+                w.DestroyEntity(neighbours[0]);
+        } });
     world.RemoveComponent<HVelocity>(entity);
 
     CHECK(world.GetComponent<HPosition>(entity)->x == 7.0f);
@@ -185,4 +191,68 @@ TEST_CASE("Hooks belong to one World", "[ecs][hooks]")
     plain.AddComponent(plain.CreateEntity(), HPosition{});
 
     CHECK(adds == 0);
+}
+
+TEST_CASE("DestroyEntity fires OnRemove for every component, with all the data still readable", "[ecs][hooks][destroy]")
+{
+    // each hook reads the other component, so neither may have been dropped yet
+    World world;
+    float positionSeenVelocity = -1.0f;
+    float velocitySeenPosition = -1.0f;
+    world.SetComponentHooks<HPosition>({ .onRemove = [&](World &w, Entity e) { positionSeenVelocity = w.GetComponent<HVelocity>(e)->dx; } });
+    world.SetComponentHooks<HVelocity>({ .onRemove = [&](World &w, Entity e) { velocitySeenPosition = w.GetComponent<HPosition>(e)->x; } });
+
+    const Entity entity = world.CreateEntity();
+    world.AddComponent(entity, HPosition{ 1.0f });
+    world.AddComponent(entity, HVelocity{ 2.0f });
+    world.DestroyEntity(entity);
+
+    CHECK(positionSeenVelocity == 2.0f);
+    CHECK(velocitySeenPosition == 1.0f);
+    CHECK_FALSE(world.IsAlive(entity));
+}
+
+TEST_CASE("DestroyEntity fires OnRemove for tags", "[ecs][hooks][destroy]")
+{
+    World world;
+    int removes = 0;
+    world.SetComponentHooks<HFrozen>({ .onRemove = [&removes](World &, Entity) { ++removes; } });
+
+    const Entity entity = world.CreateEntity();
+    world.AddTag<HFrozen>(entity);
+    world.DestroyEntity(entity);
+
+    CHECK(removes == 1);
+}
+
+TEST_CASE("DestroyEntity fires a child's OnRemove before its parent's", "[ecs][hooks][destroy]")
+{
+    World world;
+    std::vector<Entity> order;
+    world.SetComponentHooks<HPosition>({ .onRemove = [&order](World &, Entity e) { order.push_back(e); } });
+
+    const Entity parent = world.CreateEntity();
+    const Entity child = world.CreateEntity();
+    world.AddComponent(parent, HPosition{});
+    world.AddComponent(child, HPosition{});
+    REQUIRE(mir::SetParent(world, child, parent));
+
+    world.DestroyEntity(parent);
+
+    CHECK(order == std::vector<Entity>{ child, parent });
+}
+
+TEST_CASE("An OnRemove fired by DestroyEntity may destroy another entity", "[ecs][hooks][destroy]")
+{
+    World world;
+    const Entity other = world.CreateEntity();
+    world.AddComponent(other, HVelocity{});
+    world.SetComponentHooks<HPosition>({ .onRemove = [other](World &w, Entity) { w.DestroyEntity(other); } });
+
+    const Entity entity = world.CreateEntity();
+    world.AddComponent(entity, HPosition{});
+    world.DestroyEntity(entity);
+
+    CHECK_FALSE(world.IsAlive(other));
+    CHECK_FALSE(world.IsAlive(entity));
 }

@@ -24,6 +24,7 @@
 #include <cstring>
 #include <functional>
 #include <memory>
+#include <string_view>
 #include <tuple>
 #include <type_traits>
 #include <unordered_map>
@@ -165,9 +166,11 @@ namespace mir
             if (bit >= mComponentHooks.size())
                 mComponentHooks.resize(bit + 1);
 
-            MIR_ASSERT(!mComponentHooks[bit].onAdd && !mComponentHooks[bit].onRemove,
+            HookSlot &slot = mComponentHooks[bit];
+            MIR_ASSERT(!slot.hooks.onAdd && !slot.hooks.onRemove,
                 "World::SetComponentHooks: {} already has hooks", TrimTypeName<T>());
-            mComponentHooks[bit] = std::move(hooks);
+            slot.hooks = std::move(hooks);
+            slot.name = TypeIdOf<T>().name;
         }
 
         template <typename T>
@@ -175,7 +178,7 @@ namespace mir
         {
             const std::size_t bit = ComponentBit<T>();
             if (bit < mComponentHooks.size())
-                mComponentHooks[bit] = ComponentHooks{};
+                mComponentHooks[bit].hooks = ComponentHooks{};
         }
 
         // reset record, remove from both storages, remove from pool
@@ -207,6 +210,14 @@ namespace mir
             // destroy it before we get here. Already gone is success.
             if (!mPool.IsAlive(entity))
                 return;
+
+            // in bit order, and the row drops once after the last, so every hook reads all the data
+            const Signature signature = mRecords[entity.mIndex].archetype->GetSignature();
+            for (std::size_t bit = 0; bit < mComponentHooks.size(); ++bit)
+            {
+                if (signature.test(bit))
+                    RunOnRemove(entity, bit);
+            }
 
             detail::HierarchyMutator::Remove(mHierarchy, entity);
 
@@ -524,17 +535,7 @@ namespace mir
 
         void RemoveTableComponentRaw(Entity entity, TypeId type)
         {
-            if (const ComponentHooks *hooks = FindHooks(type); hooks != nullptr && hooks->onRemove)
-            {
-                [[maybe_unused]] const Archetype *before = mRecords[entity.mIndex].archetype;
-                hooks->onRemove(*this, entity);
-
-                // other entities may go, which can shift this entity's row but not its table
-                MIR_ASSERT(mPool.IsAlive(entity) && mRecords[entity.mIndex].archetype == before,
-                    "World: the OnRemove hook of {} changed its own entity. Record the change "
-                    "into a CommandBuffer instead",
-                    type.name);
-            }
+            RunOnRemove(entity, ComponentBitOf(type));
 
             // move entityset to different table
             const EntityRecord from = mRecords[entity.mIndex];
@@ -569,7 +570,22 @@ namespace mir
         const ComponentHooks *FindHooks(TypeId type) const
         {
             const std::size_t bit = ComponentBitOf(type);
-            return bit < mComponentHooks.size() ? &mComponentHooks[bit] : nullptr;
+            return bit < mComponentHooks.size() ? &mComponentHooks[bit].hooks : nullptr;
+        }
+
+        void RunOnRemove(Entity entity, std::size_t bit)
+        {
+            if (bit >= mComponentHooks.size() || !mComponentHooks[bit].hooks.onRemove)
+                return;
+
+            [[maybe_unused]] const Archetype *before = mRecords[entity.mIndex].archetype;
+            mComponentHooks[bit].hooks.onRemove(*this, entity);
+
+            // other entities may go, which can shift this entity's row but not its table
+            MIR_ASSERT(mPool.IsAlive(entity) && mRecords[entity.mIndex].archetype == before,
+                "World: the OnRemove hook of {} changed its own entity. Record the change "
+                "into a CommandBuffer instead",
+                mComponentHooks[bit].name);
         }
 
         static void AddHook(std::vector<EntityHook> &hooks, const EntityHook &hook)
@@ -686,7 +702,13 @@ namespace mir
         std::unordered_map<uint32_t, std::unique_ptr<detail::IQuery>> mQueries; // by detail::QueryKeyOf
         std::vector<EntityHook> mCreateHooks;
         std::vector<EntityHook> mDestroyHooks;
-        std::vector<ComponentHooks> mComponentHooks; // by component bit
+        // the name is kept for assert messages, since a tag has no column to read it from
+        struct HookSlot
+        {
+            ComponentHooks hooks;
+            std::string_view name;
+        };
+        std::vector<HookSlot> mComponentHooks; // by component bit
         mir::HierarchyIndex mHierarchy;
 
         // intentionally declared last as it must be destroyed first.
