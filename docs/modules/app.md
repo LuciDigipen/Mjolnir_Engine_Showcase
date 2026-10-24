@@ -455,7 +455,8 @@ use `ResolveGameProject`, whose "Loading game" line would claim a load that
 happens in the next process.
 
 **Unloading a scene does not call `OnStop`.** New and Load destroy the scene's
-entities, and `ScriptSystem`'s destroy hook only drops each Lua instance.
+entities, and `ScriptSystem`'s `ScriptRef` OnRemove hook only drops each Lua
+instance.
 
 **The game list is read once.** `DiscoverGameProjects` runs in `Initialize`. A
 game added while the engine runs would still need a build to cook its assets, and
