@@ -162,7 +162,7 @@ namespace
 
     std::vector<Entity> ChildrenOf(World &world, Entity parent)
     {
-        const HierarchyIndex &index = world.Resource<HierarchyIndex>();
+        const HierarchyIndex &index = world.HierarchyIndex();
         const std::span<const Entity> children = index.ChildrenOf(parent);
         return std::vector<Entity>(children.begin(), children.end());
     }
@@ -248,7 +248,6 @@ TEST_CASE("InstantiatePrefab appends the root under the given parent", "[prefab]
 
     const CompiledPrefab &prefab = CompileDocument();
     World world;
-    mir::InstallHierarchy(world);
     const Entity parent = world.CreateEntity();
     const Entity existing = world.CreateEntity();
     REQUIRE(mir::SetParent(world, existing, parent, mir::kNullEntity, false));

@@ -12,6 +12,7 @@
 #include "ComponentAsserts.h"
 #include "Entity.h"
 #include "EntityPool.h"
+#include "HierarchyMutator.h"
 #include "QueryTerms.h"
 #include "Signature.h"
 #include "core/log/Assert.h"
@@ -125,6 +126,7 @@ namespace mir
 
             // no defer needed
             mRecords[entity.mIndex] = EntityRecord{ mEmptyArchetype, mEmptyArchetype->AddRow(entity) };
+            detail::HierarchyMutator::AddRoot(mHierarchy, entity);
 
             for (std::size_t i = 0; i < mCreateHooks.size(); ++i)
                 mCreateHooks[i].fn(*this, entity, mCreateHooks[i].user);
@@ -182,6 +184,15 @@ namespace mir
             MIR_ASSERT(mPool.IsAlive(entity), "World::DestroyEntity: entity is not alive");
             AssertSafeToMutate("DestroyEntity");
 
+            // children first, so the destroy is bottom-up
+            for (const Entity child : detail::HierarchyMutator::DetachChildren(mHierarchy, entity))
+            {
+                MIR_ASSERT(mPool.IsAlive(child), "World::DestroyEntity: dead entity left in the scene graph");
+
+                if (mPool.IsAlive(child))
+                    DestroyEntity(child);
+            }
+
             // allowed to destroy other entities inside hooks
             for (std::size_t i = 0; i < mDestroyHooks.size(); ++i)
             {
@@ -197,6 +208,8 @@ namespace mir
             if (!mPool.IsAlive(entity))
                 return;
 
+            detail::HierarchyMutator::Remove(mHierarchy, entity);
+
             const EntityRecord record = mRecords[entity.mIndex];
             RemoveRow(*record.archetype, record.row);
 
@@ -205,6 +218,10 @@ namespace mir
         }
 
         bool IsAlive(Entity entity) const { return mPool.IsAlive(entity); }
+
+        // accessing the scene graph
+        mir::HierarchyIndex &HierarchyIndex() { return mHierarchy; }
+        const mir::HierarchyIndex &HierarchyIndex() const { return mHierarchy; }
 
         template <typename Fn>
         void ForEachAliveEntity(Fn &&fn) const
@@ -670,6 +687,7 @@ namespace mir
         std::vector<EntityHook> mCreateHooks;
         std::vector<EntityHook> mDestroyHooks;
         std::vector<ComponentHooks> mComponentHooks; // by component bit
+        mir::HierarchyIndex mHierarchy;
 
         // intentionally declared last as it must be destroyed first.
         std::unordered_map<uint32_t, std::unique_ptr<detail::IResource>> mResources; // by detail::ResourceIdOf

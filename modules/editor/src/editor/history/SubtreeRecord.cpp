@@ -22,11 +22,7 @@ namespace mir
 {
     Entity NextSibling(const World &world, Entity entity)
     {
-        const HierarchyIndex *index = world.TryResource<HierarchyIndex>();
-        if (index == nullptr)
-            return kNullEntity;
-
-        const std::span<const Entity> siblings = index->SiblingsOf(entity);
+        const std::span<const Entity> siblings = world.HierarchyIndex().SiblingsOf(entity);
         const auto it = std::find(siblings.begin(), siblings.end(), entity);
         if (it == siblings.end() || std::next(it) == siblings.end())
             return kNullEntity;

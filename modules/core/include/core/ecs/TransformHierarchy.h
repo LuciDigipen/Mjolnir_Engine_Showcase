@@ -44,31 +44,26 @@ namespace mir
     // Check CanSetParent for every topmost entity
     bool CanSetParentAll(const World &world, std::span<const Entity> entities, Entity parent, Entity before);
 
-    // Parent of entity, or null. Reads the graph without creating it.
+    // Parent of entity, or null for a root.
     Entity ParentOf(const World &world, Entity entity);
 
     // True if ancestor is entity or any transitive parent of it.
     bool IsAncestorOf(const World &world, Entity ancestor, Entity entity);
-
-    // Installs the HierarchyIndex resource and its create and destroy hooks
-    HierarchyIndex &InstallHierarchy(World &world);
 
     // Calls `fn(Entity)` for each direct child of `parent`, in insertion order.
     // fn may reparent or destry anything
     template <typename Fn>
     void ForEachChild(World &world, Entity parent, Fn &&fn)
     {
-        HierarchyIndex *index = world.TryResource<HierarchyIndex>();
-        if (index == nullptr)
-            return;
+        const HierarchyIndex &index = world.HierarchyIndex();
 
         // iterate on snapshot
-        const std::span<const Entity> children = index->ChildrenOf(parent);
+        const std::span<const Entity> children = index.ChildrenOf(parent);
         std::vector<Entity> snapshot(children.begin(), children.end());
 
         for (const Entity child : snapshot)
         {
-            if (world.IsAlive(child) && index->ParentOf(child) == parent)
+            if (world.IsAlive(child) && index.ParentOf(child) == parent)
                 fn(child);
         }
     }
@@ -78,17 +73,15 @@ namespace mir
     template <typename Fn>
     void ForEachDescendant(World &world, Entity root, Fn &&fn)
     {
-        const HierarchyIndex *index = world.TryResource<HierarchyIndex>();
-        if (index == nullptr)
-            return;
+        const HierarchyIndex &index = world.HierarchyIndex();
 
         std::vector<Entity> pending;
-        const std::span<const Entity> roots = index->ChildrenOf(root);
+        const std::span<const Entity> roots = index.ChildrenOf(root);
         pending.insert(pending.end(), roots.begin(), roots.end());
 
         for (std::size_t i = 0; i < pending.size(); ++i)
         {
-            const std::span<const Entity> children = index->ChildrenOf(pending[i]);
+            const std::span<const Entity> children = index.ChildrenOf(pending[i]);
             pending.insert(pending.end(), children.begin(), children.end());
         }
 

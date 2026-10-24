@@ -206,9 +206,6 @@ namespace mir
 
         mSplash.SetProgress("Registering components...", 0.75f);
 
-        // scene graph + install destroy hook
-        InstallHierarchy(mWorld);
-
         // Before anything may load a script
         RegisterCoreComponents();
         RegisterRendererComponents();

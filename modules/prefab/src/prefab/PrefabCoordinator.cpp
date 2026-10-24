@@ -473,10 +473,6 @@ namespace mir
                 desired[newNodes[*node.mParent].mAddress].push_back(entity);
             }
 
-            const HierarchyIndex *index = world.TryResource<HierarchyIndex>();
-            if (index == nullptr)
-                return;
-
             for (const auto &[parentAddress, children] : desired)
             {
                 if (children.size() < 2)
@@ -485,7 +481,7 @@ namespace mir
                 if (parent.IsNull())
                     continue;
 
-                const std::span<const Entity> current = index->ChildrenOf(parent);
+                const std::span<const Entity> current = world.HierarchyIndex().ChildrenOf(parent);
                 std::size_t next = 0;
                 for (const Entity child : current)
                 {
@@ -592,8 +588,6 @@ namespace mir
                     }
                 }
             }
-
-            InstallHierarchy(world);
 
             for (std::size_t newNodeIndex = 0; newNodeIndex < newNodes.size(); ++newNodeIndex)
             {

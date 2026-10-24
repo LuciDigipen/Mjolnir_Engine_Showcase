@@ -26,17 +26,13 @@ namespace mir
     {
         uint32_t SiblingIndexInScene(World &world, Entity entity, const LoadedScene &scene)
         {
-            const HierarchyIndex *index = world.TryResource<HierarchyIndex>();
-            if (index == nullptr)
-                return 0;
-
             std::unordered_set<uint64_t> sceneEntities;
             sceneEntities.reserve(scene.mEntities.size());
             for (const auto &[id, member] : scene.mEntities)
                 sceneEntities.insert(PackEntity(member));
 
             uint32_t position = 0;
-            for (const Entity sibling : index->SiblingsOf(entity))
+            for (const Entity sibling : world.HierarchyIndex().SiblingsOf(entity))
             {
                 if (sibling == entity)
                     break;
