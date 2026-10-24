@@ -42,16 +42,6 @@ namespace mir
         struct QueryIterationGuard;
     }
 
-    // Fn called right after an entity is created, or before it is torn down.
-    // Fn should not add or remove hooks
-    struct EntityHook
-    {
-        void (*fn)(World &world, Entity entity, void *user);
-        void *user = nullptr;
-
-        bool operator==(const EntityHook &) const = default;
-    };
-
     struct ComponentHooks
     {
         std::function<void(World &world, Entity entity)> onAdd;
@@ -131,32 +121,7 @@ namespace mir
             mRecords[entity.mIndex] = EntityRecord{ mEmptyArchetype, mEmptyArchetype->AddRow(entity) };
             detail::HierarchyMutator::AddRoot(mHierarchy, entity);
 
-            for (std::size_t i = 0; i < mCreateHooks.size(); ++i)
-                mCreateHooks[i].fn(*this, entity, mCreateHooks[i].user);
-
             return entity;
-        }
-
-        // registers a hook to run after entity create
-        void AddCreateHook(void (*fn)(World &, Entity, void *), void *user = nullptr)
-        {
-            AddHook(mCreateHooks, EntityHook{ fn, user });
-        }
-
-        void RemoveCreateHook(void (*fn)(World &, Entity, void *), void *user = nullptr)
-        {
-            std::erase(mCreateHooks, EntityHook{ fn, user });
-        }
-
-        // registers a hook to run before entity destroy
-        void AddDestroyHook(void (*fn)(World &, Entity, void *), void *user = nullptr)
-        {
-            AddHook(mDestroyHooks, EntityHook{ fn, user });
-        }
-
-        void RemoveDestroyHook(void (*fn)(World &, Entity, void *), void *user = nullptr)
-        {
-            std::erase(mDestroyHooks, EntityHook{ fn, user });
         }
 
         template <typename T>
@@ -213,10 +178,6 @@ namespace mir
                 if (mPool.IsAlive(child))
                     DestroyEntity(child);
             }
-
-            // allowed to destroy other entities inside hooks
-            for (std::size_t i = 0; i < mDestroyHooks.size(); ++i)
-                mDestroyHooks[i].fn(*this, entity, mDestroyHooks[i].user);
 
             // in bit order, and the row drops once after the last, so every hook reads all the data
             const Signature signature = mRecords[entity.mIndex].archetype->GetSignature();
@@ -605,12 +566,6 @@ namespace mir
                 mComponentHooks[bit].name);
         }
 
-        static void AddHook(std::vector<EntityHook> &hooks, const EntityHook &hook)
-        {
-            if (std::find(hooks.begin(), hooks.end(), hook) == hooks.end())
-                hooks.push_back(hook);
-        }
-
         // like merging in merge sort
         static void CopySharedColumns(Archetype &from, uint32_t fromRow, Archetype &to, uint32_t toRow)
         {
@@ -717,8 +672,6 @@ namespace mir
         std::unordered_map<Signature, std::unique_ptr<Archetype>> mArchetypes;
         Archetype *mEmptyArchetype = nullptr;
         std::unordered_map<uint32_t, std::unique_ptr<detail::IQuery>> mQueries; // by detail::QueryKeyOf
-        std::vector<EntityHook> mCreateHooks;
-        std::vector<EntityHook> mDestroyHooks;
         // the name is kept for assert messages, since a tag has no column to read it from
         struct HookSlot
         {

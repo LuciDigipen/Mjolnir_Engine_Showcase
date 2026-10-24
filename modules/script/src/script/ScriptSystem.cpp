@@ -39,7 +39,7 @@ namespace mir
     void ScriptSystem::OnStart(SystemContext &context)
     {
         mQuery = &context.world.GetOrCreateQuery<ScriptRef>();
-        context.world.AddDestroyHook(&ScriptSystem::OnEntityDestroyed, this);
+        context.world.SetComponentHooks<ScriptRef>({ .onRemove = [this](World &world, Entity entity) { OnScriptRemoved(world, entity); } });
         if (EntityChangeListeners *listeners = context.world.TryResource<EntityChangeListeners>())
             listeners->AddBeforeRemove(&ScriptSystem::OnBeforeRemove, this);
     }
@@ -92,16 +92,15 @@ namespace mir
     void ScriptSystem::OnStop(SystemContext &context)
     {
         StopAllScripts(context);
-        context.world.RemoveDestroyHook(&ScriptSystem::OnEntityDestroyed, this);
+        context.world.ClearComponentHooks<ScriptRef>();
         if (EntityChangeListeners *listeners = context.world.TryResource<EntityChangeListeners>())
             listeners->RemoveBeforeRemove(&ScriptSystem::OnBeforeRemove, this);
     }
 
-    void ScriptSystem::OnEntityDestroyed(World &world, Entity entity, void *user)
+    void ScriptSystem::OnScriptRemoved(World &world, Entity entity)
     {
-        auto *self = static_cast<ScriptSystem *>(user);
         if (const ScriptRef *ref = world.GetComponent<ScriptRef>(entity); ref != nullptr && ref->instanceRef >= 0)
-            self->mHost.DestroyInstance(ref->instanceRef);
+            mHost.DestroyInstance(ref->instanceRef);
     }
 
     void ScriptSystem::OnBeforeRemove(World &world, const EntityChangeSet &changes, void *user)

@@ -34,7 +34,7 @@ namespace mir
         void PushTransforms(World &world, PhysicsWorld &physics);
         void PullPoses(PhysicsWorld &physics);
 
-        static void OnEntityDestroyed(World &world, Entity entity, void *user);
+        static void OnRigidBodyRemoved(World &world, Entity entity);
 
         Query<Transform, RigidBody> *mQuery = nullptr;
     };
