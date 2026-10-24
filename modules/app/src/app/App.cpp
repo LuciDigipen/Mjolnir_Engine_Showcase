@@ -656,6 +656,12 @@ namespace mir
                 mRenderer.CaptureNextFrame(mDesc.mCapturePath);
             mScheduler.Update(context, fixedSteps, mFixedTimestep.mStep);
 
+            if (PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>())
+            {
+                if (prefabs->ConsumePublishedChanges())
+                    ResolveSceneScripts(mWorld, mScriptHost, mScriptReloadWatcher, Assets(), mProject.mAssetIdRoot);
+            }
+
             if (mWorld.Resource<InputState>().JustPressed(kToggleFullscreenAction))
                 ToggleFullscreen();
 

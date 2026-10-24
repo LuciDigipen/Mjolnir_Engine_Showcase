@@ -58,6 +58,9 @@ namespace mir
 
         bool HasPendingWork() const;
 
+        // True once after a Commit published instance data to the scene.
+        bool ConsumePublishedChanges();
+
         // Zero when no compiled template has been published to that instance.
         uint64_t PublishedRevision(StableId root) const;
 
@@ -78,6 +81,7 @@ namespace mir
         LoadedScene *mScene = nullptr;
         std::set<PrefabId> mPendingDocuments;
         std::map<StableId, PublishedInstance> mPublished;
+        bool mPublishedChanges = false;
     };
 
     // Runs at PreUpdate, before any other system, and commits only while editing.
