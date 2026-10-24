@@ -148,7 +148,10 @@ component it is losing. Tags fire hooks too.
 
 An OnAdd hook may change its own entity, for example to add a companion
 component. An OnRemove hook must not change its own entity, and that asserts. It
-may destroy other entities. Neither kind may set or clear hooks.
+may destroy other entities. Neither kind may set or clear hooks, because that
+could resize the hook slots or destroy the running hook. World counts the hooks
+that are running, so `SetComponentHooks` and `ClearComponentHooks` assert inside
+one, and in Release they log an error and do nothing.
 
 **`DestroyEntity` is bottom-up.** Children are destroyed fully first, last
 child first. Each child stays linked until its own removal, so its hooks still

@@ -182,6 +182,22 @@ TEST_CASE("ClearComponentHooks stops the hooks, and new ones can be set after", 
     CHECK(second == 1);
 }
 
+TEST_CASE("Hooks can change again once a throwing hook has unwound", "[ecs][hooks]")
+{
+    // the running-hook count drops on the throw, or the Set below would be refused
+    World world;
+    world.SetComponentHooks<HPosition>({ .onAdd = [](World &, Entity) { throw std::runtime_error("hook failed"); } });
+
+    REQUIRE_THROWS_AS(world.AddComponent(world.CreateEntity(), HPosition{}), std::runtime_error);
+
+    int adds = 0;
+    world.ClearComponentHooks<HPosition>();
+    world.SetComponentHooks<HPosition>({ .onAdd = [&adds](World &, Entity) { ++adds; } });
+    world.AddComponent(world.CreateEntity(), HPosition{});
+
+    CHECK(adds == 1);
+}
+
 TEST_CASE("Hooks belong to one World", "[ecs][hooks]")
 {
     World hooked;

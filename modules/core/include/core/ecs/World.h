@@ -128,6 +128,9 @@ namespace mir
         void SetComponentHooks(ComponentHooks hooks)
         {
             MIR_ASSERT_COMPONENT(T);
+            if (!CanChangeHooks("SetComponentHooks", TrimTypeName<T>()))
+                return;
+
             const std::size_t bit = ComponentBit<T>();
 
             if (bit >= mComponentHooks.size())
@@ -143,6 +146,9 @@ namespace mir
         template <typename T>
         void ClearComponentHooks()
         {
+            if (!CanChangeHooks("ClearComponentHooks", TrimTypeName<T>()))
+                return;
+
             const std::size_t bit = ComponentBit<T>();
             if (bit < mComponentHooks.size())
                 mComponentHooks[bit].hooks = ComponentHooks{};
@@ -514,7 +520,10 @@ namespace mir
             if (hooks == nullptr || !hooks->onAdd)
                 return slot;
 
-            hooks->onAdd(*this, entity);
+            {
+                const HookFiring firing{ mHookDepth };
+                hooks->onAdd(*this, entity);
+            }
 
             // the hook may have moved the entity to another table
             MIR_ASSERT(mPool.IsAlive(entity) && HasRaw(entity, type),
@@ -562,6 +571,28 @@ namespace mir
             return bit < mComponentHooks.size() ? &mComponentHooks[bit].hooks : nullptr;
         }
 
+        // counts hooks on the stack, so Set/Clear can refuse while one runs.
+        // RAII, so a throwing hook still lowers it
+        struct HookFiring
+        {
+            uint32_t &depth;
+
+            explicit HookFiring(uint32_t &value) : depth(value) { ++depth; }
+            ~HookFiring() { --depth; }
+        };
+
+        // setting or clearing from inside a hook could resize the slots or destroy the
+        // running std::function; asserts in Debug, skipped with an error in Release
+        bool CanChangeHooks([[maybe_unused]] const char *what, [[maybe_unused]] std::string_view type) const
+        {
+            MIR_ASSERT(mHookDepth == 0, "World::{}: {} changed from inside a hook", what, type);
+            if (mHookDepth == 0)
+                return true;
+
+            MIR_LOG_ERROR("World::{}: {} changed from inside a hook, ignored", what, type);
+            return false;
+        }
+
         // clears the destroying mark on every exit, a throwing hook included.
         // by index, since hooks may create entities and grow mRecords
         struct DestroyingMark
@@ -578,7 +609,10 @@ namespace mir
                 return;
 
             [[maybe_unused]] const Archetype *before = mRecords[entity.mIndex].archetype;
-            mComponentHooks[bit].hooks.onRemove(*this, entity);
+            {
+                const HookFiring firing{ mHookDepth };
+                mComponentHooks[bit].hooks.onRemove(*this, entity);
+            }
 
             // other entities may go, which can shift this entity's row but not its table
             MIR_ASSERT(mPool.IsAlive(entity) && mRecords[entity.mIndex].archetype == before,
@@ -706,6 +740,7 @@ namespace mir
         std::unordered_map<uint32_t, std::unique_ptr<detail::IResource>> mResources; // by detail::ResourceIdOf
         std::size_t mArchetypeGeneration = 0;
         uint32_t mQueryIterationDepth = 0; // depth for nested iteration checking
+        uint32_t mHookDepth = 0;           // hooks currently running
     };
 }
 
