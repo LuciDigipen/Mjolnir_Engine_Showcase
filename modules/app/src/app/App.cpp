@@ -446,7 +446,8 @@ namespace mir
         mTerrain->Refresh(0.0f, true);
         mTerrain->BeginPlay();
 
-        mPlaySnapshot = CaptureWorld(mWorld);
+        const PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>();
+        mPlaySnapshot = CaptureWorld(mWorld, mScene, prefabs != nullptr ? &prefabs->Resolver() : nullptr);
         mUnsavedBeforePlay = SceneUnsaved();
         ClearHistory();
 
@@ -462,8 +463,9 @@ namespace mir
         SystemContext context = MakeContext(0.0f);
         mScriptSystem->StopAllScripts(context);
 
-        mScene = RestoreWorld(mWorld, mPlaySnapshot);
-        if (PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>())
+        PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>();
+        mScene = RestoreWorld(mWorld, mPlaySnapshot, prefabs != nullptr ? &prefabs->Resolver() : nullptr);
+        if (prefabs != nullptr)
             prefabs->Bind(mScene);
         ClearHistory();
 
