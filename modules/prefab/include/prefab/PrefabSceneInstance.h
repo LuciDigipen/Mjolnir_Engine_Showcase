@@ -15,6 +15,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string_view>
 
 namespace mir
@@ -25,6 +26,8 @@ namespace mir
         PrefabSceneResolver(const PrefabRegistry &registry, CompiledPrefabCache &cache);
 
         std::map<SceneNodeAddress, Entity> Materialize(World &world, const ScenePrefabInstance &instance) override;
+
+        bool TemplateNodes(const ScenePrefabInstance &instance, std::set<SceneNodeAddress> &outNodes) const override;
 
         bool TemplateEntityRef(const ScenePrefabInstance &instance, const SceneNodeAddress &node,
             std::string_view component, std::string_view field,

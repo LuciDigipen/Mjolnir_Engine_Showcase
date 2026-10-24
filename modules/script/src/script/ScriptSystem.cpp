@@ -13,6 +13,7 @@
 #include <script/IScriptHost.h>
 
 #include <core/ecs/EngineMode.h>
+#include <core/ecs/TypeId.h>
 #include <core/log/Log.h>
 
 #include <exception>
@@ -39,6 +40,8 @@ namespace mir
     {
         mQuery = &context.world.GetOrCreateQuery<ScriptRef>();
         context.world.AddDestroyHook(&ScriptSystem::OnEntityDestroyed, this);
+        if (EntityChangeListeners *listeners = context.world.TryResource<EntityChangeListeners>())
+            listeners->AddBeforeRemove(&ScriptSystem::OnBeforeRemove, this);
     }
 
     void ScriptSystem::OnUpdate(SystemContext &context)
@@ -90,6 +93,8 @@ namespace mir
     {
         StopAllScripts(context);
         context.world.RemoveDestroyHook(&ScriptSystem::OnEntityDestroyed, this);
+        if (EntityChangeListeners *listeners = context.world.TryResource<EntityChangeListeners>())
+            listeners->RemoveBeforeRemove(&ScriptSystem::OnBeforeRemove, this);
     }
 
     void ScriptSystem::OnEntityDestroyed(World &world, Entity entity, void *user)
@@ -97,5 +102,46 @@ namespace mir
         auto *self = static_cast<ScriptSystem *>(user);
         if (const ScriptRef *ref = world.GetComponent<ScriptRef>(entity); ref != nullptr && ref->instanceRef >= 0)
             self->mHost.DestroyInstance(ref->instanceRef);
+    }
+
+    void ScriptSystem::OnBeforeRemove(World &world, const EntityChangeSet &changes, void *user)
+    {
+        auto *self = static_cast<ScriptSystem *>(user);
+
+        for (Entity entity : changes.mRemovedEntities)
+            self->ReleaseScript(world, entity);
+
+        const TypeId scriptType = TypeIdOf<ScriptRef>();
+        for (const EntityComponentRef &component : changes.mRemovedComponents)
+        {
+            if (component.mType == scriptType)
+                self->ReleaseScript(world, component.mEntity);
+        }
+
+        for (const EntityComponentChange &change : changes.mChangedComponents)
+        {
+            if (!(change.mType == scriptType))
+                continue;
+
+            for (const std::string &field : change.mFields)
+            {
+                if (field != "scriptName")
+                    continue;
+                self->ReleaseScript(world, change.mEntity);
+                break;
+            }
+        }
+    }
+
+    void ScriptSystem::ReleaseScript(World &world, Entity entity)
+    {
+        ScriptRef *ref = world.GetComponent<ScriptRef>(entity);
+        if (ref == nullptr)
+            return;
+
+        if (ref->instanceRef >= 0)
+            mHost.DestroyInstance(ref->instanceRef);
+        ref->instanceRef = -1;
+        ref->started = false;
     }
 }

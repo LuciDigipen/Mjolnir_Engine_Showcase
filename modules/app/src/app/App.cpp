@@ -38,6 +38,7 @@
 #include <physics/PhysicsInterpolationSystem.h>
 #include <physics/PhysicsSystem.h>
 #include <physics/PhysicsWorld.h>
+#include <prefab/PrefabCoordinator.h>
 #include <renderer/ComponentRegistration.h>
 #include <renderer/PostProcessingSettings.h>
 #include <renderer/RenderSettings.h>
@@ -77,6 +78,17 @@ namespace mir
         {
             return UIPointer{ static_cast<float>(input.mouseX), static_cast<float>(input.mouseY),
                              input.IsDown(MouseButton::Left) };
+        }
+
+        std::filesystem::path PrefabSourceDir(const GameProject &project)
+        {
+            const std::string prefix = project.mDir + "/";
+            if (project.mAssetIdRoot.rfind(prefix, 0) == 0)
+            {
+                return project.mRootDir / project.mAssetIdRoot.substr(prefix.size()) /
+                    std::string(kPrefabDirectoryName);
+            }
+            return project.mRootDir / "assets" / std::string(kPrefabDirectoryName);
         }
     }
 
@@ -198,6 +210,13 @@ namespace mir
         mWorld.EmplaceResource<ViewDrawSources>();
         mWorld.EmplaceResource<TerrainWorld>();
 
+        mWorld.EmplaceResource<EntityChangeListeners>();
+        PrefabCoordinator &prefabs = mWorld.EmplaceResource<PrefabCoordinator>();
+        const std::filesystem::path prefabsDir = PrefabSourceDir(mProject);
+        std::error_code prefabEc;
+        if (std::filesystem::is_directory(prefabsDir, prefabEc))
+            prefabs.ScanSources(prefabsDir);
+
         // defers structural change
         mWorld.EmplaceResource<FrameCommands>(FrameCommands{ &mCommands });
 
@@ -215,6 +234,7 @@ namespace mir
         mWorld.EmplaceResource<PhysicsWorld>();
         mWorld.EmplaceResource<CollisionEvents>();
 
+        mScheduler.AddSystem<PrefabSystem>(SystemPhase::PreUpdate);
         mScheduler.AddSystem<InputSystem>(SystemPhase::PreUpdate, *mWindow);
 
         mScriptSystem = &mScheduler.AddSystem<ScriptSystem>(SystemPhase::PreUpdate, mScriptHost);
@@ -258,6 +278,7 @@ namespace mir
 
         mSplash.SetProgress("Loading scene...", 0.9f);
         mScene = mir::NewScene("untitled");
+        prefabs.Bind(mScene);
         LoadProjectScene();
 
         //without the editor there is no Play button
@@ -299,6 +320,8 @@ namespace mir
 
         UnloadCurrentScene();
         mScene = mir::NewScene(std::move(name));
+        if (PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>())
+            prefabs->Bind(mScene);
         ClearHistory();
         SetSceneUnsaved(false);
     }
@@ -311,12 +334,15 @@ namespace mir
             return false;
         }
 
-        if (!mir::SaveScene(mWorld, mProject.mSceneDir, mScene))
-            return false;
-
-        mScene.mDirty = false;
-        SetSceneUnsaved(false);
-        return true;
+        const PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>();
+        const bool saved = mir::SaveScene(mWorld, mProject.mSceneDir, mScene,
+            prefabs != nullptr ? &prefabs->Resolver() : nullptr);
+        if (saved)
+        {
+            mScene.mDirty = false;
+            SetSceneUnsaved(false);
+        }
+        return saved;
     }
 
     bool App::LoadScene()
@@ -334,7 +360,10 @@ namespace mir
         }
 
         UnloadCurrentScene();
-        mScene = mir::LoadScene(mWorld, mProject.mSceneDir);
+        PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>();
+        mScene = mir::LoadScene(mWorld, mProject.mSceneDir, prefabs != nullptr ? &prefabs->Resolver() : nullptr);
+        if (prefabs != nullptr)
+            prefabs->Bind(mScene);
         ClearHistory();
         SetSceneUnsaved(false);
 
@@ -370,6 +399,8 @@ namespace mir
         mScriptSystem->StopAllScripts(context);
 
         mScene = RestoreWorld(mWorld, mPlaySnapshot);
+        if (PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>())
+            prefabs->Bind(mScene);
         ClearHistory();
 
         //the World is back as it was at Play, Play's edits gone, so the marker goes back too

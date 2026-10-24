@@ -8,6 +8,7 @@
  */
 #pragma once
 
+#include <core/ecs/EntityChanges.h>
 #include <core/ecs/System.h>
 #include <renderer/Material.h>
 #include <renderer/Mesh.h>
@@ -35,9 +36,13 @@ namespace mir
 
         void CommitReload(AssetCache *assets);
 
+        void OnStart(SystemContext &context) override;
         void OnUpdate(SystemContext &context) override;
+        void OnStop(SystemContext &context) override;
 
     private:
+        static void OnBeforeRemove(World &world, const EntityChangeSet &changes, void *user);
+
         struct CachedMesh
         {
             MeshHandle mMesh;
