@@ -167,16 +167,34 @@ namespace mir
             mRecords[entity.mIndex].destroying = true;
             const DestroyingMark mark{ mRecords, entity.mIndex };
 
-            // children first, so the destroy is bottom-up. Each stays linked until its own
-            // Remove, so its hooks still read its parent. A copy, since each Remove edits the list
-            const std::span<const Entity> linked = mHierarchy.ChildrenOf(entity);
-            const std::vector<Entity> children(linked.begin(), linked.end());
-            for (const Entity child : children)
+            // a child already mid-destroy further up the stack is finished by that destroy.
+            // Cut it loose, so its own Remove does not unlink from this entity once it is gone
+            for (std::size_t i = mHierarchy.ChildrenOf(entity).size(); i-- > 0;)
             {
-                MIR_ASSERT(mPool.IsAlive(child), "World::DestroyEntity: dead entity left in the scene graph");
+                const Entity child = mHierarchy.ChildrenOf(entity)[i];
+                if (IsDestroying(child))
+                    detail::HierarchyMutator::DetachChild(mHierarchy, entity, child);
+            }
 
-                if (mPool.IsAlive(child))
+            // children first, so the destroy is bottom-up. Each stays linked until its own
+            // Remove, so its hooks still read its parent. Draining the live list also takes
+            // children a hook added, and skips siblings a hook already destroyed
+            while (!mHierarchy.ChildrenOf(entity).empty())
+            {
+                const Entity child = mHierarchy.ChildrenOf(entity).back();
+
+                const bool alive = mPool.IsAlive(child);
+                MIR_ASSERT(alive, "World::DestroyEntity: dead entity left in the scene graph");
+                if (alive)
                     DestroyEntity(child);
+
+                // by membership, not size: the child's hooks may have added a sibling.
+                // In Release a child left linked would loop forever, so cut it loose
+                const std::span<const Entity> left = mHierarchy.ChildrenOf(entity);
+                const bool unlinked = std::find(left.begin(), left.end(), child) == left.end();
+                MIR_ASSERT(!alive || unlinked, "World::DestroyEntity: destroying a child did not unlink it");
+                if (!unlinked)
+                    detail::HierarchyMutator::DetachChild(mHierarchy, entity, child);
             }
 
             // in bit order, and the row drops once after the last, so every hook reads all the data
@@ -197,6 +215,9 @@ namespace mir
         }
 
         bool IsAlive(Entity entity) const { return mPool.IsAlive(entity); }
+
+        // true while DestroyEntity runs its cascade and hooks for this entity
+        bool IsDestroying(Entity entity) const { return mPool.IsAlive(entity) && mRecords[entity.mIndex].destroying; }
 
         // accessing the scene graph
         mir::HierarchyIndex &HierarchyIndex() { return mHierarchy; }

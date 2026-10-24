@@ -274,6 +274,97 @@ TEST_CASE("An OnRemove fired by DestroyEntity may destroy another entity", "[ecs
     CHECK_FALSE(world.IsAlive(entity));
 }
 
+TEST_CASE("An OnRemove in a cascade may destroy a sibling", "[ecs][hooks][destroy]")
+{
+    World world;
+    const Entity parent = world.CreateEntity();
+    const Entity a = world.CreateEntity();
+    const Entity b = world.CreateEntity();
+    world.AddComponent(a, HPosition{});
+    REQUIRE(mir::SetParent(world, a, parent));
+    REQUIRE(mir::SetParent(world, b, parent));
+    world.SetComponentHooks<HPosition>({ .onRemove = [b](World &w, Entity)
+        {
+            if (w.IsAlive(b))
+                w.DestroyEntity(b);
+        } });
+
+    world.DestroyEntity(parent);
+
+    CHECK_FALSE(world.IsAlive(parent));
+    CHECK_FALSE(world.IsAlive(a));
+    CHECK_FALSE(world.IsAlive(b));
+    CHECK(world.HierarchyIndex().Roots().empty());
+}
+
+TEST_CASE("A child whose OnRemove destroys its parent leaves no hang and a clean graph", "[ecs][hooks][destroy]")
+{
+    World world;
+    const Entity parent = world.CreateEntity();
+    const Entity first = world.CreateEntity();
+    const Entity killer = world.CreateEntity();
+    const Entity last = world.CreateEntity();
+    for (const Entity child : { first, killer, last })
+        REQUIRE(mir::SetParent(world, child, parent));
+
+    world.AddComponent(killer, HPosition{});
+    world.SetComponentHooks<HPosition>({ .onRemove = [parent](World &w, Entity) { w.DestroyEntity(parent); } });
+
+    world.DestroyEntity(killer);
+
+    CHECK_FALSE(world.IsAlive(parent));
+    CHECK_FALSE(world.IsAlive(first));
+    CHECK_FALSE(world.IsAlive(killer));
+    CHECK_FALSE(world.IsAlive(last));
+    CHECK(world.HierarchyIndex().Roots().empty());
+
+    // the reused slots start clean: one root, no stale links
+    const Entity fresh = world.CreateEntity();
+    CHECK(world.HierarchyIndex().Roots().size() == 1);
+    CHECK(world.HierarchyIndex().ChildrenOf(fresh).empty());
+}
+
+TEST_CASE("A child a hook adds to the dying parent is destroyed too", "[ecs][hooks][destroy]")
+{
+    World world;
+    const Entity parent = world.CreateEntity();
+    const Entity child = world.CreateEntity();
+    world.AddComponent(child, HPosition{});
+    REQUIRE(mir::SetParent(world, child, parent));
+
+    Entity added = mir::kNullEntity;
+    world.SetComponentHooks<HPosition>({ .onRemove = [parent, &added](World &w, Entity)
+        {
+            added = w.CreateEntity();
+            mir::SetParent(w, added, parent);
+        } });
+
+    world.DestroyEntity(parent);
+
+    REQUIRE_FALSE(added.IsNull());
+    CHECK_FALSE(world.IsAlive(added));
+    CHECK(world.HierarchyIndex().Roots().empty());
+}
+
+TEST_CASE("An entity being destroyed cannot be attached", "[ecs][hooks][destroy]")
+{
+    // SetParent asserts on it; CanSetParent gives the same answer without asserting
+    World world;
+    const Entity other = world.CreateEntity();
+    const Entity entity = world.CreateEntity();
+    world.AddComponent(entity, HPosition{});
+
+    bool attachable = true;
+    world.SetComponentHooks<HPosition>({ .onRemove = [other, &attachable](World &w, Entity e)
+        {
+            attachable = mir::CanSetParent(w, e, other);
+        } });
+
+    world.DestroyEntity(entity);
+
+    CHECK_FALSE(attachable);
+}
+
 TEST_CASE("Two hooks destroying each other's entity end with both destroyed", "[ecs][hooks][destroy]")
 {
     World world;

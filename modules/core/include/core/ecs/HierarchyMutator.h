@@ -27,6 +27,11 @@ namespace mir::detail
 
         static void Remove(HierarchyIndex &index, Entity entity) { index.Remove(entity); }
 
+        static void DetachChild(HierarchyIndex &index, Entity parent, Entity child)
+        {
+            index.DetachChild(parent, child);
+        }
+
         static void AddRoot(HierarchyIndex &index, Entity entity) { index.AddRoot(entity); }
     };
 }

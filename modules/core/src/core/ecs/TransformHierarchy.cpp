@@ -194,6 +194,12 @@ namespace mir
             return false;
         }
 
+        // its destroy has already cut it loose; a new link could put it under a parent that is draining
+        const bool destroying = world.IsDestroying(child);
+        MIR_ASSERT(!destroying, "SetParent: child is being destroyed");
+        if (destroying)
+            return false;
+
         HierarchyIndex &index = world.HierarchyIndex();
 
         // a reorder under the same parent keeps local values, so it never round-trips them
@@ -231,7 +237,7 @@ namespace mir
 
     bool CanSetParent(const World &world, Entity child, Entity parent, Entity before)
     {
-        if (!world.IsAlive(child) || (!parent.IsNull() && !world.IsAlive(parent)))
+        if (!world.IsAlive(child) || (!parent.IsNull() && !world.IsAlive(parent)) || world.IsDestroying(child))
             return false;
 
         return world.HierarchyIndex().CanSetParent(child, parent, before);

@@ -66,6 +66,10 @@ namespace mir
         // World destroys its children first, so normally none are left
         void Remove(Entity entity);
 
+        // Takes `child` out of `parent`'s children without making it a root,
+        // for a child that is being destroyed
+        void DetachChild(Entity parent, Entity child);
+
         // Appends a newly created entity to the roots
         void AddRoot(Entity entity);
 

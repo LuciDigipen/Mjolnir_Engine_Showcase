@@ -230,6 +230,14 @@ namespace mir
         return true;
     }
 
+    void HierarchyIndex::DetachChild(Entity parent, Entity child)
+    {
+        Unlink(child, parent);
+
+        if (Node *node = Find(child); node != nullptr && node->parent == parent)
+            node->parent = kNullEntity;
+    }
+
     void HierarchyIndex::Remove(Entity entity)
     {
         Node *node = Find(entity);

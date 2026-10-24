@@ -150,12 +150,22 @@ An OnAdd hook may change its own entity, for example to add a companion
 component. An OnRemove hook must not change its own entity, and that asserts. It
 may destroy other entities. Neither kind may set or clear hooks.
 
-**`DestroyEntity` is bottom-up.** Children are destroyed fully first. Each child
-stays linked until its own removal, so its hooks still read its parent. Then the
-entity's OnRemove hooks run in bit order, and the row drops once after the last
-one, so every hook reads all of the entity's data. A hook that destroys an
-entity already being destroyed is ignored with a warning, and the outer destroy
-finishes it.
+**`DestroyEntity` is bottom-up.** Children are destroyed fully first, last
+child first. Each child stays linked until its own removal, so its hooks still
+read its parent. The loop drains the live child list, so a sibling a hook
+already destroyed is gone from it, and a child a hook adds is destroyed too.
+Then the entity's OnRemove hooks run in bit order, and the row drops once after
+the last one, so every hook reads all of the entity's data.
+
+**A destroy already in progress finishes its own entity.** A hook that destroys
+an entity already being destroyed is ignored with a warning. A child that is
+mid-destroy further up the stack is cut loose from its parent first, so its own
+removal never reaches a parent that is gone. `SetParent` asserts on a child that
+is being destroyed, and `CanSetParent` answers `false` for it.
+
+A dead entity left in the graph, or a child whose destroy did not unlink it, is
+a bug. Both assert in Debug. In Release the child is cut loose and the destroy
+continues, so the loop always ends.
 
 **A resource destructor must not call back into `World`.** By then `~World` is
 already destroying the resource map. Anything holding entity handles needs an
