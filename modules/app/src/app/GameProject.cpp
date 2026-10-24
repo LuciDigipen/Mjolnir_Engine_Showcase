@@ -64,7 +64,7 @@ namespace mir
         {
             throw SetupError(ErrorCategory::ProjectData, "No --game given and engine.json names no defaultGame", path,
                 "defaultGame is missing or not a non-empty string",
-                "Set defaultGame in engine.json (e.g. games/HelloWorld), or pass --game <dir>.");
+                "Set defaultGame in engine.json, or pass --game <dir>.");
         }
 
         return it->get<std::string>();
@@ -86,7 +86,7 @@ namespace mir
         {
             throw SetupError(notFound, "Game directory '" + requested + "' is not inside the project root", rootDir,
                 "games are looked up under the project root only",
-                "Name a game under " + (rootDir / "games").string() + ", e.g. games/HelloWorld.");
+                "Name a game under " + (rootDir / "games").string() + ".");
         }
 
         std::error_code ec;
