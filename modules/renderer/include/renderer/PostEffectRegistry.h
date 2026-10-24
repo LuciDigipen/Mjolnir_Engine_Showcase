@@ -16,11 +16,17 @@
 
 namespace mir
 {
+    struct PostEffectContext
+    {
+        bool rayTracing = false;
+        bool dlssAvailable = false;
+    };
+
     struct PostEffectDesc
     {
         std::string_view mName;
 
-        void (*mDrawParams)(nlohmann::json &params) = nullptr;
+        void (*mDrawParams)(nlohmann::json &params, const PostEffectContext &context) = nullptr;
     };
 
     class PostEffectRegistry
@@ -28,7 +34,8 @@ namespace mir
     public:
         static PostEffectRegistry &Instance();
 
-        void Register(std::string_view name, void (*drawParams)(nlohmann::json &) = nullptr);
+        void Register(std::string_view name,
+            void (*drawParams)(nlohmann::json &, const PostEffectContext &) = nullptr);
 
         std::span<const PostEffectDesc> All() const { return mEffects; }
 

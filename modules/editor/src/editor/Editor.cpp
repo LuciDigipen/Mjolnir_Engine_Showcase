@@ -15,11 +15,15 @@
 #include <core/ecs/Query.h>
 #include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/World.h>
+#include <core/ecs/components/Name.h>
 #include <core/ecs/components/Transform.h>
 #include <core/ecs/components/WorldTransform.h>
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
+#include <editor/EditorWidgets.h>
 #include <editor/Selection.h>
+#include <editor/history/ComponentCommands.h>
+#include <editor/history/EntityCommands.h>
 #include <editortheme/EditorTheme.h>
 #include <renderer/CameraMath.h>
 #include <renderer/ViewSubmission.h>
@@ -38,8 +42,11 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstring>
+#include <format>
 #include <limits>
 #include <optional>
+#include <string_view>
 #include <system_error>
 #include <utility>
 
@@ -66,6 +73,25 @@ namespace mir
                 return ImGuizmo::SCALE;
             }
             return ImGuizmo::TRANSLATE;
+        }
+
+        
+        template <typename T>
+        std::unique_ptr<ICommand> SetTransformField(World &world, Entity entity, std::string_view fieldName, const T &value, std::string_view verb)
+        {
+            const ComponentOps *ops = ComponentRegistry::Instance().FindBySeq(TypeIdOf<Transform>().seq);
+            const FieldDesc *field = ops != nullptr ? ops->FindField(fieldName) : nullptr;
+            if (field == nullptr)
+                return nullptr;
+
+            FieldValue fieldValue;
+            fieldValue.mField = static_cast<uint32_t>(field - ops->mFields.data());
+            static_assert(sizeof(T) <= sizeof(fieldValue.mBytes));
+            std::memcpy(fieldValue.mBytes, &value, sizeof(T));
+
+            const Name *name = world.GetComponent<Name>(entity);
+            return MakeSetFieldsCommand(entity, *ops, { fieldValue },
+                std::format("{} {}", verb, name != nullptr ? name->mValue : "Entity"));
         }
 
         // Radius around the entity's origin that holds its scaled mesh box.
@@ -149,7 +175,7 @@ namespace mir
     Editor::~Editor() {}
 
     bool Editor::Initialize(const ImGuiRuntime &imgui, Window &window, std::filesystem::path projectSettingsPath,
-        World &world)
+        World &world, ISceneOps &sceneOps, bool srgbOutput)
     {
         if (!imgui.IsInitialized())
         {
@@ -167,11 +193,13 @@ namespace mir
         mImGuiIniPath = (ExecutableDir() / "imgui.ini").string();
         io.IniFilename = mImGuiIniPath.c_str();
 
-        EditorTheme::Apply();
-        EditorTheme::ScaleForDpi(window.ContentScale());
-
         mPreferencesPath = EditorPreferencesPath();
         mPreferences = EditorPreferences::LoadFile(mPreferencesPath);
+
+        mWindow = &window;
+        mSrgbOutput = srgbOutput;
+        ApplyTheme();
+
         if (!mPreferences.backgroundFile.empty())
         {
             std::string error;
@@ -179,13 +207,22 @@ namespace mir
                 MIR_LOG_WARN("Editor background image '{}': {}", mPreferences.backgroundFile, error);
         }
 
-        mWindow = &window;
+        mSceneOps = &sceneOps;
         mInitialized = true;
         return true;
     }
 
+    void Editor::ApplyTheme()
+    {
+        const EditorThemeKind kind =
+            mPreferences.theme == EditorThemeChoice::Slate ? EditorThemeKind::Slate : EditorThemeKind::Midnight;
+        EditorTheme::Apply(kind, mSrgbOutput);
+        EditorTheme::ScaleForDpi(mWindow->ContentScale());
+    }
+
     void Editor::ApplyPreferencesRequest(const PreferencesRequest &request)
     {
+        mThemePending |= request.mApplyTheme;
         bool save = request.mSave;
         if (request.mPickImage)
         {
@@ -292,6 +329,14 @@ namespace mir
         ImGui::SetCursorPosY((barHeight - ImGui::GetTextLineHeight()) * 0.5f);
         ImGui::TextUnformatted(mWindow->Title());
 
+        // the unsaved-changes marker (*)
+        if (mHistory.IsUnsaved())
+        {
+            ImGui::SameLine(0.0f, 0.0f);
+            ImGui::TextUnformatted("*");
+            ImGui::SetItemTooltip("The scene has changes since it was last saved");
+        }
+
         mTitleBarInteractiveRects.clear();
         const float buttonWidth = barHeight * 0.9f;
         const float buttonHeight = barHeight * 0.65f;
@@ -302,6 +347,7 @@ namespace mir
         ImGui::SetWindowFontScale(0.65f);
 
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
 
         const auto controlButton = [&](const char *icon)
             {
@@ -325,6 +371,7 @@ namespace mir
         if (controlButton(ICON_FA_XMARK))
             mWindow->RequestClose();
 
+        ImGui::PopStyleVar();
         ImGui::PopStyleColor();
         ImGui::SetWindowFontScale(1.0f);
 
@@ -340,13 +387,17 @@ namespace mir
         const bool playing = mode.mMode == EngineMode::Play;
         const bool paused = playing && mode.mPlayState == PlayState::Paused;
 
-        const char *primaryLabel = playing ? (paused ? ICON_FA_PLAY " Resume" : ICON_FA_PAUSE " Pause") : ICON_FA_PLAY " Play";
+        const char *primaryIcon = playing && !paused ? ICON_FA_PAUSE : ICON_FA_PLAY;
+        const char *primaryText = playing ? (paused ? "Resume" : "Pause") : "Play";
+        const ImVec4 primaryColor = playing && !paused ? EditorTheme::Color(StatusColor::Warning)
+                                                       : EditorTheme::Color(ThemeColor::Success);
         const ImGuiStyle &style = ImGui::GetStyle();
 
-        const float buttonWidth = std::max({ ImGui::CalcTextSize(ICON_FA_PLAY " Play").x,
-                                              ImGui::CalcTextSize(ICON_FA_PLAY " Resume").x,
-                                              ImGui::CalcTextSize(ICON_FA_PAUSE " Pause").x,
-                                              ImGui::CalcTextSize(ICON_FA_STOP " Stop").x }) +
+        const float buttonWidth = std::max({ ImGui::CalcTextSize(ICON_FA_PLAY).x, ImGui::CalcTextSize(ICON_FA_PAUSE).x,
+                                              ImGui::CalcTextSize(ICON_FA_STOP).x }) +
+            style.ItemInnerSpacing.x * 1.5f +
+            std::max({ ImGui::CalcTextSize("Play").x, ImGui::CalcTextSize("Resume").x,
+                       ImGui::CalcTextSize("Pause").x, ImGui::CalcTextSize("Stop").x }) +
             style.FramePadding.x * 2.0f;
 
         float rowWidth = buttonWidth;
@@ -357,17 +408,13 @@ namespace mir
         ImGui::SetCursorPosX((ImGui::GetWindowWidth() - rowWidth) * 0.5f);
 
         const ImVec2 buttonSize(buttonWidth, 0.0f);
-        if (!playing)
+        if (widgets::IconTextButton("##play", primaryIcon, primaryText, primaryColor, buttonSize))
+            action = playing ? SceneMenuAction::TogglePause : SceneMenuAction::Play;
+        if (playing)
         {
-            if (ImGui::Button(primaryLabel, buttonSize))
-                action = SceneMenuAction::Play;
-        }
-        else
-        {
-            if (ImGui::Button(primaryLabel, buttonSize))
-                action = SceneMenuAction::TogglePause;
             ImGui::SameLine();
-            if (ImGui::Button(ICON_FA_STOP " Stop", buttonSize))
+            if (widgets::IconTextButton("##stop", ICON_FA_STOP, "Stop", EditorTheme::Color(StatusColor::Danger),
+                buttonSize))
                 action = SceneMenuAction::Stop;
         }
 
@@ -454,8 +501,7 @@ namespace mir
         if (entity.IsNull() || !world.IsAlive(entity))
             return;
 
-        Transform *transform = world.GetComponent<Transform>(entity);
-        if (transform == nullptr)
+        if (world.GetComponent<Transform>(entity) == nullptr)
             return;
 
         const float x = static_cast<float>(mSceneViewportRect.offset.x);
@@ -464,38 +510,37 @@ namespace mir
         const float height = static_cast<float>(mSceneViewportRect.extent.height);
 
         ImGui::SetNextWindowPos(ImVec2(x + 8.0f, y + 8.0f), ImGuiCond_Always);
-        ImGui::SetNextWindowBgAlpha(0.6f);
+        ImGui::SetNextWindowBgAlpha(0.75f);
+        const float dpi = mWindow->ContentScale();
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4.0f * dpi, 4.0f * dpi));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2.0f * dpi, 2.0f * dpi));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f * dpi);
         if (ImGui::Begin("##GizmoToolbar", nullptr,
             ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoNav |
             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
             ImGuiWindowFlags_NoFocusOnAppearing))
         {
-            const auto modeButton = [&](const char *label, GizmoOperation op)
+            const auto modeButton = [&](const char *icon, const char *tooltip, GizmoOperation op)
                 {
-                    const bool active = mGizmoOperation == op;
-                    if (active)
-                        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-                    if (ImGui::Button(label))
+                    if (widgets::ToolbarButton(icon, tooltip, mGizmoOperation == op))
                         mGizmoOperation = op;
-                    if (active)
-                        ImGui::PopStyleColor();
+                    ImGui::SameLine();
                 };
 
-            modeButton("Translate", GizmoOperation::Translate);
+            modeButton(ICON_FA_ARROWS_UP_DOWN_LEFT_RIGHT, "Translate (W)", GizmoOperation::Translate);
+            modeButton(ICON_FA_ROTATE, "Rotate (E)", GizmoOperation::Rotate);
+            modeButton(ICON_FA_UP_RIGHT_AND_DOWN_LEFT_FROM_CENTER, "Scale (R)", GizmoOperation::Scale);
+
+            ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
             ImGui::SameLine();
-            modeButton("Rotate", GizmoOperation::Rotate);
-            ImGui::SameLine();
-            modeButton("Scale", GizmoOperation::Scale);
-            ImGui::SameLine();
-            ImGui::PushStyleColor(ImGuiCol_Button, EditorTheme::Color(StatusColor::Info, 0.35f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, EditorTheme::Color(StatusColor::Info, 0.5f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, EditorTheme::Color(StatusColor::Info, 0.7f));
-            if (ImGui::Button(mGizmoSpace == GizmoSpace::Local ? "Local" : "Global"))
-                mGizmoSpace = mGizmoSpace == GizmoSpace::Local ? GizmoSpace::World : GizmoSpace::Local;
-            ImGui::PopStyleColor(3);
-            ImGui::SetItemTooltip("Toggle the gizmo between local and world axes");
+
+            const bool local = mGizmoSpace == GizmoSpace::Local;
+            if (widgets::ToolbarButton(local ? ICON_FA_CUBE : ICON_FA_GLOBE,
+                local ? "Local axes (click for world)" : "World axes (click for local)"))
+                mGizmoSpace = local ? GizmoSpace::World : GizmoSpace::Local;
         }
         ImGui::End();
+        ImGui::PopStyleVar(3);
 
         // ImGuizmo works in the scene viewport's camera-relative space: the
         // camera is the origin, so its float matrices stay small however far
@@ -525,8 +570,16 @@ namespace mir
         ImGuizmo::SetRect(x, y, width, height);
 
         const ImGuizmo::MODE gizmoMode = mGizmoSpace == GizmoSpace::Local ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
-        if (!ImGuizmo::Manipulate(glm::value_ptr(view), glm::value_ptr(proj), ToImGuizmoOperation(mGizmoOperation),
-            gizmoMode, glm::value_ptr(gizmoMatrix)))
+        const bool changed = ImGuizmo::Manipulate(glm::value_ptr(view), glm::value_ptr(proj),
+            ToImGuizmoOperation(mGizmoOperation), gizmoMode, glm::value_ptr(gizmoMatrix));
+
+        
+        const bool usingGizmo = ImGuizmo::IsUsing();
+        if (mGizmoWasUsing && !usingGizmo)
+            mHistory.EndStep();
+        mGizmoWasUsing = usingGizmo;
+
+        if (!changed)
             return;
 
         // A root composes under the identity at the Scene origin.
@@ -544,7 +597,7 @@ namespace mir
             const std::optional<ParentLocalTranslation> local =
                 moved ? TryWorldToParentLocal(parentPose, *moved) : std::nullopt;
             if (local)
-                transform->SetPosition(local->Meters());
+                mHistory.Submit(SetTransformField(world, entity, "position", local->Meters(), "Move"));
             return;
         }
 
@@ -556,9 +609,9 @@ namespace mir
         DecomposeRotationScale(glm::inverse(parentPose.linear) * glm::mat3(gizmoMatrix), rotation, scale);
 
         if (mGizmoOperation == GizmoOperation::Rotate)
-            transform->SetRotation(rotation);
+            mHistory.Submit(SetTransformField(world, entity, "rotation", rotation, "Rotate"));
         else
-            transform->SetScale(scale);
+            mHistory.Submit(SetTransformField(world, entity, "scale", scale, "Scale"));
     }
 
     void Editor::FocusSelection(const EngineModeState &mode, World &world)
@@ -848,6 +901,12 @@ namespace mir
     {
         EditorActions actions;
 
+        if (mThemePending)
+        {
+            ApplyTheme();
+            mThemePending = false;
+        }
+
         if (enableLayout)
         {
             mBackground.CollectRetired();
@@ -904,11 +963,11 @@ namespace mir
             }
 
             if (ImGui::Begin("Hierarchy"))
-                actions.mEntity = mHierarchyPanel.Draw(world);
+                mHistory.Submit(MakeEntityCommand(mHierarchyPanel.Draw(world)));
             ImGui::End();
 
             if (ImGui::Begin("Inspector"))
-                mInspectorPanel.Draw(world, assetImport);
+                mInspectorPanel.Draw(world, assetImport, mHistory);
             ImGui::End();
 
             if (ImGui::Begin("Output"))
@@ -937,6 +996,7 @@ namespace mir
 
             UpdateViewportPicking(mode, world);
             FocusSelection(mode, world);
+            UpdateHistoryShortcuts();
             DrawSelectionHighlights(mode, world);
             DrawComponentGizmos(mode, world);
             DrawViewportGizmo(mode, world);
@@ -960,6 +1020,11 @@ namespace mir
                     if (ImGui::MenuItem("New Project..."))
                         mNewProjectRequested = true;
                     DrawOpenProjectMenu(projects, currentProject);
+                    ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("Edit"))
+                {
+                    DrawEditMenu();
                     ImGui::EndMenu();
                 }
                 if (ImGui::BeginMenu("Project"))
@@ -1040,7 +1105,9 @@ namespace mir
             if (mShowPostProcessing)
             {
                 if (ImGui::Begin("Post-Processing", &mShowPostProcessing))
-                    mPostProcessingPanel.Draw(postProcessingSettings, mProjectSettingsPath);
+                    mPostProcessingPanel.Draw(postProcessingSettings, mProjectSettingsPath,
+                        PostEffectContext{ renderer.RayTracingActive(renderSettings.rayTracing),
+                            renderer.DlssAvailable() });
                 ImGui::End();
             }
             else
@@ -1082,7 +1149,38 @@ namespace mir
             mSceneViewportRect = VkRect2D{};
         }
 
+        
+        if (mSceneOps != nullptr)
+            mHistory.Flush(world, *mSceneOps);
+
         return actions;
+    }
+
+    void Editor::DrawEditMenu()
+    {
+
+        //keeps the item's id while the step name in its label changes
+        const std::string undo = mHistory.CanUndo() ? "Undo " + mHistory.UndoName() : std::string("Undo");
+
+        if (ImGui::MenuItem((undo + "###Undo").c_str(), "Ctrl+Z", false, mHistory.CanUndo()))
+            mHistory.RequestUndo();
+
+        const std::string redo = mHistory.CanRedo() ? "Redo " + mHistory.RedoName() : std::string("Redo");
+
+        if (ImGui::MenuItem((redo + "###Redo").c_str(), "Ctrl+Y", false, mHistory.CanRedo()))
+            mHistory.RequestRedo();
+    }
+
+    void Editor::UpdateHistoryShortcuts()
+    {
+        const ImGuiIO &io = ImGui::GetIO();
+        if (io.WantTextInput || !io.KeyCtrl)
+            return;
+
+        if (ImGui::IsKeyPressed(ImGuiKey_Z))
+            mHistory.RequestUndo();
+        else if (ImGui::IsKeyPressed(ImGuiKey_Y))
+            mHistory.RequestRedo();
     }
 
     bool Editor::WantsCaptureKeyboard() const { return ImGui::GetIO().WantCaptureKeyboard; }

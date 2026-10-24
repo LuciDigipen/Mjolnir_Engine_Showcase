@@ -16,13 +16,8 @@
 #include <core/ecs/System.h>
 #include <core/ecs/components/WorldTransform.h>
 #include <core/log/Log.h>
-#include <renderer/BloomEffect.h>
-#include <renderer/DepthOfFieldEffect.h>
-#include <renderer/FilmEffect.h>
-#include <renderer/FogEffect.h>
-#include <renderer/HdrEffect.h>
-#include <renderer/MotionBlurEffect.h>
 #include <renderer/PostProcessingSettings.h>
+#include <renderer/PostProcessingState.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/components/Camera.h>
 #include <renderer/components/Light.h>
@@ -118,47 +113,8 @@ namespace mir
         {
             const RenderSettings &renderSettings = context.world.Resource<RenderSettings>();
 
-            const PostProcessingSettings &postProcessing = context.world.Resource<PostProcessingSettings>();
-            const auto fogIt = postProcessing.effects.find(std::string(kFogEffectName));
-            const FogParams fog =
-                fogIt != postProcessing.effects.end() ? ReadFogParams(fogIt->second.params) : FogParams{};
-            const bool fogEnabled = fogIt != postProcessing.effects.end() && fogIt->second.enabled;
-            mRenderer.SetFog(fog.color, fogEnabled ? fog.density : 0.0f, fog.start, fog.end);
-
-            const auto hdrIt = postProcessing.effects.find(std::string(kHdrEffectName));
-            const HdrParams hdr =
-                hdrIt != postProcessing.effects.end() ? ReadHdrParams(hdrIt->second.params) : HdrParams{};
-            const bool hdrEnabled = hdrIt != postProcessing.effects.end() && hdrIt->second.enabled;
-            mRenderer.SetTonemap(hdrEnabled ? hdr.exposure : 1.0f,
-                static_cast<int>(hdrEnabled ? hdr.op : TonemapOperator::None));
-
-            const auto bloomIt = postProcessing.effects.find(std::string(kBloomEffectName));
-            const BloomParams bloom =
-                bloomIt != postProcessing.effects.end() ? ReadBloomParams(bloomIt->second.params) : BloomParams{};
-            const bool bloomEnabled = bloomIt != postProcessing.effects.end() && bloomIt->second.enabled;
-            mRenderer.SetBloom(bloomEnabled, bloom.threshold, bloom.intensity, bloom.radius);
-
-            const auto dofIt = postProcessing.effects.find(std::string(kDepthOfFieldEffectName));
-            const DepthOfFieldParams dof =
-                dofIt != postProcessing.effects.end() ? ReadDepthOfFieldParams(dofIt->second.params)
-                : DepthOfFieldParams{};
-            const bool dofEnabled = dofIt != postProcessing.effects.end() && dofIt->second.enabled;
-            mRenderer.SetDepthOfField(dofEnabled, dof.focusDistance, dof.aperture, dof.maxBlur);
-
-            const auto motionBlurIt = postProcessing.effects.find(std::string(kMotionBlurEffectName));
-            const MotionBlurParams motionBlur = motionBlurIt != postProcessing.effects.end()
-                ? ReadMotionBlurParams(motionBlurIt->second.params)
-                : MotionBlurParams{};
-            const bool motionBlurEnabled = motionBlurIt != postProcessing.effects.end() && motionBlurIt->second.enabled;
-            mRenderer.SetMotionBlur(motionBlurEnabled, motionBlur.shutterStrength,
-                static_cast<uint32_t>(std::max(motionBlur.sampleCount, 1)));
-
-            const auto filmIt = postProcessing.effects.find(std::string(kFilmEffectName));
-            const FilmParams film =
-                filmIt != postProcessing.effects.end() ? ReadFilmParams(filmIt->second.params) : FilmParams{};
-            const bool filmEnabled = filmIt != postProcessing.effects.end() && filmIt->second.enabled;
-            mRenderer.SetFilm(filmEnabled, film.grain, film.contrast, film.saturation, film.vignetteStrength,
-                film.vignetteRadius);
+            mRenderer.SetPostProcessing(ResolvePostProcessing(context.world.Resource<PostProcessingSettings>(),
+                mRenderer.RayTracingActive(renderSettings.rayTracing), mRenderer.DlssAvailable()));
 
             bool haveSunLight = false;
             glm::vec3 sunDirWS{ 0.0f, 1.0f, 0.0f };
@@ -313,9 +269,6 @@ namespace mir
                 assignNearest(/*wantSpot*/ true, VulkanRenderer::kMaxSpotShadows);
                 assignNearest(/*wantSpot*/ false, VulkanRenderer::kMaxPointShadows);
             }
-            for (LightItem &item : mLightItems)
-                if (item.shadowSlot == -2)
-                    item.shadowSlot = -1;
             mRenderer.SetLights(mLightItems);
 
             mDrawItems.clear();
@@ -347,9 +300,11 @@ namespace mir
             {
                 const glm::mat4 sunShadowViewProj = MakeOrthographicViewProjection(
                     -sunDirWS, VulkanRenderer::kSunShadowHalfExtent, VulkanRenderer::kSunShadowNearZ);
-                BuildViewDrawItems(shadowCasters(shadowCameraPose.position, sunShadowViewProj),
-                    shadowCameraPose.position, sunShadowViewProj, mSunShadowItems);
-                mRenderer.SetSunShadowCaster(true, sunShadowViewProj, shadowCameraPose.position, mSunShadowItems);
+                const WorldPosition sunAnchor = SnapToShadowTexels(shadowCameraPose.position, -sunDirWS,
+                    2.0f * VulkanRenderer::kSunShadowHalfExtent / VulkanRenderer::kSunShadowResolution);
+                BuildViewDrawItems(shadowCasters(sunAnchor, sunShadowViewProj),
+                    sunAnchor, sunShadowViewProj, mSunShadowItems);
+                mRenderer.SetSunShadowCaster(true, sunShadowViewProj, sunAnchor, mSunShadowItems);
             }
             else
             {
@@ -457,7 +412,7 @@ namespace mir
                 mWarnedSkippedItems = true;
             }
 
-            const bool traceable = renderSettings.rayTracing && mRenderer.RayTracingSupported();
+            const bool traceable = mRenderer.RayTracingActive(renderSettings.rayTracing);
             if (traceable && mRenderViews.size() == 1)
             {
                 mRenderer.TraceFrame(mRenderViews);

@@ -19,7 +19,7 @@ namespace mir
 {
     namespace
     {
-        void DrawBloomParams(nlohmann::json &params)
+        void DrawBloomParams(nlohmann::json &params, const PostEffectContext &)
         {
             BloomParams bloom = ReadBloomParams(params);
             bool changed = false;

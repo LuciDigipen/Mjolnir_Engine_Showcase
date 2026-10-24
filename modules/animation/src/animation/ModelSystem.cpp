@@ -154,7 +154,7 @@ namespace mir
                         if (gpu.mirrored.IsNull())
                             gpu.mirrored = mRenderer.ErrorMaterial();
                     }
-                    // Magenta, not white: the ray tracer reads only the tint, never the texture.
+                    // Magenta, not the base color, which would tint the error texture and hide the failure.
                     gpu.factor = materialFailed || desc.baseColorTexture == mRenderer.ErrorTexture()
                         ? glm::vec4(1, 0, 1, 1)
                         : material.baseColor;

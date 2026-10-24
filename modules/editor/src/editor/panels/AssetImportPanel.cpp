@@ -8,6 +8,7 @@
  */
 #include <editor/panels/AssetImportPanel.h>
 
+#include <editor/EditorWidgets.h>
 #include <editortheme/EditorTheme.h>
 
 #include <imgui.h>
@@ -287,8 +288,8 @@ namespace mir
                               view.mWatchedRoot.empty() ? "the source asset directory" : view.mWatchedRoot.c_str());
 
         ImGui::SeparatorText("Managed models");
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.5f);
-        ImGui::InputTextWithHint("##filter", "Filter by model path or content name", mFilter, sizeof(mFilter));
+        widgets::SearchBox("##filter", mFilter, sizeof(mFilter), "Filter by model path or content name",
+            ImGui::GetContentRegionAvail().x * 0.5f);
 
         std::string scrollTo;
         if (!view.mLastImported.empty() && view.mLastImported != mScrolledTo)
@@ -315,9 +316,12 @@ namespace mir
                 ImGui::TableSetColumnIndex(0);
                 ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAllColumns | ImGuiTreeNodeFlags_OpenOnArrow |
                                            ImGuiTreeNodeFlags_OpenOnDoubleClick;
-                if (model.mPath == mSelectedPath)
+                const bool selected = model.mPath == mSelectedPath;
+                if (selected)
                     flags |= ImGuiTreeNodeFlags_Selected;
+                const int selectionColors = widgets::PushRowSelectionColors(selected);
                 const bool open = ImGui::TreeNodeEx("##model", flags, "%s", model.mPath.c_str());
+                ImGui::PopStyleColor(selectionColors);
                 if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
                     mSelectedPath = model.mPath;
                 if (!scrollTo.empty() && model.mPath == scrollTo)

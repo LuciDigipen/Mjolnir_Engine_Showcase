@@ -14,6 +14,7 @@
 #include <renderer/Material.h>
 #include <renderer/Mesh.h>
 #include <renderer/MeshStreaming.h>
+#include <renderer/PostProcessingState.h>
 #include <renderer/Texture.h>
 #include <renderer/components/Sky.h>
 
@@ -22,6 +23,7 @@
 #include <glm/geometric.hpp>
 #include <glm/mat3x3.hpp>
 #include <glm/mat4x4.hpp>
+#include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 
@@ -47,11 +49,7 @@ namespace mir::vk
     class ShadowMaps;
     class ModelDescriptors;
     class RayTracer;
-    class PostProcess;
-    class Bloom;
-    class DepthOfField;
-    class VelocityPass;
-    class MotionBlur;
+    class PostProcessingStack;
     class FrameCapture;
     class ImGuiOverlay;
     class MeshUploader;
@@ -140,7 +138,7 @@ namespace mir
         glm::vec3 direction{ 0.0f, -1.0f, 0.0f };
         float spotCos = -1.0f; // cos(half-angle); -1 = no cone (Point/Area)
         glm::vec3 color{ 0.0f }; // color * intensity
-        int32_t shadowSlot = -1;
+        int32_t shadowSlot = -1; // -1 = none, -2 = Area (never shadowed)
     };
 
     struct PointShadowFace
@@ -171,6 +169,7 @@ namespace mir
 
         bool InitImGuiVulkanBackend();
         void ShutdownImGuiVulkanBackend();
+        bool SwapchainIsSrgb() const;
 
         // abstraction from imgui
         void SetImGuiDrawData(ImDrawData *drawData);
@@ -222,6 +221,14 @@ namespace mir
 
         bool RayTracingSupported() const;
 
+        // Whether a frame with Ray Tracing requested actually goes down the TraceFrame path -
+        // the one flag AA mode clamping and the panel must agree with dispatch on.
+        bool RayTracingActive(bool requested) const;
+
+        // NGX support and a Ray Reconstruction feature that hasn't failed. Goes false for good
+        // after an init/resize/evaluate failure, so Dlss stops being offered or selected.
+        bool DlssAvailable() const;
+
         struct GpuMemoryUsage
         {
             uint64_t mUsageBytes = 0;
@@ -233,6 +240,7 @@ namespace mir
         constexpr static uint32_t kMaxSpotShadows = 4;
         constexpr static uint32_t kMaxPointShadows = 2;
 
+        constexpr static uint32_t kSunShadowResolution = 2048;
         constexpr static float kSunShadowHalfExtent = 25.0f;
         constexpr static float kSunShadowNearZ = 0.5f;
 
@@ -245,19 +253,9 @@ namespace mir
 
         void SetAmbientColor(const glm::vec3 &color);
 
-        void SetFog(const glm::vec3 &color, float density, float start, float end);
-
-        void SetTonemap(float exposure, int tonemapOperator);
-
-        // enabled false skips the GPU chain for the frame and the panel's bloom contribution.
-        void SetBloom(bool enabled, float threshold, float intensity, float radius);
-
-        void SetDepthOfField(bool enabled, float focusDistance, float aperture, float maxBlur);
-
-        void SetMotionBlur(bool enabled, float shutterStrength, uint32_t sampleCount);
-
-        void SetFilm(bool enabled, float grain, float contrast, float saturation, float vignetteStrength,
-            float vignetteRadius);
+        // Every Post-Processing effect for the frame, already resolved by ResolvePostProcessing.
+        // A disabled Bloom/DepthOfField/MotionBlur skips its GPU chain for the frame.
+        void SetPostProcessing(const PostProcessingState &state);
 
         void SetAtmosphere(const Sky &sky);
 
@@ -287,8 +285,8 @@ namespace mir
 
         void RecordCommands(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views);
         void RecordView(VkCommandBuffer cmd, const RenderView &view, uint32_t viewIndex);
-        // Writes set 1 and set 3's per-view data; returns the camera's dynamic offset.
-        uint32_t WriteCameraData(const RenderView &view, uint32_t viewIndex);
+        uint32_t WriteCameraData(const RenderView &view, uint32_t viewIndex, bool applyJitter = false,
+            glm::vec2 *outJitter = nullptr);
 
     private:
         glm::vec4 mClearColor{ 0.02f, 0.02f, 0.02f, 1.0f };
@@ -310,18 +308,8 @@ namespace mir
         // Initialized only on a device with ray tracing; its Shutdown is a no-op otherwise.
         std::unique_ptr<vk::RayTracer> mRayTracer;
 
-        std::unique_ptr<vk::PostProcess> mPostProcess;
-        std::unique_ptr<vk::Bloom> mBloom;
-        bool mBloomEnabled = false;
-
-        std::unique_ptr<vk::DepthOfField> mDepthOfField;
-        bool mDepthOfFieldEnabled = false;
-
-        std::unique_ptr<vk::VelocityPass> mVelocityPass;
-        std::unique_ptr<vk::MotionBlur> mMotionBlur;
-        bool mMotionBlurEnabled = false;
-
-        std::vector<uint32_t> mVelocityCameraOffsets;
+        // Every screen-space effect between the scene/trace pass and the swapchain.
+        std::unique_ptr<vk::PostProcessingStack> mPostProcessing;
 
         std::unique_ptr<vk::FrameCapture> mCapture;
 

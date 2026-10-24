@@ -9,6 +9,7 @@
 #pragma once
 
 #include <renderer/VulkanRenderer.h>
+#include "Image2D.h"
 #include "VulkanConstants.h"
 
 #include <volk.h>
@@ -26,6 +27,24 @@ namespace mir::vk
     class ResourceStore;
     class MaterialStore;
     struct GpuMesh;
+
+    // Every image the trace writes, one per frame in flight each. Adding one is a row in
+    // RayTracer.cpp's kRtImages (format, binding, clear value, stage) plus the shader side.
+    // The always-present outputs come first, then Ray Reconstruction's guide buffers.
+    enum class RtImage : uint32_t
+    {
+        Output,
+        // DepthOfField's linear ray distance.
+        Distance,
+        // MotionBlur's and Ray Reconstruction's per-pixel motion.
+        Velocity,
+        Albedo,
+        Normal,
+        SpecularAlbedo,
+        // Reversed-Z projected depth, separate from Distance.
+        DlssDepth,
+        Count
+    };
 
     // Only initialized when the device supports ray tracing.
     class RayTracer
@@ -84,22 +103,37 @@ namespace mir::vk
 
         // Builds the frame's TLAS from `items` and traces `rect` into the output image,
         // which ends in SHADER_READ_ONLY for the caller to sample (PostProcess's tonemap pass).
+        // aaMode selects rayGenMain's branch: Off/Dlss trace one sample per pixel (Dlss's jitter
+        // already rode in through cameraSet's CameraData), Msaa loops rtSampleCount (1/2/4/8) standard-pattern
+        // sub-pixel samples and averages color only - distance/velocity keep the first sample.
         void Record(VkCommandBuffer cmd, uint32_t frame, std::span<const DrawItem> items, const VkRect2D &rect,
             VkDescriptorSet cameraSet, uint32_t cameraOffset, const ResourceStore &resources,
-            const MaterialStore &materials);
+            const MaterialStore &materials, AntiAliasingMode aaMode, uint32_t rtSampleCount);
 
-        VkImage OutputImage(uint32_t frame) const { return mOutputImages[frame]; }
-        VkImageView OutputView(uint32_t frame) const { return mOutputViews[frame]; }
+        // VK_NULL_HANDLE for a guide buffer while Dlss is inactive.
+        VkImage Image(RtImage image, uint32_t frame) const { return Slot(image, frame).image; }
+        VkImageView View(RtImage image, uint32_t frame) const { return Slot(image, frame).view; }
 
-        VkImageView DistanceView(uint32_t frame) const { return mDistanceViews[frame]; }
-
-        VkImageView VelocityView(uint32_t frame) const { return mVelocityViews[frame]; }
+        // Ray Reconstruction's guide buffers. They exist only while Dlss is the active mode -
+        // their bindings are partially bound, so the set stays valid without them. The caller
+        // idles the device first; Resize keeps whichever state it finds.
+        bool CreateDlssGuides();
+        void DestroyDlssGuides();
+        bool HasDlssGuides() const { return Image(RtImage::Albedo, 0) != VK_NULL_HANDLE; }
 
     private:
         bool CreateAccelerationStructureObject(VkDeviceSize size, VkAccelerationStructureTypeKHR type,
             VkBuffer &outBuffer, VmaAllocation &outAllocation, VkAccelerationStructureKHR &outAS);
+        const Image2D &Slot(RtImage image, uint32_t frame) const
+        {
+            return mImages[static_cast<uint32_t>(image)][frame];
+        }
+        // The always-present outputs or the guide buffers, at extent.
+        bool CreateImages(bool guides, VkExtent2D extent);
+        void DestroyImages(bool guides);
         bool CreateOutputImages(VkExtent2D extent);
-        void DestroyOutputImages();
+        // At mExtent, which CreateOutputImages records.
+        bool CreateGuideImages() { return CreateImages(true, mExtent); }
         bool CreateScene();
         void DestroyScene();
         bool CreatePipeline(VkDescriptorSetLayout cameraSetLayout);
@@ -130,17 +164,12 @@ namespace mir::vk
         constexpr static uint32_t kMaxInstances = 16384;
         bool mWarnedInstanceCap = false;
 
-        VkImage mOutputImages[kFramesInFlight]{};
-        VmaAllocation mOutputAllocations[kFramesInFlight]{};
-        VkImageView mOutputViews[kFramesInFlight]{};
+        std::vector<VkDescriptorImageInfo> mTextureInfos;
+        bool mWarnedTextureCap = false;
 
-        VkImage mDistanceImages[kFramesInFlight]{};
-        VmaAllocation mDistanceAllocations[kFramesInFlight]{};
-        VkImageView mDistanceViews[kFramesInFlight]{};
+        VkExtent2D mExtent{};
 
-        VkImage mVelocityImages[kFramesInFlight]{};
-        VmaAllocation mVelocityAllocations[kFramesInFlight]{};
-        VkImageView mVelocityViews[kFramesInFlight]{};
+        Image2D mImages[static_cast<uint32_t>(RtImage::Count)][kFramesInFlight]{};
 
         VkAccelerationStructureKHR mTlas[kFramesInFlight]{};
         VkBuffer mTlasBuffers[kFramesInFlight]{};

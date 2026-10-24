@@ -19,6 +19,7 @@
 #include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
 
+#include <cstdint>
 #include <optional>
 
 namespace mir
@@ -28,6 +29,11 @@ namespace mir
     // plane (Camera::HasFarPlane) gets depth = near / distance, which reaches 0
     // only at infinity.
     glm::mat4 MakeViewProjection(const glm::mat4 &cameraWorld, const Camera &lens, float aspectRatio);
+
+    // Use a projection built relative to oldOrigin with positions relative to newOrigin.
+    // Subtract origins in world precision before narrowing to renderer floats.
+    std::optional<glm::mat4> RebaseViewProjection(const glm::mat4 &viewProj,
+        WorldPosition oldOrigin, WorldPosition newOrigin);
 
     // A ray in a bounded float space, such as a mesh's local space.
     struct Ray
@@ -52,6 +58,9 @@ namespace mir
     // A fixed-size, non-cascaded shadow frustum
     glm::mat4 MakeOrthographicViewProjection(const glm::vec3 &direction, float halfExtent, float nearZ);
 
+    // Snaps `anchor` across the light onto a world-fixed texel grid, so shadow edges don't crawl.
+    WorldPosition SnapToShadowTexels(WorldPosition anchor, const glm::vec3 &direction, float texelSize);
+
     // A Spot/Point shadow frustum
     glm::mat4 MakeForwardZPerspectiveViewProjection(const glm::vec3 &forward, const glm::vec3 &up,
         float fovYDegrees, float nearZ, float farZ);
@@ -61,4 +70,7 @@ namespace mir
     // narrows, so neither end is rounded to a far float position.
     std::optional<float> RayIntersectsBox(const WorldRay &ray, const WorldPose &box,
         const glm::vec3 &localMin, const glm::vec3 &localMax);
+
+    // The index'th term of the Halton(2,3) low-discrepancy sequence.
+    glm::vec2 HaltonJitter(uint32_t index);
 }

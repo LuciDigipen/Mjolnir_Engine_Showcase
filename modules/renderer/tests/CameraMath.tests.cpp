@@ -8,6 +8,7 @@
  */
 #include <renderer/CameraMath.h>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <glm/glm.hpp>
@@ -273,5 +274,90 @@ TEST_CASE("A camera ray does not depend on the lens's clip planes", "[renderer]"
             // the sine of the angle between the two directions
             CHECK(glm::length(glm::cross(glm::dvec3(ray.direction), expected)) <= 1e-6);
         }
+    }
+}
+
+TEST_CASE("Previous-frame reprojection preserves camera translation at local and map-edge origins", "[renderer]")
+{
+    for (const glm::dvec3 origin : {glm::dvec3(0.0), kEdgeA, kEdgeB})
+    {
+        const auto oldCamera = At(origin);
+        const auto newCamera = At(origin + glm::dvec3(2.0, 0.5, 1.0));
+        const auto stationaryPoint = At(origin + glm::dvec3(1.0, 2.0, -30.0));
+        const glm::mat4 rotation = glm::mat4_cast(glm::angleAxis(glm::radians(15.0f), glm::vec3(0, 1, 0)));
+        const glm::mat4 previous = mir::MakeViewProjection(rotation, kLens, 1.5f);
+        const auto rebased = mir::RebaseViewProjection(previous, oldCamera, newCamera);
+        REQUIRE(rebased);
+        const auto oldRelative = mir::TryCameraRelativeFloat(stationaryPoint, oldCamera);
+        const auto newRelative = mir::TryCameraRelativeFloat(stationaryPoint, newCamera);
+        REQUIRE(oldRelative);
+        REQUIRE(newRelative);
+
+        const glm::vec4 expected = previous * glm::vec4(*oldRelative, 1.0f);
+        const glm::vec4 actual = *rebased * glm::vec4(*newRelative, 1.0f);
+        for (int component = 0; component < 4; ++component)
+            CHECK(actual[component] == Catch::Approx(expected[component]).margin(1e-5f));
+
+        // Omitting the rebase loses camera translation, even for a stationary object.
+        const glm::vec4 uncorrected = previous * glm::vec4(*newRelative, 1.0f);
+        CHECK(std::abs(actual.x / actual.w - uncorrected.x / uncorrected.w) > 0.01f);
+        // Directions at infinity must remain independent of camera translation.
+        const glm::vec4 sky(0.2f, 0.3f, -1.0f, 0.0f);
+        CHECK(*rebased * sky == previous * sky);
+    }
+}
+
+TEST_CASE("HaltonJitter stays within +/-0.5 of a pixel", "[renderer]")
+{
+    for (uint32_t i = 0; i < 64; ++i)
+    {
+        const glm::vec2 jitter = mir::HaltonJitter(i);
+        CHECK(jitter.x >= -0.5f);
+        CHECK(jitter.x < 0.5f);
+        CHECK(jitter.y >= -0.5f);
+        CHECK(jitter.y < 0.5f);
+    }
+}
+
+TEST_CASE("HaltonJitter matches the known first terms of Halton(2,3)", "[renderer]")
+{
+    // Base-2/base-3 radical inverses of 1,2,3, centered to +/-0.5 (HaltonJitter is 1-indexed).
+    const glm::vec2 first = mir::HaltonJitter(0);
+    CHECK(first.x == Catch::Approx(0.5f - 0.5f));
+    CHECK(first.y == Catch::Approx(1.0f / 3.0f - 0.5f));
+
+    const glm::vec2 second = mir::HaltonJitter(1);
+    CHECK(second.x == Catch::Approx(0.25f - 0.5f));
+    CHECK(second.y == Catch::Approx(2.0f / 3.0f - 0.5f));
+}
+
+TEST_CASE("HaltonJitter is deterministic and varies across indices", "[renderer]")
+{
+    CHECK(mir::HaltonJitter(5) == mir::HaltonJitter(5));
+    CHECK(mir::HaltonJitter(5) != mir::HaltonJitter(6));
+}
+
+TEST_CASE("SnapToShadowTexels moves an anchor only across the light, onto a world-fixed grid", "[renderer]")
+{
+    const glm::vec3 direction = glm::normalize(glm::vec3(0.3f, -0.8f, 0.5f));
+    const float texel = 50.0f / 2048.0f;
+
+    for (const glm::dvec3 &origin : { glm::dvec3(0.0), kEdgeA, kEdgeB })
+    {
+        // A float world can't hold a map-edge position to a fraction of a texel.
+        if (!mir::kLargeWorld && origin != glm::dvec3(0.0))
+            continue;
+
+        const WorldPosition anchor = At(origin + glm::dvec3(0.0071, 0.0, -0.0043));
+        const WorldPosition snapped = mir::SnapToShadowTexels(anchor, direction, texel);
+        const glm::dvec3 moved = glm::dvec3(snapped.Meters()) - glm::dvec3(anchor.Meters());
+
+        CHECK(glm::dot(moved, glm::dvec3(direction)) == Catch::Approx(0.0).margin(1e-6));
+        CHECK(glm::length(moved) <= std::sqrt(0.5) * texel + 1e-6);
+
+        const WorldPosition nudged = At(glm::dvec3(anchor.Meters()) + glm::dvec3(direction) * 3.0);
+        const glm::dvec3 nudgedMoved =
+            glm::dvec3(mir::SnapToShadowTexels(nudged, direction, texel).Meters()) - glm::dvec3(snapped.Meters());
+        CHECK(glm::length(nudgedMoved - glm::dvec3(direction) * 3.0) == Catch::Approx(0.0).margin(1e-6));
     }
 }

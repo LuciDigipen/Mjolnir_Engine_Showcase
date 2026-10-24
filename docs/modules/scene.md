@@ -56,7 +56,8 @@ caller to adopt.
 `EntitySnapshot` is the same per-entity data, cut down to one entity and its
 descendants. Duplicate, undo of delete and prefabs build on it. `CaptureEntity`
 walks the root and then `ForEachDescendant`, so every parent comes before its
-children. Each member gets a snapshot-local id, starting at 1 for the root.
+children; `SnapshotMembers` returns that same list. Each member gets a
+snapshot-local id, starting at 1 for the root.
 The result is a JSON array in the entity-file format, kept in memory as compact
 text. Text keeps nlohmann out of the public header, and a prefab can write it to
 disk unchanged.
@@ -66,6 +67,13 @@ captured parent's children come back in their sibling order. Every
 restored entity is registered in the caller's `LoadedScene` under a new
 `StableId`, so it saves like any other. The root's own parent is not captured.
 The caller passes one, and the root is appended as that parent's last child.
+
+`RestoreEntityAt` is the same restore for undo, which brings back the entities
+a delete removed rather than making copies. The caller passes one `StableId`
+per member, in `SnapshotMembers` order, and each member is registered under its
+own. It returns the members in that order. The root goes under `parent`, before
+`before`, so it lands where it was. An anchor that is no longer a sibling there
+still leaves the root under `parent`, last.
 
 Both paths share `EntityToJson` and `SpawnEntities` in the private
 `src/scene/EntityCodec.h`. `SaveScene` and `LoadScene` only add the files
@@ -81,7 +89,7 @@ around them.
 | `SaveScene`, `LoadScene`, `UnloadScene` | `scene/SceneIO.h` | Directory in, directory out, scoped destroy |
 | `ProbeScene`, `SceneProbe` | `scene/SceneIO.h` | What `LoadScene` would skip, found without a `World` |
 | `PlaySnapshot`, `CaptureWorld`, `RestoreWorld`, `DiscardSnapshot` | `scene/PlaySnapshot.h` | Whole-World capture/restore around a Play session, built on `SaveScene`/`LoadScene`; `DiscardSnapshot` removes its directory |
-| `EntitySnapshot`, `CaptureEntity`, `RestoreEntity`, `DuplicateSceneEntity` | `scene/EntitySnapshot.h` | One entity and its descendants as in-memory data, restored into new entities registered in a `LoadedScene` |
+| `EntitySnapshot`, `SnapshotMembers`, `CaptureEntity`, `RestoreEntity`, `RestoreEntityAt`, `DuplicateSceneEntity` | `scene/EntitySnapshot.h` | One entity and its descendants as in-memory data, restored into new entities registered in a `LoadedScene`, under new `StableId`s or, for undo, their old ones |
 
 `CreateSceneEntity` is the one call an editor's "add entity" needs, so allocation
 and registration cannot happen for one without the other.
@@ -108,6 +116,13 @@ is a high-water mark persisted in the manifest.
 A stale reference in a file that has not been resaved therefore resolves to
 "gone" rather than to whatever new entity took the id. `LoadScene` clamps
 `mNextId` above every id actually present, in case the file was hand-edited.
+
+Undo is the one exception. `RestoreEntityAt` gives a deleted entity its own id
+back, because it is the same entity returning, so a save after a delete and its
+undo writes the same files. Undoing a create does not lower `mNextId`, so that
+id is not handed out again either. A `kNullStableId` in the list leaves its
+member unregistered, for an entity that was never in the scene. An id that is
+somehow already registered gets a new one, with a warning.
 
 **`LoadedScene::mEntities` is a `std::map`, not an `unordered_map`.** The manifest
 is written in key order, and an unordered map's iteration order is not stable
@@ -168,10 +183,12 @@ files, which load ignores. Only names of the
 form `<number>.json` are touched, so anything else put in `entities/` survives. A
 file that cannot be deleted logs a warning, and the save still succeeds.
 
-**`LoadScene` is lenient, and `ProbeScene` says what it would skip.** An
-unreadable `scene.json` loads an empty scene, and an unreadable entity file is
-skipped. `ProbeScene` reads the same files without touching a `World` and
-reports both cases. A caller probes first when it must decide before anything is
+**`LoadScene` is lenient, and `ProbeScene` says what it would skip.** A
+`scene.json` that is unreadable or holds a wrongly typed value (a non-id in
+`entities` or `instances`, an instance listed twice) loads an empty scene. An
+unreadable entity or instance file is skipped. Prefab-instance members have no
+entity file, so neither reads one for them. `ProbeScene` reads the same files
+through the same readers without touching a `World` and reports all three cases. A caller probes first when it must decide before anything is
 unloaded, which is what `App` does at startup and on the scene menu.
 
 ## State
@@ -192,6 +209,12 @@ after it removes the deleted entities' files.
 *As of 2026-10-09.* Root and child order survive save, load and Play/Stop
 through `siblingIndex`, and a duplicate lands right after its source.
 
+*As of 2026-10-19.* `RestoreEntityAt` puts a deleted subtree back with its
+`StableId`s and its sibling position, and the editor's undo uses it (see
+[editor-history.md](editor-history.md)). A test saves a scene, deletes and
+restores a middle child and a root, saves again and compares every file byte
+for byte.
+
 Tests in `modules/scene/tests/SceneIO.tests.cpp`,
 `modules/scene/tests/PlaySnapshot.tests.cpp` and
 `modules/scene/tests/EntitySnapshot.tests.cpp`.
@@ -204,7 +227,8 @@ collision pieces. `App` does that, through `ResolveSceneScripts` and
 `TerrainRuntime` (see [app.md](app.md)), because it needs the
 renderer and the script host that this module does not link. Scripts resolve in
 `ResolveSceneScripts`, after both of this module's load paths (`LoadScene`,
-`RestoreWorld`), which converge in `App`. Meshes resolve every frame in
+`RestoreWorld`), which converge in `App`, and after the editor restores or
+duplicates entities through `App`'s `AppSceneOps`. Meshes resolve every frame in
 `MeshResolveSystem`, so it also covers entities that `RestoreEntity` creates.
 
 ## Backlog
@@ -218,13 +242,26 @@ renderer and the script host that this module does not link. Scripts resolve in
    shows up in a profile on a large scene, have each entity file list its
    component names ahead of the blobs, so load can call `Find` per name instead
    of sweeping the whole registry per entity.
-4. **Undo of delete needs more than `EntitySnapshot`.** References into the
-   subtree from outside it stay dead after a restore. The restored root is
-   appended as its parent's last child; the snapshot carries `siblingIndex` and
-   `SetParent` takes an anchor, but nothing uses them for the root yet. The
-   `StableId` changes, so the scene file shows a delete plus an add.
 
 ## Changed
+
+*2026-10-24* — **`ProbeScene` checks a scene before it loads, and a wrongly typed
+manifest value rejects the whole manifest.** Was: `LoadScene` skipped a bad
+entity or instance id, an instance listed twice or a non-id `nextId` with a
+warning, and nothing could tell a caller what a load would drop. Now: those
+values make `scene.json` unreadable, and `ProbeScene` reports it along with
+missing entity and instance files. Because: `App` refuses or asks about a broken
+scene instead of loading part of it, so a silently skipped id would hide the
+damage it exists to catch.
+
+*2026-10-19* — **Undo gives a deleted entity its `StableId` back.** Was:
+`RestoreEntity` registered every restored entity under a new `StableId` and
+appended the root as its parent's last child. A delete and its undo then showed
+in the scene files as a delete plus an add, with the entity moved to the end.
+Now: `RestoreEntityAt` takes each member's old id and an anchor sibling, so the
+files come back unchanged. `RestoreEntity` and `DuplicateSceneEntity` still
+hand out new ids. The rule that a `StableId` is never reused gains this one
+exception, for the editor's undo (see [editor-history.md](editor-history.md)).
 
 *2026-10-09* — **Entity files carry `siblingIndex`, and duplicates land after
 their source.** Was: the manifest was written in id order and load replayed

@@ -11,7 +11,20 @@ RWTexture2D<float4> gOutput;
 RWTexture2D<float> gDistance;
 
 [[vk::binding(4, 0)]]
-RWTexture2D<float4> gVelocity;
+RWTexture2D<float2> gVelocity;
+
+// Ray Reconstruction's guide buffers
+[[vk::binding(5, 0)]]
+RWTexture2D<float4> gAlbedo; // rgb = diffuse albedo
+
+[[vk::binding(6, 0)]]
+RWTexture2D<float4> gNormal; // xyz = world normal, w = roughness
+
+[[vk::binding(7, 0)]]
+RWTexture2D<float4> gSpecularAlbedo;
+
+[[vk::binding(8, 0)]]
+RWTexture2D<float> gDlssDepth; // Projected reversed-Z; gDistance remains ray distance for DoF.
 
 struct RtInstanceInfo
 {
@@ -21,39 +34,56 @@ struct RtInstanceInfo
     float4 normalCol0;
     float4 normalCol1;
     float4 normalCol2;
-    uint unlit;
+    uint flags;            // kInstance* bits
+    uint baseColorTexture; // index into gTextures; read only with kInstanceTextured
+    float alphaCutoff;     // read only with kInstanceAlphaTest
     uint pad0;
-    uint pad1;
-    uint pad2;
     float4x4 prevModel; // camera-relative to THIS frame's camera - see DrawItem::previousModel
 };
 
 [[vk::binding(2, 0)]]
 StructuredBuffer<RtInstanceInfo> gInstances;
 
-[[vk::binding(0, 1)]]
-cbuffer CameraData
-{
-    float4x4 viewProj;
-    float4 lightDirWS;
-    float4 lightColor;
-    float4 ambientColor;
-    float4x4 invViewProj;
-    float4 cameraPos; // the origin: the TLAS is built relative to this view's camera
-    float4 fogColor;
-    float4 fogRange;       // x = start distance, y = end distance
-    float4 cameraWorldPos; // absolute camera position, for the atmosphere only
-    float4 clipPlanes;     // x = near, y = far, or 0 for no far plane
-    float4 atmosphereScattering;
-    float4 atmosphereRadii;
-    float4 atmosphereMisc;
-    float4 lightingMeta; // x = this view's count in gLights, y = its first index
-    float4x4 prevViewProj;
+// RtInstanceInfo::flags; keep in sync with RayTracer.cpp.
+static const uint kInstanceUnlit = 1u;
+static const uint kInstanceTextured = 2u; // the model shader: base color = texture * vertex color * tint
+static const uint kInstanceError = 4u;
+static const uint kInstanceAlphaTest = 8u;
+static const uint kInstanceDoubleSided = 16u;
+static const uint kMaxRtTextures = 1024;
+
+[[vk::binding(9, 0)]]
+Sampler2D<float4> gTextures[kMaxRtTextures];
+
+static const uint kAaModeOff = 0;
+static const uint kAaModeMsaa = 2;
+static const uint kAaModeDlss = 3;
+
+// D3D's standard 1x/2x/4x/8x sample patterns, 16ths of a pixel from center - the ray-traced
+// multi-sample anti-aliasing fallback's spatial supersample offsets. Packed back to back, so
+// the pattern for n samples starts at index n - 1.
+static const uint kMaxMsaaSamples = 8;
+static const float2 kMsaaOffsets[2 * kMaxMsaaSamples - 1] = {
+    float2(0.0, 0.0),
+    float2(4.0, 4.0), float2(-4.0, -4.0),
+    float2(-2.0, -6.0), float2(6.0, -2.0), float2(-6.0, 2.0), float2(2.0, 6.0),
+    float2(1.0, -3.0), float2(-1.0, 3.0), float2(5.0, 1.0), float2(-3.0, -5.0),
+    float2(-5.0, 5.0), float2(-7.0, -1.0), float2(3.0, 7.0), float2(7.0, -7.0)
 };
+
+// The CPU already rounds to a pattern size (ClampRtSampleCount); this keeps a bad value in range.
+uint MsaaPatternSize(uint requested)
+{
+    return requested <= 1u ? 1u : requested <= 2u ? 2u
+                              : requested <= 4u   ? 4u
+                                                  : kMaxMsaaSamples;
+}
 
 struct RtPushConstants
 {
     uint2 outputOffset;
+    uint aaMode;
+    uint sampleCount;
 };
 
 [[vk::push_constant]]
@@ -63,6 +93,7 @@ struct RayPayload
 {
     float3 color;
     float distance;
+    float hardwareDepth;
     float2 velocity; // NDC-space, current minus previous - see closestHitMain
 };
 
@@ -71,14 +102,75 @@ struct ShadowPayload
     float visibility;
 };
 
-static const float3 kAlbedo = float3(0.5, 0.5, 0.5);
-static const float kSpecularStrength = 0.04;
-static const float kShininess = 32.0;
+// No per-material roughness exists yet (MaterialDesc has none) - same fixed-constant
+// simplification kShininess already is, standing in for Ray Reconstruction's roughness guide.
+static const float kMaterialRoughness = pow(2.0 / (kShininess + 2.0), 0.25);
 // pos(3) + color(3) + normal(3) + uv(2) + alpha(1) + tangent(4); keep in sync with mir::Vertex.
 static const uint kVertexStrideFloats = 16;
+static const uint kColorOffset = 3;
+static const uint kNormalOffset = 6;
+static const uint kUvOffset = 9;
+static const uint kAlphaOffset = 11;
 
-// Self-shadowing bias: the origin is nudged along the surface normal before tracing.
+uint3 TriangleIndices(RtInstanceInfo info)
+{
+    const uint primBase = PrimitiveIndex() * 3;
+    return uint3(info.indexAddress[primBase + 0], info.indexAddress[primBase + 1], info.indexAddress[primBase + 2]);
+}
+
+float3 Barycentrics(BuiltInTriangleIntersectionAttributes attribs)
+{
+    return float3(1.0 - attribs.barycentrics.x - attribs.barycentrics.y, attribs.barycentrics.x, attribs.barycentrics.y);
+}
+
+float3 LoadFloat3(RtInstanceInfo info, uint vertex, uint offset)
+{
+    const uint b = vertex * kVertexStrideFloats + offset;
+    return float3(info.vertexAddress[b], info.vertexAddress[b + 1], info.vertexAddress[b + 2]);
+}
+
+float3 InterpolateFloat3(RtInstanceInfo info, uint3 indices, float3 barycentrics, uint offset)
+{
+    return LoadFloat3(info, indices.x, offset) * barycentrics.x + LoadFloat3(info, indices.y, offset) * barycentrics.y +
+           LoadFloat3(info, indices.z, offset) * barycentrics.z;
+}
+
+// xy = uv, z = vertex alpha.
+float3 InterpolateUvAlpha(RtInstanceInfo info, uint3 indices, float3 barycentrics)
+{
+    float3 result = float3(0.0, 0.0, 0.0);
+    for (uint k = 0; k < 3; k++)
+    {
+        const uint b = indices[k] * kVertexStrideFloats;
+        result += float3(info.vertexAddress[b + kUvOffset], info.vertexAddress[b + kUvOffset + 1],
+                         info.vertexAddress[b + kAlphaOffset]) *
+                  barycentrics[k];
+    }
+    return result;
+}
+
+// model.slang's base color: texture * vertex color and alpha * tint.
+float4 ModelBaseColor(RtInstanceInfo info, uint3 indices, float3 barycentrics)
+{
+    const float3 uvAlpha = InterpolateUvAlpha(info, indices, barycentrics);
+    const float3 vertexColor = InterpolateFloat3(info, indices, barycentrics, kColorOffset);
+    // Level 0: there are no ray differentials yet to pick a mip from.
+    const float4 texel = gTextures[NonUniformResourceIndex(info.baseColorTexture)].SampleLevel(uvAlpha.xy, 0.0);
+    return texel * float4(vertexColor, uvAlpha.z) * info.tint;
+}
+
+// model.slang discards below the cutoff. Blend materials are cut the same way, since a trace has no blending.
+bool AlphaTestPasses(BuiltInTriangleIntersectionAttributes attribs)
+{
+    const RtInstanceInfo info = gInstances[InstanceID()];
+    if ((info.flags & kInstanceAlphaTest) == 0)
+        return true;
+    return ModelBaseColor(info, TriangleIndices(info), Barycentrics(attribs)).a >= info.alphaCutoff;
+}
+
+// Shadow ray origin offset; grows with distance, where floats get coarser.
 static const float kShadowNormalBias = 0.01;
+static const float kShadowNormalBiasPerDistance = 1e-4;
 static const float kSunShadowDistance = 10000.0;
 
 float TraceShadowRay(float3 origin, float3 direction, float tMax)
@@ -92,11 +184,36 @@ float TraceShadowRay(float3 origin, float3 direction, float tMax)
     shadowRay.TMin = 0.001;
     shadowRay.TMax = max(tMax, shadowRay.TMin);
 
-    TraceRay(gTlas,
-             RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
-             0xFF, 0, 0, 1, shadowRay, shadowPayload);
+    TraceRay(gTlas, RAY_FLAG_SKIP_CLOSEST_HIT_SHADER | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,
+             0xFF, 1, 0, 1, shadowRay, shadowPayload);
 
     return shadowPayload.visibility;
+}
+
+// Traces every Point/Spot, not only those with a raster shadow slot.
+struct RayVisibility : IShadowVisibility
+{
+    float3 origin; // biased off the surface
+
+    float Sun(float3 L)
+    {
+        return TraceShadowRay(origin, L, kSunShadowDistance);
+    }
+
+    float Local(GpuLight light, float3 Lp, float dist)
+    {
+        if (light.color.w == kAreaLightSlot)
+            return 1.0;
+        return TraceShadowRay(origin, Lp, dist);
+    }
+}
+
+float3 FaceNormal(RtInstanceInfo info, float3 op0, float3 op1, float3 op2)
+{
+    const float3 n = cross(op1 - op0, op2 - op0);
+    const float3 worldNormal =
+        normalize(info.normalCol0.xyz * n.x + info.normalCol1.xyz * n.y + info.normalCol2.xyz * n.z);
+    return dot(worldNormal, WorldRayDirection()) > 0.0 ? -worldNormal : worldNormal;
 }
 
 [shader("raygeneration")]
@@ -105,30 +222,58 @@ void rayGenMain()
     const uint2 pixel = DispatchRaysIndex().xy;
     const uint2 dims = DispatchRaysDimensions().xy;
 
-    const float2 ndc = (float2(pixel) + 0.5) / float2(dims) * 2.0 - 1.0;
+    const uint sampleCount = pushData.aaMode == kAaModeMsaa ? MsaaPatternSize(pushData.sampleCount) : 1u;
 
-    const float4 onNearPlane = mul(invViewProj, float4(ndc, 1.0, 1.0));
-    const float3 toNearPlane = onNearPlane.xyz / onNearPlane.w - cameraPos.xyz;
-    const float3 rayDir = normalize(toNearPlane);
+    float3 colorSum = float3(0.0, 0.0, 0.0);
+    float centerDistance = 0.0;
+    float centerDepth = 0.0;
+    float2 centerVelocity = float2(0.0, 0.0);
 
-    const float toFarPlane = clipPlanes.y * length(toNearPlane) / clipPlanes.x;
+    for (uint i = 0; i < sampleCount; i++)
+    {
+        const float2 msaaOffset =
+            pushData.aaMode == kAaModeMsaa ? kMsaaOffsets[sampleCount - 1u + i] / 16.0 : float2(0.0, 0.0);
+        const float2 pixelOffset = msaaOffset + jitterAndPad.xy;
 
-    RayDesc ray;
-    ray.Origin = cameraPos.xyz;
-    ray.Direction = rayDir;
-    ray.TMin = 0.001;
-    ray.TMax = clipPlanes.y > 0.0 ? toFarPlane : 1.0e30;
+        const float2 ndc = (float2(pixel) + 0.5 + pixelOffset) / float2(dims) * 2.0 - 1.0;
 
-    RayPayload payload;
-    payload.color = float3(0.0, 0.0, 0.0);
-    payload.distance = clipPlanes.y > 0.0 ? toFarPlane : 1.0e8;
-    payload.velocity = float2(0.0, 0.0); // a miss (sky) is treated as stationary
+        const float4 onNearPlane = mul(invViewProj, float4(ndc, 1.0, 1.0));
+        const float3 toNearPlane = onNearPlane.xyz / onNearPlane.w - cameraPos.xyz;
+        const float3 rayDir = normalize(toNearPlane);
 
-    TraceRay(gTlas, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, 0xFF, 0, 0, 0, ray, payload);
+        const float toFarPlane = clipPlanes.y * length(toNearPlane) / clipPlanes.x;
 
-    gOutput[pixel + pushData.outputOffset] = float4(payload.color, 1.0);
-    gDistance[pixel + pushData.outputOffset] = payload.distance;
-    gVelocity[pixel + pushData.outputOffset] = float4(payload.velocity, 0.0, 0.0);
+        RayDesc ray;
+        ray.Origin = cameraPos.xyz;
+        ray.Direction = rayDir;
+        ray.TMin = 0.001;
+        ray.TMax = clipPlanes.y > 0.0 ? toFarPlane : 1.0e30;
+
+        RayPayload payload;
+        payload.color = float3(0.0, 0.0, 0.0);
+        payload.distance = clipPlanes.y > 0.0 ? toFarPlane : 1.0e8;
+        payload.hardwareDepth = 0.0; // Sky is at infinity with reversed Z.
+        const float4 previousSkyClip = mul(prevViewProj, float4(rayDir, 0.0));
+        payload.velocity = previousSkyClip.w > 0.0
+                               ? ndc - previousSkyClip.xy / previousSkyClip.w
+                               : float2(0.0, 0.0);
+
+        TraceRay(gTlas, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, 0xFF, 0, 0, 0, ray, payload);
+
+        colorSum += payload.color;
+        if (i == 0)
+        {
+            centerDistance = payload.distance;
+            centerDepth = payload.hardwareDepth;
+            centerVelocity = payload.velocity;
+        }
+    }
+
+    gOutput[pixel + pushData.outputOffset] = float4(colorSum / float(sampleCount), 1.0);
+    gDistance[pixel + pushData.outputOffset] = centerDistance;
+    gVelocity[pixel + pushData.outputOffset] = centerVelocity;
+    if (pushData.aaMode == kAaModeDlss)
+        gDlssDepth[pixel + pushData.outputOffset] = centerDepth;
 }
 
 [shader("miss")]
@@ -154,99 +299,83 @@ void shadowMissMain(inout ShadowPayload payload)
     payload.visibility = 1.0;
 }
 
+[shader("anyhit")]
+void anyHitMain(inout RayPayload payload, in BuiltInTriangleIntersectionAttributes attribs)
+{
+    if (!AlphaTestPasses(attribs))
+        IgnoreHit();
+}
+
+[shader("anyhit")]
+void shadowAnyHitMain(inout ShadowPayload payload, in BuiltInTriangleIntersectionAttributes attribs)
+{
+    if (!AlphaTestPasses(attribs))
+        IgnoreHit();
+}
+
 [shader("closesthit")]
 void closestHitMain(inout RayPayload payload, in BuiltInTriangleIntersectionAttributes attribs)
 {
     const RtInstanceInfo info = gInstances[InstanceID()];
+    const float3 barycentrics = Barycentrics(attribs);
+    const uint3 indices = TriangleIndices(info);
 
-    const float3 barycentrics = float3(
-        1.0 - attribs.barycentrics.x - attribs.barycentrics.y,
-        attribs.barycentrics.x,
-        attribs.barycentrics.y);
-
-    const uint primBase = PrimitiveIndex() * 3;
-    const uint i0 = info.indexAddress[primBase + 0];
-    const uint i1 = info.indexAddress[primBase + 1];
-    const uint i2 = info.indexAddress[primBase + 2];
-
-    // Object-space hit position (pos is floats 0-2 of each vertex) - needed
-    // by both branches below, to reproject through info.prevModel for velocity.
-    const uint pb0 = i0 * kVertexStrideFloats;
-    const uint pb1 = i1 * kVertexStrideFloats;
-    const uint pb2 = i2 * kVertexStrideFloats;
-    const float3 op0 = float3(info.vertexAddress[pb0], info.vertexAddress[pb0 + 1], info.vertexAddress[pb0 + 2]);
-    const float3 op1 = float3(info.vertexAddress[pb1], info.vertexAddress[pb1 + 1], info.vertexAddress[pb1 + 2]);
-    const float3 op2 = float3(info.vertexAddress[pb2], info.vertexAddress[pb2 + 1], info.vertexAddress[pb2 + 2]);
+    // Object-space hit position - needed by both branches below, to reproject
+    // through info.prevModel for velocity.
+    const float3 op0 = LoadFloat3(info, indices.x, 0);
+    const float3 op1 = LoadFloat3(info, indices.y, 0);
+    const float3 op2 = LoadFloat3(info, indices.z, 0);
     const float3 objectPos = op0 * barycentrics.x + op1 * barycentrics.y + op2 * barycentrics.z;
     const float3 hitWorldPos = WorldRayOrigin() + RayTCurrent() * WorldRayDirection();
+    const bool isError = (info.flags & kInstanceError) != 0;
 
     float3 color;
 
-    if (info.unlit != 0)
+    if ((info.flags & (kInstanceUnlit | kInstanceError)) != 0)
     {
-        const uint b0 = i0 * kVertexStrideFloats + 3;
-        const uint b1 = i1 * kVertexStrideFloats + 3;
-        const uint b2 = i2 * kVertexStrideFloats + 3;
-        const float3 c0 = float3(info.vertexAddress[b0], info.vertexAddress[b0 + 1], info.vertexAddress[b0 + 2]);
-        const float3 c1 = float3(info.vertexAddress[b1], info.vertexAddress[b1 + 1], info.vertexAddress[b1 + 2]);
-        const float3 c2 = float3(info.vertexAddress[b2], info.vertexAddress[b2 + 1], info.vertexAddress[b2 + 2]);
-        const float3 vertexColor = c0 * barycentrics.x + c1 * barycentrics.y + c2 * barycentrics.z;
-        color = vertexColor * info.tint.rgb;
+        // error.slang's solid magenta, or unlit.slang's vertex color * tint.
+        color = isError ? float3(1.0, 0.0, 1.0)
+                        : InterpolateFloat3(info, indices, barycentrics, kColorOffset) * info.tint.rgb;
+        if (pushData.aaMode == kAaModeDlss)
+        {
+            const uint2 guidePixel = DispatchRaysIndex().xy + pushData.outputOffset;
+            gAlbedo[guidePixel] = float4(color, 1.0);
+            gSpecularAlbedo[guidePixel] = float4(0.0, 0.0, 0.0, 0.0);
+            gNormal[guidePixel] = float4(FaceNormal(info, op0, op1, op2), 1.0);
+        }
     }
     else
     {
-        const uint b0 = i0 * kVertexStrideFloats + 6;
-        const uint b1 = i1 * kVertexStrideFloats + 6;
-        const uint b2 = i2 * kVertexStrideFloats + 6;
-        const float3 n0 = float3(info.vertexAddress[b0], info.vertexAddress[b0 + 1], info.vertexAddress[b0 + 2]);
-        const float3 n1 = float3(info.vertexAddress[b1], info.vertexAddress[b1 + 1], info.vertexAddress[b1 + 2]);
-        const float3 n2 = float3(info.vertexAddress[b2], info.vertexAddress[b2 + 1], info.vertexAddress[b2 + 2]);
-        const float3 objNormal = n0 * barycentrics.x + n1 * barycentrics.y + n2 * barycentrics.z;
+        const float3 objNormal = InterpolateFloat3(info, indices, barycentrics, kNormalOffset);
 
-        const float3 N = normalize(
+        float3 N = normalize(
             info.normalCol0.xyz * objNormal.x +
             info.normalCol1.xyz * objNormal.y +
             info.normalCol2.xyz * objNormal.z);
+        // model.slang lights a double-sided back face with the flipped normal.
+        if ((info.flags & kInstanceDoubleSided) != 0 && dot(N, WorldRayDirection()) > 0.0)
+            N = -N;
 
-        const float3 shadowOrigin = hitWorldPos + N * kShadowNormalBias;
-        const float3 L = normalize(lightDirWS.xyz);
-        const float3 V = normalize(cameraPos.xyz - hitWorldPos);
-        const float3 H = normalize(L + V);
+        const float3 albedo = (info.flags & kInstanceTextured) != 0
+                                  ? ModelBaseColor(info, indices, barycentrics).rgb
+                                  : kDefaultAlbedo * info.tint.rgb;
 
-        const float diffuse = max(dot(N, L), 0.0);
-        const float specular = (diffuse > 0.0) ? pow(max(dot(N, H), 0.0), kShininess) : 0.0;
+        RayVisibility visibility;
+        visibility.origin = hitWorldPos + FaceNormal(info, op0, op1, op2) *
+                                              max(kShadowNormalBias, length(hitWorldPos) * kShadowNormalBiasPerDistance);
+        color = ShadeLit(visibility, albedo, N, hitWorldPos);
 
-        const float sunVisibility = TraceShadowRay(shadowOrigin, L, kSunShadowDistance);
-
-        const float3 albedo = kAlbedo * info.tint.rgb;
-        color = albedo * ambientColor.rgb +
-                (albedo * lightColor.rgb * diffuse + lightColor.rgb * kSpecularStrength * specular) * sunVisibility;
-
-        const int firstLight = int(lightingMeta.y);
-        const int lightCount = int(lightingMeta.x);
-        for (int i = 0; i < lightCount; i++)
+        if (pushData.aaMode == kAaModeDlss)
         {
-            GpuLight light = gLights[firstLight + i];
-            const float3 toLight = light.positionAndRange.xyz - hitWorldPos;
-            const float dist = length(toLight);
-            const float range = light.positionAndRange.w;
-            const float3 Lp = toLight / max(dist, 1e-5);
-
-            float atten = clamp(1.0 - dist / max(range, 1e-5), 0.0, 1.0);
-            const float cosAngle = dot(-Lp, light.directionAndSpotCos.xyz);
-            atten *= (cosAngle >= light.directionAndSpotCos.w) ? 1.0 : 0.0;
-
-            const float diffuseP = max(dot(N, Lp), 0.0);
-
-            const float visibility = light.color.w >= 0.0 ? TraceShadowRay(shadowOrigin, Lp, dist) : 1.0;
-
-            color += albedo * light.color.rgb * atten * diffuseP * visibility;
+            const uint2 guidePixel = DispatchRaysIndex().xy + pushData.outputOffset;
+            gAlbedo[guidePixel] = float4(albedo, 1.0);
+            gSpecularAlbedo[guidePixel] = float4(kSpecularStrength.xxx, 1.0);
+            gNormal[guidePixel] = float4(N, kMaterialRoughness);
         }
     }
 
-    const float clampedDist = clamp(RayTCurrent(), fogRange.x, fogRange.y);
-    const float fogFactor = clamp(1.0 - exp(-fogColor.a * (clampedDist - fogRange.x)), 0.0, 1.0);
-    payload.color = lerp(color, fogColor.rgb, fogFactor);
+    // error.slang draws no fog.
+    payload.color = isError ? color : ApplyFog(color, RayTCurrent());
     payload.distance = RayTCurrent();
 
     // hitWorldPos is already this frame's camera-relative space (cameraPos is
@@ -254,6 +383,7 @@ void closestHitMain(inout RayPayload payload, in BuiltInTriangleIntersectionAttr
     // to this frame's camera, not last frame's - see DrawItem::previousModel),
     // so viewProj/prevViewProj alone carry the camera's own motion.
     const float4 currClip = mul(viewProj, float4(hitWorldPos, 1.0));
+    payload.hardwareDepth = saturate(currClip.z / currClip.w);
     const float4 prevClip = mul(prevViewProj, mul(info.prevModel, float4(objectPos, 1.0)));
     payload.velocity = (currClip.xy / currClip.w) - (prevClip.xy / prevClip.w);
 }

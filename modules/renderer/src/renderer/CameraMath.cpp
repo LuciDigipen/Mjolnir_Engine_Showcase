@@ -20,6 +20,23 @@
 
 namespace mir
 {
+    namespace
+    {
+        // Van der Corput radical inverse.
+        float RadicalInverse(uint32_t index, uint32_t base)
+        {
+            float result = 0.0f;
+            float f = 1.0f / static_cast<float>(base);
+            while (index > 0)
+            {
+                result += f * static_cast<float>(index % base);
+                index /= base;
+                f /= static_cast<float>(base);
+            }
+            return result;
+        }
+    }
+
     glm::mat4 MakeViewProjection(const glm::mat4 &cameraWorld, const Camera &lens, float aspectRatio)
     {
         const glm::mat4 view = glm::inverse(cameraWorld);
@@ -50,6 +67,17 @@ namespace mir
         }
 
         return proj * view;
+    }
+
+    std::optional<glm::mat4> RebaseViewProjection(const glm::mat4 &viewProj,
+        WorldPosition oldOrigin, WorldPosition newOrigin)
+    {
+        const auto delta = TryCameraRelativeFloat(newOrigin, oldOrigin);
+        if (!delta)
+            return std::nullopt;
+        glm::mat4 translation(1.0f);
+        translation[3] = glm::vec4(*delta, 1.0f);
+        return viewProj * translation;
     }
 
     std::optional<float> RayIntersectsAABB(const Ray &ray, const glm::vec3 &boxMin, const glm::vec3 &boxMax)
@@ -99,12 +127,28 @@ namespace mir
         return WorldRay{ camera.position, glm::normalize(nearPoint) };
     }
 
+    namespace
+    {
+        struct OrthographicBasis
+        {
+            glm::vec3 fwd;
+            glm::vec3 right;
+            glm::vec3 up;
+        };
+
+        OrthographicBasis MakeOrthographicBasis(const glm::vec3 &direction)
+        {
+            const glm::vec3 fwd = glm::normalize(direction);
+            const glm::vec3 upHint =
+                std::abs(fwd.y) > 0.99f ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
+            const glm::vec3 right = glm::normalize(glm::cross(upHint, -fwd));
+            return OrthographicBasis{ fwd, right, glm::cross(-fwd, right) };
+        }
+    }
+
     glm::mat4 MakeOrthographicViewProjection(const glm::vec3 &direction, float halfExtent, float nearZ)
     {
-        const glm::vec3 fwd = glm::normalize(direction);
-        const glm::vec3 upHint = std::abs(fwd.y) > 0.99f ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
-        const glm::vec3 right = glm::normalize(glm::cross(upHint, -fwd));
-        const glm::vec3 up = glm::cross(-fwd, right);
+        const auto [fwd, right, up] = MakeOrthographicBasis(direction);
 
         glm::mat4 cameraWorld{ 1.0f };
         cameraWorld[0] = glm::vec4(right, 0.0f);
@@ -123,6 +167,23 @@ namespace mir
         proj[3][3] = 1.0f;
 
         return proj * view;
+    }
+
+    WorldPosition SnapToShadowTexels(WorldPosition anchor, const glm::vec3 &direction, float texelSize)
+    {
+        if (!(texelSize > 0.0f))
+            return anchor;
+
+        const auto [fwd, right, up] = MakeOrthographicBasis(direction);
+        const WorldVec3 meters = anchor.Meters();
+        const WorldReal cell = static_cast<WorldReal>(texelSize);
+
+        const auto correction = [&](const glm::vec3 &axis)
+            {
+                const WorldReal along = glm::dot(meters, WorldVec3(axis));
+                return WorldVec3(axis) * (std::round(along / cell) * cell - along);
+            };
+        return WorldPosition::FromMeters(meters + correction(right) + correction(up)).value_or(anchor);
     }
 
     glm::mat4 MakeForwardZPerspectiveViewProjection(const glm::vec3 &forward, const glm::vec3 &up,
@@ -165,5 +226,11 @@ namespace mir
         const glm::vec3 localDirection = glm::mat3(toLocal) * ray.direction;
 
         return RayIntersectsAABB(Ray{ localOrigin, localDirection }, localMin, localMax);
+    }
+
+    glm::vec2 HaltonJitter(uint32_t index)
+    {
+        const uint32_t n = index + 1;
+        return glm::vec2(RadicalInverse(n, 2) - 0.5f, RadicalInverse(n, 3) - 0.5f);
     }
 }

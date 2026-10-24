@@ -47,6 +47,16 @@ namespace mir::vk
             return false;
         }
 
+        // The white border reads as depth 1, so taps off the map stay lit.
+        VkSamplerCreateInfo compareSamplerInfo = samplerInfo;
+        compareSamplerInfo.compareEnable = VK_TRUE;
+        compareSamplerInfo.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        if (vkCreateSampler(mDevice->Handle(), &compareSamplerInfo, nullptr, &mCompareSampler) != VK_SUCCESS)
+        {
+            MIR_LOG_CRITICAL("Initialize: vkCreateSampler failed for the comparison sampler");
+            return false;
+        }
+
         for (uint32_t i = 0; i < kFramesInFlight; ++i)
         {
             const VkImageCreateInfo imageInfo{
@@ -357,12 +367,12 @@ namespace mir::vk
             }
 
             const VkDescriptorImageInfo sunImageInfo{
-                .sampler = mSampler,
+                .sampler = mCompareSampler,
                 .imageView = mSunViews[i],
                 .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL };
 
             const VkDescriptorImageInfo spotImageInfo{
-                .sampler = mSampler,
+                .sampler = mCompareSampler,
                 .imageView = mSpotArrayViews[i],
                 .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL };
 
@@ -611,6 +621,11 @@ namespace mir::vk
         {
             vkDestroySampler(mDevice->Handle(), mSampler, nullptr);
             mSampler = VK_NULL_HANDLE;
+        }
+        if (mCompareSampler != VK_NULL_HANDLE)
+        {
+            vkDestroySampler(mDevice->Handle(), mCompareSampler, nullptr);
+            mCompareSampler = VK_NULL_HANDLE;
         }
         for (uint32_t i = 0; i < kFramesInFlight; ++i)
         {

@@ -451,8 +451,11 @@ namespace mir::vk
             desc.cullMode == VK_CULL_MODE_NONE ? 1.0f : 0.0f, 0.0f };
         const bool modelShader = desc.shaderName == kModelShaderName;
 
+        const bool error = desc.shaderName == "error";
+
         const uint32_t index = PlaceSlot(mMaterials, mFreeIndices,
-            GpuMaterial{ pipeline, descriptorSet, parameters, modelShader, 0, unlit, desc.cullMode, desc.frontFace });
+            GpuMaterial{ pipeline, descriptorSet, parameters, modelShader, 0, unlit, desc.cullMode, desc.frontFace,
+                baseColor->mView, sampler, error });
 
         MIR_LOG_INFO("Material created: {} (index {})", desc.shaderName, index);
         return MaterialHandle{ index, mMaterials[index].mGeneration };

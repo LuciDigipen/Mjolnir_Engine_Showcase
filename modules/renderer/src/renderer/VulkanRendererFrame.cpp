@@ -10,9 +10,7 @@
 #define NOMINMAX
 #endif
 #include <renderer/VulkanRenderer.h>
-#include "vulkan/Bloom.h"
 #include "vulkan/CameraBuffer.h"
-#include "vulkan/DepthOfField.h"
 #include "vulkan/Device.h"
 #include "vulkan/FrameCapture.h"
 #include "vulkan/FrameSync.h"
@@ -20,13 +18,11 @@
 #include "vulkan/MaterialStore.h"
 #include "vulkan/MeshUploader.h"
 #include "vulkan/ModelDescriptors.h"
-#include "vulkan/MotionBlur.h"
-#include "vulkan/PostProcess.h"
+#include "vulkan/PostProcessingStack.h"
 #include "vulkan/RayTracer.h"
 #include "vulkan/ResourceStore.h"
 #include "vulkan/ShadowMaps.h"
 #include "vulkan/Swapchain.h"
-#include "vulkan/VelocityPass.h"
 #include "vulkan/VulkanConstants.h"
 #include "vulkan/VulkanUtil.h"
 #include "vulkan/VulkanPushConstants.h"
@@ -36,6 +32,7 @@
 #include <glm/glm.hpp>
 
 #include <algorithm>
+#include <array>
 
 namespace mir
 {
@@ -193,57 +190,23 @@ namespace mir
             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
             VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
 
-        if (mMotionBlurEnabled)
-        {
-            vk::ImageBarrier(cmd, mSwapchain->DepthImage(frame), VK_IMAGE_ASPECT_DEPTH_BIT,
-                VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT);
+        const std::span<const RenderView> drawnViews = views.subspan(0, viewCount);
+        std::array<uint32_t, vk::kMaxViewsPerFrame> velocityCameraOffsets{};
+        if (mPostProcessing->NeedsVelocity())
+            for (size_t i = 0; i < viewCount; ++i)
+                velocityCameraOffsets[i] = WriteCameraData(views[i], static_cast<uint32_t>(i));
 
-            mVelocityCameraOffsets.clear();
-            const size_t motionViewCount = std::min<size_t>(views.size(), vk::kMaxViewsPerFrame);
-            for (size_t i = 0; i < motionViewCount; ++i)
-                mVelocityCameraOffsets.push_back(WriteCameraData(views[i], static_cast<uint32_t>(i)));
+        const VkImageView colorSource = mPostProcessing->RecordRaster(cmd, frame, {
+            .sceneColor = mSwapchain->HdrColorView(frame),
+            .depthImage = mSwapchain->DepthImage(frame),
+            .depthView = mSwapchain->DepthView(frame),
+            .views = drawnViews,
+            .cameraSet = mCameraBuffer->Set(frame),
+            .cameraOffsets = std::span(velocityCameraOffsets).first(viewCount),
+            .resources = mResources.get(),
+            .extent = extent });
 
-            mDevice->BeginLabel(cmd, "Velocity Pass", { 0.0f, 1.0f, 0.5f, 1.0f });
-            mVelocityPass->Record(cmd, frame, views.subspan(0, motionViewCount), mCameraBuffer->Set(frame),
-                mVelocityCameraOffsets, mSwapchain->DepthView(frame), extent, *mResources);
-            mDevice->EndLabel(cmd);
-        }
-
-        vk::ImageBarrier(cmd, mSwapchain->DepthImage(frame), VK_IMAGE_ASPECT_DEPTH_BIT,
-            VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-            VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
-
-        VkImageView colorSource = mSwapchain->HdrColorView(frame);
-        if (mDepthOfFieldEnabled)
-        {
-            mDevice->BeginLabel(cmd, "Depth Of Field Pass", { 0.5f, 0.0f, 1.0f, 1.0f });
-            const float nearZ = views.empty() ? 0.1f : views[0].nearZ;
-            const float farZ = views.empty() ? 0.0f : views[0].farZ;
-            mDepthOfField->Record(cmd, frame, mSwapchain->HdrColorView(frame), mSwapchain->DepthView(frame),
-                /*isLinearDepth*/ false, nearZ, farZ, extent);
-            mDevice->EndLabel(cmd);
-            colorSource = mDepthOfField->OutputView(frame);
-        }
-
-        if (mMotionBlurEnabled)
-        {
-            mDevice->BeginLabel(cmd, "Motion Blur Pass", { 0.0f, 1.0f, 0.5f, 1.0f });
-            mMotionBlur->Record(cmd, frame, colorSource, mVelocityPass->OutputView(frame), extent);
-            mDevice->EndLabel(cmd);
-            colorSource = mMotionBlur->OutputView(frame);
-        }
-
-        if (mBloomEnabled)
-        {
-            mDevice->BeginLabel(cmd, "Bloom Pass", { 1.0f, 0.5f, 0.0f, 1.0f });
-            mBloom->Record(cmd, frame, colorSource, extent);
-            mDevice->EndLabel(cmd);
-        }
+        const bool fxaaActive = mPostProcessing->PrepareComposite(cmd, frame, colorSource, extent);
 
         vk::ImageBarrier(cmd, mSwapchain->Image(imageIndex), VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_UNDEFINED,
@@ -252,35 +215,11 @@ namespace mir
             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
 
-        const VkRenderingAttachmentInfo swapchainAttachment{
-            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView = mSwapchain->View(imageIndex),
-            .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            // Every pixel is about to be overwritten by the fullscreen tonemap triangle.
-            .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-            .storeOp = VK_ATTACHMENT_STORE_OP_STORE };
+        // Every pixel is about to be overwritten by the fullscreen tonemap/FXAA triangle.
+        vk::BeginFullscreenPass(cmd, mSwapchain->View(imageIndex), extent);
+        mDevice->BeginLabel(cmd, fxaaActive ? "FXAA Pass" : "Tonemap Pass", { 1.0f, 1.0f, 0.0f, 1.0f });
 
-        const VkRenderingInfo tonemapRenderingInfo{
-            .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-            .renderArea{ .offset{ 0, 0 }, .extent = extent },
-            .layerCount = 1,
-            .colorAttachmentCount = 1,
-            .pColorAttachments = &swapchainAttachment };
-
-        vkCmdBeginRendering(cmd, &tonemapRenderingInfo);
-        mDevice->BeginLabel(cmd, "Tonemap Pass", { 1.0f, 1.0f, 0.0f, 1.0f });
-
-        const VkViewport viewport{
-            .x = 0.0f, .y = 0.0f,
-            .width = static_cast<float>(extent.width),
-            .height = static_cast<float>(extent.height),
-            .minDepth = 0.0f, .maxDepth = 1.0f };
-        const VkRect2D scissor{ .offset{ 0, 0 }, .extent = extent };
-        vkCmdSetViewport(cmd, 0, 1, &viewport);
-        vkCmdSetScissor(cmd, 0, 1, &scissor);
-
-        mPostProcess->Record(cmd, frame, colorSource, mBloom->OutputView(frame),
-            mBloom->Intensity(), extent);
+        mPostProcessing->RecordComposite(cmd, frame, colorSource, fxaaActive, extent);
 
         mImGuiOverlay->RecordInPass(cmd);
 
@@ -331,39 +270,22 @@ namespace mir
         const VkRect2D rect = vk::ResolveViewRect(view.rect, mSwapchain->Extent());
         const uint32_t frame = mFrameSync->Index();
 
-        const uint32_t cameraOffset = WriteCameraData(view, 0);
+        const AntiAliasingMode effectiveAaMode = mPostProcessing->RtAntiAliasingMode();
+        const bool applyJitter = effectiveAaMode == AntiAliasingMode::Dlss;
+        glm::vec2 jitterPixels{ 0.0f };
+        const uint32_t cameraOffset = WriteCameraData(view, 0, applyJitter, &jitterPixels);
 
         mDevice->BeginLabel(cmd, "Ray Trace Pass", { 0.0f, 1.0f, 1.0f, 1.0f });
         mRayTracer->Record(cmd, frame, view.items, rect, mCameraBuffer->Set(frame),
-            cameraOffset, *mResources, *mMaterialStore);
+            cameraOffset, *mResources, *mMaterialStore, effectiveAaMode, mPostProcessing->RtSampleCount());
         mDevice->EndLabel(cmd);
 
         const bool hasRect = rect.extent.width > 0 && rect.extent.height > 0;
 
-        VkImageView colorSource = mRayTracer->OutputView(frame);
-        if (hasRect && mDepthOfFieldEnabled)
-        {
-            mDevice->BeginLabel(cmd, "Depth Of Field Pass", { 0.5f, 0.0f, 1.0f, 1.0f });
-            mDepthOfField->Record(cmd, frame, mRayTracer->OutputView(frame), mRayTracer->DistanceView(frame),
-                /*isLinearDepth*/ true, view.nearZ, view.farZ, mSwapchain->Extent());
-            mDevice->EndLabel(cmd);
-            colorSource = mDepthOfField->OutputView(frame);
-        }
-
-        if (hasRect && mMotionBlurEnabled)
-        {
-            mDevice->BeginLabel(cmd, "Motion Blur Pass", { 0.0f, 1.0f, 0.5f, 1.0f });
-            mMotionBlur->Record(cmd, frame, colorSource, mRayTracer->VelocityView(frame), mSwapchain->Extent());
-            mDevice->EndLabel(cmd);
-            colorSource = mMotionBlur->OutputView(frame);
-        }
-
-        if (hasRect && mBloomEnabled)
-        {
-            mDevice->BeginLabel(cmd, "Bloom Pass", { 1.0f, 0.5f, 0.0f, 1.0f });
-            mBloom->Record(cmd, frame, colorSource, mSwapchain->Extent());
-            mDevice->EndLabel(cmd);
-        }
+        const VkImageView colorSource = hasRect
+            ? mPostProcessing->RecordRayTraced(cmd, frame, *mRayTracer, rect, jitterPixels, view.nearZ, view.farZ,
+                mSwapchain->Extent())
+            : mRayTracer->View(vk::RtImage::Output, frame);
 
         vk::ImageBarrier(cmd, mSwapchain->Image(imageIndex), VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_UNDEFINED,
@@ -372,22 +294,9 @@ namespace mir
             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
 
-        const VkRenderingAttachmentInfo colorAttachment{
-            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView = mSwapchain->View(imageIndex),
-            .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-            .clearValue{ .color{ { mClearColor.r, mClearColor.g, mClearColor.b, mClearColor.a } } } };
-
-        const VkRenderingInfo renderingInfo{
-            .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-            .renderArea{ .offset{ 0, 0 }, .extent = mSwapchain->Extent() },
-            .layerCount = 1,
-            .colorAttachmentCount = 1,
-            .pColorAttachments = &colorAttachment };
-
-        vkCmdBeginRendering(cmd, &renderingInfo);
+        // Cleared: outside the view rect nothing else draws.
+        vk::BeginFullscreenPass(cmd, mSwapchain->View(imageIndex), mSwapchain->Extent(), VK_ATTACHMENT_LOAD_OP_CLEAR,
+            VkClearColorValue{ { mClearColor.r, mClearColor.g, mClearColor.b, mClearColor.a } });
         mDevice->BeginLabel(cmd, "Tonemap Pass", { 1.0f, 1.0f, 0.0f, 1.0f });
 
         if (hasRect)
@@ -401,8 +310,7 @@ namespace mir
             vkCmdSetViewport(cmd, 0, 1, &viewport);
             vkCmdSetScissor(cmd, 0, 1, &rect);
 
-            mPostProcess->Record(cmd, frame, colorSource, mBloom->OutputView(frame),
-                mBloom->Intensity(), mSwapchain->Extent());
+            mPostProcessing->RecordComposite(cmd, frame, colorSource, /*fxaa*/ false, mSwapchain->Extent());
         }
 
         mImGuiOverlay->RecordInPass(cmd);
@@ -410,7 +318,9 @@ namespace mir
         mDevice->EndLabel(cmd);
         vkCmdEndRendering(cmd);
 
-        mSwapchain->RecordPresentTransition(cmd, imageIndex, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        const bool captured = mCapture->Record(cmd, *mSwapchain, imageIndex);
+        mSwapchain->RecordPresentTransition(cmd, imageIndex,
+            captured ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     }
 
     void VulkanRenderer::TraceFrame(std::span<const RenderView> views)
@@ -429,13 +339,15 @@ namespace mir
             return;
 
         RecordRtFrame(frame->cmd, frame->imageIndex, views);
-        mFrameSync->End(*mSwapchain, *frame);
+        const bool submitted = mFrameSync->End(*mSwapchain, *frame);
+        mCapture->Finish(submitted, *mSwapchain);
     }
 
-    uint32_t VulkanRenderer::WriteCameraData(const RenderView &view, uint32_t viewIndex)
+    uint32_t VulkanRenderer::WriteCameraData(const RenderView &view, uint32_t viewIndex, bool applyJitter,
+        glm::vec2 *outJitter)
     {
         const uint32_t frame = mFrameSync->Index();
         const vk::ViewShadowInfo shadow = mShadowMaps->WriteView(frame, view, viewIndex);
-        return mCameraBuffer->WriteView(frame, view, viewIndex, shadow);
+        return mCameraBuffer->WriteView(frame, view, viewIndex, shadow, applyJitter, outJitter);
     }
 }

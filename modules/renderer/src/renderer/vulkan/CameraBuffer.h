@@ -13,6 +13,7 @@
 
 #include <glm/geometric.hpp>
 #include <glm/mat4x4.hpp>
+#include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
 
 #include <volk.h>
@@ -49,8 +50,8 @@ namespace mir::vk
         void SetFog(const glm::vec3 &color, float density, float start, float end);
         void SetAtmosphere(const Sky &sky) { mAtmosphere = sky; }
 
-        // Fills this view's slice of the frame's buffers; returns its dynamic offset into binding 0.
-        uint32_t WriteView(uint32_t frame, const RenderView &view, uint32_t viewIndex, const ViewShadowInfo &shadow);
+        uint32_t WriteView(uint32_t frame, const RenderView &view, uint32_t viewIndex, const ViewShadowInfo &shadow,
+            bool applyJitter, glm::vec2 *outJitter = nullptr);
 
         VkDescriptorSetLayout SetLayout() const { return mSetLayout; }
         VkDescriptorSet Set(uint32_t frame) const { return mSets[frame]; }
@@ -88,6 +89,10 @@ namespace mir::vk
         Sky mAtmosphere{};
 
         glm::mat4 mPreviousViewProj[kMaxViewsPerFrame]{};
+        WorldPosition mPreviousCameraPosition[kMaxViewsPerFrame]{};
         bool mHasPreviousViewProj[kMaxViewsPerFrame]{};
+
+        // One Halton(2,3) index per view slot, advanced once per applyJitter=true WriteView call.
+        uint32_t mJitterIndex[kMaxViewsPerFrame]{};
     };
 }

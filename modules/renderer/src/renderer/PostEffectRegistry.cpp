@@ -19,7 +19,8 @@ namespace mir
         return registry;
     }
 
-    void PostEffectRegistry::Register(std::string_view name, void (*drawParams)(nlohmann::json &))
+    void PostEffectRegistry::Register(std::string_view name,
+        void (*drawParams)(nlohmann::json &, const PostEffectContext &))
     {
         MIR_CHECK(!name.empty(), "PostEffectRegistry::Register: effect name is empty");
 

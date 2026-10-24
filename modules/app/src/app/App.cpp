@@ -46,7 +46,6 @@
 #include <renderer/RenderSettings.h>
 #include <renderer/RenderSystem.h>
 #include <renderer/ViewDrawSource.h>
-#include <scene/EntitySnapshot.h>
 #include <scene/SceneIO.h>
 #include <script/ComponentRegistration.h>
 #include <script/ScriptSystem.h>
@@ -54,10 +53,9 @@
 #include <terrain/TerrainScene.h>
 
 #if MIR_WITH_EDITOR
+#include "AppSceneOps.h"
 #include <core/platform/Process.h>
-#include <editor/EntityBaseline.h>
 #include <editor/IdeSettings.h>
-#include <editor/Selection.h>
 #endif
 
 #include <algorithm>
@@ -66,6 +64,7 @@
 #include <string>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace mir
 {
@@ -83,6 +82,25 @@ namespace mir
         {
             return UIPointer{ static_cast<float>(input.mouseX), static_cast<float>(input.mouseY),
                              input.IsDown(MouseButton::Left) };
+        }
+
+        size_t MissingFileCount(const SceneProbe &probe)
+        {
+            return probe.mMissingEntities.size() + probe.mMissingInstances.size();
+        }
+
+        // relative to the scene directory, e.g. "entities/2.json, instances/5.json"
+        std::string MissingFileList(const SceneProbe &probe)
+        {
+            std::string files;
+            const auto append = [&files](const char *dir, const std::vector<StableId> &ids)
+                {
+                    for (const StableId id : ids)
+                        files += (files.empty() ? "" : ", ") + std::string(dir) + "/" + std::to_string(id) + ".json";
+                };
+            append("entities", probe.mMissingEntities);
+            append("instances", probe.mMissingInstances);
+            return files;
         }
     }
 
@@ -160,7 +178,9 @@ namespace mir
 
     #if MIR_WITH_EDITOR
         mSplash.SetProgress("Initializing editor...", 0.5f);
-        if (!mEditor.Initialize(mImGui, *mWindow, mProject.mProjectSettingsPath, mWorld))
+        mSceneOps = std::make_unique<AppSceneOps>(*this);
+        if (!mEditor.Initialize(mImGui, *mWindow, mProject.mProjectSettingsPath, mWorld, *mSceneOps,
+                mRenderer.SwapchainIsSrgb()))
         {
             throw SetupError(ErrorCategory::Internal, "The editor could not start", {},
                 "the log above names the step that failed",
@@ -296,6 +316,8 @@ namespace mir
 
         UnloadCurrentScene();
         mScene = mir::NewScene(std::move(name));
+        ClearHistory();
+        SetSceneUnsaved(false);
     }
 
     bool App::SaveScene()
@@ -306,7 +328,12 @@ namespace mir
             return false;
         }
 
-        return mir::SaveScene(mWorld, mProject.mSceneDir, mScene);
+        if (!mir::SaveScene(mWorld, mProject.mSceneDir, mScene))
+            return false;
+
+        mScene.mDirty = false;
+        SetSceneUnsaved(false);
+        return true;
     }
 
     bool App::LoadScene()
@@ -345,6 +372,8 @@ namespace mir
     {
         UnloadCurrentScene();
         mScene = mir::LoadScene(mWorld, mProject.mSceneDir);
+        ClearHistory();
+        SetSceneUnsaved(false);
 
         // saved names to script instances
         ResolveSceneScripts(mWorld, mScriptHost, mScriptReloadWatcher, Assets(), mProject.mAssetIdRoot);
@@ -372,12 +401,8 @@ namespace mir
                                                                                      : SceneLoadChoice::Refuse;
         }
 
-        std::string ids;
-        for (const StableId id : probe.mMissingEntities)
-            ids += (ids.empty() ? "" : ", ") + std::to_string(id);
-        const std::string message = std::to_string(probe.mMissingEntities.size()) +
-            " entity file(s) listed in " + manifest + " are missing or unreadable (ids " + ids +
-            ").\n\nOpen the scene without them? Saving it will drop them for good; restore them from git first "
+        const std::string message = std::to_string(MissingFileCount(probe)) + " file(s) listed in " + manifest +
+            " are missing or unreadable (" + MissingFileList(probe) + ").\n\nOpen the scene without them? Saving it will drop them for good; restore them from git first "
             "if you need them.\n\n" + refuse;
         return AskYesNo("Scene has missing entities", message, mDesc.mNonInteractive) ? SceneLoadChoice::Load
                                                                                         : SceneLoadChoice::Refuse;
@@ -393,6 +418,8 @@ namespace mir
         mTerrain->BeginPlay();
 
         mPlaySnapshot = CaptureWorld(mWorld);
+        mUnsavedBeforePlay = SceneUnsaved();
+        ClearHistory();
 
         SetPlayState(mWorld, PlayState::Running);
         SetEngineMode(mWorld, EngineMode::Play);
@@ -407,6 +434,10 @@ namespace mir
         mScriptSystem->StopAllScripts(context);
 
         mScene = RestoreWorld(mWorld, mPlaySnapshot);
+        ClearHistory();
+
+        //the World is back as it was at Play, Play's edits gone, so the marker goes back too
+        SetSceneUnsaved(mUnsavedBeforePlay);
 
         // Play's entities are gone and the restored ones hold no handles yet
         mModelSystem->Reset();
@@ -471,6 +502,29 @@ namespace mir
         mRenderer.RequestSwapchainRecreate();
     }
 
+    void App::ClearHistory()
+    {
+    #if MIR_WITH_EDITOR
+        mEditor.ClearHistory();
+    #endif
+    }
+
+    bool App::SceneUnsaved() const
+    {
+    #if MIR_WITH_EDITOR
+        return mEditor.IsSceneUnsaved();
+    #else
+        return false;
+    #endif
+    }
+
+    void App::SetSceneUnsaved([[maybe_unused]] bool unsaved)
+    {
+    #if MIR_WITH_EDITOR
+        mEditor.SetSceneUnsaved(unsaved);
+    #endif
+    }
+
     void App::UnloadCurrentScene()
     {
         UnloadScene(mWorld, mScene);
@@ -518,12 +572,9 @@ namespace mir
                 "Restore " + manifest.string() + " from git.");
         }
 
-        std::string files;
-        for (const StableId id : probe.mMissingEntities)
-            files += (files.empty() ? "" : ", ") + std::to_string(id) + ".json";
         throw SetupError(ErrorCategory::ProjectData,
-            std::to_string(probe.mMissingEntities.size()) + " entity file(s) of the scene are missing or unreadable",
-            mProject.mSceneDir / "entities", "missing or unreadable: " + files,
+            std::to_string(MissingFileCount(probe)) + " file(s) of the scene are missing or unreadable",
+            mProject.mSceneDir, "missing or unreadable: " + MissingFileList(probe),
             "Restore those files from git, or open the scene in the editor and choose to load it without them.");
     }
 
@@ -730,8 +781,6 @@ namespace mir
             break;
         }
 
-        ApplyEntityAction(actions.mEntity);
-
         bool assetActionAccepted = true;
         if (actions.mAssetImport.mKind == AssetImportActionKind::Remove)
         {
@@ -796,64 +845,6 @@ namespace mir
             CreateGameProject(actions.mCreateProjectName, actions.mCreateProjectRayTracing))
         {
             RequestOpenProject("games/" + actions.mCreateProjectName);
-        }
-    }
-
-    void App::ApplyEntityAction(const EntityAction &action)
-    {
-        Selection &selection = mWorld.Resource<Selection>();
-
-        switch (action.mKind)
-        {
-        case EntityActionKind::Create:
-            {
-                const EntityPresetDesc *preset = action.mPreset;
-                if (preset != nullptr && preset->mCanCreate != nullptr && !preset->mCanCreate(mWorld))
-                    return;
-
-                const Entity entity = CreateSceneEntity(mWorld, mScene);
-                if (preset != nullptr)
-                    preset->mCreate(mWorld, entity);
-
-                // after the preset
-                AddMissingBaseline(mWorld, entity);
-
-                selection.mSelected = { entity };
-                break;
-            }
-        case EntityActionKind::Delete:
-            {
-                const Entity neighbor = NeighborInHierarchy(mWorld, action.mTarget);
-                if (DestroySceneEntity(mWorld, mScene, action.mTarget) && selection.Contains(action.mTarget))
-                    selection.mSelected = neighbor.IsNull() ? std::vector<Entity>{} : std::vector<Entity>{ neighbor };
-                break;
-            }
-        case EntityActionKind::Duplicate:
-            if (const Entity copy = DuplicateSceneEntity(mWorld, mScene, action.mTarget); !copy.IsNull())
-                selection.mSelected = { copy };
-            break;
-        case EntityActionKind::Reparent:
-            {
-                // one invalid entity refuses the whole drop
-                if (!CanSetParentAll(mWorld, action.mTargets, action.mParent, action.mBefore))
-                    return;
-
-                const std::vector<Entity> moved = TopmostInHierarchyOrder(mWorld, action.mTargets);
-
-                for (const Entity entity : moved)
-                {
-                    if (action.mBefore.IsNull() && ParentOf(mWorld, entity) == action.mParent)
-                        MoveToLastSibling(mWorld, entity);
-                    else
-                        SetParent(mWorld, entity, action.mParent, action.mBefore);
-                }
-
-                if (!moved.empty())
-                    selection.mSelected = moved;
-                break;
-            }
-        case EntityActionKind::None:
-            break;
         }
     }
 

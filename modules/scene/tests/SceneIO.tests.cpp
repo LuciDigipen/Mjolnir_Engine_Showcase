@@ -6,17 +6,21 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
+#include <scene/EntitySnapshot.h>
 #include <scene/SceneIO.h>
 
 #include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/World.h>
+#include <core/ecs/components/Name.h>
 #include <core/ecs/components/Transform.h>
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstring>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <span>
 #include <vector>
 #include <string>
@@ -860,4 +864,93 @@ TEST_CASE("ProbeScene lists entities whose file is missing or unreadable", "[sce
     const mir::SceneProbe probe = mir::ProbeScene(dir.mPath);
     CHECK(probe.mManifestError.empty());
     CHECK(probe.mMissingEntities == std::vector<StableId>{ 2, 3 });
+}
+
+namespace
+{
+    // every file under root, by relative path
+    std::map<std::string, std::string> ReadTree(const std::filesystem::path &root)
+    {
+        std::map<std::string, std::string> files;
+        for (const auto &entry : std::filesystem::recursive_directory_iterator(root))
+        {
+            if (!entry.is_regular_file())
+                continue;
+
+            std::ifstream file(entry.path(), std::ios::binary);
+            files[std::filesystem::relative(entry.path(), root).generic_string()] =
+                std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+        }
+        return files;
+    }
+
+    void SetName(World &world, Entity entity, const char *name)
+    {
+        mir::Name value;
+        std::strncpy(value.mValue, name, sizeof(value.mValue) - 1);
+        world.AddComponent<mir::Name>(entity, value);
+    }
+
+    void SetTarget(World &world, Entity referrer, Entity target)
+    {
+        const ComponentOps &ops = SceneRefOps();
+        ops.AddDefault(world, referrer);
+        ops.FindField("target")->Write(ops.GetComponent(world, referrer), &target);
+    }
+}
+
+TEST_CASE("Saving after a destroy and RestoreEntityAt writes the same files", "[scene][snapshot]")
+{
+    mir::RegisterCoreComponents();
+
+    World world;
+    LoadedScene scene = NewScene("test");
+    const Entity a = CreateSceneEntity(world, scene);
+    const Entity b = CreateSceneEntity(world, scene);
+    const Entity x = CreateSceneEntity(world, scene, a);
+    const Entity y = CreateSceneEntity(world, scene, a);
+    const Entity z = CreateSceneEntity(world, scene, a);
+    const Entity w = CreateSceneEntity(world, scene, y);
+    SetName(world, y, "y");
+    SetName(world, w, "w");
+
+    Transform transform{ glm::vec3(1.5f, -2.25f, 0.1f) };
+    transform.SetRotation(glm::angleAxis(0.7f, glm::normalize(glm::vec3(1.0f, 2.0f, 3.0f))));
+    transform.SetScale(glm::vec3(0.3f, 2.0f, 1.0f));
+    mir::AddTransform(world, y, transform);
+
+    // one reference inside the subtree, one leaving it
+    SetTarget(world, y, w);
+    SetTarget(world, w, x);
+
+    // roots [b, a], so neither root nor child order is id order
+    REQUIRE(mir::SetParent(world, b, mir::kNullEntity, a));
+
+    TempSceneDir before("restore_at_before");
+    REQUIRE(mir::SaveScene(world, before.mPath, scene));
+
+    Entity target = mir::kNullEntity;
+    Entity parent = mir::kNullEntity;
+    Entity next = mir::kNullEntity;
+    SECTION("a middle child")
+    {
+        target = y;
+        parent = a;
+        next = z;
+    }
+    SECTION("a root")
+    {
+        target = b;
+        next = a;
+    }
+
+    const std::vector<StableId> ids = IdsOf(mir::SnapshotMembers(world, target), scene);
+    const mir::EntitySnapshot snapshot = mir::CaptureEntity(world, target);
+    REQUIRE(mir::DestroySceneEntity(world, scene, target));
+    REQUIRE_FALSE(mir::RestoreEntityAt(world, snapshot, scene, ids, parent, next).empty());
+
+    TempSceneDir after("restore_at_after");
+    REQUIRE(mir::SaveScene(world, after.mPath, scene));
+
+    CHECK(ReadTree(after.mPath) == ReadTree(before.mPath));
 }

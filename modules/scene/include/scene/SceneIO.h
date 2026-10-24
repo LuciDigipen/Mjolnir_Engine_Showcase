@@ -11,6 +11,8 @@
 #include "scene/SceneAsset.h"
 
 #include <filesystem>
+#include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -25,7 +27,29 @@ namespace mir
     // decide whether a directory holds a scene at all.
     std::filesystem::path SceneManifestPath(const std::filesystem::path &sceneDir);
 
-    bool SaveScene(World &world, const std::filesystem::path &sceneDir, const LoadedScene &scene);
+    class ScenePrefabResolver
+    {
+    public:
+        virtual ~ScenePrefabResolver() = default;
+
+        // An empty map means the prefab is unavailable.
+        virtual std::map<SceneNodeAddress, Entity> Materialize(World &world, const ScenePrefabInstance &instance) = 0;
+
+        // False when the prefab is unavailable or the node, component or field
+        // is not an EntityRef of the template.
+        virtual bool TemplateEntityRef(const ScenePrefabInstance &instance, const SceneNodeAddress &node,
+            std::string_view component, std::string_view field,
+            std::optional<SceneNodeAddress> &outTarget) const = 0;
+    };
+
+    // The root's Transform fields as an instance record's placement; empty when it has no Transform.
+    nlohmann::json InstancePlacementFromWorld(World &world, Entity root);
+
+    bool SaveScene(World &world, const std::filesystem::path &sceneDir, const LoadedScene &scene,
+        const ScenePrefabResolver *resolver = nullptr);
+
+    LoadedScene LoadScene(World &world, const std::filesystem::path &sceneDir,
+        ScenePrefabResolver *resolver = nullptr);
 
     // Scene error checker
     struct SceneProbe
@@ -36,13 +60,14 @@ namespace mir
         // listed in scene.json, but the entity file is missing or unreadable
         std::vector<StableId> mMissingEntities;
 
-        bool Ok() const { return mManifestError.empty() && mMissingEntities.empty(); }
+        // listed in scene.json, but the instance file is missing, unreadable or names another root
+        std::vector<StableId> mMissingInstances;
+
+        bool Ok() const { return mManifestError.empty() && mMissingEntities.empty() && mMissingInstances.empty(); }
     };
 
-    // Reads scene.json and every entity file it lists; call before unloading what LoadScene replaces
+    // Reads scene.json and every entity and instance file it lists; call before unloading what LoadScene replaces
     SceneProbe ProbeScene(const std::filesystem::path &sceneDir);
-
-    LoadedScene LoadScene(World &world, const std::filesystem::path &sceneDir);
 
     // Destroy all entity in scene
     void UnloadScene(World &world, const LoadedScene &loaded);

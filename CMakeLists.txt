@@ -38,6 +38,12 @@ option(BUILD_TESTING "Build unit tests (per module, run via ctest)" ON)
 # are not built, and nothing links engine_editor. The windows-msvc-game-*
 # presets set it.
 option(MJOLNIR_WITH_EDITOR "Build the editor into MjolnirEngine" ON)
+
+# OFF (default): no network fetch, no NVIDIA SDK dependency - DLSS Ray
+# Reconstruction anti-aliasing stays unreachable, same as unsupported hardware.
+# ON: fetches the public NVIDIA/DLSS SDK via CMake FetchContent at configure
+# time (cmake/FindNGX.cmake), pinned to an exact release tag - never committed.
+option(MIR_WITH_DLSS "Fetch NGX/DLSS-RR SDK and build Ray Reconstruction" OFF)
 if(BUILD_TESTING)
     enable_testing()
     find_package(Catch2 3 CONFIG REQUIRED)
@@ -119,6 +125,10 @@ engine_add_shaders(MjolnirEngine
     ENTRIES vertexMain:vertex fragmentMain:fragment)
 
 engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/fxaa.slang
+    ENTRIES vertexMain:vertex fragmentMain:fragment)
+
+engine_add_shaders(MjolnirEngine
     SOURCE assets/shaders/bloom.slang
     ENTRIES vertexMain:vertex brightpassMain:fragment downsampleMain:fragment upsampleMain:fragment)
 
@@ -144,7 +154,8 @@ engine_add_shaders(MjolnirEngine
 
 engine_add_shaders(MjolnirEngine
     SOURCE assets/shaders/raytrace.slang
-    ENTRIES rayGenMain:raygeneration missMain:miss closestHitMain:closesthit shadowMissMain:miss)
+    ENTRIES rayGenMain:raygeneration missMain:miss closestHitMain:closesthit shadowMissMain:miss
+            anyHitMain:anyhit shadowAnyHitMain:anyhit)
 
 # Every games/*/ with a game.json is a game; its assetsRoot gets cooked
 file(GLOB game_manifests CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/games/*/game.json")
@@ -245,6 +256,15 @@ add_custom_target(MjolnirEngine_copy_games
     COMMENT "Copying game assets/manifests and engine.json next to MjolnirEngine"
     VERBATIM)
 add_dependencies(MjolnirEngine MjolnirEngine_copy_games)
+
+if(MIR_WITH_DLSS)
+    add_custom_target(MjolnirEngine_copy_ngx
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${NGX_DLSSD_DLL}" "$<TARGET_FILE_DIR:MjolnirEngine>/nvngx_dlssd.dll"
+        COMMENT "Copying NGX Ray Reconstruction runtime next to MjolnirEngine"
+        VERBATIM)
+    add_dependencies(MjolnirEngine MjolnirEngine_copy_ngx)
+endif()
 
 # Always runs; sync and package are no-ops while current.
 if(terrain_sync_commands)

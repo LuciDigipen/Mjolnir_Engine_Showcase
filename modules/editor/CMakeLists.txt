@@ -31,7 +31,14 @@ target_sources(engine_editor PRIVATE
     src/editor/Editor.cpp
     src/editor/EditorCamera.cpp
     src/editor/EditorPreferences.cpp
+    src/editor/EditorWidgets.cpp
     src/editor/EntityBaseline.cpp
+    src/editor/history/AuthoredCommand.cpp
+    src/editor/history/ComponentCommands.cpp
+    src/editor/history/EntityCommands.cpp
+    src/editor/history/EntityIds.cpp
+    src/editor/history/History.cpp
+    src/editor/history/SubtreeRecord.cpp
     src/editor/IdeSettings.cpp
     src/editor/panels/HierarchyPanel.cpp
     src/editor/panels/AssetImportPanel.cpp
@@ -44,3 +51,7 @@ target_sources(engine_editor PRIVATE
     src/editor/panels/ProfilerPanel.cpp
     src/editor/panels/ProjectSettingsPanel.cpp
 )
+
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()

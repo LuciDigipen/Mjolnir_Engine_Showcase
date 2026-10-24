@@ -7,9 +7,7 @@
  *
  */
 #include <renderer/VulkanRenderer.h>
-#include "vulkan/Bloom.h"
 #include "vulkan/CameraBuffer.h"
-#include "vulkan/DepthOfField.h"
 #include "vulkan/Device.h"
 #include "vulkan/FrameCapture.h"
 #include "vulkan/FrameSync.h"
@@ -17,13 +15,11 @@
 #include "vulkan/MaterialStore.h"
 #include "vulkan/MeshUploader.h"
 #include "vulkan/ModelDescriptors.h"
-#include "vulkan/MotionBlur.h"
-#include "vulkan/PostProcess.h"
+#include "vulkan/PostProcessingStack.h"
 #include "vulkan/RayTracer.h"
 #include "vulkan/ResourceStore.h"
 #include "vulkan/ShadowMaps.h"
 #include "vulkan/Swapchain.h"
-#include "vulkan/VelocityPass.h"
 #include "vulkan/VulkanConstants.h"
 
 #include <core/log/Log.h>
@@ -40,11 +36,7 @@ namespace mir
         mShadowMaps(std::make_unique<vk::ShadowMaps>()),
         mModelDescriptors(std::make_unique<vk::ModelDescriptors>()),
         mRayTracer(std::make_unique<vk::RayTracer>()),
-        mPostProcess(std::make_unique<vk::PostProcess>()),
-        mBloom(std::make_unique<vk::Bloom>()),
-        mDepthOfField(std::make_unique<vk::DepthOfField>()),
-        mVelocityPass(std::make_unique<vk::VelocityPass>()),
-        mMotionBlur(std::make_unique<vk::MotionBlur>()),
+        mPostProcessing(std::make_unique<vk::PostProcessingStack>()),
         mCapture(std::make_unique<vk::FrameCapture>()),
         mImGuiOverlay(std::make_unique<vk::ImGuiOverlay>()),
         mMeshUploads(std::make_unique<vk::MeshUploader>())
@@ -52,6 +44,10 @@ namespace mir
     VulkanRenderer::~VulkanRenderer() = default;
 
     bool VulkanRenderer::RayTracingSupported() const { return mDevice->RayTracingSupported(); }
+
+    bool VulkanRenderer::RayTracingActive(bool requested) const { return requested && RayTracingSupported(); }
+
+    bool VulkanRenderer::DlssAvailable() const { return mPostProcessing->DlssAvailable(); }
 
     VulkanRenderer::GpuMemoryUsage VulkanRenderer::GetGpuMemoryUsage() const
     {
@@ -106,22 +102,9 @@ namespace mir
             return false;
 
         mMeshUploads->Initialize(*mDevice);
-        if (!mPostProcess->Initialize(*mDevice, mSwapchain->Format()))
-            return false;
 
-        if (!mBloom->Initialize(*mDevice, mSwapchain->Extent()))
-            return false;
-
-        if (!mDepthOfField->Initialize(*mDevice, mSwapchain->Extent()))
-            return false;
-
-        if (!mVelocityPass->Initialize(*mDevice, mCameraBuffer->SetLayout(), mSwapchain->Extent()))
-            return false;
-
-        if (!mMotionBlur->Initialize(*mDevice, mSwapchain->Extent()))
-            return false;
-
-        return true;
+        return mPostProcessing->Initialize(*mDevice, mSwapchain->Format(), mSwapchain->Extent(),
+            mCameraBuffer->SetLayout());
     }
 
     bool VulkanRenderer::RecreateSwapchain()
@@ -131,16 +114,12 @@ namespace mir
         // The swapchain cannot reach ray tracing, so the facade resizes its output images.
         if (!mSwapchain->Recreate(*mWindow) ||
             (mDevice->RayTracingSupported() && !mRayTracer->Resize(mSwapchain->Extent())) ||
-            !mBloom->Resize(mSwapchain->Extent()) ||
-            !mDepthOfField->Resize(mSwapchain->Extent()) ||
-            !mVelocityPass->Resize(mSwapchain->Extent()) ||
-            !mMotionBlur->Resize(mSwapchain->Extent()))
+            !mPostProcessing->Resize(mSwapchain->Extent()))
         {
             // Recreate may have cleared the flag already; set it so the next frame retries.
             mSwapchain->MarkOutOfDate();
             return false;
         }
-
         return true;
     }
 
@@ -154,11 +133,7 @@ namespace mir
 
             mMeshUploads->Shutdown(*mRayTracer);
 
-            mMotionBlur->Shutdown();
-            mVelocityPass->Shutdown();
-            mDepthOfField->Shutdown();
-            mBloom->Shutdown();
-            mPostProcess->Shutdown();
+            mPostProcessing->Shutdown();
             mMaterialStore->Shutdown();
             mRayTracer->Shutdown();
             mResources->Shutdown();
@@ -310,6 +285,8 @@ namespace mir
         // in-flight frames may still use them
         mDevice->WaitIdle();
 
+        mPostProcessing->ResetHistory();
+
         mMeshUploads->Clear(*mRayTracer);
         mRayTracer->DestroyBlases();
         const std::size_t meshCount = mResources->ReleaseMeshes();
@@ -347,6 +324,13 @@ namespace mir
         return mImGuiOverlay->Initialize(*mDevice, *mSwapchain);
     }
 
+    bool VulkanRenderer::SwapchainIsSrgb() const
+    {
+        const VkFormat format = mSwapchain->Format();
+        return format == VK_FORMAT_B8G8R8A8_SRGB || format == VK_FORMAT_R8G8B8A8_SRGB ||
+            format == VK_FORMAT_A8B8G8R8_SRGB_PACK32;
+    }
+
     void VulkanRenderer::ShutdownImGuiVulkanBackend()
     {
         mImGuiOverlay->Shutdown();
@@ -372,39 +356,11 @@ namespace mir
         mCameraBuffer->SetAmbientColor(color);
     }
 
-    void VulkanRenderer::SetFog(const glm::vec3 &color, float density, float start, float end)
+    void VulkanRenderer::SetPostProcessing(const PostProcessingState &state)
     {
-        mCameraBuffer->SetFog(color, density, start, end);
-    }
+        mCameraBuffer->SetFog(state.fog.color, state.fog.density, state.fog.start, state.fog.end);
 
-    void VulkanRenderer::SetTonemap(float exposure, int tonemapOperator)
-    {
-        mPostProcess->SetParams(exposure, tonemapOperator);
-    }
-
-    void VulkanRenderer::SetBloom(bool enabled, float threshold, float intensity, float radius)
-    {
-        mBloomEnabled = enabled;
-        mBloom->SetParams(threshold, enabled ? intensity : 0.0f, radius);
-    }
-
-    void VulkanRenderer::SetDepthOfField(bool enabled, float focusDistance, float aperture, float maxBlur)
-    {
-        mDepthOfFieldEnabled = enabled;
-        mDepthOfField->SetParams(focusDistance, aperture, maxBlur);
-    }
-
-    void VulkanRenderer::SetMotionBlur(bool enabled, float shutterStrength, uint32_t sampleCount)
-    {
-        mMotionBlurEnabled = enabled;
-        mMotionBlur->SetParams(shutterStrength, sampleCount);
-    }
-
-    void VulkanRenderer::SetFilm(bool enabled, float grain, float contrast, float saturation,
-        float vignetteStrength, float vignetteRadius)
-    {
-        mPostProcess->SetFilmParams(enabled ? grain : 0.0f, enabled ? contrast : 1.0f,
-            enabled ? saturation : 1.0f, enabled ? vignetteStrength : 0.0f, vignetteRadius);
+        mPostProcessing->Apply(state, *mRayTracer, mSwapchain->Extent());
     }
 
     void VulkanRenderer::SetAtmosphere(const Sky &sky)

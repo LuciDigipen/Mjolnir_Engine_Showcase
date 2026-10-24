@@ -10,6 +10,7 @@
 #define NOMINMAX
 #endif
 #include "VulkanUtil.h"
+#include "Image2D.h"
 #include "Device.h"
 
 #include <core/fs/FileIO.h>
@@ -105,6 +106,62 @@ namespace mir::vk
         return { 1.0f / static_cast<float>(extent.width), 1.0f / static_cast<float>(extent.height) };
     }
 
+    bool CreateImage2D(const Device &device, VkFormat format, VkExtent2D extent, VkImageUsageFlags usage,
+        const char *debugName, Image2D &out)
+    {
+        const VkImageCreateInfo imageInfo{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .imageType = VK_IMAGE_TYPE_2D,
+            .format = format,
+            .extent{ extent.width, extent.height, 1 },
+            .mipLevels = 1,
+            .arrayLayers = 1,
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .tiling = VK_IMAGE_TILING_OPTIMAL,
+            .usage = usage,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
+
+        const VmaAllocationCreateInfo allocInfo{ .usage = VMA_MEMORY_USAGE_AUTO };
+
+        if (vmaCreateImage(device.Allocator(), &imageInfo, &allocInfo, &out.image, &out.allocation, nullptr) !=
+            VK_SUCCESS)
+        {
+            MIR_LOG_CRITICAL("CreateImage2D: vmaCreateImage failed for {}", debugName);
+            return false;
+        }
+
+        const VkImageViewCreateInfo viewInfo{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = out.image,
+            .viewType = VK_IMAGE_VIEW_TYPE_2D,
+            .format = format,
+            .subresourceRange{
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1 } };
+
+        if (vkCreateImageView(device.Handle(), &viewInfo, nullptr, &out.view) != VK_SUCCESS)
+        {
+            MIR_LOG_CRITICAL("CreateImage2D: vkCreateImageView failed for {}", debugName);
+            return false;
+        }
+
+        device.NameObject(VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64_t>(out.image), debugName);
+        return true;
+    }
+
+    void DestroyImage2D(const Device &device, Image2D &image)
+    {
+        if (image.view != VK_NULL_HANDLE)
+            vkDestroyImageView(device.Handle(), image.view, nullptr);
+        if (image.image != VK_NULL_HANDLE)
+            vmaDestroyImage(device.Allocator(), image.image, image.allocation);
+        image = Image2D{};
+    }
+
     void ImageBarrier(VkCommandBuffer cmd, VkImage image, VkImageAspectFlags aspectMask,
         VkImageLayout oldLayout, VkImageLayout newLayout,
         VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
@@ -152,6 +209,35 @@ namespace mir::vk
             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
             VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+    }
+
+    void BeginFullscreenPass(VkCommandBuffer cmd, VkImageView view, VkExtent2D extent,
+        VkAttachmentLoadOp loadOp, VkClearColorValue clear)
+    {
+        const VkRenderingAttachmentInfo attachment{
+            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+            .imageView = view,
+            .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .loadOp = loadOp,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+            .clearValue{ .color = clear } };
+
+        const VkRect2D area{ .offset{ 0, 0 }, .extent = extent };
+        const VkRenderingInfo renderingInfo{
+            .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+            .renderArea = area,
+            .layerCount = 1,
+            .colorAttachmentCount = 1,
+            .pColorAttachments = &attachment };
+        vkCmdBeginRendering(cmd, &renderingInfo);
+
+        const VkViewport viewport{
+            .x = 0.0f, .y = 0.0f,
+            .width = static_cast<float>(extent.width),
+            .height = static_cast<float>(extent.height),
+            .minDepth = 0.0f, .maxDepth = 1.0f };
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+        vkCmdSetScissor(cmd, 0, 1, &area);
     }
 
     VkShaderModule CreateShaderModule(VkDevice device, const std::filesystem::path &path)

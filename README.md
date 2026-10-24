@@ -36,7 +36,7 @@ modules/              one static library each, mir::<name>
   audio/                Wwise lifetime and the per-frame pump
   imguiruntime/         ImGui context lifetime, fonts, backends, frame bracket
   editor/               editor shell, drawn into imguiruntime's context
-  editortheme/          the Slate ImGui theme, data only
+  editortheme/          the editor ImGui themes (Midnight, Slate), data only
   app/                  composition root and main loop
     include/<name>/       public API — the whole surface of the module
     src/<name>/           implementation and private headers

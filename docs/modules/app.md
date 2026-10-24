@@ -196,21 +196,26 @@ replaces whatever `Scene()` currently holds. `NewScene`, `LoadScene` and
 `StopScene` release the discarded entities' GPU meshes and materials. Game
 control is `RequestOpenProject(dir)`, and the switch itself is a restart.
 
-In an editor build, `ApplyEditorActions` passes the frame's `EntityAction` (see
-[editor.md](editor.md)) to the private `ApplyEntityAction`. Create runs
-`CreateSceneEntity`, then the preset, then `AddMissingBaseline`. Delete runs
-`DestroySceneEntity`, and Duplicate runs `DuplicateSceneEntity` (see
-[scene.md](scene.md)). Each one goes through `Scene()`, so the entity is saved or
-dropped with the scene, and the result becomes the `Selection`.
+In an editor build, the Hierarchy's create, delete, duplicate and reparent run
+inside the editor, as undoable commands (see
+[editor-history.md](editor-history.md)). They reach the scene through the
+private `AppSceneOps`, the `ISceneOps` `App` hands to `Editor::Initialize`. It
+creates with `CreateSceneEntity`, destroys with `DestroySceneEntity`, duplicates
+with `DuplicateSceneEntity`, and captures and restores with `CaptureEntity` and
+`RestoreEntityAt` (see [scene.md](scene.md)). Each goes through `Scene()`, so the
+entity is saved or dropped with the scene. After a restore or a duplicate it
+runs `ResolveSceneScripts`, because a copied or restored `ScriptRef` has no
+script instance and `ScriptSystem` skips it.
 
-Reparent checks the whole list with `CanSetParentAll` and does nothing if any
-entity fails. It then moves the list in hierarchy order through `SetParent`,
-which keeps each world pose, and selects what moved. A null `mBefore` under the
-entity's current parent means after the last sibling, so that case runs
-`MoveToLastSibling` (see [core.md](core.md)). Reparent changes no
-`LoadedScene` entry, because save reads each parent from `HierarchyIndex`. Unlike
-`NewScene`/`SaveScene`/`LoadScene`, these run during Play too, and Stop discards
-them with the rest of Play's changes.
+`NewScene`, `LoadScene`, `PlayScene` and `StopScene` call
+`Editor::ClearHistory`, since each replaces the entities that history's steps
+point at. Unlike `NewScene`/`SaveScene`/`LoadScene`, the entity operations run
+during Play too, and Stop discards them with the rest of Play's changes.
+
+The editor's unsaved marker is set from here too. A successful `SaveScene`, and
+`NewScene` and `LoadScene` after clearing, call `Editor::SetSceneUnsaved(false)`.
+`PlayScene` remembers whether the scene was unsaved, and `StopScene` puts that
+back, because `RestoreWorld` returns the `World` to the moment Play began.
 
 ### Ownership and order
 
@@ -220,6 +225,7 @@ them with the rest of Play's changes.
 | `mWindow` | early | late | the renderer's surface is built from it |
 | `mRenderer` | after the window | before it | holds `VkSurfaceKHR` and the device |
 | `mEditor` | after the renderer | before it | its Vulkan backend needs a live device, its GLFW backend a live window |
+| `mSceneOps` (`AppSceneOps`, editor builds only) | just before `mEditor.Initialize` | with `App` | holds only a reference to `App`; the editor keeps a pointer to it |
 | `mContentBrowser` (`ContentBrowserWatcher`, editor builds only) | with `App` | with `App` | owns no OS handle - a poll-based watcher only, so no explicit `Shutdown` |
 | `mCommands` | before `mWorld` | after it | outlives the world it records against |
 | `mWorld`, `mScheduler`, `mScriptHost`, `mScene` | with `App` | with `App` | no external resources |
@@ -429,7 +435,7 @@ to its defaults on its own and would otherwise lose them all without a word.
 
 **A broken scene asks before it fails.** `ProbeScene` runs before anything is
 unloaded. In an editor build, a corrupt `scene.json` offers an empty scene, and
-missing entity files offer to open without them. At startup No quits with the
+missing entity or instance files offer to open without them. At startup No quits with the
 error. From the menu No keeps the current scene. A game build never asks, and
 `--non-interactive` answers No.
 
@@ -600,6 +606,18 @@ a missing manifest is an empty one, and a broken scene asks first or fails.
 Because: a silent degraded start hid broken data, and the reader had no fix to
 act on. The lazy manifest dates from 2026-09-01, when a missing manifest had to
 cost an asset rather than the application; an empty manifest keeps that.
+
+*2026-10-20* — **Save, New, Load, Play and Stop set the unsaved marker (#206).**
+Was: `SaveScene` returned `mir::SaveScene`'s result and nothing tracked whether
+the scene matched its file. Now: a successful save, New and Load mark the scene
+saved, and Stop restores the marker Play found, through `Editor::SetSceneUnsaved`.
+
+*2026-10-19* — **The editor's entity operations moved into its undo history.**
+Was: the private `ApplyEntityAction` carried out each `EntityAction` the
+Hierarchy returned. Now: the editor runs them as commands and reaches the scene
+through the private `AppSceneOps`. A restored or duplicated entity gets its
+script instance from `ResolveSceneScripts`, which a duplicate used to miss until
+the next Load or Stop. New, Load, Play and Stop clear the history.
 
 *2026-10-18* — **`MeshResolveSystem` resolves builtin primitives without
 touching the asset cache.** Was: `ResolveMesh` always turned `meshName` into

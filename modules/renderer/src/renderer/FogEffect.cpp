@@ -21,7 +21,7 @@ namespace mir
 {
     namespace
     {
-        void DrawFogParams(nlohmann::json &params)
+        void DrawFogParams(nlohmann::json &params, const PostEffectContext &)
         {
             FogParams fog = ReadFogParams(params);
             bool changed = false;

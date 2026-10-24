@@ -1,9 +1,10 @@
 # editor
 
-The Slate editor shell — dockspace, default panel layout, the File, Project and
-Debug menus — drawn into the ImGui context `imguiruntime` owns. It owns no part
-of that context's lifetime: no `CreateContext`, no fonts, no backend. See
-[imguiruntime.md](imguiruntime.md).
+The Slate editor shell — dockspace, default panel layout, the File, Edit, Project
+and Debug menus — drawn into the ImGui context `imguiruntime` owns. It owns no
+part of that context's lifetime: no `CreateContext`, no fonts, no backend. See
+[imguiruntime.md](imguiruntime.md). Undo and redo have their own page,
+[editor-history.md](editor-history.md).
 
 `mir::editor` · depends `mir::imguiruntime`, `mir::renderer`, `mir::window` (public); `mir::core`, `mir::editortheme`, `imgui`, `imguizmo`, `iconfontcppheaders` (private) · API `modules/editor/include/editor/` · maintainer Sumin Park · reviewed 2026-09-17
 
@@ -31,14 +32,17 @@ if (IsEditing(world))                                   // Play shows the World'
 ```
 
 `DrawLayout` returns `EditorActions`: the `SceneMenuAction` the File menu or the
-Play/Pause/Stop toolbar picked this frame, the `EntityAction` the Hierarchy asked
-for, and the directory of a game picked under Project > Open Project and
-confirmed. The editor decides what was asked for and `App` decides what it means,
-so this module never touches `SceneIO`, `PlaySnapshot`, a `LoadedScene` or a
-`GameProject` — `EngineModeState` is read-only here, just to draw the toolbar's
-current label. `HierarchyPanel` reads the `World`'s entities (see below) to
-display and select them. It never creates, destroys or duplicates one itself.
-Each of those also changes the `LoadedScene`, and only `App` holds it.
+Play/Pause/Stop toolbar picked this frame, and the directory of a game picked
+under Project > Open Project and confirmed. The editor decides what was asked for
+and `App` decides what it means, so this module never touches `SceneIO`,
+`PlaySnapshot`, a `LoadedScene` or a `GameProject` — `EngineModeState` is
+read-only here, just to draw the toolbar's current label. `HierarchyPanel` reads
+the `World`'s entities (see below) to display and select them. It never creates,
+destroys or duplicates one itself. Each of those also changes the `LoadedScene`,
+and only `App` holds it. `Editor` turns the `EntityAction` the Hierarchy returns
+into a command for its `History`, which reaches the scene through the
+`ISceneOps` `App` passed to `Initialize` (see
+[editor-history.md](editor-history.md)).
 
 Project > Open Project lists the `ProjectMenuEntry` values `App` passes in — each
 game's name, with its directory in the shortcut column — and ticks the one whose
@@ -51,7 +55,8 @@ does the restart.
 bottom with `DockBuilderSplitNode`, keeps the centre undocked through
 `ImGuiDockNodeFlags_PassthruCentralNode`, docks `Hierarchy`, `Inspector` and
 `Output` into the splits, draws a Play/Pause/Stop toolbar strip and the menu bar,
-and optionally the Style Editor and Project Settings windows.
+and optionally the Style Editor and Project Settings windows. Last, it runs
+`History::Flush`, the frame's one safe point for undoable changes.
 
 Passing `false` skips all of that and resets `SceneViewportRect()` to zero
 extent, which the renderer reads as "use the full swapchain". An ImGui context
@@ -71,8 +76,15 @@ itself is handling doesn't also move it.
 
 ```cpp
 bool Initialize(const ImGuiRuntime &imgui, Window &window, std::filesystem::path projectSettingsPath,
-                World &world);    // false if imgui is not initialized
+                World &world, ISceneOps &sceneOps);    // false if imgui is not initialized
 void Shutdown();                  // before ImGuiRuntime::Shutdown
+
+void ClearHistory();              // App calls it on New, Load, Play and Stop
+bool IsSceneUnsaved() const;      // the title bar's * marker
+void SetSceneUnsaved(bool unsaved);  // false: the scene as it is now is the saved one
+bool IsDocumentUnsaved(DocumentId document) const;              // the same for a Prefab or other document
+void SetDocumentUnsaved(DocumentId document, bool unsaved);
+void SetAuthoringBackend(IAuthoringBackend *backend);           // App's authoring documents (#249)
 
 // between ImGuiRuntime::BeginFrame and EndFrame
 EditorActions DrawLayout(bool enableLayout, InputMap &inputMap, RenderSettings &renderSettings,
@@ -91,14 +103,15 @@ EditorCamera &SceneCamera();
 |---|---|---|
 | `SceneMenuAction` | `editor/Editor.h` | `None`/`New`/`Save`/`Load`/`Play`/`TogglePause`/`Stop` |
 | `ProjectMenuEntry` | `editor/Editor.h` | `{mDir, mName}` for one game in Open Project |
-| `EditorActions` | `editor/Editor.h` | `{mScene, mEntity, mOpenProject, mAssetImport, mContentBrowser, ...}`, what the menus and toolbar asked for this frame |
+| `EditorActions` | `editor/Editor.h` | `{mScene, mOpenProject, mAssetImport, mContentBrowser, ...}`, what the menus and toolbar asked for this frame |
 | `ContentBrowserView`, `ContentBrowserEntryView` | `editor/panels/ContentBrowserPanel.h` | The open project's content root as a flat list of files/directories, plus `mLastRenamedFrom`/`mLastRenamedTo` for one tick when a same-tick remove+add looks like a rename |
 | `ContentBrowserAction`, `ContentBrowserActionKind` | `editor/panels/ContentBrowserPanel.h` | `{mKind, mTargetPath, mNewName}`: `CreateFolder`, `Rename`, `Delete` or `OpenInIde`, for `App` to carry out (see [app.md](app.md)) |
 | `IdeSettings`, `DetectDefaultIde` | `editor/IdeSettings.h` | The `project_settings.json` "ide.path" string (empty: auto-detect VS Code), edited from `ProjectSettingsPanel`'s External Tools section |
-| `EntityAction`, `EntityActionKind` | `editor/panels/HierarchyPanel.h` | `{mKind, mPreset, mTarget, mTargets, mParent, mBefore}`: `Create` (null `mPreset` = New), `Delete`, `Duplicate`, or `Reparent` (a list moved under `mParent` before `mBefore`), for `App` to carry out |
+| `EntityAction`, `EntityActionKind` | `editor/panels/HierarchyPanel.h` | `{mKind, mPreset, mTarget, mTargets, mParent, mBefore}`: `Create` (null `mPreset` = New), `Delete`, `Duplicate`, or `Reparent` (a list moved under `mParent` before `mBefore`), which `MakeEntityCommand` turns into a command (see [editor-history.md](editor-history.md)) |
 | `NeighborInHierarchy` | `editor/panels/HierarchyPanel.h` | The entity to select after deleting one: next sibling, else previous, else the parent |
 | `IsBaselineComponent`, `AddMissingBaseline` | `editor/EntityBaseline.h` | The components every editor-created entity has: `Transform`, `WorldTransform`, `Name` |
 | `EditorCamera` | `editor/EditorCamera.h` | Free-fly scene camera, `WorldPosition` + yaw/pitch (`Pose()`, `Translate`, `FocusOn`), outside the `World` |
+| `widgets::*` | `editor/EditorWidgets.h` | The editor's UE5-style ImGui widgets: `CategoryHeader`, `BeginPropertyGrid`/`PropertyRow`/`EndPropertyGrid`, `AxisDragN` (X/Y/Z/W colour-tagged fields), `SearchBox`, `ToolbarButton`, `IconTextButton`, `PushRowSelectionColors`, `MatchesFilter`. Colours come from `EditorTheme` |
 | `Selection` | `editor/Selection.h` | `{mSelected, mAnchor}` (a `vector<Entity>`, ordered by selection - `.back()` is primary - and the shift-click range start), the `World` resource `Hierarchy` and viewport picking write and `Inspector`/the gizmo read |
 
 `LogPanel`, in `src/editor/panels/LogPanel.cpp`, renders `core`'s `LogHistory`
@@ -117,9 +130,9 @@ entry list on the left, and a file/folder table for the selected folder on
 the right — directories are explicit entries, so an empty or just-created one
 still shows up. Clicking selects, double-clicking a folder navigates into it,
 and a row's context menu offers Rename and Delete; Delete goes through a
-confirm modal (no undo exists anywhere in this engine - see [app.md](app.md)
-for `ContentBrowserWatcher`, which actually watches the disk and carries out
-the mutations). This closes #152: the panel never caches a stale listing, so
+confirm modal (file changes are outside undo, which covers only scene edits -
+see [app.md](app.md) for `ContentBrowserWatcher`, which actually watches the
+disk and carries out the mutations). This closes #152: the panel never caches a stale listing, so
 a file added, removed or renamed outside the editor shows up on the watcher's
 next poll with no restart.
 
@@ -162,10 +175,11 @@ creates an entity from no preset, and the items below it come from
 `EntityPresetRegistry`. Right-clicking a row opens Duplicate and Delete for that
 entity, and selects it first if it was not already selected. The Delete key and
 Ctrl+D do the same for `Selection::Primary()`, while the panel has focus and no
-text field is active. Each of these only fills `EntityAction`.
-`App::ApplyEntityAction` carries it out (see [app.md](app.md)) and selects the
-result. After a delete it selects `NeighborInHierarchy`, computed before the
-entity is gone.
+text field is active. Each of these only fills `EntityAction`. `Editor` turns
+it into a command and `History` runs it at the end of `DrawLayout` (see
+[editor-history.md](editor-history.md)), so Ctrl+Z undoes it. The command
+selects the result. After a delete it selects `NeighborInHierarchy`, computed
+before the entity is gone.
 
 Dragging a row reparents or reorders. The drag carries the whole selection, or
 only the grabbed row if a Ctrl-press removed it from the selection. Each row
@@ -181,10 +195,10 @@ A press on a row that is already part of a multi-selection waits for the
 release, as in Explorer and Unity. A release without a drag then collapses the
 selection to that row, and a drag carries the whole selection instead.
 
-`App::ApplyEntityAction` puts the dragged list in hierarchy order and drops any
+The ReParent command puts the dragged list in hierarchy order and drops any
 entity whose ancestor is also listed, so a subtree moves once and siblings keep
 their order. It moves each through `SetParent`, which keeps the world pose, and
-selects them. A drop after the last sibling under the current parent is
+selects them. The whole drop is one step. A drop after the last sibling under the current parent is
 `MoveToLastSibling`. On the next frame the panel opens their ancestors and
 scrolls the last one into view, only as far as needed.
 
@@ -201,21 +215,28 @@ save a scene, and why it treats a C++ and a script-declared runtime component
 identically: both surface through the same `ComponentOps`/`FieldDesc` tables.
 Each field reads into a 64-byte scratch buffer (large enough for a `Mat4`,
 `FieldKind`'s biggest kind), an ImGui control drawn over the copy per
-`FieldKind`, and `FieldDesc::Write` called on the live component only if the
-control reports an edit — so a component with a custom accessor (`Transform`'s
-`SetPosition` and friends) runs through it rather than being memcpy'd under
-it. A `FieldDesc::ReadOnly` field (`WorldTransform.matrix`) still shows its
+`FieldKind`. Only when the control reports an edit does the new value go to
+`History` as a Set fields command, which calls `FieldDesc::Write` at the end of
+the frame — so a component with a custom accessor (`Transform`'s `SetPosition`
+and friends) runs through it rather than being memcpy'd under it (see
+[editor-history.md](editor-history.md)). A `FieldDesc::ReadOnly` field (`WorldTransform.matrix`) still shows its
 current value, greyed out via `ImGui::BeginDisabled`. (A 3D transform gizmo
 does exist, drawn over the viewport by `DrawViewportGizmo` via ImGuizmo - it's
 a separate, `Selection`-driven overlay, not part of `InspectorPanel`'s
 field-table drawing described here.)
 
-Component edits happen inside `InspectorPanel`, on the `World` directly. They
-change no `LoadedScene` entry, so unlike entity actions there is nothing for
-`App` to do. The Add Component button below the components lists every
-registered component the entity lacks, except the baseline, and picking one
-calls `ComponentOps::AddDefault`. Right-clicking a component's header opens
-Copy Values, Paste Values and Remove Component. Copy Values reads every field
+Component edits go to `History` as commands, like entity actions, so each one
+can be undone. They change no `LoadedScene` entry, so `App` has nothing to do
+for them. Once no ImGui item is active after an edit, the panel calls
+`History::EndStep`, so one drag, one typed value or one click is one step. The
+"+ Add" button at the right of the header row lists every registered component the
+entity lacks, except the baseline, and picking one submits Add component. Below
+it, Search Details filters by component or field name: a matching component name
+shows all its fields, otherwise only the matching fields show. Each component is a
+category bar over a label|value grid; every grid in the panel shares one column
+splitter.
+Right-clicking a component's header opens Copy Values, Paste Values and Remove
+Component. Copy Values reads every field
 through `FieldDesc::Read` into the panel's `Clipboard`. Paste Values is enabled
 only on a component of the copied type. When the entity lacks that type, Add
 Component offers "Paste <type>" at the top instead, which adds the component
@@ -283,6 +304,7 @@ wins over the default `Entity<index>`. `IsBaselineComponent` keeps the three out
 of Add Component and greys out their Remove Component.
 
 **Paste writes field by field through `FieldDesc::Write`, never as raw bytes.**
+Its Set fields command does the writing, and so do the gizmo's.
 Copying `Transform`'s bytes would copy its version stamp too.
 `WorldTransform` is rebuilt only when that stamp differs from the one it was
 built from, so a pasted position could be skipped. Writing each field runs
@@ -293,19 +315,23 @@ fields are persisted data, so skipping them would paste half a component. A
 `ReadOnly` field is skipped. An `EntityRef` keeps its target, so a pasted
 reference points where the copied one did.
 
-**Remove Component runs after the component loop.** Removing a component moves
-the entity to another archetype, which invalidates the component pointers the
-rest of the loop draws from. Add Component is drawn after the loop for the same
-reason. Paste runs inside the loop, because writing into a component of the same
-type moves nothing.
+**Nothing the Inspector submits changes the `World` while it draws.** History
+applies every command at the end of `DrawLayout`. Removing or adding a component
+moves the entity to another archetype, which would invalidate the component
+pointers the rest of the loop draws from, so it must not happen mid-loop.
+
+**The gizmo's drag is one step.** `DrawViewportGizmo` submits the one channel
+the operation moves (position, rotation or scale) every frame the gizmo
+changes it, and calls `History::EndStep` on the frame `ImGuizmo::IsUsing()`
+turns false.
 
 **Entity and component edits are allowed during Play.** Stop restores the `World`
 from `PlaySnapshot`, so it discards them along with everything else Play changed.
 
 **A drop is checked by the same code that refuses it.** Every row target calls
 `CanSetParentAll`, the check `SetParent` makes. One entity that cannot move
-refuses the whole drop, and `App` runs the same check again before moving
-anything. An invalid row still takes the payload, so the root target behind it
+refuses the whole drop, and the ReParent command runs the same check again
+before moving anything. An invalid row still takes the payload, so the root target behind it
 does not light up. It draws nothing and shows the not-allowed cursor.
 
 **Row targets accept with `AcceptBeforeDelivery`.** Without it,
@@ -319,9 +345,9 @@ payload to the smallest target that accepts it, so a row wins over the panel's
 whole area. Each row's target is stretched by half the gap above and below, so a
 drop between two rows never falls through to the root.
 
-**The reveal runs one frame late.** `App` applies the action after `Draw`
-returns, so the panel keeps the dropped list and opens the new ancestors on the
-next `Draw`, when the graph has changed.
+**The reveal runs one frame late.** `History` applies the action at the end of
+`DrawLayout`, after `Draw` returns, so the panel keeps the dropped list and opens
+the new ancestors on the next `Draw`, when the graph has changed.
 
 ## State
 
@@ -345,8 +371,20 @@ entity: the right-clicked row, or `Selection::Primary()`.
 *As of 2026-10-09.* `Hierarchy` reparents and reorders by drag and drop, for
 the whole selection, and the order survives save and Play.
 
-No tests. It needs a device and a display. `smoke.switch` covers the restart that
-Open Project asks for, but not the menu or the dialog themselves.
+*As of 2026-10-19.* Create, Delete, Duplicate and reparenting in `Hierarchy`
+can be undone and redone, with Ctrl+Z, Ctrl+Y or the Edit menu (see
+[editor-history.md](editor-history.md)).
+
+*As of 2026-10-20.* So can every `Inspector` edit and the gizmo's move, rotate
+and scale. No panel writes the scene's `World` directly any more. The title bar
+shows `*` after the game's title while the scene differs from its last save, with
+a tooltip saying so; the save point lives in `History` (see
+[editor-history.md](editor-history.md)).
+
+The panels and menus have no tests. They need a device and a display.
+`smoke.switch` covers the restart that Open Project asks for, but not the menu
+or the dialog themselves. History needs neither, and its tests are in
+`modules/editor/tests/`.
 
 ## Backlog
 
@@ -378,6 +416,57 @@ Open Project asks for, but not the menu or the dialog themselves.
    deleted, not everything recursively under a deleted folder.
 
 ## Changed
+
+*2026-10-22* — **Theme preference; `Initialize` takes `srgbOutput`.**
+`EditorPreferences::theme` (`"theme": "midnight" | "slate"`) picks the editor
+theme, set from Preferences and applied at the start of the next frame.
+`Editor::Initialize` gained `bool srgbOutput` (App passes
+`VulkanRenderer::SwapchainIsSrgb()`) so the theme shows its colours as written.
+
+*2026-10-22* — **UE5-style panels.** Was: Inspector fields drew as ImGui's
+value-then-label widgets under collapsing headers, Add Component sat at the bottom,
+and the Hierarchy was a bare tree. Now: the Inspector is laid out like UE5's
+Details panel (header row with "+ Add", Search Details, category bars,
+label|value grids, X/Y/Z-tagged vector fields), the Hierarchy has a search box
+that keeps the matches' ancestors, an "Item Label" header and its own scrolling
+row area, the gizmo toolbar is icons, and Play/Stop carry coloured icons. The
+shared pieces live in `editor/EditorWidgets.h`. Because: the editor moved to a
+UE5-like look (see [editortheme.md](editortheme.md)).
+
+*2026-10-21* — **`PostProcessingPanel::Draw` takes a `PostEffectContext`
+(PR #278).** Was: every effect's params UI drew the same regardless of
+pipeline or hardware. Now: `Editor` passes `{ RayTracingActive(rayTracing),
+DlssAvailable() }` through to each effect's draw callback, so the
+anti-aliasing entry's Mode combo lists only the modes this device can run
+right now - the same flags `RenderSystem` clamps the mode against (see
+[renderer.md](renderer.md)'s anti-aliasing rules). Because: a combo offering
+Dlss on a machine that can't run it would save a mode that silently renders
+as Off.
+
+*2026-10-21* — **History knows about documents other than the scene (#243).**
+`Editor` gained `IsDocumentUnsaved`, `SetDocumentUnsaved` and
+`SetAuthoringBackend`, which pass through to `History`. The title bar still
+shows the scene's marker only. See [editor-history.md](editor-history.md).
+
+*2026-10-20* — **The title bar marks an unsaved scene (#206).** Was: nothing
+showed whether the scene had changed since it was saved. Now: `DrawTitleBar`
+adds `*` after the title while `History::IsUnsaved()`, and `Editor` exposes
+`IsSceneUnsaved`/`SetSceneUnsaved` for `App` to set the save point.
+
+*2026-10-20* — **Inspector and gizmo edits go through undo history (#204).**
+Was: `InspectorPanel` wrote fields, pasted, added and removed components on the
+`World` itself, and `DrawViewportGizmo` called `Transform`'s setters. Remove
+Component waited until after the component loop for that reason. Now: both
+submit commands to `History`, `InspectorPanel::Draw` takes the `History`, and
+each drag is one step. See [editor-history.md](editor-history.md).
+
+*2026-10-19* — **Entity operations go through undo history.** Was: `DrawLayout`
+returned the Hierarchy's `EntityAction` in `EditorActions::mEntity`, and
+`App::ApplyEntityAction` carried it out on the spot. Nothing could be undone.
+Now: `Editor` owns a `History`, turns the action into a command with
+`MakeEntityCommand`, and runs it at the end of `DrawLayout`. `Initialize` takes
+the `ISceneOps` `App` implements, and an Edit menu sits between File and
+Project. See [editor-history.md](editor-history.md).
 
 *2026-10-18* — **A standalone Post-Processing panel (#207).** Was: no place
 for post-effect controls other than Project Settings. Now: `PostProcessingPanel`
