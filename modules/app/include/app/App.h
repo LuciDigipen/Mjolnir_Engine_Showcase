@@ -54,6 +54,7 @@ namespace mir
     class TerrainRuntime;
     class MeshResolveSystem;
     class AppSceneOps;
+    class PrefabAuthoringAdapter;
 
     struct AppDesc
     {
@@ -223,6 +224,7 @@ namespace mir
     #if MIR_WITH_EDITOR
         Editor mEditor;
         std::unique_ptr<AppSceneOps> mSceneOps;
+        std::unique_ptr<PrefabAuthoringAdapter> mPrefabAuthoring;
     #endif
         // Stop puts the World back as it was at Play, so it puts this back too
         bool mUnsavedBeforePlay = false;

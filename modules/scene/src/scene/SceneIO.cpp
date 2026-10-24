@@ -27,6 +27,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -1058,6 +1059,49 @@ namespace mir
 
         scene.mDirty = true;
         return true;
+    }
+
+    std::string CaptureInstanceRecord(const LoadedScene &scene, StableId root)
+    {
+        const auto it = scene.mInstances.find(root);
+        if (it == scene.mInstances.end())
+            return {};
+        return InstanceToJson(it->second).dump();
+    }
+
+    bool RestoreInstanceRecord(LoadedScene &scene, std::string_view text)
+    {
+        const json parsed = json::parse(text.begin(), text.end(), nullptr, false);
+        if (parsed.is_discarded())
+            return false;
+
+        const std::optional<ScenePrefabInstance> record = InstanceFromJson(parsed, "undo");
+        if (!record)
+            return false;
+
+        scene.mInstances[record->mRoot] = *record;
+        scene.mDirty = true;
+        return true;
+    }
+
+    std::vector<std::string> CaptureInstanceRecords(const LoadedScene &scene, std::span<const StableId> members)
+    {
+        const std::set<StableId> captured(members.begin(), members.end());
+        std::vector<std::string> records;
+        for (const auto &[root, instance] : scene.mInstances)
+        {
+            if (captured.contains(root))
+                records.push_back(InstanceToJson(instance).dump());
+        }
+        return records;
+    }
+
+    bool RestoreInstanceRecords(LoadedScene &scene, std::span<const std::string> records)
+    {
+        bool restored = true;
+        for (const std::string &text : records)
+            restored &= RestoreInstanceRecord(scene, text);
+        return restored;
     }
 
     void UnloadScene(World &world, const LoadedScene &loaded)

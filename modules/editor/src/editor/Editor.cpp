@@ -22,6 +22,7 @@
 #include <core/log/Log.h>
 #include <editor/EditorWidgets.h>
 #include <editor/Selection.h>
+#include <editor/history/AuthoredEdit.h>
 #include <editor/history/ComponentCommands.h>
 #include <editor/history/EntityCommands.h>
 #include <editortheme/EditorTheme.h>
@@ -77,7 +78,8 @@ namespace mir
 
         
         template <typename T>
-        std::unique_ptr<ICommand> SetTransformField(World &world, Entity entity, std::string_view fieldName, const T &value, std::string_view verb)
+        std::unique_ptr<ICommand> SetTransformField(World &world, Entity entity, std::string_view fieldName,
+            const T &value, std::string_view verb, IAuthoredEntities *authored)
         {
             const ComponentOps *ops = ComponentRegistry::Instance().FindBySeq(TypeIdOf<Transform>().seq);
             const FieldDesc *field = ops != nullptr ? ops->FindField(fieldName) : nullptr;
@@ -90,8 +92,8 @@ namespace mir
             std::memcpy(fieldValue.mBytes, &value, sizeof(T));
 
             const Name *name = world.GetComponent<Name>(entity);
-            return MakeSetFieldsCommand(entity, *ops, { fieldValue },
-                std::format("{} {}", verb, name != nullptr ? name->mValue : "Entity"));
+            return MakeSetFieldsEditCommand(entity, *ops, { fieldValue },
+                std::format("{} {}", verb, name != nullptr ? name->mValue : "Entity"), authored);
         }
 
         // Radius around the entity's origin that holds its scaled mesh box.
@@ -597,7 +599,8 @@ namespace mir
             const std::optional<ParentLocalTranslation> local =
                 moved ? TryWorldToParentLocal(parentPose, *moved) : std::nullopt;
             if (local)
-                mHistory.Submit(SetTransformField(world, entity, "position", local->Meters(), "Move"));
+                mHistory.Submit(SetTransformField(world, entity, "position", local->Meters(), "Move",
+                    mAuthoredEntities));
             return;
         }
 
@@ -609,9 +612,9 @@ namespace mir
         DecomposeRotationScale(glm::inverse(parentPose.linear) * glm::mat3(gizmoMatrix), rotation, scale);
 
         if (mGizmoOperation == GizmoOperation::Rotate)
-            mHistory.Submit(SetTransformField(world, entity, "rotation", rotation, "Rotate"));
+            mHistory.Submit(SetTransformField(world, entity, "rotation", rotation, "Rotate", mAuthoredEntities));
         else
-            mHistory.Submit(SetTransformField(world, entity, "scale", scale, "Scale"));
+            mHistory.Submit(SetTransformField(world, entity, "scale", scale, "Scale", mAuthoredEntities));
     }
 
     void Editor::FocusSelection(const EngineModeState &mode, World &world)
@@ -967,7 +970,7 @@ namespace mir
             ImGui::End();
 
             if (ImGui::Begin("Inspector"))
-                mInspectorPanel.Draw(world, assetImport, mHistory);
+                mInspectorPanel.Draw(world, assetImport, mHistory, mAuthoredEntities);
             ImGui::End();
 
             if (ImGui::Begin("Output"))

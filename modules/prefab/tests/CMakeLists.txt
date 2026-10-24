@@ -1,4 +1,5 @@
 engine_add_module_tests(prefab
+    PrefabAuthoring.tests.cpp
     PrefabCompile.tests.cpp
     PrefabCoordinator.tests.cpp
     PrefabFormat.tests.cpp
@@ -6,5 +7,6 @@ engine_add_module_tests(prefab
     PrefabInstantiate.tests.cpp
     PrefabOverrides.tests.cpp
     PrefabRegistry.tests.cpp
+    PrefabSave.tests.cpp
     PrefabScene.tests.cpp
 )

@@ -39,6 +39,8 @@
 
 namespace mir
 {
+    class IAuthoredEntities;
+
     enum class SceneMenuAction
     {
         None,
@@ -133,6 +135,7 @@ namespace mir
 
         
         void SetAuthoringBackend(IAuthoringBackend *backend) { mHistory.SetAuthoringBackend(backend); }
+        void SetAuthoredEntities(IAuthoredEntities *authored) { mAuthoredEntities = authored; }
 
     private:
         void DrawTitleBar();
@@ -184,6 +187,7 @@ namespace mir
 
         History mHistory;
         ISceneOps *mSceneOps = nullptr;
+        IAuthoredEntities *mAuthoredEntities = nullptr;
 
         std::filesystem::path mPreferencesPath;
         EditorPreferences mPreferences;

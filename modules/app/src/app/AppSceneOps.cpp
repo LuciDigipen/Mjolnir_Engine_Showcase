@@ -11,9 +11,12 @@
 #include "SceneResolve.h"
 
 #include <app/App.h>
+#include <core/log/Log.h>
 #include <scene/EntitySnapshot.h>
 #include <scene/SceneAsset.h>
+#include <scene/SceneIO.h>
 
+#include <optional>
 #include <unordered_map>
 
 namespace mir
@@ -48,6 +51,9 @@ namespace mir
             const auto it = ids.find(PackEntity(member));
             subtree.mStableIds.push_back(it != ids.end() ? it->second : kNullStableId);
         }
+
+        subtree.mInstances = CaptureInstanceRecords(mApp.Scene(), subtree.mStableIds);
+
         return subtree;
     }
 
@@ -55,13 +61,102 @@ namespace mir
     {
         std::vector<Entity> members = RestoreEntityAt(mApp.GetWorld(), EntitySnapshot{ subtree.mData }, mApp.Scene(),
             subtree.mStableIds, parent, before);
+        if (!members.empty() && !subtree.mInstances.empty() &&
+            !RestoreInstanceRecords(mApp.Scene(), subtree.mInstances))
+        {
+            MIR_LOG_WARN("AppSceneOps: could not restore a prefab instance record");
+        }
         ResolveScripts();
         return members;
     }
 
     bool AppSceneOps::Destroy(Entity root)
     {
-        return DestroySceneEntity(mApp.GetWorld(), mApp.Scene(), root);
+        LoadedScene &scene = mApp.Scene();
+        StableId rootId = kNullStableId;
+        for (const auto &[id, entity] : scene.mEntities)
+        {
+            if (entity == root)
+            {
+                rootId = id;
+                break;
+            }
+        }
+
+        if (rootId != kNullStableId)
+        {
+            for (const auto &[instanceRoot, instance] : scene.mInstances)
+            {
+                bool member = false;
+                for (const auto &[address, id] : instance.mBindings)
+                {
+                    (void)address;
+                    member |= id == rootId;
+                }
+                if (!member)
+                    continue;
+
+                if (instanceRoot == rootId)
+                    break;
+
+                MIR_LOG_WARN("AppSceneOps: cannot delete a prefab instance member; delete its root instead");
+                return false;
+            }
+        }
+
+        return DestroySceneEntity(mApp.GetWorld(), scene, root);
+    }
+
+    bool AppSceneOps::CanReparent(std::span<const Entity> entities, Entity parent)
+    {
+        const LoadedScene &scene = mApp.Scene();
+        const auto stableIdOf = [&scene](Entity entity)
+            {
+                for (const auto &[id, candidate] : scene.mEntities)
+                {
+                    if (candidate == entity)
+                        return id;
+                }
+                return kNullStableId;
+            };
+        const auto memberState = [&scene](StableId id, bool &isRoot)
+            {
+                for (const auto &[instanceRoot, instance] : scene.mInstances)
+                {
+                    for (const auto &[address, member] : instance.mBindings)
+                    {
+                        (void)address;
+                        if (member != id)
+                            continue;
+                        isRoot = instanceRoot == id;
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+        if (!parent.IsNull())
+        {
+            bool parentIsRoot = false;
+            const StableId parentId = stableIdOf(parent);
+            if (parentId != kNullStableId && memberState(parentId, parentIsRoot))
+            {
+                MIR_LOG_WARN("AppSceneOps: cannot reparent under a prefab instance member");
+                return false;
+            }
+        }
+
+        for (const Entity entity : entities)
+        {
+            bool isRoot = false;
+            const StableId id = stableIdOf(entity);
+            if (id != kNullStableId && memberState(id, isRoot) && !isRoot)
+            {
+                MIR_LOG_WARN("AppSceneOps: cannot reparent a prefab instance member");
+                return false;
+            }
+        }
+        return true;
     }
 
     void AppSceneOps::ResolveScripts()

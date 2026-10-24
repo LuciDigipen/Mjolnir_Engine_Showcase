@@ -305,6 +305,12 @@ namespace mir
                 World &world = context.mWorld;
 
                 
+                if (!context.mScene.CanReparent(mTargets, mParentEntity))
+                {
+                    MIR_LOG_WARN("History: cannot reparent into or out of a prefab instance");
+                    return false;
+                }
+
                 if (!CanSetParentAll(world, mTargets, mParentEntity, mBeforeEntity))
                     return false;
 
