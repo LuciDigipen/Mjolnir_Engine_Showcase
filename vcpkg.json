@@ -20,6 +20,7 @@
             "host": true
         },
         "sol2",
+        "tinyfiledialogs",
         "catch2"
     ],
     "features": {

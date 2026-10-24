@@ -22,7 +22,7 @@ namespace mir
 {
     class TerrainExecutor
     {
-      public:
+    public:
         virtual ~TerrainExecutor() = default;
 
         // Runs the job later on some thread. Jobs never throw.
@@ -32,7 +32,7 @@ namespace mir
     // Jobs not started when the pool is destroyed are dropped unrun.
     class TerrainWorkerPool final : public TerrainExecutor
     {
-      public:
+    public:
         explicit TerrainWorkerPool(uint32_t threads);
         ~TerrainWorkerPool() override;
 
@@ -45,8 +45,8 @@ namespace mir
             return mThreads.size();
         }
 
-      private:
-        void Work(std::stop_token stop);
+    private:
+        void Work(std::stop_token stop) noexcept;
 
         std::mutex mMutex;
         std::condition_variable_any mWake;
@@ -58,7 +58,7 @@ namespace mir
     // Holds jobs until a test runs them on its own thread.
     class TerrainManualExecutor final : public TerrainExecutor
     {
-      public:
+    public:
         void Post(std::function<void()> job) override;
 
         size_t Pending() const;
@@ -67,7 +67,7 @@ namespace mir
         // Includes jobs the run jobs post.
         size_t RunAll();
 
-      private:
+    private:
         mutable std::mutex mMutex;
         std::deque<std::function<void()>> mJobs;
     };

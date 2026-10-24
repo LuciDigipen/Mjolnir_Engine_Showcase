@@ -9,6 +9,7 @@
 #pragma once
 
 #include <cstddef>
+#include <filesystem>
 #include <format>
 #include <string>
 #include <string_view>
@@ -29,7 +30,8 @@ namespace mir
 
     struct LogConfig
     {
-        std::string filePath = "logs/engine.log";
+        // empty: LogDir()/engine.log
+        std::string filePath;
         LogLevel consoleLevel = LogLevel::Trace;
         LogLevel fileLevel = LogLevel::Trace;
         std::size_t maxFileBytes = 5 * 1024 * 1024;
@@ -38,6 +40,8 @@ namespace mir
     };
 
     void InitLog(const LogConfig &config = {});
+
+    const std::filesystem::path &LogFilePath();
 
     // Sometimes need manual flush
     void FlushLog();

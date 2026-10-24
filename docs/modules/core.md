@@ -216,8 +216,8 @@ reload costs nothing.
 Overflow stops the process in every build, checked once at allocation and again
 on use. The second check is what catches a C++ component that was never
 registered and drew its `seq` straight from `TypeIdOf`. As an assert it would
-reach `std::bitset::set` in Release and throw out of `World::AddComponent`, in a
-codebase that does not use exceptions.
+reach `std::bitset::set` in Release and throw out of `World::AddComponent`, into
+callers that do not catch it.
 
 **Erased operations are total.** `ComponentOps` answers for a dead entity instead
 of asserting. The typed API asserts because touching a destroyed entity is a bug

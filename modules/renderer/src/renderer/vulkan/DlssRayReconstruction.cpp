@@ -38,7 +38,7 @@ namespace mir::vk
                 view, image, range, format, extent.width, extent.height, /*readWrite*/ false);
         }
 
-        void NVSDK_CONV NgxLogCallback(const char *message, NVSDK_NGX_Logging_Level level, NVSDK_NGX_Feature)
+        void NVSDK_CONV NgxLogCallback(const char *message, NVSDK_NGX_Logging_Level level, NVSDK_NGX_Feature) noexcept
         {
             if (level == NVSDK_NGX_LOGGING_LEVEL_OFF)
                 return;

@@ -8,6 +8,8 @@
  */
 #pragma once
 
+#include <core/log/SetupError.h>
+
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -37,23 +39,30 @@ namespace mir
         // Source tree in a development build (asset_workspace.json), else next to the executable
         std::filesystem::path mRootDir;
 
+        // mAssetIdRoot on disk
+        std::filesystem::path mAssetsDir;
+
         std::filesystem::path mSceneDir;
         std::filesystem::path mProjectSettingsPath;
         std::filesystem::path mSoundBankDir;
     };
 
-    // engine.json's defaultGame; nullopt (logged) if missing
-    std::optional<std::string> ReadDefaultGame();
+    // engine.json's defaultGame; throws SetupError if engine.json or the key is missing
+    std::string ReadDefaultGame();
 
-    // To the executable-relative form asset ids use ("games/<name>");
-    // nullopt (logged) if outside the executable directory or missing
-    std::optional<std::filesystem::path> NormalizeGameDir(const std::string &requested);
+    // To the executable-relative form asset ids use ("games/<name>"). Throws SetupError of
+    // @p notFound if outside the project root or missing
+    std::filesystem::path NormalizeGameDir(const std::string &requested, ErrorCategory notFound);
 
-    // Nullopt (logged) without a game.json; a malformed one falls back to defaults
-    std::optional<GameProject> LoadGameProject(const std::filesystem::path &gameDir);
+    // Throws SetupError: @p notFound without a game.json, ProjectData for a malformed one
+    GameProject LoadGameProject(const std::filesystem::path &gameDir,
+                                ErrorCategory notFound = ErrorCategory::ProjectData);
 
     // NormalizeGameDir, then LoadGameProject
-    std::optional<GameProject> ResolveGameProject(const std::string &requested);
+    GameProject ResolveGameProject(const std::string &requested, ErrorCategory notFound);
+
+    // Creates any missing assets, scene or SoundBank directory; throws SetupError (System) if it cannot
+    void EnsureGameDirectories(const GameProject &project);
 
     // Every games/*/ next to the executable with a game.json, sorted by directory
     std::vector<GameProject> DiscoverGameProjects();

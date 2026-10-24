@@ -50,6 +50,22 @@ TEST_CASE("ReadJsonFile returns nullopt for a missing file", "[serial][jsonFile]
     CHECK_FALSE(mir::ReadJsonFile(MakeScratchFile()).has_value());
 }
 
+TEST_CASE("ReadJsonFile tells a missing file from a malformed one through its error", "[serial][jsonFile]")
+{
+    std::string missingError;
+    CHECK_FALSE(mir::ReadJsonFile(MakeScratchFile(), &missingError).has_value());
+    CHECK(missingError == "file does not exist");
+
+    const std::filesystem::path path = MakeScratchFile();
+    REQUIRE(mir::WriteText(path, "{\n  \"a\": \n}"));
+
+    std::string parseError;
+    CHECK_FALSE(mir::ReadJsonFile(path, &parseError).has_value());
+    CHECK(parseError.find("line 3") != std::string::npos);
+
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("ReadJsonFile returns nullopt for malformed JSON", "[serial][jsonFile]")
 {
     const std::filesystem::path path = MakeScratchFile();

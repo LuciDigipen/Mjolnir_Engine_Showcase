@@ -49,7 +49,7 @@ audio::Terminate();                         // App::Shutdown
 
 | Name | Header | Role |
 |---|---|---|
-| `Init` | `audio/AudioSystem.h` | Brings up all four Wwise stages and loads a game's banks; false on any failure, and on a game that has none |
+| `Init` | `audio/AudioSystem.h` | Brings up all four Wwise stages and loads every bank in a game's SoundBank directory; throws `SetupError` on any failure |
 | `Update` | `audio/AudioSystem.h` | One `RenderAudio()`; nothing is mixed without it |
 | `Terminate` | `audio/AudioSystem.h` | Reverse-order teardown, safe whether or not `Init` succeeded |
 | `PostEvent` | `audio/AudioSystem.h` | Fires an event by name on the fixed global game object |
@@ -76,14 +76,17 @@ applies to *subsequent* registrations, so an emitter registered first keeps an
 empty listener set. Get this backwards and `PostEvent` still returns a valid
 playing ID while nothing is audible, with no error logged anywhere.
 
-**`Terminate()` runs on every `Init()` failure path, not just at shutdown.** Each
+**`Terminate()` runs on every `Init()` failure path, before the `SetupError` is thrown, not just at shutdown.** Each
 stage guards on its own module's state rather than on a single "did init finish"
 flag, so a partially-initialised engine tears down correctly. Debug Wwise asserts
 at `MemoryMgr::Term` if anything is still allocated, which is what makes a clean
 Debug exit evidence rather than luck.
 
-**`Init.bnk` loads before any other bank.** It carries the bus layout every other
-bank resolves against, and loading a content bank first fails.
+**`Init` loads every `.bnk` directly in the SoundBank directory, `Init.bnk`
+first.** `Init.bnk` carries the bus layout every other bank resolves against, and
+loading a content bank first fails. A directory that holds banks but no
+`Init.bnk` is rejected before any Wwise stage comes up, so the error names the
+missing file instead of a failed `LoadBank`.
 
 **The bank path is resolved from the executable, never the working directory.**
 `GameProject::mSoundBankDir` is built from `mir::ExecutableDir()`, and `Init`
@@ -92,10 +95,21 @@ build directory while a VS Code F5 launch typically runs from the repository
 root, so a CWD-relative path passes the smoke tests and silently finds nothing
 under the debugger.
 
-**A game with no SoundBanks is not an error.** `Init` checks the directory
-before any Wwise stage comes up, logs `Info` and returns false. The smoke tests
-fail on any logged Error, so treating a deliberately silent game as a failure
-would turn every game without audio red.
+**A game with no SoundBanks still starts Wwise.** `App::Initialize` creates a
+missing SoundBank directory, and an empty one loads no banks. The sound engine
+still comes up, so a silent game and a game with audio take the same path, and a
+Wwise failure is fatal for both.
+
+**The profiler connection is part of setup.** In a build without
+`AK_OPTIMIZED`, a failed `AK::Comm::Init` is fatal. It fails when another
+process holds the profiler port.
+
+### Errors
+
+| Category | Raised when |
+|---|---|
+| System | The SoundBank directory is missing, a Wwise stage fails to start (the cause carries the `AKRESULT`), or the profiler connection fails |
+| Project data | Banks are present without `Init.bnk`, or a bank fails to load |
 
 **`RenderAudio()` runs once per frame, after `mScheduler.Update`.** Calls queued
 before it are processed that frame; anything posted after waits for the next one.
@@ -142,7 +156,8 @@ Release, and both of `HelloWorld`'s banks loading, confirmed on hardware. The
 Wwise Profiler connects to Debug and Profile builds.
 
 Banks are per game. `HelloWorld` carries `Init.bnk` and `Test.bnk`; `EmptyScene`
-has no `audio/` directory and runs silent through the rule above.
+has no banks, so its SoundBank directory is created empty and Wwise runs with
+nothing loaded.
 
 Everything about *what* plays is a placeholder — listener id 2 and emitter id 1
 are registered at init and nothing posts to them. `PostEvent` has no caller
@@ -152,7 +167,7 @@ mapping.
 
 There is no `modules/audio/tests/`. Coverage comes from `smoke.HelloWorld`, which
 runs the engine for 120 frames and fails on any logged Error or Critical; since
-every failure path in `Init` logs, a passing smoke test means the engine came up
+every failure path in `Init` throws, a passing smoke test means the engine came up
 and both banks loaded. It does not and cannot assert that sound reached the
 speakers.
 
@@ -195,3 +210,13 @@ config mapping has never been exercised.
    the engine programmers edits audio. Per-game banks raise the stakes a little:
    each game that gains audio needs its own generation target, and its own
    `Init.bnk`.
+
+## Changed
+
+*2026-10-20* — **Every setup failure is fatal, and every bank loads.** Was: a
+missing SoundBank directory ran silent, `Init` returned false on any failure,
+the profiler connection was optional, and `Init` loaded `Init.bnk` and a
+hard-coded `Test.bnk`. Now: the directory is created when missing, every `.bnk`
+in it loads with `Init.bnk` first, and every failure throws a `SetupError`.
+Because: a degraded start hid broken audio data, and the hard-coded bank name
+tied the engine to one game.

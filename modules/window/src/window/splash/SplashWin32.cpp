@@ -11,6 +11,7 @@
 #include "core/fs/Paths.h"
 #include "core/log/Assert.h"
 #include "core/log/Log.h"
+#include "core/log/SetupError.h"
 
 // This file uses the -W Win32 APIs throughout (CreateWindowExW,
 // RegisterClassExW, ...); without UNICODE, resource macros like IDC_ARROW
@@ -66,6 +67,8 @@ namespace mir
     {
         std::thread mThread;
         HWND mWindow = nullptr;
+        // GetLastError from the splash thread when its window could not be created
+        DWORD mLastError = 0;
         std::mutex mMutex;
         PaintState mState;
     };
@@ -288,7 +291,7 @@ namespace mir
             ::SelectObject(dc, prevFont);
         }
 
-        LRESULT CALLBACK SplashWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+        LRESULT CALLBACK SplashWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) noexcept
         {
             switch (msg)
             {
@@ -340,7 +343,8 @@ namespace mir
             });
         }
 
-        void SplashThreadMain(SplashImpl *impl, SplashDesc desc, std::promise<HWND> ready)
+        // A thread entry: an exception escaping it would end the process with no report
+        void SplashThreadMain(SplashImpl *impl, SplashDesc desc, std::promise<HWND> ready) noexcept
         {
             ComGuard comGuard;
 
@@ -357,6 +361,7 @@ namespace mir
                 nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
             if (hwnd == nullptr)
             {
+                impl->mLastError = ::GetLastError();
                 ready.set_value(nullptr);
                 return;
             }
@@ -419,17 +424,21 @@ namespace mir
             // with this function (then mImpl) the whole time.
             impl->mThread = std::thread(&SplashThreadMain, impl.get(), desc, std::move(ready));
         }
-        catch (const std::system_error &)
+        catch (const std::system_error &error)
         {
             // Thread never started - nothing to join.
-            return false;
+            throw SetupError(ErrorCategory::System, "The splash screen thread could not start", {}, error.what(),
+                "Check the system has resources left for a new thread.");
         }
 
         HWND hwnd = readyFuture.get();
         if (hwnd == nullptr)
         {
+            const DWORD lastError = impl->mLastError;
             impl->mThread.join();
-            return false;
+            throw SetupError(ErrorCategory::System, "The splash screen window could not be created", {},
+                "Win32 error " + std::to_string(lastError),
+                "Check that a desktop session is available (not a service or a locked session).");
         }
 
         impl->mWindow = hwnd;

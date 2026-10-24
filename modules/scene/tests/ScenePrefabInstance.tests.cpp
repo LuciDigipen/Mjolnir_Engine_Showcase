@@ -605,6 +605,53 @@ TEST_CASE("LoadScene skips a malformed instance file without throwing", "[scene]
     CHECK(transform->Position() == WorldVec3(1.0, 2.0, 3.0));
 }
 
+TEST_CASE("ProbeScene passes a saved instance whose members have no entity file", "[scene][prefab]")
+{
+    mir::RegisterCoreComponents();
+    LinkOps();
+
+    World world;
+    LoadedScene scene = NewScene("test");
+    CreateSceneEntity(world, scene);
+
+    FakeSceneResolver resolver;
+    REQUIRE(PlaceInstance(world, scene, resolver) != kNullStableId);
+
+    TempSceneDir dir("probe_instance");
+    REQUIRE(mir::SaveScene(world, dir.mPath, scene, &resolver));
+
+    CHECK(mir::ProbeScene(dir.mPath).Ok());
+}
+
+TEST_CASE("ProbeScene lists an unreadable instance file apart from entity files", "[scene][prefab]")
+{
+    TempSceneDir dir("probe_malformed_instance");
+    WriteText(dir.mPath / "scene.json", R"({"name":"test","nextId":3,"entities":[2],"instances":[1]})");
+    WriteText(dir.mPath / "instances" / "1.json", "{ not json");
+    WriteText(dir.mPath / "entities" / "2.json", R"({"id":2,"parent":0,"components":[]})");
+
+    const mir::SceneProbe probe = mir::ProbeScene(dir.mPath);
+    CHECK(probe.mManifestError.empty());
+    CHECK(probe.mMissingEntities.empty());
+    CHECK(probe.mMissingInstances == std::vector<StableId>{ 1 });
+}
+
+TEST_CASE("ProbeScene rejects an instance listed twice or a null id", "[scene][prefab]")
+{
+    const char *manifests[] = {
+        R"({"name":"test","entities":[],"instances":[1,1]})",
+        R"({"name":"test","entities":[0]})",
+        R"({"name":"test","entities":[],"instances":{}})",
+    };
+    for (const char *text : manifests)
+    {
+        TempSceneDir dir("probe_bad_instances");
+        WriteText(dir.mPath / "scene.json", text);
+
+        CHECK_FALSE(mir::ProbeScene(dir.mPath).mManifestError.empty());
+    }
+}
+
 TEST_CASE("An explicit null reference override survives save and load", "[scene][prefab]")
 {
     mir::RegisterCoreComponents();

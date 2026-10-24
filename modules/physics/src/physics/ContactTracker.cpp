@@ -18,7 +18,7 @@
 namespace mir::detail
 {
     void ContactTracker::OnContactAdded(const JPH::Body &body1, const JPH::Body &body2,
-        const JPH::ContactManifold &manifold, JPH::ContactSettings &)
+        const JPH::ContactManifold &manifold, JPH::ContactSettings &) noexcept
     {
         const JPH::SubShapeIDPair key(body1.GetID(), manifold.mSubShapeID1, body2.GetID(), manifold.mSubShapeID2);
         const std::scoped_lock lock(mMutex);
@@ -38,14 +38,14 @@ namespace mir::detail
     }
 
     void ContactTracker::OnContactPersisted(const JPH::Body &body1, const JPH::Body &body2,
-        const JPH::ContactManifold &manifold, JPH::ContactSettings &)
+        const JPH::ContactManifold &manifold, JPH::ContactSettings &) noexcept
     {
         const std::scoped_lock lock(mMutex);
         if (const auto it = mPairs.find(PairKey(body1.GetID(), body2.GetID())); it != mPairs.end())
             Record(it->second, body1.GetID(), manifold);
     }
 
-    void ContactTracker::OnContactRemoved(const JPH::SubShapeIDPair &key)
+    void ContactTracker::OnContactRemoved(const JPH::SubShapeIDPair &key) noexcept
     {
         const std::scoped_lock lock(mMutex);
         // Already ended by ForgetBody.

@@ -20,21 +20,21 @@ namespace mir
     {
         std::filesystem::path QueryExecutablePath()
         {
-#if defined(_WIN32)
+        #if defined(_WIN32)
             wchar_t buffer[MAX_PATH]{};
             const DWORD length = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
             if (length == 0)
                 return {};
             return std::filesystem::path(buffer, buffer + length);
-#elif defined(__linux__)
+        #elif defined(__linux__)
             char buffer[4096]{};
             const ssize_t length = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
             if (length <= 0)
                 return {};
             return std::filesystem::path(buffer, buffer + length);
-#else
+        #else
             return {};
-#endif
+        #endif
         }
 
         std::filesystem::path QueryExecutableDir()
@@ -77,5 +77,10 @@ namespace mir
     std::filesystem::path CookedAssetsDir()
     {
         return ExecutableDir() / "cooked";
+    }
+
+    std::filesystem::path LogDir()
+    {
+        return ExecutableDir() / "logs";
     }
 }

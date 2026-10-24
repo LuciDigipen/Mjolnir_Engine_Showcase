@@ -33,3 +33,8 @@ TEST_CASE("CookedAssetsDir points at cooked/ under the executable directory", "[
     const auto path = mir::CookedAssetsDir();
     REQUIRE(path == mir::ExecutableDir() / "cooked");
 }
+
+TEST_CASE("LogDir points at logs/ under the executable directory", "[paths]")
+{
+    REQUIRE(mir::LogDir() == mir::ExecutableDir() / "logs");
+}
