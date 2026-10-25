@@ -25,6 +25,7 @@ namespace mir
         CapturedSubtree Capture(Entity root) override;
         std::vector<Entity> Restore(const CapturedSubtree &subtree, Entity parent, Entity before) override;
         bool Destroy(Entity root) override;
+        Entity PlacePrefab(std::string_view contentPath, Entity parent, const WorldVec3 &position) override;
         bool CanReparent(std::span<const Entity> entities, Entity parent) override;
 
     private:

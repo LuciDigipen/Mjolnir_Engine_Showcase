@@ -22,6 +22,7 @@
 #include <core/ecs/components/Transform.h>
 #include <core/log/Log.h>
 
+#include <filesystem>
 #include <format>
 #include <optional>
 #include <string>
@@ -387,6 +388,65 @@ namespace mir
             std::vector<Move> mMoves;
             std::string mName;
         };
+
+        class PlacePrefabCommand final : public ICommand
+        {
+        public:
+            PlacePrefabCommand(std::string contentPath, Entity parent, const WorldVec3 &position)
+                : mContentPath(std::move(contentPath)), mParentEntity(parent), mPosition(position)
+            {
+                mName = std::format("Place {}", std::filesystem::path(mContentPath).stem().string());
+            }
+
+            bool Do(CommandContext &context) override
+            {
+                Entity entity = kNullEntity;
+                if (mRoot == kNullHistoryId)
+                {
+                    entity = context.mScene.PlacePrefab(mContentPath, mParentEntity, mPosition);
+                    if (entity.IsNull())
+                        return false;
+                    mRoot = context.mIds.IdOf(entity);
+                }
+                else
+                {
+                    entity = mRecord.Restore(context);
+                    if (entity.IsNull())
+                        return false;
+                }
+
+                SelectOnly(context.mWorld, { entity });
+                return true;
+            }
+
+            bool Undo(CommandContext &context) override
+            {
+                if (!mRecord.Remove(context, context.mIds.EntityOf(mRoot)))
+                    MIR_LOG_WARN("History: '{}' cannot be undone, the instance is gone", mName);
+                return true;
+            }
+
+            std::size_t Size() const override
+            {
+                return sizeof(*this) + mRecord.Size() + mContentPath.size() + mName.size();
+            }
+
+            std::string Name() const override { return mName; }
+
+            void CollectIds(std::vector<HistoryId> &out) const override
+            {
+                out.push_back(mRoot);
+                mRecord.CollectIds(out);
+            }
+
+        private:
+            std::string mContentPath;
+            Entity mParentEntity;
+            WorldVec3 mPosition;
+            HistoryId mRoot = kNullHistoryId;
+            SubtreeRecord mRecord;
+            std::string mName;
+        };
     }
 
     std::unique_ptr<ICommand> MakeCreateCommand(const EntityPresetDesc *preset)
@@ -414,6 +474,12 @@ namespace mir
         return std::make_unique<ReParentCommand>(std::move(targets), parent, before);
     }
 
+    std::unique_ptr<ICommand> MakePlacePrefabCommand(std::string contentPath, Entity parent,
+        const WorldVec3 &position)
+    {
+        return std::make_unique<PlacePrefabCommand>(std::move(contentPath), parent, position);
+    }
+
     std::unique_ptr<ICommand> MakeEntityCommand(const EntityAction &action)
     {
         switch (action.mKind)
@@ -428,6 +494,9 @@ namespace mir
             return MakeCopyAsOrdinaryObjectCommand(action.mTarget);
         case EntityActionKind::Reparent:
             return MakeReParentCommand(action.mTargets, action.mParent, action.mBefore);
+        case EntityActionKind::PlacePrefab:
+            return MakePlacePrefabCommand(action.mPrefabPath, action.mParent, WorldVec3(0));
+        case EntityActionKind::CreatePrefab:
         case EntityActionKind::None:
             break;
         }

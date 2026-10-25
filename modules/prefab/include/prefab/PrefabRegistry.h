@@ -39,12 +39,26 @@ namespace mir
         // Unsaved in-memory documents, resolved before disk. An invalid
         // document is rejected and the registry is left unchanged.
         bool SetDocument(const PrefabDocument &doc, std::vector<PrefabDiagnostic> *diagnostics = nullptr);
+
+        // The same, with the file the document is meant to be saved to.
+        bool SetDocument(const PrefabDocument &doc, const std::filesystem::path &intendedPath,
+            std::vector<PrefabDiagnostic> *diagnostics = nullptr);
+
+        // Where a memory-only document is meant to be saved; empty clears it.
+        bool SetIntendedPath(PrefabId id, std::optional<std::filesystem::path> path);
+
         bool RemoveDocument(PrefabId id);
 
         const PrefabDocument *Find(PrefabId id) const;
-        std::optional<std::filesystem::path> PathOf(PrefabId id) const;
 
-        // The scanned prefab whose file is @p path, if any.
+        // The file on disk, or the intended path of an unsaved document.
+        std::optional<std::filesystem::path> PathOf(PrefabId id) const;
+        std::optional<std::filesystem::path> IntendedPathOf(PrefabId id) const;
+
+        // True once a file holds this document.
+        bool HasSavedFile(PrefabId id) const { return mDiskPaths.contains(id); }
+
+        // The prefab whose file or intended path is @p path, if any.
         std::optional<PrefabId> IdAtPath(const std::filesystem::path &path) const;
 
         // Call only after the file at @p path holds @p doc.
@@ -67,6 +81,7 @@ namespace mir
 
     private:
         std::unordered_map<PrefabId, PrefabDocument> mMemory;
+        std::unordered_map<PrefabId, std::filesystem::path> mIntendedPaths;
         std::unordered_map<PrefabId, PrefabDocument> mDisk;
         std::unordered_map<PrefabId, std::filesystem::path> mDiskPaths;
     };

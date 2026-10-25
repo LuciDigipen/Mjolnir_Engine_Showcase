@@ -36,6 +36,7 @@
 #include <random>
 #include <regex>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -100,6 +101,39 @@ namespace
         }
 
         bool Destroy(Entity root) override { return mir::DestroySceneEntity(mWorld, mScene, root); }
+
+        Entity PlacePrefab(std::string_view contentPath, Entity parent, const mir::WorldVec3 &position) override
+        {
+            if (mPlaceFails)
+                return kNullEntity;
+
+            const Entity root = mir::CreateSceneEntity(mWorld, mScene, parent);
+            mWorld.AddComponent<Transform>(root, Transform(position));
+            const Entity child = mir::CreateSceneEntity(mWorld, mScene, root);
+
+            const auto idOf = [this](Entity entity)
+                {
+                    for (const auto &[id, candidate] : mScene.mEntities)
+                    {
+                        if (candidate == entity)
+                            return id;
+                    }
+                    return kNullStableId;
+                };
+
+            const StableId rootId = idOf(root);
+            mir::ScenePrefabInstance instance;
+            instance.mPrefab = std::string(contentPath);
+            instance.mRoot = rootId;
+            instance.mBindings[mir::SceneNodeAddress{ 1 }] = rootId;
+            instance.mBindings[mir::SceneNodeAddress{ 2 }] = idOf(child);
+            instance.mPlacement = mir::InstancePlacementFromWorld(mWorld, root);
+            mScene.mInstances[rootId] = std::move(instance);
+            mScene.mDirty = true;
+            return root;
+        }
+
+        bool mPlaceFails = false;
 
     private:
         World &mWorld;

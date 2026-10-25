@@ -14,6 +14,9 @@
 
 namespace mir
 {
+    // A Prefab row's content path, as a drag payload for the Hierarchy and the scene viewport.
+    inline constexpr const char *kPrefabContentPayload = "MIR_PREFAB_CONTENT";
+
     enum class ContentBrowserEntryKind
     {
         File,
@@ -26,6 +29,7 @@ namespace mir
         std::string mName;
         ContentBrowserEntryKind mKind = ContentBrowserEntryKind::File;
         uint64_t mSizeBytes = 0; // 0 for directories
+        bool mUnsaved = false;   // a memory-only Prefab at its intended path
     };
 
     struct ContentBrowserView

@@ -10,6 +10,7 @@ target_link_libraries(engine_prefab
 target_sources(engine_prefab PRIVATE
     src/prefab/CompiledPrefab.cpp
     src/prefab/PrefabAuthoring.cpp
+    src/prefab/PrefabCapture.cpp
     src/prefab/PrefabCoordinator.cpp
     src/prefab/PrefabDocument.cpp
     src/prefab/PrefabFormat.cpp

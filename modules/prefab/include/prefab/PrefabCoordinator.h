@@ -39,6 +39,8 @@ namespace mir
         const CompiledPrefabCache &Cache() const { return mCache; }
 
         bool SetDocument(const PrefabDocument &doc, std::vector<PrefabDiagnostic> *diagnostics = nullptr);
+        bool SetDocument(const PrefabDocument &doc, const std::filesystem::path &intendedPath,
+            std::vector<PrefabDiagnostic> *diagnostics = nullptr);
         bool RemoveDocument(PrefabId id);
 
         // Rebuilds the disk table and logs what Scan found.

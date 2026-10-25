@@ -11,8 +11,10 @@
 #include <editor/history/Command.h>
 
 #include <core/ecs/Entity.h>
+#include <core/math/WorldCoordinates.h>
 
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace mir
@@ -26,6 +28,10 @@ namespace mir
     std::unique_ptr<ICommand> MakeDuplicateCommand(Entity source);
     std::unique_ptr<ICommand> MakeCopyAsOrdinaryObjectCommand(Entity source);
     std::unique_ptr<ICommand> MakeReParentCommand(std::vector<Entity> targets, Entity parent, Entity before);
+
+    // Places a linked Prefab instance; position is local to parent, or a world position for a root.
+    std::unique_ptr<ICommand> MakePlacePrefabCommand(std::string contentPath, Entity parent,
+        const WorldVec3 &position);
 
     //null for EntityActionKind::None
     std::unique_ptr<ICommand> MakeEntityCommand(const EntityAction &action);
