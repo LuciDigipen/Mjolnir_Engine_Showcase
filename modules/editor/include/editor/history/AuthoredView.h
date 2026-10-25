@@ -35,6 +35,13 @@ namespace mir
         Removed,
     };
 
+    enum class AuthoredInstanceRole : uint8_t
+    {
+        Ordinary,
+        Root,
+        Member,
+    };
+
     struct AuthoredAction
     {
         bool mAllowed = true;
@@ -56,6 +63,8 @@ namespace mir
         virtual AuthoredFieldState FieldState(const AuthoredKey &key) = 0;
         virtual AuthoredComponentState ComponentState(Entity entity, std::string_view component) = 0;
         virtual std::vector<std::string> RemovedComponents(Entity entity) = 0;
+
+        virtual AuthoredInstanceRole InstanceRole(Entity entity) = 0;
 
         // The field's value in the backend's encoding.
         virtual std::string EncodeField(FieldKind kind, const void *bytes) = 0;

@@ -14,6 +14,7 @@
 
 #include <scene/EntitySnapshot.h>
 #include <scene/SceneAsset.h>
+#include <scene/SceneDuplicate.h>
 #include <scene/SceneIO.h>
 
 #include <core/ecs/ComponentRegistry.h>
@@ -65,7 +66,11 @@ namespace
         TestSceneOps(World &world, LoadedScene &scene) : mWorld(world), mScene(scene) {}
 
         Entity CreateEntity() override { return mir::CreateSceneEntity(mWorld, mScene); }
-        Entity Duplicate(Entity source) override { return mir::DuplicateSceneEntity(mWorld, mScene, source); }
+        Entity Duplicate(Entity source) override { return mir::DuplicateSceneEntitySubtree(mWorld, mScene, source); }
+        Entity CopyAsOrdinaryObject(Entity source) override
+        {
+            return mir::CopyInstanceMemberAsOrdinary(mWorld, mScene, source);
+        }
 
         CapturedSubtree Capture(Entity root) override
         {
@@ -81,13 +86,17 @@ namespace
                 const auto it = ids.find(mir::PackEntity(member));
                 subtree.mStableIds.push_back(it != ids.end() ? it->second : kNullStableId);
             }
+            subtree.mInstances = mir::CaptureInstanceRecords(mScene, subtree.mStableIds);
             return subtree;
         }
 
         std::vector<Entity> Restore(const CapturedSubtree &subtree, Entity parent, Entity before) override
         {
-            return mir::RestoreEntityAt(mWorld, mir::EntitySnapshot{ subtree.mData }, mScene, subtree.mStableIds,
-                parent, before);
+            std::vector<Entity> members = mir::RestoreEntityAt(mWorld, mir::EntitySnapshot{ subtree.mData }, mScene,
+                subtree.mStableIds, parent, before);
+            if (!members.empty())
+                mir::RestoreInstanceRecords(mScene, subtree.mInstances);
+            return members;
         }
 
         bool Destroy(Entity root) override { return mir::DestroySceneEntity(mWorld, mScene, root); }

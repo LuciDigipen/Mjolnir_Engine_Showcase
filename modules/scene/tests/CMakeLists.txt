@@ -4,4 +4,5 @@ engine_add_module_tests(scene
     ScenePrefabInstance.tests.cpp
     PlaySnapshot.tests.cpp
     EntitySnapshot.tests.cpp
+    SceneDuplicate.tests.cpp
 )

@@ -15,6 +15,7 @@
 #include <core/ecs/components/Name.h>
 #include <editor/EditorWidgets.h>
 #include <editor/Selection.h>
+#include <editor/history/AuthoredView.h>
 
 #include <IconsFontAwesome6.h>
 #include <imgui.h>
@@ -33,7 +34,7 @@ namespace mir
 {
     namespace
     {
-        void DrawEntityMenu(Selection &selection, Entity entity, EntityAction &action)
+        void DrawEntityMenu(Selection &selection, Entity entity, IAuthoredEntities *authored, EntityAction &action)
         {
             if (!ImGui::BeginPopupContextItem())
                 return;
@@ -41,8 +42,12 @@ namespace mir
             if (!selection.Contains(entity))
                 selection.mSelected = { entity };
 
-            if (ImGui::MenuItem("Duplicate", "Ctrl+D"))
+            const AuthoredInstanceRole role =
+                authored != nullptr ? authored->InstanceRole(entity) : AuthoredInstanceRole::Ordinary;
+            if (role != AuthoredInstanceRole::Member && ImGui::MenuItem("Duplicate", "Ctrl+D"))
                 action = { EntityActionKind::Duplicate, nullptr, entity };
+            if (role != AuthoredInstanceRole::Ordinary && ImGui::MenuItem("Copy as Ordinary Object"))
+                action = { EntityActionKind::CopyAsOrdinaryObject, nullptr, entity };
             if (ImGui::MenuItem("Delete", "Del"))
                 action = { EntityActionKind::Delete, nullptr, entity };
 
@@ -77,6 +82,7 @@ namespace mir
             World &world;
             const HierarchyIndex &index;
             Selection &selection;
+            IAuthoredEntities *authored;
             EntityAction &action;
             Entity &deferredClick;
             std::vector<Entity> &dragged;
@@ -334,7 +340,7 @@ namespace mir
             DragSourceForRow(context, entity);
             DropTargetForRow(context, entity, hasChildren && !open);
 
-            DrawEntityMenu(selection, entity, context.action);
+            DrawEntityMenu(selection, entity, context.authored, context.action);
 
             if (hasChildren && open)
             {
@@ -375,7 +381,7 @@ namespace mir
         }
     }
 
-    EntityAction HierarchyPanel::Draw(World &world)
+    EntityAction HierarchyPanel::Draw(World &world, IAuthoredEntities *authored)
     {
         EntityAction action;
 
@@ -437,8 +443,8 @@ namespace mir
             ImGui::PushID(mSearchScope);
 
         DropPreview preview;
-        DrawContext context{ world, index, selection, action, mDeferredClick, mDragged, mDropHint, preview, mReveal, openRows,
-            scrollTo, mHoverRow, mHoverStart, kNullEntity, mOpenedDuringDrag, mDropDelivered,
+        DrawContext context{ world, index, selection, authored, action, mDeferredClick, mDragged, mDropHint, preview,
+            mReveal, openRows, scrollTo, mHoverRow, mHoverStart, kNullEntity, mOpenedDuringDrag, mDropDelivered,
             filtering ? &mFiltered : nullptr };
 
         for (const Entity root : index.Roots())

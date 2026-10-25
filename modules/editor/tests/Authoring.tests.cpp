@@ -128,6 +128,7 @@ namespace
     public:
         Entity CreateEntity() override { return kNullEntity; }
         Entity Duplicate(Entity) override { return kNullEntity; }
+        Entity CopyAsOrdinaryObject(Entity) override { return kNullEntity; }
         CapturedSubtree Capture(Entity) override { return {}; }
         std::vector<Entity> Restore(const CapturedSubtree &, Entity, Entity) override { return {}; }
         bool Destroy(Entity) override { return false; }

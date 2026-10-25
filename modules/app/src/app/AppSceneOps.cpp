@@ -14,6 +14,7 @@
 #include <core/log/Log.h>
 #include <scene/EntitySnapshot.h>
 #include <scene/SceneAsset.h>
+#include <scene/SceneDuplicate.h>
 #include <scene/SceneIO.h>
 
 #include <optional>
@@ -28,7 +29,14 @@ namespace mir
 
     Entity AppSceneOps::Duplicate(Entity source)
     {
-        const Entity copy = DuplicateSceneEntity(mApp.GetWorld(), mApp.Scene(), source);
+        const Entity copy = DuplicateSceneEntitySubtree(mApp.GetWorld(), mApp.Scene(), source);
+        ResolveScripts();
+        return copy;
+    }
+
+    Entity AppSceneOps::CopyAsOrdinaryObject(Entity source)
+    {
+        const Entity copy = CopyInstanceMemberAsOrdinary(mApp.GetWorld(), mApp.Scene(), source);
         ResolveScripts();
         return copy;
     }

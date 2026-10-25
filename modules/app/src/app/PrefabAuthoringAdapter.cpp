@@ -150,6 +150,20 @@ namespace mir
         return mAuthoring.RemovedComponents(entity);
     }
 
+    AuthoredInstanceRole PrefabAuthoringAdapter::InstanceRole(Entity entity)
+    {
+        switch (mAuthoring.InstanceRole(entity))
+        {
+        case PrefabInstanceRole::Root:
+            return AuthoredInstanceRole::Root;
+        case PrefabInstanceRole::Member:
+            return AuthoredInstanceRole::Member;
+        case PrefabInstanceRole::Ordinary:
+            break;
+        }
+        return AuthoredInstanceRole::Ordinary;
+    }
+
     std::string PrefabAuthoringAdapter::EncodeField(FieldKind kind, const void *bytes)
     {
         return mAuthoring.EncodeField(kind, bytes);

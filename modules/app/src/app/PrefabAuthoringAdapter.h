@@ -40,6 +40,8 @@ namespace mir
         AuthoredComponentState ComponentState(Entity entity, std::string_view component) override;
         std::vector<std::string> RemovedComponents(Entity entity) override;
 
+        AuthoredInstanceRole InstanceRole(Entity entity) override;
+
         std::string EncodeField(FieldKind kind, const void *bytes) override;
 
         AuthoredAction Revert(const AuthoredKey &key) override;
