@@ -35,9 +35,10 @@ namespace mir
     // module is built to take the slot back
     void ReclaimCrashHandler();
 
-    // Call at the top of every thread the engine owns: MSVC keeps the terminate handler
-    // per thread, and the thread keeps stack for the handler if it overflows. A thread
-    // a library owns still reaches the handler through abort, but two of those
-    // terminating at once can lose the race and end with abort's exit code 3
+    // Call at the top of every thread the engine owns, and from a library's thread-init
+    // hook where it has one (Jolt): MSVC keeps the terminate handler per thread, and the
+    // thread keeps stack for the handler if it overflows. A thread with no hook (Wwise)
+    // still reaches the handler through abort, but two of those terminating at once can
+    // lose the race: abort's exit code 3, and no report if the first had not renamed it in
     void ArmCrashHandler();
 } // namespace mir

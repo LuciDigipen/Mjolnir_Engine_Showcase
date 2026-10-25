@@ -105,6 +105,8 @@ namespace mir
         {
             // set once at install, only read after
             std::wstring reportPath;
+            // written first, then renamed over reportPath, so a reader sees a whole report or none
+            std::wstring reportTempPath;
             std::wstring dumpPath;
             std::string reportHead;
             std::string reportTail;
@@ -188,7 +190,7 @@ namespace mir
             }
 
             const HANDLE file =
-                CreateFileW(gCrash.reportPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+                CreateFileW(gCrash.reportTempPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
             if (file == INVALID_HANDLE_VALUE)
                 return;
 
@@ -197,6 +199,7 @@ namespace mir
             WriteFile(file, cause.data, static_cast<DWORD>(cause.size), &written, nullptr);
             WriteFile(file, gCrash.reportTail.data(), static_cast<DWORD>(gCrash.reportTail.size()), &written, nullptr);
             CloseHandle(file);
+            MoveFileExW(gCrash.reportTempPath.c_str(), gCrash.reportPath.c_str(), MOVEFILE_REPLACE_EXISTING);
         }
 
         void WriteDump()
@@ -347,6 +350,7 @@ namespace mir
         std::filesystem::create_directories(config.mDumpPath.parent_path(), ec);
 
         gCrash.reportPath = config.mReportPath.wstring();
+        gCrash.reportTempPath = gCrash.reportPath + L".tmp";
         gCrash.dumpPath = config.mDumpPath.wstring();
 
         const std::string dump = JsonEscape(Utf8(config.mDumpPath));
