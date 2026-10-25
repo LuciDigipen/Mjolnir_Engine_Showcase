@@ -121,7 +121,7 @@ namespace mir
     }
 
     // Never null; does nothing until Initialize binds it.
-    App::App() : mTerrain(std::make_unique<TerrainRuntime>()) {}
+    App::App() = default;
 
     App::~App() { Shutdown(); }
 
@@ -225,9 +225,9 @@ namespace mir
         mPhysicsScript.emplace(*mScript);
         mRendererScript.emplace(*mScript);
         mTerrainScript.emplace(*mScript);
+        mTerrain.emplace(Context(), *mRenderer, mProject);
 
 
-        mTerrain->Bind(mWorld, mRenderer->Renderer(), mProject);
 
         if (mDesc.mUIDemo)
             mUIDemo.Load(mGameUI, Assets());
@@ -368,7 +368,7 @@ namespace mir
             prefabs->Bind(mScene);
         ClearHistory();
         SetSceneUnsaved(false);
-        mTerrain->Load();
+        mTerrain->Runtime().Load();
     }
 
     App::SceneLoadChoice App::ChooseSceneLoad(const SceneProbe &probe, bool atStartup) const
@@ -405,8 +405,8 @@ namespace mir
             return;
 
         // Play pins the terrain releases present on entry
-        mTerrain->Refresh(0.0f, true);
-        mTerrain->BeginPlay();
+        mTerrain->Runtime().Refresh(0.0f, true);
+        mTerrain->Runtime().BeginPlay();
 
         mPlaySnapshot = CaptureWorld(mWorld);
         mUnsavedBeforePlay = SceneUnsaved();
@@ -437,14 +437,14 @@ namespace mir
         mRenderer->Meshes().Reset();
         mWorld.Resource<ModelDrawItems>().items.clear();
         mWorld.Resource<ModelMorphOverrides>().instances.clear();
-        mTerrain->ForgetMeshes();
+        mTerrain->Runtime().ForgetMeshes();
         mRenderer->Renderer().ReleaseSceneResources();
 
         SetEngineMode(mWorld, EngineMode::Edit);
         SetPlayState(mWorld, PlayState::Running);
 
         // Starts checking a release published during Play
-        mTerrain->Refresh(0.0f, true);
+        mTerrain->Runtime().Refresh(0.0f, true);
     }
 
     void App::TogglePause()
@@ -568,7 +568,7 @@ namespace mir
             draws->items.clear();
         if (auto *overrides = mWorld.TryResource<ModelMorphOverrides>())
             overrides->instances.clear();
-        mTerrain->Unload();
+        mTerrain->Runtime().Unload();
         mRenderer->Renderer().ReleaseSceneResources();
     }
 
@@ -669,13 +669,6 @@ namespace mir
                 mWorld.Resource<RequestQueue>().Push(Request::ApplyImportedAssets);
             mContentBrowser.Update();
         #endif
-
-            // Every mode, before any system runs
-            mTerrain->Update();
-
-            // Edit, between frames, before any system runs
-            if (IsEditing(mWorld))
-                mTerrain->Refresh(dt, false);
 
             mFrameDt = dt;
             mImGui->RunUI();
@@ -930,6 +923,7 @@ namespace mir
     #endif
 
         mScheduler.Reset();
+        mTerrain.reset();
         mTerrainScript.reset();
         mRendererScript.reset();
         mPhysicsScript.reset();

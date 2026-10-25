@@ -34,6 +34,7 @@
 #include <scene/SceneIO.h>
 #include <script/ScriptModule.h>
 #include <terrain/TerrainModule.h>
+#include <terrain_runtime/TerrainRuntimeModule.h>
 #include <terrain_script/TerrainScriptModule.h>
 #include <window/Splash.h>
 #include <window/WindowModule.h>
@@ -58,7 +59,6 @@
 
 namespace mir
 {
-    class TerrainRuntime;
     class WorldSceneOps;
 
     struct AppDesc
@@ -262,10 +262,10 @@ namespace mir
         std::optional<PhysicsScriptModule> mPhysicsScript;
         std::optional<RendererScriptModule> mRendererScript;
         std::optional<TerrainScriptModule> mTerrainScript;
+        std::optional<TerrainRuntimeModule> mTerrain;
         LoadedScene mScene;
 
-        // Handles only, freed with the renderer and the World
-        std::unique_ptr<TerrainRuntime> mTerrain;
+
 
         AppDesc mDesc;
         GameProject mProject;
