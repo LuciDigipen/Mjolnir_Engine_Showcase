@@ -24,7 +24,12 @@ namespace mir
         // Once per fixed substep, 0..N times a frame; context.dt is the fixed step.
         // After Update so physics writes Transform last, before PostUpdate propagates it.
         FixedUpdate,
+        // Transform writers that run after physics, e.g. interpolation
         PostUpdate,
+        // TransformPropagateSystem alone, so every later phase reads this frame's WorldTransform
+        Propagate,
+        // WorldTransform readers
+        LateUpdate,
         Render,
         kCount
     };

@@ -252,27 +252,24 @@ namespace mir
 
         mScriptSystem = &mScheduler.AddSystem<ScriptSystem>(SystemPhase::PreUpdate, mScriptHost);
 
-        // FixedUpdate: once per fixed substep, before PostUpdate turns the
+        // FixedUpdate: once per fixed substep, before Propagate turns the
         // Transforms it writes into world matrices
         mScheduler.AddSystem<PhysicsSystem>(SystemPhase::FixedUpdate);
 
-
         mScheduler.AddSystem<PhysicsInterpolationSystem>(SystemPhase::PostUpdate);
 
-        //should be before any other system in PostUpdate that reads WorldTransform
-        mScheduler.AddSystem<TransformPropagateSystem>(SystemPhase::PostUpdate);
+        mScheduler.AddSystem<TransformPropagateSystem>(SystemPhase::Propagate);
 
-        mScheduler.AddSystem<CameraControllerSystem>(SystemPhase::PostUpdate);
+        mScheduler.AddSystem<CameraControllerSystem>(SystemPhase::LateUpdate);
         mModelSystem =
-            &mScheduler.AddSystem<ModelSystem>(SystemPhase::PostUpdate, mRenderer, Assets(), mProject.mAssetIdRoot);
-        mMeshResolveSystem = &mScheduler.AddSystem<MeshResolveSystem>(SystemPhase::PostUpdate, mRenderer, Assets(),
+            &mScheduler.AddSystem<ModelSystem>(SystemPhase::LateUpdate, mRenderer, Assets(), mProject.mAssetIdRoot);
+        mMeshResolveSystem = &mScheduler.AddSystem<MeshResolveSystem>(SystemPhase::LateUpdate, mRenderer, Assets(),
             mProject.mAssetIdRoot);
 
-        // after TransformPropagateSystem: it reads the WorldTransform that system writes
-        mScheduler.AddSystem<AudioEmitterSystem>(SystemPhase::PostUpdate);
-        mScheduler.AddSystem<AudioListenerSystem>(SystemPhase::PostUpdate);
+        mScheduler.AddSystem<AudioEmitterSystem>(SystemPhase::LateUpdate);
+        mScheduler.AddSystem<AudioListenerSystem>(SystemPhase::LateUpdate);
 
-        mScheduler.AddSystem<CollisionEventSystem>(SystemPhase::PostUpdate);
+        mScheduler.AddSystem<CollisionEventSystem>(SystemPhase::LateUpdate);
 
         mRenderSystem = &mScheduler.AddSystem<RenderSystem>(SystemPhase::Render, mRenderer);
 

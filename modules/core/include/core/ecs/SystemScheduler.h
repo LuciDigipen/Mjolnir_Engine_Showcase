@@ -45,6 +45,8 @@ namespace mir
         {
             static_assert(std::is_base_of_v<ISystem, S>, "SystemScheduler::Add: S must derive from ISystem");
             MIR_ASSERT(!mStarted, "SystemScheduler::Add: systems must be registered before Start");
+            MIR_ASSERT((phase != SystemPhase::Propagate || std::is_same_v<S, TransformPropagateSystem>),
+                "SystemScheduler::Add: only TransformPropagateSystem runs in Propagate");
 
             auto system = std::make_unique<S>(std::forward<Args>(args)...);
             S &ref = *system;
