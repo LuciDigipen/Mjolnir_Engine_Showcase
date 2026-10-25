@@ -335,3 +335,24 @@ TEST_CASE("A local write on a parented interpolated body is read through its par
     // local 3 under a parent at 10 is world 13
     CHECK(probe.position.x == Catch::Approx(13.0).margin(1e-9));
 }
+
+TEST_CASE("A kinematic body moved by velocity is drawn between its steps", "[physics][interpolation][kinematic]")
+{
+    InterpolationFixture fixture;
+    const mir::Entity entity = fixture.world.CreateEntity();
+    mir::AddTransform(fixture.world, entity, mir::Transform{ mir::WorldVec3(0.0, 5.0, 0.0) });
+    fixture.world.AddComponent<mir::RigidBody>(entity,
+        mir::RigidBody{ .motion = mir::PhysicsMotion::Kinematic, .shape = mir::PhysicsShape::Sphere, .radius = 0.5f, .interpolate = true });
+    fixture.world.Resource<mir::PhysicsWorld>().SetBodyLinearVelocity(
+        fixture.BodyOf(entity).runtime.body, glm::vec3(6.0f, 0.0f, 0.0f));
+
+    for (int i = 0; i < 10; ++i)
+        fixture.Frame(1, 1.0f);
+
+    const double previousX = fixture.BodyOf(entity).runtime.previousPosition.x;
+    const double currentX = fixture.BodyOf(entity).runtime.currentPosition.x;
+    REQUIRE(currentX > previousX);
+
+    fixture.Frame(0, 0.5f);
+    CHECK(fixture.TransformOf(entity).Position().x == Catch::Approx((previousX + currentX) * 0.5).margin(1e-6));
+}

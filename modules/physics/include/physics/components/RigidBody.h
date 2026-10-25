@@ -44,6 +44,10 @@ namespace mir
             // later means something else moved it, its own Transform or any ancestor's.
             WorldVec3 stampedPosition{ 0 };
             glm::quat stampedRotation = kIdentityRotation;
+            // A Kinematic body's first Transform write teleports it, later ones move it to the target.
+            bool hasMoved = false;
+            // Moved to a target this step, so its velocity is cleared once the step has reached it.
+            bool movedToTarget = false;
         };
 
         Runtime runtime;
@@ -58,6 +62,13 @@ namespace mir
     }
 
     // `runtime` is deliberately not listed: it is this run's live state, never saved or edited.
+    // A body the step moves, dynamic or kinematic, whose pose is written back to the Transform.
+    inline bool HasMovingBody(const RigidBody &rigidBody)
+    {
+        return rigidBody.runtime.body.IsValid()
+            && (rigidBody.motion == PhysicsMotion::Dynamic || rigidBody.motion == PhysicsMotion::Kinematic);
+    }
+
     inline constexpr FieldDesc kRigidBodyFields[] = {
         { .mName = "motion", .mKind = FieldKind::Int, .mOffset = offsetof(RigidBody, motion),
          .mWidget = FieldWidget::Enum, .mEnumNames = kPhysicsMotionNames },

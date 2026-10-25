@@ -67,13 +67,13 @@ namespace mir
         if (physics == nullptr)
             return;
 
-        PushTransforms(context.world, *physics);
+        PushTransforms(context.world, *physics, context.dt);
         RunStepGates(context.world, *physics, context.dt);
         physics->Step(context.dt);
         PullPoses(context.world, *physics);
     }
 
-    void PhysicsSystem::PushTransforms(World &world, PhysicsWorld &physics)
+    void PhysicsSystem::PushTransforms(World &world, PhysicsWorld &physics, float dt)
     {
         mQuery->ForEach(
             [&](Entity entity, Transform &, RigidBody &rigidBody)
@@ -105,9 +105,20 @@ namespace mir
                 const glm::quat rotation =
                     rotationWritten ? pose.rotation : physics.BodyRotation(rigidBody.runtime.body);
 
-                physics.SetBodyTransform(rigidBody.runtime.body, position, rotation);
-                // interpolation restarts from here, with no blend from the old pose
-                detail::ResetStepPoses(rigidBody, position.Meters(), rotation);
+                if (rigidBody.motion == PhysicsMotion::Kinematic && rigidBody.runtime.hasMoved)
+                {
+                    // moved to the target over this step, so dynamic bodies in the way are pushed; the step
+                    // poses keep running, so interpolation draws the sweep
+                    physics.MoveBodyKinematic(rigidBody.runtime.body, position, rotation, dt);
+                    rigidBody.runtime.movedToTarget = true;
+                }
+                else
+                {
+                    physics.SetBodyTransform(rigidBody.runtime.body, position, rotation);
+                    // interpolation restarts from here, with no blend from the old pose
+                    detail::ResetStepPoses(rigidBody, position.Meters(), rotation);
+                    rigidBody.runtime.hasMoved = true;
+                }
                 // stamp what the entity shows, not the target, or the next push would see a write again
                 detail::Stamp(rigidBody, pose);
             });
@@ -118,8 +129,16 @@ namespace mir
         mQuery->ForEach(
             [&](Entity entity, Transform &transform, RigidBody &rigidBody)
             {
-                if (!HasDynamicBody(rigidBody))
+                if (!HasMovingBody(rigidBody))
                     return;
+
+                // The step reached the target, so the velocity MoveKinematic set must not carry it on.
+                if (rigidBody.runtime.movedToTarget)
+                {
+                    physics.SetBodyLinearVelocity(rigidBody.runtime.body, glm::vec3(0.0f));
+                    physics.SetBodyAngularVelocity(rigidBody.runtime.body, glm::vec3(0.0f));
+                    rigidBody.runtime.movedToTarget = false;
+                }
 
                 rigidBody.runtime.previousPosition = rigidBody.runtime.currentPosition;
                 rigidBody.runtime.previousRotation = rigidBody.runtime.currentRotation;

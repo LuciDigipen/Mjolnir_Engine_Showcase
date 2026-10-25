@@ -26,12 +26,14 @@ namespace mir
     {
         Static = 0,
         Dynamic = 1,
+        // Moved by a script, a Transform write or a velocity, never by forces; pushes dynamic bodies and is not pushed back.
+        Kinematic = 2,
     };
 
     // Index == underlying PhysicsMotion value; for RigidBody's "motion" inspector field.
-    inline constexpr std::string_view kPhysicsMotionNames[] = { "Static", "Dynamic" };
+    inline constexpr std::string_view kPhysicsMotionNames[] = { "Static", "Dynamic", "Kinematic" };
     // Each assert names its enum's last value; move it along when one is added.
-    static_assert(std::size(kPhysicsMotionNames) == static_cast<std::size_t>(PhysicsMotion::Dynamic) + 1);
+    static_assert(std::size(kPhysicsMotionNames) == static_cast<std::size_t>(PhysicsMotion::Kinematic) + 1);
 
     enum class PhysicsShape : int32_t
     {

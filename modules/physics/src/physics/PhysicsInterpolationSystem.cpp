@@ -36,7 +36,7 @@ namespace mir
         mQuery->ForEach(
             [&](Entity entity, Transform &transform, RigidBody &rigidBody)
             {
-                if (!rigidBody.interpolate || !HasDynamicBody(rigidBody))
+                if (!rigidBody.interpolate || !HasMovingBody(rigidBody))
                     return;
 
                 // Moved by something else since physics last placed it: that write stands until the next push.

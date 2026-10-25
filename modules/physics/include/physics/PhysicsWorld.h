@@ -106,6 +106,9 @@ namespace mir
         glm::vec3 BodyLinearVelocity(BodyHandle body) const;
         glm::vec3 BodyAngularVelocity(BodyHandle body) const;
         void SetBodyTransform(BodyHandle body, WorldPosition position, const glm::quat &rotation);
+        // Kinematic only: sets the velocity that reaches the pose after dt, so dynamic bodies in the way are pushed
+        // and not skipped over. The pose is reached at the end of the next step; the velocity is left behind.
+        void MoveBodyKinematic(BodyHandle body, WorldPosition position, const glm::quat &rotation, float dt);
         void SetBodyLinearVelocity(BodyHandle body, const glm::vec3 &velocity);
         void SetBodyAngularVelocity(BodyHandle body, const glm::vec3 &velocity);
         void AddLinearVelocity(BodyHandle body, const glm::vec3 &velocity);

@@ -388,6 +388,110 @@ TEST_CASE("A rotated non-uniform parent stays finite", "[physics][world]")
     CHECK(std::isfinite(at.z));
 }
 
+namespace
+{
+    constexpr mir::RigidBody kKinematicBox{
+        .motion = mir::PhysicsMotion::Kinematic,
+        .shape = mir::PhysicsShape::Box,
+        .halfExtent = glm::vec3(0.5f),
+    };
+
+    mir::BodyHandle BodyOfEntity(PhysicsFixture &fixture, mir::Entity entity)
+    {
+        return fixture.world.GetComponent<mir::RigidBody>(entity)->runtime.body;
+    }
+}
+
+TEST_CASE("A kinematic body ignores gravity and moves by its velocity", "[physics][kinematic]")
+{
+    PhysicsFixture fixture;
+    const mir::Entity entity = fixture.Add(glm::vec3(0.0f, 5.0f, 0.0f), kKinematicBox);
+
+    fixture.Run(30);
+    CHECK(fixture.TransformOf(entity).Position().y == Catch::Approx(5.0).margin(1e-5));
+
+    fixture.Physics().SetBodyLinearVelocity(BodyOfEntity(fixture, entity), glm::vec3(3.0f, 0.0f, 0.0f));
+    fixture.Run(60);
+    CHECK(fixture.TransformOf(entity).Position().x == Catch::Approx(3.0).margin(0.05));
+}
+
+TEST_CASE("A kinematic body pushes a dynamic one and is not pushed back", "[physics][kinematic]")
+{
+    PhysicsFixture fixture;
+    fixture.Add(glm::vec3(0.0f, 0.0f, 0.0f), kStaticBox);
+    const mir::Entity sphere = fixture.Add(glm::vec3(0.0f, 1.0f, 0.0f), kDynamicSphere);
+    const mir::Entity pusher = fixture.Add(glm::vec3(-3.0f, 1.0f, 0.0f), kKinematicBox);
+    fixture.Physics().SetBodyLinearVelocity(BodyOfEntity(fixture, pusher), glm::vec3(2.0f, 0.0f, 0.0f));
+
+    fixture.Run(180);
+
+    // three seconds at 2 m/s carries the box from -3 to 3, whatever it met on the way
+    CHECK(fixture.TransformOf(pusher).Position().x == Catch::Approx(3.0).margin(0.05));
+    CHECK(fixture.TransformOf(sphere).Position().x > 1.0);
+}
+
+TEST_CASE("A Transform write moves a kinematic body to the target and it stays there", "[physics][kinematic]")
+{
+    PhysicsFixture fixture;
+    const mir::Entity entity = fixture.Add(glm::vec3(0.0f, 5.0f, 0.0f), kKinematicBox);
+    fixture.Run(2);
+
+    // the first write after the body exists teleports it
+    fixture.world.GetComponent<mir::Transform>(entity)->SetPosition(mir::WorldVec3(10.0, 5.0, 0.0));
+    fixture.Run(1);
+    CHECK(fixture.Physics().BodyPosition(BodyOfEntity(fixture, entity))->Meters().x == Catch::Approx(10.0).margin(1e-4));
+
+    // later writes sweep: the target is reached by the end of the step, with velocity to show for it
+    fixture.world.GetComponent<mir::Transform>(entity)->SetPosition(mir::WorldVec3(11.0, 5.0, 0.0));
+    fixture.Run(1);
+    CHECK(fixture.Physics().BodyPosition(BodyOfEntity(fixture, entity))->Meters().x == Catch::Approx(11.0).margin(1e-3));
+
+    // and it does not carry on past the target
+    fixture.Run(10);
+    CHECK(fixture.Physics().BodyPosition(BodyOfEntity(fixture, entity))->Meters().x == Catch::Approx(11.0).margin(1e-3));
+    CHECK(fixture.Physics().BodyLinearVelocity(BodyOfEntity(fixture, entity)).x == Catch::Approx(0.0).margin(1e-4));
+}
+
+TEST_CASE("A kinematic target move pushes a dynamic body in the way", "[physics][kinematic]")
+{
+    PhysicsFixture fixture;
+    fixture.Add(glm::vec3(0.0f, 0.0f, 0.0f), kStaticBox);
+    const mir::Entity sphere = fixture.Add(glm::vec3(0.0f, 1.0f, 0.0f), kDynamicSphere);
+    const mir::Entity pusher = fixture.Add(glm::vec3(-3.0f, 1.0f, 0.0f), kKinematicBox);
+    fixture.Run(2);
+
+    // a platform walked along by Transform writes, one step at a time
+    double x = -3.0;
+    for (int i = 0; i < 150; ++i)
+    {
+        x += 0.04;
+        fixture.world.GetComponent<mir::Transform>(pusher)->SetPosition(mir::WorldVec3(x, 1.0, 0.0));
+        fixture.Run(1);
+    }
+
+    CHECK(fixture.TransformOf(sphere).Position().x > 1.0);
+    CHECK(fixture.TransformOf(pusher).Position().x == Catch::Approx(x).margin(1e-3));
+}
+
+TEST_CASE("A position write on a kinematic body keeps its own rotation", "[physics][kinematic]")
+{
+    PhysicsFixture fixture;
+    const mir::Entity entity = fixture.Add(glm::vec3(0.0f, 5.0f, 0.0f), kKinematicBox);
+    fixture.Run(2);
+    fixture.world.GetComponent<mir::Transform>(entity)->SetPosition(mir::WorldVec3(1.0, 5.0, 0.0));
+    fixture.Run(1);
+
+    const glm::quat turned = glm::angleAxis(0.8f, glm::vec3(0.0f, 1.0f, 0.0f));
+    fixture.world.GetComponent<mir::Transform>(entity)->SetRotation(turned);
+    fixture.Run(1);
+    CHECK(std::abs(glm::dot(fixture.Physics().BodyRotation(BodyOfEntity(fixture, entity)), turned)) > 0.99999f);
+
+    fixture.world.GetComponent<mir::Transform>(entity)->SetPosition(mir::WorldVec3(2.0, 5.0, 0.0));
+    fixture.Run(1);
+    CHECK(std::abs(glm::dot(fixture.Physics().BodyRotation(BodyOfEntity(fixture, entity)), turned)) > 0.99999f);
+    CHECK(fixture.Physics().BodyPosition(BodyOfEntity(fixture, entity))->Meters().x == Catch::Approx(2.0).margin(1e-3));
+}
+
 TEST_CASE("A RigidBody gets its body when it is added, before any step", "[physics]")
 {
     PhysicsFixture fixture;

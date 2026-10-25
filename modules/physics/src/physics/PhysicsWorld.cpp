@@ -141,14 +141,18 @@ namespace mir
         {
             const JPH::RefConst<JPH::Shape> owned(shape);
             const bool dynamic = motion == PhysicsMotion::Dynamic;
+            // Kinematic bodies move, so they live in the moving layer and start awake
+            const bool moving = motion != PhysicsMotion::Static;
+            const JPH::EMotionType type = dynamic ? JPH::EMotionType::Dynamic
+                : moving                          ? JPH::EMotionType::Kinematic
+                                                  : JPH::EMotionType::Static;
 
-            JPH::BodyCreationSettings settings(owned, ToJolt(position), ToJolt(rotation),
-                                               dynamic ? JPH::EMotionType::Dynamic : JPH::EMotionType::Static,
-                                               dynamic ? detail::Layers::kMoving : detail::Layers::kNonMoving);
+            JPH::BodyCreationSettings settings(owned, ToJolt(position), ToJolt(rotation), type,
+                                               moving ? detail::Layers::kMoving : detail::Layers::kNonMoving);
             settings.mEnhancedInternalEdgeRemoval = enhancedInternalEdgeRemoval;
 
             const JPH::BodyID id = Bodies().CreateAndAddBody(
-                settings, dynamic ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+                settings, moving ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
 
             if (id.IsInvalid())
             {
@@ -156,9 +160,9 @@ namespace mir
                 return {};
             }
 
-            if (!dynamic)
+            if (!moving)
                 mBroadPhaseDirty = true;
-            else
+            else if (dynamic)
                 Bodies().SetCollisionGroup(id, JPH::CollisionGroup(nullptr, detail::kDynamicGroup, id.GetIndex()));
 
             return BodyHandle{id.GetIndexAndSequenceNumber()};
@@ -405,6 +409,15 @@ namespace mir
             return;
 
         mImpl->Bodies().SetPositionAndRotation(*id, ToJolt(position), ToJolt(rotation), JPH::EActivation::Activate);
+    }
+
+    void PhysicsWorld::MoveBodyKinematic(BodyHandle body, WorldPosition position, const glm::quat &rotation, float dt)
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        if (!id || mImpl->Bodies().GetMotionType(*id) != JPH::EMotionType::Kinematic || dt <= 0.0f)
+            return;
+
+        mImpl->Bodies().MoveKinematic(*id, ToJolt(position), ToJolt(rotation), dt);
     }
 
     void PhysicsWorld::SetBodyLinearVelocity(BodyHandle body, const glm::vec3 &velocity)

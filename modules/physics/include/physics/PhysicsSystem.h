@@ -40,7 +40,7 @@ namespace mir
 
     private:
         // New bodies and Transform edits reach Jolt before the step; Jolt's poses come back after it.
-        void PushTransforms(World &world, PhysicsWorld &physics);
+        void PushTransforms(World &world, PhysicsWorld &physics, float dt);
         void PullPoses(World &world, PhysicsWorld &physics);
 
         Query<Transform, RigidBody> *mQuery = nullptr;
