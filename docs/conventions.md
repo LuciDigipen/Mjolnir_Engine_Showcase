@@ -130,11 +130,12 @@ rather than from C++
 
 Recoverable failure returns `false`, `nullptr` or `std::optional`, and logs once.
 
-Every setup failure is fatal. Setup is everything inside `App::Initialize`,
-including the first scene load. A failing step throws a `SetupError`
-(`core/log/SetupError.h`) instead of returning. `main` catches it while `App` is
-still alive, so the report is written before anything is torn down. `~App` then
-runs `App::Shutdown`, which every service makes safe on a partial setup.
+Every setup failure is fatal. Setup is everything `App`'s constructor builds,
+every module constructor and the first scene load included. A failing step
+throws a `SetupError` (`core/log/SetupError.h`) instead of returning. C++ then
+destroys the members already built, in reverse, and `main` reports the error.
+A module destructor never throws: it logs what fails and carries on, and `main`
+exits with 15 when teardown logged an error.
 
 A `SetupError` carries what failed, the path, the cause and the fix. The fix
 names a concrete action, such as the file to restore or the command to run. The
@@ -172,6 +173,7 @@ and agents branch on, so a number is never reused.
 | 12 | Build output | Rebuild: the manifest, AssetCooker, `asset_workspace.json`, `engine.json`, the fonts |
 | 13 | System | Fix the machine: GPU driver, display, audio device, permissions |
 | 14 | Internal | Report a bug with the log attached |
+| 15 | Shutdown | The run finished, but something failed while shutting down; the log says what |
 | 20 | Crash | Report a bug with the log and `logs/crash.dmp` attached |
 
 The log is `logs/engine.log` next to the executable, whatever the launch

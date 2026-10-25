@@ -72,6 +72,19 @@ the editor's own camera. Right-drag flies/looks (WASD/QE, scroll for speed);
 `Editor::UpdateCamera` gates that on `!WantsCaptureMouse()` so a drag ImGui
 itself is handling doesn't also move it.
 
+### The module
+
+`EditorModule` owns the `Editor`, the asset import, the content browser and the
+scene ops. Its ImGui drawer draws the layout, turns the frame's actions into
+requests (scene commands, a game to open) or carries them out (an import, a
+content browser action, opening a file in the IDE), then feeds viewport 0's rect
+and, in Edit, the editor camera to `RenderSystem`. Its `FrameBegin` work polls
+the import and the content browser and asks for the swap once a cook finishes.
+Its stage functions keep the history and the unsaved mark: `SceneLoad` clears
+the history and sets the mark from `SceneModule::LastLoad()`, `SceneSaved`
+clears it, `PlayBegin` remembers it for Stop to put back, and `ReloadCommit`
+marks the import applied.
+
 ## API
 
 ```cpp
@@ -101,6 +114,10 @@ EditorCamera &SceneCamera();
 
 | Type | Header | Role |
 |---|---|---|
+| `EditorModule` | `editor/EditorModule.h` | The editor's module: its ImGui drawer, `FrameBegin` work and stage functions |
+| `AssetImportManager`, `ContentBrowserWatcher` | `editor/AssetImportManager.h`, `editor/ContentBrowserWatcher.h` | The import queue and the cooker child; the content browser's disk poll |
+| `WorldSceneOps` | `editor/WorldSceneOps.h` | The `ISceneOps` the history uses, on the World and its `LoadedScene` |
+| `CreateGameProject` | `editor/CreateGameProject.h` | Writes a new game directory; the scene through `scene`'s own save |
 | `SceneMenuAction` | `editor/Editor.h` | `None`/`New`/`Save`/`Load`/`Play`/`TogglePause`/`Stop` |
 | `ProjectMenuEntry` | `editor/Editor.h` | `{mDir, mName}` for one game in Open Project |
 | `EditorActions` | `editor/Editor.h` | `{mScene, mOpenProject, mAssetImport, mContentBrowser, ...}`, what the menus and toolbar asked for this frame |
@@ -416,6 +433,15 @@ or the dialog themselves. History needs neither, and its tests are in
    deleted, not everything recursively under a deleted folder.
 
 ## Changed
+
+*2026-10-24* — **`EditorModule`; the import, content browser, scene ops and
+project creation moved in from `app`.** Was: `App` held the `Editor`, the
+`AssetImportManager`, the `ContentBrowserWatcher` and `AppSceneOps`, applied the
+editor's actions, and cleared the history and set the unsaved mark at each
+transition. Now: the module does all of it through its drawer, its `FrameBegin`
+work and stage functions, and `CreateGameProject` writes the default scene
+through `scene`. Because: `App` no longer knows what the editor keeps, and the
+scene file had a hand-written copy of `scene`'s format.
 
 *2026-10-22* — **Theme preference; `Initialize` takes `srgbOutput`.**
 `EditorPreferences::theme` (`"theme": "midnight" | "slate"`) picks the editor

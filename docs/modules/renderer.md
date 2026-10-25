@@ -97,6 +97,47 @@ lot of code: there are no render passes and no framebuffers, since
 `vkCmdBeginRendering` is used throughout, there are only synchronization2
 barriers, and frame pacing is one timeline semaphore rather than a fence pool.
 
+### The module
+
+`RendererModule` starts the renderer, registers the renderer's components,
+entity types and post effects, the `ViewDrawSources`, `RenderSettings` and
+`PostProcessingSettings` resources, `MeshResolveSystem` in `LateUpdate` and
+`RenderSystem` in `Render`. It takes the window as an `ISurfaceProvider`, so
+`renderer` still never links `window`. Its stage functions free the scene's GPU
+resources at `SceneUnload` and reset the temporal history at `SceneLoad` and
+`PlayBegin`; a Stop keeps every cache.
+
+### Resolving mesh and material names
+
+Meshes and materials resolve in `MeshResolveSystem`, a `LateUpdate` system the
+module registers. A `MeshRenderer` round-trips `meshName` and `materialShader`
+as strings; a name turns into handles by asset id under the game's asset id
+root, unless it is one of `Shapes.h`'s reserved builtin names, which generate
+their geometry on the spot. Entities also get a `MeshRenderer` outside
+a load: from Duplicate, Paste, Add Component and Inspector edits. A load-time pass
+would leave their handles stale or null, so this runs every frame. It remembers
+the `meshName` and `materialShader` each entity was last resolved from, keyed by
+`PackEntity`. It resolves again only when one of them changes. Handles and
+`MeshBounds` come from caches keyed by name, so renderers naming the same mesh
+share one upload.
+
+A renderer whose names are both empty is never touched, so a handle set from code
+keeps its value. Clearing `meshName` nulls the mesh and removes `MeshBounds`.
+Removing the `MeshRenderer` removes `MeshBounds` too, and its OnRemove forgets
+the entity's names, so a packed id the World hands out again starts unresolved.
+`Reset()` empties the caches and runs at `SceneUnload`, before
+`ReleaseSceneResources`.
+
+At `ReloadCommit` the module calls `CommitReload` with the new `AssetCache`. It frees the cached meshes and forgets every entity's names, so
+the next `LateUpdate` resolves every renderer from the new cache, including one
+whose mesh failed before the import. That runs before `Render`, so no freed mesh
+is drawn. A mesh file that is not valid JSON, lacks a vertex field, or has an
+index past its vertices logs an error and resolves to no mesh.
+
+A `materialShader` whose `CreateMaterial` fails logs an error and resolves to the
+renderer's error material. The mesh then draws magenta, rather than the default
+grey a null handle would give it.
+
 ## API
 
 ```cpp
@@ -110,6 +151,7 @@ MaterialHandle CreateMaterial(const MaterialDesc &desc);
 bool DestroyMaterial(MaterialHandle handle); // same contract; always false on the default and error materials
 MaterialHandle ErrorMaterial() const;        // solid magenta, for a caller whose CreateMaterial failed
 void ReleaseSceneResources();                // every mesh, material and texture but the built-ins
+void ResetHistory();                         // the next frame accumulates fresh: a cut
 
 // Asynchronous meshes (#127): no call waits on the GPU
 bool ConfigureMeshStreaming(const MeshStreamingDesc &desc);  // staging ring and per-frame bytes, from the caller's data
@@ -471,7 +513,7 @@ one clobbering the other.
 the file cannot be read as a JSON object at all. A readable file whose
 `"rendering"` key is absent, or holds something other than an object, loads as
 defaults instead — a file from before sections existed has no `"rendering"` key
-and is the ordinary case. `App::Initialize` turns the `nullopt` into defaults
+and is the ordinary case. `RendererModule` turns the `nullopt` into defaults
 with `value_or`, so no system has to check.
 
 The key is read with `find` rather than nlohmann's `value`. `value` hands back
@@ -606,7 +648,7 @@ destroy yet (see Backlog). Material lookups check the generation the same
 way mesh and texture lookups do.
 
 **`RenderSystem` runs in `Render` because `TransformPropagateSystem` runs in
-`PostUpdate`.** Placed any earlier, it would draw the previous frame's matrices.
+`Propagate`.** Placed any earlier, it would draw the previous frame's matrices.
 
 **The renderer reaches `RenderSystem` by constructor reference**, not as a world
 resource. A resource would be reachable from any script-bound system, and there
@@ -742,6 +784,14 @@ Everything that needs a device is verified by the smoke tests and
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-10-24* — **`RendererModule`, and `MeshResolveSystem` moved in from
+`app`.** Was: `App` started the renderer, registered its components and
+systems, and owned `MeshResolveSystem`; `ReleaseSceneResources` also reset the
+temporal history, and Stop flushed every cache. Now: the module does all of it,
+`ResetHistory` is its own call at `SceneLoad` and `PlayBegin`, and Stop keeps
+the caches. Because: `App` no longer wires each library, and the caches are
+keyed by asset, so a Stop only made the restored scene upload them again.
 
 *2026-10-22* — **Lights and shadows match between ray tracing and rasterization
 (#217).** Was: `model.slang` lit every model draw with a fixed hard-coded

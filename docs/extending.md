@@ -195,9 +195,10 @@ only exist after the flush.
 
 Systems cannot be registered after `Start`.
 
-A system that sets `World::SetComponentHooks<T>` in `OnStart` has to clear them
-with `ClearComponentHooks<T>` in `OnStop`. Left behind, the hook calls into freed
-memory on the next removal of `T`.
+Component hooks belong to the component's module: it calls
+`World::SetComponentHooks<T>` in its constructor and keeps the returned
+`Registration` as one of its last-declared members. The token clears the hooks
+when the module dies, so no hook calls into freed memory.
 
 Filters go in the same call as the data terms:
 

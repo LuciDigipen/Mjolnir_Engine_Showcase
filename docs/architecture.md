@@ -1,8 +1,8 @@
 # Architecture
 
-*State as of 2026-09-06.* An archetype ECS, a Vulkan 1.3 renderer, an offline
+*State as of 2026-10-24.* An archetype ECS, a Vulkan 1.3 renderer, an offline
 asset pipeline, a Lua scripting layer, an ImGui editor shell, and a thin app
-that composes them.
+that builds them as modules.
 
 ## Principles
 
@@ -19,6 +19,28 @@ Each module has `include/<module>/` for what other consumers may use, and
 `src/<module>/` for everything else.
 
 *Third-party libraries*: Libraries should be linked `PRIVATE` by default.If technical exception arises, document and share with team.
+
+**Every library with state or registrations is a module.**
+
+A module is a class, one per library, that `App` holds as a plain member. Its
+constructor is its startup: it registers its components, World resources,
+systems, component hooks and stage functions, and takes the other modules it
+needs as references. Its destructor is its shutdown. `App` declares the members
+in dependency order, so C++ builds them in that order and destroys them in
+reverse, and a constructor that throws unwinds only what was built.
+
+Every registration returns a move-only `Registration` token, which the module
+keeps as one of its last-declared members. The token unregisters when it dies,
+so a hook or stage function never outlives the module it calls into.
+
+**Libraries come in three kinds.**
+
+*Base* is `core_base`: logging, paths, file bytes, math, the platform layer and
+the crash handler. It is process-wide, set up in `main`, and links only
+third-party code. *Plain* libraries hold stateless helpers with no lifetime:
+`serial`, `editortheme` and `project`. They link base and other plain libraries.
+*Modules* are everything else, and may link anything below them. A library
+becomes a module only when it owns runtime state or registers something.
 
 **A game is data, not a build target.**
 
@@ -45,10 +67,11 @@ a path.
 
 **Setup failures are fatal, and they tell the reader the fix.**
 
-Any step of `App::Initialize` that fails throws a `SetupError` naming the fix.
-`main` turns it into an exit code per category, `logs/last-error.json` and an
-error box, so a person or an agent can fix the launch without reading engine
-code.
+Any module constructor that fails throws a `SetupError` naming the fix. `main`
+turns it into an exit code per category, `logs/last-error.json` and an error
+box, so a person or an agent can fix the launch without reading engine code. A
+crash or `std::terminate` on any thread goes to the crash handler instead, which
+writes the same report and a minidump and exits with 20.
 
 Exceptions are allowed, except across a C callback or out of a thread's entry
 function. At runtime, an operation that can fail still returns `false`,
@@ -59,56 +82,57 @@ Programmer error uses assertions instead. `MIR_ASSERT` is for development errors
 
 ## Module graph
 
-`script` privately links `terrain` for the resident Lua height query (#144);
-`terrain` retains its assets/core dependencies and no script dependency, and
-links `serial` privately for its streaming settings (#126).
+The folder tree is in the [README](../README.md#folder-structure). This is what
+each library links in the engine, besides `core`; `app` links everything.
 
-The folder tree is in the [README](../README.md#folder-structure). This is how
-the pieces depend on each other.
+| Library | Kind | Links |
+|---|---|---|
+| `core_base` | base | third-party only |
+| `serial` | plain | `core_base` |
+| `project` | plain | `core_base`, `serial` |
+| `editortheme` | plain | `imgui` only |
+| `core` | module | `core_base` |
+| `assets` | module | `project` |
+| `scene` | module | `serial` |
+| `prefab` | module | `assets`, `scene`, `serial` |
+| `window`, `audio`, `physics` | module | none |
+| `input` | module | `window`, `serial` |
+| `camera` | module | `input` |
+| `renderer` | module | `assets`, `serial` |
+| `animation` | module | `assets`, `renderer` |
+| `terrain` | module | `assets`, `serial` |
+| `terrain_runtime` | module, bridge | `terrain`, `renderer`, `physics`, `project` |
+| `script` | module | `assets` |
+| `audio_script`, `input_script`, `physics_script`, `renderer_script`, `terrain_script` | module, bridge | `script` and its library |
+| `imguiruntime` | module | `window`, `renderer`, `input` |
+| `gameui` | module | `assets`, `input` |
+| `gameshell` | module | `gameui` |
+| `editor` | module | `imguiruntime`, `renderer`, `window`, `input`, `scene`, `animation`, `assets`, `project`, `editortheme` |
 
-```
-               MjolnirEngine (main.cpp)
-                         |
-                        app
-      +--------+---------+--------+-------------+
-      |        |         |        |             |
-   assets    scene    script    editor      gameshell
-      |        |         |      |    |          |
-      |        |         |      | editortheme gameui
-      |        |         |      |               |
-      |        |         |   imguiruntime     input
-      |        |         |     |      |         |
-      |        |         |  window  renderer    |
-      |        |         |     |      |         |
-      +--------+---------+-----+------+---------+
-                         |
-                       core
-```
+A cross-library piece moves into a library only when that adds no cycle, no new
+third-party code to the library's link closure, and no new runtime setup to its
+tests. Otherwise it is a bridge library. `terrain_runtime` is one, so `terrain`
+and `TerrainTool` need neither Vulkan nor Jolt. The five `*_script` bridges are
+the others, so no library but `script` and its bridges sees Lua.
 
-`app` also links `window`, `renderer` and `imguiruntime` directly, because it
-constructs them. It links `editor` only when `MJOLNIR_WITH_EDITOR` is on; a
-build with it off has no `editor`, `editortheme` or ImGuizmo at all (see
-[app.md](modules/app.md#without-the-editor)). `editor` links `window` and `renderer` too, for the title bar
-and the viewport rect. `gameui` sits beside `editor` and draws into the same
-ImGui frame, but links `imgui` alone, privately, and neither `editor` nor
-`imguiruntime`: it never owns or brackets the frame. It also links `assets`,
-for the cooked textures it draws, and not `renderer`: ImGui's backend uploads
-those itself. `gameshell`, the HUD and pause menu every game gets, links
-`gameui` alone, as a game's own screens would.
-
-`serial` is not shown: `renderer`, `scene`, `input` and `app` reach `core`
-through it for anything touching a JSON file.
+`gameui` draws into the ImGui frame but links `imgui` alone, privately, and
+neither `editor` nor `imguiruntime`. It links `assets`, for the cooked textures
+it draws, and not `renderer`: ImGui's backend uploads those itself. `gameshell`
+links `gameui` alone, as a game's own screens would.
 
 | Module | Owns | Document |
 |---|---|---|
-| `core` | ECS, logging, paths, the surface contract | [core.md](modules/core.md) |
+| `core` | `core_base`: logging, paths, math, platform, crash handler. `core`: the ECS, stages, frame slots, requests | [core.md](modules/core.md) |
+| `project` | `game.json` and `project_settings.json` as plain data | [project.md](modules/project.md) |
 | `window` | An OS window and its event pump | [window.md](modules/window.md) |
 | `renderer` | The whole Vulkan path, and render-facing components | [renderer.md](modules/renderer.md) |
 | `assets` | Cooked blobs, manifest, cache | [assets.md](modules/assets.md) |
 | `animation` | Model pose sampling and per-instance playback data | [animation.md](modules/animation.md) |
-| `scene` | Scene save and load | [scene.md](modules/scene.md) |
+| `scene` | Scene save and load, the scene the World holds, the Play snapshot | [scene.md](modules/scene.md) |
 | `serial` | JSON documents on disk | [serial.md](modules/serial.md) |
-| `script` | Lua embedding and ECS bindings | [script.md](modules/script.md) |
+| `script` | Lua embedding, ECS bindings, the script resolver | [script.md](modules/script.md) |
+| `*_script` | Five bridges adding one library's Lua bindings each | [script-bridges.md](modules/script-bridges.md) |
+| `terrain_runtime` | Terrain streaming, drawing and collision at runtime | [terrain_runtime.md](modules/terrain_runtime.md) |
 | `audio` | Wwise lifetime and the per-frame pump | [audio.md](modules/audio.md) |
 | `camera` | Gameplay camera control: follow a target, or free-fly from input | [camera.md](modules/camera.md) |
 | `imguiruntime` | ImGui context lifetime, fonts, both backends, the frame bracket | [imguiruntime.md](modules/imguiruntime.md) |
@@ -116,7 +140,7 @@ through it for anything touching a JSON file.
 | `editortheme` | Theme data only | [editortheme.md](modules/editortheme.md) |
 | `gameui` | Game UI drawn over the scene, the same in the editor and a game build | [gameui.md](modules/gameui.md) |
 | `gameshell` | The HUD and the pause menu every game gets, built on `gameui` | [gameshell.md](modules/gameshell.md) |
-| `app` | Composition root and the frame loop | [app.md](modules/app.md) |
+| `app` | The module members, scene commands, the frame loop | [app.md](modules/app.md) |
 
 Add your row when you start a document, and update it in the same commit as the
 code it describes.
@@ -129,12 +153,18 @@ Everything else may depend on it.
 
 **`app` is the only module that knows all the others.**
 
-It holds each subsystem as a named member. Declaration order in `App.h` is
-initialisation order, and reverse declaration order is destruction order, so the
-order in that header is what makes teardown correct.
+It holds each module as a member, declared in dependency order: a module after
+every module it uses, and a bridge after `script` and its library. Within a
+system phase, systems run in the same order. Adding a module means adding one
+member, which forces a decision about where it belongs.
 
-Adding a subsystem means editing `App`, which forces a decision about where it
-belongs in that order.
+**A same-phase order follows a dependency edge.**
+
+Within a phase, a system may rely on running after another only when its
+library depends on the other's. Any other ordering needs a phase boundary, which
+is why `Propagate` exists: `PhysicsInterpolationSystem` writes `Transform` in
+`PostUpdate`, `TransformPropagateSystem` runs alone in `Propagate`, and every
+`WorldTransform` reader runs in `LateUpdate`.
 
 **`renderer` never sees `window`.**
 
@@ -175,10 +205,10 @@ see, and `App.cpp` may not call ImGui.
 and `imgui.ini`. The runtime leaves `IniFilename` null, so a build without
 `editor` persists nothing.
 
-`app` drives a frame as `ImGuiRuntime::BeginFrame`, `Editor::DrawLayout`,
-`UIContext::BeginFrame`/`EndFrame`, `ImGuiRuntime::EndFrame`, then reads
-`Editor::SceneViewportRect`. `App.cpp` contains no ImGui call and includes no
-ImGui header.
+`ImGuiModule::RunUI` brackets the frame and runs the drawers modules registered,
+in registration order: the editor's layout first, then the game UI. It hands
+the draw data to the renderer and the frame's keyboard and mouse capture to
+`InputState`. `App.cpp` contains no ImGui call and includes no ImGui header.
 
 **`gameui` draws into ImGui's background draw list and nowhere else.**
 
@@ -214,26 +244,27 @@ type. The flow is in [A file](#a-file).
 ```
 PollEvents                       close flag and framebuffer size refresh here
 dt = min(elapsed, mMaxDeltaSeconds)
-TerrainRuntime::Update           installs finished terrain reads, release checks, mesh builds, uploads and collision pieces (every mode); then, in Edit, its Refresh (which may switch to a checked, prewarmed release)
-ImGuiRuntime::BeginFrame         the NewFrame trio
-Editor::DrawLayout               -> EditorActions (scene action, game to open)
-UIContext::BeginFrame/EndFrame   game UI into the background list, scene viewport or whole window
-ImGuiRuntime::EndFrame           -> ImDrawData*
-renderer.SetImGuiDrawData(...), renderer.SetSceneViewport(...)
-ScriptReloadWatcher::Poll        mtime check, throttled
+ApplyRequests                    last frame's Play, Stop, Load, Save, Quit, import swap, project switch
+RunFrameSlot(FrameBegin)         script reload poll, terrain installs and Edit refresh, import and content browser polls
+ImGuiModule::RunUI               editor drawer, then the game UI drawer; draw data and UI capture handed on
 FixedTimestep::Advance(dt)       substeps this frame, mFixedDeltaSeconds each, at most mMaxFixedSteps
-SystemScheduler::Update          PreUpdate, Update, FixedUpdate x substeps, PostUpdate, Render
+SystemScheduler::Update          PreUpdate, Update, FixedUpdate x substeps, PostUpdate, Propagate, LateUpdate, Render
 ```
 
-Ordering between features is expressed as a phase, never as registration order.
+A transition someone asks for mid-frame waits in the `RequestQueue` World
+resource and runs at the top of the next frame. Nothing is drawn or running
+there, so a transition never frees what this frame's draw data or systems still
+hold.
 
-`ScriptSystem` runs in `PreUpdate`. `FixedUpdate` is for physics and its sync
-back to `Transform`; it runs zero or more times a frame with the fixed step as
-`dt`. Before each step `PhysicsSystem` calls the `PhysicsStepGates` World
-resource's gates; app's terrain is one, placing collision pieces and holding
-bodies whose ground is not collidable yet (#128). `TransformPropagateSystem` runs in `PostUpdate`, after it. `RenderSystem`
-runs in `Render`, after all of them, so every `WorldTransform` it reads is
-already current for the frame being drawn.
+`ScriptSystem` runs in `PreUpdate`, after `ScriptResolveSystem` gives every
+`ScriptRef` its instance. `FixedUpdate` is for physics and its sync back to
+`Transform`; it runs zero or more times a frame with the fixed step as `dt`.
+Before each step `PhysicsSystem` calls the `PhysicsStepGates` World resource's
+gates; terrain is one, placing collision pieces and holding bodies whose ground
+is not collidable yet (#128). `TransformPropagateSystem` runs in `Propagate`,
+after every `Transform` writer, and `RenderSystem` runs in `Render`, after all
+of them, so every `WorldTransform` it reads is current for the frame being
+drawn.
 
 The scheduler flushes the command buffer at each phase boundary and after each
 `FixedUpdate` substep, never in the middle of a system.
@@ -246,6 +277,27 @@ view, and app's terrain answers per view with its own level of detail (#125).
 Meshes queued with `QueueMesh` are copied at the start of the next recorded
 frame within a per-frame byte budget and become drawable once that frame has
 completed; retired ones are freed after their last frame, with no wait (#127).
+
+### A transition
+
+`App` runs a scene or Play transition as a fixed sequence of its own steps and
+stages. A stage runs the functions modules registered for it, in registration
+order, then flushes the command buffer.
+
+```
+New / Load        SceneUnload  ->  scene replaced  ->  SceneLoad
+Save              written      ->  SceneSaved
+Play              snapshot     ->  PlayBegin  ->  Play mode
+Stop              PlayEnd  ->  restore the snapshot  ->  Edit mode  ->  SceneLoad
+Asset reload      BeginReload  ->  ReloadPrepare  ->  CommitReload  ->  ReloadCommit
+```
+
+A `SceneLoad` function reads why the scene is there through
+`SceneModule::LastLoad()`: from disk, new, or restored from the Play snapshot,
+and whether it is incomplete. A `ReloadPrepare` function vetoes the swap by
+throwing. Stop keeps the GPU caches, which are keyed by asset; per-entity state
+goes in the owning component's `OnRemove`, which the restore fires for every
+Play entity.
 
 ### A file
 
@@ -272,10 +324,12 @@ every path is built from `ExecutableDir()`.
 ```
 
 `GameProject` holds the directories while each module holds its own filenames, so
-`app` joins a root to a constant at the call site. `kSceneManifestFileName` lives
-in `scene`, `kAssetManifestFileName` in `assets`, and the three project-level
-names in `app/GameProject.h`. A module that spells another module's filename
-prevents that module from renaming its own file.
+a module joins a root to its own constant. `kSceneManifestFileName` lives in
+`scene`, `kAssetManifestFileName` in `assets`, and the three project-level names
+in `project/GameProject.h`. A module that spells another module's filename
+prevents that module from renaming its own file. The asset id root is the one
+field `project` cannot fill: `assets`' `ResolveAssetIdRoot` does, with the
+normalizer the cooker uses.
 
 A key missing from `game.json` falls back to a default in `GameProject.cpp`. The
 `assetsRoot` default is written a second time in the root CMakeLists, which reads
@@ -304,7 +358,7 @@ exists only at that last step ([An asset](#an-asset)). That hash is also why
 Bytes then move through one stack, whichever lane named the file.
 
 ```
-GameProject  InputMap  RenderSettings  SceneIO    SceneResolve   AssetCache   VulkanRenderer
+GameProject  InputMap  RenderSettings  SceneIO    ScriptLoader   AssetCache   VulkanRenderer
      |          |            |            |            |              |             |
  ReadJsonFile / WriteJsonFile / UpdateJsonFile      ParseJson         |             |
      |          |            |            |         (no path)        |             |
@@ -320,9 +374,8 @@ GameProject  InputMap  RenderSettings  SceneIO    SceneResolve   AssetCache   Vu
 `ReadJsonFile` is `ReadText` followed by `ParseJson`, and `WriteJsonFile` is
 `dump()` followed by `WriteTextAtomic`, so the `try`/`catch` around a parse
 appears once in the engine. `AssetCache` and `ReadSpirv` skip `serial` because
-they want bytes rather than a document. `SceneResolve` holds bytes already, out
-of an `AssetBlobView`, so it calls `ParseJson` with the asset id as the context
-an error names.
+they want bytes rather than a document. The script loader holds bytes already,
+out of an `AssetBlobView`, and hands them to Lua without a parse.
 
 Writes through `serial` are atomic, because JSON on disk here is always a file a
 person can edit. `AssetCooker` writes with plain `WriteBytes`, since a tool
@@ -384,8 +437,11 @@ A `.lua` file is a cooked asset. `ScriptHost` loads its source, `CreateInstance`
 returns an `instanceRef`, and a `ScriptRef` component links an entity to that
 instance.
 
-`ScriptSystem` walks `Query<ScriptRef>` in `PreUpdate` and calls into Lua per
-entity.
+`ScriptResolveSystem` gives every `ScriptRef` without an instance one, and
+replaces the instance of a renamed one, every frame and in every mode. Whatever
+made the `ScriptRef` (a scene load, Stop, a duplicate, an undo, a prefab
+publish) needs no resolve call of its own. `ScriptSystem` then walks
+`Query<ScriptRef>` in `PreUpdate` and calls into Lua per entity.
 
 Scripts reach components by name, through `ComponentRegistry`. Exposing a new
 native component to Lua therefore costs no new binding code — it costs a field
@@ -397,7 +453,7 @@ table. See [script.md](modules/script.md).
 2. No renderer abstraction. `Renderer.h` is a placeholder and `App` names
    `VulkanRenderer` directly, so there is no headless mode, and nothing in
    `app`, `renderer` or `editor` is unit tested, except `ContentBrowserWatcher`
-   (see [modules/app.md](modules/app.md)), whose disk-polling logic has no
+   (see [modules/editor.md](modules/editor.md)), whose disk-polling logic has no
    renderer/ECS dependency to need one.
 3. No typed assets. Everything cooks as a raw passthrough blob.
 4. Linux sources exist, but there is no Linux preset. macOS fails at configure.
@@ -409,6 +465,18 @@ table. See [script.md](modules/script.md).
    [modules/assets.md](modules/assets.md)).
 
 ## Changed
+
+*2026-10-24* — **App builds modules instead of wiring subsystems.** Was: `App`
+held fixed subsystem members, registered every library's components, resources
+and systems by hand in `Initialize`, and ran every scene transition's steps
+itself, with a hand-written `Shutdown` order. Now: one module class per library,
+held as members in dependency order; each registers its own parts and frees
+them in its destructor, transitions run stages that modules register into, and
+UI runs as ImGui drawers. `core` split into `core_base` and `core`, and
+`project`, `terrain_runtime` and five script bridges joined the graph. Because:
+removing a component leaked its runtime object (#222), since nothing but `App`
+knew what each library needed, and every new library meant editing `App` in
+several places. See [app.md](modules/app.md) and [core.md](modules/core.md).
 
 *2026-10-20* — **Setup failures are fatal and reported.** Was: failures returned
 a value, a failed startup exited with `-1` and no message, and several services

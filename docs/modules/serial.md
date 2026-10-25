@@ -52,7 +52,7 @@ would build a fresh document and drop the other's section on every save.
 | `UpdateJsonFile` | `serial/JsonFile.h` | Read, edit through a callback, write back |
 
 `ParseJson` exists separately from `ReadJsonFile` because some JSON never comes
-from a path. `SceneResolve`'s mesh assets arrive as bytes out of an
+from a path. `MeshResolveSystem`'s mesh assets arrive as bytes out of an
 `AssetBlobView`, so there is no filename to report; the caller passes the asset
 id as `context` instead. `ReadJsonFile` is `ReadText` followed by `ParseJson`,
 which is why the `try`/`catch` around `json::parse` appears once in the engine.
@@ -108,7 +108,7 @@ updates all work.
 
 Callers today: `RenderSettings` and `InputMap` for `project_settings.json`,
 `SceneIO` for a scene manifest and its per-entity files, `GameProject` for
-`engine.json` and `game.json`, and `SceneResolve` for mesh assets through
+`engine.json` and `game.json`, and `MeshResolveSystem` for mesh assets through
 `ParseJson`.
 
 Tests in `modules/serial/tests/`: `JsonFile`, covering the round trip, the three

@@ -37,6 +37,11 @@ get a context from.
 | Type | Header | Role |
 |---|---|---|
 | `ImGuiRuntime` | `imguiruntime/ImGuiRuntime.h` | `Initialize`/`Shutdown` the context and both backends; `BeginFrame`/`EndFrame` bracket a frame |
+| `ImGuiModule` | `imguiruntime/ImGuiModule.h` | Owns the runtime; `AddDrawer` and `RunUI` |
+
+`RunUI` is one ImGui frame: `BeginFrame`, every drawer in registration order,
+`EndFrame`, then the draw data to the renderer and the frame's keyboard and
+mouse capture to `InputState`, for this frame's systems.
 
 `VulkanRenderer::InitImGuiVulkanBackend` and `ShutdownImGuiVulkanBackend` stay in
 `renderer`, because they need the device, queue and swapchain format. This module
@@ -101,6 +106,12 @@ every frame and shutdown, and `smoke.switch` covers the restart that reloads
    that wants its own fonts has no hook yet.
 
 ## Changed
+
+*2026-10-24* — **`ImGuiModule` runs registered drawers.** Was: `App` called
+`BeginFrame`, the editor, the game UI and `EndFrame` itself, and set the UI
+capture from the editor. Now: modules register drawers, `RunUI` runs them, and
+the capture comes from ImGui's own flags. Because: `App` no longer knows who
+draws.
 
 *2026-10-02* — **The editor-free build exists.** `MJOLNIR_WITH_EDITOR` OFF
 builds without `editor`, and this module is then the context's only owner and
