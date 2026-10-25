@@ -129,7 +129,8 @@ const ComponentOps &health = ComponentRegistry::Instance().RegisterRuntime("Heal
 | `CommandBuffer` | `ecs/CommandBuffer.h` | Deferred structural changes |
 | `ISystem`, `SystemScheduler` | `ecs/System.h`, `ecs/SystemScheduler.h` | Per-frame work, and running it by phase; stage and frame-slot lists |
 | `Stage`, `FrameSlot` | `ecs/System.h` | The transitions App runs, and the host work slots of a frame |
-| `Registration` | `ecs/Registration.h` | Move-only token that undoes a registration when it dies |
+| `Registration` | `Registration.h` (base) | Move-only token that undoes a registration when it dies |
+| `RegistrationList<F>` | `RegistrationList.h` (base) | Functions run in registration order, each added through a token: stages, frame slots, drawers, Lua bindings, screens |
 | `ModuleContext`, `CoreModule` | `ecs/ModuleContext.h`, `ecs/CoreModule.h` | What every module constructor gets; core's own module |
 | `Request`, `RequestQueue` | `ecs/Requests.h` | Transitions asked for during a frame, applied at the top of the next |
 | `InstallCrashHandler`, `ArmCrashHandler`, `ReclaimCrashHandler` | `platform/CrashHandler.h` | The crash handler; per-thread setup; taking the filter slot back from a library |
@@ -330,10 +331,19 @@ anything else there. Transform writers go before it, in `PostUpdate`, and
 `WorldTransform` readers after it, in `LateUpdate`. Within one phase a system may
 rely on running after another only when its library depends on the other's.
 
-**Stage and frame-slot lists change only between runs.** Registering or dropping
-a token while one runs asserts, because the list could move the running
-function. A stage function that throws stops the stage and reaches `App`, which
-is how a `ReloadPrepare` function vetoes a reload.
+**A registration list changes only between runs.** Every `RegistrationList`
+(stages, frame slots, ImGui drawers, Lua bindings, game UI screens) asserts on
+an add or a removal while it runs, because either could move the running
+function. A function that throws stops the run and reaches the caller, which is
+how a `ReloadPrepare` function vetoes a reload. A list asserts in its destructor
+if a registration is still alive, so a token outliving its list is caught where
+it happens.
+
+**A system's destructor touches nothing outside the system.** Systems belong to
+the scheduler, which `App` destroys after every module, so a system outlives the
+runtimes its module owns. Cleanup that reaches Jolt, Wwise, the Lua host or the
+renderer goes in `OnStop`, which `~App` runs while every module is alive, or in
+the owning module's destructor.
 
 **A token dies before its registry.** A token asserts when the `World`,
 scheduler or host it came from is already gone. A module keeps its tokens as its
