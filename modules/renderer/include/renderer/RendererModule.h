@@ -56,6 +56,7 @@ namespace mir
         RenderSystem *mRenderSystem = nullptr;
 
         // last: they unregister before the renderer above shuts down
+        Registration mHooks;
         Registration mSceneUnload;
         Registration mSceneLoad;
         Registration mPlayBegin;

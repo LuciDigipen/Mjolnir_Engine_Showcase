@@ -34,6 +34,7 @@ namespace mir
         ModelSystem *mModels = nullptr;
 
         // last: they unregister before anything above is destroyed
+        Registration mHooks;
         Registration mSceneUnload;
         Registration mReloadPrepare;
         Registration mReloadCommit;

@@ -14,6 +14,7 @@
 #include <renderer/RenderSettings.h>
 #include <renderer/RenderSystem.h>
 #include <renderer/ViewDrawSource.h>
+#include <renderer/components/MeshRenderer.h>
 
 #include <assets/AssetsModule.h>
 #include <core/ecs/SystemScheduler.h>
@@ -49,6 +50,11 @@ namespace mir
         mMeshes = &context.scheduler.AddSystem<MeshResolveSystem>(SystemPhase::LateUpdate, mRenderer, &assets.Cache(),
             settings.mAssetIdRoot);
         mRenderSystem = &context.scheduler.AddSystem<RenderSystem>(SystemPhase::Render, mRenderer);
+
+        mHooks = context.world.SetComponentHooks<MeshRenderer>({ .onRemove = [this](World &, Entity entity)
+            {
+                mMeshes->Forget(entity);
+            } });
 
         // no scene entity holds a mesh or material handle now
         mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &)

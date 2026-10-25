@@ -33,6 +33,11 @@ namespace mir
         mModels = &context.scheduler.AddSystem<ModelSystem>(SystemPhase::LateUpdate, renderer, &assets.Cache(),
             std::move(assetIdRoot));
 
+        mHooks = context.world.SetComponentHooks<ModelPlayer>({ .onRemove = [this](World &world, Entity entity)
+            {
+                mModels->Forget(world, entity);
+            } });
+
         mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &frame)
             {
                 mModels->Reset();

@@ -32,6 +32,10 @@ namespace mir
         void DiscardPreparedReload();
         void OnUpdate(SystemContext &context) override;
 
+        // ModelPlayer's OnRemove: drops the entity's request, poses and morph overrides, so a
+        // packed id the World hands out again starts fresh
+        void Forget(World &world, Entity entity);
+
     private:
         struct GpuPrimitive
         {
@@ -58,7 +62,9 @@ namespace mir
         std::unordered_set<uint64_t> mFailed;
         std::unordered_map<uint64_t, uint64_t> mRequestedModels;
         std::vector<std::vector<glm::vec4>> mDeformations;
-        std::unordered_map<uint64_t, WorldPose> mPreviousPoses;
-        std::unordered_map<uint64_t, WorldPose> mCurrentPoses;
+        // by PackEntity, then node
+        using NodePoses = std::unordered_map<uint32_t, WorldPose>;
+        std::unordered_map<uint64_t, NodePoses> mPreviousPoses;
+        std::unordered_map<uint64_t, NodePoses> mCurrentPoses;
     };
 } // namespace mir
