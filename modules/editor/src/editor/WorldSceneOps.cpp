@@ -8,13 +8,18 @@
  */
 #include <editor/WorldSceneOps.h>
 
+#include <editor/PrefabWorkspace.h>
+
 #include <core/ecs/World.h>
 #include <core/log/Log.h>
+#include <prefab/PrefabId.h>
 #include <scene/EntitySnapshot.h>
 #include <scene/SceneAsset.h>
 #include <scene/SceneDuplicate.h>
 #include <scene/SceneIO.h>
 
+#include <optional>
+#include <string>
 #include <unordered_map>
 
 namespace mir
@@ -78,6 +83,19 @@ namespace mir
         }
 
         return DestroySceneEntity(mWorld, mScene, root);
+    }
+
+    Entity WorldSceneOps::PlacePrefab(std::string_view contentPath, Entity parent, const WorldVec3 &position)
+    {
+        const std::optional<PrefabId> id =
+            mPrefabs.FindByPath(mProjectRoot / std::filesystem::path(std::string(contentPath)));
+        if (!id)
+        {
+            MIR_LOG_ERROR("Place Prefab: '{}' is not a registered Prefab", contentPath);
+            return kNullEntity;
+        }
+
+        return mPrefabs.Place(mWorld, *id, parent, position);
     }
 
     bool WorldSceneOps::CanReparent(std::span<const Entity> entities, Entity parent)

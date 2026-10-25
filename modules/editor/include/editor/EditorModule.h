@@ -62,6 +62,9 @@ namespace mir
         // the active Prefab tab's preview World in Edit, else null
         World *ActivePreviewWorld();
         EditorDocuments MakeEditorDocuments();
+
+        // the browser's files, plus the new Prefabs that have no file yet
+        ContentBrowserView MakeContentBrowserView();
         PrefabWorkspace::PrefabUnsaved UnsavedPrefabs() const;
         PrefabWorkspace::PrefabSaved MarkSavedPrefabs();
 
@@ -79,10 +82,10 @@ namespace mir
 
         AssetImportManager mImport;
         ContentBrowserWatcher mContentBrowser;
-        WorldSceneOps mSceneOps;
-        // before mEditor: they die after it, once Shutdown stopped it using them
+        // before mSceneOps and mEditor: they die after them, once Shutdown stopped the editor using them
         PrefabAuthoringAdapter mPrefabAuthoring;
         PrefabWorkspace mPrefabWorkspace;
+        WorldSceneOps mSceneOps;
         Editor mEditor;
 
         // Stop puts the World back as it was at Play, so it puts this back too

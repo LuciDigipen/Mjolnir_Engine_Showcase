@@ -40,6 +40,7 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <utility>
 
@@ -123,9 +124,10 @@ namespace mir
         RendererModule &renderer, SceneModule &scene, PrefabModule &prefab, AssetsModule &assets,
         const GameProject &project, bool enableLayout)
         : mWorld(context.world), mRenderer(renderer), mScene(scene), mPrefab(prefab), mProject(project),
-          mEnableLayout(enableLayout), mProjectMenu(BuildProjectMenu()), mSceneOps(context.world, scene.Scene()),
-          mPrefabAuthoring(context.world, prefab.Coordinator()),
-          mPrefabWorkspace(prefab.Coordinator(), mPrefabAuthoring)
+          mEnableLayout(enableLayout), mProjectMenu(BuildProjectMenu()),
+          mPrefabAuthoring(context.world, prefab.Coordinator(), prefab.SourceDir()),
+          mPrefabWorkspace(prefab.Coordinator(), mPrefabAuthoring),
+          mSceneOps(context.world, scene.Scene(), mPrefabWorkspace, mProject.mRootDir)
     {
         mImport.Initialize(mProject);
         mContentBrowser.Initialize(mProject);
@@ -247,7 +249,8 @@ namespace mir
                     mWorld.Resource<RenderSettings>(), mWorld.Resource<PostProcessingSettings>(),
                     mWorld.Resource<EngineModeState>(), mProjectMenu, mProject.mDir,
                     preview != nullptr ? *preview : mWorld, mWorld, MakeEditorDocuments(), mImport.View(),
-                    mRenderer.Renderer(), mContentBrowser.View());
+                    mRenderer.Renderer(), MakeContentBrowserView());
+                mPrefabWorkspace.CloseMissingDocuments();
                 ApplyActions(actions);
                 FeedViewport();
             });
@@ -427,7 +430,7 @@ namespace mir
     {
         return [this](PrefabId id)
             {
-                return !mPrefab.Coordinator().Registry().PathOf(id).has_value() ||
+                return !mPrefab.Coordinator().Registry().HasSavedFile(id) ||
                     mEditor.IsDocumentUnsaved(DocumentOf(id));
             };
     }
@@ -435,6 +438,52 @@ namespace mir
     PrefabWorkspace::PrefabSaved EditorModule::MarkSavedPrefabs()
     {
         return [this](PrefabId id) { mEditor.SetDocumentUnsaved(DocumentOf(id), false); };
+    }
+
+    ContentBrowserView EditorModule::MakeContentBrowserView()
+    {
+        ContentBrowserView view = mContentBrowser.View();
+        const PrefabRegistry &registry = mPrefab.Coordinator().Registry();
+
+        std::set<std::string> known;
+        for (const ContentBrowserEntryView &entry : view.mEntries)
+            known.insert(entry.mRelativePath);
+
+        for (const PrefabId id : mPrefab.Coordinator().DocumentIds())
+        {
+            if (!registry.HasMemoryDocument(id) || registry.HasSavedFile(id))
+                continue;
+            const std::optional<std::filesystem::path> intended = registry.IntendedPathOf(id);
+            if (!intended)
+                continue;
+
+            const std::string relative = intended->lexically_relative(mProject.mRootDir).generic_string();
+            if (relative.empty() || relative.rfind("..", 0) == 0)
+                continue;
+
+            for (std::size_t slash = relative.find('/'); slash != std::string::npos;
+                 slash = relative.find('/', slash + 1))
+            {
+                const std::string directory = relative.substr(0, slash);
+                if (!known.insert(directory).second)
+                    continue;
+                ContentBrowserEntryView entry;
+                entry.mRelativePath = directory;
+                entry.mName = std::filesystem::path(directory).filename().string();
+                entry.mKind = ContentBrowserEntryKind::Directory;
+                view.mEntries.push_back(std::move(entry));
+            }
+
+            if (!known.insert(relative).second)
+                continue;
+            ContentBrowserEntryView entry;
+            entry.mRelativePath = relative;
+            entry.mName = intended->filename().string();
+            entry.mKind = ContentBrowserEntryKind::File;
+            entry.mUnsaved = true;
+            view.mEntries.push_back(std::move(entry));
+        }
+        return view;
     }
 
     void EditorModule::RefreshPrefabHistory()

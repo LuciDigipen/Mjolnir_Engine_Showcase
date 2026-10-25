@@ -28,6 +28,7 @@ namespace mir
         PrefabModule &operator=(const PrefabModule &) = delete;
 
         PrefabCoordinator &Coordinator() { return mCoordinator; }
+        const std::filesystem::path &SourceDir() const { return mSourceDir; }
 
         // after a prefab file under the source directory changed; waits while Play freezes the prefabs
         void Rescan();

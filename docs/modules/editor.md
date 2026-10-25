@@ -100,7 +100,9 @@ the prefabs, then the editor keeps the Prefab tabs' unsaved marks for Stop to pu
 back (`PrefabPlayMarks`). A rename or rewrite of a Prefab file reaches the
 coordinator through `ContentBrowserWatcher` and `PrefabModule::Rescan`, which waits
 while the prefabs are frozen, and a document whose file changed under it loses its
-save point. The previews' models take part in an asset swap, and their caches reset at
+save point. The browser also lists a new Prefab that has no file yet, and
+`WorldSceneOps::PlacePrefab` places a Prefab by its content path through the
+workspace. A tab whose Prefab vanished closes after the frame's layout. The previews' models take part in an asset swap, and their caches reset at
 `SceneUnload`, after the renderer freed every upload.
 
 Save on a Prefab tab writes that Prefab. On the Scene tab it first writes the

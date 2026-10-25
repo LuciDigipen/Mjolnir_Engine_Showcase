@@ -18,6 +18,7 @@
 #include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/TypeId.h>
 #include <core/ecs/World.h>
+#include <core/ecs/components/Name.h>
 #include <core/ecs/components/Transform.h>
 #include <core/fs/FileIO.h>
 #include <prefab/PrefabCoordinator.h>
@@ -31,13 +32,17 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <glm/gtc/quaternion.hpp>
 #include <glm/vec3.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <memory>
+#include <random>
+#include <sstream>
 #include <optional>
 #include <span>
 #include <string>
@@ -81,8 +86,10 @@ namespace
     using mir::PrefabComponentInstance;
     using mir::PrefabCoordinator;
     using mir::PrefabDocument;
+    using mir::PrefabId;
     using mir::PrefabNode;
     using mir::PrefabSystem;
+    using mir::PrefabToJson;
     using mir::RuntimeFieldDecl;
     using mir::SceneNodeAddress;
     using mir::ScenePrefabInstance;
@@ -91,6 +98,40 @@ namespace
     using mir::StableId;
     using mir::SystemContext;
     using mir::World;
+
+    const std::string &ProcessToken()
+    {
+        static const std::string token = []
+            {
+                std::random_device rd;
+                std::ostringstream out;
+                out << std::hex << ((static_cast<std::uint64_t>(rd()) << 32) ^ rd());
+                return out.str();
+            }();
+        return token;
+    }
+
+    struct TempDir
+    {
+        std::filesystem::path mPath;
+
+        TempDir()
+        {
+            static std::atomic<int> counter{ 0 };
+            mPath = std::filesystem::temp_directory_path() /
+                ("mir_app_authoring_test_" + ProcessToken() + "_" + std::to_string(counter.fetch_add(1)));
+            std::filesystem::create_directories(mPath);
+        }
+
+        ~TempDir()
+        {
+            std::error_code ec;
+            std::filesystem::remove_all(mPath, ec);
+        }
+
+        TempDir(const TempDir &) = delete;
+        TempDir &operator=(const TempDir &) = delete;
+    };
 
     const ComponentOps &DataOps()
     {
@@ -127,6 +168,7 @@ namespace
         CapturedSubtree Capture(Entity) override { return {}; }
         std::vector<Entity> Restore(const CapturedSubtree &, Entity, Entity) override { return {}; }
         bool Destroy(Entity) override { return false; }
+        Entity PlacePrefab(std::string_view, Entity, const mir::WorldVec3 &) override { return kNullEntity; }
     };
 
     PrefabDocument Document()
@@ -220,6 +262,7 @@ namespace
         World mWorld;
         LoadedScene mScene;
         PrefabCoordinator *mCoordinator = nullptr;
+        TempDir mPrefabsDir;
         std::unique_ptr<PrefabAuthoringAdapter> mAdapter;
         NoSceneOps mSceneOps;
         History mHistory;
@@ -248,7 +291,7 @@ namespace
             REQUIRE(mRoot != kNullStableId);
             mCoordinator->Bind(mScene);
 
-            mAdapter = std::make_unique<PrefabAuthoringAdapter>(mWorld, *mCoordinator);
+            mAdapter = std::make_unique<PrefabAuthoringAdapter>(mWorld, *mCoordinator, mPrefabsDir.mPath);
             mHistory.SetAuthoringBackend(mAdapter.get());
             mPrefabDocument = DocumentId{ mDocument.mId.mHigh, mDocument.mId.mLow };
         }
@@ -320,22 +363,6 @@ namespace
         }
         return kNullStableId;
     }
-
-    struct TempDir
-    {
-        std::filesystem::path mPath = std::filesystem::temp_directory_path() /
-            ("mir_app_authoring_" + mir::ToString(mir::GeneratePrefabId()));
-
-        TempDir() { std::filesystem::create_directories(mPath); }
-        ~TempDir()
-        {
-            std::error_code ec;
-            std::filesystem::remove_all(mPath, ec);
-        }
-
-        TempDir(const TempDir &) = delete;
-        TempDir &operator=(const TempDir &) = delete;
-    };
 
     bool SaveScene(Fixture &fixture, const std::filesystem::path &path)
     {
@@ -427,6 +454,68 @@ TEST_CASE("A failed Prefab save preserves the saved scene and dirty state", "[ap
     CHECK(fixture.mHistory.IsUnsaved(fixture.mPrefabDocument));
     CHECK(fixture.mHistory.IsUnsaved(kSceneDocument));
     CHECK(fixture.mScene.mDirty);
+}
+
+TEST_CASE("Create Prefab is one step over a new unsaved document", "[app][authoring]")
+{
+    Fixture fixture;
+
+    const Entity root = CreateSceneEntity(fixture.mWorld, fixture.mScene);
+    fixture.mWorld.AddComponent<mir::Name>(root, mir::MakeName("Chair"));
+    mir::AddTransform(fixture.mWorld, root,
+        mir::Transform(glm::vec3(1.0f, 2.0f, 3.0f), glm::angleAxis(0.5f, glm::vec3(0.0f, 1.0f, 0.0f)),
+            glm::vec3(2.0f, 3.0f, 4.0f)));
+    const Entity child = CreateSceneEntity(fixture.mWorld, fixture.mScene, root);
+    mir::AddTransform(fixture.mWorld, child, mir::Transform(glm::vec3(5.0f, 6.0f, 7.0f)));
+    const StableId rootStable = StableIdIn(fixture.mScene, root);
+
+    fixture.Run(mir::MakeCreatePrefabCommand(*fixture.mAdapter, root));
+    REQUIRE(fixture.mHistory.StepCount() == 1);
+
+    std::optional<PrefabId> created;
+    for (const PrefabId id : fixture.mCoordinator->Registry().Ids())
+    {
+        if (id != fixture.mDocument.mId)
+            created = id;
+    }
+    REQUIRE(created.has_value());
+    const PrefabDocument *document = fixture.mCoordinator->Registry().Find(*created);
+    REQUIRE(document != nullptr);
+    REQUIRE(document->mNodes.size() == 2);
+    CHECK(document->mRootNode == 1);
+    CHECK(document->mNodes[1].mParent == 1);
+
+    const std::optional<std::filesystem::path> path = fixture.mCoordinator->Registry().IntendedPathOf(*created);
+    REQUIRE(path.has_value());
+    CHECK(path->filename() == "Chair.prefab");
+    CHECK_FALSE(fixture.mCoordinator->Registry().HasSavedFile(*created));
+    CHECK(fixture.mHistory.IsUnsaved(DocumentId{ created->mHigh, created->mLow }));
+
+    const PrefabComponentInstance *transform = nullptr;
+    for (const PrefabComponentInstance &component : document->mNodes[0].mComponents)
+    {
+        if (component.mType == "Transform")
+            transform = &component;
+    }
+    REQUIRE(transform != nullptr);
+    CHECK(transform->mFields.at("position") == nlohmann::json::array({ 0.0, 0.0, 0.0 }));
+    CHECK(transform->mFields.at("rotation") == nlohmann::json::array({ 0.0, 0.0, 0.0, 1.0 }));
+
+    CHECK(fixture.mScene.mEntities.contains(rootStable));
+    CHECK(fixture.mWorld.GetComponent<mir::Transform>(root)->Position() == mir::WorldVec3(1.0, 2.0, 3.0));
+
+    const nlohmann::json before = mir::PrefabToJson(*document);
+    const PrefabId createdId = *created;
+
+    fixture.Undo();
+    CHECK(fixture.mCoordinator->Registry().Find(createdId) == nullptr);
+    CHECK_FALSE(fixture.mCoordinator->Registry().PathOf(createdId).has_value());
+
+    fixture.Redo();
+    document = fixture.mCoordinator->Registry().Find(createdId);
+    REQUIRE(document != nullptr);
+    CHECK(mir::PrefabToJson(*document) == before);
+    CHECK(fixture.mCoordinator->Registry().IntendedPathOf(createdId) == path);
 }
 
 TEST_CASE("A field override is one History step and survives undo and redo", "[app][authoring]")
