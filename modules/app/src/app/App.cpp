@@ -211,7 +211,7 @@ namespace mir
         mSplash.SetProgress("Registering components...", 0.75f);
 
         // Before anything may load a script
-        RegisterCoreComponents();
+        mCore.emplace(Context(), mCommands);
         RegisterRendererComponents();
         RegisterRendererEntityTypes();
         RegisterRendererPostEffects();
@@ -227,16 +227,12 @@ namespace mir
         mWorld.EmplaceResource<ViewDrawSources>();
         mWorld.EmplaceResource<TerrainWorld>();
 
-        mWorld.EmplaceResource<EntityChangeListeners>();
         PrefabCoordinator &prefabs = mWorld.EmplaceResource<PrefabCoordinator>();
         const std::filesystem::path prefabsDir = PrefabSourceDir(mProject);
         std::error_code prefabEc;
         if (std::filesystem::is_directory(prefabsDir, prefabEc))
             prefabs.ScanSources(prefabsDir);
 
-        // defers structural change
-        mWorld.EmplaceResource<FrameCommands>(FrameCommands{ &mCommands });
-        mWorld.EmplaceResource<RequestQueue>();
 
         InputMap inputMap = InputMap::LoadFile(mProject.mProjectSettingsPath).value_or(InputMap{});
         AddDefaultActions(inputMap);
@@ -246,7 +242,6 @@ namespace mir
         mWorld.EmplaceResource<PostProcessingSettings>(
             PostProcessingSettings::LoadFile(mProject.mProjectSettingsPath).value_or(PostProcessingSettings{}));
         mWorld.EmplaceResource<InputState>();
-        mWorld.EmplaceResource<EngineModeState>();
 
         // physcis world - currently Jolt
         mWorld.EmplaceResource<PhysicsWorld>();
@@ -262,8 +257,6 @@ namespace mir
         mScheduler.AddSystem<PhysicsSystem>(SystemPhase::FixedUpdate);
 
         mScheduler.AddSystem<PhysicsInterpolationSystem>(SystemPhase::PostUpdate);
-
-        mScheduler.AddSystem<TransformPropagateSystem>(SystemPhase::Propagate);
 
         mScheduler.AddSystem<CameraControllerSystem>(SystemPhase::LateUpdate);
         mModelSystem =
@@ -702,6 +695,11 @@ namespace mir
     #endif
     }
 
+    ModuleContext App::Context()
+    {
+        return ModuleContext{ mWorld, mScheduler };
+    }
+
     SystemContext App::MakeContext(float dt)
     {
         return SystemContext{ mWorld, mCommands, dt, mElapsed, mFrame, mFixedTimestep.Alpha() };
@@ -1009,6 +1007,7 @@ namespace mir
         audio::Terminate();
 
         mScheduler.Reset();
+        mCore.reset();
 
         // Cache before manifest
         mAssetCache.reset();

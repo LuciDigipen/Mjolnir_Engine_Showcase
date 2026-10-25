@@ -41,7 +41,8 @@ target_sources(engine_core PRIVATE
     src/core/ecs/ComponentRegistry.cpp
     src/core/ecs/EntityPresetRegistry.cpp
     src/core/ecs/RuntimeQuery.cpp
-    src/core/ecs/DeferredAccess.cpp)
+    src/core/ecs/DeferredAccess.cpp
+    src/core/ecs/CoreModule.cpp)
 
 # PUBLIC: ECS headers include log, math and fs headers
 target_link_libraries(engine_core PUBLIC mir::core_base)

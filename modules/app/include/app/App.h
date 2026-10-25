@@ -12,6 +12,7 @@
 #include <assets/AssetCache.h>
 #include <assets/AssetManifest.h>
 #include <core/ecs/CommandBuffer.h>
+#include <core/ecs/CoreModule.h>
 #include <core/ecs/FixedTimestep.h>
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/World.h>
@@ -168,6 +169,8 @@ namespace mir
         void ToggleFullscreen();
 
     private:
+        ModuleContext Context();
+
         // context is rebuilt per tick
         SystemContext MakeContext(float dt);
 
@@ -242,6 +245,7 @@ namespace mir
 
         World mWorld;
         SystemScheduler mScheduler;
+        std::optional<CoreModule> mCore;
         RenderSystem *mRenderSystem = nullptr;
         ScriptSystem *mScriptSystem = nullptr;
         ModelSystem *mModelSystem = nullptr;
