@@ -95,6 +95,7 @@ namespace mir
         WrongIdentity, // asset or release differs from the one asked for
         NotFound,      // a tile outside the release's layout
         InvalidInput,  // the writer was given tiles or options it cannot encode
+        Internal,      // a reader or decoder threw; a bug, so never retried
     };
 
     struct TerrainPackError

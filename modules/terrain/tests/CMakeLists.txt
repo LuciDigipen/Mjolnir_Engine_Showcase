@@ -12,6 +12,7 @@ engine_add_module_tests(terrain
     TerrainPackFormat.tests.cpp
     TerrainPackIntegrity.tests.cpp
     TerrainRegion.tests.cpp
+    RunGuarded.tests.cpp
     TerrainRelease.tests.cpp
     TerrainReleaseSwitch.tests.cpp
     TerrainScene.tests.cpp

@@ -11,6 +11,7 @@
 #include "PackInternal.h"
 
 #include <core/log/Assert.h>
+#include <terrain/RunGuarded.h>
 #include <terrain/TerrainCollisionResidency.h>
 #include <terrain/TerrainMeshResidency.h>
 #include <terrain/TerrainStreamer.h>
@@ -21,6 +22,7 @@
 #include <format>
 #include <mutex>
 #include <optional>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 
@@ -258,7 +260,14 @@ namespace mir
                 job.pack = candidate.info.packsVerified;
                 candidate.ticket = job.ticket;
                 executor->Post([queue = queue, job = std::move(job), open = open, root = root] {
-                    queue->Push(Run(job, open, root));
+                    queue->Push(RunGuarded([&] { return Run(job, open, root); }, [&](std::string_view what)
+                        {
+                            Result failed;
+                            failed.ticket = job.ticket;
+                            failed.error = detail::Error(Code::Internal, "checking release {} threw: {}",
+                                                         Hex(job.release.value), what);
+                            return failed;
+                        }));
                 });
                 return;
             }
