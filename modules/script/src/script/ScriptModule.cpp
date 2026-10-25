@@ -39,5 +39,11 @@ namespace mir
             {
                 mReload.Poll(&assets.Cache(), frame.dt);
             });
+
+        // before Stop's restore destroys the entities the scripts run on
+        mPlayEnd = context.scheduler.AddStage(Stage::PlayEnd, [this](SystemContext &frame) { mScripts->StopAllScripts(frame); });
+
+        // a script whose asset arrived with this cook resolves now
+        mReloadCommit = context.scheduler.AddStage(Stage::ReloadCommit, [this](SystemContext &) { mResolver->ForgetFailures(); });
     }
 }

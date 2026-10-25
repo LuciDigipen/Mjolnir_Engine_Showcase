@@ -9,6 +9,7 @@
 #pragma once
 
 #include <core/ecs/ModuleContext.h>
+#include <core/ecs/Registration.h>
 
 #include <string>
 
@@ -31,5 +32,10 @@ namespace mir
     private:
         // owned by the scheduler, which outlives this module
         ModelSystem *mModels = nullptr;
+
+        // last: they unregister before anything above is destroyed
+        Registration mSceneUnload;
+        Registration mReloadPrepare;
+        Registration mReloadCommit;
     };
 }

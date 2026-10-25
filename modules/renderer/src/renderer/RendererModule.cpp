@@ -49,6 +49,22 @@ namespace mir
         mMeshes = &context.scheduler.AddSystem<MeshResolveSystem>(SystemPhase::LateUpdate, mRenderer, &assets.Cache(),
             settings.mAssetIdRoot);
         mRenderSystem = &context.scheduler.AddSystem<RenderSystem>(SystemPhase::Render, mRenderer);
+
+        // no scene entity holds a mesh or material handle now
+        mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &)
+            {
+                mMeshes->Reset();
+                mRenderer.ReleaseSceneResources();
+            });
+
+        // a cut: the history of the scene before says nothing about this one
+        mSceneLoad = context.scheduler.AddStage(Stage::SceneLoad, [this](SystemContext &) { mRenderer.ResetHistory(); });
+        mPlayBegin = context.scheduler.AddStage(Stage::PlayBegin, [this](SystemContext &) { mRenderer.ResetHistory(); });
+
+        mReloadCommit = context.scheduler.AddStage(Stage::ReloadCommit, [this, &assets](SystemContext &)
+            {
+                mMeshes->CommitReload(&assets.Cache());
+            });
     }
 
     RendererModule::~RendererModule() { mRenderer.Shutdown(); }

@@ -113,6 +113,26 @@ namespace mir
                 mContentBrowser.Update();
             });
 
+        // every handle the undo history holds dies with the scene it came from
+        mSceneLoad = context.scheduler.AddStage(Stage::SceneLoad, [this, &scene](SystemContext &)
+            {
+                const SceneLoadResult &load = scene.LastLoad();
+                mEditor.ClearHistory();
+                // Play's edits are gone with Play's World, so the mark goes back to what it was
+                mEditor.SetSceneUnsaved(load.cause == SceneLoadCause::FromSnapshot ? mUnsavedBeforePlay : load.incomplete);
+            });
+        mSceneSaved = context.scheduler.AddStage(Stage::SceneSaved, [this](SystemContext &) { mEditor.SetSceneUnsaved(false); });
+        mPlayBegin = context.scheduler.AddStage(Stage::PlayBegin, [this](SystemContext &)
+            {
+                mUnsavedBeforePlay = mEditor.IsSceneUnsaved();
+                mEditor.ClearHistory();
+            });
+        mReloadCommit = context.scheduler.AddStage(Stage::ReloadCommit, [this](SystemContext &)
+            {
+                mImport.MarkApplied();
+                MIR_LOG_INFO("Applied imported assets at an Edit frame boundary");
+            });
+
         mDrawer = imgui.AddDrawer([this, &window]
             {
                 if (window.Get().Width() == 0 || window.Get().Height() == 0)
@@ -129,6 +149,10 @@ namespace mir
 
     EditorModule::~EditorModule()
     {
+        mReloadCommit.Reset();
+        mPlayBegin.Reset();
+        mSceneSaved.Reset();
+        mSceneLoad.Reset();
         mDrawer.Reset();
         mFrameBegin.Reset();
         mEditor.Shutdown();

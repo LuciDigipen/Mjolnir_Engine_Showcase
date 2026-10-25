@@ -33,7 +33,10 @@ namespace mir
     private:
         std::unique_ptr<TerrainRuntime> mRuntime;
 
-        // last: unregisters before the runtime above is destroyed
+        // last: they unregister before the runtime above is destroyed
         Registration mFrameBegin;
+        Registration mSceneUnload;
+        Registration mSceneLoad;
+        Registration mPlayBegin;
     };
 }

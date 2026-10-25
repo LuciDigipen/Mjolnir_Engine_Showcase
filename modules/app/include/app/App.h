@@ -191,18 +191,11 @@ namespace mir
         // what the editor, the game shell and the import asked for last frame
         void ApplyRequests();
 
-        // UnloadScene, then free the GPU resources
+        // destroys the scene's entities, then the SceneUnload stage frees what they held
         void UnloadCurrentScene();
 
-        //every handle the editor's undo history holds dies with the scene it came from
-        void ClearHistory();
-
-        //true while the scene has changes since its last save, shown as the title bar's *
-        bool SceneUnsaved() const;
-
-        //false = the scene counts as saved from now on, so the * disapears
-        //true = the * stays until the next save
-        void SetSceneUnsaved(bool unsaved);
+        // the functions modules registered for it, then a command flush
+        void RunStage(Stage stage);
 
         // LoadScene if the game has a scene.json; throws SetupError for a broken one the user won't open
         void LoadProjectScene();
@@ -276,8 +269,6 @@ namespace mir
         TerrainScriptModule mTerrainScript;
         TerrainRuntimeModule mTerrain;
 
-        // Stop puts the World back as it was at Play, so it puts this back too
-        bool mUnsavedBeforePlay = false;
         std::optional<GameProject> mProjectToOpen;
         bool mSwitchHookFired = false;
         float mFrameDt = 0.0f;

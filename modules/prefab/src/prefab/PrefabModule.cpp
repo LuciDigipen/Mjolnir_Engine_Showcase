@@ -11,18 +11,26 @@
 #include <prefab/PrefabCoordinator.h>
 
 #include <core/ecs/SystemScheduler.h>
+#include <scene/SceneModule.h>
 #include <core/ecs/World.h>
 
 #include <system_error>
 
 namespace mir
 {
-    PrefabModule::PrefabModule(ModuleContext context, const std::filesystem::path &sourceDir)
+    PrefabModule::PrefabModule(ModuleContext context, SceneModule &scene, const std::filesystem::path &sourceDir)
         : mCoordinator(context.world.EmplaceResource<PrefabCoordinator>())
     {
         std::error_code ec;
         if (std::filesystem::is_directory(sourceDir, ec))
             mCoordinator.ScanSources(sourceDir);
+        mCoordinator.Bind(scene.Scene());
+
+        // the scene's value changed; instances map to its stable ids
+        mSceneLoad = context.scheduler.AddStage(Stage::SceneLoad, [this, &scene](SystemContext &)
+            {
+                mCoordinator.Bind(scene.Scene());
+            });
 
         // first in PreUpdate: it commits at the Edit safe point, before anything reads the scene
         context.scheduler.AddSystem<PrefabSystem>(SystemPhase::PreUpdate);

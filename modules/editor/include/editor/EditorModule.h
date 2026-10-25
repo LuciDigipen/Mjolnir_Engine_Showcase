@@ -64,8 +64,15 @@ namespace mir
         WorldSceneOps mSceneOps;
         Editor mEditor;
 
+        // Stop puts the World back as it was at Play, so it puts this back too
+        bool mUnsavedBeforePlay = false;
+
         // last: they unregister before anything above is destroyed
         Registration mFrameBegin;
         Registration mDrawer;
+        Registration mSceneLoad;
+        Registration mSceneSaved;
+        Registration mPlayBegin;
+        Registration mReloadCommit;
     };
 }

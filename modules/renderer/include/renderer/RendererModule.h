@@ -11,6 +11,7 @@
 #include <renderer/VulkanRenderer.h>
 
 #include <core/ecs/ModuleContext.h>
+#include <core/ecs/Registration.h>
 
 #include <filesystem>
 #include <string>
@@ -53,5 +54,11 @@ namespace mir
         // owned by the scheduler, which outlives this module
         MeshResolveSystem *mMeshes = nullptr;
         RenderSystem *mRenderSystem = nullptr;
+
+        // last: they unregister before the renderer above shuts down
+        Registration mSceneUnload;
+        Registration mSceneLoad;
+        Registration mPlayBegin;
+        Registration mReloadCommit;
     };
 }

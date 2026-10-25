@@ -66,8 +66,6 @@ namespace mir
         // before any system runs.
         void Update();
 
-        void Load();
-
         // force polls now and applies an unsettled change. A newer release current names is checked and prewarmed
         // in the background and switched to here once ready.
         void Refresh(float dt, bool force);

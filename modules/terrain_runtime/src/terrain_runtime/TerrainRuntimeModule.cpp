@@ -30,6 +30,18 @@ namespace mir
                 if (IsEditing(frame.world))
                     mRuntime->Refresh(frame.dt, false);
             });
+
+        mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &) { mRuntime->Unload(); });
+
+        // after an Unload it applies the whole spec; after Stop's restore, almost nothing
+        mSceneLoad = context.scheduler.AddStage(Stage::SceneLoad, [this](SystemContext &) { mRuntime->Refresh(0.0f, true); });
+
+        // Play pins the releases present on entry
+        mPlayBegin = context.scheduler.AddStage(Stage::PlayBegin, [this](SystemContext &)
+            {
+                mRuntime->Refresh(0.0f, true);
+                mRuntime->BeginPlay();
+            });
     }
 
     TerrainRuntimeModule::~TerrainRuntimeModule() = default;

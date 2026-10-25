@@ -45,5 +45,7 @@ namespace mir
         // last: they unregister before the host above is destroyed
         Registration mHooks;
         Registration mReloadPoll;
+        Registration mPlayEnd;
+        Registration mReloadCommit;
     };
 }

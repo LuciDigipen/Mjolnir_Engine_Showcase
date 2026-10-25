@@ -280,18 +280,6 @@ namespace mir
         ReportSwitch();
     }
 
-    void TerrainRuntime::Load()
-    {
-        if (!Bound())
-            return;
-        mReported.clear();
-        mSincePoll = 0.0f;
-        mPendingSpec = CollectTerrainScene(*mWorld, mAssetIdRoot);
-        mPendingAge = 0.0f;
-        Apply(mPendingSpec);
-        TagColliders(mPendingSpec);
-    }
-
     void TerrainRuntime::Refresh(float dt, bool force)
     {
         if (!Bound())

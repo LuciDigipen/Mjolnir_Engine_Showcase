@@ -15,6 +15,8 @@
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/World.h>
 
+#include <stdexcept>
+#include <string>
 #include <utility>
 
 namespace mir
@@ -30,5 +32,24 @@ namespace mir
         // a WorldTransform reader
         mModels = &context.scheduler.AddSystem<ModelSystem>(SystemPhase::LateUpdate, renderer, &assets.Cache(),
             std::move(assetIdRoot));
+
+        mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &frame)
+            {
+                mModels->Reset();
+                frame.world.Resource<ModelDrawItems>().items.clear();
+                frame.world.Resource<ModelMorphOverrides>().instances.clear();
+            });
+
+        // stages the new cook's GPU resources; a rejection vetoes the swap
+        mReloadPrepare = context.scheduler.AddStage(Stage::ReloadPrepare, [this, &assets](SystemContext &)
+            {
+                std::string error;
+                if (!mModels->PrepareReload(assets.Candidate(), error))
+                    throw std::runtime_error("new model resources were rejected: " + error);
+            });
+        mReloadCommit = context.scheduler.AddStage(Stage::ReloadCommit, [this, &assets](SystemContext &)
+            {
+                mModels->CommitReload(&assets.Cache());
+            });
     }
 }

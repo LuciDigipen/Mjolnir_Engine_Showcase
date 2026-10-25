@@ -138,7 +138,7 @@ namespace mir
           mCore(Context(), mCommands),
           mAssets(CookedAssetsDir()),
           mScene(Context(), mProject.mSceneDir),
-          mPrefab(Context(), PrefabSourceDir(mProject)),
+          mPrefab(Context(), mScene, PrefabSourceDir(mProject)),
           mWindow(MakeWindowDesc(mDesc)),
           mRenderer(Context(), mWindow.Get(), mAssets,
               RendererModuleSettings{ .mAppName = mDesc.mAppName,
@@ -171,7 +171,6 @@ namespace mir
             mUIDemo.Load(mGameUI, Assets());
 
         mSplash.screen.SetProgress("Loading scene...", 0.9f);
-        mPrefab.Coordinator().Bind(mScene.Scene());
         LoadProjectScene();
 
         //without the editor there is no Play button
@@ -224,9 +223,7 @@ namespace mir
 
         UnloadCurrentScene();
         mScene.New(std::move(name), incomplete);
-        mPrefab.Coordinator().Bind(mScene.Scene());
-        ClearHistory();
-        SetSceneUnsaved(false);
+        RunStage(Stage::SceneLoad);
     }
 
     bool App::SaveScene()
@@ -239,7 +236,7 @@ namespace mir
 
         const bool saved = mScene.Save(&mPrefab.Coordinator().Resolver());
         if (saved)
-            SetSceneUnsaved(false);
+            RunStage(Stage::SceneSaved);
         return saved;
     }
 
@@ -280,10 +277,7 @@ namespace mir
     {
         UnloadCurrentScene();
         mScene.LoadFromDisk(&mPrefab.Coordinator().Resolver(), incomplete);
-        mPrefab.Coordinator().Bind(mScene.Scene());
-        ClearHistory();
-        SetSceneUnsaved(false);
-        mTerrain.Runtime().Load();
+        RunStage(Stage::SceneLoad);
     }
 
     App::SceneLoadChoice App::ChooseSceneLoad(const SceneProbe &probe, bool atStartup) const
@@ -319,13 +313,8 @@ namespace mir
         if (IsPlaying(mWorld))
             return;
 
-        // Play pins the terrain releases present on entry
-        mTerrain.Runtime().Refresh(0.0f, true);
-        mTerrain.Runtime().BeginPlay();
-
         mScene.CaptureForPlay();
-        mUnsavedBeforePlay = SceneUnsaved();
-        ClearHistory();
+        RunStage(Stage::PlayBegin);
 
         SetPlayState(mWorld, PlayState::Running);
         SetEngineMode(mWorld, EngineMode::Play);
@@ -336,15 +325,8 @@ namespace mir
         if (!IsPlaying(mWorld))
             return;
 
-        SystemContext context = MakeContext(0.0f);
-        mScript.Scripts().StopAllScripts(context);
-
+        RunStage(Stage::PlayEnd);
         mScene.RestoreFromPlay();
-        mPrefab.Coordinator().Bind(mScene.Scene());
-        ClearHistory();
-
-        //the World is back as it was at Play, Play's edits gone, so the marker goes back too
-        SetSceneUnsaved(mUnsavedBeforePlay);
 
         // Play's entities are gone and the restored ones hold no handles yet
         mAnimation.Models().Reset();
@@ -357,8 +339,8 @@ namespace mir
         SetEngineMode(mWorld, EngineMode::Edit);
         SetPlayState(mWorld, PlayState::Running);
 
-        // Starts checking a release published during Play
-        mTerrain.Runtime().Refresh(0.0f, true);
+        // terrain starts checking a release published during Play
+        RunStage(Stage::SceneLoad);
     }
 
     void App::TogglePause()
@@ -447,42 +429,16 @@ namespace mir
         mRenderer.Renderer().RequestSwapchainRecreate();
     }
 
-    void App::ClearHistory()
-    {
-    #if MIR_WITH_EDITOR
-        mEditor.Get().ClearHistory();
-    #endif
-    }
-
-    bool App::SceneUnsaved() const
-    {
-    #if MIR_WITH_EDITOR
-        return mEditor.Get().IsSceneUnsaved();
-    #else
-        return false;
-    #endif
-    }
-
-    void App::SetSceneUnsaved([[maybe_unused]] bool unsaved)
-    {
-    #if MIR_WITH_EDITOR
-        mEditor.Get().SetSceneUnsaved(unsaved);
-    #endif
-    }
-
     void App::UnloadCurrentScene()
     {
         mScene.Unload();
+        RunStage(Stage::SceneUnload);
+    }
 
-        // no scene entity holds a mesh or material handle now
-        mAnimation.Models().Reset();
-        mRenderer.Meshes().Reset();
-        if (auto *draws = mWorld.TryResource<ModelDrawItems>())
-            draws->items.clear();
-        if (auto *overrides = mWorld.TryResource<ModelMorphOverrides>())
-            overrides->instances.clear();
-        mTerrain.Runtime().Unload();
-        mRenderer.Renderer().ReleaseSceneResources();
+    void App::RunStage(Stage stage)
+    {
+        SystemContext context = MakeContext(0.0f);
+        mScheduler.RunStage(stage, context);
     }
 
     void App::LoadProjectScene()
@@ -493,6 +449,8 @@ namespace mir
         if (!std::filesystem::exists(manifest, ec))
         {
             MIR_LOG_INFO("No {} in '{}', starting with an empty scene", kSceneManifestFileName, mProject.mSceneDir.string());
+            mScene.New("untitled");
+            RunStage(Stage::SceneLoad);
             return;
         }
 
@@ -502,6 +460,7 @@ namespace mir
         case SceneLoadChoice::StartEmpty:
             MIR_LOG_WARN("Starting with an empty scene over the corrupt '{}'", manifest.string());
             mScene.New("untitled", true);
+            RunStage(Stage::SceneLoad);
             return;
         case SceneLoadChoice::Load:
             ReplaceSceneFromDisk(!probe.Ok());
@@ -623,32 +582,21 @@ namespace mir
 #if MIR_WITH_EDITOR
     void App::ApplyImportedAssets()
     {
+        // a ReloadPrepare function vetoes by throwing, after cleaning up its own staging
         try
         {
             mAssets.BeginReload();
+            RunStage(Stage::ReloadPrepare);
         }
         catch (const std::exception &error)
         {
+            mAssets.AbortReload();
             mEditor.Import().MarkApplyFailed(error.what());
             return;
         }
 
-        std::string error;
-        if (!mAnimation.Models().PrepareReload(mAssets.Candidate(), error))
-        {
-            mAssets.AbortReload();
-            mEditor.Import().MarkApplyFailed("new model resources were rejected: " + error);
-            return;
-        }
-
         mAssets.CommitReload();
-        mAnimation.Models().CommitReload(&mAssets.Cache());
-        mRenderer.Meshes().CommitReload(&mAssets.Cache());
-
-        // a script whose asset arrived with this cook resolves now
-        mScript.Resolver().ForgetFailures();
-        mEditor.Import().MarkApplied();
-        MIR_LOG_INFO("Applied imported assets at an Edit frame boundary");
+        RunStage(Stage::ReloadCommit);
     }
 #endif
 } // namespace mir

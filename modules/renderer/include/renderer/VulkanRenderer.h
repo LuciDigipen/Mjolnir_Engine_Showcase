@@ -191,6 +191,9 @@ namespace mir
 
         void ReleaseSceneResources();
 
+        // the next frame starts temporal accumulation fresh (DLSS ray reconstruction's history)
+        void ResetHistory();
+
         // Releases a selected model generation after a replacement has been
         // prepared. Handles not present in these spans remain valid.
         void ReleaseModelResources(std::span<const MeshHandle> meshes,
