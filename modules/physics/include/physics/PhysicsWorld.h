@@ -50,6 +50,8 @@ namespace mir
         int mLayer = 0;
         // Never blocks motion; reports contacts like any other body.
         bool mIsTrigger = false;
+        // A refusal is not logged: the caller already said so when it first tried.
+        bool mQuiet = false;
         // Pairs this body touches also get Stay events.
         bool mDetectStay = false;
         // Reads only for Dynamic: a mass at or below 0 leaves the shape's own, from its volume.
@@ -160,19 +162,22 @@ namespace mir
         // Kinematic only: sets the velocity that reaches the pose after dt, so dynamic bodies in the way are pushed
         // and not skipped over. The pose is reached at the end of the next step; the velocity is left behind.
         void MoveBodyKinematic(BodyHandle body, WorldPosition position, const glm::quat &rotation, float dt);
-        void SetBodyLinearVelocity(BodyHandle body, const glm::vec3 &velocity);
-        void SetBodyAngularVelocity(BodyHandle body, const glm::vec3 &velocity);
-        void AddLinearVelocity(BodyHandle body, const glm::vec3 &velocity);
-        void AddAngularVelocity(BodyHandle body, const glm::vec3 &velocity);
+        // These return whether the body took the call. False, with the reason logged, for a stale handle, a vector
+        // that is not finite, a force, torque or impulse on a body that is not Dynamic (a held body takes impulses and
+        // velocities into the velocities it keeps, not forces), or a velocity on a Static body.
+        bool SetBodyLinearVelocity(BodyHandle body, const glm::vec3 &velocity);
+        bool SetBodyAngularVelocity(BodyHandle body, const glm::vec3 &velocity);
+        bool AddLinearVelocity(BodyHandle body, const glm::vec3 &velocity);
+        bool AddAngularVelocity(BodyHandle body, const glm::vec3 &velocity);
 
         // Force and torque accumulate until the next Step() consumes and clears
         // them, so a continuous push has to be re-applied every step.
-        void AddForce(BodyHandle body, const glm::vec3 &force);
-        void AddTorque(BodyHandle body, const glm::vec3 &torque);
-        void AddImpulse(BodyHandle body, const glm::vec3 &impulse);
-        void AddAngularImpulse(BodyHandle body, const glm::vec3 &angularImpulse);
-        void AddForceAtOffset(BodyHandle body, const glm::vec3 &force, const glm::vec3 &localOffset);
-        void AddImpulseAtOffset(BodyHandle body, const glm::vec3 &impulse, const glm::vec3 &localOffset);
+        bool AddForce(BodyHandle body, const glm::vec3 &force);
+        bool AddTorque(BodyHandle body, const glm::vec3 &torque);
+        bool AddImpulse(BodyHandle body, const glm::vec3 &impulse);
+        bool AddAngularImpulse(BodyHandle body, const glm::vec3 &angularImpulse);
+        bool AddForceAtOffset(BodyHandle body, const glm::vec3 &force, const glm::vec3 &localOffset);
+        bool AddImpulseAtOffset(BodyHandle body, const glm::vec3 &impulse, const glm::vec3 &localOffset);
 
         // kNullEntity for an untagged body or a bad handle; the entity is not checked for liveness.
         void SetBodyEntity(BodyHandle body, Entity entity);

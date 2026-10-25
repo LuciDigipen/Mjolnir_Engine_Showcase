@@ -158,8 +158,17 @@ namespace mir
             return sol::nil;
         }
 
-        bool LuaValueToField(const FieldDesc &field, const sol::object &value, FieldScratch &scratch)
+        // `problem` gets the reason when the value cannot be the field's, for the one error the caller logs.
+        bool LuaValueToField(const FieldDesc &field, const sol::object &value, FieldScratch &scratch,
+                             std::string *problem = nullptr)
         {
+            const auto refuse = [&](std::string why)
+            {
+                if (problem != nullptr)
+                    *problem = std::move(why);
+                return false;
+            };
+
             switch (field.mKind)
             {
             case FieldKind::Bool:
@@ -173,22 +182,28 @@ namespace mir
             {
                 if (value.get_type() != sol::type::number)
                     return false;
-                scratch.asInt = static_cast<int32_t>(value.as<double>());
+                const double number = value.as<double>();
+                if (!(number >= -2147483648.0 && number <= 2147483647.0))
+                    return refuse("the number is NaN, infinite or outside the range of an integer");
+                scratch.asInt = static_cast<int32_t>(number);
                 return true;
             }
             case FieldKind::Float:
             {
-                if (!value.is<float>())
+                if (value.get_type() != sol::type::number)
                     return false;
-                scratch.asFloat = value.as<float>();
+                const double number = value.as<double>();
+                if (std::isnan(number) || std::isinf(number) || !std::isfinite(static_cast<float>(number)))
+                    return refuse("the number is NaN, infinite or too large");
+                scratch.asFloat = static_cast<float>(number);
                 return true;
             }
             case FieldKind::Vec3:
             {
-                if (!value.is<sol::table>())
-                    return false;
-                const sol::table t = value.as<sol::table>();
-                scratch.asVec3 = glm::vec3(t.get_or("x", 0.0f), t.get_or("y", 0.0f), t.get_or("z", 0.0f));
+                double c[3]{};
+                if (const std::string why = VectorProblem(value, "value", kVec3Keys, c); !why.empty())
+                    return refuse(why);
+                scratch.asVec3 = glm::vec3(static_cast<float>(c[0]), static_cast<float>(c[1]), static_cast<float>(c[2]));
                 return true;
             }
             case FieldKind::WorldPosition:
@@ -202,20 +217,20 @@ namespace mir
             }
             case FieldKind::Vec4:
             {
-                if (!value.is<sol::table>())
-                    return false;
-                const sol::table t = value.as<sol::table>();
-                scratch.asVec4 = glm::vec4(t.get_or("x", 0.0f), t.get_or("y", 0.0f), t.get_or("z", 0.0f),
-                                           t.get_or("w", 0.0f));
+                double c[4]{};
+                if (const std::string why = VectorProblem(value, "value", kQuatKeys, c); !why.empty())
+                    return refuse(why);
+                scratch.asVec4 = glm::vec4(static_cast<float>(c[0]), static_cast<float>(c[1]), static_cast<float>(c[2]),
+                                           static_cast<float>(c[3]));
                 return true;
             }
             case FieldKind::Quat:
             {
-                if (!value.is<sol::table>())
-                    return false;
-                const sol::table t = value.as<sol::table>();
-                scratch.asQuat = glm::quat(t.get_or("w", 1.0f), t.get_or("x", 0.0f), t.get_or("y", 0.0f),
-                                           t.get_or("z", 0.0f));
+                double c[4]{};
+                if (const std::string why = VectorProblem(value, "value", kQuatKeys, c); !why.empty())
+                    return refuse(why);
+                scratch.asQuat = glm::quat(static_cast<float>(c[3]), static_cast<float>(c[0]), static_cast<float>(c[1]),
+                                           static_cast<float>(c[2]));
                 return true;
             }
             case FieldKind::Mat4:
@@ -348,10 +363,12 @@ namespace mir
             }
 
             FieldScratch scratch;
-            if (!LuaValueToField(*field, value, scratch))
+            std::string problem;
+            if (!LuaValueToField(*field, value, scratch, &problem))
             {
-                MIR_LOG_ERROR("script: world:set '{}.{}' - value is the wrong shape or non-finite for a {}",
-                              componentName, fieldName, FieldKindName(field->mKind));
+                MIR_LOG_ERROR("script: world:set '{}.{}' - value is the wrong shape or non-finite for a {}{}",
+                              componentName, fieldName, FieldKindName(field->mKind),
+                              problem.empty() ? std::string() : ": " + problem);
                 return false;
             }
 

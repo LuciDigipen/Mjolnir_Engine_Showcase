@@ -8,6 +8,8 @@
  */
 #include <physics/PhysicsSystem.h>
 
+#include <core/log/Log.h>
+#include <core/log/LogHistory.h>
 #include <physics/CollisionEvents.h>
 #include <physics/PhysicsStepGate.h>
 #include <physics/PhysicsWorld.h>
@@ -26,6 +28,8 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <cmath>
+#include <filesystem>
+#include <limits>
 #include <optional>
 #include <vector>
 
@@ -1051,6 +1055,128 @@ TEST_CASE("A ray cast filters by layer, motion type, trigger and excluded body",
         noMotions.mMotions = 0;
         CHECK_FALSE(cast(noMotions).has_value());
     }
+}
+
+TEST_CASE("A force, impulse or velocity call says whether the body took it", "[physics][validation]")
+{
+    PhysicsFixture fixture;
+    mir::PhysicsWorld &physics = fixture.Physics();
+    const mir::BodyHandle dynamicBody = BodyOfEntity(fixture, fixture.Add(glm::vec3(0.0f, 5.0f, 0.0f), kDynamicSphere));
+    const mir::BodyHandle staticBody = BodyOfEntity(fixture, fixture.Add(glm::vec3(10.0f, 0.0f, 0.0f), kStaticBox));
+    const mir::BodyHandle kinematicBody = BodyOfEntity(fixture, fixture.Add(glm::vec3(20.0f, 5.0f, 0.0f), kKinematicBox));
+    const glm::vec3 push(1.0f, 0.0f, 0.0f);
+
+    SECTION("a Dynamic body takes all of them")
+    {
+        CHECK(physics.AddForce(dynamicBody, push));
+        CHECK(physics.AddTorque(dynamicBody, push));
+        CHECK(physics.AddImpulse(dynamicBody, push));
+        CHECK(physics.AddAngularImpulse(dynamicBody, push));
+        CHECK(physics.AddForceAtOffset(dynamicBody, push, push));
+        CHECK(physics.AddImpulseAtOffset(dynamicBody, push, push));
+        CHECK(physics.SetBodyLinearVelocity(dynamicBody, push));
+        CHECK(physics.SetBodyAngularVelocity(dynamicBody, push));
+        CHECK(physics.AddLinearVelocity(dynamicBody, push));
+        CHECK(physics.AddAngularVelocity(dynamicBody, push));
+    }
+
+    SECTION("a Static body takes none")
+    {
+        CHECK_FALSE(physics.AddForce(staticBody, push));
+        CHECK_FALSE(physics.AddImpulse(staticBody, push));
+        CHECK_FALSE(physics.SetBodyLinearVelocity(staticBody, push));
+        CHECK_FALSE(physics.AddAngularVelocity(staticBody, push));
+    }
+
+    SECTION("a Kinematic body takes a velocity and no force or impulse")
+    {
+        CHECK(physics.SetBodyLinearVelocity(kinematicBody, push));
+        CHECK(physics.AddAngularVelocity(kinematicBody, push));
+        CHECK_FALSE(physics.AddForce(kinematicBody, push));
+        CHECK_FALSE(physics.AddTorque(kinematicBody, push));
+        CHECK_FALSE(physics.AddImpulse(kinematicBody, push));
+    }
+
+    SECTION("a held body keeps impulses and velocities and takes no force")
+    {
+        physics.HoldBody(dynamicBody);
+        CHECK(physics.AddImpulse(dynamicBody, push));
+        CHECK(physics.AddAngularImpulse(dynamicBody, push));
+        CHECK(physics.SetBodyLinearVelocity(dynamicBody, push));
+        CHECK_FALSE(physics.AddForce(dynamicBody, push));
+        CHECK_FALSE(physics.AddTorque(dynamicBody, push));
+    }
+
+    SECTION("a vector that is not finite changes nothing")
+    {
+        const glm::vec3 before = physics.BodyLinearVelocity(dynamicBody);
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        const float inf = std::numeric_limits<float>::infinity();
+        CHECK_FALSE(physics.SetBodyLinearVelocity(dynamicBody, glm::vec3(nan, 0.0f, 0.0f)));
+        CHECK_FALSE(physics.AddImpulse(dynamicBody, glm::vec3(0.0f, inf, 0.0f)));
+        CHECK_FALSE(physics.AddForceAtOffset(dynamicBody, push, glm::vec3(0.0f, 0.0f, -inf)));
+        CHECK(physics.BodyLinearVelocity(dynamicBody) == before);
+    }
+
+    SECTION("a body that is gone takes nothing")
+    {
+        physics.DestroyBody(dynamicBody);
+        CHECK_FALSE(physics.AddForce(dynamicBody, push));
+        CHECK_FALSE(physics.SetBodyLinearVelocity(dynamicBody, push));
+    }
+}
+
+TEST_CASE("A size of zero leaves the entity without a body, says so once, and a fix builds it", "[physics][validation]")
+{
+    mir::InitLog({ .filePath = (std::filesystem::temp_directory_path() / "mir_physics_validation.log").string() });
+    mir::LogHistory::Clear();
+    const auto refusals = []()
+    {
+        std::size_t count = 0;
+        for (const mir::LogEntry &entry : mir::LogHistory::Snapshot())
+            count += entry.message.find("must be positive") != std::string::npos ? 1 : 0;
+        return count;
+    };
+
+    PhysicsFixture fixture;
+    mir::RigidBody flat = kDynamicBox;
+    flat.halfExtent = glm::vec3(0.5f, 0.0f, 0.5f);
+    const mir::Entity entity = fixture.Add(glm::vec3(0.0f, 5.0f, 0.0f), flat);
+
+    // no body, no step has anything to say about it, and the one refusal was logged when it was added
+    CHECK_FALSE(BodyOfEntity(fixture, entity).IsValid());
+    CHECK(fixture.Physics().BodyCount() == 0);
+    fixture.Run(10);
+    CHECK(refusals() == 1);
+
+    // still not buildable: no new message
+    BodyComponent(fixture, entity).halfExtent = glm::vec3(-1.0f, 0.5f, 0.5f);
+    fixture.Run(5);
+    CHECK_FALSE(BodyOfEntity(fixture, entity).IsValid());
+    CHECK(refusals() == 1);
+
+    // fixed: the body appears, silently
+    BodyComponent(fixture, entity).halfExtent = glm::vec3(0.5f);
+    fixture.Run(1);
+    CHECK(BodyOfEntity(fixture, entity).IsValid());
+    CHECK(fixture.Physics().BodyCount() == 1);
+    CHECK(refusals() == 1);
+}
+
+TEST_CASE("Every shape refuses a size that is not above zero", "[physics][validation]")
+{
+    PhysicsFixture fixture;
+    mir::RigidBody sphere = kDynamicSphere;
+    sphere.radius = 0.0f;
+    mir::RigidBody capsule{ .motion = mir::PhysicsMotion::Dynamic, .shape = mir::PhysicsShape::Capsule };
+    capsule.halfHeight = 0.0f;
+    mir::RigidBody nonFinite = kDynamicBox;
+    nonFinite.halfExtent.x = std::numeric_limits<float>::infinity();
+
+    CHECK_FALSE(BodyOfEntity(fixture, fixture.Add(glm::vec3(0.0f), sphere)).IsValid());
+    CHECK_FALSE(BodyOfEntity(fixture, fixture.Add(glm::vec3(5.0f, 0.0f, 0.0f), capsule)).IsValid());
+    CHECK_FALSE(BodyOfEntity(fixture, fixture.Add(glm::vec3(10.0f, 0.0f, 0.0f), nonFinite)).IsValid());
+    CHECK(fixture.Physics().BodyCount() == 0);
 }
 
 TEST_CASE("A RigidBody gets its body when it is added, before any step", "[physics]")

@@ -611,6 +611,89 @@ TEST_CASE("a cast skips triggers unless hitTriggers is set", "[script][physics][
 
 namespace
 {
+    constexpr std::string_view kStaticForce = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    local force = world:add_force(entity, { x = 1.0, y = 0.0, z = 0.0 })
+    local velocity = world:set_linear_velocity(entity, { x = 1.0, y = 0.0, z = 0.0 })
+    world:set(entity, "PhysicsBindingsProbe", "ok", force == false and velocity == false)
+end
+
+return T
+)LUA";
+
+    constexpr std::string_view kBadInput = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    local nan, inf = 0 / 0, 1 / 0
+    local ok = true
+    -- a vector that is NaN, infinite, an array, missing a key or not numbers is refused
+    ok = ok and world:add_force(entity, { x = nan, y = 0.0, z = 0.0 }) == false
+    ok = ok and world:add_impulse(entity, { x = 0.0, y = inf, z = 0.0 }) == false
+    ok = ok and world:set_linear_velocity(entity, { 1.0, 2.0, 3.0 }) == false
+    ok = ok and world:set_linear_velocity(entity, { x = 1.0, y = 2.0 }) == false
+    ok = ok and world:set_linear_velocity(entity, { x = "1", y = "2", z = "3" }) == false
+    ok = ok and world:add_torque(entity, 5) == false
+    ok = ok and world:add_force(entity, { x = 1.0, y = 0.0, z = 0.0 }, { x = nan, y = 0.0, z = 0.0 }) == false
+    -- a ray with a bad origin, direction or distance misses
+    ok = ok and not world:raycast({ x = nan, y = 0.0, z = 0.0 }, { x = 0.0, y = -1.0, z = 0.0 }, 10.0).hit
+    ok = ok and not world:raycast({ x = 0.0, y = 0.0, z = 0.0 }, { 0.0, -1.0, 0.0 }, 10.0).hit
+    ok = ok and not world:raycast({ x = 0.0, y = 0.0, z = 0.0 }, { x = 0.0, y = -1.0, z = 0.0 }, inf).hit
+    -- teleport and the field setters refuse them too
+    ok = ok and world:teleport(entity, { x = nan, y = 0.0, z = 0.0 }) == false
+    ok = ok and world:teleport(entity, { x = 1.0, y = 0.0, z = 0.0 }, { x = 0.0, y = 0.0, z = 0.0 }) == false
+    ok = ok and world:set_mass(entity, nan) == false
+    ok = ok and world:set_friction(entity, inf) == false
+    ok = ok and world:set_half_extent(entity, { x = 1.0, y = 2.0 }) == false
+    ok = ok and world:set_offset(entity, { x = nan, y = 0.0, z = 0.0 }) == false
+    -- and the good form still works
+    ok = ok and world:add_force(entity, { x = 1.0, y = 0.0, z = 0.0 }) == true
+    ok = ok and world:set_linear_velocity(entity, { x = 0.0, y = 0.0, z = 0.0 }) == true
+    world:set(entity, "PhysicsBindingsProbe", "ok", ok)
+end
+
+return T
+)LUA";
+}
+
+TEST_CASE("Lua input that is not finite or not the documented form is refused and changes nothing", "[script][physics][validation]")
+{
+    Fixture f(kBadInput);
+    const mir::RigidBody before = *f.world.GetComponent<mir::RigidBody>(f.entity);
+    f.Start();
+
+    CHECK(ReadProbeField<bool>(f.world, f.entity, "ok"));
+
+    // no setter that was refused changed the component
+    const mir::RigidBody &after = *f.world.GetComponent<mir::RigidBody>(f.entity);
+    CHECK(after.mass == before.mass);
+    CHECK(after.friction == before.friction);
+    CHECK(after.halfExtent == before.halfExtent);
+    CHECK(after.offset == before.offset);
+}
+
+TEST_CASE("a force or velocity on a Static body returns false from Lua", "[script][physics][validation]")
+{
+    Fixture f(kStaticForce);
+    f.world.GetComponent<mir::RigidBody>(f.entity)->motion = mir::PhysicsMotion::Static;
+    f.Step();
+    f.Start();
+
+    CHECK(ReadProbeField<bool>(f.world, f.entity, "ok"));
+}
+
+namespace
+{
     constexpr std::string_view kLayers = R"LUA(
 local T = {}
 

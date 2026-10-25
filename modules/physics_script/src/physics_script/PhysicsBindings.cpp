@@ -62,8 +62,9 @@ namespace mir
         }
 
         using BodyRead = glm::vec3 (PhysicsWorld::*)(BodyHandle) const;
-        using BodyWrite = void (PhysicsWorld::*)(BodyHandle, const glm::vec3 &);
-        using BodyWriteAtOffset = void (PhysicsWorld::*)(BodyHandle, const glm::vec3 &, const glm::vec3 &);
+        // These say whether the body took the call; PhysicsWorld logs why when it did not.
+        using BodyWrite = bool (PhysicsWorld::*)(BodyHandle, const glm::vec3 &);
+        using BodyWriteAtOffset = bool (PhysicsWorld::*)(BodyHandle, const glm::vec3 &, const glm::vec3 &);
 
         sol::table ReadVector(World &world, Entity entity, sol::this_state state, BodyRead read)
         {
@@ -72,45 +73,38 @@ namespace mir
             return Vec3ToLua(sol::state_view(state), ref ? (ref->physics.*read)(ref->body) : glm::vec3(0.0f));
         }
 
-        bool WriteVector(World &world, Entity entity, std::string_view name, const sol::object &value,
-                         BodyWrite write)
+        bool WriteVector(World &world, Entity entity, std::string_view name, std::string_view argument,
+                         const sol::object &value, BodyWrite write)
         {
             glm::vec3 vector{};
-            if (!ToVec3(value, vector))
-            {
-                MIR_LOG_ERROR("script: world:{} needs a table with x, y and z", name);
+            if (!ReadVec3(value, vector, "world:" + std::string(name), argument))
                 return false;
-            }
 
             const std::optional<BodyRef> ref = ResolveBody(world, entity);
             if (!ref)
                 return false;
 
-            (ref->physics.*write)(ref->body, vector);
-            return true;
+            return (ref->physics.*write)(ref->body, vector);
         }
 
-        bool WriteVectorAtOffset(World &world, Entity entity, std::string_view name, const sol::object &value,
-                                 const sol::optional<sol::object> &offset, BodyWrite write,
+        bool WriteVectorAtOffset(World &world, Entity entity, std::string_view name, std::string_view argument,
+                                 const sol::object &value, const sol::optional<sol::object> &offset, BodyWrite write,
                                  BodyWriteAtOffset writeAtOffset)
         {
             if (!Given(offset))
-                return WriteVector(world, entity, name, value, write);
+                return WriteVector(world, entity, name, argument, value, write);
 
+            const std::string call = "world:" + std::string(name);
             glm::vec3 vector{};
             glm::vec3 localOffset{};
-            if (!ToVec3(value, vector) || !ToVec3(*offset, localOffset))
-            {
-                MIR_LOG_ERROR("script: world:{} needs tables with x, y and z", name);
+            if (!ReadVec3(value, vector, call, argument) || !ReadVec3(*offset, localOffset, call, "offset"))
                 return false;
-            }
 
             const std::optional<BodyRef> ref = ResolveBody(world, entity);
             if (!ref)
                 return false;
 
-            (ref->physics.*writeAtOffset)(ref->body, vector, localOffset);
-            return true;
+            return (ref->physics.*writeAtOffset)(ref->body, vector, localOffset);
         }
 
         sol::table WorldLinearVelocity(World &world, Entity entity, sol::this_state state)
@@ -125,25 +119,25 @@ namespace mir
 
         bool WorldSetLinearVelocity(World &world, Entity entity, const sol::object &velocity)
         {
-            return WriteVector(world, entity, "set_linear_velocity", velocity,
+            return WriteVector(world, entity, "set_linear_velocity", "velocity", velocity,
                                &PhysicsWorld::SetBodyLinearVelocity);
         }
 
         bool WorldSetAngularVelocity(World &world, Entity entity, const sol::object &velocity)
         {
-            return WriteVector(world, entity, "set_angular_velocity", velocity,
+            return WriteVector(world, entity, "set_angular_velocity", "velocity", velocity,
                                &PhysicsWorld::SetBodyAngularVelocity);
         }
 
         bool WorldAddLinearVelocity(World &world, Entity entity, const sol::object &velocity)
         {
-            return WriteVector(world, entity, "add_linear_velocity", velocity,
+            return WriteVector(world, entity, "add_linear_velocity", "velocity", velocity,
                                &PhysicsWorld::AddLinearVelocity);
         }
 
         bool WorldAddAngularVelocity(World &world, Entity entity, const sol::object &velocity)
         {
-            return WriteVector(world, entity, "add_angular_velocity", velocity,
+            return WriteVector(world, entity, "add_angular_velocity", "velocity", velocity,
                                &PhysicsWorld::AddAngularVelocity);
         }
 
@@ -151,25 +145,25 @@ namespace mir
         // that wants a body-local thrust rotates it by Transform.rotation first.
         bool WorldAddForce(World &world, Entity entity, const sol::object &force, sol::optional<sol::object> offset)
         {
-            return WriteVectorAtOffset(world, entity, "add_force", force, offset, &PhysicsWorld::AddForce,
+            return WriteVectorAtOffset(world, entity, "add_force", "force", force, offset, &PhysicsWorld::AddForce,
                                        &PhysicsWorld::AddForceAtOffset);
         }
 
         bool WorldAddTorque(World &world, Entity entity, const sol::object &torque)
         {
-            return WriteVector(world, entity, "add_torque", torque, &PhysicsWorld::AddTorque);
+            return WriteVector(world, entity, "add_torque", "torque", torque, &PhysicsWorld::AddTorque);
         }
 
         bool WorldAddImpulse(World &world, Entity entity, const sol::object &impulse,
                              sol::optional<sol::object> offset)
         {
-            return WriteVectorAtOffset(world, entity, "add_impulse", impulse, offset, &PhysicsWorld::AddImpulse,
+            return WriteVectorAtOffset(world, entity, "add_impulse", "impulse", impulse, offset, &PhysicsWorld::AddImpulse,
                                        &PhysicsWorld::AddImpulseAtOffset);
         }
 
         bool WorldAddAngularImpulse(World &world, Entity entity, const sol::object &impulse)
         {
-            return WriteVector(world, entity, "add_angular_impulse", impulse, &PhysicsWorld::AddAngularImpulse);
+            return WriteVector(world, entity, "add_angular_impulse", "impulse", impulse, &PhysicsWorld::AddAngularImpulse);
         }
 
         // Only converts; PhysicsWorld::RayCast refuses, and logs, a bad direction or distance.
@@ -287,29 +281,21 @@ namespace mir
             sol::table result = lua.create_table();
             result["hit"] = false;
 
-            const std::optional<WorldVec3> from = WorldVec3FromLua(origin);
+            const std::optional<WorldVec3> from = ReadWorldVec3(origin, "world:raycast", "origin");
             if (!from)
-            {
-                MIR_LOG_ERROR("script: world:raycast needs an origin table with finite x, y and z in world range");
                 return result;
-            }
 
             glm::vec3 dir{};
-            if (!ToVec3(direction, dir))
-            {
-                MIR_LOG_ERROR("script: world:raycast needs a direction table with x, y and z");
+            if (!ReadVec3(direction, dir, "world:raycast", "direction"))
                 return result;
-            }
 
             float distance = kRayCastDefaultMaxDistance;
             if (Given(maxDistance))
             {
-                if (maxDistance->get_type() != sol::type::number)
-                {
-                    MIR_LOG_ERROR("script: world:raycast needs a number for maxDistance");
+                double number = 0.0;
+                if (!ReadNumber(*maxDistance, number, "world:raycast", "maxDistance"))
                     return result;
-                }
-                distance = static_cast<float>(maxDistance->as<double>());
+                distance = static_cast<float>(number);
             }
 
             const PhysicsWorld *physics = world.TryResource<PhysicsWorld>();
@@ -480,27 +466,26 @@ namespace mir
         // world:teleport(entity, position[, rotation]): a world pose, with no sweep to it on a kinematic body.
         bool WorldTeleport(World &world, Entity entity, const sol::object &position, const sol::optional<sol::object> &rotation)
         {
-            const std::optional<WorldVec3> at = WorldVec3FromLua(position);
+            const std::optional<WorldVec3> at = ReadWorldVec3(position, "world:teleport", "position");
             const std::optional<WorldPosition> target = at ? WorldPosition::FromMeters(*at) : std::nullopt;
             if (!target)
-            {
-                MIR_LOG_ERROR("script: world:teleport needs a position table with finite x, y and z");
                 return false;
-            }
 
             std::optional<glm::quat> turned;
             if (Given(rotation))
             {
-                if (!rotation->is<sol::table>())
+                double components[4]{};
+                const std::string problem = VectorProblem(*rotation, "rotation", kQuatKeys, components);
+                if (!problem.empty())
                 {
-                    MIR_LOG_ERROR("script: world:teleport needs a rotation table with x, y, z and w");
+                    MIR_LOG_ERROR("script: world:teleport: {}", problem);
                     return false;
                 }
-                const sol::table t = rotation->as<sol::table>();
-                const glm::quat q(t.get_or("w", 1.0f), t.get_or("x", 0.0f), t.get_or("y", 0.0f), t.get_or("z", 0.0f));
-                if (!std::isfinite(q.w + q.x + q.y + q.z) || glm::length(q) == 0.0f)
+                const glm::quat q(static_cast<float>(components[3]), static_cast<float>(components[0]),
+                                  static_cast<float>(components[1]), static_cast<float>(components[2]));
+                if (!(glm::length(q) > 0.0f) || !std::isfinite(glm::length(q)))
                 {
-                    MIR_LOG_ERROR("script: world:teleport needs a finite rotation");
+                    MIR_LOG_ERROR("script: world:teleport: rotation must not be all zeros");
                     return false;
                 }
                 turned = glm::normalize(q);

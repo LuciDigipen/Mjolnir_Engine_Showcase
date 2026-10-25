@@ -70,13 +70,21 @@ namespace mir
 
         // The one place a body is built: the add hook, the PlayBegin pass and the first-step fallback share it.
         // The pose is the entity's world pose, and the shape follows the world scale.
-        void CreateBodyFor(World &world, PhysicsWorld &physics, Entity entity, RigidBody &rigidBody)
+        // A body the physics world refuses (a size at or below 0) is left out, on purpose: the reason was logged
+        // by that first try, and `quiet` keeps the retry after an edit from saying it again.
+        void CreateBodyFor(World &world, PhysicsWorld &physics, Entity entity, RigidBody &rigidBody, bool quiet = false)
         {
             const BodyPose pose = detail::PoseOf(world, entity);
 
-            rigidBody.runtime.body = physics.CreateBody(BodyDescFor(rigidBody, pose, entity));
-            physics.SetBodyEntity(rigidBody.runtime.body, entity);
+            BodyDesc desc = BodyDescFor(rigidBody, pose, entity);
+            desc.mQuiet = quiet;
+            rigidBody.runtime.body = physics.CreateBody(desc);
             rigidBody.runtime.applied = AppliedOf(rigidBody);
+            rigidBody.runtime.creationRefused = !rigidBody.runtime.body.IsValid();
+            if (rigidBody.runtime.creationRefused)
+                return;
+
+            physics.SetBodyEntity(rigidBody.runtime.body, entity);
             detail::ResetStepPoses(rigidBody, pose.position.Meters(), pose.rotation);
             detail::Stamp(rigidBody, pose);
         }
@@ -118,7 +126,12 @@ namespace mir
             [&](Entity entity, Transform &, RigidBody &rigidBody)
             {
                 if (!rigidBody.runtime.body.IsValid())
+                {
+                    // refused at creation: an edit may have made it buildable, and says nothing if it still is not
+                    if (rigidBody.runtime.creationRefused && AppliedOf(rigidBody) != rigidBody.runtime.applied)
+                        CreateBodyFor(world, physics, entity, rigidBody, true);
                     return;
+                }
 
                 const AppliedBody now = AppliedOf(rigidBody);
                 AppliedBody &applied = rigidBody.runtime.applied;
@@ -159,6 +172,10 @@ namespace mir
         mQuery->ForEach(
             [&](Entity entity, Transform &, RigidBody &rigidBody)
             {
+                // refused already: it is tried again when its fields change, in ApplyEdits
+                if (!rigidBody.runtime.body.IsValid() && rigidBody.runtime.creationRefused)
+                    return;
+
                 if (!rigidBody.runtime.body.IsValid())
                 {
                     // The Transform came after the RigidBody, so the add hook had nothing to build from.
@@ -305,7 +322,7 @@ namespace mir
         world.ForEach<Transform, RigidBody>(
             [&](Entity entity, Transform &, RigidBody &rigidBody)
             {
-                if (!rigidBody.runtime.body.IsValid())
+                if (!rigidBody.runtime.body.IsValid() && !rigidBody.runtime.creationRefused)
                     CreateBodyFor(world, *physics, entity, rigidBody);
             });
 
