@@ -1,10 +1,11 @@
 engine_add_module(imguiruntime)
 
 target_link_libraries(engine_imguiruntime
-    PUBLIC mir::renderer
+    # PUBLIC core: ImGuiModule.h holds a ModuleContext and hands out Registrations
+    PUBLIC mir::core
+           mir::renderer
            mir::window
-    PRIVATE mir::core
-            mir::input
+    PRIVATE mir::input
             imgui::imgui
             iconfontcppheaders::iconfontcppheaders
 )

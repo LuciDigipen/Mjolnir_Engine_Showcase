@@ -9,14 +9,15 @@ find_package(Stb REQUIRED)
 target_include_directories(engine_editor PRIVATE ${Stb_INCLUDE_DIR})
 
 target_link_libraries(engine_editor
-    PUBLIC mir::imguiruntime
+    # PUBLIC core: EditorModule.h holds Registrations and takes a ModuleContext
+    PUBLIC mir::core
+           mir::imguiruntime
            mir::renderer
            mir::window
            mir::input
            mir::project
     PRIVATE mir::animation
             mir::assets
-            mir::core
             mir::editortheme
             mir::gameui
             mir::scene
