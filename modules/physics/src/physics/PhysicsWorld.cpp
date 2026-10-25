@@ -69,6 +69,52 @@ namespace mir
             return bodies.GetCenterOfMassPosition(id) + worldOffset;
         }
 
+        // A cast hits only the layers asked for, by the object layer's user layer.
+        class RayLayerFilter final : public JPH::ObjectLayerFilter
+        {
+        public:
+            explicit RayLayerFilter(uint32_t layers) : mLayers(layers) {}
+
+            bool ShouldCollide(JPH::ObjectLayer layer) const override
+            {
+                return ((mLayers >> detail::Layers::UserLayer(layer)) & 1u) != 0;
+            }
+
+        private:
+            uint32_t mLayers;
+        };
+
+        // The excluded bodies, the motion types asked for and whether triggers count.
+        class RayBodyFilter final : public JPH::BodyFilter
+        {
+        public:
+            explicit RayBodyFilter(const RayFilter &filter) : mFilter(filter)
+            {
+                for (const BodyHandle body : filter.mExclude)
+                    mExcluded.push_back(ToBodyId(body));
+            }
+
+            bool ShouldCollide(const JPH::BodyID &id) const override
+            {
+                return std::find(mExcluded.begin(), mExcluded.end(), id) == mExcluded.end();
+            }
+
+            bool ShouldCollideLocked(const JPH::Body &body) const override
+            {
+                if (body.IsSensor() && !mFilter.mHitTriggers)
+                    return false;
+
+                const PhysicsMotion motion = body.GetMotionType() == JPH::EMotionType::Static ? PhysicsMotion::Static
+                    : body.GetMotionType() == JPH::EMotionType::Dynamic                       ? PhysicsMotion::Dynamic
+                                                                                              : PhysicsMotion::Kinematic;
+                return (mFilter.mMotions & MotionBit(motion)) != 0;
+            }
+
+        private:
+            const RayFilter &mFilter;
+            std::vector<JPH::BodyID> mExcluded;
+        };
+
         // Jolt stands a capsule along Y, so the other axes turn it.
         glm::quat AxisRotation(PhysicsAxis axis)
         {
@@ -804,8 +850,19 @@ namespace mir
     }
 
     std::optional<RayHit> PhysicsWorld::RayCast(WorldPosition origin, const glm::vec3 &direction,
-                                                float maxDistance) const
+                                                float maxDistance, const RayFilter &filter) const
     {
+        if (filter.mLayers == 0)
+        {
+            MIR_LOG_ERROR("PhysicsWorld::RayCast: the filter asks for no layer, so nothing can be hit");
+            return std::nullopt;
+        }
+        if ((filter.mMotions & kAllMotions) == 0)
+        {
+            MIR_LOG_ERROR("PhysicsWorld::RayCast: the filter asks for no motion type, so nothing can be hit");
+            return std::nullopt;
+        }
+
         if (!(maxDistance > 0.0f))
         {
             MIR_LOG_ERROR("PhysicsWorld::RayCast: maxDistance must be positive");
@@ -826,7 +883,9 @@ namespace mir
 
         const JPH::RRayCast ray(ToJolt(origin), ToJolt(span));
         JPH::RayCastResult hit;
-        if (!mImpl->mSystem.GetNarrowPhaseQuery().CastRay(ray, hit))
+        const RayLayerFilter layerFilter(filter.mLayers);
+        const RayBodyFilter bodyFilter(filter);
+        if (!mImpl->mSystem.GetNarrowPhaseQuery().CastRay(ray, hit, {}, layerFilter, bodyFilter))
             return std::nullopt;
 
         // origin + fraction * span: the float product is added in world precision

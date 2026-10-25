@@ -30,6 +30,11 @@ namespace mir
         Kinematic = 2,
     };
 
+    // A set of motion types as a bitmask, for a ray cast that asks for only some of them.
+    constexpr uint32_t MotionBit(PhysicsMotion motion) { return 1u << static_cast<uint32_t>(motion); }
+    inline constexpr uint32_t kAllMotions =
+        MotionBit(PhysicsMotion::Static) | MotionBit(PhysicsMotion::Dynamic) | MotionBit(PhysicsMotion::Kinematic);
+
     // Index == underlying PhysicsMotion value; for RigidBody's "motion" inspector field.
     inline constexpr std::string_view kPhysicsMotionNames[] = { "Static", "Dynamic", "Kinematic" };
     // Each assert names its enum's last value; move it along when one is added.

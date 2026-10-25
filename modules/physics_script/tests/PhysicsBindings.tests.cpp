@@ -497,6 +497,120 @@ TEST_CASE("a RigidBody edit made in OnFixedUpdate reaches the body in the same s
 
 namespace
 {
+    // The caster is the fixture's box at the origin; the floor below it is added by the test.
+    constexpr std::string_view kCastSelf = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+local function near(a, b) return math.abs(a - b) < 0.02 end
+
+function T.OnStart(self, world, entity)
+    local from, down = { x = 0.0, y = 3.0, z = 0.0 }, { x = 0.0, y = -1.0, z = 0.0 }
+    local plain = world:raycast(from, down, 20.0)
+    local self_hit = world:raycast(from, down, 20.0, { ignoreSelf = false })
+    local excluded = world:raycast(from, down, 20.0, { ignoreSelf = false, exclude = { entity } })
+    local ok = plain.hit and near(plain.distance, 5.5)
+        and self_hit.hit and near(self_hit.distance, 2.5)
+        and excluded.hit and near(excluded.distance, 5.5)
+    world:set(entity, "PhysicsBindingsProbe", "ok", ok)
+end
+
+return T
+)LUA";
+
+    constexpr std::string_view kCastFilters = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+local function near(a, b) return math.abs(a - b) < 0.02 end
+
+function T.OnStart(self, world, entity)
+    local from, down = { x = 0.0, y = 3.0, z = 0.0 }, { x = 0.0, y = -1.0, z = 0.0 }
+    local byName = world:raycast(from, down, 20.0, { layers = { "Floor" } })
+    local byIndex = world:raycast(from, down, 20.0, { layers = { 2 } })
+    local wrongLayer = world:raycast(from, down, 20.0, { layers = { "Default" } })
+    local isStatic = world:raycast(from, down, 20.0, { motion = { PhysicsMotion.Static } })
+    local isKinematic = world:raycast(from, down, 20.0, { motion = { PhysicsMotion.Kinematic } })
+    local typo = world:raycast(from, down, 20.0, { layer = { "Floor" } })
+    local nobody = world:raycast(from, down, 20.0, { layers = { "Nobody" } })
+    local ok = byName.hit and near(byName.distance, 5.5)
+        and byIndex.hit and near(byIndex.distance, 5.5)
+        and not wrongLayer.hit
+        and isStatic.hit and near(isStatic.distance, 5.5)
+        and not isKinematic.hit
+        and not typo.hit
+        and not nobody.hit
+    world:set(entity, "PhysicsBindingsProbe", "ok", ok)
+end
+
+return T
+)LUA";
+
+    constexpr std::string_view kCastTriggers = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    local from, down = { x = 0.0, y = 3.0, z = 0.0 }, { x = 0.0, y = -1.0, z = 0.0 }
+    local skipped = world:raycast(from, down, 20.0)
+    local asked = world:raycast(from, down, 20.0, { hitTriggers = true })
+    world:set(entity, "PhysicsBindingsProbe", "ok", not skipped.hit and asked.hit)
+end
+
+return T
+)LUA";
+
+    // A floor under the caster, 5.5 meters below the cast's start.
+    void AddFloor(Fixture &f, int layer = 0, bool trigger = false)
+    {
+        mir::RigidBody floor{ .motion = mir::PhysicsMotion::Static, .shape = mir::PhysicsShape::Box,
+            .halfExtent = glm::vec3(5.0f, 0.5f, 5.0f) };
+        floor.layer = layer;
+        floor.isTrigger = trigger;
+        const mir::Entity entity = f.world.CreateEntity();
+        mir::AddTransform(f.world, entity, mir::Transform{ mir::WorldVec3(0.0, -3.0, 0.0) });
+        f.world.AddComponent<mir::RigidBody>(entity, floor);
+    }
+}
+
+TEST_CASE("a cast does not hit its caster unless it says so, and can exclude entities", "[script][physics][raycast]")
+{
+    Fixture f(kCastSelf);
+    AddFloor(f);
+    f.Start();
+    CHECK(ReadProbeField<bool>(f.world, f.entity, "ok"));
+}
+
+TEST_CASE("a cast filters by layer name or index and by motion type, and refuses an unknown option", "[script][physics][raycast]")
+{
+    Fixture f(kCastFilters);
+    mir::PhysicsLayerTable table;
+    table.names[2] = "Floor";
+    f.Physics().SetLayerTable(table);
+    AddFloor(f, 2);
+    f.Start();
+    CHECK(ReadProbeField<bool>(f.world, f.entity, "ok"));
+}
+
+TEST_CASE("a cast skips triggers unless hitTriggers is set", "[script][physics][raycast]")
+{
+    Fixture f(kCastTriggers);
+    AddFloor(f, 0, true);
+    f.Start();
+    CHECK(ReadProbeField<bool>(f.world, f.entity, "ok"));
+}
+
+namespace
+{
     constexpr std::string_view kLayers = R"LUA(
 local T = {}
 

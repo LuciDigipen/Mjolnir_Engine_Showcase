@@ -60,6 +60,18 @@ namespace mir
         bool mAllowSleeping = true;
     };
 
+    // What a ray cast may hit. The defaults hit every layer and motion type, skip triggers and exclude nothing.
+    struct RayFilter
+    {
+        // Bit i asks for layer i.
+        uint32_t mLayers = 0xFFFFFFFFu;
+        // MotionBit of each motion type asked for.
+        uint32_t mMotions = kAllMotions;
+        bool mHitTriggers = false;
+        // Bodies the cast passes through, the caster's own among them.
+        std::span<const BodyHandle> mExclude;
+    };
+
     struct RayHit
     {
         BodyHandle mBody;
@@ -168,7 +180,9 @@ namespace mir
 
         // Closest hit within maxDistance. Jolt's float fraction resolves ~6e-8 * maxDistance.
         // nullopt, logged, for a zero or non-finite direction or a non-positive maxDistance.
-        std::optional<RayHit> RayCast(WorldPosition origin, const glm::vec3 &direction, float maxDistance) const;
+        // An empty layer or motion set is refused with a logged reason, like a bad ray.
+        std::optional<RayHit> RayCast(WorldPosition origin, const glm::vec3 &direction, float maxDistance,
+            const RayFilter &filter = {}) const;
 
         // nullopt unless body is a live height field.
         std::optional<HeightFieldInfo> HeightFieldInfoOf(BodyHandle body) const;

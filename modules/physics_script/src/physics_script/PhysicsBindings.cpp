@@ -9,6 +9,7 @@
 
 #include <physics_script/PhysicsBindings.h>
 
+#include <script/BindingApi.h>
 #include <script/BindingHelpers.h>
 
 #include <core/ecs/World.h>
@@ -27,6 +28,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace mir
 {
@@ -171,8 +173,115 @@ namespace mir
         }
 
         // Only converts; PhysicsWorld::RayCast refuses, and logs, a bad direction or distance.
+        const PhysicsLayerTable &LayerTableOf(World &world);
+        std::optional<int> ResolveLayer(const PhysicsLayerTable &table, const sol::object &value, std::string_view call);
+
+        // The options table of world:raycast, turned into the filter and the bodies it excludes.
+        // False, logged, for anything it does not understand, so a typo never quietly casts without its filter.
+        bool ReadCastOptions(World &world, sol::state_view lua, const sol::table &options, RayFilter &filter,
+            std::vector<BodyHandle> &excluded)
+        {
+            bool ignoreSelf = true;
+
+            for (const auto &[key, value] : options)
+            {
+                const std::string name = key.is<std::string>() ? key.as<std::string>() : std::string();
+                if (name == "layers")
+                {
+                    if (!value.is<sol::table>())
+                    {
+                        MIR_LOG_ERROR("script: world:raycast options.layers needs a list of layer names or indices");
+                        return false;
+                    }
+                    const PhysicsLayerTable &table = LayerTableOf(world);
+                    filter.mLayers = 0;
+                    for (const auto &[position, layer] : value.as<sol::table>())
+                    {
+                        const std::optional<int> index = ResolveLayer(table, layer, "world:raycast options.layers");
+                        if (!index)
+                            return false;
+                        filter.mLayers |= 1u << *index;
+                    }
+                }
+                else if (name == "motion")
+                {
+                    if (!value.is<sol::table>())
+                    {
+                        MIR_LOG_ERROR("script: world:raycast options.motion needs a list of PhysicsMotion values");
+                        return false;
+                    }
+                    filter.mMotions = 0;
+                    for (const auto &[position, motion] : value.as<sol::table>())
+                    {
+                        if (motion.get_type() != sol::type::number)
+                        {
+                            MIR_LOG_ERROR("script: world:raycast options.motion needs PhysicsMotion values");
+                            return false;
+                        }
+                        const double number = motion.as<double>();
+                        if (std::floor(number) != number || number < 0.0 || number > 2.0)
+                        {
+                            MIR_LOG_ERROR("script: world:raycast options.motion has {}, which is not a PhysicsMotion", number);
+                            return false;
+                        }
+                        filter.mMotions |= 1u << static_cast<int>(number);
+                    }
+                }
+                else if (name == "exclude")
+                {
+                    if (!value.is<sol::table>())
+                    {
+                        MIR_LOG_ERROR("script: world:raycast options.exclude needs a list of entities");
+                        return false;
+                    }
+                    for (const auto &[position, entry] : value.as<sol::table>())
+                    {
+                        if (!entry.is<Entity>())
+                        {
+                            MIR_LOG_ERROR("script: world:raycast options.exclude needs a list of entities");
+                            return false;
+                        }
+                        if (const std::optional<BodyRef> ref = ResolveBody(world, entry.as<Entity>()))
+                            excluded.push_back(ref->body);
+                    }
+                }
+                else if (name == "ignoreSelf" || name == "hitTriggers")
+                {
+                    if (value.get_type() != sol::type::boolean)
+                    {
+                        MIR_LOG_ERROR("script: world:raycast options.{} needs true or false", name);
+                        return false;
+                    }
+                    if (name == "ignoreSelf")
+                        ignoreSelf = value.as<bool>();
+                    else
+                        filter.mHitTriggers = value.as<bool>();
+                }
+                else
+                {
+                    MIR_LOG_ERROR("script: world:raycast has no option '{}'; the options are layers, motion, exclude, "
+                                  "ignoreSelf and hitTriggers", name);
+                    return false;
+                }
+            }
+
+            // the caster does not hit itself unless it says so
+            if (ignoreSelf)
+            {
+                const Entity caster = RunningScriptEntity(lua);
+                if (!caster.IsNull())
+                {
+                    if (const std::optional<BodyRef> ref = ResolveBody(world, caster))
+                        excluded.push_back(ref->body);
+                }
+            }
+            filter.mExclude = excluded;
+            return true;
+        }
+
         sol::table WorldRayCast(World &world, const sol::object &origin, const sol::object &direction,
-                                sol::optional<sol::object> maxDistance, sol::this_state state)
+                                sol::optional<sol::object> maxDistance, sol::optional<sol::object> options,
+                                sol::this_state state)
         {
             sol::state_view lua(state);
             sol::table result = lua.create_table();
@@ -211,7 +320,32 @@ namespace mir
             if (!position)
                 return result;
 
-            const std::optional<RayHit> hit = physics->RayCast(*position, dir, distance);
+            RayFilter filter;
+            std::vector<BodyHandle> excluded;
+            sol::object optionsGiven = Given(options) ? *options : sol::make_object(lua, sol::lua_nil);
+            if (optionsGiven.get_type() != sol::type::nil)
+            {
+                if (!optionsGiven.is<sol::table>())
+                {
+                    MIR_LOG_ERROR("script: world:raycast needs a table for options");
+                    return result;
+                }
+                if (!ReadCastOptions(world, lua, optionsGiven.as<sol::table>(), filter, excluded))
+                    return result;
+            }
+            else
+            {
+                // no options: the default still keeps the caster out of its own cast
+                const Entity caster = RunningScriptEntity(lua);
+                if (!caster.IsNull())
+                {
+                    if (const std::optional<BodyRef> ref = ResolveBody(world, caster))
+                        excluded.push_back(ref->body);
+                }
+                filter.mExclude = excluded;
+            }
+
+            const std::optional<RayHit> hit = physics->RayCast(*position, dir, distance, filter);
             if (!hit)
                 return result;
 

@@ -57,6 +57,13 @@ bindings to a `ScriptHost` the way the bridge does.
 
 ## Changed
 
+*2026-10-25* — **Layers and ray cast filters in the physics bridge.** Was: every body collided with every other, and
+`world:raycast` hit whatever was first, its caster's own body included. Now: a body has a `layer` that a script sets by
+name or index (`set_layer`, `layer_index`), and `world:raycast(origin, direction, distance, options)` takes `layers`,
+`motion`, `exclude`, `ignoreSelf` (default true) and `hitTriggers` (default false). The host remembers the entity whose
+callback is running, which is how a cast knows its caster. Because: a script cannot hit itself by accident, and a game
+needs to say what a cast is for.
+
 *2026-10-25* — **The physics bridge reaches every `RigidBody` field.** Was: scripts could push a body with
 forces and velocities, but not read or change its settings. Now: each `RigidBody` field has a getter named
 after it and a `set_` setter (`friction`, `set_friction`, `half_extent`, `set_offset`), both going through

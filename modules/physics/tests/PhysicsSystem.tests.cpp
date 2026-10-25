@@ -965,6 +965,94 @@ TEST_CASE("A layer outside 0 to 31 is made the Default layer", "[physics][layers
     CHECK(fixture.Physics().BodyCount() == 1);
 }
 
+TEST_CASE("A ray cast filters by layer, motion type, trigger and excluded body", "[physics][raycast]")
+{
+    PhysicsFixture fixture;
+    mir::PhysicsLayerTable table;
+    table.names[2] = "Floor";
+    fixture.Physics().SetLayerTable(table);
+
+    mir::RigidBody floorBody = kStaticBox;
+    floorBody.layer = 2;
+    const mir::Entity floor = fixture.Add(glm::vec3(0.0f, -3.0f, 0.0f), floorBody);
+    const mir::BodyHandle floorHandle = BodyOfEntity(fixture, floor);
+
+    mir::RigidBody boxBody = kKinematicBox;
+    const mir::Entity box = fixture.Add(glm::vec3(0.0f, 0.0f, 0.0f), boxBody);
+
+    const mir::WorldPosition origin = mir::WorldPosition::FromMeters(mir::WorldVec3(0.0, 3.0, 0.0)).value();
+    const auto cast = [&](const mir::RayFilter &filter)
+    { return fixture.Physics().RayCast(origin, glm::vec3(0.0f, -1.0f, 0.0f), 20.0f, filter); };
+
+    SECTION("with no filter the first body is hit")
+    {
+        const std::optional<mir::RayHit> hit = cast({});
+        REQUIRE(hit.has_value());
+        CHECK(hit->mBody == BodyOfEntity(fixture, box));
+        CHECK(hit->mDistance == Catch::Approx(2.5f).margin(0.01f));
+    }
+
+    SECTION("an excluded body is passed through")
+    {
+        const mir::BodyHandle excluded[] = { BodyOfEntity(fixture, box) };
+        mir::RayFilter filter;
+        filter.mExclude = excluded;
+        const std::optional<mir::RayHit> hit = cast(filter);
+        REQUIRE(hit.has_value());
+        CHECK(hit->mBody == floorHandle);
+    }
+
+    SECTION("only the asked layers are hit")
+    {
+        mir::RayFilter filter;
+        filter.mLayers = 1u << 2;
+        const std::optional<mir::RayHit> hit = cast(filter);
+        REQUIRE(hit.has_value());
+        CHECK(hit->mBody == floorHandle);
+
+        filter.mLayers = 1u << 5;
+        CHECK_FALSE(cast(filter).has_value());
+    }
+
+    SECTION("only the asked motion types are hit")
+    {
+        mir::RayFilter filter;
+        filter.mMotions = mir::MotionBit(mir::PhysicsMotion::Static);
+        CHECK(cast(filter)->mBody == floorHandle);
+
+        filter.mMotions = mir::MotionBit(mir::PhysicsMotion::Kinematic);
+        CHECK(cast(filter)->mBody == BodyOfEntity(fixture, box));
+
+        filter.mMotions = mir::MotionBit(mir::PhysicsMotion::Dynamic);
+        CHECK_FALSE(cast(filter).has_value());
+    }
+
+    SECTION("a trigger is skipped unless the cast asks for it")
+    {
+        BodyComponent(fixture, box).isTrigger = true;
+        fixture.Run(1);
+
+        const std::optional<mir::RayHit> skipped = cast({});
+        REQUIRE(skipped.has_value());
+        CHECK(skipped->mBody == floorHandle);
+
+        mir::RayFilter filter;
+        filter.mHitTriggers = true;
+        CHECK(cast(filter)->mBody == BodyOfEntity(fixture, box));
+    }
+
+    SECTION("an empty layer or motion set is refused")
+    {
+        mir::RayFilter noLayers;
+        noLayers.mLayers = 0;
+        CHECK_FALSE(cast(noLayers).has_value());
+
+        mir::RayFilter noMotions;
+        noMotions.mMotions = 0;
+        CHECK_FALSE(cast(noMotions).has_value());
+    }
+}
+
 TEST_CASE("A RigidBody gets its body when it is added, before any step", "[physics]")
 {
     PhysicsFixture fixture;

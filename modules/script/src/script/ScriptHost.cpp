@@ -30,10 +30,18 @@
 
 namespace mir
 {
+    namespace
+    {
+        constexpr const char *kRunningRegistryKey = "mir.scriptHost";
+    }
+
     struct ScriptHostImpl
     {
         ScriptHostImpl()
         {
+            // how a binding, which has only the Lua state, finds the entity whose callback is running
+            mLua.registry()[kRunningRegistryKey] = static_cast<void *>(this);
+
             mLua.open_libraries(sol::lib::base, sol::lib::string, sol::lib::math, sol::lib::table);
 
             // Lua's own print writes to stdout, which nothing here reads -
@@ -61,6 +69,9 @@ namespace mir
             RegisterEntityBindings(mLua);
             RegisterWorldBindings(mLua);
         }
+
+        // The entity whose callback is running now, null between callbacks.
+        Entity mRunning = kNullEntity;
 
         struct ScriptInstance
         {
@@ -201,23 +212,55 @@ namespace mir
         return mImpl->mInstances.size();
     }
 
+    namespace
+    {
+        // Set for the length of one callback and put back after, so a callback inside a callback is safe.
+        class RunningScope
+        {
+        public:
+            RunningScope(ScriptHostImpl &impl, Entity entity) : mImpl(impl), mPrevious(impl.mRunning)
+            {
+                mImpl.mRunning = entity;
+            }
+
+            ~RunningScope() { mImpl.mRunning = mPrevious; }
+
+            RunningScope(const RunningScope &) = delete;
+            RunningScope &operator=(const RunningScope &) = delete;
+
+        private:
+            ScriptHostImpl &mImpl;
+            Entity mPrevious;
+        };
+    }
+
+    Entity RunningScriptEntity(sol::state_view lua)
+    {
+        const sol::optional<void *> impl = lua.registry()[kRunningRegistryKey];
+        return impl ? static_cast<ScriptHostImpl *>(*impl)->mRunning : kNullEntity;
+    }
+
     void ScriptHost::CallOnStart(World &world, CommandBuffer &, Entity entity, int32_t instanceRef)
     {
+        const RunningScope running(*mImpl, entity);
         mImpl->CallCallback(instanceRef, "OnStart", std::ref(world), entity);
     }
 
     void ScriptHost::CallOnUpdate(World &world, CommandBuffer &, Entity entity, int32_t instanceRef, float dt)
     {
+        const RunningScope running(*mImpl, entity);
         mImpl->CallCallback(instanceRef, "OnUpdate", std::ref(world), entity, dt);
     }
 
     void ScriptHost::CallOnFixedUpdate(World &world, CommandBuffer &, Entity entity, int32_t instanceRef, float dt)
     {
+        const RunningScope running(*mImpl, entity);
         mImpl->CallCallback(instanceRef, "OnFixedUpdate", std::ref(world), entity, dt);
     }
 
     void ScriptHost::CallOnStop(World &world, CommandBuffer &, Entity entity, int32_t instanceRef)
     {
+        const RunningScope running(*mImpl, entity);
         mImpl->CallCallback(instanceRef, "OnStop", std::ref(world), entity);
     }
 }
