@@ -19,6 +19,7 @@ target_link_libraries(engine_app
             mir::prefab
             mir::serial
             mir::terrain
+            mir::terrain_runtime
 )
 
 # App's yes/no prompts
@@ -30,8 +31,6 @@ target_sources(engine_app PRIVATE
     src/app/ErrorReport.cpp
     src/app/Prompt.cpp
     src/app/SceneResolve.cpp
-    src/app/TerrainRender.cpp
-    src/app/TerrainRuntime.cpp
 )
 
 # PUBLIC: App.h holds the editor's members only with it, so everything that

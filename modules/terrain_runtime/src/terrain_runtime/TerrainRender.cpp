@@ -6,7 +6,7 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
-#include "TerrainRender.h"
+#include <terrain_runtime/TerrainRender.h>
 
 #include <core/ecs/components/WorldTransform.h>
 

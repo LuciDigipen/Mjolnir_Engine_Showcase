@@ -8,7 +8,7 @@
  */
 #pragma once
 
-#include "TerrainRender.h"
+#include <terrain_runtime/TerrainRender.h>
 
 #include <project/GameProject.h>
 #include <core/ecs/Entity.h>

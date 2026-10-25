@@ -6,7 +6,7 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
-#include "TerrainRuntime.h"
+#include <terrain_runtime/TerrainRuntime.h>
 
 #include <core/ecs/EngineMode.h>
 #include <core/ecs/Query.h>

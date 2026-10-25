@@ -72,6 +72,7 @@ add_subdirectory(modules/scene)
 add_subdirectory(modules/script)
 add_subdirectory(modules/serial)
 add_subdirectory(modules/terrain)
+add_subdirectory(modules/terrain_runtime)
 add_subdirectory(modules/window)
 
 add_subdirectory(tools/AssetCooker)

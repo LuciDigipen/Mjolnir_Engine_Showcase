@@ -11,7 +11,6 @@
 
 #include "Prompt.h"
 #include "SceneResolve.h"
-#include "TerrainRuntime.h"
 #include <animation/ModelPlayer.h>
 #include <animation/ModelSystem.h>
 #include <assets/AssetIdRoot.h>
@@ -55,6 +54,7 @@
 #include <script/ScriptSystem.h>
 #include <terrain/ComponentRegistration.h>
 #include <terrain/TerrainScene.h>
+#include <terrain_runtime/TerrainRuntime.h>
 
 #if MIR_WITH_EDITOR
 #include "AppSceneOps.h"
