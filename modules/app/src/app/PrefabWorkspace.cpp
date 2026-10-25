@@ -1,12 +1,12 @@
 /**
- * @file PrefabDocuments.cpp
+ * @file PrefabWorkspace.cpp
  * @author Jackey Cen
  * @brief The open Prefab documents, each with an isolated preview World, and their saves.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
-#include "PrefabDocuments.h"
+#include "PrefabWorkspace.h"
 
 #include "MeshResolveSystem.h"
 #include "PrefabAuthoringAdapter.h"
@@ -37,7 +37,7 @@ namespace mir
         constexpr std::size_t kShortIdLength = 8;
     }
 
-    struct PrefabDocuments::Document
+    struct PrefabWorkspace::Document
     {
         World mWorld;
         LoadedScene mScene;
@@ -47,31 +47,27 @@ namespace mir
         ModelSystem *mModel = nullptr;
     };
 
-    PrefabDocuments::PrefabDocuments(PrefabCoordinator &coordinator, PrefabAuthoringAdapter &authoring)
+    PrefabWorkspace::PrefabWorkspace(PrefabCoordinator &coordinator, PrefabAuthoringAdapter &authoring)
         : mCoordinator(coordinator), mAuthoring(authoring)
     {
     }
 
-    PrefabDocuments::~PrefabDocuments()
+    PrefabWorkspace::~PrefabWorkspace()
     {
         mActive.reset();
         mAuthoring.SetActiveDocument(std::nullopt);
-        for (const auto &[id, document] : mDocuments)
-        {
-            (void)document;
-            mCoordinator.UnbindPreview(id);
-        }
-        mDocuments.clear();
+        while (!mDocuments.empty())
+            Close(mDocuments.begin()->first);
     }
 
-    void PrefabDocuments::BindResolveSystems(VulkanRenderer *renderer, AssetCache *assets, std::string assetIdRoot)
+    void PrefabWorkspace::BindResolveSystems(VulkanRenderer *renderer, AssetCache *assets, std::string assetIdRoot)
     {
         mRenderer = renderer;
         mAssets = assets;
         mAssetIdRoot = std::move(assetIdRoot);
     }
 
-    bool PrefabDocuments::Open(PrefabId id)
+    bool PrefabWorkspace::Open(PrefabId id)
     {
         if (const auto open = mDocuments.find(id); open != mDocuments.end())
         {
@@ -129,7 +125,7 @@ namespace mir
         return true;
     }
 
-    bool PrefabDocuments::Close(PrefabId id)
+    bool PrefabWorkspace::Close(PrefabId id)
     {
         const auto open = mDocuments.find(id);
         if (open == mDocuments.end())
@@ -138,10 +134,12 @@ namespace mir
         mCoordinator.UnbindPreview(id);
 
         Document &document = *open->second;
+        SystemContext context{ document.mWorld, document.mCommands };
+        document.mScheduler.Stop(context);
         if (document.mMesh != nullptr)
-            document.mMesh->Reset();
+            document.mMesh->ReleaseResources();
         if (document.mModel != nullptr)
-            document.mModel->Reset();
+            document.mModel->ReleaseResources();
         document.mWorld.Resource<ModelDrawItems>().items.clear();
         document.mWorld.Resource<ModelMorphOverrides>().instances.clear();
 
@@ -155,23 +153,23 @@ namespace mir
         return true;
     }
 
-    bool PrefabDocuments::IsOpen(PrefabId id) const
+    bool PrefabWorkspace::IsOpen(PrefabId id) const
     {
         return mDocuments.contains(id);
     }
 
-    void PrefabDocuments::ActivateScene()
+    void PrefabWorkspace::ActivateScene()
     {
         mActive.reset();
         mAuthoring.SetActiveDocument(std::nullopt);
     }
 
-    std::vector<PrefabId> PrefabDocuments::OpenDocuments() const
+    std::vector<PrefabId> PrefabWorkspace::OpenDocuments() const
     {
         return mOpenOrder;
     }
 
-    std::string PrefabDocuments::LabelOf(PrefabId id) const
+    std::string PrefabWorkspace::LabelOf(PrefabId id) const
     {
         if (const std::optional<std::filesystem::path> path = mCoordinator.Registry().PathOf(id))
         {
@@ -183,24 +181,24 @@ namespace mir
         return uuid.substr(0, kShortIdLength);
     }
 
-    std::optional<PrefabId> PrefabDocuments::FindByPath(const std::filesystem::path &path) const
+    std::optional<PrefabId> PrefabWorkspace::FindByPath(const std::filesystem::path &path) const
     {
         return mCoordinator.Registry().IdAtPath(path);
     }
 
-    World *PrefabDocuments::PreviewWorld(PrefabId id) const
+    World *PrefabWorkspace::PreviewWorld(PrefabId id) const
     {
         const auto open = mDocuments.find(id);
         return open == mDocuments.end() ? nullptr : &open->second->mWorld;
     }
 
-    const LoadedScene *PrefabDocuments::PreviewScene(PrefabId id) const
+    const LoadedScene *PrefabWorkspace::PreviewScene(PrefabId id) const
     {
         const auto open = mDocuments.find(id);
         return open == mDocuments.end() ? nullptr : &open->second->mScene;
     }
 
-    void PrefabDocuments::Update(float dt, double elapsed, uint64_t frame)
+    void PrefabWorkspace::Update(float dt, double elapsed, uint64_t frame)
     {
         for (auto &[id, document] : mDocuments)
         {
@@ -210,7 +208,47 @@ namespace mir
         }
     }
 
-    void PrefabDocuments::ResetResolve()
+    bool PrefabWorkspace::PrepareReload(AssetCache &assets, std::string &error)
+    {
+        DiscardPreparedReload();
+        for (const auto &[id, document] : mDocuments)
+        {
+            (void)id;
+            if (document->mModel != nullptr && !document->mModel->PrepareReload(assets, error))
+            {
+                DiscardPreparedReload();
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void PrefabWorkspace::CommitReload(AssetCache *assets)
+    {
+        mAssets = assets;
+        for (const auto &[id, document] : mDocuments)
+        {
+            (void)id;
+            if (document->mModel != nullptr)
+                document->mModel->CommitReload(assets);
+            if (document->mMesh != nullptr)
+                document->mMesh->CommitReload(assets);
+            document->mWorld.Resource<ModelDrawItems>().items.clear();
+            document->mWorld.Resource<ModelMorphOverrides>().instances.clear();
+        }
+    }
+
+    void PrefabWorkspace::DiscardPreparedReload()
+    {
+        for (const auto &[id, document] : mDocuments)
+        {
+            (void)id;
+            if (document->mModel != nullptr)
+                document->mModel->DiscardPreparedReload();
+        }
+    }
+
+    void PrefabWorkspace::ResetResolve()
     {
         for (auto &[id, document] : mDocuments)
         {
@@ -224,7 +262,7 @@ namespace mir
         }
     }
 
-    bool PrefabDocuments::SavePrefab(PrefabId id, const PrefabUnsaved &unsaved, const PrefabSaved &markSaved)
+    bool PrefabWorkspace::SavePrefab(PrefabId id, const PrefabUnsaved &unsaved, const PrefabSaved &markSaved)
     {
         const PrefabSavePlan plan = PlanSavePrefab(mCoordinator.Registry(), id, unsaved);
         const PrefabSaveResult result = ExecuteSavePlan(mCoordinator.Registry(), plan);
@@ -241,7 +279,7 @@ namespace mir
         return result.mSucceeded;
     }
 
-    bool PrefabDocuments::SaveScene(const LoadedScene &scene, const PrefabUnsaved &unsaved,
+    bool PrefabWorkspace::SaveScene(const LoadedScene &scene, const PrefabUnsaved &unsaved,
         const PrefabSaved &markSaved, const std::function<bool()> &writeScene)
     {
         const PrefabSavePlan plan = PlanSaveScene(mCoordinator.Registry(), scene, unsaved);

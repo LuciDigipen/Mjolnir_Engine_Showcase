@@ -55,7 +55,7 @@ namespace mir
     class MeshResolveSystem;
     class AppSceneOps;
     class PrefabAuthoringAdapter;
-    class PrefabDocuments;
+    class PrefabWorkspace;
 
     struct AppDesc
     {
@@ -132,7 +132,7 @@ namespace mir
 
     #if MIR_WITH_EDITOR
         // Open Prefab documents and their preview Worlds, for the editor's tabs
-        PrefabDocuments *OpenPrefabs() { return mPrefabDocuments.get(); }
+        PrefabWorkspace *OpenPrefabs() { return mPrefabWorkspace.get(); }
     #endif
 
         // The game currently open
@@ -266,7 +266,7 @@ namespace mir
 
     #if MIR_WITH_EDITOR
         // Before mScene and mWorld, after the editor stopped using them
-        std::unique_ptr<PrefabDocuments> mPrefabDocuments;
+        std::unique_ptr<PrefabWorkspace> mPrefabWorkspace;
         std::optional<DocumentId> mPrefabBeforePlay;
     #endif
 

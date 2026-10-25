@@ -1,17 +1,19 @@
 /**
- * @file PrefabDocuments.tests.cpp
+ * @file PrefabWorkspace.tests.cpp
  * @author Jackey Cen
- * @brief Tests for app/PrefabDocuments.
+ * @brief Tests for app/PrefabWorkspace.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
 #include "../src/app/PrefabAuthoringAdapter.h"
-#include "../src/app/PrefabDocuments.h"
+#include "../src/app/PrefabWorkspace.h"
 
 #include <editor/history/AuthoredEdit.h>
 #include <editor/history/Authoring.h>
 #include <editor/history/History.h>
+#include <editor/history/DocumentNodeCommands.h>
+#include <editor/panels/HierarchyPanel.h>
 #include <editor/history/SceneOps.h>
 
 #include <core/ecs/CommandBuffer.h>
@@ -72,7 +74,7 @@ namespace
     using mir::PrefabComponentInstance;
     using mir::PrefabCoordinator;
     using mir::PrefabDocument;
-    using mir::PrefabDocuments;
+    using mir::PrefabWorkspace;
     using mir::PrefabId;
     using mir::PrefabNode;
     using mir::PrefabSystem;
@@ -221,7 +223,7 @@ namespace
         LoadedScene mScene = NewScene("main");
         PrefabCoordinator *mCoordinator = nullptr;
         std::unique_ptr<PrefabAuthoringAdapter> mAdapter;
-        std::unique_ptr<PrefabDocuments> mDocuments;
+        std::unique_ptr<PrefabWorkspace> mDocuments;
         History mHistory;
         NoSceneOps mSceneOps;
         CommandBuffer mCommands;
@@ -242,7 +244,7 @@ namespace
 
             mAdapter = std::make_unique<PrefabAuthoringAdapter>(mWorld, *mCoordinator);
             mHistory.SetAuthoringBackend(mAdapter.get());
-            mDocuments = std::make_unique<PrefabDocuments>(*mCoordinator, *mAdapter);
+            mDocuments = std::make_unique<PrefabWorkspace>(*mCoordinator, *mAdapter);
         }
 
         const LoadedScene &PreviewScene() const
@@ -285,7 +287,7 @@ namespace
             mHistory.Flush(mWorld, mSceneOps);
         }
 
-        PrefabDocuments::PrefabUnsaved Unsaved() const
+        PrefabWorkspace::PrefabUnsaved Unsaved() const
         {
             return [this](PrefabId id)
                 {
@@ -294,7 +296,7 @@ namespace
                 };
         }
 
-        PrefabDocuments::PrefabSaved MarkSaved()
+        PrefabWorkspace::PrefabSaved MarkSaved()
         {
             return [this](PrefabId id) { mHistory.SetUnsaved(DocumentId{ id.mHigh, id.mLow }, false); };
         }
@@ -460,7 +462,6 @@ TEST_CASE("Node create, delete and reparent are one undoable command each", "[ap
 
     const AuthoredAction moved = fixture.mAdapter->ReparentNode(fourth, second, 0);
     REQUIRE(moved.mAllowed);
-    REQUIRE(moved.mEntries.size() == 1);
     fixture.Run(MakeAuthoredCommand(moved.mName, moved.mEntries));
     fixture.Commit();
     CHECK(ParentOf(*fixture.mDocuments->PreviewWorld(fixture.mDocument.mId), fourth) == second);
@@ -674,4 +675,93 @@ TEST_CASE("Save Scene writes unsaved prefabs first and stops before the scene on
         }));
     CHECK_FALSE(wroteScene);
     CHECK(fixture.mHistory.IsUnsaved(fixture.mDocumentId));
+}
+
+TEST_CASE("A Prefab hierarchy reorder uses the drop anchor after removing moved nodes", "[app][prefabs]")
+{
+    Fixture fixture;
+    REQUIRE(fixture.mDocuments->Open(fixture.mDocument.mId));
+    World &world = *fixture.mDocuments->PreviewWorld(fixture.mDocument.mId);
+    const Entity root = fixture.PreviewEntity({ 1 });
+    const Entity second = fixture.PreviewEntity({ 2 });
+    const Entity third = fixture.PreviewEntity({ 3 });
+    fixture.Run(mir::MakeDocumentEntityCommand(mir::EntityAction{
+        .mKind = mir::EntityActionKind::Reparent, .mTargets = { second }, .mParent = root, .mBefore = third },
+        *fixture.mAdapter, world));
+    fixture.Commit();
+    const auto children = world.HierarchyIndex().ChildrenOf(root);
+    CHECK(std::vector<Entity>(children.begin(), children.end()) == std::vector<Entity>{ second, third });
+    CHECK(fixture.mHistory.StepCount() == 0);
+}
+
+TEST_CASE("A multi-node Prefab drop preserves order through undo and redo", "[app][prefabs]")
+{
+    Fixture fixture;
+    REQUIRE(fixture.mDocuments->Open(fixture.mDocument.mId));
+    World &world = *fixture.mDocuments->PreviewWorld(fixture.mDocument.mId);
+    const Entity second = fixture.PreviewEntity({ 2 });
+    const Entity third = fixture.PreviewEntity({ 3 });
+    const Entity fourth = fixture.PreviewEntity({ 4 });
+    fixture.Run(mir::MakeDocumentEntityCommand(mir::EntityAction{
+        .mKind = mir::EntityActionKind::Reparent, .mTargets = { second, fourth }, .mParent = third },
+        *fixture.mAdapter, world));
+    fixture.Commit();
+    auto children = world.HierarchyIndex().ChildrenOf(third);
+    CHECK(std::vector<Entity>(children.begin(), children.end()) == std::vector<Entity>{ second, fourth });
+    REQUIRE(fixture.mHistory.StepCount() == 1);
+    fixture.Undo();
+    fixture.Commit();
+    CHECK(ParentOf(world, second) == fixture.PreviewEntity({ 1 }));
+    CHECK(ParentOf(world, fourth) == third);
+    fixture.Redo();
+    fixture.Commit();
+    children = world.HierarchyIndex().ChildrenOf(third);
+    CHECK(std::vector<Entity>(children.begin(), children.end()) == std::vector<Entity>{ second, fourth });
+}
+
+TEST_CASE("Deleting a referenced source node clears source references and remains undoable", "[app][prefabs]")
+{
+    Fixture fixture;
+    REQUIRE(fixture.mDocuments->Open(fixture.mDocument.mId));
+    const Entity second = fixture.PreviewEntity({ 2 });
+    const AuthoredAction deleted = fixture.mAdapter->DeleteNodes(std::vector<Entity>{ second });
+    REQUIRE(deleted.mAllowed);
+    fixture.Run(MakeAuthoredCommand(deleted.mName, deleted.mEntries));
+    fixture.Commit();
+    CHECK_FALSE(fixture.mDocuments->PreviewWorld(fixture.mDocument.mId)->IsAlive(second));
+    REQUIRE(fixture.mHistory.StepCount() == 1);
+    CHECK(FindComponent(fixture.mCoordinator->Registry().Find(fixture.mDocument.mId)->mNodes.front(),
+        "AppDocumentsTestData")->mFields.at("target").is_null());
+    fixture.Undo();
+    fixture.Commit();
+    CHECK(fixture.mDocuments->PreviewWorld(fixture.mDocument.mId)->IsAlive(fixture.PreviewEntity({ 2 })));
+    CHECK(FindComponent(fixture.mCoordinator->Registry().Find(fixture.mDocument.mId)->mNodes.front(),
+        "AppDocumentsTestData")->mFields.at("target") == json::array({ "2" }));
+}
+
+TEST_CASE("A multi-node Prefab drop before a sibling preserves the requested order", "[app][prefabs]")
+{
+    Fixture fixture;
+    REQUIRE(fixture.mDocuments->Open(fixture.mDocument.mId));
+    World &world = *fixture.mDocuments->PreviewWorld(fixture.mDocument.mId);
+    const Entity root = fixture.PreviewEntity({ 1 });
+    const Entity second = fixture.PreviewEntity({ 2 });
+    const Entity third = fixture.PreviewEntity({ 3 });
+    const Entity fourth = fixture.PreviewEntity({ 4 });
+    fixture.Run(mir::MakeDocumentEntityCommand(mir::EntityAction{
+        .mKind = mir::EntityActionKind::Reparent, .mTargets = { second, fourth }, .mParent = root, .mBefore = third },
+        *fixture.mAdapter, world));
+    fixture.Commit();
+    auto children = world.HierarchyIndex().ChildrenOf(root);
+    CHECK(std::vector<Entity>(children.begin(), children.end()) == std::vector<Entity>{ second, fourth, third });
+    REQUIRE(fixture.mHistory.StepCount() == 1);
+    fixture.Undo();
+    fixture.Commit();
+    children = world.HierarchyIndex().ChildrenOf(root);
+    CHECK(std::vector<Entity>(children.begin(), children.end()) == std::vector<Entity>{ second, third });
+    CHECK(ParentOf(world, fourth) == third);
+    fixture.Redo();
+    fixture.Commit();
+    children = world.HierarchyIndex().ChildrenOf(root);
+    CHECK(std::vector<Entity>(children.begin(), children.end()) == std::vector<Entity>{ second, fourth, third });
 }

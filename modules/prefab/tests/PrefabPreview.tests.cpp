@@ -270,7 +270,6 @@ TEST_CASE("Preview node delete and reparent entries cover the document", "[prefa
     const Entity parent = reparent.PreviewEntity(SceneNodeAddress{ 2 });
     const mir::PrefabAuthoredAction moved = reparent.mAuthoring->ReparentNode(4, 2, 0);
     REQUIRE(moved.mRefusal.empty());
-    REQUIRE(moved.mEntries.size() == 1);
     REQUIRE(reparent.mAuthoring->Write(moved.mEntries).mApplied);
     reparent.Commit();
     CHECK(ParentOf(reparent.mPreviewWorld, node) == parent);

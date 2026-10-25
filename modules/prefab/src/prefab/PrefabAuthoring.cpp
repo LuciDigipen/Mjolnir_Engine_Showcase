@@ -1726,24 +1726,53 @@ namespace mir
             key.mAddress = { id };
             action.mEntries.push_back(PrefabAuthoredEntry{ key, std::nullopt });
         }
+        // References in surviving source nodes are part of this undoable deletion.
+        for (const PrefabNode &node : document->mNodes)
+        {
+            if (seen.contains(node.mId))
+                continue;
+            for (const PrefabComponentInstance &component : node.mComponents)
+            {
+                const ComponentOps *ops = ComponentRegistry::Instance().Find(component.mType);
+                if (ops == nullptr)
+                    continue;
+                for (const FieldDesc &field : ops->mFields)
+                {
+                    if (field.mKind != FieldKind::EntityRef)
+                        continue;
+                    const auto value = component.mFields.find(std::string(field.mName));
+                    if (value == component.mFields.end() || !value->is_array() || value->empty())
+                        continue;
+                    const bool removed = std::any_of(seen.begin(), seen.end(), [&](PrefabNodeId id)
+                        { return (*value)[0] == std::to_string(id); });
+                    if (!removed)
+                        continue;
+                    PrefabAuthoredKey key;
+                    key.mPrefab = mActiveDocument;
+                    key.mAddress = { node.mId };
+                    key.mComponent = component.mType;
+                    key.mField = field.mName;
+                    action.mEntries.push_back(PrefabAuthoredEntry{ key, std::string("null") });
+                }
+            }
+        }
         return action;
     }
 
     PrefabAuthoredAction PrefabAuthoring::ReparentNode(PrefabNodeId node, PrefabNodeId parent,
         std::size_t siblingIndex)
     {
+        return ReparentNodes(std::span<const PrefabNodeId>(&node, 1), parent, siblingIndex);
+    }
+
+    PrefabAuthoredAction PrefabAuthoring::ReparentNodes(std::span<const PrefabNodeId> nodes,
+        PrefabNodeId parent, std::size_t siblingIndex)
+    {
         PrefabAuthoredAction action;
         const PrefabDocument *document = ActivePrefabDocument();
-        if (!mActiveDocument || document == nullptr)
+        if (!mActiveDocument || document == nullptr || nodes.empty())
         {
-            action.mRefusal = "no prefab document is active";
-            return action;
-        }
-
-        const std::optional<std::size_t> nodeIndex = FindNodeIndex(*document, node);
-        if (!nodeIndex || node == document->mRootNode)
-        {
-            action.mRefusal = "the node cannot be reparented";
+            action.mRefusal = "no prefab document or moving node is active";
             return action;
         }
         const PrefabNode *parentNode = FindNode(*document, SceneNodeAddress{ parent });
@@ -1752,22 +1781,41 @@ namespace mir
             action.mRefusal = "the parent node is missing";
             return action;
         }
-
-        const std::vector<PrefabNodeId> descendants = DescendantsOf(*document, node);
-        if (std::find(descendants.begin(), descendants.end(), parent) != descendants.end())
+        std::set<PrefabNodeId> moving;
+        std::vector<PrefabNode> moved;
+        for (PrefabNodeId id : nodes)
         {
-            action.mRefusal = "a node cannot be parented under its own descendant";
-            return action;
+            const auto index = FindNodeIndex(*document, id);
+            const auto descendants = DescendantsOf(*document, id);
+            if (!index || id == document->mRootNode || id == parent ||
+                std::find(descendants.begin(), descendants.end(), parent) != descendants.end())
+            {
+                action.mRefusal = "a node cannot be moved under itself or its descendant";
+                return action;
+            }
+            if (moving.insert(id).second)
+                moved.push_back(document->mNodes[*index]);
         }
-
-        json record = NodeRecord(*document, document->mNodes[*nodeIndex]);
-        record["parent"] = std::to_string(parent);
-        record["index"] = InsertionIndex(*document, parent, siblingIndex, node);
-
-        PrefabAuthoredKey key;
-        key.mPrefab = *mActiveDocument;
-        key.mAddress = { node };
-        action.mEntries.push_back(PrefabAuthoredEntry{ key, record.dump() });
+        PrefabDocument after = *document;
+        std::erase_if(after.mNodes, [&](const PrefabNode &node) { return moving.contains(node.mId); });
+        for (PrefabNode &node : moved)
+        {
+            node.mParent = parent;
+            const auto index = InsertionIndex(after, parent, siblingIndex++, node.mId);
+            after.mNodes.insert(after.mNodes.begin() + static_cast<std::ptrdiff_t>(index), node);
+        }
+        // Publish final absolute positions together, including siblings shifted by the move.
+        // Read/Write can then restore the same ordering atomically for undo and redo.
+        for (const PrefabNode &node : after.mNodes)
+        {
+            const json record = NodeRecord(after, node);
+            if (record == NodeRecord(*document, document->mNodes[*FindNodeIndex(*document, node.mId)]))
+                continue;
+            PrefabAuthoredKey key;
+            key.mPrefab = mActiveDocument;
+            key.mAddress = { node.mId };
+            action.mEntries.push_back(PrefabAuthoredEntry{ key, record.dump() });
+        }
         return action;
     }
 }

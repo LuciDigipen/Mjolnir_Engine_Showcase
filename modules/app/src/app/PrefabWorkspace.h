@@ -1,5 +1,5 @@
 /**
- * @file PrefabDocuments.h
+ * @file PrefabWorkspace.h
  * @author Jackey Cen
  * @brief The open Prefab documents, each with an isolated preview World, and their saves.
  *
@@ -28,21 +28,21 @@ namespace mir
     class VulkanRenderer;
     class World;
 
-    class PrefabDocuments
+    class PrefabWorkspace
     {
     public:
         using PrefabUnsaved = std::function<bool(PrefabId)>;
         using PrefabSaved = std::function<void(PrefabId)>;
 
-        PrefabDocuments(PrefabCoordinator &coordinator, PrefabAuthoringAdapter &authoring);
-        ~PrefabDocuments();
+        PrefabWorkspace(PrefabCoordinator &coordinator, PrefabAuthoringAdapter &authoring);
+        ~PrefabWorkspace();
 
-        PrefabDocuments(const PrefabDocuments &) = delete;
-        PrefabDocuments &operator=(const PrefabDocuments &) = delete;
-        PrefabDocuments(PrefabDocuments &&) = delete;
-        PrefabDocuments &operator=(PrefabDocuments &&) = delete;
+        PrefabWorkspace(const PrefabWorkspace &) = delete;
+        PrefabWorkspace &operator=(const PrefabWorkspace &) = delete;
+        PrefabWorkspace(PrefabWorkspace &&) = delete;
+        PrefabWorkspace &operator=(PrefabWorkspace &&) = delete;
 
-        // Null renderer or assets skips the mesh and model systems of every preview.
+        // Null renderer skips preview mesh and model systems; null assets still permits built-in meshes.
         void BindResolveSystems(VulkanRenderer *renderer, AssetCache *assets, std::string assetIdRoot);
 
         // Focuses an open document, or creates its preview World and one instance.
@@ -53,7 +53,7 @@ namespace mir
         // The Scene tab: no document is active, so edits author the bound scene.
         void ActivateScene();
 
-        // Open documents in tab order (by id).
+        // Open documents in the order their tabs were opened.
         std::vector<PrefabId> OpenDocuments() const;
 
         // The file stem, or a short UUID before the document has a file.
@@ -67,6 +67,11 @@ namespace mir
 
         // Runs each preview's transform, mesh-resolve and model systems once.
         void Update(float dt, double elapsed, uint64_t frame);
+
+        // Prepares every open preview before App replaces the shared asset cache.
+        bool PrepareReload(AssetCache &assets, std::string &error);
+        void CommitReload(AssetCache *assets);
+        void DiscardPreparedReload();
 
         // After App released the scene's GPU resources.
         void ResetResolve();

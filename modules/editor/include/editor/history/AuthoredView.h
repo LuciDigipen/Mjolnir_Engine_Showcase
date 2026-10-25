@@ -87,6 +87,21 @@ namespace mir
         virtual AuthoredAction DeleteNodes(std::span<const Entity> nodes) = 0;
         virtual AuthoredAction ReparentNode(Entity node, Entity parent, std::size_t siblingIndex) = 0;
 
+        // The insertion index is measured after all moving nodes are removed.
+        virtual AuthoredAction ReparentNodes(std::span<const Entity> nodes, Entity parent, std::size_t siblingIndex)
+        {
+            AuthoredAction result;
+            result.mName = "Reparent Nodes";
+            for (Entity node : nodes)
+            {
+                AuthoredAction action = ReparentNode(node, parent, siblingIndex++);
+                if (!action.mAllowed)
+                    return action;
+                result.mEntries.insert(result.mEntries.end(), action.mEntries.begin(), action.mEntries.end());
+            }
+            return result;
+        }
+
         // True when removing the component deletes it from the active document
         // instead of hiding one the template provides.
         virtual bool WritesComponentDirectly(Entity entity, std::string_view component) = 0;

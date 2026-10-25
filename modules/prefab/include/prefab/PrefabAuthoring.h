@@ -108,6 +108,9 @@ namespace mir
         PrefabAuthoredAction DeleteNodes(std::span<const PrefabNodeId> nodes);
         PrefabAuthoredAction ReparentNode(PrefabNodeId node, PrefabNodeId parent, std::size_t siblingIndex);
 
+        PrefabAuthoredAction ReparentNodes(std::span<const PrefabNodeId> nodes, PrefabNodeId parent,
+            std::size_t siblingIndex);
+
         // True when the component lives directly in the active document.
         bool WritesComponentDirectly(Entity entity, std::string_view component) const;
 

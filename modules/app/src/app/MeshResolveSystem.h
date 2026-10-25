@@ -34,6 +34,8 @@ namespace mir
         // Call at ReleaseSceneResources
         void Reset();
 
+        // Frees this system's uploads while other Worlds keep rendering.
+        void ReleaseResources();
         void CommitReload(AssetCache *assets);
 
         void OnStart(SystemContext &context) override;

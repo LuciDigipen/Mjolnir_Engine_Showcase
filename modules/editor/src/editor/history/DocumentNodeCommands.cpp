@@ -35,10 +35,14 @@ namespace mir
             return index.Roots().front();
         }
 
-        std::size_t SiblingIndex(const World &world, Entity parent, Entity before)
+        std::size_t SiblingIndex(const World &world, Entity parent, Entity before,
+            std::span<const Entity> moving = {})
         {
             const HierarchyIndex &index = world.HierarchyIndex();
-            const std::span<const Entity> children = index.ChildrenOf(parent);
+            std::vector<Entity> children;
+            for (Entity child : index.ChildrenOf(parent))
+                if (std::find(moving.begin(), moving.end(), child) == moving.end())
+                    children.push_back(child);
             if (before.IsNull())
                 return children.size();
 
@@ -80,22 +84,8 @@ namespace mir
                 return nullptr;
 
             const Entity parent = action.mParent.IsNull() ? root : action.mParent;
-            const std::size_t index = SiblingIndex(world, parent, action.mBefore);
-            std::vector<AuthoredEntry> entries;
-            std::string name;
-            for (const Entity target : action.mTargets)
-            {
-                const AuthoredAction moved = authored.ReparentNode(target, parent, index);
-                if (!moved.mAllowed)
-                    return FromAction(moved);
-                if (name.empty())
-                    name = moved.mName;
-                entries.insert(entries.end(), moved.mEntries.begin(), moved.mEntries.end());
-            }
-
-            if (entries.empty())
-                return nullptr;
-            return MakeAuthoredCommand(name.empty() ? "Reparent Node" : name, std::move(entries));
+            const std::size_t index = SiblingIndex(world, parent, action.mBefore, action.mTargets);
+            return FromAction(authored.ReparentNodes(action.mTargets, parent, index));
         }
         case EntityActionKind::Duplicate:
         case EntityActionKind::CopyAsOrdinaryObject:

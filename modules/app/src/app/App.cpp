@@ -56,7 +56,7 @@
 #if MIR_WITH_EDITOR
 #include "AppSceneOps.h"
 #include "PrefabAuthoringAdapter.h"
-#include "PrefabDocuments.h"
+#include "PrefabWorkspace.h"
 #include <core/platform/Process.h>
 #include <editor/IdeSettings.h>
 #endif
@@ -118,7 +118,7 @@ namespace mir
         }
 
     #if MIR_WITH_EDITOR
-        PrefabDocuments::PrefabUnsaved UnsavedPrefabs(const Editor &editor, const PrefabCoordinator &prefabs)
+        PrefabWorkspace::PrefabUnsaved UnsavedPrefabs(const Editor &editor, const PrefabCoordinator &prefabs)
         {
             return [editor = &editor, prefabs = &prefabs](PrefabId id)
                 {
@@ -127,7 +127,7 @@ namespace mir
                 };
         }
 
-        PrefabDocuments::PrefabSaved MarkSavedPrefabs(Editor &editor)
+        PrefabWorkspace::PrefabSaved MarkSavedPrefabs(Editor &editor)
         {
             return [editor = &editor](PrefabId id)
                 {
@@ -250,8 +250,8 @@ namespace mir
         mPrefabAuthoring = std::make_unique<PrefabAuthoringAdapter>(mWorld, prefabs);
         mEditor.SetAuthoringBackend(mPrefabAuthoring.get());
         mEditor.SetAuthoredEntities(mPrefabAuthoring.get());
-        mPrefabDocuments = std::make_unique<PrefabDocuments>(prefabs, *mPrefabAuthoring);
-        mPrefabDocuments->BindResolveSystems(&mRenderer, Assets(), mProject.mAssetIdRoot);
+        mPrefabWorkspace = std::make_unique<PrefabWorkspace>(prefabs, *mPrefabAuthoring);
+        mPrefabWorkspace->BindResolveSystems(&mRenderer, Assets(), mProject.mAssetIdRoot);
     #endif
         const std::filesystem::path prefabsDir = PrefabSourceDir(mProject);
         std::error_code prefabEc;
@@ -384,9 +384,9 @@ namespace mir
             };
 
     #if MIR_WITH_EDITOR
-        if (mPrefabDocuments != nullptr && prefabs != nullptr)
+        if (mPrefabWorkspace != nullptr && prefabs != nullptr)
         {
-            if (!mPrefabDocuments->SaveScene(mScene, UnsavedPrefabs(mEditor, *prefabs), MarkSavedPrefabs(mEditor),
+            if (!mPrefabWorkspace->SaveScene(mScene, UnsavedPrefabs(mEditor, *prefabs), MarkSavedPrefabs(mEditor),
                     writeScene))
                 return false;
         }
@@ -413,9 +413,9 @@ namespace mir
         }
 
     #if MIR_WITH_EDITOR
-        if (mPrefabDocuments != nullptr)
+        if (mPrefabWorkspace != nullptr)
         {
-            if (const std::optional<PrefabId> active = mPrefabDocuments->ActiveDocument())
+            if (const std::optional<PrefabId> active = mPrefabWorkspace->ActiveDocument())
             {
                 PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>();
                 if (prefabs == nullptr)
@@ -423,7 +423,7 @@ namespace mir
                     MIR_LOG_ERROR("App::SaveActiveDocument: the prefab registry is missing");
                     return false;
                 }
-                return mPrefabDocuments->SavePrefab(*active, UnsavedPrefabs(mEditor, *prefabs),
+                return mPrefabWorkspace->SavePrefab(*active, UnsavedPrefabs(mEditor, *prefabs),
                     MarkSavedPrefabs(mEditor));
             }
         }
@@ -513,12 +513,12 @@ namespace mir
             return;
 
     #if MIR_WITH_EDITOR
-        if (mPrefabDocuments != nullptr)
+        if (mPrefabWorkspace != nullptr)
         {
-            const std::optional<PrefabId> active = mPrefabDocuments->ActiveDocument();
+            const std::optional<PrefabId> active = mPrefabWorkspace->ActiveDocument();
             mPrefabBeforePlay = active ? std::optional<DocumentId>(DocumentId{ active->mHigh, active->mLow })
                                        : std::nullopt;
-            mPrefabDocuments->ActivateScene();
+            mPrefabWorkspace->ActivateScene();
         }
     #endif
 
@@ -560,8 +560,8 @@ namespace mir
         mTerrain->ForgetMeshes();
         mRenderer.ReleaseSceneResources();
     #if MIR_WITH_EDITOR
-        if (mPrefabDocuments != nullptr)
-            mPrefabDocuments->ResetResolve();
+        if (mPrefabWorkspace != nullptr)
+            mPrefabWorkspace->ResetResolve();
     #endif
 
         ResolveSceneScripts(mWorld, mScriptHost, mScriptReloadWatcher, Assets(), mProject.mAssetIdRoot);
@@ -570,10 +570,10 @@ namespace mir
         SetPlayState(mWorld, PlayState::Running);
 
     #if MIR_WITH_EDITOR
-        if (mPrefabBeforePlay.has_value() && mPrefabDocuments != nullptr)
+        if (mPrefabBeforePlay.has_value() && mPrefabWorkspace != nullptr)
         {
             const DocumentId document = *mPrefabBeforePlay;
-            if (!mPrefabDocuments->Open(PrefabId{ document.mHigh, document.mLow }))
+            if (!mPrefabWorkspace->Open(PrefabId{ document.mHigh, document.mLow }))
                 MIR_LOG_WARN("App::StopScene: could not reopen the prefab document");
         }
         mPrefabBeforePlay.reset();
@@ -668,8 +668,8 @@ namespace mir
         mTerrain->Unload();
         mRenderer.ReleaseSceneResources();
     #if MIR_WITH_EDITOR
-        if (mPrefabDocuments != nullptr)
-            mPrefabDocuments->ResetResolve();
+        if (mPrefabWorkspace != nullptr)
+            mPrefabWorkspace->ResetResolve();
     #endif
     }
 
@@ -867,8 +867,8 @@ namespace mir
 
         #if MIR_WITH_EDITOR
             // after PrefabSystem committed their documents at this safe point
-            if (IsEditing(mWorld) && mPrefabDocuments != nullptr)
-                mPrefabDocuments->Update(dt, mElapsed, mFrame);
+            if (IsEditing(mWorld) && mPrefabWorkspace != nullptr)
+                mPrefabWorkspace->Update(dt, mElapsed, mFrame);
         #endif
 
             // reference clearing and binding changes at the safe point happen outside History
@@ -1002,7 +1002,7 @@ namespace mir
             RequestOpenProject("games/" + actions.mCreateProjectName);
         }
 
-        if (mPrefabDocuments != nullptr && IsEditing(mWorld))
+        if (mPrefabWorkspace != nullptr && IsEditing(mWorld))
         {
             const DocumentId document = actions.mDocument.mDocument;
             const PrefabId prefab{ document.mHigh, document.mLow };
@@ -1010,13 +1010,13 @@ namespace mir
             {
             case EditorDocumentActionKind::Activate:
                 if (document == kSceneDocument)
-                    mPrefabDocuments->ActivateScene();
+                    mPrefabWorkspace->ActivateScene();
                 else
-                    mPrefabDocuments->Open(prefab);
+                    mPrefabWorkspace->Open(prefab);
                 break;
             case EditorDocumentActionKind::Close:
                 if (document != kSceneDocument)
-                    mPrefabDocuments->Close(prefab);
+                    mPrefabWorkspace->Close(prefab);
                 break;
             case EditorDocumentActionKind::None:
                 break;
@@ -1029,13 +1029,13 @@ namespace mir
 
     void App::OpenPrefabAsset(const std::string &relativePath)
     {
-        if (mPrefabDocuments == nullptr)
+        if (mPrefabWorkspace == nullptr)
         {
             MIR_LOG_ERROR("Content browser: no Prefab documents are available for '{}'", relativePath);
             return;
         }
 
-        const std::optional<PrefabId> id = mPrefabDocuments->FindByPath(mProject.mRootDir / relativePath);
+        const std::optional<PrefabId> id = mPrefabWorkspace->FindByPath(mProject.mRootDir / relativePath);
         if (!id.has_value())
         {
             MIR_LOG_ERROR("Content browser: '{}' is not a registered Prefab", relativePath);
@@ -1043,7 +1043,7 @@ namespace mir
             return;
         }
 
-        if (!mPrefabDocuments->Open(*id))
+        if (!mPrefabWorkspace->Open(*id))
         {
             MIR_LOG_ERROR("Content browser: could not open '{}'", relativePath);
             mContentBrowser.Reject(relativePath, "could not open this Prefab");
@@ -1052,10 +1052,10 @@ namespace mir
 
     World *App::ActivePreviewWorld()
     {
-        if (IsEditing(mWorld) && mPrefabDocuments != nullptr)
+        if (IsEditing(mWorld) && mPrefabWorkspace != nullptr)
         {
-            if (const std::optional<PrefabId> active = mPrefabDocuments->ActiveDocument())
-                return mPrefabDocuments->PreviewWorld(*active);
+            if (const std::optional<PrefabId> active = mPrefabWorkspace->ActiveDocument())
+                return mPrefabWorkspace->PreviewWorld(*active);
         }
         return nullptr;
     }
@@ -1068,19 +1068,19 @@ namespace mir
         documents.mActive = kSceneDocument;
         documents.mEnabled = IsEditing(mWorld);
 
-        if (mPrefabDocuments != nullptr)
+        if (mPrefabWorkspace != nullptr)
         {
             const PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>();
-            for (const PrefabId id : mPrefabDocuments->OpenDocuments())
+            for (const PrefabId id : mPrefabWorkspace->OpenDocuments())
             {
                 const DocumentId document{ id.mHigh, id.mLow };
                 const bool unsaved = prefabs == nullptr || !prefabs->Registry().PathOf(id).has_value() ||
                     mEditor.IsDocumentUnsaved(document);
                 documents.mTabs.push_back(
-                    EditorDocumentTab{ document, mPrefabDocuments->LabelOf(id), unsaved, true });
+                    EditorDocumentTab{ document, mPrefabWorkspace->LabelOf(id), unsaved, true });
             }
 
-            if (const std::optional<PrefabId> active = mPrefabDocuments->ActiveDocument())
+            if (const std::optional<PrefabId> active = mPrefabWorkspace->ActiveDocument())
                 documents.mActive = DocumentId{ active->mHigh, active->mLow };
         }
         return documents;
@@ -1102,6 +1102,14 @@ namespace mir
             return;
         }
 
+        if (mPrefabWorkspace && !mPrefabWorkspace->PrepareReload(candidate, error))
+        {
+            if (mModelSystem)
+                mModelSystem->DiscardPreparedReload();
+            mAssetImport.MarkApplyFailed("new preview model resources were rejected: " + error);
+            return;
+        }
+
         mAssetCache.reset();
         mAssetManifest = std::move(candidateManifest);
         mAssetCache.emplace(&*mAssetManifest, CookedAssetsDir());
@@ -1109,6 +1117,8 @@ namespace mir
             mModelSystem->CommitReload(&*mAssetCache);
         if (mMeshResolveSystem)
             mMeshResolveSystem->CommitReload(&*mAssetCache);
+        if (mPrefabWorkspace)
+            mPrefabWorkspace->CommitReload(&*mAssetCache);
 
         // a script whose asset arrived with this cook resolves now; resolved ones are skipped
         ResolveSceneScripts(mWorld, mScriptHost, mScriptReloadWatcher, Assets(), mProject.mAssetIdRoot);
@@ -1170,7 +1180,7 @@ namespace mir
 
     #if MIR_WITH_EDITOR
         mEditor.Shutdown();
-        mPrefabDocuments.reset();
+        mPrefabWorkspace.reset();
         mPrefabAuthoring.reset();
     #endif
         mImGui.Shutdown(mRenderer);

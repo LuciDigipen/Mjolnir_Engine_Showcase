@@ -234,6 +234,23 @@ namespace mir
         return ToEditorAction(mAuthoring.ReparentNode(*nodeId, *parentId, siblingIndex), "Reparent Node");
     }
 
+    AuthoredAction PrefabAuthoringAdapter::ReparentNodes(std::span<const Entity> nodes, Entity parent,
+        std::size_t siblingIndex)
+    {
+        const std::optional<PrefabNodeId> parentId = mAuthoring.NodeIdOf(parent);
+        if (!parentId)
+            return RefusedAction("Reparent Nodes", "the parent is not part of the active prefab document");
+        std::vector<PrefabNodeId> ids;
+        for (Entity node : nodes)
+        {
+            const std::optional<PrefabNodeId> id = mAuthoring.NodeIdOf(node);
+            if (!id)
+                return RefusedAction("Reparent Nodes", "a node is not part of the active prefab document");
+            ids.push_back(*id);
+        }
+        return ToEditorAction(mAuthoring.ReparentNodes(ids, *parentId, siblingIndex), "Reparent Nodes");
+    }
+
     bool PrefabAuthoringAdapter::WritesComponentDirectly(Entity entity, std::string_view component)
     {
         return mAuthoring.WritesComponentDirectly(entity, component);

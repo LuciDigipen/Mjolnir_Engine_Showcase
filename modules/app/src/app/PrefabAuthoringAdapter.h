@@ -53,6 +53,8 @@ namespace mir
         AuthoredAction DeleteNodes(std::span<const Entity> nodes) override;
         AuthoredAction ReparentNode(Entity node, Entity parent, std::size_t siblingIndex) override;
 
+        AuthoredAction ReparentNodes(std::span<const Entity> nodes, Entity parent, std::size_t siblingIndex) override;
+
         bool WritesComponentDirectly(Entity entity, std::string_view component) override;
 
         void SetActiveDocument(std::optional<PrefabId> prefab) { mAuthoring.SetActiveDocument(prefab); }

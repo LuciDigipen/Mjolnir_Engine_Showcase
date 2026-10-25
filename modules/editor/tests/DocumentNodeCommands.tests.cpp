@@ -276,7 +276,7 @@ TEST_CASE("A drop on the hierarchy root reparents under the document root", "[ed
         fixture.mWorld));
 
     CHECK(fixture.mAuthored.mParent == fixture.mRoot);
-    CHECK(fixture.mAuthored.mSiblingIndex == children);
+    CHECK(fixture.mAuthored.mSiblingIndex == children - 1);
 }
 
 TEST_CASE("A document does not offer duplicate, copy as ordinary or a refused action", "[editor][prefabs]")
