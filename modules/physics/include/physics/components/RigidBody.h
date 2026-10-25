@@ -29,7 +29,22 @@ namespace mir
         PhysicsShape shape = PhysicsShape::Box;
         glm::vec3 halfExtent{ 0.5f, 0.5f, 0.5f };
         float radius = 0.5f;
+        // Capsule: half the total height, caps included, along `axis`.
+        float halfHeight = 1.0f;
+        PhysicsAxis axis = PhysicsAxis::Y;
+        // Where the collider sits relative to the entity's Transform, in the entity's own axes.
+        glm::vec3 offset{ 0.0f };
+        glm::quat rotationOffset = kIdentityRotation;
         bool interpolate = false;
+        // Reports contacts but never blocks motion.
+        bool isTrigger = false;
+        // Also report Stay events for the pairs this body touches.
+        bool detectStay = false;
+        float mass = 1.0f;
+        float gravityFactor = 1.0f;
+        float friction = 0.2f;
+        float restitution = 0.0f;
+        bool allowSleeping = true;
 
         // Runtime state PhysicsSystem keeps; not in the field table, so never saved.
         struct Runtime
@@ -61,7 +76,6 @@ namespace mir
         return rigidBody.runtime.body.IsValid() && rigidBody.motion == PhysicsMotion::Dynamic;
     }
 
-    // `runtime` is deliberately not listed: it is this run's live state, never saved or edited.
     // A body the step moves, dynamic or kinematic, whose pose is written back to the Transform.
     inline bool HasMovingBody(const RigidBody &rigidBody)
     {
@@ -69,6 +83,7 @@ namespace mir
             && (rigidBody.motion == PhysicsMotion::Dynamic || rigidBody.motion == PhysicsMotion::Kinematic);
     }
 
+    // `runtime` is deliberately not listed: it is this run's live state, never saved or edited.
     inline constexpr FieldDesc kRigidBodyFields[] = {
         { .mName = "motion", .mKind = FieldKind::Int, .mOffset = offsetof(RigidBody, motion),
          .mWidget = FieldWidget::Enum, .mEnumNames = kPhysicsMotionNames },
@@ -77,6 +92,22 @@ namespace mir
         { .mName = "halfExtent", .mKind = FieldKind::Vec3, .mOffset = offsetof(RigidBody, halfExtent) },
         { .mName = "radius", .mKind = FieldKind::Float, .mOffset = offsetof(RigidBody, radius),
          .mClamped = true, .mMin = 0.01f, .mMax = FLT_MAX }, // 0 would mean a degenerate, collision-less sphere
+        { .mName = "halfHeight", .mKind = FieldKind::Float, .mOffset = offsetof(RigidBody, halfHeight),
+         .mClamped = true, .mMin = 0.01f, .mMax = FLT_MAX }, // a body clamps it up to the radius when it is built
+        { .mName = "axis", .mKind = FieldKind::Int, .mOffset = offsetof(RigidBody, axis),
+         .mWidget = FieldWidget::Enum, .mEnumNames = kPhysicsAxisNames },
+        { .mName = "offset", .mKind = FieldKind::Vec3, .mOffset = offsetof(RigidBody, offset) },
+        { .mName = "rotationOffset", .mKind = FieldKind::Quat, .mOffset = offsetof(RigidBody, rotationOffset) },
         { .mName = "interpolate", .mKind = FieldKind::Bool, .mOffset = offsetof(RigidBody, interpolate) },
+        { .mName = "isTrigger", .mKind = FieldKind::Bool, .mOffset = offsetof(RigidBody, isTrigger) },
+        { .mName = "detectStay", .mKind = FieldKind::Bool, .mOffset = offsetof(RigidBody, detectStay) },
+        { .mName = "mass", .mKind = FieldKind::Float, .mOffset = offsetof(RigidBody, mass),
+         .mClamped = true, .mMin = 0.001f, .mMax = FLT_MAX }, // Jolt cannot build a dynamic body of no mass
+        { .mName = "gravityFactor", .mKind = FieldKind::Float, .mOffset = offsetof(RigidBody, gravityFactor) },
+        { .mName = "friction", .mKind = FieldKind::Float, .mOffset = offsetof(RigidBody, friction),
+         .mClamped = true, .mMin = 0.0f, .mMax = FLT_MAX },
+        { .mName = "restitution", .mKind = FieldKind::Float, .mOffset = offsetof(RigidBody, restitution),
+         .mClamped = true, .mMin = 0.0f, .mMax = 1.0f },
+        { .mName = "allowSleeping", .mKind = FieldKind::Bool, .mOffset = offsetof(RigidBody, allowSleeping) },
     };
 }

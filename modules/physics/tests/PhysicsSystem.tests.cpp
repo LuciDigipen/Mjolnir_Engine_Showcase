@@ -492,6 +492,193 @@ TEST_CASE("A position write on a kinematic body keeps its own rotation", "[physi
     CHECK(fixture.Physics().BodyPosition(BodyOfEntity(fixture, entity))->Meters().x == Catch::Approx(2.0).margin(1e-3));
 }
 
+TEST_CASE("A capsule collides at its real size along its axis", "[physics][capsule]")
+{
+    PhysicsFixture fixture;
+    const auto castDown = [&]()
+    {
+        const mir::WorldPosition origin = mir::WorldPosition::FromMeters(mir::WorldVec3(0.0, 10.0, 0.0)).value();
+        return fixture.Physics().RayCast(origin, glm::vec3(0.0f, -1.0f, 0.0f), 20.0f);
+    };
+
+    mir::RigidBody capsule{ .motion = mir::PhysicsMotion::Static, .shape = mir::PhysicsShape::Capsule, .radius = 0.5f };
+    capsule.halfHeight = 2.0f;
+
+    SECTION("standing along Y, half the total height reaches the top")
+    {
+        fixture.Add(glm::vec3(0.0f), capsule);
+        const std::optional<mir::RayHit> hit = castDown();
+        REQUIRE(hit.has_value());
+        CHECK(hit->mDistance == Catch::Approx(8.0f).margin(0.01f));
+    }
+
+    SECTION("lying along X, only the radius is up")
+    {
+        capsule.axis = mir::PhysicsAxis::X;
+        fixture.Add(glm::vec3(0.0f), capsule);
+        const std::optional<mir::RayHit> hit = castDown();
+        REQUIRE(hit.has_value());
+        CHECK(hit->mDistance == Catch::Approx(9.5f).margin(0.01f));
+    }
+
+    SECTION("a half height under the radius is raised to a sphere")
+    {
+        capsule.halfHeight = 0.1f;
+        fixture.Add(glm::vec3(0.0f), capsule);
+        const std::optional<mir::RayHit> hit = castDown();
+        REQUIRE(hit.has_value());
+        CHECK(hit->mDistance == Catch::Approx(9.5f).margin(0.01f));
+    }
+
+    SECTION("scaled, the height follows the axis and the radius the other two")
+    {
+        mir::RigidBody scaledCapsule = capsule;
+        const mir::Entity entity = fixture.world.CreateEntity();
+        mir::AddTransform(fixture.world, entity, mir::Transform{ mir::WorldVec3(0.0), {}, glm::vec3(3.0f, 2.0f, 1.0f) });
+        fixture.world.AddComponent<mir::RigidBody>(entity, scaledCapsule);
+        const std::optional<mir::RayHit> hit = castDown();
+        REQUIRE(hit.has_value());
+        // half height 2 along Y times 2
+        CHECK(hit->mDistance == Catch::Approx(6.0f).margin(0.01f));
+    }
+}
+
+TEST_CASE("The collider offset and its rotation move the shape and not the body", "[physics][offset]")
+{
+    PhysicsFixture fixture;
+    const auto castDown = [&]()
+    {
+        const mir::WorldPosition origin = mir::WorldPosition::FromMeters(mir::WorldVec3(0.0, 10.0, 0.0)).value();
+        return fixture.Physics().RayCast(origin, glm::vec3(0.0f, -1.0f, 0.0f), 20.0f);
+    };
+
+    SECTION("an offset lifts the shape")
+    {
+        mir::RigidBody sphere{ .motion = mir::PhysicsMotion::Static, .shape = mir::PhysicsShape::Sphere, .radius = 0.5f };
+        sphere.offset = glm::vec3(0.0f, 3.0f, 0.0f);
+        const mir::Entity entity = fixture.Add(glm::vec3(0.0f), sphere);
+
+        const std::optional<mir::RayHit> hit = castDown();
+        REQUIRE(hit.has_value());
+        CHECK(hit->mDistance == Catch::Approx(6.5f).margin(0.01f));
+        // the body itself stays at the entity
+        CHECK(fixture.Physics().BodyPosition(BodyOfEntity(fixture, entity))->Meters().y == 0.0);
+    }
+
+    SECTION("the offset follows the world scale")
+    {
+        mir::RigidBody sphere{ .motion = mir::PhysicsMotion::Static, .shape = mir::PhysicsShape::Sphere, .radius = 0.5f };
+        sphere.offset = glm::vec3(0.0f, 1.0f, 0.0f);
+        const mir::Entity entity = fixture.world.CreateEntity();
+        mir::AddTransform(fixture.world, entity, mir::Transform{ mir::WorldVec3(0.0), {}, glm::vec3(2.0f) });
+        fixture.world.AddComponent<mir::RigidBody>(entity, sphere);
+
+        // offset 2, radius 1
+        const std::optional<mir::RayHit> hit = castDown();
+        REQUIRE(hit.has_value());
+        CHECK(hit->mDistance == Catch::Approx(7.0f).margin(0.01f));
+    }
+
+    SECTION("a rotation stands a long box up")
+    {
+        mir::RigidBody box{ .motion = mir::PhysicsMotion::Static, .shape = mir::PhysicsShape::Box };
+        box.halfExtent = glm::vec3(2.0f, 0.5f, 0.5f);
+        box.rotationOffset = glm::angleAxis(glm::half_pi<float>(), glm::vec3(0.0f, 0.0f, 1.0f));
+        fixture.Add(glm::vec3(0.0f), box);
+
+        const std::optional<mir::RayHit> hit = castDown();
+        REQUIRE(hit.has_value());
+        CHECK(hit->mDistance == Catch::Approx(8.0f).margin(0.01f));
+    }
+}
+
+TEST_CASE("Mass, gravity factor, friction, restitution and sleeping reach the body", "[physics][properties]")
+{
+    SECTION("mass sets how far an impulse carries a body")
+    {
+        PhysicsFixture fixture;
+        mir::RigidBody heavy = kDynamicSphere;
+        heavy.mass = 10.0f;
+        heavy.gravityFactor = 0.0f;
+        const mir::Entity entity = fixture.Add(glm::vec3(0.0f, 5.0f, 0.0f), heavy);
+
+        fixture.Physics().AddImpulse(BodyOfEntity(fixture, entity), glm::vec3(10.0f, 0.0f, 0.0f));
+        fixture.Run(1);
+
+        // 10 kg pushed by 10 N s is 1 m/s, and with no gravity nothing else moves it
+        CHECK(fixture.Physics().BodyLinearVelocity(BodyOfEntity(fixture, entity)).x == Catch::Approx(1.0f).margin(0.01f));
+        CHECK(fixture.Physics().BodyLinearVelocity(BodyOfEntity(fixture, entity)).y == Catch::Approx(0.0f).margin(1e-4f));
+    }
+
+    SECTION("restitution bounces a ball")
+    {
+        PhysicsFixture fixture;
+        fixture.Add(glm::vec3(0.0f), kStaticBox);
+        mir::RigidBody bouncy = kDynamicSphere;
+        bouncy.restitution = 0.9f;
+        mir::RigidBody dead = kDynamicSphere;
+        dead.restitution = 0.0f;
+        const mir::Entity a = fixture.Add(glm::vec3(-5.0f, 3.0f, 0.0f), bouncy);
+        const mir::Entity b = fixture.Add(glm::vec3(5.0f, 3.0f, 0.0f), dead);
+
+        double highestBouncy = 0.0;
+        double highestDead = 0.0;
+        for (int i = 0; i < 120; ++i)
+        {
+            fixture.Run(1);
+            if (i > 50)
+            {
+                highestBouncy = std::max(highestBouncy, fixture.TransformOf(a).Position().y);
+                highestDead = std::max(highestDead, fixture.TransformOf(b).Position().y);
+            }
+        }
+        CHECK(highestBouncy > 1.8);
+        CHECK(highestDead < 1.2);
+    }
+
+    SECTION("friction slows a slide")
+    {
+        PhysicsFixture fixture;
+        mir::RigidBody floor = kStaticBox;
+        floor.friction = 1.0f;
+        fixture.Add(glm::vec3(0.0f), floor);
+        mir::RigidBody grippy = kDynamicSphere;
+        mir::RigidBody slick = kDynamicSphere;
+        grippy.friction = 1.0f;
+        slick.friction = 0.0f;
+        // boxes slide where spheres roll
+        grippy.shape = mir::PhysicsShape::Box;
+        slick.shape = mir::PhysicsShape::Box;
+        grippy.halfExtent = slick.halfExtent = glm::vec3(0.5f);
+        const mir::Entity a = fixture.Add(glm::vec3(-5.0f, 1.01f, 0.0f), grippy);
+        const mir::Entity b = fixture.Add(glm::vec3(5.0f, 1.01f, 0.0f), slick);
+        fixture.Physics().SetBodyLinearVelocity(BodyOfEntity(fixture, a), glm::vec3(3.0f, 0.0f, 0.0f));
+        fixture.Physics().SetBodyLinearVelocity(BodyOfEntity(fixture, b), glm::vec3(3.0f, 0.0f, 0.0f));
+
+        fixture.Run(60);
+
+        CHECK(fixture.TransformOf(a).Position().x + 5.0 < fixture.TransformOf(b).Position().x - 5.0);
+    }
+
+    SECTION("a body that cannot sleep stays awake at rest, and Wake wakes one that does")
+    {
+        PhysicsFixture fixture;
+        fixture.Add(glm::vec3(0.0f), kStaticBox);
+        mir::RigidBody awake = kDynamicSphere;
+        awake.allowSleeping = false;
+        const mir::Entity restless = fixture.Add(glm::vec3(-5.0f, 1.0f, 0.0f), awake);
+        const mir::Entity sleeper = fixture.Add(glm::vec3(5.0f, 1.0f, 0.0f), kDynamicSphere);
+
+        fixture.Run(300);
+
+        CHECK_FALSE(fixture.Physics().IsBodySleeping(BodyOfEntity(fixture, restless)));
+        REQUIRE(fixture.Physics().IsBodySleeping(BodyOfEntity(fixture, sleeper)));
+
+        fixture.Physics().WakeBody(BodyOfEntity(fixture, sleeper));
+        CHECK_FALSE(fixture.Physics().IsBodySleeping(BodyOfEntity(fixture, sleeper)));
+    }
+}
+
 TEST_CASE("A RigidBody gets its body when it is added, before any step", "[physics]")
 {
     PhysicsFixture fixture;

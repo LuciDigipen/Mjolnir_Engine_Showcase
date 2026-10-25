@@ -36,9 +36,23 @@ namespace mir
         PhysicsShape mShape = PhysicsShape::Box;
         WorldPosition mPosition;
         glm::quat mRotation = kIdentityRotation;
-        // Only the field the shape uses is read.
+        // Only the fields the shape uses are read.
         glm::vec3 mHalfExtent{0.5f};
         float mRadius = 0.5f;
+        // Capsule: half the total height, caps included. Raised to the radius when smaller.
+        float mHalfHeight = 1.0f;
+        PhysicsAxis mAxis = PhysicsAxis::Y;
+        // Where the shape sits in the body's own frame.
+        glm::vec3 mOffset{0.0f};
+        glm::quat mRotationOffset = kIdentityRotation;
+        // Never blocks motion; reports contacts like any other body.
+        bool mIsTrigger = false;
+        // Reads only for Dynamic: a mass at or below 0 leaves the shape's own, from its volume.
+        float mMass = 0.0f;
+        float mGravityFactor = 1.0f;
+        float mFriction = 0.2f;
+        float mRestitution = 0.0f;
+        bool mAllowSleeping = true;
     };
 
     struct RayHit
@@ -106,6 +120,9 @@ namespace mir
         glm::vec3 BodyLinearVelocity(BodyHandle body) const;
         glm::vec3 BodyAngularVelocity(BodyHandle body) const;
         void SetBodyTransform(BodyHandle body, WorldPosition position, const glm::quat &rotation);
+        // A Dynamic or Kinematic body that rests, or that has not been touched for a while, falls asleep.
+        void WakeBody(BodyHandle body);
+        bool IsBodySleeping(BodyHandle body) const;
         // Kinematic only: sets the velocity that reaches the pose after dt, so dynamic bodies in the way are pushed
         // and not skipped over. The pose is reached at the end of the next step; the velocity is left behind.
         void MoveBodyKinematic(BodyHandle body, WorldPosition position, const glm::quat &rotation, float dt);

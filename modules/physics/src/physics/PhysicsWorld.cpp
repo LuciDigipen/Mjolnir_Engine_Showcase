@@ -31,12 +31,16 @@
 #include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
+#include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 
 #include <glm/geometric.hpp>
+#include <glm/gtc/constants.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -64,8 +68,22 @@ namespace mir
             return bodies.GetCenterOfMassPosition(id) + worldOffset;
         }
 
-        // Null, logged, for a size Jolt cannot build. A shape other than Sphere is a box.
-        const JPH::Shape *MakeShape(const BodyDesc &desc)
+        // Jolt stands a capsule along Y, so the other axes turn it.
+        glm::quat AxisRotation(PhysicsAxis axis)
+        {
+            switch (axis)
+            {
+            case PhysicsAxis::X:
+                return glm::angleAxis(-glm::half_pi<float>(), glm::vec3(0.0f, 0.0f, 1.0f));
+            case PhysicsAxis::Z:
+                return glm::angleAxis(glm::half_pi<float>(), glm::vec3(1.0f, 0.0f, 0.0f));
+            default:
+                return kIdentityRotation;
+            }
+        }
+
+        // The size-only shape, in its own frame. Null, logged, for a size Jolt cannot build.
+        const JPH::Shape *MakeBaseShape(const BodyDesc &desc)
         {
             if (desc.mShape == PhysicsShape::Sphere)
             {
@@ -77,6 +95,19 @@ namespace mir
                 return new JPH::SphereShape(desc.mRadius);
             }
 
+            if (desc.mShape == PhysicsShape::Capsule)
+            {
+                if (desc.mRadius <= 0.0f)
+                {
+                    MIR_LOG_ERROR("PhysicsWorld::CreateBody: radius must be positive");
+                    return nullptr;
+                }
+                // halfHeight counts the caps, Jolt wants the cylinder between them, and a body with no
+                // cylinder at all is a sphere that Jolt's capsule refuses
+                const float cylinder = std::max(desc.mHalfHeight - desc.mRadius, 1.0e-3f);
+                return new JPH::CapsuleShape(cylinder, desc.mRadius);
+            }
+
             const glm::vec3 &halfExtent = desc.mHalfExtent;
             if (halfExtent.x <= 0.0f || halfExtent.y <= 0.0f || halfExtent.z <= 0.0f)
             {
@@ -84,6 +115,20 @@ namespace mir
                 return nullptr;
             }
             return new JPH::BoxShape(ToJolt(halfExtent));
+        }
+
+        // The base shape placed in the body's frame by the capsule axis and the collider offset.
+        const JPH::Shape *MakeShape(const BodyDesc &desc)
+        {
+            const JPH::Shape *base = MakeBaseShape(desc);
+            if (base == nullptr)
+                return nullptr;
+
+            const glm::quat rotation = desc.mRotationOffset
+                * (desc.mShape == PhysicsShape::Capsule ? AxisRotation(desc.mAxis) : kIdentityRotation);
+            if (rotation == kIdentityRotation && desc.mOffset == glm::vec3(0.0f))
+                return base;
+            return new JPH::RotatedTranslatedShape(ToJolt(desc.mOffset), ToJolt(rotation), base);
         }
     }
 
@@ -137,7 +182,8 @@ namespace mir
         }
 
         BodyHandle CreateBody(const JPH::Shape *shape, WorldPosition position, const glm::quat &rotation,
-                              PhysicsMotion motion, bool enhancedInternalEdgeRemoval = false)
+                              PhysicsMotion motion, bool enhancedInternalEdgeRemoval = false,
+                              const BodyDesc *properties = nullptr)
         {
             const JPH::RefConst<JPH::Shape> owned(shape);
             const bool dynamic = motion == PhysicsMotion::Dynamic;
@@ -150,6 +196,20 @@ namespace mir
             JPH::BodyCreationSettings settings(owned, ToJolt(position), ToJolt(rotation), type,
                                                moving ? detail::Layers::kMoving : detail::Layers::kNonMoving);
             settings.mEnhancedInternalEdgeRemoval = enhancedInternalEdgeRemoval;
+            if (properties != nullptr)
+            {
+                settings.mIsSensor = properties->mIsTrigger;
+                settings.mFriction = properties->mFriction;
+                settings.mRestitution = properties->mRestitution;
+                settings.mGravityFactor = properties->mGravityFactor;
+                settings.mAllowSleeping = properties->mAllowSleeping;
+                // the shape gives the inertia, the mass scales it
+                if (dynamic && properties->mMass > 0.0f)
+                {
+                    settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+                    settings.mMassPropertiesOverride.mMass = properties->mMass;
+                }
+            }
 
             const JPH::BodyID id = Bodies().CreateAndAddBody(
                 settings, moving ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
@@ -236,7 +296,7 @@ namespace mir
         if (shape == nullptr)
             return {};
 
-        return mImpl->CreateBody(shape, desc.mPosition, desc.mRotation, desc.mMotion);
+        return mImpl->CreateBody(shape, desc.mPosition, desc.mRotation, desc.mMotion, false, &desc);
     }
 
     BodyHandle PhysicsWorld::CreateStaticHeightField(const HeightFieldDesc &desc)
@@ -409,6 +469,18 @@ namespace mir
             return;
 
         mImpl->Bodies().SetPositionAndRotation(*id, ToJolt(position), ToJolt(rotation), JPH::EActivation::Activate);
+    }
+
+    void PhysicsWorld::WakeBody(BodyHandle body)
+    {
+        if (const std::optional<JPH::BodyID> id = mImpl->Live(body))
+            mImpl->Bodies().ActivateBody(*id);
+    }
+
+    bool PhysicsWorld::IsBodySleeping(BodyHandle body) const
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        return id && mImpl->Bodies().GetMotionType(*id) != JPH::EMotionType::Static && !mImpl->Bodies().IsActive(*id);
     }
 
     void PhysicsWorld::MoveBodyKinematic(BodyHandle body, WorldPosition position, const glm::quat &rotation, float dt)

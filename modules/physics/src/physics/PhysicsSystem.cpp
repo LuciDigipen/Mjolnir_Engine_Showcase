@@ -26,19 +26,42 @@ namespace mir
     {
         using detail::BodyPose;
 
+        // The shape follows the world scale: a box per axis, a sphere by the largest axis, a capsule by the
+        // axis it stands along for its height and the larger of the other two for its radius. The collider
+        // offset scales with it; a rotated non-uniform parent is as close as the decomposition gets.
+        BodyDesc BodyDescFor(const RigidBody &rigidBody, const BodyPose &pose)
+        {
+            const glm::vec3 scale = glm::abs(pose.scale);
+            const int axis = static_cast<int>(rigidBody.axis);
+            const float along = scale[axis];
+            const float across = std::max(scale[(axis + 1) % 3], scale[(axis + 2) % 3]);
+            const bool capsule = rigidBody.shape == PhysicsShape::Capsule;
+
+            return {.mMotion = rigidBody.motion,
+                    .mShape = rigidBody.shape,
+                    .mPosition = pose.position,
+                    .mRotation = pose.rotation,
+                    .mHalfExtent = rigidBody.halfExtent * scale,
+                    .mRadius = rigidBody.radius * (capsule ? across : std::max({ scale.x, scale.y, scale.z })),
+                    .mHalfHeight = rigidBody.halfHeight * along,
+                    .mAxis = rigidBody.axis,
+                    .mOffset = rigidBody.offset * pose.scale,
+                    .mRotationOffset = rigidBody.rotationOffset,
+                    .mIsTrigger = rigidBody.isTrigger,
+                    .mMass = rigidBody.mass,
+                    .mGravityFactor = rigidBody.gravityFactor,
+                    .mFriction = rigidBody.friction,
+                    .mRestitution = rigidBody.restitution,
+                    .mAllowSleeping = rigidBody.allowSleeping};
+        }
+
         // The one place a body is built: the add hook, the PlayBegin pass and the first-step fallback share it.
         // The pose is the entity's world pose, and the shape follows the world scale.
         void CreateBodyFor(World &world, PhysicsWorld &physics, Entity entity, RigidBody &rigidBody)
         {
             const BodyPose pose = detail::PoseOf(world, entity);
-            const glm::vec3 scale = glm::abs(pose.scale);
 
-            rigidBody.runtime.body = physics.CreateBody({.mMotion = rigidBody.motion,
-                                                         .mShape = rigidBody.shape,
-                                                         .mPosition = pose.position,
-                                                         .mRotation = pose.rotation,
-                                                         .mHalfExtent = rigidBody.halfExtent * scale,
-                                                         .mRadius = rigidBody.radius * std::max({ scale.x, scale.y, scale.z })});
+            rigidBody.runtime.body = physics.CreateBody(BodyDescFor(rigidBody, pose));
             physics.SetBodyEntity(rigidBody.runtime.body, entity);
             detail::ResetStepPoses(rigidBody, pose.position.Meters(), pose.rotation);
             detail::Stamp(rigidBody, pose);

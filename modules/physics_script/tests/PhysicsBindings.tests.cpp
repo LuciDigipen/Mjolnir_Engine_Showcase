@@ -48,10 +48,12 @@ namespace
     // does expect to move is never mistaken for noise.
     constexpr float kStill = 1.0e-3f;
 
+    // The mass of a unit cube at Jolt's default density, which is what the forces below were chosen for.
     constexpr mir::RigidBody kDynamicBox{
         .motion = mir::PhysicsMotion::Dynamic,
         .shape = mir::PhysicsShape::Box,
         .halfExtent = glm::vec3(0.5f),
+        .mass = 1000.0f,
     };
 
     // Where a script writes what it read, so the test can check it. Same trick

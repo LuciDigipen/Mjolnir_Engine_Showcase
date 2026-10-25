@@ -39,11 +39,23 @@ namespace mir
     {
         Box = 0,
         Sphere = 1,
+        Capsule = 2,
     };
 
     // Index == underlying PhysicsShape value; for RigidBody's "shape" inspector field.
-    inline constexpr std::string_view kPhysicsShapeNames[] = { "Box", "Sphere" };
-    static_assert(std::size(kPhysicsShapeNames) == static_cast<std::size_t>(PhysicsShape::Sphere) + 1);
+    inline constexpr std::string_view kPhysicsShapeNames[] = { "Box", "Sphere", "Capsule" };
+    static_assert(std::size(kPhysicsShapeNames) == static_cast<std::size_t>(PhysicsShape::Capsule) + 1);
+
+    // The way a capsule stands.
+    enum class PhysicsAxis : int32_t
+    {
+        X = 0,
+        Y = 1,
+        Z = 2,
+    };
+
+    inline constexpr std::string_view kPhysicsAxisNames[] = { "X", "Y", "Z" };
+    static_assert(std::size(kPhysicsAxisNames) == static_cast<std::size_t>(PhysicsAxis::Z) + 1);
 
     struct BodyHandle
     {
