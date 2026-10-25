@@ -159,11 +159,7 @@ save order, coordinator publication and authoring. `modules/scene/tests/` covers
 instance records and references, and `modules/editor/tests/` covers the open
 documents and authored adapter.
 
-`games/PrefabCheck` is the packaged acceptance: two crate instances, a House
-with two nested Door occurrences and overrides, a null reference, a
-cross-instance reference and a detached copy. Its Lua check runs in
-`smoke.PrefabCheck` from a no-editor build whose source Prefabs have been
-removed. Save and load round trips remain covered by the module tests; a game
+Save and load round trips remain covered by the module tests; a game
 build has no save path.
 
 ## Backlog

@@ -267,9 +267,7 @@ for byte.
 *As of 2026-10-23.* Instance records load through a `ScenePrefabResolver` and
 round-trip their bindings, placement and field/component patches, including
 nested occurrences, explicit nulls and cross-instance references. A missing
-Prefab keeps the record unchanged. The acceptance scene
-`games/PrefabCheck/scenes/default` exercises these cases in
-`smoke.PrefabCheck`.
+Prefab keeps the record unchanged.
 
 Tests in `modules/scene/tests/SceneIO.tests.cpp`,
 `modules/scene/tests/PlaySnapshot.tests.cpp` and
