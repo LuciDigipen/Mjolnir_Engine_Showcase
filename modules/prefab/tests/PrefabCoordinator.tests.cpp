@@ -235,10 +235,7 @@ namespace
 
     std::vector<Entity> ChildrenOf(World &world, Entity parent)
     {
-        const mir::HierarchyIndex *index = world.TryResource<mir::HierarchyIndex>();
-        if (index == nullptr)
-            return {};
-        const std::span<const Entity> children = index->ChildrenOf(parent);
+        const std::span<const Entity> children = world.HierarchyIndex().ChildrenOf(parent);
         return std::vector<Entity>(children.begin(), children.end());
     }
 

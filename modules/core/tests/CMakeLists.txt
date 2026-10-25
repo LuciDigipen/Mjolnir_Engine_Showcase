@@ -13,6 +13,7 @@ engine_add_module_tests(core
     WorldCoordinates.tests.cpp
     TransformHierarchy.tests.cpp
     Resources.tests.cpp
+    ComponentHooks.tests.cpp
     Entity.tests.cpp
     EntityChanges.tests.cpp
     ComponentRegistry.tests.cpp

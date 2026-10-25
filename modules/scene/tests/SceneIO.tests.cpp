@@ -729,7 +729,7 @@ TEST_CASE("Root and child order survive a save and load", "[scene][order]")
 
     World loadedWorld;
     const LoadedScene loaded = mir::LoadScene(loadedWorld, dir.mPath);
-    const mir::HierarchyIndex &index = loadedWorld.Resource<mir::HierarchyIndex>();
+    const mir::HierarchyIndex &index = loadedWorld.HierarchyIndex();
 
     CHECK(IdsOf(index.Roots(), loaded) == std::vector<StableId>{ 3, 1, 2 });
     CHECK(IdsOf(index.ChildrenOf(loaded.mEntities.at(1)), loaded) == std::vector<StableId>{ 6, 4, 5 });
@@ -752,7 +752,7 @@ TEST_CASE("A scene saved before sibling order loads in id order", "[scene][order
 
     World world;
     const LoadedScene loaded = mir::LoadScene(world, dir.mPath);
-    const mir::HierarchyIndex &index = world.Resource<mir::HierarchyIndex>();
+    const mir::HierarchyIndex &index = world.HierarchyIndex();
 
     CHECK(IdsOf(index.Roots(), loaded) == std::vector<StableId>{ 1, 2 });
     CHECK(IdsOf(index.ChildrenOf(loaded.mEntities.at(1)), loaded) == std::vector<StableId>{ 3, 4 });
@@ -776,7 +776,7 @@ TEST_CASE("Tied and missing sibling indices fall back to id order", "[scene][ord
     World world;
     const LoadedScene loaded = mir::LoadScene(world, dir.mPath);
 
-    CHECK(IdsOf(world.Resource<mir::HierarchyIndex>().Roots(), loaded) == std::vector<StableId>{ 3, 4, 2, 1 });
+    CHECK(IdsOf(world.HierarchyIndex().Roots(), loaded) == std::vector<StableId>{ 3, 4, 2, 1 });
 }
 
 TEST_CASE("ProbeScene passes a scene LoadScene would load in full", "[scene]")

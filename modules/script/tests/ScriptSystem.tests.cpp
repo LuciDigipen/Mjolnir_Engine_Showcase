@@ -96,6 +96,32 @@ TEST_CASE("BeforeRemove releases a script binding that a commit removes", "[scri
     system.OnStop(context);
 }
 
+TEST_CASE("Removing the ScriptRef destroys its instance until OnStop", "[script]")
+{
+    mir::RegisterCoreComponents();
+    mir::RegisterScriptComponents();
+
+    World world;
+    CommandBuffer commands;
+    FakeHost host;
+    ScriptSystem system(host);
+
+    SystemContext context{ world, commands };
+    system.OnStart(context);
+
+    const Entity entity = world.CreateEntity();
+    world.AddComponent<ScriptRef>(entity, MakeRef(7));
+    world.RemoveComponent<ScriptRef>(entity);
+    REQUIRE(host.mDestroyed == std::vector<int32_t>{ 7 });
+
+    system.OnStop(context);
+
+    // the hook is cleared, so a later removal reaches nothing
+    world.AddComponent<ScriptRef>(entity, MakeRef(8));
+    world.RemoveComponent<ScriptRef>(entity);
+    CHECK(host.mDestroyed == std::vector<int32_t>{ 7 });
+}
+
 TEST_CASE("BeforeRemove releases only a changed script name", "[script][changes]")
 {
     mir::RegisterCoreComponents();

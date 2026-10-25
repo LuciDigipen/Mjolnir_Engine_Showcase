@@ -230,19 +230,12 @@ namespace mir
         return true;
     }
 
-    std::vector<Entity> HierarchyIndex::DetachChildren(Entity entity)
+    void HierarchyIndex::DetachChild(Entity parent, Entity child)
     {
-        Node *node = Find(entity);
-        if (node == nullptr)
-            return {};
+        Unlink(child, parent);
 
-        for (const Entity child : node->children)
-        {
-            if (Node *orphan = Find(child))
-                orphan->parent = kNullEntity;
-        }
-
-        return std::move(node->children);
+        if (Node *node = Find(child); node != nullptr && node->parent == parent)
+            node->parent = kNullEntity;
     }
 
     void HierarchyIndex::Remove(Entity entity)

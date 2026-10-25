@@ -35,7 +35,7 @@ namespace mir
     void AudioEmitterSystem::OnStart(SystemContext &context)
     {
         mQuery = &context.world.GetOrCreateQuery<const WorldTransform, AudioEmitter>();
-        context.world.AddDestroyHook(&AudioEmitterSystem::OnEntityDestroyed, this);
+        context.world.SetComponentHooks<AudioEmitter>({ .onRemove = &AudioEmitterSystem::OnEmitterRemoved });
     }
 
     void AudioEmitterSystem::OnUpdate(SystemContext &context)
@@ -107,10 +107,10 @@ namespace mir
                 });
         }
 
-        context.world.RemoveDestroyHook(&AudioEmitterSystem::OnEntityDestroyed, this);
+        context.world.ClearComponentHooks<AudioEmitter>();
     }
 
-    void AudioEmitterSystem::OnEntityDestroyed(World &world, Entity entity, void *)
+    void AudioEmitterSystem::OnEmitterRemoved(World &world, Entity entity)
     {
         AudioEmitter *emitter = world.GetComponent<AudioEmitter>(entity);
         if (emitter == nullptr || emitter->mGameObject == 0)

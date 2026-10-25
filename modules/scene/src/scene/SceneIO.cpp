@@ -754,8 +754,6 @@ namespace mir
                 return std::pair(a.mSiblingIndex, a.mId) < std::pair(b.mSiblingIndex, b.mId);
             });
 
-        InstallHierarchy(world);
-
         std::vector<PendingEntityRef> pendingRefs;
 
         struct PendingParent
@@ -906,7 +904,7 @@ namespace mir
             ids[PackEntity(entity)] = id;
 
         // resolve parent ids
-        const HierarchyIndex &hierarchy = InstallHierarchy(world);
+        const HierarchyIndex &hierarchy = world.HierarchyIndex();
         std::map<StableId, std::size_t> nextSiblingIndices;
         for (const auto &pending : pendingParents)
         {

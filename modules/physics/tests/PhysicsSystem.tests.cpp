@@ -165,6 +165,19 @@ TEST_CASE("Destroying the entity frees its body", "[physics]")
     REQUIRE(fixture.Physics().BodyCount() == 0);
 }
 
+TEST_CASE("Removing the RigidBody frees its body", "[physics]")
+{
+    PhysicsFixture fixture;
+    const mir::Entity entity = fixture.Add(glm::vec3(0.0f, 5.0f, 0.0f), kDynamicSphere);
+
+    fixture.Run(1);
+    REQUIRE(fixture.Physics().BodyCount() == 1);
+
+    fixture.world.RemoveComponent<mir::RigidBody>(entity);
+    CHECK(fixture.Physics().BodyCount() == 0);
+    CHECK(fixture.world.IsAlive(entity));
+}
+
 TEST_CASE("Each created body is tagged with its entity", "[physics]")
 {
     PhysicsFixture fixture;

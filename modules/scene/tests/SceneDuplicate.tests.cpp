@@ -112,7 +112,7 @@ namespace
 
     std::vector<Entity> RootsOf(World &world)
     {
-        const std::span<const Entity> roots = world.Resource<mir::HierarchyIndex>().Roots();
+        const std::span<const Entity> roots = world.HierarchyIndex().Roots();
         return std::vector<Entity>(roots.begin(), roots.end());
     }
 

@@ -577,9 +577,7 @@ TEST_CASE("A source node deletion restores nodes but keeps cleared references nu
     CHECK(mir::ParentOf(fixture.mWorld, fixture.Member(third)) == fixture.Member(rootNode));
     CHECK(mir::ParentOf(fixture.mWorld, fixture.Member(fourth)) == fixture.Member(third));
 
-    const mir::HierarchyIndex *index = fixture.mWorld.TryResource<mir::HierarchyIndex>();
-    REQUIRE(index != nullptr);
-    const std::span<const Entity> children = index->ChildrenOf(fixture.Member(rootNode));
+    const std::span<const Entity> children = fixture.mWorld.HierarchyIndex().ChildrenOf(fixture.Member(rootNode));
     REQUIRE(children.size() == 2);
     CHECK(children[1] == fixture.Member(third));
 

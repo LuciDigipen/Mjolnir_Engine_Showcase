@@ -42,15 +42,15 @@ all, so `AddTag<T>` only moves the entity into the archetype carrying that bit.
 
 ### Resources
 
-Some state belongs to a world but not to any entity — the scene graph, a camera,
-an asset cache, a script VM. That state lives in `World`, keyed by type.
+Some state belongs to a world but not to any entity — a camera, an asset cache,
+a script VM. That state lives in `World`, keyed by type.
 
 Resources are not components and carry none of the POD constraints. Nothing ever
 relocates one, so a resource may own heap memory and have a destructor.
 
 ```cpp
-world.EmplaceResource<HierarchyIndex>();
-HierarchyIndex *index = world.TryResource<HierarchyIndex>();
+world.EmplaceResource<EntityChangeListeners>();
+EntityChangeListeners *listeners = world.TryResource<EntityChangeListeners>();
 ```
 
 ### Access by name
@@ -77,8 +77,9 @@ const ComponentOps &health = ComponentRegistry::Instance().RegisterRuntime("Heal
 | `TypeId` | `ecs/TypeId.h` | Per-type `{seq, hash, name}` |
 | `Signature` | `ecs/Signature.h` | 256-bit component set, the archetype key |
 | `Archetype`, `ComponentColumn` | `ecs/Archetype.h` | Rows sharing a signature; one type's data in one |
-| `World` | `ecs/World.h` | Owns entities, archetypes, resources |
-| `HierarchyIndex` | `ecs/HierarchyIndex.h` | The scene graph and the root order, held as a resource |
+| `World` | `ecs/World.h` | Owns entities, archetypes, resources and the scene graph |
+| `ComponentHooks` | `ecs/World.h` | One OnAdd and one OnRemove per component type, per `World` |
+| `HierarchyIndex` | `ecs/HierarchyIndex.h` | The scene graph and the root order, read through `World::HierarchyIndex()` |
 | `SetParent`, `MoveToLastSibling` | `ecs/TransformHierarchy.h` | Reparent or reorder, keeping the world pose by default; move to the end of the siblings |
 | `CanSetParent`, `CanSetParentAll` | `ecs/TransformHierarchy.h` | The checks `SetParent` makes, without changing anything; for one entity or a list |
 | `TopmostInHierarchyOrder` | `ecs/TransformHierarchy.h` | A list in hierarchy order, minus entries whose ancestor is also listed |
@@ -138,6 +139,42 @@ binding layer that has to route between the two.
 `CreateEntity` is exempt. A new entity lands in the empty archetype, so no table
 that a walk is matching against moves.
 
+**A component type has at most one pair of hooks, and its owner sets them.** The
+owning system calls `SetComponentHooks<T>` when it starts and
+`ClearComponentHooks<T>` when it stops, so no hook outlives the object it calls
+into. OnAdd runs after the value is stored. OnRemove runs before the data is
+dropped, on `RemoveComponent` and on `DestroyEntity`, so it can read the
+component it is losing. Tags fire hooks too.
+
+An OnAdd hook may change its own entity, for example to add a companion
+component. An OnRemove hook must not change its own entity, and that asserts. It
+may destroy other entities, an ancestor included. When a `RemoveComponent` hook
+destroys an ancestor, the cascade takes its own entity too. That destroy skips
+the hook already running, so each OnRemove fires exactly once, and the removal
+ends with the destroy. Neither kind may set or clear hooks, because that
+could resize the hook slots or destroy the running hook. World counts the hooks
+that are running, so `SetComponentHooks` and `ClearComponentHooks` assert inside
+one, and in Release they log an error and do nothing.
+
+**`DestroyEntity` is bottom-up.** Children are destroyed fully first, last
+child first. Each child stays linked until its own removal, so its hooks still
+read its parent. The loop drains the live child list, so a sibling a hook
+already destroyed is gone from it.
+Then the entity's OnRemove hooks run in bit order, and the row drops once after
+the last one, so every hook reads all of the entity's data.
+
+**A destroy already in progress finishes its own entity.** A hook that destroys
+an entity already being destroyed is ignored with a warning. A child that is
+mid-destroy further up the stack is cut loose from its parent first, so its own
+removal never reaches a parent that is gone. A dying entity takes no part in new
+links, as a child or as a parent. `SetParent` asserts and returns `false` for
+either, and `CanSetParent` answers `false`. During a drain the child list can
+therefore only shrink.
+
+A dead entity left in the graph, or a child whose destroy did not unlink it, is
+a bug. Both assert in Debug. In Release the child is cut loose and the destroy
+continues, so the loop always ends.
+
 **A resource destructor must not call back into `World`.** By then `~World` is
 already destroying the resource map. Anything holding entity handles needs an
 explicit shutdown call rather than destructor cleanup.
@@ -163,10 +200,9 @@ matches the graph checks. The keep-world position fit is checked only when the
 move is applied, so a highlighted drop can still be refused.
 
 **Every entity has a place in an ordered list.** A child sits in its parent's
-children, and a root sits in `HierarchyIndex::Roots()`. A `World` create hook
-appends each new entity to the roots, so roots keep creation order.
-`InstallHierarchy` registers that hook, and on first install it adds the
-entities that already exist, in slot order.
+children, and a root sits in `HierarchyIndex::Roots()`. `CreateEntity` appends
+each new entity to the roots, so roots keep creation order. The graph is a
+`World` member, so every entity is in it from create to destroy.
 
 `SetParent(world, child, parent, before)` inserts the child in front of the
 sibling `before`, or last when `before` is null. A null `parent` uses the root
@@ -297,8 +333,9 @@ free to leave in hot paths.
 
 ## State
 
-*As of 2026-10-09.* Working: entities, archetype storage with tags, filtered and
-runtime queries, deferred structural change, phase scheduling, typed resources,
+*As of 2026-10-24.* Working: entities, archetype storage with tags, filtered and
+runtime queries, deferred structural change, per-type component hooks, phase
+scheduling, typed resources,
 the transform hierarchy with lazy world-matrix resolution, ordered siblings and
 roots, keep-world reparenting, the component registry
 with named field access, script-declared component types, and the file-byte
@@ -306,7 +343,7 @@ primitives in `fs/FileIO.h`.
 
 Tests in `modules/core/tests/`: `Archetype`, `Query`, `CommandBuffer`,
 `Resources`, `Transform`, `TransformHierarchy`, `System`, `ComponentRegistry`,
-`RuntimeQuery`, `Paths`, `Process`, `FileIO`.
+`ComponentHooks`, `RuntimeQuery`, `Paths`, `Process`, `FileIO`.
 
 Logging and asserts have no tests of their own. Every other test exercises them,
 and their failure mode is loud.
@@ -315,8 +352,9 @@ and their failure mode is loud.
 former is flag-flipping with nothing to assert on in isolation; the latter is
 exercised by `scene`'s `PlaySnapshot.tests.cpp`, its one real caller.
 
-Missing: parallelism, dependency ordering, change detection, component lifecycle
-hooks, and row migration when a script component's layout changes.
+Missing: parallelism, dependency ordering, change detection, observers (several
+listeners for one component event), and row migration when a script component's
+layout changes.
 
 ## Backlog
 
@@ -338,6 +376,16 @@ hooks, and row migration when a script component's layout changes.
    `World::AddComponent` directly, rather than it being convention.
 
 ## Changed
+
+*2026-10-24* — **Per-type component hooks replace entity hooks; `World` owns the
+scene graph.** Was: `World` ran create and destroy hooks per entity, and
+`RemoveComponent` ran none. Removing a `RigidBody`, `AudioEmitter` or
+`ScriptRef` therefore leaked its runtime object (#222). `HierarchyIndex` was a
+resource that `InstallHierarchy` added, so every reader null-checked it. Now:
+each component type has one OnAdd and one OnRemove per `World`, set by its owner.
+`World` holds the graph as a member and updates it on create and destroy.
+Because: cleanup belongs to the component's owner, and every entity is in the
+graph anyway.
 
 *2026-10-09* — **`SetParent` keeps the world pose and takes a position.** Was:
 `SetParent` only appended and left the local `Transform` alone, so a reparent

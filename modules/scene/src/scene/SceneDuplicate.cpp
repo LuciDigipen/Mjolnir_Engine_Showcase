@@ -64,11 +64,7 @@ namespace mir
 
         Entity NextSiblingOf(World &world, Entity entity)
         {
-            const HierarchyIndex *index = world.TryResource<HierarchyIndex>();
-            if (index == nullptr)
-                return kNullEntity;
-
-            const std::span<const Entity> siblings = index->SiblingsOf(entity);
+            const std::span<const Entity> siblings = world.HierarchyIndex().SiblingsOf(entity);
             const auto it = std::find(siblings.begin(), siblings.end(), entity);
             if (it == siblings.end() || std::next(it) == siblings.end())
                 return kNullEntity;
@@ -77,10 +73,6 @@ namespace mir
 
         uint32_t SceneSiblingIndex(World &world, Entity entity, const LoadedScene &scene)
         {
-            const HierarchyIndex *index = world.TryResource<HierarchyIndex>();
-            if (index == nullptr)
-                return 0;
-
             std::unordered_set<uint64_t> sceneEntities;
             sceneEntities.reserve(scene.mEntities.size());
             for (const auto &[id, member] : scene.mEntities)
@@ -90,7 +82,7 @@ namespace mir
             }
 
             uint32_t position = 0;
-            for (const Entity sibling : index->SiblingsOf(entity))
+            for (const Entity sibling : world.HierarchyIndex().SiblingsOf(entity))
             {
                 if (sibling == entity)
                     break;
