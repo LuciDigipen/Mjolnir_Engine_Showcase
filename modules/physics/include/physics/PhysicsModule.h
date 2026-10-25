@@ -25,5 +25,7 @@ namespace mir
     private:
         // last: unregisters before anything above is destroyed
         Registration mHooks;
+        Registration mPlayBegin;
+        Registration mPlayEnd;
     };
 }

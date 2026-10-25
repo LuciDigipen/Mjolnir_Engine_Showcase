@@ -627,6 +627,13 @@ namespace mir
         if (dt <= 0.0f)
             return;
 
+        struct SteppingScope
+        {
+            explicit SteppingScope(bool &flag) : mFlag(flag) { mFlag = true; }
+            ~SteppingScope() { mFlag = false; }
+            bool &mFlag;
+        } stepping(mStepping);
+
         if (mImpl->mBroadPhaseDirty)
         {
             mImpl->mSystem.OptimizeBroadPhase();

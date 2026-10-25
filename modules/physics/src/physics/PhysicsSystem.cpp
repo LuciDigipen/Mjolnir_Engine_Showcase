@@ -28,20 +28,34 @@ namespace mir
             return WorldPosition::FromMeters(transform.Position()).value_or(WorldPosition{});
         }
 
-        BodyHandle CreateBodyFor(PhysicsWorld &physics, const RigidBody &rigidBody, const Transform &transform)
-        {
-            return physics.CreateBody({.mMotion = rigidBody.motion,
-                                       .mShape = rigidBody.shape,
-                                       .mPosition = BodyWorldPosition(transform),
-                                       .mRotation = transform.Rotation(),
-                                       .mHalfExtent = rigidBody.halfExtent,
-                                       .mRadius = rigidBody.radius});
-        }
-
         void ResetStepPoses(RigidBody &rigidBody, const Transform &transform)
         {
             rigidBody.runtime.previousPosition = rigidBody.runtime.currentPosition = transform.Position();
             rigidBody.runtime.previousRotation = rigidBody.runtime.currentRotation = transform.Rotation();
+        }
+
+        // The one place a body is built: the add hook, the PlayBegin pass and the first-step fallback share it.
+        void CreateBodyFor(World &world, PhysicsWorld &physics, Entity entity, const Transform &transform,
+            RigidBody &rigidBody)
+        {
+            // Jolt is world space and Transform is parent space, so a
+            // parented body would drift. Warned once, at creation.
+            if (ParentOf(world, entity) != kNullEntity)
+            {
+                MIR_LOG_WARN("PhysicsSystem: entity {} has a parent; its RigidBody is simulated "
+                             "in world space and will not follow the parent",
+                    entity.mIndex);
+            }
+
+            rigidBody.runtime.body = physics.CreateBody({.mMotion = rigidBody.motion,
+                                                         .mShape = rigidBody.shape,
+                                                         .mPosition = BodyWorldPosition(transform),
+                                                         .mRotation = transform.Rotation(),
+                                                         .mHalfExtent = rigidBody.halfExtent,
+                                                         .mRadius = rigidBody.radius});
+            physics.SetBodyEntity(rigidBody.runtime.body, entity);
+            ResetStepPoses(rigidBody, transform);
+            rigidBody.runtime.transformVersion = transform.Version();
         }
 
         // Spawns and teleports are already in the world, so they pass the gates like any move.
@@ -80,23 +94,17 @@ namespace mir
             {
                 if (!rigidBody.runtime.body.IsValid())
                 {
-                    // Jolt is world space and Transform is parent space, so a
-                    // parented body would drift. Warned once, at creation.
-                    if (ParentOf(world, entity) != kNullEntity)
-                    {
-                        MIR_LOG_WARN("PhysicsSystem: entity {} has a parent; its RigidBody is simulated "
-                                     "in world space and will not follow the parent",
-                            entity.mIndex);
-                    }
-
-                    // This runs after ScriptSystem PreUpdate phase,
-                    // meaning OnStart() in a script can never find a body.
-                    rigidBody.runtime.body = CreateBodyFor(physics, rigidBody, transform);
-                    physics.SetBodyEntity(rigidBody.runtime.body, entity);
-                    ResetStepPoses(rigidBody, transform);
+                    // The Transform came after the RigidBody, so the add hook had nothing to build from.
+                    MIR_LOG_WARN("PhysicsSystem: entity {} had no body at its first step; created it now, "
+                                 "its Transform was added after its RigidBody",
+                        entity.mIndex);
+                    CreateBodyFor(world, physics, entity, transform, rigidBody);
                 }
                 else if (transform.Version() != rigidBody.runtime.transformVersion)
                 {
+                    MIR_ASSERT(physics.BodyEntity(rigidBody.runtime.body) == entity,
+                        "PhysicsSystem: entity {} holds a body that belongs to another entity", entity.mIndex);
+
                     // Moved by something other than physics since the last step.
                     physics.SetBodyTransform(rigidBody.runtime.body, BodyWorldPosition(transform), transform.Rotation());
                     ResetStepPoses(rigidBody, transform);
@@ -133,6 +141,24 @@ namespace mir
             });
     }
 
+    void PhysicsSystem::OnRigidBodyAdded(World &world, Entity entity)
+    {
+        RigidBody *rigidBody = world.GetComponent<RigidBody>(entity);
+        if (rigidBody == nullptr)
+            return;
+
+        // First, before any early return: a copy must not keep the original's handle.
+        rigidBody->runtime = {};
+
+        PhysicsWorld *physics = world.TryResource<PhysicsWorld>();
+        Transform *transform = world.GetComponent<Transform>(entity);
+        if (physics == nullptr || !physics->IsSimulationLive() || transform == nullptr)
+            return;
+
+        MIR_ASSERT(!physics->IsStepping(), "PhysicsSystem: a RigidBody was added while physics was stepping");
+        CreateBodyFor(world, *physics, entity, *transform, *rigidBody);
+    }
+
     void PhysicsSystem::OnRigidBodyRemoved(World &world, Entity entity)
     {
         RigidBody *rigidBody = world.GetComponent<RigidBody>(entity);
@@ -140,8 +166,36 @@ namespace mir
             return;
 
         if (PhysicsWorld *physics = world.TryResource<PhysicsWorld>(); physics != nullptr)
+        {
+            MIR_ASSERT(physics->BodyEntity(rigidBody->runtime.body) == entity,
+                "PhysicsSystem: entity {} frees a body that belongs to another entity", entity.mIndex);
             physics->DestroyBody(rigidBody->runtime.body);
+        }
 
         rigidBody->runtime.body = {};
+    }
+
+    void PhysicsSystem::OnPlayBegin(World &world)
+    {
+        PhysicsWorld *physics = world.TryResource<PhysicsWorld>();
+        if (physics == nullptr)
+            return;
+
+        MIR_ASSERT(!physics->IsSimulationLive(), "PhysicsSystem: PlayBegin ran twice without a PlayEnd");
+
+        world.ForEach<Transform, RigidBody>(
+            [&](Entity entity, Transform &transform, RigidBody &rigidBody)
+            {
+                if (!rigidBody.runtime.body.IsValid())
+                    CreateBodyFor(world, *physics, entity, transform, rigidBody);
+            });
+
+        physics->SetSimulationLive(true);
+    }
+
+    void PhysicsSystem::OnPlayEnd(World &world)
+    {
+        if (PhysicsWorld *physics = world.TryResource<PhysicsWorld>(); physics != nullptr)
+            physics->SetSimulationLive(false);
     }
 }

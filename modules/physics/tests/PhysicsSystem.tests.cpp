@@ -35,16 +35,18 @@ namespace
         mir::CommandBuffer commands;
         mir::SystemScheduler scheduler;
         mir::SystemContext context{ world, commands, kStep, 0.0, 0 };
-        // what PhysicsModule sets, so a removed RigidBody frees its body
+        // what PhysicsModule sets, so an added RigidBody gets its body and a removed one frees it
         mir::Registration hooks;
 
         explicit PhysicsFixture(mir::EngineMode mode = mir::EngineMode::Play)
         {
             world.EmplaceResource<mir::PhysicsWorld>();
-            hooks = world.SetComponentHooks<mir::RigidBody>({ .onRemove = &mir::PhysicsSystem::OnRigidBodyRemoved });
+            hooks = world.SetComponentHooks<mir::RigidBody>(
+                { .onAdd = &mir::PhysicsSystem::OnRigidBodyAdded, .onRemove = &mir::PhysicsSystem::OnRigidBodyRemoved });
             world.EmplaceResource<mir::EngineModeState>();
             mir::SetEngineMode(world, mode);
             mir::SetPlayState(world, mir::PlayState::Running);
+            Physics().SetSimulationLive(mode == mir::EngineMode::Play);
 
             scheduler.AddSystem<mir::PhysicsSystem>(mir::SystemPhase::FixedUpdate, mir::SystemOrder{mir::SystemOrder::kNormal});
             scheduler.Start(context);
@@ -193,6 +195,126 @@ TEST_CASE("Each created body is tagged with its entity", "[physics]")
     const mir::BodyHandle sphereBody = fixture.world.GetComponent<mir::RigidBody>(sphere)->runtime.body;
     CHECK(fixture.Physics().BodyEntity(floorBody) == floor);
     CHECK(fixture.Physics().BodyEntity(sphereBody) == sphere);
+}
+
+TEST_CASE("A RigidBody gets its body when it is added, before any step", "[physics]")
+{
+    PhysicsFixture fixture;
+    const mir::Entity entity = fixture.Add(glm::vec3(0.0f, 5.0f, 0.0f), kDynamicSphere);
+
+    const mir::BodyHandle body = fixture.world.GetComponent<mir::RigidBody>(entity)->runtime.body;
+    REQUIRE(body.IsValid());
+    CHECK(fixture.Physics().BodyCount() == 1);
+    CHECK(fixture.Physics().BodyEntity(body) == entity);
+}
+
+TEST_CASE("A RigidBody can be added, removed and added again", "[physics]")
+{
+    PhysicsFixture fixture;
+    const mir::Entity entity = fixture.Add(glm::vec3(0.0f, 5.0f, 0.0f), kDynamicSphere);
+    REQUIRE(fixture.Physics().BodyCount() == 1);
+
+    fixture.world.RemoveComponent<mir::RigidBody>(entity);
+    REQUIRE(fixture.Physics().BodyCount() == 0);
+
+    fixture.world.AddComponent<mir::RigidBody>(entity, kDynamicSphere);
+    CHECK(fixture.Physics().BodyCount() == 1);
+    CHECK(fixture.world.GetComponent<mir::RigidBody>(entity)->runtime.body.IsValid());
+}
+
+TEST_CASE("A velocity set right after the add moves the body on the first step", "[physics]")
+{
+    PhysicsFixture fixture;
+    const mir::Entity entity = fixture.Add(glm::vec3(0.0f, 5.0f, 0.0f), kDynamicSphere);
+
+    // what a script's OnStart does
+    fixture.Physics().SetBodyLinearVelocity(
+        fixture.world.GetComponent<mir::RigidBody>(entity)->runtime.body, glm::vec3(6.0f, 0.0f, 0.0f));
+    fixture.Run(6);
+
+    CHECK(fixture.TransformOf(entity).Position().x > 0.4);
+}
+
+TEST_CASE("Edit mode builds no bodies until PlayBegin, which builds each once", "[physics]")
+{
+    PhysicsFixture fixture(mir::EngineMode::Edit);
+    fixture.Add(glm::vec3(0.0f, 5.0f, 0.0f), kDynamicSphere);
+    fixture.Add(glm::vec3(0.0f, 0.0f, 0.0f), kStaticBox);
+    REQUIRE(fixture.Physics().BodyCount() == 0);
+    REQUIRE_FALSE(fixture.Physics().IsSimulationLive());
+
+    mir::PhysicsSystem::OnPlayBegin(fixture.world);
+    CHECK(fixture.Physics().BodyCount() == 2);
+    CHECK(fixture.Physics().IsSimulationLive());
+
+    // a body added while live is built by the hook, not by a second pass
+    fixture.Add(glm::vec3(3.0f, 5.0f, 0.0f), kDynamicSphere);
+    CHECK(fixture.Physics().BodyCount() == 3);
+
+    // a pass over bodies that already exist skips them
+    mir::PhysicsSystem::OnPlayEnd(fixture.world);
+    mir::PhysicsSystem::OnPlayBegin(fixture.world);
+    CHECK(fixture.Physics().BodyCount() == 3);
+}
+
+TEST_CASE("After PlayEnd a restore adds RigidBodies without bodies and the next Play builds one each", "[physics]")
+{
+    PhysicsFixture fixture(mir::EngineMode::Edit);
+    fixture.Add(glm::vec3(0.0f, 5.0f, 0.0f), kDynamicSphere);
+    mir::PhysicsSystem::OnPlayBegin(fixture.world);
+    REQUIRE(fixture.Physics().BodyCount() == 1);
+
+    // Stop: PlayEnd, then the restore destroys the Play entities and adds the saved ones
+    mir::PhysicsSystem::OnPlayEnd(fixture.world);
+    REQUIRE_FALSE(fixture.Physics().IsSimulationLive());
+    std::vector<mir::Entity> playEntities;
+    fixture.world.ForEach<mir::RigidBody>([&](mir::Entity entity, mir::RigidBody &) { playEntities.push_back(entity); });
+    for (const mir::Entity entity : playEntities)
+        fixture.world.DestroyEntity(entity);
+    REQUIRE(fixture.Physics().BodyCount() == 0);
+
+    const mir::Entity restored = fixture.Add(glm::vec3(0.0f, 5.0f, 0.0f), kDynamicSphere);
+    CHECK(fixture.Physics().BodyCount() == 0);
+    CHECK_FALSE(fixture.world.GetComponent<mir::RigidBody>(restored)->runtime.body.IsValid());
+
+    mir::PhysicsSystem::OnPlayBegin(fixture.world);
+    CHECK(fixture.Physics().BodyCount() == 1);
+}
+
+TEST_CASE("A copied RigidBody gets its own body and not the original's", "[physics]")
+{
+    PhysicsFixture fixture;
+    const mir::Entity original = fixture.Add(glm::vec3(0.0f, 5.0f, 0.0f), kDynamicSphere);
+    // by value: adding the copy can move the original's storage
+    const mir::RigidBody source = *fixture.world.GetComponent<mir::RigidBody>(original);
+    REQUIRE(source.runtime.body.IsValid());
+
+    // the bytes still carry the original's live handle, like Duplicate or a prefab instance
+    const mir::Entity copy = fixture.Add(glm::vec3(4.0f, 5.0f, 0.0f), source);
+    const mir::BodyHandle copyBody = fixture.world.GetComponent<mir::RigidBody>(copy)->runtime.body;
+
+    REQUIRE(copyBody.IsValid());
+    CHECK(copyBody != source.runtime.body);
+    CHECK(fixture.Physics().BodyEntity(copyBody) == copy);
+    CHECK(fixture.Physics().BodyCount() == 2);
+
+    fixture.world.DestroyEntity(original);
+    CHECK(fixture.Physics().BodyCount() == 1);
+    CHECK(fixture.Physics().BodyEntity(copyBody) == copy);
+}
+
+TEST_CASE("A Transform added after the RigidBody gets its body at the first step", "[physics]")
+{
+    PhysicsFixture fixture;
+    const mir::Entity entity = fixture.world.CreateEntity();
+    fixture.world.AddComponent<mir::RigidBody>(entity, kDynamicSphere);
+    CHECK(fixture.Physics().BodyCount() == 0);
+
+    mir::AddTransform(fixture.world, entity, mir::Transform{ glm::vec3(0.0f, 5.0f, 0.0f) });
+    fixture.Run(1);
+
+    CHECK(fixture.Physics().BodyCount() == 1);
+    CHECK(fixture.world.GetComponent<mir::RigidBody>(entity)->runtime.body.IsValid());
 }
 
 TEST_CASE("Writing the Transform teleports the body", "[physics]")

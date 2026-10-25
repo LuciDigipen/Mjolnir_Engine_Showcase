@@ -28,8 +28,15 @@ namespace mir
         void OnStart(SystemContext &context) override;
         void OnUpdate(SystemContext &context) override;
 
+        // RigidBody's OnAdd: clears the runtime block, then creates the body while the simulation is live
+        static void OnRigidBodyAdded(World &world, Entity entity);
         // RigidBody's OnRemove: frees its Jolt body
         static void OnRigidBodyRemoved(World &world, Entity entity);
+
+        // PlayBegin: bodies for the RigidBodies already in the scene, then the simulation goes live
+        static void OnPlayBegin(World &world);
+        // PlayEnd: the simulation stops being live before the restore adds its entities
+        static void OnPlayEnd(World &world);
 
     private:
         // New bodies and Transform edits reach Jolt before the step; Jolt's poses come back after it.

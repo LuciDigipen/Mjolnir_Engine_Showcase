@@ -34,6 +34,12 @@ namespace mir
             SystemOrder{SystemOrder::kNormal});
         context.scheduler.AddSystem<CollisionEventSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kNormal});
 
-        mHooks = context.world.SetComponentHooks<RigidBody>({ .onRemove = &PhysicsSystem::OnRigidBodyRemoved });
+        mHooks = context.world.SetComponentHooks<RigidBody>(
+            { .onAdd = &PhysicsSystem::OnRigidBodyAdded, .onRemove = &PhysicsSystem::OnRigidBodyRemoved });
+
+        mPlayBegin = context.scheduler.AddStage(Stage::PlayBegin,
+            [](SystemContext &frame) { PhysicsSystem::OnPlayBegin(frame.world); });
+        mPlayEnd = context.scheduler.AddStage(Stage::PlayEnd,
+            [](SystemContext &frame) { PhysicsSystem::OnPlayEnd(frame.world); });
     }
 }

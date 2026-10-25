@@ -135,6 +135,13 @@ namespace mir
 
         std::size_t BodyCount() const;
 
+        // True from the PlayBegin pass until PlayEnd; the RigidBody add hook creates bodies only while it is.
+        bool IsSimulationLive() const { return mSimulationLive; }
+        void SetSimulationLive(bool live) { mSimulationLive = live; }
+
+        // True only while Step runs, when bodies must not be created.
+        bool IsStepping() const { return mStepping; }
+
         // Advances by dt seconds. Non-positive dt is a no-op, not an error.
         void Step(float dt);
 
@@ -144,5 +151,7 @@ namespace mir
       private:
         struct Impl;
         std::unique_ptr<Impl> mImpl;
+        bool mSimulationLive = false;
+        bool mStepping = false;
     };
 }
