@@ -8,6 +8,8 @@
  */
 #pragma once
 
+#include <physics/PhysicsLayers.h>
+
 #include <Jolt/Jolt.h>
 
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
@@ -21,13 +23,19 @@
 
 namespace mir::detail
 {
-    // Two layers is the minimum that still lets the broad phase skip the
-    // static-vs-static half of the world.
+    // An object layer is a user layer and whether the body moves, so the broad phase can still skip the
+    // static-vs-static half of the world with just two broad-phase layers.
     namespace Layers
     {
-        constexpr JPH::ObjectLayer kNonMoving = 0;
-        constexpr JPH::ObjectLayer kMoving = 1;
-        constexpr JPH::ObjectLayer kCount = 2;
+        constexpr JPH::ObjectLayer kCount = kPhysicsLayerCount * 2;
+
+        constexpr JPH::ObjectLayer Of(int userLayer, bool moving)
+        {
+            return static_cast<JPH::ObjectLayer>(userLayer * 2 + (moving ? 1 : 0));
+        }
+
+        constexpr bool IsMoving(JPH::ObjectLayer layer) { return (layer & 1) != 0; }
+        constexpr int UserLayer(JPH::ObjectLayer layer) { return layer >> 1; }
     }
 
     namespace BroadPhaseLayers
@@ -37,25 +45,25 @@ namespace mir::detail
         constexpr JPH::uint kCount = 2;
     }
 
-    // Statics never collide with statics; every other pair does.
+    // Statics never collide with statics; any other pair collides when the layer table says its layers do.
+    // The table is read by Jolt's jobs during a step and changed only between steps.
     class ObjectLayerPairFilterImpl final : public JPH::ObjectLayerPairFilter
     {
     public:
+        explicit ObjectLayerPairFilterImpl(const PhysicsLayerTable &table) : mTable(table) {}
+
         bool ShouldCollide(JPH::ObjectLayer a, JPH::ObjectLayer b) const override
         {
-            return a == Layers::kMoving || b == Layers::kMoving;
+            return (Layers::IsMoving(a) || Layers::IsMoving(b)) && mTable.Collide(Layers::UserLayer(a), Layers::UserLayer(b));
         }
+
+    private:
+        const PhysicsLayerTable &mTable;
     };
 
     class BroadPhaseLayerInterfaceImpl final : public JPH::BroadPhaseLayerInterface
     {
     public:
-        BroadPhaseLayerInterfaceImpl()
-        {
-            mLayers[Layers::kNonMoving] = BroadPhaseLayers::kNonMoving;
-            mLayers[Layers::kMoving] = BroadPhaseLayers::kMoving;
-        }
-
         JPH::uint GetNumBroadPhaseLayers() const override
         {
             return BroadPhaseLayers::kCount;
@@ -64,7 +72,7 @@ namespace mir::detail
         JPH::BroadPhaseLayer GetBroadPhaseLayer(JPH::ObjectLayer layer) const override
         {
             JPH_ASSERT(layer < Layers::kCount);
-            return mLayers[layer];
+            return Layers::IsMoving(layer) ? BroadPhaseLayers::kMoving : BroadPhaseLayers::kNonMoving;
         }
 
     #if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
@@ -74,8 +82,6 @@ namespace mir::detail
         }
     #endif
 
-    private:
-        JPH::BroadPhaseLayer mLayers[Layers::kCount];
     };
 
     class ObjectVsBroadPhaseLayerFilterImpl final : public JPH::ObjectVsBroadPhaseLayerFilter
@@ -83,7 +89,7 @@ namespace mir::detail
     public:
         bool ShouldCollide(JPH::ObjectLayer layer, JPH::BroadPhaseLayer broadPhase) const override
         {
-            return layer == Layers::kMoving || broadPhase == BroadPhaseLayers::kMoving;
+            return Layers::IsMoving(layer) || broadPhase == BroadPhaseLayers::kMoving;
         }
     };
 

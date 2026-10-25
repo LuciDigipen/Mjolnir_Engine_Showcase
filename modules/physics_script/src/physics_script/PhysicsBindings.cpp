@@ -14,6 +14,7 @@
 #include <core/ecs/World.h>
 #include <core/log/Log.h>
 #include <physics/CollisionEvents.h>
+#include <physics/PhysicsLayers.h>
 #include <physics/PhysicsSystem.h>
 #include <physics/PhysicsWorld.h>
 #include <physics/components/RigidBody.h>
@@ -266,6 +267,61 @@ namespace mir
             return result.valid() && result.get_type() == sol::type::boolean && result.get<bool>();
         }
 
+        const PhysicsLayerTable &LayerTableOf(World &world)
+        {
+            static const PhysicsLayerTable kDefault;
+            const PhysicsWorld *physics = world.TryResource<PhysicsWorld>();
+            return physics != nullptr ? physics->LayerTable() : kDefault;
+        }
+
+        // A layer as a script writes it: a name from the project's table or an index 0 to 31. nullopt, logged,
+        // for anything else, with the layers that do exist.
+        std::optional<int> ResolveLayer(const PhysicsLayerTable &table, const sol::object &value, std::string_view call)
+        {
+            if (value.get_type() == sol::type::number)
+            {
+                const double number = value.as<double>();
+                if (std::floor(number) == number && number >= 0.0 && number < kPhysicsLayerCount)
+                    return static_cast<int>(number);
+                MIR_LOG_ERROR("script: {} needs a layer index from 0 to {}, not {}", call, kPhysicsLayerCount - 1, number);
+                return std::nullopt;
+            }
+
+            if (value.get_type() == sol::type::string)
+            {
+                const std::string name = value.as<std::string>();
+                if (const std::optional<int> index = table.IndexOf(name))
+                    return index;
+
+                std::string known;
+                for (int i = 0; i < kPhysicsLayerCount; ++i)
+                {
+                    if (!table.names[i].empty())
+                        known += (known.empty() ? "" : ", ") + table.names[i];
+                }
+                MIR_LOG_ERROR("script: {} has no layer named '{}'; the layers are {}", call, name, known);
+                return std::nullopt;
+            }
+
+            MIR_LOG_ERROR("script: {} needs a layer name or an index from 0 to {}", call, kPhysicsLayerCount - 1);
+            return std::nullopt;
+        }
+
+        bool WorldSetLayer(sol::this_state state, World &world, Entity entity, const sol::object &layer)
+        {
+            const std::optional<int> index = ResolveLayer(LayerTableOf(world), layer, "world:set_layer");
+            if (!index)
+                return false;
+            return WriteRigidBodyField(state, world, entity, "layer", sol::make_object(sol::state_view(state), *index));
+        }
+
+        sol::object WorldLayerIndex(sol::this_state state, World &world, std::string_view name)
+        {
+            sol::state_view lua(state);
+            const std::optional<int> index = LayerTableOf(world).IndexOf(name);
+            return index ? sol::make_object(lua, *index) : sol::make_object(lua, sol::lua_nil);
+        }
+
         // Lua tables PhysicsMotion, PhysicsShape and PhysicsAxis, filled from the same name arrays the editor shows.
         void RegisterEnum(sol::state &lua, const char *name, std::span<const std::string_view> names)
         {
@@ -376,10 +432,16 @@ namespace mir
             worldType.set_function(snake,
                 [name = std::string(field.mName)](sol::this_state state, World &world, Entity entity)
                 { return ReadRigidBodyField(state, world, entity, name); });
+            // a layer is set by name or index, below
+            if (field.mName == "layer")
+                continue;
             worldType.set_function("set_" + snake,
                 [name = std::string(field.mName)](sol::this_state state, World &world, Entity entity, const sol::object &value)
                 { return WriteRigidBodyField(state, world, entity, name, value); });
         }
+
+        worldType.set_function("set_layer", &WorldSetLayer);
+        worldType.set_function("layer_index", &WorldLayerIndex);
 
         RegisterEnum(lua, "PhysicsMotion", kPhysicsMotionNames);
         RegisterEnum(lua, "PhysicsShape", kPhysicsShapeNames);

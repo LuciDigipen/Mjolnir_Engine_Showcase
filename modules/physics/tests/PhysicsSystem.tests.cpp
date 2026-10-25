@@ -892,6 +892,79 @@ TEST_CASE("Editing the body properties during Play reaches the body", "[physics]
     }
 }
 
+TEST_CASE("Layers decide which bodies collide", "[physics][layers]")
+{
+    PhysicsFixture fixture;
+    mir::PhysicsLayerTable table;
+    table.names[1] = "Ghost";
+    table.names[2] = "Floor";
+    table.SetCollide(1, 2, false);
+    fixture.Physics().SetLayerTable(table);
+
+    mir::RigidBody floor = kStaticBox;
+    floor.layer = 2;
+    fixture.Add(glm::vec3(0.0f), floor);
+
+    mir::RigidBody ghost = kDynamicSphere;
+    ghost.layer = 1;
+    const mir::Entity passes = fixture.Add(glm::vec3(-5.0f, 3.0f, 0.0f), ghost);
+    const mir::Entity lands = fixture.Add(glm::vec3(5.0f, 3.0f, 0.0f), kDynamicSphere);
+
+    fixture.Run(180);
+
+    // the pair whose entry is cleared falls through, the default layer still lands
+    CHECK(fixture.TransformOf(passes).Position().y < -2.0);
+    CHECK(fixture.TransformOf(lands).Position().y > 0.5);
+}
+
+TEST_CASE("Editing a body's layer in Play takes effect without a new handle", "[physics][layers]")
+{
+    PhysicsFixture fixture;
+    mir::PhysicsLayerTable table;
+    table.SetCollide(0, 1, false);
+    fixture.Physics().SetLayerTable(table);
+
+    fixture.Add(glm::vec3(0.0f), kStaticBox);
+    const mir::Entity ball = fixture.Add(glm::vec3(0.0f, 2.0f, 0.0f), kDynamicSphere);
+    const mir::BodyHandle handle = BodyOfEntity(fixture, ball);
+    fixture.Run(180);
+    REQUIRE(fixture.TransformOf(ball).Position().y > 0.5);
+
+    // it rests on the floor; moved to a layer that does not collide with Default it drops through
+    BodyComponent(fixture, ball).layer = 1;
+    fixture.Run(180);
+
+    CHECK(fixture.TransformOf(ball).Position().y < -2.0);
+    CHECK(BodyOfEntity(fixture, ball) == handle);
+}
+
+TEST_CASE("A new layer table wakes the bodies that rested", "[physics][layers]")
+{
+    PhysicsFixture fixture;
+    fixture.Add(glm::vec3(0.0f), kStaticBox);
+    const mir::Entity ball = fixture.Add(glm::vec3(0.0f, 1.0f, 0.0f), kDynamicSphere);
+    fixture.Run(300);
+    REQUIRE(fixture.Physics().IsBodySleeping(BodyOfEntity(fixture, ball)));
+
+    mir::PhysicsLayerTable table;
+    table.SetCollide(0, 0, false);
+    fixture.Physics().SetLayerTable(table);
+    fixture.Run(180);
+
+    CHECK(fixture.TransformOf(ball).Position().y < -2.0);
+}
+
+TEST_CASE("A layer outside 0 to 31 is made the Default layer", "[physics][layers]")
+{
+    PhysicsFixture fixture;
+    mir::RigidBody wrong = kDynamicSphere;
+    wrong.layer = 99;
+    const mir::Entity entity = fixture.Add(glm::vec3(0.0f, 5.0f, 0.0f), wrong);
+
+    CHECK(BodyOfEntity(fixture, entity).IsValid());
+    CHECK(fixture.Physics().BodyCount() == 1);
+}
+
 TEST_CASE("A RigidBody gets its body when it is added, before any step", "[physics]")
 {
     PhysicsFixture fixture;

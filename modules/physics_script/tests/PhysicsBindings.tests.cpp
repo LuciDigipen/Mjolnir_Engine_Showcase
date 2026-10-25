@@ -495,6 +495,48 @@ TEST_CASE("a RigidBody edit made in OnFixedUpdate reaches the body in the same s
     CHECK(f.Body() == before);
 }
 
+namespace
+{
+    constexpr std::string_view kLayers = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    local ok = true
+    ok = ok and world:layer_index("Enemy") == 3
+    ok = ok and world:layer_index("Nobody") == nil
+    ok = ok and world:set_layer(entity, "Enemy")
+    ok = ok and world:layer(entity) == 3
+    ok = ok and world:set_layer(entity, 5)
+    ok = ok and world:layer(entity) == 5
+    -- a name that does not exist, an index out of range and a wrong type are refused and change nothing
+    ok = ok and world:set_layer(entity, "Nobody") == false
+    ok = ok and world:set_layer(entity, 40) == false
+    ok = ok and world:set_layer(entity, 1.5) == false
+    ok = ok and world:set_layer(entity, true) == false
+    ok = ok and world:layer(entity) == 5
+    world:set(entity, "PhysicsBindingsProbe", "ok", ok)
+end
+
+return T
+)LUA";
+}
+
+TEST_CASE("layers are set by name or index and looked up by name", "[script][physics][layers]")
+{
+    Fixture f(kLayers);
+    mir::PhysicsLayerTable table;
+    table.names[3] = "Enemy";
+    f.Physics().SetLayerTable(table);
+    f.Start();
+
+    CHECK(ReadProbeField<bool>(f.world, f.entity, "ok"));
+    CHECK(f.world.GetComponent<mir::RigidBody>(f.entity)->layer == 5);
+}
+
 TEST_CASE("every RigidBody field can be read and written from Lua", "[script][physics][fields]")
 {
     Fixture f(kEditFields);

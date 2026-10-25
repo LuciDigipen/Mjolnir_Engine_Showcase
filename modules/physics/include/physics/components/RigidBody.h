@@ -42,6 +42,7 @@ namespace mir
         float friction = 0.2f;
         float restitution = 0.0f;
         bool allowSleeping = true;
+        int layer = 0;
 
         friend bool operator==(const AppliedBody &, const AppliedBody &) = default;
     };
@@ -68,6 +69,8 @@ namespace mir
         float friction = 0.2f;
         float restitution = 0.0f;
         bool allowSleeping = true;
+        // Which layer the collider is on, 0 to 31: what it may collide with, and what a ray cast can ask for.
+        int layer = 0;
 
         // Runtime state PhysicsSystem keeps; not in the field table, so never saved.
         struct Runtime
@@ -99,7 +102,8 @@ namespace mir
     {
         return { rigidBody.motion, rigidBody.shape, rigidBody.halfExtent, rigidBody.radius, rigidBody.halfHeight,
             rigidBody.axis, rigidBody.offset, rigidBody.rotationOffset, rigidBody.isTrigger, rigidBody.detectStay,
-            rigidBody.mass, rigidBody.gravityFactor, rigidBody.friction, rigidBody.restitution, rigidBody.allowSleeping };
+            rigidBody.mass, rigidBody.gravityFactor, rigidBody.friction, rigidBody.restitution, rigidBody.allowSleeping,
+            rigidBody.layer };
     }
 
     // A body the simulation moves, as opposed to one it only collides against.
@@ -141,5 +145,6 @@ namespace mir
         { .mName = "restitution", .mKind = FieldKind::Float, .mOffset = offsetof(RigidBody, restitution),
          .mClamped = true, .mMin = 0.0f, .mMax = 1.0f },
         { .mName = "allowSleeping", .mKind = FieldKind::Bool, .mOffset = offsetof(RigidBody, allowSleeping) },
+        { .mName = "layer", .mKind = FieldKind::Int, .mOffset = offsetof(RigidBody, layer) },
     };
 }

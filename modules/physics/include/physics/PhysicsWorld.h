@@ -13,6 +13,7 @@
 
 #include <physics/CollisionEvents.h>
 #include <physics/HeightField.h>
+#include <physics/PhysicsLayers.h>
 #include <physics/PhysicsTypes.h>
 
 #include <core/ecs/Entity.h>
@@ -45,6 +46,8 @@ namespace mir
         // Where the shape sits in the body's own frame.
         glm::vec3 mOffset{0.0f};
         glm::quat mRotationOffset = kIdentityRotation;
+        // Which layer the body is on, 0 to 31; out of range is refused with a logged reason.
+        int mLayer = 0;
         // Never blocks motion; reports contacts like any other body.
         bool mIsTrigger = false;
         // Pairs this body touches also get Stay events.
@@ -129,6 +132,8 @@ namespace mir
         // body keeps desc.mMass.
         void SetBodyShape(BodyHandle body, const BodyDesc &desc);
         void SetBodyTrigger(BodyHandle body, bool trigger);
+        // Moves the body to another layer in place, keeping whether it moves.
+        void SetBodyLayer(BodyHandle body, int layer);
         void SetBodyMaterial(BodyHandle body, float friction, float restitution);
         void SetBodyGravityFactor(BodyHandle body, float factor);
         // Scales the inertia with it; a mass at or below 0 is ignored.
@@ -171,6 +176,10 @@ namespace mir
         std::size_t HeightFieldsBuilt() const;
 
         std::size_t BodyCount() const;
+
+        // Which layers collide. Between steps only; every body is woken, since a pair that rested may not any more.
+        void SetLayerTable(const PhysicsLayerTable &table);
+        const PhysicsLayerTable &LayerTable() const;
 
         // True from the PlayBegin pass until PlayEnd; the RigidBody add hook creates bodies only while it is.
         bool IsSimulationLive() const { return mSimulationLive; }

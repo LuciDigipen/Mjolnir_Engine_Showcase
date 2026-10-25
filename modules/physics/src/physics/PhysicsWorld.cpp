@@ -186,6 +186,13 @@ namespace mir
                               PhysicsMotion motion, bool enhancedInternalEdgeRemoval = false,
                               const BodyDesc *properties = nullptr)
         {
+            const int layer = properties != nullptr ? properties->mLayer : 0;
+            if (layer < 0 || layer >= kPhysicsLayerCount)
+            {
+                MIR_LOG_ERROR("PhysicsWorld::CreateBody: layer {} is outside 0 to {}", layer, kPhysicsLayerCount - 1);
+                return {};
+            }
+
             const JPH::RefConst<JPH::Shape> owned(shape);
             const bool dynamic = motion == PhysicsMotion::Dynamic;
             // Kinematic bodies move, so they live in the moving layer and start awake
@@ -195,7 +202,7 @@ namespace mir
                                                   : JPH::EMotionType::Static;
 
             JPH::BodyCreationSettings settings(owned, ToJolt(position), ToJolt(rotation), type,
-                                               moving ? detail::Layers::kMoving : detail::Layers::kNonMoving);
+                                               detail::Layers::Of(layer, moving));
             settings.mEnhancedInternalEdgeRemoval = enhancedInternalEdgeRemoval;
             if (properties != nullptr)
             {
@@ -277,7 +284,8 @@ namespace mir
 
         detail::BroadPhaseLayerInterfaceImpl mBroadPhaseLayers;
         detail::ObjectVsBroadPhaseLayerFilterImpl mObjectVsBroadPhase;
-        detail::ObjectLayerPairFilterImpl mObjectLayerPairs;
+        PhysicsLayerTable mLayerTable;
+        detail::ObjectLayerPairFilterImpl mObjectLayerPairs{mLayerTable};
 
         // Before mSystem, which keeps a pointer to it.
         detail::ContactTracker mContacts;
@@ -501,7 +509,7 @@ namespace mir
                                               : JPH::EMotionType::Static;
 
         JPH::BodyInterface &bodies = mImpl->Bodies();
-        bodies.SetObjectLayer(*id, moving ? detail::Layers::kMoving : detail::Layers::kNonMoving);
+        bodies.SetObjectLayer(*id, detail::Layers::Of(detail::Layers::UserLayer(bodies.GetObjectLayer(*id)), moving));
         bodies.SetMotionType(*id, type, moving ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
         bodies.SetCollisionGroup(*id,
             dynamic ? JPH::CollisionGroup(nullptr, detail::kDynamicGroup, id->GetIndex()) : JPH::CollisionGroup());
@@ -535,6 +543,37 @@ namespace mir
 
         mImpl->Bodies().SetIsSensor(*id, trigger);
         mImpl->WakeAround(*id);
+    }
+
+    void PhysicsWorld::SetBodyLayer(BodyHandle body, int layer)
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        if (!id)
+            return;
+        if (layer < 0 || layer >= kPhysicsLayerCount)
+        {
+            MIR_LOG_ERROR("PhysicsWorld::SetBodyLayer: layer {} is outside 0 to {}", layer, kPhysicsLayerCount - 1);
+            return;
+        }
+
+        JPH::BodyInterface &bodies = mImpl->Bodies();
+        bodies.SetObjectLayer(*id, detail::Layers::Of(layer, detail::Layers::IsMoving(bodies.GetObjectLayer(*id))));
+        mImpl->WakeAround(*id);
+    }
+
+    void PhysicsWorld::SetLayerTable(const PhysicsLayerTable &table)
+    {
+        mImpl->mLayerTable = table;
+
+        JPH::BodyIDVector ids;
+        mImpl->mSystem.GetBodies(ids);
+        if (!ids.empty())
+            mImpl->Bodies().ActivateBodies(ids.data(), static_cast<int>(ids.size()));
+    }
+
+    const PhysicsLayerTable &PhysicsWorld::LayerTable() const
+    {
+        return mImpl->mLayerTable;
     }
 
     void PhysicsWorld::SetBodyMaterial(BodyHandle body, float friction, float restitution)

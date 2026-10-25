@@ -29,7 +29,18 @@ namespace mir
         // The shape follows the world scale: a box per axis, a sphere by the largest axis, a capsule by the
         // axis it stands along for its height and the larger of the other two for its radius. The collider
         // offset scales with it; a rotated non-uniform parent is as close as the decomposition gets.
-        BodyDesc BodyDescFor(const RigidBody &rigidBody, const BodyPose &pose)
+        // A layer outside 0 to 31 is the Default layer, said once here at creation and at the edit.
+        int LayerOf(const RigidBody &rigidBody, Entity entity)
+        {
+            if (rigidBody.layer >= 0 && rigidBody.layer < kPhysicsLayerCount)
+                return rigidBody.layer;
+
+            MIR_LOG_WARN("PhysicsSystem: entity {} has layer {}, which is outside 0 to {}; using layer 0",
+                entity.mIndex, rigidBody.layer, kPhysicsLayerCount - 1);
+            return 0;
+        }
+
+        BodyDesc BodyDescFor(const RigidBody &rigidBody, const BodyPose &pose, Entity entity)
         {
             const glm::vec3 scale = glm::abs(pose.scale);
             const int axis = static_cast<int>(rigidBody.axis);
@@ -47,6 +58,7 @@ namespace mir
                     .mAxis = rigidBody.axis,
                     .mOffset = rigidBody.offset * pose.scale,
                     .mRotationOffset = rigidBody.rotationOffset,
+                    .mLayer = LayerOf(rigidBody, entity),
                     .mIsTrigger = rigidBody.isTrigger,
                     .mDetectStay = rigidBody.detectStay,
                     .mMass = rigidBody.mass,
@@ -62,7 +74,7 @@ namespace mir
         {
             const BodyPose pose = detail::PoseOf(world, entity);
 
-            rigidBody.runtime.body = physics.CreateBody(BodyDescFor(rigidBody, pose));
+            rigidBody.runtime.body = physics.CreateBody(BodyDescFor(rigidBody, pose, entity));
             physics.SetBodyEntity(rigidBody.runtime.body, entity);
             rigidBody.runtime.applied = AppliedOf(rigidBody);
             detail::ResetStepPoses(rigidBody, pose.position.Meters(), pose.rotation);
@@ -121,10 +133,12 @@ namespace mir
                 if (now.shape != applied.shape || now.halfExtent != applied.halfExtent || now.radius != applied.radius
                     || now.halfHeight != applied.halfHeight || now.axis != applied.axis || now.offset != applied.offset
                     || now.rotationOffset != applied.rotationOffset)
-                    physics.SetBodyShape(body, BodyDescFor(rigidBody, detail::PoseOf(world, entity)));
+                    physics.SetBodyShape(body, BodyDescFor(rigidBody, detail::PoseOf(world, entity), entity));
                 else if (now.mass != applied.mass)
                     physics.SetBodyMass(body, now.mass);
 
+                if (now.layer != applied.layer)
+                    physics.SetBodyLayer(body, LayerOf(rigidBody, entity));
                 if (now.isTrigger != applied.isTrigger)
                     physics.SetBodyTrigger(body, now.isTrigger);
                 if (now.friction != applied.friction || now.restitution != applied.restitution)
