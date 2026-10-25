@@ -58,6 +58,7 @@ target_sources(engine_renderer PRIVATE
     src/renderer/PostProcessingSettings.cpp
     src/renderer/PostProcessingState.cpp
     src/renderer/Renderer.cpp
+    src/renderer/RendererModule.cpp
     src/renderer/RenderSettings.cpp
     src/renderer/Shapes.cpp
     src/renderer/ViewSubmission.cpp

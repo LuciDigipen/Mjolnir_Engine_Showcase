@@ -22,12 +22,12 @@
 #include <gameshell/GameShell.h>
 #include <gameui/UIContext.h>
 #include <gameui/UIDemoScreen.h>
-#include <imguiruntime/ImGuiRuntime.h>
+#include <imguiruntime/ImGuiModule.h>
 #include <input/InputModule.h>
 #include <input_script/InputScriptModule.h>
 #include <physics/PhysicsModule.h>
 #include <physics_script/PhysicsScriptModule.h>
-#include <renderer/VulkanRenderer.h>
+#include <renderer/RendererModule.h>
 #include <renderer_script/RendererScriptModule.h>
 #include <scene/PlaySnapshot.h>
 #include <scene/SceneAsset.h>
@@ -36,7 +36,7 @@
 #include <terrain/TerrainModule.h>
 #include <terrain_script/TerrainScriptModule.h>
 #include <window/Splash.h>
-#include <window/Window.h>
+#include <window/WindowModule.h>
 
 // 1 with the editor, 0 for the game alone
 #ifndef MIR_WITH_EDITOR 
@@ -58,9 +58,7 @@
 
 namespace mir
 {
-    class RenderSystem;
     class TerrainRuntime;
-    class MeshResolveSystem;
     class WorldSceneOps;
 
     struct AppDesc
@@ -123,7 +121,7 @@ namespace mir
         SystemScheduler &Systems() { return mScheduler; }
 
         // Temporary seam
-        VulkanRenderer &Renderer() { return mRenderer; }
+        VulkanRenderer &Renderer() { return mRenderer->Renderer(); }
 
         // Startup splash
         SplashScreen &Splash() { return mSplash; }
@@ -176,6 +174,9 @@ namespace mir
     private:
         ModuleContext Context();
 
+        // the editor, the game UI and their actions; one ImGui drawer
+        void DrawUI();
+
         // context is rebuilt per tick
         SystemContext MakeContext(float dt);
 
@@ -225,9 +226,9 @@ namespace mir
     #endif
 
         SplashScreen mSplash;
-        std::unique_ptr<Window> mWindow;
-        VulkanRenderer mRenderer;
-        ImGuiRuntime mImGui;
+        std::optional<WindowModule> mWindow;
+        std::optional<RendererModule> mRenderer;
+        std::optional<ImGuiModule> mImGui;
     #if MIR_WITH_EDITOR
         Editor mEditor;
         std::unique_ptr<WorldSceneOps> mSceneOps;
@@ -248,8 +249,6 @@ namespace mir
         World mWorld;
         SystemScheduler mScheduler;
         std::optional<CoreModule> mCore;
-        RenderSystem *mRenderSystem = nullptr;
-        MeshResolveSystem *mMeshResolveSystem = nullptr;
         PlaySnapshot mPlaySnapshot;
         std::optional<InputModule> mInput;
         std::optional<CameraModule> mCamera;
@@ -276,6 +275,8 @@ namespace mir
     #endif
         std::optional<GameProject> mProjectToOpen;
         bool mSwitchHookFired = false;
+        float mFrameDt = 0.0f;
+        Registration mUiDrawer;
         double mElapsed = 0.0;
         uint64_t mFrame = 0;
         FixedTimestep mFixedTimestep;

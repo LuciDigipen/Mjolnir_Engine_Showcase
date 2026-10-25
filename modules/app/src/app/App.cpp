@@ -155,6 +155,14 @@ namespace mir
                        .mStatus = "Creating window...",
                        .mProgress = 0.0f });
 
+        mCore.emplace(Context(), mCommands);
+        mAssets.emplace(CookedAssetsDir());
+    #if MIR_WITH_EDITOR
+        // The first frames run without assets; ApplyImportedAssets swaps them in once cooked
+        if (!mAssets->HadManifest() && mAssetImport.SourceHasAssets())
+            mAssetImport.QueueFullCook();
+    #endif
+
         WindowDesc windowDesc{};
         windowDesc.mWidth = desc.mWidth;
         windowDesc.mHeight = desc.mHeight;
@@ -163,38 +171,24 @@ namespace mir
         windowDesc.mCustomTitleBar = mDesc.mEnableEditorLayout;
         windowDesc.mStartHidden = true;
 
-        mWindow = Window::Create(windowDesc);
+        mWindow.emplace(windowDesc);
 
         mSplash.SetProgress("Initializing renderer...", 0.2f);
-        if (!mRenderer.Initialize(
-            { .window = mWindow.get(), .appName = desc.mAppName, .enableValidation = desc.mEnableValidation }))
-        {
-            throw SetupError(ErrorCategory::System, "The Vulkan renderer could not start", {},
-                "the log above names the step that failed and its VkResult",
-                "Update the GPU driver, and check that the GPU supports Vulkan.");
-        }
+        mRenderer.emplace(Context(), mWindow->Get(), *mAssets,
+            RendererModuleSettings{ .mAppName = desc.mAppName,
+                                    .mEnableValidation = desc.mEnableValidation,
+                                    .mProjectSettingsPath = mProject.mProjectSettingsPath,
+                                    .mAssetIdRoot = mProject.mAssetIdRoot });
 
         mSplash.SetProgress("Initializing UI...", 0.4f);
-        if (!mImGui.Initialize(*mWindow, mRenderer))
-        {
-            // fonts are copied by the build; any other failure is ImGui's backend, which is ours
-            const std::filesystem::path fontsDir = ExecutableDir() / "fonts";
-            std::error_code ec;
-            if (!std::filesystem::is_directory(fontsDir, ec))
-            {
-                throw SetupError(ErrorCategory::BuildOutput, "The UI fonts are missing", fontsDir,
-                    "the fonts directory next to the engine does not exist", "Rebuild to copy the fonts.");
-            }
-            throw SetupError(ErrorCategory::Internal, "The UI layer could not start", {},
-                "the log above names the ImGui step that failed",
-                "This is an engine bug. Report it with the log attached: " + LogFilePath().string());
-        }
+        mImGui.emplace(Context(), *mWindow, *mRenderer);
+        mUiDrawer = mImGui->AddDrawer([this] { DrawUI(); });
 
     #if MIR_WITH_EDITOR
         mSplash.SetProgress("Initializing editor...", 0.5f);
         mSceneOps = std::make_unique<WorldSceneOps>(mWorld, mScene);
-        if (!mEditor.Initialize(mImGui, *mWindow, mProject.mProjectSettingsPath, mWorld, *mSceneOps,
-                mRenderer.SwapchainIsSrgb()))
+        if (!mEditor.Initialize(mImGui->Runtime(), mWindow->Get(), mProject.mProjectSettingsPath, mWorld, *mSceneOps,
+                mRenderer->Renderer().SwapchainIsSrgb()))
         {
             throw SetupError(ErrorCategory::Internal, "The editor could not start", {},
                 "the log above names the step that failed",
@@ -204,22 +198,8 @@ namespace mir
 
         mInitialized = true;
 
-        mAssets.emplace(CookedAssetsDir());
-    #if MIR_WITH_EDITOR
-        // The first frames run without assets; ApplyImportedAssets swaps them in once cooked
-        if (!mAssets->HadManifest() && mAssetImport.SourceHasAssets())
-            mAssetImport.QueueFullCook();
-    #endif
-
         mSplash.SetProgress("Registering components...", 0.75f);
 
-        // Before anything may load a script
-        mCore.emplace(Context(), mCommands);
-        RegisterRendererComponents();
-        RegisterRendererEntityTypes();
-        RegisterRendererPostEffects();
-
-        mWorld.EmplaceResource<ViewDrawSources>();
 
         PrefabCoordinator &prefabs = mWorld.EmplaceResource<PrefabCoordinator>();
         const std::filesystem::path prefabsDir = PrefabSourceDir(mProject);
@@ -228,18 +208,13 @@ namespace mir
             prefabs.ScanSources(prefabsDir);
 
 
-        mWorld.EmplaceResource<RenderSettings>(RenderSettings::LoadFile(mProject.mProjectSettingsPath).value_or(RenderSettings{}));
-        mWorld.EmplaceResource<PostProcessingSettings>(
-            PostProcessingSettings::LoadFile(mProject.mProjectSettingsPath).value_or(PostProcessingSettings{}));
         mScheduler.AddSystem<PrefabSystem>(SystemPhase::PreUpdate);
 
         // in dependency order: a module after every module it uses, a bridge after
         // script and its library. Within a phase, systems run in this order
-        mInput.emplace(Context(), *mWindow, mProject.mProjectSettingsPath);
+        mInput.emplace(Context(), mWindow->Get(), mProject.mProjectSettingsPath);
         mCamera.emplace(Context());
-        mAnimation.emplace(Context(), mRenderer, *mAssets, mProject.mAssetIdRoot);
-        mMeshResolveSystem = &mScheduler.AddSystem<MeshResolveSystem>(SystemPhase::LateUpdate, mRenderer, Assets(),
-            mProject.mAssetIdRoot);
+        mAnimation.emplace(Context(), mRenderer->Renderer(), *mAssets, mProject.mAssetIdRoot);
         mAudio.emplace(Context(), mProject.mSoundBankDir);
         mPhysics.emplace(Context());
         mTerrainData.emplace(Context());
@@ -251,9 +226,8 @@ namespace mir
         mRendererScript.emplace(*mScript);
         mTerrainScript.emplace(*mScript);
 
-        mRenderSystem = &mScheduler.AddSystem<RenderSystem>(SystemPhase::Render, mRenderer);
 
-        mTerrain->Bind(mWorld, mRenderer, mProject);
+        mTerrain->Bind(mWorld, mRenderer->Renderer(), mProject);
 
         if (mDesc.mUIDemo)
             mUIDemo.Load(mGameUI, Assets());
@@ -291,7 +265,7 @@ namespace mir
         // every module is built, so a library that took the crash filter slot has done so
         ReclaimCrashHandler();
 
-        mWindow->Show();
+        mWindow->Get().Show();
     }
 
     bool App::RequestOpenProject(const std::string &requestedDir)
@@ -314,7 +288,7 @@ namespace mir
 
         // one game per process: main.cpp relaunches after Run returns
         MIR_LOG_INFO("Closing '{}' to open '{}'", mProject.mDir, mProjectToOpen->mDir);
-        mWindow->RequestClose();
+        mWindow->Get().RequestClose();
         return true;
     }
 
@@ -460,11 +434,11 @@ namespace mir
 
         // Play's entities are gone and the restored ones hold no handles yet
         mAnimation->Models().Reset();
-        mMeshResolveSystem->Reset();
+        mRenderer->Meshes().Reset();
         mWorld.Resource<ModelDrawItems>().items.clear();
         mWorld.Resource<ModelMorphOverrides>().instances.clear();
         mTerrain->ForgetMeshes();
-        mRenderer.ReleaseSceneResources();
+        mRenderer->Renderer().ReleaseSceneResources();
 
         SetEngineMode(mWorld, EngineMode::Edit);
         SetPlayState(mWorld, PlayState::Running);
@@ -542,7 +516,7 @@ namespace mir
             #endif
                 break;
             case Request::Quit:
-                mWindow->RequestClose();
+                mWindow->Get().RequestClose();
                 break;
             }
         }
@@ -553,9 +527,9 @@ namespace mir
         if (!mInitialized)
             return;
 
-        mWindow->ToggleFullscreen();
+        mWindow->Get().ToggleFullscreen();
 
-        mRenderer.RequestSwapchainRecreate();
+        mRenderer->Renderer().RequestSwapchainRecreate();
     }
 
     void App::ClearHistory()
@@ -588,14 +562,14 @@ namespace mir
         // no scene entity holds a mesh or material handle now
         if (mAnimation)
             mAnimation->Models().Reset();
-        if (mMeshResolveSystem)
-            mMeshResolveSystem->Reset();
+        if (mRenderer)
+            mRenderer->Meshes().Reset();
         if (auto *draws = mWorld.TryResource<ModelDrawItems>())
             draws->items.clear();
         if (auto *overrides = mWorld.TryResource<ModelMorphOverrides>())
             overrides->instances.clear();
         mTerrain->Unload();
-        mRenderer.ReleaseSceneResources();
+        mRenderer->Renderer().ReleaseSceneResources();
     }
 
     void App::LoadProjectScene()
@@ -674,9 +648,9 @@ namespace mir
 
         auto previous = std::chrono::steady_clock::now();
 
-        while (!mWindow->ShouldClose())
+        while (!mWindow->Get().ShouldClose())
         {
-            mWindow->PollEvents();
+            mWindow->Get().PollEvents();
 
             const auto now = std::chrono::steady_clock::now();
             const float dt = std::min(std::chrono::duration<float>(now - previous).count(), mDesc.mMaxDeltaSeconds);
@@ -703,54 +677,26 @@ namespace mir
             if (IsEditing(mWorld))
                 mTerrain->Refresh(dt, false);
 
-            mImGui.BeginFrame();
-
-            if (mWindow->Width() != 0 && mWindow->Height() != 0)
-            {
-            #if MIR_WITH_EDITOR
-                const EditorActions actions = mEditor.DrawLayout(
-                    mDesc.mEnableEditorLayout, mWorld.Resource<InputMap>(), mWorld.Resource<RenderSettings>(),
-                    mWorld.Resource<PostProcessingSettings>(), mWorld.Resource<EngineModeState>(), mProjectMenu,
-                    mProject.mDir, mWorld, mAssetImport.View(), mRenderer, mContentBrowser.View());
-            #endif
-
-                mGameUI.BeginFrame(GameUIArea(), mWorld.Resource<InputState>(), mWorld.Resource<InputMap>(),
-                    ToUIPointer(mWindow->RawInput()));
-                GameShellAction shellAction = GameShellAction::None;
-                if (mDesc.mUIDemo)
-                    mUIDemo.Draw(mGameUI);
-                else
-                    shellAction = mGameShell.Draw(mGameUI, IsPlaying(mWorld), dt);
-                mGameUI.EndFrame();
-
-                ApplyShellAction(shellAction);
-
-            #if MIR_WITH_EDITOR
-                ApplyEditorActions(actions);
-            #endif
-            }
-
-            mRenderer.SetImGuiDrawData(mImGui.EndFrame());
+            mFrameDt = dt;
+            mImGui->RunUI();
 
         #if MIR_WITH_EDITOR
-            mRenderSystem->SetViewportRect(0, mDesc.mEnableEditorLayout ? mEditor.SceneViewportRect() : VkRect2D{});
+            mRenderer->Rendering().SetViewportRect(0, mDesc.mEnableEditorLayout ? mEditor.SceneViewportRect() : VkRect2D{});
 
             // Only feed EditorCamera input in Edit.
             if (IsEditing(mWorld) && mDesc.mEnableEditorLayout)
             {
                 mEditor.UpdateCamera(dt);
                 const EditorCamera &camera = mEditor.SceneCamera();
-                mRenderSystem->SetExternalCamera(0, camera.Pose(), camera.mLens);
+                mRenderer->Rendering().SetExternalCamera(0, camera.Pose(), camera.mLens);
             }
             else
             {
-                mRenderSystem->SetViewportCamera(0, kNullEntity);
+                mRenderer->Rendering().SetViewportCamera(0, kNullEntity);
             }
-
-            mWorld.Resource<InputState>().SetUiCapture(mEditor.WantsCaptureKeyboard(), mEditor.WantsCaptureMouse());
         #else
-            mRenderSystem->SetViewportRect(0, VkRect2D{});
-            mRenderSystem->SetViewportCamera(0, kNullEntity);
+            mRenderer->Rendering().SetViewportRect(0, VkRect2D{});
+            mRenderer->Rendering().SetViewportCamera(0, kNullEntity);
         #endif
 
 
@@ -760,7 +706,7 @@ namespace mir
 
             SystemContext context = MakeContext(dt);
             if (!mDesc.mCapturePath.empty() && mFrame + 1 == mDesc.mMaxFrames)
-                mRenderer.CaptureNextFrame(mDesc.mCapturePath);
+                mRenderer->Renderer().CaptureNextFrame(mDesc.mCapturePath);
             mScheduler.Update(context, fixedSteps, mFixedTimestep.mStep);
 
             if (mWorld.Resource<InputState>().JustPressed(kToggleFullscreenAction))
@@ -772,8 +718,36 @@ namespace mir
 
             // same exit path as the close button
             if (mDesc.mMaxFrames != 0 && mFrame >= mDesc.mMaxFrames)
-                mWindow->RequestClose();
+                mWindow->Get().RequestClose();
         }
+    }
+
+    void App::DrawUI()
+    {
+        if (mWindow->Get().Width() == 0 || mWindow->Get().Height() == 0)
+            return;
+
+    #if MIR_WITH_EDITOR
+        const EditorActions actions = mEditor.DrawLayout(
+            mDesc.mEnableEditorLayout, mWorld.Resource<InputMap>(), mWorld.Resource<RenderSettings>(),
+            mWorld.Resource<PostProcessingSettings>(), mWorld.Resource<EngineModeState>(), mProjectMenu,
+            mProject.mDir, mWorld, mAssetImport.View(), mRenderer->Renderer(), mContentBrowser.View());
+    #endif
+
+        mGameUI.BeginFrame(GameUIArea(), mWorld.Resource<InputState>(), mWorld.Resource<InputMap>(),
+            ToUIPointer(mWindow->Get().RawInput()));
+        GameShellAction shellAction = GameShellAction::None;
+        if (mDesc.mUIDemo)
+            mUIDemo.Draw(mGameUI);
+        else
+            shellAction = mGameShell.Draw(mGameUI, IsPlaying(mWorld), mFrameDt);
+        mGameUI.EndFrame();
+
+        ApplyShellAction(shellAction);
+
+    #if MIR_WITH_EDITOR
+        ApplyEditorActions(actions);
+    #endif
     }
 
     UIRect App::GameUIArea() const
@@ -782,7 +756,7 @@ namespace mir
         if (mDesc.mEnableEditorLayout)
             return ToUIRect(mEditor.SceneViewportRect());
     #endif
-        return UIRect{ 0.0f, 0.0f, static_cast<float>(mWindow->Width()), static_cast<float>(mWindow->Height()) };
+        return UIRect{ 0.0f, 0.0f, static_cast<float>(mWindow->Get().Width()), static_cast<float>(mWindow->Get().Height()) };
     }
 
 #if MIR_WITH_EDITOR
@@ -903,8 +877,8 @@ namespace mir
         mAssets->CommitReload();
         if (mAnimation)
             mAnimation->Models().CommitReload(&mAssets->Cache());
-        if (mMeshResolveSystem)
-            mMeshResolveSystem->CommitReload(&mAssets->Cache());
+        if (mRenderer)
+            mRenderer->Meshes().CommitReload(&mAssets->Cache());
 
         // a script whose asset arrived with this cook resolves now
         if (mScript)
@@ -968,23 +942,18 @@ namespace mir
         mAnimation.reset();
         mCamera.reset();
         mInput.reset();
-        mCore.reset();
-
-        mAssets.reset();
 
         DiscardSnapshot(mPlaySnapshot);
 
     #if MIR_WITH_EDITOR
         mEditor.Shutdown();
     #endif
-        mImGui.Shutdown(mRenderer);
-
-        mRenderer.Shutdown();
+        mUiDrawer.Reset();
+        mImGui.reset();
+        mRenderer.reset();
         mWindow.reset();
-
-        // the systems Reset destroyed
-        mRenderSystem = nullptr;
-        mMeshResolveSystem = nullptr;
+        mAssets.reset();
+        mCore.reset();
 
         if (mInitialized)
             MIR_LOG_INFO("App shut down");

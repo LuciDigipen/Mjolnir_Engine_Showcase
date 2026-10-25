@@ -4,8 +4,9 @@ target_link_libraries(engine_imguiruntime
     PUBLIC mir::renderer
            mir::window
     PRIVATE mir::core
+            mir::input
             imgui::imgui
             iconfontcppheaders::iconfontcppheaders
 )
 
-target_sources(engine_imguiruntime PRIVATE src/imguiruntime/ImGuiRuntime.cpp)
+target_sources(engine_imguiruntime PRIVATE src/imguiruntime/ImGuiModule.cpp src/imguiruntime/ImGuiRuntime.cpp)
