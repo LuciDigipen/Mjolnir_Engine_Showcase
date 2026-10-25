@@ -238,6 +238,9 @@ namespace mir
         WindowModule mWindow;
         SplashStep mRendererStep{ mSplash, "Initializing renderer...", 0.2f };
         RendererModule mRenderer;
+        // before ImGui and the editor, which read input and models
+        InputModule mInput;
+        AnimationModule mAnimation;
         SplashStep mImGuiStep{ mSplash, "Initializing UI...", 0.4f };
         ImGuiModule mImGui;
     #if MIR_WITH_EDITOR
@@ -245,9 +248,7 @@ namespace mir
         EditorModule mEditor;
     #endif
         SplashStep mModulesStep{ mSplash, "Registering components...", 0.75f };
-        InputModule mInput;
         CameraModule mCamera;
-        AnimationModule mAnimation;
         AudioModule mAudio;
         PhysicsModule mPhysics;
         TerrainModule mTerrainData;

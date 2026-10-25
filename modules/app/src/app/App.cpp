@@ -126,13 +126,13 @@ namespace mir
                                       .mEnableValidation = mDesc.mEnableValidation,
                                       .mProjectSettingsPath = mProject.mProjectSettingsPath,
                                       .mAssetIdRoot = mProject.mAssetIdRoot }),
+          mInput(Context(), mWindow.Get(), mProject.mProjectSettingsPath),
+          mAnimation(Context(), mRenderer.Renderer(), mAssets, mProject.mAssetIdRoot),
           mImGui(Context(), mWindow, mRenderer),
     #if MIR_WITH_EDITOR
           mEditor(Context(), mImGui, mWindow, mRenderer, mScene, mAssets, mProject, mDesc.mEnableEditorLayout),
     #endif
-          mInput(Context(), mWindow.Get(), mProject.mProjectSettingsPath),
           mCamera(Context()),
-          mAnimation(Context(), mRenderer.Renderer(), mAssets, mProject.mAssetIdRoot),
           mAudio(Context(), mProject.mSoundBankDir),
           mPhysics(Context()),
           mTerrainData(Context()),
