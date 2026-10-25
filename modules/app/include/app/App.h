@@ -99,7 +99,8 @@ namespace mir
         //whether this build has the editor in it at all
         static constexpr bool kHasEditor = MIR_WITH_EDITOR != 0;
 
-        App();
+        // Builds every module in member order. A throw unwinds what was built, in reverse
+        explicit App(const AppDesc &desc);
         ~App();
 
         App(const App &) = delete;
@@ -107,27 +108,22 @@ namespace mir
         App(App &&) = delete;
         App &operator=(App &&) = delete;
 
-        // Throws SetupError on any startup failure; the destructor then cleans up what was built
-        void Initialize(const AppDesc &desc);
         void Run();
-
-        // Safe on a partial Initialize and safe to call twice
-        void Shutdown();
 
         World &GetWorld() { return mWorld; }
         SystemScheduler &Systems() { return mScheduler; }
 
         // Temporary seam
-        VulkanRenderer &Renderer() { return mRenderer->Renderer(); }
+        VulkanRenderer &Renderer() { return mRenderer.Renderer(); }
 
         // Startup splash
-        SplashScreen &Splash() { return mSplash; }
+        SplashScreen &Splash() { return mSplash.screen; }
 
-        // Never null after Initialize; empty until a build or import cooks something
-        AssetCache *Assets();
+        // Never null; empty until a build or import cooks something
+        AssetCache *Assets() { return &mAssets.Cache(); }
 
         // The scene currently in the World
-        LoadedScene &Scene() { return mSceneModule->Scene(); }
+        LoadedScene &Scene() { return mScene.Scene(); }
 
         // The game currently open
         const GameProject &Project() const { return mProject; }
@@ -168,6 +164,22 @@ namespace mir
         void ToggleFullscreen();
 
     private:
+        // shown while App is built, closed by main or by its destructor
+        struct StartupSplash
+        {
+            SplashScreen screen;
+            explicit StartupSplash(const AppDesc &desc);
+        };
+
+        // a splash status line between two module members
+        struct SplashStep
+        {
+            SplashStep(StartupSplash &splash, const char *status, float progress)
+            {
+                splash.screen.SetProgress(status, progress);
+            }
+        };
+
         ModuleContext Context();
 
         // the editor, the game UI and their actions; one ImGui drawer
@@ -219,56 +231,61 @@ namespace mir
         void ApplyImportedAssets();
     #endif
 
-        SplashScreen mSplash;
-        std::optional<WindowModule> mWindow;
-        std::optional<RendererModule> mRenderer;
-        std::optional<ImGuiModule> mImGui;
-        // Stop puts the World back as it was at Play, so it puts this back too
-        bool mUnsavedBeforePlay = false;
+        // Startup order, which is dependency order: a module after every module it uses,
+        // a bridge after script and its library. C++ destroys them in reverse. Within a
+        // phase, systems run in this order too
+        AppDesc mDesc;
+        GameProject mProject;
+        StartupSplash mSplash;
+
+        // before ImGuiModule, so their UI textures are destroyed after ImGui shuts down
         UIContext mGameUI;
         UIDemoScreen mUIDemo;
         GameShell mGameShell;
 
-            // Before mWorld, so it is destroyed after it
+        // before mWorld, so it is destroyed after it
         CommandBuffer mCommands;
-
         World mWorld;
         SystemScheduler mScheduler;
-        std::optional<CoreModule> mCore;
-        std::optional<SceneModule> mSceneModule;
-        std::optional<PrefabModule> mPrefab;
-        std::optional<InputModule> mInput;
-        std::optional<CameraModule> mCamera;
-        std::optional<AnimationModule> mAnimation;
-        std::optional<AudioModule> mAudio;
-        std::optional<PhysicsModule> mPhysics;
-        std::optional<TerrainModule> mTerrainData;
-        std::optional<ScriptModule> mScript;
-        std::optional<AudioScriptModule> mAudioScript;
-        std::optional<InputScriptModule> mInputScript;
-        std::optional<PhysicsScriptModule> mPhysicsScript;
-        std::optional<RendererScriptModule> mRendererScript;
-        std::optional<TerrainScriptModule> mTerrainScript;
-        std::optional<TerrainRuntimeModule> mTerrain;
+
+        CoreModule mCore;
+        AssetsModule mAssets;
+        SceneModule mScene;
+        PrefabModule mPrefab;
+        WindowModule mWindow;
+        SplashStep mRendererStep{ mSplash, "Initializing renderer...", 0.2f };
+        RendererModule mRenderer;
+        SplashStep mImGuiStep{ mSplash, "Initializing UI...", 0.4f };
+        ImGuiModule mImGui;
     #if MIR_WITH_EDITOR
-        std::optional<EditorModule> mEditor;
+        SplashStep mEditorStep{ mSplash, "Initializing editor...", 0.5f };
+        EditorModule mEditor;
     #endif
+        SplashStep mModulesStep{ mSplash, "Registering components...", 0.75f };
+        InputModule mInput;
+        CameraModule mCamera;
+        AnimationModule mAnimation;
+        AudioModule mAudio;
+        PhysicsModule mPhysics;
+        TerrainModule mTerrainData;
+        ScriptModule mScript;
+        AudioScriptModule mAudioScript;
+        InputScriptModule mInputScript;
+        PhysicsScriptModule mPhysicsScript;
+        RendererScriptModule mRendererScript;
+        TerrainScriptModule mTerrainScript;
+        TerrainRuntimeModule mTerrain;
 
-
-
-        AppDesc mDesc;
-        GameProject mProject;
-    #if MIR_WITH_EDITOR
-    #endif
+        // Stop puts the World back as it was at Play, so it puts this back too
+        bool mUnsavedBeforePlay = false;
         std::optional<GameProject> mProjectToOpen;
         bool mSwitchHookFired = false;
         float mFrameDt = 0.0f;
-        Registration mUiDrawer;
         double mElapsed = 0.0;
         uint64_t mFrame = 0;
         FixedTimestep mFixedTimestep;
 
-        std::optional<AssetsModule> mAssets;
-        bool mInitialized = false;
+        // last: unregisters before the members DrawUI uses are destroyed
+        Registration mUiDrawer;
     };
 } // namespace mir

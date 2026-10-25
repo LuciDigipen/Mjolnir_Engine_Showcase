@@ -89,101 +89,89 @@ namespace mir
         }
     }
 
-    // Never null; does nothing until Initialize binds it.
-    App::App() = default;
-
-    App::~App() { Shutdown(); }
-
-    void App::Initialize(const AppDesc &desc)
+    namespace
     {
-        mDesc = desc;
-        mProject = desc.mProject;
-        mProjectToOpen.reset();
-        mSwitchHookFired = false;
-        mFixedTimestep = FixedTimestep{ .mStep = desc.mFixedDeltaSeconds, .mMaxSteps = desc.mMaxFixedSteps };
+        // the checks that come before anything is built
+        AppDesc Prepared(const AppDesc &desc)
+        {
+            AppDesc prepared = desc;
+            EnsureGameDirectories(prepared.mProject);
+            ReadProjectSettings(prepared.mProject.mProjectSettingsPath);
 
-        // A failure anywhere below throws; ~App runs Shutdown, which is safe on whatever got built
+        #if !MIR_WITH_EDITOR
+            //no editor to lay out, the window is the game
+            prepared.mEnableEditorLayout = false;
+            MIR_LOG_INFO("Built without the editor; running the game");
+        #endif
 
-        EnsureGameDirectories(mProject);
-        ReadProjectSettings(mProject.mProjectSettingsPath);
+            EnsureDpiAware();
+            return prepared;
+        }
 
-    #if !MIR_WITH_EDITOR
-        //no editor to lay out, the window is the game
-        mDesc.mEnableEditorLayout = false;
-        MIR_LOG_INFO("Built without the editor; running the game");
-    #endif
+        // the title points into desc, which outlives the window's creation
+        WindowDesc MakeWindowDesc(const AppDesc &desc)
+        {
+            WindowDesc window{};
+            window.mWidth = desc.mWidth;
+            window.mHeight = desc.mHeight;
+            window.mTitle = desc.mProject.mTitle.c_str();
+            window.mMaximized = desc.mEnableEditorLayout;
+            window.mCustomTitleBar = desc.mEnableEditorLayout;
+            window.mStartHidden = true;
+            return window;
+        }
+    }
 
-        EnsureDpiAware();
+    App::StartupSplash::StartupSplash(const AppDesc &desc)
+    {
+        screen.Show({ .mEngineName = desc.mAppName,
+                      .mVersion = kEngineVersion,
+                      .mCopyright = kEngineCopyright,
+                      .mStatus = "Creating window...",
+                      .mProgress = 0.0f });
+    }
 
-        mSplash.Show({ .mEngineName = desc.mAppName,
-                       .mVersion = kEngineVersion,
-                       .mCopyright = kEngineCopyright,
-                       .mStatus = "Creating window...",
-                       .mProgress = 0.0f });
-
-        mCore.emplace(Context(), mCommands);
-        mAssets.emplace(CookedAssetsDir());
-        mSceneModule.emplace(Context(), mProject.mSceneDir);
-        mPrefab.emplace(Context(), PrefabSourceDir(mProject));
-        WindowDesc windowDesc{};
-        windowDesc.mWidth = desc.mWidth;
-        windowDesc.mHeight = desc.mHeight;
-        windowDesc.mTitle = mProject.mTitle.c_str();
-        windowDesc.mMaximized = mDesc.mEnableEditorLayout;
-        windowDesc.mCustomTitleBar = mDesc.mEnableEditorLayout;
-        windowDesc.mStartHidden = true;
-
-        mWindow.emplace(windowDesc);
-
-        mSplash.SetProgress("Initializing renderer...", 0.2f);
-        mRenderer.emplace(Context(), mWindow->Get(), *mAssets,
-            RendererModuleSettings{ .mAppName = desc.mAppName,
-                                    .mEnableValidation = desc.mEnableValidation,
-                                    .mProjectSettingsPath = mProject.mProjectSettingsPath,
-                                    .mAssetIdRoot = mProject.mAssetIdRoot });
-
-        mSplash.SetProgress("Initializing UI...", 0.4f);
-        mImGui.emplace(Context(), *mWindow, *mRenderer);
-
+    App::App(const AppDesc &desc)
+        : mDesc(Prepared(desc)),
+          mProject(mDesc.mProject),
+          mSplash(mDesc),
+          mCore(Context(), mCommands),
+          mAssets(CookedAssetsDir()),
+          mScene(Context(), mProject.mSceneDir),
+          mPrefab(Context(), PrefabSourceDir(mProject)),
+          mWindow(MakeWindowDesc(mDesc)),
+          mRenderer(Context(), mWindow.Get(), mAssets,
+              RendererModuleSettings{ .mAppName = mDesc.mAppName,
+                                      .mEnableValidation = mDesc.mEnableValidation,
+                                      .mProjectSettingsPath = mProject.mProjectSettingsPath,
+                                      .mAssetIdRoot = mProject.mAssetIdRoot }),
+          mImGui(Context(), mWindow, mRenderer),
     #if MIR_WITH_EDITOR
-        mSplash.SetProgress("Initializing editor...", 0.5f);
-        mEditor.emplace(Context(), *mImGui, *mWindow, *mRenderer, *mSceneModule, *mAssets, mProject,
-            mDesc.mEnableEditorLayout);
+          mEditor(Context(), mImGui, mWindow, mRenderer, mScene, mAssets, mProject, mDesc.mEnableEditorLayout),
     #endif
-
+          mInput(Context(), mWindow.Get(), mProject.mProjectSettingsPath),
+          mCamera(Context()),
+          mAnimation(Context(), mRenderer.Renderer(), mAssets, mProject.mAssetIdRoot),
+          mAudio(Context(), mProject.mSoundBankDir),
+          mPhysics(Context()),
+          mTerrainData(Context()),
+          mScript(Context(), mAssets, mProject.mAssetIdRoot),
+          mAudioScript(mScript),
+          mInputScript(mScript),
+          mPhysicsScript(mScript),
+          mRendererScript(mScript),
+          mTerrainScript(mScript),
+          mTerrain(Context(), mRenderer, mProject),
+          mFixedTimestep{ .mStep = mDesc.mFixedDeltaSeconds, .mMaxSteps = mDesc.mMaxFixedSteps }
+    {
         // after the editor's drawer, so the game UI fits this frame's scene viewport
-        mUiDrawer = mImGui->AddDrawer([this] { DrawUI(); });
-
-        mInitialized = true;
-
-        mSplash.SetProgress("Registering components...", 0.75f);
-
-
-
-        // in dependency order: a module after every module it uses, a bridge after
-        // script and its library. Within a phase, systems run in this order
-        mInput.emplace(Context(), mWindow->Get(), mProject.mProjectSettingsPath);
-        mCamera.emplace(Context());
-        mAnimation.emplace(Context(), mRenderer->Renderer(), *mAssets, mProject.mAssetIdRoot);
-        mAudio.emplace(Context(), mProject.mSoundBankDir);
-        mPhysics.emplace(Context());
-        mTerrainData.emplace(Context());
-
-        mScript.emplace(Context(), *mAssets, mProject.mAssetIdRoot);
-        mAudioScript.emplace(*mScript);
-        mInputScript.emplace(*mScript);
-        mPhysicsScript.emplace(*mScript);
-        mRendererScript.emplace(*mScript);
-        mTerrainScript.emplace(*mScript);
-        mTerrain.emplace(Context(), *mRenderer, mProject);
-
-
+        mUiDrawer = mImGui.AddDrawer([this] { DrawUI(); });
 
         if (mDesc.mUIDemo)
             mUIDemo.Load(mGameUI, Assets());
 
-        mSplash.SetProgress("Loading scene...", 0.9f);
-        mPrefab->Coordinator().Bind(mSceneModule->Scene());
+        mSplash.screen.SetProgress("Loading scene...", 0.9f);
+        mPrefab.Coordinator().Bind(mScene.Scene());
         LoadProjectScene();
 
         //without the editor there is no Play button
@@ -193,14 +181,20 @@ namespace mir
         // every module is built, so a library that took the crash filter slot has done so
         ReclaimCrashHandler();
 
-        mWindow->Get().Show();
+        mWindow.Get().Show();
+    }
+
+    // Systems stop while every module is alive; then members die in reverse
+    App::~App()
+    {
+        SystemContext stopContext = MakeContext(0.0f);
+        mScheduler.Stop(stopContext);
+        mScheduler.Reset();
+        MIR_LOG_INFO("App shut down");
     }
 
     bool App::RequestOpenProject(const std::string &requestedDir)
     {
-        if (!mInitialized)
-            return false;
-
         // validate before closing; not ResolveGameProject, which logs "Loading game"
         try
         {
@@ -216,7 +210,7 @@ namespace mir
 
         // one game per process: main.cpp relaunches after Run returns
         MIR_LOG_INFO("Closing '{}' to open '{}'", mProject.mDir, mProjectToOpen->mDir);
-        mWindow->Get().RequestClose();
+        mWindow.Get().RequestClose();
         return true;
     }
 
@@ -229,8 +223,8 @@ namespace mir
         }
 
         UnloadCurrentScene();
-        mSceneModule->New(std::move(name), incomplete);
-        mPrefab->Coordinator().Bind(mSceneModule->Scene());
+        mScene.New(std::move(name), incomplete);
+        mPrefab.Coordinator().Bind(mScene.Scene());
         ClearHistory();
         SetSceneUnsaved(false);
     }
@@ -243,7 +237,7 @@ namespace mir
             return false;
         }
 
-        const bool saved = mSceneModule->Save(&mPrefab->Coordinator().Resolver());
+        const bool saved = mScene.Save(&mPrefab.Coordinator().Resolver());
         if (saved)
             SetSceneUnsaved(false);
         return saved;
@@ -285,11 +279,11 @@ namespace mir
     void App::ReplaceSceneFromDisk(bool incomplete)
     {
         UnloadCurrentScene();
-        mSceneModule->LoadFromDisk(&mPrefab->Coordinator().Resolver(), incomplete);
-        mPrefab->Coordinator().Bind(mSceneModule->Scene());
+        mScene.LoadFromDisk(&mPrefab.Coordinator().Resolver(), incomplete);
+        mPrefab.Coordinator().Bind(mScene.Scene());
         ClearHistory();
         SetSceneUnsaved(false);
-        mTerrain->Runtime().Load();
+        mTerrain.Runtime().Load();
     }
 
     App::SceneLoadChoice App::ChooseSceneLoad(const SceneProbe &probe, bool atStartup) const
@@ -326,10 +320,10 @@ namespace mir
             return;
 
         // Play pins the terrain releases present on entry
-        mTerrain->Runtime().Refresh(0.0f, true);
-        mTerrain->Runtime().BeginPlay();
+        mTerrain.Runtime().Refresh(0.0f, true);
+        mTerrain.Runtime().BeginPlay();
 
-        mSceneModule->CaptureForPlay();
+        mScene.CaptureForPlay();
         mUnsavedBeforePlay = SceneUnsaved();
         ClearHistory();
 
@@ -343,28 +337,28 @@ namespace mir
             return;
 
         SystemContext context = MakeContext(0.0f);
-        mScript->Scripts().StopAllScripts(context);
+        mScript.Scripts().StopAllScripts(context);
 
-        mSceneModule->RestoreFromPlay();
-        mPrefab->Coordinator().Bind(mSceneModule->Scene());
+        mScene.RestoreFromPlay();
+        mPrefab.Coordinator().Bind(mScene.Scene());
         ClearHistory();
 
         //the World is back as it was at Play, Play's edits gone, so the marker goes back too
         SetSceneUnsaved(mUnsavedBeforePlay);
 
         // Play's entities are gone and the restored ones hold no handles yet
-        mAnimation->Models().Reset();
-        mRenderer->Meshes().Reset();
+        mAnimation.Models().Reset();
+        mRenderer.Meshes().Reset();
         mWorld.Resource<ModelDrawItems>().items.clear();
         mWorld.Resource<ModelMorphOverrides>().instances.clear();
-        mTerrain->Runtime().ForgetMeshes();
-        mRenderer->Renderer().ReleaseSceneResources();
+        mTerrain.Runtime().ForgetMeshes();
+        mRenderer.Renderer().ReleaseSceneResources();
 
         SetEngineMode(mWorld, EngineMode::Edit);
         SetPlayState(mWorld, PlayState::Running);
 
         // Starts checking a release published during Play
-        mTerrain->Runtime().Refresh(0.0f, true);
+        mTerrain.Runtime().Refresh(0.0f, true);
     }
 
     void App::TogglePause()
@@ -435,12 +429,12 @@ namespace mir
             case Request::ApplyImportedAssets:
             #if MIR_WITH_EDITOR
                 // the import may have been applied or dropped since it asked
-                if (mEditor->Import().PendingApply() && IsEditing(mWorld))
+                if (mEditor.Import().PendingApply() && IsEditing(mWorld))
                     ApplyImportedAssets();
             #endif
                 break;
             case Request::Quit:
-                mWindow->Get().RequestClose();
+                mWindow.Get().RequestClose();
                 break;
             }
         }
@@ -448,25 +442,22 @@ namespace mir
 
     void App::ToggleFullscreen()
     {
-        if (!mInitialized)
-            return;
+        mWindow.Get().ToggleFullscreen();
 
-        mWindow->Get().ToggleFullscreen();
-
-        mRenderer->Renderer().RequestSwapchainRecreate();
+        mRenderer.Renderer().RequestSwapchainRecreate();
     }
 
     void App::ClearHistory()
     {
     #if MIR_WITH_EDITOR
-        mEditor->Get().ClearHistory();
+        mEditor.Get().ClearHistory();
     #endif
     }
 
     bool App::SceneUnsaved() const
     {
     #if MIR_WITH_EDITOR
-        return mEditor->Get().IsSceneUnsaved();
+        return mEditor.Get().IsSceneUnsaved();
     #else
         return false;
     #endif
@@ -475,25 +466,23 @@ namespace mir
     void App::SetSceneUnsaved([[maybe_unused]] bool unsaved)
     {
     #if MIR_WITH_EDITOR
-        mEditor->Get().SetSceneUnsaved(unsaved);
+        mEditor.Get().SetSceneUnsaved(unsaved);
     #endif
     }
 
     void App::UnloadCurrentScene()
     {
-        mSceneModule->Unload();
+        mScene.Unload();
 
         // no scene entity holds a mesh or material handle now
-        if (mAnimation)
-            mAnimation->Models().Reset();
-        if (mRenderer)
-            mRenderer->Meshes().Reset();
+        mAnimation.Models().Reset();
+        mRenderer.Meshes().Reset();
         if (auto *draws = mWorld.TryResource<ModelDrawItems>())
             draws->items.clear();
         if (auto *overrides = mWorld.TryResource<ModelMorphOverrides>())
             overrides->instances.clear();
-        mTerrain->Runtime().Unload();
-        mRenderer->Renderer().ReleaseSceneResources();
+        mTerrain.Runtime().Unload();
+        mRenderer.Renderer().ReleaseSceneResources();
     }
 
     void App::LoadProjectScene()
@@ -512,7 +501,7 @@ namespace mir
         {
         case SceneLoadChoice::StartEmpty:
             MIR_LOG_WARN("Starting with an empty scene over the corrupt '{}'", manifest.string());
-            mSceneModule->New("untitled", true);
+            mScene.New("untitled", true);
             return;
         case SceneLoadChoice::Load:
             ReplaceSceneFromDisk(!probe.Ok());
@@ -546,11 +535,6 @@ namespace mir
         RequestOpenProject(mDesc.mSwitchProjectTo);
     }
 
-    AssetCache *App::Assets()
-    {
-        return mAssets.has_value() ? &mAssets->Cache() : nullptr;
-    }
-
     ModuleContext App::Context()
     {
         return ModuleContext{ mWorld, mScheduler };
@@ -563,19 +547,14 @@ namespace mir
 
     void App::Run()
     {
-        if (!mInitialized)
-        {
-            return;
-        }
-
         SystemContext startContext = MakeContext(0.0f);
         mScheduler.Start(startContext);
 
         auto previous = std::chrono::steady_clock::now();
 
-        while (!mWindow->Get().ShouldClose())
+        while (!mWindow.Get().ShouldClose())
         {
-            mWindow->Get().PollEvents();
+            mWindow.Get().PollEvents();
 
             const auto now = std::chrono::steady_clock::now();
             const float dt = std::min(std::chrono::duration<float>(now - previous).count(), mDesc.mMaxDeltaSeconds);
@@ -589,7 +568,7 @@ namespace mir
             mScheduler.RunFrameSlot(FrameSlot::FrameBegin, frameContext);
 
             mFrameDt = dt;
-            mImGui->RunUI();
+            mImGui.RunUI();
 
 
 
@@ -599,7 +578,7 @@ namespace mir
 
             SystemContext context = MakeContext(dt);
             if (!mDesc.mCapturePath.empty() && mFrame + 1 == mDesc.mMaxFrames)
-                mRenderer->Renderer().CaptureNextFrame(mDesc.mCapturePath);
+                mRenderer.Renderer().CaptureNextFrame(mDesc.mCapturePath);
             mScheduler.Update(context, fixedSteps, mFixedTimestep.mStep);
 
             if (mWorld.Resource<InputState>().JustPressed(kToggleFullscreenAction))
@@ -611,17 +590,17 @@ namespace mir
 
             // same exit path as the close button
             if (mDesc.mMaxFrames != 0 && mFrame >= mDesc.mMaxFrames)
-                mWindow->Get().RequestClose();
+                mWindow.Get().RequestClose();
         }
     }
 
     void App::DrawUI()
     {
-        if (mWindow->Get().Width() == 0 || mWindow->Get().Height() == 0)
+        if (mWindow.Get().Width() == 0 || mWindow.Get().Height() == 0)
             return;
 
         mGameUI.BeginFrame(GameUIArea(), mWorld.Resource<InputState>(), mWorld.Resource<InputMap>(),
-            ToUIPointer(mWindow->Get().RawInput()));
+            ToUIPointer(mWindow.Get().RawInput()));
         GameShellAction shellAction = GameShellAction::None;
         if (mDesc.mUIDemo)
             mUIDemo.Draw(mGameUI);
@@ -636,9 +615,9 @@ namespace mir
     {
     #if MIR_WITH_EDITOR
         if (mDesc.mEnableEditorLayout)
-            return ToUIRect(mEditor->Get().SceneViewportRect());
+            return ToUIRect(mEditor.Get().SceneViewportRect());
     #endif
-        return UIRect{ 0.0f, 0.0f, static_cast<float>(mWindow->Get().Width()), static_cast<float>(mWindow->Get().Height()) };
+        return UIRect{ 0.0f, 0.0f, static_cast<float>(mWindow.Get().Width()), static_cast<float>(mWindow.Get().Height()) };
     }
 
 #if MIR_WITH_EDITOR
@@ -646,72 +625,30 @@ namespace mir
     {
         try
         {
-            mAssets->BeginReload();
+            mAssets.BeginReload();
         }
         catch (const std::exception &error)
         {
-            mEditor->Import().MarkApplyFailed(error.what());
+            mEditor.Import().MarkApplyFailed(error.what());
             return;
         }
 
         std::string error;
-        if (mAnimation && !mAnimation->Models().PrepareReload(mAssets->Candidate(), error))
+        if (!mAnimation.Models().PrepareReload(mAssets.Candidate(), error))
         {
-            mAssets->AbortReload();
-            mEditor->Import().MarkApplyFailed("new model resources were rejected: " + error);
+            mAssets.AbortReload();
+            mEditor.Import().MarkApplyFailed("new model resources were rejected: " + error);
             return;
         }
 
-        mAssets->CommitReload();
-        if (mAnimation)
-            mAnimation->Models().CommitReload(&mAssets->Cache());
-        if (mRenderer)
-            mRenderer->Meshes().CommitReload(&mAssets->Cache());
+        mAssets.CommitReload();
+        mAnimation.Models().CommitReload(&mAssets.Cache());
+        mRenderer.Meshes().CommitReload(&mAssets.Cache());
 
         // a script whose asset arrived with this cook resolves now
-        if (mScript)
-            mScript->Resolver().ForgetFailures();
-        mEditor->Import().MarkApplied();
+        mScript.Resolver().ForgetFailures();
+        mEditor.Import().MarkApplied();
         MIR_LOG_INFO("Applied imported assets at an Edit frame boundary");
     }
 #endif
-
-    // Runs in full after a partial Initialize too: every step below is a no-op on what was never built
-    void App::Shutdown()
-    {
-        // let all the systems stop first
-        SystemContext stopContext = MakeContext(0.0f);
-        mScheduler.Stop(stopContext);
-
-        mScheduler.Reset();
-        mTerrain.reset();
-        mTerrainScript.reset();
-        mRendererScript.reset();
-        mPhysicsScript.reset();
-        mInputScript.reset();
-        mAudioScript.reset();
-        mScript.reset();
-        mTerrainData.reset();
-        mPhysics.reset();
-        mAudio.reset();
-        mAnimation.reset();
-        mCamera.reset();
-        mInput.reset();
-
-        mUiDrawer.Reset();
-    #if MIR_WITH_EDITOR
-        mEditor.reset();
-    #endif
-        mImGui.reset();
-        mRenderer.reset();
-        mWindow.reset();
-        mPrefab.reset();
-        mSceneModule.reset();
-        mAssets.reset();
-        mCore.reset();
-
-        if (mInitialized)
-            MIR_LOG_INFO("App shut down");
-        mInitialized = false;
-    }
 } // namespace mir
