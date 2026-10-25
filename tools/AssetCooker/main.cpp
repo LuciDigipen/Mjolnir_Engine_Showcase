@@ -24,6 +24,8 @@
 #include <fstream>
 #include <iomanip>
 #include <nlohmann/json.hpp>
+#include <prefab/PrefabAsset.h>
+#include <prefab/PrefabRegistry.h>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -546,10 +548,14 @@ namespace
                 if (auto resolved = ResolveModel(options, cachedPath);
                     resolved && std::filesystem::exists(resolved->second))
                     identityOwners.emplace(cachedRecord.at("identityPath").get<std::string>(), cachedPath);
+        std::unordered_map<uint64_t, std::string> prefabAssetOwners;
         auto emit = [&](mir::AssetId id, const std::vector<std::byte> &bytes) {
             const auto blob = mir::ParseAssetBlob(bytes);
             if (!blob)
                 throw std::runtime_error("importer emitted invalid blob");
+            if (const auto owner = prefabAssetOwners.find(id.value);
+                owner != prefabAssetOwners.end() && blob->header.typeTag != mir::kPrefabAssetTypeTag)
+                throw std::runtime_error("an asset hashes to the AssetId of prefab '" + owner->second + "'");
             const std::string file = Hex(id.value) + "-" + Hex(mir::Fnv1a64(bytes)) + ".blob";
             const auto path = options.out / file;
             bool same = false;
@@ -560,6 +566,32 @@ namespace
             Output output{id, blob->header.typeTag, blob->header.contentVersion, file};
             outputs[id.value] = output;
             return output;
+        };
+
+        std::unordered_map<mir::PrefabId, std::string> prefabOwners;
+        auto cookPrefab = [&](const std::string &logical, const std::filesystem::path &path) {
+            const mir::PrefabParseResult parsed = mir::ReadPrefabFile(path);
+            if (!parsed.mDocument)
+            {
+                std::string message = "invalid prefab " + logical;
+                for (const mir::PrefabDiagnostic &diagnostic : parsed.mDiagnostics)
+                    if (diagnostic.mSeverity == mir::PrefabDiagnosticSeverity::Error)
+                        message += "\n  " + diagnostic.mMessage;
+                throw std::runtime_error(message);
+            }
+
+            const mir::PrefabId uuid = parsed.mDocument->mId;
+            if (const auto owner = prefabOwners.find(uuid); owner != prefabOwners.end())
+                throw std::runtime_error("prefab UUID " + mir::ToString(uuid) + " is used by both '" +
+                    owner->second + "' and '" + logical + "'");
+            prefabOwners.emplace(uuid, logical);
+
+            const mir::AssetId id = mir::PrefabAssetId(uuid);
+            if (const auto existing = outputs.find(id.value); existing != outputs.end())
+                throw std::runtime_error("prefab '" + logical + "' hashes to the AssetId of cooked blob '" +
+                    existing->second.file + "'; regenerate the prefab UUID");
+            prefabAssetOwners.emplace(id.value, logical);
+            emit(id, mir::BuildPrefabAsset(*parsed.mDocument));
         };
 
         for (const auto &logical : options.removals)
@@ -738,6 +770,11 @@ namespace
                     const std::string logical = LogicalPath(root, path);
                     if (mir::IsTerrainFileExcludedFromCook(logical))
                         continue;
+                    if (ext == ".prefab")
+                    {
+                        cookPrefab(logical, path);
+                        continue;
+                    }
                     auto bytes = mir::ReadBytes(path);
                     if (!bytes)
                         throw std::runtime_error("cannot read " + path.string());

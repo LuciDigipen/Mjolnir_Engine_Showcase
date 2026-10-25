@@ -5,7 +5,7 @@ Builds every module, runs the frame loop and the scene and Play transitions.
 gameplay and no subsystem of its own: what a library needs at startup, per frame
 or at a transition, its module registers.
 
-`mir::app` · depends every module, public, because `App.h` holds them as members; `prefab`, `serial` private · API `modules/app/include/app/` · maintainer Sumin Park · reviewed 2026-10-24
+`mir::app` · depends every module, public, because `App.h` holds them as members; `serial` private · API `modules/app/include/app/` · maintainer Sumin Park · reviewed 2026-10-24
 
 ## Model
 
@@ -110,6 +110,10 @@ only thing that flips it. The editor's toolbar and the pause menu push `Play`,
 Quit stops Play in the editor and closes the window without it. Without the
 editor there is no Play button, so the constructor calls `PlayScene` when
 `mEnableEditorLayout` is off: a game build plays.
+
+### Prefab resources
+
+PrefabModule scans source documents in an editor build. Without the editor, App supplies AssetsModule so PrefabModule fills its registry from the cooked manifest and cache. The packaged build removes copied Prefab sources. EditorModule owns tabs, previews, authored commands and explicit dependency-aware saves.
 
 ### Without the editor
 

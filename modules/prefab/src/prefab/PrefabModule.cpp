@@ -9,6 +9,7 @@
 #include <prefab/PrefabModule.h>
 
 #include <prefab/PrefabCoordinator.h>
+#include <assets/AssetsModule.h>
 
 #include <core/ecs/SystemScheduler.h>
 #include <scene/SceneModule.h>
@@ -18,12 +19,21 @@
 
 namespace mir
 {
-    PrefabModule::PrefabModule(ModuleContext context, SceneModule &scene, const std::filesystem::path &sourceDir)
-        : mCoordinator(context.world.EmplaceResource<PrefabCoordinator>()), mSourceDir(sourceDir)
+    PrefabModule::PrefabModule(ModuleContext context, SceneModule &scene, const std::filesystem::path &sourceDir,
+        AssetsModule *cookedAssets)
+        : mCoordinator(context.world.EmplaceResource<PrefabCoordinator>()),
+          mSourceDir(cookedAssets != nullptr ? std::filesystem::path{} : sourceDir)
     {
-        std::error_code ec;
-        if (std::filesystem::is_directory(sourceDir, ec))
-            mCoordinator.ScanSources(sourceDir);
+        if (cookedAssets != nullptr)
+        {
+            mCoordinator.LoadCooked(cookedAssets->Manifest(), cookedAssets->Cache());
+        }
+        else
+        {
+            std::error_code ec;
+            if (std::filesystem::is_directory(sourceDir, ec))
+                mCoordinator.ScanSources(sourceDir);
+        }
         mCoordinator.Bind(scene.Scene());
 
         // pending edits reach the scene, then the published state stays put until Stop
