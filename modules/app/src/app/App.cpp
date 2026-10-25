@@ -325,16 +325,10 @@ namespace mir
         if (!IsPlaying(mWorld))
             return;
 
+        // Play's entities fire their OnRemove as the restore destroys them; the GPU caches,
+        // keyed by asset, stay for the restored scene
         RunStage(Stage::PlayEnd);
         mScene.RestoreFromPlay();
-
-        // Play's entities are gone and the restored ones hold no handles yet
-        mAnimation.Models().Reset();
-        mRenderer.Meshes().Reset();
-        mWorld.Resource<ModelDrawItems>().items.clear();
-        mWorld.Resource<ModelMorphOverrides>().instances.clear();
-        mTerrain.Runtime().ForgetMeshes();
-        mRenderer.Renderer().ReleaseSceneResources();
 
         SetEngineMode(mWorld, EngineMode::Edit);
         SetPlayState(mWorld, PlayState::Running);
