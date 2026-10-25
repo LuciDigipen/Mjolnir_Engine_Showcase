@@ -22,10 +22,12 @@
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/World.h>
+#include <physics/ComponentRegistration.h>
 #include <physics/PhysicsSystem.h>
 #include <physics/PhysicsWorld.h>
 #include <physics/components/RigidBody.h>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <glm/geometric.hpp>
@@ -102,6 +104,7 @@ namespace
             mir::SetEngineMode(world, mir::EngineMode::Play);
             mir::SetPlayState(world, mir::PlayState::Running);
             mir::RegisterScriptComponents();
+            mir::RegisterPhysicsComponents();
 
             // the same order ScriptModule and PhysicsModule give them: scripts first
             scheduler.AddSystem<mir::ScriptFixedSystem>(mir::SystemPhase::FixedUpdate,
@@ -365,6 +368,158 @@ TEST_CASE("OnFixedUpdate runs before the step, so what it sets acts on that step
     const std::optional<mir::WorldPosition> at = f.Physics().BodyPosition(f.Body());
     REQUIRE(at.has_value());
     CHECK(at->Meters().x > 0.05);
+}
+
+namespace
+{
+    constexpr std::string_view kEditFields = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    local ok = true
+    ok = ok and world:set_friction(entity, 0.7)
+    ok = ok and world:set_half_extent(entity, { x = 1.0, y = 2.0, z = 3.0 })
+    ok = ok and world:set_offset(entity, { x = 0.0, y = 4.0, z = 0.0 })
+    ok = ok and world:set_rotation_offset(entity, { x = 0.0, y = 0.0, z = 0.0, w = 1.0 })
+    ok = ok and world:set_is_trigger(entity, true)
+    ok = ok and world:set_detect_stay(entity, true)
+    ok = ok and world:set_motion(entity, PhysicsMotion.Kinematic)
+    ok = ok and world:set_shape(entity, PhysicsShape.Capsule)
+    ok = ok and world:set_axis(entity, PhysicsAxis.Z)
+    ok = ok and world:set_mass(entity, 25.0)
+    ok = ok and world:set_gravity_factor(entity, 0.5)
+    ok = ok and world:set_restitution(entity, 0.3)
+    ok = ok and world:set_allow_sleeping(entity, false)
+    ok = ok and world:set_half_height(entity, 2.5)
+    ok = ok and world:set_radius(entity, 0.75)
+    ok = ok and world:set_interpolate(entity, true)
+
+    local read = math.abs(world:friction(entity) - 0.7) < 1e-6
+        and world:half_extent(entity).y == 2.0
+        and world:offset(entity).y == 4.0
+        and world:is_trigger(entity) == true
+        and world:motion(entity) == 2
+        and world:shape(entity) == 2
+        and world:axis(entity) == 2
+    world:set(entity, "PhysicsBindingsProbe", "ok", ok and read)
+end
+
+return T
+)LUA";
+
+    constexpr std::string_view kTeleport = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    local moved = world:teleport(entity, { x = 20.0, y = 5.0, z = 0.0 })
+    world:set(entity, "PhysicsBindingsProbe", "ok", moved == true)
+end
+
+return T
+)LUA";
+
+    constexpr std::string_view kTeleportNothing = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    local moved = world:teleport(entity, { x = 20.0, y = 5.0, z = 0.0 })
+    world:set(entity, "PhysicsBindingsProbe", "ok", moved == false)
+end
+
+return T
+)LUA";
+
+    constexpr std::string_view kSleepControl = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    world:wake(entity)
+    world:set(entity, "PhysicsBindingsProbe", "ok", world:is_sleeping(entity) == false)
+end
+
+return T
+)LUA";
+}
+
+TEST_CASE("every RigidBody field can be read and written from Lua", "[script][physics][fields]")
+{
+    Fixture f(kEditFields);
+    f.Start();
+
+    CHECK(ReadProbeField<bool>(f.world, f.entity, "ok"));
+
+    // and the component holds what the script wrote, the same field the editor edits
+    const mir::RigidBody &rigidBody = *f.world.GetComponent<mir::RigidBody>(f.entity);
+    CHECK(rigidBody.friction == Catch::Approx(0.7f));
+    CHECK(rigidBody.halfExtent == glm::vec3(1.0f, 2.0f, 3.0f));
+    CHECK(rigidBody.offset == glm::vec3(0.0f, 4.0f, 0.0f));
+    CHECK(rigidBody.isTrigger);
+    CHECK(rigidBody.detectStay);
+    CHECK(rigidBody.motion == mir::PhysicsMotion::Kinematic);
+    CHECK(rigidBody.shape == mir::PhysicsShape::Capsule);
+    CHECK(rigidBody.axis == mir::PhysicsAxis::Z);
+    CHECK(rigidBody.mass == 25.0f);
+    CHECK(rigidBody.gravityFactor == 0.5f);
+    CHECK(rigidBody.restitution == Catch::Approx(0.3f));
+    CHECK_FALSE(rigidBody.allowSleeping);
+    CHECK(rigidBody.halfHeight == 2.5f);
+    CHECK(rigidBody.radius == 0.75f);
+    CHECK(rigidBody.interpolate);
+}
+
+TEST_CASE("the RigidBody getters answer nil and the setters false for an entity without one", "[script][physics][fields]")
+{
+    Fixture f(kEditFields, false);
+    f.Start();
+
+    // the first setter fails, so the script reports it
+    CHECK_FALSE(ReadProbeField<bool>(f.world, f.entity, "ok"));
+}
+
+TEST_CASE("world:teleport puts the Transform and the body at a world pose", "[script][physics][teleport]")
+{
+    Fixture f(kTeleport);
+    f.Start();
+    CHECK(ReadProbeField<bool>(f.world, f.entity, "ok"));
+
+    CHECK(f.world.GetComponent<mir::Transform>(f.entity)->Position() == mir::WorldVec3(20.0, 5.0, 0.0));
+    const std::optional<mir::WorldPosition> at = f.Physics().BodyPosition(f.Body());
+    REQUIRE(at.has_value());
+    CHECK(at->Meters() == mir::WorldVec3(20.0, 5.0, 0.0));
+
+    // a step afterwards does not undo it
+    f.Step();
+    CHECK(f.world.GetComponent<mir::Transform>(f.entity)->Position().x == Catch::Approx(20.0).margin(1e-3));
+}
+
+TEST_CASE("world:teleport on an entity with no body is false", "[script][physics][teleport]")
+{
+    Fixture f(kTeleportNothing, false);
+    f.Start();
+    CHECK(ReadProbeField<bool>(f.world, f.entity, "ok"));
+}
+
+TEST_CASE("world:wake and world:is_sleeping drive the body's sleep", "[script][physics][sleep]")
+{
+    Fixture f(kSleepControl);
+    f.Start();
+    CHECK(ReadProbeField<bool>(f.world, f.entity, "ok"));
 }
 
 TEST_CASE("world:add_force with no offset pushes the center of mass", "[script][physics]")

@@ -181,6 +181,28 @@ namespace mir
             });
     }
 
+    bool PhysicsSystem::Teleport(World &world, Entity entity, const WorldPosition &position,
+        const std::optional<glm::quat> &rotation)
+    {
+        PhysicsWorld *physics = world.TryResource<PhysicsWorld>();
+        RigidBody *rigidBody = world.GetComponent<RigidBody>(entity);
+        Transform *transform = world.GetComponent<Transform>(entity);
+        if (physics == nullptr || rigidBody == nullptr || transform == nullptr || !rigidBody->runtime.body.IsValid())
+            return false;
+
+        const glm::quat target = rotation.value_or(detail::PoseOf(world, entity).rotation);
+        if (!detail::WriteWorldPose(world, entity, *transform, position, target))
+            return false;
+
+        // from what the entity resolves to, so the next push finds nothing written
+        const BodyPose pose = detail::PoseOf(world, entity);
+        physics->SetBodyTransform(rigidBody->runtime.body, pose.position, pose.rotation);
+        detail::ResetStepPoses(*rigidBody, pose.position.Meters(), pose.rotation);
+        detail::Stamp(*rigidBody, pose);
+        rigidBody->runtime.hasMoved = true;
+        return true;
+    }
+
     void PhysicsSystem::OnRigidBodyAdded(World &world, Entity entity)
     {
         RigidBody *rigidBody = world.GetComponent<RigidBody>(entity);

@@ -25,7 +25,7 @@ other library, `script`'s other public headers included.
 |---|---|---|
 | `AudioScriptModule`, `RegisterAudioBindings` | `audio_script/` | `world:post_event/stop_event/set_rtpc/set_switch/set_state` |
 | `InputScriptModule`, `RegisterInputBindings` | `input_script/` | `world:is_down/just_pressed/just_released/axis/axis2d/active_device` |
-| `PhysicsScriptModule`, `RegisterPhysicsBindings` | `physics_script/` | Rigid bodies, raycasts and collision events |
+| `PhysicsScriptModule`, `RegisterPhysicsBindings` | `physics_script/` | Rigid bodies, every `RigidBody` field, `teleport`, sleep control, raycasts and collision events |
 | `RendererScriptModule`, `RegisterPostProcessingBindings` | `renderer_script/` | `world:set_fog/get_fog` and the other post-processing pairs |
 | `TerrainScriptModule`, `RegisterTerrainBindings` | `terrain_script/` | `world:terrain_height_at` |
 
@@ -56,6 +56,12 @@ bindings to a `ScriptHost` the way the bridge does.
    tables do not fit a reflection table today.
 
 ## Changed
+
+*2026-10-25* — **The physics bridge reaches every `RigidBody` field.** Was: scripts could push a body with
+forces and velocities, but not read or change its settings. Now: each `RigidBody` field has a getter named
+after it and a `set_` setter (`friction`, `set_friction`, `half_extent`, `set_offset`), both going through
+the same field write the editor uses. `wake`, `is_sleeping` and `teleport` cover what no field can, and
+collision events gain a `"stay"` phase. Because: a script should be able to do whatever the editor can.
 
 *2026-10-24* — **Added.** Was: every binding lived in `script`, and
 `ScriptHost`'s constructor called each library's `Register...Bindings` by hand.

@@ -17,6 +17,11 @@
 #include <core/ecs/Query.h>
 #include <core/ecs/System.h>
 #include <core/ecs/components/Transform.h>
+#include <core/math/WorldCoordinates.h>
+
+#include <glm/gtc/quaternion.hpp>
+
+#include <optional>
 
 namespace mir
 {
@@ -32,6 +37,11 @@ namespace mir
         static void OnRigidBodyAdded(World &world, Entity entity);
         // RigidBody's OnRemove: frees its Jolt body
         static void OnRigidBodyRemoved(World &world, Entity entity);
+
+        // Puts the entity's body and Transform at a world pose without sweeping to it, whatever the motion type.
+        // The rotation defaults to the current one. False when the entity has no live body or the pose does not fit.
+        static bool Teleport(World &world, Entity entity, const WorldPosition &position,
+            const std::optional<glm::quat> &rotation = std::nullopt);
 
         // PlayBegin: bodies for the RigidBodies already in the scene, then the simulation goes live
         static void OnPlayBegin(World &world);
