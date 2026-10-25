@@ -46,6 +46,8 @@ namespace mir
         // a function vetoes the reload by throwing
         ReloadPrepare,
         ReloadCommit,
+        // after a veto: every holder drops what it staged, the vetoer's too
+        ReloadAbort,
         kCount
     };
 

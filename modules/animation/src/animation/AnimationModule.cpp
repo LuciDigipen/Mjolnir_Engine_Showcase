@@ -56,5 +56,9 @@ namespace mir
             {
                 mModels->CommitReload(&assets.Cache());
             });
+        mReloadAbort = context.scheduler.AddStage(Stage::ReloadAbort, [this](SystemContext &)
+            {
+                mModels->DiscardPreparedReload();
+            });
     }
 }

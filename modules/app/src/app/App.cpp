@@ -502,7 +502,7 @@ namespace mir
 #if MIR_WITH_EDITOR
     void App::ApplyImportedAssets()
     {
-        // a ReloadPrepare function vetoes by throwing, after cleaning up its own staging
+        // a ReloadPrepare function vetoes by throwing; ReloadAbort drops what the others staged
         try
         {
             mAssets.BeginReload();
@@ -510,6 +510,7 @@ namespace mir
         }
         catch (const std::exception &error)
         {
+            RunStage(Stage::ReloadAbort);
             mAssets.AbortReload();
             mEditor.Import().MarkApplyFailed(error.what());
             return;

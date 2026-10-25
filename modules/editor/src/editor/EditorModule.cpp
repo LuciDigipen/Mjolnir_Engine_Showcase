@@ -198,6 +198,10 @@ namespace mir
                 mImport.MarkApplied();
                 MIR_LOG_INFO("Applied imported assets at an Edit frame boundary");
             });
+        mReloadAbort = context.scheduler.AddStage(Stage::ReloadAbort, [this](SystemContext &)
+            {
+                mPrefabWorkspace.DiscardPreparedReload();
+            });
 
         mDrawer = imgui.AddDrawer(DrawerGroup::Tools, [this, &window]
             {
@@ -217,6 +221,7 @@ namespace mir
 
     EditorModule::~EditorModule()
     {
+        mReloadAbort.Reset();
         mReloadCommit.Reset();
         mReloadPrepare.Reset();
         mPlayBegin.Reset();

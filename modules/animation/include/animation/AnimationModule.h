@@ -38,5 +38,6 @@ namespace mir
         Registration mSceneUnload;
         Registration mReloadPrepare;
         Registration mReloadCommit;
+        Registration mReloadAbort;
     };
 }

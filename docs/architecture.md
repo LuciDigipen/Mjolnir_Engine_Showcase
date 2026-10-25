@@ -293,12 +293,13 @@ Save              written      ->  SceneSaved
 Play              snapshot     ->  PlayBegin  ->  Play mode
 Stop              PlayEnd  ->  restore the snapshot  ->  Edit mode  ->  SceneLoad
 Asset reload      BeginReload  ->  ReloadPrepare  ->  CommitReload  ->  ReloadCommit
+                                     (a veto)  ->  ReloadAbort  ->  AbortReload
 ```
 
 A `SceneLoad` function reads why the scene is there through
 `SceneModule::LastLoad()`: from disk, new, or restored from the Play snapshot,
 and whether it is incomplete. A `ReloadPrepare` function vetoes the swap by
-throwing. Stop keeps the GPU caches, which are keyed by asset; per-entity state
+throwing, and `ReloadAbort` then drops what every holder staged. Stop keeps the GPU caches, which are keyed by asset; per-entity state
 goes in the owning component's `OnRemove`, which the restore fires for every
 Play entity.
 

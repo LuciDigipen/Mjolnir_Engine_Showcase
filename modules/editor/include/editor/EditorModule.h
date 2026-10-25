@@ -98,5 +98,6 @@ namespace mir
         Registration mPlayBegin;
         Registration mReloadPrepare;
         Registration mReloadCommit;
+        Registration mReloadAbort;
     };
 }

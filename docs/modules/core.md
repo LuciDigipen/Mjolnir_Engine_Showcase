@@ -38,7 +38,7 @@ that undoes the registration when it dies. Component hooks, stage functions,
 frame-slot functions, ImGui drawers and Lua bindings all work this way.
 
 A *stage* is a transition `App` runs: `SceneUnload`, `SceneLoad`, `SceneSaved`,
-`PlayBegin`, `PlayEnd`, `ReloadPrepare` and `ReloadCommit`. `RunStage` calls the
+`PlayBegin`, `PlayEnd`, `ReloadPrepare`, `ReloadCommit` and `ReloadAbort`. `RunStage` calls the
 stage's functions in registration order, then flushes the command buffer. A
 *frame slot* is host work once per rendered frame, outside the phases; today the
 only one is `FrameBegin`. The scheduler holds both lists next to its phases.

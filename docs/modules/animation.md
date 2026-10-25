@@ -24,8 +24,8 @@ weights for one entity and node without changing the asset.
 
 `ModelSystem` is registered by `AnimationModule` in `LateUpdate` with the asset
 cache and the Vulkan renderer. The module also clears its per-entity state from
-the `ModelPlayer` OnRemove hook, frees its GPU caches at `SceneUnload`, and stages
-and commits an asset swap at `ReloadPrepare` and `ReloadCommit`. It resolves each `ModelPlayer`, advances its clock only while Play is
+the `ModelPlayer` OnRemove hook, frees its GPU caches at `SceneUnload`, and stages,
+commits or drops an asset swap at `ReloadPrepare`, `ReloadCommit` and `ReloadAbort`. It resolves each `ModelPlayer`, advances its clock only while Play is
 simulating, evaluates a pose, and submits per-draw deformation data. The
 renderer shader applies morph, then skin, then the instance transform;
 `DeformPrimitive` provides the CPU reference for that order.

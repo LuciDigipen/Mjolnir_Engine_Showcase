@@ -94,13 +94,15 @@ SaveScene    SceneModule::Save, SceneSaved stage
 PlayScene    SceneModule::CaptureForPlay, PlayBegin stage, Play mode
 StopScene    PlayEnd stage, SceneModule::RestoreFromPlay, Edit mode, SceneLoad stage
 asset swap   AssetsModule::BeginReload, ReloadPrepare stage, CommitReload, ReloadCommit stage
+             (a veto: ReloadAbort stage, AbortReload)
 ```
 
 `StopScene` runs `PlayEnd` before the restore, so scripts get their `OnStop` in
 the World they ran in. Stop keeps the GPU caches: the restore fires `OnRemove`
 for every Play entity, which drops its per-entity state, and the caches are
 keyed by asset. A `ReloadPrepare` function vetoes the swap by throwing; `App`
-then aborts the reload and tells the import why.
+then runs `ReloadAbort`, so the holders that prepared before it drop their
+staging, aborts the reload and tells the import why.
 
 `EngineModeState` (see [core.md](core.md)) is a `World` resource; `App` is the
 only thing that flips it. The editor's toolbar and the pause menu push `Play`,
