@@ -29,6 +29,29 @@ namespace mir
         kCount
     };
 
+    // Transitions App runs; each runs the functions modules registered for it, in
+    // registration order. A SceneLoad function must not assume SceneUnload ran first
+    enum class Stage : uint8_t
+    {
+        SceneUnload,
+        SceneLoad,
+        SceneSaved,
+        PlayBegin,
+        PlayEnd,
+        // a function vetoes the reload by throwing
+        ReloadPrepare,
+        ReloadCommit,
+        kCount
+    };
+
+    // Host work once per rendered frame, outside the phases
+    enum class FrameSlot : uint8_t
+    {
+        // after requests are applied, before the UI and the systems
+        FrameBegin,
+        kCount
+    };
+
     // Everything a system is handed for one tick.
     struct SystemContext
     {
