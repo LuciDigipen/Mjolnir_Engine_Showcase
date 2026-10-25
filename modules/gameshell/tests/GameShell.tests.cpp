@@ -5,8 +5,7 @@
  *        the gamepad alone, the mouse alone and the keyboard alone, game input
  *        held while it is open, the HUD out of the stick's reach, and both in
  *        the editor's viewport and fullscreen. Raw input goes through
- *        InputSystem and the default bindings, as in App, into a headless
- *        ImGui context.
+ *        InputSystem and the default bindings, as in App.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -25,7 +24,6 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
-#include <imgui.h>
 
 #include <optional>
 #include <string>
@@ -62,19 +60,10 @@ namespace
     public:
         explicit Fixture(const UIRect &area = kFullscreen) : mArea(area)
         {
-            mImGui = ImGui::CreateContext();
-            ImGuiIO &io = ImGui::GetIO();
-            io.DisplaySize = ImVec2(1920, 1080);
-            io.DeltaTime = 1.0f / 60.0f;
-            io.IniFilename = nullptr;
-            io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
-
             // a game's own action, beside the defaults
             mMap.AddAction("Fire", InputActionType::Button)
                 .bindings.push_back(InputBinding{.device = DeviceKind::Keyboard, .key = Key::F});
         }
-
-        ~Fixture() { ImGui::DestroyContext(mImGui); }
 
         Fixture(const Fixture &) = delete;
         Fixture &operator=(const Fixture &) = delete;
@@ -86,13 +75,11 @@ namespace
             mSystem.OnUpdate(mContext);
 
             const RawInputSnapshot &raw = mWindow.mRaw;
-            ImGui::NewFrame();
             mUI.BeginFrame(mArea, mInput, mMap,
                            UIPointer{static_cast<float>(raw.mouseX), static_cast<float>(raw.mouseY),
                                      raw.IsDown(MouseButton::Left)});
             const GameShellAction action = mShell.Draw(mUI, playing, dt);
             mUI.EndFrame();
-            ImGui::EndFrame();
             return action;
         }
 
@@ -156,7 +143,6 @@ namespace
         UIId Focus() const { return mUI.State().Focus(); }
 
     private:
-        ImGuiContext *mImGui = nullptr;
         UIRect mArea;
         TestWindow mWindow;
         World mWorld;

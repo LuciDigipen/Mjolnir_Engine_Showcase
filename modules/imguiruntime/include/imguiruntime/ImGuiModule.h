@@ -23,6 +23,16 @@ namespace mir
     class RendererModule;
     class WindowModule;
 
+    // RunUI runs every Tools drawer, then every Game drawer. An order that follows no
+    // dependency edge needs a boundary: the game UI fits the scene viewport a tool
+    // drawer, the editor's, writes the same frame
+    enum class DrawerGroup : uint8_t
+    {
+        Tools,
+        Game,
+        kCount
+    };
+
     class ImGuiModule
     {
     public:
@@ -33,8 +43,8 @@ namespace mir
         ImGuiModule(const ImGuiModule &) = delete;
         ImGuiModule &operator=(const ImGuiModule &) = delete;
 
-        // drawn in registration order, between the frame's BeginFrame and EndFrame
-        [[nodiscard]] Registration AddDrawer(std::function<void()> drawer);
+        // drawn by group, then in registration order, between the frame's BeginFrame and EndFrame
+        [[nodiscard]] Registration AddDrawer(DrawerGroup group, std::function<void()> drawer);
 
         // BeginFrame, the drawers, EndFrame; hands the draw data to the renderer and the
         // frame's keyboard and mouse capture to InputState, for this frame's systems
@@ -46,6 +56,7 @@ namespace mir
         struct Drawer
         {
             uint64_t id;
+            DrawerGroup group;
             std::function<void()> draw;
         };
 

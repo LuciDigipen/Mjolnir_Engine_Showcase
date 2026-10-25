@@ -10,6 +10,7 @@
  */
 #pragma once
 
+#include "UIBackend.h"
 #include "UIDrawList.h"
 #include "UIId.h"
 #include "UILayout.h"
@@ -92,8 +93,17 @@ namespace mir
         UITextures &Textures() { return mTextures; }
         const UITextures &Textures() const { return mTextures; }
 
+        // what EndFrame submits to; without one a frame runs and draws nothing.
+        // Null before the backend goes; the textures it made stay
+        void SetBackend(IUIBackend *backend)
+        {
+            mBackend = backend;
+            mTextures.SetBackend(backend);
+        }
+
     private:
         UITextures mTextures;
+        IUIBackend *mBackend = nullptr;
         UIDrawList mDrawList;
         UIState mState;
         UIRect mArea;

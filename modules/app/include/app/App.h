@@ -19,9 +19,9 @@
 #include <core/ecs/FixedTimestep.h>
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/World.h>
-#include <gameshell/GameShell.h>
-#include <gameui/UIContext.h>
-#include <gameui/UIDemoScreen.h>
+#include <gameshell/GameShellModule.h>
+#include <gameui/GameUIModule.h>
+#include <gameui_imgui/GameUIImGuiModule.h>
 #include <imguiruntime/ImGuiModule.h>
 #include <input/InputModule.h>
 #include <input_script/InputScriptModule.h>
@@ -156,9 +156,6 @@ namespace mir
         // Toggles Running/Paused. No-op outside Play.
         void TogglePause();
 
-        //queues what the player asked of the game in the pause menu
-        void ApplyShellAction(GameShellAction action);
-
         //windowed to fullscreen without a restart. called by f11.
         //swapchain is recreated next frame.
         void ToggleFullscreen();
@@ -181,9 +178,6 @@ namespace mir
         };
 
         ModuleContext Context();
-
-        // the editor, the game UI and their actions; one ImGui drawer
-        void DrawUI();
 
         // context is rebuilt per tick
         SystemContext MakeContext(float dt);
@@ -216,9 +210,6 @@ namespace mir
         // the mSwitchProjectTo test hook
         void RunSwitchHook();
 
-        //the game UI's area: the editor's scene viewport, or the whole window
-        UIRect GameUIArea() const;
-
     #if MIR_WITH_EDITOR
         // swaps in what a finished import cooked, at an Edit frame boundary
         void ApplyImportedAssets();
@@ -231,11 +222,6 @@ namespace mir
         GameProject mProject;
         StartupSplash mSplash;
 
-        // before ImGuiModule, so their UI textures are destroyed after ImGui shuts down
-        UIContext mGameUI;
-        UIDemoScreen mUIDemo;
-        GameShell mGameShell;
-
         // before mWorld, so it is destroyed after it
         CommandBuffer mCommands;
         World mWorld;
@@ -245,6 +231,10 @@ namespace mir
         AssetsModule mAssets;
         SceneModule mScene;
         PrefabModule mPrefab;
+        // before ImGuiModule: ImGui's shutdown frees the GPU side of the UI's textures,
+        // so the textures must still be there
+        GameUIModule mGameUI;
+        GameShellModule mGameShell;
         WindowModule mWindow;
         SplashStep mRendererStep{ mSplash, "Initializing renderer...", 0.2f };
         RendererModule mRenderer;
@@ -268,15 +258,12 @@ namespace mir
         RendererScriptModule mRendererScript;
         TerrainScriptModule mTerrainScript;
         TerrainRuntimeModule mTerrain;
+        GameUIImGuiModule mGameUIImGui;
 
         std::optional<GameProject> mProjectToOpen;
         bool mSwitchHookFired = false;
-        float mFrameDt = 0.0f;
         double mElapsed = 0.0;
         uint64_t mFrame = 0;
         FixedTimestep mFixedTimestep;
-
-        // last: unregisters before the members DrawUI uses are destroyed
-        Registration mUiDrawer;
     };
 } // namespace mir

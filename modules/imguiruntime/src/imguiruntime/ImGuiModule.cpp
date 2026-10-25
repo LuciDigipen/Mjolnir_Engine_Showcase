@@ -48,10 +48,10 @@ namespace mir
 
     ImGuiModule::~ImGuiModule() { mRuntime.Shutdown(mRenderer.Renderer()); }
 
-    Registration ImGuiModule::AddDrawer(std::function<void()> drawer)
+    Registration ImGuiModule::AddDrawer(DrawerGroup group, std::function<void()> drawer)
     {
         const uint64_t id = mNextDrawerId++;
-        mDrawers.push_back(Drawer{ id, std::move(drawer) });
+        mDrawers.push_back(Drawer{ id, group, std::move(drawer) });
         return Registration(mAlive, [this, id]
             {
                 std::erase_if(mDrawers, [id](const Drawer &entry) { return entry.id == id; });
@@ -61,8 +61,14 @@ namespace mir
     void ImGuiModule::RunUI()
     {
         mRuntime.BeginFrame();
-        for (const Drawer &drawer : mDrawers)
-            drawer.draw();
+        for (auto group = static_cast<uint8_t>(0); group < static_cast<uint8_t>(DrawerGroup::kCount); ++group)
+        {
+            for (const Drawer &drawer : mDrawers)
+            {
+                if (static_cast<uint8_t>(drawer.group) == group)
+                    drawer.draw();
+            }
+        }
         mRenderer.Renderer().SetImGuiDrawData(mRuntime.EndFrame());
 
         if (InputState *input = mContext.world.TryResource<InputState>())

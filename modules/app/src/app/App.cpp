@@ -36,20 +36,6 @@ namespace mir
 {
     namespace
     {
-    #if MIR_WITH_EDITOR
-        UIRect ToUIRect(const VkRect2D &rect)
-        {
-            return UIRect{ static_cast<float>(rect.offset.x), static_cast<float>(rect.offset.y),
-                          static_cast<float>(rect.extent.width), static_cast<float>(rect.extent.height) };
-        }
-    #endif
-
-        UIPointer ToUIPointer(const RawInputSnapshot &input)
-        {
-            return UIPointer{ static_cast<float>(input.mouseX), static_cast<float>(input.mouseY),
-                             input.IsDown(MouseButton::Left) };
-        }
-
         size_t MissingFileCount(const SceneProbe &probe)
         {
             return probe.mMissingEntities.size() + probe.mMissingInstances.size();
@@ -131,6 +117,9 @@ namespace mir
           mAssets(CookedAssetsDir()),
           mScene(Context(), mProject.mSceneDir),
           mPrefab(Context(), mScene, PrefabSourceDir(mProject)),
+          mGameUI(Context()),
+          mGameShell(Context(), mGameUI, mAssets,
+              GameShellSettings{ .mUIDemo = mDesc.mUIDemo, .mQuitStopsPlay = mDesc.mEnableEditorLayout }),
           mWindow(MakeWindowDesc(mDesc)),
           mRenderer(Context(), mWindow.Get(), mAssets,
               RendererModuleSettings{ .mAppName = mDesc.mAppName,
@@ -154,14 +143,9 @@ namespace mir
           mRendererScript(mScript),
           mTerrainScript(mScript),
           mTerrain(Context(), mRenderer, mProject),
+          mGameUIImGui(Context(), mImGui, mWindow, mGameUI),
           mFixedTimestep{ .mStep = mDesc.mFixedDeltaSeconds, .mMaxSteps = mDesc.mMaxFixedSteps }
     {
-        // after the editor's drawer, so the game UI fits this frame's scene viewport
-        mUiDrawer = mImGui.AddDrawer([this] { DrawUI(); });
-
-        if (mDesc.mUIDemo)
-            mUIDemo.Load(mGameUI, Assets());
-
         mSplash.screen.SetProgress("Loading scene...", 0.9f);
         LoadProjectScene();
 
@@ -337,30 +321,6 @@ namespace mir
         SetPlayState(mWorld, IsPaused(mWorld) ? PlayState::Running : PlayState::Paused);
     }
 
-    void App::ApplyShellAction(GameShellAction action)
-    {
-        RequestQueue &requests = mWorld.Resource<RequestQueue>();
-        switch (action)
-        {
-        case GameShellAction::Pause:
-            requests.Push(Request::Pause);
-            break;
-        case GameShellAction::Resume:
-            requests.Push(Request::Resume);
-            break;
-        case GameShellAction::Restart:
-            requests.Push(Request::Stop);
-            requests.Push(Request::Play);
-            break;
-        case GameShellAction::Quit:
-            //the editor's Quit leaves Play, but game build closes
-            requests.Push(mDesc.mEnableEditorLayout ? Request::Stop : Request::Quit);
-            break;
-        case GameShellAction::None:
-            break;
-        }
-    }
-
     void App::ApplyRequests()
     {
         RequestQueue &queue = mWorld.Resource<RequestQueue>();
@@ -512,7 +472,6 @@ namespace mir
             SystemContext frameContext = MakeContext(dt);
             mScheduler.RunFrameSlot(FrameSlot::FrameBegin, frameContext);
 
-            mFrameDt = dt;
             mImGui.RunUI();
 
 
@@ -537,32 +496,6 @@ namespace mir
             if (mDesc.mMaxFrames != 0 && mFrame >= mDesc.mMaxFrames)
                 mWindow.Get().RequestClose();
         }
-    }
-
-    void App::DrawUI()
-    {
-        if (mWindow.Get().Width() == 0 || mWindow.Get().Height() == 0)
-            return;
-
-        mGameUI.BeginFrame(GameUIArea(), mWorld.Resource<InputState>(), mWorld.Resource<InputMap>(),
-            ToUIPointer(mWindow.Get().RawInput()));
-        GameShellAction shellAction = GameShellAction::None;
-        if (mDesc.mUIDemo)
-            mUIDemo.Draw(mGameUI);
-        else
-            shellAction = mGameShell.Draw(mGameUI, IsPlaying(mWorld), mFrameDt);
-        mGameUI.EndFrame();
-
-        ApplyShellAction(shellAction);
-    }
-
-    UIRect App::GameUIArea() const
-    {
-    #if MIR_WITH_EDITOR
-        if (mDesc.mEnableEditorLayout)
-            return ToUIRect(mEditor.Get().SceneViewportRect());
-    #endif
-        return UIRect{ 0.0f, 0.0f, static_cast<float>(mWindow.Get().Width()), static_cast<float>(mWindow.Get().Height()) };
     }
 
 #if MIR_WITH_EDITOR

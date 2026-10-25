@@ -24,6 +24,7 @@
 #include <core/log/Log.h>
 #include <core/log/SetupError.h>
 #include <core/platform/Process.h>
+#include <gameui/GameUIArea.h>
 #include <imguiruntime/ImGuiModule.h>
 #include <input/InputMap.h>
 #include <renderer/PostProcessingSettings.h>
@@ -133,7 +134,7 @@ namespace mir
                 MIR_LOG_INFO("Applied imported assets at an Edit frame boundary");
             });
 
-        mDrawer = imgui.AddDrawer([this, &window]
+        mDrawer = imgui.AddDrawer(DrawerGroup::Tools, [this, &window]
             {
                 if (window.Get().Width() == 0 || window.Get().Height() == 0)
                     return;
@@ -163,7 +164,14 @@ namespace mir
     void EditorModule::FeedViewport()
     {
         RenderSystem &rendering = mRenderer.Rendering();
-        rendering.SetViewportRect(0, mEnableLayout ? mEditor.SceneViewportRect() : VkRect2D{});
+        const VkRect2D viewport = mEditor.SceneViewportRect();
+        rendering.SetViewportRect(0, mEnableLayout ? viewport : VkRect2D{});
+
+        // the game UI draws later this frame, into the same scene viewport
+        GameUIArea &area = mWorld.Resource<GameUIArea>();
+        area.mSet = mEnableLayout;
+        area.mRect = UIRect{ static_cast<float>(viewport.offset.x), static_cast<float>(viewport.offset.y),
+                             static_cast<float>(viewport.extent.width), static_cast<float>(viewport.extent.height) };
 
         // only Edit feeds the editor camera
         if (IsEditing(mWorld) && mEnableLayout)

@@ -18,6 +18,7 @@ target_link_libraries(engine_editor
             mir::assets
             mir::core
             mir::editortheme
+            mir::gameui
             mir::scene
             mir::serial
             imgui::imgui
