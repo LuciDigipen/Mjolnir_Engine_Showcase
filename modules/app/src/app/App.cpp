@@ -285,7 +285,20 @@ namespace mir
     #if MIR_WITH_EDITOR
         mProjectMenu.clear();
         for (const GameProject &project : mAvailableProjects)
-            mProjectMenu.push_back(ProjectMenuEntry{ project.mDir, project.mName });
+        {
+            // listed with the reason, not hidden: a game that vanished from the menu reads as lost
+            ProjectMenuEntry entry{ project.mDir, project.mName, {} };
+            try
+            {
+                GameProject resolved = project;
+                ResolveAssetIdRoot(resolved);
+            }
+            catch (const SetupError &error)
+            {
+                entry.mUnavailable = error.What() + " (" + error.Cause() + ")";
+            }
+            mProjectMenu.push_back(std::move(entry));
+        }
     #endif
 
         mSplash.SetProgress("Loading scene...", 0.9f);

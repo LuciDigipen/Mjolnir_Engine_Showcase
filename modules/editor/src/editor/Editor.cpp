@@ -432,11 +432,14 @@ namespace mir
             ImGui::PushID(project.mDir.c_str());
 
             const bool isCurrent = project.mDir == currentProject;
-            if (ImGui::MenuItem(project.mName.c_str(), project.mDir.c_str(), isCurrent) && !isCurrent)
+            const bool available = project.mUnavailable.empty();
+            if (ImGui::MenuItem(project.mName.c_str(), project.mDir.c_str(), isCurrent, available) && !isCurrent)
             {
                 mPendingProject = project;
                 mOpenConfirmRequested = true;
             }
+            if (!available && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("%s", project.mUnavailable.c_str());
 
             ImGui::PopID();
         }
