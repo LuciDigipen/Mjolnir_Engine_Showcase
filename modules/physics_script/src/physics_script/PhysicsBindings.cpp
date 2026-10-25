@@ -47,10 +47,10 @@ namespace mir
                 return std::nullopt;
 
             const RigidBody *rigidBody = world.GetComponent<RigidBody>(entity);
-            if (rigidBody == nullptr || !rigidBody->body.IsValid())
+            if (rigidBody == nullptr || !rigidBody->runtime.body.IsValid())
                 return std::nullopt;
 
-            return BodyRef{*physics, rigidBody->body};
+            return BodyRef{*physics, rigidBody->runtime.body};
         }
 
         using BodyRead = glm::vec3 (PhysicsWorld::*)(BodyHandle) const;

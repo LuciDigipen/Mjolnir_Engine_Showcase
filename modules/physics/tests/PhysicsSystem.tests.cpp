@@ -189,8 +189,8 @@ TEST_CASE("Each created body is tagged with its entity", "[physics]")
 
     fixture.Run(1);
 
-    const mir::BodyHandle floorBody = fixture.world.GetComponent<mir::RigidBody>(floor)->body;
-    const mir::BodyHandle sphereBody = fixture.world.GetComponent<mir::RigidBody>(sphere)->body;
+    const mir::BodyHandle floorBody = fixture.world.GetComponent<mir::RigidBody>(floor)->runtime.body;
+    const mir::BodyHandle sphereBody = fixture.world.GetComponent<mir::RigidBody>(sphere)->runtime.body;
     CHECK(fixture.Physics().BodyEntity(floorBody) == floor);
     CHECK(fixture.Physics().BodyEntity(sphereBody) == sphere);
 }
@@ -227,13 +227,13 @@ namespace
             ++calls;
             seen.clear();
             world.GetOrCreateQuery<mir::RigidBody>().ForEach([&](mir::Entity, mir::RigidBody &rigidBody) {
-                const std::optional<mir::WorldPosition> at = physics.BodyPosition(rigidBody.body);
+                const std::optional<mir::WorldPosition> at = physics.BodyPosition(rigidBody.runtime.body);
                 REQUIRE(at);
                 seen.push_back(at->Meters());
                 if (open)
-                    physics.ResumeBody(rigidBody.body);
+                    physics.ResumeBody(rigidBody.runtime.body);
                 else
-                    physics.HoldBody(rigidBody.body);
+                    physics.HoldBody(rigidBody.runtime.body);
             });
         }
     };
@@ -274,7 +274,7 @@ namespace
     {
         const mir::RigidBody *rigidBody = fixture.world.GetComponent<mir::RigidBody>(entity);
         REQUIRE(rigidBody != nullptr);
-        const std::optional<mir::WorldPosition> position = fixture.Physics().BodyPosition(rigidBody->body);
+        const std::optional<mir::WorldPosition> position = fixture.Physics().BodyPosition(rigidBody->runtime.body);
         REQUIRE(position);
         return position->Meters();
     }

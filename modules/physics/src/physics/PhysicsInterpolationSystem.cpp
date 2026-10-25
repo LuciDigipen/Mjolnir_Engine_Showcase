@@ -36,19 +36,19 @@ namespace mir
                 if (!rigidBody.interpolate || !HasDynamicBody(rigidBody))
                     return;
 
-                if (transform.Version() != rigidBody.transformVersion)
+                if (transform.Version() != rigidBody.runtime.transformVersion)
                     return;
 
                 const WorldVec3 position =
-                    glm::mix(rigidBody.previousPosition, rigidBody.currentPosition, static_cast<WorldReal>(alpha));
-                const glm::quat rotation = glm::slerp(rigidBody.previousRotation, rigidBody.currentRotation, alpha);
+                    glm::mix(rigidBody.runtime.previousPosition, rigidBody.runtime.currentPosition, static_cast<WorldReal>(alpha));
+                const glm::quat rotation = glm::slerp(rigidBody.runtime.previousRotation, rigidBody.runtime.currentRotation, alpha);
 
                 if (position != transform.Position())
                     transform.SetPosition(position);
                 if (rotation != transform.Rotation())
                     transform.SetRotation(rotation);
 
-                rigidBody.transformVersion = transform.Version();
+                rigidBody.runtime.transformVersion = transform.Version();
             });
     }
 }

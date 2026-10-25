@@ -40,8 +40,8 @@ namespace mir
 
         void ResetStepPoses(RigidBody &rigidBody, const Transform &transform)
         {
-            rigidBody.previousPosition = rigidBody.currentPosition = transform.Position();
-            rigidBody.previousRotation = rigidBody.currentRotation = transform.Rotation();
+            rigidBody.runtime.previousPosition = rigidBody.runtime.currentPosition = transform.Position();
+            rigidBody.runtime.previousRotation = rigidBody.runtime.currentRotation = transform.Rotation();
         }
 
         // Spawns and teleports are already in the world, so they pass the gates like any move.
@@ -78,7 +78,7 @@ namespace mir
         mQuery->ForEach(
             [&](Entity entity, Transform &transform, RigidBody &rigidBody)
             {
-                if (!rigidBody.body.IsValid())
+                if (!rigidBody.runtime.body.IsValid())
                 {
                     // Jolt is world space and Transform is parent space, so a
                     // parented body would drift. Warned once, at creation.
@@ -91,18 +91,18 @@ namespace mir
 
                     // This runs after ScriptSystem PreUpdate phase,
                     // meaning OnStart() in a script can never find a body.
-                    rigidBody.body = CreateBodyFor(physics, rigidBody, transform);
-                    physics.SetBodyEntity(rigidBody.body, entity);
+                    rigidBody.runtime.body = CreateBodyFor(physics, rigidBody, transform);
+                    physics.SetBodyEntity(rigidBody.runtime.body, entity);
                     ResetStepPoses(rigidBody, transform);
                 }
-                else if (transform.Version() != rigidBody.transformVersion)
+                else if (transform.Version() != rigidBody.runtime.transformVersion)
                 {
                     // Moved by something other than physics since the last step.
-                    physics.SetBodyTransform(rigidBody.body, BodyWorldPosition(transform), transform.Rotation());
+                    physics.SetBodyTransform(rigidBody.runtime.body, BodyWorldPosition(transform), transform.Rotation());
                     ResetStepPoses(rigidBody, transform);
                 }
 
-                rigidBody.transformVersion = transform.Version();
+                rigidBody.runtime.transformVersion = transform.Version();
             });
     }
 
@@ -114,34 +114,34 @@ namespace mir
                 if (!HasDynamicBody(rigidBody))
                     return;
 
-                rigidBody.previousPosition = rigidBody.currentPosition;
-                rigidBody.previousRotation = rigidBody.currentRotation;
+                rigidBody.runtime.previousPosition = rigidBody.runtime.currentPosition;
+                rigidBody.runtime.previousRotation = rigidBody.runtime.currentRotation;
 
                 // A body Jolt left at a non-finite position keeps its last
                 // Transform instead of writing that back.
-                const std::optional<WorldPosition> position = physics.BodyPosition(rigidBody.body);
+                const std::optional<WorldPosition> position = physics.BodyPosition(rigidBody.runtime.body);
                 if (position && position->Meters() != transform.Position())
                     transform.SetPosition(position->Meters());
 
-                const glm::quat rotation = physics.BodyRotation(rigidBody.body);
+                const glm::quat rotation = physics.BodyRotation(rigidBody.runtime.body);
                 if (rotation != transform.Rotation())
                     transform.SetRotation(rotation);
 
-                rigidBody.currentPosition = transform.Position();
-                rigidBody.currentRotation = transform.Rotation();
-                rigidBody.transformVersion = transform.Version();
+                rigidBody.runtime.currentPosition = transform.Position();
+                rigidBody.runtime.currentRotation = transform.Rotation();
+                rigidBody.runtime.transformVersion = transform.Version();
             });
     }
 
     void PhysicsSystem::OnRigidBodyRemoved(World &world, Entity entity)
     {
         RigidBody *rigidBody = world.GetComponent<RigidBody>(entity);
-        if (rigidBody == nullptr || !rigidBody->body.IsValid())
+        if (rigidBody == nullptr || !rigidBody->runtime.body.IsValid())
             return;
 
         if (PhysicsWorld *physics = world.TryResource<PhysicsWorld>(); physics != nullptr)
-            physics->DestroyBody(rigidBody->body);
+            physics->DestroyBody(rigidBody->runtime.body);
 
-        rigidBody->body = {};
+        rigidBody->runtime.body = {};
     }
 }

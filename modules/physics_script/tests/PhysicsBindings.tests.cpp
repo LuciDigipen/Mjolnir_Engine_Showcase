@@ -121,7 +121,7 @@ namespace
 
         mir::PhysicsWorld &Physics() { return world.Resource<mir::PhysicsWorld>(); }
 
-        mir::BodyHandle Body() { return world.GetComponent<mir::RigidBody>(entity)->body; }
+        mir::BodyHandle Body() { return world.GetComponent<mir::RigidBody>(entity)->runtime.body; }
 
         glm::vec3 Linear() { return Physics().BodyLinearVelocity(Body()); }
         glm::vec3 Angular() { return Physics().BodyAngularVelocity(Body()); }

@@ -81,7 +81,7 @@ namespace
         mir::WorldVec3 SimulatedMeters(mir::Entity entity)
         {
             const std::optional<mir::WorldPosition> position =
-                world.Resource<mir::PhysicsWorld>().BodyPosition(BodyOf(entity).body);
+                world.Resource<mir::PhysicsWorld>().BodyPosition(BodyOf(entity).runtime.body);
             REQUIRE(position);
             return position->Meters();
         }
@@ -97,8 +97,8 @@ TEST_CASE("An interpolating body is drawn between its last two steps", "[physics
         fixture.Frame(1, 1.0f);
 
     const mir::RigidBody &body = fixture.BodyOf(entity);
-    const double previousY = body.previousPosition.y;
-    const double currentY = body.currentPosition.y;
+    const double previousY = body.runtime.previousPosition.y;
+    const double currentY = body.runtime.currentPosition.y;
     REQUIRE(previousY > currentY); // falling
 
     // A frame between steps: half way from the last pose to the newest.
@@ -120,7 +120,7 @@ TEST_CASE("A body without interpolate still shows its latest step", "[physics][i
         fixture.Frame(1, 1.0f);
     fixture.Frame(0, 0.25f);
 
-    REQUIRE(fixture.TransformOf(entity).Position() == fixture.BodyOf(entity).currentPosition);
+    REQUIRE(fixture.TransformOf(entity).Position() == fixture.BodyOf(entity).runtime.currentPosition);
 }
 
 TEST_CASE("Interpolated writes are not read back as a teleport", "[physics][interpolation]")

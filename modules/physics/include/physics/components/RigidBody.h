@@ -32,12 +32,17 @@ namespace mir
         bool interpolate = false;
 
         // Runtime state PhysicsSystem keeps; not in the field table, so never saved.
-        BodyHandle body;
-        uint32_t transformVersion = 0;
-        WorldVec3 previousPosition{ 0 };
-        WorldVec3 currentPosition{ 0 };
-        glm::quat previousRotation = kIdentityRotation;
-        glm::quat currentRotation = kIdentityRotation;
+        struct Runtime
+        {
+            BodyHandle body;
+            uint32_t transformVersion = 0;
+            WorldVec3 previousPosition{ 0 };
+            WorldVec3 currentPosition{ 0 };
+            glm::quat previousRotation = kIdentityRotation;
+            glm::quat currentRotation = kIdentityRotation;
+        };
+
+        Runtime runtime;
     };
 
     MIR_ASSERT_COMPONENT(RigidBody);
@@ -45,9 +50,10 @@ namespace mir
     // A body the simulation moves, as opposed to one it only collides against.
     inline bool HasDynamicBody(const RigidBody &rigidBody)
     {
-        return rigidBody.body.IsValid() && rigidBody.motion == PhysicsMotion::Dynamic;
+        return rigidBody.runtime.body.IsValid() && rigidBody.motion == PhysicsMotion::Dynamic;
     }
 
+    // `runtime` is deliberately not listed: it is this run's live state, never saved or edited.
     inline constexpr FieldDesc kRigidBodyFields[] = {
         { .mName = "motion", .mKind = FieldKind::Int, .mOffset = offsetof(RigidBody, motion),
          .mWidget = FieldWidget::Enum, .mEnumNames = kPhysicsMotionNames },
