@@ -10,6 +10,7 @@
 
 #include <script/IScriptHost.h>
 
+#include <cstddef>
 #include <memory>
 
 namespace mir
@@ -33,6 +34,9 @@ namespace mir
 
         int32_t CreateInstance(std::string_view scriptName) override;
         void DestroyInstance(int32_t instanceRef) override;
+
+        // live instances; a removed ScriptRef that leaves one behind is a leak
+        std::size_t InstanceCount() const;
 
         void CallOnStart(World &world, CommandBuffer &commands, Entity entity, int32_t instanceRef) override;
         void CallOnUpdate(World &world, CommandBuffer &commands, Entity entity, int32_t instanceRef,

@@ -189,6 +189,11 @@ namespace mir
         mImpl->DestroyInstance(instanceRef);
     }
 
+    std::size_t ScriptHost::InstanceCount() const
+    {
+        return mImpl->mInstances.size();
+    }
+
     void ScriptHost::CallOnStart(World &world, CommandBuffer &, Entity entity, int32_t instanceRef)
     {
         mImpl->CallCallback(instanceRef, "OnStart", std::ref(world), entity);
