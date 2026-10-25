@@ -194,16 +194,18 @@ private:
 };
 ```
 
-Register it in its module's constructor, in the phase that expresses the
+Register it in its module's constructor, in the phase and order that express the
 ordering you need:
 
 ```cpp
-context.scheduler.AddSystem<MovementSystem>(SystemPhase::Update);
+context.scheduler.AddSystem<MovementSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kNormal});
 ```
 
-Within a phase, a system may rely on running after another only when its library
-depends on the other's. Write `Transform` before `Propagate` and read
-`WorldTransform` in `LateUpdate`.
+Within a phase, systems run by `SystemOrder`, lowest first: `kEarly` is 10,
+`kNormal` is 50 and `kLate` is 90, and any int from 0 to 100 works between them.
+Equal orders are unspecified, so a system that needs another to run first takes a
+different order. Write `Transform` before `Propagate` and read `WorldTransform`
+in `LateUpdate`.
 
 `Add`, `Remove` and `Destroy` go on `context.commands` and land at the next phase
 boundary. Mutating inside `ForEach` invalidates the iteration.

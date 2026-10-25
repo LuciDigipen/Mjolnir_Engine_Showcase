@@ -26,9 +26,11 @@ namespace mir
         RegisterScriptComponents();
 
         // the resolver first, so a ScriptRef made last frame runs this frame
-        mResolver = &context.scheduler.AddSystem<ScriptResolveSystem>(SystemPhase::PreUpdate, mHost,
+        mResolver = &context.scheduler.AddSystem<ScriptResolveSystem>(SystemPhase::PreUpdate,
+            SystemOrder{SystemOrder::kEarly}, mHost,
             MakeScriptAssetLoader(mHost, mReload, assets.Cache(), std::move(assetIdRoot)));
-        mScripts = &context.scheduler.AddSystem<ScriptSystem>(SystemPhase::PreUpdate, mHost);
+        mScripts = &context.scheduler.AddSystem<ScriptSystem>(SystemPhase::PreUpdate,
+            SystemOrder{SystemOrder::kNormal}, mHost);
 
         mHooks = context.world.SetComponentHooks<ScriptRef>({ .onRemove = [this](World &world, Entity entity)
             {

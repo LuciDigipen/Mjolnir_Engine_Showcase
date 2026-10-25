@@ -18,6 +18,6 @@ namespace mir
     CameraModule::CameraModule(ModuleContext context)
     {
         RegisterCameraComponents();
-        context.scheduler.AddSystem<CameraControllerSystem>(SystemPhase::LateUpdate);
+        context.scheduler.AddSystem<CameraControllerSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kNormal});
     }
 }

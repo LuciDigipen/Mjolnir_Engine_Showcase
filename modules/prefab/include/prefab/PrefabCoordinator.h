@@ -113,6 +113,8 @@ namespace mir
         void CommitScene(World &world, LoadedScene &scene, PublishedTable &published, bool mainScene);
         bool SceneHasPendingWork(const LoadedScene *scene, const PublishedTable &published) const;
         void ApplyRescan(const std::filesystem::path &prefabsDir);
+        void AddPendingDocument(PrefabId id);
+        std::vector<PrefabId> PendingInDependencyOrder() const;
 
         PrefabRegistry mRegistry;
         CompiledPrefabCache mCache;

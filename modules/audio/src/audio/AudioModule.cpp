@@ -35,9 +35,9 @@ namespace mir
         RegisterAudioComponents();
 
         // WorldTransform readers; the render after both, so it sends this frame's positions
-        context.scheduler.AddSystem<AudioEmitterSystem>(SystemPhase::LateUpdate);
-        context.scheduler.AddSystem<AudioListenerSystem>(SystemPhase::LateUpdate);
-        context.scheduler.AddSystem<AudioRenderSystem>(SystemPhase::LateUpdate);
+        context.scheduler.AddSystem<AudioEmitterSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kNormal});
+        context.scheduler.AddSystem<AudioListenerSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kNormal});
+        context.scheduler.AddSystem<AudioRenderSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kLate});
 
         mHooks = context.world.SetComponentHooks<AudioEmitter>({ .onRemove = &AudioEmitterSystem::OnEmitterRemoved });
     }

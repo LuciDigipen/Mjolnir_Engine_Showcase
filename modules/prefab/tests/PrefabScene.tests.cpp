@@ -218,7 +218,7 @@ TEST_CASE("PlacePrefabInstance registers every node under a fresh StableId", "[p
     PrefabRegistry registry;
     REQUIRE(registry.SetDocument(document));
     CompiledPrefabCache cache;
-    REQUIRE_FALSE(HasPrefabErrors(cache.Compile(document)));
+    REQUIRE_FALSE(HasPrefabErrors(cache.Compile(document, mir::RegistryLookup(registry))));
     const std::shared_ptr<const CompiledPrefab> prefab = cache.Find(document.mId);
     REQUIRE(prefab != nullptr);
 
@@ -257,7 +257,7 @@ TEST_CASE("TemplateEntityRef reports the default target and a null default", "[p
     PrefabRegistry registry;
     REQUIRE(registry.SetDocument(document));
     CompiledPrefabCache cache;
-    REQUIRE_FALSE(HasPrefabErrors(cache.Compile(document)));
+    REQUIRE_FALSE(HasPrefabErrors(cache.Compile(document, mir::RegistryLookup(registry))));
     PrefabSceneResolver resolver(registry, cache);
 
     ScenePrefabInstance instance;
@@ -284,7 +284,7 @@ TEST_CASE("Prefab scene instances round-trip ids and references", "[prefab][scen
     PrefabRegistry registry;
     REQUIRE(registry.SetDocument(document));
     CompiledPrefabCache cache;
-    REQUIRE_FALSE(HasPrefabErrors(cache.Compile(document)));
+    REQUIRE_FALSE(HasPrefabErrors(cache.Compile(document, mir::RegistryLookup(registry))));
     const std::shared_ptr<const CompiledPrefab> prefab = cache.Find(document.mId);
     REQUIRE(prefab != nullptr);
     PrefabSceneResolver resolver(registry, cache);
@@ -347,7 +347,7 @@ TEST_CASE("An instance whose template root has no Transform round-trips", "[pref
     PrefabRegistry registry;
     REQUIRE(registry.SetDocument(document));
     CompiledPrefabCache cache;
-    REQUIRE_FALSE(HasPrefabErrors(cache.Compile(document)));
+    REQUIRE_FALSE(HasPrefabErrors(cache.Compile(document, mir::RegistryLookup(registry))));
     const std::shared_ptr<const CompiledPrefab> prefab = cache.Find(document.mId);
     REQUIRE(prefab != nullptr);
     PrefabSceneResolver resolver(registry, cache);

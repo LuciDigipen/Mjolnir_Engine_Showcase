@@ -12,6 +12,7 @@
 
 #include <core/ecs/ComponentFields.h>
 #include <core/ecs/Entity.h>
+#include <core/math/WorldReal.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -54,6 +55,12 @@ namespace mir
         std::vector<AuthoredEntry> mEntries;
     };
 
+    struct AuthoredApplyTarget
+    {
+        std::string mLabel;
+        bool mOverrides = false;
+    };
+
     class IAuthoredEntities
     {
     public:
@@ -80,10 +87,23 @@ namespace mir
         virtual AuthoredAction Revert(const AuthoredKey &key) = 0;
         virtual AuthoredAction Apply(const AuthoredKey &key) = 0;
 
+        // Every layer below the origin that can take the override, outermost first.
+        virtual std::vector<AuthoredApplyTarget> ApplyTargets(const AuthoredKey &) { return {}; }
+
+        // The same Apply, written into the chosen layer instead of the outermost one.
+        virtual AuthoredAction Apply(const AuthoredKey &key, std::size_t target)
+        {
+            (void)target;
+            return Apply(key);
+        }
+
         // Node edits on the active document; a null parent means the document root.
         // A preset fills the new node with the components it creates on a fresh entity.
         virtual AuthoredAction CreateNode(Entity parent, std::size_t siblingIndex,
             const EntityPresetDesc *preset = nullptr) = 0;
+        // Adds a nested occurrence of the content Prefab; placement, when set, is parent-local.
+        virtual AuthoredAction PlacePrefabNode(std::string_view contentPath, Entity parent,
+            std::size_t siblingIndex, const std::optional<WorldVec3> &placement) = 0;
         virtual AuthoredAction DeleteNodes(std::span<const Entity> nodes) = 0;
         virtual AuthoredAction ReparentNode(Entity node, Entity parent, std::size_t siblingIndex) = 0;
 

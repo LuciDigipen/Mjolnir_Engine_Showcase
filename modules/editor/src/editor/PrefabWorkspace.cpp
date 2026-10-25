@@ -84,7 +84,8 @@ namespace mir
 
         if (!mCoordinator.Cache().Find(id))
         {
-            const std::vector<PrefabDiagnostic> diagnostics = mCoordinator.Cache().Compile(*document);
+            const std::vector<PrefabDiagnostic> diagnostics =
+                mCoordinator.Cache().Compile(*document, RegistryLookup(mCoordinator.Registry()));
             if (HasPrefabErrors(diagnostics))
                 return false;
         }
@@ -108,12 +109,15 @@ namespace mir
         if (!mCoordinator.BindPreview(id, world, preview->mScene))
             return false;
 
-        preview->mScheduler.AddSystem<TransformPropagateSystem>(SystemPhase::PostUpdate);
+        preview->mScheduler.AddSystem<TransformPropagateSystem>(SystemPhase::PostUpdate,
+            SystemOrder{SystemOrder::kEarly});
         if (mRenderer != nullptr)
         {
-            preview->mMesh = &preview->mScheduler.AddSystem<MeshResolveSystem>(SystemPhase::PostUpdate, *mRenderer,
+            preview->mMesh = &preview->mScheduler.AddSystem<MeshResolveSystem>(SystemPhase::PostUpdate,
+                SystemOrder{SystemOrder::kNormal}, *mRenderer,
                 mAssets, mAssetIdRoot);
-            preview->mModel = &preview->mScheduler.AddSystem<ModelSystem>(SystemPhase::PostUpdate, *mRenderer,
+            preview->mModel = &preview->mScheduler.AddSystem<ModelSystem>(SystemPhase::PostUpdate,
+                SystemOrder{SystemOrder::kNormal}, *mRenderer,
                 mAssets, mAssetIdRoot);
         }
 
@@ -201,7 +205,8 @@ namespace mir
         std::shared_ptr<const CompiledPrefab> prefab = mCoordinator.Cache().Find(id);
         if (!prefab)
         {
-            const std::vector<PrefabDiagnostic> diagnostics = mCoordinator.Cache().Compile(*document);
+            const std::vector<PrefabDiagnostic> diagnostics =
+                mCoordinator.Cache().Compile(*document, RegistryLookup(mCoordinator.Registry()));
             for (const PrefabDiagnostic &diagnostic : diagnostics)
                 MIR_LOG_ERROR("Place Prefab: {}", diagnostic.mMessage);
             if (HasPrefabErrors(diagnostics))

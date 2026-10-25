@@ -23,6 +23,7 @@
 #include <charconv>
 #include <cstddef>
 #include <cstring>
+#include <filesystem>
 #include <limits>
 #include <map>
 #include <memory>
@@ -109,6 +110,30 @@ namespace mir
                 return nullptr;
             const std::optional<std::size_t> index = FindNodeIndex(document, address.front());
             return index ? &document.mNodes[*index] : nullptr;
+        }
+
+        const PrefabNode *FindDocumentNode(const PrefabRegistry &registry, const PrefabDocument &document,
+            const SceneNodeAddress &address)
+        {
+            const PrefabDocument *current = &document;
+            for (std::size_t i = 0; i < address.size(); ++i)
+            {
+                const std::optional<std::size_t> index =
+                    current != nullptr ? FindNodeIndex(*current, address[i]) : std::nullopt;
+                if (!index)
+                    return nullptr;
+
+                const PrefabNode &node = current->mNodes[*index];
+                if (i + 1 == address.size())
+                    return node.mKind == PrefabNodeKind::Entity ? &node : nullptr;
+                if (node.mKind != PrefabNodeKind::Prefab)
+                    return nullptr;
+
+                current = registry.Find(node.mPrefab);
+                if (current == nullptr)
+                    return nullptr;
+            }
+            return nullptr;
         }
 
         const PrefabComponentInstance *FindComponent(const PrefabNode &node, std::string_view type)
@@ -205,10 +230,38 @@ namespace mir
             return std::min(indexOf(parent) + 1, order.size());
         }
 
+        json NewOccurrenceRecord(const PrefabDocument &document, PrefabNodeId id, PrefabNodeId parent,
+            PrefabId prefab, std::size_t siblingIndex, const std::optional<WorldVec3> &position,
+            PrefabNodeId innerRoot)
+        {
+            PrefabNode node;
+            node.mId = id;
+            node.mKind = PrefabNodeKind::Prefab;
+            node.mParent = parent;
+            node.mPrefab = prefab;
+
+            if (position)
+            {
+                PrefabPatch patch;
+                patch.mTarget = { innerRoot };
+                patch.mFields.push_back(PrefabFieldOverride{
+                    "Transform", "position", json::array({ position->x, position->y, position->z }) });
+                node.mPatches.push_back(std::move(patch));
+            }
+
+            json record = PrefabNodeToJson(document, node);
+            record["index"] = InsertionIndex(document, parent, siblingIndex, kNullPrefabNodeId);
+            return record;
+        }
+
         json NewNodeRecord(const PrefabDocument &document, PrefabNodeId id, PrefabNodeId parent,
             std::size_t siblingIndex, const EntityPresetDesc *preset)
         {
-            json components = json::array();
+            PrefabNode node;
+            node.mId = id;
+            node.mKind = PrefabNodeKind::Entity;
+            node.mParent = parent;
+
             if (preset != nullptr && preset->mCreate != nullptr)
             {
                 World scratch;
@@ -221,7 +274,8 @@ namespace mir
                         continue;
 
                     const void *component = ops->GetComponent(scratch, entity);
-                    json fields = json::object();
+                    PrefabComponentInstance instance;
+                    instance.mType = std::string(ops->mType.name);
                     for (const FieldDesc &field : ops->mFields)
                     {
                         if (field.ReadOnly())
@@ -229,28 +283,27 @@ namespace mir
                         // A preset creates one entity, so a reference has no node to point at.
                         if (field.mKind == FieldKind::EntityRef)
                         {
-                            fields[std::string(field.mName)] = nullptr;
+                            instance.mFields[std::string(field.mName)] = nullptr;
                             continue;
                         }
 
                         FieldBuffer buffer{};
                         field.Read(component, buffer.mBytes);
-                        fields[std::string(field.mName)] = FieldToJson(field.mKind, buffer.mBytes);
+                        instance.mFields[std::string(field.mName)] = FieldToJson(field.mKind, buffer.mBytes);
                     }
-                    components.push_back(json{ { "type", std::string(ops->mType.name) }, { "fields", std::move(fields) } });
+                    node.mComponents.push_back(std::move(instance));
                 }
             }
             else
             {
-                components.push_back(json{ { "type", "Transform" }, { "fields", json::object() } });
-                components.push_back(json{ { "type", "WorldTransform" }, { "fields", json::object() } });
-                components.push_back(json{ { "type", "Name" }, { "fields", json{ { "name", "Entity" } } } });
+                node.mComponents.push_back(PrefabComponentInstance{ "Transform", json::object() });
+                node.mComponents.push_back(PrefabComponentInstance{ "WorldTransform", json::object() });
+                node.mComponents.push_back(
+                    PrefabComponentInstance{ "Name", json{ { "name", "Entity" } } });
             }
 
-            json record = json::object();
+            json record = PrefabNodeToJson(document, node);
             record["index"] = InsertionIndex(document, parent, siblingIndex, kNullPrefabNodeId);
-            record["parent"] = std::to_string(parent);
-            record["components"] = std::move(components);
             return record;
         }
 
@@ -300,19 +353,202 @@ namespace mir
             return true;
         }
 
-        Transform ReadTransform(const PrefabComponentInstance &component)
+        json NodeRecord(const PrefabDocument &document, const PrefabNode &node)
+        {
+            json record = PrefabNodeToJson(document, node);
+            const std::optional<std::size_t> index = FindNodeIndex(document, node.mId);
+            record["index"] = index.value_or(document.mNodes.size());
+            return record;
+        }
+
+        bool ReadNodeRecord(const json &record, PrefabNode &out, std::string &reason)
+        {
+            json normalized = record;
+            if (!normalized.contains("id"))
+                normalized["id"] = std::to_string(out.mId);
+            if (!normalized.contains("kind"))
+                normalized["kind"] = "entity";
+
+            std::vector<PrefabDiagnostic> diagnostics;
+            const std::optional<PrefabNode> parsed = ParsePrefabNode(normalized, diagnostics);
+            if (!parsed)
+            {
+                reason = diagnostics.empty() ? "a node record is malformed" : diagnostics.front().mMessage;
+                return false;
+            }
+            if (parsed->mId != out.mId)
+            {
+                reason = "node record id " + std::to_string(parsed->mId) + " does not match the key";
+                return false;
+            }
+
+            out = *parsed;
+            if (out.mKind != PrefabNodeKind::Entity)
+                return true;
+
+            for (const PrefabComponentInstance &component : out.mComponents)
+            {
+                std::string fieldReason;
+                if (!ValidateDocumentFields(component.mType, component.mFields, fieldReason))
+                {
+                    reason = std::move(fieldReason);
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        const PrefabPatch *FindPatch(const PrefabNode &node, const SceneNodeAddress &target)
+        {
+            for (const PrefabPatch &patch : node.mPatches)
+            {
+                if (patch.mTarget == target)
+                    return &patch;
+            }
+            return nullptr;
+        }
+
+        PrefabPatch *FindPatch(PrefabNode &node, const SceneNodeAddress &target)
+        {
+            for (PrefabPatch &patch : node.mPatches)
+            {
+                if (patch.mTarget == target)
+                    return &patch;
+            }
+            return nullptr;
+        }
+
+        PrefabPatch &GetOrAddPatch(PrefabNode &node, const SceneNodeAddress &target)
+        {
+            if (PrefabPatch *existing = FindPatch(node, target))
+                return *existing;
+
+            PrefabPatch patch;
+            patch.mTarget = target;
+            node.mPatches.push_back(std::move(patch));
+            return node.mPatches.back();
+        }
+
+        void EraseEmptyPatch(PrefabNode &node, const SceneNodeAddress &target)
+        {
+            std::erase_if(node.mPatches, [&target](const PrefabPatch &patch)
+                {
+                    return patch.mTarget == target && patch.mFields.empty() &&
+                        patch.mAddedComponents.empty() && patch.mRemovedComponents.empty();
+                });
+        }
+
+        const PrefabComponentInstance *FindAddedComponent(const PrefabPatch &patch, std::string_view type)
+        {
+            for (const PrefabComponentInstance &component : patch.mAddedComponents)
+            {
+                if (component.mType == type)
+                    return &component;
+            }
+            return nullptr;
+        }
+
+        PrefabComponentInstance *FindAddedComponent(PrefabPatch &patch, std::string_view type)
+        {
+            for (PrefabComponentInstance &component : patch.mAddedComponents)
+            {
+                if (component.mType == type)
+                    return &component;
+            }
+            return nullptr;
+        }
+
+        const PrefabFieldOverride *FindPatchField(const PrefabPatch &patch, std::string_view component,
+            std::string_view field)
+        {
+            for (const PrefabFieldOverride &entry : patch.mFields)
+            {
+                if (entry.mComponent == component && entry.mField == field)
+                    return &entry;
+            }
+            return nullptr;
+        }
+
+        PrefabFieldOverride *FindPatchField(PrefabPatch &patch, std::string_view component, std::string_view field)
+        {
+            for (PrefabFieldOverride &entry : patch.mFields)
+            {
+                if (entry.mComponent == component && entry.mField == field)
+                    return &entry;
+            }
+            return nullptr;
+        }
+
+        Transform ReadTransform(const json &fields)
         {
             Transform transform;
             for (const FieldDesc &field : kTransformFields)
             {
-                const auto value = component.mFields.find(std::string(field.mName));
+                const auto value = fields.find(std::string(field.mName));
                 FieldBuffer buffer{};
-                if (value != component.mFields.end() && JsonToField(field.mKind, *value, buffer.mBytes))
+                if (value != fields.end() && JsonToField(field.mKind, *value, buffer.mBytes))
                     field.Write(&transform, buffer.mBytes);
             }
             return transform;
         }
 
+        std::optional<PrefabNodeId> OccurrenceRoot(const PrefabRegistry &registry, const PrefabNode &node)
+        {
+            const PrefabDocument *inner = registry.Find(node.mPrefab);
+            if (inner == nullptr)
+                return std::nullopt;
+            return inner->mRootNode;
+        }
+
+        // An occurrence's Transform is its inner root's, under the occurrence's own root patch.
+        std::optional<Transform> NodeTransform(const PrefabRegistry &registry, const PrefabNode &node)
+        {
+            if (node.mKind == PrefabNodeKind::Entity)
+            {
+                const PrefabComponentInstance *component = FindComponent(node, "Transform");
+                return component != nullptr ? std::optional<Transform>(ReadTransform(component->mFields)) : std::nullopt;
+            }
+
+            const PrefabDocument *inner = registry.Find(node.mPrefab);
+            const PrefabNode *root = inner != nullptr ? FindNode(*inner, SceneNodeAddress{ inner->mRootNode }) : nullptr;
+            const PrefabComponentInstance *component = root != nullptr ? FindComponent(*root, "Transform") : nullptr;
+            if (component == nullptr)
+                return std::nullopt;
+
+            json fields = component->mFields;
+            if (const PrefabPatch *patch = FindPatch(node, SceneNodeAddress{ root->mId }))
+            {
+                for (const PrefabFieldOverride &field : patch->mFields)
+                {
+                    if (field.mComponent == "Transform")
+                        fields[field.mField] = field.mValue;
+                }
+            }
+            return ReadTransform(fields);
+        }
+
+        void WriteNodeTransform(const PrefabRegistry &registry, PrefabNode &node, const Transform &local)
+        {
+            for (const FieldDesc &field : kTransformFields)
+            {
+                FieldBuffer buffer{};
+                field.Read(&local, buffer.mBytes);
+                json value = FieldToJson(field.mKind, buffer.mBytes);
+                if (node.mKind == PrefabNodeKind::Entity)
+                {
+                    FindComponent(node, "Transform")->mFields[std::string(field.mName)] = std::move(value);
+                    continue;
+                }
+
+                PrefabPatch &patch = GetOrAddPatch(node, SceneNodeAddress{ *OccurrenceRoot(registry, node) });
+                if (PrefabFieldOverride *existing = FindPatchField(patch, "Transform", field.mName))
+                    existing->mValue = std::move(value);
+                else
+                    patch.mFields.push_back(PrefabFieldOverride{ "Transform", std::string(field.mName), std::move(value) });
+            }
+        }
+
+        // Nested occurrences hold no nodes, so every ancestor is an entity node.
         std::optional<WorldPose> DocumentPose(const PrefabDocument &document, PrefabNodeId id)
         {
             std::vector<const PrefabNode *> chain;
@@ -331,7 +567,7 @@ namespace mir
                 const PrefabComponentInstance *component = FindComponent(**node, "Transform");
                 if (component == nullptr)
                     continue;
-                const Transform local = ReadTransform(*component);
+                const Transform local = ReadTransform(component->mFields);
                 const std::optional<WorldPose> composed = TryComposePose(pose, local.LinearMatrix(), local.Position());
                 if (!composed)
                     return std::nullopt;
@@ -341,117 +577,252 @@ namespace mir
         }
 
         // Rewrites the node's Transform so its pose in the document survives the move under parent.
-        bool KeepDocumentPose(const PrefabDocument &document, PrefabNode &node, PrefabNodeId parent)
+        bool KeepDocumentPose(const PrefabRegistry &registry, const PrefabDocument &document, PrefabNode &node,
+            PrefabNodeId parent)
         {
-            PrefabComponentInstance *component = FindComponent(node, "Transform");
-            if (component == nullptr)
+            const std::optional<Transform> current = NodeTransform(registry, node);
+            if (!current)
                 return true;
 
-            const std::optional<WorldPose> nodePose = DocumentPose(document, node.mId);
-            const std::optional<WorldPose> parentPose = DocumentPose(document, parent);
+            const std::optional<WorldPose> oldParent = DocumentPose(document, node.mParent);
+            const std::optional<WorldPose> nodePose =
+                oldParent ? TryComposePose(*oldParent, current->LinearMatrix(), current->Position()) : std::nullopt;
+            const std::optional<WorldPose> newParent = DocumentPose(document, parent);
             const std::optional<Transform> local =
-                nodePose && parentPose ? TryLocalForWorldPose(*parentPose, *nodePose) : std::nullopt;
+                nodePose && newParent ? TryLocalForWorldPose(*newParent, *nodePose) : std::nullopt;
             if (!local)
                 return false;
 
-            for (const FieldDesc &field : kTransformFields)
-            {
-                FieldBuffer buffer{};
-                field.Read(&*local, buffer.mBytes);
-                component->mFields[std::string(field.mName)] = FieldToJson(field.mKind, buffer.mBytes);
-            }
+            WriteNodeTransform(registry, node, *local);
             return true;
         }
 
-        json NodeRecord(const PrefabDocument &document, const PrefabNode &node)
+        bool PatchHasComponent(const PrefabPatch &patch, std::string_view component)
         {
-            json out = json::object();
-            const std::optional<std::size_t> index = FindNodeIndex(document, node.mId);
-            out["index"] = index.value_or(document.mNodes.size());
-
-            if (node.mId != document.mRootNode)
-                out["parent"] = std::to_string(node.mParent);
-
-            json components = json::array();
-            for (const PrefabComponentInstance &component : node.mComponents)
-                components.push_back(json{ { "type", component.mType }, { "fields", component.mFields } });
-            out["components"] = std::move(components);
-            return out;
+            return FindAddedComponent(patch, component) != nullptr ||
+                std::find(patch.mRemovedComponents.begin(), patch.mRemovedComponents.end(), component) !=
+                patch.mRemovedComponents.end();
         }
 
-        bool ReadNodeRecord(const json &record, PrefabNode &out, std::string &reason)
+        // Written back to a removed component, these restore it with the overrides its removal erased.
+        std::optional<std::string> InheritedOverrides(const PrefabPatch &patch, std::string_view component)
         {
-            if (!record.is_object())
+            json fields = json::object();
+            for (const PrefabFieldOverride &field : patch.mFields)
             {
-                reason = "a node record is not an object";
-                return false;
+                if (field.mComponent == component)
+                    fields[field.mField] = field.mValue;
             }
+            if (fields.empty())
+                return std::nullopt;
+            return fields.dump();
+        }
 
-            if (const auto components = record.find("components"); components != record.end())
+        // The nested document a Prefab node expands, so an address can be resolved below this layer.
+        const PrefabDocument *InnerDocument(const PrefabRegistry &registry, const PrefabNode &node)
+        {
+            return node.mKind == PrefabNodeKind::Prefab ? registry.Find(node.mPrefab) : nullptr;
+        }
+
+        bool DocumentReaches(const PrefabRegistry &registry, PrefabId from, PrefabId target,
+            std::vector<PrefabId> &visited)
+        {
+            if (from == target)
+                return true;
+            if (std::find(visited.begin(), visited.end(), from) != visited.end())
+                return false;
+            visited.push_back(from);
+
+            const PrefabDocument *document = registry.Find(from);
+            if (document == nullptr)
+                return false;
+            for (const PrefabNode &node : document->mNodes)
             {
-                if (!components->is_array())
+                if (node.mKind == PrefabNodeKind::Prefab && !node.mPrefab.IsNull() &&
+                    DocumentReaches(registry, node.mPrefab, target, visited))
                 {
-                    reason = "node components are not an array";
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        bool TemplateHasComponent(const PrefabRegistry &registry, const PrefabDocument &document,
+            const SceneNodeAddress &address, std::string_view type);
+
+        bool ApplyPatchEntry(const PrefabRegistry &registry, PrefabNode &occurrence, const SceneNodeAddress &target,
+            const PrefabAuthoredEntry &entry)
+        {
+            if (target.empty())
+                return false;
+
+            const PrefabDocument *inner = InnerDocument(registry, occurrence);
+            if (inner == nullptr || FindDocumentNode(registry, *inner, target) == nullptr)
+                return false;
+
+            json value;
+            if (!DecodeValue(entry.mValue, value))
+                return false;
+
+            if (IsFieldKey(entry.mKey))
+            {
+                const ComponentOps *ops = ComponentRegistry::Instance().Find(entry.mKey.mComponent);
+                const FieldDesc *field = ops != nullptr ? ops->FindField(entry.mKey.mField) : nullptr;
+                if (field == nullptr || field->ReadOnly())
                     return false;
+                if (entry.mValue && !ValueFitsField(*field, value))
+                    return false;
+
+                PrefabPatch *patch = FindPatch(occurrence, target);
+                PrefabComponentInstance *added =
+                    patch != nullptr ? FindAddedComponent(*patch, entry.mKey.mComponent) : nullptr;
+                if (added != nullptr && added->mFields.contains(entry.mKey.mField))
+                {
+                    if (entry.mValue)
+                        added->mFields[entry.mKey.mField] = std::move(value);
+                    else
+                        added->mFields.erase(entry.mKey.mField);
+                    return true;
                 }
 
-                for (const json &entry : *components)
+                if (!entry.mValue)
                 {
-                    if (!entry.is_object())
+                    if (patch != nullptr)
                     {
-                        reason = "a node component is not an object";
-                        return false;
+                        std::erase_if(patch->mFields, [&entry](const PrefabFieldOverride &override)
+                            {
+                                return override.mComponent == entry.mKey.mComponent &&
+                                    override.mField == entry.mKey.mField;
+                            });
+                        EraseEmptyPatch(occurrence, target);
                     }
-                    const auto type = entry.find("type");
-                    if (type == entry.end() || !type->is_string())
-                    {
-                        reason = "a node component has no type";
-                        return false;
-                    }
+                    return true;
+                }
 
-                    PrefabComponentInstance component;
-                    component.mType = type->get<std::string>();
-                    if (const auto fields = entry.find("fields"); fields != entry.end())
+                if (patch == nullptr)
+                    patch = &GetOrAddPatch(occurrence, target);
+                if (PrefabFieldOverride *existing =
+                        FindPatchField(*patch, entry.mKey.mComponent, entry.mKey.mField))
+                {
+                    existing->mValue = std::move(value);
+                }
+                else
+                {
+                    patch->mFields.push_back(
+                        PrefabFieldOverride{ entry.mKey.mComponent, entry.mKey.mField, std::move(value) });
+                }
+                return true;
+            }
+
+            if (!IsComponentKey(entry.mKey))
+                return false;
+
+            const ComponentOps *ops = ComponentRegistry::Instance().Find(entry.mKey.mComponent);
+            if (ops == nullptr)
+                return false;
+
+            if (!entry.mValue)
+            {
+                PrefabPatch *patch = FindPatch(occurrence, target);
+                if (patch == nullptr)
+                    return true;
+
+                const std::size_t addedBefore = patch->mAddedComponents.size();
+                std::erase_if(patch->mAddedComponents, [&entry](const PrefabComponentInstance &component)
                     {
-                        std::string fieldReason;
-                        if (!ValidateDocumentFields(component.mType, *fields, fieldReason))
+                        return component.mType == entry.mKey.mComponent;
+                    });
+                const std::size_t removedBefore = patch->mRemovedComponents.size();
+                std::erase(patch->mRemovedComponents, entry.mKey.mComponent);
+                const bool changed = patch->mAddedComponents.size() != addedBefore ||
+                    patch->mRemovedComponents.size() != removedBefore;
+                if (changed)
+                {
+                    std::erase_if(patch->mFields, [&entry](const PrefabFieldOverride &override)
                         {
-                            reason = std::move(fieldReason);
-                            return false;
-                        }
-                        component.mFields = *fields;
-                    }
-                    out.mComponents.push_back(std::move(component));
+                            return override.mComponent == entry.mKey.mComponent;
+                        });
+                    EraseEmptyPatch(occurrence, target);
                 }
+                return true;
             }
 
-            if (const auto parent = record.find("parent"); parent != record.end())
+            if (value.is_null())
             {
-                if (!parent->is_string())
+                PrefabPatch &patch = GetOrAddPatch(occurrence, target);
+                std::erase_if(patch.mAddedComponents, [&entry](const PrefabComponentInstance &component)
+                    {
+                        return component.mType == entry.mKey.mComponent;
+                    });
+                if (std::find(patch.mRemovedComponents.begin(), patch.mRemovedComponents.end(),
+                        entry.mKey.mComponent) == patch.mRemovedComponents.end())
                 {
-                    reason = "node parent is not a node id";
-                    return false;
+                    patch.mRemovedComponents.push_back(entry.mKey.mComponent);
                 }
-                const std::string &text = parent->get_ref<const std::string &>();
-                uint64_t id = 0;
-                const auto parsed = std::from_chars(text.data(), text.data() + text.size(), id);
-                if (parsed.ec != std::errc() || parsed.ptr != text.data() + text.size() ||
-                    id == kNullPrefabNodeId)
-                {
-                    reason = "node parent \"" + text + "\" is not a node id";
-                    return false;
-                }
-                out.mParent = id;
+                std::erase_if(patch.mFields, [&entry](const PrefabFieldOverride &override)
+                    {
+                        return override.mComponent == entry.mKey.mComponent;
+                    });
+                return true;
             }
 
+            if (!value.is_object())
+                return false;
+
+            for (auto it = value.begin(); it != value.end(); ++it)
+            {
+                const FieldDesc *field = ops->FindField(it.key());
+                if (field == nullptr || field->ReadOnly())
+                    return false;
+                if (!ValueFitsField(*field, it.value()))
+                    return false;
+            }
+
+            PrefabPatch &patch = GetOrAddPatch(occurrence, target);
+            std::erase(patch.mRemovedComponents, entry.mKey.mComponent);
+            // A component of the inner template takes the fields as overrides rather than a second copy.
+            if (TemplateHasComponent(registry, *inner, target, entry.mKey.mComponent))
+            {
+                for (auto it = value.begin(); it != value.end(); ++it)
+                {
+                    if (PrefabFieldOverride *existing = FindPatchField(patch, entry.mKey.mComponent, it.key()))
+                        existing->mValue = it.value();
+                    else
+                        patch.mFields.push_back(PrefabFieldOverride{ entry.mKey.mComponent, it.key(), it.value() });
+                }
+                EraseEmptyPatch(occurrence, target);
+                return true;
+            }
+            if (PrefabComponentInstance *added = FindAddedComponent(patch, entry.mKey.mComponent))
+            {
+                added->mFields = std::move(value);
+            }
+            else
+            {
+                patch.mAddedComponents.push_back(
+                    PrefabComponentInstance{ entry.mKey.mComponent, std::move(value) });
+            }
             return true;
         }
 
-        bool ApplyDocumentEntry(PrefabDocument &document, const PrefabAuthoredEntry &entry,
-            std::vector<SceneNodeAddress> &removedNodes)
+        bool ApplyDocumentEntry(const PrefabRegistry &registry, PrefabDocument &document,
+            const PrefabAuthoredEntry &entry, std::vector<SceneNodeAddress> &removedNodes)
         {
-            if (entry.mKey.mAddress.size() != 1)
+            if (entry.mKey.mAddress.empty())
                 return false;
+
+            if (entry.mKey.mAddress.size() > 1)
+            {
+                if (IsNodeKey(entry.mKey))
+                    return false;
+
+                const std::optional<std::size_t> index = FindNodeIndex(document, entry.mKey.mAddress.front());
+                if (!index || document.mNodes[*index].mKind != PrefabNodeKind::Prefab)
+                    return false;
+
+                const SceneNodeAddress target(entry.mKey.mAddress.begin() + 1, entry.mKey.mAddress.end());
+                return ApplyPatchEntry(registry, document.mNodes[*index], target, entry);
+            }
 
             const PrefabNodeId id = entry.mKey.mAddress.front();
             if (IsNodeKey(entry.mKey))
@@ -475,7 +846,6 @@ namespace mir
 
                 PrefabNode node;
                 node.mId = id;
-                node.mKind = PrefabNodeKind::Entity;
                 std::string reason;
                 if (!ReadNodeRecord(record, node, reason))
                 {
@@ -506,7 +876,7 @@ namespace mir
                 if (!DecodeValue(entry.mValue, fields))
                     return false;
 
-                if (!entry.mValue)
+                if (!entry.mValue || fields.is_null())
                 {
                     std::erase_if(node.mComponents, [&](const PrefabComponentInstance &component)
                         {
@@ -610,14 +980,14 @@ namespace mir
         };
 
         bool PrepareSceneEdit(const PrefabAuthoredEntry &entry, const LoadedScene &scene, World &world,
-            const std::function<const PrefabDocument *(PrefabId)> &documents, SceneEdit &out)
+            const PrefabDocumentLookup &documents, SceneEdit &out)
         {
-            if (entry.mKey.mAddress.size() != 2)
+            if (entry.mKey.mAddress.size() < 2)
                 return false;
 
             out.mEntry = &entry;
             out.mRoot = entry.mKey.mAddress.front();
-            out.mNode = SceneNodeAddress{ entry.mKey.mAddress.back() };
+            out.mNode = SceneNodeAddress(entry.mKey.mAddress.begin() + 1, entry.mKey.mAddress.end());
 
             if (!DecodeValue(entry.mValue, out.mValue))
                 return false;
@@ -814,18 +1184,431 @@ namespace mir
             {
                 if (id != *target)
                     continue;
-                if (address.size() != 1)
-                {
-                    reason = "targets a nested prefab node, which is not supported";
-                    return false;
-                }
-                outValue = json::array({ std::to_string(address.front()) });
+
+                outValue = json::array();
+                for (uint64_t segment : address)
+                    outValue.push_back(std::to_string(segment));
                 return true;
             }
 
             reason = scene.mEntities.contains(*target) ? "targets an entity outside this instance"
                                                        : "targets an entity the scene does not contain";
             return false;
+        }
+
+        std::optional<SceneNodeAddress> ReadAddressJson(const json &value)
+        {
+            if (value.is_null())
+                return SceneNodeAddress{};
+            if (!value.is_array())
+                return std::nullopt;
+
+            SceneNodeAddress address;
+            for (const json &segment : value)
+            {
+                if (!segment.is_string())
+                    return std::nullopt;
+                const std::string &text = segment.get_ref<const std::string &>();
+                if (text.empty())
+                    return std::nullopt;
+
+                uint64_t id = 0;
+                const auto parsed = std::from_chars(text.data(), text.data() + text.size(), id);
+                if (parsed.ec != std::errc() || parsed.ptr != text.data() + text.size())
+                    return std::nullopt;
+                address.push_back(id);
+            }
+            return address;
+        }
+
+        json AddressJson(const SceneNodeAddress &address)
+        {
+            json out = json::array();
+            for (uint64_t segment : address)
+                out.push_back(std::to_string(segment));
+            return out;
+        }
+
+        // The entity node's own components, then each enclosing occurrence's patches from the innermost out.
+        bool TemplateHasComponent(const PrefabRegistry &registry, const PrefabDocument &document,
+            const SceneNodeAddress &address, std::string_view type)
+        {
+            std::vector<const PrefabNode *> occurrences;
+            const PrefabDocument *current = &document;
+            const PrefabNode *entity = nullptr;
+            for (std::size_t i = 0; i < address.size() && current != nullptr; ++i)
+            {
+                const std::optional<std::size_t> index = FindNodeIndex(*current, address[i]);
+                if (!index)
+                    return false;
+
+                const PrefabNode &node = current->mNodes[*index];
+                if (i + 1 == address.size())
+                {
+                    entity = node.mKind == PrefabNodeKind::Entity ? &node : nullptr;
+                    break;
+                }
+                if (node.mKind != PrefabNodeKind::Prefab)
+                    return false;
+
+                occurrences.push_back(&node);
+                current = registry.Find(node.mPrefab);
+            }
+            if (entity == nullptr)
+                return false;
+
+            bool present = FindComponent(*entity, type) != nullptr;
+            for (std::size_t level = occurrences.size(); level-- > 0;)
+            {
+                const SceneNodeAddress suffix(address.begin() + static_cast<std::ptrdiff_t>(level) + 1, address.end());
+                for (const PrefabPatch &patch : occurrences[level]->mPatches)
+                {
+                    if (patch.mTarget != suffix)
+                        continue;
+                    if (FindAddedComponent(patch, type) != nullptr)
+                        present = true;
+                    if (std::find(patch.mRemovedComponents.begin(), patch.mRemovedComponents.end(), type) !=
+                        patch.mRemovedComponents.end())
+                    {
+                        present = false;
+                    }
+                }
+            }
+            return present;
+        }
+
+        struct ApplyOrigin
+        {
+            bool mScene = false;
+            StableId mRoot = kNullStableId;                  // scene origin
+            const ScenePrefabInstance *mInstance = nullptr;  // scene origin
+            std::optional<PrefabId> mPrefab;                 // Prefab-tab origin
+            SceneNodeAddress mSegments;                      // address in the origin's document space
+            std::vector<PrefabId> mDocuments;                // documents owning each segment
+        };
+
+        struct ApplyLayer
+        {
+            PrefabId mPrefab{};
+            std::size_t mLevel = 0;
+            SceneNodeAddress mAddress; // relative to the layer's document
+        };
+
+        std::string LayerLabel(const PrefabRegistry &registry, PrefabId id)
+        {
+            if (const std::optional<std::filesystem::path> path = registry.PathOf(id))
+            {
+                const std::u8string stem = path->stem().u8string();
+                return std::string(stem.begin(), stem.end());
+            }
+
+            constexpr std::size_t kShortIdLength = 8;
+            const std::string text = ToString(id);
+            return text.substr(0, kShortIdLength);
+        }
+
+        // Each segment names a node of the document owning the one before it; the last names an entity.
+        bool ResolveDocumentChain(const PrefabRegistry &registry, PrefabDocument const &document,
+            const SceneNodeAddress &segments, std::vector<PrefabId> &documents)
+        {
+            documents.clear();
+            const PrefabDocument *current = &document;
+            for (std::size_t i = 0; i < segments.size(); ++i)
+            {
+                const std::optional<std::size_t> index = FindNodeIndex(*current, segments[i]);
+                if (!index)
+                    return false;
+
+                const PrefabNode &node = current->mNodes[*index];
+                if (i + 1 == segments.size())
+                    return node.mKind == PrefabNodeKind::Entity;
+
+                if (node.mKind != PrefabNodeKind::Prefab)
+                    return false;
+                const PrefabDocument *next = registry.Find(node.mPrefab);
+                if (next == nullptr)
+                    return false;
+
+                documents.push_back(node.mPrefab);
+                current = next;
+            }
+            return false;
+        }
+
+        struct ApplyChain
+        {
+            ApplyOrigin mOrigin;
+            std::vector<ApplyLayer> mLayers;
+        };
+
+        std::optional<ApplyChain> ResolveApplyChain(const PrefabRegistry &registry, const LoadedScene *scene,
+            const PrefabAuthoredKey &key)
+        {
+            ApplyChain chain;
+
+            if (key.mPrefab)
+            {
+                const PrefabDocument *document = registry.Find(*key.mPrefab);
+                if (document == nullptr || key.mAddress.size() < 2)
+                    return std::nullopt;
+
+                std::vector<PrefabId> documents;
+                if (!ResolveDocumentChain(registry, *document, key.mAddress, documents))
+                    return std::nullopt;
+
+                chain.mOrigin.mPrefab = *key.mPrefab;
+                chain.mOrigin.mSegments = key.mAddress;
+                chain.mOrigin.mDocuments.push_back(*key.mPrefab);
+                chain.mOrigin.mDocuments.insert(chain.mOrigin.mDocuments.end(), documents.begin(), documents.end());
+            }
+            else
+            {
+                if (scene == nullptr || key.mAddress.size() < 2)
+                    return std::nullopt;
+
+                const StableId root = key.mAddress.front();
+                const auto instance = scene->mInstances.find(root);
+                if (instance == scene->mInstances.end())
+                    return std::nullopt;
+
+                const SceneNodeAddress node(key.mAddress.begin() + 1, key.mAddress.end());
+                if (!instance->second.mBindings.contains(node))
+                    return std::nullopt;
+
+                const std::optional<PrefabId> prefab = ParsePrefabId(instance->second.mPrefab);
+                const PrefabDocument *document = prefab ? registry.Find(*prefab) : nullptr;
+                if (document == nullptr)
+                    return std::nullopt;
+
+                std::vector<PrefabId> documents;
+                if (!ResolveDocumentChain(registry, *document, node, documents))
+                    return std::nullopt;
+
+                chain.mOrigin.mScene = true;
+                chain.mOrigin.mRoot = root;
+                chain.mOrigin.mInstance = &instance->second;
+                chain.mOrigin.mSegments = node;
+                chain.mOrigin.mDocuments.push_back(*prefab);
+                chain.mOrigin.mDocuments.insert(chain.mOrigin.mDocuments.end(), documents.begin(), documents.end());
+            }
+
+            const std::size_t start = chain.mOrigin.mScene ? 0 : 1;
+            for (std::size_t level = start; level < chain.mOrigin.mSegments.size(); ++level)
+            {
+                ApplyLayer layer;
+                layer.mPrefab = chain.mOrigin.mDocuments[level];
+                layer.mLevel = level;
+                layer.mAddress.assign(chain.mOrigin.mSegments.begin() + static_cast<std::ptrdiff_t>(level),
+                    chain.mOrigin.mSegments.end());
+                chain.mLayers.push_back(std::move(layer));
+            }
+            return chain;
+        }
+
+        bool LayerPrefabNode(const PrefabRegistry &registry, const ApplyLayer &layer, const PrefabNode *&node)
+        {
+            const PrefabDocument *document = registry.Find(layer.mPrefab);
+            if (document == nullptr || layer.mAddress.empty())
+                return false;
+            const std::optional<std::size_t> index = FindNodeIndex(*document, layer.mAddress.front());
+            if (!index)
+                return false;
+            node = &document->mNodes[*index];
+            return true;
+        }
+
+        bool LayerHasField(const PrefabRegistry &registry, const ApplyLayer &layer, std::string_view component,
+            std::string_view field)
+        {
+            const PrefabNode *node = nullptr;
+            if (!LayerPrefabNode(registry, layer, node))
+                return false;
+
+            if (layer.mAddress.size() == 1)
+            {
+                const PrefabComponentInstance *instance = FindComponent(*node, component);
+                return instance != nullptr && instance->mFields.contains(std::string(field));
+            }
+
+            if (node->mKind != PrefabNodeKind::Prefab)
+                return false;
+            const SceneNodeAddress target(layer.mAddress.begin() + 1, layer.mAddress.end());
+            const PrefabPatch *patch = FindPatch(*node, target);
+            if (patch == nullptr)
+                return false;
+
+            if (const PrefabComponentInstance *added = FindAddedComponent(*patch, component))
+            {
+                if (added->mFields.contains(std::string(field)))
+                    return true;
+            }
+            return FindPatchField(*patch, component, field) != nullptr;
+        }
+
+        bool LayerHasComponent(const PrefabRegistry &registry, const ApplyLayer &layer, std::string_view component)
+        {
+            const PrefabNode *node = nullptr;
+            if (!LayerPrefabNode(registry, layer, node))
+                return false;
+
+            if (layer.mAddress.size() == 1)
+                return FindComponent(*node, component) != nullptr;
+
+            if (node->mKind != PrefabNodeKind::Prefab)
+                return false;
+            const SceneNodeAddress target(layer.mAddress.begin() + 1, layer.mAddress.end());
+            const PrefabPatch *patch = FindPatch(*node, target);
+            return patch != nullptr && PatchHasComponent(*patch, component);
+        }
+
+        bool TranslateLayerRef(const ApplyOrigin &origin, const ApplyLayer &layer, const LoadedScene *scene,
+            const json &value, json &outValue, std::string &reason)
+        {
+            const std::size_t level = layer.mLevel;
+            SceneNodeAddress address;
+            if (origin.mScene)
+            {
+                const std::optional<StableId> target = StableIdFromJson(value);
+                if (!target)
+                {
+                    reason = "is not a StableId or null";
+                    return false;
+                }
+                if (*target == kNullStableId)
+                {
+                    outValue = nullptr;
+                    return true;
+                }
+
+                const ScenePrefabInstance &instance = *origin.mInstance;
+                const auto binding = std::find_if(instance.mBindings.begin(), instance.mBindings.end(),
+                    [target](const auto &entry) { return entry.second == *target; });
+                if (binding == instance.mBindings.end())
+                {
+                    reason = scene != nullptr && scene->mEntities.contains(*target)
+                        ? "targets an entity outside this instance"
+                        : "targets an entity the scene does not contain";
+                    return false;
+                }
+                address = binding->first;
+            }
+            else
+            {
+                if (value.is_null())
+                {
+                    outValue = nullptr;
+                    return true;
+                }
+                const std::optional<SceneNodeAddress> parsed = ReadAddressJson(value);
+                if (!parsed)
+                {
+                    reason = "is not a node address or null";
+                    return false;
+                }
+                address = *parsed;
+            }
+
+            if (address.size() <= level ||
+                !std::equal(origin.mSegments.begin(), origin.mSegments.begin() + static_cast<std::ptrdiff_t>(level),
+                    address.begin()))
+            {
+                reason = "targets an entity outside this layer";
+                return false;
+            }
+
+            outValue = AddressJson(SceneNodeAddress(address.begin() + static_cast<std::ptrdiff_t>(level),
+                address.end()));
+            return true;
+        }
+
+        const PrefabPatch *OriginPatch(const PrefabRegistry &registry, const PrefabAuthoredKey &key,
+            const ApplyOrigin &origin)
+        {
+            if (origin.mScene || !key.mPrefab || origin.mSegments.size() < 2)
+                return nullptr;
+
+            const PrefabDocument *document = registry.Find(*key.mPrefab);
+            if (document == nullptr)
+                return nullptr;
+            const std::optional<std::size_t> index = FindNodeIndex(*document, origin.mSegments.front());
+            if (!index || document->mNodes[*index].mKind != PrefabNodeKind::Prefab)
+                return nullptr;
+
+            const SceneNodeAddress target(origin.mSegments.begin() + 1, origin.mSegments.end());
+            return FindPatch(document->mNodes[*index], target);
+        }
+
+        std::optional<json> OriginFieldValue(const PrefabRegistry &registry, const PrefabAuthoredKey &key,
+            const ApplyOrigin &origin)
+        {
+            if (!origin.mScene)
+            {
+                const PrefabPatch *patch = OriginPatch(registry, key, origin);
+                if (patch == nullptr)
+                    return std::nullopt;
+                if (const PrefabComponentInstance *added = FindAddedComponent(*patch, key.mComponent))
+                {
+                    const auto it = added->mFields.find(key.mField);
+                    if (it != added->mFields.end())
+                        return std::optional<json>(it.value());
+                }
+                if (const PrefabFieldOverride *entry = FindPatchField(*patch, key.mComponent, key.mField))
+                    return std::optional<json>(entry->mValue);
+                return std::nullopt;
+            }
+
+            const ScenePrefabInstance &instance = *origin.mInstance;
+            if (const SceneComponentRecord *added = FindAddedComponent(instance, origin.mSegments, key.mComponent))
+            {
+                const auto it = added->mFields.find(key.mField);
+                if (it != added->mFields.end())
+                    return std::optional<json>(it.value());
+            }
+            if (const SceneFieldPatch *patch =
+                    FindInstanceFieldPatch(instance, origin.mSegments, key.mComponent, key.mField))
+            {
+                return std::optional<json>(patch->mValue);
+            }
+            return std::nullopt;
+        }
+
+        std::optional<json> OriginAddedFields(const PrefabRegistry &registry, const PrefabAuthoredKey &key,
+            const ApplyOrigin &origin)
+        {
+            if (!origin.mScene)
+            {
+                const PrefabPatch *patch = OriginPatch(registry, key, origin);
+                const PrefabComponentInstance *added =
+                    patch != nullptr ? FindAddedComponent(*patch, key.mComponent) : nullptr;
+                return added != nullptr ? std::optional<json>(added->mFields) : std::nullopt;
+            }
+
+            const SceneComponentRecord *added =
+                FindAddedComponent(*origin.mInstance, origin.mSegments, key.mComponent);
+            return added != nullptr ? std::optional<json>(added->mFields) : std::nullopt;
+        }
+
+        PrefabComponentState OriginComponentState(const PrefabRegistry &registry, const LoadedScene *scene,
+            const PrefabAuthoredKey &key, const ApplyOrigin &origin)
+        {
+            if (!origin.mScene)
+            {
+                const PrefabPatch *patch = OriginPatch(registry, key, origin);
+                if (patch == nullptr)
+                    return PrefabComponentState::Inherited;
+                if (FindAddedComponent(*patch, key.mComponent) != nullptr)
+                    return PrefabComponentState::Added;
+                if (std::find(patch->mRemovedComponents.begin(), patch->mRemovedComponents.end(),
+                        key.mComponent) != patch->mRemovedComponents.end())
+                {
+                    return PrefabComponentState::Removed;
+                }
+                return PrefabComponentState::Inherited;
+            }
+
+            if (scene == nullptr)
+                return PrefabComponentState::Absent;
+            return InstanceComponentState(registry, *scene, origin.mRoot, origin.mSegments, key.mComponent);
         }
     }
 
@@ -885,7 +1668,22 @@ namespace mir
     std::optional<PrefabNodeId> PrefabAuthoring::NodeIdOf(Entity entity) const
     {
         const std::optional<Member> member = FindMember(entity);
-        if (!member || !member->mPrefab || member->mNode.size() != 1)
+        if (!member || !member->mPrefab)
+            return std::nullopt;
+
+        if (member->mNode.size() == 1)
+            return member->mNode.front();
+
+        const PrefabDocument *document = ActivePrefabDocument();
+        if (document == nullptr || member->mNode.size() != 2)
+            return std::nullopt;
+
+        const std::optional<std::size_t> index = FindNodeIndex(*document, member->mNode.front());
+        if (!index || document->mNodes[*index].mKind != PrefabNodeKind::Prefab)
+            return std::nullopt;
+
+        const PrefabDocument *inner = mCoordinator.Registry().Find(document->mNodes[*index].mPrefab);
+        if (inner == nullptr || inner->mRootNode != member->mNode.back())
             return std::nullopt;
         return member->mNode.front();
     }
@@ -970,12 +1768,34 @@ namespace mir
 
         if (key.mPrefab)
         {
-            if (mActiveDocument && *mActiveDocument == *key.mPrefab)
-                return PrefabFieldState::Inherited;
-
             const PrefabDocument *document = mCoordinator.Registry().Find(*key.mPrefab);
             if (document == nullptr)
                 return PrefabFieldState::Inherited;
+
+            if (key.mAddress.size() > 1)
+            {
+                const std::optional<std::size_t> index = FindNodeIndex(*document, key.mAddress.front());
+                if (index && document->mNodes[*index].mKind == PrefabNodeKind::Prefab)
+                {
+                    const SceneNodeAddress target(key.mAddress.begin() + 1, key.mAddress.end());
+                    const PrefabPatch *patch = FindPatch(document->mNodes[*index], target);
+                    if (patch != nullptr)
+                    {
+                        if (const PrefabComponentInstance *added = FindAddedComponent(*patch, key.mComponent))
+                        {
+                            if (added->mFields.contains(key.mField))
+                                return PrefabFieldState::Overridden;
+                        }
+                        if (FindPatchField(*patch, key.mComponent, key.mField) != nullptr)
+                            return PrefabFieldState::Overridden;
+                    }
+                }
+                return PrefabFieldState::Inherited;
+            }
+
+            if (mActiveDocument && *mActiveDocument == *key.mPrefab)
+                return PrefabFieldState::Inherited;
+
             const PrefabNode *node = FindNode(*document, key.mAddress);
             const PrefabComponentInstance *component =
                 node != nullptr ? FindComponent(*node, key.mComponent) : nullptr;
@@ -1012,7 +1832,33 @@ namespace mir
         if (member->mPrefab)
         {
             const PrefabDocument *document = ActivePrefabDocument();
-            const PrefabNode *node = document != nullptr ? FindNode(*document, member->mNode) : nullptr;
+            if (document == nullptr)
+                return PrefabComponentState::Absent;
+
+            if (member->mNode.size() > 1)
+            {
+                const std::optional<std::size_t> index = FindNodeIndex(*document, member->mNode.front());
+                if (index && document->mNodes[*index].mKind == PrefabNodeKind::Prefab)
+                {
+                    const SceneNodeAddress target(member->mNode.begin() + 1, member->mNode.end());
+                    const PrefabPatch *patch = FindPatch(document->mNodes[*index], target);
+                    if (patch != nullptr)
+                    {
+                        if (FindAddedComponent(*patch, component) != nullptr)
+                            return PrefabComponentState::Added;
+                        if (std::find(patch->mRemovedComponents.begin(), patch->mRemovedComponents.end(),
+                                component) != patch->mRemovedComponents.end())
+                        {
+                            return PrefabComponentState::Removed;
+                        }
+                    }
+                }
+                return TemplateHasComponent(mCoordinator.Registry(), *document, member->mNode, component)
+                    ? PrefabComponentState::Inherited
+                    : PrefabComponentState::Absent;
+            }
+
+            const PrefabNode *node = FindNode(*document, member->mNode);
             return node != nullptr && FindComponent(*node, component) != nullptr ? PrefabComponentState::Inherited
                                                                                  : PrefabComponentState::Absent;
         }
@@ -1078,15 +1924,33 @@ namespace mir
             return removed;
 
         std::optional<Member> member = FindMember(entity);
-        if (!member || member->mPrefab)
+        if (!member)
             return removed;
+
+        if (member->mPrefab)
+        {
+            const PrefabDocument *document = ActivePrefabDocument();
+            if (document == nullptr || member->mNode.size() < 2)
+                return removed;
+
+            const std::optional<std::size_t> index = FindNodeIndex(*document, member->mNode.front());
+            if (!index || document->mNodes[*index].mKind != PrefabNodeKind::Prefab)
+                return removed;
+
+            const SceneNodeAddress target(member->mNode.begin() + 1, member->mNode.end());
+            if (const PrefabPatch *patch = FindPatch(document->mNodes[*index], target))
+                removed = patch->mRemovedComponents;
+            return removed;
+        }
 
         const std::optional<PrefabId> id = ParsePrefabId(member->mInstance->mPrefab);
         if (!id)
             return removed;
 
-        const PrefabDocument *document = mCoordinator.Registry().Find(*id);
-        const PrefabNode *node = document != nullptr ? FindNode(*document, member->mNode) : nullptr;
+        const PrefabRegistry &registry = mCoordinator.Registry();
+        const PrefabDocument *document = registry.Find(*id);
+        const PrefabNode *node =
+            document != nullptr ? FindDocumentNode(registry, *document, member->mNode) : nullptr;
         if (node == nullptr)
             return removed;
 
@@ -1094,6 +1958,18 @@ namespace mir
         {
             if (HasRemovedComponent(*member->mInstance, member->mNode, component.mType))
                 removed.push_back(component.mType);
+        }
+
+        // A component an outer occurrence added is not in the inner node.
+        for (const SceneInstancePatch &patch : member->mInstance->mPatches)
+        {
+            if (patch.mTarget != member->mNode)
+                continue;
+            for (const std::string &type : patch.mRemovedComponents)
+            {
+                if (std::find(removed.begin(), removed.end(), type) == removed.end())
+                    removed.push_back(type);
+            }
         }
         return removed;
     }
@@ -1106,9 +1982,10 @@ namespace mir
         const Entity entity = *static_cast<const Entity *>(bytes);
         if (const std::optional<Member> member = FindMember(entity); member && member->mPrefab)
         {
-            if (member->mNode.size() != 1)
-                return std::string("null");
-            return json::array({ std::to_string(member->mNode.front()) }).dump();
+            json address = json::array();
+            for (PrefabNodeId segment : member->mNode)
+                address.push_back(std::to_string(segment));
+            return address.dump();
         }
 
         StableId id = kNullStableId;
@@ -1138,9 +2015,80 @@ namespace mir
 
             if (key.mPrefab)
             {
-                const PrefabDocument *document = mCoordinator.Registry().Find(*key.mPrefab);
-                if (document == nullptr || key.mAddress.size() != 1)
+                const PrefabRegistry &registry = mCoordinator.Registry();
+                const PrefabDocument *document = registry.Find(*key.mPrefab);
+                if (document == nullptr)
                     return std::nullopt;
+
+                if (key.mAddress.size() > 1)
+                {
+                    const PrefabNode *member = FindDocumentNode(registry, *document, key.mAddress);
+                    if (member == nullptr)
+                        return std::nullopt;
+
+                    const std::optional<std::size_t> index = FindNodeIndex(*document, key.mAddress.front());
+                    const PrefabNode *occurrence =
+                        index ? &document->mNodes[*index] : nullptr;
+                    const SceneNodeAddress target(key.mAddress.begin() + 1, key.mAddress.end());
+                    const PrefabPatch *patch =
+                        occurrence != nullptr && occurrence->mKind == PrefabNodeKind::Prefab
+                        ? FindPatch(*occurrence, target)
+                        : nullptr;
+
+                    if (IsNodeKey(key))
+                        return std::nullopt;
+
+                    if (IsFieldKey(key))
+                    {
+                        if (const ComponentOps *ops = ComponentRegistry::Instance().Find(key.mComponent);
+                            ops == nullptr || ops->FindField(key.mField) == nullptr)
+                        {
+                            return std::nullopt;
+                        }
+                        if (patch == nullptr)
+                        {
+                            entries.push_back(std::move(entry));
+                            continue;
+                        }
+                        if (const PrefabComponentInstance *added = FindAddedComponent(*patch, key.mComponent))
+                        {
+                            const auto it = added->mFields.find(key.mField);
+                            if (it != added->mFields.end())
+                                entry.mValue = it->dump();
+                        }
+                        else if (const PrefabFieldOverride *override =
+                                     FindPatchField(*patch, key.mComponent, key.mField))
+                        {
+                            entry.mValue = override->mValue.dump();
+                        }
+                    }
+                    else if (IsComponentKey(key))
+                    {
+                        if (patch == nullptr)
+                        {
+                            entries.push_back(std::move(entry));
+                            continue;
+                        }
+                        if (const PrefabComponentInstance *added = FindAddedComponent(*patch, key.mComponent))
+                            entry.mValue = added->mFields.dump();
+                        else if (std::find(patch->mRemovedComponents.begin(), patch->mRemovedComponents.end(),
+                                     key.mComponent) != patch->mRemovedComponents.end())
+                        {
+                            entry.mValue = "null";
+                        }
+                        else
+                        {
+                            entry.mValue = InheritedOverrides(*patch, key.mComponent);
+                        }
+                    }
+                    else
+                    {
+                        return std::nullopt;
+                    }
+
+                    entries.push_back(std::move(entry));
+                    continue;
+                }
 
                 const PrefabNode *node = FindNode(*document, key.mAddress);
                 if (IsNodeKey(key))
@@ -1177,11 +2125,11 @@ namespace mir
             }
             else
             {
-                if (scene == nullptr || key.mAddress.size() != 2)
+                if (scene == nullptr || key.mAddress.size() < 2)
                     return std::nullopt;
 
                 const StableId root = key.mAddress.front();
-                const SceneNodeAddress node{ key.mAddress.back() };
+                const SceneNodeAddress node(key.mAddress.begin() + 1, key.mAddress.end());
                 const auto instance = scene->mInstances.find(root);
                 if (instance == scene->mInstances.end())
                     return std::nullopt;
@@ -1279,6 +2227,7 @@ namespace mir
         }
 
         std::map<PrefabId, std::vector<SceneNodeAddress>> removedNodes;
+        const PrefabRegistry &registry = mCoordinator.Registry();
         for (auto &[id, document] : documents)
         {
             std::vector<const PrefabAuthoredEntry *> nodeInsertions;
@@ -1286,12 +2235,17 @@ namespace mir
             {
                 if (!entry.mKey.mPrefab || *entry.mKey.mPrefab != id)
                     continue;
+                if (IsNodeKey(entry.mKey) && entry.mKey.mAddress.size() != 1)
+                {
+                    MIR_LOG_WARN("Prefab authoring: a nested occurrence member has no node of its own");
+                    return result;
+                }
                 if (IsNodeKey(entry.mKey) && entry.mValue)
                 {
                     nodeInsertions.push_back(&entry);
                     continue;
                 }
-                if (!ApplyDocumentEntry(document, entry, removedNodes[id]))
+                if (!ApplyDocumentEntry(registry, document, entry, removedNodes[id]))
                 {
                     MIR_LOG_WARN("Prefab authoring: refused entry in \"{}\"", ToString(id));
                     return result;
@@ -1313,14 +2267,45 @@ namespace mir
                 });
             for (const PrefabAuthoredEntry *entry : nodeInsertions)
             {
-                if (!ApplyDocumentEntry(document, *entry, removedNodes[id]))
+                if (!ApplyDocumentEntry(registry, document, *entry, removedNodes[id]))
                 {
                     MIR_LOG_WARN("Prefab authoring: refused node entry in \"{}\"", ToString(id));
                     return result;
                 }
             }
+        }
 
-            const PrefabCompileResult compiled = CompilePrefab(document);
+        // Edits can span a layer and the Prefab that nests it, so compile against the batch's own copies.
+        const PrefabDocumentLookup lookup = [&documents, &registry](PrefabId id) -> const PrefabDocument *
+        {
+            const auto edited = documents.find(id);
+            return edited != documents.end() ? &edited->second : registry.Find(id);
+        };
+        std::vector<PrefabId> compileOrder;
+        compileOrder.reserve(documents.size());
+        for (const auto &[id, document] : documents)
+        {
+            (void)document;
+            compileOrder.push_back(id);
+        }
+        const auto nestingCount = [&documents](PrefabId id)
+            {
+                const PrefabDocument &document = documents.at(id);
+                std::size_t count = 0;
+                for (const PrefabNode &node : document.mNodes)
+                {
+                    if (node.mKind == PrefabNodeKind::Prefab && documents.contains(node.mPrefab))
+                        ++count;
+                }
+                return count;
+            };
+        std::stable_sort(compileOrder.begin(), compileOrder.end(), [&nestingCount](PrefabId a, PrefabId b)
+            {
+                return nestingCount(a) < nestingCount(b);
+            });
+        for (PrefabId id : compileOrder)
+        {
+            const PrefabCompileResult compiled = CompilePrefab(documents.at(id), lookup);
             if (!compiled.mPrefab)
             {
                 for (const PrefabDiagnostic &diagnostic : compiled.mDiagnostics)
@@ -1349,11 +2334,11 @@ namespace mir
 
             for (const PrefabAuthoredEntry &entry : sceneBatch)
             {
-                if (entry.mKey.mAddress.size() != 2)
+                if (entry.mKey.mAddress.size() < 2)
                     continue;
 
                 const StableId root = entry.mKey.mAddress.front();
-                const SceneNodeAddress node{ entry.mKey.mAddress.back() };
+                const SceneNodeAddress node(entry.mKey.mAddress.begin() + 1, entry.mKey.mAddress.end());
                 const auto instance = scene->mInstances.find(root);
                 if (instance == scene->mInstances.end())
                     continue;
@@ -1431,19 +2416,12 @@ namespace mir
                 scene->mDirty = sceneDirtyBefore;
             };
 
-        // Scene entries are checked against the documents as this batch leaves them.
-        const std::function<const PrefabDocument *(PrefabId)> batchDocument =
-            [&documents, this](PrefabId id) -> const PrefabDocument *
-        {
-            const auto edited = documents.find(id);
-            return edited != documents.end() ? &edited->second : mCoordinator.Registry().Find(id);
-        };
         std::vector<SceneEdit> sceneEdits;
         sceneEdits.reserve(sceneBatch.size());
         for (const PrefabAuthoredEntry &entry : sceneBatch)
         {
             SceneEdit edit;
-            if (!PrepareSceneEdit(entry, *scene, mWorld, batchDocument, edit))
+            if (!PrepareSceneEdit(entry, *scene, mWorld, lookup, edit))
             {
                 MIR_LOG_WARN("Prefab authoring: scene entry could not be written");
                 return result;
@@ -1502,14 +2480,61 @@ namespace mir
         }
 
         const LoadedScene *scene = mCoordinator.Scene();
-        if (scene == nullptr || key.mPrefab || key.mAddress.size() != 2)
+        if (key.mPrefab)
+        {
+            const std::optional<ApplyChain> chain =
+                ResolveApplyChain(mCoordinator.Registry(), nullptr, key);
+            if (!chain)
+            {
+                action.mRefusal = "the nested occurrence member is missing";
+                return action;
+            }
+
+            const PrefabPatch *patch = OriginPatch(mCoordinator.Registry(), key, chain->mOrigin);
+            if (patch == nullptr)
+            {
+                action.mRefusal = "the member has no local override to revert";
+                return action;
+            }
+
+            if (IsFieldKey(key))
+            {
+                bool present = false;
+                if (const PrefabComponentInstance *added = FindAddedComponent(*patch, key.mComponent))
+                    present = added->mFields.contains(key.mField);
+                present = present || FindPatchField(*patch, key.mComponent, key.mField) != nullptr;
+                if (!present)
+                {
+                    action.mRefusal = "the field is not overridden";
+                    return action;
+                }
+            }
+            else if (IsComponentKey(key))
+            {
+                if (!PatchHasComponent(*patch, key.mComponent))
+                {
+                    action.mRefusal = "the component has no local change to revert";
+                    return action;
+                }
+            }
+            else
+            {
+                action.mRefusal = "select a field or a component";
+                return action;
+            }
+
+            action.mEntries.push_back(PrefabAuthoredEntry{ key, std::nullopt });
+            return action;
+        }
+
+        if (scene == nullptr || key.mAddress.size() < 2)
         {
             action.mRefusal = "only an instance member has a local override to revert";
             return action;
         }
 
         const StableId root = key.mAddress.front();
-        const SceneNodeAddress node{ key.mAddress.back() };
+        const SceneNodeAddress node(key.mAddress.begin() + 1, key.mAddress.end());
         const auto instance = scene->mInstances.find(root);
         if (instance == scene->mInstances.end() ||
             !instance->second.mBindings.contains(node))
@@ -1548,7 +2573,31 @@ namespace mir
         return action;
     }
 
-    PrefabAuthoredAction PrefabAuthoring::Apply(const PrefabAuthoredKey &key) const
+    std::vector<PrefabApplyTarget> PrefabAuthoring::ApplyTargets(const PrefabAuthoredKey &key) const
+    {
+        std::vector<PrefabApplyTarget> targets;
+        if (mCoordinator.IsFrozen() || key.mAddress.size() < 2)
+            return targets;
+
+        const PrefabRegistry &registry = mCoordinator.Registry();
+        const std::optional<ApplyChain> chain = ResolveApplyChain(registry, mCoordinator.Scene(), key);
+        if (!chain)
+            return targets;
+
+        for (const ApplyLayer &layer : chain->mLayers)
+        {
+            PrefabApplyTarget target;
+            target.mPrefab = layer.mPrefab;
+            target.mLabel = LayerLabel(registry, layer.mPrefab);
+            target.mOverrides = IsFieldKey(key)
+                ? LayerHasField(registry, layer, key.mComponent, key.mField)
+                : IsComponentKey(key) && LayerHasComponent(registry, layer, key.mComponent);
+            targets.push_back(std::move(target));
+        }
+        return targets;
+    }
+
+    PrefabAuthoredAction PrefabAuthoring::Apply(const PrefabAuthoredKey &key, std::size_t target) const
     {
         PrefabAuthoredAction action;
         if (mCoordinator.IsFrozen())
@@ -1558,44 +2607,46 @@ namespace mir
         }
 
         const LoadedScene *scene = mCoordinator.Scene();
-        if (scene == nullptr || key.mPrefab || key.mAddress.size() != 2)
+        const PrefabRegistry &registry = mCoordinator.Registry();
+        const std::optional<ApplyChain> chain = ResolveApplyChain(registry, scene, key);
+        if (!chain)
         {
-            action.mRefusal = "only an instance member can be applied to its prefab";
+            action.mRefusal = key.mPrefab ? "the nested occurrence member is missing"
+                                          : "the instance member is missing";
             return action;
         }
 
-        const StableId root = key.mAddress.front();
-        const SceneNodeAddress node{ key.mAddress.back() };
-        const auto instanceIt = scene->mInstances.find(root);
-        if (instanceIt == scene->mInstances.end())
+        const ApplyOrigin &origin = chain->mOrigin;
+        if (origin.mScene)
         {
-            action.mRefusal = "the instance is missing from this scene";
-            return action;
-        }
-        const ScenePrefabInstance &instance = instanceIt->second;
-
-        const auto binding = instance.mBindings.find(node);
-        if (binding == instance.mBindings.end() || !SceneMemberAlive(*scene, mWorld, binding->second))
-        {
-            action.mRefusal = "the instance member is missing";
-            return action;
+            const auto binding = origin.mInstance->mBindings.find(origin.mSegments);
+            if (binding == origin.mInstance->mBindings.end() ||
+                !SceneMemberAlive(*scene, mWorld, binding->second))
+            {
+                action.mRefusal = "the instance member is missing";
+                return action;
+            }
         }
 
-        const std::optional<PrefabId> prefab = ParsePrefabId(instance.mPrefab);
-        if (!prefab)
+        if (chain->mLayers.empty())
         {
-            action.mRefusal = "the instance has an invalid prefab id";
+            action.mRefusal = "the member has no lower layer to apply to";
             return action;
         }
-        const PrefabDocument *document = mCoordinator.Registry().Find(*prefab);
-        const PrefabNode *documentNode = document != nullptr ? FindNode(*document, node) : nullptr;
-        if (documentNode == nullptr)
+        if (target >= chain->mLayers.size())
         {
-            action.mRefusal = "the prefab document has no such node";
+            action.mRefusal = "the apply target is not one of this member's layers";
             return action;
         }
 
-        const PrefabAuthoredKey documentKey{ *prefab, node, key.mComponent, key.mField };
+        const ApplyLayer &layer = chain->mLayers[target];
+        const PrefabAuthoredKey targetKey{ layer.mPrefab, layer.mAddress, key.mComponent, key.mField };
+        const PrefabDocument *layerDocument = registry.Find(layer.mPrefab);
+        if (layerDocument == nullptr)
+        {
+            action.mRefusal = "the target layer document is missing";
+            return action;
+        }
 
         if (IsFieldKey(key))
         {
@@ -1607,38 +2658,24 @@ namespace mir
                 return action;
             }
 
-            const json *value = nullptr;
-            if (const SceneComponentRecord *added = FindAddedComponent(instance, node, key.mComponent))
-            {
-                const auto it = added->mFields.find(key.mField);
-                if (it != added->mFields.end())
-                    value = &it.value();
-            }
-            if (value == nullptr)
-            {
-                if (const SceneFieldPatch *patch =
-                        FindInstanceFieldPatch(instance, node, key.mComponent, key.mField))
-                {
-                    value = &patch->mValue;
-                }
-            }
-            if (value == nullptr)
+            const std::optional<json> value = OriginFieldValue(registry, key, origin);
+            if (!value)
             {
                 action.mRefusal = "the field is not overridden";
                 return action;
             }
 
-            if (FindComponent(*documentNode, key.mComponent) == nullptr)
+            if (!TemplateHasComponent(registry, *layerDocument, layer.mAddress, key.mComponent))
             {
                 action.mRefusal = "apply the added component before its fields";
                 return action;
             }
 
-            json documentValue;
+            json layerValue;
             std::string reason;
             if (field->mKind == FieldKind::EntityRef)
             {
-                if (!TranslateEntityRef(*scene, instance, *value, documentValue, reason))
+                if (!TranslateLayerRef(origin, layer, scene, *value, layerValue, reason))
                 {
                     action.mRefusal = "the field " + reason;
                     return action;
@@ -1646,16 +2683,15 @@ namespace mir
             }
             else
             {
-                FieldBuffer buffer{};
-                if (!JsonToField(field->mKind, *value, buffer.mBytes))
+                if (!ValueFitsField(*field, *value))
                 {
                     action.mRefusal = "the field value does not fit its type";
                     return action;
                 }
-                documentValue = *value;
+                layerValue = *value;
             }
 
-            action.mEntries.push_back(PrefabAuthoredEntry{ documentKey, documentValue.dump() });
+            action.mEntries.push_back(PrefabAuthoredEntry{ targetKey, layerValue.dump() });
             action.mEntries.push_back(PrefabAuthoredEntry{ key, std::nullopt });
             return action;
         }
@@ -1666,18 +2702,11 @@ namespace mir
             return action;
         }
 
-        const PrefabComponentState state = InstanceComponentState(mCoordinator.Registry(), *scene, root, node,
-            key.mComponent);
+        const PrefabComponentState state = OriginComponentState(registry, scene, key, origin);
         if (state == PrefabComponentState::Added)
         {
-            if (FindComponent(*documentNode, key.mComponent) != nullptr)
-            {
-                action.mRefusal = "the prefab already has this component";
-                return action;
-            }
-
-            const SceneComponentRecord *record = FindAddedComponent(instance, node, key.mComponent);
-            if (record == nullptr)
+            const std::optional<json> record = OriginAddedFields(registry, key, origin);
+            if (!record)
             {
                 action.mRefusal = "the component addition is missing";
                 return action;
@@ -1690,8 +2719,14 @@ namespace mir
                 return action;
             }
 
+            if (TemplateHasComponent(registry, *layerDocument, layer.mAddress, key.mComponent))
+            {
+                action.mRefusal = "the target layer already has this component";
+                return action;
+            }
+
             json fields = json::object();
-            for (auto it = record->mFields.begin(); it != record->mFields.end(); ++it)
+            for (auto it = record->begin(); it != record->end(); ++it)
             {
                 const FieldDesc *field = ops->FindField(it.key());
                 if (field == nullptr)
@@ -1702,19 +2737,18 @@ namespace mir
 
                 if (field->mKind == FieldKind::EntityRef)
                 {
-                    json documentValue;
+                    json layerValue;
                     std::string reason;
-                    if (!TranslateEntityRef(*scene, instance, it.value(), documentValue, reason))
+                    if (!TranslateLayerRef(origin, layer, scene, it.value(), layerValue, reason))
                     {
                         action.mRefusal = "field \"" + it.key() + "\" " + reason;
                         return action;
                     }
-                    fields[it.key()] = std::move(documentValue);
+                    fields[it.key()] = std::move(layerValue);
                     continue;
                 }
 
-                FieldBuffer buffer{};
-                if (!JsonToField(field->mKind, it.value(), buffer.mBytes))
+                if (!ValueFitsField(*field, it.value()))
                 {
                     action.mRefusal = "field \"" + it.key() + "\" value does not fit its type";
                     return action;
@@ -1722,19 +2756,20 @@ namespace mir
                 fields[it.key()] = it.value();
             }
 
-            action.mEntries.push_back(PrefabAuthoredEntry{ documentKey, fields.dump() });
+            action.mEntries.push_back(PrefabAuthoredEntry{ targetKey, fields.dump() });
             action.mEntries.push_back(PrefabAuthoredEntry{ key, std::nullopt });
             return action;
         }
 
         if (state == PrefabComponentState::Removed)
         {
-            if (FindComponent(*documentNode, key.mComponent) == nullptr)
+            if (!TemplateHasComponent(registry, *layerDocument, layer.mAddress, key.mComponent))
             {
-                action.mRefusal = "the prefab does not have this component";
+                action.mRefusal = "the target layer does not have this component";
                 return action;
             }
-            action.mEntries.push_back(PrefabAuthoredEntry{ documentKey, std::nullopt });
+
+            action.mEntries.push_back(PrefabAuthoredEntry{ targetKey, std::string("null") });
             action.mEntries.push_back(PrefabAuthoredEntry{ key, std::nullopt });
             return action;
         }
@@ -1755,9 +2790,14 @@ namespace mir
 
         const PrefabDocument *document = ActivePrefabDocument();
         const PrefabNode *parentNode = document != nullptr ? FindNode(*document, SceneNodeAddress{ parent }) : nullptr;
-        if (parentNode == nullptr || parentNode->mKind != PrefabNodeKind::Entity)
+        if (parentNode == nullptr)
         {
             action.mRefusal = "the parent node is missing";
+            return action;
+        }
+        if (parentNode->mKind != PrefabNodeKind::Entity)
+        {
+            action.mRefusal = "a nested Prefab occurrence cannot hold nodes";
             return action;
         }
         if (preset != nullptr && preset->mCanCreate != nullptr)
@@ -1783,6 +2823,66 @@ namespace mir
         key.mAddress = { *id };
         action.mEntries.push_back(PrefabAuthoredEntry{ key,
             NewNodeRecord(*document, *id, parent, siblingIndex, preset).dump() });
+        return action;
+    }
+
+    PrefabAuthoredAction PrefabAuthoring::PlacePrefabNode(PrefabNodeId parent, PrefabId prefab,
+        std::size_t siblingIndex, std::optional<WorldVec3> position)
+    {
+        PrefabAuthoredAction action;
+        if (!mActiveDocument)
+        {
+            action.mRefusal = "no prefab document is active";
+            return action;
+        }
+
+        if (prefab == *mActiveDocument)
+        {
+            action.mRefusal = "a prefab cannot nest itself";
+            return action;
+        }
+
+        const PrefabRegistry &registry = mCoordinator.Registry();
+        const PrefabDocument *inner = registry.Find(prefab);
+        if (inner == nullptr)
+        {
+            action.mRefusal = "the prefab is not registered";
+            return action;
+        }
+
+        std::vector<PrefabId> visited;
+        if (DocumentReaches(registry, prefab, *mActiveDocument, visited))
+        {
+            action.mRefusal = "the prefab nests this document";
+            return action;
+        }
+
+        const PrefabDocument *document = ActivePrefabDocument();
+        const PrefabNode *parentNode = document != nullptr ? FindNode(*document, SceneNodeAddress{ parent }) : nullptr;
+        if (parentNode == nullptr)
+        {
+            action.mRefusal = "the parent node is missing";
+            return action;
+        }
+        if (parentNode->mKind != PrefabNodeKind::Entity)
+        {
+            action.mRefusal = "a nested Prefab occurrence cannot hold nodes";
+            return action;
+        }
+
+        PrefabDocument copy = *document;
+        const std::optional<PrefabNodeId> id = AllocateNodeId(copy);
+        if (!id)
+        {
+            action.mRefusal = "the document has no free node id";
+            return action;
+        }
+
+        PrefabAuthoredKey key;
+        key.mPrefab = *mActiveDocument;
+        key.mAddress = { *id };
+        action.mEntries.push_back(PrefabAuthoredEntry{ key,
+            NewOccurrenceRecord(*document, *id, parent, prefab, siblingIndex, position, inner->mRootNode).dump() });
         return action;
     }
 
@@ -1874,9 +2974,14 @@ namespace mir
             return action;
         }
         const PrefabNode *parentNode = FindNode(*document, SceneNodeAddress{ parent });
-        if (parentNode == nullptr || parentNode->mKind != PrefabNodeKind::Entity)
+        if (parentNode == nullptr)
         {
             action.mRefusal = "the parent node is missing";
+            return action;
+        }
+        if (parentNode->mKind != PrefabNodeKind::Entity)
+        {
+            action.mRefusal = "a nested Prefab occurrence cannot hold nodes";
             return action;
         }
         std::set<PrefabNodeId> moving;
@@ -1898,7 +3003,7 @@ namespace mir
         std::erase_if(after.mNodes, [&](const PrefabNode &node) { return moving.contains(node.mId); });
         for (PrefabNode &node : moved)
         {
-            if (node.mParent != parent && !KeepDocumentPose(*document, node, parent))
+            if (node.mParent != parent && !KeepDocumentPose(mCoordinator.Registry(), *document, node, parent))
             {
                 action.mRefusal = "the node's world position does not fit under the new parent";
                 return action;

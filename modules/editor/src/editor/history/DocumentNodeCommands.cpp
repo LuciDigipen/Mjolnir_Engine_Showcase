@@ -87,6 +87,15 @@ namespace mir
             const std::size_t index = SiblingIndex(world, parent, action.mBefore, action.mTargets);
             return FromAction(authored.ReparentNodes(action.mTargets, parent, index));
         }
+        case EntityActionKind::PlacePrefab:
+        {
+            if (root.IsNull() || action.mPrefabPath.empty())
+                return nullptr;
+
+            const Entity parent = action.mParent.IsNull() ? root : action.mParent;
+            return FromAction(authored.PlacePrefabNode(action.mPrefabPath, parent,
+                SiblingIndex(world, parent, kNullEntity), action.mPlacement));
+        }
         case EntityActionKind::Duplicate:
         case EntityActionKind::CopyAsOrdinaryObject:
         case EntityActionKind::None:

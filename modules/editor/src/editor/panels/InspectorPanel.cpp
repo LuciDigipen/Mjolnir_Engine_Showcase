@@ -241,13 +241,25 @@ namespace mir
             if (ImGui::MenuItem("Revert", nullptr, false, canRevert))
                 edits.Submit(MakeRevertAuthoredCommand(authored, key));
 
-            const AuthoredAction apply = authored.Apply(key);
-            ImGui::BeginDisabled(!apply.mAllowed);
-            if (ImGui::MenuItem("Apply to Prefab"))
-                edits.Submit(MakeApplyAuthoredCommand(authored, key));
-            ImGui::EndDisabled();
-            if (!apply.mAllowed)
-                ImGui::SetItemTooltip("%s", apply.mReason.c_str());
+            const std::vector<AuthoredApplyTarget> targets = authored.ApplyTargets(key);
+            if (targets.empty() || !ImGui::BeginMenu("Apply to"))
+                return;
+
+            for (std::size_t index = 0; index < targets.size(); ++index)
+            {
+                const AuthoredAction apply = authored.Apply(key, index);
+                std::string label = targets[index].mLabel;
+                if (targets[index].mOverrides)
+                    label += "  " ICON_FA_PEN;
+
+                ImGui::BeginDisabled(!apply.mAllowed);
+                if (ImGui::MenuItem(label.c_str()))
+                    edits.Submit(MakeApplyAuthoredCommand(authored, key, index));
+                ImGui::EndDisabled();
+                if (!apply.mAllowed)
+                    ImGui::SetItemTooltip("%s", apply.mReason.c_str());
+            }
+            ImGui::EndMenu();
         }
 
         void PasteValues(World &world, const Clipboard &clipboard, Entity entity, Edits &edits)

@@ -23,9 +23,10 @@
 #include <cctype>
 #include <cstddef>
 #include <map>
+#include <optional>
 #include <string>
-#include <unordered_set>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -47,23 +48,105 @@ namespace mir
             return "Entity " + std::to_string(entity.mIndex);
         }
 
-        std::unordered_set<uint64_t> InstanceMembers(const LoadedScene &scene)
+        std::optional<StableId> StableIdFromJson(const json &value)
         {
-            std::unordered_set<uint64_t> members;
-            for (const auto &[root, instance] : scene.mInstances)
+            if (value.is_null())
+                return kNullStableId;
+            if (value.is_number_unsigned())
+                return value.get<uint64_t>();
+            if (value.is_number_integer())
             {
-                const auto rootEntity = scene.mEntities.find(root);
-                if (rootEntity != scene.mEntities.end())
-                    members.insert(PackEntity(rootEntity->second));
-                for (const auto &[address, id] : instance.mBindings)
-                {
-                    (void)address;
-                    const auto member = scene.mEntities.find(id);
-                    if (member != scene.mEntities.end())
-                        members.insert(PackEntity(member->second));
-                }
+                const int64_t raw = value.get<int64_t>();
+                if (raw < 0)
+                    return std::nullopt;
+                return static_cast<StableId>(raw);
             }
-            return members;
+            return std::nullopt;
+        }
+
+        json AddressJson(const SceneNodeAddress &address)
+        {
+            json out = json::array();
+            for (uint64_t segment : address)
+                out.push_back(std::to_string(segment));
+            return out;
+        }
+
+        // A captured entity's address in the new document; empty when it is outside the selection.
+        bool TranslateRef(const json &value, const std::map<StableId, SceneNodeAddress> &addresses, json &out)
+        {
+            const std::optional<StableId> target = StableIdFromJson(value);
+            if (!target)
+                return false;
+            if (*target == kNullStableId)
+            {
+                out = nullptr;
+                return true;
+            }
+
+            const auto address = addresses.find(*target);
+            if (address == addresses.end())
+                return false;
+            out = AddressJson(address->second);
+            return true;
+        }
+
+        SceneNodeAddress InnerRootAddress(const ScenePrefabInstance &instance)
+        {
+            for (const auto &[address, id] : instance.mBindings)
+            {
+                if (id == instance.mRoot)
+                    return address;
+            }
+            return {};
+        }
+
+        PrefabPatch &GetOrAddPatch(PrefabNode &node, const SceneNodeAddress &target)
+        {
+            for (PrefabPatch &patch : node.mPatches)
+            {
+                if (patch.mTarget == target)
+                    return patch;
+            }
+
+            PrefabPatch patch;
+            patch.mTarget = target;
+            node.mPatches.push_back(std::move(patch));
+            return node.mPatches.back();
+        }
+
+        void AddPlacementPatch(PrefabNode &node, World &world, Entity root, const ScenePrefabInstance &instance,
+            const ComponentOps &ops)
+        {
+            const SceneNodeAddress target = InnerRootAddress(instance);
+            if (target.empty() || !ops.Has(world, root))
+                return;
+
+            const void *component = ops.GetComponent(world, root);
+            if (component == nullptr)
+                return;
+
+            PrefabPatch &patch = GetOrAddPatch(node, target);
+            for (const FieldDesc &field : ops.mFields)
+            {
+                if (field.ReadOnly() || field.mKind == FieldKind::EntityRef)
+                    continue;
+
+                FieldBuffer buffer{};
+                field.Read(component, buffer.mBytes);
+                const json value = FieldToJson(field.mKind, buffer.mBytes);
+
+                const auto existing = std::find_if(patch.mFields.begin(), patch.mFields.end(),
+                    [&ops, &field](const PrefabFieldOverride &entry)
+                    {
+                        return entry.mComponent == ops.mType.name && entry.mField == field.mName;
+                    });
+                if (existing != patch.mFields.end())
+                    existing->mValue = value;
+                else
+                    patch.mFields.push_back(
+                        PrefabFieldOverride{ std::string(ops.mType.name), std::string(field.mName), value });
+            }
         }
 
         void ResetRootTransform(PrefabComponentInstance &component, const ComponentOps &ops)
@@ -100,13 +183,96 @@ namespace mir
             return result;
         }
 
-        const std::unordered_set<uint64_t> instanceMembers = InstanceMembers(scene);
+        std::map<uint64_t, StableId> stableIds;
+        for (const auto &[id, entity] : scene.mEntities)
+            stableIds.emplace(PackEntity(entity), id);
+
+        const auto rootId = stableIds.find(PackEntity(root));
+        if (rootId == stableIds.end())
+        {
+            result.mRefusal = "the selection is not part of this scene";
+            return result;
+        }
+
+        std::unordered_set<uint64_t> memberKeys;
+        for (const Entity member : members)
+            memberKeys.insert(PackEntity(member));
+
+        std::map<StableId, const ScenePrefabInstance *> capturedInstances;
+        std::unordered_map<uint64_t, const ScenePrefabInstance *> instanceOfMember;
+        for (const auto &[instanceRoot, instance] : scene.mInstances)
+        {
+            const auto rootEntity = scene.mEntities.find(instanceRoot);
+            if (rootEntity == scene.mEntities.end() || !world.IsAlive(rootEntity->second))
+                continue;
+
+            const bool rootInside = memberKeys.contains(PackEntity(rootEntity->second));
+            bool anyInside = false;
+            bool allInside = true;
+            for (const auto &[address, id] : instance.mBindings)
+            {
+                (void)address;
+                const auto entity = scene.mEntities.find(id);
+                if (entity == scene.mEntities.end() || !world.IsAlive(entity->second))
+                    continue;
+                if (memberKeys.contains(PackEntity(entity->second)))
+                    anyInside = true;
+                else
+                    allInside = false;
+            }
+
+            if (rootInside)
+            {
+                if (instanceRoot == rootId->second)
+                {
+                    result.mRefusal = "Entity '" + EntityLabel(world, root) +
+                        "' is a Prefab instance root; capture an ordinary parent";
+                    return result;
+                }
+                if (!allInside)
+                {
+                    result.mRefusal = "Prefab instance '" + EntityLabel(world, rootEntity->second) +
+                        "' reaches outside the selection";
+                    return result;
+                }
+                capturedInstances.emplace(instanceRoot, &instance);
+            }
+            else if (anyInside)
+            {
+                result.mRefusal = "an entity in the selection belongs to a Prefab instance whose root is outside it";
+                return result;
+            }
+            else
+            {
+                continue;
+            }
+
+            for (const auto &[address, id] : instance.mBindings)
+            {
+                (void)address;
+                const auto entity = scene.mEntities.find(id);
+                if (entity != scene.mEntities.end())
+                    instanceOfMember.emplace(PackEntity(entity->second), &instance);
+            }
+        }
+
         for (const Entity member : members)
         {
-            if (instanceMembers.contains(PackEntity(member)))
+            if (member == root)
+                continue;
+
+            const auto stable = stableIds.find(PackEntity(member));
+            const auto instance = stable != stableIds.end()
+                ? instanceOfMember.find(PackEntity(member))
+                : instanceOfMember.end();
+            if (instance != instanceOfMember.end() && instance->second->mRoot != stable->second)
+                continue;
+
+            const Entity parent = ParentOf(world, member);
+            if (parent.IsNull() || instanceOfMember.contains(PackEntity(parent)))
             {
                 result.mRefusal = "Entity '" + EntityLabel(world, member) +
-                    "' is a Prefab instance root or member; capture ordinary entities only";
+                    "' sits under a Prefab instance; capture it outside the instance";
                 return result;
             }
         }
@@ -115,42 +281,174 @@ namespace mir
         document.mId = GeneratePrefabId();
         document.mNextNodeId = 1;
 
-        std::map<uint64_t, PrefabNodeId> nodeIds;
-        std::vector<PrefabNodeId> order;
-        order.reserve(members.size());
+        std::map<uint64_t, PrefabNodeId> entityNodes;
+        std::map<StableId, PrefabNodeId> occurrenceNodes;
         for (const Entity member : members)
         {
+            const auto stable = stableIds.find(PackEntity(member));
+            if (stable == stableIds.end())
+                continue;
+
+            const auto instance = instanceOfMember.find(PackEntity(member));
+            if (instance != instanceOfMember.end())
+            {
+                if (instance->second->mRoot != stable->second || occurrenceNodes.contains(stable->second))
+                    continue;
+            }
+            else if (entityNodes.contains(PackEntity(member)))
+            {
+                continue;
+            }
+
             const std::optional<PrefabNodeId> id = AllocateNodeId(document);
             if (!id)
             {
                 result.mRefusal = "the document has no free node id";
                 return result;
             }
-            nodeIds.emplace(PackEntity(member), *id);
-            order.push_back(*id);
-        }
-        document.mRootNode = order.front();
 
-        std::unordered_map<uint64_t, StableId> owners;
-        for (const auto &[id, entity] : scene.mEntities)
-            if (nodeIds.contains(PackEntity(entity)))
-                owners.emplace(PackEntity(entity), id);
+            if (instance != instanceOfMember.end())
+                occurrenceNodes.emplace(stable->second, *id);
+            else
+                entityNodes.emplace(PackEntity(member), *id);
+        }
+
+        const auto rootNode = entityNodes.find(PackEntity(root));
+        if (rootNode == entityNodes.end())
+        {
+            result.mRefusal = "the selection needs an ordinary entity root";
+            return result;
+        }
+        document.mRootNode = rootNode->second;
+
+        std::map<StableId, SceneNodeAddress> addresses;
+        for (const auto &[entityKey, nodeId] : entityNodes)
+            addresses.emplace(stableIds.at(entityKey), SceneNodeAddress{ nodeId });
+        for (const auto &[instanceRoot, instance] : capturedInstances)
+        {
+            const PrefabNodeId occurrence = occurrenceNodes.at(instanceRoot);
+            addresses[instanceRoot] = SceneNodeAddress{ occurrence };
+            for (const auto &[address, id] : instance->mBindings)
+            {
+                SceneNodeAddress full{ occurrence };
+                full.insert(full.end(), address.begin(), address.end());
+                addresses[id] = std::move(full);
+            }
+        }
 
         ComponentRegistry &registry = ComponentRegistry::Instance();
+        const auto translateFields = [&addresses](const ComponentOps &ops, const json &fields, json &out)
+        {
+            for (auto it = fields.begin(); it != fields.end(); ++it)
+            {
+                const FieldDesc *field = ops.FindField(it.key());
+                if (field != nullptr && field->ReadOnly())
+                    continue;
+                if (field == nullptr || field->mKind != FieldKind::EntityRef)
+                {
+                    out[it.key()] = it.value();
+                    continue;
+                }
+
+                json translated;
+                if (!TranslateRef(it.value(), addresses, translated))
+                    return false;
+                out[it.key()] = std::move(translated);
+            }
+            return true;
+        };
+
         for (const Entity member : members)
         {
-            const auto savedOwner = owners.find(PackEntity(member));
-            const StableId owner = savedOwner != owners.end() ? savedOwner->second : kNullStableId;
+            const auto stable = stableIds.find(PackEntity(member));
+            if (stable == stableIds.end())
+                continue;
+
+            const auto instanceIt = instanceOfMember.find(PackEntity(member));
+            if (instanceIt != instanceOfMember.end())
+            {
+                const ScenePrefabInstance &instance = *instanceIt->second;
+                if (instance.mRoot != stable->second)
+                    continue;
+
+                const std::optional<PrefabId> prefab = ParsePrefabId(instance.mPrefab);
+                if (!prefab)
+                {
+                    result.mRefusal = "Prefab instance '" + EntityLabel(world, member) +
+                        "' has an invalid prefab id";
+                    return result;
+                }
+
+                PrefabNode node;
+                node.mId = occurrenceNodes.at(stable->second);
+                node.mKind = PrefabNodeKind::Prefab;
+                node.mPrefab = *prefab;
+
+                const Entity parent = ParentOf(world, member);
+                const auto parentNode = entityNodes.find(PackEntity(parent));
+                if (parentNode != entityNodes.end())
+                    node.mParent = parentNode->second;
+
+                for (const SceneInstancePatch &patch : instance.mPatches)
+                {
+                    PrefabPatch converted;
+                    converted.mTarget = patch.mTarget;
+
+                    for (const SceneFieldPatch &field : patch.mFields)
+                    {
+                        PrefabFieldOverride entry{ field.mComponent, field.mField, field.mValue };
+                        if (const ComponentOps *ops = registry.Find(field.mComponent))
+                        {
+                            const FieldDesc *desc = ops->FindField(field.mField);
+                            if (desc != nullptr && desc->mKind == FieldKind::EntityRef &&
+                                !TranslateRef(field.mValue, addresses, entry.mValue))
+                            {
+                                result.mRefusal = "Prefab instance '" + EntityLabel(world, member) + "' field '" +
+                                    field.mComponent + "." + field.mField + "' points outside the selection";
+                                return result;
+                            }
+                        }
+                        converted.mFields.push_back(std::move(entry));
+                    }
+
+                    for (const SceneComponentRecord &added : patch.mAddedComponents)
+                    {
+                        const ComponentOps *ops = registry.Find(added.mType);
+                        if (ops == nullptr)
+                            continue;
+
+                        PrefabComponentInstance component;
+                        component.mType = added.mType;
+                        if (!translateFields(*ops, added.mFields, component.mFields))
+                        {
+                            result.mRefusal = "Prefab instance '" + EntityLabel(world, member) +
+                                "' added component '" + added.mType + "' points outside the selection";
+                            return result;
+                        }
+                        converted.mAddedComponents.push_back(std::move(component));
+                    }
+
+                    converted.mRemovedComponents = patch.mRemovedComponents;
+                    node.mPatches.push_back(std::move(converted));
+                }
+
+                if (const ComponentOps *transform = registry.Find("Transform"))
+                    AddPlacementPatch(node, world, member, instance, *transform);
+
+                document.mNodes.push_back(std::move(node));
+                continue;
+            }
+            const StableId owner = stable->second;
 
             PrefabNode node;
-            node.mId = nodeIds.at(PackEntity(member));
+            node.mId = entityNodes.at(PackEntity(member));
             node.mKind = PrefabNodeKind::Entity;
 
             if (member != root)
             {
                 const Entity parent = ParentOf(world, member);
-                const auto parentId = nodeIds.find(PackEntity(parent));
-                if (parentId != nodeIds.end())
+                const auto parentId = entityNodes.find(PackEntity(parent));
+                if (parentId != entityNodes.end())
                     node.mParent = parentId->second;
             }
 
@@ -190,16 +488,17 @@ namespace mir
                             continue;
                         }
 
-                        const auto targetId = nodeIds.find(PackEntity(target));
-                        if (targetId == nodeIds.end())
+                        const auto targetId = stableIds.find(PackEntity(target));
+                        json translated;
+                        if (targetId == stableIds.end() ||
+                            !TranslateRef(json(targetId->second), addresses, translated))
                         {
                             result.mRefusal = "Entity '" + EntityLabel(world, member) + "' field '" +
                                 instance.mType + "." + std::string(field.mName) +
                                 "' points outside the subtree";
                             return result;
                         }
-                        instance.mFields[std::string(field.mName)] =
-                            json::array({ std::to_string(targetId->second) });
+                        instance.mFields[std::string(field.mName)] = std::move(translated);
                         continue;
                     }
 
@@ -213,6 +512,13 @@ namespace mir
             }
 
             document.mNodes.push_back(std::move(node));
+        }
+
+        const std::vector<PrefabDiagnostic> diagnostics = ValidatePrefab(document);
+        if (HasPrefabErrors(diagnostics))
+        {
+            result.mRefusal = diagnostics.front().mMessage;
+            return result;
         }
 
         result.mDocument = std::move(document);

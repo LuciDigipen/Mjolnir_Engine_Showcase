@@ -42,7 +42,7 @@ namespace mir
             });
 
         // first in PreUpdate: it commits at the Edit safe point, before anything reads the scene
-        context.scheduler.AddSystem<PrefabSystem>(SystemPhase::PreUpdate);
+        context.scheduler.AddSystem<PrefabSystem>(SystemPhase::PreUpdate, SystemOrder{SystemOrder::kEarly - 5});
     }
 
     void PrefabModule::Rescan()
