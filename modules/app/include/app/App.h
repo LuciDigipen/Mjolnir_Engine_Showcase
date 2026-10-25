@@ -231,6 +231,7 @@ namespace mir
         World *ActivePreviewWorld();
         EditorDocuments MakeEditorDocuments();
         ContentBrowserView MakeContentBrowserView();
+        void RefreshPrefabHistory();
     #endif
 
         SplashScreen mSplash;

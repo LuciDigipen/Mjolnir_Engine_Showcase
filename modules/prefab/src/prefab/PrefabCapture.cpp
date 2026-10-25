@@ -438,6 +438,7 @@ namespace mir
                 document.mNodes.push_back(std::move(node));
                 continue;
             }
+            const StableId owner = stable->second;
 
             PrefabNode node;
             node.mId = entityNodes.at(PackEntity(member));
@@ -475,6 +476,14 @@ namespace mir
                         field.Read(component, &target);
                         if (target.IsNull())
                         {
+                            if (owner != kNullStableId && scene.mUnresolvedEntityRefs.contains(
+                                    { owner, instance.mType, std::string(field.mName) }))
+                            {
+                                result.mRefusal = "Entity '" + EntityLabel(world, member) + "' field '" +
+                                    instance.mType + "." + std::string(field.mName) +
+                                    "' has an unresolved reference to a temporarily unavailable target";
+                                return result;
+                            }
                             instance.mFields[std::string(field.mName)] = nullptr;
                             continue;
                         }
