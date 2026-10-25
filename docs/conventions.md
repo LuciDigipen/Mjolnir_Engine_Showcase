@@ -142,12 +142,16 @@ reader is a person or an agent without the engine's source, so the fix must be
 enough on its own. Native codes (`AKRESULT`, `VkResult`, a Win32 or GLFW error,
 a JSON parse position) go into the cause.
 
-Exceptions are allowed anywhere, with three limits. An exception must never
-cross a C callback, because unwinding through a C library's frames is undefined.
-An exception must never leave a thread's entry function, because that calls
-`std::terminate`. So every GLFW, Win32, Vulkan, Wwise and Jolt callback, and
-every thread entry, catches or is `noexcept`. The third limit is about state: at
-runtime, catch only to report and exit, or around an operation that leaves
+Exceptions are allowed anywhere, with two limits. A function called from C code
+or a foreign thread, such as a library callback or a thread entry point, is
+`noexcept`. Unwinding through a C library's frames is undefined, and an
+exception leaving a thread calls `std::terminate`. Its body may fail only by
+allocation, which terminates and reaches the crash handler. Anything else that
+can throw is caught inside, with a stated fallback. Each registration site
+checks the `noexcept` with a `static_assert`. A worker job runs its body through
+`RunGuarded` (`terrain/RunGuarded.h`), which turns an exception into that job's
+error result and lets `std::bad_alloc` terminate. The second limit is about
+state: at runtime, catch only to report and exit, or around an operation that leaves
 nothing half-done, such as a model load. A catch that carries on mid-frame can
 leave the `World` or a command buffer half-updated.
 
@@ -224,6 +228,13 @@ Run `ctest --test-dir builds/windows-msvc-debug --output-on-failure` before
 pushing.
 
 ## Changed
+
+*2026-10-24* — **Callbacks and thread entries are `noexcept`, and fail only by
+allocation.** Was: each one caught or was `noexcept`, by choice. Now: all are
+`noexcept`, checked by a `static_assert`, worker jobs go through `RunGuarded`,
+and `std::bad_alloc` always terminates. Because: a throw inside a terrain job
+aborted the process with no report, and swallowing an allocation failure
+inside a callback leaves its state silently wrong.
 
 *2026-10-20* — **Setup failures throw a `SetupError`, and exceptions are
 allowed.** Was: initialization returned `bool` and left the caller to decide,

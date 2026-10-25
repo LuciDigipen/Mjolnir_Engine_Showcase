@@ -14,6 +14,7 @@ namespace mir
 {
     TerrainWorkerPool::TerrainWorkerPool(uint32_t threads)
     {
+        static_assert(noexcept(Work(std::stop_token{})), "C callbacks and thread entry points must be noexcept (conventions.md)");
         mThreads.reserve(threads);
         for (uint32_t i = 0; i < threads; ++i)
             mThreads.emplace_back([this](std::stop_token stop) { Work(stop); });

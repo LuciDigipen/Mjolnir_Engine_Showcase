@@ -27,12 +27,15 @@
 #include <wincodec.h>
 
 #include <algorithm>
+#include <exception>
 #include <future>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <string>
 #include <system_error>
 #include <thread>
+#include <type_traits>
 
 namespace mir
 {
@@ -373,6 +376,11 @@ namespace mir
                 std::lock_guard<std::mutex> lock(impl->mMutex);
                 impl->mState = initialState;
             }
+            catch (const std::bad_alloc &)
+            {
+                // out of memory is the process's failure: terminate reaches the crash handler
+                std::terminate();
+            }
             catch (...)
             {
                 ::DestroyWindow(hwnd);
@@ -422,6 +430,9 @@ namespace mir
         {
             // The thread only needs to reach *impl, not own it - impl stays
             // with this function (then mImpl) the whole time.
+            static_assert(
+                std::is_nothrow_invocable_v<decltype(&SplashThreadMain), SplashImpl *, SplashDesc, std::promise<HWND>>,
+                "C callbacks and thread entry points must be noexcept (conventions.md)");
             impl->mThread = std::thread(&SplashThreadMain, impl.get(), desc, std::move(ready));
         }
         catch (const std::system_error &error)

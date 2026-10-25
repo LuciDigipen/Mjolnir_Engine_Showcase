@@ -41,6 +41,7 @@
 #include <cmath>
 #include <optional>
 #include <unordered_map>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -98,6 +99,14 @@ namespace mir
                          mObjectLayerPairs);
 
             mSystem.SetGravity(ToJolt(desc.mGravity));
+            static_assert(noexcept(mContacts.OnContactAdded(std::declval<const JPH::Body &>(),
+                              std::declval<const JPH::Body &>(), std::declval<const JPH::ContactManifold &>(),
+                              std::declval<JPH::ContactSettings &>())) &&
+                              noexcept(mContacts.OnContactPersisted(std::declval<const JPH::Body &>(),
+                                  std::declval<const JPH::Body &>(), std::declval<const JPH::ContactManifold &>(),
+                                  std::declval<JPH::ContactSettings &>())) &&
+                              noexcept(mContacts.OnContactRemoved(std::declval<const JPH::SubShapeIDPair &>())),
+                "C callbacks and thread entry points must be noexcept (conventions.md)");
             mSystem.SetContactListener(&mContacts);
         }
 
