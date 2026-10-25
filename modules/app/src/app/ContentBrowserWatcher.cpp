@@ -11,6 +11,7 @@
 #include <assets/AssetPath.h>
 #include <core/log/Log.h>
 #include <core/log/SetupError.h>
+#include <prefab/PrefabFormat.h>
 
 #include <system_error>
 
@@ -31,6 +32,26 @@ namespace mir
             const auto size = entry.file_size(error);
             return static_cast<uint64_t>(time) ^ (size + 0x9e3779b97f4a7c15ull + (static_cast<uint64_t>(time) << 6));
         }
+
+        std::filesystem::path PrefabRoot(const GameProject &project)
+        {
+            const std::string prefix = project.mDir + "/";
+            const std::filesystem::path assets = project.mAssetIdRoot.rfind(prefix, 0) == 0
+                ? std::filesystem::path(project.mAssetIdRoot.substr(prefix.size()))
+                : std::filesystem::path("assets");
+            return assets / std::string(kPrefabDirectoryName);
+        }
+
+        bool IsUnder(const std::filesystem::path &path, const std::filesystem::path &root)
+        {
+            auto segment = path.begin();
+            for (auto expected = root.begin(); expected != root.end(); ++expected, ++segment)
+            {
+                if (segment == path.end() || *segment != *expected)
+                    return false;
+            }
+            return true;
+        }
     } // namespace
 
     void ContentBrowserWatcher::Initialize(const GameProject &project)
@@ -39,6 +60,7 @@ namespace mir
         mView = {};
         mWatched.clear();
         mWatchInitialized = false;
+        mPrefabSourceChanged = false;
         mLastPoll = {};
 
         // LoadGameProject already found this directory, so losing it here is the machine's doing
@@ -51,6 +73,7 @@ namespace mir
         }
 
         mRoot = project.mRootDir;
+        mPrefabRoot = PrefabRoot(project);
         mView.mContentRoot = project.mDir;
         Refresh();
     }
@@ -115,6 +138,27 @@ namespace mir
         {
             mView.mLastRenamedFrom = removed.front().generic_string();
             mView.mLastRenamedTo = added.front().generic_string();
+        }
+
+        if (mWatchInitialized)
+        {
+            for (const auto &[path, file] : freshWatched)
+            {
+                if (path.extension() != kPrefabExtension || !IsUnder(path, mPrefabRoot))
+                    continue;
+                const auto previous = mWatched.find(path);
+                if (previous == mWatched.end() || previous->second.signature != file.signature)
+                    mPrefabSourceChanged = true;
+            }
+            for (const auto &[path, file] : mWatched)
+            {
+                (void)file;
+                if (path.extension() == kPrefabExtension && IsUnder(path, mPrefabRoot) &&
+                    !freshWatched.contains(path))
+                {
+                    mPrefabSourceChanged = true;
+                }
+            }
         }
 
         mWatched = std::move(freshWatched);

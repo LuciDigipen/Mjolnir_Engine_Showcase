@@ -31,8 +31,10 @@ namespace mir
     public:
         // Rebuilds the whole disk table from prefabsDir (recursive); malformed
         // files contribute diagnostics only, and a UUID shared by several files
-        // resolves from none of them.
-        std::vector<PrefabDiagnostic> Scan(const std::filesystem::path &prefabsDir);
+        // resolves from none of them. changed receives the ids whose disk
+        // document was added, removed or rewritten.
+        std::vector<PrefabDiagnostic> Scan(const std::filesystem::path &prefabsDir,
+            std::vector<PrefabId> *changed = nullptr);
 
         // Unsaved in-memory documents, resolved before disk. An invalid
         // document is rejected and the registry is left unchanged.
@@ -47,6 +49,13 @@ namespace mir
 
         // Call only after the file at @p path holds @p doc.
         void MarkSaved(const PrefabDocument &doc, const std::filesystem::path &path);
+
+        // Every id in either table, memory first.
+        std::vector<PrefabId> Ids() const;
+        bool HasMemoryDocument(PrefabId id) const { return mMemory.contains(id); }
+
+        // The disk version only, even when an in-memory document hides it.
+        const PrefabDocument *FindOnDisk(PrefabId id) const;
 
         // Same nodes and high-water mark under a fresh unused PrefabId.
         std::optional<PrefabDocument> CopyAsNew(const PrefabDocument &doc) const;

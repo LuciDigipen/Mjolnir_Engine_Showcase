@@ -665,3 +665,38 @@ TEST_CASE("Only a publication that restructures an instance is scene maintenance
     CHECK(fixture.mCoordinator->ConsumeSceneMaintenance());
     CHECK_FALSE(fixture.mCoordinator->ConsumeSceneMaintenance());
 }
+
+TEST_CASE("Frozen prefab authoring refuses writes and actions", "[prefab][authoring]")
+{
+    Fixture fixture;
+    const SceneNodeAddress rootNode{ 1 };
+    const PrefabAuthoredKey documentAmount =
+        DocumentKey(fixture.mDocument.mId, rootNode, "PrefabAuthoringTestData", "amount");
+    const PrefabAuthoredKey sceneAmount =
+        SceneKey(fixture.mRoot, rootNode, "PrefabAuthoringTestData", "amount");
+
+    const json documentBefore = mir::PrefabToJson(*fixture.mCoordinator->Registry().Find(fixture.mDocument.mId));
+    const float sceneBefore = FloatField(fixture.mWorld, fixture.Member(rootNode), DataOps(), "amount");
+
+    fixture.mCoordinator->SetFrozen(true);
+
+    const std::vector<PrefabAuthoredEntry> entries{
+        PrefabAuthoredEntry{ documentAmount, std::string("91.0") },
+        PrefabAuthoredEntry{ sceneAmount, std::string("92.0") },
+    };
+    CHECK_FALSE(fixture.mAuthoring->Write(entries).mApplied);
+    CHECK(mir::PrefabToJson(*fixture.mCoordinator->Registry().Find(fixture.mDocument.mId)) == documentBefore);
+    CHECK(FloatField(fixture.mWorld, fixture.Member(rootNode), DataOps(), "amount") == sceneBefore);
+    CHECK_FALSE(ReadOne(*fixture.mAuthoring, sceneAmount).has_value());
+
+    CHECK_FALSE(fixture.mAuthoring->FieldKey(fixture.Member(rootNode), "PrefabAuthoringTestData", "amount")
+        .has_value());
+    CHECK_FALSE(fixture.mAuthoring->ComponentKey(fixture.Member(rootNode), "PrefabAuthoringTestData")
+        .has_value());
+    CHECK(fixture.mAuthoring->FieldState(sceneAmount) == PrefabFieldState::Inherited);
+    CHECK(fixture.mAuthoring->ComponentState(fixture.Member(rootNode), "PrefabAuthoringTestData") ==
+        PrefabComponentState::Absent);
+    CHECK(fixture.mAuthoring->RemovedComponents(fixture.Member(rootNode)).empty());
+    CHECK_FALSE(fixture.mAuthoring->Revert(sceneAmount).mRefusal.empty());
+    CHECK_FALSE(fixture.mAuthoring->Apply(sceneAmount).mRefusal.empty());
+}

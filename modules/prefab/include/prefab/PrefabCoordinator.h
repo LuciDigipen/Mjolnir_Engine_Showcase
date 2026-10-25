@@ -44,6 +44,20 @@ namespace mir
         // Rebuilds the disk table and logs what Scan found.
         void ScanSources(const std::filesystem::path &prefabsDir);
 
+        // Applies the same scan and queues every changed source for the next
+        // Commit. While frozen the scan waits for the next unfrozen Commit.
+        void RescanSources(const std::filesystem::path &prefabsDir);
+
+        // Effective documents replaced by external source changes, once per adopted id.
+        std::vector<PrefabId> ConsumeExternalChanges();
+
+        // Frozen pins the published prefab state: Commit publishes nothing and
+        // rescans wait for the next unfrozen Commit.
+        void SetFrozen(bool frozen) { mFrozen = frozen; }
+        bool IsFrozen() const { return mFrozen; }
+
+        std::vector<PrefabId> DocumentIds() const { return mRegistry.Ids(); }
+
         // Non-owning: the scene must outlive this binding.
         void Bind(LoadedScene &scene);
         LoadedScene *Scene() { return mScene; }
@@ -96,14 +110,18 @@ namespace mir
         void ReconcilePublished(const LoadedScene &scene, PublishedTable &published);
         void CommitScene(World &world, LoadedScene &scene, PublishedTable &published, bool mainScene);
         bool SceneHasPendingWork(const LoadedScene *scene, const PublishedTable &published) const;
+        void ApplyRescan(const std::filesystem::path &prefabsDir);
 
         PrefabRegistry mRegistry;
         CompiledPrefabCache mCache;
         PrefabSceneResolver mResolver;
         LoadedScene *mScene = nullptr;
         std::set<PrefabId> mPendingDocuments;
+        std::set<PrefabId> mExternalChanges;
         PublishedTable mPublished;
         std::map<PrefabId, PreviewBinding> mPreviews;
+        std::filesystem::path mQueuedRescan;
+        bool mFrozen = false;
         bool mPublishedChanges = false;
         bool mSceneMaintenance = false;
     };

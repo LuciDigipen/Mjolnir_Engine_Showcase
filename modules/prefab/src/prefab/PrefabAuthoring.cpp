@@ -903,6 +903,9 @@ namespace mir
     std::optional<PrefabAuthoredKey> PrefabAuthoring::FieldKey(Entity entity, std::string_view component,
         std::string_view field) const
     {
+        if (mCoordinator.IsFrozen())
+            return std::nullopt;
+
         std::optional<Member> member = FindMember(entity);
         if (!member)
             return std::nullopt;
@@ -932,6 +935,9 @@ namespace mir
 
     std::optional<PrefabAuthoredKey> PrefabAuthoring::ComponentKey(Entity entity, std::string_view component) const
     {
+        if (mCoordinator.IsFrozen())
+            return std::nullopt;
+
         std::optional<Member> member = FindMember(entity);
         if (!member)
             return std::nullopt;
@@ -959,6 +965,9 @@ namespace mir
 
     PrefabFieldState PrefabAuthoring::FieldState(const PrefabAuthoredKey &key) const
     {
+        if (mCoordinator.IsFrozen())
+            return PrefabFieldState::Inherited;
+
         if (key.mPrefab)
         {
             if (mActiveDocument && *mActiveDocument == *key.mPrefab)
@@ -993,6 +1002,9 @@ namespace mir
 
     PrefabComponentState PrefabAuthoring::ComponentState(Entity entity, std::string_view component) const
     {
+        if (mCoordinator.IsFrozen())
+            return PrefabComponentState::Absent;
+
         std::optional<Member> member = FindMember(entity);
         if (!member)
             return PrefabComponentState::Absent;
@@ -1062,6 +1074,9 @@ namespace mir
     std::vector<std::string> PrefabAuthoring::RemovedComponents(Entity entity) const
     {
         std::vector<std::string> removed;
+        if (mCoordinator.IsFrozen())
+            return removed;
+
         std::optional<Member> member = FindMember(entity);
         if (!member || member->mPrefab)
             return removed;
@@ -1226,6 +1241,12 @@ namespace mir
     PrefabAuthoredWrite PrefabAuthoring::Write(std::span<const PrefabAuthoredEntry> entries)
     {
         PrefabAuthoredWrite result;
+        if (mCoordinator.IsFrozen())
+        {
+            MIR_LOG_WARN("Prefab authoring: the documents are frozen during Play");
+            return result;
+        }
+
         if (entries.empty())
         {
             result.mApplied = true;
@@ -1474,6 +1495,12 @@ namespace mir
     PrefabAuthoredAction PrefabAuthoring::Revert(const PrefabAuthoredKey &key) const
     {
         PrefabAuthoredAction action;
+        if (mCoordinator.IsFrozen())
+        {
+            action.mRefusal = "the prefab documents are frozen during Play";
+            return action;
+        }
+
         const LoadedScene *scene = mCoordinator.Scene();
         if (scene == nullptr || key.mPrefab || key.mAddress.size() != 2)
         {
@@ -1524,6 +1551,12 @@ namespace mir
     PrefabAuthoredAction PrefabAuthoring::Apply(const PrefabAuthoredKey &key) const
     {
         PrefabAuthoredAction action;
+        if (mCoordinator.IsFrozen())
+        {
+            action.mRefusal = "the prefab documents are frozen during Play";
+            return action;
+        }
+
         const LoadedScene *scene = mCoordinator.Scene();
         if (scene == nullptr || key.mPrefab || key.mAddress.size() != 2)
         {
