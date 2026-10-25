@@ -93,7 +93,7 @@ namespace
             mir::SetEngineMode(world, mir::EngineMode::Play);
             mir::SetPlayState(world, mir::PlayState::Running);
 
-            scheduler.AddSystem<mir::PhysicsSystem>(mir::SystemPhase::FixedUpdate);
+            scheduler.AddSystem<mir::PhysicsSystem>(mir::SystemPhase::FixedUpdate, mir::SystemOrder{mir::SystemOrder::kNormal});
             scheduler.Start(context);
 
             entity = world.CreateEntity();
@@ -488,7 +488,7 @@ return T
             mir::SetEngineMode(world, mir::EngineMode::Play);
             mir::SetPlayState(world, mir::PlayState::Running);
 
-            scheduler.AddSystem<mir::PhysicsSystem>(mir::SystemPhase::FixedUpdate);
+            scheduler.AddSystem<mir::PhysicsSystem>(mir::SystemPhase::FixedUpdate, mir::SystemOrder{mir::SystemOrder::kNormal});
             scheduler.Start(context);
 
             for (uint32_t k = 0; k < kFieldSide; ++k)

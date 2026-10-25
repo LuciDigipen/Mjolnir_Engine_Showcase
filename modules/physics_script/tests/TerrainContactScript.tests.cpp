@@ -63,8 +63,8 @@ namespace
             mir::SetEngineMode(world, mir::EngineMode::Play);
             mir::SetPlayState(world, mir::PlayState::Running);
 
-            scheduler.AddSystem<mir::PhysicsSystem>(mir::SystemPhase::FixedUpdate);
-            scheduler.AddSystem<mir::CollisionEventSystem>(mir::SystemPhase::PostUpdate);
+            scheduler.AddSystem<mir::PhysicsSystem>(mir::SystemPhase::FixedUpdate, mir::SystemOrder{mir::SystemOrder::kNormal});
+            scheduler.AddSystem<mir::CollisionEventSystem>(mir::SystemPhase::PostUpdate, mir::SystemOrder{mir::SystemOrder::kNormal});
             scheduler.Start(context);
 
             const std::optional<std::string> source =

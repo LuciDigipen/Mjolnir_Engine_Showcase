@@ -28,6 +28,6 @@ namespace mir
         context.world.EmplaceResource<InputState>();
 
         // before ScriptSystem, which reads this frame's input
-        context.scheduler.AddSystem<InputSystem>(SystemPhase::PreUpdate, window);
+        context.scheduler.AddSystem<InputSystem>(SystemPhase::PreUpdate, SystemOrder{SystemOrder::kEarly}, window);
     }
 }

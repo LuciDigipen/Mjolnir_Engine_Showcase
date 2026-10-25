@@ -28,6 +28,7 @@ namespace mir
         context.world.EmplaceResource<FrameCommands>(FrameCommands{ &commands });
         context.world.EmplaceResource<RequestQueue>();
 
-        context.scheduler.AddSystem<TransformPropagateSystem>(SystemPhase::Propagate);
+        context.scheduler.AddSystem<TransformPropagateSystem>(SystemPhase::Propagate,
+            SystemOrder{SystemOrder::kNormal});
     }
 }

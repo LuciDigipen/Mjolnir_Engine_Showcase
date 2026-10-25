@@ -46,7 +46,7 @@ namespace
             mir::SetEngineMode(world, mode);
             mir::SetPlayState(world, mir::PlayState::Running);
 
-            scheduler.AddSystem<mir::PhysicsSystem>(mir::SystemPhase::FixedUpdate);
+            scheduler.AddSystem<mir::PhysicsSystem>(mir::SystemPhase::FixedUpdate, mir::SystemOrder{mir::SystemOrder::kNormal});
             scheduler.Start(context);
         }
 

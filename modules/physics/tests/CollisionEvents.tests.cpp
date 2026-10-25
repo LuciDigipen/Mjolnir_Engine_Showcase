@@ -310,9 +310,9 @@ namespace
             SetEngineMode(world, EngineMode::Play);
             SetPlayState(world, PlayState::Running);
 
-            reader = &scheduler.AddSystem<Reader>(SystemPhase::PreUpdate);
-            scheduler.AddSystem<PhysicsSystem>(SystemPhase::FixedUpdate);
-            scheduler.AddSystem<CollisionEventSystem>(SystemPhase::PostUpdate);
+            reader = &scheduler.AddSystem<Reader>(SystemPhase::PreUpdate, SystemOrder{SystemOrder::kNormal});
+            scheduler.AddSystem<PhysicsSystem>(SystemPhase::FixedUpdate, SystemOrder{SystemOrder::kNormal});
+            scheduler.AddSystem<CollisionEventSystem>(SystemPhase::PostUpdate, SystemOrder{SystemOrder::kNormal});
             scheduler.Start(context);
 
             ground = Add({ 0.0, -0.5, 0.0 }, RigidBody{ .motion = PhysicsMotion::Static,
