@@ -34,8 +34,8 @@
 #endif
 
 #if MIR_WITH_EDITOR
-#include <app/AssetImportManager.h>
-#include <app/ContentBrowserWatcher.h>
+#include <editor/AssetImportManager.h>
+#include <editor/ContentBrowserWatcher.h>
 #include <editor/Editor.h>
 #endif
 
@@ -54,7 +54,7 @@ namespace mir
     class ModelSystem;
     class TerrainRuntime;
     class MeshResolveSystem;
-    class AppSceneOps;
+    class WorldSceneOps;
 
     struct AppDesc
     {
@@ -225,7 +225,7 @@ namespace mir
         ImGuiRuntime mImGui;
     #if MIR_WITH_EDITOR
         Editor mEditor;
-        std::unique_ptr<AppSceneOps> mSceneOps;
+        std::unique_ptr<WorldSceneOps> mSceneOps;
     #endif
         // Stop puts the World back as it was at Play, so it puts this back too
         bool mUnsavedBeforePlay = false;

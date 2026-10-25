@@ -6,7 +6,7 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
-#include <app/AssetImportManager.h>
+#include <editor/AssetImportManager.h>
 
 #include <assets/AssetIdRoot.h>
 #include <assets/AssetPath.h>

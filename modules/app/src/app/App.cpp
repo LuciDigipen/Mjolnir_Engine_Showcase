@@ -57,10 +57,10 @@
 #include <terrain_runtime/TerrainRuntime.h>
 
 #if MIR_WITH_EDITOR
-#include "AppSceneOps.h"
-#include "CreateGameProject.h"
 #include <core/platform/Process.h>
+#include <editor/CreateGameProject.h>
 #include <editor/IdeSettings.h>
+#include <editor/WorldSceneOps.h>
 #endif
 
 #include <algorithm>
@@ -194,7 +194,7 @@ namespace mir
 
     #if MIR_WITH_EDITOR
         mSplash.SetProgress("Initializing editor...", 0.5f);
-        mSceneOps = std::make_unique<AppSceneOps>(*this);
+        mSceneOps = std::make_unique<WorldSceneOps>(mWorld, mScene);
         if (!mEditor.Initialize(mImGui, *mWindow, mProject.mProjectSettingsPath, mWorld, *mSceneOps,
                 mRenderer.SwapchainIsSrgb()))
         {

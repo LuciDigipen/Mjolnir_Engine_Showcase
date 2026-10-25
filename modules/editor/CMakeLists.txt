@@ -13,8 +13,11 @@ target_link_libraries(engine_editor
            mir::renderer
            mir::window
            mir::input
-    PRIVATE mir::core
+           mir::project
+    PRIVATE mir::assets
+            mir::core
             mir::editortheme
+            mir::scene
             mir::serial
             imgui::imgui
             imguizmo::imguizmo
@@ -27,7 +30,10 @@ if(WIN32)
 endif()
 
 target_sources(engine_editor PRIVATE
+    src/editor/AssetImportManager.cpp
     src/editor/BackgroundImage.cpp
+    src/editor/ContentBrowserWatcher.cpp
+    src/editor/CreateGameProject.cpp
     src/editor/Editor.cpp
     src/editor/EditorCamera.cpp
     src/editor/EditorPreferences.cpp
@@ -50,6 +56,7 @@ target_sources(engine_editor PRIVATE
     src/editor/panels/PreferencesPanel.cpp
     src/editor/panels/ProfilerPanel.cpp
     src/editor/panels/ProjectSettingsPanel.cpp
+    src/editor/WorldSceneOps.cpp
 )
 
 if(BUILD_TESTING)

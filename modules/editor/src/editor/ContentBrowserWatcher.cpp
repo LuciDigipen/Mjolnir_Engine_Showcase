@@ -6,7 +6,7 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
-#include <app/ContentBrowserWatcher.h>
+#include <editor/ContentBrowserWatcher.h>
 
 #include <assets/AssetPath.h>
 #include <core/log/Log.h>

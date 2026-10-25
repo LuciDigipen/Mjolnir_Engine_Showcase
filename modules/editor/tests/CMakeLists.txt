@@ -1,6 +1,7 @@
 engine_add_module_tests(editor
     Authoring.tests.cpp
     ComponentCommands.tests.cpp
+    ContentBrowserWatcher.tests.cpp
     EntityCommands.tests.cpp
     History.tests.cpp
 )

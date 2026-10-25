@@ -1,7 +1,7 @@
 /**
- * @file AppSceneOps.h
+ * @file WorldSceneOps.h
  * @author Dong Ta
- * @brief The scene calls the editor's history makes, done on App's World and LoadedScene.
+ * @brief The scene calls the editor's history makes, done on a World and its LoadedScene.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -12,12 +12,14 @@
 
 namespace mir
 {
-    class App;
+    class World;
+    struct LoadedScene;
 
-    class AppSceneOps final : public ISceneOps
+    class WorldSceneOps final : public ISceneOps
     {
     public:
-        explicit AppSceneOps(App &app) : mApp(app) {}
+        // scene is the one the World holds; App replaces its value, never the object
+        WorldSceneOps(World &world, LoadedScene &scene) : mWorld(world), mScene(scene) {}
 
         Entity CreateEntity() override;
         Entity Duplicate(Entity source) override;
@@ -26,6 +28,7 @@ namespace mir
         bool Destroy(Entity root) override;
 
     private:
-        App &mApp;
+        World &mWorld;
+        LoadedScene &mScene;
     };
 }

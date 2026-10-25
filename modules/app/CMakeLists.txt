@@ -39,12 +39,4 @@ target_compile_definitions(engine_app PUBLIC MIR_WITH_EDITOR=$<BOOL:${MJOLNIR_WI
 # the editor, and the asset import queue that only its panel drives
 if(MJOLNIR_WITH_EDITOR)
     target_link_libraries(engine_app PUBLIC mir::editor)
-    target_sources(engine_app PRIVATE src/app/AppSceneOps.cpp src/app/AssetImportManager.cpp
-        src/app/CreateGameProject.cpp
-        src/app/ContentBrowserWatcher.cpp)
-endif()
-
-# ContentBrowserWatcher.tests.cpp needs editor/panels/ContentBrowserPanel.h
-if(BUILD_TESTING AND MJOLNIR_WITH_EDITOR)
-    add_subdirectory(tests)
 endif()
