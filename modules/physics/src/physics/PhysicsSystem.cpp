@@ -93,12 +93,23 @@ namespace mir
 
                 // Moved by something other than physics since the last step, its own Transform or a parent's.
                 const BodyPose pose = detail::PoseOf(world, entity);
-                if (detail::PositionWritten(rigidBody, pose) || detail::RotationWritten(rigidBody, pose))
-                {
-                    physics.SetBodyTransform(rigidBody.runtime.body, pose.position, pose.rotation);
-                    detail::ResetStepPoses(rigidBody, pose.position.Meters(), pose.rotation);
-                    detail::Stamp(rigidBody, pose);
-                }
+                const bool positionWritten = detail::PositionWritten(rigidBody, pose);
+                const bool rotationWritten = detail::RotationWritten(rigidBody, pose);
+                if (!positionWritten && !rotationWritten)
+                    return;
+
+                // The entity may show a lagging interpolated pose, so what nobody wrote comes from the body.
+                WorldPosition position = pose.position;
+                if (!positionWritten)
+                    position = physics.BodyPosition(rigidBody.runtime.body).value_or(pose.position);
+                const glm::quat rotation =
+                    rotationWritten ? pose.rotation : physics.BodyRotation(rigidBody.runtime.body);
+
+                physics.SetBodyTransform(rigidBody.runtime.body, position, rotation);
+                // interpolation restarts from here, with no blend from the old pose
+                detail::ResetStepPoses(rigidBody, position.Meters(), rotation);
+                // stamp what the entity shows, not the target, or the next push would see a write again
+                detail::Stamp(rigidBody, pose);
             });
     }
 
