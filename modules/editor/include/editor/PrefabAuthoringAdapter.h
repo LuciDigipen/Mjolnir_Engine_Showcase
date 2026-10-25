@@ -13,6 +13,7 @@
 #include <prefab/PrefabAuthoring.h>
 #include <prefab/PrefabSave.h>
 
+#include <cstddef>
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -30,7 +31,7 @@ namespace mir
     {
     public:
         PrefabAuthoringAdapter(World &world, PrefabCoordinator &coordinator,
-            std::filesystem::path prefabsDir);
+            std::filesystem::path projectRoot, std::filesystem::path prefabsDir);
 
         std::optional<std::vector<AuthoredEntry>> Read(std::span<const AuthoredKey> keys) override;
         AuthoringWrite Write(std::span<const AuthoredEntry> entries) override;
@@ -49,9 +50,13 @@ namespace mir
 
         AuthoredAction Revert(const AuthoredKey &key) override;
         AuthoredAction Apply(const AuthoredKey &key) override;
+        AuthoredAction Apply(const AuthoredKey &key, std::size_t target) override;
+        std::vector<AuthoredApplyTarget> ApplyTargets(const AuthoredKey &key) override;
 
         AuthoredAction CreateNode(Entity parent, std::size_t siblingIndex,
             const EntityPresetDesc *preset = nullptr) override;
+        AuthoredAction PlacePrefabNode(std::string_view contentPath, Entity parent, std::size_t siblingIndex,
+            const std::optional<WorldVec3> &placement) override;
         AuthoredAction DeleteNodes(std::span<const Entity> nodes) override;
         AuthoredAction ReparentNode(Entity node, Entity parent, std::size_t siblingIndex) override;
         AuthoredAction CreatePrefab(Entity entity) override;
@@ -73,6 +78,7 @@ namespace mir
         World &mWorld;
         PrefabCoordinator &mCoordinator;
         PrefabAuthoring mAuthoring;
+        std::filesystem::path mProjectRoot;
         std::filesystem::path mPrefabsDir;
     };
 }

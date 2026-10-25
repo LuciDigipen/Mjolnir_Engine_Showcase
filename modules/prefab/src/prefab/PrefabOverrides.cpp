@@ -14,6 +14,7 @@
 #include "scene/ComponentJson.h"
 #include "scene/SceneInstancePatch.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -90,28 +91,43 @@ namespace mir
             return registry.Find(*id);
         }
 
-        const PrefabNode *FindDocumentNode(const PrefabDocument &document, const SceneNodeAddress &address)
+        const PrefabNode *FindOwnNode(const PrefabDocument &document, PrefabNodeId id)
         {
-            if (address.size() != 1)
-                return nullptr;
-
             for (const PrefabNode &node : document.mNodes)
             {
-                if (node.mId == address.front())
-                    return node.mKind == PrefabNodeKind::Entity ? &node : nullptr;
+                if (node.mId == id)
+                    return &node;
             }
             return nullptr;
         }
 
-        PrefabNode *FindDocumentNode(PrefabDocument &document, const SceneNodeAddress &address)
+        PrefabNode *FindOwnNode(PrefabDocument &document, PrefabNodeId id)
         {
-            if (address.size() != 1)
-                return nullptr;
-
             for (PrefabNode &node : document.mNodes)
             {
-                if (node.mId == address.front())
-                    return node.mKind == PrefabNodeKind::Entity ? &node : nullptr;
+                if (node.mId == id)
+                    return &node;
+            }
+            return nullptr;
+        }
+
+        const PrefabNode *FindDocumentNode(const PrefabRegistry &registry, const PrefabDocument &document,
+            const SceneNodeAddress &address)
+        {
+            const PrefabDocument *current = &document;
+            for (std::size_t i = 0; i < address.size(); ++i)
+            {
+                const PrefabNode *node = current != nullptr ? FindOwnNode(*current, address[i]) : nullptr;
+                if (node == nullptr)
+                    return nullptr;
+                if (i + 1 == address.size())
+                    return node->mKind == PrefabNodeKind::Entity ? node : nullptr;
+                if (node->mKind != PrefabNodeKind::Prefab)
+                    return nullptr;
+
+                current = registry.Find(node->mPrefab);
+                if (current == nullptr)
+                    return nullptr;
             }
             return nullptr;
         }
@@ -134,6 +150,61 @@ namespace mir
                     return &component;
             }
             return nullptr;
+        }
+
+        // The entity node's own components, then each enclosing occurrence's patches from the innermost out,
+        // in the order CompilePrefab applies them.
+        bool TemplateHasComponent(const PrefabDocumentLookup &documents, const PrefabDocument &document,
+            const SceneNodeAddress &address, std::string_view type)
+        {
+            std::vector<const PrefabNode *> occurrences;
+            const PrefabDocument *current = &document;
+            const PrefabNode *entity = nullptr;
+            for (std::size_t i = 0; i < address.size() && current != nullptr; ++i)
+            {
+                const PrefabNode *node = FindOwnNode(*current, address[i]);
+                if (node == nullptr)
+                    return false;
+                if (i + 1 == address.size())
+                {
+                    entity = node->mKind == PrefabNodeKind::Entity ? node : nullptr;
+                    break;
+                }
+                if (node->mKind != PrefabNodeKind::Prefab)
+                    return false;
+                occurrences.push_back(node);
+                current = documents(node->mPrefab);
+            }
+            if (entity == nullptr)
+                return false;
+
+            bool present = FindDocumentComponent(*entity, type) != nullptr;
+            for (std::size_t level = occurrences.size(); level-- > 0;)
+            {
+                const SceneNodeAddress suffix(address.begin() + static_cast<std::ptrdiff_t>(level) + 1, address.end());
+                for (const PrefabPatch &patch : occurrences[level]->mPatches)
+                {
+                    if (patch.mTarget != suffix)
+                        continue;
+                    for (const PrefabComponentInstance &added : patch.mAddedComponents)
+                    {
+                        if (added.mType == type)
+                            present = true;
+                    }
+                    if (std::find(patch.mRemovedComponents.begin(), patch.mRemovedComponents.end(), type) !=
+                        patch.mRemovedComponents.end())
+                    {
+                        present = false;
+                    }
+                }
+            }
+            return present;
+        }
+
+        bool TemplateHasComponent(const PrefabRegistry &registry, const PrefabDocument &document,
+            const SceneNodeAddress &address, std::string_view type)
+        {
+            return TemplateHasComponent(RegistryLookup(registry), document, address, type);
         }
 
         bool MemberEntity(World &world, const LoadedScene &scene, const ScenePrefabInstance &instance,
@@ -204,7 +275,7 @@ namespace mir
                 return nullptr;
             }
 
-            const std::vector<PrefabDiagnostic> compiled = cache.Compile(*document);
+            const std::vector<PrefabDiagnostic> compiled = cache.Compile(*document, RegistryLookup(registry));
             if (HasPrefabErrors(compiled))
             {
                 if (diagnostics != nullptr)
@@ -254,12 +325,10 @@ namespace mir
             {
                 if (id != *target)
                     continue;
-                if (address.size() != 1)
-                {
-                    reason = "targets a nested prefab node, which is not supported";
-                    return false;
-                }
-                outValue = json::array({ std::to_string(address.front()) });
+
+                outValue = json::array();
+                for (uint64_t segment : address)
+                    outValue.push_back(std::to_string(segment));
                 return true;
             }
 
@@ -328,12 +397,11 @@ namespace mir
     PrefabComponentState InstanceComponentState(const PrefabRegistry &registry, const LoadedScene &scene,
         StableId root, const SceneNodeAddress &node, std::string_view component)
     {
-        return InstanceComponentState([&registry](PrefabId id) -> const PrefabDocument * { return registry.Find(id); },
-            scene, root, node, component);
+        return InstanceComponentState(RegistryLookup(registry), scene, root, node, component);
     }
 
-    PrefabComponentState InstanceComponentState(const std::function<const PrefabDocument *(PrefabId)> &documents,
-        const LoadedScene &scene, StableId root, const SceneNodeAddress &node, std::string_view component)
+    PrefabComponentState InstanceComponentState(const PrefabDocumentLookup &documents, const LoadedScene &scene,
+        StableId root, const SceneNodeAddress &node, std::string_view component)
     {
         const auto instanceIt = scene.mInstances.find(root);
         if (instanceIt == scene.mInstances.end())
@@ -350,8 +418,7 @@ namespace mir
         if (document == nullptr)
             return PrefabComponentState::Absent;
 
-        const PrefabNode *templateNode = FindDocumentNode(*document, node);
-        if (templateNode == nullptr || FindDocumentComponent(*templateNode, component) == nullptr)
+        if (!TemplateHasComponent(documents, *document, node, component))
             return PrefabComponentState::Absent;
         return PrefabComponentState::Inherited;
     }
@@ -375,7 +442,7 @@ namespace mir
             return false;
         }
 
-        const PrefabNode *templateNode = FindDocumentNode(*document, node);
+        const PrefabNode *templateNode = FindDocumentNode(registry, *document, node);
         if (templateNode == nullptr)
         {
             AddError(diagnostics, "node \"" + AddressText(node) + "\" is not an entity node of the prefab");
@@ -411,7 +478,7 @@ namespace mir
         }
 
         SceneComponentRecord *added = FindAddedComponent(instance, node, component);
-        const bool inherited = FindDocumentComponent(*templateNode, component) != nullptr;
+        const bool inherited = TemplateHasComponent(registry, *document, node, component);
         if (!inherited && added == nullptr)
         {
             AddError(diagnostics, "component \"" + std::string(component) + "\" is not part of node \"" +
@@ -516,7 +583,7 @@ namespace mir
             return false;
         }
 
-        const PrefabNode *templateNode = FindDocumentNode(*document, node);
+        const PrefabNode *templateNode = FindDocumentNode(registry, *document, node);
         if (templateNode == nullptr)
         {
             AddError(diagnostics, "node \"" + AddressText(node) + "\" is not an entity node of the prefab");
@@ -536,7 +603,7 @@ namespace mir
                 AddressText(node) + "\"");
             return false;
         }
-        if (FindDocumentComponent(*templateNode, component) != nullptr)
+        if (TemplateHasComponent(registry, *document, node, component))
         {
             AddError(diagnostics, "component \"" + std::string(component) +
                 "\" is part of the prefab node; revert its removal instead");
@@ -577,7 +644,7 @@ namespace mir
             return false;
         }
 
-        const PrefabNode *templateNode = FindDocumentNode(*document, node);
+        const PrefabNode *templateNode = FindDocumentNode(registry, *document, node);
         if (templateNode == nullptr)
         {
             AddError(diagnostics, "node \"" + AddressText(node) + "\" is not an entity node of the prefab");
@@ -610,7 +677,7 @@ namespace mir
         if (HasRemovedComponent(instance, node, component))
             return false;
 
-        if (FindDocumentComponent(*templateNode, component) == nullptr)
+        if (!TemplateHasComponent(registry, *document, node, component))
         {
             AddError(diagnostics, "component \"" + std::string(component) + "\" is not part of node \"" +
                 AddressText(node) + "\"");
@@ -824,8 +891,15 @@ namespace mir
                 return result;
             }
 
-            PrefabNode *node = FindDocumentNode(copy, selection.mTarget);
-            if (node == nullptr)
+            if (selection.mTarget.size() != 1)
+            {
+                AddError(&result.mDiagnostics, entry +
+                    " is a member of a nested prefab occurrence; edit its inner Prefab document instead");
+                return result;
+            }
+
+            PrefabNode *node = FindOwnNode(copy, selection.mTarget.front());
+            if (node == nullptr || node->mKind != PrefabNodeKind::Entity)
             {
                 AddError(&result.mDiagnostics, entry + " targets a node that is not in the prefab document");
                 return result;
@@ -885,7 +959,7 @@ namespace mir
                                 break;
                             }
                         }
-                        if (FindDocumentNode(copy, targetAddress) == nullptr)
+                        if (FindDocumentNode(registry, copy, targetAddress) == nullptr)
                         {
                             AddError(&result.mDiagnostics, entry +
                                 " targets a node that is not in the prefab document");
@@ -985,7 +1059,8 @@ namespace mir
             }
         }
 
-        const PrefabCompileResult compiled = CompilePrefab(copy);
+        const PrefabDocumentLookup lookup = RegistryLookup(registry);
+        const PrefabCompileResult compiled = CompilePrefab(copy, lookup);
         if (!compiled.mPrefab)
         {
             result.mDiagnostics.insert(result.mDiagnostics.end(),
@@ -1001,7 +1076,7 @@ namespace mir
             return result;
         }
 
-        const std::vector<PrefabDiagnostic> cacheDiagnostics = cache.Compile(copy);
+        const std::vector<PrefabDiagnostic> cacheDiagnostics = cache.Compile(copy, lookup);
         if (HasPrefabErrors(cacheDiagnostics))
         {
             std::vector<PrefabDiagnostic> rollbackDiagnostics;
@@ -1009,6 +1084,25 @@ namespace mir
             result.mDiagnostics.insert(result.mDiagnostics.end(),
                 cacheDiagnostics.begin(), cacheDiagnostics.end());
             return result;
+        }
+
+        std::vector<PrefabId> dependents = cache.Dependents(copy.mId);
+        std::stable_sort(dependents.begin(), dependents.end(), [&cache](PrefabId a, PrefabId b)
+            {
+                const std::shared_ptr<const CompiledPrefab> first = cache.Find(a);
+                const std::shared_ptr<const CompiledPrefab> second = cache.Find(b);
+                const std::size_t firstCount = first ? first->Dependencies().size() : 0;
+                const std::size_t secondCount = second ? second->Dependencies().size() : 0;
+                return firstCount < secondCount;
+            });
+        for (PrefabId dependent : dependents)
+        {
+            const PrefabDocument *document = registry.Find(dependent);
+            if (document == nullptr)
+                continue;
+            const std::vector<PrefabDiagnostic> dependentDiagnostics = cache.Compile(*document, lookup);
+            result.mDiagnostics.insert(result.mDiagnostics.end(),
+                dependentDiagnostics.begin(), dependentDiagnostics.end());
         }
 
         for (const PrefabPatchSelection &selection : selections)

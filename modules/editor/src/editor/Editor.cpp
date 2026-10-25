@@ -696,7 +696,7 @@ namespace mir
             mHistory.Submit(SetTransformField(world, entity, "scale", scale, "Scale", mAuthoredEntities));
     }
 
-    void Editor::DrawViewportPrefabDrop()
+    void Editor::DrawViewportPrefabDrop(bool documentTab, World &world)
     {
         const ImGuiPayload *active = ImGui::GetDragDropPayload();
         if (active == nullptr || !active->IsDataType(kPrefabContentPayload))
@@ -755,9 +755,30 @@ namespace mir
                                 offset ? TryTranslateWorld(ray.origin, *offset) : std::nullopt;
                             if (point)
                             {
-                                mHistory.Submit(MakePlacePrefabCommand(
-                                    std::string(static_cast<const char *>(payload->Data), payload->DataSize),
-                                    kNullEntity, point->Meters()));
+                                const std::string contentPath(static_cast<const char *>(payload->Data),
+                                    payload->DataSize);
+                                if (!documentTab)
+                                {
+                                    mHistory.Submit(MakePlacePrefabCommand(contentPath, kNullEntity,
+                                        point->Meters()));
+                                }
+                                else if (mAuthoredEntities != nullptr)
+                                {
+                                    const std::span<const Entity> roots = world.HierarchyIndex().Roots();
+                                    const Entity root = roots.empty() ? kNullEntity : roots.front();
+                                    const std::optional<ParentLocalTranslation> local = root.IsNull()
+                                        ? std::nullopt
+                                        : TryWorldToParentLocal(ResolveWorld(world, root), *point);
+                                    if (local)
+                                    {
+                                        EntityAction action;
+                                        action.mKind = EntityActionKind::PlacePrefab;
+                                        action.mPrefabPath = contentPath;
+                                        action.mPlacement = local->Meters();
+                                        mHistory.Submit(
+                                            MakeDocumentEntityCommand(action, *mAuthoredEntities, world));
+                                    }
+                                }
                             }
                         }
                     }
@@ -1166,8 +1187,8 @@ namespace mir
                             static_cast<uint32_t>(viewportHeight) } };
             }
 
-            if (!documentTab && mode.mMode == EngineMode::Edit)
-                DrawViewportPrefabDrop();
+            if (mode.mMode == EngineMode::Edit)
+                DrawViewportPrefabDrop(documentTab, activeWorld);
 
             // the dock area below the bars, minus the scene viewport
             if (const ImGuiDockNode *rootNode = ImGui::DockBuilderGetNode(dockspaceId);

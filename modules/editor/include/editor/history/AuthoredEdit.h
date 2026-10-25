@@ -34,7 +34,8 @@ namespace mir
 
     // Null and logged when the view refuses the action.
     std::unique_ptr<ICommand> MakeRevertAuthoredCommand(IAuthoredEntities &authored, const AuthoredKey &key);
-    std::unique_ptr<ICommand> MakeApplyAuthoredCommand(IAuthoredEntities &authored, const AuthoredKey &key);
+    std::unique_ptr<ICommand> MakeApplyAuthoredCommand(IAuthoredEntities &authored, const AuthoredKey &key,
+        std::size_t target = 0);
 
     // The Hierarchy's Create Prefab, as one authored command over the new document.
     std::unique_ptr<ICommand> MakeCreatePrefabCommand(IAuthoredEntities &authored, Entity entity);

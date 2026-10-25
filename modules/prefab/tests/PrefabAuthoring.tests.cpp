@@ -16,6 +16,7 @@
 #include <prefab/PrefabCoordinator.h>
 #include <prefab/PrefabFormat.h>
 #include <prefab/PrefabSceneInstance.h>
+#include <scene/ComponentJson.h>
 #include <scene/SceneInstancePatch.h>
 #include <scene/SceneIO.h>
 
@@ -59,6 +60,7 @@ namespace
     using mir::PrefabAuthoring;
     using mir::PrefabComponentInstance;
     using mir::PrefabComponentState;
+    using mir::PrefabCompileResult;
     using mir::PrefabCoordinator;
     using mir::PrefabDocument;
     using mir::PrefabFieldState;
@@ -71,6 +73,7 @@ namespace
     using mir::SetInstanceFieldOverride;
     using mir::StableId;
     using mir::SystemContext;
+    using mir::ToString;
     using mir::World;
 
     const ComponentOps &DataOps()
@@ -248,7 +251,8 @@ namespace
 
             mDocument = Document();
             REQUIRE(mCoordinator->Registry().SetDocument(mDocument));
-            REQUIRE_FALSE(HasPrefabErrors(mCoordinator->Cache().Compile(mDocument)));
+            REQUIRE_FALSE(HasPrefabErrors(
+                mCoordinator->Cache().Compile(mDocument, mir::RegistryLookup(mCoordinator->Registry()))));
 
             mScene = NewScene("test");
             const std::shared_ptr<const CompiledPrefab> prefab = mCoordinator->Cache().Find(mDocument.mId);
@@ -275,6 +279,138 @@ namespace
             PrefabSystem system;
             SystemContext context{ mWorld, mCommands };
             system.OnUpdate(context);
+        }
+    };
+
+    PrefabComponentInstance DataComponent(double amount, double bonus, const json &target)
+    {
+        return PrefabComponentInstance{
+            "PrefabAuthoringTestData", json{ { "amount", amount }, { "bonus", bonus }, { "target", target } } };
+    }
+
+    PrefabDocument InnerDocument()
+    {
+        PrefabDocument document = mir::NewPrefabDocument();
+        document.mNodes[0].mComponents.push_back(DataComponent(1.0, 1.0, nullptr));
+        document.mNodes[0].mComponents.push_back(PrefabComponentInstance{ "Transform", json::object() });
+
+        PrefabNode child;
+        child.mId = 2;
+        child.mParent = 1;
+        child.mComponents.push_back(DataComponent(2.0, 2.0, nullptr));
+        child.mComponents.push_back(PrefabComponentInstance{ "Transform", json::object() });
+        document.mNodes.push_back(std::move(child));
+        document.mNextNodeId = 3;
+        return document;
+    }
+
+    PrefabDocument NestedDocument(mir::PrefabId inner)
+    {
+        PrefabDocument document = mir::NewPrefabDocument();
+        document.mNodes[0].mComponents.push_back(PrefabComponentInstance{ "Transform", json::object() });
+
+        PrefabNode occurrence;
+        occurrence.mId = 2;
+        occurrence.mKind = mir::PrefabNodeKind::Prefab;
+        occurrence.mParent = 1;
+        occurrence.mPrefab = inner;
+        document.mNodes.push_back(std::move(occurrence));
+        document.mNextNodeId = 3;
+        return document;
+    }
+
+    struct LayerFixture
+    {
+        World mWorld;
+        World mPreviewWorld;
+        LoadedScene mScene = NewScene("main");
+        LoadedScene mPreviewScene = NewScene("preview");
+        PrefabCoordinator *mCoordinator = nullptr;
+        std::unique_ptr<PrefabAuthoring> mAuthoring;
+        TempDir mPrefabs;
+        mir::CommandBuffer mCommands;
+        PrefabDocument mInner;
+        PrefabDocument mMiddle;
+        PrefabDocument mOuter;
+        StableId mRoot = kNullStableId;
+        StableId mPreviewRoot = kNullStableId;
+
+        LayerFixture()
+        {
+            mir::RegisterCoreComponents();
+            DataOps();
+            ExtraOps();
+
+            mWorld.EmplaceResource<mir::EngineModeState>();
+            mCoordinator = &mWorld.EmplaceResource<PrefabCoordinator>();
+
+            mInner = InnerDocument();
+            mMiddle = NestedDocument(mInner.mId);
+            mOuter = NestedDocument(mMiddle.mId);
+            REQUIRE(mCoordinator->SetDocument(mInner, mPrefabs.mPath / "Inner.prefab"));
+            REQUIRE(mCoordinator->SetDocument(mMiddle, mPrefabs.mPath / "Middle.prefab"));
+            REQUIRE(mCoordinator->SetDocument(mOuter, mPrefabs.mPath / "Outer.prefab"));
+
+            const mir::PrefabDocumentLookup lookup = mir::RegistryLookup(mCoordinator->Registry());
+            REQUIRE_FALSE(HasPrefabErrors(mCoordinator->Cache().Compile(mInner, lookup)));
+            REQUIRE_FALSE(HasPrefabErrors(mCoordinator->Cache().Compile(mMiddle, lookup)));
+            REQUIRE_FALSE(HasPrefabErrors(mCoordinator->Cache().Compile(mOuter, lookup)));
+
+            const std::shared_ptr<const CompiledPrefab> prefab = mCoordinator->Cache().Find(mOuter.mId);
+            REQUIRE(prefab != nullptr);
+            mRoot = PlacePrefabInstance(mWorld, mScene, *prefab);
+            REQUIRE(mRoot != kNullStableId);
+            mCoordinator->Bind(mScene);
+
+            mPreviewRoot = PlacePrefabInstance(mPreviewWorld, mPreviewScene, *prefab);
+            REQUIRE(mPreviewRoot != kNullStableId);
+            REQUIRE(mCoordinator->BindPreview(mOuter.mId, mPreviewWorld, mPreviewScene));
+
+            mAuthoring = std::make_unique<PrefabAuthoring>(mWorld, *mCoordinator);
+        }
+
+        Entity Member(const SceneNodeAddress &address) const
+        {
+            return mScene.mEntities.at(mScene.mInstances.at(mRoot).mBindings.at(address));
+        }
+
+        Entity PreviewMember(const SceneNodeAddress &address) const
+        {
+            return mPreviewScene.mEntities.at(mPreviewScene.mInstances.at(mPreviewRoot).mBindings.at(address));
+        }
+
+        float PreviewAmount(const SceneNodeAddress &address)
+        {
+            return FloatField(mPreviewWorld, PreviewMember(address), DataOps(), "amount");
+        }
+
+        void Commit()
+        {
+            PrefabSystem system;
+            SystemContext context{ mWorld, mCommands };
+            system.OnUpdate(context);
+        }
+
+        float CompiledAmount(mir::PrefabId id, const SceneNodeAddress &address) const
+        {
+            const PrefabCompileResult compiled =
+                mir::CompilePrefab(*mCoordinator->Registry().Find(id), mir::RegistryLookup(mCoordinator->Registry()));
+            REQUIRE(compiled.mPrefab != nullptr);
+            for (const mir::CompiledPrefabNode &node : compiled.mPrefab->Nodes())
+            {
+                if (node.mAddress != address)
+                    continue;
+                for (const mir::CompiledPrefabComponent &component : node.mComponents)
+                {
+                    if (component.mOps->mType.name != "PrefabAuthoringTestData")
+                        continue;
+                    float amount = 0.0f;
+                    component.mOps->FindField("amount")->Read(component.mBytes.data(), &amount);
+                    return amount;
+                }
+            }
+            FAIL("compiled member missing");
+            return 0.0f;
         }
     };
 
@@ -699,4 +835,458 @@ TEST_CASE("Frozen prefab authoring refuses writes and actions", "[prefab][author
     CHECK(fixture.mAuthoring->RemovedComponents(fixture.Member(rootNode)).empty());
     CHECK_FALSE(fixture.mAuthoring->Revert(sceneAmount).mRefusal.empty());
     CHECK_FALSE(fixture.mAuthoring->Apply(sceneAmount).mRefusal.empty());
+}
+
+TEST_CASE("Apply writes the chosen layer and leaves the other overrides alone", "[prefab][authoring]")
+{
+    LayerFixture fixture;
+    const SceneNodeAddress member{ 2, 2, 1 };
+    const SceneNodeAddress outerPatchTarget{ 2, 1 };
+    const SceneNodeAddress innerPatchTarget{ 1 };
+
+    REQUIRE(SetInstanceFieldOverride(fixture.mWorld, fixture.mScene, fixture.mCoordinator->Registry(),
+        fixture.mRoot, member, "PrefabAuthoringTestData", "amount", 30.0));
+
+    const PrefabAuthoredKey middleKey = DocumentKey(fixture.mMiddle.mId, SceneNodeAddress{ 2, 1 },
+        "PrefabAuthoringTestData", "amount");
+    REQUIRE(fixture.mAuthoring->Write(
+        std::vector<PrefabAuthoredEntry>{ PrefabAuthoredEntry{ middleKey, std::string("20.0") } }).mApplied);
+
+    const PrefabAuthoredKey sceneKey = SceneKey(fixture.mRoot, member, "PrefabAuthoringTestData", "amount");
+    const std::vector<mir::PrefabApplyTarget> targets = fixture.mAuthoring->ApplyTargets(sceneKey);
+    REQUIRE(targets.size() == 3);
+    CHECK(targets[0].mLabel == "Outer");
+    CHECK(targets[1].mLabel == "Middle");
+    CHECK(targets[2].mLabel == "Inner");
+    CHECK_FALSE(targets[0].mOverrides);
+    CHECK(targets[1].mOverrides);
+
+    const auto applyTo = [&](std::size_t index)
+        {
+            const mir::PrefabAuthoredAction action = fixture.mAuthoring->Apply(sceneKey, index);
+            REQUIRE(action.mRefusal.empty());
+            REQUIRE(action.mEntries.size() == 2);
+            REQUIRE(fixture.mAuthoring->Write(action.mEntries).mApplied);
+        };
+    const auto amountOverride = [&](mir::PrefabId id, const SceneNodeAddress &patchTarget)
+        {
+            const PrefabDocument *document = fixture.mCoordinator->Registry().Find(id);
+            REQUIRE(document != nullptr);
+            for (const PrefabNode &node : document->mNodes)
+            {
+                if (node.mId != 2)
+                    continue;
+                for (const mir::PrefabPatch &patch : node.mPatches)
+                {
+                    if (patch.mTarget != patchTarget)
+                        continue;
+                    for (const mir::PrefabFieldOverride &field : patch.mFields)
+                    {
+                        if (field.mComponent == "PrefabAuthoringTestData" && field.mField == "amount")
+                            return std::optional<double>(field.mValue.get<double>());
+                    }
+                }
+            }
+            return std::optional<double>{};
+        };
+
+    SECTION("the outer layer")
+    {
+        applyTo(0);
+        CHECK(fixture.mAuthoring->FieldState(sceneKey) == PrefabFieldState::Inherited);
+        CHECK(amountOverride(fixture.mOuter.mId, outerPatchTarget) == 30.0);
+        CHECK(amountOverride(fixture.mMiddle.mId, innerPatchTarget) == 20.0);
+        CHECK(fixture.CompiledAmount(fixture.mOuter.mId, member) == 30.0f);
+    }
+    SECTION("the middle layer")
+    {
+        applyTo(1);
+        CHECK(fixture.mAuthoring->FieldState(sceneKey) == PrefabFieldState::Inherited);
+        CHECK_FALSE(amountOverride(fixture.mOuter.mId, outerPatchTarget).has_value());
+        CHECK(amountOverride(fixture.mMiddle.mId, innerPatchTarget) == 30.0);
+        CHECK(fixture.CompiledAmount(fixture.mOuter.mId, member) == 30.0f);
+    }
+    SECTION("the inner layer")
+    {
+        applyTo(2);
+        CHECK(fixture.mAuthoring->FieldState(sceneKey) == PrefabFieldState::Inherited);
+        CHECK_FALSE(amountOverride(fixture.mOuter.mId, outerPatchTarget).has_value());
+        CHECK(amountOverride(fixture.mMiddle.mId, innerPatchTarget) == 20.0);
+        CHECK(fixture.CompiledAmount(fixture.mOuter.mId, member) == 20.0f);
+
+        const PrefabDocument *inner = fixture.mCoordinator->Registry().Find(fixture.mInner.mId);
+        REQUIRE(inner != nullptr);
+        const PrefabComponentInstance *data = nullptr;
+        for (const PrefabComponentInstance &component : inner->mNodes.front().mComponents)
+        {
+            if (component.mType == "PrefabAuthoringTestData")
+                data = &component;
+        }
+        REQUIRE(data != nullptr);
+        CHECK(data->mFields.at("amount") == 30.0);
+    }
+}
+
+TEST_CASE("Apply refuses a reference that leaves the target layer", "[prefab][authoring]")
+{
+    LayerFixture fixture;
+    const SceneNodeAddress member{ 2, 2, 1 };
+    const StableId outerRoot = fixture.mScene.mInstances.at(fixture.mRoot).mBindings.at(SceneNodeAddress{ 1 });
+
+    REQUIRE(SetInstanceEntityRef(fixture.mWorld, fixture.mScene, fixture.mRoot, member,
+        "PrefabAuthoringTestData", "target", outerRoot));
+
+    const PrefabAuthoredKey key = SceneKey(fixture.mRoot, member, "PrefabAuthoringTestData", "target");
+    for (const std::size_t target : { std::size_t{ 1 }, std::size_t{ 2 } })
+    {
+        const mir::PrefabAuthoredAction refused = fixture.mAuthoring->Apply(key, target);
+        CHECK_FALSE(refused.mRefusal.empty());
+        CHECK(refused.mRefusal.find("outside this layer") != std::string::npos);
+        CHECK(refused.mEntries.empty());
+    }
+
+    const mir::PrefabAuthoredAction applied = fixture.mAuthoring->Apply(key, 0);
+    REQUIRE(applied.mRefusal.empty());
+    REQUIRE(fixture.mAuthoring->Write(applied.mEntries).mApplied);
+
+    const PrefabDocument *outer = fixture.mCoordinator->Registry().Find(fixture.mOuter.mId);
+    REQUIRE(outer != nullptr);
+    const mir::PrefabPatch *patch = nullptr;
+    for (const PrefabNode &node : outer->mNodes)
+    {
+        if (node.mId != 2)
+            continue;
+        for (const mir::PrefabPatch &candidate : node.mPatches)
+        {
+            if (candidate.mTarget == SceneNodeAddress{ 2, 1 })
+                patch = &candidate;
+        }
+    }
+    REQUIRE(patch != nullptr);
+    REQUIRE(patch->mFields.size() == 1);
+    CHECK(patch->mFields.front().mValue == json::array({ "1" }));
+}
+
+TEST_CASE("Revert a scene override to expose the layer below", "[prefab][authoring]")
+{
+    LayerFixture fixture;
+    const SceneNodeAddress member{ 2, 2, 1 };
+    const PrefabAuthoredKey middleKey =
+        DocumentKey(fixture.mMiddle.mId, SceneNodeAddress{ 2, 1 }, "PrefabAuthoringTestData", "amount");
+    REQUIRE(fixture.mAuthoring->Write(
+        std::vector<PrefabAuthoredEntry>{ PrefabAuthoredEntry{ middleKey, std::string("20.0") } }).mApplied);
+    fixture.Commit();
+
+    REQUIRE(SetInstanceFieldOverride(fixture.mWorld, fixture.mScene, fixture.mCoordinator->Registry(),
+        fixture.mRoot, member, "PrefabAuthoringTestData", "amount", 30.0));
+    const PrefabAuthoredKey key = SceneKey(fixture.mRoot, member, "PrefabAuthoringTestData", "amount");
+    CHECK(fixture.mAuthoring->FieldState(key) == PrefabFieldState::Overridden);
+
+    const mir::PrefabAuthoredAction reverted = fixture.mAuthoring->Revert(key);
+    REQUIRE(reverted.mRefusal.empty());
+    REQUIRE(fixture.mAuthoring->Write(reverted.mEntries).mApplied);
+
+    CHECK(fixture.mAuthoring->FieldState(key) == PrefabFieldState::Inherited);
+    CHECK(FloatField(fixture.mWorld, fixture.Member(member), DataOps(), "amount") == 20.0f);
+}
+
+TEST_CASE("A Prefab tab edits nested members as its occurrence overrides", "[prefab][authoring]")
+{
+    LayerFixture fixture;
+    fixture.mAuthoring->SetActiveDocument(fixture.mOuter.mId);
+    const SceneNodeAddress member{ 2, 2, 1 };
+    const Entity entity = fixture.PreviewMember(member);
+
+    const std::optional<PrefabAuthoredKey> fieldKey =
+        fixture.mAuthoring->FieldKey(entity, "PrefabAuthoringTestData", "amount");
+    REQUIRE(fieldKey.has_value());
+    CHECK(*fieldKey->mPrefab == fixture.mOuter.mId);
+    CHECK(fieldKey->mAddress == member);
+    CHECK(fixture.mAuthoring->FieldState(*fieldKey) == PrefabFieldState::Inherited);
+
+    const std::optional<PrefabAuthoredKey> extraKey =
+        fixture.mAuthoring->ComponentKey(entity, "PrefabAuthoringTestExtra");
+    REQUIRE(extraKey.has_value());
+    REQUIRE(fixture.mAuthoring->Write(
+        std::vector<PrefabAuthoredEntry>{ PrefabAuthoredEntry{ *extraKey, std::string("{\"value\":4.5}") } })
+        .mApplied);
+    CHECK(fixture.mAuthoring->ComponentState(entity, "PrefabAuthoringTestExtra") ==
+        PrefabComponentState::Added);
+    fixture.Commit();
+    CHECK(ExtraOps().Has(fixture.mPreviewWorld, entity));
+    CHECK(FloatField(fixture.mPreviewWorld, entity, ExtraOps(), "value") == 4.5f);
+
+    REQUIRE(fixture.mAuthoring->Write(
+        std::vector<PrefabAuthoredEntry>{ PrefabAuthoredEntry{ *fieldKey, std::string("42.0") } }).mApplied);
+    CHECK(fixture.mAuthoring->FieldState(*fieldKey) == PrefabFieldState::Overridden);
+    fixture.Commit();
+    CHECK(fixture.PreviewAmount(member) == 42.0f);
+
+    const mir::PrefabAuthoredAction applied = fixture.mAuthoring->Apply(*fieldKey, 1);
+    REQUIRE(applied.mRefusal.empty());
+    REQUIRE(fixture.mAuthoring->Write(applied.mEntries).mApplied);
+    CHECK(fixture.mAuthoring->FieldState(*fieldKey) == PrefabFieldState::Inherited);
+    fixture.Commit();
+    CHECK(fixture.PreviewAmount(member) == 42.0f);
+
+    const std::optional<PrefabAuthoredKey> dataKey =
+        fixture.mAuthoring->ComponentKey(entity, "PrefabAuthoringTestData");
+    REQUIRE(dataKey.has_value());
+    REQUIRE(fixture.mAuthoring->Write(
+        std::vector<PrefabAuthoredEntry>{ PrefabAuthoredEntry{ *dataKey, std::string("null") } }).mApplied);
+    CHECK(fixture.mAuthoring->ComponentState(entity, "PrefabAuthoringTestData") ==
+        PrefabComponentState::Removed);
+    CHECK(fixture.mAuthoring->RemovedComponents(entity) ==
+        std::vector<std::string>{ "PrefabAuthoringTestData" });
+    fixture.Commit();
+    CHECK_FALSE(DataOps().Has(fixture.mPreviewWorld, entity));
+
+    const mir::PrefabAuthoredAction restored = fixture.mAuthoring->Revert(*dataKey);
+    REQUIRE(restored.mRefusal.empty());
+    REQUIRE(fixture.mAuthoring->Write(restored.mEntries).mApplied);
+    CHECK(fixture.mAuthoring->ComponentState(entity, "PrefabAuthoringTestData") ==
+        PrefabComponentState::Inherited);
+    fixture.Commit();
+    CHECK(DataOps().Has(fixture.mPreviewWorld, entity));
+
+    const mir::PrefabAuthoredAction removed = fixture.mAuthoring->Revert(*extraKey);
+    REQUIRE(removed.mRefusal.empty());
+    REQUIRE(fixture.mAuthoring->Write(removed.mEntries).mApplied);
+    fixture.Commit();
+    CHECK_FALSE(ExtraOps().Has(fixture.mPreviewWorld, entity));
+
+    CHECK_FALSE(fixture.mAuthoring->NodeIdOf(entity).has_value());
+}
+
+TEST_CASE("Reversing a Prefab tab override exposes the inner value", "[prefab][authoring]")
+{
+    LayerFixture fixture;
+    fixture.mAuthoring->SetActiveDocument(fixture.mOuter.mId);
+    const SceneNodeAddress member{ 2, 2, 1 };
+    const Entity entity = fixture.PreviewMember(member);
+
+    const PrefabAuthoredKey middleKey =
+        DocumentKey(fixture.mMiddle.mId, SceneNodeAddress{ 2, 1 }, "PrefabAuthoringTestData", "amount");
+    REQUIRE(fixture.mAuthoring->Write(
+        std::vector<PrefabAuthoredEntry>{ PrefabAuthoredEntry{ middleKey, std::string("20.0") } }).mApplied);
+    fixture.Commit();
+
+    const std::optional<PrefabAuthoredKey> key =
+        fixture.mAuthoring->FieldKey(entity, "PrefabAuthoringTestData", "amount");
+    REQUIRE(key.has_value());
+    REQUIRE(fixture.mAuthoring->Write(
+        std::vector<PrefabAuthoredEntry>{ PrefabAuthoredEntry{ *key, std::string("40.0") } }).mApplied);
+    fixture.Commit();
+    CHECK(fixture.PreviewAmount(member) == 40.0f);
+
+    const mir::PrefabAuthoredAction reverted = fixture.mAuthoring->Revert(*key);
+    REQUIRE(reverted.mRefusal.empty());
+    REQUIRE(fixture.mAuthoring->Write(reverted.mEntries).mApplied);
+    CHECK(fixture.mAuthoring->FieldState(*key) == PrefabFieldState::Inherited);
+    fixture.Commit();
+    CHECK(fixture.PreviewAmount(member) == 20.0f);
+}
+
+TEST_CASE("A nested occurrence root maps to its outer node and deletion restores its patches", "[prefab][authoring]")
+{
+    LayerFixture fixture;
+    fixture.mAuthoring->SetActiveDocument(fixture.mOuter.mId);
+
+    const SceneNodeAddress occurrenceRoot{ 2, 1 };
+    const SceneNodeAddress nestedMember{ 2, 2, 1 };
+    REQUIRE(fixture.mAuthoring->NodeIdOf(fixture.PreviewMember(occurrenceRoot)) ==
+        std::optional<mir::PrefabNodeId>{ 2 });
+    CHECK_FALSE(fixture.mAuthoring->NodeIdOf(fixture.PreviewMember(nestedMember)).has_value());
+    CHECK_FALSE(fixture.mAuthoring->NodeIdOf(fixture.PreviewMember(SceneNodeAddress{ 2, 2, 2 })).has_value());
+
+    const PrefabAuthoredKey amount =
+        DocumentKey(fixture.mOuter.mId, nestedMember, "PrefabAuthoringTestData", "amount");
+    REQUIRE(fixture.mAuthoring->Write(
+        std::vector<PrefabAuthoredEntry>{ PrefabAuthoredEntry{ amount, std::string("21.0") } }).mApplied);
+    fixture.Commit();
+    CHECK(fixture.PreviewAmount(nestedMember) == 21.0f);
+
+    const PrefabAuthoredKey node = DocumentKey(fixture.mOuter.mId, SceneNodeAddress{ 2 });
+    const std::optional<std::string> record = ReadOne(*fixture.mAuthoring, node);
+    REQUIRE(record.has_value());
+
+    const mir::PrefabNodeId ids[] = { 2 };
+    const mir::PrefabAuthoredAction deleted = fixture.mAuthoring->DeleteNodes(ids);
+    REQUIRE(deleted.mRefusal.empty());
+    REQUIRE(fixture.mAuthoring->Write(deleted.mEntries).mApplied);
+    fixture.Commit();
+    REQUIRE(fixture.mCoordinator->Registry().Find(fixture.mOuter.mId)->mNodes.size() == 1);
+    CHECK_FALSE(fixture.mPreviewScene.mInstances.at(fixture.mPreviewRoot).mBindings.contains(occurrenceRoot));
+
+    REQUIRE(fixture.mAuthoring->Write(
+        std::vector<PrefabAuthoredEntry>{ PrefabAuthoredEntry{ node, record } }).mApplied);
+    fixture.Commit();
+    const PrefabDocument *restored = fixture.mCoordinator->Registry().Find(fixture.mOuter.mId);
+    REQUIRE(restored != nullptr);
+    REQUIRE(restored->mNodes.size() == 2);
+    const PrefabNode &occurrence = restored->mNodes.back();
+    CHECK(occurrence.mKind == mir::PrefabNodeKind::Prefab);
+    CHECK(occurrence.mPrefab == fixture.mMiddle.mId);
+    REQUIRE(occurrence.mPatches.size() == 1);
+    CHECK(occurrence.mPatches.front().mTarget == SceneNodeAddress{ 2, 1 });
+    REQUIRE(occurrence.mPatches.front().mFields.size() == 1);
+    CHECK(occurrence.mPatches.front().mFields.front().mValue == 21.0);
+    CHECK(fixture.PreviewAmount(nestedMember) == 21.0f);
+}
+
+TEST_CASE("An outer Prefab tab refuses nodes under a nested occurrence", "[prefab][authoring]")
+{
+    LayerFixture fixture;
+    fixture.mAuthoring->SetActiveDocument(fixture.mOuter.mId);
+
+    const mir::PrefabAuthoredAction under = fixture.mAuthoring->CreateNode(2, 0);
+    CHECK_FALSE(under.mRefusal.empty());
+    CHECK(under.mEntries.empty());
+
+    const mir::PrefabAuthoredAction added = fixture.mAuthoring->CreateNode(1, 0);
+    REQUIRE(added.mRefusal.empty());
+    REQUIRE(fixture.mAuthoring->Write(added.mEntries).mApplied);
+
+    const PrefabDocument *document = fixture.mCoordinator->Registry().Find(fixture.mOuter.mId);
+    REQUIRE(document != nullptr);
+    REQUIRE(document->mNodes.size() == 3);
+    const mir::PrefabNodeId createdId = document->mNextNodeId - 1;
+
+    const mir::PrefabAuthoredAction moved = fixture.mAuthoring->ReparentNode(createdId, 2, 0);
+    CHECK_FALSE(moved.mRefusal.empty());
+    CHECK(moved.mEntries.empty());
+    CHECK(fixture.mCoordinator->Registry().Find(fixture.mOuter.mId)->mNodes.size() == 3);
+}
+
+TEST_CASE("Placing a Prefab builds one occurrence node under the parent", "[prefab][authoring]")
+{
+    LayerFixture fixture;
+    fixture.mAuthoring->SetActiveDocument(fixture.mOuter.mId);
+
+    const mir::PrefabAuthoredAction placed = fixture.mAuthoring->PlacePrefabNode(1, fixture.mInner.mId, 0);
+    REQUIRE(placed.mRefusal.empty());
+    REQUIRE(placed.mEntries.size() == 1);
+    CHECK(placed.mEntries.front().mKey.mPrefab == fixture.mOuter.mId);
+
+    const json record = json::parse(*placed.mEntries.front().mValue);
+    CHECK(record.at("kind") == "prefab");
+    CHECK(record.at("prefab") == ToString(fixture.mInner.mId));
+    CHECK(record.at("parent") == "1");
+    CHECK(record.at("patches").empty());
+
+    REQUIRE(fixture.mAuthoring->Write(placed.mEntries).mApplied);
+    const PrefabDocument *document = fixture.mCoordinator->Registry().Find(fixture.mOuter.mId);
+    REQUIRE(document != nullptr);
+    REQUIRE(document->mNodes.size() == 3);
+    const PrefabNode *occurrence = nullptr;
+    for (const PrefabNode &node : document->mNodes)
+    {
+        if (node.mId == document->mNextNodeId - 1)
+            occurrence = &node;
+    }
+    REQUIRE(occurrence != nullptr);
+    CHECK(occurrence->mKind == mir::PrefabNodeKind::Prefab);
+    CHECK(occurrence->mPrefab == fixture.mInner.mId);
+    CHECK(occurrence->mParent == 1);
+    CHECK(occurrence->mPatches.empty());
+
+    fixture.Commit();
+    CHECK(fixture.mPreviewScene.mInstances.at(fixture.mPreviewRoot).mBindings.contains(
+        SceneNodeAddress{ occurrence->mId, fixture.mInner.mRootNode }));
+}
+
+TEST_CASE("Placing a Prefab writes the drop point onto its inner root", "[prefab][authoring]")
+{
+    LayerFixture fixture;
+    fixture.mAuthoring->SetActiveDocument(fixture.mOuter.mId);
+
+    const mir::WorldVec3 position(2.0, 3.0, 4.0);
+    const mir::PrefabAuthoredAction placed = fixture.mAuthoring->PlacePrefabNode(1, fixture.mInner.mId, 0, position);
+    REQUIRE(placed.mRefusal.empty());
+    REQUIRE(placed.mEntries.size() == 1);
+
+    const json record = json::parse(*placed.mEntries.front().mValue);
+    REQUIRE(record.at("patches").size() == 1);
+    const json &patch = record.at("patches").front();
+    CHECK(patch.at("target") == json::array({ "1" }));
+    REQUIRE(patch.at("fields").size() == 1);
+    CHECK(patch.at("fields").front().at("component") == "Transform");
+    CHECK(patch.at("fields").front().at("field") == "position");
+    CHECK(patch.at("fields").front().at("value") == json::array({ 2.0, 3.0, 4.0 }));
+
+    REQUIRE(fixture.mAuthoring->Write(placed.mEntries).mApplied);
+    fixture.Commit();
+
+    const mir::PrefabNodeId newId = placed.mEntries.front().mKey.mAddress.front();
+    const SceneNodeAddress innerRoot{ newId, fixture.mInner.mRootNode };
+    CHECK(fixture.mPreviewScene.mInstances.at(fixture.mPreviewRoot).mBindings.contains(innerRoot));
+    const Entity root = fixture.PreviewMember(innerRoot);
+    const mir::Transform *transform = fixture.mPreviewWorld.GetComponent<mir::Transform>(root);
+    REQUIRE(transform != nullptr);
+    CHECK(transform->Position() == position);
+}
+
+TEST_CASE("Reparenting a nested occurrence keeps its world pose", "[prefab][authoring]")
+{
+    LayerFixture fixture;
+    fixture.mAuthoring->SetActiveDocument(fixture.mOuter.mId);
+
+    const mir::PrefabAuthoredAction created = fixture.mAuthoring->CreateNode(1, 0);
+    REQUIRE(created.mRefusal.empty());
+    REQUIRE(fixture.mAuthoring->Write(created.mEntries).mApplied);
+    const mir::PrefabNodeId parent = created.mEntries.front().mKey.mAddress.front();
+
+    const mir::WorldVec3 parentPosition(10.0, 0.0, 0.0);
+    const glm::quat parentRotation = glm::angleAxis(glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    const std::vector<PrefabAuthoredEntry> transformed{
+        { DocumentKey(fixture.mOuter.mId, SceneNodeAddress{ parent }, "Transform", "position"),
+            mir::FieldToJson(FieldKind::WorldPosition, &parentPosition).dump() },
+        { DocumentKey(fixture.mOuter.mId, SceneNodeAddress{ parent }, "Transform", "rotation"),
+            mir::FieldToJson(FieldKind::Quat, &parentRotation).dump() },
+    };
+    REQUIRE(fixture.mAuthoring->Write(transformed).mApplied);
+
+    const mir::PrefabAuthoredAction placed =
+        fixture.mAuthoring->PlacePrefabNode(1, fixture.mInner.mId, 0, mir::WorldVec3(2.0, 3.0, 4.0));
+    REQUIRE(placed.mRefusal.empty());
+    REQUIRE(fixture.mAuthoring->Write(placed.mEntries).mApplied);
+    fixture.Commit();
+
+    const mir::PrefabNodeId occurrence = placed.mEntries.front().mKey.mAddress.front();
+    const Entity root = fixture.PreviewMember(SceneNodeAddress{ occurrence, fixture.mInner.mRootNode });
+    const mir::WorldPose before = mir::ResolveWorld(fixture.mPreviewWorld, root);
+
+    const mir::PrefabAuthoredAction moved = fixture.mAuthoring->ReparentNode(occurrence, parent, 0);
+    REQUIRE(moved.mRefusal.empty());
+    REQUIRE(fixture.mAuthoring->Write(moved.mEntries).mApplied);
+    fixture.Commit();
+
+    const Entity movedRoot = fixture.PreviewMember(SceneNodeAddress{ occurrence, fixture.mInner.mRootNode });
+    REQUIRE(mir::ParentOf(fixture.mPreviewWorld, movedRoot) ==
+        fixture.PreviewMember(SceneNodeAddress{ parent }));
+    const mir::WorldPose after = mir::ResolveWorld(fixture.mPreviewWorld, movedRoot);
+    CHECK(glm::length(glm::dvec3(after.position.Meters() - before.position.Meters())) < 1e-4);
+    for (int axis = 0; axis < 3; ++axis)
+        CHECK(glm::length(after.linear[axis] - before.linear[axis]) < 1e-4f);
+}
+
+TEST_CASE("Placing a Prefab refuses a direct or indirect cycle", "[prefab][authoring]")
+{
+    LayerFixture fixture;
+
+    fixture.mAuthoring->SetActiveDocument(fixture.mOuter.mId);
+    const mir::PrefabAuthoredAction direct = fixture.mAuthoring->PlacePrefabNode(1, fixture.mOuter.mId, 0);
+    CHECK_FALSE(direct.mRefusal.empty());
+    CHECK(direct.mEntries.empty());
+
+    const mir::PrefabAuthoredAction underOccurrence =
+        fixture.mAuthoring->PlacePrefabNode(2, fixture.mInner.mId, 0);
+    CHECK_FALSE(underOccurrence.mRefusal.empty());
+    CHECK(underOccurrence.mEntries.empty());
+
+    fixture.mAuthoring->SetActiveDocument(fixture.mInner.mId);
+    const mir::PrefabAuthoredAction indirect = fixture.mAuthoring->PlacePrefabNode(1, fixture.mOuter.mId, 0);
+    CHECK_FALSE(indirect.mRefusal.empty());
+    CHECK(indirect.mEntries.empty());
+    CHECK(fixture.mCoordinator->Registry().Find(fixture.mInner.mId)->mNodes.size() == 2);
 }
