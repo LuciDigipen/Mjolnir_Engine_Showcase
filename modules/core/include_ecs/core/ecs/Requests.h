@@ -10,6 +10,8 @@
 #pragma once
 #include <algorithm>
 #include <cstdint>
+#include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -51,9 +53,14 @@ namespace mir
             return taken;
         }
 
-        bool Empty() const { return mPending.empty(); }
+        bool Empty() const { return mPending.empty() && !mOpenProject.has_value(); }
+
+        // a game directory to switch to; the last one pushed in a frame wins
+        void PushOpenProject(std::string dir) { mOpenProject = std::move(dir); }
+        std::optional<std::string> TakeOpenProject() { return std::exchange(mOpenProject, std::nullopt); }
 
     private:
         std::vector<Request> mPending;
+        std::optional<std::string> mOpenProject;
     };
 }

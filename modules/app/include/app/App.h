@@ -45,9 +45,7 @@
 #endif
 
 #if MIR_WITH_EDITOR
-#include <editor/AssetImportManager.h>
-#include <editor/ContentBrowserWatcher.h>
-#include <editor/Editor.h>
+#include <editor/EditorModule.h>
 #endif
 
 #include <cstdint>
@@ -59,7 +57,6 @@
 
 namespace mir
 {
-    class WorldSceneOps;
 
     struct AppDesc
     {
@@ -135,8 +132,6 @@ namespace mir
         // The game currently open
         const GameProject &Project() const { return mProject; }
 
-        // Games found at startup
-        const std::vector<GameProject> &AvailableProjects() const { return mAvailableProjects; }
 
         // Validates the game and closes the window; main.cpp then relaunches into it.
         // False (logged) if it is not a game.
@@ -220,29 +215,19 @@ namespace mir
         UIRect GameUIArea() const;
 
     #if MIR_WITH_EDITOR
-            //what the editor's menus, toolbar and panels asked for this frame
-        void ApplyEditorActions(const EditorActions &actions);
+        // swaps in what a finished import cooked, at an Edit frame boundary
         void ApplyImportedAssets();
-        void OpenInExternalIde(const std::string &relativePath);
     #endif
 
         SplashScreen mSplash;
         std::optional<WindowModule> mWindow;
         std::optional<RendererModule> mRenderer;
         std::optional<ImGuiModule> mImGui;
-    #if MIR_WITH_EDITOR
-        Editor mEditor;
-        std::unique_ptr<WorldSceneOps> mSceneOps;
-    #endif
         // Stop puts the World back as it was at Play, so it puts this back too
         bool mUnsavedBeforePlay = false;
         UIContext mGameUI;
         UIDemoScreen mUIDemo;
         GameShell mGameShell;
-    #if MIR_WITH_EDITOR
-        AssetImportManager mAssetImport;
-        ContentBrowserWatcher mContentBrowser;
-    #endif
 
             // Before mWorld, so it is destroyed after it
         CommandBuffer mCommands;
@@ -265,14 +250,15 @@ namespace mir
         std::optional<RendererScriptModule> mRendererScript;
         std::optional<TerrainScriptModule> mTerrainScript;
         std::optional<TerrainRuntimeModule> mTerrain;
+    #if MIR_WITH_EDITOR
+        std::optional<EditorModule> mEditor;
+    #endif
 
 
 
         AppDesc mDesc;
         GameProject mProject;
-        std::vector<GameProject> mAvailableProjects;
     #if MIR_WITH_EDITOR
-        std::vector<ProjectMenuEntry> mProjectMenu;
     #endif
         std::optional<GameProject> mProjectToOpen;
         bool mSwitchHookFired = false;

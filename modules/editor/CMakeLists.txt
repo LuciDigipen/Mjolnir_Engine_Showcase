@@ -14,7 +14,8 @@ target_link_libraries(engine_editor
            mir::window
            mir::input
            mir::project
-    PRIVATE mir::assets
+    PRIVATE mir::animation
+            mir::assets
             mir::core
             mir::editortheme
             mir::scene
@@ -36,6 +37,7 @@ target_sources(engine_editor PRIVATE
     src/editor/CreateGameProject.cpp
     src/editor/Editor.cpp
     src/editor/EditorCamera.cpp
+    src/editor/EditorModule.cpp
     src/editor/EditorPreferences.cpp
     src/editor/EditorWidgets.cpp
     src/editor/EntityBaseline.cpp
