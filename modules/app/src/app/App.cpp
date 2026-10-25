@@ -157,6 +157,8 @@ namespace mir
 
         mCore.emplace(Context(), mCommands);
         mAssets.emplace(CookedAssetsDir());
+        mSceneModule.emplace(Context(), mProject.mSceneDir);
+        mPrefab.emplace(Context(), PrefabSourceDir(mProject));
     #if MIR_WITH_EDITOR
         // The first frames run without assets; ApplyImportedAssets swaps them in once cooked
         if (!mAssets->HadManifest() && mAssetImport.SourceHasAssets())
@@ -186,7 +188,7 @@ namespace mir
 
     #if MIR_WITH_EDITOR
         mSplash.SetProgress("Initializing editor...", 0.5f);
-        mSceneOps = std::make_unique<WorldSceneOps>(mWorld, mScene);
+        mSceneOps = std::make_unique<WorldSceneOps>(mWorld, mSceneModule->Scene());
         if (!mEditor.Initialize(mImGui->Runtime(), mWindow->Get(), mProject.mProjectSettingsPath, mWorld, *mSceneOps,
                 mRenderer->Renderer().SwapchainIsSrgb()))
         {
@@ -201,14 +203,6 @@ namespace mir
         mSplash.SetProgress("Registering components...", 0.75f);
 
 
-        PrefabCoordinator &prefabs = mWorld.EmplaceResource<PrefabCoordinator>();
-        const std::filesystem::path prefabsDir = PrefabSourceDir(mProject);
-        std::error_code prefabEc;
-        if (std::filesystem::is_directory(prefabsDir, prefabEc))
-            prefabs.ScanSources(prefabsDir);
-
-
-        mScheduler.AddSystem<PrefabSystem>(SystemPhase::PreUpdate);
 
         // in dependency order: a module after every module it uses, a bridge after
         // script and its library. Within a phase, systems run in this order
@@ -254,8 +248,7 @@ namespace mir
     #endif
 
         mSplash.SetProgress("Loading scene...", 0.9f);
-        mScene = mir::NewScene("untitled");
-        prefabs.Bind(mScene);
+        mPrefab->Coordinator().Bind(mSceneModule->Scene());
         LoadProjectScene();
 
         //without the editor there is no Play button
@@ -292,7 +285,7 @@ namespace mir
         return true;
     }
 
-    void App::NewScene(std::string name)
+    void App::NewScene(std::string name, bool incomplete)
     {
         if (IsPlaying(mWorld))
         {
@@ -301,9 +294,8 @@ namespace mir
         }
 
         UnloadCurrentScene();
-        mScene = mir::NewScene(std::move(name));
-        if (PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>())
-            prefabs->Bind(mScene);
+        mSceneModule->New(std::move(name), incomplete);
+        mPrefab->Coordinator().Bind(mSceneModule->Scene());
         ClearHistory();
         SetSceneUnsaved(false);
     }
@@ -316,14 +308,9 @@ namespace mir
             return false;
         }
 
-        const PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>();
-        const bool saved = mir::SaveScene(mWorld, mProject.mSceneDir, mScene,
-            prefabs != nullptr ? &prefabs->Resolver() : nullptr);
+        const bool saved = mSceneModule->Save(&mPrefab->Coordinator().Resolver());
         if (saved)
-        {
-            mScene.mDirty = false;
             SetSceneUnsaved(false);
-        }
         return saved;
     }
 
@@ -342,30 +329,29 @@ namespace mir
         }
 
         // probed before unloading, so refusing keeps the current scene intact
-        switch (ChooseSceneLoad(ProbeScene(mProject.mSceneDir), false))
+        const SceneProbe probe = ProbeScene(mProject.mSceneDir);
+        switch (ChooseSceneLoad(probe, false))
         {
         case SceneLoadChoice::Refuse:
             MIR_LOG_WARN("App::LoadScene: kept the current scene over the broken one in '{}'",
                 mProject.mSceneDir.string());
             return false;
         case SceneLoadChoice::StartEmpty:
-            NewScene();
+            NewScene("untitled", true);
             return true;
         case SceneLoadChoice::Load:
             break;
         }
 
-        ReplaceSceneFromDisk();
+        ReplaceSceneFromDisk(!probe.Ok());
         return true;
     }
 
-    void App::ReplaceSceneFromDisk()
+    void App::ReplaceSceneFromDisk(bool incomplete)
     {
         UnloadCurrentScene();
-        PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>();
-        mScene = mir::LoadScene(mWorld, mProject.mSceneDir, prefabs != nullptr ? &prefabs->Resolver() : nullptr);
-        if (prefabs != nullptr)
-            prefabs->Bind(mScene);
+        mSceneModule->LoadFromDisk(&mPrefab->Coordinator().Resolver(), incomplete);
+        mPrefab->Coordinator().Bind(mSceneModule->Scene());
         ClearHistory();
         SetSceneUnsaved(false);
         mTerrain->Runtime().Load();
@@ -408,7 +394,7 @@ namespace mir
         mTerrain->Runtime().Refresh(0.0f, true);
         mTerrain->Runtime().BeginPlay();
 
-        mPlaySnapshot = CaptureWorld(mWorld);
+        mSceneModule->CaptureForPlay();
         mUnsavedBeforePlay = SceneUnsaved();
         ClearHistory();
 
@@ -424,9 +410,8 @@ namespace mir
         SystemContext context = MakeContext(0.0f);
         mScript->Scripts().StopAllScripts(context);
 
-        mScene = RestoreWorld(mWorld, mPlaySnapshot);
-        if (PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>())
-            prefabs->Bind(mScene);
+        mSceneModule->RestoreFromPlay();
+        mPrefab->Coordinator().Bind(mSceneModule->Scene());
         ClearHistory();
 
         //the World is back as it was at Play, Play's edits gone, so the marker goes back too
@@ -557,7 +542,7 @@ namespace mir
 
     void App::UnloadCurrentScene()
     {
-        UnloadScene(mWorld, mScene);
+        mSceneModule->Unload();
 
         // no scene entity holds a mesh or material handle now
         if (mAnimation)
@@ -588,9 +573,10 @@ namespace mir
         {
         case SceneLoadChoice::StartEmpty:
             MIR_LOG_WARN("Starting with an empty scene over the corrupt '{}'", manifest.string());
+            mSceneModule->New("untitled", true);
             return;
         case SceneLoadChoice::Load:
-            ReplaceSceneFromDisk();
+            ReplaceSceneFromDisk(!probe.Ok());
             return;
         case SceneLoadChoice::Refuse:
             break;
@@ -937,8 +923,6 @@ namespace mir
         mCamera.reset();
         mInput.reset();
 
-        DiscardSnapshot(mPlaySnapshot);
-
     #if MIR_WITH_EDITOR
         mEditor.Shutdown();
     #endif
@@ -946,6 +930,8 @@ namespace mir
         mImGui.reset();
         mRenderer.reset();
         mWindow.reset();
+        mPrefab.reset();
+        mSceneModule.reset();
         mAssets.reset();
         mCore.reset();
 

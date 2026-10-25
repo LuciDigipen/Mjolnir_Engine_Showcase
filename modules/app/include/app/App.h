@@ -29,9 +29,9 @@
 #include <physics_script/PhysicsScriptModule.h>
 #include <renderer/RendererModule.h>
 #include <renderer_script/RendererScriptModule.h>
-#include <scene/PlaySnapshot.h>
-#include <scene/SceneAsset.h>
+#include <prefab/PrefabModule.h>
 #include <scene/SceneIO.h>
+#include <scene/SceneModule.h>
 #include <script/ScriptModule.h>
 #include <terrain/TerrainModule.h>
 #include <terrain_runtime/TerrainRuntimeModule.h>
@@ -130,7 +130,7 @@ namespace mir
         AssetCache *Assets();
 
         // The scene currently in the World
-        LoadedScene &Scene() { return mScene; }
+        LoadedScene &Scene() { return mSceneModule->Scene(); }
 
         // The game currently open
         const GameProject &Project() const { return mProject; }
@@ -145,8 +145,9 @@ namespace mir
         // The game RequestOpenProject accepted, if any
         const std::optional<GameProject> &ProjectToOpen() const { return mProjectToOpen; }
 
-        // Discards mScene's entities and replaces it with an empty one
-        void NewScene(std::string name = "untitled");
+        // Discards the scene's entities and replaces it with an empty one. incomplete: it
+        // stands in for a scene that could not be read
+        void NewScene(std::string name = "untitled", bool incomplete = false);
 
         // Writes Scene() to the game's scene directory. False on I/O failure
         bool SaveScene();
@@ -209,8 +210,8 @@ namespace mir
         // Asks what to do with a scene ProbeScene found broken; Refuse when nobody can answer
         SceneLoadChoice ChooseSceneLoad(const SceneProbe &probe, bool atStartup) const;
 
-        // Unload, load and resolve, with no checks
-        void ReplaceSceneFromDisk();
+        // Unload and load, with no checks; incomplete when entity files are missing
+        void ReplaceSceneFromDisk(bool incomplete);
 
         // the mSwitchProjectTo test hook
         void RunSwitchHook();
@@ -249,7 +250,8 @@ namespace mir
         World mWorld;
         SystemScheduler mScheduler;
         std::optional<CoreModule> mCore;
-        PlaySnapshot mPlaySnapshot;
+        std::optional<SceneModule> mSceneModule;
+        std::optional<PrefabModule> mPrefab;
         std::optional<InputModule> mInput;
         std::optional<CameraModule> mCamera;
         std::optional<AnimationModule> mAnimation;
@@ -263,7 +265,6 @@ namespace mir
         std::optional<RendererScriptModule> mRendererScript;
         std::optional<TerrainScriptModule> mTerrainScript;
         std::optional<TerrainRuntimeModule> mTerrain;
-        LoadedScene mScene;
 
 
 

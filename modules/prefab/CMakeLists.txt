@@ -12,6 +12,7 @@ target_sources(engine_prefab PRIVATE
     src/prefab/PrefabCoordinator.cpp
     src/prefab/PrefabDocument.cpp
     src/prefab/PrefabFormat.cpp
+    src/prefab/PrefabModule.cpp
     src/prefab/PrefabId.cpp
     src/prefab/PrefabInstantiate.cpp
     src/prefab/PrefabOverrides.cpp

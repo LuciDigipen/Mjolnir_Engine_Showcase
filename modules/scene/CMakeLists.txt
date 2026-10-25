@@ -7,6 +7,7 @@ target_sources(engine_scene PRIVATE
     src/scene/SceneEntityRefs.cpp
     src/scene/SceneInstanceCodec.cpp
     src/scene/SceneIO.cpp
+    src/scene/SceneModule.cpp
     src/scene/PlaySnapshot.cpp)
 
 # core's Entity/World types and nlohmann::json are in scene's public headers
