@@ -7,7 +7,7 @@
  *
  */
 
-#include "TerrainBindings.h"
+#include <terrain_script/TerrainBindings.h>
 
 #include <core/ecs/World.h>
 #include <core/log/Log.h>

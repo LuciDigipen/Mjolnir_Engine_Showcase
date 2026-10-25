@@ -11,6 +11,11 @@ target_link_libraries(engine_app
            mir::imguiruntime
            mir::scene
            mir::script
+           mir::audio_script
+           mir::input_script
+           mir::physics_script
+           mir::renderer_script
+           mir::terrain_script
     PRIVATE mir::input
             mir::camera
             mir::animation

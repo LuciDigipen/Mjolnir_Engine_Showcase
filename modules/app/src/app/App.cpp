@@ -255,6 +255,11 @@ namespace mir
         mScheduler.AddSystem<InputSystem>(SystemPhase::PreUpdate, *mWindow);
 
         mScript.emplace(Context(), *mAssets, mProject.mAssetIdRoot);
+        mAudioScript.emplace(*mScript);
+        mInputScript.emplace(*mScript);
+        mPhysicsScript.emplace(*mScript);
+        mRendererScript.emplace(*mScript);
+        mTerrainScript.emplace(*mScript);
 
         // FixedUpdate: once per fixed substep, before Propagate turns the
         // Transforms it writes into world matrices
@@ -982,6 +987,11 @@ namespace mir
         audio::Terminate();
 
         mScheduler.Reset();
+        mTerrainScript.reset();
+        mRendererScript.reset();
+        mPhysicsScript.reset();
+        mInputScript.reset();
+        mAudioScript.reset();
         mScript.reset();
         mCore.reset();
 

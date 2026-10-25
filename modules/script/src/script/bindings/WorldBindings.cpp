@@ -9,7 +9,7 @@
 
 #include "WorldBindings.h"
 
-#include "BindingHelpers.h"
+#include <script/BindingHelpers.h>
 
 #include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/DeferredAccess.h>

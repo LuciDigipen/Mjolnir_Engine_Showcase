@@ -6,6 +6,8 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
+#include <physics_script/PhysicsBindings.h>
+#include <script/BindingApi.h>
 #include <script/ScriptHost.h>
 
 #include <core/ecs/CommandBuffer.h>
@@ -42,6 +44,7 @@ namespace
         mir::SystemScheduler scheduler;
         mir::SystemContext context{ world, commands, kStep, 0.0, 0 };
         mir::ScriptHost host;
+        const mir::Registration bindings = mir::AddBindings(host, &mir::RegisterPhysicsBindings);
         std::vector<float> samples = std::vector<float>(17 * 17, 0.0f);
         mir::Entity ground;
         mir::Entity ball;

@@ -7,9 +7,9 @@
  *
  */
 
-#include "PhysicsBindings.h"
+#include <physics_script/PhysicsBindings.h>
 
-#include "BindingHelpers.h"
+#include <script/BindingHelpers.h>
 
 #include <core/ecs/World.h>
 #include <core/log/Log.h>

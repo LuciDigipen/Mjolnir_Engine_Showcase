@@ -9,22 +9,22 @@
 
 #include <script/ScriptHost.h>
 
-#include "bindings/AudioBindings.h"
 #include "bindings/EntityBindings.h"
-#include "bindings/InputBindings.h"
-#include "bindings/PhysicsBindings.h"
-#include "bindings/PostProcessingBindings.h"
-#include "bindings/TerrainBindings.h"
 #include "bindings/WorldBindings.h"
+
+#include <script/BindingApi.h>
 
 #include <core/ecs/World.h>
 #include <core/log/Log.h>
 
 #include <sol/sol.hpp>
 
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace mir
 {
@@ -55,14 +55,9 @@ namespace mir
                                   MIR_LOG_INFO("[lua] {}", line);
                               });
 
+            // core's bindings; every library's own come from its bridge through AddBindings
             RegisterEntityBindings(mLua);
             RegisterWorldBindings(mLua);
-            RegisterTerrainBindings(mLua);
-
-            RegisterInputBindings(mLua);
-            RegisterPhysicsBindings(mLua);
-            RegisterAudioBindings(mLua);
-            RegisterPostProcessingBindings(mLua);
         }
 
         struct ScriptInstance
@@ -141,7 +136,16 @@ namespace mir
             }
         }
 
+        struct Bindings
+        {
+            uint64_t id;
+            LuaBindings bindings;
+        };
+
         sol::state mLua;
+        // replayed into any Lua state built later; mLua is built once today
+        std::vector<Bindings> mBindings;
+        uint64_t mNextBindingsId = 0;
         std::unordered_map<std::string, sol::object> mLoadedScripts;
         std::unordered_map<int32_t, ScriptInstance> mInstances;
         int32_t mNextInstanceRef = 0;
@@ -152,6 +156,19 @@ namespace mir
     }
 
     ScriptHost::~ScriptHost() = default;
+
+    Registration AddBindings(ScriptHost &host, LuaBindings bindings)
+    {
+        ScriptHostImpl &impl = host.Impl();
+        bindings(impl.mLua);
+
+        const uint64_t id = impl.mNextBindingsId++;
+        impl.mBindings.push_back(ScriptHostImpl::Bindings{ id, std::move(bindings) });
+        return Registration(host.Alive(), [&impl, id]
+            {
+                std::erase_if(impl.mBindings, [id](const ScriptHostImpl::Bindings &entry) { return entry.id == id; });
+            });
+    }
 
     bool ScriptHost::LoadScriptSource(std::string_view name, std::string_view source)
     {

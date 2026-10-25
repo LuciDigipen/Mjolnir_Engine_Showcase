@@ -10,6 +10,8 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
+#include <physics_script/PhysicsBindings.h>
+#include <script/BindingApi.h>
 #include <script/ScriptHost.h>
 
 #include <core/ecs/CommandBuffer.h>
@@ -78,6 +80,7 @@ namespace
         mir::SystemScheduler scheduler;
         mir::SystemContext context{ world, commands, kStep, 0.0, 0 };
         mir::ScriptHost host;
+        const mir::Registration bindings = mir::AddBindings(host, &mir::RegisterPhysicsBindings);
         mir::Entity entity{};
         int32_t instance = -1;
 
@@ -473,6 +476,7 @@ return T
         mir::SystemScheduler scheduler;
         mir::SystemContext context{ world, commands, kStep, 0.0, 0 };
         mir::ScriptHost host;
+        const mir::Registration bindings = mir::AddBindings(host, &mir::RegisterPhysicsBindings);
         std::vector<float> samples;
         int casts = 0;
 

@@ -9,9 +9,9 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
-#include "PostProcessingBindings.h"
+#include <renderer_script/PostProcessingBindings.h>
 
-#include "BindingHelpers.h"
+#include <script/BindingHelpers.h>
 
 #include <core/ecs/World.h>
 #include <core/log/Log.h>

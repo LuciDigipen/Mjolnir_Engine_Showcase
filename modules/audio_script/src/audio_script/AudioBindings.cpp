@@ -6,7 +6,7 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
-#include "AudioBindings.h"
+#include <audio_script/AudioBindings.h>
 
 #include <audio/AudioSystem.h>
 #include <audio/components/AudioEmitter.h>

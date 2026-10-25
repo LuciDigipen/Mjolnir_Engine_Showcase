@@ -6,6 +6,8 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
+#include <input_script/InputBindings.h>
+#include <script/BindingApi.h>
 #include <script/ScriptHost.h>
 
 #include <core/ecs/CommandBuffer.h>
@@ -93,6 +95,8 @@ TEST_CASE("world:is_down/axis/axis2d/active_device read the InputState resource"
     probe.AddDefault(world, entity);
 
     ScriptHost host;
+
+    const mir::Registration bindings = mir::AddBindings(host, &mir::RegisterInputBindings);
     REQUIRE(host.LoadScriptSource("input_probe", kProbeSource));
 
     const int32_t instance = host.CreateInstance("input_probe");
@@ -122,6 +126,8 @@ TEST_CASE("world:is_down and world:axis are false/zero with no InputState resour
     probe.AddDefault(world, entity);
 
     ScriptHost host;
+
+    const mir::Registration bindings = mir::AddBindings(host, &mir::RegisterInputBindings);
     REQUIRE(host.LoadScriptSource("input_probe_missing", kProbeSource));
 
     const int32_t instance = host.CreateInstance("input_probe_missing");

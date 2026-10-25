@@ -10,6 +10,7 @@
 
 #include <project/GameProject.h>
 #include <assets/AssetsModule.h>
+#include <audio_script/AudioScriptModule.h>
 #include <core/ecs/CommandBuffer.h>
 #include <core/ecs/CoreModule.h>
 #include <core/ecs/FixedTimestep.h>
@@ -19,11 +20,15 @@
 #include <gameui/UIContext.h>
 #include <gameui/UIDemoScreen.h>
 #include <imguiruntime/ImGuiRuntime.h>
+#include <input_script/InputScriptModule.h>
+#include <physics_script/PhysicsScriptModule.h>
 #include <renderer/VulkanRenderer.h>
+#include <renderer_script/RendererScriptModule.h>
 #include <scene/PlaySnapshot.h>
 #include <scene/SceneAsset.h>
 #include <scene/SceneIO.h>
 #include <script/ScriptModule.h>
+#include <terrain_script/TerrainScriptModule.h>
 #include <window/Splash.h>
 #include <window/Window.h>
 
@@ -243,6 +248,11 @@ namespace mir
         MeshResolveSystem *mMeshResolveSystem = nullptr;
         PlaySnapshot mPlaySnapshot;
         std::optional<ScriptModule> mScript;
+        std::optional<AudioScriptModule> mAudioScript;
+        std::optional<InputScriptModule> mInputScript;
+        std::optional<PhysicsScriptModule> mPhysicsScript;
+        std::optional<RendererScriptModule> mRendererScript;
+        std::optional<TerrainScriptModule> mTerrainScript;
         LoadedScene mScene;
 
         // Handles only, freed with the renderer and the World

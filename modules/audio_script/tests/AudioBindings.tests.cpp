@@ -6,6 +6,8 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
+#include <audio_script/AudioBindings.h>
+#include <script/BindingApi.h>
 #include <script/ScriptHost.h>
 
 #include <audio/AudioSystem.h>
@@ -63,6 +65,7 @@ namespace
         World world;
         CommandBuffer commands;
         ScriptHost host;
+        const mir::Registration bindings = mir::AddBindings(host, &mir::RegisterAudioBindings);
         Entity entity{};
         int32_t instance = -1;
 

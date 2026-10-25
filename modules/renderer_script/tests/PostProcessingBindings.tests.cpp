@@ -8,6 +8,8 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
+#include <renderer_script/PostProcessingBindings.h>
+#include <script/BindingApi.h>
 #include <script/ScriptHost.h>
 
 #include <core/ecs/CommandBuffer.h>
@@ -88,6 +90,7 @@ namespace
         World world;
         CommandBuffer commands;
         ScriptHost host;
+        const mir::Registration bindings = mir::AddBindings(host, &mir::RegisterPostProcessingBindings);
         Entity entity{};
         int32_t instance = -1;
 

@@ -7,7 +7,7 @@
  *
  */
 
-#include "InputBindings.h"
+#include <input_script/InputBindings.h>
 
 #include <core/ecs/World.h>
 #include <input/InputState.h>

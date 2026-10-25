@@ -7,12 +7,13 @@
  *
  */
 
-#include "../src/script/bindings/EntityBindings.h"
-#include "../src/script/bindings/TerrainBindings.h"
-#include "../src/script/bindings/WorldBindings.h"
+#include "../../script/src/script/bindings/EntityBindings.h"
+#include "../../script/src/script/bindings/WorldBindings.h"
 #include "../../terrain/tests/TerrainPackTestSupport.h"
 #include "../../terrain/tests/TerrainStreamingTestSupport.h"
 
+#include <terrain_script/TerrainBindings.h>
+#include <script/BindingApi.h>
 #include <script/ScriptHost.h>
 #include <terrain/TerrainAssetPath.h>
 #include <terrain/TerrainScene.h>
@@ -460,6 +461,7 @@ TEST_CASE("ScriptHost terrain query pins published A during Play and re-resolves
     const Entity entity = fixture.world.CreateEntity();
     probe.AddDefault(fixture.world, entity);
     ScriptHost host;
+    const mir::Registration bindings = mir::AddBindings(host, &mir::RegisterTerrainBindings);
     REQUIRE(host.LoadScriptSource("terrain_play", R"LUA(
 local T = {}
 function T.NewInstanceData() return {ran=0} end
