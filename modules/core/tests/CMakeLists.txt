@@ -24,6 +24,7 @@ engine_add_module_tests(core
     System.tests.cpp
     Stages.tests.cpp
     Requests.tests.cpp
+    ModuleUnwind.tests.cpp
     FixedTimestep.tests.cpp
     Transform.tests.cpp
     TransformHierarchy.tests.cpp
