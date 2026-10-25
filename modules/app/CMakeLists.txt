@@ -16,6 +16,7 @@ target_link_libraries(engine_app
            mir::input_script
            mir::physics
            mir::physics_script
+           mir::prefab
            mir::project
            mir::renderer
            mir::renderer_script
@@ -25,8 +26,7 @@ target_link_libraries(engine_app
            mir::terrain_runtime
            mir::terrain_script
            mir::window
-    PRIVATE mir::prefab
-            mir::serial
+    PRIVATE mir::serial
 )
 
 # App's yes/no prompts
