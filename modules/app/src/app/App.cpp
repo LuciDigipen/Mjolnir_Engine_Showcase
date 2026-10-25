@@ -27,6 +27,7 @@
 #include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/DeferredAccess.h>
 #include <core/ecs/EngineMode.h>
+#include <core/ecs/Requests.h>
 #include <core/ecs/TransformHierarchy.h>
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
@@ -232,6 +233,7 @@ namespace mir
 
         // defers structural change
         mWorld.EmplaceResource<FrameCommands>(FrameCommands{ &mCommands });
+        mWorld.EmplaceResource<RequestQueue>();
 
         InputMap inputMap = InputMap::LoadFile(mProject.mProjectSettingsPath).value_or(InputMap{});
         AddDefaultActions(inputMap);
@@ -491,29 +493,68 @@ namespace mir
 
     void App::ApplyShellAction(GameShellAction action)
     {
+        RequestQueue &requests = mWorld.Resource<RequestQueue>();
         switch (action)
         {
         case GameShellAction::Pause:
-            if (IsSimulating(mWorld))
-                TogglePause();
+            requests.Push(Request::Pause);
             break;
         case GameShellAction::Resume:
-            if (IsPaused(mWorld))
-                TogglePause();
+            requests.Push(Request::Resume);
             break;
         case GameShellAction::Restart:
-            StopScene();
-            PlayScene();
+            requests.Push(Request::Stop);
+            requests.Push(Request::Play);
             break;
         case GameShellAction::Quit:
             //the editor's Quit leaves Play, but game build closes
-            if (mDesc.mEnableEditorLayout)
-                StopScene();
-            else
-                mWindow->RequestClose();
+            requests.Push(mDesc.mEnableEditorLayout ? Request::Stop : Request::Quit);
             break;
         case GameShellAction::None:
             break;
+        }
+    }
+
+    void App::ApplyRequests()
+    {
+        for (const Request request : mWorld.Resource<RequestQueue>().Take())
+        {
+            switch (request)
+            {
+            case Request::Play:
+                PlayScene();
+                break;
+            case Request::Stop:
+                StopScene();
+                break;
+            case Request::Pause:
+                if (IsSimulating(mWorld))
+                    TogglePause();
+                break;
+            case Request::Resume:
+                if (IsPaused(mWorld))
+                    TogglePause();
+                break;
+            case Request::NewScene:
+                NewScene();
+                break;
+            case Request::LoadScene:
+                LoadScene();
+                break;
+            case Request::SaveScene:
+                SaveScene();
+                break;
+            case Request::ApplyImportedAssets:
+            #if MIR_WITH_EDITOR
+                // the import may have been applied or dropped since it asked
+                if (mAssetImport.PendingApply() && IsEditing(mWorld))
+                    ApplyImportedAssets();
+            #endif
+                break;
+            case Request::Quit:
+                mWindow->RequestClose();
+                break;
+            }
         }
     }
 
@@ -680,10 +721,16 @@ namespace mir
             previous = now;
             mElapsed += dt;
 
+            // nothing is drawn or running yet, so a transition frees nothing in use
+            ApplyRequests();
+
+            SystemContext frameContext = MakeContext(dt);
+            mScheduler.RunFrameSlot(FrameSlot::FrameBegin, frameContext);
+
         #if MIR_WITH_EDITOR
             mAssetImport.Update(IsEditing(mWorld));
             if (mAssetImport.PendingApply() && IsEditing(mWorld))
-                ApplyImportedAssets();
+                mWorld.Resource<RequestQueue>().Push(Request::ApplyImportedAssets);
             mContentBrowser.Update();
         #endif
 
@@ -788,25 +835,26 @@ namespace mir
 #if MIR_WITH_EDITOR
     void App::ApplyEditorActions(const EditorActions &actions)
     {
+        RequestQueue &requests = mWorld.Resource<RequestQueue>();
         switch (actions.mScene)
         {
         case SceneMenuAction::New:
-            NewScene();
+            requests.Push(Request::NewScene);
             break;
         case SceneMenuAction::Save:
-            SaveScene();
+            requests.Push(Request::SaveScene);
             break;
         case SceneMenuAction::Load:
-            LoadScene();
+            requests.Push(Request::LoadScene);
             break;
         case SceneMenuAction::Play:
-            PlayScene();
+            requests.Push(Request::Play);
             break;
         case SceneMenuAction::TogglePause:
-            TogglePause();
+            requests.Push(IsPaused(mWorld) ? Request::Resume : Request::Pause);
             break;
         case SceneMenuAction::Stop:
-            StopScene();
+            requests.Push(Request::Stop);
             break;
         case SceneMenuAction::None:
             break;

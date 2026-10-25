@@ -160,7 +160,7 @@ namespace mir
         // Toggles Running/Paused. No-op outside Play.
         void TogglePause();
 
-        //carries out what the player asked of the game in the pause menu
+        //queues what the player asked of the game in the pause menu
         void ApplyShellAction(GameShellAction action);
 
         //windowed to fullscreen without a restart. called by f11.
@@ -170,6 +170,9 @@ namespace mir
     private:
         // context is rebuilt per tick
         SystemContext MakeContext(float dt);
+
+        // what the editor, the game shell and the import asked for last frame
+        void ApplyRequests();
 
         // UnloadScene, then free the GPU resources
         void UnloadCurrentScene();
