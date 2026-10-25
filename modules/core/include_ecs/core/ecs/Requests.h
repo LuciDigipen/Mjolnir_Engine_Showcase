@@ -41,8 +41,9 @@ namespace mir
                 mPending.push_back(request);
         }
 
-        // in push order, Quit last so every other request still applies before the close.
-        // Empties the queue first: requests pushed while these apply wait for the next frame
+        // In push order, and Quit runs last in its frame, so a Save pushed with it still saves.
+        // Empties the queue first: requests pushed while these apply go to the next frame,
+        // which after a Quit never runs, so nothing runs after a Quit
         std::vector<Request> Take()
         {
             std::vector<Request> taken = std::exchange(mPending, {});
