@@ -80,28 +80,29 @@ namespace mir
 
         constexpr float kMinParentAxis = 1e-12f;
 
-        // The local values that hold `child`'s world pose under `parent`. A zero-scale
-        // parent counts as translation only. nullopt when the position does not fit.
         std::optional<Transform> TryKeepWorld(World &world, Entity child, Entity parent)
         {
-            const WorldPose childPose = ResolveWorld(world, child);
-            WorldPose parentPose = parent.IsNull() ? WorldPose{} : ResolveWorld(world, parent);
-
-            for (int axis = 0; axis < 3; ++axis)
-            {
-                if (glm::length(parentPose.linear[axis]) < kMinParentAxis)
-                    parentPose.linear = glm::mat3(1.0f);
-            }
-
-            const std::optional<ParentLocalTranslation> position = TryWorldToParentLocal(parentPose, childPose.position);
-            if (!position)
-                return std::nullopt;
-
-            glm::quat rotation{};
-            glm::vec3 scale{};
-            DecomposeRotationScale(glm::inverse(parentPose.linear) * childPose.linear, rotation, scale);
-            return Transform(position->Meters(), rotation, scale);
+            return TryLocalForWorldPose(parent.IsNull() ? WorldPose{} : ResolveWorld(world, parent),
+                ResolveWorld(world, child));
         }
+    }
+
+    std::optional<Transform> TryLocalForWorldPose(WorldPose parent, const WorldPose &child)
+    {
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            if (glm::length(parent.linear[axis]) < kMinParentAxis)
+                parent.linear = glm::mat3(1.0f);
+        }
+
+        const std::optional<ParentLocalTranslation> position = TryWorldToParentLocal(parent, child.position);
+        if (!position)
+            return std::nullopt;
+
+        glm::quat rotation{};
+        glm::vec3 scale{};
+        DecomposeRotationScale(glm::inverse(parent.linear) * child.linear, rotation, scale);
+        return Transform(position->Meters(), rotation, scale);
     }
 
     Entity ParentOf(const World &world, Entity entity)

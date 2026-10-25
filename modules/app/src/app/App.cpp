@@ -990,7 +990,14 @@ namespace mir
                 }
             }
             if (contentBrowserActionAccepted)
+            {
                 mContentBrowser.Handle(actions.mContentBrowser);
+                if (actions.mContentBrowser.mKind == ContentBrowserActionKind::Rename)
+                {
+                    if (PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>())
+                        prefabs->ScanSources(PrefabSourceDir(mProject));
+                }
+            }
         }
 
         if (!actions.mOpenProject.empty())

@@ -18,6 +18,7 @@
 #include <core/ecs/World.h>
 #include <core/ecs/components/Name.h>
 #include <core/ecs/components/Transform.h>
+#include <scene/ComponentJson.h>
 #include <scene/SceneAsset.h>
 #include <scene/SceneIO.h>
 
@@ -276,4 +277,42 @@ TEST_CASE("Preview node delete and reparent entries cover the document", "[prefa
 
     const mir::PrefabAuthoredAction refused = reparent.mAuthoring->ReparentNode(2, 4, 0);
     CHECK_FALSE(refused.mRefusal.empty());
+}
+
+TEST_CASE("Reparenting a preview node keeps its world pose", "[prefab][preview]")
+{
+    Fixture fixture;
+
+    const auto transformKey = [&](PrefabNodeId node, std::string_view field)
+        {
+            return PrefabAuthoredKey{ fixture.mDocument.mId, SceneNodeAddress{ node }, "Transform", std::string(field) };
+        };
+    const mir::WorldVec3 secondPosition(10.0, 0.0, 0.0);
+    const glm::quat secondRotation = glm::angleAxis(glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    const glm::vec3 secondScale(2.0f);
+    const mir::WorldVec3 thirdPosition(0.0, 5.0, 0.0);
+    const mir::WorldVec3 fourthPosition(1.0, 0.0, 3.0);
+    const std::vector<PrefabAuthoredEntry> placed{
+        { transformKey(2, "position"), mir::FieldToJson(FieldKind::WorldPosition, &secondPosition).dump() },
+        { transformKey(2, "rotation"), mir::FieldToJson(FieldKind::Quat, &secondRotation).dump() },
+        { transformKey(2, "scale"), mir::FieldToJson(FieldKind::Vec3, &secondScale).dump() },
+        { transformKey(3, "position"), mir::FieldToJson(FieldKind::WorldPosition, &thirdPosition).dump() },
+        { transformKey(4, "position"), mir::FieldToJson(FieldKind::WorldPosition, &fourthPosition).dump() },
+    };
+    REQUIRE(fixture.mAuthoring->Write(placed).mApplied);
+    fixture.Commit();
+
+    const Entity node = fixture.PreviewEntity(SceneNodeAddress{ 4 });
+    const mir::WorldPose before = mir::ResolveWorld(fixture.mPreviewWorld, node);
+
+    const mir::PrefabAuthoredAction moved = fixture.mAuthoring->ReparentNode(4, 2, 0);
+    REQUIRE(moved.mRefusal.empty());
+    REQUIRE(fixture.mAuthoring->Write(moved.mEntries).mApplied);
+    fixture.Commit();
+    REQUIRE(ParentOf(fixture.mPreviewWorld, node) == fixture.PreviewEntity(SceneNodeAddress{ 2 }));
+
+    const mir::WorldPose after = mir::ResolveWorld(fixture.mPreviewWorld, node);
+    CHECK(glm::length(glm::dvec3(after.position.Meters() - before.position.Meters())) < 1e-4);
+    for (int axis = 0; axis < 3; ++axis)
+        CHECK(glm::length(after.linear[axis] - before.linear[axis]) < 1e-4f);
 }

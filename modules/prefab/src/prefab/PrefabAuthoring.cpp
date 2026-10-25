@@ -10,7 +10,9 @@
 
 #include "core/ecs/ComponentRegistry.h"
 #include "core/ecs/EntityPresetRegistry.h"
+#include "core/ecs/TransformHierarchy.h"
 #include "core/ecs/World.h"
+#include "core/ecs/components/Transform.h"
 #include "core/log/Log.h"
 #include "prefab/CompiledPrefab.h"
 #include "prefab/PrefabFormat.h"
@@ -295,6 +297,69 @@ namespace mir
                 }
             }
 
+            return true;
+        }
+
+        Transform ReadTransform(const PrefabComponentInstance &component)
+        {
+            Transform transform;
+            for (const FieldDesc &field : kTransformFields)
+            {
+                const auto value = component.mFields.find(std::string(field.mName));
+                FieldBuffer buffer{};
+                if (value != component.mFields.end() && JsonToField(field.mKind, *value, buffer.mBytes))
+                    field.Write(&transform, buffer.mBytes);
+            }
+            return transform;
+        }
+
+        std::optional<WorldPose> DocumentPose(const PrefabDocument &document, PrefabNodeId id)
+        {
+            std::vector<const PrefabNode *> chain;
+            for (std::optional<std::size_t> index = FindNodeIndex(document, id);
+                index && chain.size() < document.mNodes.size();
+                index = FindNodeIndex(document, chain.back()->mParent))
+            {
+                chain.push_back(&document.mNodes[*index]);
+                if (chain.back()->mId == document.mRootNode)
+                    break;
+            }
+
+            WorldPose pose;
+            for (auto node = chain.rbegin(); node != chain.rend(); ++node)
+            {
+                const PrefabComponentInstance *component = FindComponent(**node, "Transform");
+                if (component == nullptr)
+                    continue;
+                const Transform local = ReadTransform(*component);
+                const std::optional<WorldPose> composed = TryComposePose(pose, local.LinearMatrix(), local.Position());
+                if (!composed)
+                    return std::nullopt;
+                pose = *composed;
+            }
+            return pose;
+        }
+
+        // Rewrites the node's Transform so its pose in the document survives the move under parent.
+        bool KeepDocumentPose(const PrefabDocument &document, PrefabNode &node, PrefabNodeId parent)
+        {
+            PrefabComponentInstance *component = FindComponent(node, "Transform");
+            if (component == nullptr)
+                return true;
+
+            const std::optional<WorldPose> nodePose = DocumentPose(document, node.mId);
+            const std::optional<WorldPose> parentPose = DocumentPose(document, parent);
+            const std::optional<Transform> local =
+                nodePose && parentPose ? TryLocalForWorldPose(*parentPose, *nodePose) : std::nullopt;
+            if (!local)
+                return false;
+
+            for (const FieldDesc &field : kTransformFields)
+            {
+                FieldBuffer buffer{};
+                field.Read(&*local, buffer.mBytes);
+                component->mFields[std::string(field.mName)] = FieldToJson(field.mKind, buffer.mBytes);
+            }
             return true;
         }
 
@@ -1800,6 +1865,11 @@ namespace mir
         std::erase_if(after.mNodes, [&](const PrefabNode &node) { return moving.contains(node.mId); });
         for (PrefabNode &node : moved)
         {
+            if (node.mParent != parent && !KeepDocumentPose(*document, node, parent))
+            {
+                action.mRefusal = "the node's world position does not fit under the new parent";
+                return action;
+            }
             node.mParent = parent;
             const auto index = InsertionIndex(after, parent, siblingIndex++, node.mId);
             after.mNodes.insert(after.mNodes.begin() + static_cast<std::ptrdiff_t>(index), node);
