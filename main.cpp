@@ -16,6 +16,7 @@
 #include <core/log/Log.h>
 #include <core/log/LogHistory.h>
 #include <core/log/SetupError.h>
+#include <core/platform/CrashHandler.h>
 #include <core/platform/Process.h>
 
 #include <charconv>
@@ -250,6 +251,18 @@ int main(int argc, char **argv)
     mir::InitLog();
     MIR_LOG_INFO("Log file: {}", mir::LogFilePath().string());
     mir::ClearErrorReport();
+
+    try
+    {
+        mir::InstallCrashHandler({ .mReportPath = mir::ErrorReportPath(),
+                                   .mDumpPath = mir::CrashDumpPath(),
+                                   .mReporterPath = mir::ReporterPath(),
+                                   .mLogPath = mir::LogFilePath() });
+    }
+    catch (const mir::SetupError &error)
+    {
+        return mir::ReportFatal(error);
+    }
 
     // bad arguments or game directory exit before the splash, with no App to tear down
     try

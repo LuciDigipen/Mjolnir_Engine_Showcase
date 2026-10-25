@@ -172,12 +172,20 @@ and agents branch on, so a number is never reused.
 | 12 | Build output | Rebuild: the manifest, AssetCooker, `asset_workspace.json`, `engine.json`, the fonts |
 | 13 | System | Fix the machine: GPU driver, display, audio device, permissions |
 | 14 | Internal | Report a bug with the log attached |
+| 20 | Crash | Report a bug with the log and `logs/crash.dmp` attached |
 
 The log is `logs/engine.log` next to the executable, whatever the launch
 directory. Its absolute path is the first line the engine prints. A fatal error
 also writes `logs/last-error.json` with the same fields as the `SetupError`. Each
 run deletes the previous one at startup, so a report on disk belongs to the
 latest run.
+
+A crash or `std::terminate` on any thread goes to the crash handler
+(`core/platform/CrashHandler.h`), installed first in `main`. It writes the same
+report with `kind` set to `crash`, and a minidump at `logs/crash.dmp`, from a
+thread of its own, then ends the process with exit 20. Destructors do not run on
+that path, so anything a crash must not lose is the handler's job, not a
+module's. A caught failure's report has `kind` set to `caught`.
 
 A person sees the error in a box. `MjolnirErrorReporter`, shipped next to the
 engine, shows it after the engine has already exited, so the engine never waits

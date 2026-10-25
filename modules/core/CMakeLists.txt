@@ -20,7 +20,8 @@ target_sources(engine_core_base PRIVATE
     src/core/log/LogHistory.cpp
     src/core/fs/Paths.cpp
     src/core/fs/FileIO.cpp
-    src/core/platform/Process.cpp)
+    src/core/platform/Process.cpp
+    src/core/platform/CrashHandler.cpp)
 
 # get external libraries here
 find_package(spdlog CONFIG REQUIRED)

@@ -8,6 +8,8 @@
  */
 #include "terrain/TerrainExecutor.h"
 
+#include <core/platform/CrashHandler.h>
+
 #include <utility>
 
 namespace mir
@@ -39,6 +41,7 @@ namespace mir
 
     void TerrainWorkerPool::Work(std::stop_token stop) noexcept
     {
+        ArmCrashHandler();
         for (;;)
         {
             std::function<void()> job;

@@ -30,3 +30,13 @@ engine_add_module_tests(terrain
 target_link_libraries(engine_terrain_tests PRIVATE mir::scene mir::physics terrain_bake)
 target_compile_definitions(engine_terrain_tests PRIVATE
     TERRAIN_COLLISION_RECIPE="${PROJECT_SOURCE_DIR}/tools/TerrainTool/tests/fixtures/mixed-2x2.terrain.json")
+
+# the crash runs in a child process, so the test run survives it
+if(WIN32 AND BUILD_TESTING)
+    add_executable(engine_terrain_crash_probe TerrainCrashProbe.cpp)
+    target_link_libraries(engine_terrain_crash_probe PRIVATE mir::terrain)
+    target_sources(engine_terrain_tests PRIVATE TerrainCrash.tests.cpp)
+    add_dependencies(engine_terrain_tests engine_terrain_crash_probe)
+    target_compile_definitions(engine_terrain_tests
+        PRIVATE MIR_TERRAIN_CRASH_PROBE_PATH="$<TARGET_FILE:engine_terrain_crash_probe>")
+endif()

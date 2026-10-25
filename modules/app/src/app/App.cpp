@@ -32,6 +32,7 @@
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
 #include <core/log/SetupError.h>
+#include <core/platform/CrashHandler.h>
 #include <input/DefaultInputMap.h>
 #include <input/InputMap.h>
 #include <input/InputState.h>
@@ -296,6 +297,9 @@ namespace mir
         //without the editor there is no Play button
         if (!mDesc.mEnableEditorLayout)
             PlayScene();
+
+        // every module is built, so a library that took the crash filter slot has done so
+        ReclaimCrashHandler();
 
         mWindow->Show();
     }

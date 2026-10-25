@@ -22,6 +22,8 @@
 #ifndef _UNICODE
 #define _UNICODE
 #endif
+#include <core/platform/CrashHandler.h>
+
 #include <windows.h>
 
 #include <wincodec.h>
@@ -349,6 +351,8 @@ namespace mir
         // A thread entry: an exception escaping it would end the process with no report
         void SplashThreadMain(SplashImpl *impl, SplashDesc desc, std::promise<HWND> ready) noexcept
         {
+            ArmCrashHandler();
+
             ComGuard comGuard;
 
             RegisterSplashClassOnce();
