@@ -18,7 +18,11 @@
 #include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/World.h>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+
+#include <glm/gtc/constants.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <cmath>
 #include <optional>
@@ -195,6 +199,193 @@ TEST_CASE("Each created body is tagged with its entity", "[physics]")
     const mir::BodyHandle sphereBody = fixture.world.GetComponent<mir::RigidBody>(sphere)->runtime.body;
     CHECK(fixture.Physics().BodyEntity(floorBody) == floor);
     CHECK(fixture.Physics().BodyEntity(sphereBody) == sphere);
+}
+
+namespace
+{
+    constexpr mir::RigidBody kDynamicBox{
+        .motion = mir::PhysicsMotion::Dynamic,
+        .shape = mir::PhysicsShape::Box,
+        .halfExtent = glm::vec3(0.5f),
+    };
+
+    // A child of `parent` with its own local Transform, the way the editor builds one.
+    mir::Entity AddChild(PhysicsFixture &fixture, mir::Entity parent, const mir::Transform &local,
+        const mir::RigidBody &rigidBody)
+    {
+        const mir::Entity entity = fixture.world.CreateEntity();
+        mir::AddTransform(fixture.world, entity, local, parent);
+        fixture.world.AddComponent<mir::RigidBody>(entity, rigidBody);
+        return entity;
+    }
+
+    mir::Entity AddParent(PhysicsFixture &fixture, const mir::Transform &transform, mir::Entity parent = mir::kNullEntity)
+    {
+        const mir::Entity entity = fixture.world.CreateEntity();
+        mir::AddTransform(fixture.world, entity, transform, parent);
+        return entity;
+    }
+
+    mir::WorldVec3 WorldPositionOf(PhysicsFixture &fixture, mir::Entity entity)
+    {
+        return mir::ResolveWorld(fixture.world, entity).position.Meters();
+    }
+
+    mir::WorldVec3 BodyAt(PhysicsFixture &fixture, mir::Entity entity)
+    {
+        const mir::BodyHandle body = fixture.world.GetComponent<mir::RigidBody>(entity)->runtime.body;
+        return fixture.Physics().BodyPosition(body).value().Meters();
+    }
+
+    // The Y quarter turn that sends +X to -Z.
+    const glm::quat kQuarterTurnY = glm::angleAxis(glm::half_pi<float>(), glm::vec3(0.0f, 1.0f, 0.0f));
+}
+
+TEST_CASE("A parented body spawns where it appears in the world", "[physics][world]")
+{
+    PhysicsFixture fixture;
+    const mir::Entity parent = AddParent(fixture, mir::Transform{ mir::WorldVec3(10.0, 0.0, 0.0) });
+    const mir::Entity child = AddChild(fixture, parent, mir::Transform{ mir::WorldVec3(0.0, 5.0, 0.0) }, kDynamicSphere);
+
+    const mir::WorldVec3 at = BodyAt(fixture, child);
+    CHECK(at.x == 10.0);
+    CHECK(at.y == 5.0);
+    CHECK(at.z == 0.0);
+}
+
+TEST_CASE("A body under three nested parents spawns at the composed pose", "[physics][world]")
+{
+    PhysicsFixture fixture;
+    const mir::Entity a = AddParent(fixture, mir::Transform{ mir::WorldVec3(1.0, 0.0, 0.0) });
+    const mir::Entity b = AddParent(fixture, mir::Transform{ mir::WorldVec3(0.0, 1.0, 0.0) }, a);
+    const mir::Entity c = AddParent(fixture, mir::Transform{ mir::WorldVec3(0.0, 0.0, 1.0), kQuarterTurnY }, b);
+    const mir::Entity child = AddChild(fixture, c, mir::Transform{ mir::WorldVec3(2.0, 0.0, 0.0) }, kDynamicSphere);
+
+    // c is turned a quarter about Y, so its local +X lands on world -Z
+    const mir::WorldVec3 at = BodyAt(fixture, child);
+    CHECK(at.x == Catch::Approx(1.0).margin(1e-5));
+    CHECK(at.y == Catch::Approx(1.0).margin(1e-5));
+    CHECK(at.z == Catch::Approx(-1.0).margin(1e-5));
+}
+
+TEST_CASE("A body under a moved, turned and scaled parent behaves like the same body unparented", "[physics][world]")
+{
+    PhysicsFixture fixture;
+    fixture.Add(glm::vec3(0.0f, 0.0f, 0.0f), kStaticBox);
+
+    const mir::Entity parent =
+        AddParent(fixture, mir::Transform{ mir::WorldVec3(5.0, 0.0, 0.0), kQuarterTurnY, glm::vec3(2.0f) });
+    const mir::Entity child = AddChild(fixture, parent, mir::Transform{ mir::WorldVec3(1.0, 3.0, 0.0) }, kDynamicBox);
+
+    // the same pose and the half extent the world scale of 2 gives, ten meters over so the two do not touch
+    mir::RigidBody doubled = kDynamicBox;
+    doubled.halfExtent *= 2.0f;
+    const mir::Entity plain = fixture.world.CreateEntity();
+    mir::AddTransform(fixture.world, plain, mir::Transform{ mir::WorldVec3(-5.0, 6.0, -2.0), kQuarterTurnY });
+    fixture.world.AddComponent<mir::RigidBody>(plain, doubled);
+
+    fixture.Run(180);
+
+    const mir::WorldVec3 parented = WorldPositionOf(fixture, child) - mir::WorldVec3(5.0, 6.0, -2.0);
+    const mir::WorldVec3 unparented = WorldPositionOf(fixture, plain) - mir::WorldVec3(-5.0, 6.0, -2.0);
+    CHECK(parented.x == Catch::Approx(unparented.x).margin(1e-3));
+    CHECK(parented.y == Catch::Approx(unparented.y).margin(1e-3));
+    CHECK(parented.z == Catch::Approx(unparented.z).margin(1e-3));
+    // both fell from y = 6 onto the floor, which is 0.5 up, under a box of half height 1
+    CHECK(WorldPositionOf(fixture, child).y == Catch::Approx(1.5).margin(0.1));
+}
+
+TEST_CASE("A parented body writes its result back through the parents", "[physics][world]")
+{
+    PhysicsFixture fixture;
+    fixture.Add(glm::vec3(0.0f, 0.0f, 0.0f), kStaticBox);
+    const mir::Entity parent =
+        AddParent(fixture, mir::Transform{ mir::WorldVec3(4.0, 0.0, 0.0), kQuarterTurnY, glm::vec3(2.0f) });
+    const mir::Entity child = AddChild(fixture, parent, mir::Transform{ mir::WorldVec3(0.0, 4.0, 0.0) }, kDynamicSphere);
+
+    fixture.Run(60);
+
+    const mir::WorldVec3 world = WorldPositionOf(fixture, child);
+    const mir::WorldVec3 body = BodyAt(fixture, child);
+    CHECK(world.x == Catch::Approx(body.x).margin(1e-4));
+    CHECK(world.y == Catch::Approx(body.y).margin(1e-4));
+    CHECK(world.z == Catch::Approx(body.z).margin(1e-4));
+    // it fell, and its local scale is untouched
+    CHECK(body.y < 8.0);
+    CHECK(fixture.TransformOf(child).Scale() == glm::vec3(1.0f));
+}
+
+TEST_CASE("Moving the parent at runtime carries the child's body", "[physics][world]")
+{
+    PhysicsFixture fixture;
+    const mir::Entity parent = AddParent(fixture, mir::Transform{ mir::WorldVec3(0.0, 0.0, 0.0) });
+    const mir::Entity child = AddChild(fixture, parent, mir::Transform{ mir::WorldVec3(2.0, 20.0, 0.0) }, kDynamicSphere);
+    fixture.Run(5);
+
+    fixture.world.GetComponent<mir::Transform>(parent)->SetPosition(mir::WorldVec3(0.0, 0.0, 7.0));
+    fixture.Run(1);
+    CHECK(BodyAt(fixture, child).z == Catch::Approx(7.0).margin(1e-3));
+    CHECK(BodyAt(fixture, child).x == Catch::Approx(2.0).margin(1e-3));
+
+    // a quarter turn about Y sends the child's local +X to world -Z, around the parent's origin
+    fixture.world.GetComponent<mir::Transform>(parent)->SetRotation(kQuarterTurnY);
+    fixture.Run(1);
+    CHECK(BodyAt(fixture, child).x == Catch::Approx(0.0).margin(1e-3));
+    CHECK(BodyAt(fixture, child).z == Catch::Approx(5.0).margin(1e-3));
+}
+
+TEST_CASE("A collider follows the world scale", "[physics][world]")
+{
+    PhysicsFixture fixture;
+    const auto castDown = [&]()
+    {
+        const mir::WorldPosition origin = mir::WorldPosition::FromMeters(mir::WorldVec3(0.0, 10.0, 0.0)).value();
+        return fixture.Physics().RayCast(origin, glm::vec3(0.0f, -1.0f, 0.0f), 20.0f);
+    };
+
+    SECTION("a sphere takes the largest axis")
+    {
+        mir::RigidBody sphere = kDynamicSphere;
+        sphere.motion = mir::PhysicsMotion::Static;
+        const mir::Entity entity = fixture.world.CreateEntity();
+        mir::AddTransform(fixture.world, entity, mir::Transform{ mir::WorldVec3(0.0), {}, glm::vec3(2.0f, 1.0f, 3.0f) });
+        fixture.world.AddComponent<mir::RigidBody>(entity, sphere);
+
+        // radius 0.5 times 3 reaches 1.5 above the center, so a ray from 10 hits after 8.5
+        const std::optional<mir::RayHit> hit = castDown();
+        REQUIRE(hit.has_value());
+        CHECK(hit->mDistance == Catch::Approx(8.5f).margin(0.01f));
+    }
+
+    SECTION("a box scales per axis")
+    {
+        mir::RigidBody box = kStaticBox;
+        box.halfExtent = glm::vec3(1.0f);
+        const mir::Entity entity = fixture.world.CreateEntity();
+        mir::AddTransform(fixture.world, entity, mir::Transform{ mir::WorldVec3(0.0), {}, glm::vec3(1.0f, 3.0f, 1.0f) });
+        fixture.world.AddComponent<mir::RigidBody>(entity, box);
+
+        // half height 1 times 3 puts the top 3 up
+        const std::optional<mir::RayHit> hit = castDown();
+        REQUIRE(hit.has_value());
+        CHECK(hit->mDistance == Catch::Approx(7.0f).margin(0.01f));
+    }
+}
+
+TEST_CASE("A rotated non-uniform parent stays finite", "[physics][world]")
+{
+    PhysicsFixture fixture;
+    fixture.Add(glm::vec3(0.0f, 0.0f, 0.0f), kStaticBox);
+    const mir::Entity parent = AddParent(fixture,
+        mir::Transform{ mir::WorldVec3(0.0, 0.0, 0.0), glm::angleAxis(0.7f, glm::vec3(0.0f, 0.0f, 1.0f)), glm::vec3(1.0f, 3.0f, 1.0f) });
+    const mir::Entity child = AddChild(fixture, parent, mir::Transform{ mir::WorldVec3(0.0, 2.0, 0.0) }, kDynamicSphere);
+
+    fixture.Run(30);
+
+    const mir::WorldVec3 at = BodyAt(fixture, child);
+    CHECK(std::isfinite(at.x));
+    CHECK(std::isfinite(at.y));
+    CHECK(std::isfinite(at.z));
 }
 
 TEST_CASE("A RigidBody gets its body when it is added, before any step", "[physics]")

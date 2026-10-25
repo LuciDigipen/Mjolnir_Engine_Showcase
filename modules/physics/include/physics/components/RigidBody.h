@@ -35,11 +35,15 @@ namespace mir
         struct Runtime
         {
             BodyHandle body;
-            uint32_t transformVersion = 0;
+            // The last two fixed-step poses in world space, which interpolation blends.
             WorldVec3 previousPosition{ 0 };
             WorldVec3 currentPosition{ 0 };
             glm::quat previousRotation = kIdentityRotation;
             glm::quat currentRotation = kIdentityRotation;
+            // The world pose the entity had when physics last placed it. A different resolved pose
+            // later means something else moved it, its own Transform or any ancestor's.
+            WorldVec3 stampedPosition{ 0 };
+            glm::quat stampedRotation = kIdentityRotation;
         };
 
         Runtime runtime;

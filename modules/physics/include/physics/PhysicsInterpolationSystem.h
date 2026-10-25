@@ -7,8 +7,8 @@
  * a display faster than the step the body - and any camera following it -
  * visibly jumps. For each Dynamic body with RigidBody::interpolate set, this
  * writes the previous-to-current step blend at SystemContext::fixedAlpha
- * instead, and stamps RigidBody::transformVersion so PhysicsSystem does not
- * read that write back as a teleport.
+ * instead, and stamps the pose it wrote so PhysicsSystem does not read that
+ * write back as a teleport.
  *
  * Registered in SystemPhase::PostUpdate, before Propagate, so
  * the blended Transform is what this frame's world poses are built from.

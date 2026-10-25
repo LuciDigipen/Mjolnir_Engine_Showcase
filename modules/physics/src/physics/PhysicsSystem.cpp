@@ -8,6 +8,8 @@
  */
 #include <physics/PhysicsSystem.h>
 
+#include "BodyPose.h"
+
 #include <physics/PhysicsStepGate.h>
 #include <physics/PhysicsWorld.h>
 
@@ -16,46 +18,30 @@
 #include <core/ecs/World.h>
 #include <core/log/Log.h>
 
+#include <algorithm>
+
 namespace mir
 {
     namespace
     {
-        // A RigidBody belongs on a root, whose Transform position is the
-        // absolute world position. The setters keep it finite, so the origin
-        // fallback is never taken.
-        WorldPosition BodyWorldPosition(const Transform &transform)
-        {
-            return WorldPosition::FromMeters(transform.Position()).value_or(WorldPosition{});
-        }
-
-        void ResetStepPoses(RigidBody &rigidBody, const Transform &transform)
-        {
-            rigidBody.runtime.previousPosition = rigidBody.runtime.currentPosition = transform.Position();
-            rigidBody.runtime.previousRotation = rigidBody.runtime.currentRotation = transform.Rotation();
-        }
+        using detail::BodyPose;
 
         // The one place a body is built: the add hook, the PlayBegin pass and the first-step fallback share it.
-        void CreateBodyFor(World &world, PhysicsWorld &physics, Entity entity, const Transform &transform,
-            RigidBody &rigidBody)
+        // The pose is the entity's world pose, and the shape follows the world scale.
+        void CreateBodyFor(World &world, PhysicsWorld &physics, Entity entity, RigidBody &rigidBody)
         {
-            // Jolt is world space and Transform is parent space, so a
-            // parented body would drift. Warned once, at creation.
-            if (ParentOf(world, entity) != kNullEntity)
-            {
-                MIR_LOG_WARN("PhysicsSystem: entity {} has a parent; its RigidBody is simulated "
-                             "in world space and will not follow the parent",
-                    entity.mIndex);
-            }
+            const BodyPose pose = detail::PoseOf(world, entity);
+            const glm::vec3 scale = glm::abs(pose.scale);
 
             rigidBody.runtime.body = physics.CreateBody({.mMotion = rigidBody.motion,
                                                          .mShape = rigidBody.shape,
-                                                         .mPosition = BodyWorldPosition(transform),
-                                                         .mRotation = transform.Rotation(),
-                                                         .mHalfExtent = rigidBody.halfExtent,
-                                                         .mRadius = rigidBody.radius});
+                                                         .mPosition = pose.position,
+                                                         .mRotation = pose.rotation,
+                                                         .mHalfExtent = rigidBody.halfExtent * scale,
+                                                         .mRadius = rigidBody.radius * std::max({ scale.x, scale.y, scale.z })});
             physics.SetBodyEntity(rigidBody.runtime.body, entity);
-            ResetStepPoses(rigidBody, transform);
-            rigidBody.runtime.transformVersion = transform.Version();
+            detail::ResetStepPoses(rigidBody, pose.position.Meters(), pose.rotation);
+            detail::Stamp(rigidBody, pose);
         }
 
         // Spawns and teleports are already in the world, so they pass the gates like any move.
@@ -84,13 +70,13 @@ namespace mir
         PushTransforms(context.world, *physics);
         RunStepGates(context.world, *physics, context.dt);
         physics->Step(context.dt);
-        PullPoses(*physics);
+        PullPoses(context.world, *physics);
     }
 
     void PhysicsSystem::PushTransforms(World &world, PhysicsWorld &physics)
     {
         mQuery->ForEach(
-            [&](Entity entity, Transform &transform, RigidBody &rigidBody)
+            [&](Entity entity, Transform &, RigidBody &rigidBody)
             {
                 if (!rigidBody.runtime.body.IsValid())
                 {
@@ -98,26 +84,28 @@ namespace mir
                     MIR_LOG_WARN("PhysicsSystem: entity {} had no body at its first step; created it now, "
                                  "its Transform was added after its RigidBody",
                         entity.mIndex);
-                    CreateBodyFor(world, physics, entity, transform, rigidBody);
+                    CreateBodyFor(world, physics, entity, rigidBody);
+                    return;
                 }
-                else if (transform.Version() != rigidBody.runtime.transformVersion)
+
+                MIR_ASSERT(physics.BodyEntity(rigidBody.runtime.body) == entity,
+                    "PhysicsSystem: entity {} holds a body that belongs to another entity", entity.mIndex);
+
+                // Moved by something other than physics since the last step, its own Transform or a parent's.
+                const BodyPose pose = detail::PoseOf(world, entity);
+                if (detail::PositionWritten(rigidBody, pose) || detail::RotationWritten(rigidBody, pose))
                 {
-                    MIR_ASSERT(physics.BodyEntity(rigidBody.runtime.body) == entity,
-                        "PhysicsSystem: entity {} holds a body that belongs to another entity", entity.mIndex);
-
-                    // Moved by something other than physics since the last step.
-                    physics.SetBodyTransform(rigidBody.runtime.body, BodyWorldPosition(transform), transform.Rotation());
-                    ResetStepPoses(rigidBody, transform);
+                    physics.SetBodyTransform(rigidBody.runtime.body, pose.position, pose.rotation);
+                    detail::ResetStepPoses(rigidBody, pose.position.Meters(), pose.rotation);
+                    detail::Stamp(rigidBody, pose);
                 }
-
-                rigidBody.runtime.transformVersion = transform.Version();
             });
     }
 
-    void PhysicsSystem::PullPoses(PhysicsWorld &physics)
+    void PhysicsSystem::PullPoses(World &world, PhysicsWorld &physics)
     {
         mQuery->ForEach(
-            [&](Entity, Transform &transform, RigidBody &rigidBody)
+            [&](Entity entity, Transform &transform, RigidBody &rigidBody)
             {
                 if (!HasDynamicBody(rigidBody))
                     return;
@@ -125,19 +113,17 @@ namespace mir
                 rigidBody.runtime.previousPosition = rigidBody.runtime.currentPosition;
                 rigidBody.runtime.previousRotation = rigidBody.runtime.currentRotation;
 
-                // A body Jolt left at a non-finite position keeps its last
-                // Transform instead of writing that back.
-                const std::optional<WorldPosition> position = physics.BodyPosition(rigidBody.runtime.body);
-                if (position && position->Meters() != transform.Position())
-                    transform.SetPosition(position->Meters());
+                // A body Jolt left at a non-finite position, or one that does not fit back through its
+                // parents, keeps its last Transform instead of writing that back.
+                if (const std::optional<WorldPosition> position = physics.BodyPosition(rigidBody.runtime.body))
+                    detail::WriteWorldPose(world, entity, transform, *position, physics.BodyRotation(rigidBody.runtime.body));
 
-                const glm::quat rotation = physics.BodyRotation(rigidBody.runtime.body);
-                if (rotation != transform.Rotation())
-                    transform.SetRotation(rotation);
-
-                rigidBody.runtime.currentPosition = transform.Position();
-                rigidBody.runtime.currentRotation = transform.Rotation();
-                rigidBody.runtime.transformVersion = transform.Version();
+                // What the entity resolves to now, not Jolt's pose: the round trip through the parents can
+                // differ by float rounding, and the next push compares against this.
+                const BodyPose pose = detail::PoseOf(world, entity);
+                rigidBody.runtime.currentPosition = pose.position.Meters();
+                rigidBody.runtime.currentRotation = pose.rotation;
+                detail::Stamp(rigidBody, pose);
             });
     }
 
@@ -156,7 +142,7 @@ namespace mir
             return;
 
         MIR_ASSERT(!physics->IsStepping(), "PhysicsSystem: a RigidBody was added while physics was stepping");
-        CreateBodyFor(world, *physics, entity, *transform, *rigidBody);
+        CreateBodyFor(world, *physics, entity, *rigidBody);
     }
 
     void PhysicsSystem::OnRigidBodyRemoved(World &world, Entity entity)
@@ -184,10 +170,10 @@ namespace mir
         MIR_ASSERT(!physics->IsSimulationLive(), "PhysicsSystem: PlayBegin ran twice without a PlayEnd");
 
         world.ForEach<Transform, RigidBody>(
-            [&](Entity entity, Transform &transform, RigidBody &rigidBody)
+            [&](Entity entity, Transform &, RigidBody &rigidBody)
             {
                 if (!rigidBody.runtime.body.IsValid())
-                    CreateBodyFor(world, *physics, entity, transform, rigidBody);
+                    CreateBodyFor(world, *physics, entity, rigidBody);
             });
 
         physics->SetSimulationLive(true);
