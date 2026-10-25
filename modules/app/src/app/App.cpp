@@ -49,7 +49,7 @@
 #include <renderer/RenderSystem.h>
 #include <renderer/ViewDrawSource.h>
 #include <scene/SceneIO.h>
-#include <script/ComponentRegistration.h>
+#include <script/ScriptModule.h>
 #include <script/ScriptResolveSystem.h>
 #include <script/ScriptSystem.h>
 #include <terrain/ComponentRegistration.h>
@@ -222,7 +222,6 @@ namespace mir
         RegisterRendererPostEffects();
         RegisterPhysicsComponents();
         RegisterCameraComponents();
-        RegisterScriptComponents();
         RegisterAudioComponents();
         RegisterModelPlayer();
         RegisterTerrainComponents();
@@ -255,9 +254,7 @@ namespace mir
         mScheduler.AddSystem<PrefabSystem>(SystemPhase::PreUpdate);
         mScheduler.AddSystem<InputSystem>(SystemPhase::PreUpdate, *mWindow);
 
-        mScriptResolve = &mScheduler.AddSystem<ScriptResolveSystem>(SystemPhase::PreUpdate, mScriptHost,
-            MakeScriptAssetLoader(mScriptHost, mScriptReloadWatcher, mAssets->Cache(), mProject.mAssetIdRoot));
-        mScriptSystem = &mScheduler.AddSystem<ScriptSystem>(SystemPhase::PreUpdate, mScriptHost);
+        mScript.emplace(Context(), *mAssets, mProject.mAssetIdRoot);
 
         // FixedUpdate: once per fixed substep, before Propagate turns the
         // Transforms it writes into world matrices
@@ -460,7 +457,7 @@ namespace mir
             return;
 
         SystemContext context = MakeContext(0.0f);
-        mScriptSystem->StopAllScripts(context);
+        mScript->Scripts().StopAllScripts(context);
 
         mScene = RestoreWorld(mWorld, mPlaySnapshot);
         if (PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>())
@@ -765,7 +762,6 @@ namespace mir
             mRenderSystem->SetViewportCamera(0, kNullEntity);
         #endif
 
-            mScriptReloadWatcher.Poll(Assets(), dt);
 
             // advances in every mode; FixedUpdate systems check IsSimulating
             // themselves, as ScriptSystem does
@@ -922,8 +918,8 @@ namespace mir
             mMeshResolveSystem->CommitReload(&mAssets->Cache());
 
         // a script whose asset arrived with this cook resolves now
-        if (mScriptResolve)
-            mScriptResolve->ForgetFailures();
+        if (mScript)
+            mScript->Resolver().ForgetFailures();
         mAssetImport.MarkApplied();
         MIR_LOG_INFO("Applied imported assets at an Edit frame boundary");
     }
@@ -973,6 +969,7 @@ namespace mir
         audio::Terminate();
 
         mScheduler.Reset();
+        mScript.reset();
         mCore.reset();
 
         mAssets.reset();
@@ -989,8 +986,6 @@ namespace mir
 
         // the systems Reset destroyed
         mRenderSystem = nullptr;
-        mScriptSystem = nullptr;
-        mScriptResolve = nullptr;
         mModelSystem = nullptr;
         mMeshResolveSystem = nullptr;
 

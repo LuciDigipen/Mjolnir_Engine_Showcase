@@ -23,8 +23,7 @@
 #include <scene/PlaySnapshot.h>
 #include <scene/SceneAsset.h>
 #include <scene/SceneIO.h>
-#include <script/ScriptHost.h>
-#include <script/ScriptReloadWatcher.h>
+#include <script/ScriptModule.h>
 #include <window/Splash.h>
 #include <window/Window.h>
 
@@ -49,8 +48,6 @@
 namespace mir
 {
     class RenderSystem;
-    class ScriptSystem;
-    class ScriptResolveSystem;
     class ModelSystem;
     class TerrainRuntime;
     class MeshResolveSystem;
@@ -114,8 +111,6 @@ namespace mir
 
         World &GetWorld() { return mWorld; }
         SystemScheduler &Systems() { return mScheduler; }
-        ScriptHost &Scripts() { return mScriptHost; }
-        ScriptReloadWatcher &ScriptReload() { return mScriptReloadWatcher; }
 
         // Temporary seam
         VulkanRenderer &Renderer() { return mRenderer; }
@@ -244,13 +239,10 @@ namespace mir
         SystemScheduler mScheduler;
         std::optional<CoreModule> mCore;
         RenderSystem *mRenderSystem = nullptr;
-        ScriptSystem *mScriptSystem = nullptr;
-        ScriptResolveSystem *mScriptResolve = nullptr;
         ModelSystem *mModelSystem = nullptr;
         MeshResolveSystem *mMeshResolveSystem = nullptr;
         PlaySnapshot mPlaySnapshot;
-        ScriptHost mScriptHost;
-        ScriptReloadWatcher mScriptReloadWatcher{ mScriptHost };
+        std::optional<ScriptModule> mScript;
         LoadedScene mScene;
 
         // Handles only, freed with the renderer and the World

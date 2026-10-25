@@ -13,7 +13,6 @@
 
 #include <core/ecs/EntityChanges.h>
 #include <core/ecs/Query.h>
-#include <core/ecs/Registration.h>
 #include <core/ecs/System.h>
 
 namespace mir
@@ -48,6 +47,5 @@ namespace mir
 
         IScriptHost &mHost;
         Query<ScriptRef> *mQuery = nullptr;
-        Registration mHooks;
     };
 }
