@@ -26,9 +26,6 @@ namespace mir
         bool Destroy(Entity root) override;
 
     private:
-        //a copied or restored ScriptRef has no instance, and ScriptSystem skips those
-        void ResolveScripts();
-
         App &mApp;
     };
 }

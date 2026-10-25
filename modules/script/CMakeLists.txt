@@ -25,6 +25,7 @@ target_sources(engine_script PRIVATE
     src/script/ComponentRegistration.cpp
     src/script/ScriptHost.cpp
     src/script/ScriptReloadWatcher.cpp
+    src/script/ScriptResolveSystem.cpp
     src/script/ScriptSystem.cpp
     src/script/bindings/AudioBindings.cpp
     src/script/bindings/EntityBindings.cpp

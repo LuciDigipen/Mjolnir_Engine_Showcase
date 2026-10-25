@@ -30,7 +30,6 @@ target_sources(engine_app PRIVATE
     src/app/App.cpp
     src/app/ErrorReport.cpp
     src/app/Prompt.cpp
-    src/app/SceneResolve.cpp
 )
 
 # PUBLIC: App.h holds the editor's members only with it, so everything that

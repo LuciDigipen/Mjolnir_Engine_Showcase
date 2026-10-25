@@ -10,7 +10,6 @@
 #include <app/App.h>
 
 #include "Prompt.h"
-#include "SceneResolve.h"
 #include <animation/ModelPlayer.h>
 #include <animation/ModelSystem.h>
 #include <assets/AssetIdRoot.h>
@@ -51,6 +50,7 @@
 #include <renderer/ViewDrawSource.h>
 #include <scene/SceneIO.h>
 #include <script/ComponentRegistration.h>
+#include <script/ScriptResolveSystem.h>
 #include <script/ScriptSystem.h>
 #include <terrain/ComponentRegistration.h>
 #include <terrain/TerrainScene.h>
@@ -255,6 +255,8 @@ namespace mir
         mScheduler.AddSystem<PrefabSystem>(SystemPhase::PreUpdate);
         mScheduler.AddSystem<InputSystem>(SystemPhase::PreUpdate, *mWindow);
 
+        mScriptResolve = &mScheduler.AddSystem<ScriptResolveSystem>(SystemPhase::PreUpdate, mScriptHost,
+            MakeScriptAssetLoader(mScriptHost, mScriptReloadWatcher, mAssets->Cache(), mProject.mAssetIdRoot));
         mScriptSystem = &mScheduler.AddSystem<ScriptSystem>(SystemPhase::PreUpdate, mScriptHost);
 
         // FixedUpdate: once per fixed substep, before Propagate turns the
@@ -404,9 +406,6 @@ namespace mir
             prefabs->Bind(mScene);
         ClearHistory();
         SetSceneUnsaved(false);
-
-        // saved names to script instances
-        ResolveSceneScripts(mWorld, mScriptHost, mScriptReloadWatcher, Assets(), mProject.mAssetIdRoot);
         mTerrain->Load();
     }
 
@@ -478,8 +477,6 @@ namespace mir
         mWorld.Resource<ModelMorphOverrides>().instances.clear();
         mTerrain->ForgetMeshes();
         mRenderer.ReleaseSceneResources();
-
-        ResolveSceneScripts(mWorld, mScriptHost, mScriptReloadWatcher, Assets(), mProject.mAssetIdRoot);
 
         SetEngineMode(mWorld, EngineMode::Edit);
         SetPlayState(mWorld, PlayState::Running);
@@ -779,12 +776,6 @@ namespace mir
                 mRenderer.CaptureNextFrame(mDesc.mCapturePath);
             mScheduler.Update(context, fixedSteps, mFixedTimestep.mStep);
 
-            if (PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>())
-            {
-                if (prefabs->ConsumePublishedChanges())
-                    ResolveSceneScripts(mWorld, mScriptHost, mScriptReloadWatcher, Assets(), mProject.mAssetIdRoot);
-            }
-
             if (mWorld.Resource<InputState>().JustPressed(kToggleFullscreenAction))
                 ToggleFullscreen();
 
@@ -930,8 +921,9 @@ namespace mir
         if (mMeshResolveSystem)
             mMeshResolveSystem->CommitReload(&mAssets->Cache());
 
-        // a script whose asset arrived with this cook resolves now; resolved ones are skipped
-        ResolveSceneScripts(mWorld, mScriptHost, mScriptReloadWatcher, Assets(), mProject.mAssetIdRoot);
+        // a script whose asset arrived with this cook resolves now
+        if (mScriptResolve)
+            mScriptResolve->ForgetFailures();
         mAssetImport.MarkApplied();
         MIR_LOG_INFO("Applied imported assets at an Edit frame boundary");
     }
@@ -998,6 +990,7 @@ namespace mir
         // the systems Reset destroyed
         mRenderSystem = nullptr;
         mScriptSystem = nullptr;
+        mScriptResolve = nullptr;
         mModelSystem = nullptr;
         mMeshResolveSystem = nullptr;
 

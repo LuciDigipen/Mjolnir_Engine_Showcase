@@ -8,8 +8,6 @@
  */
 #include "AppSceneOps.h"
 
-#include "SceneResolve.h"
-
 #include <app/App.h>
 #include <scene/EntitySnapshot.h>
 #include <scene/SceneAsset.h>
@@ -25,9 +23,7 @@ namespace mir
 
     Entity AppSceneOps::Duplicate(Entity source)
     {
-        const Entity copy = DuplicateSceneEntity(mApp.GetWorld(), mApp.Scene(), source);
-        ResolveScripts();
-        return copy;
+        return DuplicateSceneEntity(mApp.GetWorld(), mApp.Scene(), source);
     }
 
     CapturedSubtree AppSceneOps::Capture(Entity root)
@@ -55,18 +51,11 @@ namespace mir
     {
         std::vector<Entity> members = RestoreEntityAt(mApp.GetWorld(), EntitySnapshot{ subtree.mData }, mApp.Scene(),
             subtree.mStableIds, parent, before);
-        ResolveScripts();
         return members;
     }
 
     bool AppSceneOps::Destroy(Entity root)
     {
         return DestroySceneEntity(mApp.GetWorld(), mApp.Scene(), root);
-    }
-
-    void AppSceneOps::ResolveScripts()
-    {
-        ResolveSceneScripts(mApp.GetWorld(), mApp.Scripts(), mApp.ScriptReload(), mApp.Assets(),
-            mApp.Project().mAssetIdRoot);
     }
 }

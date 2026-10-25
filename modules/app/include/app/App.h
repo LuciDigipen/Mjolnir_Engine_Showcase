@@ -50,6 +50,7 @@ namespace mir
 {
     class RenderSystem;
     class ScriptSystem;
+    class ScriptResolveSystem;
     class ModelSystem;
     class TerrainRuntime;
     class MeshResolveSystem;
@@ -244,6 +245,7 @@ namespace mir
         std::optional<CoreModule> mCore;
         RenderSystem *mRenderSystem = nullptr;
         ScriptSystem *mScriptSystem = nullptr;
+        ScriptResolveSystem *mScriptResolve = nullptr;
         ModelSystem *mModelSystem = nullptr;
         MeshResolveSystem *mMeshResolveSystem = nullptr;
         PlaySnapshot mPlaySnapshot;

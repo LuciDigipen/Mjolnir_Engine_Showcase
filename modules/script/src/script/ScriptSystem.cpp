@@ -11,6 +11,7 @@
 #include <script/ScriptSystem.h>
 
 #include <script/IScriptHost.h>
+#include <script/ScriptResolveSystem.h>
 
 #include <core/ecs/EngineMode.h>
 #include <core/ecs/TypeId.h>
@@ -132,9 +133,6 @@ namespace mir
         if (ref == nullptr)
             return;
 
-        if (ref->instanceRef >= 0)
-            mHost.DestroyInstance(ref->instanceRef);
-        ref->instanceRef = -1;
-        ref->started = false;
+        ReleaseScriptInstance(mHost, *ref);
     }
 }
