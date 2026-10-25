@@ -209,6 +209,13 @@ namespace mir
                 return;
             }
 
+            if (!errorOnInvalid && !build.mIndexByAddress.contains(*target))
+            {
+                AddWarning(diagnostics, context + " target \"" + AddressText(*target) +
+                    "\" is not in the expanded template; skipped");
+                return;
+            }
+
             build.mRelocations.insert_or_assign(key, PendingRelocation{ node, std::string(ops.mType.name), field,
                 std::move(*target), context, errorOnInvalid });
         }
@@ -269,6 +276,7 @@ namespace mir
                     continue;
                 }
 
+                EraseComponentRelocations(build, target, added.mType);
                 CompiledPrefabComponent component = MakeComponent(*ops);
                 for (auto authored = added.mFields.begin(); authored != added.mFields.end(); ++authored)
                 {
@@ -297,7 +305,6 @@ namespace mir
                 const std::size_t existing = FindComponentIndex(node, added.mType);
                 if (existing != kNoTemplateNode)
                 {
-                    EraseComponentRelocations(build, target, added.mType);
                     node.mComponents[existing] = std::move(component);
                 }
                 else
@@ -362,6 +369,7 @@ namespace mir
                     pending.push_back(*child);
             }
 
+            std::vector<const PrefabNode *> occurrences;
             std::unordered_map<PrefabNodeId, std::size_t> templateByDocNode;
             bool ok = true;
 
@@ -501,12 +509,29 @@ namespace mir
                         AddDependency(build, dependency);
                     AddDependency(build, target);
 
-                    for (const PrefabPatch &patch : node.mPatches)
+                    occurrences.push_back(&node);
+                }
+
+                if (build.mNodes.size() > kMaxCompiledPrefabNodes)
+                {
+                    AddError(diagnostics, "expanded template for prefab " + ToString(doc.mId) +
+                        " exceeds the node limit " + std::to_string(kMaxCompiledPrefabNodes));
+                    ok = false;
+                    break;
+                }
+            }
+
+            // Resolve overrides only after all occurrences and forward targets are indexed.
+            if (ok)
+            {
+                for (const PrefabNode *occurrence : occurrences)
+                {
+                    for (const PrefabPatch &patch : occurrence->mPatches)
                     {
                         if (patch.mTarget.empty())
                             continue;
 
-                        PrefabNodeAddress targetAddress{ node.mId };
+                        PrefabNodeAddress targetAddress{ occurrence->mId };
                         targetAddress.insert(targetAddress.end(), patch.mTarget.begin(), patch.mTarget.end());
 
                         const auto targetIt = build.mIndexByAddress.find(targetAddress);
@@ -518,14 +543,6 @@ namespace mir
                         }
                         ApplyPatch(build, targetIt->second, patch, targetAddress, diagnostics);
                     }
-                }
-
-                if (build.mNodes.size() > kMaxCompiledPrefabNodes)
-                {
-                    AddError(diagnostics, "expanded template for prefab " + ToString(doc.mId) +
-                        " exceeds the node limit " + std::to_string(kMaxCompiledPrefabNodes));
-                    ok = false;
-                    break;
                 }
             }
 
