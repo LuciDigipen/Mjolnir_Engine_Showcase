@@ -103,6 +103,13 @@ alive.
 source's own parent. The copy then moves to right after the source, as Unity's
 Ctrl+D places it. It returns null for an entity that is not alive.
 
+`DuplicateSceneEntitySubtree` retains the linked Prefab record for an instance
+root, while `CopyInstanceMemberAsOrdinary` produces a detached effective copy.
+Both map every copied scene identity, including ordinary descendants. Saved
+field and added-component references use that map; outside targets stay unchanged.
+Unresolved reference markers are copied under the new owner IDs, so a temporarily
+unavailable target is retained through Save instead of becoming an explicit null.
+
 ## Rules
 
 **Never reference an entity by `Entity` in a file.** `Entity::mIndex` is a slot
