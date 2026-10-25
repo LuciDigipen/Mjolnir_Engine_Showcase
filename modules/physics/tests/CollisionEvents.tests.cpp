@@ -298,10 +298,13 @@ namespace
         Reader *reader = nullptr;
         Entity ground;
         Entity ball;
+        // what PhysicsModule sets, so a destroyed body publishes its End
+        mir::Registration hooks;
 
         PublishFixture()
         {
             world.EmplaceResource<PhysicsWorld>();
+            hooks = world.SetComponentHooks<RigidBody>({ .onRemove = &PhysicsSystem::OnRigidBodyRemoved });
             world.EmplaceResource<CollisionEvents>();
             world.EmplaceResource<EngineModeState>();
             SetEngineMode(world, EngineMode::Play);

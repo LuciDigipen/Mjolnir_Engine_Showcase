@@ -3,7 +3,7 @@
 The screens every game gets from the engine: a HUD while it plays and a pause
 menu over it, driven by the gamepad, the mouse or the keyboard. It is built on
 `gameui`'s public API alone, as a game's own screens would be, and decides
-nothing about the game: it reports what the player asked, and `App` carries it
+nothing about the game: it reports what the player asked, and its module pushes it
 out.
 
 `mir::gameshell` · depends `mir::gameui` (public) · API `modules/gameshell/include/gameshell/` · maintainer Quy Dong Ta · reviewed 2026-10-02
@@ -11,16 +11,9 @@ out.
 ## Model
 
 `GameShell` is drawn every frame inside the game UI's frame, and returns a
-`GameShellAction`: `Pause`, `Resume`, `Restart`, `Quit` or nothing. `App`
-turns those into `TogglePause`, `StopScene` and `PlayScene`, after the UI's
-frame has ended, the way it handles the editor's toolbar.
-
-```cpp
-// App::Run
-shellAction = mGameShell.Draw(mGameUI, IsPlaying(mWorld), dt);
-mGameUI.EndFrame();
-ApplyShellAction(shellAction);
-```
+`GameShellAction`: `Pause`, `Resume`, `Restart`, `Quit` or nothing. Its module
+turns those into requests, which `App` applies at the top of the next frame, the
+way it handles the editor's toolbar.
 
 Outside Play it draws nothing and an open menu closes. In Play it draws the
 HUD, then the menu over it.
@@ -53,6 +46,13 @@ Each device does the whole round trip alone:
 | Keyboard | Escape | Arrow keys | Escape, or Enter on Resume |
 | Mouse | Click the HUD's Pause | Hover | Click Resume, or the right button |
 
+### The module
+
+`GameShellModule` registers one screen with `GameUIModule`: the HUD and the
+pause menu, or `UIDemoScreen` under `--ui-demo`. It turns a `GameShellAction`
+into requests on the `RequestQueue`: Pause, Resume, Restart as Stop then Play,
+and Quit as Stop in the editor or Quit in a game build.
+
 ## API
 
 | Type | Header | Role |
@@ -82,13 +82,12 @@ the input, so the press that closed it never reaches the game as well.
 
 ## State
 
-*As of 2026-10-02.* `App` draws it every frame unless `--ui-demo` is given. It
+*As of 2026-10-24.* Its module draws it every frame unless `--ui-demo` is given. It
 works in the editor's scene viewport, in Play, and in a game build, which with
 `--no-editor`, or in a build without the editor at all, starts in Play.
 
 `tests/GameShell.tests.cpp` feeds raw keys, pad buttons and the mouse through
-`InputSystem` and the default bindings into a headless ImGui context, as `App`
-does, and covers the menu opened, navigated and closed by each device alone
+`InputSystem` and the default bindings, as the engine does, and covers the menu opened, navigated and closed by each device alone
 (the mouse in an offset area, as in the editor's viewport), game input held
 while it is open without the capture flags, the stick and confirm not reaching
 the HUD in play, nothing drawn outside Play and Stop closing the menu, both
@@ -111,6 +110,11 @@ right is checked by running a game: Play in the editor, or `--no-editor`.
    before it opens. A game that binds those keys for itself sees them once.
 
 ## Changed
+
+*2026-10-24* — **`GameShellModule`.** Was: `App` drew the shell or the demo and
+carried out each action. Now: the module registers the screen and pushes
+requests. Because: `App` no longer wires features, and the demo-or-menus choice
+belongs with the shell.
 
 *2026-10-02* — **Created.** The pause menu and the HUD, the first screens
 built on `gameui` from outside it.

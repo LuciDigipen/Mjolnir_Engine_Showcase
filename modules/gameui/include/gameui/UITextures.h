@@ -22,17 +22,9 @@
 namespace mir
 {
     class AssetCache;
+    class IUIBackend;
     struct TextureAsset;
-
-    namespace detail
-    {
-        struct UIBackendTexture;
-
-        struct UIBackendTextureDeleter
-        {
-            void operator()(UIBackendTexture *texture) const;
-        };
-    } // namespace detail
+    struct UIBackendTexture;
 
     class UITextures
     {
@@ -52,11 +44,29 @@ namespace mir
 
         size_t Count() const { return mTextures.size(); }
 
-        detail::UIBackendTexture *Find(UITexture texture) const;
+        // the backend's texture, or null: no backend, or it could not make one
+        void *Find(UITexture texture) const;
+
+        // makes every texture with the backend, from the pixels kept here. Null stops
+        // making new copies; the copies made stay until the textures go, since they
+        // release themselves
+        void SetBackend(IUIBackend *backend);
 
     private:
+        struct Texture
+        {
+            uint32_t width = 0;
+            uint32_t height = 0;
+            std::vector<uint8_t> rgba;
+            void *backend = nullptr;
+            void (*release)(void *) = nullptr;
+        };
+
+        void Make(Texture &texture);
+
         // [id - 1]
-        std::vector<std::unique_ptr<detail::UIBackendTexture, detail::UIBackendTextureDeleter>> mTextures;
+        std::vector<Texture> mTextures;
+        IUIBackend *mBackend = nullptr;
 
         // by AssetId, failed loads included, so a missing asset is reported once
         std::unordered_map<uint64_t, UISprite> mLoaded;

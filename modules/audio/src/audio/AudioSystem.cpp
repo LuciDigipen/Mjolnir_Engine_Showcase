@@ -23,11 +23,14 @@
 #include "core/log/Log.h"
 #include "core/log/SetupError.h"
 #include <algorithm>
+#include <exception>
 #include <filesystem>
 #include <glm/geometric.hpp>
 #include <mutex>
+#include <new>
 #include <string>
 #include <system_error>
+#include <type_traits>
 #include <unordered_set>
 #include <vector>
 
@@ -115,6 +118,11 @@ namespace mir::audio {
             {
                 std::lock_guard<std::mutex> lock(g_endedMutex);
                 g_endedPlayingIds.push_back(eventInfo->playingID);
+            }
+            catch (const std::bad_alloc &)
+            {
+                // out of memory is the process's failure: terminate reaches the crash handler
+                std::terminate();
             }
             catch (...)
             {
@@ -310,6 +318,8 @@ namespace mir::audio {
         if (!g_Initialized)
             return 0;
 
+        static_assert(std::is_nothrow_invocable_v<decltype(&OnEventEnded), AkCallbackType, AkEventCallbackInfo *,
+                          void *, void *>, "C callbacks and thread entry points must be noexcept (conventions.md)");
         const AkPlayingID playingId = AK::SoundEngine::PostEvent(eventName,
             static_cast<AkGameObjectID>(gameObject), AK_EndOfEvent, &OnEventEnded);
 

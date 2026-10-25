@@ -48,6 +48,8 @@ int main(int argc, char **argv)
         const nlohmann::json report = nlohmann::json::parse(input, nullptr, false);
         if (report.is_object())
         {
+            if (report.value("kind", std::string()) == "crash")
+                title = "MjolnirEngine crashed";
             title += " (" + report.value("category", std::string("error")) + ", exit " +
                 std::to_string(report.value("exitCode", 0)) + ")";
             message = report.value("what", std::string("Unknown error"));

@@ -1,6 +1,7 @@
 ﻿engine_add_module(terrain)
 
 target_sources(engine_terrain PRIVATE
+    src/terrain/TerrainModule.cpp
     src/terrain/ComponentRegistration.cpp
     src/terrain/TerrainAreaSamples.cpp
     src/terrain/TerrainCollision.cpp

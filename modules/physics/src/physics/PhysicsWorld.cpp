@@ -15,6 +15,7 @@
 #include "JoltRuntime.h"
 
 #include <core/log/Log.h>
+#include <core/platform/CrashHandler.h>
 
 #include <Jolt/Jolt.h>
 
@@ -41,6 +42,7 @@
 #include <cmath>
 #include <optional>
 #include <unordered_map>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -88,16 +90,28 @@ namespace mir
     struct PhysicsWorld::Impl
     {
         explicit Impl(const PhysicsWorldDesc &desc)
-            : mJobSystem(static_cast<JPH::uint>(JPH::cMaxPhysicsJobs), static_cast<JPH::uint>(JPH::cMaxPhysicsBarriers),
-                         desc.mWorkerThreads > 0 ? static_cast<int>(desc.mWorkerThreads) : -1),
-              mCollisionSteps(desc.mCollisionSteps > 0 ? desc.mCollisionSteps : 1)
+            : mCollisionSteps(desc.mCollisionSteps > 0 ? desc.mCollisionSteps : 1)
         {
+            // armed like the engine's own threads, so a terminate on a job thread reports
+            // through the crash handler's terminate route, not the abort fallback
+            mJobSystem.SetThreadInitFunction([](int) { ArmCrashHandler(); });
+            mJobSystem.Init(static_cast<JPH::uint>(JPH::cMaxPhysicsJobs), static_cast<JPH::uint>(JPH::cMaxPhysicsBarriers),
+                desc.mWorkerThreads > 0 ? static_cast<int>(desc.mWorkerThreads) : -1);
+
             mSystem.Init(desc.mMaxBodies,
                          0, // body mutexes: 0 lets Jolt pick a default
                          desc.mMaxBodyPairs, desc.mMaxContactConstraints, mBroadPhaseLayers, mObjectVsBroadPhase,
                          mObjectLayerPairs);
 
             mSystem.SetGravity(ToJolt(desc.mGravity));
+            static_assert(noexcept(mContacts.OnContactAdded(std::declval<const JPH::Body &>(),
+                              std::declval<const JPH::Body &>(), std::declval<const JPH::ContactManifold &>(),
+                              std::declval<JPH::ContactSettings &>())) &&
+                              noexcept(mContacts.OnContactPersisted(std::declval<const JPH::Body &>(),
+                                  std::declval<const JPH::Body &>(), std::declval<const JPH::ContactManifold &>(),
+                                  std::declval<JPH::ContactSettings &>())) &&
+                              noexcept(mContacts.OnContactRemoved(std::declval<const JPH::SubShapeIDPair &>())),
+                "C callbacks and thread entry points must be noexcept (conventions.md)");
             mSystem.SetContactListener(&mContacts);
         }
 

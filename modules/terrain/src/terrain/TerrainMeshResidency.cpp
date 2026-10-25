@@ -9,6 +9,7 @@
  */
 #include "terrain/TerrainMeshResidency.h"
 
+#include <terrain/RunGuarded.h>
 #include <terrain/TerrainLod.h>
 #include <terrain/TerrainRegion.h>
 #include <terrain/TerrainRenderMesh.h>
@@ -22,6 +23,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <string_view>
 #include <tuple>
 #include <unordered_map>
 
@@ -150,7 +152,13 @@ namespace mir
                     job = std::move(first->second);
                     mPending.erase(first);
                 }
-                Finished finished = Build(job);
+                Finished finished = RunGuarded([&] { return Build(job); }, [&](std::string_view what)
+                    {
+                        Finished failed;
+                        failed.ticket = job.ticket;
+                        failed.error = std::format("the mesh build threw: {}", what);
+                        return failed;
+                    });
                 std::lock_guard lock(mMutex);
                 if (!mClosed)
                     mFinished.push_back(std::move(finished));

@@ -86,7 +86,8 @@ rather than wait on a callback that may only come with the next `PollEvents`.
 
 **The window outlives its renderer.** The renderer builds a `VkSurfaceKHR` from
 the native handle, so destroying the window first leaves that surface pointing at
-a dead window. `App::Shutdown` encodes the order.
+a dead window. `App` declares `WindowModule` before `RendererModule`, so C++
+destroys them in that order.
 
 **`Width` and `Height` are framebuffer pixels, not screen coordinates.** They are
 legitimately `0x0` while the window is minimised, and the window does not filter

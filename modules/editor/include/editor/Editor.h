@@ -70,6 +70,9 @@ namespace mir
     {
         std::string mDir;
         std::string mName;
+
+        // why it cannot be opened, shown on hover; empty when it can
+        std::string mUnavailable;
     };
 
     enum class EditorDocumentActionKind

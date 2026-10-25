@@ -18,6 +18,7 @@
 
 namespace mir
 {
+    // The child dies with this process, however this process ends
     class ChildProcess
     {
     public:

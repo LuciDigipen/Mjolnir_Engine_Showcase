@@ -9,7 +9,8 @@
  */
 #include <gameui/UITextures.h>
 
-#include "UIBackend.h"
+#include <gameui/UIBackend.h>
+
 #include <assets/AssetCache.h>
 #include <assets/ModelAsset.h>
 #include <core/log/Log.h>
@@ -20,7 +21,14 @@ namespace mir
 {
     UITextures::UITextures() = default;
 
-    UITextures::~UITextures() = default;
+    UITextures::~UITextures()
+    {
+        for (Texture &texture : mTextures)
+        {
+            if (texture.release != nullptr)
+                texture.release(texture.backend);
+        }
+    }
 
     UISprite UITextures::Load(AssetCache &assets, AssetId id)
     {
@@ -41,11 +49,15 @@ namespace mir
 
     UISprite UITextures::Add(const TextureAsset &texture)
     {
-        auto backend = detail::CreateBackendTexture(texture.width, texture.height, texture.rgba);
-        if (!backend)
+        if (texture.width == 0 || texture.height == 0 ||
+            texture.rgba.size() != static_cast<size_t>(texture.width) * texture.height * 4)
+        {
+            MIR_LOG_ERROR("gameui: a {}x{} UI texture needs {} bytes of RGBA, got {}", texture.width, texture.height,
+                static_cast<size_t>(texture.width) * texture.height * 4, texture.rgba.size());
             return {};
+        }
 
-        mTextures.emplace_back(std::move(backend));
+        Make(mTextures.emplace_back(Texture{ texture.width, texture.height, texture.rgba }));
         const float width = static_cast<float>(texture.width);
         const float height = static_cast<float>(texture.height);
         return UISprite{.mTexture = UITexture{static_cast<uint32_t>(mTextures.size())},
@@ -54,10 +66,27 @@ namespace mir
                         .mSource = UIRect{0.0f, 0.0f, width, height}};
     }
 
-    detail::UIBackendTexture *UITextures::Find(UITexture texture) const
+    void *UITextures::Find(UITexture texture) const
     {
         if (!texture.IsValid() || texture.mId > mTextures.size())
             return nullptr;
-        return mTextures[texture.mId - 1].get();
+        return mTextures[texture.mId - 1].backend;
+    }
+
+    void UITextures::SetBackend(IUIBackend *backend)
+    {
+        mBackend = backend;
+        for (Texture &texture : mTextures)
+            Make(texture);
+    }
+
+    void UITextures::Make(Texture &texture)
+    {
+        if (mBackend == nullptr || texture.backend != nullptr)
+            return;
+
+        const UIBackendTexture made = mBackend->CreateTexture(texture.width, texture.height, texture.rgba);
+        texture.backend = made.texture;
+        texture.release = made.release;
     }
 } // namespace mir

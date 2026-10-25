@@ -277,6 +277,12 @@ namespace mir
         return mMaterialStore->DestroyMaterial(handle);
     }
 
+    void VulkanRenderer::ResetHistory()
+    {
+        if (mPostProcessing)
+            mPostProcessing->ResetHistory();
+    }
+
     void VulkanRenderer::ReleaseSceneResources()
     {
         if (mDevice->Handle() == VK_NULL_HANDLE)
@@ -284,8 +290,6 @@ namespace mir
 
         // in-flight frames may still use them
         mDevice->WaitIdle();
-
-        mPostProcessing->ResetHistory();
 
         mMeshUploads->Clear(*mRayTracer);
         mRayTracer->DestroyBlases();

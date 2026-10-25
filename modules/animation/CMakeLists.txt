@@ -1,5 +1,6 @@
 engine_add_module(animation)
 target_sources(engine_animation PRIVATE
+    src/animation/AnimationModule.cpp
     src/animation/ModelAnimation.cpp
     src/animation/ModelSystem.cpp
 )

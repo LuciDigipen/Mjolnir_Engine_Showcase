@@ -104,6 +104,8 @@ namespace mir
     {
 #if defined(_WIN32)
         HANDLE handle = nullptr;
+        // closing it kills the child, so the child dies with this process however it ends
+        HANDLE job = nullptr;
 #elif defined(__linux__)
         pid_t pid = -1;
 #endif
@@ -135,15 +137,32 @@ namespace mir
         startup.cb = sizeof(startup);
         PROCESS_INFORMATION process{};
         const wchar_t *workingDirectoryValue = workingDirectory.empty() ? nullptr : workingDirectory.c_str();
-        if (!CreateProcessW(program.c_str(), commandLine.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
-                            workingDirectoryValue, &startup, &process))
+        // suspended until it is in the job, so it cannot start a grandchild outside it
+        if (!CreateProcessW(program.c_str(), commandLine.data(), nullptr, nullptr, FALSE,
+                            CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr, workingDirectoryValue, &startup, &process))
         {
             MIR_LOG_ERROR("ChildProcess: could not start '{}' (error {})", program.string(), GetLastError());
             return false;
         }
 
+        HANDLE job = CreateJobObjectW(nullptr, nullptr);
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (job == nullptr ||
+            !SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits)) ||
+            !AssignProcessToJobObject(job, process.hProcess))
+        {
+            MIR_LOG_WARN("ChildProcess: '{}' is not tied to this process (error {}); it outlives a crash",
+                program.string(), GetLastError());
+            if (job != nullptr)
+                CloseHandle(job);
+            job = nullptr;
+        }
+
+        ResumeThread(process.hThread);
         CloseHandle(process.hThread);
         mImpl->handle = process.hProcess;
+        mImpl->job = job;
         mImpl->exitCode.reset();
         return true;
     }
@@ -162,6 +181,9 @@ namespace mir
             code = static_cast<DWORD>(-1);
         CloseHandle(mImpl->handle);
         mImpl->handle = nullptr;
+        if (mImpl->job != nullptr)
+            CloseHandle(mImpl->job);
+        mImpl->job = nullptr;
         mImpl->exitCode = static_cast<int>(code);
         return mImpl->exitCode;
     }

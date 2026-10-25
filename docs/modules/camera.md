@@ -9,9 +9,8 @@ by free-fly input. It does not own the lens or draw anything; `Camera` and
 ## Model
 
 A `CameraController` sits on the same root entity as a `Camera`.
-`CameraControllerSystem` runs in `PostUpdate` right after
-`TransformPropagateSystem`, so a follow target's `WorldTransform` is this
-frame's, including a `RigidBody` that `PhysicsInterpolationSystem` blended just
+`CameraModule` registers `CameraControllerSystem` in `LateUpdate`, after
+`Propagate`, so a follow target's `WorldTransform` is this frame's, including a `RigidBody` that `PhysicsInterpolationSystem` blended just
 before. After writing the camera's `Transform` it calls `ResolveWorld` on the
 camera, because propagation has already run and `RenderSystem` reads the cache.
 
@@ -27,11 +26,6 @@ camera, because propagation has already run and `RenderSystem` reads the cache.
 
 `ToggleCameraMode` (F2, gamepad Back) flips every controller between the two.
 Setting `mode` from the Inspector or Lua works the same.
-
-```cpp
-mScheduler.AddSystem<TransformPropagateSystem>(SystemPhase::PostUpdate);
-mScheduler.AddSystem<CameraControllerSystem>(SystemPhase::PostUpdate);
-```
 
 ## API
 

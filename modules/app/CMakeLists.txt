@@ -1,23 +1,32 @@
 engine_add_module(app)
 
+# PUBLIC: App.h holds every module as a member
 target_link_libraries(engine_app
-    PUBLIC mir::assets
+    PUBLIC mir::animation
+           mir::assets
+           mir::audio
+           mir::audio_script
+           mir::camera
            mir::core
-           mir::window
-           mir::renderer
-           mir::gameui
            mir::gameshell
+           mir::gameui
+           mir::gameui_imgui
            mir::imguiruntime
+           mir::input
+           mir::input_script
+           mir::physics
+           mir::physics_script
+           mir::prefab
+           mir::project
+           mir::renderer
+           mir::renderer_script
            mir::scene
            mir::script
-    PRIVATE mir::input
-            mir::camera
-            mir::animation
-            mir::audio
-            mir::physics
-            mir::prefab
-            mir::serial
-            mir::terrain
+           mir::terrain
+           mir::terrain_runtime
+           mir::terrain_script
+           mir::window
+    PRIVATE mir::serial
 )
 
 # App's yes/no prompts
@@ -27,13 +36,7 @@ target_link_libraries(engine_app PRIVATE tinyfiledialogs::tinyfiledialogs)
 target_sources(engine_app PRIVATE
     src/app/App.cpp
     src/app/ErrorReport.cpp
-    src/app/GameProject.cpp
-    src/app/ProjectSettings.cpp
     src/app/Prompt.cpp
-    src/app/MeshResolveSystem.cpp
-    src/app/SceneResolve.cpp
-    src/app/TerrainRender.cpp
-    src/app/TerrainRuntime.cpp
 )
 
 # PUBLIC: App.h holds the editor's members only with it, so everything that
@@ -43,12 +46,4 @@ target_compile_definitions(engine_app PUBLIC MIR_WITH_EDITOR=$<BOOL:${MJOLNIR_WI
 # the editor, and the asset import queue that only its panel drives
 if(MJOLNIR_WITH_EDITOR)
     target_link_libraries(engine_app PUBLIC mir::editor)
-    target_sources(engine_app PRIVATE src/app/AppSceneOps.cpp src/app/AssetImportManager.cpp
-        src/app/ContentBrowserWatcher.cpp src/app/PrefabAuthoringAdapter.cpp src/app/PrefabWorkspace.cpp
-        src/app/PrefabPlayMarks.cpp)
-endif()
-
-# ContentBrowserWatcher.tests.cpp needs editor/panels/ContentBrowserPanel.h
-if(BUILD_TESTING AND MJOLNIR_WITH_EDITOR)
-    add_subdirectory(tests)
 endif()

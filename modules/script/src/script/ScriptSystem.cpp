@@ -11,6 +11,7 @@
 #include <script/ScriptSystem.h>
 
 #include <script/IScriptHost.h>
+#include <script/ScriptResolveSystem.h>
 
 #include <core/ecs/EngineMode.h>
 #include <core/ecs/TypeId.h>
@@ -39,7 +40,6 @@ namespace mir
     void ScriptSystem::OnStart(SystemContext &context)
     {
         mQuery = &context.world.GetOrCreateQuery<ScriptRef>();
-        context.world.SetComponentHooks<ScriptRef>({ .onRemove = [this](World &world, Entity entity) { ReleaseScript(world, entity); } });
         if (EntityChangeListeners *listeners = context.world.TryResource<EntityChangeListeners>())
             listeners->AddBeforeRemove(&ScriptSystem::OnBeforeRemove, this);
     }
@@ -92,7 +92,6 @@ namespace mir
     void ScriptSystem::OnStop(SystemContext &context)
     {
         StopAllScripts(context);
-        context.world.ClearComponentHooks<ScriptRef>();
         if (EntityChangeListeners *listeners = context.world.TryResource<EntityChangeListeners>())
             listeners->RemoveBeforeRemove(&ScriptSystem::OnBeforeRemove, this);
     }
@@ -132,9 +131,6 @@ namespace mir
         if (ref == nullptr)
             return;
 
-        if (ref->instanceRef >= 0)
-            mHost.DestroyInstance(ref->instanceRef);
-        ref->instanceRef = -1;
-        ref->started = false;
+        ReleaseScriptInstance(mHost, *ref);
     }
 }

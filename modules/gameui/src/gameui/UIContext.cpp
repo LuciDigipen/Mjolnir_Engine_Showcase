@@ -10,7 +10,6 @@
  */
 #include <gameui/UIContext.h>
 
-#include "UIBackend.h"
 #include <core/log/Assert.h>
 #include <input/PromptLabel.h>
 
@@ -37,8 +36,8 @@ namespace mir
         MIR_ASSERT(mDrawList.ClipDepth() == 0, "UIContext::EndFrame with {} PushClip unpopped",
                    mDrawList.ClipDepth());
 
-        if (mInFrame && !mArea.IsEmpty())
-            detail::SubmitToBackground(mArea, mDrawList, mTextures);
+        if (mInFrame && !mArea.IsEmpty() && mBackend != nullptr)
+            mBackend->Submit(mArea, mDrawList, mTextures);
 
         if (mInFrame)
         {

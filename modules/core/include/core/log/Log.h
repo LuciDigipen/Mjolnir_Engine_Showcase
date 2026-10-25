@@ -9,6 +9,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <format>
 #include <string>
@@ -48,6 +49,9 @@ namespace mir
 
     // Closes the log file for another process; logging is off until InitLog again
     void ShutdownLog();
+
+    // Error and Critical lines logged so far, including asserts
+    uint64_t ErrorCount();
 
     namespace detail
     {

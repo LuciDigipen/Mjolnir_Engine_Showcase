@@ -3,7 +3,8 @@
  * @author Quy Dong Ta
  * @brief Moves every CameraController entity, by its target or by free-fly input, each frame.
  *
- * Registered in SystemPhase::PostUpdate right after TransformPropagateSystem.
+ * Registered in SystemPhase::LateUpdate. It resolves its target's pose on demand and
+ * refreshes its own WorldTransform, so it needs no Propagate after it.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *

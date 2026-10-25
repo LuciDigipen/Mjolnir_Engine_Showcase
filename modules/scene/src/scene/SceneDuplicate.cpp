@@ -32,36 +32,35 @@
 
 namespace mir
 {
+    std::optional<StableId> StableIdOf(const LoadedScene &scene, Entity entity)
+    {
+        for (const auto &[id, candidate] : scene.mEntities)
+        {
+            if (candidate == entity)
+                return id;
+        }
+        return std::nullopt;
+    }
+
+    const ScenePrefabInstance *FindInstanceBinding(const LoadedScene &scene, StableId member, StableId &outRoot)
+    {
+        for (const auto &[root, instance] : scene.mInstances)
+        {
+            for (const auto &[address, id] : instance.mBindings)
+            {
+                (void)address;
+                if (id != member)
+                    continue;
+                outRoot = root;
+                return &instance;
+            }
+        }
+        return nullptr;
+    }
+
     namespace
     {
         using nlohmann::json;
-
-        std::optional<StableId> StableIdOf(const LoadedScene &scene, Entity entity)
-        {
-            for (const auto &[id, candidate] : scene.mEntities)
-            {
-                if (candidate == entity)
-                    return id;
-            }
-            return std::nullopt;
-        }
-
-        const ScenePrefabInstance *FindInstanceBinding(const LoadedScene &scene, StableId member,
-            StableId &outRoot)
-        {
-            for (const auto &[root, instance] : scene.mInstances)
-            {
-                for (const auto &[address, id] : instance.mBindings)
-                {
-                    (void)address;
-                    if (id != member)
-                        continue;
-                    outRoot = root;
-                    return &instance;
-                }
-            }
-            return nullptr;
-        }
 
         Entity NextSiblingOf(World &world, Entity entity)
         {

@@ -26,15 +26,18 @@ namespace mir
         // not a runtime handle - unlike instanceRef, this is what a scene file
         // actually saves: instanceRef is only meaningful within one run's live
         // ScriptHost, so LoadScene re-derives it from this name instead of
-        // trying to restore the handle itself (see ResolveSceneScripts, run by
-        // App::LoadScene).
+        // trying to restore the handle itself (see ScriptResolveSystem).
         char scriptName[kFieldStringCapacity] = {};
+
+        // the scriptName instanceRef was made from, so a rename is seen. Transient
+        // like instanceRef: never serialized, snapshotted or copied
+        char resolvedName[kFieldStringCapacity] = {};
     };
 
     MIR_ASSERT_COMPONENT(ScriptRef);
 
-    // Fields for scripts, inspectors, and scene serialization. instanceRef and
-    // started are deliberately left out - they're this run's live state, not
+    // Fields for scripts, inspectors, and scene serialization. instanceRef, started
+    // and resolvedName are deliberately left out - they're this run's live state, not
     // anything a scene file should round-trip.
     inline constexpr FieldDesc kScriptRefFields[] = {
         {"scriptName", FieldKind::String, offsetof(ScriptRef, scriptName)},

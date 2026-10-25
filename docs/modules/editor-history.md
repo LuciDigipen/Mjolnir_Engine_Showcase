@@ -72,8 +72,8 @@ the restored entity.
 
 Entity operations need the `LoadedScene` and the snapshot functions, which live
 in `mir::scene`. The editor does not link it, so it asks through `ISceneOps`:
-create, duplicate, capture, restore and destroy. `App` implements it as the
-private `AppSceneOps` and hands it to `Editor::Initialize`.
+create, duplicate, capture, restore and destroy. `EditorModule` implements it
+as `WorldSceneOps` and hands it to `Editor::Initialize`.
 
 ## API
 
@@ -236,10 +236,9 @@ Explorer is the editor's UI reference.
 
 **Commands change component data only.** Physics bodies, resolved meshes and
 GPU resources are rebuilt by their systems, as after a load. Scripts are the
-exception, because `ScriptSystem` skips a `ScriptRef` without an instance. So
-`AppSceneOps` runs `ResolveSceneScripts` after a restore and after a duplicate.
-Undoing Remove Component on a `ScriptRef` is not covered: it comes back with
-no instance, as Add Component's does.
+exception only in appearance: a restored or duplicated `ScriptRef` comes back
+with no instance, and `ScriptResolveSystem` gives it one on the next frame, as it
+does for Add Component and an undone Remove Component.
 
 ## State
 
@@ -269,7 +268,7 @@ against a `TestSceneOps` built on the real `mir::scene` functions, set up in
 `EditingFixture.h`. They compare the saved scene files at each stage, rather
 than component bytes, because a restored entity has new handles. The parts that
 need ImGui or `App` have no unit test: where the Inspector and the gizmo call
-`EndStep`, the shortcuts, the Edit menu and `AppSceneOps`. The `smoke.<game>`
+`EndStep`, the shortcuts, the Edit menu and `WorldSceneOps`. The `smoke.<game>`
 runs start the editor with them in place.
 
 ## Backlog
