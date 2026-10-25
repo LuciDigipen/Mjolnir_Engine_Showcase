@@ -10,12 +10,12 @@
 #include <app/App.h>
 
 #include "MeshResolveSystem.h"
-#include "ProjectSettings.h"
 #include "Prompt.h"
 #include "SceneResolve.h"
 #include "TerrainRuntime.h"
 #include <animation/ModelPlayer.h>
 #include <animation/ModelSystem.h>
+#include <assets/AssetIdRoot.h>
 #include <assets/AssetPath.h>
 #include <audio/AudioEmitterSystem.h>
 #include <audio/AudioListenerSystem.h>
@@ -44,6 +44,7 @@
 #include <physics/PhysicsSystem.h>
 #include <physics/PhysicsWorld.h>
 #include <prefab/PrefabCoordinator.h>
+#include <project/ProjectSettings.h>
 #include <renderer/ComponentRegistration.h>
 #include <renderer/PostProcessingSettings.h>
 #include <renderer/RenderSettings.h>
@@ -57,6 +58,7 @@
 
 #if MIR_WITH_EDITOR
 #include "AppSceneOps.h"
+#include "CreateGameProject.h"
 #include <core/platform/Process.h>
 #include <editor/IdeSettings.h>
 #endif
@@ -313,6 +315,7 @@ namespace mir
         try
         {
             mProjectToOpen = LoadGameProject(NormalizeGameDir(requestedDir, ErrorCategory::Usage));
+            ResolveAssetIdRoot(*mProjectToOpen);
         }
         catch (const SetupError &error)
         {

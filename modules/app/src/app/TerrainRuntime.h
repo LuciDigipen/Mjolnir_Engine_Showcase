@@ -10,7 +10,7 @@
 
 #include "TerrainRender.h"
 
-#include <app/GameProject.h>
+#include <project/GameProject.h>
 #include <core/ecs/Entity.h>
 #include <physics/PhysicsStepGate.h>
 #include <physics/PhysicsTypes.h>

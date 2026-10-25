@@ -8,7 +8,7 @@
  */
 #pragma once
 
-#include <app/GameProject.h>
+#include <project/GameProject.h>
 #include <core/platform/Process.h>
 #include <editor/panels/AssetImportPanel.h>
 

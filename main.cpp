@@ -11,13 +11,14 @@
 
 #include <app/App.h>
 #include <app/ErrorReport.h>
-#include <app/GameProject.h>
+#include <assets/AssetIdRoot.h>
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
 #include <core/log/LogHistory.h>
 #include <core/log/SetupError.h>
 #include <core/platform/CrashHandler.h>
 #include <core/platform/Process.h>
+#include <project/GameProject.h>
 
 #include <charconv>
 #include <cstddef>
@@ -167,9 +168,10 @@ namespace
     {
         // a bad --game is the command line's fault, a bad defaultGame is the data's
         const bool fromCommandLine = !options.mGameDir.empty();
-        const mir::GameProject project = mir::ResolveGameProject(
+        mir::GameProject project = mir::ResolveGameProject(
             fromCommandLine ? options.mGameDir : mir::ReadDefaultGame(),
             fromCommandLine ? mir::ErrorCategory::Usage : mir::ErrorCategory::ProjectData);
+        mir::ResolveAssetIdRoot(project);
 
         mir::App app;
 

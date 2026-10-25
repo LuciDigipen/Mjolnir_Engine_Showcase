@@ -9,7 +9,7 @@
  */
 #pragma once
 
-#include <app/GameProject.h>
+#include <project/GameProject.h>
 #include <editor/panels/ContentBrowserPanel.h>
 
 #include <chrono>

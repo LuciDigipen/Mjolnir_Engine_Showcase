@@ -33,19 +33,27 @@ namespace mir
 
         std::string mTitle = "MjolnirEngine";
 
-        // asset id prefix, e.g. "games/HelloWorld/assets" - not a disk path
+        // game.json's assetsRoot, relative to mDir, as written
+        std::string mAssetsRoot = "assets";
+
+        // asset id prefix, e.g. "games/HelloWorld/assets" - not a disk path. Empty
+        // until assets' ResolveAssetIdRoot fills it: only assets knows how ids normalize
         std::string mAssetIdRoot;
 
         // Source tree in a development build (asset_workspace.json), else next to the executable
         std::filesystem::path mRootDir;
 
-        // mAssetIdRoot on disk
+        // mAssetsRoot on disk
         std::filesystem::path mAssetsDir;
 
         std::filesystem::path mSceneDir;
         std::filesystem::path mProjectSettingsPath;
         std::filesystem::path mSoundBankDir;
     };
+
+    // Where games/ lives: the source tree in a development build (asset_workspace.json),
+    // else next to the executable
+    std::filesystem::path ProjectRoot();
 
     // engine.json's defaultGame; throws SetupError if engine.json or the key is missing
     std::string ReadDefaultGame();
@@ -66,7 +74,4 @@ namespace mir
 
     // Every games/*/ next to the executable with a game.json, sorted by directory
     std::vector<GameProject> DiscoverGameProjects();
-
-    // Writes games/<name>/: game.json, an EmptyScene-shaped scenes/default/scene.json
-    bool CreateGameProject(const std::string &name, bool useRayTracing);
 }

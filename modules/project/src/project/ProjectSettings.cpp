@@ -6,7 +6,7 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
-#include "ProjectSettings.h"
+#include <project/ProjectSettings.h>
 
 #include <core/log/SetupError.h>
 #include <serial/JsonFile.h>

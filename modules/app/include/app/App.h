@@ -8,7 +8,7 @@
  */
 #pragma once
 
-#include <app/GameProject.h>
+#include <project/GameProject.h>
 #include <assets/AssetCache.h>
 #include <assets/AssetManifest.h>
 #include <core/ecs/CommandBuffer.h>

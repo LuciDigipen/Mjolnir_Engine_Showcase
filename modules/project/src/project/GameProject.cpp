@@ -6,46 +6,37 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
-#include <app/GameProject.h>
+#include <project/GameProject.h>
 
-#include <assets/AssetPath.h>
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
 #include <core/log/SetupError.h>
-#include <renderer/RenderSettings.h>
-#include <scene/SceneIO.h>
 
 #include <serial/JsonFile.h>
 
 #include <algorithm>
 #include <system_error>
-#include <utility>
 
 namespace mir
 {
-    namespace
+    // Normally next to the executable, beside the copies CMake made. A development
+    // build also writes an asset_workspace.json there pointing back at the source
+    // tree, so the editor's import workflow edits the real game data instead of a copy.
+    std::filesystem::path ProjectRoot()
     {
-        // Where games/ lives. Normally that is next to the executable, beside
-        // the copies CMake made. A development build also writes an
-        // asset_workspace.json there pointing back at the source tree, so the
-        // editor's import workflow edits the real game data instead of a copy.
-        std::filesystem::path ProjectRoot()
+        const std::optional<nlohmann::json> binding = ReadJsonFile(ExecutableDir() / "asset_workspace.json");
+
+        if (binding && binding->is_object() && binding->value("version", 0) == 1)
         {
-            const std::optional<nlohmann::json> binding =
-                ReadJsonFile(ExecutableDir() / "asset_workspace.json");
-
-            if (binding && binding->is_object() && binding->value("version", 0) == 1)
-            {
-                const std::filesystem::path source = binding->value("sourceRoot", "");
-                std::error_code ec;
-                if (std::filesystem::is_directory(source / "games", ec))
-                    // normalized so paths in messages read one way
-                    return source.lexically_normal();
-            }
-
-            return ExecutableDir();
+            const std::filesystem::path source = binding->value("sourceRoot", "");
+            std::error_code ec;
+            if (std::filesystem::is_directory(source / "games", ec))
+                // normalized so paths in messages read one way
+                return source.lexically_normal();
         }
-    } // namespace
+
+        return ExecutableDir();
+    }
 
     std::string ReadDefaultGame()
     {
@@ -124,8 +115,6 @@ namespace mir
         project.mDir = gameDir.generic_string();
         project.mName = gameDir.filename().string();
 
-        // assetsRoot default must match CMakeLists.txt
-        std::string assetsRoot = "assets";
         std::string sceneDir = "scenes/default";
         std::string soundBanksRoot = "assets/audio/SoundBanks";
 
@@ -134,7 +123,8 @@ namespace mir
         {
             project.mName = json->value("name", project.mName);
             project.mTitle = json->value("title", project.mTitle);
-            assetsRoot = json->value("assetsRoot", assetsRoot);
+            // the default must match CMakeLists.txt
+            project.mAssetsRoot = json->value("assetsRoot", project.mAssetsRoot);
             sceneDir = json->value("sceneDir", sceneDir);
             soundBanksRoot = json->value("soundBanksRoot", soundBanksRoot);
         }
@@ -148,18 +138,8 @@ namespace mir
         if (project.mName.empty())
             project.mName = gameDir.filename().string();
 
-        // The same normalizer AssetCooker applies to its --source roots, so ids match
-        AssetPathResult idRoot = MakeLogicalAssetPath(gameDir.generic_string(), assetsRoot);
-        if (!idRoot.Ok())
-        {
-            throw SetupError(ErrorCategory::ProjectData, "game.json has an unusable assetsRoot '" + assetsRoot + "'",
-                manifestPath, std::string(Describe(idRoot.error)),
-                "Make assetsRoot a relative path inside the game directory, e.g. assets.");
-        }
-
-        project.mAssetIdRoot = std::move(idRoot.path);
         project.mRootDir = root;
-        project.mAssetsDir = (ProjectRoot() / project.mAssetIdRoot).lexically_normal();
+        project.mAssetsDir = (root / project.mAssetsRoot).lexically_normal();
         project.mSceneDir = (root / sceneDir).lexically_normal();
         project.mProjectSettingsPath = root / kProjectSettingsFileName;
         project.mSoundBankDir = (root / soundBanksRoot).lexically_normal();
@@ -227,46 +207,5 @@ namespace mir
                 return a.mDir < b.mDir;
             });
         return projects;
-    }
-
-    bool CreateGameProject(const std::string &name, bool useRayTracing)
-    {
-        if (name.empty() || name.find('/') != std::string::npos || name.find('\\') != std::string::npos ||
-            name == "." || name == "..")
-        {
-            MIR_LOG_ERROR("CreateGameProject: '{}' is not a valid project name", name);
-            return false;
-        }
-
-        const std::filesystem::path root = ProjectRoot() / "games" / name;
-
-        std::error_code ec;
-        if (std::filesystem::exists(root, ec))
-        {
-            MIR_LOG_ERROR("CreateGameProject: 'games/{}' already exists", name);
-            return false;
-        }
-
-        const std::filesystem::path sceneDir = root / "scenes" / "default";
-        if (!std::filesystem::create_directories(sceneDir, ec) ||
-            !std::filesystem::create_directories(root / "assets", ec))
-        {
-            MIR_LOG_ERROR("CreateGameProject: could not create 'games/{}': {}", name, ec.message());
-            return false;
-        }
-
-        const nlohmann::json manifest{ { "name", name },{ "title", "MjolnirEngine - " + name } };
-
-        // same shape as games/EmptyScene/scenes/default/scene.json
-        const nlohmann::json scene{ { "entities", nlohmann::json::array() },{ "name", "default" },{ "nextId", 1 } };
-
-        if (!WriteJsonFile(root / kGameManifestFileName, manifest) ||
-            !WriteJsonFile(sceneDir / kSceneManifestFileName, scene))
-        {
-            MIR_LOG_ERROR("CreateGameProject: could not write 'games/{}' manifest/scene", name);
-            return false;
-        }
-
-        return RenderSettings{ .rayTracing = useRayTracing }.SaveFile(root / kProjectSettingsFileName);
     }
 }

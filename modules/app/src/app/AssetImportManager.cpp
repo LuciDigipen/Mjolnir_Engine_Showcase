@@ -8,12 +8,12 @@
  */
 #include <app/AssetImportManager.h>
 
-#include "ProjectSettings.h"
-
+#include <assets/AssetIdRoot.h>
 #include <assets/AssetPath.h>
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
 #include <core/log/SetupError.h>
+#include <project/ProjectSettings.h>
 #include <serial/JsonFile.h>
 
 #include <nlohmann/json.hpp>
@@ -293,8 +293,20 @@ namespace mir
         {
             // a full cook rewrites the manifest from its roots alone, so it needs every root the build cooks
             std::vector<std::string> idRoots = {"assets"};
-            for (const GameProject &game : DiscoverGameProjects())
-                idRoots.push_back(game.mAssetIdRoot);
+            for (GameProject &game : DiscoverGameProjects())
+            {
+                // a game with a broken assetsRoot has nothing to cook, and must not stop the others
+                try
+                {
+                    ResolveAssetIdRoot(game);
+                    idRoots.push_back(game.mAssetIdRoot);
+                }
+                catch (const SetupError &error)
+                {
+                    MIR_LOG_ERROR("Asset import: skipping '{}' in the full cook: {} ({})", game.mDir, error.What(),
+                        error.Cause());
+                }
+            }
             std::error_code ec;
             for (const std::string &idRoot : idRoots)
             {
