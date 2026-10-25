@@ -29,6 +29,7 @@
 #include <input/InputMap.h>
 #include <prefab/PrefabCoordinator.h>
 #include <prefab/PrefabModule.h>
+#include <prefab/PrefabSave.h>
 #include <renderer/PostProcessingSettings.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/RenderSystem.h>
@@ -172,11 +173,22 @@ namespace mir
 
                 // Play's edits are gone with Play's World, so the mark goes back to what it was
                 mEditor.SetSceneUnsaved(mUnsavedBeforePlay);
-                if (mPrefabBeforePlay.has_value() && !mPrefabWorkspace.Open(*mPrefabBeforePlay))
-                    MIR_LOG_WARN("EditorModule: could not reopen the prefab document after Play");
+                // a prefab deleted during Play fails to open, and the Scene tab stays
+                if (mPrefabBeforePlay.has_value())
+                    mPrefabWorkspace.Open(*mPrefabBeforePlay);
                 mPrefabBeforePlay.reset();
             });
-        mSceneSaved = context.scheduler.AddStage(Stage::SceneSaved, [this](SystemContext &) { mEditor.SetSceneUnsaved(false); });
+        // the prefabs were written a frame before the scene; one changed since keeps the
+        // scene unsaved, so the next Save writes both
+        mSceneSaved = context.scheduler.AddStage(Stage::SceneSaved, [this](SystemContext &)
+            {
+                if (!PlanSaveScene(mPrefab.Coordinator().Registry(), mScene.Scene(), UnsavedPrefabs()).mSteps.empty())
+                {
+                    MIR_LOG_WARN("Save Scene: a prefab the scene uses changed before the scene was written; save again");
+                    return;
+                }
+                mEditor.SetSceneUnsaved(false);
+            });
         mPlayBegin = context.scheduler.AddStage(Stage::PlayBegin, [this](SystemContext &)
             {
                 mUnsavedBeforePlay = mEditor.IsSceneUnsaved();

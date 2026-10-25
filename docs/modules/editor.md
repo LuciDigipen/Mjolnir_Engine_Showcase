@@ -93,13 +93,16 @@ module's authored state; `prefab/PrefabAuthoring` owns the edits themselves.
 Apply and Revert write no files. A `LateUpdate` system runs the open previews in
 Edit, after `PrefabSystem` committed their documents, and the drawer hands the
 active tab's preview to the panels and to `RenderSystem::SetSourceWorld`. Play
-shows the Scene tab, and the `SceneLoad` after Stop reopens the tab it left. The
+shows the Scene tab, and the `SceneLoad` after Stop reopens the tab it left, by
+prefab id; a prefab deleted during Play leaves the Scene tab. The
 previews' models take part in an asset swap, and their caches reset at
 `SceneUnload`, after the renderer freed every upload.
 
 Save on a Prefab tab writes that Prefab. On the Scene tab it first writes the
 modified Prefab sources the scene uses, then asks for `SaveScene`, which `App`
-runs at the top of the next frame. Each Prefab write clears that document's
+runs at the top of the next frame. At `SceneSaved` the module plans the save
+again, and a prefab that changed in between keeps the scene unsaved, so the next
+Save writes both. Each Prefab write clears that document's
 saved mark without clearing History. A missing source path or a failed write
 stops the save and leaves the scene unwritten; files already written stay
 saved.
