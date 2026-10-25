@@ -25,6 +25,7 @@
 #include <map>
 #include <string>
 #include <unordered_set>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -130,9 +131,17 @@ namespace mir
         }
         document.mRootNode = order.front();
 
+        std::unordered_map<uint64_t, StableId> owners;
+        for (const auto &[id, entity] : scene.mEntities)
+            if (nodeIds.contains(PackEntity(entity)))
+                owners.emplace(PackEntity(entity), id);
+
         ComponentRegistry &registry = ComponentRegistry::Instance();
         for (const Entity member : members)
         {
+            const auto savedOwner = owners.find(PackEntity(member));
+            const StableId owner = savedOwner != owners.end() ? savedOwner->second : kNullStableId;
+
             PrefabNode node;
             node.mId = nodeIds.at(PackEntity(member));
             node.mKind = PrefabNodeKind::Entity;
@@ -169,6 +178,14 @@ namespace mir
                         field.Read(component, &target);
                         if (target.IsNull())
                         {
+                            if (owner != kNullStableId && scene.mUnresolvedEntityRefs.contains(
+                                    { owner, instance.mType, std::string(field.mName) }))
+                            {
+                                result.mRefusal = "Entity '" + EntityLabel(world, member) + "' field '" +
+                                    instance.mType + "." + std::string(field.mName) +
+                                    "' has an unresolved reference to a temporarily unavailable target";
+                                return result;
+                            }
                             instance.mFields[std::string(field.mName)] = nullptr;
                             continue;
                         }

@@ -996,3 +996,21 @@ TEST_CASE("External Prefab adoption invalidates saved History before undo redo a
     fixture.Redo();
     CHECK_FALSE(fixture.mHistory.IsUnsaved(fixture.mDocumentId));
 }
+
+TEST_CASE("Save Scene keeps an occupied unsaved Prefab dirty and leaves the other file intact", "[app][prefabs]")
+{
+    Fixture fixture;
+    TempDir directory;
+    const auto path = directory.mPath / "Occupied.prefab";
+    REQUIRE(fixture.mCoordinator->Registry().SetDocument(fixture.mDocument, path));
+    fixture.mHistory.SetUnsaved(fixture.mDocumentId, true);
+    fixture.mScene.mInstances[1].mPrefab = ToString(fixture.mDocument.mId);
+    REQUIRE(mir::WritePrefabFile(path, mir::NewPrefabDocument()));
+    const auto before = ReadText(path);
+    bool sceneWritten = false;
+    CHECK_FALSE(fixture.SaveScene([&]() { sceneWritten = true; return true; }));
+    CHECK_FALSE(sceneWritten);
+    CHECK(ReadText(path) == before);
+    CHECK(fixture.mHistory.IsUnsaved(fixture.mDocumentId));
+    CHECK_FALSE(fixture.mCoordinator->Registry().HasSavedFile(fixture.mDocument.mId));
+}

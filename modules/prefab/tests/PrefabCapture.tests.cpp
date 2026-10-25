@@ -282,3 +282,41 @@ TEST_CASE("An intended file name is sanitized and made unique", "[prefab][captur
     CHECK(path.filename() == "Chair 2.prefab");
     CHECK(mir::PrefabNameForFile("Desk/Side:Table?") == "Desk_Side_Table_");
 }
+
+TEST_CASE("Capture refuses unavailable references instead of persisting a null handle", "[prefab][capture]")
+{
+    Fixture fixture;
+    Entity owner = fixture.mRoot;
+    SECTION("The selected root owns the reference") {}
+    SECTION("A descendant owns the reference") { owner = fixture.mGrandchild; }
+    SetRef(fixture.mWorld, owner, "target", mir::kNullEntity);
+    fixture.mScene.mUnresolvedEntityRefs[{ IdOf(fixture.mScene, owner), "PrefabCaptureTestRef", "target" }] = 9999;
+    const auto markers = fixture.mScene.mUnresolvedEntityRefs;
+    const auto entities = fixture.mScene.mEntities;
+    const auto nextId = fixture.mScene.mNextId;
+    const auto captured = CapturePrefab(fixture.mWorld, fixture.mScene, fixture.mRoot);
+    CHECK_FALSE(captured.mDocument.has_value());
+    CHECK(captured.mRefusal.find("unresolved") != std::string::npos);
+    CHECK(fixture.mScene.mUnresolvedEntityRefs == markers);
+    CHECK(fixture.mScene.mEntities == entities);
+    CHECK(fixture.mScene.mNextId == nextId);
+}
+
+TEST_CASE("Capture distinguishes unavailable references from resolved and unrelated fields", "[prefab][capture]")
+{
+    Fixture fixture;
+    SECTION("An outside owner has an unresolved reference")
+    {
+        fixture.mScene.mUnresolvedEntityRefs[{ IdOf(fixture.mScene, fixture.mOutside),
+            "PrefabCaptureTestRef", "target" }] = 9999;
+    }
+    SECTION("A live internal handle takes precedence over its stale marker")
+    {
+        fixture.mScene.mUnresolvedEntityRefs[{ IdOf(fixture.mScene, fixture.mChild),
+            "PrefabCaptureTestRef", "target" }] = 9999;
+    }
+    const auto captured = CapturePrefab(fixture.mWorld, fixture.mScene, fixture.mRoot);
+    REQUIRE(captured.mDocument.has_value());
+    CHECK(FindComponent(captured.mDocument->mNodes[1], "PrefabCaptureTestRef")->mFields.at("target") ==
+        json::array({ "3" }));
+}
