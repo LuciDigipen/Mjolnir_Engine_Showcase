@@ -7,7 +7,7 @@ target_sources(engine_serial PRIVATE
 )
 
 target_link_libraries(engine_serial
-    PUBLIC mir::core
+    PUBLIC mir::core_base
            nlohmann_json::nlohmann_json
 )
 

@@ -1,9 +1,13 @@
-engine_add_module_tests(core
+engine_add_module_tests(core_base
     Paths.tests.cpp
     FileIO.tests.cpp
     Process.tests.cpp
     LogHistory.tests.cpp
     SetupError.tests.cpp
+    WorldCoordinates.tests.cpp
+)
+
+engine_add_module_tests(core
     Archetype.tests.cpp
     Query.tests.cpp
     CommandBuffer.tests.cpp
@@ -12,7 +16,6 @@ engine_add_module_tests(core
     Requests.tests.cpp
     FixedTimestep.tests.cpp
     Transform.tests.cpp
-    WorldCoordinates.tests.cpp
     TransformHierarchy.tests.cpp
     Resources.tests.cpp
     ComponentHooks.tests.cpp
