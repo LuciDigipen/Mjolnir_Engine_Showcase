@@ -1,7 +1,7 @@
 /**
  * @file AudioBindings.tests.cpp
  * @author Quy Dong Ta
- * @brief Tests for the Lua world:post_event/stop_event/set_rtpc/set_switch/set_state bindings.
+ * @brief Tests for the Lua world:post_event/stop_event/is_playing/set_rtpc/set_switch/set_state bindings.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -47,6 +47,7 @@ namespace
             {"switched", FieldKind::Bool},
             {"state", FieldKind::Bool},
             {"reached", FieldKind::Bool},
+            {"playing", FieldKind::Bool},
         };
         return ComponentRegistry::Instance().RegisterRuntime("AudioBindingsProbe", fields);
     }
@@ -125,6 +126,21 @@ end
 
 function T.OnStart(self, world, entity)
     world:set(entity, "AudioBindingsProbe", "playingId", world:post_event(entity, "Play_chargeDown"))
+    world:set(entity, "AudioBindingsProbe", "reached", true)
+end
+
+return T
+)LUA";
+
+    constexpr std::string_view kIsPlaying = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    world:set(entity, "AudioBindingsProbe", "playing", world:is_playing(entity))
     world:set(entity, "AudioBindingsProbe", "reached", true)
 end
 
@@ -226,6 +242,21 @@ TEST_CASE("the audio bindings refuse malformed arguments instead of erroring out
     // Both together: the script survived every bad call, and no bad call passed.
     CHECK(ReadProbeField<bool>(fixture.world, fixture.entity, "reached"));
     CHECK(ReadProbeField<bool>(fixture.world, fixture.entity, "rtpc"));
+}
+
+TEST_CASE("world:is_playing is false without an emitter, and for a voice the engine does not have", "[script][audio]")
+{
+    Fixture noEmitter(kIsPlaying, "audio_probe_is_playing_none");
+    noEmitter.Start();
+    CHECK(ReadProbeField<bool>(noEmitter.world, noEmitter.entity, "reached"));
+    CHECK_FALSE(ReadProbeField<bool>(noEmitter.world, noEmitter.entity, "playing"));
+
+    // a stale id is not a playing voice: no engine is running, so nothing is live
+    Fixture staleVoice(kIsPlaying, "audio_probe_is_playing_stale");
+    staleVoice.AddEmitter(kFakeGameObject, /*playingId=*/99);
+    staleVoice.Start();
+    CHECK(ReadProbeField<bool>(staleVoice.world, staleVoice.entity, "reached"));
+    CHECK_FALSE(ReadProbeField<bool>(staleVoice.world, staleVoice.entity, "playing"));
 }
 
 TEST_CASE("world:stop_event only reports a voice it actually stopped", "[script][audio]")

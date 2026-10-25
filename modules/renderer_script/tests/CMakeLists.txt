@@ -1,4 +1,5 @@
 engine_add_module_tests(renderer_script
+    MeshBindings.tests.cpp
     PostProcessingBindings.tests.cpp
 )
 

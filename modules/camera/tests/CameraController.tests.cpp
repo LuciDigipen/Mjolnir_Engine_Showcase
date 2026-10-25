@@ -8,6 +8,7 @@
  *
  */
 #include <camera/CameraControllerSystem.h>
+#include <camera/components/CameraController.h>
 
 #include <core/ecs/CommandBuffer.h>
 #include <core/ecs/EngineMode.h>
@@ -201,6 +202,37 @@ TEST_CASE("Free-fly turns by pixels from the mouse and by a rate from the stick"
     input.lookPixels = { 0.0f, -100000.0f };
     mir::StepFreeFly(controller, WorldVec3(0.0), input, 0.016f);
     REQUIRE(controller.mPitchDegrees == 89.0f);
+}
+
+TEST_CASE("Free-fly faces a yaw and pitch written through the field table", "[camera][freefly]")
+{
+    const auto findField = [](std::string_view name) -> const mir::FieldDesc *
+    {
+        for (const mir::FieldDesc &field : mir::kCameraControllerFields)
+            if (field.mName == name)
+                return &field;
+        return nullptr;
+    };
+    const mir::FieldDesc *yaw = findField("yawDegrees");
+    const mir::FieldDesc *pitch = findField("pitchDegrees");
+    REQUIRE(yaw != nullptr);
+    REQUIRE(pitch != nullptr);
+    CHECK(yaw->mHidden);
+    CHECK(pitch->mHidden);
+
+    CameraController controller{};
+    float value = 0.0f; // +X
+    REQUIRE(yaw->Write(&controller, &value));
+    value = 30.0f;
+    REQUIRE(pitch->Write(&controller, &value));
+
+    const CameraPose next = mir::StepFreeFly(controller, WorldVec3(0.0), FreeFlyInput{}, 0.016f);
+    const glm::vec3 expected(std::cos(glm::radians(30.0f)), std::sin(glm::radians(30.0f)), 0.0f);
+    REQUIRE(glm::dot(Forward(next.rotation), expected) > 0.9999f);
+
+    value = 120.0f;
+    REQUIRE(pitch->Constrain(&value));
+    REQUIRE(value == mir::kFreeFlyMaxPitchDegrees);
 }
 
 namespace

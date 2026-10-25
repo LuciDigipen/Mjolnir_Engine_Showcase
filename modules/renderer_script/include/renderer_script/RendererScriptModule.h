@@ -26,5 +26,6 @@ namespace mir
 
     private:
         Registration mBindings;
+        Registration mMeshBindings;
     };
 }
