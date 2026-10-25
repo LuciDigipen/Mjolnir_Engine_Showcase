@@ -457,6 +457,44 @@ return T
 )LUA";
 }
 
+namespace
+{
+    constexpr std::string_view kFreezeInFixedUpdate = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    world:set_linear_velocity(entity, { x = 6.0, y = 0.0, z = 0.0 })
+end
+
+function T.OnFixedUpdate(self, world, entity, dt)
+    world:set_motion(entity, PhysicsMotion.Static)
+end
+
+return T
+)LUA";
+}
+
+TEST_CASE("a RigidBody edit made in OnFixedUpdate reaches the body in the same step", "[script][physics][fields]")
+{
+    Fixture f(kFreezeInFixedUpdate);
+    f.world.AddComponent<mir::ScriptRef>(f.entity, mir::ScriptRef{});
+    mir::ScriptRef *ref = f.world.GetComponent<mir::ScriptRef>(f.entity);
+    ref->instanceRef = f.instance;
+    ref->started = true;
+    f.Start();
+
+    const mir::BodyHandle before = f.Body();
+    f.Step();
+
+    // the body was moving at 6 m/s, and the edit made it Static before the step moved it
+    CHECK(f.Physics().BodyPosition(f.Body())->Meters().x == Catch::Approx(0.0).margin(1e-6));
+    CHECK(f.Body() == before);
+}
+
 TEST_CASE("every RigidBody field can be read and written from Lua", "[script][physics][fields]")
 {
     Fixture f(kEditFields);

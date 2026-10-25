@@ -64,6 +64,7 @@ namespace mir
 
             rigidBody.runtime.body = physics.CreateBody(BodyDescFor(rigidBody, pose));
             physics.SetBodyEntity(rigidBody.runtime.body, entity);
+            rigidBody.runtime.applied = AppliedOf(rigidBody);
             detail::ResetStepPoses(rigidBody, pose.position.Meters(), pose.rotation);
             detail::Stamp(rigidBody, pose);
         }
@@ -91,10 +92,52 @@ namespace mir
         if (physics == nullptr)
             return;
 
+        ApplyEdits(context.world, *physics);
         PushTransforms(context.world, *physics, context.dt);
         RunStepGates(context.world, *physics, context.dt);
         physics->Step(context.dt);
         PullPoses(context.world, *physics);
+    }
+
+    // An edit to a RigidBody, from the editor, Lua or code, reaches the live body here, before the step.
+    void PhysicsSystem::ApplyEdits(World &world, PhysicsWorld &physics)
+    {
+        mQuery->ForEach(
+            [&](Entity entity, Transform &, RigidBody &rigidBody)
+            {
+                if (!rigidBody.runtime.body.IsValid())
+                    return;
+
+                const AppliedBody now = AppliedOf(rigidBody);
+                AppliedBody &applied = rigidBody.runtime.applied;
+                const BodyHandle body = rigidBody.runtime.body;
+                // a held body is left alone, and the edit lands once it is resumed
+                if (now == applied || physics.IsBodyHeld(body))
+                    return;
+
+                if (now.motion != applied.motion)
+                    physics.SetBodyMotion(body, now.motion);
+
+                if (now.shape != applied.shape || now.halfExtent != applied.halfExtent || now.radius != applied.radius
+                    || now.halfHeight != applied.halfHeight || now.axis != applied.axis || now.offset != applied.offset
+                    || now.rotationOffset != applied.rotationOffset)
+                    physics.SetBodyShape(body, BodyDescFor(rigidBody, detail::PoseOf(world, entity)));
+                else if (now.mass != applied.mass)
+                    physics.SetBodyMass(body, now.mass);
+
+                if (now.isTrigger != applied.isTrigger)
+                    physics.SetBodyTrigger(body, now.isTrigger);
+                if (now.friction != applied.friction || now.restitution != applied.restitution)
+                    physics.SetBodyMaterial(body, now.friction, now.restitution);
+                if (now.gravityFactor != applied.gravityFactor)
+                    physics.SetBodyGravityFactor(body, now.gravityFactor);
+                if (now.allowSleeping != applied.allowSleeping)
+                    physics.SetBodyAllowSleeping(body, now.allowSleeping);
+                if (now.detectStay != applied.detectStay)
+                    physics.SetBodyDetectsStay(body, now.detectStay);
+
+                applied = now;
+            });
     }
 
     void PhysicsSystem::PushTransforms(World &world, PhysicsWorld &physics, float dt)

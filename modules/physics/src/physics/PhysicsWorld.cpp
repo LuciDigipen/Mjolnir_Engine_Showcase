@@ -199,13 +199,15 @@ namespace mir
             settings.mEnhancedInternalEdgeRemoval = enhancedInternalEdgeRemoval;
             if (properties != nullptr)
             {
+                // so a Static body can become Dynamic or Kinematic later without being rebuilt
+                settings.mAllowDynamicOrKinematic = true;
                 settings.mIsSensor = properties->mIsTrigger;
                 settings.mFriction = properties->mFriction;
                 settings.mRestitution = properties->mRestitution;
                 settings.mGravityFactor = properties->mGravityFactor;
                 settings.mAllowSleeping = properties->mAllowSleeping;
-                // the shape gives the inertia, the mass scales it
-                if (dynamic && properties->mMass > 0.0f)
+                // the shape gives the inertia, the mass scales it; given whatever the motion, for a later switch
+                if (properties->mMass > 0.0f)
                 {
                     settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
                     settings.mMassPropertiesOverride.mMass = properties->mMass;
@@ -227,6 +229,14 @@ namespace mir
                 Bodies().SetCollisionGroup(id, JPH::CollisionGroup(nullptr, detail::kDynamicGroup, id.GetIndex()));
 
             return BodyHandle{id.GetIndexAndSequenceNumber()};
+        }
+
+        // An edit to a body changes what rests on it or against it, and Jolt wakes nothing by itself.
+        void WakeAround(JPH::BodyID id)
+        {
+            JPH::AABox bounds = Bodies().GetTransformedShape(id).GetWorldSpaceBounds();
+            bounds.ExpandBy(JPH::Vec3::sReplicate(kWakeMargin));
+            Bodies().ActivateBodiesInAABox(bounds, {}, {});
         }
 
         // Mass properties are read while the body is still dynamic; Jolt only answers them then.
@@ -476,6 +486,106 @@ namespace mir
             return;
 
         mImpl->Bodies().SetPositionAndRotation(*id, ToJolt(position), ToJolt(rotation), JPH::EActivation::Activate);
+    }
+
+    void PhysicsWorld::SetBodyMotion(BodyHandle body, PhysicsMotion motion)
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        if (!id || mImpl->FindHeld(body))
+            return;
+
+        const bool dynamic = motion == PhysicsMotion::Dynamic;
+        const bool moving = motion != PhysicsMotion::Static;
+        const JPH::EMotionType type = dynamic ? JPH::EMotionType::Dynamic
+            : moving                          ? JPH::EMotionType::Kinematic
+                                              : JPH::EMotionType::Static;
+
+        JPH::BodyInterface &bodies = mImpl->Bodies();
+        bodies.SetObjectLayer(*id, moving ? detail::Layers::kMoving : detail::Layers::kNonMoving);
+        bodies.SetMotionType(*id, type, moving ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+        bodies.SetCollisionGroup(*id,
+            dynamic ? JPH::CollisionGroup(nullptr, detail::kDynamicGroup, id->GetIndex()) : JPH::CollisionGroup());
+        if (!moving)
+            mImpl->mBroadPhaseDirty = true;
+        mImpl->WakeAround(*id);
+    }
+
+    void PhysicsWorld::SetBodyShape(BodyHandle body, const BodyDesc &desc)
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        if (!id)
+            return;
+
+        const JPH::RefConst<JPH::Shape> shape(MakeShape(desc));
+        if (shape == nullptr)
+            return;
+
+        mImpl->Bodies().SetShape(*id, shape, true, JPH::EActivation::Activate);
+        // the shape's own volume gave the mass back, so the authored one is put on again
+        SetBodyMass(body, desc.mMass);
+        mImpl->mBroadPhaseDirty = true;
+        mImpl->WakeAround(*id);
+    }
+
+    void PhysicsWorld::SetBodyTrigger(BodyHandle body, bool trigger)
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        if (!id)
+            return;
+
+        mImpl->Bodies().SetIsSensor(*id, trigger);
+        mImpl->WakeAround(*id);
+    }
+
+    void PhysicsWorld::SetBodyMaterial(BodyHandle body, float friction, float restitution)
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        if (!id)
+            return;
+
+        mImpl->Bodies().SetFriction(*id, friction);
+        mImpl->Bodies().SetRestitution(*id, restitution);
+        mImpl->WakeAround(*id);
+    }
+
+    void PhysicsWorld::SetBodyGravityFactor(BodyHandle body, float factor)
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        if (!id)
+            return;
+
+        mImpl->Bodies().SetGravityFactor(*id, factor);
+        mImpl->Bodies().ActivateBody(*id);
+    }
+
+    void PhysicsWorld::SetBodyMass(BodyHandle body, float mass)
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        if (!id || mass <= 0.0f)
+            return;
+
+        {
+            const JPH::BodyLockWrite lock(mImpl->mSystem.GetBodyLockInterface(), *id);
+            if (!lock.Succeeded() || lock.GetBody().GetMotionProperties() == nullptr)
+                return;
+            // a Static body has no mass of its own to scale until it moves
+            if (lock.GetBody().GetMotionType() != JPH::EMotionType::Dynamic)
+                return;
+            lock.GetBody().GetMotionProperties()->ScaleToMass(mass);
+        }
+        // after the lock is released: the body interface takes it again
+        mImpl->Bodies().ActivateBody(*id);
+    }
+
+    void PhysicsWorld::SetBodyAllowSleeping(BodyHandle body, bool allow)
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        if (!id)
+            return;
+
+        const JPH::BodyLockWrite lock(mImpl->mSystem.GetBodyLockInterface(), *id);
+        if (lock.Succeeded())
+            lock.GetBody().SetAllowSleeping(allow);
     }
 
     void PhysicsWorld::WakeBody(BodyHandle body)

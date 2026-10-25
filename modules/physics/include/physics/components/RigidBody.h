@@ -23,6 +23,29 @@
 
 namespace mir
 {
+    // The authored fields a Jolt body was last built or updated from, one per field so that comparing
+    // two of them cannot trip over padding. `interpolate` is not here: the interpolation system reads it live.
+    struct AppliedBody
+    {
+        PhysicsMotion motion = PhysicsMotion::Dynamic;
+        PhysicsShape shape = PhysicsShape::Box;
+        glm::vec3 halfExtent{ 0.5f, 0.5f, 0.5f };
+        float radius = 0.5f;
+        float halfHeight = 1.0f;
+        PhysicsAxis axis = PhysicsAxis::Y;
+        glm::vec3 offset{ 0.0f };
+        glm::quat rotationOffset = kIdentityRotation;
+        bool isTrigger = false;
+        bool detectStay = false;
+        float mass = 1.0f;
+        float gravityFactor = 1.0f;
+        float friction = 0.2f;
+        float restitution = 0.0f;
+        bool allowSleeping = true;
+
+        friend bool operator==(const AppliedBody &, const AppliedBody &) = default;
+    };
+
     struct RigidBody
     {
         PhysicsMotion motion = PhysicsMotion::Dynamic;
@@ -59,6 +82,8 @@ namespace mir
             // later means something else moved it, its own Transform or any ancestor's.
             WorldVec3 stampedPosition{ 0 };
             glm::quat stampedRotation = kIdentityRotation;
+            // What the body was last built or updated from, so an edit shows as a difference.
+            AppliedBody applied;
             // A Kinematic body's first Transform write teleports it, later ones move it to the target.
             bool hasMoved = false;
             // Moved to a target this step, so its velocity is cleared once the step has reached it.
@@ -69,6 +94,13 @@ namespace mir
     };
 
     MIR_ASSERT_COMPONENT(RigidBody);
+
+    inline AppliedBody AppliedOf(const RigidBody &rigidBody)
+    {
+        return { rigidBody.motion, rigidBody.shape, rigidBody.halfExtent, rigidBody.radius, rigidBody.halfHeight,
+            rigidBody.axis, rigidBody.offset, rigidBody.rotationOffset, rigidBody.isTrigger, rigidBody.detectStay,
+            rigidBody.mass, rigidBody.gravityFactor, rigidBody.friction, rigidBody.restitution, rigidBody.allowSleeping };
+    }
 
     // A body the simulation moves, as opposed to one it only collides against.
     inline bool HasDynamicBody(const RigidBody &rigidBody)

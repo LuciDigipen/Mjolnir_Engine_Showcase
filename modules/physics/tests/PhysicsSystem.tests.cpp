@@ -702,6 +702,196 @@ TEST_CASE("A trigger RigidBody blocks nothing and reports with detectStay", "[ph
     CHECK(stays > 0);
 }
 
+namespace
+{
+    mir::RigidBody &BodyComponent(PhysicsFixture &fixture, mir::Entity entity)
+    {
+        return *fixture.world.GetComponent<mir::RigidBody>(entity);
+    }
+
+    std::optional<mir::RayHit> CastDown(PhysicsFixture &fixture)
+    {
+        const mir::WorldPosition origin = mir::WorldPosition::FromMeters(mir::WorldVec3(0.0, 10.0, 0.0)).value();
+        return fixture.Physics().RayCast(origin, glm::vec3(0.0f, -1.0f, 0.0f), 20.0f);
+    }
+}
+
+TEST_CASE("Editing the motion type during Play changes the live body and keeps its handle", "[physics][edit]")
+{
+    PhysicsFixture fixture;
+    const mir::Entity entity = fixture.Add(glm::vec3(0.0f, 5.0f, 0.0f), kDynamicSphere);
+    const mir::BodyHandle handle = BodyOfEntity(fixture, entity);
+    fixture.Run(10);
+
+    SECTION("Dynamic to Static stops it where it is")
+    {
+        BodyComponent(fixture, entity).motion = mir::PhysicsMotion::Static;
+        fixture.Run(1);
+        const double stopped = fixture.Physics().BodyPosition(handle)->Meters().y;
+        fixture.Run(30);
+
+        CHECK(fixture.Physics().BodyPosition(handle)->Meters().y == stopped);
+        CHECK(BodyOfEntity(fixture, entity) == handle);
+    }
+
+    SECTION("Dynamic to Kinematic keeps the velocity it had and ignores gravity")
+    {
+        fixture.Physics().SetBodyLinearVelocity(handle, glm::vec3(4.0f, 0.0f, 0.0f));
+        BodyComponent(fixture, entity).motion = mir::PhysicsMotion::Kinematic;
+        fixture.Run(30);
+
+        CHECK(fixture.Physics().BodyLinearVelocity(handle).x == Catch::Approx(4.0f).margin(1e-3f));
+        CHECK(fixture.Physics().BodyLinearVelocity(handle).y == Catch::Approx(0.0f).margin(1e-3f));
+        CHECK(fixture.TransformOf(entity).Position().x > 1.5);
+    }
+
+    SECTION("Static to Dynamic lets it fall")
+    {
+        BodyComponent(fixture, entity).motion = mir::PhysicsMotion::Static;
+        fixture.Run(2);
+        const double held = fixture.Physics().BodyPosition(handle)->Meters().y;
+
+        BodyComponent(fixture, entity).motion = mir::PhysicsMotion::Dynamic;
+        fixture.Run(30);
+
+        CHECK(fixture.Physics().BodyPosition(handle)->Meters().y < held - 0.5);
+        CHECK(BodyOfEntity(fixture, entity) == handle);
+    }
+}
+
+TEST_CASE("A static body edited in Play is applied, and so is one that sleeps", "[physics][edit]")
+{
+    PhysicsFixture fixture;
+    fixture.Add(glm::vec3(0.0f), kStaticBox);
+    const mir::Entity sleeper = fixture.Add(glm::vec3(0.0f, 1.0f, 0.0f), kDynamicSphere);
+    fixture.Run(300);
+    REQUIRE(fixture.Physics().IsBodySleeping(BodyOfEntity(fixture, sleeper)));
+
+    // a sleeping body still takes the edit, and wakes to it
+    BodyComponent(fixture, sleeper).gravityFactor = -1.0f;
+    fixture.Run(30);
+    CHECK(fixture.TransformOf(sleeper).Position().y > 1.5);
+}
+
+TEST_CASE("Editing the shape during Play rebuilds the shape and nothing else", "[physics][edit]")
+{
+    PhysicsFixture fixture;
+    mir::RigidBody box = kStaticBox;
+    box.halfExtent = glm::vec3(1.0f);
+    const mir::Entity entity = fixture.Add(glm::vec3(0.0f), box);
+    const mir::BodyHandle handle = BodyOfEntity(fixture, entity);
+    REQUIRE(CastDown(fixture).value().mDistance == Catch::Approx(9.0f).margin(0.01f));
+
+    SECTION("a size")
+    {
+        BodyComponent(fixture, entity).halfExtent = glm::vec3(1.0f, 3.0f, 1.0f);
+        fixture.Run(1);
+        CHECK(CastDown(fixture).value().mDistance == Catch::Approx(7.0f).margin(0.01f));
+    }
+
+    SECTION("the shape kind")
+    {
+        BodyComponent(fixture, entity).shape = mir::PhysicsShape::Sphere;
+        BodyComponent(fixture, entity).radius = 0.5f;
+        fixture.Run(1);
+        CHECK(CastDown(fixture).value().mDistance == Catch::Approx(9.5f).margin(0.01f));
+    }
+
+    SECTION("the collider offset")
+    {
+        BodyComponent(fixture, entity).offset = glm::vec3(0.0f, 2.0f, 0.0f);
+        fixture.Run(1);
+        CHECK(CastDown(fixture).value().mDistance == Catch::Approx(7.0f).margin(0.01f));
+    }
+
+    CHECK(BodyOfEntity(fixture, entity) == handle);
+}
+
+TEST_CASE("Editing the body properties during Play reaches the body", "[physics][edit]")
+{
+    PhysicsFixture fixture;
+
+    SECTION("gravity factor")
+    {
+        const mir::Entity entity = fixture.Add(glm::vec3(0.0f, 50.0f, 0.0f), kDynamicSphere);
+        fixture.Run(5);
+        BodyComponent(fixture, entity).gravityFactor = 0.0f;
+        fixture.Run(1);
+        const float speed = fixture.Physics().BodyLinearVelocity(BodyOfEntity(fixture, entity)).y;
+        fixture.Run(20);
+        // no more acceleration, only Jolt's slight damping: gravity would have added about 3 m/s by now
+        CHECK(fixture.Physics().BodyLinearVelocity(BodyOfEntity(fixture, entity)).y == Catch::Approx(speed).margin(0.1f));
+    }
+
+    SECTION("mass")
+    {
+        mir::RigidBody floating = kDynamicSphere;
+        floating.gravityFactor = 0.0f;
+        const mir::Entity entity = fixture.Add(glm::vec3(0.0f, 5.0f, 0.0f), floating);
+        BodyComponent(fixture, entity).mass = 10.0f;
+        fixture.Run(1);
+        fixture.Physics().AddImpulse(BodyOfEntity(fixture, entity), glm::vec3(10.0f, 0.0f, 0.0f));
+        fixture.Run(1);
+        CHECK(fixture.Physics().BodyLinearVelocity(BodyOfEntity(fixture, entity)).x == Catch::Approx(1.0f).margin(0.01f));
+    }
+
+    SECTION("restitution")
+    {
+        fixture.Add(glm::vec3(0.0f), kStaticBox);
+        const mir::Entity ball = fixture.Add(glm::vec3(0.0f, 3.0f, 0.0f), kDynamicSphere);
+        BodyComponent(fixture, ball).restitution = 0.9f;
+        double highest = 0.0;
+        for (int i = 0; i < 120; ++i)
+        {
+            fixture.Run(1);
+            if (i > 50)
+                highest = std::max(highest, fixture.TransformOf(ball).Position().y);
+        }
+        CHECK(highest > 1.8);
+    }
+
+    SECTION("a trigger lets a resting body through")
+    {
+        const mir::Entity floor = fixture.Add(glm::vec3(0.0f), kStaticBox);
+        const mir::Entity ball = fixture.Add(glm::vec3(0.0f, 2.0f, 0.0f), kDynamicSphere);
+        fixture.Run(120);
+        REQUIRE(fixture.TransformOf(ball).Position().y > 0.5);
+
+        BodyComponent(fixture, floor).isTrigger = true;
+        fixture.Run(120);
+        CHECK(fixture.TransformOf(ball).Position().y < -2.0);
+    }
+
+    SECTION("allowSleeping")
+    {
+        fixture.Add(glm::vec3(0.0f), kStaticBox);
+        const mir::Entity ball = fixture.Add(glm::vec3(0.0f, 1.0f, 0.0f), kDynamicSphere);
+        BodyComponent(fixture, ball).allowSleeping = false;
+        fixture.Run(300);
+        CHECK_FALSE(fixture.Physics().IsBodySleeping(BodyOfEntity(fixture, ball)));
+    }
+
+    SECTION("detectStay")
+    {
+        mir::RigidBody zone = kStaticBox;
+        zone.isTrigger = true;
+        zone.halfExtent = glm::vec3(5.0f);
+        const mir::Entity trigger = fixture.Add(glm::vec3(0.0f), zone);
+        mir::RigidBody floating = kDynamicSphere;
+        floating.gravityFactor = 0.0f;
+        fixture.Add(glm::vec3(0.0f), floating);
+        fixture.Run(3);
+        fixture.Physics().DrainCollisionEvents();
+
+        BodyComponent(fixture, trigger).detectStay = true;
+        fixture.Run(3);
+        std::size_t stays = 0;
+        for (const mir::CollisionEvent &event : fixture.Physics().DrainCollisionEvents())
+            stays += event.mPhase == mir::CollisionPhase::Stay ? 1 : 0;
+        CHECK(stays > 0);
+    }
+}
+
 TEST_CASE("A RigidBody gets its body when it is added, before any step", "[physics]")
 {
     PhysicsFixture fixture;

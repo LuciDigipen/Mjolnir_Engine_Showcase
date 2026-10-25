@@ -122,6 +122,19 @@ namespace mir
         glm::vec3 BodyLinearVelocity(BodyHandle body) const;
         glm::vec3 BodyAngularVelocity(BodyHandle body) const;
         void SetBodyTransform(BodyHandle body, WorldPosition position, const glm::quat &rotation);
+        // In-place edits: the handle, the contacts and the Restrict lists all stay. Velocity follows Jolt, so it is kept
+        // going to Kinematic or Dynamic and dropped going to Static. A held body is left alone.
+        void SetBodyMotion(BodyHandle body, PhysicsMotion motion);
+        // Replaces the shape from the shape fields of `desc` (kind, sizes, axis, offset, rotation offset); a Dynamic
+        // body keeps desc.mMass.
+        void SetBodyShape(BodyHandle body, const BodyDesc &desc);
+        void SetBodyTrigger(BodyHandle body, bool trigger);
+        void SetBodyMaterial(BodyHandle body, float friction, float restitution);
+        void SetBodyGravityFactor(BodyHandle body, float factor);
+        // Scales the inertia with it; a mass at or below 0 is ignored.
+        void SetBodyMass(BodyHandle body, float mass);
+        void SetBodyAllowSleeping(BodyHandle body, bool allow);
+
         // A Dynamic or Kinematic body that rests, or that has not been touched for a while, falls asleep.
         void WakeBody(BodyHandle body);
         // Whether the pairs this body touches get Stay events, once per frame.
