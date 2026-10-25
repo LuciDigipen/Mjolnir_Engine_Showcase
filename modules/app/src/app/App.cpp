@@ -159,12 +159,12 @@ namespace mir
         mWindow.Get().Show();
     }
 
-    // Systems stop while every module is alive; then members die in reverse
+    // Systems stop while every module is alive; then members die in reverse, the
+    // modules before the scheduler, so a module's system pointers stay valid to the end
     App::~App()
     {
         SystemContext stopContext = MakeContext(0.0f);
         mScheduler.Stop(stopContext);
-        mScheduler.Reset();
         MIR_LOG_INFO("App shut down");
     }
 

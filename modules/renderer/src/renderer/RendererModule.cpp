@@ -73,5 +73,14 @@ namespace mir
             });
     }
 
-    RendererModule::~RendererModule() { mRenderer.Shutdown(); }
+    // the tokens first, so nothing they reach runs on a renderer already shut down
+    RendererModule::~RendererModule()
+    {
+        mReloadCommit.Reset();
+        mPlayBegin.Reset();
+        mSceneLoad.Reset();
+        mSceneUnload.Reset();
+        mHooks.Reset();
+        mRenderer.Shutdown();
+    }
 }
