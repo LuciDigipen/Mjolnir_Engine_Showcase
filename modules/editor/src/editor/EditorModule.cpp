@@ -148,7 +148,8 @@ namespace mir
         mEditor.SetAuthoringBackend(&mPrefabAuthoring);
         mEditor.SetAuthoredEntities(&mPrefabAuthoring);
         mPrefabWorkspace.BindResolveSystems(&renderer.Renderer(), &assets.Cache(), mProject.mAssetIdRoot);
-        context.scheduler.AddSystem<PrefabPreviewSystem>(SystemPhase::LateUpdate, mPrefabWorkspace,
+        context.scheduler.AddSystem<PrefabPreviewSystem>(SystemPhase::LateUpdate,
+            SystemOrder{SystemOrder::kNormal}, mPrefabWorkspace,
             prefab.Coordinator(), mEditor, [this] { RefreshPrefabHistory(); });
 
         mFrameBegin = context.scheduler.AddFrameSlot(FrameSlot::FrameBegin, [this](SystemContext &frame)

@@ -30,7 +30,8 @@ namespace mir
         context.world.EmplaceResource<ModelMorphOverrides>();
 
         // a WorldTransform reader
-        mModels = &context.scheduler.AddSystem<ModelSystem>(SystemPhase::LateUpdate, renderer, &assets.Cache(),
+        mModels = &context.scheduler.AddSystem<ModelSystem>(SystemPhase::LateUpdate,
+            SystemOrder{SystemOrder::kNormal}, renderer, &assets.Cache(),
             std::move(assetIdRoot));
 
         mHooks = context.world.SetComponentHooks<ModelPlayer>({ .onRemove = [this](World &world, Entity entity)

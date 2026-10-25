@@ -29,9 +29,10 @@ namespace mir
         context.world.EmplaceResource<CollisionEvents>();
 
         // once per fixed substep, before Propagate turns the Transforms it writes into world matrices
-        context.scheduler.AddSystem<PhysicsSystem>(SystemPhase::FixedUpdate);
-        context.scheduler.AddSystem<PhysicsInterpolationSystem>(SystemPhase::PostUpdate);
-        context.scheduler.AddSystem<CollisionEventSystem>(SystemPhase::LateUpdate);
+        context.scheduler.AddSystem<PhysicsSystem>(SystemPhase::FixedUpdate, SystemOrder{SystemOrder::kNormal});
+        context.scheduler.AddSystem<PhysicsInterpolationSystem>(SystemPhase::PostUpdate,
+            SystemOrder{SystemOrder::kNormal});
+        context.scheduler.AddSystem<CollisionEventSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kNormal});
 
         mHooks = context.world.SetComponentHooks<RigidBody>({ .onRemove = &PhysicsSystem::OnRigidBodyRemoved });
     }

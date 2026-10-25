@@ -328,8 +328,13 @@ they call still run.
 
 **Only `TransformPropagateSystem` runs in `Propagate`.** `AddSystem` asserts on
 anything else there. Transform writers go before it, in `PostUpdate`, and
-`WorldTransform` readers after it, in `LateUpdate`. Within one phase a system may
-rely on running after another only when its library depends on the other's.
+`WorldTransform` readers after it, in `LateUpdate`.
+
+**Inside a phase, systems run by `SystemOrder`.** `AddSystem` takes the phase and
+an order from 0 to 100, with the borders `kEarly` (10), `kNormal` (50) and `kLate`
+(90). The lowest order runs first, and `Start`, `Update` and `Stop` all use that
+order. Equal orders are unspecified, so a system that needs another first takes a
+different order.
 
 **A registration list changes only between runs.** Every `RegistrationList`
 (stages, frame slots, ImGui drawers, Lua bindings, game UI screens) asserts on
@@ -458,6 +463,13 @@ layout changes.
    `World::AddComponent` directly, rather than it being convention.
 
 ## Changed
+
+*2026-10-25* — **Systems run by `SystemOrder` inside a phase.** Was: systems in
+one phase ran in registration order, and a few relied on it (the script resolver
+before `ScriptSystem`, the preview's propagate before its resolvers). Now:
+`AddSystem` takes a `SystemOrder` from 0 to 100 after the phase, and equal orders
+are unspecified. Because: registration order is module construction order, which
+nothing enforces, and the script fixed-step callback has to run before physics.
 
 *2026-10-24* — **Modules, stages and tokens; `core` split in two.** Was: one
 `core` library, systems set their component hooks in `OnStart` and cleared them

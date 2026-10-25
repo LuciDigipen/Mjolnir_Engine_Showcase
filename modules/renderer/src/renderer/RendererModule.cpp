@@ -47,9 +47,11 @@ namespace mir
             PostProcessingSettings::LoadFile(settings.mProjectSettingsPath).value_or(PostProcessingSettings{}));
 
         // a WorldTransform reader
-        mMeshes = &context.scheduler.AddSystem<MeshResolveSystem>(SystemPhase::LateUpdate, mRenderer, &assets.Cache(),
+        mMeshes = &context.scheduler.AddSystem<MeshResolveSystem>(SystemPhase::LateUpdate,
+            SystemOrder{SystemOrder::kNormal}, mRenderer, &assets.Cache(),
             settings.mAssetIdRoot);
-        mRenderSystem = &context.scheduler.AddSystem<RenderSystem>(SystemPhase::Render, mRenderer);
+        mRenderSystem = &context.scheduler.AddSystem<RenderSystem>(SystemPhase::Render,
+            SystemOrder{SystemOrder::kNormal}, mRenderer);
 
         mHooks = context.world.SetComponentHooks<MeshRenderer>({ .onRemove = [this](World &, Entity entity)
             {

@@ -1013,7 +1013,7 @@ TEST_CASE("TransformPropagateSystem refreshes every cache", "[ecs][transform][hi
     World world;
     mir::CommandBuffer commands;
     mir::SystemScheduler scheduler;
-    scheduler.AddSystem<mir::TransformPropagateSystem>(mir::SystemPhase::Propagate);
+    scheduler.AddSystem<mir::TransformPropagateSystem>(mir::SystemPhase::Propagate, mir::SystemOrder{mir::SystemOrder::kNormal});
 
     const Entity parent = MakeAt(world, glm::vec3(10.0f, 0.0f, 0.0f));
     const Entity child = MakeAt(world, glm::vec3(0.0f, 1.0f, 0.0f));
@@ -1072,9 +1072,9 @@ TEST_CASE("A PostUpdate write reaches a LateUpdate reader in the same frame", "[
     Link(world, child, parent);
 
     // registered out of phase order on purpose
-    Reader &reader = scheduler.AddSystem<Reader>(mir::SystemPhase::LateUpdate, child);
-    scheduler.AddSystem<mir::TransformPropagateSystem>(mir::SystemPhase::Propagate);
-    scheduler.AddSystem<Mover>(mir::SystemPhase::PostUpdate, parent);
+    Reader &reader = scheduler.AddSystem<Reader>(mir::SystemPhase::LateUpdate, mir::SystemOrder{mir::SystemOrder::kNormal}, child);
+    scheduler.AddSystem<mir::TransformPropagateSystem>(mir::SystemPhase::Propagate, mir::SystemOrder{mir::SystemOrder::kNormal});
+    scheduler.AddSystem<Mover>(mir::SystemPhase::PostUpdate, mir::SystemOrder{mir::SystemOrder::kNormal}, parent);
 
     mir::SystemContext context{ world, commands };
     scheduler.Start(context);

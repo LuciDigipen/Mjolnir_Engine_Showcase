@@ -108,12 +108,15 @@ namespace mir
         if (!mCoordinator.BindPreview(id, world, preview->mScene))
             return false;
 
-        preview->mScheduler.AddSystem<TransformPropagateSystem>(SystemPhase::PostUpdate);
+        preview->mScheduler.AddSystem<TransformPropagateSystem>(SystemPhase::PostUpdate,
+            SystemOrder{SystemOrder::kEarly});
         if (mRenderer != nullptr)
         {
-            preview->mMesh = &preview->mScheduler.AddSystem<MeshResolveSystem>(SystemPhase::PostUpdate, *mRenderer,
+            preview->mMesh = &preview->mScheduler.AddSystem<MeshResolveSystem>(SystemPhase::PostUpdate,
+                SystemOrder{SystemOrder::kNormal}, *mRenderer,
                 mAssets, mAssetIdRoot);
-            preview->mModel = &preview->mScheduler.AddSystem<ModelSystem>(SystemPhase::PostUpdate, *mRenderer,
+            preview->mModel = &preview->mScheduler.AddSystem<ModelSystem>(SystemPhase::PostUpdate,
+                SystemOrder{SystemOrder::kNormal}, *mRenderer,
                 mAssets, mAssetIdRoot);
         }
 
