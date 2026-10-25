@@ -49,17 +49,28 @@ namespace mir
         LoadedScene *Scene() { return mScene; }
         const LoadedScene *Scene() const { return mScene; }
 
+        // A preview World and its scene live outside the main scene and are
+        // committed by Commit in their own World.
+        bool BindPreview(PrefabId id, World &world, LoadedScene &scene);
+        bool UnbindPreview(PrefabId id);
+        World *PreviewWorld(PrefabId id) const;
+        LoadedScene *PreviewScene(PrefabId id) const;
+
         PrefabSceneResolver &Resolver() { return mResolver; }
         const PrefabSceneResolver &Resolver() const { return mResolver; }
 
         // Compiles pending documents and propagates every newer template to the
-        // open scene's instances.
+        // open scene's instances and every bound preview.
         void Commit(World &world);
 
         bool HasPendingWork() const;
 
         // True once after a Commit published instance data to the scene.
         bool ConsumePublishedChanges();
+
+        // True once after a Commit changed the bound scene's authored data outside History:
+        // references cleared, or instance bindings dropped or added.
+        bool ConsumeSceneMaintenance();
 
         // Zero when no compiled template has been published to that instance.
         uint64_t PublishedRevision(StableId root) const;
@@ -72,16 +83,29 @@ namespace mir
             std::shared_ptr<const CompiledPrefab> mTemplate;
         };
 
-        void RecordPublished(const LoadedScene &scene);
-        void ReconcilePublished(const LoadedScene &scene);
+        using PublishedTable = std::map<StableId, PublishedInstance>;
+
+        struct PreviewBinding
+        {
+            World *mWorld = nullptr;
+            LoadedScene *mScene = nullptr;
+            PublishedTable mPublished;
+        };
+
+        void RecordPublished(const LoadedScene &scene, PublishedTable &published) const;
+        void ReconcilePublished(const LoadedScene &scene, PublishedTable &published);
+        void CommitScene(World &world, LoadedScene &scene, PublishedTable &published, bool mainScene);
+        bool SceneHasPendingWork(const LoadedScene *scene, const PublishedTable &published) const;
 
         PrefabRegistry mRegistry;
         CompiledPrefabCache mCache;
         PrefabSceneResolver mResolver;
         LoadedScene *mScene = nullptr;
         std::set<PrefabId> mPendingDocuments;
-        std::map<StableId, PublishedInstance> mPublished;
+        PublishedTable mPublished;
+        std::map<PrefabId, PreviewBinding> mPreviews;
         bool mPublishedChanges = false;
+        bool mSceneMaintenance = false;
     };
 
     // Runs at PreUpdate, before any other system, and commits only while editing.

@@ -37,6 +37,8 @@ namespace mir
         // MeshRenderer's OnRemove: a packed id the World hands out again starts unresolved
         void Forget(Entity entity) { mResolved.erase(PackEntity(entity)); }
 
+        // Frees this system's uploads while other Worlds keep rendering.
+        void ReleaseResources();
         void CommitReload(AssetCache *assets);
 
         void OnStart(SystemContext &context) override;

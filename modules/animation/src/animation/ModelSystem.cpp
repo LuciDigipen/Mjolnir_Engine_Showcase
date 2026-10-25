@@ -94,6 +94,15 @@ namespace mir
         mFailed.clear();
         mDeformations.clear();
     }
+    void ModelSystem::ReleaseResources()
+    {
+        Release(mModels, mTextures);
+        Reset();
+        mRequestedModels.clear();
+        mPreviousPoses.clear();
+        mCurrentPoses.clear();
+    }
+
     ModelSystem::Loaded ModelSystem::LoadInto(AssetCache &assets, AssetId id,
         std::unordered_map<uint64_t, TextureHandle> &textures)
     {
@@ -210,7 +219,8 @@ namespace mir
                 }
         for (const auto &[id, texture] : textures)
             textureHandles.push_back(texture);
-        mRenderer.ReleaseModelResources(meshes, materials, textureHandles);
+        if (!meshes.empty() || !materials.empty() || !textureHandles.empty())
+            mRenderer.ReleaseModelResources(meshes, materials, textureHandles);
         models.clear();
         textures.clear();
     }

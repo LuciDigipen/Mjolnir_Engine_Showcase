@@ -31,6 +31,7 @@ namespace mir
         SelectionHovered,
         Success,
         Primary,
+        Prefab,
     };
 
     enum class EditorThemeKind

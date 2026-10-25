@@ -74,8 +74,8 @@ itself is handling doesn't also move it.
 
 ### The module
 
-`EditorModule` owns the `Editor`, the asset import, the content browser and the
-scene ops. Its ImGui drawer draws the layout, turns the frame's actions into
+`EditorModule` owns the `Editor`, the asset import, the content browser, the
+scene ops and the Prefab documents. Its ImGui drawer draws the layout, turns the frame's actions into
 requests (scene commands, a game to open) or carries them out (an import, a
 content browser action, opening a file in the IDE), then feeds viewport 0's rect
 and, in Edit, the editor camera to `RenderSystem`, and the scene viewport to
@@ -86,6 +86,23 @@ Its stage functions keep the history and the unsaved mark: `SceneLoad` clears
 the history and sets the mark from `SceneModule::LastLoad()`, `SceneSaved`
 clears it, `PlayBegin` remembers it for Stop to put back, and `ReloadCommit`
 marks the import applied.
+
+The Prefab documents are a `PrefabWorkspace`, one preview World per open Prefab
+tab, and a `PrefabAuthoringAdapter`. The adapter bridges History and the prefab
+module's authored state; `prefab/PrefabAuthoring` owns the edits themselves.
+Apply and Revert write no files. A `LateUpdate` system runs the open previews in
+Edit, after `PrefabSystem` committed their documents, and the drawer hands the
+active tab's preview to the panels and to `RenderSystem::SetSourceWorld`. Play
+shows the Scene tab, and the `SceneLoad` after Stop reopens the tab it left. The
+previews' models take part in an asset swap, and their caches reset at
+`SceneUnload`, after the renderer freed every upload.
+
+Save on a Prefab tab writes that Prefab. On the Scene tab it first writes the
+modified Prefab sources the scene uses, then asks for `SaveScene`, which `App`
+runs at the top of the next frame. Each Prefab write clears that document's
+saved mark without clearing History. A missing source path or a failed write
+stops the save and leaves the scene unwritten; files already written stay
+saved.
 
 ## API
 
@@ -99,7 +116,7 @@ bool IsSceneUnsaved() const;      // the title bar's * marker
 void SetSceneUnsaved(bool unsaved);  // false: the scene as it is now is the saved one
 bool IsDocumentUnsaved(DocumentId document) const;              // the same for a Prefab or other document
 void SetDocumentUnsaved(DocumentId document, bool unsaved);
-void SetAuthoringBackend(IAuthoringBackend *backend);           // App's authoring documents (#249)
+void SetAuthoringBackend(IAuthoringBackend *backend);           // the module's PrefabAuthoringAdapter
 
 // between ImGuiRuntime::BeginFrame and EndFrame
 EditorActions DrawLayout(bool enableLayout, InputMap &inputMap, RenderSettings &renderSettings,
@@ -436,12 +453,13 @@ or the dialog themselves. History needs neither, and its tests are in
 
 ## Changed
 
-*2026-10-24* — **`EditorModule`; the import, content browser, scene ops and
-project creation moved in from `app`.** Was: `App` held the `Editor`, the
-`AssetImportManager`, the `ContentBrowserWatcher` and `AppSceneOps`, applied the
-editor's actions, and cleared the history and set the unsaved mark at each
-transition. Now: the module does all of it through its drawer, its `FrameBegin`
-work and stage functions, and `CreateGameProject` writes the default scene
+*2026-10-24* — **`EditorModule`; the import, content browser, scene ops, Prefab
+documents and project creation moved in from `app`.** Was: `App` held the
+`Editor`, the `AssetImportManager`, the `ContentBrowserWatcher`, `AppSceneOps`,
+the `PrefabWorkspace` and the `PrefabAuthoringAdapter`, applied the editor's
+actions, and cleared the history and set the unsaved mark at each transition.
+Now: the module does all of it through its drawer, its `FrameBegin` work, a
+`LateUpdate` system and stage functions, and `CreateGameProject` writes the default scene
 through `scene`. Because: `App` no longer knows what the editor keeps, and the
 scene file had a hand-written copy of `scene`'s format.
 

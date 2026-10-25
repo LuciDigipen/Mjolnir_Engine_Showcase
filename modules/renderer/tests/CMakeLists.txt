@@ -12,6 +12,7 @@ engine_add_module_tests(renderer
     PostProcessingSettings.tests.cpp
     PostProcessingState.tests.cpp
     RenderSettings.tests.cpp
+    RenderSystem.tests.cpp
     Shapes.tests.cpp
     ViewSubmission.tests.cpp
 )

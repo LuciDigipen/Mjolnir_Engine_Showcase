@@ -88,6 +88,8 @@ namespace mir
             return FromHex(gColors.success, alpha);
         case ThemeColor::Primary:
             return FromHex(gColors.primary, alpha);
+        case ThemeColor::Prefab:
+            return FromHex(gColors.prefab, alpha);
         }
         return FromHex(gColors.text, alpha);
     }

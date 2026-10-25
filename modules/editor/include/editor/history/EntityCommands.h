@@ -24,6 +24,7 @@ namespace mir
     std::unique_ptr<ICommand> MakeCreateCommand(const EntityPresetDesc *preset);
     std::unique_ptr<ICommand> MakeDeleteCommand(Entity target);
     std::unique_ptr<ICommand> MakeDuplicateCommand(Entity source);
+    std::unique_ptr<ICommand> MakeCopyAsOrdinaryObjectCommand(Entity source);
     std::unique_ptr<ICommand> MakeReParentCommand(std::vector<Entity> targets, Entity parent, Entity before);
 
     //null for EntityActionKind::None

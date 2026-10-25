@@ -89,7 +89,11 @@ namespace mir
 
     std::size_t SubtreeRecord::Size() const
     {
-        return mSubtree.mData.size() + mSubtree.mMembers.size() * sizeof(Entity) +
+        std::size_t instances = 0;
+        for (const std::string &record : mSubtree.mInstances)
+            instances += record.size();
+
+        return mSubtree.mData.size() + instances + mSubtree.mMembers.size() * sizeof(Entity) +
             mSubtree.mStableIds.size() * sizeof(uint64_t) + mMembers.size() * sizeof(HistoryId) +
             mLinks.size() * sizeof(RefLink);
     }

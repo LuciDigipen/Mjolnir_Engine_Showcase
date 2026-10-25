@@ -32,6 +32,7 @@
 #include <window/Window.h>
 
 #include <filesystem>
+#include <map>
 #include <span>
 #include <string>
 #include <string_view>
@@ -39,6 +40,8 @@
 
 namespace mir
 {
+    class IAuthoredEntities;
+
     enum class SceneMenuAction
     {
         None,
@@ -72,6 +75,35 @@ namespace mir
         std::string mUnavailable;
     };
 
+    enum class EditorDocumentActionKind
+    {
+        None,
+        Activate,
+        Close,
+    };
+
+    struct EditorDocumentAction
+    {
+        EditorDocumentActionKind mKind = EditorDocumentActionKind::None;
+        DocumentId mDocument = kSceneDocument;
+    };
+
+    struct EditorDocumentTab
+    {
+        DocumentId mDocument = kSceneDocument;
+        std::string mLabel;
+        bool mUnsaved = false;
+        bool mClosable = false;
+    };
+
+    // The Scene first, then every open Prefab document.
+    struct EditorDocuments
+    {
+        std::vector<EditorDocumentTab> mTabs;
+        DocumentId mActive = kSceneDocument;
+        bool mEnabled = true;
+    };
+
     struct EditorActions
     {
         SceneMenuAction mScene = SceneMenuAction::None;
@@ -83,6 +115,8 @@ namespace mir
         bool mCreateProjectRayTracing = false;
         AssetImportAction mAssetImport;
         ContentBrowserAction mContentBrowser;
+        EditorDocumentAction mDocument;
+        bool mSaveActiveDocument = false;
     };
 
     class Editor
@@ -107,7 +141,8 @@ namespace mir
         EditorActions DrawLayout(bool enableLayout, InputMap &inputMap, RenderSettings &renderSettings,
                                  PostProcessingSettings &postProcessingSettings, const EngineModeState &mode,
                                  std::span<const ProjectMenuEntry> projects, std::string_view currentProject,
-                                 World &world, const AssetImportView &assetImport, const VulkanRenderer &renderer,
+                                 World &activeWorld, World &sceneWorld, const EditorDocuments &documents,
+                                 const AssetImportView &assetImport, const VulkanRenderer &renderer,
                                  const ContentBrowserView &contentBrowser);
 
         VkRect2D SceneViewportRect() const { return mSceneViewportRect; }
@@ -136,12 +171,14 @@ namespace mir
 
         
         void SetAuthoringBackend(IAuthoringBackend *backend) { mHistory.SetAuthoringBackend(backend); }
+        void SetAuthoredEntities(IAuthoredEntities *authored) { mAuthoredEntities = authored; }
 
     private:
         void DrawTitleBar();
         void DrawOpenProjectMenu(std::span<const ProjectMenuEntry> projects, std::string_view currentProject);
         void DrawOpenProjectConfirm(EditorActions &actions);
-        void DrawViewportGizmo(const EngineModeState &mode, World &world);
+        void DrawViewportGizmo(const EngineModeState &mode, World &world, EditorActions &actions,
+            bool prefabDocument);
         void UpdateViewportPicking(const EngineModeState &mode, World &world);
         // F moves the scene camera next to the primary selection.
         void FocusSelection(const EngineModeState &mode, World &world);
@@ -149,7 +186,11 @@ namespace mir
         void DrawComponentGizmos(const EngineModeState &mode, World &world);
         void DrawNewProjectModal(EditorActions &actions, std::span<const ProjectMenuEntry> projects);
         void DrawEditMenu();
-        void UpdateHistoryShortcuts();
+        void UpdateHistoryShortcuts(EditorActions &actions, const EngineModeState &mode);
+
+        // Each document keeps its own camera; a document opened first focuses on its root.
+        void SwitchDocumentCamera(const EditorDocuments &documents, World &world);
+        void FocusDocumentRoot(World &world);
 
         SceneMenuAction DrawPlayControls(const EngineModeState &mode);
 
@@ -184,9 +225,16 @@ namespace mir
         PostProcessingPanel mPostProcessingPanel;
         ProfilerPanel mProfilerPanel;
         EditorCamera mCamera;
+        std::map<DocumentId, EditorCamera> mDocumentCameras;
+        DocumentId mCameraDocument = kSceneDocument;
+
+        // the tab strip reveals mActive only when it changed elsewhere; selecting it every frame would undo a click
+        DocumentId mShownDocument = kSceneDocument;
+        bool mShownDocumentKnown = false;
 
         History mHistory;
         ISceneOps *mSceneOps = nullptr;
+        IAuthoredEntities *mAuthoredEntities = nullptr;
 
         std::filesystem::path mPreferencesPath;
         EditorPreferences mPreferences;

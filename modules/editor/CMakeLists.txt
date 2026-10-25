@@ -16,6 +16,8 @@ target_link_libraries(engine_editor
            mir::window
            mir::input
            mir::project
+           # PrefabWorkspace.h and PrefabAuthoringAdapter.h take prefab types
+           mir::prefab
     PRIVATE mir::animation
             mir::assets
             mir::editortheme
@@ -43,8 +45,12 @@ target_sources(engine_editor PRIVATE
     src/editor/EditorPreferences.cpp
     src/editor/EditorWidgets.cpp
     src/editor/EntityBaseline.cpp
+    src/editor/PrefabAuthoringAdapter.cpp
+    src/editor/PrefabWorkspace.cpp
     src/editor/history/AuthoredCommand.cpp
+    src/editor/history/AuthoredEdit.cpp
     src/editor/history/ComponentCommands.cpp
+    src/editor/history/DocumentNodeCommands.cpp
     src/editor/history/EntityCommands.cpp
     src/editor/history/EntityIds.cpp
     src/editor/history/History.cpp

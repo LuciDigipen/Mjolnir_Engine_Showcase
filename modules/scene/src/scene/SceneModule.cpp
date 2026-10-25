@@ -45,11 +45,14 @@ namespace mir
         return true;
     }
 
-    void SceneModule::CaptureForPlay() { mSnapshot = CaptureWorld(mWorld); }
-
-    void SceneModule::RestoreFromPlay()
+    void SceneModule::CaptureForPlay(const ScenePrefabResolver *resolver)
     {
-        mScene = RestoreWorld(mWorld, mSnapshot);
+        mSnapshot = CaptureWorld(mWorld, mScene, resolver);
+    }
+
+    void SceneModule::RestoreFromPlay(ScenePrefabResolver *resolver)
+    {
+        mScene = RestoreWorld(mWorld, mSnapshot, resolver);
         mLastLoad = SceneLoadResult{ SceneLoadCause::FromSnapshot, false };
     }
 }

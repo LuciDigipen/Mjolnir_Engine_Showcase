@@ -29,9 +29,13 @@ namespace mir
 
         PrefabCoordinator &Coordinator() { return mCoordinator; }
 
+        // after a file under the source directory was renamed
+        void Rescan();
+
     private:
         // a World resource, which outlives this module
         PrefabCoordinator &mCoordinator;
+        std::filesystem::path mSourceDir;
 
         // last: unregisters before anything above is destroyed
         Registration mSceneLoad;

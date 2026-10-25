@@ -14,6 +14,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -63,6 +64,10 @@ namespace mir
 
     PrefabComponentState InstanceComponentState(const PrefabRegistry &registry, const LoadedScene &scene,
         StableId root, const SceneNodeAddress &node, std::string_view component);
+
+    // Reads instance templates through @p documents, such as a batch's edited copies.
+    PrefabComponentState InstanceComponentState(const std::function<const PrefabDocument *(PrefabId)> &documents,
+        const LoadedScene &scene, StableId root, const SceneNodeAddress &node, std::string_view component);
 
     // Presence is the override: the value is recorded even when it equals the template value.
     bool SetInstanceFieldOverride(World &world, LoadedScene &scene, const PrefabRegistry &registry, StableId root,

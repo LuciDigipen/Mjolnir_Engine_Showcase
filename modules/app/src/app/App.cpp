@@ -130,7 +130,8 @@ namespace mir
           mAnimation(Context(), mRenderer.Renderer(), mAssets, mProject.mAssetIdRoot),
           mImGui(Context(), mWindow, mRenderer),
     #if MIR_WITH_EDITOR
-          mEditor(Context(), mImGui, mWindow, mRenderer, mScene, mAssets, mProject, mDesc.mEnableEditorLayout),
+          mEditor(Context(), mImGui, mWindow, mRenderer, mScene, mPrefab, mAssets, mProject,
+              mDesc.mEnableEditorLayout),
     #endif
           mCamera(Context()),
           mAudio(Context(), mProject.mSoundBankDir),
@@ -291,7 +292,7 @@ namespace mir
         if (IsPlaying(mWorld))
             return;
 
-        mScene.CaptureForPlay();
+        mScene.CaptureForPlay(&mPrefab.Coordinator().Resolver());
         RunStage(Stage::PlayBegin);
 
         SetPlayState(mWorld, PlayState::Running);
@@ -306,7 +307,7 @@ namespace mir
         // Play's entities fire their OnRemove as the restore destroys them; the GPU caches,
         // keyed by asset, stay for the restored scene
         RunStage(Stage::PlayEnd);
-        mScene.RestoreFromPlay();
+        mScene.RestoreFromPlay(&mPrefab.Coordinator().Resolver());
 
         SetEngineMode(mWorld, EngineMode::Edit);
         SetPlayState(mWorld, PlayState::Running);
@@ -475,8 +476,6 @@ namespace mir
             mScheduler.RunFrameSlot(FrameSlot::FrameBegin, frameContext);
 
             mImGui.RunUI();
-
-
 
             // advances in every mode; FixedUpdate systems check IsSimulating
             // themselves, as ScriptSystem does

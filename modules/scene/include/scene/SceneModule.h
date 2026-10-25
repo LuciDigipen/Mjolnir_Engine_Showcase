@@ -65,8 +65,8 @@ namespace mir
         bool Save(const ScenePrefabResolver *resolver);
 
         // Play keeps a snapshot; Stop destroys Play's entities and restores it
-        void CaptureForPlay();
-        void RestoreFromPlay();
+        void CaptureForPlay(const ScenePrefabResolver *resolver);
+        void RestoreFromPlay(ScenePrefabResolver *resolver);
 
     private:
         World &mWorld;

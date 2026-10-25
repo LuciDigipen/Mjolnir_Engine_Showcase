@@ -99,10 +99,10 @@ namespace mir
             return kNoIndex;
         }
 
-        // The top root node's Transform is scene placement; a nested occurrence root's is template content.
-        bool IsPlacementTransform(const CompiledPrefabNode &node, std::string_view type)
+        // Only the main scene's top root Transform is placement, never a preview's or a nested occurrence root's.
+        bool IsPlacementTransform(bool mainScene, const CompiledPrefabNode &node, std::string_view type)
         {
-            return !node.mParent.has_value() && type == "Transform";
+            return mainScene && !node.mParent.has_value() && type == "Transform";
         }
 
         std::optional<SceneNodeAddress> RelocationTargetAddress(const RelocationIndex &index,
@@ -271,7 +271,7 @@ namespace mir
 
         InstancePlan BuildPlan(World &world, LoadedScene &scene, StableId root, ScenePrefabInstance &instance,
             const std::shared_ptr<const CompiledPrefab> &oldPrefab,
-            const std::shared_ptr<const CompiledPrefab> &newPrefab, EntityChangeSet &beforeChanges)
+            const std::shared_ptr<const CompiledPrefab> &newPrefab, bool mainScene, EntityChangeSet &beforeChanges)
         {
             InstancePlan plan;
             plan.mRoot = root;
@@ -326,7 +326,7 @@ namespace mir
                     const std::size_t newComponent = FindComponent(newNode, ops.mType.name);
                     if (newComponent == kNoIndex)
                     {
-                        if (IsPlacementTransform(newNode, ops.mType.name))
+                        if (IsPlacementTransform(mainScene, newNode, ops.mType.name))
                             continue;
                         if (ops.Has(world, entity) && FindAddedComponent(instance, address, ops.mType.name) == nullptr)
                         {
@@ -344,7 +344,7 @@ namespace mir
                     const CompiledPrefabComponent &newComp = newNode.mComponents[newComponent];
                     if (!ops.Has(world, entity))
                     {
-                        if (IsPlacementTransform(newNode, ops.mType.name))
+                        if (IsPlacementTransform(mainScene, newNode, ops.mType.name))
                             continue;
                         plan.mComponentAdditions.push_back(ComponentAddition{ entity, newIndex, newComponent });
                         RecordAddedComponent(beforeChanges, entity, ops);
@@ -360,7 +360,7 @@ namespace mir
                     if (liveComponent == nullptr)
                         continue;
 
-                    if (IsPlacementTransform(newNode, ops.mType.name))
+                    if (IsPlacementTransform(mainScene, newNode, ops.mType.name))
                         continue;
 
                     for (std::size_t fieldIndex = 0; fieldIndex < ops.mFields.size(); ++fieldIndex)
@@ -426,7 +426,7 @@ namespace mir
                     if (ops.Has(world, entity))
                         continue;
 
-                    if (IsPlacementTransform(newNode, ops.mType.name))
+                    if (IsPlacementTransform(mainScene, newNode, ops.mType.name))
                         continue;
 
                     plan.mComponentAdditions.push_back(ComponentAddition{ entity, newIndex, newComponent });
@@ -697,6 +697,11 @@ namespace mir
 
         mCache.Remove(id);
         std::erase_if(mPublished, [id](const auto &entry) { return entry.second.mPrefab == id; });
+        for (auto &[previewId, preview] : mPreviews)
+        {
+            (void)previewId;
+            std::erase_if(preview.mPublished, [id](const auto &entry) { return entry.second.mPrefab == id; });
+        }
         return true;
     }
 
@@ -715,13 +720,56 @@ namespace mir
     void PrefabCoordinator::Bind(LoadedScene &scene)
     {
         mScene = &scene;
-        RecordPublished(scene);
+        RecordPublished(scene, mPublished);
+    }
+
+    bool PrefabCoordinator::BindPreview(PrefabId id, World &world, LoadedScene &scene)
+    {
+        if (id.IsNull() || mPreviews.contains(id))
+            return false;
+
+        PreviewBinding binding;
+        binding.mWorld = &world;
+        binding.mScene = &scene;
+
+        const std::shared_ptr<const CompiledPrefab> prefab = FindOrCompileTemplate(mRegistry, mCache, id);
+        if (!prefab)
+            return false;
+        RecordPublished(scene, binding.mPublished);
+
+        mPreviews.emplace(id, std::move(binding));
+        return true;
+    }
+
+    bool PrefabCoordinator::UnbindPreview(PrefabId id)
+    {
+        return mPreviews.erase(id) > 0;
+    }
+
+    World *PrefabCoordinator::PreviewWorld(PrefabId id) const
+    {
+        const auto it = mPreviews.find(id);
+        return it == mPreviews.end() ? nullptr : it->second.mWorld;
+    }
+
+    LoadedScene *PrefabCoordinator::PreviewScene(PrefabId id) const
+    {
+        const auto it = mPreviews.find(id);
+        return it == mPreviews.end() ? nullptr : it->second.mScene;
     }
 
     void PrefabCoordinator::Commit(World &world)
     {
+        // Before compiling, so an instance placed since the last Commit keeps
+        // the revision it was materialized from.
         if (mScene != nullptr)
-            ReconcilePublished(*mScene);
+            ReconcilePublished(*mScene, mPublished);
+        for (auto &[id, preview] : mPreviews)
+        {
+            (void)id;
+            if (preview.mWorld != nullptr && preview.mScene != nullptr)
+                ReconcilePublished(*preview.mScene, preview.mPublished);
+        }
 
         for (PrefabId id : mPendingDocuments)
         {
@@ -736,34 +784,47 @@ namespace mir
         }
         mPendingDocuments.clear();
 
-        if (mScene == nullptr)
-            return;
+        if (mScene != nullptr)
+            CommitScene(world, *mScene, mPublished, true);
 
+        for (auto &[id, preview] : mPreviews)
+        {
+            (void)id;
+            if (preview.mWorld == nullptr || preview.mScene == nullptr)
+                continue;
+            CommitScene(*preview.mWorld, *preview.mScene, preview.mPublished, false);
+        }
+    }
+
+    void PrefabCoordinator::CommitScene(World &world, LoadedScene &scene, PublishedTable &published,
+        bool mainScene)
+    {
         EntityChangeSet beforeChanges;
         std::vector<InstancePlan> plans;
 
-        for (auto &[root, instance] : mScene->mInstances)
+        for (auto &[root, instance] : scene.mInstances)
         {
             const std::optional<PrefabId> id = ParsePrefabId(instance.mPrefab);
             if (!id)
                 continue;
 
-            const auto published = mPublished.find(root);
-            if (published == mPublished.end() || !published->second.mTemplate)
+            const auto entry = published.find(root);
+            if (entry == published.end() || !entry->second.mTemplate)
                 continue;
 
             const std::shared_ptr<const CompiledPrefab> current = mCache.Find(*id);
-            if (!current || current->Revision() == published->second.mRevision)
+            if (!current || current->Revision() == entry->second.mRevision)
                 continue;
 
-            plans.push_back(BuildPlan(world, *mScene, root, instance, published->second.mTemplate, current,
+            plans.push_back(BuildPlan(world, scene, root, instance, entry->second.mTemplate, current, mainScene,
                 beforeChanges));
         }
 
         if (plans.empty())
             return;
 
-        mPublishedChanges = true;
+        if (mainScene)
+            mPublishedChanges = true;
 
         std::set<uint64_t> removedEntityKeys;
         for (const InstancePlan &plan : plans)
@@ -779,11 +840,13 @@ namespace mir
         for (const InstancePlan &plan : plans)
             removedIds.insert(plan.mRemovedMemberIds.begin(), plan.mRemovedMemberIds.end());
 
+        bool maintained = false;
         if (!removedIds.empty())
         {
             const std::vector<StableId> ids(removedIds.begin(), removedIds.end());
             std::vector<ClearedSceneEntityRef> cleared;
-            ClearSceneEntityRefsTo(world, *mScene, ids, &cleared);
+            ClearSceneEntityRefsTo(world, scene, ids, &cleared);
+            maintained = !cleared.empty();
             for (const ClearedSceneEntityRef &entry : cleared)
             {
                 if (const ComponentOps *ops = ComponentRegistry::Instance().Find(entry.mType.name))
@@ -798,9 +861,13 @@ namespace mir
         EntityChangeSet afterChanges = beforeChanges;
         for (InstancePlan &plan : plans)
         {
-            ApplyPlan(world, *mScene, plan, afterChanges);
-            mPublished[plan.mRoot] = PublishedInstance{ plan.mNew->Id(), plan.mNew->Revision(), plan.mNew };
+            maintained |= !plan.mRemovedMemberIds.empty() || !plan.mAddedNodes.empty();
+            ApplyPlan(world, scene, plan, afterChanges);
+            published[plan.mRoot] = PublishedInstance{ plan.mNew->Id(), plan.mNew->Revision(), plan.mNew };
         }
+
+        if (maintained && mainScene)
+            mSceneMaintenance = true;
 
         if (listeners != nullptr && HasChanges(afterChanges))
             listeners->NotifyAfterChange(world, afterChanges);
@@ -811,24 +878,21 @@ namespace mir
         return std::exchange(mPublishedChanges, false);
     }
 
+    bool PrefabCoordinator::ConsumeSceneMaintenance()
+    {
+        return std::exchange(mSceneMaintenance, false);
+    }
+
     bool PrefabCoordinator::HasPendingWork() const
     {
         if (!mPendingDocuments.empty())
             return true;
-        if (mScene == nullptr)
-            return false;
-
-        for (const auto &[root, instance] : mScene->mInstances)
+        if (SceneHasPendingWork(mScene, mPublished))
+            return true;
+        for (const auto &[id, preview] : mPreviews)
         {
-            const auto published = mPublished.find(root);
-            if (published == mPublished.end())
-                continue;
-
-            const std::optional<PrefabId> id = ParsePrefabId(instance.mPrefab);
-            if (!id)
-                continue;
-            const std::shared_ptr<const CompiledPrefab> current = mCache.Find(*id);
-            if (current && current->Revision() != published->second.mRevision)
+            (void)id;
+            if (SceneHasPendingWork(preview.mScene, preview.mPublished))
                 return true;
         }
         return false;
@@ -840,9 +904,9 @@ namespace mir
         return it == mPublished.end() ? 0 : it->second.mRevision;
     }
 
-    void PrefabCoordinator::RecordPublished(const LoadedScene &scene)
+    void PrefabCoordinator::RecordPublished(const LoadedScene &scene, PublishedTable &published) const
     {
-        mPublished.clear();
+        published.clear();
         for (const auto &[root, instance] : scene.mInstances)
         {
             const std::optional<PrefabId> id = ParsePrefabId(instance.mPrefab);
@@ -852,32 +916,53 @@ namespace mir
             const std::shared_ptr<const CompiledPrefab> prefab = mCache.Find(*id);
             if (!prefab)
                 continue;
-            mPublished.emplace(root, PublishedInstance{ *id, prefab->Revision(), prefab });
+            published.emplace(root, PublishedInstance{ *id, prefab->Revision(), prefab });
         }
     }
 
-    void PrefabCoordinator::ReconcilePublished(const LoadedScene &scene)
+    void PrefabCoordinator::ReconcilePublished(const LoadedScene &scene, PublishedTable &published)
     {
-        std::map<StableId, PublishedInstance> published;
+        PublishedTable reconciled;
         for (const auto &[root, instance] : scene.mInstances)
         {
             const std::optional<PrefabId> id = ParsePrefabId(instance.mPrefab);
             if (!id)
                 continue;
 
-            const auto existing = mPublished.find(root);
-            if (existing != mPublished.end() && existing->second.mPrefab == *id)
+            const auto existing = published.find(root);
+            if (existing != published.end() && existing->second.mPrefab == *id)
             {
-                published.emplace(root, existing->second);
+                reconciled.emplace(root, existing->second);
                 continue;
             }
 
             const std::shared_ptr<const CompiledPrefab> prefab = FindOrCompileTemplate(mRegistry, mCache, *id);
             if (!prefab)
                 continue;
-            published.emplace(root, PublishedInstance{ *id, prefab->Revision(), prefab });
+            reconciled.emplace(root, PublishedInstance{ *id, prefab->Revision(), prefab });
         }
-        mPublished = std::move(published);
+        published = std::move(reconciled);
+    }
+
+    bool PrefabCoordinator::SceneHasPendingWork(const LoadedScene *scene, const PublishedTable &published) const
+    {
+        if (scene == nullptr)
+            return false;
+
+        for (const auto &[root, instance] : scene->mInstances)
+        {
+            const auto entry = published.find(root);
+            if (entry == published.end())
+                continue;
+
+            const std::optional<PrefabId> id = ParsePrefabId(instance.mPrefab);
+            if (!id)
+                continue;
+            const std::shared_ptr<const CompiledPrefab> current = mCache.Find(*id);
+            if (current && current->Revision() != entry->second.mRevision)
+                return true;
+        }
+        return false;
     }
 
     void PrefabSystem::OnUpdate(SystemContext &context)

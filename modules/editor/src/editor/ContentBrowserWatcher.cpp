@@ -139,6 +139,7 @@ namespace mir
             DeleteEntry(action.mTargetPath);
             break;
         case ContentBrowserActionKind::OpenInIde:
+        case ContentBrowserActionKind::OpenPrefab:
             break;
         case ContentBrowserActionKind::None:
             break;

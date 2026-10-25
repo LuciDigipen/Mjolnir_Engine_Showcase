@@ -9,6 +9,7 @@ target_link_libraries(engine_prefab
 
 target_sources(engine_prefab PRIVATE
     src/prefab/CompiledPrefab.cpp
+    src/prefab/PrefabAuthoring.cpp
     src/prefab/PrefabCoordinator.cpp
     src/prefab/PrefabDocument.cpp
     src/prefab/PrefabFormat.cpp
@@ -17,6 +18,7 @@ target_sources(engine_prefab PRIVATE
     src/prefab/PrefabInstantiate.cpp
     src/prefab/PrefabOverrides.cpp
     src/prefab/PrefabRegistry.cpp
+    src/prefab/PrefabSave.cpp
     src/prefab/PrefabSceneInstance.cpp
 )
 

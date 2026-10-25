@@ -61,6 +61,8 @@ namespace mir::detail
         constexpr uint32_t kAxisY = 0x5BB035;
         constexpr uint32_t kAxisZ = 0x2F80ED;
         constexpr uint32_t kAxisW = 0x808080;
+
+        constexpr uint32_t kPrefab = 0x74B8F0;
     }
 
     ThemeColors ApplyMidnight(ImGuiStyle &style)
@@ -195,6 +197,7 @@ namespace mir::detail
             .category = kCategory,
             .categoryHovered = kCategoryHovered,
             .selectionHovered = kSelectHovered,
+            .prefab = kPrefab,
         };
     }
 }

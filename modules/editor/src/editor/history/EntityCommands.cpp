@@ -170,6 +170,24 @@ namespace mir
             Entity mSource;
         };
 
+        class CopyAsOrdinaryObjectCommand final : public MakeEntityCommandBase
+        {
+        public:
+            explicit CopyAsOrdinaryObjectCommand(Entity source) : mSource(source) {}
+
+        private:
+            Entity Make(CommandContext &context) override
+            {
+                if (!context.mWorld.IsAlive(mSource))
+                    return kNullEntity;
+
+                mName = std::format("Copy {} as Ordinary Object", NameOf(context.mWorld, mSource));
+                return context.mScene.CopyAsOrdinaryObject(mSource);
+            }
+
+            Entity mSource;
+        };
+
         class DeleteCommand final : public ICommand
         {
         public:
@@ -305,6 +323,12 @@ namespace mir
                 World &world = context.mWorld;
 
                 
+                if (!context.mScene.CanReparent(mTargets, mParentEntity))
+                {
+                    MIR_LOG_WARN("History: cannot reparent into or out of a prefab instance");
+                    return false;
+                }
+
                 if (!CanSetParentAll(world, mTargets, mParentEntity, mBeforeEntity))
                     return false;
 
@@ -380,6 +404,11 @@ namespace mir
         return std::make_unique<DuplicateCommand>(source);
     }
 
+    std::unique_ptr<ICommand> MakeCopyAsOrdinaryObjectCommand(Entity source)
+    {
+        return std::make_unique<CopyAsOrdinaryObjectCommand>(source);
+    }
+
     std::unique_ptr<ICommand> MakeReParentCommand(std::vector<Entity> targets, Entity parent, Entity before)
     {
         return std::make_unique<ReParentCommand>(std::move(targets), parent, before);
@@ -395,6 +424,8 @@ namespace mir
             return MakeDeleteCommand(action.mTarget);
         case EntityActionKind::Duplicate:
             return MakeDuplicateCommand(action.mTarget);
+        case EntityActionKind::CopyAsOrdinaryObject:
+            return MakeCopyAsOrdinaryObjectCommand(action.mTarget);
         case EntityActionKind::Reparent:
             return MakeReParentCommand(action.mTargets, action.mParent, action.mBefore);
         case EntityActionKind::None:

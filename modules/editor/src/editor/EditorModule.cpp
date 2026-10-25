@@ -27,6 +27,8 @@
 #include <gameui/GameUIArea.h>
 #include <imguiruntime/ImGuiModule.h>
 #include <input/InputMap.h>
+#include <prefab/PrefabCoordinator.h>
+#include <prefab/PrefabModule.h>
 #include <renderer/PostProcessingSettings.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/RenderSystem.h>
@@ -36,6 +38,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <stdexcept>
 #include <utility>
 
 namespace mir
@@ -63,6 +66,34 @@ namespace mir
             return menu;
         }
 
+        DocumentId DocumentOf(PrefabId id) { return DocumentId{ id.mHigh, id.mLow }; }
+
+        // Edit only: runs the open previews after PrefabSystem committed their documents, before Render
+        class PrefabPreviewSystem final : public ISystem
+        {
+        public:
+            PrefabPreviewSystem(PrefabWorkspace &workspace, PrefabCoordinator &prefabs, Editor &editor)
+                : mWorkspace(workspace), mPrefabs(prefabs), mEditor(editor)
+            {
+            }
+
+            void OnUpdate(SystemContext &context) override
+            {
+                if (!IsEditing(context.world))
+                    return;
+                mWorkspace.Update(context.dt, context.elapsed, context.frame);
+
+                // reference clearing and binding changes at the safe point happen outside History
+                if (mPrefabs.ConsumeSceneMaintenance() && !mEditor.IsSceneUnsaved())
+                    mEditor.SetSceneUnsaved(true);
+            }
+
+        private:
+            PrefabWorkspace &mWorkspace;
+            PrefabCoordinator &mPrefabs;
+            Editor &mEditor;
+        };
+
         // true while a scene entity plays the model
         bool IsModelReferenced(World &world, const std::string &assetIdRoot, AssetId model)
         {
@@ -83,10 +114,12 @@ namespace mir
     }
 
     EditorModule::EditorModule(ModuleContext context, ImGuiModule &imgui, WindowModule &window,
-        RendererModule &renderer, SceneModule &scene, AssetsModule &assets, const GameProject &project,
-        bool enableLayout)
-        : mWorld(context.world), mRenderer(renderer), mProject(project), mEnableLayout(enableLayout),
-          mProjectMenu(BuildProjectMenu()), mSceneOps(context.world, scene.Scene())
+        RendererModule &renderer, SceneModule &scene, PrefabModule &prefab, AssetsModule &assets,
+        const GameProject &project, bool enableLayout)
+        : mWorld(context.world), mRenderer(renderer), mScene(scene), mPrefab(prefab), mProject(project),
+          mEnableLayout(enableLayout), mProjectMenu(BuildProjectMenu()), mSceneOps(context.world, scene.Scene()),
+          mPrefabAuthoring(context.world, prefab.Coordinator()),
+          mPrefabWorkspace(prefab.Coordinator(), mPrefabAuthoring)
     {
         mImport.Initialize(mProject);
         mContentBrowser.Initialize(mProject);
@@ -104,6 +137,11 @@ namespace mir
                 "the log above names the step that failed",
                 "This is an engine bug. Report it with the log attached: " + LogFilePath().string());
         }
+        mEditor.SetAuthoringBackend(&mPrefabAuthoring);
+        mEditor.SetAuthoredEntities(&mPrefabAuthoring);
+        mPrefabWorkspace.BindResolveSystems(&renderer.Renderer(), &assets.Cache(), mProject.mAssetIdRoot);
+        context.scheduler.AddSystem<PrefabPreviewSystem>(SystemPhase::LateUpdate, mPrefabWorkspace,
+            prefab.Coordinator(), mEditor);
 
         mFrameBegin = context.scheduler.AddFrameSlot(FrameSlot::FrameBegin, [this](SystemContext &frame)
             {
@@ -114,22 +152,49 @@ namespace mir
                 mContentBrowser.Update();
             });
 
+        // after the renderer's: it freed every upload, the previews' too
+        mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &)
+            {
+                mPrefabWorkspace.ResetResolve();
+            });
+
         // every handle the undo history holds dies with the scene it came from
         mSceneLoad = context.scheduler.AddStage(Stage::SceneLoad, [this, &scene](SystemContext &)
             {
                 const SceneLoadResult &load = scene.LastLoad();
                 mEditor.ClearHistory();
+                if (load.cause != SceneLoadCause::FromSnapshot)
+                {
+                    // a load that rebinds prefab instances marks the scene dirty
+                    mEditor.SetSceneUnsaved(load.incomplete || scene.Scene().mDirty);
+                    return;
+                }
+
                 // Play's edits are gone with Play's World, so the mark goes back to what it was
-                mEditor.SetSceneUnsaved(load.cause == SceneLoadCause::FromSnapshot ? mUnsavedBeforePlay : load.incomplete);
+                mEditor.SetSceneUnsaved(mUnsavedBeforePlay);
+                if (mPrefabBeforePlay.has_value() && !mPrefabWorkspace.Open(*mPrefabBeforePlay))
+                    MIR_LOG_WARN("EditorModule: could not reopen the prefab document after Play");
+                mPrefabBeforePlay.reset();
             });
         mSceneSaved = context.scheduler.AddStage(Stage::SceneSaved, [this](SystemContext &) { mEditor.SetSceneUnsaved(false); });
         mPlayBegin = context.scheduler.AddStage(Stage::PlayBegin, [this](SystemContext &)
             {
                 mUnsavedBeforePlay = mEditor.IsSceneUnsaved();
                 mEditor.ClearHistory();
+                mPrefabBeforePlay = mPrefabWorkspace.ActiveDocument();
+                mPrefabWorkspace.ActivateScene();
             });
-        mReloadCommit = context.scheduler.AddStage(Stage::ReloadCommit, [this](SystemContext &)
+
+        // the previews' models stage from the candidate too
+        mReloadPrepare = context.scheduler.AddStage(Stage::ReloadPrepare, [this, &assets](SystemContext &)
             {
+                std::string error;
+                if (!mPrefabWorkspace.PrepareReload(assets.Candidate(), error))
+                    throw std::runtime_error("new preview model resources were rejected: " + error);
+            });
+        mReloadCommit = context.scheduler.AddStage(Stage::ReloadCommit, [this, &assets](SystemContext &)
+            {
+                mPrefabWorkspace.CommitReload(&assets.Cache());
                 mImport.MarkApplied();
                 MIR_LOG_INFO("Applied imported assets at an Edit frame boundary");
             });
@@ -139,9 +204,11 @@ namespace mir
                 if (window.Get().Width() == 0 || window.Get().Height() == 0)
                     return;
 
+                World *preview = ActivePreviewWorld();
                 const EditorActions actions = mEditor.DrawLayout(mEnableLayout, mWorld.Resource<InputMap>(),
                     mWorld.Resource<RenderSettings>(), mWorld.Resource<PostProcessingSettings>(),
-                    mWorld.Resource<EngineModeState>(), mProjectMenu, mProject.mDir, mWorld, mImport.View(),
+                    mWorld.Resource<EngineModeState>(), mProjectMenu, mProject.mDir,
+                    preview != nullptr ? *preview : mWorld, mWorld, MakeEditorDocuments(), mImport.View(),
                     mRenderer.Renderer(), mContentBrowser.View());
                 ApplyActions(actions);
                 FeedViewport();
@@ -151,9 +218,11 @@ namespace mir
     EditorModule::~EditorModule()
     {
         mReloadCommit.Reset();
+        mReloadPrepare.Reset();
         mPlayBegin.Reset();
         mSceneSaved.Reset();
         mSceneLoad.Reset();
+        mSceneUnload.Reset();
         mDrawer.Reset();
         mFrameBegin.Reset();
         mEditor.Shutdown();
@@ -173,8 +242,9 @@ namespace mir
         area.mRect = UIRect{ static_cast<float>(viewport.offset.x), static_cast<float>(viewport.offset.y),
                              static_cast<float>(viewport.extent.width), static_cast<float>(viewport.extent.height) };
 
-        // only Edit feeds the editor camera
-        if (IsEditing(mWorld) && mEnableLayout)
+        // only Edit feeds the editor camera, and only Edit shows a Prefab tab's preview
+        const bool editorView = IsEditing(mWorld) && mEnableLayout;
+        if (editorView)
         {
             mEditor.UpdateCamera(mFrameDt);
             const EditorCamera &camera = mEditor.SceneCamera();
@@ -184,6 +254,7 @@ namespace mir
         {
             rendering.SetViewportCamera(0, kNullEntity);
         }
+        rendering.SetSourceWorld(editorView ? ActivePreviewWorld() : nullptr);
     }
 
     void EditorModule::ApplyActions(const EditorActions &actions)
@@ -195,7 +266,7 @@ namespace mir
             requests.Push(Request::NewScene);
             break;
         case SceneMenuAction::Save:
-            requests.Push(Request::SaveScene);
+            SaveActiveDocument();
             break;
         case SceneMenuAction::Load:
             requests.Push(Request::LoadScene);
@@ -232,6 +303,11 @@ namespace mir
         {
             OpenInExternalIde(actions.mContentBrowser.mTargetPath);
         }
+        else if (actions.mContentBrowser.mKind == ContentBrowserActionKind::OpenPrefab)
+        {
+            if (IsEditing(mWorld))
+                OpenPrefabAsset(actions.mContentBrowser.mTargetPath);
+        }
         else
         {
             bool contentBrowserActionAccepted = true;
@@ -248,7 +324,11 @@ namespace mir
                 }
             }
             if (contentBrowserActionAccepted)
+            {
                 mContentBrowser.Handle(actions.mContentBrowser);
+                if (actions.mContentBrowser.mKind == ContentBrowserActionKind::Rename)
+                    mPrefab.Rescan();
+            }
         }
 
         if (!actions.mOpenProject.empty())
@@ -258,6 +338,109 @@ namespace mir
             CreateGameProject(actions.mCreateProjectName, actions.mCreateProjectRayTracing))
         {
             requests.PushOpenProject("games/" + actions.mCreateProjectName);
+        }
+
+        if (IsEditing(mWorld))
+        {
+            const DocumentId document = actions.mDocument.mDocument;
+            const PrefabId prefab{ document.mHigh, document.mLow };
+            switch (actions.mDocument.mKind)
+            {
+            case EditorDocumentActionKind::Activate:
+                if (document == kSceneDocument)
+                    mPrefabWorkspace.ActivateScene();
+                else
+                    mPrefabWorkspace.Open(prefab);
+                break;
+            case EditorDocumentActionKind::Close:
+                if (document != kSceneDocument)
+                    mPrefabWorkspace.Close(prefab);
+                break;
+            case EditorDocumentActionKind::None:
+                break;
+            }
+        }
+
+        if (actions.mSaveActiveDocument)
+            SaveActiveDocument();
+    }
+
+    void EditorModule::SaveActiveDocument()
+    {
+        if (IsPlaying(mWorld))
+        {
+            MIR_LOG_WARN("EditorModule::SaveActiveDocument: ignored while Play is running (Stop first)");
+            return;
+        }
+
+        if (const std::optional<PrefabId> active = mPrefabWorkspace.ActiveDocument())
+        {
+            mPrefabWorkspace.SavePrefab(*active, UnsavedPrefabs(), MarkSavedPrefabs());
+            return;
+        }
+
+        // the prefabs are written now and the scene at the top of the next frame; a prefab
+        // that fails to write leaves the scene unwritten
+        mPrefabWorkspace.SaveScene(mScene.Scene(), UnsavedPrefabs(), MarkSavedPrefabs(), [this]
+            {
+                mWorld.Resource<RequestQueue>().Push(Request::SaveScene);
+                return true;
+            });
+    }
+
+    PrefabWorkspace::PrefabUnsaved EditorModule::UnsavedPrefabs() const
+    {
+        return [this](PrefabId id)
+            {
+                return !mPrefab.Coordinator().Registry().PathOf(id).has_value() ||
+                    mEditor.IsDocumentUnsaved(DocumentOf(id));
+            };
+    }
+
+    PrefabWorkspace::PrefabSaved EditorModule::MarkSavedPrefabs()
+    {
+        return [this](PrefabId id) { mEditor.SetDocumentUnsaved(DocumentOf(id), false); };
+    }
+
+    World *EditorModule::ActivePreviewWorld()
+    {
+        if (!IsEditing(mWorld))
+            return nullptr;
+        const std::optional<PrefabId> active = mPrefabWorkspace.ActiveDocument();
+        return active.has_value() ? mPrefabWorkspace.PreviewWorld(*active) : nullptr;
+    }
+
+    EditorDocuments EditorModule::MakeEditorDocuments()
+    {
+        EditorDocuments documents;
+        documents.mTabs.push_back(
+            EditorDocumentTab{ kSceneDocument, mScene.Scene().mName, mEditor.IsSceneUnsaved(), false });
+        documents.mActive = kSceneDocument;
+        documents.mEnabled = IsEditing(mWorld);
+
+        const PrefabWorkspace::PrefabUnsaved unsaved = UnsavedPrefabs();
+        for (const PrefabId id : mPrefabWorkspace.OpenDocuments())
+            documents.mTabs.push_back(EditorDocumentTab{ DocumentOf(id), mPrefabWorkspace.LabelOf(id), unsaved(id), true });
+
+        if (const std::optional<PrefabId> active = mPrefabWorkspace.ActiveDocument())
+            documents.mActive = DocumentOf(*active);
+        return documents;
+    }
+
+    void EditorModule::OpenPrefabAsset(const std::string &relativePath)
+    {
+        const std::optional<PrefabId> id = mPrefabWorkspace.FindByPath(mProject.mRootDir / relativePath);
+        if (!id.has_value())
+        {
+            MIR_LOG_ERROR("Content browser: '{}' is not a registered Prefab", relativePath);
+            mContentBrowser.Reject(relativePath, "not a registered Prefab");
+            return;
+        }
+
+        if (!mPrefabWorkspace.Open(*id))
+        {
+            MIR_LOG_ERROR("Content browser: could not open '{}'", relativePath);
+            mContentBrowser.Reject(relativePath, "could not open this Prefab");
         }
     }
 

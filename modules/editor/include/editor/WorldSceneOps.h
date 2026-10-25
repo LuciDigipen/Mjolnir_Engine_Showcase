@@ -23,9 +23,11 @@ namespace mir
 
         Entity CreateEntity() override;
         Entity Duplicate(Entity source) override;
+        Entity CopyAsOrdinaryObject(Entity source) override;
         CapturedSubtree Capture(Entity root) override;
         std::vector<Entity> Restore(const CapturedSubtree &subtree, Entity parent, Entity before) override;
         bool Destroy(Entity root) override;
+        bool CanReparent(std::span<const Entity> entities, Entity parent) override;
 
     private:
         World &mWorld;

@@ -1034,3 +1034,64 @@ TEST_CASE("Instance bindings take precedence over stale member entity files", "[
         CHECK(loaded.mInstances.size() == 1);
     }
 }
+
+TEST_CASE("A captured instance record restores under its root", "[scene][prefab]")
+{
+    LoadedScene scene = NewScene("test");
+
+    ScenePrefabInstance record;
+    record.mPrefab = kPrefabUuid;
+    record.mRoot = 7;
+    record.mParent = 3;
+    record.mSiblingIndex = 2;
+    record.mBindings[SceneNodeAddress{ 1 }] = 7;
+    record.mBindings[SceneNodeAddress{ 2 }] = 9;
+    scene.mInstances[7] = record;
+
+    const std::string text = mir::CaptureInstanceRecord(scene, 7);
+    REQUIRE_FALSE(text.empty());
+
+    scene.mInstances.clear();
+    scene.mDirty = false;
+    REQUIRE(mir::RestoreInstanceRecord(scene, text));
+
+    REQUIRE(scene.mInstances.contains(7));
+    CHECK(scene.mInstances.at(7).mPrefab == kPrefabUuid);
+    CHECK(scene.mInstances.at(7).mParent == 3);
+    CHECK(scene.mInstances.at(7).mSiblingIndex == 2);
+    CHECK(scene.mInstances.at(7).mBindings.at(SceneNodeAddress{ 2 }) == 9);
+    CHECK(scene.mDirty);
+
+    CHECK_FALSE(mir::RestoreInstanceRecord(scene, "not json"));
+}
+
+TEST_CASE("Capturing an ordinary parent takes the instance records below it", "[scene][prefab]")
+{
+    LoadedScene scene = NewScene("test");
+
+    ScenePrefabInstance record;
+    record.mPrefab = kPrefabUuid;
+    record.mRoot = 7;
+    record.mParent = 5;
+    record.mBindings[SceneNodeAddress{ 1 }] = 7;
+    record.mBindings[SceneNodeAddress{ 2 }] = 9;
+    mir::SceneInstancePatch patch;
+    patch.mTarget = SceneNodeAddress{ 1 };
+    patch.mFields.push_back(mir::SceneFieldPatch{ "Comp", "field", json(5) });
+    record.mPatches.push_back(patch);
+    scene.mInstances[7] = record;
+
+    const std::vector<StableId> members{ 5, 7, 9 };
+    const std::vector<std::string> records = mir::CaptureInstanceRecords(scene, members);
+    REQUIRE(records.size() == 1);
+
+    scene.mInstances.clear();
+    REQUIRE(mir::RestoreInstanceRecords(scene, records));
+
+    REQUIRE(scene.mInstances.contains(7));
+    CHECK(scene.mInstances.at(7).mParent == 5);
+    CHECK(scene.mInstances.at(7).mBindings.at(SceneNodeAddress{ 2 }) == 9);
+    REQUIRE(scene.mInstances.at(7).mPatches.size() == 1);
+    REQUIRE(scene.mInstances.at(7).mPatches.front().mFields.size() == 1);
+    CHECK(scene.mInstances.at(7).mPatches.front().mFields.front().mValue == 5);
+}

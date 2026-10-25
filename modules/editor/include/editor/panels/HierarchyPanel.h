@@ -18,12 +18,15 @@
 
 namespace mir
 {
+    class IAuthoredEntities;
+
     enum class EntityActionKind
     {
         None,
         Create,
         Delete,
         Duplicate,
+        CopyAsOrdinaryObject,
         Reparent,
     };
 
@@ -42,7 +45,8 @@ namespace mir
     class HierarchyPanel
     {
     public:
-        EntityAction Draw(World &world);
+        // @p authoredDocument draws an authored document: only the actions it offers.
+        EntityAction Draw(World &world, IAuthoredEntities *authored = nullptr, bool authoredDocument = false);
 
     private:
         static constexpr double kFilterRefreshSeconds = 0.25;

@@ -135,6 +135,23 @@ namespace mir
         return it->second;
     }
 
+    std::optional<PrefabId> PrefabRegistry::IdAtPath(const std::filesystem::path &path) const
+    {
+        const std::filesystem::path wanted = path.lexically_normal();
+        for (const auto &[id, candidate] : mDiskPaths)
+        {
+            if (candidate.lexically_normal() == wanted)
+                return id;
+        }
+        return std::nullopt;
+    }
+
+    void PrefabRegistry::MarkSaved(const PrefabDocument &doc, const std::filesystem::path &path)
+    {
+        mDisk[doc.mId] = doc;
+        mDiskPaths[doc.mId] = path;
+    }
+
     std::optional<PrefabDocument> PrefabRegistry::CopyAsNew(const PrefabDocument &doc) const
     {
         if (HasPrefabErrors(ValidatePrefab(doc)))

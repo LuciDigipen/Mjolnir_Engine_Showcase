@@ -48,6 +48,8 @@ namespace mir::detail
         constexpr uint32_t kAxisX = 0xD9534F;
         constexpr uint32_t kAxisY = 0x6CB33E;
         constexpr uint32_t kAxisZ = 0x4C8DFF;
+
+        constexpr uint32_t kPrefab = 0x8AB8FF;
     }
 
     ThemeColors ApplySlate(ImGuiStyle &style)
@@ -127,6 +129,7 @@ namespace mir::detail
             .category = kHeader,
             .categoryHovered = kHeaderHovered,
             .selectionHovered = kHeaderHovered,
+            .prefab = kPrefab,
         };
     }
 }

@@ -104,6 +104,21 @@ namespace mir
         mResolved.clear();
     }
 
+    void MeshResolveSystem::ReleaseResources()
+    {
+        std::vector<MeshHandle> meshes;
+        std::vector<MaterialHandle> materials;
+        for (const auto &[name, cached] : mMeshes)
+            if (!cached.mMesh.IsNull())
+                meshes.push_back(cached.mMesh);
+        for (const auto &[name, material] : mMaterials)
+            if (!material.IsNull())
+                materials.push_back(material);
+        if (!meshes.empty() || !materials.empty())
+            mRenderer.ReleaseModelResources(meshes, materials, {});
+        Reset();
+    }
+
     void MeshResolveSystem::CommitReload(AssetCache *assets)
     {
         std::vector<MeshHandle> meshes;

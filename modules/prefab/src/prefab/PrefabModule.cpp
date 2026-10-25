@@ -19,11 +19,9 @@
 namespace mir
 {
     PrefabModule::PrefabModule(ModuleContext context, SceneModule &scene, const std::filesystem::path &sourceDir)
-        : mCoordinator(context.world.EmplaceResource<PrefabCoordinator>())
+        : mCoordinator(context.world.EmplaceResource<PrefabCoordinator>()), mSourceDir(sourceDir)
     {
-        std::error_code ec;
-        if (std::filesystem::is_directory(sourceDir, ec))
-            mCoordinator.ScanSources(sourceDir);
+        Rescan();
         mCoordinator.Bind(scene.Scene());
 
         // the scene's value changed; instances map to its stable ids
@@ -34,5 +32,12 @@ namespace mir
 
         // first in PreUpdate: it commits at the Edit safe point, before anything reads the scene
         context.scheduler.AddSystem<PrefabSystem>(SystemPhase::PreUpdate);
+    }
+
+    void PrefabModule::Rescan()
+    {
+        std::error_code ec;
+        if (std::filesystem::is_directory(mSourceDir, ec))
+            mCoordinator.ScanSources(mSourceDir);
     }
 }

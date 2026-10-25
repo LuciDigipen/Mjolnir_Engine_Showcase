@@ -328,6 +328,13 @@ namespace mir
     PrefabComponentState InstanceComponentState(const PrefabRegistry &registry, const LoadedScene &scene,
         StableId root, const SceneNodeAddress &node, std::string_view component)
     {
+        return InstanceComponentState([&registry](PrefabId id) -> const PrefabDocument * { return registry.Find(id); },
+            scene, root, node, component);
+    }
+
+    PrefabComponentState InstanceComponentState(const std::function<const PrefabDocument *(PrefabId)> &documents,
+        const LoadedScene &scene, StableId root, const SceneNodeAddress &node, std::string_view component)
+    {
         const auto instanceIt = scene.mInstances.find(root);
         if (instanceIt == scene.mInstances.end())
             return PrefabComponentState::Absent;
@@ -338,7 +345,8 @@ namespace mir
         if (HasRemovedComponent(instance, node, component))
             return PrefabComponentState::Removed;
 
-        const PrefabDocument *document = FindTemplate(registry, instance);
+        const std::optional<PrefabId> id = ParsePrefabId(instance.mPrefab);
+        const PrefabDocument *document = id ? documents(*id) : nullptr;
         if (document == nullptr)
             return PrefabComponentState::Absent;
 
@@ -542,14 +550,9 @@ namespace mir
                 std::to_string(root));
             return false;
         }
-        if (ops->Has(world, entity))
-        {
-            AddError(diagnostics, "node \"" + AddressText(node) + "\" already has component \"" +
-                std::string(component) + "\"");
-            return false;
-        }
-
-        ops->AddDefault(world, entity);
+        // The pre-batch template may still supply it until the batch's documents commit.
+        if (!ops->Has(world, entity))
+            ops->AddDefault(world, entity);
         GetOrAddInstancePatch(instance, node).mAddedComponents.push_back(SceneComponentRecord{
             std::string(component), json::object() });
         scene.mDirty = true;
@@ -613,14 +616,10 @@ namespace mir
                 AddressText(node) + "\"");
             return false;
         }
-        if (!ops->Has(world, entity))
-        {
-            AddError(diagnostics, "node \"" + AddressText(node) + "\" does not have component \"" +
-                std::string(component) + "\"");
-            return false;
-        }
+        // The pre-batch template may already have removed it until the batch's documents commit.
+        if (ops->Has(world, entity))
+            ops->Remove(world, entity);
 
-        ops->Remove(world, entity);
         SceneInstancePatch &patch = GetOrAddInstancePatch(instance, node);
         patch.mRemovedComponents.push_back(std::string(component));
         std::erase_if(patch.mFields, [&](const SceneFieldPatch &fieldPatch)

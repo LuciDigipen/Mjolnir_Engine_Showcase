@@ -1,10 +1,13 @@
 engine_add_module_tests(prefab
+    PrefabAuthoring.tests.cpp
     PrefabCompile.tests.cpp
     PrefabCoordinator.tests.cpp
     PrefabFormat.tests.cpp
     PrefabId.tests.cpp
     PrefabInstantiate.tests.cpp
     PrefabOverrides.tests.cpp
+    PrefabPreview.tests.cpp
     PrefabRegistry.tests.cpp
+    PrefabSave.tests.cpp
     PrefabScene.tests.cpp
 )
