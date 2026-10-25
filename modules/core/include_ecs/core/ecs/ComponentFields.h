@@ -16,6 +16,8 @@
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -197,6 +199,25 @@ namespace mir
                 return false; // accessor-backed with no setter
 
             std::memcpy(static_cast<std::byte *>(component) + mOffset, in, FieldSize(mKind));
+            return true;
+        }
+
+        // Clamps a clamped Float in place. False for an enum index with no name, or a NaN.
+        bool Constrain(void *value) const
+        {
+            if (mWidget == FieldWidget::Enum && mKind == FieldKind::Int && !mEnumNames.empty())
+            {
+                const int32_t index = *static_cast<const int32_t *>(value);
+                return index >= 0 && static_cast<std::size_t>(index) < mEnumNames.size();
+            }
+
+            if (mClamped && mKind == FieldKind::Float)
+            {
+                float &number = *static_cast<float *>(value);
+                if (std::isnan(number))
+                    return false;
+                number = std::clamp(number, mMin, mMax);
+            }
             return true;
         }
     };

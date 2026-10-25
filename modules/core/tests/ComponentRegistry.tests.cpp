@@ -20,6 +20,7 @@
 
 #include <array>
 #include <cstring>
+#include <limits>
 #include <string_view>
 
 namespace
@@ -200,6 +201,36 @@ TEST_CASE("A field with no setter refuses the write")
     CHECK_FALSE(position->Write(&value, &attempt));
     CHECK(value.Linear() == glm::mat3{1.0f});
     CHECK(value.Position().Meters() == mir::WorldVec3(0.0));
+}
+
+TEST_CASE("Constrain clamps a clamped float and refuses an unnamed enum index or a NaN")
+{
+    static constexpr std::string_view kNames[] = {"First", "Second"};
+    const FieldDesc kind{.mName = "kind", .mKind = FieldKind::Int, .mWidget = mir::FieldWidget::Enum,
+                         .mEnumNames = kNames};
+    const FieldDesc radius{.mName = "radius", .mKind = FieldKind::Float, .mClamped = true, .mMin = 0.5f,
+                           .mMax = 2.0f};
+    const FieldDesc speed{.mName = "speed", .mKind = FieldKind::Float};
+
+    int32_t index = 1;
+    CHECK(kind.Constrain(&index));
+    index = 2;
+    CHECK_FALSE(kind.Constrain(&index));
+    index = -1;
+    CHECK_FALSE(kind.Constrain(&index));
+
+    float value = -3.0f;
+    CHECK(radius.Constrain(&value));
+    CHECK(value == 0.5f);
+    value = 9.0f;
+    CHECK(radius.Constrain(&value));
+    CHECK(value == 2.0f);
+    value = std::numeric_limits<float>::quiet_NaN();
+    CHECK_FALSE(radius.Constrain(&value));
+
+    value = -3.0f;
+    CHECK(speed.Constrain(&value));
+    CHECK(value == -3.0f);
 }
 
 TEST_CASE("A registered tag reports size 0 and works through the erased ops")

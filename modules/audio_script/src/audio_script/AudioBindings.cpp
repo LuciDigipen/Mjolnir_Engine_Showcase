@@ -101,6 +101,12 @@ namespace mir
             return true;
         }
 
+        bool WorldIsPlaying(World &world, Entity entity)
+        {
+            const AudioEmitter *emitter = ResolveEmitter(world, entity);
+            return emitter != nullptr && audio::IsVoicePlaying(emitter->mPlayingId);
+        }
+
         bool WorldSetRtpc(World &world, Entity entity, const sol::object &rtpcName,
                           const sol::object &value)
         {
@@ -148,6 +154,7 @@ namespace mir
         sol::table worldType = lua["World"];
         worldType.set_function("post_event", &WorldPostEvent);
         worldType.set_function("stop_event", &WorldStopEvent);
+        worldType.set_function("is_playing", &WorldIsPlaying);
         worldType.set_function("set_rtpc", &WorldSetRtpc);
         worldType.set_function("set_switch", &WorldSetSwitch);
         worldType.set_function("set_state", &WorldSetState);
