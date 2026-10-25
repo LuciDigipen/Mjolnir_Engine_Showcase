@@ -14,6 +14,7 @@
 #include "EntityPool.h"
 #include "HierarchyMutator.h"
 #include "QueryTerms.h"
+#include "Registration.h"
 #include "Signature.h"
 #include "core/log/Assert.h"
 
@@ -127,12 +128,13 @@ namespace mir
             return entity;
         }
 
+        // The hooks fire until the token dies; its owner keeps it as a last-declared member
         template <typename T>
-        void SetComponentHooks(ComponentHooks hooks)
+        [[nodiscard]] Registration SetComponentHooks(ComponentHooks hooks)
         {
             MIR_ASSERT_COMPONENT(T);
             if (!CanChangeHooks("SetComponentHooks", TrimTypeName<T>()))
-                return;
+                return Registration{};
 
             const std::size_t bit = ComponentBit<T>();
 
@@ -144,17 +146,7 @@ namespace mir
                 "World::SetComponentHooks: {} already has hooks", TrimTypeName<T>());
             slot.hooks = std::move(hooks);
             slot.name = TypeIdOf<T>().name;
-        }
-
-        template <typename T>
-        void ClearComponentHooks()
-        {
-            if (!CanChangeHooks("ClearComponentHooks", TrimTypeName<T>()))
-                return;
-
-            const std::size_t bit = ComponentBit<T>();
-            if (bit < mComponentHooks.size())
-                mComponentHooks[bit].hooks = ComponentHooks{};
+            return Registration(mAlive, [this] { ClearComponentHooks<T>(); });
         }
 
         // reset record, remove from both storages, remove from pool
@@ -609,6 +601,18 @@ namespace mir
             return false;
         }
 
+        // only through the token SetComponentHooks returned
+        template <typename T>
+        void ClearComponentHooks()
+        {
+            if (!CanChangeHooks("ClearComponentHooks", TrimTypeName<T>()))
+                return;
+
+            const std::size_t bit = ComponentBit<T>();
+            if (bit < mComponentHooks.size())
+                mComponentHooks[bit].hooks = ComponentHooks{};
+        }
+
         // clears the destroying mark on every exit, a throwing hook included.
         // by index, since hooks may create entities and grow mRecords
         struct DestroyingMark
@@ -771,6 +775,10 @@ namespace mir
         };
         std::vector<HookSlot> mComponentHooks; // by component bit
         mir::HierarchyIndex mHierarchy;
+
+        // hook tokens hold it weakly, to assert the World outlives them. Before
+        // mResources, so a resource holding a token still finds the World alive
+        std::shared_ptr<const int> mAlive = std::make_shared<const int>(0);
 
         // intentionally declared last as it must be destroyed first.
         std::unordered_map<uint32_t, std::unique_ptr<detail::IResource>> mResources; // by detail::ResourceIdOf

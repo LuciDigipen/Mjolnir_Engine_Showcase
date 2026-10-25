@@ -15,6 +15,7 @@
 #include <physics/components/RigidBody.h>
 
 #include <core/ecs/Query.h>
+#include <core/ecs/Registration.h>
 #include <core/ecs/System.h>
 #include <core/ecs/components/Transform.h>
 
@@ -37,5 +38,6 @@ namespace mir
         static void OnRigidBodyRemoved(World &world, Entity entity);
 
         Query<Transform, RigidBody> *mQuery = nullptr;
+        Registration mHooks;
     };
 }

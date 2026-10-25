@@ -179,7 +179,7 @@ TEST_CASE("A spawn is not visible to systems in its own phase", "[ecs][system]")
     REQUIRE(counter.seen == std::vector<std::size_t>{0, 1});
 }
 
-TEST_CASE("A system clears its component hooks in OnStop, so Reset leaves none behind", "[ecs][system]")
+TEST_CASE("A system drops its hook token in OnStop, so Reset leaves no hook behind", "[ecs][system]")
 {
     World world;
     CommandBuffer commands;
@@ -196,13 +196,14 @@ TEST_CASE("A system clears its component hooks in OnStop, so Reset leaves none b
         explicit HookSystem(int &calls) : mCalls(calls) {}
         void OnStart(SystemContext &context) override
         {
-            context.world.SetComponentHooks<Hooked>({ .onRemove = [this](World &, Entity) { ++mCalls; } });
+            mHooks = context.world.SetComponentHooks<Hooked>({ .onRemove = [this](World &, Entity) { ++mCalls; } });
         }
         void OnUpdate(SystemContext &) override {}
-        void OnStop(SystemContext &context) override { context.world.ClearComponentHooks<Hooked>(); }
+        void OnStop(SystemContext &) override { mHooks.Reset(); }
 
     private:
         int &mCalls;
+        Registration mHooks;
     };
 
     {

@@ -39,7 +39,7 @@ namespace mir
     void ScriptSystem::OnStart(SystemContext &context)
     {
         mQuery = &context.world.GetOrCreateQuery<ScriptRef>();
-        context.world.SetComponentHooks<ScriptRef>({ .onRemove = [this](World &world, Entity entity) { ReleaseScript(world, entity); } });
+        mHooks = context.world.SetComponentHooks<ScriptRef>({ .onRemove = [this](World &world, Entity entity) { ReleaseScript(world, entity); } });
         if (EntityChangeListeners *listeners = context.world.TryResource<EntityChangeListeners>())
             listeners->AddBeforeRemove(&ScriptSystem::OnBeforeRemove, this);
     }
@@ -92,7 +92,7 @@ namespace mir
     void ScriptSystem::OnStop(SystemContext &context)
     {
         StopAllScripts(context);
-        context.world.ClearComponentHooks<ScriptRef>();
+        mHooks.Reset();
         if (EntityChangeListeners *listeners = context.world.TryResource<EntityChangeListeners>())
             listeners->RemoveBeforeRemove(&ScriptSystem::OnBeforeRemove, this);
     }

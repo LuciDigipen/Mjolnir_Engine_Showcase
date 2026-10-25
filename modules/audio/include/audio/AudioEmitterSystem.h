@@ -14,6 +14,7 @@
 #include <audio/components/AudioEmitter.h>
 
 #include <core/ecs/Query.h>
+#include <core/ecs/Registration.h>
 #include <core/ecs/System.h>
 #include <core/ecs/components/WorldTransform.h>
 
@@ -30,5 +31,6 @@ namespace mir
         static void OnEmitterRemoved(World &world, Entity entity);
 
         Query<const WorldTransform, AudioEmitter> *mQuery = nullptr;
+        Registration mHooks;
     };
 }
