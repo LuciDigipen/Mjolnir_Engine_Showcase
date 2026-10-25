@@ -78,7 +78,9 @@ itself is handling doesn't also move it.
 scene ops. Its ImGui drawer draws the layout, turns the frame's actions into
 requests (scene commands, a game to open) or carries them out (an import, a
 content browser action, opening a file in the IDE), then feeds viewport 0's rect
-and, in Edit, the editor camera to `RenderSystem`. Its `FrameBegin` work polls
+and, in Edit, the editor camera to `RenderSystem`, and the scene viewport to
+the `GameUIArea` resource for the game UI drawn later that frame. The drawer is
+in the `Tools` group, which runs before the game UI's. Its `FrameBegin` work polls
 the import and the content browser and asks for the swap once a cook finishes.
 Its stage functions keep the history and the unsaved mark: `SceneLoad` clears
 the history and sets the mark from `SceneModule::LastLoad()`, `SceneSaved`

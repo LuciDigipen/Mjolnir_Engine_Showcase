@@ -22,13 +22,12 @@ it belongs.
 ```
 mDesc, mProject          the checks before anything is built: game directories, project_settings.json
 mSplash                  shown until main closes it
-mGameUI, mUIDemo, mGameShell   before ImGui, so their UI textures are destroyed after it shuts down
 mCommands, mWorld, mScheduler
 CoreModule, AssetsModule, SceneModule, PrefabModule
+GameUIModule, GameShellModule    before ImGui, whose shutdown frees their textures' GPU side
 WindowModule, RendererModule, ImGuiModule, EditorModule (editor builds)
 InputModule, CameraModule, AnimationModule, AudioModule, PhysicsModule, TerrainModule
-ScriptModule, the five script bridges, TerrainRuntimeModule
-mUiDrawer                last: the game UI's ImGui drawer
+ScriptModule, the five script bridges, TerrainRuntimeModule, GameUIImGuiModule
 ```
 
 Between two module members a `SplashStep` sets the splash's status line, so the
@@ -43,7 +42,7 @@ while not ShouldClose:
     dt = min(elapsed, mMaxDeltaSeconds)
     ApplyRequests                      last frame's transitions, and a game to switch to
     RunFrameSlot(FrameBegin)           script reload poll, terrain installs and Edit refresh, import and content browser polls
-    ImGuiModule::RunUI                 the editor's drawer, then the game UI's
+    ImGuiModule::RunUI                 Tools drawers (the editor), then Game drawers (the game UI)
     fixedSteps = FixedTimestep::Advance(dt)  every mode; FixedUpdate systems check IsSimulating
     SystemScheduler::Update            PreUpdate, Update, FixedUpdate x fixedSteps, PostUpdate, Propagate, LateUpdate, Render
     if ToggleFullscreen just pressed: ToggleFullscreen    F11; the swapchain follows next frame
@@ -233,10 +232,6 @@ corrupt the current scene.
 scenes save and load from the editor's File menu, Project > Open Project restarts
 into another game, and the scene renders. Play/Pause/Stop work end to end.
 
-The game UI and the game shell are still drawn by `App`'s own ImGui drawer, not
-by a module: `gameui` draws through ImGui's background list, so it has to run
-inside the ImGui frame, and where its drawer belongs is not settled.
-
 No unit tests. `App` is composition, and its behaviour is a window opening, a
 device initialising and a loop running. The parts worth asserting — phase
 ordering, stages, command buffer flushing, member unwind, asset lookup, scene
@@ -250,16 +245,13 @@ through `mSwitchProjectTo`. All of them fail on a crash or a logged error.
 
 1. **A headless mode**, which needs the renderer abstraction. It is also the
    prerequisite for any test in this module.
-2. **A gameui module.** The game UI drawer and the game shell belong to a module
-   once it is settled how `gameui`, which draws inside the ImGui frame, registers
-   without linking `imguiruntime`.
-3. **No frame limiter**, and no window-event handling beyond the renderer
+2. **No frame limiter**, and no window-event handling beyond the renderer
    re-querying size.
-4. One `App` per process is assumed everywhere, and nothing enforces it.
-5. **A second viewport for Play+Paused**, showing the editor camera alongside
+3. One `App` per process is assumed everywhere, and nothing enforces it.
+4. **A second viewport for Play+Paused**, showing the editor camera alongside
    the game view. `RenderSystem::AddViewport` exists (see
    [renderer.md](renderer.md)); nothing calls it yet.
-6. **No World diffing for Play/Stop** — `PlaySnapshot` destroys and reloads
+5. **No World diffing for Play/Stop** — `PlaySnapshot` destroys and reloads
    every entity rather than diffing what changed, which is simple but not
    cheap for a large scene.
 

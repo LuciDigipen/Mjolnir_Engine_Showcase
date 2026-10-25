@@ -5,32 +5,25 @@ and clipping, in one area of the window, plus the widget identity, pointer
 state and focus that widgets are built on, the core widgets, in grey box or in
 art the style supplies, and helpers that lay them out inside a safe area. The
 same code is a HUD inside the editor's scene viewport and fullscreen UI in a
-game build. It owns no ImGui lifetime, opens no window, reads no file and keeps
-no layout between frames.
+game build. It names no graphics API, opens no window, reads no file and keeps
+no layout between frames: what puts its draw list on screen is a backend bridge.
 
-`mir::gameui` · depends `mir::assets`, `mir::input`, `mir::core` (public); `imgui` (private) · API `modules/gameui/include/gameui/` · maintainer Quy Dong Ta · reviewed 2026-10-02
+`mir::gameui` · depends `mir::assets`, `mir::input`, `mir::core` (public) · API `modules/gameui/include/gameui/` · maintainer Quy Dong Ta · reviewed 2026-10-24
 
 ## Model
 
-A `UIContext` brackets one frame of game UI inside `imguiruntime`'s frame. Its
-`UIDrawList` records commands in coordinates local to the area given to
-`BeginFrame`, and `EndFrame` replays them into ImGui's background draw list,
-offset to that area and clipped to it.
+A `UIContext` brackets one frame of game UI. Its `UIDrawList` records commands
+in coordinates local to the area given to `BeginFrame`, and `EndFrame` hands
+them to the installed `IUIBackend`, which draws them offset to that area and
+clipped to it. Without a backend a frame runs and draws nothing, which is how
+the tests run.
 
-```cpp
-// App::Run, after Editor::DrawLayout has set this frame's scene viewport
-const UIRect uiArea = mDesc.mEnableEditorLayout
-    ? ToUIRect(mEditor.SceneViewportRect())
-    : UIRect{0.0f, 0.0f, static_cast<float>(mWindow->Width()), static_cast<float>(mWindow->Height())};
-mGameUI.BeginFrame(uiArea, mWorld.Resource<InputState>(), mWorld.Resource<InputMap>(),
-                   ToUIPointer(mWindow->RawInput()));
-GameShellAction shellAction = GameShellAction::None;
-if (mDesc.mUIDemo)
-    mUIDemo.Draw(mGameUI);
-else
-    shellAction = mGameShell.Draw(mGameUI, IsPlaying(mWorld), dt);
-mGameUI.EndFrame();
-```
+`GameUIModule` owns the `UIContext` and the screens drawn into it, each a
+function registered with `AddScreen`. `RunFrame(area, pointer)` is one frame:
+`BeginFrame`, every screen in registration order, `EndFrame`. A backend bridge
+calls it; today that is `gameui_imgui`, which runs it in the ImGui frame's
+`Game` drawer group. The area comes from the `GameUIArea` World resource, which
+the editor's drawer writes with its scene viewport, or is the whole window.
 
 A widget is a rect plus a `UIId`. The id is a hash of a name and an optional
 index, the trick ImGui uses, so a widget in a loop keeps its identity
@@ -168,14 +161,10 @@ from `mShowFocus`, so the ring follows the active device. Colours, sprites,
 rounding and padding are in `UIStyle`. Text is left-aligned after the padding and centred by
 `mTextHeight`, since nothing measures it yet.
 
-The background list is why one code path serves both builds. ImGui renders it
-before every window, and `VulkanRenderer` draws ImGui after the 3D views, so it
-lands over the scene and under Hierarchy, Inspector and Output. The dockspace
-passes its central node through, so nothing covers the viewport. No renderer
-change was needed.
-
-Recording, not drawing immediately, keeps ImGui in one `.cpp` and lets the
-clip stack be tested without a display.
+The ImGui backend draws into ImGui's background list, which is why one code
+path serves both builds; see [gameui_imgui.md](gameui_imgui.md). Recording, not
+drawing immediately, keeps the graphics API out of this module and lets the clip
+stack be tested without a display.
 
 ### Art
 
@@ -211,14 +200,10 @@ references is left to that model's import. `UITextures::Load(AssetCache&,
 AssetId)` reads the payload through the normal asset path, and loading an id
 twice returns the same texture.
 
-`UITextures`, which `UIContext` owns, hands each texture to ImGui 1.92's
-dynamic texture path. The pixels are copied into an `ImTextureData` in
-`WantCreate`, which is registered as a user texture. ImGui lists it to the
-renderer backend every frame. `ImGui_ImplVulkan` creates the image, uploads
-it and makes its descriptor on the first frame it renders, and frees all of it
-in its own shutdown. `AddImage` takes the `ImTextureData` itself, so no
-descriptor is made by hand and the renderer has no part in it, which is why
-gameui does not link `renderer`.
+`UITextures`, which `UIContext` owns, keeps each texture's pixels and has the
+installed backend make its own copy, when the texture is added or when a
+backend is installed later. Each copy carries its own release function, so a
+backend may go before the textures; removing the backend only stops new copies.
 
 ### Layout
 
@@ -329,29 +314,15 @@ enabled widget declared. `UIState::SetFocus` picks the widget a screen opens on.
 
 ## Rules
 
-**No public header names ImGui.** `grep -rnE "ImGui|Im[A-Z]|imgui"
-modules/gameui/include/gameui/` must print nothing, which catches every ImGui
-type (`ImVec2`, `ImU32`, `ImDrawList`, `ImTextureID`) and the header itself
-while leaving words such as `Image`. A public ImGui type would make `imgui` a
-public dependency of everything that draws game UI, and tie the game's API to
-the editor's library.
+**gameui names no graphics API.** It does not link `imgui`, and no header in it
+includes one. `IUIBackend` is the whole contract: make a texture, submit a
+frame. Swapping the backend means swapping the bridge.
 
-**Only `src/gameui/UIBackendImGui.cpp` includes `<imgui.h>`.** `UIContext.cpp`
-and `UITextures.cpp` reach it through `detail::SubmitToBackground` and
-`detail::CreateBackendTexture` in the private `UIBackend.h`. It also includes
-`<imgui_internal.h>`, for `RegisterUserTexture`. Swapping the backend means
-replacing that one file, and the two test fixtures that host a headless ImGui
-context: `tests/UIWidgets.tests.cpp` and `tests/UITextures.tests.cpp` include
-`<imgui.h>` for that alone, so `EndFrame`'s real submit and the textures run
-under test.
-
-**No `ImGui::Begin` anywhere in the module.** A window would sit among the
-editor's panels and dock like one. The background list has no window.
-
-**Draw after `Editor::DrawLayout` and before `ImGuiRuntime::EndFrame`.**
-`SceneViewportRect()` is set inside `DrawLayout`, so drawing earlier uses last
-frame's viewport and lags a dock drag by a frame. After `EndFrame` the draw data
-is already built and the UI never appears.
+**The game UI draws after the editor's layout in the same frame.** The editor's
+drawer writes `GameUIArea` from the scene viewport, and the bridge's drawer runs
+in the `Game` group, after every `Tools` drawer, so the area is this frame's.
+Neither library depends on the other, so the order comes from the group, not
+from declaration order.
 
 **The fullscreen area is the window's framebuffer size, not the swapchain's.**
 The swapchain catches up to a resize only inside `DrawFrame`, a frame after the
@@ -421,14 +392,13 @@ its look.
 `TextureAsset`s. An image decoder at runtime would be a second image path beside
 the cooker's, with its own failures, in every game build.
 
-**Destroy `UIContext` after `ImGuiRuntime::Shutdown`.** A texture's GPU side
+**Destroy the game UI after ImGui shuts down.** An ImGui texture's GPU side
 belongs to ImGui's Vulkan backend, which frees a registered texture only while
-rendering or in its own shutdown. A `UITextures` destroyed after the context
-frees only CPU memory. One destroyed while the context lives unregisters every
-texture the backend never uploaded, and leaks any it did, with an error,
-rather than free memory the backend still holds. `App` holds `mGameUI` as a
-member and does not reset it in `Shutdown`, so it goes with `App`, after the
-context.
+rendering or in its own shutdown. A copy released after the context frees only
+CPU memory. One released while the context lives unregisters a texture the
+backend never uploaded, and leaks one it did, with an error. `App` therefore
+declares `GameUIModule` and `GameShellModule` before `ImGuiModule`; the
+`ui-demo` smoke run fails on that error.
 
 **Lay a screen out in `SafeArea()`, never in `Bounds()` or by constant.** The
 safe area is the one place the display's and the player's insets reach a
@@ -438,8 +408,8 @@ and no setting can bring them back. A screen's own margins are fine, inside the
 safe area.
 
 **Build the pointer from the window's raw input, not `InputState`.** `InputState`
-has no pointer position, and it is a frame old when the UI runs. `App` reads
-`Window::RawInput()`, which `PollEvents` has just refreshed.
+has no pointer position, and it is a frame old when the UI runs. The bridge
+reads `Window::RawInput()`, which `PollEvents` has just refreshed.
 
 ## State
 
@@ -507,8 +477,7 @@ alone. `tests/UIFocus.tests.cpp` covers a pointer-only widget clicked by the
 pointer and never focused, and links passing over it. `tests/UIFocus.tests.cpp` also covers `mAdjustsX`:
 left and right adjust the focused widget and leave focus, up and down still
 navigate, and the press that brings the highlight back adjusts nothing.
-`tests/UIWidgets.tests.cpp` runs a headless ImGui context, so `EndFrame`'s
-submit to the backend runs too, and covers each widget's result by pointer
+`tests/UIWidgets.tests.cpp` runs with no backend and covers each widget's result by pointer
 and by UI action, the slider by drag (snapping, clamping, the latch outside
 the rect) and by step (once per press, clamped, a disabled slider), the display
 widgets staying inert unless focusable, what the bar and the focus ring draw,
@@ -518,11 +487,9 @@ by its style alone, with every part's sprite and the hovered and held
 fallbacks. `tests/UIDrawList.tests.cpp` also covers nine-slice: corners kept
 across sizes, pieces covering the rect exactly, corners shrinking by one factor,
 uneven and oversized slices, an atlas cell, and culling by piece.
-`tests/UITextures.tests.cpp` hosts a headless ImGui context and covers a texture
-reaching ImGui's list in `WantCreate` with its pixels, loading through an
-`AssetCache` (once per id, and a null sprite for a raw or missing asset),
-teardown before and after the context, and `EndFrame` drawing a sprite with
-the `ImTextureData` as its texture. `tests/UILayout.tests.cpp` covers each
+`tests/UITextures.tests.cpp` covers the pixels kept until a backend makes a
+texture, a wrong pixel count, and copies releasing themselves after the backend
+is gone. The ImGui side is tested in `gameui_imgui`. `tests/UILayout.tests.cpp` covers each
 helper, a row inside a column inside an anchored region, and the demo's
 `Layout` at 16:9, 21:9, 4:3 and three more sizes, each with no inset, a TV's 5%
 and a lopsided one: everything inside the safe area, the menu down its left and
@@ -580,6 +547,14 @@ looks right is verified by running `--ui-demo`.
    screen that needs them, as rows and columns waited for the demo screen.
 
 ## Changed
+
+*2026-10-24* — **Backend-free, with a module.** Was: `UIBackendImGui.cpp` lived
+here and gameui linked `imgui`, and `App` held the `UIContext`, chose the area
+and drew the shell or the demo. Now: `IUIBackend` is the contract and the ImGui
+side is the `gameui_imgui` bridge; `GameUIModule` owns the context and the
+screens, and `GameUIArea` carries the area. Because: a module drawing inside the
+ImGui frame must not link `imguiruntime`, which would put the renderer in
+gameui's link closure, and `App` no longer wires features.
 
 *2026-10-02* — **A screen can hold the game's input, and a widget can be
 pointer-only.** Was: nothing in gameui could keep input from gameplay, and

@@ -106,8 +106,9 @@ each library links in the engine, besides `core`; `app` links everything.
 | `audio_script`, `input_script`, `physics_script`, `renderer_script`, `terrain_script` | module, bridge | `script` and its library |
 | `imguiruntime` | module | `window`, `renderer`, `input` |
 | `gameui` | module | `assets`, `input` |
+| `gameui_imgui` | module, bridge | `gameui`, `imguiruntime`, `window` |
 | `gameshell` | module | `gameui` |
-| `editor` | module | `imguiruntime`, `renderer`, `window`, `input`, `scene`, `animation`, `assets`, `project`, `editortheme` |
+| `editor` | module | `imguiruntime`, `renderer`, `window`, `input`, `scene`, `animation`, `assets`, `project`, `gameui`, `editortheme` |
 
 A cross-library piece moves into a library only when that adds no cycle, no new
 third-party code to the library's link closure, and no new runtime setup to its
@@ -115,10 +116,10 @@ tests. Otherwise it is a bridge library. `terrain_runtime` is one, so `terrain`
 and `TerrainTool` need neither Vulkan nor Jolt. The five `*_script` bridges are
 the others, so no library but `script` and its bridges sees Lua.
 
-`gameui` draws into the ImGui frame but links `imgui` alone, privately, and
-neither `editor` nor `imguiruntime`. It links `assets`, for the cooked textures
-it draws, and not `renderer`: ImGui's backend uploads those itself. `gameshell`
-links `gameui` alone, as a game's own screens would.
+`gameui` names no graphics API. The `gameui_imgui` bridge puts its draw list in
+ImGui's background list and its textures through ImGui, so gameui links neither
+`imgui` nor `imguiruntime`. `gameshell` links `gameui`, as a game's own screens
+would.
 
 | Module | Owns | Document |
 |---|---|---|
@@ -140,6 +141,7 @@ links `gameui` alone, as a game's own screens would.
 | `editortheme` | Theme data only | [editortheme.md](modules/editortheme.md) |
 | `gameui` | Game UI drawn over the scene, the same in the editor and a game build | [gameui.md](modules/gameui.md) |
 | `gameshell` | The HUD and the pause menu every game gets, built on `gameui` | [gameshell.md](modules/gameshell.md) |
+| `gameui_imgui` | The game UI's ImGui backend and drawer | [gameui_imgui.md](modules/gameui_imgui.md) |
 | `app` | The module members, scene commands, the frame loop | [app.md](modules/app.md) |
 
 Add your row when you start a document, and update it in the same commit as the
@@ -206,17 +208,18 @@ and `imgui.ini`. The runtime leaves `IniFilename` null, so a build without
 `editor` persists nothing.
 
 `ImGuiModule::RunUI` brackets the frame and runs the drawers modules registered,
-in registration order: the editor's layout first, then the game UI. It hands
+the `Tools` group before the `Game` group: the editor's layout first, then the
+game UI, which fits the scene viewport the editor wrote that frame. It hands
 the draw data to the renderer and the frame's keyboard and mouse capture to
 `InputState`. `App.cpp` contains no ImGui call and includes no ImGui header.
 
-**`gameui` draws into ImGui's background draw list and nowhere else.**
+**The game UI draws into ImGui's background draw list and nowhere else.**
 
 That list renders before every window, and the renderer draws ImGui after the
 3D views, so the game UI lands over the scene and under the editor's panels. The
 same code is a HUD clipped to the scene viewport in the editor and fullscreen UI
-in a game build, with no renderer change. Only `UIBackendImGui.cpp` includes
-ImGui, and no public `gameui` header names an ImGui type.
+in a game build, with no renderer change. Only `gameui_imgui`'s
+`ImGuiUIBackend.cpp` includes ImGui.
 
 **`editortheme` depends on nothing engine-side, only `imgui`.**
 

@@ -39,8 +39,8 @@ get a context from.
 | `ImGuiRuntime` | `imguiruntime/ImGuiRuntime.h` | `Initialize`/`Shutdown` the context and both backends; `BeginFrame`/`EndFrame` bracket a frame |
 | `ImGuiModule` | `imguiruntime/ImGuiModule.h` | Owns the runtime; `AddDrawer` and `RunUI` |
 
-`RunUI` is one ImGui frame: `BeginFrame`, every drawer in registration order,
-`EndFrame`, then the draw data to the renderer and the frame's keyboard and
+`RunUI` is one ImGui frame: `BeginFrame`, every `Tools` drawer, then every
+`Game` drawer, each group in registration order, `EndFrame`, then the draw data to the renderer and the frame's keyboard and
 mouse capture to `InputState`, for this frame's systems.
 
 `VulkanRenderer::InitImGuiVulkanBackend` and `ShutdownImGuiVulkanBackend` stay in
