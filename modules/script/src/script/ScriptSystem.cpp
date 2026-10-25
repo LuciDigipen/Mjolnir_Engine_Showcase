@@ -10,6 +10,8 @@
 
 #include <script/ScriptSystem.h>
 
+#include "RunIsolated.h"
+
 #include <script/IScriptHost.h>
 #include <script/ScriptResolveSystem.h>
 
@@ -21,22 +23,6 @@
 
 namespace mir
 {
-    namespace
-    {
-        template <typename Fn>
-        void RunIsolated(Entity entity, const char *callback, Fn &&fn)
-        {
-            try
-            {
-                fn();
-            }
-            catch (const std::exception &e)
-            {
-                MIR_LOG_ERROR("script: entity {} threw in {}: {}", entity.mIndex, callback, e.what());
-            }
-        }
-    }
-
     void ScriptSystem::OnStart(SystemContext &context)
     {
         mQuery = &context.world.GetOrCreateQuery<ScriptRef>();

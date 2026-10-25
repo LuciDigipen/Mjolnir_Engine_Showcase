@@ -211,6 +211,11 @@ namespace mir
         mImpl->CallCallback(instanceRef, "OnUpdate", std::ref(world), entity, dt);
     }
 
+    void ScriptHost::CallOnFixedUpdate(World &world, CommandBuffer &, Entity entity, int32_t instanceRef, float dt)
+    {
+        mImpl->CallCallback(instanceRef, "OnFixedUpdate", std::ref(world), entity, dt);
+    }
+
     void ScriptHost::CallOnStop(World &world, CommandBuffer &, Entity entity, int32_t instanceRef)
     {
         mImpl->CallCallback(instanceRef, "OnStop", std::ref(world), entity);

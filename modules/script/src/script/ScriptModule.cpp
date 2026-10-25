@@ -9,6 +9,7 @@
 #include <script/ScriptModule.h>
 
 #include <script/ComponentRegistration.h>
+#include <script/ScriptFixedSystem.h>
 #include <script/ScriptResolveSystem.h>
 #include <script/ScriptSystem.h>
 #include <script/components/ScriptRef.h>
@@ -29,6 +30,8 @@ namespace mir
         mResolver = &context.scheduler.AddSystem<ScriptResolveSystem>(SystemPhase::PreUpdate,
             SystemOrder{SystemOrder::kEarly}, mHost,
             MakeScriptAssetLoader(mHost, mReload, assets.Cache(), std::move(assetIdRoot)));
+        // before PhysicsSystem (kNormal), so what OnFixedUpdate sets acts on the same step
+        context.scheduler.AddSystem<ScriptFixedSystem>(SystemPhase::FixedUpdate, SystemOrder{SystemOrder::kEarly}, mHost);
         mScripts = &context.scheduler.AddSystem<ScriptSystem>(SystemPhase::PreUpdate,
             SystemOrder{SystemOrder::kNormal}, mHost);
 

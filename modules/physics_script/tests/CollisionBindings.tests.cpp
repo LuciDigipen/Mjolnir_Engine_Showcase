@@ -100,6 +100,8 @@ return T
         mir::CommandBuffer commands;
         mir::SystemScheduler scheduler;
         mir::SystemContext context{ world, commands, kStep, 0.0, 0 };
+        // what PhysicsModule sets, so an added RigidBody gets its body
+        mir::Registration hooks;
         mir::ScriptHost host;
         const mir::Registration bindings = mir::AddBindings(host, &mir::RegisterPhysicsBindings);
         std::vector<float> samples = std::vector<float>(17 * 17, 0.0f);
@@ -110,6 +112,9 @@ return T
         Fixture()
         {
             world.EmplaceResource<mir::PhysicsWorld>();
+            world.Resource<mir::PhysicsWorld>().SetSimulationLive(true);
+            hooks = world.SetComponentHooks<mir::RigidBody>(
+                { .onAdd = &mir::PhysicsSystem::OnRigidBodyAdded, .onRemove = &mir::PhysicsSystem::OnRigidBodyRemoved });
             world.EmplaceResource<mir::CollisionEvents>();
             world.EmplaceResource<mir::EngineModeState>();
             mir::SetEngineMode(world, mir::EngineMode::Play);

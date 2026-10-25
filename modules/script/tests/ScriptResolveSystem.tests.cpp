@@ -45,6 +45,7 @@ namespace
 
         void CallOnStart(World &, CommandBuffer &, Entity, int32_t) override {}
         void CallOnUpdate(World &, CommandBuffer &, Entity, int32_t, float) override {}
+        void CallOnFixedUpdate(World &, CommandBuffer &, Entity, int32_t, float) override {}
         void CallOnStop(World &, CommandBuffer &, Entity, int32_t) override {}
 
         std::vector<int32_t> mDestroyed;

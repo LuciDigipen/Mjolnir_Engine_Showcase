@@ -18,7 +18,7 @@ bindings never mention a C++ component type.
 There are two lifetimes, kept separate.
 
 **Code** is one Lua table per loaded script *name*, holding only the functions
-that script defines — `OnStart`, `OnUpdate`, `OnStop` and `NewInstanceData`. It
+that script defines — `OnStart`, `OnUpdate`, `OnFixedUpdate`, `OnStop` and `NewInstanceData`. It
 is shared across every entity running that script.
 
 **State** is one small private table per `instanceRef`, passed as `self` to every
@@ -40,7 +40,14 @@ calling `OnStart` once and then `OnUpdate` every frame. Each entity's callback i
 by a C++ `try`/`catch` and by sol2's `protected_function`, so a script error
 stops that entity's script rather than the frame.
 
-`ScriptModule` owns the host, the reload watcher and both systems. It sets the
+`ScriptFixedSystem` calls `OnFixedUpdate(self, world, entity, dt)` once per physics step, with
+the fixed step as `dt`. It runs in `SystemPhase::FixedUpdate` at `SystemOrder::kEarly`, before
+`PhysicsSystem`, so forces and velocities a script sets there act on the same step. A frame with no
+step never calls it, and a frame that catches up several steps calls it once for each. It skips a
+script whose `OnStart` has not run yet, so `OnStart` always comes first, and it isolates each
+entity's callback like the others.
+
+`ScriptModule` owns the host, the reload watcher and the three systems. It sets the
 `ScriptRef` OnRemove hook, which drops the instance, polls the watcher in the
 `FrameBegin` slot, stops every script at `PlayEnd`, and lets the resolver retry
 failed names at `ReloadCommit`. Every library's own Lua bindings come from a
@@ -302,6 +309,13 @@ made the `ScriptRef`.
    flavour underneath.
 
 ## Changed
+
+*2026-10-25* — **`OnFixedUpdate`, and a `ScriptRef` starts clean when it is added.** Was: scripts
+had no callback on the physics step, so a force set in `OnUpdate` landed on whichever step came
+next, and a `ScriptRef` copied from another entity carried that entity's `instanceRef` and
+`started`. Now: `ScriptFixedSystem` runs `OnFixedUpdate` before each physics step, and the
+`ScriptRef` OnAdd hook resets `instanceRef` and `started`. Because: physics work belongs on the
+fixed step, and a copy must not share the original's instance.
 
 *2026-10-24* — **A live resolver, `ScriptModule`, and the bindings moved to
 bridges.** Was: `app`'s `ResolveSceneScripts` ran after a scene load, a Stop, a

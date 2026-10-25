@@ -12,6 +12,8 @@
  */
 #include <physics_script/PhysicsBindings.h>
 #include <script/BindingApi.h>
+#include <script/ComponentRegistration.h>
+#include <script/ScriptFixedSystem.h>
 #include <script/ScriptHost.h>
 
 #include <core/ecs/CommandBuffer.h>
@@ -81,6 +83,8 @@ namespace
         mir::SystemContext context{ world, commands, kStep, 0.0, 0 };
         mir::ScriptHost host;
         const mir::Registration bindings = mir::AddBindings(host, &mir::RegisterPhysicsBindings);
+        // what PhysicsModule sets, so the body exists as soon as the RigidBody does
+        mir::Registration hooks;
         mir::Entity entity{};
         int32_t instance = -1;
 
@@ -89,10 +93,17 @@ namespace
             // No gravity: an applied push is then the only thing moving the
             // body, so every assertion below can be about that push alone.
             world.EmplaceResource<mir::PhysicsWorld>(mir::PhysicsWorldDesc{ .mGravity = glm::vec3(0.0f) });
+            Physics().SetSimulationLive(true);
+            hooks = world.SetComponentHooks<mir::RigidBody>(
+                { .onAdd = &mir::PhysicsSystem::OnRigidBodyAdded, .onRemove = &mir::PhysicsSystem::OnRigidBodyRemoved });
             world.EmplaceResource<mir::EngineModeState>();
             mir::SetEngineMode(world, mir::EngineMode::Play);
             mir::SetPlayState(world, mir::PlayState::Running);
+            mir::RegisterScriptComponents();
 
+            // the same order ScriptModule and PhysicsModule give them: scripts first
+            scheduler.AddSystem<mir::ScriptFixedSystem>(mir::SystemPhase::FixedUpdate,
+                mir::SystemOrder{ mir::SystemOrder::kEarly }, host);
             scheduler.AddSystem<mir::PhysicsSystem>(mir::SystemPhase::FixedUpdate, mir::SystemOrder{mir::SystemOrder::kNormal});
             scheduler.Start(context);
 
@@ -293,6 +304,67 @@ return T
 )LUA";
 }
 
+namespace
+{
+    constexpr std::string_view kLaunchOnStart = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    world:set_linear_velocity(entity, { x = 6.0, y = 0.0, z = 0.0 })
+end
+
+return T
+)LUA";
+
+    constexpr std::string_view kLaunchOnFixedUpdate = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnFixedUpdate(self, world, entity, dt)
+    world:set_linear_velocity(entity, { x = 6.0, y = 0.0, z = 0.0 })
+end
+
+return T
+)LUA";
+}
+
+TEST_CASE("a velocity set in OnStart takes effect on the next step", "[script][physics]")
+{
+    Fixture f(kLaunchOnStart);
+    // the body is already there when OnStart runs
+    REQUIRE(f.Body().IsValid());
+
+    f.Start();
+    f.Step();
+
+    const std::optional<mir::WorldPosition> at = f.Physics().BodyPosition(f.Body());
+    REQUIRE(at.has_value());
+    CHECK(at->Meters().x > 0.05);
+}
+
+TEST_CASE("OnFixedUpdate runs before the step, so what it sets acts on that step", "[script][physics]")
+{
+    Fixture f(kLaunchOnFixedUpdate);
+    f.world.AddComponent<mir::ScriptRef>(f.entity, mir::ScriptRef{});
+    mir::ScriptRef *ref = f.world.GetComponent<mir::ScriptRef>(f.entity);
+    ref->instanceRef = f.instance;
+    ref->started = true;
+
+    f.Step();
+
+    // one step at 6 m/s is 0.1 m; had the callback run after the step it would still be at rest
+    const std::optional<mir::WorldPosition> at = f.Physics().BodyPosition(f.Body());
+    REQUIRE(at.has_value());
+    CHECK(at->Meters().x > 0.05);
+}
+
 TEST_CASE("world:add_force with no offset pushes the center of mass", "[script][physics]")
 {
     Fixture fixture(kPushForward);
@@ -475,6 +547,8 @@ return T
         mir::CommandBuffer commands;
         mir::SystemScheduler scheduler;
         mir::SystemContext context{ world, commands, kStep, 0.0, 0 };
+        // what PhysicsModule sets, so an added RigidBody gets its body
+        mir::Registration hooks;
         mir::ScriptHost host;
         const mir::Registration bindings = mir::AddBindings(host, &mir::RegisterPhysicsBindings);
         std::vector<float> samples;
@@ -484,6 +558,9 @@ return T
         {
             // No gravity, so a dynamic body stays where the ray expects it.
             world.EmplaceResource<mir::PhysicsWorld>(mir::PhysicsWorldDesc{ .mGravity = glm::vec3(0.0f) });
+            world.Resource<mir::PhysicsWorld>().SetSimulationLive(true);
+            hooks = world.SetComponentHooks<mir::RigidBody>(
+                { .onAdd = &mir::PhysicsSystem::OnRigidBodyAdded, .onRemove = &mir::PhysicsSystem::OnRigidBodyRemoved });
             world.EmplaceResource<mir::EngineModeState>();
             mir::SetEngineMode(world, mir::EngineMode::Play);
             mir::SetPlayState(world, mir::PlayState::Running);

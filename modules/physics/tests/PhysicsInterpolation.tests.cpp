@@ -35,10 +35,15 @@ namespace
         mir::CommandBuffer commands;
         mir::SystemScheduler scheduler;
         mir::SystemContext context{ world, commands, kStep, 0.0, 0 };
+        // what PhysicsModule sets, so an added RigidBody gets its body
+        mir::Registration hooks;
 
         InterpolationFixture()
         {
             world.EmplaceResource<mir::PhysicsWorld>();
+            world.Resource<mir::PhysicsWorld>().SetSimulationLive(true);
+            hooks = world.SetComponentHooks<mir::RigidBody>(
+                { .onAdd = &mir::PhysicsSystem::OnRigidBodyAdded, .onRemove = &mir::PhysicsSystem::OnRigidBodyRemoved });
             world.EmplaceResource<mir::EngineModeState>();
             mir::SetEngineMode(world, mir::EngineMode::Play);
             mir::SetPlayState(world, mir::PlayState::Running);
