@@ -1,30 +1,31 @@
 engine_add_module(app)
 
+# PUBLIC: App.h holds every module as a member
 target_link_libraries(engine_app
-    PUBLIC mir::assets
+    PUBLIC mir::animation
+           mir::assets
+           mir::audio
+           mir::audio_script
+           mir::camera
            mir::core
-           mir::project
-           mir::window
-           mir::renderer
-           mir::gameui
            mir::gameshell
+           mir::gameui
            mir::imguiruntime
+           mir::input
+           mir::input_script
+           mir::physics
+           mir::physics_script
+           mir::project
+           mir::renderer
+           mir::renderer_script
            mir::scene
            mir::script
-           mir::audio_script
-           mir::input_script
-           mir::physics_script
-           mir::renderer_script
+           mir::terrain
+           mir::terrain_runtime
            mir::terrain_script
-    PRIVATE mir::input
-            mir::camera
-            mir::animation
-            mir::audio
-            mir::physics
-            mir::prefab
+           mir::window
+    PRIVATE mir::prefab
             mir::serial
-            mir::terrain
-            mir::terrain_runtime
 )
 
 # App's yes/no prompts

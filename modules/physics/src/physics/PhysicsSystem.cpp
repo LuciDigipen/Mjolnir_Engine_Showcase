@@ -56,7 +56,6 @@ namespace mir
     void PhysicsSystem::OnStart(SystemContext &context)
     {
         mQuery = &context.world.GetOrCreateQuery<Transform, RigidBody>();
-        mHooks = context.world.SetComponentHooks<RigidBody>({ .onRemove = &PhysicsSystem::OnRigidBodyRemoved });
     }
 
     void PhysicsSystem::OnUpdate(SystemContext &context)
@@ -72,11 +71,6 @@ namespace mir
         RunStepGates(context.world, *physics, context.dt);
         physics->Step(context.dt);
         PullPoses(*physics);
-    }
-
-    void PhysicsSystem::OnStop(SystemContext &)
-    {
-        mHooks.Reset();
     }
 
     void PhysicsSystem::PushTransforms(World &world, PhysicsWorld &physics)

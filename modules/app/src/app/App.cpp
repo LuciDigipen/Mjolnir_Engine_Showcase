@@ -147,8 +147,6 @@ namespace mir
         MIR_LOG_INFO("Built without the editor; running the game");
     #endif
 
-        audio::Init(mProject.mSoundBankDir);
-
         EnsureDpiAware();
 
         mSplash.Show({ .mEngineName = desc.mAppName,
@@ -220,16 +218,8 @@ namespace mir
         RegisterRendererComponents();
         RegisterRendererEntityTypes();
         RegisterRendererPostEffects();
-        RegisterPhysicsComponents();
-        RegisterCameraComponents();
-        RegisterAudioComponents();
-        RegisterModelPlayer();
-        RegisterTerrainComponents();
 
-        mWorld.EmplaceResource<ModelDrawItems>();
-        mWorld.EmplaceResource<ModelMorphOverrides>();
         mWorld.EmplaceResource<ViewDrawSources>();
-        mWorld.EmplaceResource<TerrainWorld>();
 
         PrefabCoordinator &prefabs = mWorld.EmplaceResource<PrefabCoordinator>();
         const std::filesystem::path prefabsDir = PrefabSourceDir(mProject);
@@ -238,21 +228,21 @@ namespace mir
             prefabs.ScanSources(prefabsDir);
 
 
-        InputMap inputMap = InputMap::LoadFile(mProject.mProjectSettingsPath).value_or(InputMap{});
-        AddDefaultActions(inputMap);
-        mWorld.EmplaceResource<InputMap>(std::move(inputMap));
-
         mWorld.EmplaceResource<RenderSettings>(RenderSettings::LoadFile(mProject.mProjectSettingsPath).value_or(RenderSettings{}));
         mWorld.EmplaceResource<PostProcessingSettings>(
             PostProcessingSettings::LoadFile(mProject.mProjectSettingsPath).value_or(PostProcessingSettings{}));
-        mWorld.EmplaceResource<InputState>();
-
-        // physcis world - currently Jolt
-        mWorld.EmplaceResource<PhysicsWorld>();
-        mWorld.EmplaceResource<CollisionEvents>();
-
         mScheduler.AddSystem<PrefabSystem>(SystemPhase::PreUpdate);
-        mScheduler.AddSystem<InputSystem>(SystemPhase::PreUpdate, *mWindow);
+
+        // in dependency order: a module after every module it uses, a bridge after
+        // script and its library. Within a phase, systems run in this order
+        mInput.emplace(Context(), *mWindow, mProject.mProjectSettingsPath);
+        mCamera.emplace(Context());
+        mAnimation.emplace(Context(), mRenderer, *mAssets, mProject.mAssetIdRoot);
+        mMeshResolveSystem = &mScheduler.AddSystem<MeshResolveSystem>(SystemPhase::LateUpdate, mRenderer, Assets(),
+            mProject.mAssetIdRoot);
+        mAudio.emplace(Context(), mProject.mSoundBankDir);
+        mPhysics.emplace(Context());
+        mTerrainData.emplace(Context());
 
         mScript.emplace(Context(), *mAssets, mProject.mAssetIdRoot);
         mAudioScript.emplace(*mScript);
@@ -260,23 +250,6 @@ namespace mir
         mPhysicsScript.emplace(*mScript);
         mRendererScript.emplace(*mScript);
         mTerrainScript.emplace(*mScript);
-
-        // FixedUpdate: once per fixed substep, before Propagate turns the
-        // Transforms it writes into world matrices
-        mScheduler.AddSystem<PhysicsSystem>(SystemPhase::FixedUpdate);
-
-        mScheduler.AddSystem<PhysicsInterpolationSystem>(SystemPhase::PostUpdate);
-
-        mScheduler.AddSystem<CameraControllerSystem>(SystemPhase::LateUpdate);
-        mModelSystem =
-            &mScheduler.AddSystem<ModelSystem>(SystemPhase::LateUpdate, mRenderer, Assets(), mProject.mAssetIdRoot);
-        mMeshResolveSystem = &mScheduler.AddSystem<MeshResolveSystem>(SystemPhase::LateUpdate, mRenderer, Assets(),
-            mProject.mAssetIdRoot);
-
-        mScheduler.AddSystem<AudioEmitterSystem>(SystemPhase::LateUpdate);
-        mScheduler.AddSystem<AudioListenerSystem>(SystemPhase::LateUpdate);
-
-        mScheduler.AddSystem<CollisionEventSystem>(SystemPhase::LateUpdate);
 
         mRenderSystem = &mScheduler.AddSystem<RenderSystem>(SystemPhase::Render, mRenderer);
 
@@ -486,7 +459,7 @@ namespace mir
         SetSceneUnsaved(mUnsavedBeforePlay);
 
         // Play's entities are gone and the restored ones hold no handles yet
-        mModelSystem->Reset();
+        mAnimation->Models().Reset();
         mMeshResolveSystem->Reset();
         mWorld.Resource<ModelDrawItems>().items.clear();
         mWorld.Resource<ModelMorphOverrides>().instances.clear();
@@ -613,8 +586,8 @@ namespace mir
         UnloadScene(mWorld, mScene);
 
         // no scene entity holds a mesh or material handle now
-        if (mModelSystem)
-            mModelSystem->Reset();
+        if (mAnimation)
+            mAnimation->Models().Reset();
         if (mMeshResolveSystem)
             mMeshResolveSystem->Reset();
         if (auto *draws = mWorld.TryResource<ModelDrawItems>())
@@ -793,8 +766,6 @@ namespace mir
             if (mWorld.Resource<InputState>().JustPressed(kToggleFullscreenAction))
                 ToggleFullscreen();
 
-            audio::Update();
-
             ++mFrame;
 
             RunSwitchHook();
@@ -922,7 +893,7 @@ namespace mir
         }
 
         std::string error;
-        if (mModelSystem && !mModelSystem->PrepareReload(mAssets->Candidate(), error))
+        if (mAnimation && !mAnimation->Models().PrepareReload(mAssets->Candidate(), error))
         {
             mAssets->AbortReload();
             mAssetImport.MarkApplyFailed("new model resources were rejected: " + error);
@@ -930,8 +901,8 @@ namespace mir
         }
 
         mAssets->CommitReload();
-        if (mModelSystem)
-            mModelSystem->CommitReload(&mAssets->Cache());
+        if (mAnimation)
+            mAnimation->Models().CommitReload(&mAssets->Cache());
         if (mMeshResolveSystem)
             mMeshResolveSystem->CommitReload(&mAssets->Cache());
 
@@ -984,8 +955,6 @@ namespace mir
         mAssetImport.Shutdown();
     #endif
 
-        audio::Terminate();
-
         mScheduler.Reset();
         mTerrainScript.reset();
         mRendererScript.reset();
@@ -993,6 +962,12 @@ namespace mir
         mInputScript.reset();
         mAudioScript.reset();
         mScript.reset();
+        mTerrainData.reset();
+        mPhysics.reset();
+        mAudio.reset();
+        mAnimation.reset();
+        mCamera.reset();
+        mInput.reset();
         mCore.reset();
 
         mAssets.reset();
@@ -1009,7 +984,6 @@ namespace mir
 
         // the systems Reset destroyed
         mRenderSystem = nullptr;
-        mModelSystem = nullptr;
         mMeshResolveSystem = nullptr;
 
         if (mInitialized)

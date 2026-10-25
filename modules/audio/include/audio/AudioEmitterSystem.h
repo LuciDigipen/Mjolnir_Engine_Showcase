@@ -14,7 +14,6 @@
 #include <audio/components/AudioEmitter.h>
 
 #include <core/ecs/Query.h>
-#include <core/ecs/Registration.h>
 #include <core/ecs/System.h>
 #include <core/ecs/components/WorldTransform.h>
 
@@ -27,10 +26,10 @@ namespace mir
         void OnUpdate(SystemContext &context) override;
         void OnStop(SystemContext &context) override;
 
-    private:
+        // AudioEmitter's OnRemove: stops its voice and unregisters its game object
         static void OnEmitterRemoved(World &world, Entity entity);
 
+    private:
         Query<const WorldTransform, AudioEmitter> *mQuery = nullptr;
-        Registration mHooks;
     };
 }

@@ -9,8 +9,11 @@
 #pragma once
 
 #include <project/GameProject.h>
+#include <animation/AnimationModule.h>
 #include <assets/AssetsModule.h>
+#include <audio/AudioModule.h>
 #include <audio_script/AudioScriptModule.h>
+#include <camera/CameraModule.h>
 #include <core/ecs/CommandBuffer.h>
 #include <core/ecs/CoreModule.h>
 #include <core/ecs/FixedTimestep.h>
@@ -20,7 +23,9 @@
 #include <gameui/UIContext.h>
 #include <gameui/UIDemoScreen.h>
 #include <imguiruntime/ImGuiRuntime.h>
+#include <input/InputModule.h>
 #include <input_script/InputScriptModule.h>
+#include <physics/PhysicsModule.h>
 #include <physics_script/PhysicsScriptModule.h>
 #include <renderer/VulkanRenderer.h>
 #include <renderer_script/RendererScriptModule.h>
@@ -28,6 +33,7 @@
 #include <scene/SceneAsset.h>
 #include <scene/SceneIO.h>
 #include <script/ScriptModule.h>
+#include <terrain/TerrainModule.h>
 #include <terrain_script/TerrainScriptModule.h>
 #include <window/Splash.h>
 #include <window/Window.h>
@@ -53,7 +59,6 @@
 namespace mir
 {
     class RenderSystem;
-    class ModelSystem;
     class TerrainRuntime;
     class MeshResolveSystem;
     class WorldSceneOps;
@@ -244,9 +249,14 @@ namespace mir
         SystemScheduler mScheduler;
         std::optional<CoreModule> mCore;
         RenderSystem *mRenderSystem = nullptr;
-        ModelSystem *mModelSystem = nullptr;
         MeshResolveSystem *mMeshResolveSystem = nullptr;
         PlaySnapshot mPlaySnapshot;
+        std::optional<InputModule> mInput;
+        std::optional<CameraModule> mCamera;
+        std::optional<AnimationModule> mAnimation;
+        std::optional<AudioModule> mAudio;
+        std::optional<PhysicsModule> mPhysics;
+        std::optional<TerrainModule> mTerrainData;
         std::optional<ScriptModule> mScript;
         std::optional<AudioScriptModule> mAudioScript;
         std::optional<InputScriptModule> mInputScript;
