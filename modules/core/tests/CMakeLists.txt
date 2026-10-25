@@ -9,6 +9,7 @@ engine_add_module_tests(core
     CommandBuffer.tests.cpp
     System.tests.cpp
     Stages.tests.cpp
+    Requests.tests.cpp
     FixedTimestep.tests.cpp
     Transform.tests.cpp
     WorldCoordinates.tests.cpp
