@@ -464,7 +464,7 @@ layout changes.
 
 ## Changed
 
-*2026-10-25* — **Systems run by `SystemOrder` inside a phase.** Was: systems in
+*2026-10-25*, **Systems run by `SystemOrder` inside a phase.** Was: systems in
 one phase ran in registration order, and a few relied on it (the script resolver
 before `ScriptSystem`, the preview's propagate before its resolvers). Now:
 `AddSystem` takes a `SystemOrder` from 0 to 100 after the phase, and equal orders

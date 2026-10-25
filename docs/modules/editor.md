@@ -463,7 +463,7 @@ or the dialog themselves. History needs neither, and its tests are in
 
 ## Changed
 
-*2026-10-25* — **A Physics layers section in `ProjectSettingsPanel`.** Was: the panel drew Input, Rendering and
+*2026-10-25*, **A Physics layers section in `ProjectSettingsPanel`.** Was: the panel drew Input, Rendering and
 External Tools, and every body collided with every other. Now: it edits the `physicsLayers` section of
 `project_settings.json` (up to 32 layer names and a collision grid), which the physics module reads, and a saved
 table is applied to the running `PhysicsWorld` while editing. Because: a game needs to say which layers pass

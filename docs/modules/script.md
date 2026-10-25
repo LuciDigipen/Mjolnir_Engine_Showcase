@@ -2,7 +2,7 @@
 
 Embeds Lua as the gameplay scripting layer, through sol2 over LuaJIT. A script
 reads per-frame ECS state and drives triggers, entity behaviour and UI logic. It
-does not touch physics or flight dynamics, and never draws a frame itself - its
+reaches physics only through the `physics_script` bridge, and never draws a frame itself - its
 one reach into rendering is the post-processing settings resource, a handful of
 plain numbers, not the renderer's own state.
 
@@ -310,7 +310,7 @@ made the `ScriptRef`.
 
 ## Changed
 
-*2026-10-25* — **`OnFixedUpdate`, and a `ScriptRef` starts clean when it is added.** Was: scripts
+*2026-10-25*, **`OnFixedUpdate`, and a `ScriptRef` starts clean when it is added.** Was: scripts
 had no callback on the physics step, so a force set in `OnUpdate` landed on whichever step came
 next, and a `ScriptRef` copied from another entity carried that entity's `instanceRef` and
 `started`. Now: `ScriptFixedSystem` runs `OnFixedUpdate` before each physics step, and the

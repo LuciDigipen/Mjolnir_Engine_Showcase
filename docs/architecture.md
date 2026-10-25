@@ -95,7 +95,8 @@ each library links in the engine, besides `core`; `app` links everything.
 | `assets` | module | `project` |
 | `scene` | module | `serial` |
 | `prefab` | module | `assets`, `scene`, `serial` |
-| `window`, `audio`, `physics` | module | none |
+| `window`, `audio` | module | none |
+| `physics` | module | `serial` |
 | `input` | module | `window`, `serial` |
 | `camera` | module | `input` |
 | `renderer` | module | `assets`, `serial` |
@@ -108,7 +109,7 @@ each library links in the engine, besides `core`; `app` links everything.
 | `gameui` | module | `assets`, `input` |
 | `gameui_imgui` | module, bridge | `gameui`, `imguiruntime`, `window` |
 | `gameshell` | module | `gameui` |
-| `editor` | module | `imguiruntime`, `renderer`, `window`, `input`, `scene`, `animation`, `assets`, `project`, `gameui`, `editortheme` |
+| `editor` | module | `imguiruntime`, `renderer`, `window`, `input`, `scene`, `animation`, `assets`, `project`, `gameui`, `physics`, `editortheme` |
 
 A cross-library piece moves into a library only when that adds no cycle, no new
 third-party code to the library's link closure, and no new runtime setup to its
@@ -132,6 +133,7 @@ would.
 | `scene` | Scene save and load, the scene the World holds, the Play snapshot | [scene.md](modules/scene.md) |
 | `serial` | JSON documents on disk | [serial.md](modules/serial.md) |
 | `script` | Lua embedding, ECS bindings, the script resolver | [script.md](modules/script.md) |
+| `physics` | Jolt world, `RigidBody`, the step, layers, events | [physics.md](modules/physics.md) |
 | `*_script` | Five bridges adding one library's Lua bindings each | [script-bridges.md](modules/script-bridges.md) |
 | `terrain_runtime` | Terrain streaming, drawing and collision at runtime | [terrain_runtime.md](modules/terrain_runtime.md) |
 | `audio` | Wwise lifetime and the per-frame pump | [audio.md](modules/audio.md) |
