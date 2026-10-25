@@ -186,7 +186,6 @@ namespace
         Fixture()
         {
             mir::RegisterCoreComponents();
-            mir::InstallHierarchy(mWorld);
             mWorld.EmplaceResource<mir::Selection>();
 
             mRoot = mWorld.CreateEntity();
@@ -208,9 +207,8 @@ namespace
 TEST_CASE("Hierarchy create in a document authors a node under its root", "[editor][prefabs]")
 {
     Fixture fixture;
-    const mir::HierarchyIndex *index = fixture.mWorld.TryResource<mir::HierarchyIndex>();
-    REQUIRE(index != nullptr);
-    const std::size_t children = index->ChildrenOf(fixture.mRoot).size();
+    const mir::HierarchyIndex &index = fixture.mWorld.HierarchyIndex();
+    const std::size_t children = index.ChildrenOf(fixture.mRoot).size();
 
     fixture.Run(mir::MakeDocumentEntityCommand(
         EntityAction{ .mKind = EntityActionKind::Create }, fixture.mAuthored, fixture.mWorld));
@@ -270,9 +268,8 @@ TEST_CASE("Hierarchy reparent in a document moves onto the drop target", "[edito
 TEST_CASE("A drop on the hierarchy root reparents under the document root", "[editor][prefabs]")
 {
     Fixture fixture;
-    const mir::HierarchyIndex *index = fixture.mWorld.TryResource<mir::HierarchyIndex>();
-    REQUIRE(index != nullptr);
-    const std::size_t children = index->ChildrenOf(fixture.mRoot).size();
+    const mir::HierarchyIndex &index = fixture.mWorld.HierarchyIndex();
+    const std::size_t children = index.ChildrenOf(fixture.mRoot).size();
 
     fixture.Run(mir::MakeDocumentEntityCommand(
         EntityAction{ .mKind = EntityActionKind::Reparent, .mTargets = { fixture.mChild } }, fixture.mAuthored,

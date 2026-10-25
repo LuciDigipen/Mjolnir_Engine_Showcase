@@ -6,7 +6,7 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
-#include "../src/app/PrefabAuthoring.h"
+#include "../src/app/PrefabAuthoringAdapter.h"
 #include "../src/app/PrefabDocuments.h"
 
 #include <editor/history/AuthoredEdit.h>

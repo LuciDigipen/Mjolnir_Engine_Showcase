@@ -10,15 +10,18 @@
  */
 
 #include <app/App.h>
+#include <app/ErrorReport.h>
 #include <app/GameProject.h>
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
 #include <core/log/LogHistory.h>
+#include <core/log/SetupError.h>
 #include <core/platform/Process.h>
 
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -27,6 +30,9 @@
 
 namespace
 {
+    constexpr std::string_view kUsage = "[--game <dir>] [--frames <N>] [--capture <png>] [--no-editor] [--ui-demo] "
+        "[--non-interactive] [--switch-to <dir>]...";
+
     struct LaunchOptions
     {
         // empty: use engine.json's defaultGame
@@ -38,12 +44,21 @@ namespace
         bool mNoEditor = false;
         bool mUIDemo = false;
 
+        // for agents and CI: every prompt takes its safe answer instead of waiting for a click
+        bool mNonInteractive = false;
+
         // test hook: games to restart into, in order
         std::vector<std::string> mProjectSwitches;
     };
 
-    // [--game <dir>] [--frames <N>] [--switch-to <dir>]...; anything else fails
-    std::optional<LaunchOptions> ParseLaunchOptions(int argc, char **argv)
+    [[noreturn]] void ThrowUsage(std::string what)
+    {
+        throw mir::SetupError(mir::ErrorCategory::Usage, std::move(what), {}, {},
+            "Fix the command line. " + std::string(kUsage));
+    }
+
+    // Throws a Usage SetupError on anything it does not recognize
+    LaunchOptions ParseLaunchOptions(int argc, char **argv)
     {
         LaunchOptions options;
 
@@ -59,10 +74,7 @@ namespace
                 const std::string_view value = argv[++i];
                 const auto [parsedEnd, ec] = std::from_chars(value.data(), value.data() + value.size(), options.mMaxFrames);
                 if (ec != std::errc{} || parsedEnd != value.data() + value.size() || options.mMaxFrames == 0)
-                {
-                    MIR_LOG_ERROR("--frames expects a positive integer, got '{}'", value);
-                    return std::nullopt;
-                }
+                    ThrowUsage("--frames expects a positive integer, got '" + std::string(value) + "'");
             }
             else if (arg == "--capture" && i + 1 < argc)
             {
@@ -76,40 +88,40 @@ namespace
             {
                 options.mUIDemo = true;
             }
+            else if (arg == "--non-interactive")
+            {
+                options.mNonInteractive = true;
+            }
             else if (arg == "--switch-to" && i + 1 < argc)
             {
                 options.mProjectSwitches.emplace_back(argv[++i]);
             }
             else
             {
-                MIR_LOG_ERROR("unrecognized argument '{}' (usage: [--game <dir>] [--frames <N>] [--capture <png>] [--no-editor] [--ui-demo] [--switch-to <dir>]...)", arg);
-                return std::nullopt;
+                ThrowUsage("unrecognized argument '" + std::string(arg) + "'");
             }
         }
 
         // a switch happens halfway through --frames
         if (!options.mProjectSwitches.empty() && options.mMaxFrames == 0)
-        {
-            MIR_LOG_ERROR("--switch-to needs --frames");
-            return std::nullopt;
-        }
+            ThrowUsage("--switch-to needs --frames");
 
         if (!options.mCapturePath.empty() && options.mMaxFrames == 0)
-        {
-            MIR_LOG_ERROR("--capture needs --frames");
-            return std::nullopt;
-        }
+            ThrowUsage("--capture needs --frames");
+
         return options;
     }
 
     // Arguments for the next process; a bounded run passes on its remaining frames and switches
     std::vector<std::string> RelaunchArguments(const LaunchOptions &options, const mir::GameProject &next)
     {
-        std::vector<std::string> args{"--game", next.mDir};
+        std::vector<std::string> args{ "--game", next.mDir };
         if (options.mNoEditor)
             args.emplace_back("--no-editor");
         if (options.mUIDemo)
             args.emplace_back("--ui-demo");
+        if (options.mNonInteractive)
+            args.emplace_back("--non-interactive");
         if (!options.mCapturePath.empty())
         {
             args.emplace_back("--capture");
@@ -141,80 +153,119 @@ namespace
         }
         return false;
     }
+
+    // Anything that is not a SetupError reaching main is an engine bug
+    mir::SetupError InternalError(std::string_view what)
+    {
+        return mir::SetupError(mir::ErrorCategory::Internal, "Unexpected error: " + std::string(what), {},
+            std::string(what), "This is an engine bug. Report it with the log attached: " +
+            mir::LogFilePath().string());
+    }
+
+    int RunEngine(const LaunchOptions &options)
+    {
+        // a bad --game is the command line's fault, a bad defaultGame is the data's
+        const bool fromCommandLine = !options.mGameDir.empty();
+        const mir::GameProject project = mir::ResolveGameProject(
+            fromCommandLine ? options.mGameDir : mir::ReadDefaultGame(),
+            fromCommandLine ? mir::ErrorCategory::Usage : mir::ErrorCategory::ProjectData);
+
+        mir::App app;
+
+        mir::AppDesc desc{};
+        desc.mProject = project;
+        desc.mMaxFrames = options.mMaxFrames;
+        desc.mCapturePath = options.mCapturePath;
+        // a build without the editor is always the game; --no-editor is then a no-op
+        desc.mEnableEditorLayout = mir::App::kHasEditor && !options.mNoEditor;
+        desc.mUIDemo = options.mUIDemo;
+        desc.mNonInteractive = options.mNonInteractive;
+        if (!options.mProjectSwitches.empty())
+            desc.mSwitchProjectTo = options.mProjectSwitches.front();
+
+        // Caught while app is alive: the report is written before ~App tears down
+        try
+        {
+            // also loads the game's scene
+            app.Initialize(desc);
+
+            // Only now is startup actually done - close explicitly rather than
+            // leaning on WS_EX_TOPMOST z-order to hide the swap.
+            app.Splash().SetProgress("Ready", 1.0f);
+            app.Splash().Close();
+
+            app.Run();
+        }
+        catch (const mir::SetupError &error)
+        {
+            app.Splash().Close();
+            return mir::ReportFatal(error);
+        }
+        catch (const std::exception &error)
+        {
+            app.Splash().Close();
+            return mir::ReportFatal(InternalError(error.what()));
+        }
+        catch (...)
+        {
+            app.Splash().Close();
+            return mir::ReportFatal(InternalError("unknown exception"));
+        }
+
+        app.Shutdown();
+
+        // a bounded (test) run fails if anything logged an error
+        const bool bounded = options.mMaxFrames != 0;
+        const int exitCode = (bounded && AnyErrorLogged()) ? 1 : 0;
+
+        // switching games restarts the process; a bounded run waits for the child
+        if (const std::optional<mir::GameProject> &next = app.ProjectToOpen(); next.has_value())
+        {
+            const std::vector<std::string> args = RelaunchArguments(options, *next);
+            MIR_LOG_INFO("Restarting into '{}'", next->mDir);
+
+            // the next process writes the same log file
+            mir::ShutdownLog();
+
+            const std::optional<int> childExit = mir::LaunchProcess(mir::ExecutablePath(), args, bounded);
+            if (!childExit.has_value())
+            {
+                mir::InitLog();
+                MIR_LOG_ERROR("could not restart into '{}'", next->mDir);
+                mir::FlushLog();
+                return 1;
+            }
+
+            return (bounded && exitCode == 0) ? *childExit : exitCode;
+        }
+
+        mir::FlushLog();
+        return exitCode;
+    }
 }
 
 int main(int argc, char **argv)
 {
     // Logging lives outside App so early construction failures are still visible.
     mir::InitLog();
+    MIR_LOG_INFO("Log file: {}", mir::LogFilePath().string());
+    mir::ClearErrorReport();
 
-    // bad arguments or game directory exit before the splash
-    const std::optional<LaunchOptions> options = ParseLaunchOptions(argc, argv);
-
-    std::optional<std::string> requestedGame;
-    if (options.has_value())
-        requestedGame = options->mGameDir.empty() ? mir::ReadDefaultGame() : std::optional<std::string>(options->mGameDir);
-
-    const std::optional<mir::GameProject> project =
-        requestedGame.has_value() ? mir::ResolveGameProject(*requestedGame) : std::nullopt;
-    if (!project.has_value())
+    // bad arguments or game directory exit before the splash, with no App to tear down
+    try
     {
-        mir::FlushLog();
-        return 1;
+        return RunEngine(ParseLaunchOptions(argc, argv));
     }
-
-    mir::App app;
-
-    mir::AppDesc desc{};
-    desc.mProject = *project;
-    desc.mMaxFrames = options->mMaxFrames;
-    desc.mCapturePath = options->mCapturePath;
-    // a build without the editor is always the game; --no-editor is then a no-op
-    desc.mEnableEditorLayout = mir::App::kHasEditor && !options->mNoEditor;
-    desc.mUIDemo = options->mUIDemo;
-    if (!options->mProjectSwitches.empty())
-        desc.mSwitchProjectTo = options->mProjectSwitches.front();
-
-    // also loads the game's scene
-    if (!app.Initialize(desc))
+    catch (const mir::SetupError &error)
     {
-        mir::FlushLog();
-        return -1;
+        return mir::ReportFatal(error);
     }
-
-    // Only now is startup actually done - close explicitly rather than
-    // leaning on WS_EX_TOPMOST z-order to hide the swap.
-    app.Splash().SetProgress("Ready", 1.0f);
-    app.Splash().Close();
-
-    app.Run();
-    app.Shutdown();
-
-    // a bounded (test) run fails if anything logged an error
-    const bool bounded = options->mMaxFrames != 0;
-    const int exitCode = (bounded && AnyErrorLogged()) ? 1 : 0;
-
-    // switching games restarts the process; a bounded run waits for the child
-    if (const std::optional<mir::GameProject> &next = app.ProjectToOpen(); next.has_value())
+    catch (const std::exception &error)
     {
-        const std::vector<std::string> args = RelaunchArguments(*options, *next);
-        MIR_LOG_INFO("Restarting into '{}'", next->mDir);
-
-        // the next process writes the same log file
-        mir::ShutdownLog();
-
-        const std::optional<int> childExit = mir::LaunchProcess(mir::ExecutablePath(), args, bounded);
-        if (!childExit.has_value())
-        {
-            mir::InitLog();
-            MIR_LOG_ERROR("could not restart into '{}'", next->mDir);
-            mir::FlushLog();
-            return 1;
-        }
-
-        return (bounded && exitCode == 0) ? *childExit : exitCode;
+        return mir::ReportFatal(InternalError(error.what()));
     }
-
-    mir::FlushLog();
-    return exitCode;
+    catch (...)
+    {
+        return mir::ReportFatal(InternalError("unknown exception"));
+    }
 }

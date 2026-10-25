@@ -146,12 +146,6 @@ namespace mir
     ContentBrowserAction ContentBrowserPanel::Draw(const ContentBrowserView &view)
     {
         ContentBrowserAction action;
-        if (!view.mAvailable)
-        {
-            ImGui::TextWrapped("Content browser is unavailable: %s", view.mUnavailableReason.c_str());
-            return action;
-        }
-
         if (!view.mLastRenamedFrom.empty())
         {
             if (mSelectedPath == view.mLastRenamedFrom)

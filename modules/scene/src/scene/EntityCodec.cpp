@@ -92,12 +92,8 @@ namespace mir
 
     uint32_t SiblingIndexOf(const World &world, Entity entity, const EntityIdMap &ids)
     {
-        const HierarchyIndex *index = world.TryResource<HierarchyIndex>();
-        if (index == nullptr)
-            return 0;
-
         uint32_t position = 0;
-        for (const Entity sibling : index->SiblingsOf(entity))
+        for (const Entity sibling : world.HierarchyIndex().SiblingsOf(entity))
         {
             if (sibling == entity)
                 break;
@@ -266,9 +262,6 @@ namespace mir
     std::map<StableId, Entity> SpawnEntities(World &world, const std::vector<std::pair<StableId, json>> &entities,
         bool resolveOutsideRefs)
     {
-        // before any create, so the sorted creation order below sets the root order
-        InstallHierarchy(world);
-
         std::map<StableId, Entity> spawned;
         std::vector<PendingEntityRef> pendingRefs;
 

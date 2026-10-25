@@ -30,8 +30,6 @@ namespace mir
 
     struct ContentBrowserView
     {
-        bool mAvailable = false;
-        std::string mUnavailableReason;
         std::string mContentRoot; // display only, e.g. "games/HelloWorld"
         std::string mLastError;
         std::vector<ContentBrowserEntryView> mEntries; // every file/dir under the content root, flat

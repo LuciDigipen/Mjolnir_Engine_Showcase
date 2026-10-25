@@ -1,6 +1,6 @@
 engine_add_module_tests(app
     ContentBrowserWatcher.tests.cpp
-    PrefabAuthoring.tests.cpp
+    PrefabAuthoringAdapter.tests.cpp
     PrefabDocuments.tests.cpp
 )
 

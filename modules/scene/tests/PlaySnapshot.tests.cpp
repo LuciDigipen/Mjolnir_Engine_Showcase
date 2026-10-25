@@ -185,7 +185,7 @@ TEST_CASE("RestoreWorld keeps root and child order", "[scene][order]")
     RestoreWorld(world, snapshot);
     DiscardSnapshot(snapshot);
 
-    const mir::HierarchyIndex &index = world.Resource<mir::HierarchyIndex>();
+    const mir::HierarchyIndex &index = world.HierarchyIndex();
     std::vector<float> roots;
     for (const Entity root : index.Roots())
         roots.push_back(MarkerOf(world, root));

@@ -41,7 +41,6 @@ namespace
     using mir::FieldDesc;
     using mir::FieldKind;
     using mir::HasPrefabErrors;
-    using mir::InstallHierarchy;
     using mir::kNullEntity;
     using mir::kNullStableId;
     using mir::LoadedScene;
@@ -143,7 +142,6 @@ namespace
             REQUIRE(mCoordinator->Registry().SetDocument(mDocument));
             REQUIRE_FALSE(HasPrefabErrors(mCoordinator->Cache().Compile(mDocument)));
 
-            InstallHierarchy(mPreviewWorld);
             const std::shared_ptr<const CompiledPrefab> prefab = mCoordinator->Cache().Find(mDocument.mId);
             REQUIRE(prefab != nullptr);
             mPreviewRoot = PlacePrefabInstance(mPreviewWorld, mPreviewScene, *prefab);

@@ -356,7 +356,7 @@ TEST_CASE("DuplicateSceneEntity places the copy right after its source", "[scene
     SECTION("among roots")
     {
         const Entity copy = mir::DuplicateSceneEntity(world, scene, parent);
-        const std::span<const Entity> roots = world.Resource<mir::HierarchyIndex>().Roots();
+        const std::span<const Entity> roots = world.HierarchyIndex().Roots();
         CHECK(std::vector<Entity>(roots.begin(), roots.end()) == std::vector<Entity>{ parent, copy, otherRoot });
     }
 }
@@ -447,7 +447,7 @@ TEST_CASE("RestoreEntityAt puts the root back before its old next sibling", "[sc
     SECTION("among roots")
     {
         const Entity restored = removeAndRestore(parent, mir::kNullEntity, otherRoot);
-        const std::span<const Entity> roots = world.Resource<mir::HierarchyIndex>().Roots();
+        const std::span<const Entity> roots = world.HierarchyIndex().Roots();
         CHECK(std::vector<Entity>(roots.begin(), roots.end()) == std::vector<Entity>{ restored, otherRoot });
         CHECK(ChildrenOf(world, restored).size() == 3);
     }

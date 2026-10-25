@@ -24,6 +24,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -64,11 +65,7 @@ namespace mir
 
         Entity NextSiblingOf(World &world, Entity entity)
         {
-            const HierarchyIndex *index = world.TryResource<HierarchyIndex>();
-            if (index == nullptr)
-                return kNullEntity;
-
-            const std::span<const Entity> siblings = index->SiblingsOf(entity);
+            const std::span<const Entity> siblings = world.HierarchyIndex().SiblingsOf(entity);
             const auto it = std::find(siblings.begin(), siblings.end(), entity);
             if (it == siblings.end() || std::next(it) == siblings.end())
                 return kNullEntity;
@@ -77,10 +74,6 @@ namespace mir
 
         uint32_t SceneSiblingIndex(World &world, Entity entity, const LoadedScene &scene)
         {
-            const HierarchyIndex *index = world.TryResource<HierarchyIndex>();
-            if (index == nullptr)
-                return 0;
-
             std::unordered_set<uint64_t> sceneEntities;
             sceneEntities.reserve(scene.mEntities.size());
             for (const auto &[id, member] : scene.mEntities)
@@ -90,7 +83,7 @@ namespace mir
             }
 
             uint32_t position = 0;
-            for (const Entity sibling : index->SiblingsOf(entity))
+            for (const Entity sibling : world.HierarchyIndex().SiblingsOf(entity))
             {
                 if (sibling == entity)
                     break;
@@ -153,15 +146,10 @@ namespace mir
             }
         }
 
-        Entity DuplicateLinkedInstance(World &world, LoadedScene &scene, Entity source,
-            const ScenePrefabInstance &sourceRecord)
+        Entity DuplicateSubtree(World &world, LoadedScene &scene, Entity source,
+            std::map<StableId, StableId> &remap)
         {
             const std::vector<Entity> sourceMembers = SnapshotMembers(world, source);
-            std::unordered_map<uint64_t, std::size_t> sourceIndex;
-            sourceIndex.reserve(sourceMembers.size());
-            for (std::size_t i = 0; i < sourceMembers.size(); ++i)
-                sourceIndex[PackEntity(sourceMembers[i])] = i;
-
             const Entity copy = DuplicateSceneEntity(world, scene, source);
             if (copy.IsNull())
                 return kNullEntity;
@@ -169,28 +157,50 @@ namespace mir
             const std::vector<Entity> copyMembers = SnapshotMembers(world, copy);
             if (copyMembers.size() != sourceMembers.size())
             {
-                MIR_LOG_WARN("Duplicate: the copy has {} members but the instance has {}", copyMembers.size(),
+                MIR_LOG_WARN("Duplicate: the copy has {} entities but its source has {}", copyMembers.size(),
                     sourceMembers.size());
                 DestroySceneEntity(world, scene, copy);
                 return kNullEntity;
             }
 
-            std::map<StableId, StableId> remap;
-            for (const auto &[address, id] : sourceRecord.mBindings)
+            std::unordered_map<uint64_t, StableId> ids;
+            ids.reserve(scene.mEntities.size());
+            for (const auto &[id, entity] : scene.mEntities)
+                ids.emplace(PackEntity(entity), id);
+
+            // Ordinary descendants are copied too, even though they have no Prefab binding.
+            for (std::size_t i = 0; i < sourceMembers.size(); ++i)
             {
-                (void)address;
-                const auto entityIt = scene.mEntities.find(id);
-                if (entityIt == scene.mEntities.end() || !world.IsAlive(entityIt->second))
+                const auto original = ids.find(PackEntity(sourceMembers[i]));
+                const auto copied = ids.find(PackEntity(copyMembers[i]));
+                if (original == ids.end() || copied == ids.end())
                     continue;
-
-                const auto indexIt = sourceIndex.find(PackEntity(entityIt->second));
-                if (indexIt == sourceIndex.end())
-                    continue;
-
-                const std::optional<StableId> copyId = StableIdOf(scene, copyMembers[indexIt->second]);
-                if (copyId)
-                    remap.emplace(id, *copyId);
+                remap.emplace(original->second, copied->second);
             }
+
+            decltype(scene.mUnresolvedEntityRefs) copiedRefs;
+            for (const auto &[key, target] : scene.mUnresolvedEntityRefs)
+            {
+                const auto owner = remap.find(std::get<0>(key));
+                if (owner == remap.end())
+                    continue;
+                auto copiedKey = key;
+                std::get<0>(copiedKey) = owner->second;
+                const auto copiedTarget = remap.find(target);
+                copiedRefs.emplace(std::move(copiedKey),
+                    copiedTarget != remap.end() ? copiedTarget->second : target);
+            }
+            scene.mUnresolvedEntityRefs.insert(copiedRefs.begin(), copiedRefs.end());
+            return copy;
+        }
+
+        Entity DuplicateLinkedInstance(World &world, LoadedScene &scene, Entity source,
+            const ScenePrefabInstance &sourceRecord)
+        {
+            std::map<StableId, StableId> remap;
+            const Entity copy = DuplicateSubtree(world, scene, source, remap);
+            if (copy.IsNull())
+                return kNullEntity;
 
             const std::optional<StableId> copyRoot = StableIdOf(scene, copy);
             if (!copyRoot)
@@ -245,7 +255,10 @@ namespace mir
             sourceId ? FindInstanceBinding(scene, *sourceId, instanceRoot) : nullptr;
 
         if (instance == nullptr)
-            return DuplicateSceneEntity(world, scene, source);
+        {
+            std::map<StableId, StableId> remap;
+            return DuplicateSubtree(world, scene, source, remap);
+        }
 
         if (instanceRoot != *sourceId)
         {
@@ -280,7 +293,8 @@ namespace mir
         const Entity parent = ParentOf(world, root);
         const Entity before = NextSiblingOf(world, root);
 
-        const Entity copy = DuplicateSceneEntity(world, scene, source);
+        std::map<StableId, StableId> remap;
+        const Entity copy = DuplicateSubtree(world, scene, source, remap);
         if (copy.IsNull())
             return kNullEntity;
 

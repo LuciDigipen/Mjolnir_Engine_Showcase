@@ -10,11 +10,13 @@
 
 #include "core/log/Assert.h"
 #include "core/log/Log.h"
+#include "core/log/SetupError.h"
 
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
 #include <cstdint>
+#include <string>
 
 namespace mir
 {
@@ -24,9 +26,17 @@ namespace mir
         // against the number of live windows.
         int g_windowCount = 0;
 
-        void OnGLFWError(int code, const char *description)
+        void OnGLFWError(int code, const char *description) noexcept
         {
             MIR_LOG_ERROR("GLFW error {}: {}", code, description);
+        }
+
+        // GLFW's own description of the error that just happened, for SetupError's cause
+        std::string LastGLFWError()
+        {
+            const char *description = nullptr;
+            const int code = glfwGetError(&description);
+            return "GLFW error " + std::to_string(code) + ": " + (description != nullptr ? description : "unknown");
         }
 
 
@@ -109,7 +119,11 @@ namespace mir
         if (g_windowCount == 0)
         {
             glfwSetErrorCallback(&OnGLFWError);
-            MIR_CHECK(glfwInit() == GLFW_TRUE, "glfwInit failed");
+            if (glfwInit() != GLFW_TRUE)
+            {
+                throw SetupError(ErrorCategory::System, "The windowing system could not start", {}, LastGLFWError(),
+                    "Check that a display is available and the GPU driver is installed.");
+            }
         }
 
         // No OpenGL context. The renderer owns the graphics API.
@@ -123,7 +137,15 @@ namespace mir
                                     desc.mTitle,
                                     nullptr,
                                     nullptr);
-        MIR_CHECK(mHandle != nullptr, "glfwCreateWindow failed");
+        if (mHandle == nullptr)
+        {
+            const std::string cause = LastGLFWError();
+            // the constructor never finished, so no destructor will balance glfwInit
+            if (g_windowCount == 0)
+                glfwTerminate();
+            throw SetupError(ErrorCategory::System, "The main window could not be created", {}, cause,
+                "Check that a display is available and the GPU driver is installed.");
+        }
         ++g_windowCount;
 
         mTitle = desc.mTitle;
@@ -287,7 +309,7 @@ namespace mir
         mHeight = static_cast<uint32_t>(fbHeight);
     }
 
-    void GLFWWindow::OnFramebufferSize(GLFWwindow *handle, int width, int height)
+    void GLFWWindow::OnFramebufferSize(GLFWwindow *handle, int width, int height) noexcept
     {
         auto *self = static_cast<GLFWWindow *>(glfwGetWindowUserPointer(handle));
         MIR_ASSERT(self != nullptr, "framebuffer callback without a user pointer");
@@ -297,7 +319,7 @@ namespace mir
         self->mHeight = static_cast<uint32_t>(height);
     }
 
-    void GLFWWindow::OnScroll(GLFWwindow *handle, double xoffset, double yoffset)
+    void GLFWWindow::OnScroll(GLFWwindow *handle, double xoffset, double yoffset) noexcept
     {
         auto *self = static_cast<GLFWWindow *>(glfwGetWindowUserPointer(handle));
         MIR_ASSERT(self != nullptr, "scroll callback without a user pointer");
@@ -306,7 +328,7 @@ namespace mir
         self->mRawInput.scrollY += yoffset;
     }
 
-    void GLFWWindow::OnDrop(GLFWwindow *handle, int count, const char **paths)
+    void GLFWWindow::OnDrop(GLFWwindow *handle, int count, const char **paths) noexcept
     {
         auto *self = static_cast<GLFWWindow *>(glfwGetWindowUserPointer(handle));
         MIR_ASSERT(self != nullptr, "drop callback without a user pointer");

@@ -99,12 +99,24 @@ back to the instance.
 That user pointer is how the static framebuffer callback recovers the owning
 `GLFWWindow`. Any further callback added here follows the same route.
 
-**Failure aborts rather than returning.** `glfwInit` and `glfwCreateWindow` are
-wrapped in `MIR_CHECK`, so `Window::Create` never returns null on the desktop
-backend.
+**Failure throws a `SetupError`.** When `glfwInit` or `glfwCreateWindow`
+fails, the constructor throws with category System and GLFW's own description as
+the cause, so `Window::Create` never returns null. A failed first window calls
+`glfwTerminate` before throwing, because no destructor runs for a constructor
+that did not finish.
 
-This departs from the convention that init paths return `bool`, and it leaves
-`App::Initialize`'s `if (!mWindow)` branch unreachable. See Backlog.
+**Every callback is `noexcept`.** GLFW and Win32 call them from C, and an
+exception unwinding through those frames is undefined. That covers the GLFW
+callbacks, the custom title bar's window procedure and the splash's window
+procedure and thread.
+
+### Errors
+
+| Category | Raised when |
+|---|---|
+| System | GLFW cannot start, the main window cannot be created, or the Win32 splash thread or window cannot be created |
+
+The Linux splash has no backend and succeeds without showing anything.
 
 **The GLFW error callback is installed before `glfwInit`**, so GLFW's own
 diagnostics go through `MIR_LOG_ERROR` rather than being lost.
@@ -168,14 +180,16 @@ The module is covered in practice by the engine failing to start.
    cursor control and runtime title changes.
 4. macOS has no native translation unit, so a macOS configure fails. Linux
    sources exist but there is no Linux preset, so that path is unbuilt.
-5. Undecided: `MIR_CHECK` versus returning `nullptr`. `App` already has a branch
-   the current backend can never take, so the two disagree and one of them should
-   change.
-6. Undecided: whether multiple windows are a goal. The GLFW init refcount
+5. Undecided: whether multiple windows are a goal. The GLFW init refcount
    supports it, so the first window to die does not take the library down with
    it, but nothing else in the engine does.
 
 ## Changed
+
+*2026-10-20* — **Window and splash failures throw.** Was: `glfwInit` and
+`glfwCreateWindow` aborted through `MIR_CHECK`, and a splash that could not show
+was skipped with a warning. Now: both throw a `SetupError` (System). Because:
+an abort bypassed the error report, so the engine vanished with no message.
 
 *2026-10-05* — **Fullscreen toggle.** Was: no fullscreen, so a window stayed
 windowed for its whole life. Now: `Window::ToggleFullscreen` and

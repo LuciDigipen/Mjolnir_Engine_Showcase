@@ -179,22 +179,29 @@ TEST_CASE("A spawn is not visible to systems in its own phase", "[ecs][system]")
     REQUIRE(counter.seen == std::vector<std::size_t>{0, 1});
 }
 
-TEST_CASE("A system removes its destroy hook in OnStop, so Reset leaves none behind", "[ecs][system]")
+TEST_CASE("A system clears its component hooks in OnStop, so Reset leaves none behind", "[ecs][system]")
 {
     World world;
     CommandBuffer commands;
     int hookCalls = 0;
 
+    struct Hooked
+    {
+        int value = 0;
+    };
+
     class HookSystem final : public ISystem
     {
     public:
         explicit HookSystem(int &calls) : mCalls(calls) {}
-        void OnStart(SystemContext &context) override { context.world.AddDestroyHook(&Fire, this); }
+        void OnStart(SystemContext &context) override
+        {
+            context.world.SetComponentHooks<Hooked>({ .onRemove = [this](World &, Entity) { ++mCalls; } });
+        }
         void OnUpdate(SystemContext &) override {}
-        void OnStop(SystemContext &context) override { context.world.RemoveDestroyHook(&Fire, this); }
+        void OnStop(SystemContext &context) override { context.world.ClearComponentHooks<Hooked>(); }
 
     private:
-        static void Fire(World &, Entity, void *user) { ++static_cast<HookSystem *>(user)->mCalls; }
         int &mCalls;
     };
 
@@ -206,6 +213,7 @@ TEST_CASE("A system removes its destroy hook in OnStop, so Reset leaves none beh
         scheduler.Start(context);
 
         const Entity a = world.CreateEntity();
+        world.AddComponent(a, Hooked{});
         world.DestroyEntity(a);
         REQUIRE(hookCalls == 1);
 
@@ -216,6 +224,7 @@ TEST_CASE("A system removes its destroy hook in OnStop, so Reset leaves none beh
     // If OnStop had not removed the hook, this would call through a
     // dangling `this` - instead the count simply stops moving.
     const Entity b = world.CreateEntity();
+    world.AddComponent(b, Hooked{});
     world.DestroyEntity(b);
     REQUIRE(hookCalls == 1);
 }

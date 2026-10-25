@@ -1,12 +1,12 @@
 /**
- * @file PrefabAuthoring.tests.cpp
+ * @file PrefabAuthoringAdapter.tests.cpp
  * @author Jackey Cen
- * @brief Tests for app/PrefabAuthoring.
+ * @brief Tests for app/PrefabAuthoringAdapter.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
-#include "../src/app/PrefabAuthoring.h"
+#include "../src/app/PrefabAuthoringAdapter.h"
 
 #include <editor/history/AuthoredEdit.h>
 #include <editor/history/Authoring.h>
@@ -19,9 +19,11 @@
 #include <core/ecs/TypeId.h>
 #include <core/ecs/World.h>
 #include <core/ecs/components/Transform.h>
+#include <core/fs/FileIO.h>
 #include <prefab/PrefabCoordinator.h>
 #include <prefab/PrefabFormat.h>
 #include <prefab/PrefabSceneInstance.h>
+#include <scene/EntitySnapshot.h>
 #include <scene/SceneAsset.h>
 #include <scene/SceneDuplicate.h>
 #include <scene/SceneInstancePatch.h>
@@ -34,11 +36,13 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -104,6 +108,14 @@ namespace
             { "value", FieldKind::Float },
         };
         return ComponentRegistry::Instance().RegisterRuntime("AppAuthoringTestExtra", fields);
+    }
+
+    const ComponentOps &RefOps()
+    {
+        static const RuntimeFieldDecl fields[] = {
+            { "link", FieldKind::EntityRef }, { "outside", FieldKind::EntityRef },
+        };
+        return ComponentRegistry::Instance().RegisterRuntime("AppAuthoringTestRefs", fields);
     }
 
     class NoSceneOps final : public mir::ISceneOps
@@ -308,6 +320,113 @@ namespace
         }
         return kNullStableId;
     }
+
+    struct TempDir
+    {
+        std::filesystem::path mPath = std::filesystem::temp_directory_path() /
+            ("mir_app_authoring_" + mir::ToString(mir::GeneratePrefabId()));
+
+        TempDir() { std::filesystem::create_directories(mPath); }
+        ~TempDir()
+        {
+            std::error_code ec;
+            std::filesystem::remove_all(mPath, ec);
+        }
+
+        TempDir(const TempDir &) = delete;
+        TempDir &operator=(const TempDir &) = delete;
+    };
+
+    bool SaveScene(Fixture &fixture, const std::filesystem::path &path)
+    {
+        const bool prefabsSaved = fixture.mAdapter->SaveScenePrefabs(fixture.mScene,
+            [&](mir::PrefabId id)
+            {
+                return fixture.mHistory.IsUnsaved(DocumentId{ id.mHigh, id.mLow });
+            },
+            [&](mir::PrefabId id)
+            {
+                fixture.mHistory.SetUnsaved(DocumentId{ id.mHigh, id.mLow }, false);
+            });
+        if (!prefabsSaved || !mir::SaveScene(fixture.mWorld, path, fixture.mScene, &fixture.mCoordinator->Resolver()))
+            return false;
+        fixture.mScene.mDirty = false;
+        fixture.Save(kSceneDocument);
+        return true;
+    }
+}
+
+TEST_CASE("Apply survives Save Scene and reload without saving implicitly", "[app][authoring][save]")
+{
+    TempDir dir;
+    Fixture fixture;
+    const std::filesystem::path prefabsDir = dir.mPath / "prefabs";
+    const std::filesystem::path prefabPath = prefabsDir / "test.prefab";
+    const std::filesystem::path sceneDir = dir.mPath / "scene";
+    std::filesystem::create_directories(prefabsDir);
+    REQUIRE(mir::WritePrefabFile(prefabPath, fixture.mDocument));
+    REQUIRE_FALSE(HasPrefabErrors(fixture.mCoordinator->Registry().Scan(prefabsDir)));
+    const auto sourceBefore = mir::ReadText(prefabPath);
+
+    const SceneNodeAddress second{ 2 };
+    const AuthoredKey amount = SceneEditKey(fixture, second, "AppAuthoringTestData", "amount");
+    fixture.Run(MakeAuthoredCommand("Override", { AuthoredEntry{ amount, std::string("12.0") } }));
+    const AuthoredAction apply = fixture.mAdapter->Apply(amount);
+    REQUIRE(apply.mAllowed);
+    fixture.Run(MakeAuthoredCommand(apply.mName, apply.mEntries));
+    CHECK(mir::ReadText(prefabPath) == sourceBefore);
+    REQUIRE(fixture.mHistory.IsUnsaved(fixture.mPrefabDocument));
+    REQUIRE(fixture.mHistory.IsUnsaved(kSceneDocument));
+
+    REQUIRE(SaveScene(fixture, sceneDir));
+    CHECK_FALSE(fixture.mHistory.IsUnsaved(fixture.mPrefabDocument));
+    CHECK_FALSE(fixture.mHistory.IsUnsaved(kSceneDocument));
+    CHECK(fixture.mHistory.StepCount() == 2);
+
+    World loadedWorld;
+    PrefabCoordinator loadedCoordinator;
+    REQUIRE_FALSE(HasPrefabErrors(loadedCoordinator.Registry().Scan(prefabsDir)));
+    const LoadedScene loaded = mir::LoadScene(loadedWorld, sceneDir, &loadedCoordinator.Resolver());
+    const ScenePrefabInstance &instance = loaded.mInstances.at(fixture.mRoot);
+    CHECK(FindInstanceFieldPatch(instance, second, "AppAuthoringTestData", "amount") == nullptr);
+    const Entity member = loaded.mEntities.at(instance.mBindings.at(second));
+    CHECK(FloatField(loadedWorld, member, DataOps(), "amount") == 12.0f);
+
+    fixture.Undo();
+    CHECK(fixture.mHistory.IsUnsaved(fixture.mPrefabDocument));
+    CHECK(fixture.mAdapter->FieldState(amount) == AuthoredFieldState::Overridden);
+    CHECK(mir::ReadText(prefabPath) != sourceBefore);
+    fixture.Redo();
+    CHECK_FALSE(fixture.mHistory.IsUnsaved(fixture.mPrefabDocument));
+    CHECK_FALSE(fixture.mHistory.IsUnsaved(kSceneDocument));
+}
+
+TEST_CASE("A failed Prefab save preserves the saved scene and dirty state", "[app][authoring][save]")
+{
+    TempDir dir;
+    Fixture fixture;
+    const std::filesystem::path prefabsDir = dir.mPath / "prefabs";
+    const std::filesystem::path prefabPath = prefabsDir / "test.prefab";
+    const std::filesystem::path sceneDir = dir.mPath / "scene";
+    std::filesystem::create_directories(prefabsDir);
+    REQUIRE(mir::WritePrefabFile(prefabPath, fixture.mDocument));
+    REQUIRE_FALSE(HasPrefabErrors(fixture.mCoordinator->Registry().Scan(prefabsDir)));
+    REQUIRE(SaveScene(fixture, sceneDir));
+    const auto sceneBefore = mir::ReadText(sceneDir / "scene.json");
+
+    const AuthoredKey amount = SceneEditKey(fixture, SceneNodeAddress{ 2 }, "AppAuthoringTestData", "amount");
+    fixture.Run(MakeAuthoredCommand("Override", { AuthoredEntry{ amount, std::string("12.0") } }));
+    const AuthoredAction apply = fixture.mAdapter->Apply(amount);
+    REQUIRE(apply.mAllowed);
+    fixture.Run(MakeAuthoredCommand(apply.mName, apply.mEntries));
+    std::filesystem::remove(prefabPath);
+    std::filesystem::create_directory(prefabPath);
+
+    CHECK_FALSE(SaveScene(fixture, sceneDir));
+    CHECK(mir::ReadText(sceneDir / "scene.json") == sceneBefore);
+    CHECK(fixture.mHistory.IsUnsaved(fixture.mPrefabDocument));
+    CHECK(fixture.mHistory.IsUnsaved(kSceneDocument));
+    CHECK(fixture.mScene.mDirty);
 }
 
 TEST_CASE("A field override is one History step and survives undo and redo", "[app][authoring]")
@@ -770,4 +889,121 @@ TEST_CASE("A linked duplicate keeps the Prefab and remaps its own references", "
     const Entity copiedMember = fixture.mScene.mEntities.at(copyRecord.mBindings.at(second));
     CHECK(EntityField(fixture.mWorld, copy, DataOps(), "target") == copiedMember);
     CHECK(EntityField(fixture.mWorld, fixture.Member(first), DataOps(), "target") == fixture.Member(second));
+}
+
+TEST_CASE("Duplicate patches remap ordinary descendants across a save and reload", "[app][duplicate][save]")
+{
+    TempDir dir;
+    Fixture fixture;
+    World &world = fixture.mWorld;
+    LoadedScene &scene = fixture.mScene;
+    const Entity root = fixture.Member(SceneNodeAddress{ 1 });
+    const Entity ordinary = CreateSceneEntity(world, scene, root);
+    mir::AddTransform(world, ordinary);
+    const StableId ordinaryId = StableIdIn(scene, ordinary);
+    const Entity outside = CreateSceneEntity(world, scene);
+    const StableId outsideId = StableIdIn(scene, outside);
+    REQUIRE(SetInstanceEntityRef(world, scene, fixture.mRoot, SceneNodeAddress{ 1 },
+        "AppAuthoringTestData", "target", ordinaryId));
+    RefOps().AddDefault(world, root);
+    REQUIRE(RefOps().FindField("link")->Write(RefOps().GetComponent(world, root), &ordinary));
+    REQUIRE(RefOps().FindField("outside")->Write(RefOps().GetComponent(world, root), &outside));
+    mir::GetOrAddInstancePatch(scene.mInstances.at(fixture.mRoot), SceneNodeAddress{ 1 }).mAddedComponents.push_back(
+        { "AppAuthoringTestRefs", json{ { "link", ordinaryId }, { "outside", outsideId } } });
+
+    const std::vector<Entity> sourceMembers = mir::SnapshotMembers(world, root);
+    const auto ordinaryIndex = std::find(sourceMembers.begin(), sourceMembers.end(), ordinary) - sourceMembers.begin();
+    const Entity copy = DuplicateSceneEntitySubtree(world, scene, root);
+    REQUIRE(world.IsAlive(copy));
+    const StableId copyId = StableIdIn(scene, copy);
+    const Entity copiedOrdinary = mir::SnapshotMembers(world, copy).at(ordinaryIndex);
+    const StableId copiedOrdinaryId = StableIdIn(scene, copiedOrdinary);
+    REQUIRE(copiedOrdinaryId != ordinaryId);
+    const ScenePrefabInstance &record = scene.mInstances.at(copyId);
+    REQUIRE(FindInstanceFieldPatch(record, SceneNodeAddress{ 1 }, "AppAuthoringTestData", "target") != nullptr);
+    CHECK(FindInstanceFieldPatch(record, SceneNodeAddress{ 1 }, "AppAuthoringTestData", "target")->mValue ==
+        json(copiedOrdinaryId));
+    const auto *added = mir::FindAddedComponent(record, SceneNodeAddress{ 1 }, "AppAuthoringTestRefs");
+    REQUIRE(added != nullptr);
+    CHECK(added->mFields.at("link") == json(copiedOrdinaryId));
+    CHECK(added->mFields.at("outside") == json(outsideId));
+
+    REQUIRE(mir::SaveScene(world, dir.mPath, scene, &fixture.mCoordinator->Resolver()));
+    World loadedWorld;
+    PrefabCoordinator loadedCoordinator;
+    REQUIRE(loadedCoordinator.SetDocument(fixture.mDocument));
+    const LoadedScene loaded = mir::LoadScene(loadedWorld, dir.mPath, &loadedCoordinator.Resolver());
+    const Entity loadedCopy = loaded.mEntities.at(copyId);
+    CHECK(EntityField(loadedWorld, loadedCopy, DataOps(), "target") == loaded.mEntities.at(copiedOrdinaryId));
+    CHECK(EntityField(loadedWorld, loadedCopy, RefOps(), "link") == loaded.mEntities.at(copiedOrdinaryId));
+    CHECK(EntityField(loadedWorld, loadedCopy, RefOps(), "outside") == loaded.mEntities.at(outsideId));
+    CHECK(EntityField(world, root, DataOps(), "target") == ordinary);
+    CHECK(EntityField(world, root, RefOps(), "link") == ordinary);
+}
+
+TEST_CASE("Copied unresolved references survive saving until their target is available", "[app][duplicate][save]")
+{
+    TempDir dir;
+    Fixture fixture;
+    PrefabDocument targetDocument = fixture.mDocument;
+    targetDocument.mId = mir::GeneratePrefabId();
+    REQUIRE(fixture.mCoordinator->SetDocument(targetDocument));
+    REQUIRE_FALSE(HasPrefabErrors(fixture.mCoordinator->Cache().Compile(targetDocument)));
+    const auto targetTemplate = fixture.mCoordinator->Cache().Find(targetDocument.mId);
+    REQUIRE(targetTemplate != nullptr);
+    const StableId targetRoot = PlacePrefabInstance(fixture.mWorld, fixture.mScene, *targetTemplate);
+    const StableId targetId = fixture.mScene.mInstances.at(targetRoot).mBindings.at(SceneNodeAddress{ 2 });
+    const Entity target = fixture.mScene.mEntities.at(targetId);
+    const Entity sourceRoot = fixture.Member(SceneNodeAddress{ 1 });
+    const Entity ordinary = CreateSceneEntity(fixture.mWorld, fixture.mScene, sourceRoot);
+    const StableId ordinaryId = StableIdIn(fixture.mScene, ordinary);
+    mir::AddTransform(fixture.mWorld, ordinary);
+    DataOps().AddDefault(fixture.mWorld, ordinary);
+    REQUIRE(DataOps().FindField("target")->Write(DataOps().GetComponent(fixture.mWorld, ordinary), &target));
+    REQUIRE(SetInstanceEntityRef(fixture.mWorld, fixture.mScene, fixture.mRoot, SceneNodeAddress{ 1 },
+        "AppAuthoringTestData", "target", targetId));
+    REQUIRE(mir::SaveScene(fixture.mWorld, dir.mPath / "initial", fixture.mScene, &fixture.mCoordinator->Resolver()));
+
+    World partialWorld;
+    PrefabCoordinator partialCoordinator;
+    REQUIRE(partialCoordinator.SetDocument(fixture.mDocument));
+    LoadedScene partial = mir::LoadScene(partialWorld, dir.mPath / "initial", &partialCoordinator.Resolver());
+    REQUIRE_FALSE(partial.mEntities.contains(targetId));
+    REQUIRE(partial.mUnresolvedEntityRefs.size() == 2);
+
+    Entity source = partial.mEntities.at(fixture.mRoot);
+    bool detached = false;
+    SECTION("Linked instance") { }
+    SECTION("Detached instance") { detached = true; }
+    SECTION("Ordinary subtree") { source = partial.mEntities.at(ordinaryId); }
+    const std::vector<Entity> members = mir::SnapshotMembers(partialWorld, source);
+    const auto ownerIndex = std::find(members.begin(), members.end(), partial.mEntities.at(ordinaryId)) - members.begin();
+    const Entity copy = detached ? mir::CopyInstanceMemberAsOrdinary(partialWorld, partial, source)
+                                 : DuplicateSceneEntitySubtree(partialWorld, partial, source);
+    REQUIRE(partialWorld.IsAlive(copy));
+    const Entity copiedOwner = mir::SnapshotMembers(partialWorld, copy).at(ownerIndex);
+    const StableId copiedOwnerId = StableIdIn(partial, copiedOwner);
+    const auto copiedKey = std::make_tuple(copiedOwnerId, std::string("AppAuthoringTestData"), std::string("target"));
+    CHECK(partial.mUnresolvedEntityRefs.contains(copiedKey));
+    if (partial.mUnresolvedEntityRefs.contains(copiedKey))
+        CHECK(partial.mUnresolvedEntityRefs.at(copiedKey) == targetId);
+    CHECK(EntityField(partialWorld, copiedOwner, DataOps(), "target").IsNull());
+    const StableId copyId = StableIdIn(partial, copy);
+    if (source != partial.mEntities.at(ordinaryId))
+        CHECK(partial.mUnresolvedEntityRefs.contains(
+            { copyId, std::string("AppAuthoringTestData"), std::string("target") }));
+    CHECK(partial.mUnresolvedEntityRefs.at(
+        { ordinaryId, std::string("AppAuthoringTestData"), std::string("target") }) == targetId);
+    REQUIRE(mir::SaveScene(partialWorld, dir.mPath / "copied", partial, &partialCoordinator.Resolver()));
+
+    World loadedWorld;
+    PrefabCoordinator loadedCoordinator;
+    REQUIRE(loadedCoordinator.SetDocument(fixture.mDocument));
+    REQUIRE(loadedCoordinator.SetDocument(targetDocument));
+    const LoadedScene loaded = mir::LoadScene(loadedWorld, dir.mPath / "copied", &loadedCoordinator.Resolver());
+    CHECK(EntityField(loadedWorld, loaded.mEntities.at(copiedOwnerId), DataOps(), "target") ==
+        loaded.mEntities.at(targetId));
+    CHECK(EntityField(loadedWorld, loaded.mEntities.at(copyId), DataOps(), "target") == loaded.mEntities.at(targetId));
+    CHECK(EntityField(loadedWorld, loaded.mEntities.at(ordinaryId), DataOps(), "target") == loaded.mEntities.at(targetId));
+    CHECK(loaded.mUnresolvedEntityRefs.empty());
 }

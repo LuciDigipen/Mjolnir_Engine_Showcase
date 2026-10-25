@@ -9,7 +9,7 @@
 #include "PrefabDocuments.h"
 
 #include "MeshResolveSystem.h"
-#include "PrefabAuthoring.h"
+#include "PrefabAuthoringAdapter.h"
 
 #include <animation/ModelPlayer.h>
 #include <animation/ModelSystem.h>
@@ -97,7 +97,6 @@ namespace mir
 
         auto preview = std::make_unique<Document>();
         World &world = preview->mWorld;
-        InstallHierarchy(world);
         world.EmplaceResource<EngineModeState>();
         world.EmplaceResource<Selection>();
         world.EmplaceResource<EntityChangeListeners>();

@@ -49,10 +49,8 @@ namespace mir
 
     struct AssetImportView
     {
-        bool mAvailable = false;
         bool mAutoImport = false;
         bool mProcessRunning = false;
-        std::string mUnavailableReason;
         // showed the tree which automatic import react to
         std::string mWatchedRoot;
 
@@ -64,7 +62,6 @@ namespace mir
     enum class AssetImportActionKind
     {
         None,
-        BindWorkspace,
         Import,
         Reimport,
         ForceReimport,
@@ -81,7 +78,6 @@ namespace mir
         std::string mExternalSource;
         std::string mPackageRoot;
         std::string mTargetDirectory;
-        std::string mWorkspaceRoot;
         bool mEnabled = false;
     };
 
@@ -104,7 +100,6 @@ namespace mir
         char mSource[512]{};
         char mPackageRoot[512]{};
         char mTargetDirectory[256]{};
-        char mWorkspaceRoot[512]{};
         char mMoveTarget[256]{};
         char mFilter[64]{};
         std::vector<Staged> mStaged;

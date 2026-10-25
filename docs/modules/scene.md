@@ -87,6 +87,7 @@ around them.
 | `LoadedScene` | `scene/SceneAsset.h` | `{mName, std::map<StableId, Entity>, mNextId}` |
 | `NewScene`, `AllocateStableId`, `CreateSceneEntity`, `DestroySceneEntity` | `scene/SceneAsset.h` | Authoring entry points |
 | `SaveScene`, `LoadScene`, `UnloadScene` | `scene/SceneIO.h` | Directory in, directory out, scoped destroy |
+| `ProbeScene`, `SceneProbe` | `scene/SceneIO.h` | What `LoadScene` would skip, found without a `World` |
 | `PlaySnapshot`, `CaptureWorld`, `RestoreWorld`, `DiscardSnapshot` | `scene/PlaySnapshot.h` | Whole-World capture/restore around a Play session, built on `SaveScene`/`LoadScene`; `DiscardSnapshot` removes its directory |
 | `EntitySnapshot`, `SnapshotMembers`, `CaptureEntity`, `RestoreEntity`, `RestoreEntityAt`, `DuplicateSceneEntity` | `scene/EntitySnapshot.h` | One entity and its descendants as in-memory data, restored into new entities registered in a `LoadedScene`, under new `StableId`s or, for undo, their old ones |
 
@@ -101,6 +102,13 @@ alive.
 `DuplicateSceneEntity` is `CaptureEntity` followed by `RestoreEntity` under the
 source's own parent. The copy then moves to right after the source, as Unity's
 Ctrl+D places it. It returns null for an entity that is not alive.
+
+`DuplicateSceneEntitySubtree` retains the linked Prefab record for an instance
+root, while `CopyInstanceMemberAsOrdinary` produces a detached effective copy.
+Both map every copied scene identity, including ordinary descendants. Saved
+field and added-component references use that map; outside targets stay unchanged.
+Unresolved reference markers are copied under the new owner IDs, so a temporarily
+unavailable target is retained through Save instead of becoming an explicit null.
 
 ## Rules
 
@@ -182,6 +190,14 @@ files, which load ignores. Only names of the
 form `<number>.json` are touched, so anything else put in `entities/` survives. A
 file that cannot be deleted logs a warning, and the save still succeeds.
 
+**`LoadScene` is lenient, and `ProbeScene` says what it would skip.** A
+`scene.json` that is unreadable or holds a wrongly typed value (a non-id in
+`entities` or `instances`, an instance listed twice) loads an empty scene. An
+unreadable entity or instance file is skipped. Prefab-instance members have no
+entity file, so neither reads one for them. `ProbeScene` reads the same files
+through the same readers without touching a `World` and reports all three cases. A caller probes first when it must decide before anything is
+unloaded, which is what `App` does at startup and on the scene menu.
+
 ## State
 
 *As of 2026-09-12.* Save, load and unload work end to end, including the generic
@@ -235,6 +251,15 @@ duplicates entities through `App`'s `AppSceneOps`. Meshes resolve every frame in
    of sweeping the whole registry per entity.
 
 ## Changed
+
+*2026-10-24* — **`ProbeScene` checks a scene before it loads, and a wrongly typed
+manifest value rejects the whole manifest.** Was: `LoadScene` skipped a bad
+entity or instance id, an instance listed twice or a non-id `nextId` with a
+warning, and nothing could tell a caller what a load would drop. Now: those
+values make `scene.json` unreadable, and `ProbeScene` reports it along with
+missing entity and instance files. Because: `App` refuses or asks about a broken
+scene instead of loading part of it, so a silently skipped id would hide the
+damage it exists to catch.
 
 *2026-10-19* — **Undo gives a deleted entity its `StableId` back.** Was:
 `RestoreEntity` registered every restored entity under a new `StableId` and

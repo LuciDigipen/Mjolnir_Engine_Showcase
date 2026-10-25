@@ -18,7 +18,6 @@
 
 namespace mir
 {
-    class HierarchyIndex;
     class IAuthoredEntities;
 
     enum class EntityActionKind
@@ -52,7 +51,7 @@ namespace mir
     private:
         static constexpr double kFilterRefreshSeconds = 0.25;
 
-        void RebuildFilter(const World &world, const HierarchyIndex *index);
+        void RebuildFilter(const World &world);
 
         // a plain click on an already-selected row waits for release, so a drag can carry the selection
         Entity mDeferredClick = kNullEntity;

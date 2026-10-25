@@ -21,9 +21,12 @@
 #endif
 
 #include "core/log/Log.h"
+#include "core/log/SetupError.h"
+#include <algorithm>
 #include <filesystem>
 #include <glm/geometric.hpp>
 #include <mutex>
+#include <string>
 #include <system_error>
 #include <unordered_set>
 #include <vector>
@@ -37,6 +40,8 @@ namespace mir::audio {
 
         constexpr AkGameObjectID kGlobalObject = 1;
         constexpr AkGameObjectID kListener = 2;
+
+        const std::filesystem::path kInitBank = "Init.bnk";
 
 
         AkGameObjectID g_nextEmitterId = 1000;
@@ -100,50 +105,97 @@ namespace mir::audio {
         std::vector<AkPlayingID> g_endedPlayingIds;
         std::vector<AkPlayingID> g_endedScratch;
 
-        void OnEventEnded(AkCallbackType type, AkEventCallbackInfo *eventInfo, void *, void *)
+        // Called on Wwise's audio thread: nothing may escape into it
+        void OnEventEnded(AkCallbackType type, AkEventCallbackInfo *eventInfo, void *, void *) noexcept
         {
             if (type != AK_EndOfEvent || eventInfo == nullptr)
                 return;
 
-            std::lock_guard<std::mutex> lock(g_endedMutex);
-            g_endedPlayingIds.push_back(eventInfo->playingID);
+            try
+            {
+                std::lock_guard<std::mutex> lock(g_endedMutex);
+                g_endedPlayingIds.push_back(eventInfo->playingID);
+            }
+            catch (...)
+            {
+                // a lost end only keeps IsVoicePlaying true; Terminate clears it
+            }
+        }
+
+        std::string ResultText(AKRESULT result)
+        {
+            return "AKRESULT " + std::to_string(static_cast<int>(result));
+        }
+
+        // Tears down whatever came up, so a caller that never reaches Terminate leaks nothing
+        [[noreturn]] void Fail(ErrorCategory category, std::string what, const std::filesystem::path &path,
+                               std::string cause, std::string fix)
+        {
+            Terminate();
+            throw SetupError(category, std::move(what), path, std::move(cause), std::move(fix));
+        }
+
+        // Every .bnk directly in @p bankDir, Init.bnk first: Wwise loads nothing before it
+        std::vector<std::filesystem::path> FindBanks(const std::filesystem::path &bankDir)
+        {
+            std::vector<std::filesystem::path> banks;
+            std::error_code ec;
+            for (const std::filesystem::directory_entry &entry : std::filesystem::directory_iterator(bankDir, ec))
+            {
+                std::error_code entryEc;
+                if (entry.is_regular_file(entryEc) && entry.path().extension() == ".bnk")
+                    banks.push_back(entry.path().filename());
+            }
+            std::sort(banks.begin(), banks.end(), [](const std::filesystem::path &a, const std::filesystem::path &b)
+                {
+                    if ((a == kInitBank) != (b == kInitBank))
+                        return a == kInitBank;
+                    return a < b;
+                });
+            return banks;
         }
     }
 
-    bool Init(const std::filesystem::path &bankDir)
+    void Init(const std::filesystem::path &bankDir)
     {
-
         std::error_code errorC;
         if (!std::filesystem::is_directory(bankDir, errorC))
         {
-            MIR_LOG_INFO("audio: no SoundBanks at '{}', running silent", bankDir.string());
-            return false;
+            throw SetupError(ErrorCategory::System, "The SoundBank directory is missing", bankDir,
+                "it should have been created at startup", "Create the directory, or check its parent is writable.");
         }
-        
+
+        // Checked before Wwise starts, so a missing Init.bnk names itself instead of failing LoadBank
+        const std::vector<std::filesystem::path> banks = FindBanks(bankDir);
+        if (!banks.empty() && banks.front() != kInitBank)
+        {
+            throw SetupError(ErrorCategory::ProjectData, "SoundBanks are present but Init.bnk is not", bankDir,
+                "Wwise cannot load any bank before Init.bnk",
+                "Regenerate the SoundBanks in Wwise and copy Init.bnk into " + bankDir.string() + ".");
+        }
 
         AkMemSettings memSettings;
         AK::MemoryMgr::GetDefaultSettings(memSettings);
-
-        if (!Check(AK::MemoryMgr::Init(&memSettings), "MemoryMgr::Init"))
+        if (const AKRESULT result = AK::MemoryMgr::Init(&memSettings); result != AK_Success)
         {
-            return false;
+            Fail(ErrorCategory::System, "Wwise memory manager failed to start", {}, ResultText(result),
+                "Check the log above for Wwise's reason.");
         }
+
         AkStreamMgrSettings stmSettings;
         AK::StreamMgr::GetDefaultSettings(stmSettings);
-        
         if (AK::StreamMgr::Create(stmSettings) == nullptr)
         {
-            MIR_LOG_ERROR("Wwise streammgr::create failed");
-            Terminate();
-            return false;
+            Fail(ErrorCategory::System, "Wwise stream manager failed to start", {}, "StreamMgr::Create returned null",
+                "Check the log above for Wwise's reason.");
         }
-        
+
         AkDeviceSettings deviceSettings;
         AK::StreamMgr::GetDefaultDeviceSettings(deviceSettings);
-        if (!Check(g_lowLevelIO.Init(deviceSettings), "low level i/o init"))
+        if (const AKRESULT result = g_lowLevelIO.Init(deviceSettings); result != AK_Success)
         {
-            Terminate();
-            return false;
+            Fail(ErrorCategory::System, "Wwise file I/O failed to start", {}, ResultText(result),
+                "Check the log above for Wwise's reason.");
         }
         g_ioInitialized = true;
 
@@ -152,39 +204,40 @@ namespace mir::audio {
         AK::SoundEngine::GetDefaultInitSettings(initSettings);
 
         AK::SoundEngine::GetDefaultPlatformInitSettings(AkPlatformInitSettings);
-        if (!Check(AK::SoundEngine::Init(&initSettings, &AkPlatformInitSettings), "soundengine init"))
+        if (const AKRESULT result = AK::SoundEngine::Init(&initSettings, &AkPlatformInitSettings); result != AK_Success)
         {
-            Terminate();
-            return false;
+            Fail(ErrorCategory::System, "Wwise sound engine failed to start", {}, ResultText(result),
+                "Check that an audio output device is available.");
         }
 #ifndef AK_OPTIMIZED
         AkCommSettings commSettings;
         AK::Comm::GetDefaultInitSettings(commSettings);
-        if (AK::Comm::Init(commSettings) != AK_Success)
+        if (const AKRESULT result = AK::Comm::Init(commSettings); result != AK_Success)
         {
-            MIR_LOG_WARN("wwise profiler connection unavailable");
+            Fail(ErrorCategory::System, "Wwise profiler connection failed to start", {}, ResultText(result),
+                "Close any other program holding the Wwise profiler port, such as another engine instance "
+                "or a tool connected to it.");
         }
 #endif
 
         g_lowLevelIO.SetBasePath(bankDir.c_str());
-        AkBankID bankID;
+        for (const std::filesystem::path &bank : banks)
+        {
+            AkBankID bankID;
+            if (const AKRESULT result = AK::SoundEngine::LoadBank(bank.string().c_str(), bankID); result != AK_Success)
+            {
+                Fail(ErrorCategory::ProjectData, "SoundBank " + bank.string() + " failed to load", bankDir / bank,
+                    ResultText(result),
+                    "Regenerate the SoundBanks with the Wwise version the engine links, then copy them into " +
+                        bankDir.string() + ".");
+            }
+        }
 
-        if (!Check(AK::SoundEngine::LoadBank("Init.bnk", bankID), "LoadBank(Init.bnk)")) 
-        {
-            Terminate();
-            return false;
-        }
-        if (!Check(AK::SoundEngine::LoadBank("Test.bnk", bankID), "LoadBank(Test.bnk)"))
-        {
-            Terminate();
-            return false;
-        }
         AK::SoundEngine::RegisterGameObj(kListener, "Listener");
         AK::SoundEngine::SetDefaultListeners(&kListener, 1);
         AK::SoundEngine::RegisterGameObj(kGlobalObject, "Global");
         g_Initialized = true;
-        MIR_LOG_INFO("wwise initialized");
-        return true;
+        MIR_LOG_INFO("wwise initialized, {} SoundBank(s) from '{}'", banks.size(), bankDir.string());
     }
 
 

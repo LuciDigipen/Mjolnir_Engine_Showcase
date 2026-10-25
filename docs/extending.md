@@ -195,8 +195,9 @@ only exist after the flush.
 
 Systems cannot be registered after `Start`.
 
-A system that installs a `World::AddDestroyHook` has to remove it in `OnStop`.
-Left behind, the hook calls into freed memory on the next entity destroyed.
+A system that sets `World::SetComponentHooks<T>` in `OnStart` has to clear them
+with `ClearComponentHooks<T>` in `OnStop`. Left behind, the hook calls into freed
+memory on the next removal of `T`.
 
 Filters go in the same call as the data terms:
 

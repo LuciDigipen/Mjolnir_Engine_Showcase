@@ -293,6 +293,41 @@ namespace
     }
 }
 
+TEST_CASE("Document-only writes work before a scene is bound", "[prefab][authoring]")
+{
+    mir::RegisterCoreComponents();
+    DataOps();
+    ExtraOps();
+    World world;
+    PrefabCoordinator coordinator;
+    PrefabDocument document = Document();
+    REQUIRE(coordinator.SetDocument(document));
+    REQUIRE(coordinator.Scene() == nullptr);
+    PrefabAuthoring authoring(world, coordinator);
+
+    const PrefabAuthoredKey amount =
+        DocumentKey(document.mId, SceneNodeAddress{ 2 }, "PrefabAuthoringTestData", "amount");
+    const std::vector<PrefabAuthoredEntry> changed{ { amount, std::string("12.0") } };
+    const mir::PrefabAuthoredWrite write = authoring.Write(changed);
+    REQUIRE(write.mApplied);
+    CHECK_FALSE(write.mSceneMaintained);
+    CHECK(ReadOne(authoring, amount) == "12.0");
+
+    const PrefabAuthoredKey leaf = DocumentKey(document.mId, SceneNodeAddress{ 4 });
+    const std::vector<PrefabAuthoredEntry> deletion{ { leaf, std::nullopt } };
+    const mir::PrefabAuthoredWrite removed = authoring.Write(deletion);
+    REQUIRE(removed.mApplied);
+    CHECK_FALSE(removed.mSceneMaintained);
+    CHECK(coordinator.Registry().Find(document.mId)->mNodes.size() == 3);
+
+    const PrefabAuthoredKey sceneAmount =
+        SceneKey(1, SceneNodeAddress{ 2 }, "PrefabAuthoringTestData", "amount");
+    const std::vector<PrefabAuthoredEntry> mixed{
+        { amount, std::string("99.0") }, { sceneAmount, std::string("25.0") } };
+    CHECK_FALSE(authoring.Write(mixed).mApplied);
+    CHECK(ReadOne(authoring, amount) == "12.0");
+}
+
 TEST_CASE("Field and component presence round-trips through the authored state", "[prefab][authoring]")
 {
     Fixture fixture;
@@ -542,9 +577,7 @@ TEST_CASE("A source node deletion restores nodes but keeps cleared references nu
     CHECK(mir::ParentOf(fixture.mWorld, fixture.Member(third)) == fixture.Member(rootNode));
     CHECK(mir::ParentOf(fixture.mWorld, fixture.Member(fourth)) == fixture.Member(third));
 
-    const mir::HierarchyIndex *index = fixture.mWorld.TryResource<mir::HierarchyIndex>();
-    REQUIRE(index != nullptr);
-    const std::span<const Entity> children = index->ChildrenOf(fixture.Member(rootNode));
+    const std::span<const Entity> children = fixture.mWorld.HierarchyIndex().ChildrenOf(fixture.Member(rootNode));
     REQUIRE(children.size() == 2);
     CHECK(children[1] == fixture.Member(third));
 

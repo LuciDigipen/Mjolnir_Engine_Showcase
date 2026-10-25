@@ -10,6 +10,7 @@
 #include "core/ecs/TransformHierarchy.h"
 
 #include "core/ecs/CommandBuffer.h"
+#include "core/ecs/HierarchyMutator.h"
 #include "core/ecs/Query.h"
 #include "core/ecs/World.h"
 #include "core/log/Assert.h"
@@ -48,39 +49,13 @@ namespace mir
 
             static void Invalidate(WorldTransform &target) { target.mDirty = true; }
         };
-
-        // Only thing allowed to call HierarchyIndex's private mutators
-        struct HierarchyMutator
-        {
-            static bool SetParent(HierarchyIndex &index, Entity child, Entity parent, Entity before)
-            {
-                return index.SetParent(child, parent, before);
-            }
-
-            static bool MoveToLastSibling(HierarchyIndex &index, Entity entity)
-            {
-                return index.MoveToLastSibling(entity);
-            }
-
-            static void Remove(HierarchyIndex &index, Entity entity) { index.Remove(entity); }
-
-            static std::vector<Entity> DetachChildren(HierarchyIndex &index, Entity entity)
-            {
-                return index.DetachChildren(entity);
-            }
-
-            static void AddRoot(HierarchyIndex &index, Entity entity) { index.AddRoot(entity); }
-        };
     }
 
     namespace
     {
-        Entity LiveParentOf(World &world, const HierarchyIndex *index, Entity entity)
+        Entity LiveParentOf(World &world, Entity entity)
         {
-            if (index == nullptr)
-                return kNullEntity;
-
-            const Entity parent = index->ParentOf(entity);
+            const Entity parent = world.HierarchyIndex().ParentOf(entity);
             return world.IsAlive(parent) ? parent : kNullEntity;
         }
 
@@ -127,54 +102,11 @@ namespace mir
             DecomposeRotationScale(glm::inverse(parentPose.linear) * childPose.linear, rotation, scale);
             return Transform(position->Meters(), rotation, scale);
         }
-
-        void OnEntityCreated(World &world, Entity entity, void *)
-        {
-            if (HierarchyIndex *index = world.TryResource<HierarchyIndex>())
-                detail::HierarchyMutator::AddRoot(*index, entity);
-        }
-
-        // destroy all destroyed entity's children
-        void OnEntityDestroyed(World &world, Entity entity, void *)
-        {
-            HierarchyIndex *index = world.TryResource<HierarchyIndex>();
-            if (index == nullptr)
-                return;
-
-            const std::vector<Entity> children = detail::HierarchyMutator::DetachChildren(*index, entity);
-
-            for (const Entity child : children)
-            {
-                MIR_ASSERT(world.IsAlive(child), "OnEntityDestroyed: dead entity left in the scene graph");
-
-                if (world.IsAlive(child))
-                    world.DestroyEntity(child);
-            }
-
-            detail::HierarchyMutator::Remove(*index, entity);
-        }
-    }
-
-    HierarchyIndex &InstallHierarchy(World &world)
-    {
-        if (!world.HasResource<HierarchyIndex>())
-        {
-            HierarchyIndex &index = world.EmplaceResource<HierarchyIndex>();
-
-            // entities made before install are roots, in slot order
-            world.ForEachAliveEntity([&index](Entity entity) { detail::HierarchyMutator::AddRoot(index, entity); });
-        }
-
-        world.AddCreateHook(&OnEntityCreated);
-        world.AddDestroyHook(&OnEntityDestroyed);
-
-        return world.Resource<HierarchyIndex>();
     }
 
     Entity ParentOf(const World &world, Entity entity)
     {
-        const HierarchyIndex *index = world.TryResource<HierarchyIndex>();
-        return index ? index->ParentOf(entity) : kNullEntity;
+        return world.HierarchyIndex().ParentOf(entity);
     }
 
     bool IsAncestorOf(const World &world, Entity ancestor, Entity entity)
@@ -185,8 +117,7 @@ namespace mir
         if (ancestor == entity)
             return true;
 
-        const HierarchyIndex *index = world.TryResource<HierarchyIndex>();
-        return index != nullptr && index->IsAncestorOf(ancestor, entity);
+        return world.HierarchyIndex().IsAncestorOf(ancestor, entity);
     }
 
     WorldPose ResolveWorld(World &world, Entity entity)
@@ -195,12 +126,10 @@ namespace mir
         if (!world.IsAlive(entity))
             return WorldPose{};
 
-        const HierarchyIndex *index = world.TryResource<HierarchyIndex>();
-
         Entity chain[kMaxHierarchyDepth];
         uint32_t depth = 0;
 
-        for (Entity cursor = entity; !cursor.IsNull(); cursor = LiveParentOf(world, index, cursor))
+        for (Entity cursor = entity; !cursor.IsNull(); cursor = LiveParentOf(world, cursor))
         {
             MIR_ASSERT(depth < kMaxHierarchyDepth,
                 "ResolveWorld: hierarchy deeper than {} - the graph should have refused this",
@@ -265,7 +194,16 @@ namespace mir
             return false;
         }
 
-        HierarchyIndex &index = InstallHierarchy(world);
+        // a dying entity takes no part in new links: its destroy already cut it loose as a
+        // child, and as a parent it has drained or is draining its children
+        const bool childDying = world.IsDestroying(child);
+        const bool parentDying = !parent.IsNull() && world.IsDestroying(parent);
+        MIR_ASSERT(!childDying, "SetParent: child is being destroyed");
+        MIR_ASSERT(!parentDying, "SetParent: parent is being destroyed");
+        if (childDying || parentDying)
+            return false;
+
+        HierarchyIndex &index = world.HierarchyIndex();
 
         // a reorder under the same parent keeps local values, so it never round-trips them
         std::optional<Transform> kept;
@@ -305,19 +243,16 @@ namespace mir
         if (!world.IsAlive(child) || (!parent.IsNull() && !world.IsAlive(parent)))
             return false;
 
-        const HierarchyIndex *index = world.TryResource<HierarchyIndex>();
-        if (index == nullptr)
-            return child != parent && before.IsNull();
+        if (world.IsDestroying(child) || (!parent.IsNull() && world.IsDestroying(parent)))
+            return false;
 
-        return index->CanSetParent(child, parent, before);
+        return world.HierarchyIndex().CanSetParent(child, parent, before);
     }
 
     std::vector<Entity> TopmostInHierarchyOrder(const World &world, std::span<const Entity> entities)
     {
         std::vector<Entity> ordered;
-        const HierarchyIndex *index = world.TryResource<HierarchyIndex>();
-        if (index == nullptr)
-            return ordered;
+        const HierarchyIndex &index = world.HierarchyIndex();
 
         const auto listed = [&entities](Entity entity)
             {
@@ -325,7 +260,7 @@ namespace mir
             };
 
 // a listed entity's subtree is skipped, which drops its listed descendants
-        std::vector<Entity> pending(index->Roots().rbegin(), index->Roots().rend());
+        std::vector<Entity> pending(index.Roots().rbegin(), index.Roots().rend());
         while (!pending.empty())
         {
             const Entity entity = pending.back();
@@ -337,7 +272,7 @@ namespace mir
                 continue;
             }
 
-            const std::span<const Entity> children = index->ChildrenOf(entity);
+            const std::span<const Entity> children = index.ChildrenOf(entity);
             pending.insert(pending.end(), children.rbegin(), children.rend());
         }
         return ordered;
@@ -360,13 +295,11 @@ namespace mir
             return false;
         }
 
-        return detail::HierarchyMutator::MoveToLastSibling(InstallHierarchy(world), entity);
+        return detail::HierarchyMutator::MoveToLastSibling(world.HierarchyIndex(), entity);
     }
 
     Transform &AddTransform(World &world, Entity entity, const Transform &transform, Entity parent)
     {
-        InstallHierarchy(world);
-
         if (world.Has<Transform>(entity))
             *world.GetComponent<Transform>(entity) = transform;
         else

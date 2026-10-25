@@ -20,9 +20,16 @@ target_link_libraries(engine_app
             mir::terrain
 )
 
+# App's yes/no prompts
+find_package(tinyfiledialogs CONFIG REQUIRED)
+target_link_libraries(engine_app PRIVATE tinyfiledialogs::tinyfiledialogs)
+
 target_sources(engine_app PRIVATE
     src/app/App.cpp
+    src/app/ErrorReport.cpp
     src/app/GameProject.cpp
+    src/app/ProjectSettings.cpp
+    src/app/Prompt.cpp
     src/app/MeshResolveSystem.cpp
     src/app/SceneResolve.cpp
     src/app/TerrainRender.cpp
@@ -37,7 +44,7 @@ target_compile_definitions(engine_app PUBLIC MIR_WITH_EDITOR=$<BOOL:${MJOLNIR_WI
 if(MJOLNIR_WITH_EDITOR)
     target_link_libraries(engine_app PUBLIC mir::editor)
     target_sources(engine_app PRIVATE src/app/AppSceneOps.cpp src/app/AssetImportManager.cpp
-        src/app/ContentBrowserWatcher.cpp src/app/PrefabAuthoring.cpp src/app/PrefabDocuments.cpp)
+        src/app/ContentBrowserWatcher.cpp src/app/PrefabAuthoringAdapter.cpp src/app/PrefabDocuments.cpp)
 endif()
 
 # ContentBrowserWatcher.tests.cpp needs editor/panels/ContentBrowserPanel.h

@@ -1301,11 +1301,11 @@ namespace mir
 
     void Editor::FocusDocumentRoot(World &world)
     {
-        const HierarchyIndex *index = world.TryResource<HierarchyIndex>();
-        if (index == nullptr || index->Roots().empty())
+        const HierarchyIndex &index = world.HierarchyIndex();
+        if (index.Roots().empty())
             return;
 
-        const Entity root = index->Roots().front();
+        const Entity root = index.Roots().front();
         if (!world.IsAlive(root) || world.GetComponent<Transform>(root) == nullptr)
             return;
 

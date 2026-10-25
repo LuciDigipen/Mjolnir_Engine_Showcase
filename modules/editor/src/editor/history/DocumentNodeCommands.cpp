@@ -29,19 +29,16 @@ namespace mir
     {
         Entity DocumentRoot(const World &world)
         {
-            const HierarchyIndex *index = world.TryResource<HierarchyIndex>();
-            if (index == nullptr || index->Roots().empty())
+            const HierarchyIndex &index = world.HierarchyIndex();
+            if (index.Roots().empty())
                 return kNullEntity;
-            return index->Roots().front();
+            return index.Roots().front();
         }
 
         std::size_t SiblingIndex(const World &world, Entity parent, Entity before)
         {
-            const HierarchyIndex *index = world.TryResource<HierarchyIndex>();
-            if (index == nullptr)
-                return 0;
-
-            const std::span<const Entity> children = index->ChildrenOf(parent);
+            const HierarchyIndex &index = world.HierarchyIndex();
+            const std::span<const Entity> children = index.ChildrenOf(parent);
             if (before.IsNull())
                 return children.size();
 

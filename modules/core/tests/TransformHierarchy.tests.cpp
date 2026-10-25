@@ -67,13 +67,13 @@ namespace
 
     std::vector<Entity> RootsOf(const World &world)
     {
-        const std::span<const Entity> roots = world.Resource<mir::HierarchyIndex>().Roots();
+        const std::span<const Entity> roots = world.HierarchyIndex().Roots();
         return { roots.begin(), roots.end() };
     }
 
     std::vector<Entity> ChildrenOf(const World &world, Entity parent)
     {
-        const std::span<const Entity> children = world.Resource<mir::HierarchyIndex>().ChildrenOf(parent);
+        const std::span<const Entity> children = world.HierarchyIndex().ChildrenOf(parent);
         return { children.begin(), children.end() };
     }
 
@@ -88,7 +88,6 @@ namespace
 
         Family()
         {
-            mir::InstallHierarchy(world);
             parent = world.CreateEntity();
             a = world.CreateEntity();
             b = world.CreateEntity();
@@ -234,7 +233,7 @@ TEST_CASE("Rooting a child returns it to world space", "[ecs][transform][hierarc
     Link(world, child, mir::kNullEntity);
 
     CHECK(mir::ParentOf(world, child).IsNull());
-    CHECK(world.Resource<mir::HierarchyIndex>().ChildrenOf(parent).empty());
+    CHECK(world.HierarchyIndex().ChildrenOf(parent).empty());
     RequireNear(OriginOf(mir::ResolveWorld(world, child)), glm::vec3(0.0f, 1.0f, 0.0f));
 }
 
@@ -244,7 +243,7 @@ TEST_CASE("AddTransform leaves an entity rooted", "[ecs][transform][hierarchy]")
     const Entity entity = MakeAt(world, glm::vec3(1.0f, 0.0f, 0.0f));
 
     CHECK(mir::ParentOf(world, entity).IsNull());
-    CHECK(world.Resource<mir::HierarchyIndex>().ChildrenOf(entity).empty());
+    CHECK(world.HierarchyIndex().ChildrenOf(entity).empty());
     CHECK(world.Has<WorldTransform>(entity));
 }
 
@@ -380,91 +379,6 @@ TEST_CASE("A cascading hook may relocate the row being destroyed", "[ecs][hooks]
     // would corrupt it rather than fail loudly.
     REQUIRE(world.IsAlive(bystander));
     RequireNear(OriginOf(mir::ResolveWorld(world, bystander)), glm::vec3(1.0f, 2.0f, 3.0f));
-}
-
-TEST_CASE("A destroy hook fires with components still readable", "[ecs][hooks]")
-{
-    // The ordering DestroyEntity depends on: hooks run before teardown, so a
-    // hook can still inspect what it is about to lose.
-    World world;
-    static int seen = 0;
-    seen = 0;
-
-    world.AddDestroyHook([](World &w, Entity e, void *)
-        {
-            seen += (w.GetComponent<Transform>(e) != nullptr) ? 1 : 0;
-        });
-
-    const Entity a = MakeAt(world, glm::vec3(0.0f));
-    const Entity b = MakeAt(world, glm::vec3(0.0f));
-    Link(world, b, a);
-
-    world.DestroyEntity(a);
-
-    CHECK(seen == 2); // the parent, and the child the cascade reached
-}
-
-TEST_CASE("The same destroy hook is only installed once", "[ecs][hooks]")
-{
-    // One function pointer added repeatedly, not two lambdas: each captureless
-    // lambda is its own type with its own address, so writing it out twice
-    // would be two different hooks and would not test the dedupe at all.
-    World world;
-    static int calls = 0;
-    calls = 0;
-
-    void (*hook)(World &, Entity, void *) = [](World &, Entity, void *)
-        {
-            ++calls;
-        };
-    world.AddDestroyHook(hook);
-    world.AddDestroyHook(hook);
-    world.AddDestroyHook(hook);
-
-    world.DestroyEntity(world.CreateEntity());
-
-    CHECK(calls == 1);
-}
-
-TEST_CASE("A create hook fires once per entity, after it exists", "[ecs][hooks]")
-{
-    World world;
-    static int calls = 0;
-    calls = 0;
-
-    void (*hook)(World &, Entity, void *) = [](World &w, Entity e, void *)
-        {
-            calls += w.IsAlive(e) ? 1 : 0;
-        };
-    world.AddCreateHook(hook);
-    world.AddCreateHook(hook);
-
-    world.CreateEntity();
-    world.CreateEntity();
-    CHECK(calls == 2);
-
-    world.RemoveCreateHook(hook);
-    world.CreateEntity();
-    CHECK(calls == 2);
-}
-
-TEST_CASE("Repeated AddTransform installs one hierarchy hook", "[ecs][hooks]")
-{
-    // AddTransform arms the hook on every call, so the dedupe is what keeps a
-    // scene of N entities from cascading N times per destroy.
-    World world;
-    const Entity root = MakeAt(world, glm::vec3(0.0f));
-    const Entity a = MakeAt(world, glm::vec3(0.0f));
-    const Entity b = MakeAt(world, glm::vec3(0.0f));
-    Link(world, a, root);
-    Link(world, b, a);
-
-    // A second cascade over an already-dead subtree would assert or double-free
-    // rather than pass quietly.
-    world.DestroyEntity(root);
-
-    CHECK_FALSE(world.IsAlive(a));
-    CHECK_FALSE(world.IsAlive(b));
 }
 
 TEST_CASE("ForEachChild visits every direct child and no deeper", "[ecs][transform][hierarchy][walk]")
@@ -613,22 +527,9 @@ TEST_CASE("Reparenting moves a child between chains", "[ecs][transform][hierarch
 TEST_CASE("Roots come back in creation order", "[ecs][transform][hierarchy][roots]")
 {
     World world;
-    mir::InstallHierarchy(world);
 
     const Entity a = world.CreateEntity();
     const Entity b = world.CreateEntity();
-    const Entity c = world.CreateEntity();
-
-    CHECK(RootsOf(world) == std::vector<Entity>{ a, b, c });
-}
-
-TEST_CASE("Entities made before the install become roots in slot order", "[ecs][transform][hierarchy][roots]")
-{
-    World world;
-    const Entity a = world.CreateEntity();
-    const Entity b = world.CreateEntity();
-
-    mir::InstallHierarchy(world);
     const Entity c = world.CreateEntity();
 
     CHECK(RootsOf(world) == std::vector<Entity>{ a, b, c });
@@ -637,7 +538,6 @@ TEST_CASE("Entities made before the install become roots in slot order", "[ecs][
 TEST_CASE("Parenting leaves the roots and rooting appends", "[ecs][transform][hierarchy][roots]")
 {
     World world;
-    mir::InstallHierarchy(world);
     const Entity a = world.CreateEntity();
     const Entity b = world.CreateEntity();
     const Entity c = world.CreateEntity();
@@ -655,7 +555,6 @@ TEST_CASE("Parenting leaves the roots and rooting appends", "[ecs][transform][hi
 TEST_CASE("A refused reparent leaves the roots alone", "[ecs][transform][hierarchy][roots]")
 {
     World world;
-    mir::InstallHierarchy(world);
     const Entity a = world.CreateEntity();
     const Entity b = world.CreateEntity();
     REQUIRE(Link(world, b, a));
@@ -667,7 +566,6 @@ TEST_CASE("A refused reparent leaves the roots alone", "[ecs][transform][hierarc
 TEST_CASE("Destroying a root takes it and its subtree out of the roots", "[ecs][transform][hierarchy][roots][destroy]")
 {
     World world;
-    mir::InstallHierarchy(world);
     const Entity a = world.CreateEntity();
     const Entity b = world.CreateEntity();
     const Entity child = world.CreateEntity();
@@ -684,7 +582,6 @@ TEST_CASE("Destroying a root takes it and its subtree out of the roots", "[ecs][
 TEST_CASE("Destroying a child leaves the roots alone", "[ecs][transform][hierarchy][roots][destroy]")
 {
     World world;
-    mir::InstallHierarchy(world);
     const Entity a = world.CreateEntity();
     const Entity child = world.CreateEntity();
     REQUIRE(Link(world, child, a));
@@ -1018,10 +915,9 @@ TEST_CASE("ForEachChild survives fn touching other children", "[ecs][transform][
     CHECK(Contains(seen, d));
 }
 
-TEST_CASE("IsAncestorOf is reflexive without a graph", "[ecs][transform][hierarchy]")
+TEST_CASE("IsAncestorOf is reflexive", "[ecs][transform][hierarchy]")
 {
-    // Nothing here installs the HierarchyIndex, and an entity is still its own
-    // ancestor - caller-side reparent guards are written against that.
+    // An entity is its own ancestor - caller-side reparent guards are written against that.
     World world;
     const Entity entity = world.CreateEntity();
     const Entity other = world.CreateEntity();
@@ -1613,7 +1509,6 @@ TEST_CASE("Keep-world reparent holds a far pose", "[ecs][transform][hierarchy][k
 TEST_CASE("CanSetParent answers as SetParent would, without changing anything", "[ecs][transform][hierarchy][order]")
 {
     World world;
-    mir::InstallHierarchy(world);
     const Entity a = world.CreateEntity();
     const Entity b = world.CreateEntity();
     const Entity child = world.CreateEntity();
@@ -1634,7 +1529,6 @@ TEST_CASE("CanSetParent answers as SetParent would, without changing anything", 
 TEST_CASE("TopmostInHierarchyOrder sorts by hierarchy and drops listed descendants", "[ecs][transform][hierarchy][order]")
 {
     World world;
-    mir::InstallHierarchy(world);
     const Entity a = world.CreateEntity();
     const Entity b = world.CreateEntity();
     const Entity x = world.CreateEntity();

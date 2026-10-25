@@ -27,11 +27,12 @@ namespace mir::detail
     {
       public:
         // Called on Jolt's job threads with bodies locked: read only IDs and the manifold.
+        // noexcept because an exception cannot cross Jolt or leave a job thread.
         void OnContactAdded(const JPH::Body &body1, const JPH::Body &body2, const JPH::ContactManifold &manifold,
-                            JPH::ContactSettings &) override;
+                            JPH::ContactSettings &) noexcept override;
         void OnContactPersisted(const JPH::Body &body1, const JPH::Body &body2, const JPH::ContactManifold &manifold,
-                                JPH::ContactSettings &) override;
-        void OnContactRemoved(const JPH::SubShapeIDPair &key) override;
+                                JPH::ContactSettings &) noexcept override;
+        void OnContactRemoved(const JPH::SubShapeIDPair &key) noexcept override;
 
         void Flush(const JPH::BodyInterface &bodies, std::vector<CollisionEvent> &out);
 

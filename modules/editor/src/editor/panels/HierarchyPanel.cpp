@@ -86,7 +86,7 @@ namespace mir
         struct DrawContext
         {
             World &world;
-            const HierarchyIndex *index;
+            const HierarchyIndex &index;
             Selection &selection;
             IAuthoredEntities *authored;
             bool authoredDocument;
@@ -231,9 +231,6 @@ namespace mir
         // Before, child or after, split 25 / 50 / 25 over the row and half the gap on each side
         void DropTargetForRow(DrawContext &context, Entity entity, bool collapsed)
         {
-            if (context.index == nullptr)
-                return;
-
             const float halfGap = ImGui::GetStyle().ItemSpacing.y * 0.5f;
             const ImVec2 itemMin = ImGui::GetItemRectMin();
             const ImVec2 itemMax = ImGui::GetItemRectMax();
@@ -244,7 +241,7 @@ namespace mir
 
             const float t = (ImGui::GetMousePos().y - rect.Min.y) / rect.GetHeight();
             DropKind kind = DropKind::Before;
-            Entity parent = context.index->ParentOf(entity);
+            Entity parent = context.index.ParentOf(entity);
             Entity before = entity;
             if (t >= 0.25f && t <= 0.75f)
             {
@@ -255,7 +252,7 @@ namespace mir
             else if (t > 0.75f)
             {
                 kind = DropKind::After;
-                before = NextUndragged(*context.index, entity, context.dragged);
+                before = NextUndragged(context.index, entity, context.dragged);
             }
 
             // BeforeDelivery returns the payload while hovering, not only on release.
@@ -315,8 +312,7 @@ namespace mir
             if (context.filtered != nullptr && !context.filtered->contains(PackEntity(entity)))
                 return;
 
-            const std::span<const Entity> children =
-                context.index != nullptr ? context.index->ChildrenOf(entity) : std::span<const Entity>{};
+            const std::span<const Entity> children = context.index.ChildrenOf(entity);
             const bool hasChildren = context.filtered == nullptr
                 ? !children.empty()
                 : std::any_of(children.begin(), children.end(),
@@ -410,19 +406,19 @@ namespace mir
         Selection &selection = world.Resource<Selection>();
         std::erase_if(selection.mSelected, [&](Entity e) { return !world.IsAlive(e); });
 
-        const HierarchyIndex *index = world.TryResource<HierarchyIndex>();
+        const HierarchyIndex &index = world.HierarchyIndex();
         const ImGuiPayload *activePayload = ImGui::GetDragDropPayload();
         const bool dragging = activePayload != nullptr && activePayload->IsDataType(kEntityPayload);
 
         // reveal last frame's drop: open every ancestor, scroll to the last moved entity
         std::unordered_set<uint64_t> openRows;
         Entity scrollTo = kNullEntity;
-        if (index != nullptr && !mReveal.empty())
+        if (!mReveal.empty())
         {
             const std::vector<Entity> moved = TopmostInHierarchyOrder(world, mReveal);
             for (const Entity entity : moved)
             {
-                for (Entity ancestor = index->ParentOf(entity); !ancestor.IsNull(); ancestor = index->ParentOf(ancestor))
+                for (Entity ancestor = index.ParentOf(entity); !ancestor.IsNull(); ancestor = index.ParentOf(ancestor))
                     openRows.insert(PackEntity(ancestor));
             }
             if (!moved.empty())
@@ -437,7 +433,7 @@ namespace mir
             ++mSearchScope;
         mWasFiltering = filtering;
         if (filtering)
-            RebuildFilter(world, index);
+            RebuildFilter(world);
 
         if (ImGui::BeginTable("##outliner-header", 1))
         {
@@ -478,15 +474,8 @@ namespace mir
             mDragged, mDropHint, preview, mReveal, openRows, scrollTo, mHoverRow, mHoverStart, kNullEntity,
             mOpenedDuringDrag, mDropDelivered, filtering ? &mFiltered : nullptr };
 
-        if (index != nullptr)
-        {
-            for (const Entity root : index->Roots())
-                DrawEntity(context, root);
-        }
-        else
-        {
-            world.ForEachAliveEntity([&](Entity entity) { DrawEntity(context, entity); });
-        }
+        for (const Entity root : index.Roots())
+            DrawEntity(context, root);
 
         if (!context.rangeClick.IsNull())
             ApplyRangeClick(selection, context.rangeClick, context.visibleRows, context.rangeKeep);
@@ -575,8 +564,9 @@ namespace mir
         return action;
     }
 
-    void HierarchyPanel::RebuildFilter(const World &world, const HierarchyIndex *index)
+    void HierarchyPanel::RebuildFilter(const World &world)
     {
+        const HierarchyIndex &index = world.HierarchyIndex();
         const double now = ImGui::GetTime();
         if (mFilterBuiltFor == mFilter && now - mFilterBuiltAt < kFilterRefreshSeconds)
             return;
@@ -593,28 +583,17 @@ namespace mir
                 if (!matches)
                     return;
                 mFiltered.insert(PackEntity(entity));
-                if (index != nullptr)
-                    for (Entity ancestor = index->ParentOf(entity); !ancestor.IsNull(); ancestor = index->ParentOf(ancestor))
-                        if (!mFiltered.insert(PackEntity(ancestor)).second)
-                            break;
+                for (Entity ancestor = index.ParentOf(entity); !ancestor.IsNull(); ancestor = index.ParentOf(ancestor))
+                    if (!mFiltered.insert(PackEntity(ancestor)).second)
+                        break;
             });
     }
 
     Entity NeighborInHierarchy(const World &world, Entity entity)
     {
-        const HierarchyIndex *index = world.TryResource<HierarchyIndex>();
-        const Entity parent = index != nullptr ? index->ParentOf(entity) : kNullEntity;
-
-        std::vector<Entity> siblings;
-        if (index != nullptr)
-        {
-            const std::span<const Entity> listed = index->SiblingsOf(entity);
-            siblings.assign(listed.begin(), listed.end());
-        }
-        else
-        {
-            world.ForEachAliveEntity([&](Entity root) { siblings.push_back(root); });
-        }
+        const HierarchyIndex &index = world.HierarchyIndex();
+        const Entity parent = index.ParentOf(entity);
+        const std::span<const Entity> siblings = index.SiblingsOf(entity);
 
         const auto it = std::find(siblings.begin(), siblings.end(), entity);
         if (it == siblings.end())

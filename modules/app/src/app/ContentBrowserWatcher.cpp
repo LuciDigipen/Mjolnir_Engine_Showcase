@@ -10,6 +10,7 @@
 
 #include <assets/AssetPath.h>
 #include <core/log/Log.h>
+#include <core/log/SetupError.h>
 
 #include <system_error>
 
@@ -32,7 +33,7 @@ namespace mir
         }
     } // namespace
 
-    bool ContentBrowserWatcher::Initialize(const GameProject &project)
+    void ContentBrowserWatcher::Initialize(const GameProject &project)
     {
         mProject = project;
         mView = {};
@@ -40,26 +41,22 @@ namespace mir
         mWatchInitialized = false;
         mLastPoll = {};
 
+        // LoadGameProject already found this directory, so losing it here is the machine's doing
         std::error_code error;
         if (!std::filesystem::is_directory(project.mRootDir, error))
         {
-            mView.mAvailable = false;
-            mView.mUnavailableReason = "project root does not exist: " + project.mRootDir.string();
-            MIR_LOG_WARN("Content browser unavailable: {}", mView.mUnavailableReason);
-            return false;
+            throw SetupError(ErrorCategory::System, "The content browser cannot watch the game directory",
+                project.mRootDir, error ? error.message() : "it is no longer a directory",
+                "Check the directory still exists and is readable.");
         }
 
         mRoot = project.mRootDir;
-        mView.mAvailable = true;
         mView.mContentRoot = project.mDir;
         Refresh();
-        return true;
     }
 
     void ContentBrowserWatcher::Update()
     {
-        if (!mView.mAvailable)
-            return;
         const auto now = std::chrono::steady_clock::now();
         if (mLastPoll != std::chrono::steady_clock::time_point{} && now - mLastPoll < std::chrono::milliseconds(250))
             return;
@@ -127,7 +124,7 @@ namespace mir
 
     void ContentBrowserWatcher::Handle(const ContentBrowserAction &action)
     {
-        if (!mView.mAvailable || action.mKind == ContentBrowserActionKind::None)
+        if (action.mKind == ContentBrowserActionKind::None)
             return;
         mView.mLastError.clear();
         switch (action.mKind)
