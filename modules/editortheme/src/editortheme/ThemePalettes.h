@@ -48,6 +48,7 @@ namespace mir::detail
         uint32_t category;
         uint32_t categoryHovered;
         uint32_t selectionHovered;
+        uint32_t prefab;
     };
 
     ThemeColors ApplySlate(ImGuiStyle &style);

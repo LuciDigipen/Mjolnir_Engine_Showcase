@@ -41,6 +41,20 @@ namespace mir
 
     constexpr glm::vec3 kDefaultLightColor{ 0.85f, 0.85f, 0.85f };
 
+    // What a source World gets when it authors neither a Sun nor a Sky.
+    struct SourceLighting
+    {
+        bool mUseDefaultSun = false;
+        bool mUseDefaultSky = false;
+    };
+
+    inline SourceLighting ResolveSourceLighting(bool haveSun, bool haveSky, bool sourceOverride)
+    {
+        if (!sourceOverride || haveSun || haveSky)
+            return {};
+        return SourceLighting{ true, true };
+    }
+
     struct Viewport
     {
         // zero = the whole swapchain
@@ -63,12 +77,18 @@ namespace mir
             mViewports.push_back(Viewport{});
         }
 
-        void OnStart(SystemContext &context) override
+        void OnStart(SystemContext &context) override { BindQueries(context.world); }
+
+        // Draws @p world's entities, lights and view sources instead of the World this
+        // system runs in; RenderSettings and post-processing stay the main World's.
+        // Null draws the main World again.
+        void SetSourceWorld(World *world)
         {
-            mMeshQuery = &context.world.GetOrCreateQuery<const WorldTransform, const MeshRenderer>();
-            mCameraQuery = &context.world.GetOrCreateQuery<const WorldTransform, const Camera>();
-            mSkyQuery = &context.world.GetOrCreateQuery<const WorldTransform, const Sky>();
-            mLightQuery = &context.world.GetOrCreateQuery<const WorldTransform, const Light>();
+            if (world == mSourceWorld)
+                return;
+            mSourceWorld = world;
+            mPreviousPoses.clear();
+            mCurrentPoses.clear();
         }
 
         ViewportId AddViewport(VkRect2D rect)
@@ -113,6 +133,9 @@ namespace mir
         {
             const RenderSettings &renderSettings = context.world.Resource<RenderSettings>();
 
+            World &source = mSourceWorld != nullptr ? *mSourceWorld : context.world;
+            BindQueries(source);
+
             mRenderer.SetPostProcessing(ResolvePostProcessing(context.world.Resource<PostProcessingSettings>(),
                 mRenderer.RayTracingActive(renderSettings.rayTracing), mRenderer.DlssAvailable()));
 
@@ -156,6 +179,18 @@ namespace mir
                     mRenderer.SetAtmosphere(sky);
                     haveSky = true;
                 });
+
+            const SourceLighting sourceLighting = ResolveSourceLighting(haveSunLight, haveSky, mSourceWorld != nullptr);
+            if (sourceLighting.mUseDefaultSun)
+            {
+                sunDirWS = kSunReferenceLocalDirection;
+                mRenderer.SetDirectionalLight(sunDirWS, kDefaultLightColor);
+            }
+            if (sourceLighting.mUseDefaultSky)
+            {
+                mRenderer.SetAtmosphere(Sky{});
+                haveSky = true;
+            }
             mRenderer.SetSkyVisible(haveSky);
 
             bool haveDefaultCamera = false;
@@ -224,7 +259,7 @@ namespace mir
                                                   MakeCameraRelativeViewProjection(cameraPose, camera, aspect) });
             }
 
-            ViewDrawSources *viewSources = context.world.TryResource<ViewDrawSources>();
+            ViewDrawSources *viewSources = source.TryResource<ViewDrawSources>();
             if (viewSources)
                 for (IViewDrawSource *source : viewSources->sources)
                     source->Prepare(mViewCameras);
@@ -291,7 +326,7 @@ namespace mir
 
             // ModelSystem builds its own items (meshes that came from a model
             // asset, with their morph/skin data attached).
-            if (const ModelDrawItems *models = context.world.TryResource<ModelDrawItems>())
+            if (const ModelDrawItems *models = source.TryResource<ModelDrawItems>())
                 mDrawItems.insert(mDrawItems.end(), models->items.begin(), models->items.end());
 
             const bool haveDirectionalLight = haveSunLight || haveSky;
@@ -436,7 +471,16 @@ namespace mir
         }
 
     private:
+        void BindQueries(World &world)
+        {
+            mMeshQuery = &world.GetOrCreateQuery<const WorldTransform, const MeshRenderer>();
+            mCameraQuery = &world.GetOrCreateQuery<const WorldTransform, const Camera>();
+            mSkyQuery = &world.GetOrCreateQuery<const WorldTransform, const Sky>();
+            mLightQuery = &world.GetOrCreateQuery<const WorldTransform, const Light>();
+        }
+
         VulkanRenderer &mRenderer;
+        World *mSourceWorld = nullptr;
         Query<const WorldTransform, const MeshRenderer> *mMeshQuery = nullptr;
         Query<const WorldTransform, const Camera> *mCameraQuery = nullptr;
         Query<const WorldTransform, const Sky> *mSkyQuery = nullptr;

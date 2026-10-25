@@ -13,14 +13,18 @@
 #include <core/ecs/ComponentFields.h>
 #include <core/ecs/Entity.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace mir
 {
+    struct EntityPresetDesc;
+
     enum class AuthoredFieldState : uint8_t
     {
         Inherited,
@@ -66,11 +70,40 @@ namespace mir
 
         virtual AuthoredInstanceRole InstanceRole(Entity entity) = 0;
 
+        // Every live entity a Prefab occurrence binds in the current context.
+        virtual std::vector<Entity> PrefabLinkedEntities() { return {}; }
+
         // The field's value in the backend's encoding.
         virtual std::string EncodeField(FieldKind kind, const void *bytes) = 0;
 
         // One command's entries; a refused action carries a reason instead.
         virtual AuthoredAction Revert(const AuthoredKey &key) = 0;
         virtual AuthoredAction Apply(const AuthoredKey &key) = 0;
+
+        // Node edits on the active document; a null parent means the document root.
+        // A preset fills the new node with the components it creates on a fresh entity.
+        virtual AuthoredAction CreateNode(Entity parent, std::size_t siblingIndex,
+            const EntityPresetDesc *preset = nullptr) = 0;
+        virtual AuthoredAction DeleteNodes(std::span<const Entity> nodes) = 0;
+        virtual AuthoredAction ReparentNode(Entity node, Entity parent, std::size_t siblingIndex) = 0;
+
+        // The insertion index is measured after all moving nodes are removed.
+        virtual AuthoredAction ReparentNodes(std::span<const Entity> nodes, Entity parent, std::size_t siblingIndex)
+        {
+            AuthoredAction result;
+            result.mName = "Reparent Nodes";
+            for (Entity node : nodes)
+            {
+                AuthoredAction action = ReparentNode(node, parent, siblingIndex++);
+                if (!action.mAllowed)
+                    return action;
+                result.mEntries.insert(result.mEntries.end(), action.mEntries.begin(), action.mEntries.end());
+            }
+            return result;
+        }
+
+        // True when removing the component deletes it from the active document
+        // instead of hiding one the template provides.
+        virtual bool WritesComponentDirectly(Entity entity, std::string_view component) = 0;
     };
 }

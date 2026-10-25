@@ -110,8 +110,11 @@ namespace mir
             {
                 const AuthoredComponentState state = authored->ComponentState(entity, ops.mType.name);
                 std::optional<std::string> value;
-                if (state == AuthoredComponentState::Inherited)
+                if (state == AuthoredComponentState::Inherited &&
+                    !authored->WritesComponentDirectly(entity, ops.mType.name))
+                {
                     value = std::string("null");
+                }
                 return MakeAuthoredCommand(std::format("Remove {}", ops.mType.name),
                     { AuthoredEntry{ *key, std::move(value) } });
             }

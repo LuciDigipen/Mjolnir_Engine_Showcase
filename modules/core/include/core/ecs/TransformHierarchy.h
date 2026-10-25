@@ -17,6 +17,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -24,6 +25,10 @@ namespace mir
 {
     // The entity's pose in the fixed Scene world; a dead entity is the identity at the origin.
     WorldPose ResolveWorld(World &world, Entity entity);
+
+    // The local values that hold `child`'s world pose under `parent`. A zero-scale
+    // parent counts as translation only. nullopt when the position does not fit.
+    std::optional<Transform> TryLocalForWorldPose(WorldPose parent, const WorldPose &child);
 
     // Adds Transform and its WorldTransform cache
     Transform &AddTransform(World &world,

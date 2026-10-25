@@ -27,6 +27,8 @@ namespace mir
             : mRenderer(renderer), mAssets(assets), mRoot(std::move(root))
         {}
         void Reset();
+        // Frees this World's uploads without releasing resources owned by other Worlds.
+        void ReleaseResources();
         bool PrepareReload(AssetCache &assets, std::string &error);
         void CommitReload(AssetCache *assets);
         void DiscardPreparedReload();

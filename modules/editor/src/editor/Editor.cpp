@@ -24,6 +24,7 @@
 #include <editor/Selection.h>
 #include <editor/history/AuthoredEdit.h>
 #include <editor/history/ComponentCommands.h>
+#include <editor/history/DocumentNodeCommands.h>
 #include <editor/history/EntityCommands.h>
 #include <editortheme/EditorTheme.h>
 #include <renderer/CameraMath.h>
@@ -172,6 +173,64 @@ namespace mir
             glm::mat4 mViewProj;
             float mX0, mY0, mWidth, mHeight;
         };
+
+        // The tab bar over the scene viewport; the viewport itself starts below it.
+        float DrawDocumentTabs(float x, float y, float width, const EditorDocuments &documents, EditorActions &actions,
+            bool revealActive)
+        {
+            const float height = ImGui::GetFrameHeight();
+
+            ImGui::SetNextWindowPos(ImVec2(x, y), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(width, height), ImGuiCond_Always);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+            const bool open = ImGui::Begin("##DocumentTabs", nullptr,
+                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                    ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
+                    ImGuiWindowFlags_NoFocusOnAppearing);
+
+            if (open)
+            {
+                ImGui::BeginDisabled(!documents.mEnabled);
+                if (ImGui::BeginTabBar("##DocumentTabBar"))
+                {
+                    for (const EditorDocumentTab &tab : documents.mTabs)
+                    {
+                        ImGuiTabItemFlags flags =
+                            tab.mUnsaved ? ImGuiTabItemFlags_UnsavedDocument : ImGuiTabItemFlags_None;
+                        if (revealActive && tab.mDocument == documents.mActive)
+                            flags |= ImGuiTabItemFlags_SetSelected;
+
+                        // the ### id keeps the tab stable as its label or unsaved marker changes
+                        const std::string label = std::format("{}###doc{:016x}{:016x}", tab.mLabel,
+                            tab.mDocument.mHigh, tab.mDocument.mLow);
+                        bool tabOpen = true;
+                        const bool visible =
+                            ImGui::BeginTabItem(label.c_str(), tab.mClosable ? &tabOpen : nullptr, flags);
+                        const bool clicked = ImGui::IsItemClicked();
+                        if (visible)
+                            ImGui::EndTabItem();
+
+                        if (tab.mClosable && !tabOpen)
+                        {
+                            actions.mDocument =
+                                EditorDocumentAction{ EditorDocumentActionKind::Close, tab.mDocument };
+                        }
+                        else if (clicked && tab.mDocument != documents.mActive)
+                        {
+                            actions.mDocument =
+                                EditorDocumentAction{ EditorDocumentActionKind::Activate, tab.mDocument };
+                        }
+                    }
+                    ImGui::EndTabBar();
+                }
+                ImGui::EndDisabled();
+            }
+
+            ImGui::End();
+            ImGui::PopStyleVar(2);
+            return height;
+        }
     } // namespace
 
     Editor::~Editor() {}
@@ -479,7 +538,8 @@ namespace mir
         ImGui::EndPopup();
     }
 
-    void Editor::DrawViewportGizmo(const EngineModeState &mode, World &world)
+    void Editor::DrawViewportGizmo(const EngineModeState &mode, World &world, EditorActions &actions,
+        bool prefabDocument)
     {
         // matches EditorCamera's own Edit-only gating in App::Run
         if (mode.mMode != EngineMode::Edit)
@@ -500,10 +560,11 @@ namespace mir
 
         const Selection *selection = world.TryResource<Selection>();
         const Entity entity = selection != nullptr ? selection->Primary() : kNullEntity;
-        if (entity.IsNull() || !world.IsAlive(entity))
-            return;
+        const bool hasGizmoTarget =
+            !entity.IsNull() && world.IsAlive(entity) && world.GetComponent<Transform>(entity) != nullptr;
 
-        if (world.GetComponent<Transform>(entity) == nullptr)
+        // A Prefab tab keeps the toolbar (and its Save) visible with nothing selected.
+        if (!hasGizmoTarget && !prefabDocument)
             return;
 
         const float x = static_cast<float>(mSceneViewportRect.offset.x);
@@ -540,9 +601,20 @@ namespace mir
             if (widgets::ToolbarButton(local ? ICON_FA_CUBE : ICON_FA_GLOBE,
                 local ? "Local axes (click for world)" : "World axes (click for local)"))
                 mGizmoSpace = local ? GizmoSpace::World : GizmoSpace::Local;
+
+            if (prefabDocument)
+            {
+                ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+                ImGui::SameLine();
+                if (widgets::ToolbarButton(ICON_FA_FLOPPY_DISK, "Save Prefab (Ctrl+S)"))
+                    actions.mSaveActiveDocument = true;
+            }
         }
         ImGui::End();
         ImGui::PopStyleVar(3);
+
+        if (!hasGizmoTarget)
+            return;
 
         // ImGuizmo works in the scene viewport's camera-relative space: the
         // camera is the origin, so its float matrices stay small however far
@@ -899,10 +971,13 @@ namespace mir
 
     EditorActions Editor::DrawLayout(bool enableLayout, InputMap &inputMap, RenderSettings &renderSettings,
         PostProcessingSettings &postProcessingSettings, const EngineModeState &mode,
-        std::span<const ProjectMenuEntry> projects, std::string_view currentProject, World &world,
-        const AssetImportView &assetImport, const VulkanRenderer &renderer, const ContentBrowserView &contentBrowser)
+        std::span<const ProjectMenuEntry> projects, std::string_view currentProject, World &activeWorld,
+        World &sceneWorld, const EditorDocuments &documents, const AssetImportView &assetImport,
+        const VulkanRenderer &renderer, const ContentBrowserView &contentBrowser)
     {
         EditorActions actions;
+
+        const bool documentTab = documents.mActive != kSceneDocument;
 
         if (mThemePending)
         {
@@ -965,12 +1040,20 @@ namespace mir
                 ImGui::DockBuilderFinish(dockspaceId);
             }
 
+            SwitchDocumentCamera(documents, activeWorld);
+
             if (ImGui::Begin("Hierarchy"))
-                mHistory.Submit(MakeEntityCommand(mHierarchyPanel.Draw(world, mAuthoredEntities)));
+            {
+                const EntityAction entityAction = mHierarchyPanel.Draw(activeWorld, mAuthoredEntities, documentTab);
+                if (documentTab && mAuthoredEntities != nullptr)
+                    mHistory.Submit(MakeDocumentEntityCommand(entityAction, *mAuthoredEntities, activeWorld));
+                else
+                    mHistory.Submit(MakeEntityCommand(entityAction));
+            }
             ImGui::End();
 
             if (ImGui::Begin("Inspector"))
-                mInspectorPanel.Draw(world, assetImport, mHistory, mAuthoredEntities);
+                mInspectorPanel.Draw(activeWorld, assetImport, mHistory, mAuthoredEntities);
             ImGui::End();
 
             if (ImGui::Begin("Output"))
@@ -980,10 +1063,17 @@ namespace mir
             if (const ImGuiDockNode *centralNode = ImGui::DockBuilderGetCentralNode(dockspaceId);
                 centralNode != nullptr)
             {
+                const bool revealActive = !mShownDocumentKnown || mShownDocument != documents.mActive;
+                const float barHeight = DrawDocumentTabs(centralNode->Pos.x, centralNode->Pos.y, centralNode->Size.x,
+                    documents, actions, revealActive);
+                mShownDocument = documents.mActive;
+                mShownDocumentKnown = true;
+                const float viewportHeight = std::max(centralNode->Size.y - barHeight, 0.0f);
                 mSceneViewportRect = VkRect2D{
-                    .offset{ static_cast<int32_t>(centralNode->Pos.x), static_cast<int32_t>(centralNode->Pos.y) },
+                    .offset{ static_cast<int32_t>(centralNode->Pos.x),
+                            static_cast<int32_t>(centralNode->Pos.y + barHeight) },
                     .extent{ static_cast<uint32_t>(std::max(centralNode->Size.x, 0.0f)),
-                            static_cast<uint32_t>(std::max(centralNode->Size.y, 0.0f)) } };
+                            static_cast<uint32_t>(viewportHeight) } };
             }
 
             // the dock area below the bars, minus the scene viewport
@@ -997,12 +1087,12 @@ namespace mir
                     sceneMin + sceneSize);
             }
 
-            UpdateViewportPicking(mode, world);
-            FocusSelection(mode, world);
-            UpdateHistoryShortcuts();
-            DrawSelectionHighlights(mode, world);
-            DrawComponentGizmos(mode, world);
-            DrawViewportGizmo(mode, world);
+            UpdateViewportPicking(mode, activeWorld);
+            FocusSelection(mode, activeWorld);
+            UpdateHistoryShortcuts(actions, mode);
+            DrawSelectionHighlights(mode, activeWorld);
+            DrawComponentGizmos(mode, activeWorld);
+            DrawViewportGizmo(mode, activeWorld, actions, documentTab);
 
             ImGui::PopStyleColor(pushedColors);
             if (ImGui::BeginMainMenuBar())
@@ -1154,7 +1244,7 @@ namespace mir
 
         
         if (mSceneOps != nullptr)
-            mHistory.Flush(world, *mSceneOps);
+            mHistory.Flush(sceneWorld, *mSceneOps);
 
         return actions;
     }
@@ -1174,7 +1264,7 @@ namespace mir
             mHistory.RequestRedo();
     }
 
-    void Editor::UpdateHistoryShortcuts()
+    void Editor::UpdateHistoryShortcuts(EditorActions &actions, const EngineModeState &mode)
     {
         const ImGuiIO &io = ImGui::GetIO();
         if (io.WantTextInput || !io.KeyCtrl)
@@ -1184,6 +1274,44 @@ namespace mir
             mHistory.RequestUndo();
         else if (ImGui::IsKeyPressed(ImGuiKey_Y))
             mHistory.RequestRedo();
+        else if (mode.mMode == EngineMode::Edit && ImGui::IsKeyPressed(ImGuiKey_S))
+            actions.mSaveActiveDocument = true;
+    }
+
+    void Editor::SwitchDocumentCamera(const EditorDocuments &documents, World &world)
+    {
+        if (documents.mActive == mCameraDocument)
+            return;
+
+        mDocumentCameras[mCameraDocument] = mCamera;
+        const auto cached = mDocumentCameras.find(documents.mActive);
+        if (cached != mDocumentCameras.end())
+        {
+            mCamera = cached->second;
+        }
+        else
+        {
+            mCamera = EditorCamera{};
+            if (documents.mActive != kSceneDocument)
+                FocusDocumentRoot(world);
+            mDocumentCameras.emplace(documents.mActive, mCamera);
+        }
+        mCameraDocument = documents.mActive;
+    }
+
+    void Editor::FocusDocumentRoot(World &world)
+    {
+        const HierarchyIndex &index = world.HierarchyIndex();
+        if (index.Roots().empty())
+            return;
+
+        const Entity root = index.Roots().front();
+        if (!world.IsAlive(root) || world.GetComponent<Transform>(root) == nullptr)
+            return;
+
+        const WorldPose pose = ResolveWorld(world, root);
+        const MeshBounds *bounds = world.GetComponent<MeshBounds>(root);
+        mCamera.FocusOn(pose.position, bounds != nullptr ? BoundsRadius(*bounds, pose.linear) : 0.0f);
     }
 
     bool Editor::WantsCaptureKeyboard() const { return ImGui::GetIO().WantCaptureKeyboard; }

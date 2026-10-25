@@ -10,6 +10,8 @@
 
 #include <core/log/Log.h>
 
+#include <core/ecs/EntityPresetRegistry.h>
+
 #include <utility>
 
 namespace mir
@@ -73,6 +75,15 @@ namespace mir
             out.mEntries.reserve(action.mEntries.size());
             for (const PrefabAuthoredEntry &entry : action.mEntries)
                 out.mEntries.push_back(AuthoredEntry{ ToEditorKey(entry.mKey), entry.mValue });
+            return out;
+        }
+
+        AuthoredAction RefusedAction(std::string name, std::string reason)
+        {
+            AuthoredAction out;
+            out.mAllowed = false;
+            out.mReason = std::move(reason);
+            out.mName = std::move(name);
             return out;
         }
     }
@@ -164,6 +175,11 @@ namespace mir
         return AuthoredInstanceRole::Ordinary;
     }
 
+    std::vector<Entity> PrefabAuthoringAdapter::PrefabLinkedEntities()
+    {
+        return mAuthoring.PrefabLinkedEntities();
+    }
+
     std::string PrefabAuthoringAdapter::EncodeField(FieldKind kind, const void *bytes)
     {
         return mAuthoring.EncodeField(kind, bytes);
@@ -177,6 +193,67 @@ namespace mir
     AuthoredAction PrefabAuthoringAdapter::Apply(const AuthoredKey &key)
     {
         return ToEditorAction(mAuthoring.Apply(ToPrefabKey(key)), "Apply to Prefab");
+    }
+
+    AuthoredAction PrefabAuthoringAdapter::CreateNode(Entity parent, std::size_t siblingIndex,
+        const EntityPresetDesc *preset)
+    {
+        const std::optional<PrefabNodeId> parentNode = mAuthoring.NodeIdOf(parent);
+        if (!parentNode)
+            return RefusedAction("Create Node", "the parent is not part of the active prefab document");
+
+        std::string name = "Create Node";
+        if (preset != nullptr)
+            name = "Create " + std::string(preset->mName.substr(preset->mName.find('/') + 1));
+        return ToEditorAction(mAuthoring.CreateNode(*parentNode, siblingIndex, preset), std::move(name));
+    }
+
+    AuthoredAction PrefabAuthoringAdapter::DeleteNodes(std::span<const Entity> nodes)
+    {
+        if (nodes.empty())
+            return RefusedAction("Delete Node", "no node is selected");
+
+        std::vector<PrefabNodeId> ids;
+        ids.reserve(nodes.size());
+        for (const Entity entity : nodes)
+        {
+            const std::optional<PrefabNodeId> id = mAuthoring.NodeIdOf(entity);
+            if (!id)
+                return RefusedAction("Delete Node", "a selected entity is not part of the active prefab document");
+            ids.push_back(*id);
+        }
+        return ToEditorAction(mAuthoring.DeleteNodes(ids), "Delete Node");
+    }
+
+    AuthoredAction PrefabAuthoringAdapter::ReparentNode(Entity node, Entity parent, std::size_t siblingIndex)
+    {
+        const std::optional<PrefabNodeId> nodeId = mAuthoring.NodeIdOf(node);
+        const std::optional<PrefabNodeId> parentId = mAuthoring.NodeIdOf(parent);
+        if (!nodeId || !parentId)
+            return RefusedAction("Reparent Node", "the node and parent must be part of the active prefab document");
+        return ToEditorAction(mAuthoring.ReparentNode(*nodeId, *parentId, siblingIndex), "Reparent Node");
+    }
+
+    AuthoredAction PrefabAuthoringAdapter::ReparentNodes(std::span<const Entity> nodes, Entity parent,
+        std::size_t siblingIndex)
+    {
+        const std::optional<PrefabNodeId> parentId = mAuthoring.NodeIdOf(parent);
+        if (!parentId)
+            return RefusedAction("Reparent Nodes", "the parent is not part of the active prefab document");
+        std::vector<PrefabNodeId> ids;
+        for (Entity node : nodes)
+        {
+            const std::optional<PrefabNodeId> id = mAuthoring.NodeIdOf(node);
+            if (!id)
+                return RefusedAction("Reparent Nodes", "a node is not part of the active prefab document");
+            ids.push_back(*id);
+        }
+        return ToEditorAction(mAuthoring.ReparentNodes(ids, *parentId, siblingIndex), "Reparent Nodes");
+    }
+
+    bool PrefabAuthoringAdapter::WritesComponentDirectly(Entity entity, std::string_view component)
+    {
+        return mAuthoring.WritesComponentDirectly(entity, component);
     }
 
     bool PrefabAuthoringAdapter::SaveScenePrefabs(const LoadedScene &scene, const PrefabUnsavedPredicate &unsaved,

@@ -41,11 +41,24 @@ namespace mir
         std::vector<std::string> RemovedComponents(Entity entity) override;
 
         AuthoredInstanceRole InstanceRole(Entity entity) override;
+        std::vector<Entity> PrefabLinkedEntities() override;
 
         std::string EncodeField(FieldKind kind, const void *bytes) override;
 
         AuthoredAction Revert(const AuthoredKey &key) override;
         AuthoredAction Apply(const AuthoredKey &key) override;
+
+        AuthoredAction CreateNode(Entity parent, std::size_t siblingIndex,
+            const EntityPresetDesc *preset = nullptr) override;
+        AuthoredAction DeleteNodes(std::span<const Entity> nodes) override;
+        AuthoredAction ReparentNode(Entity node, Entity parent, std::size_t siblingIndex) override;
+
+        AuthoredAction ReparentNodes(std::span<const Entity> nodes, Entity parent, std::size_t siblingIndex) override;
+
+        bool WritesComponentDirectly(Entity entity, std::string_view component) override;
+
+        void SetActiveDocument(std::optional<PrefabId> prefab) { mAuthoring.SetActiveDocument(prefab); }
+        std::optional<PrefabId> ActiveDocument() const { return mAuthoring.ActiveDocument(); }
 
         bool SaveScenePrefabs(const LoadedScene &scene, const PrefabUnsavedPredicate &unsaved,
             const std::function<void(PrefabId)> &saved);
