@@ -22,6 +22,7 @@ target_link_libraries(engine_renderer
             nlohmann_json::nlohmann_json
     PRIVATE GPUOpen::VulkanMemoryAllocator
             imgui::imgui
+            mir::assets
             mir::serial
 )
 
@@ -48,6 +49,7 @@ target_sources(engine_renderer PRIVATE
     src/renderer/ComponentRegistration.cpp
     src/renderer/DepthOfFieldEffect.cpp
     src/renderer/FilmEffect.cpp
+    src/renderer/MeshResolveSystem.cpp
     src/renderer/MeshStreaming.cpp
     src/renderer/FogEffect.cpp
     src/renderer/HdrEffect.cpp

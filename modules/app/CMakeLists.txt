@@ -29,7 +29,6 @@ target_sources(engine_app PRIVATE
     src/app/App.cpp
     src/app/ErrorReport.cpp
     src/app/Prompt.cpp
-    src/app/MeshResolveSystem.cpp
     src/app/SceneResolve.cpp
     src/app/TerrainRender.cpp
     src/app/TerrainRuntime.cpp

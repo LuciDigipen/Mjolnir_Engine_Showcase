@@ -6,7 +6,7 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
-#include "MeshResolveSystem.h"
+#include <renderer/MeshResolveSystem.h>
 
 #include <assets/AssetBlob.h>
 #include <assets/AssetCache.h>

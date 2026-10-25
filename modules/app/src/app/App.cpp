@@ -9,7 +9,6 @@
 
 #include <app/App.h>
 
-#include "MeshResolveSystem.h"
 #include "Prompt.h"
 #include "SceneResolve.h"
 #include "TerrainRuntime.h"
@@ -46,6 +45,7 @@
 #include <prefab/PrefabCoordinator.h>
 #include <project/ProjectSettings.h>
 #include <renderer/ComponentRegistration.h>
+#include <renderer/MeshResolveSystem.h>
 #include <renderer/PostProcessingSettings.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/RenderSystem.h>
