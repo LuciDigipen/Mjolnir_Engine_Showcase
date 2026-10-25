@@ -8,6 +8,7 @@
  */
 #include <physics/PhysicsSystem.h>
 
+#include <physics/CollisionEvents.h>
 #include <physics/PhysicsStepGate.h>
 #include <physics/PhysicsWorld.h>
 #include <physics/components/RigidBody.h>
@@ -677,6 +678,28 @@ TEST_CASE("Mass, gravity factor, friction, restitution and sleeping reach the bo
         fixture.Physics().WakeBody(BodyOfEntity(fixture, sleeper));
         CHECK_FALSE(fixture.Physics().IsBodySleeping(BodyOfEntity(fixture, sleeper)));
     }
+}
+
+TEST_CASE("A trigger RigidBody blocks nothing and reports with detectStay", "[physics][trigger]")
+{
+    PhysicsFixture fixture;
+    mir::RigidBody zone = kStaticBox;
+    zone.isTrigger = true;
+    zone.detectStay = true;
+    zone.halfExtent = glm::vec3(2.0f, 2.0f, 2.0f);
+    fixture.Add(glm::vec3(0.0f, 0.0f, 0.0f), zone);
+    const mir::Entity ball = fixture.Add(glm::vec3(0.0f, 3.0f, 0.0f), kDynamicSphere);
+
+    std::size_t stays = 0;
+    for (int i = 0; i < 120; ++i)
+    {
+        fixture.Run(1);
+        for (const mir::CollisionEvent &event : fixture.Physics().DrainCollisionEvents())
+            stays += event.mPhase == mir::CollisionPhase::Stay ? 1 : 0;
+    }
+
+    CHECK(fixture.TransformOf(ball).Position().y < -3.0);
+    CHECK(stays > 0);
 }
 
 TEST_CASE("A RigidBody gets its body when it is added, before any step", "[physics]")

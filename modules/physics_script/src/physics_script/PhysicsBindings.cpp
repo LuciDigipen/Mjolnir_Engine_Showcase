@@ -242,7 +242,9 @@ namespace mir
                     collision["other"] = other;
                 collision["point"] = WorldVec3ToLua(lua, event.mPoint.Meters());
                 collision["normal"] = Vec3ToLua(lua, isA ? -event.mNormal : event.mNormal);
-                collision["phase"] = event.mPhase == CollisionPhase::Begin ? "begin" : "end";
+                collision["phase"] = event.mPhase == CollisionPhase::Begin ? "begin"
+                    : event.mPhase == CollisionPhase::End                  ? "end"
+                                                                           : "stay";
                 out[++count] = collision;
             }
             return out;

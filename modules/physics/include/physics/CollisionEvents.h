@@ -24,6 +24,8 @@ namespace mir
     {
         Begin,
         End,
+        // A pair still touching at the end of a frame, once per frame, for a body with detectStay.
+        Stay,
     };
 
     // One per body pair, not per contact point; a pair asleep in contact stays touching.
@@ -34,7 +36,7 @@ namespace mir
         BodyHandle mBodyB;
         Entity mEntityA;
         Entity mEntityB;
-        // End reuses the pair's last contact.
+        // End and Stay reuse the pair's last contact.
         WorldPosition mPoint;
         // Points from A toward B.
         glm::vec3 mNormal{ 0.0f };

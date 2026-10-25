@@ -46,6 +46,7 @@
 #include <cmath>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -282,6 +283,8 @@ namespace mir
         std::unordered_map<uint32_t, SharedHeightField> mHeightFieldShapes;
         JPH::Ref<detail::ContactRestriction> mRestriction = new detail::ContactRestriction();
         std::unordered_map<uint32_t, Held> mHeld;
+        // Handle ids of the bodies whose pairs get Stay events.
+        std::unordered_set<uint32_t> mStayBodies;
     };
 
     PhysicsWorld::PhysicsWorld(const PhysicsWorldDesc &desc) : mImpl(std::make_unique<Impl>(desc))
@@ -296,7 +299,10 @@ namespace mir
         if (shape == nullptr)
             return {};
 
-        return mImpl->CreateBody(shape, desc.mPosition, desc.mRotation, desc.mMotion, false, &desc);
+        const BodyHandle body = mImpl->CreateBody(shape, desc.mPosition, desc.mRotation, desc.mMotion, false, &desc);
+        if (body.IsValid() && desc.mDetectStay)
+            mImpl->mStayBodies.insert(body.mId);
+        return body;
     }
 
     BodyHandle PhysicsWorld::CreateStaticHeightField(const HeightFieldDesc &desc)
@@ -342,6 +348,7 @@ namespace mir
         mImpl->mHeightFieldInfo.erase(body.mId);
         mImpl->mHeightFieldShapes.erase(body.mId);
         mImpl->mHeld.erase(body.mId);
+        mImpl->mStayBodies.erase(body.mId);
         mImpl->mRestriction->mAllowed.erase(id->GetIndex());
 
         bodies.ActivateBodiesInAABox(bounds, {}, {});
@@ -475,6 +482,17 @@ namespace mir
     {
         if (const std::optional<JPH::BodyID> id = mImpl->Live(body))
             mImpl->Bodies().ActivateBody(*id);
+    }
+
+    void PhysicsWorld::SetBodyDetectsStay(BodyHandle body, bool detects)
+    {
+        if (!mImpl->Live(body))
+            return;
+
+        if (detects)
+            mImpl->mStayBodies.insert(body.mId);
+        else
+            mImpl->mStayBodies.erase(body.mId);
     }
 
     bool PhysicsWorld::IsBodySleeping(BodyHandle body) const
@@ -738,6 +756,9 @@ namespace mir
 
     std::vector<CollisionEvent> PhysicsWorld::DrainCollisionEvents()
     {
-        return std::exchange(mImpl->mCollisionEvents, {});
+        std::vector<CollisionEvent> events = std::exchange(mImpl->mCollisionEvents, {});
+        if (!mImpl->mStayBodies.empty())
+            mImpl->mContacts.AppendStay(mImpl->Bodies(), mImpl->mStayBodies, events);
+        return events;
     }
 }

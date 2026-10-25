@@ -47,6 +47,8 @@ namespace mir
         glm::quat mRotationOffset = kIdentityRotation;
         // Never blocks motion; reports contacts like any other body.
         bool mIsTrigger = false;
+        // Pairs this body touches also get Stay events.
+        bool mDetectStay = false;
         // Reads only for Dynamic: a mass at or below 0 leaves the shape's own, from its volume.
         float mMass = 0.0f;
         float mGravityFactor = 1.0f;
@@ -122,6 +124,8 @@ namespace mir
         void SetBodyTransform(BodyHandle body, WorldPosition position, const glm::quat &rotation);
         // A Dynamic or Kinematic body that rests, or that has not been touched for a while, falls asleep.
         void WakeBody(BodyHandle body);
+        // Whether the pairs this body touches get Stay events, once per frame.
+        void SetBodyDetectsStay(BodyHandle body, bool detects);
         bool IsBodySleeping(BodyHandle body) const;
         // Kinematic only: sets the velocity that reaches the pose after dt, so dynamic bodies in the way are pushed
         // and not skipped over. The pose is reached at the end of the next step; the velocity is left behind.

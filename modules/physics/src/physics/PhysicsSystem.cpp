@@ -48,6 +48,7 @@ namespace mir
                     .mOffset = rigidBody.offset * pose.scale,
                     .mRotationOffset = rigidBody.rotationOffset,
                     .mIsTrigger = rigidBody.isTrigger,
+                    .mDetectStay = rigidBody.detectStay,
                     .mMass = rigidBody.mass,
                     .mGravityFactor = rigidBody.gravityFactor,
                     .mFriction = rigidBody.friction,

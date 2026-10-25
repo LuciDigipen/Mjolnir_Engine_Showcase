@@ -36,6 +36,11 @@ namespace mir::detail
 
         void Flush(const JPH::BodyInterface &bodies, std::vector<CollisionEvent> &out);
 
+        // A Stay for every pair that still touches and has a body in `stayBodies` (handle ids), unless the
+        // pair began or ended in `out` already.
+        void AppendStay(const JPH::BodyInterface &bodies, const std::unordered_set<uint32_t> &stayBodies,
+            std::vector<CollisionEvent> &out);
+
         // Call before the body leaves Jolt, while its user data is still readable.
         void ForgetBody(JPH::BodyID body, const JPH::BodyInterface &bodies, std::vector<CollisionEvent> &out);
 

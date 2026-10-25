@@ -427,3 +427,84 @@ TEST_CASE("Destroying a touching entity in Play publishes its End", "[physics][c
     REQUIRE(fixture.Published().size() == 1);
     CHECK(fixture.Published()[0].mPhase == CollisionPhase::End);
 }
+
+TEST_CASE("A trigger reports a body passing through and blocks nothing", "[physics][trigger]")
+{
+    PhysicsWorld world;
+    const BodyHandle trigger = world.CreateBody({.mMotion = PhysicsMotion::Static,
+                                                 .mShape = PhysicsShape::Box,
+                                                 .mPosition = At(glm::dvec3(0.0)),
+                                                 .mHalfExtent = glm::vec3(2.0f, 1.0f, 2.0f),
+                                                 .mIsTrigger = true});
+    const BodyHandle ball = world.CreateBody({.mMotion = PhysicsMotion::Dynamic,
+                                              .mShape = PhysicsShape::Sphere,
+                                              .mPosition = At(glm::dvec3(0.0, 4.0, 0.0)),
+                                              .mRadius = kRadius});
+    world.SetBodyEntity(trigger, Entity{ 1, 1 });
+    world.SetBodyEntity(ball, kBallEntity);
+
+    const std::vector<CollisionEvent> events = StepAndCollect(world, 120);
+
+    // the ball fell through the box and kept going
+    CHECK(world.BodyPosition(ball)->Meters().y < -4.0);
+    CHECK(CountPhase(events, CollisionPhase::Begin) == 1);
+    CHECK(CountPhase(events, CollisionPhase::End) == 1);
+    CHECK(CountPhase(events, CollisionPhase::Stay) == 0);
+}
+
+TEST_CASE("A body with detectStay gets one Stay per frame for each pair it keeps touching", "[physics][trigger]")
+{
+    mir::PhysicsWorldDesc weightless;
+    weightless.mGravity = glm::vec3(0.0f);
+    PhysicsWorld world(weightless);
+    world.CreateBody({.mMotion = PhysicsMotion::Static,
+                      .mShape = PhysicsShape::Box,
+                      .mPosition = At(glm::dvec3(0.0)),
+                      .mHalfExtent = glm::vec3(2.0f),
+                      .mIsTrigger = true,
+                      .mDetectStay = true});
+    world.CreateBody({.mMotion = PhysicsMotion::Dynamic,
+                      .mShape = PhysicsShape::Sphere,
+                      .mPosition = At(glm::dvec3(0.0)),
+                      .mRadius = kRadius});
+
+    // the frame the pair begins has its Begin and no Stay
+    const std::vector<CollisionEvent> first = StepAndCollect(world, 1);
+    CHECK(CountPhase(first, CollisionPhase::Begin) == 1);
+    CHECK(CountPhase(first, CollisionPhase::Stay) == 0);
+
+    // then one Stay a frame, and nothing else
+    for (int frame = 0; frame < 5; ++frame)
+    {
+        const std::vector<CollisionEvent> events = StepAndCollect(world, 1);
+        CHECK(CountPhase(events, CollisionPhase::Stay) == 1);
+        CHECK(events.size() == 1);
+    }
+}
+
+TEST_CASE("Stay events follow the flag on either body and stop when it is cleared", "[physics][trigger]")
+{
+    mir::PhysicsWorldDesc weightless;
+    weightless.mGravity = glm::vec3(0.0f);
+    PhysicsWorld world(weightless);
+    world.CreateBody({.mMotion = PhysicsMotion::Static,
+                      .mShape = PhysicsShape::Box,
+                      .mPosition = At(glm::dvec3(0.0)),
+                      .mHalfExtent = glm::vec3(2.0f),
+                      .mIsTrigger = true});
+    const BodyHandle ball = world.CreateBody({.mMotion = PhysicsMotion::Dynamic,
+                                              .mShape = PhysicsShape::Sphere,
+                                              .mPosition = At(glm::dvec3(0.0)),
+                                              .mRadius = kRadius});
+    StepAndCollect(world, 2);
+
+    // nobody asked: no Stay
+    CHECK(CountPhase(StepAndCollect(world, 3), CollisionPhase::Stay) == 0);
+
+    // the moving body asks, the trigger does not
+    world.SetBodyDetectsStay(ball, true);
+    CHECK(CountPhase(StepAndCollect(world, 3), CollisionPhase::Stay) == 3);
+
+    world.SetBodyDetectsStay(ball, false);
+    CHECK(CountPhase(StepAndCollect(world, 3), CollisionPhase::Stay) == 0);
+}

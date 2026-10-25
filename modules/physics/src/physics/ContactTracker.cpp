@@ -96,6 +96,31 @@ namespace mir::detail
         }
     }
 
+    void ContactTracker::AppendStay(const JPH::BodyInterface &bodies, const std::unordered_set<uint32_t> &stayBodies,
+        std::vector<CollisionEvent> &out)
+    {
+        const std::scoped_lock lock(mMutex);
+
+        std::unordered_set<uint64_t> changed;
+        for (const CollisionEvent &event : out)
+            changed.insert(PairKey(JPH::BodyID(event.mBodyA.mId), JPH::BodyID(event.mBodyB.mId)));
+
+        std::vector<uint64_t> staying;
+        for (const auto &[key, pair] : mPairs)
+        {
+            if (!pair.mTouching || changed.contains(key))
+                continue;
+            if (stayBodies.contains(pair.mBodyA.GetIndexAndSequenceNumber())
+                || stayBodies.contains(pair.mBodyB.GetIndexAndSequenceNumber()))
+                staying.push_back(key);
+        }
+
+        // Sorted: map order is not stable.
+        std::sort(staying.begin(), staying.end());
+        for (const uint64_t key : staying)
+            out.push_back(MakeEvent(CollisionPhase::Stay, mPairs.at(key), bodies));
+    }
+
     void ContactTracker::ForgetBody(JPH::BodyID body, const JPH::BodyInterface &bodies,
         std::vector<CollisionEvent> &out)
     {
