@@ -5,6 +5,7 @@ engine_add_module_tests(core_base
     LogHistory.tests.cpp
     SetupError.tests.cpp
     WorldCoordinates.tests.cpp
+    RegistrationList.tests.cpp
 )
 
 # each crash runs in a child process, so the test run survives it

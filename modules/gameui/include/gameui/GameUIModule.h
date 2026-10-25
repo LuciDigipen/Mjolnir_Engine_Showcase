@@ -12,12 +12,9 @@
 #include "UIState.h"
 
 #include <core/ecs/ModuleContext.h>
-#include <core/ecs/Registration.h>
+#include <core/RegistrationList.h>
 
-#include <cstdint>
 #include <functional>
-#include <memory>
-#include <vector>
 
 namespace mir
 {
@@ -40,20 +37,10 @@ namespace mir
         void RunFrame(const UIRect &area, const UIPointer &pointer);
 
     private:
-        struct Entry
-        {
-            uint64_t id;
-            Screen draw;
-        };
-
         World &mWorld;
         UIContext mUI;
-        std::vector<Entry> mScreens;
-        uint64_t mNextScreenId = 0;
+        RegistrationList<Screen> mScreens;
         float mFrameDt = 0.0f;
-
-        // screen tokens hold it weakly, to assert this module outlives them
-        std::shared_ptr<const int> mAlive = std::make_shared<const int>(0);
 
         // last: unregisters before anything above is destroyed
         Registration mFrameBegin;

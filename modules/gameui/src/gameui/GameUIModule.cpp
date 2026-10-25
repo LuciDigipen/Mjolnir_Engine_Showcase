@@ -27,21 +27,12 @@ namespace mir
             [this](SystemContext &frame) { mFrameDt = frame.dt; });
     }
 
-    Registration GameUIModule::AddScreen(Screen screen)
-    {
-        const uint64_t id = mNextScreenId++;
-        mScreens.push_back(Entry{ id, std::move(screen) });
-        return Registration(mAlive, [this, id]
-            {
-                std::erase_if(mScreens, [id](const Entry &entry) { return entry.id == id; });
-            });
-    }
+    Registration GameUIModule::AddScreen(Screen screen) { return mScreens.Add(std::move(screen)); }
 
     void GameUIModule::RunFrame(const UIRect &area, const UIPointer &pointer)
     {
         mUI.BeginFrame(area, mWorld.Resource<InputState>(), mWorld.Resource<InputMap>(), pointer);
-        for (const Entry &screen : mScreens)
-            screen.draw(mUI, mFrameDt);
+        mScreens.Run(mUI, mFrameDt);
         mUI.EndFrame();
     }
 }

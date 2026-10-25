@@ -14,6 +14,8 @@
 
 #include <script/BindingApi.h>
 
+#include <core/RegistrationList.h>
+
 #include <core/ecs/World.h>
 #include <core/log/Log.h>
 
@@ -136,16 +138,9 @@ namespace mir
             }
         }
 
-        struct Bindings
-        {
-            uint64_t id;
-            LuaBindings bindings;
-        };
-
         sol::state mLua;
         // replayed into any Lua state built later; mLua is built once today
-        std::vector<Bindings> mBindings;
-        uint64_t mNextBindingsId = 0;
+        RegistrationList<LuaBindings> mBindings;
         std::unordered_map<std::string, sol::object> mLoadedScripts;
         std::unordered_map<int32_t, ScriptInstance> mInstances;
         int32_t mNextInstanceRef = 0;
@@ -162,12 +157,7 @@ namespace mir
         ScriptHostImpl &impl = host.Impl();
         bindings(impl.mLua);
 
-        const uint64_t id = impl.mNextBindingsId++;
-        impl.mBindings.push_back(ScriptHostImpl::Bindings{ id, std::move(bindings) });
-        return Registration(host.Alive(), [&impl, id]
-            {
-                std::erase_if(impl.mBindings, [id](const ScriptHostImpl::Bindings &entry) { return entry.id == id; });
-            });
+        return impl.mBindings.Add(std::move(bindings));
     }
 
     bool ScriptHost::LoadScriptSource(std::string_view name, std::string_view source)

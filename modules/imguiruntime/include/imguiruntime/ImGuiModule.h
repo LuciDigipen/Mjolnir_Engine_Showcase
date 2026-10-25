@@ -11,12 +11,11 @@
 #include <imguiruntime/ImGuiRuntime.h>
 
 #include <core/ecs/ModuleContext.h>
-#include <core/ecs/Registration.h>
+#include <core/RegistrationList.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <memory>
-#include <vector>
 
 namespace mir
 {
@@ -53,20 +52,9 @@ namespace mir
         const ImGuiRuntime &Runtime() const { return mRuntime; }
 
     private:
-        struct Drawer
-        {
-            uint64_t id;
-            DrawerGroup group;
-            std::function<void()> draw;
-        };
-
         ModuleContext mContext;
         RendererModule &mRenderer;
         ImGuiRuntime mRuntime;
-        std::vector<Drawer> mDrawers;
-        uint64_t mNextDrawerId = 0;
-
-        // drawer tokens hold it weakly, to assert this module outlives them
-        std::shared_ptr<const int> mAlive = std::make_shared<const int>(0);
+        RegistrationList<std::function<void()>> mDrawers[static_cast<std::size_t>(DrawerGroup::kCount)];
     };
 }

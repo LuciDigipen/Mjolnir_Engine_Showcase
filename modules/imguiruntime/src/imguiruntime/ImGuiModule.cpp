@@ -50,25 +50,14 @@ namespace mir
 
     Registration ImGuiModule::AddDrawer(DrawerGroup group, std::function<void()> drawer)
     {
-        const uint64_t id = mNextDrawerId++;
-        mDrawers.push_back(Drawer{ id, group, std::move(drawer) });
-        return Registration(mAlive, [this, id]
-            {
-                std::erase_if(mDrawers, [id](const Drawer &entry) { return entry.id == id; });
-            });
+        return mDrawers[static_cast<std::size_t>(group)].Add(std::move(drawer));
     }
 
     void ImGuiModule::RunUI()
     {
         mRuntime.BeginFrame();
-        for (auto group = static_cast<uint8_t>(0); group < static_cast<uint8_t>(DrawerGroup::kCount); ++group)
-        {
-            for (const Drawer &drawer : mDrawers)
-            {
-                if (static_cast<uint8_t>(drawer.group) == group)
-                    drawer.draw();
-            }
-        }
+        for (auto &group : mDrawers)
+            group.Run();
         mRenderer.Renderer().SetImGuiDrawData(mRuntime.EndFrame());
 
         if (InputState *input = mContext.world.TryResource<InputState>())

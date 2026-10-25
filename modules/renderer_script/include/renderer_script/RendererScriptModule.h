@@ -8,7 +8,7 @@
  */
 #pragma once
 
-#include <core/ecs/Registration.h>
+#include <core/Registration.h>
 
 namespace mir
 {

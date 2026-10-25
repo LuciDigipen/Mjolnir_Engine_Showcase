@@ -12,7 +12,7 @@
 #include <script/ScriptReloadWatcher.h>
 
 #include <core/ecs/ModuleContext.h>
-#include <core/ecs/Registration.h>
+#include <core/Registration.h>
 
 #include <string>
 

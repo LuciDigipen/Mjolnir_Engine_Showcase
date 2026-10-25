@@ -14,7 +14,7 @@
 #include "EntityPool.h"
 #include "HierarchyMutator.h"
 #include "QueryTerms.h"
-#include "Registration.h"
+#include "core/Registration.h"
 #include "Signature.h"
 #include "core/log/Assert.h"
 

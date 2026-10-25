@@ -7,7 +7,7 @@
  *
  */
 #include <core/ecs/CommandBuffer.h>
-#include <core/ecs/Registration.h>
+#include <core/Registration.h>
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/World.h>
 

@@ -10,7 +10,7 @@
 
 #include <script/BindingHelpers.h>
 
-#include <core/ecs/Registration.h>
+#include <core/Registration.h>
 
 #include <sol/sol.hpp>
 

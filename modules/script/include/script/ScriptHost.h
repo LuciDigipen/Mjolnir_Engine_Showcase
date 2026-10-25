@@ -45,12 +45,8 @@ namespace mir
 
         // for AddBindings (script/BindingApi.h), which keeps sol2 out of this header
         ScriptHostImpl &Impl() { return *mImpl; }
-        std::weak_ptr<const void> Alive() const { return mAlive; }
 
     private:
         std::unique_ptr<ScriptHostImpl> mImpl;
-
-        // binding tokens hold it weakly, to assert the host outlives them
-        std::shared_ptr<const int> mAlive = std::make_shared<const int>(0);
     };
 }

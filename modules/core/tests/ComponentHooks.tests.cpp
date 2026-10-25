@@ -6,7 +6,7 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
-#include <core/ecs/Registration.h>
+#include <core/Registration.h>
 #include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/World.h>
 
