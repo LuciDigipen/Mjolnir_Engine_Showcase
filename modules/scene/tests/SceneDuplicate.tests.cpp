@@ -77,16 +77,6 @@ namespace
         return it != scene.mEntities.end() ? it->second : kNullEntity;
     }
 
-    std::optional<StableId> StableIdOf(const LoadedScene &scene, Entity entity)
-    {
-        for (const auto &[id, candidate] : scene.mEntities)
-        {
-            if (candidate == entity)
-                return id;
-        }
-        return std::nullopt;
-    }
-
     void SetRef(World &world, Entity referrer, const ComponentOps &ops, std::string_view field, Entity target)
     {
         if (!ops.Has(world, referrer))

@@ -69,35 +69,12 @@ namespace mir
 
     bool WorldSceneOps::Destroy(Entity root)
     {
-        StableId rootId = kNullStableId;
-        for (const auto &[id, entity] : mScene.mEntities)
+        StableId instanceRoot = kNullStableId;
+        const std::optional<StableId> rootId = StableIdOf(mScene, root);
+        if (rootId && FindInstanceBinding(mScene, *rootId, instanceRoot) != nullptr && instanceRoot != *rootId)
         {
-            if (entity == root)
-            {
-                rootId = id;
-                break;
-            }
-        }
-
-        if (rootId != kNullStableId)
-        {
-            for (const auto &[instanceRoot, instance] : mScene.mInstances)
-            {
-                bool member = false;
-                for (const auto &[address, id] : instance.mBindings)
-                {
-                    (void)address;
-                    member |= id == rootId;
-                }
-                if (!member)
-                    continue;
-
-                if (instanceRoot == rootId)
-                    break;
-
-                MIR_LOG_WARN("WorldSceneOps: cannot delete a prefab instance member; delete its root instead");
-                return false;
-            }
+            MIR_LOG_WARN("WorldSceneOps: cannot delete a prefab instance member; delete its root instead");
+            return false;
         }
 
         return DestroySceneEntity(mWorld, mScene, root);
@@ -105,37 +82,11 @@ namespace mir
 
     bool WorldSceneOps::CanReparent(std::span<const Entity> entities, Entity parent)
     {
-        const LoadedScene &scene = mScene;
-        const auto stableIdOf = [&scene](Entity entity)
-            {
-                for (const auto &[id, candidate] : scene.mEntities)
-                {
-                    if (candidate == entity)
-                        return id;
-                }
-                return kNullStableId;
-            };
-        const auto memberState = [&scene](StableId id, bool &isRoot)
-            {
-                for (const auto &[instanceRoot, instance] : scene.mInstances)
-                {
-                    for (const auto &[address, member] : instance.mBindings)
-                    {
-                        (void)address;
-                        if (member != id)
-                            continue;
-                        isRoot = instanceRoot == id;
-                        return true;
-                    }
-                }
-                return false;
-            };
-
+        StableId instanceRoot = kNullStableId;
         if (!parent.IsNull())
         {
-            bool parentIsRoot = false;
-            const StableId parentId = stableIdOf(parent);
-            if (parentId != kNullStableId && memberState(parentId, parentIsRoot))
+            const std::optional<StableId> parentId = StableIdOf(mScene, parent);
+            if (parentId && FindInstanceBinding(mScene, *parentId, instanceRoot) != nullptr)
             {
                 MIR_LOG_WARN("WorldSceneOps: cannot reparent under a prefab instance member");
                 return false;
@@ -144,9 +95,8 @@ namespace mir
 
         for (const Entity entity : entities)
         {
-            bool isRoot = false;
-            const StableId id = stableIdOf(entity);
-            if (id != kNullStableId && memberState(id, isRoot) && !isRoot)
+            const std::optional<StableId> id = StableIdOf(mScene, entity);
+            if (id && FindInstanceBinding(mScene, *id, instanceRoot) != nullptr && instanceRoot != *id)
             {
                 MIR_LOG_WARN("WorldSceneOps: cannot reparent a prefab instance member");
                 return false;

@@ -111,6 +111,10 @@ alive.
 source's own parent. The copy then moves to right after the source, as Unity's
 Ctrl+D places it. It returns null for an entity that is not alive.
 
+`StableIdOf` and `FindInstanceBinding` (`scene/SceneDuplicate.h`) answer which
+scene id an entity has and which prefab instance binds it; the editor's delete
+and reparent guards use them too.
+
 `DuplicateSceneEntitySubtree` retains the linked Prefab record for an instance
 root, while `CopyInstanceMemberAsOrdinary` produces a detached effective copy.
 Both map every copied scene identity, including ordinary descendants. Saved
