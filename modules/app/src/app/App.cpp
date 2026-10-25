@@ -206,7 +206,12 @@ namespace mir
 
         mInitialized = true;
 
-        LoadAssetManifest();
+        mAssets.emplace(CookedAssetsDir());
+    #if MIR_WITH_EDITOR
+        // The first frames run without assets; ApplyImportedAssets swaps them in once cooked
+        if (!mAssets->HadManifest() && mAssetImport.SourceHasAssets())
+            mAssetImport.QueueFullCook();
+    #endif
 
         mSplash.SetProgress("Registering components...", 0.75f);
 
@@ -659,40 +664,7 @@ namespace mir
 
     AssetCache *App::Assets()
     {
-        return mAssetCache.has_value() ? &*mAssetCache : nullptr;
-    }
-
-    void App::LoadAssetManifest()
-    {
-        const std::filesystem::path manifestPath = CookedAssetsDir() / kAssetManifestFileName;
-
-        // A build with no assets writes no manifest, and that build is still correct
-        std::error_code ec;
-        const bool exists = std::filesystem::exists(manifestPath, ec);
-        if (exists)
-        {
-            mAssetManifest = AssetManifest::LoadFile(manifestPath);
-            if (!mAssetManifest.has_value())
-            {
-                throw SetupError(ErrorCategory::BuildOutput, "The cooked asset manifest is corrupt", manifestPath,
-                    "it could not be parsed as an asset manifest", "Rebuild to re-cook the assets.");
-            }
-        }
-        else
-        {
-            mAssetManifest.emplace();
-            MIR_LOG_INFO("No asset manifest at '{}', starting with no cooked assets", manifestPath.string());
-        }
-
-        // after the manifest is engaged, never before: the cache stores a raw
-        // pointer to it
-        mAssetCache.emplace(&*mAssetManifest, CookedAssetsDir());
-
-    #if MIR_WITH_EDITOR
-        // The first frames run without assets; ApplyImportedAssets swaps them in once cooked
-        if (!exists && mAssetImport.SourceHasAssets())
-            mAssetImport.QueueFullCook();
-    #endif
+        return mAssets.has_value() ? &mAssets->Cache() : nullptr;
     }
 
     ModuleContext App::Context()
@@ -934,27 +906,29 @@ namespace mir
 
     void App::ApplyImportedAssets()
     {
-        auto candidateManifest = AssetManifest::LoadFile(CookedAssetsDir() / kAssetManifestFileName);
-        if (!candidateManifest)
+        try
         {
-            mAssetImport.MarkApplyFailed("the new asset manifest could not be loaded");
+            mAssets->BeginReload();
+        }
+        catch (const std::exception &error)
+        {
+            mAssetImport.MarkApplyFailed(error.what());
             return;
         }
-        AssetCache candidate(&*candidateManifest, CookedAssetsDir());
+
         std::string error;
-        if (mModelSystem && !mModelSystem->PrepareReload(candidate, error))
+        if (mModelSystem && !mModelSystem->PrepareReload(mAssets->Candidate(), error))
         {
+            mAssets->AbortReload();
             mAssetImport.MarkApplyFailed("new model resources were rejected: " + error);
             return;
         }
 
-        mAssetCache.reset();
-        mAssetManifest = std::move(candidateManifest);
-        mAssetCache.emplace(&*mAssetManifest, CookedAssetsDir());
+        mAssets->CommitReload();
         if (mModelSystem)
-            mModelSystem->CommitReload(&*mAssetCache);
+            mModelSystem->CommitReload(&mAssets->Cache());
         if (mMeshResolveSystem)
-            mMeshResolveSystem->CommitReload(&*mAssetCache);
+            mMeshResolveSystem->CommitReload(&mAssets->Cache());
 
         // a script whose asset arrived with this cook resolves now; resolved ones are skipped
         ResolveSceneScripts(mWorld, mScriptHost, mScriptReloadWatcher, Assets(), mProject.mAssetIdRoot);
@@ -1009,9 +983,7 @@ namespace mir
         mScheduler.Reset();
         mCore.reset();
 
-        // Cache before manifest
-        mAssetCache.reset();
-        mAssetManifest.reset();
+        mAssets.reset();
 
         DiscardSnapshot(mPlaySnapshot);
 

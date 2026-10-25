@@ -9,8 +9,7 @@
 #pragma once
 
 #include <project/GameProject.h>
-#include <assets/AssetCache.h>
-#include <assets/AssetManifest.h>
+#include <assets/AssetsModule.h>
 #include <core/ecs/CommandBuffer.h>
 #include <core/ecs/CoreModule.h>
 #include <core/ecs/FixedTimestep.h>
@@ -206,9 +205,6 @@ namespace mir
         // Unload, load and resolve, with no checks
         void ReplaceSceneFromDisk();
 
-        // The manifest the build or an import cooked; empty when there is none yet
-        void LoadAssetManifest();
-
         // the mSwitchProjectTo test hook
         void RunSwitchHook();
 
@@ -270,9 +266,7 @@ namespace mir
         uint64_t mFrame = 0;
         FixedTimestep mFixedTimestep;
 
-        // maintain order of mAssetCache -> mAssetCache
-        std::optional<AssetManifest> mAssetManifest;
-        std::optional<AssetCache> mAssetCache;
+        std::optional<AssetsModule> mAssets;
         bool mInitialized = false;
     };
 } // namespace mir
