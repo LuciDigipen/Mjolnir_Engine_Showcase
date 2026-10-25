@@ -3,4 +3,5 @@ engine_add_module_tests(assets
     AssetManifest.tests.cpp
     AssetPath.tests.cpp
     AssetCache.tests.cpp
+    AssetsModule.tests.cpp
 )

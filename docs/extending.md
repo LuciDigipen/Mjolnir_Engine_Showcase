@@ -17,6 +17,15 @@ own.
 4. Add a file before configuring. CMake cannot build a library with no sources,
    and the script tells you so.
 
+If the library owns runtime state or registers anything, give it a module class:
+a constructor taking a `ModuleContext` and the modules it needs, which registers
+its components, resources, systems, hooks and stage functions, and a destructor
+that frees its runtime. Keep every `Registration` it gets back as one of its
+last-declared members. Then add it to `App` as a member, after every module it
+uses: that position is its startup order, its teardown order and its systems'
+order within a phase. A library with nothing to own or register stays a plain
+library and needs neither.
+
 Then check the [module graph](architecture.md#module-graph) still holds, add a
 row to its table, and start a `docs/modules/<name>.md` from
 [TEMPLATE.md](modules/TEMPLATE.md).
@@ -144,8 +153,12 @@ world.GetOrCreateQuery<Position>(Without<Frozen>{})
 ```
 
 To make a component reachable by name — from Lua, from the inspector, or from a
-save file — register it with a field table in your module's
-`ComponentRegistration.cpp`.
+save file — register it with a field table in your library's
+`ComponentRegistration.cpp`, which its module's constructor calls.
+
+A component that holds a runtime object gets an OnRemove hook from its module,
+which frees that object: `RemoveComponent`, `DestroyEntity` and Stop's restore
+all fire it.
 
 Use accessor thunks rather than raw offsets for any component that has an
 invariant to protect. Writing `Transform::mPosition` through an offset moves the
@@ -181,11 +194,18 @@ private:
 };
 ```
 
-Register it before `Run`, in the phase that expresses the ordering you need:
+Register it in its module's constructor, in the phase and order that express the
+ordering you need:
 
 ```cpp
-app.Systems().Add<MovementSystem>(SystemPhase::Update);
+context.scheduler.AddSystem<MovementSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kNormal});
 ```
+
+Within a phase, systems run by `SystemOrder`, lowest first: `kEarly` is 10,
+`kNormal` is 50 and `kLate` is 90, and any int from 0 to 100 works between them.
+Equal orders are unspecified, so a system that needs another to run first takes a
+different order. Write `Transform` before `Propagate` and read `WorldTransform`
+in `LateUpdate`.
 
 `Add`, `Remove` and `Destroy` go on `context.commands` and land at the next phase
 boundary. Mutating inside `ForEach` invalidates the iteration.
@@ -195,9 +215,10 @@ only exist after the flush.
 
 Systems cannot be registered after `Start`.
 
-A system that sets `World::SetComponentHooks<T>` in `OnStart` has to clear them
-with `ClearComponentHooks<T>` in `OnStop`. Left behind, the hook calls into freed
-memory on the next removal of `T`.
+Component hooks belong to the component's module: it calls
+`World::SetComponentHooks<T>` in its constructor and keeps the returned
+`Registration` as one of its last-declared members. The token clears the hooks
+when the module dies, so no hook calls into freed memory.
 
 Filters go in the same call as the data terms:
 
@@ -321,18 +342,9 @@ A directory without `game.json` is refused at startup. A `sceneDir` with no
 
 ## Add a script to an entity
 
-Load the source, create an instance, and attach a `ScriptRef`:
-
-```cpp
-const AssetId id = MakeAssetId("games/HelloWorld/assets/scripts/spin.lua");
-const AssetBlobView *blob = app.Assets()->Load(id);
-
-app.Scripts().LoadScriptSource("spin", AsStringView(*blob));
-app.ScriptReload().Track("spin", id);          // picks up an edit on the next cook
-
-const int32_t instance = app.Scripts().CreateInstance("spin");
-world.AddComponent<ScriptRef>(entity, ScriptRef{.instanceRef = instance});
-```
+Attach a `ScriptRef` whose `scriptName` names a cooked script under the game's
+`scripts/`. `ScriptResolveSystem` loads the source, tracks it for hot reload and
+creates the instance on the next frame, in Edit as in Play.
 
 A script defines `OnStart`, `OnUpdate` and `OnStop`, plus an optional
 `NewInstanceData()` for its own per-entity state.

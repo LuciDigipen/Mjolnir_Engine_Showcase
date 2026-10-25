@@ -37,6 +37,14 @@ if (AssetCache *cache = app.Assets())
 | `AssetBlobView` | `assets/AssetBlob.h` | Header plus a span over the payload; `AsStringView` for text |
 | `AssetManifest` | `assets/AssetManifest.h` | id to type tag, content version and path, over a shared path table |
 | `AssetCache` | `assets/AssetCache.h` | `Load`, `Get`, `Invalidate`, `ResolvedPath` |
+| `AssetsModule` | `assets/AssetsModule.h` | The manifest and cache, loaded at startup, and the reload candidate |
+| `ResolveAssetIdRoot` | `assets/AssetIdRoot.h` | Fills a `GameProject`'s asset id root; fails setup on an unusable `assetsRoot` |
+
+`AssetsModule` loads the manifest in its constructor: a missing one is an empty
+manifest, a corrupt one fails setup. `Cache()` is the same object for the
+module's life, so a holder keeps its pointer across a reload. A reload is
+`BeginReload` (a manifest it cannot parse throws), then holders prepare from
+`Candidate()`, then `CommitReload` swaps it in or `AbortReload` drops it.
 
 ## Rules
 
@@ -109,6 +117,13 @@ logical paths for any root spelling").
    at the cost of a file per asset and a registry to keep in sync.
 
 ## Changed
+
+*2026-10-24* — **`AssetsModule` and `ResolveAssetIdRoot`.** Was: `App` held the
+manifest and cache, rebuilt the cache object on every import, and `app`'s
+`GameProject` computed the asset id root. Now: the module owns both, keeps the
+cache's address across a reload, and holds the candidate between prepare and
+commit; `assets` fills the id root. Because: holders kept stale pointers unless
+`App` told each one, and `project` cannot depend on `assets`.
 
 *2026-10-02* — **Terrain files are no longer cooked (#116).** Was: a terrain
 recipe under an assetsRoot became a raw blob like any other file. Now:

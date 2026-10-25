@@ -11,6 +11,7 @@
 #include "PackInternal.h"
 
 #include <core/log/Assert.h>
+#include <terrain/RunGuarded.h>
 #include <terrain/TerrainHeightQuery.h>
 #include <terrain/TerrainRelease.h>
 #include <terrain/TerrainScene.h>
@@ -23,6 +24,7 @@
 #include <limits>
 #include <map>
 #include <mutex>
+#include <string_view>
 #include <tuple>
 #include <unordered_map>
 #include <utility>
@@ -178,7 +180,14 @@ namespace mir
                     job = std::move(first->second);
                     mPending.erase(first);
                 }
-                Finished finished = Process(job);
+                Finished finished = RunGuarded([&] { return Process(job); }, [&](std::string_view what)
+                    {
+                        Finished failed;
+                        failed.ticket = job.ticket;
+                        failed.release = job.handle->Info();
+                        failed.error = detail::Error(Code::Internal, "reading or decoding threw: {}", what);
+                        return failed;
+                    });
                 {
                     std::lock_guard lock(mMutex);
                     if (mClosed)

@@ -3,6 +3,7 @@
 find_package(Wwise REQUIRED)
 
 target_sources(engine_audio PRIVATE 
+    src/audio/AudioModule.cpp
     "${WWISE_SDK_ROOT}/samples/SoundEngine/Common/AkGeneratedSoundBanksResolver.cpp"
     "${WWISE_SDK_ROOT}/samples/SoundEngine/Common/AkMultipleFileLocation.cpp"
     "${WWISE_SDK_ROOT}/samples/SoundEngine/Win32/AkDefaultIOHookDeferred.cpp"

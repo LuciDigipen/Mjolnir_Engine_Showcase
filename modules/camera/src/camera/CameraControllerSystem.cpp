@@ -29,7 +29,6 @@ namespace mir
     {
         constexpr float kMinLookDistance = 1e-4f;
         constexpr float kMaxLookDotUp = 0.9999f;
-        constexpr float kMaxPitchDegrees = 89.0f;
         const glm::vec3 kUp{ 0.0f, 1.0f, 0.0f };
 
         glm::vec3 FreeFlyForward(float yawDegrees, float pitchDegrees)
@@ -97,7 +96,7 @@ namespace mir
     {
         const glm::vec3 forward = rotation * glm::vec3(0.0f, 0.0f, -1.0f);
         const float pitch = glm::degrees(std::asin(std::clamp(forward.y, -1.0f, 1.0f)));
-        controller.mPitchDegrees = std::clamp(pitch, -kMaxPitchDegrees, kMaxPitchDegrees);
+        controller.mPitchDegrees = std::clamp(pitch, -kFreeFlyMaxPitchDegrees, kFreeFlyMaxPitchDegrees);
         //when the camera looks almost straight up or down, the horizontal part is near zero and yaw isn’t meaningful, so it keeps the previous yaw.
         //so only run if its meaningful
         if (forward.x * forward.x + forward.z * forward.z > kMinLookDistance * kMinLookDistance)
@@ -110,7 +109,7 @@ namespace mir
 
         const float stickTurn = controller.mStickLookRate * dt;
         controller.mYawDegrees = std::fmod(controller.mYawDegrees + input.lookPixels.x * controller.mLookSensitivity + input.lookStick.x * stickTurn, 360.0f);
-        controller.mPitchDegrees = std::clamp(controller.mPitchDegrees - input.lookPixels.y * controller.mLookSensitivity - input.lookStick.y * stickTurn, -kMaxPitchDegrees, kMaxPitchDegrees);
+        controller.mPitchDegrees = std::clamp(controller.mPitchDegrees - input.lookPixels.y * controller.mLookSensitivity - input.lookStick.y * stickTurn, -kFreeFlyMaxPitchDegrees, kFreeFlyMaxPitchDegrees);
 
         const glm::vec3 forward = FreeFlyForward(controller.mYawDegrees, controller.mPitchDegrees);
         const glm::vec3 right = glm::normalize(glm::cross(forward, kUp));

@@ -27,14 +27,14 @@ namespace mir
     public:
         void OnStart(SystemContext &context) override;
         void OnUpdate(SystemContext &context) override;
-        void OnStop(SystemContext &context) override;
+
+        // RigidBody's OnRemove: frees its Jolt body
+        static void OnRigidBodyRemoved(World &world, Entity entity);
 
     private:
         // New bodies and Transform edits reach Jolt before the step; Jolt's poses come back after it.
         void PushTransforms(World &world, PhysicsWorld &physics);
         void PullPoses(PhysicsWorld &physics);
-
-        static void OnRigidBodyRemoved(World &world, Entity entity);
 
         Query<Transform, RigidBody> *mQuery = nullptr;
     };

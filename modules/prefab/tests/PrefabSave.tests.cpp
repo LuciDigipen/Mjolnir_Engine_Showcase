@@ -12,6 +12,7 @@
 #include <prefab/PrefabSceneInstance.h>
 
 #include <core/ecs/ComponentRegistry.h>
+#include <core/fs/FileIO.h>
 #include <scene/SceneAsset.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -292,4 +293,58 @@ TEST_CASE("Saving an outer prefab writes its unsaved nested Prefab first", "[pre
     CHECK(result.mWritten[1] == outer.mId);
     CHECK(ReadText(*fixture.mRegistry.PathOf(inner.mId)).find("Changed Inner") != std::string::npos);
     CHECK(ReadText(*fixture.mRegistry.PathOf(outer.mId)).find("Changed Outer") != std::string::npos);
+}
+
+TEST_CASE("First Prefab save rechecks path ownership after planning", "[prefab][save]")
+{
+    Fixture fixture;
+    const PrefabDocument document = Named(mir::NewPrefabDocument(), "New");
+    const PrefabDocument other = Named(mir::NewPrefabDocument(), "Other");
+    const auto path = fixture.mDir.mPath / "Reserved.prefab";
+    REQUIRE(fixture.mRegistry.SetDocument(document, path));
+    const auto plan = PlanSavePrefab(fixture.mRegistry, document.mId, [](PrefabId) { return true; });
+    REQUIRE_FALSE(HasPrefabErrors(plan.mDiagnostics));
+    bool occupiedFile = true;
+    SECTION("An unscanned Prefab arrives at the intended path")
+    {
+        REQUIRE(mir::WritePrefabFile(path, other));
+    }
+    SECTION("A scan registers a different Prefab at the intended path")
+    {
+        REQUIRE(mir::WritePrefabFile(path, other));
+        fixture.Scan();
+    }
+    SECTION("A non-Prefab file arrives at the intended path")
+    {
+        REQUIRE(mir::WriteText(path, "unrelated user content"));
+    }
+    SECTION("Another unsaved document claims the intended path")
+    {
+        occupiedFile = false;
+        REQUIRE(fixture.mRegistry.SetDocument(other, path));
+    }
+    const std::string before = occupiedFile ? ReadText(path) : std::string();
+    const auto result = ExecuteSavePlan(fixture.mRegistry, plan);
+    CHECK_FALSE(result.mSucceeded);
+    CHECK(HasPrefabErrors(result.mDiagnostics));
+    CHECK(result.mWritten.empty());
+    CHECK_FALSE(fixture.mRegistry.HasSavedFile(document.mId));
+    CHECK(fixture.mRegistry.IntendedPathOf(document.mId) == path);
+    if (occupiedFile)
+        CHECK(ReadText(path) == before);
+    else
+        CHECK_FALSE(std::filesystem::exists(path));
+}
+
+TEST_CASE("An existing file with the same Prefab UUID remains writable", "[prefab][save]")
+{
+    Fixture fixture;
+    PrefabDocument document = Named(mir::NewPrefabDocument(), "Original");
+    const auto path = fixture.mDir.mPath / "Same.prefab";
+    REQUIRE(mir::WritePrefabFile(path, document));
+    document.mNodes[0].mComponents.front().mFields["name"] = "Changed";
+    REQUIRE(fixture.mRegistry.SetDocument(document, path));
+    const auto plan = PlanSavePrefab(fixture.mRegistry, document.mId, [](PrefabId) { return true; });
+    REQUIRE(ExecuteSavePlan(fixture.mRegistry, plan).mSucceeded);
+    CHECK(ReadText(path).find("Changed") != std::string::npos);
 }

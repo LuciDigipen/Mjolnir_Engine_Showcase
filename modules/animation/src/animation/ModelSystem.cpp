@@ -253,6 +253,17 @@ namespace mir
     }
 
     void ModelSystem::DiscardPreparedReload() { Release(mPreparedModels, mPreparedTextures); }
+
+    void ModelSystem::Forget(World &world, Entity entity)
+    {
+        const uint64_t packed = PackEntity(entity);
+        mRequestedModels.erase(packed);
+        mFailed.erase(packed);
+        mPreviousPoses.erase(packed);
+        mCurrentPoses.erase(packed);
+        if (auto *overrides = world.TryResource<ModelMorphOverrides>())
+            overrides->instances.erase(packed);
+    }
     void ModelSystem::OnUpdate(SystemContext &context)
     {
         auto &draws = context.world.Resource<ModelDrawItems>();
@@ -352,9 +363,12 @@ namespace mir
                         auto matrices = SkinMatrices(data.resources.model, pose, uint32_t(i));
                         const auto &mesh = data.resources.meshes.at(node.mesh.value);
                         const auto &gpu = data.meshes.at(node.mesh.value);
-                        const uint64_t poseKey = packed * 1000003ull + static_cast<uint64_t>(i);
-                        const auto previousPose = mPreviousPoses.find(poseKey);
-                        mCurrentPoses[poseKey] = *world;
+                        const auto nodeIndex = static_cast<uint32_t>(i);
+                        const WorldPose *previousPose = nullptr;
+                        if (const auto entityPoses = mPreviousPoses.find(packed); entityPoses != mPreviousPoses.end())
+                            if (const auto found = entityPoses->second.find(nodeIndex); found != entityPoses->second.end())
+                                previousPose = &found->second;
+                        mCurrentPoses[packed][nodeIndex] = *world;
 
                         for (size_t p = 0; p < mesh.primitives.size(); ++p)
                         {
@@ -367,8 +381,8 @@ namespace mir
                                                det < 0 ? gpu[p].mirrored : gpu[p].material,
                                                mDeformations.back() };
                             item.transparent = gpu[p].transparent;
-                            if (previousPose != mPreviousPoses.end())
-                                item.previousPose = previousPose->second;
+                            if (previousPose != nullptr)
+                                item.previousPose = *previousPose;
                             draws.items.push_back(item);
                         }
                     }

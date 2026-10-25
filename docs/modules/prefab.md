@@ -5,9 +5,11 @@ authoring state edits go to. It owns how a Prefab is stored, expanded and
 instance-bound; it owns no editor panel and no World system beyond publishing
 compiled edits at the Edit safe point.
 
-`mir::prefab` · depends `mir::core`, `mir::assets`, `mir::scene` (public); `mir::serial` (private) · API `modules/prefab/include/prefab/` · maintainer Jackey Cen · reviewed 2026-10-23
+`mir::prefab` · depends `mir::core`, `mir::assets`, `mir::scene`, `mir::serial` (public) · API `modules/prefab/include/prefab/` · maintainer Jackey Cen · reviewed 2026-10-23
 
 ## Model
+
+PrefabModule owns setup and transition registrations. It scans sources in editor builds or loads UUID-addressed resources through AssetsModule in game builds. EditorModule owns the workspace previews and authoring adapter.
 
 A Prefab has two identities. A `PrefabId` (UUID v4) is its persistent identity,
 so renaming or moving the file keeps every reference. The file is a versioned
@@ -56,8 +58,8 @@ implements the scene's resolver seam: it compiles the template on demand,
 instantiates it, and answers the template's default `EntityRef` targets so a
 save can tell an override from an inherited value.
 
-`PrefabCoordinator` is the runtime owner: the registry, the compiled cache, the
-resolver, the bound scene and one preview World per open Prefab document. Its
+`PrefabCoordinator` owns the registry, compiled cache and resolver, and tracks
+the bound scene and the preview Worlds owned by EditorModule's PrefabWorkspace. Its
 `PrefabSystem` runs first in `PreUpdate` but commits only in Edit, so a Prefab
 edit reaches instances at a frame boundary, never during Play. Frozen during
 Play, it also queues source rescans until the next unfrozen commit.
@@ -98,6 +100,7 @@ under a fresh `StableId` and records the scene instance.
 | `ScenePrefabResolver`, `PlacePrefabInstance` | `prefab/PrefabSceneInstance.h` | Materialize an instance and register its StableIds |
 | `PrefabFieldState`, `SetInstanceFieldOverride`, `RevertInstancePatch`, `ApplyPrefabInstancePatches` | `prefab/PrefabOverrides.h` | One scene instance's overrides |
 | `PrefabAuthoring`, `PrefabAuthoredKey`, `PrefabAuthoredEntry` | `prefab/PrefabAuthoring.h` | Document-qualified authored state for undo |
+| `PrefabModule` | `prefab/PrefabModule.h` | Source/cooked setup and scene/Play transition registrations |
 | `PrefabCoordinator`, `PrefabSystem` | `prefab/PrefabCoordinator.h` | Registry, cache, resolver, previews and commit |
 | `PrefabCaptureResult`, `CapturePrefab`, `UniquePrefabPath` | `prefab/PrefabCapture.h` | A scene subtree as a new document |
 | `PlanSavePrefab`, `PlanSaveScene`, `ExecuteSavePlan` | `prefab/PrefabSave.h` | Dependency-ordered writes |
@@ -138,9 +141,9 @@ warnings and are kept verbatim in the document.
 the compiled state and the scene instances are pinned, and a source rescan waits
 for the next unfrozen commit.
 
-**A preview is its own World and scene.** Editing a Prefab document does not
-touch the main scene until it is applied; the preview has separate entities and
-a separate `LoadedScene`, committed by the same coordinator.
+**A preview is its own World and scene.** Its entities never enter the main
+scene or Play snapshot. Successful document edits propagate to bound instances
+through the shared coordinator at the Edit safe point.
 
 **A game build reads cooked Prefabs only.** Without the editor, the registry is
 filled by `LoadCooked` from the cooked manifest; the build removes the copied
@@ -153,7 +156,7 @@ scene instances, overrides, capture, save plans and authored state work. Tests
 in `modules/prefab/tests/` cover the format, identity, registry, cooking,
 compilation and nesting, instantiation, scene round trips, overrides, capture,
 save order, coordinator publication and authoring. `modules/scene/tests/` covers
-instance records and references, and `modules/app/tests/` covers the open
+instance records and references, and `modules/editor/tests/` covers the open
 documents and authored adapter.
 
 `games/PrefabCheck` is the packaged acceptance: two crate instances, a House

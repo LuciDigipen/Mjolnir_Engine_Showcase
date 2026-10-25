@@ -9,7 +9,7 @@
 
 #include "WorldBindings.h"
 
-#include "BindingHelpers.h"
+#include <script/BindingHelpers.h>
 
 #include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/DeferredAccess.h>
@@ -181,7 +181,7 @@ namespace mir
                 if (!value.is<float>())
                     return false;
                 scratch.asFloat = value.as<float>();
-                return true;
+                return !std::isnan(scratch.asFloat);
             }
             case FieldKind::Vec3:
             {
@@ -214,8 +214,13 @@ namespace mir
                 if (!value.is<sol::table>())
                     return false;
                 const sol::table t = value.as<sol::table>();
-                scratch.asQuat = glm::quat(t.get_or("w", 1.0f), t.get_or("x", 0.0f), t.get_or("y", 0.0f),
-                                           t.get_or("z", 0.0f));
+                const glm::quat rotation(t.get_or("w", 1.0f), t.get_or("x", 0.0f), t.get_or("y", 0.0f),
+                                         t.get_or("z", 0.0f));
+                
+                const float length = glm::length(rotation);
+                if (!std::isfinite(length) || length == 0.0f)
+                    return false;
+                scratch.asQuat = rotation / length;
                 return true;
             }
             case FieldKind::Mat4:
@@ -355,6 +360,13 @@ namespace mir
                 return false;
             }
 
+            if (!field->Constrain(&scratch))
+            {
+                MIR_LOG_ERROR("script: world:set '{}.{}' - value is outside the field's range", componentName,
+                              fieldName);
+                return false;
+            }
+
             if (!field->Write(component, &scratch))
             {
                 MIR_LOG_ERROR("script: world:set '{}.{}' is read-only", componentName, fieldName);
@@ -429,6 +441,12 @@ namespace mir
                     {
                         MIR_LOG_ERROR("script: world:add '{}.{}' - value is the wrong shape or non-finite for a {}",
                                       componentName, field.mName, FieldKindName(field.mKind));
+                        continue;
+                    }
+                    if (!field.Constrain(&scratch))
+                    {
+                        MIR_LOG_ERROR("script: world:add '{}.{}' - value is outside the field's range", componentName,
+                                      field.mName);
                         continue;
                     }
                     field.Write(buffer.data(), &scratch);

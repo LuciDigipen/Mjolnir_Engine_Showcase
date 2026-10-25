@@ -7,6 +7,8 @@
  *
  */
 #include <prefab/CompiledPrefab.h>
+#include <prefab/PrefabInstantiate.h>
+#include <core/ecs/World.h>
 
 #include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/components/Transform.h>
@@ -620,4 +622,124 @@ TEST_CASE("Nested compilation rejects cycles, missing documents and excessive ex
         CHECK(cache.Find(outer.mId) == valid);
         CHECK(cache.Find(outer.mId)->Revision() == valid->Revision());
     }
+}
+
+TEST_CASE("Nested component replacement retains its new references", "[prefab][review307]")
+{
+    const ComponentOps &ops = StatsOps();
+    const PrefabDocument inner = InnerDocument();
+    PrefabDocument outer = OuterDocument(inner.mId);
+    json fields = { { "target", json::array({ "2", "1" }) }, { "speed", 8.0 } };
+    bool hasTarget = true;
+    SECTION("a new reference replaces the inherited reference") {}
+    SECTION("an omitted reference resets to null")
+    {
+        fields.erase("target");
+        hasTarget = false;
+    }
+    SECTION("an explicit null resets the inherited reference")
+    {
+        fields["target"] = nullptr;
+        hasTarget = false;
+    }
+    mir::PrefabPatch patch;
+    patch.mTarget = { 1 };
+    patch.mAddedComponents.push_back({ "PrefabCompileTestStats", fields });
+    outer.mNodes[1].mPatches = { patch };
+    const std::map<PrefabId, PrefabDocument> documents{ { inner.mId, inner } };
+    const PrefabCompileResult compiled = mir::CompilePrefab(outer, LookupOf(documents));
+    REQUIRE(compiled.mPrefab != nullptr);
+    CHECK(compiled.mDiagnostics.empty());
+    mir::World world;
+    const auto instance = mir::InstantiatePrefab(world, *compiled.mPrefab);
+    const Entity owner = instance.mEntities.at(PrefabNodeAddress{ 2, 1 });
+    Entity target = mir::kNullEntity;
+    REQUIRE(ops.GetComponent(world, owner) != nullptr);
+    ops.FindField("target")->Read(ops.GetComponent(world, owner), &target);
+    CHECK(target == (hasTarget ? owner : mir::kNullEntity));
+    float speed = 0.0f;
+    ops.FindField("speed")->Read(ops.GetComponent(world, owner), &speed);
+    CHECK(speed == 8.0f);
+    const Entity other = instance.mEntities.at(PrefabNodeAddress{ 3, 1 });
+    ops.FindField("target")->Read(ops.GetComponent(world, other), &target);
+    CHECK(target == instance.mEntities.at(PrefabNodeAddress{ 3, 2 }));
+}
+
+TEST_CASE("Skipped nested reference overrides preserve inherited targets", "[prefab][review307]")
+{
+    const ComponentOps &ops = StatsOps();
+    const PrefabDocument inner = InnerDocument();
+    PrefabDocument outer = OuterDocument(inner.mId);
+    json value = json::array({ "2", "99" });
+    PrefabNodeAddress expected{ 2, 2 };
+    bool warning = true;
+    bool wrap = false;
+    bool topOverride = false;
+    bool valid = true;
+    SECTION("a missing target preserves the inherited reference") {}
+    SECTION("a malformed address is rejected by validation") { value = 123; valid = false; }
+    SECTION("a valid forward reference replaces the inherited reference")
+    {
+        value = json::array({ "3", "1" });
+        expected = { 3, 1 };
+        warning = false;
+    }
+    SECTION("explicit null clears the inherited reference")
+    {
+        value = nullptr;
+        expected.clear();
+        warning = false;
+    }
+    SECTION("a skipped reference stays inherited through another nesting layer") { wrap = true; }
+    SECTION("a stale outer override preserves the intermediate override")
+    {
+        wrap = true;
+        topOverride = true;
+        value = json::array({ "3", "1" });
+        expected = { 3, 1 };
+    }
+    mir::PrefabPatch patch;
+    patch.mTarget = { 1 };
+    patch.mFields.push_back({ "PrefabCompileTestStats", "target", value });
+    outer.mNodes[1].mPatches = { patch };
+    std::map<PrefabId, PrefabDocument> documents{ { inner.mId, inner }, { outer.mId, outer } };
+    PrefabDocument source = outer;
+    PrefabNodeAddress ownerAddress{ 2, 1 };
+    if (wrap)
+    {
+        source = mir::NewPrefabDocument();
+        PrefabNode occurrence;
+        occurrence.mId = 2;
+        occurrence.mParent = source.mRootNode;
+        occurrence.mKind = PrefabNodeKind::Prefab;
+        occurrence.mPrefab = outer.mId;
+        if (topOverride)
+        {
+            mir::PrefabPatch stale;
+            stale.mTarget = { 2, 1 };
+            stale.mFields.push_back({ "PrefabCompileTestStats", "target", json::array({ "2", "99" }) });
+            occurrence.mPatches.push_back(stale);
+        }
+        source.mNodes.push_back(occurrence);
+        source.mNextNodeId = 3;
+        ownerAddress.insert(ownerAddress.begin(), 2);
+        expected.insert(expected.begin(), 2);
+    }
+    const PrefabCompileResult compiled = mir::CompilePrefab(source, LookupOf(documents));
+    if (!valid)
+    {
+        CHECK(compiled.mPrefab == nullptr);
+        CHECK(mir::HasPrefabErrors(compiled.mDiagnostics));
+        return;
+    }
+    REQUIRE(compiled.mPrefab != nullptr);
+    CHECK_FALSE(mir::HasPrefabErrors(compiled.mDiagnostics));
+    CHECK(HasWarningContaining(compiled.mDiagnostics, "skipped") == warning);
+    mir::World world;
+    const auto instance = mir::InstantiatePrefab(world, *compiled.mPrefab);
+    const Entity owner = instance.mEntities.at(ownerAddress);
+    Entity target = mir::kNullEntity;
+    REQUIRE(ops.GetComponent(world, owner) != nullptr);
+    ops.FindField("target")->Read(ops.GetComponent(world, owner), &target);
+    CHECK(target == (expected.empty() ? mir::kNullEntity : instance.mEntities.at(expected)));
 }

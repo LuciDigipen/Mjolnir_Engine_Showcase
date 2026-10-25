@@ -9,12 +9,20 @@ find_package(Stb REQUIRED)
 target_include_directories(engine_editor PRIVATE ${Stb_INCLUDE_DIR})
 
 target_link_libraries(engine_editor
-    PUBLIC mir::imguiruntime
+    # PUBLIC core: EditorModule.h holds Registrations and takes a ModuleContext
+    PUBLIC mir::core
+           mir::imguiruntime
            mir::renderer
            mir::window
            mir::input
-    PRIVATE mir::core
+           mir::project
+           # PrefabWorkspace.h and PrefabAuthoringAdapter.h take prefab types
+           mir::prefab
+    PRIVATE mir::animation
+            mir::assets
             mir::editortheme
+            mir::gameui
+            mir::scene
             mir::serial
             imgui::imgui
             imguizmo::imguizmo
@@ -27,12 +35,19 @@ if(WIN32)
 endif()
 
 target_sources(engine_editor PRIVATE
+    src/editor/AssetImportManager.cpp
     src/editor/BackgroundImage.cpp
+    src/editor/ContentBrowserWatcher.cpp
+    src/editor/CreateGameProject.cpp
     src/editor/Editor.cpp
     src/editor/EditorCamera.cpp
+    src/editor/EditorModule.cpp
     src/editor/EditorPreferences.cpp
     src/editor/EditorWidgets.cpp
     src/editor/EntityBaseline.cpp
+    src/editor/PrefabAuthoringAdapter.cpp
+    src/editor/PrefabPlayMarks.cpp
+    src/editor/PrefabWorkspace.cpp
     src/editor/history/AuthoredCommand.cpp
     src/editor/history/AuthoredEdit.cpp
     src/editor/history/ComponentCommands.cpp
@@ -52,6 +67,7 @@ target_sources(engine_editor PRIVATE
     src/editor/panels/PreferencesPanel.cpp
     src/editor/panels/ProfilerPanel.cpp
     src/editor/panels/ProjectSettingsPanel.cpp
+    src/editor/WorldSceneOps.cpp
 )
 
 if(BUILD_TESTING)

@@ -9,22 +9,24 @@
 
 #include <script/ScriptHost.h>
 
-#include "bindings/AudioBindings.h"
 #include "bindings/EntityBindings.h"
-#include "bindings/InputBindings.h"
-#include "bindings/PhysicsBindings.h"
-#include "bindings/PostProcessingBindings.h"
-#include "bindings/TerrainBindings.h"
 #include "bindings/WorldBindings.h"
+
+#include <script/BindingApi.h>
+
+#include <core/RegistrationList.h>
 
 #include <core/ecs/World.h>
 #include <core/log/Log.h>
 
 #include <sol/sol.hpp>
 
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace mir
 {
@@ -55,14 +57,9 @@ namespace mir
                                   MIR_LOG_INFO("[lua] {}", line);
                               });
 
+            // core's bindings; every library's own come from its bridge through AddBindings
             RegisterEntityBindings(mLua);
             RegisterWorldBindings(mLua);
-            RegisterTerrainBindings(mLua);
-
-            RegisterInputBindings(mLua);
-            RegisterPhysicsBindings(mLua);
-            RegisterAudioBindings(mLua);
-            RegisterPostProcessingBindings(mLua);
         }
 
         struct ScriptInstance
@@ -142,6 +139,8 @@ namespace mir
         }
 
         sol::state mLua;
+        // replayed into any Lua state built later; mLua is built once today
+        RegistrationList<LuaBindings> mBindings;
         std::unordered_map<std::string, sol::object> mLoadedScripts;
         std::unordered_map<int32_t, ScriptInstance> mInstances;
         int32_t mNextInstanceRef = 0;
@@ -152,6 +151,14 @@ namespace mir
     }
 
     ScriptHost::~ScriptHost() = default;
+
+    Registration AddBindings(ScriptHost &host, LuaBindings bindings)
+    {
+        ScriptHostImpl &impl = host.Impl();
+        bindings(impl.mLua);
+
+        return impl.mBindings.Add(std::move(bindings));
+    }
 
     bool ScriptHost::LoadScriptSource(std::string_view name, std::string_view source)
     {
@@ -187,6 +194,11 @@ namespace mir
     void ScriptHost::DestroyInstance(int32_t instanceRef)
     {
         mImpl->DestroyInstance(instanceRef);
+    }
+
+    std::size_t ScriptHost::InstanceCount() const
+    {
+        return mImpl->mInstances.size();
     }
 
     void ScriptHost::CallOnStart(World &world, CommandBuffer &, Entity entity, int32_t instanceRef)

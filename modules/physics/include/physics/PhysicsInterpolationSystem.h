@@ -10,7 +10,7 @@
  * instead, and stamps RigidBody::transformVersion so PhysicsSystem does not
  * read that write back as a teleport.
  *
- * Registered in SystemPhase::PostUpdate *before* TransformPropagateSystem, so
+ * Registered in SystemPhase::PostUpdate, before Propagate, so
  * the blended Transform is what this frame's world poses are built from.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation

@@ -45,6 +45,9 @@ namespace mir
         return 14;
     }
 
+    // The run finished, but something failed while shutting down; the log says what
+    inline constexpr int kShutdownExitCode = 15;
+
     inline constexpr std::string_view CategoryName(ErrorCategory category)
     {
         switch (category)

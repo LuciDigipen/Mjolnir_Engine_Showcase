@@ -56,21 +56,29 @@ add_subdirectory(modules/animation)
 add_subdirectory(modules/app)
 add_subdirectory(modules/assets)
 add_subdirectory(modules/audio)
+add_subdirectory(modules/audio_script)
 add_subdirectory(modules/camera)
 add_subdirectory(modules/core)
 add_subdirectory(modules/editor)
 add_subdirectory(modules/editortheme)
 add_subdirectory(modules/gameshell)
 add_subdirectory(modules/gameui)
+add_subdirectory(modules/gameui_imgui)
 add_subdirectory(modules/imguiruntime)
 add_subdirectory(modules/input)
+add_subdirectory(modules/input_script)
 add_subdirectory(modules/physics)
+add_subdirectory(modules/physics_script)
 add_subdirectory(modules/prefab)
+add_subdirectory(modules/project)
 add_subdirectory(modules/renderer)
+add_subdirectory(modules/renderer_script)
 add_subdirectory(modules/scene)
 add_subdirectory(modules/script)
 add_subdirectory(modules/serial)
 add_subdirectory(modules/terrain)
+add_subdirectory(modules/terrain_runtime)
+add_subdirectory(modules/terrain_script)
 add_subdirectory(modules/window)
 
 add_subdirectory(tools/AssetCooker)
@@ -295,6 +303,7 @@ target_link_libraries(MjolnirEngine PRIVATE
     mir::input
     mir::physics
     mir::prefab
+    mir::project
     mir::scene
     mir::script
     mir::terrain

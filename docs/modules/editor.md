@@ -91,6 +91,48 @@ the editor's own camera. Right-drag flies/looks (WASD/QE, scroll for speed);
 `Editor::UpdateCamera` gates that on `!WantsCaptureMouse()` so a drag ImGui
 itself is handling doesn't also move it.
 
+### The module
+
+`EditorModule` owns the `Editor`, the asset import, the content browser, the
+scene ops and the Prefab documents. Its ImGui drawer draws the layout, turns the frame's actions into
+requests (scene commands, a game to open) or carries them out (an import, a
+content browser action, opening a file in the IDE), then feeds viewport 0's rect
+and, in Edit, the editor camera to `RenderSystem`, and the scene viewport to
+the `GameUIArea` resource for the game UI drawn later that frame. The drawer is
+in the `Tools` group, which runs before the game UI's. Its `FrameBegin` work polls
+the import and the content browser and asks for the swap once a cook finishes.
+Its stage functions keep the history and the unsaved mark: `SceneLoad` clears
+the history and sets the mark from `SceneModule::LastLoad()`, `SceneSaved`
+clears it, `PlayBegin` remembers it for Stop to put back, and `ReloadCommit`
+marks the import applied.
+
+The Prefab documents are a `PrefabWorkspace`, one preview World per open Prefab
+tab, and a `PrefabAuthoringAdapter`. The adapter bridges History and the prefab
+module's authored state; `prefab/PrefabAuthoring` owns the edits themselves.
+Apply and Revert write no files. A `LateUpdate` system runs the open previews in
+Edit, after `PrefabSystem` committed their documents, and the drawer hands the
+active tab's preview to the panels and to `RenderSystem::SetSourceWorld`. Play
+shows the Scene tab, and the `SceneLoad` after Stop reopens the tab it left, by
+prefab id; a prefab deleted during Play leaves the Scene tab. `PlayBegin`
+runs before the snapshot: `PrefabModule` commits the pending edits and freezes
+the prefabs, then the editor keeps the Prefab tabs' unsaved marks for Stop to put
+back (`PrefabPlayMarks`). A rename or rewrite of a Prefab file reaches the
+coordinator through `ContentBrowserWatcher` and `PrefabModule::Rescan`, which waits
+while the prefabs are frozen, and a document whose file changed under it loses its
+save point. The browser also lists a new Prefab that has no file yet, and
+`WorldSceneOps::PlacePrefab` places a Prefab by its content path through the
+workspace. A tab whose Prefab vanished closes after the frame's layout. The previews' models take part in an asset swap, and their caches reset at
+`SceneUnload`, after the renderer freed every upload.
+
+Save on a Prefab tab writes that Prefab. On the Scene tab it first writes the
+modified Prefab sources the scene uses, then asks for `SaveScene`, which `App`
+runs at the top of the next frame. At `SceneSaved` the module plans the save
+again, and a prefab that changed in between keeps the scene unsaved, so the next
+Save writes both. Each Prefab write clears that document's
+saved mark without clearing History. A missing source path or a failed write
+stops the save and leaves the scene unwritten; files already written stay
+saved.
+
 ## API
 
 ```cpp
@@ -103,8 +145,8 @@ bool IsSceneUnsaved() const;      // the title bar's * marker
 void SetSceneUnsaved(bool unsaved);  // false: the scene as it is now is the saved one
 bool IsDocumentUnsaved(DocumentId document) const;              // the same for a Prefab or other document
 void SetDocumentUnsaved(DocumentId document, bool unsaved);
-void SetAuthoringBackend(IAuthoringBackend *backend);           // App's authoring documents (#249)
-void SetAuthoredEntities(IAuthoredEntities *authored);          // App's instance overrides
+void SetAuthoringBackend(IAuthoringBackend *backend);           // the module's PrefabAuthoringAdapter
+void SetAuthoredEntities(IAuthoredEntities *authored);          // document edits and instance overrides
 
 // between ImGuiRuntime::BeginFrame and EndFrame
 EditorActions DrawLayout(bool enableLayout, InputMap &inputMap, RenderSettings &renderSettings,
@@ -123,6 +165,10 @@ EditorCamera &SceneCamera();
 
 | Type | Header | Role |
 |---|---|---|
+| `EditorModule` | `editor/EditorModule.h` | The editor's module: its ImGui drawer, `FrameBegin` work and stage functions |
+| `AssetImportManager`, `ContentBrowserWatcher` | `editor/AssetImportManager.h`, `editor/ContentBrowserWatcher.h` | The import queue and the cooker child; the content browser's disk poll |
+| `WorldSceneOps` | `editor/WorldSceneOps.h` | The `ISceneOps` the history uses, on the World and its `LoadedScene` |
+| `CreateGameProject` | `editor/CreateGameProject.h` | Writes a new game directory; the scene through `scene`'s own save |
 | `SceneMenuAction` | `editor/Editor.h` | `None`/`New`/`Save`/`Load`/`Play`/`TogglePause`/`Stop` |
 | `ProjectMenuEntry` | `editor/Editor.h` | `{mDir, mName}` for one game in Open Project |
 | `EditorActions` | `editor/Editor.h` | `{mScene, mOpenProject, mCreateProjectName, mAssetImport, mContentBrowser, mDocument, mSaveActiveDocument}`, what the menus and toolbar asked for this frame |
@@ -413,9 +459,7 @@ Prefab, each with its own camera and unsaved marker. `Hierarchy` offers Create
 Prefab and a Prefab drag target, `ContentBrowser` opens a Prefab on double-click
 and drags one into the scene, and `Inspector` reverts or applies instance
 overrides through `IAuthoredEntities`. Node create, delete and reparent in a
-Prefab document are undoable commands. Prefab tabs and overrides have no unit
-test here; `smoke.<game>` starts the editor path that opens them, and the
-app-side preview and document logic is tested in `modules/app/tests/`.
+Prefab document are undoable commands. Authored commands, previews, references and saves are covered by `modules/editor/tests/`; smoke tests cover the full engine path.
 
 The panels and menus have no tests. They need a device and a display.
 `smoke.switch` covers the restart that Open Project asks for, but not the menu
@@ -453,12 +497,15 @@ or the dialog themselves. History needs neither, and its tests are in
 
 ## Changed
 
-*2026-10-23* — **Prefab document tabs.** Was: the editor drew the scene only.
-Now: the document bar shows the Scene plus every open Prefab, the active
-document supplies the viewport World and camera, and `DrawLayout` takes both
-Worlds. Prefab-node actions, override edits, Create Prefab and Prefab placement
-go through the authored commands in `editor-history.md`; the editor still never
-holds a Prefab type or a `LoadedScene`.
+*2026-10-24* — **`EditorModule`; the import, content browser, scene ops, Prefab
+documents and project creation moved in from `app`.** Was: `App` held the
+`Editor`, the `AssetImportManager`, the `ContentBrowserWatcher`, `AppSceneOps`,
+the `PrefabWorkspace` and the `PrefabAuthoringAdapter`, applied the editor's
+actions, and cleared the history and set the unsaved mark at each transition.
+Now: the module does all of it through its drawer, its `FrameBegin` work, a
+`LateUpdate` system and stage functions, and `CreateGameProject` writes the default scene
+through `scene`. Because: `App` no longer knows what the editor keeps, and the
+scene file had a hand-written copy of `scene`'s format.
 
 *2026-10-22* — **Theme preference; `Initialize` takes `srgbOutput`.**
 `EditorPreferences::theme` (`"theme": "midnight" | "slate"`) picks the editor

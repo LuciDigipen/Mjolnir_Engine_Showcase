@@ -106,7 +106,15 @@ around them.
 | `SaveScene`, `LoadScene`, `UnloadScene` | `scene/SceneIO.h` | Directory in, directory out, scoped destroy |
 | `ProbeScene`, `SceneProbe` | `scene/SceneIO.h` | What `LoadScene` would skip, found without a `World` |
 | `PlaySnapshot`, `CaptureWorld`, `RestoreWorld`, `DiscardSnapshot` | `scene/PlaySnapshot.h` | Whole-World capture/restore around a Play session, built on `SaveScene`/`LoadScene`; `DiscardSnapshot` removes its directory |
+| `SceneModule`, `SceneLoadResult`, `SceneLoadCause` | `scene/SceneModule.h` | The scene the World holds, its Play snapshot, and how it last got there |
 | `EntitySnapshot`, `SnapshotMembers`, `CaptureEntity`, `RestoreEntity`, `RestoreEntityAt`, `DuplicateSceneEntity` | `scene/EntitySnapshot.h` | One entity and its descendants as in-memory data, restored into new entities registered in a `LoadedScene`, under new `StableId`s or, for undo, their old ones |
+
+`SceneModule` holds the `LoadedScene`, the scene directory and the Play
+snapshot. Its commands replace the scene without unloading it first, because
+`App` runs `SceneUnload` between the two. Each command records a
+`SceneLoadResult`: from disk, new, or restored from the snapshot, and whether it
+is incomplete. `SceneLoad` stage functions read it through `LastLoad()`, and are
+its only readers.
 
 `CreateSceneEntity` is the one call an editor's "add entity" needs, so allocation
 and registration cannot happen for one without the other.
@@ -119,6 +127,10 @@ alive.
 `DuplicateSceneEntity` is `CaptureEntity` followed by `RestoreEntity` under the
 source's own parent. The copy then moves to right after the source, as Unity's
 Ctrl+D places it. It returns null for an entity that is not alive.
+
+`StableIdOf` and `FindInstanceBinding` (`scene/SceneDuplicate.h`) answer which
+scene id an entity has and which prefab instance binds it; the editor's delete
+and reparent guards use them too.
 
 `DuplicateSceneEntitySubtree` retains the linked Prefab record for an instance
 root, while `CopyInstanceMemberAsOrdinary` produces a detached effective copy.
@@ -197,9 +209,9 @@ because a handle from a file names a different run's entity, so it loads null
 with a warning.
 
 **`RestoreEntity` does not resolve runtime handles.** Script instances, meshes
-and materials are left out of the field tables. In `App`, `MeshResolveSystem`
-picks up a restored `MeshRenderer` on the next frame, and `ResolveSceneScripts`
-runs after a load (see [app.md](app.md)).
+and materials are left out of the field tables. `renderer`'s
+`MeshResolveSystem` picks up a restored `MeshRenderer` on the next frame, and
+`script`'s `ScriptResolveSystem` a restored `ScriptRef`.
 
 **`UnloadScene` destroys exactly what that load created**, each entity guarded by
 `IsAlive` since destroying a parent already cascades. It never touches entities
@@ -266,14 +278,12 @@ Tests in `modules/scene/tests/SceneIO.tests.cpp`,
 Resolving names back into live handles after a load is not done here — a
 `ScriptRef.scriptName` into an `instanceRef`, a mesh name into a `MeshHandle`, or
 a `TerrainInstance.recipePath` into a pinned terrain release with its meshes and
-collision pieces. `App` does that, through `ResolveSceneScripts` and
-`ResolveSceneMeshes` in `app`'s private `SceneResolve.cpp` and through its private
-`TerrainRuntime` (see [app.md](app.md)), because it needs the
-renderer and the script host that this module does not link. Scripts resolve in
-`ResolveSceneScripts`, after both of this module's load paths (`LoadScene`,
-`RestoreWorld`), which converge in `App`, and after the editor restores or
-duplicates entities through `App`'s `AppSceneOps`. Meshes resolve every frame in
-`MeshResolveSystem`, so it also covers entities that `RestoreEntity` creates.
+collision pieces. The modules that own those runtimes do it, because they need
+the renderer and the script host that this module does not link. Scripts and
+meshes resolve every frame, in `script`'s `ScriptResolveSystem` and `renderer`'s
+`MeshResolveSystem`, so they cover every way an entity arrives. Terrain resolves
+in `terrain_runtime`'s `SceneLoad` function (see
+[terrain_runtime.md](terrain_runtime.md)).
 
 ## Backlog
 
@@ -288,6 +298,12 @@ duplicates entities through `App`'s `AppSceneOps`. Meshes resolve every frame in
    of sweeping the whole registry per entity.
 
 ## Changed
+
+*2026-10-24* — **`SceneModule`.** Was: `App` held the `LoadedScene` and the
+Play snapshot and called `LoadScene`, `SaveScene`, `CaptureWorld` and
+`RestoreWorld` itself. Now: the module owns them and records why the scene is
+there for the `SceneLoad` stage. Because: the editor's history and unsaved mark
+follow from that cause, and the editor must not need `App` to find it out.
 
 *2026-10-24* — **`ProbeScene` checks a scene before it loads, and a wrongly typed
 manifest value rejects the whole manifest.** Was: `LoadScene` skipped a bad

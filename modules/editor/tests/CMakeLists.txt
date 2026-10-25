@@ -2,10 +2,14 @@ engine_add_module_tests(editor
     Authoring.tests.cpp
     AuthoredEdit.tests.cpp
     ComponentCommands.tests.cpp
+    ContentBrowserWatcher.tests.cpp
     DocumentNodeCommands.tests.cpp
     EntityCommands.tests.cpp
     History.tests.cpp
+    PrefabAuthoringAdapter.tests.cpp
+    PrefabPlayMarks.tests.cpp
+    PrefabWorkspace.tests.cpp
 )
 
-# editor links core privately, but its headers include core's; scene stands in for App's scene ops
-target_link_libraries(engine_editor_tests PRIVATE mir::core mir::scene)
+# editor links scene privately; the tests build scenes for the scene ops and prefab previews
+target_link_libraries(engine_editor_tests PRIVATE mir::scene)

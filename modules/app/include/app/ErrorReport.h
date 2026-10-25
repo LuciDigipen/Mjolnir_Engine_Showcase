@@ -15,11 +15,18 @@
 namespace mir
 {
     inline constexpr std::string_view kErrorReportFileName = "last-error.json";
+    inline constexpr std::string_view kCrashDumpFileName = "crash.dmp";
+
+    // Beside the engine, named like it, so a game build ships it the same way
+    std::filesystem::path ReporterPath();
 
     // LogDir()/last-error.json
     std::filesystem::path ErrorReportPath();
 
-    // Removes an earlier run's report, so a report on disk always belongs to the latest run
+    // LogDir()/crash.dmp
+    std::filesystem::path CrashDumpPath();
+
+    // Removes an earlier run's report and dump, so what is on disk belongs to the latest run
     void ClearErrorReport();
 
     // Logs the error, writes last-error.json, starts the reporter box and returns the exit code.

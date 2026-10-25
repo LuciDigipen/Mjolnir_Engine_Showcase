@@ -27,22 +27,25 @@ callback.
 `ScriptRef` is a POD component carrying `instanceRef`, `started` and
 `scriptName`, and it is the only thing the ECS knows about a script.
 
+`ScriptResolveSystem` gives every `ScriptRef` its instance. It runs first in
+`PreUpdate`, every frame and in every mode, and creates an instance for every
+`ScriptRef` that has none, loading the script's cooked source the first time
+the name appears. It remembers the name each instance came from, so a rename
+replaces the instance, and it does not retry a name that failed to load until an
+asset reload. Whatever made the `ScriptRef` needs no resolve call of its own.
+
 `ScriptSystem` is the sole driver. It is one `ISystem` in
-`SystemPhase::PreUpdate` walking `Query<ScriptRef>`, calling `OnStart` once and
-then `OnUpdate` every frame. Each entity's callback is isolated from the others
+`SystemPhase::PreUpdate`, after the resolver, walking `Query<ScriptRef>`,
+calling `OnStart` once and then `OnUpdate` every frame. Each entity's callback is isolated from the others
 by a C++ `try`/`catch` and by sol2's `protected_function`, so a script error
 stops that entity's script rather than the frame.
 
-```cpp
-const AssetId id = MakeAssetId("games/HelloWorld/assets/scripts/spin.lua");
-const AssetBlobView *blob = app.Assets()->Load(id);
-
-app.Scripts().LoadScriptSource("spin", AsStringView(*blob));
-app.ScriptReload().Track("spin", id);          // picks up an edit on the next cook
-
-const int32_t instance = app.Scripts().CreateInstance("spin");
-world.AddComponent<ScriptRef>(entity, ScriptRef{.instanceRef = instance});
-```
+`ScriptModule` owns the host, the reload watcher and both systems. It sets the
+`ScriptRef` OnRemove hook, which drops the instance, polls the watcher in the
+`FrameBegin` slot, stops every script at `PlayEnd`, and lets the resolver retry
+failed names at `ReloadCommit`. Every library's own Lua bindings come from a
+bridge (see [script-bridges.md](script-bridges.md)); `script` itself binds only
+`Entity` and `World`.
 
 ```lua
 local Spin = {}
@@ -69,23 +72,30 @@ return Spin
 | `ScriptHost` | `script/ScriptHost.h` | The one Lua-backed implementation; sol2 hidden behind a pimpl |
 | `ScriptRef` | `script/components/ScriptRef.h` | POD link component: `instanceRef`, `started`, `scriptName` |
 | `ScriptSystem` | `script/ScriptSystem.h` | Drives the callbacks per `ScriptRef`, `SystemPhase::PreUpdate` |
+| `ScriptResolveSystem`, `MakeScriptAssetLoader`, `ReleaseScriptInstance` | `script/ScriptResolveSystem.h` | Gives every `ScriptRef` its instance; loads a script from the cooked assets; drops an instance |
+| `ScriptModule` | `script/ScriptModule.h` | The host, the watcher, both systems, the hook and the stage functions |
+| `AddBindings`, `LuaBindings` | `script/BindingApi.h` | How a bridge adds its bindings; behind the `script_bindings` target, the only header with sol2 in it |
 | `ScriptReloadWatcher` | `script/ScriptReloadWatcher.h` | Polls a tracked script's cooked file and reloads on change |
 | `RegisterScriptComponents` | `script/ComponentRegistration.h` | Registers `ScriptRef`, mirroring `core` and `renderer` |
 
 The Lua surface — `world:has/get/set/spawn/destroy/add/remove/each/declare` and
 the `Entity` usertype — lives in `src/script/bindings/` and is not public. Loaded
 Lua source reaches it; no C++ outside this module includes it. The input,
-physics, audio and terrain bindings each extend that same `World` usertype rather than
-adding one of their own, and each is registered after `RegisterWorldBindings`.
+physics, audio, terrain and post-processing bindings live in the bridges, and
+each extends that same `World` usertype rather than adding one of its own. The
+host binds `Entity` and `World` when it builds its state, so every bridge's
+bindings run after them.
 
 The input half is `world:is_down/just_pressed/just_released/axis/axis2d` and
 `world:active_device`. Scripts are gameplay, so the action reads go through
 `InputState::ForGame`: every action reads at rest while a game UI screen, such
 as the pause menu, holds the input. See [gameui.md](gameui.md).
 
-The audio half is `world:post_event/stop_event/set_rtpc/set_switch/set_state`.
+The audio half is `world:post_event/stop_event/is_playing/set_rtpc/set_switch/set_state`.
 All but `set_state` take the entity and reach the `AkGameObject` its
 `AudioEmitter` carries; `set_state` takes none, because a Wwise state is global.
+`is_playing` is true while the voice the emitter last started, by `post_event`
+or `playOnStart`, is still playing.
 
 ```lua
 function T.OnUpdate(self, world, entity, dt)
@@ -93,6 +103,11 @@ function T.OnUpdate(self, world, entity, dt)
     world:set_rtpc(entity, "Speed", self.charge * 100.0)   -- false if refused
 end
 ```
+
+The renderer bridge adds `world:mesh_bounds(entity)`: the local-space
+`{ min = {x, y, z}, max = {x, y, z} }` box of the entity's resolved mesh, or
+`nil` when there is none yet. `MeshBounds` is derived and never registered, so
+`world:get` cannot reach it.
 
 ### Post-processing
 
@@ -234,6 +249,14 @@ sol::type::number` rather than `is<int32_t>()`. That check's strictness is
 coupled to the Lua version, and neither variant of it means "is this usable as an
 int".
 
+**`world:set` and `world:add` keep a value inside the field's limits**, through
+`FieldDesc::Constrain`: an enum `Int` refuses an index with no name, and a
+clamped `Float` is clamped to `[mMin, mMax]`, the same limits the Inspector
+applies. `world:set` returns `false` for a refusal; `world:add` logs it and
+leaves that field at its default. Any `Float` refuses NaN. A `quat` is
+normalized, and refused when it has zero length or is not finite, because a
+table with a missing key defaults `w` to 1 and the rest to 0.
+
 **`world:each`'s `RuntimeQuery` is cached per term list, as a `World` resource**,
 so its lifetime matches the `World`'s. A process-wide cache could alias a reused
 heap address across `World` instances, between Catch2 test cases for example.
@@ -273,9 +296,8 @@ edit reaching a running instance, and a deliberate error thrown from inside a
 
 `ScriptRef.scriptName` exists so scene files can round-trip which script an
 entity runs. `instanceRef` is this run's live state and is deliberately not
-saved. Resolving the name back into an `instanceRef` after a scene load is
-`ResolveSceneScripts`, a private pass in `app` that `App::LoadScene` runs, rather
-than something this module or `scene` does.
+saved. `ScriptResolveSystem` turns the name back into an `instanceRef`, whatever
+made the `ScriptRef`.
 
 ## Backlog
 
@@ -295,6 +317,26 @@ than something this module or `scene` does.
    flavour underneath.
 
 ## Changed
+
+*2026-10-25* — **Script writes respect field limits; `world:mesh_bounds` and
+`world:is_playing` added (#219).** Was: `world:set` and `world:add` wrote any
+value of the right shape, so a script could set `Light.type = 9`, a negative
+`Light.intensity` or a NaN, and `{ y = 1 }` stored a non-unit rotation; a script
+could not read a mesh's bounds or ask whether an emitter was still playing. Now:
+writes go through `FieldDesc::Constrain`, quaternions are normalized, and the
+two bindings exist. Because: the Inspector's limits only guarded the Inspector,
+and the #219 audit found these as the gaps a script could not work around.
+
+*2026-10-24* — **A live resolver, `ScriptModule`, and the bindings moved to
+bridges.** Was: `app`'s `ResolveSceneScripts` ran after a scene load, a Stop, a
+duplicate, a restore, a prefab publish and an import, and a new path that made a
+`ScriptRef` had to remember the call; `ScriptHost`'s constructor registered every
+library's bindings, so `script` linked audio, input, physics, renderer and
+terrain. Now: `ScriptResolveSystem` resolves every frame, a rename replaces the
+instance, `ScriptModule` owns the host and its systems, and five bridge
+libraries add their bindings through `AddBindings`. Because: a forgotten resolve
+left a script silently dead, and a library's Lua surface belongs next to it, not
+inside `script`.
 
 *2026-10-19* — **`world:set_motion_blur/get_motion_blur` joins the
 post-processing bindings (#212).** Was: the five effects above. Now: Motion

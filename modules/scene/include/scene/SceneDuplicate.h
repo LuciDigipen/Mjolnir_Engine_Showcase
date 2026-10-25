@@ -10,9 +10,17 @@
 #include "core/ecs/Entity.h"
 #include "scene/SceneAsset.h"
 
+#include <optional>
+
 namespace mir
 {
     class World;
+
+    // The scene id of a live entity; empty for one the scene does not track.
+    std::optional<StableId> StableIdOf(const LoadedScene &scene, Entity entity);
+
+    // The instance that binds member, with its root's id in outRoot; null for an ordinary entity.
+    const ScenePrefabInstance *FindInstanceBinding(const LoadedScene &scene, StableId member, StableId &outRoot);
 
     // An instance root becomes a linked instance of the same Prefab; a non-root
     // member is refused. Every other entity duplicates as before.

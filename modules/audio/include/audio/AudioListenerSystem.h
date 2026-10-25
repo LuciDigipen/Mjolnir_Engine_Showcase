@@ -3,9 +3,8 @@
  * @author Quy Dong Ta
  * @brief Pushes the active AudioListener's WorldTransform to Wwise each frame.
  *
- * Registered in SystemPhase::PostUpdate *after* TransformPropagateSystem, which
- * is what makes WorldTransform current for the frame - phase ties break by
- * registration order, so the order of the AddSystem calls matters.
+ * Registered in SystemPhase::LateUpdate, after Propagate makes WorldTransform
+ * current for the frame.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *

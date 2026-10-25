@@ -17,6 +17,8 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 
 #include <algorithm>
+#include <atomic>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 
@@ -25,6 +27,9 @@ namespace mir
     namespace
     {
         bool s_initialized = false;
+
+        // a counter, not LogHistory, which is capped and drops old entries
+        std::atomic<uint64_t> s_errorCount{ 0 };
         std::filesystem::path s_filePath;
 
         spdlog::level::level_enum ToSpd(LogLevel level)
@@ -120,6 +125,11 @@ namespace mir
         s_initialized = true;
     }
 
+    uint64_t ErrorCount()
+    {
+        return s_errorCount;
+    }
+
     const std::filesystem::path &LogFilePath()
     {
         return s_filePath;
@@ -157,6 +167,8 @@ namespace mir
 
         void Log(LogLevel level, std::string_view msg, std::source_location loc)
         {
+            if (level >= LogLevel::Error && level != LogLevel::Off)
+                ++s_errorCount;
             if (!s_initialized)
             {
                 return;
@@ -167,6 +179,7 @@ namespace mir
 
         void LogAssert(const char *expr, std::string_view msg, std::source_location loc)
         {
+            ++s_errorCount;
             if (!s_initialized)
             {
                 return;

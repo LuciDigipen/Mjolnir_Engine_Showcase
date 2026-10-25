@@ -24,6 +24,46 @@ namespace mir
             diagnostics.push_back({ PrefabDiagnosticSeverity::Error, {}, std::move(message) });
         }
 
+        bool CheckWriteOwnership(const PrefabRegistry &registry, const PrefabSaveStep &step,
+            std::vector<PrefabDiagnostic> &diagnostics)
+        {
+            const auto intended = registry.PathOf(step.mPrefab);
+            if (!intended || intended->lexically_normal() != step.mPath.lexically_normal())
+            {
+                AddError(diagnostics, "prefab " + ToString(step.mPrefab) + " save path changed after planning");
+                return false;
+            }
+            for (PrefabId other : registry.Ids())
+            {
+                if (other == step.mPrefab)
+                    continue;
+                const auto path = registry.PathOf(other);
+                if (path && path->lexically_normal() == step.mPath.lexically_normal())
+                {
+                    AddError(diagnostics, "path " + step.mPath.string() + " belongs to prefab " + ToString(other));
+                    return false;
+                }
+            }
+            std::error_code ec;
+            const bool exists = std::filesystem::exists(step.mPath, ec);
+            if (ec)
+            {
+                AddError(diagnostics, "could not check prefab save path " + step.mPath.string() + ": " + ec.message());
+                return false;
+            }
+            if (exists)
+            {
+                const PrefabParseResult existing = ReadPrefabFile(step.mPath);
+                if (!existing.mDocument || existing.mDocument->mId != step.mPrefab)
+                {
+                    AddError(diagnostics, "path " + step.mPath.string() +
+                        " is occupied by a file not owned by prefab " + ToString(step.mPrefab));
+                    return false;
+                }
+            }
+            return true;
+        }
+
         class PlanBuilder
         {
         public:
@@ -128,6 +168,9 @@ namespace mir
                     " could not create its directory: " + ec.message());
                 return result;
             }
+
+            if (!CheckWriteOwnership(registry, step, result.mDiagnostics))
+                return result;
 
             std::vector<PrefabDiagnostic> diagnostics;
             if (!WritePrefabFile(step.mPath, *document, &diagnostics))

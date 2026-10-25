@@ -9,9 +9,8 @@ by free-fly input. It does not own the lens or draw anything; `Camera` and
 ## Model
 
 A `CameraController` sits on the same root entity as a `Camera`.
-`CameraControllerSystem` runs in `PostUpdate` right after
-`TransformPropagateSystem`, so a follow target's `WorldTransform` is this
-frame's, including a `RigidBody` that `PhysicsInterpolationSystem` blended just
+`CameraModule` registers `CameraControllerSystem` in `LateUpdate`, after
+`Propagate`, so a follow target's `WorldTransform` is this frame's, including a `RigidBody` that `PhysicsInterpolationSystem` blended just
 before. After writing the camera's `Transform` it calls `ResolveWorld` on the
 camera, because propagation has already run and `RenderSystem` reads the cache.
 
@@ -28,16 +27,16 @@ camera, because propagation has already run and `RenderSystem` reads the cache.
 `ToggleCameraMode` (F2, gamepad Back) flips every controller between the two.
 Setting `mode` from the Inspector or Lua works the same.
 
-```cpp
-mScheduler.AddSystem<TransformPropagateSystem>(SystemPhase::PostUpdate);
-mScheduler.AddSystem<CameraControllerSystem>(SystemPhase::PostUpdate);
-```
+Free-fly's look direction is the hidden `yawDegrees` and `pitchDegrees` fields,
+so a script can aim a free-fly camera by writing them; pitch is clamped to
+±`kFreeFlyMaxPitchDegrees`. Writing the `Transform`'s rotation instead is
+overwritten on the next frame.
 
 ## API
 
 | Type | Header | Role |
 |---|---|---|
-| `CameraController`, `CameraMode` | `camera/components/CameraController.h` | Mode, follow and free-fly settings, plus runtime state that is not saved |
+| `CameraController`, `CameraMode`, `kFreeFlyMaxPitchDegrees` | `camera/components/CameraController.h` | Mode, follow and free-fly settings, plus runtime state; of that, only free-fly yaw and pitch are fields |
 | `CameraControllerSystem` | `camera/CameraControllerSystem.h` | The per-frame driver |
 | `StepCameraFollow`, `CameraFollowGoal`, `SeedFreeFly`, `StepFreeFly` | `camera/CameraControllerSystem.h` | The pure steps the system runs, for tests |
 | `RegisterCameraComponents` | `camera/ComponentRegistration.h` | Registers `CameraController` |
@@ -70,6 +69,13 @@ follows the scripted `FollowRig`.
 - Cursor capture for look without holding a button.
 
 ## Changed
+
+*2026-10-25* — **Free-fly yaw and pitch are fields (#219).** Was: they were
+runtime state with no field, so a script's write to the `Transform`'s rotation
+was overwritten next frame and nothing could aim a free-fly camera. Now:
+`yawDegrees` and `pitchDegrees` are hidden fields, pitch clamped to the same
+limit the step uses. Because: scripted cutscene hand-offs and respawn look-ats.
+Entering FreeFly still re-seeds both from the rotation.
 
 *2026-10-15* — **Module created.** Was: `CameraFollow` lived in `renderer`.
 Now: `CameraController` here, with a free-fly mode. Because: issue #28's
