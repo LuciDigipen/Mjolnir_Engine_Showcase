@@ -215,9 +215,10 @@ no "outside a walk" case for a script to be in. The bindings route through
 `core`'s `DeferredAccess.h` unconditionally rather than trying to detect which
 case they are in.
 
-**`ScriptSystem` installs a `World::AddDestroyHook` and removes it in `OnStop`.**
-A hook left behind calls into freed memory on the next entity destroyed. That
-pairing is covered by `modules/core/tests/System.tests.cpp`, not by a test here.
+**`ScriptSystem` sets the `ScriptRef` OnRemove hook in `OnStart` and clears it in
+`OnStop`.** The hook drops the Lua instance on `RemoveComponent` and on
+`DestroyEntity`. A hook left behind calls into freed memory on the next removal.
+`ScriptSystem.tests.cpp` covers both the drop and the clear.
 
 **Register native components before loading any script**, including
 `RegisterScriptComponents`. `ComponentRegistry` refuses a script that claims an

@@ -61,7 +61,6 @@ namespace
 
         Scene()
         {
-            InstallHierarchy(world);
             RegisterCoreComponents();
             RegisterTerrainComponents();
             EmplaceTestStreamer(world);

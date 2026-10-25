@@ -42,7 +42,6 @@ namespace mir
         void StopAllScripts(SystemContext &context);
 
     private:
-        static void OnEntityDestroyed(World &world, Entity entity, void *user);
         static void OnBeforeRemove(World &world, const EntityChangeSet &changes, void *user);
         void ReleaseScript(World &world, Entity entity);
 

@@ -56,7 +56,7 @@ namespace mir
     void PhysicsSystem::OnStart(SystemContext &context)
     {
         mQuery = &context.world.GetOrCreateQuery<Transform, RigidBody>();
-        context.world.AddDestroyHook(&PhysicsSystem::OnEntityDestroyed, this);
+        context.world.SetComponentHooks<RigidBody>({ .onRemove = &PhysicsSystem::OnRigidBodyRemoved });
     }
 
     void PhysicsSystem::OnUpdate(SystemContext &context)
@@ -76,7 +76,7 @@ namespace mir
 
     void PhysicsSystem::OnStop(SystemContext &context)
     {
-        context.world.RemoveDestroyHook(&PhysicsSystem::OnEntityDestroyed, this);
+        context.world.ClearComponentHooks<RigidBody>();
     }
 
     void PhysicsSystem::PushTransforms(World &world, PhysicsWorld &physics)
@@ -139,7 +139,7 @@ namespace mir
             });
     }
 
-    void PhysicsSystem::OnEntityDestroyed(World &world, Entity entity, void *)
+    void PhysicsSystem::OnRigidBodyRemoved(World &world, Entity entity)
     {
         RigidBody *rigidBody = world.GetComponent<RigidBody>(entity);
         if (rigidBody == nullptr || !rigidBody->body.IsValid())

@@ -246,7 +246,6 @@ namespace
 
         Runtime()
         {
-            InstallHierarchy(world);
             RegisterCoreComponents();
             RegisterTerrainComponents();
         }

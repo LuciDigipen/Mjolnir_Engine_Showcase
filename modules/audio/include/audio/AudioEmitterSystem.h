@@ -28,7 +28,7 @@ namespace mir
         void OnStop(SystemContext &context) override;
 
     private:
-        static void OnEntityDestroyed(World &world, Entity entity, void *user);
+        static void OnEmitterRemoved(World &world, Entity entity);
 
         Query<const WorldTransform, AudioEmitter> *mQuery = nullptr;
     };

@@ -157,13 +157,10 @@ namespace mir
 
         // read before the restore, which appends the copy to the same list
         Entity next = kNullEntity;
-        if (const HierarchyIndex *index = world.TryResource<HierarchyIndex>())
-        {
-            const std::span<const Entity> siblings = index->SiblingsOf(source);
-            const auto it = std::find(siblings.begin(), siblings.end(), source);
-            if (it != siblings.end() && std::next(it) != siblings.end())
-                next = *std::next(it);
-        }
+        const std::span<const Entity> siblings = world.HierarchyIndex().SiblingsOf(source);
+        const auto it = std::find(siblings.begin(), siblings.end(), source);
+        if (it != siblings.end() && std::next(it) != siblings.end())
+            next = *std::next(it);
 
         const Entity parent = ParentOf(world, source);
         const Entity copy = RestoreEntity(world, CaptureEntity(world, source), scene, parent);

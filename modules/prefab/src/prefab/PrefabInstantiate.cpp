@@ -23,7 +23,6 @@ namespace mir
     PrefabInstantiation InstantiatePrefab(World &world, const CompiledPrefab &prefab, Entity parent)
     {
         PrefabInstantiation result;
-        InstallHierarchy(world);
 
         const std::span<const CompiledPrefabNode> nodes = prefab.Nodes();
         std::vector<Entity> entities;

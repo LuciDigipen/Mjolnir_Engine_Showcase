@@ -12,6 +12,7 @@
 #include "ComponentAsserts.h"
 #include "Entity.h"
 #include "EntityPool.h"
+#include "HierarchyMutator.h"
 #include "QueryTerms.h"
 #include "Signature.h"
 #include "core/log/Assert.h"
@@ -21,7 +22,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <memory>
+#include <span>
+#include <string_view>
 #include <tuple>
 #include <type_traits>
 #include <unordered_map>
@@ -38,21 +42,21 @@ namespace mir
         struct QueryIterationGuard;
     }
 
-    // Fn called right after an entity is created, or before it is torn down.
-    // Fn should not add or remove hooks
-    struct EntityHook
+    struct ComponentHooks
     {
-        void (*fn)(World &world, Entity entity, void *user);
-        void *user = nullptr;
-
-        bool operator==(const EntityHook &) const = default;
+        std::function<void(World &world, Entity entity)> onAdd;
+        std::function<void(World &world, Entity entity)> onRemove;
     };
 
     // entity position of entity's archetype
+    inline constexpr uint16_t kNoRemovingBit = 0xFFFF;
+
     struct EntityRecord
     {
         Archetype *archetype = nullptr;
         uint32_t row = 0;
+        bool destroying = false;                 // set while DestroyEntity runs its hooks
+        uint16_t removingBit = kNoRemovingBit;   // set while RemoveComponent runs that bit's OnRemove
     };
 
     namespace detail
@@ -118,33 +122,39 @@ namespace mir
 
             // no defer needed
             mRecords[entity.mIndex] = EntityRecord{ mEmptyArchetype, mEmptyArchetype->AddRow(entity) };
-
-            for (std::size_t i = 0; i < mCreateHooks.size(); ++i)
-                mCreateHooks[i].fn(*this, entity, mCreateHooks[i].user);
+            detail::HierarchyMutator::AddRoot(mHierarchy, entity);
 
             return entity;
         }
 
-        // registers a hook to run after entity create
-        void AddCreateHook(void (*fn)(World &, Entity, void *), void *user = nullptr)
+        template <typename T>
+        void SetComponentHooks(ComponentHooks hooks)
         {
-            AddHook(mCreateHooks, EntityHook{ fn, user });
+            MIR_ASSERT_COMPONENT(T);
+            if (!CanChangeHooks("SetComponentHooks", TrimTypeName<T>()))
+                return;
+
+            const std::size_t bit = ComponentBit<T>();
+
+            if (bit >= mComponentHooks.size())
+                mComponentHooks.resize(bit + 1);
+
+            HookSlot &slot = mComponentHooks[bit];
+            MIR_ASSERT(!slot.hooks.onAdd && !slot.hooks.onRemove,
+                "World::SetComponentHooks: {} already has hooks", TrimTypeName<T>());
+            slot.hooks = std::move(hooks);
+            slot.name = TypeIdOf<T>().name;
         }
 
-        void RemoveCreateHook(void (*fn)(World &, Entity, void *), void *user = nullptr)
+        template <typename T>
+        void ClearComponentHooks()
         {
-            std::erase(mCreateHooks, EntityHook{ fn, user });
-        }
+            if (!CanChangeHooks("ClearComponentHooks", TrimTypeName<T>()))
+                return;
 
-        // registers a hook to run before entity destroy
-        void AddDestroyHook(void (*fn)(World &, Entity, void *), void *user = nullptr)
-        {
-            AddHook(mDestroyHooks, EntityHook{ fn, user });
-        }
-
-        void RemoveDestroyHook(void (*fn)(World &, Entity, void *), void *user = nullptr)
-        {
-            std::erase(mDestroyHooks, EntityHook{ fn, user });
+            const std::size_t bit = ComponentBit<T>();
+            if (bit < mComponentHooks.size())
+                mComponentHooks[bit].hooks = ComponentHooks{};
         }
 
         // reset record, remove from both storages, remove from pool
@@ -153,20 +163,62 @@ namespace mir
             MIR_ASSERT(mPool.IsAlive(entity), "World::DestroyEntity: entity is not alive");
             AssertSafeToMutate("DestroyEntity");
 
-            // allowed to destroy other entities inside hooks
-            for (std::size_t i = 0; i < mDestroyHooks.size(); ++i)
+            // a hook destroyed it again, e.g. two hooks destroying each other's entity;
+            // the outer call finishes it
+            if (mRecords[entity.mIndex].destroying)
             {
-                // check for each hook if target entity is stil alive for hook execution
-                if (!mPool.IsAlive(entity))
-                    return;
-
-                mDestroyHooks[i].fn(*this, entity, mDestroyHooks[i].user);
+                MIR_LOG_WARN("World::DestroyEntity: entity {} is already being destroyed; a hook "
+                    "destroyed it again, ignored",
+                    entity.mIndex);
+                return;
             }
 
-            // A cascade can reach this entity from another direction and
-            // destroy it before we get here. Already gone is success.
-            if (!mPool.IsAlive(entity))
-                return;
+            mRecords[entity.mIndex].destroying = true;
+            const DestroyingMark mark{ mRecords, entity.mIndex };
+
+            // a child already mid-destroy further up the stack is finished by that destroy.
+            // Cut it loose, so its own Remove does not unlink from this entity once it is gone
+            for (std::size_t i = mHierarchy.ChildrenOf(entity).size(); i-- > 0;)
+            {
+                const Entity child = mHierarchy.ChildrenOf(entity)[i];
+                if (IsDestroying(child))
+                    detail::HierarchyMutator::DetachChild(mHierarchy, entity, child);
+            }
+
+            // children first, so the destroy is bottom-up. Each stays linked until its own
+            // Remove, so its hooks still read its parent. Draining the live list skips
+            // siblings a hook already destroyed
+            while (!mHierarchy.ChildrenOf(entity).empty())
+            {
+                [[maybe_unused]] const std::size_t before = mHierarchy.ChildrenOf(entity).size();
+                const Entity child = mHierarchy.ChildrenOf(entity).back();
+
+                const bool alive = mPool.IsAlive(child);
+                MIR_ASSERT(alive, "World::DestroyEntity: dead entity left in the scene graph");
+                if (alive)
+                    DestroyEntity(child);
+
+                // a dying parent accepts no children, so the list only shrinks.
+                // In Release a child left linked would loop forever, so cut it loose
+                const std::span<const Entity> left = mHierarchy.ChildrenOf(entity);
+                const bool unlinked = std::find(left.begin(), left.end(), child) == left.end();
+                MIR_ASSERT(!alive || (unlinked && left.size() < before),
+                    "World::DestroyEntity: destroying a child did not unlink it");
+                if (!unlinked)
+                    detail::HierarchyMutator::DetachChild(mHierarchy, entity, child);
+            }
+
+            // in bit order, and the row drops once after the last, so every hook reads all the data
+            // a removal already running this bit's hook skips it, so each hook fires once
+            const Signature signature = mRecords[entity.mIndex].archetype->GetSignature();
+            const uint16_t removing = mRecords[entity.mIndex].removingBit;
+            for (std::size_t bit = 0; bit < mComponentHooks.size(); ++bit)
+            {
+                if (signature.test(bit) && bit != removing)
+                    RunOnRemove(entity, bit);
+            }
+
+            detail::HierarchyMutator::Remove(mHierarchy, entity);
 
             const EntityRecord record = mRecords[entity.mIndex];
             RemoveRow(*record.archetype, record.row);
@@ -176,6 +228,13 @@ namespace mir
         }
 
         bool IsAlive(Entity entity) const { return mPool.IsAlive(entity); }
+
+        // true while DestroyEntity runs its cascade and hooks for this entity
+        bool IsDestroying(Entity entity) const { return mPool.IsAlive(entity) && mRecords[entity.mIndex].destroying; }
+
+        // accessing the scene graph
+        mir::HierarchyIndex &HierarchyIndex() { return mHierarchy; }
+        const mir::HierarchyIndex &HierarchyIndex() const { return mHierarchy; }
 
         template <typename Fn>
         void ForEachAliveEntity(Fn &&fn) const
@@ -463,11 +522,35 @@ namespace mir
 
             RemoveRow(*from.archetype, from.row);
             mRecords[entity.mIndex] = EntityRecord{ &target, row };
-            return slot;
+
+            const ComponentHooks *hooks = FindHooks(type);
+            if (hooks == nullptr || !hooks->onAdd)
+                return slot;
+
+            {
+                const HookFiring firing{ mHookDepth };
+                hooks->onAdd(*this, entity);
+            }
+
+            // the hook may have moved the entity to another table
+            MIR_ASSERT(mPool.IsAlive(entity) && HasRaw(entity, type),
+                "World: the OnAdd hook of {} removed it or destroyed its entity", type.name);
+            return GetRaw(entity, type);
         }
 
         void RemoveTableComponentRaw(Entity entity, TypeId type)
         {
+            // the hook may destroy an ancestor, whose cascade takes this entity too.
+            // The mark makes that destroy skip this hook, and then the removal is done
+            {
+                const RemovingMark mark{ *this, entity, static_cast<uint16_t>(ComponentBitOf(type)) };
+                RunOnRemove(entity, ComponentBitOf(type));
+            }
+
+            // by handle, since a hook may have reused the slot for a new entity
+            if (!mPool.IsAlive(entity))
+                return;
+
             // move entityset to different table
             const EntityRecord from = mRecords[entity.mIndex];
             Signature signature = from.archetype->GetSignature();
@@ -497,10 +580,81 @@ namespace mir
             RemoveTableComponentRaw(entity, TypeIdOf<T>());
         }
 
-        static void AddHook(std::vector<EntityHook> &hooks, const EntityHook &hook)
+        // null when the type never had hooks set
+        const ComponentHooks *FindHooks(TypeId type) const
         {
-            if (std::find(hooks.begin(), hooks.end(), hook) == hooks.end())
-                hooks.push_back(hook);
+            const std::size_t bit = ComponentBitOf(type);
+            return bit < mComponentHooks.size() ? &mComponentHooks[bit].hooks : nullptr;
+        }
+
+        // counts hooks on the stack, so Set/Clear can refuse while one runs.
+        // RAII, so a throwing hook still lowers it
+        struct HookFiring
+        {
+            uint32_t &depth;
+
+            explicit HookFiring(uint32_t &value) : depth(value) { ++depth; }
+            ~HookFiring() { --depth; }
+        };
+
+        // setting or clearing from inside a hook could resize the slots or destroy the
+        // running std::function; asserts in Debug, skipped with an error in Release
+        bool CanChangeHooks([[maybe_unused]] const char *what, [[maybe_unused]] std::string_view type) const
+        {
+            MIR_ASSERT(mHookDepth == 0, "World::{}: {} changed from inside a hook", what, type);
+            if (mHookDepth == 0)
+                return true;
+
+            MIR_LOG_ERROR("World::{}: {} changed from inside a hook, ignored", what, type);
+            return false;
+        }
+
+        // clears the destroying mark on every exit, a throwing hook included.
+        // by index, since hooks may create entities and grow mRecords
+        struct DestroyingMark
+        {
+            std::vector<EntityRecord> &records;
+            uint32_t index;
+
+            ~DestroyingMark() { records[index].destroying = false; }
+        };
+
+        // marks the bit whose OnRemove a RemoveComponent is running, and clears it on
+        // every exit. Once the entity is gone its record was reset, so there is nothing to clear
+        struct RemovingMark
+        {
+            World &world;
+            Entity entity;
+
+            RemovingMark(World &owner, Entity target, uint16_t bit) : world(owner), entity(target)
+            {
+                world.mRecords[entity.mIndex].removingBit = bit;
+            }
+
+            ~RemovingMark()
+            {
+                if (world.mPool.IsAlive(entity))
+                    world.mRecords[entity.mIndex].removingBit = kNoRemovingBit;
+            }
+        };
+
+        void RunOnRemove(Entity entity, std::size_t bit)
+        {
+            if (bit >= mComponentHooks.size() || !mComponentHooks[bit].hooks.onRemove)
+                return;
+
+            [[maybe_unused]] const Archetype *before = mRecords[entity.mIndex].archetype;
+            {
+                const HookFiring firing{ mHookDepth };
+                mComponentHooks[bit].hooks.onRemove(*this, entity);
+            }
+
+            // other entities may go, which can shift this entity's row but not its table.
+            // Gone entirely is allowed: a destroyed ancestor takes it in its cascade
+            MIR_ASSERT(!mPool.IsAlive(entity) || mRecords[entity.mIndex].archetype == before,
+                "World: the OnRemove hook of {} changed its own entity. Record the change "
+                "into a CommandBuffer instead",
+                mComponentHooks[bit].name);
         }
 
         // like merging in merge sort
@@ -609,13 +763,20 @@ namespace mir
         std::unordered_map<Signature, std::unique_ptr<Archetype>> mArchetypes;
         Archetype *mEmptyArchetype = nullptr;
         std::unordered_map<uint32_t, std::unique_ptr<detail::IQuery>> mQueries; // by detail::QueryKeyOf
-        std::vector<EntityHook> mCreateHooks;
-        std::vector<EntityHook> mDestroyHooks;
+        // the name is kept for assert messages, since a tag has no column to read it from
+        struct HookSlot
+        {
+            ComponentHooks hooks;
+            std::string_view name;
+        };
+        std::vector<HookSlot> mComponentHooks; // by component bit
+        mir::HierarchyIndex mHierarchy;
 
         // intentionally declared last as it must be destroyed first.
         std::unordered_map<uint32_t, std::unique_ptr<detail::IResource>> mResources; // by detail::ResourceIdOf
         std::size_t mArchetypeGeneration = 0;
         uint32_t mQueryIterationDepth = 0; // depth for nested iteration checking
+        uint32_t mHookDepth = 0;           // hooks currently running
     };
 }
 
