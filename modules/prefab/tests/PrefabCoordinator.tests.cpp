@@ -914,8 +914,11 @@ TEST_CASE("A rescan while frozen waits for the next Edit safe point", "[prefab][
     fixture.Commit();
     CHECK(FloatField(fixture.mWorld, fixture.Member(rootAddress), DataOps(), "amount") == 1.0f);
 
+    CHECK(fixture.mCoordinator->ConsumeExternalChanges().empty());
     fixture.mCoordinator->SetFrozen(false);
     fixture.Commit();
+    CHECK(fixture.mCoordinator->ConsumeExternalChanges() == std::vector<mir::PrefabId>{ fixture.mDocument.mId });
+    CHECK(fixture.mCoordinator->ConsumeExternalChanges().empty());
     CHECK(FloatField(fixture.mWorld, fixture.Member(rootAddress), DataOps(), "amount") == 61.0f);
 }
 
@@ -936,6 +939,7 @@ TEST_CASE("A rescan keeps an unsaved in-memory document", "[prefab][coordinator]
         .mFields.at("amount") == 71.0);
 
     fixture.Commit();
+    CHECK(fixture.mCoordinator->ConsumeExternalChanges().empty());
     CHECK(FloatField(fixture.mWorld, fixture.Member(rootAddress), DataOps(), "amount") == 71.0f);
 }
 
@@ -951,6 +955,7 @@ TEST_CASE("A rescan replaces an in-memory document that matches its saved file",
     REQUIRE(mir::WritePrefabFile(fixture.mPrefabs.mPath / "instance.prefab", fixture.mDocument));
 
     fixture.mCoordinator->RescanSources(fixture.mPrefabs.mPath);
+    CHECK(fixture.mCoordinator->ConsumeExternalChanges() == std::vector<mir::PrefabId>{ fixture.mDocument.mId });
     CHECK_FALSE(fixture.mCoordinator->Registry().HasMemoryDocument(fixture.mDocument.mId));
     CHECK(fixture.mCoordinator->Registry().Find(fixture.mDocument.mId)->mNodes.front().mComponents.front()
         .mFields.at("amount") == 91.0);

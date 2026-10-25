@@ -85,6 +85,9 @@ namespace mir
         // After App released the scene's GPU resources.
         void ResetResolve();
 
+        // Invalidate History save points without clearing undo/redo or marking a disk write.
+        void InvalidateExternalSavePoints(const std::function<void(PrefabId)> &invalidate);
+
         // @p unsaved also has to report a prefab with no file yet; @p markSaved
         // runs once per file that was written.
         bool SavePrefab(PrefabId id, const PrefabUnsaved &unsaved, const PrefabSaved &markSaved);

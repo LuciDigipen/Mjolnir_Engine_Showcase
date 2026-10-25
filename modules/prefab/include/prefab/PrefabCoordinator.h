@@ -50,6 +50,9 @@ namespace mir
         // Commit. While frozen the scan waits for the next unfrozen Commit.
         void RescanSources(const std::filesystem::path &prefabsDir);
 
+        // Effective documents replaced by external source changes, once per adopted id.
+        std::vector<PrefabId> ConsumeExternalChanges();
+
         // Frozen pins the published prefab state: Commit publishes nothing and
         // rescans wait for the next unfrozen Commit.
         void SetFrozen(bool frozen) { mFrozen = frozen; }
@@ -116,6 +119,7 @@ namespace mir
         PrefabSceneResolver mResolver;
         LoadedScene *mScene = nullptr;
         std::set<PrefabId> mPendingDocuments;
+        std::set<PrefabId> mExternalChanges;
         PublishedTable mPublished;
         std::map<PrefabId, PreviewBinding> mPreviews;
         std::filesystem::path mQueuedRescan;
