@@ -11,12 +11,14 @@
 
 #include <app/App.h>
 #include <app/ErrorReport.h>
-#include <app/GameProject.h>
+#include <assets/AssetIdRoot.h>
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
 #include <core/log/LogHistory.h>
 #include <core/log/SetupError.h>
+#include <core/platform/CrashHandler.h>
 #include <core/platform/Process.h>
+#include <project/GameProject.h>
 
 #include <charconv>
 #include <cstddef>
@@ -166,11 +168,10 @@ namespace
     {
         // a bad --game is the command line's fault, a bad defaultGame is the data's
         const bool fromCommandLine = !options.mGameDir.empty();
-        const mir::GameProject project = mir::ResolveGameProject(
+        mir::GameProject project = mir::ResolveGameProject(
             fromCommandLine ? options.mGameDir : mir::ReadDefaultGame(),
             fromCommandLine ? mir::ErrorCategory::Usage : mir::ErrorCategory::ProjectData);
-
-        mir::App app;
+        mir::ResolveAssetIdRoot(project);
 
         mir::AppDesc desc{};
         desc.mProject = project;
@@ -183,43 +184,47 @@ namespace
         if (!options.mProjectSwitches.empty())
             desc.mSwitchProjectTo = options.mProjectSwitches.front();
 
-        // Caught while app is alive: the report is written before ~App tears down
+        // Outside the try, so a failure in Run reports with App alive. A failure while
+        // building it reports after what was built has been torn down
+        std::optional<mir::App> app;
         try
         {
             // also loads the game's scene
-            app.Initialize(desc);
+            app.emplace(desc);
 
             // Only now is startup actually done - close explicitly rather than
             // leaning on WS_EX_TOPMOST z-order to hide the swap.
-            app.Splash().SetProgress("Ready", 1.0f);
-            app.Splash().Close();
+            app->Splash().SetProgress("Ready", 1.0f);
+            app->Splash().Close();
 
-            app.Run();
+            app->Run();
         }
         catch (const mir::SetupError &error)
         {
-            app.Splash().Close();
             return mir::ReportFatal(error);
         }
         catch (const std::exception &error)
         {
-            app.Splash().Close();
             return mir::ReportFatal(InternalError(error.what()));
         }
         catch (...)
         {
-            app.Splash().Close();
             return mir::ReportFatal(InternalError("unknown exception"));
         }
 
-        app.Shutdown();
-
         // a bounded (test) run fails if anything logged an error
         const bool bounded = options.mMaxFrames != 0;
-        const int exitCode = (bounded && AnyErrorLogged()) ? 1 : 0;
+        int exitCode = (bounded && AnyErrorLogged()) ? 1 : 0;
+        const std::optional<mir::GameProject> next = app->ProjectToOpen();
+
+        // module destructors log what fails and carry on, so the counter is how teardown reports
+        const uint64_t errorsBeforeTeardown = mir::ErrorCount();
+        app.reset();
+        if (mir::ErrorCount() > errorsBeforeTeardown)
+            exitCode = mir::kShutdownExitCode;
 
         // switching games restarts the process; a bounded run waits for the child
-        if (const std::optional<mir::GameProject> &next = app.ProjectToOpen(); next.has_value())
+        if (next.has_value())
         {
             const std::vector<std::string> args = RelaunchArguments(options, *next);
             MIR_LOG_INFO("Restarting into '{}'", next->mDir);
@@ -250,6 +255,18 @@ int main(int argc, char **argv)
     mir::InitLog();
     MIR_LOG_INFO("Log file: {}", mir::LogFilePath().string());
     mir::ClearErrorReport();
+
+    try
+    {
+        mir::InstallCrashHandler({ .mReportPath = mir::ErrorReportPath(),
+                                   .mDumpPath = mir::CrashDumpPath(),
+                                   .mReporterPath = mir::ReporterPath(),
+                                   .mLogPath = mir::LogFilePath() });
+    }
+    catch (const mir::SetupError &error)
+    {
+        return mir::ReportFatal(error);
+    }
 
     // bad arguments or game directory exit before the splash, with no App to tear down
     try

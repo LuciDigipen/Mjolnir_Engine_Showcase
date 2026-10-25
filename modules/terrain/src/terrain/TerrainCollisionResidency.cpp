@@ -10,6 +10,7 @@
 
 #include "PackInternal.h"
 
+#include <terrain/RunGuarded.h>
 #include <terrain/TerrainLayout.h>
 
 #include <algorithm>
@@ -18,6 +19,7 @@
 #include <deque>
 #include <format>
 #include <mutex>
+#include <string_view>
 #include <tuple>
 #include <unordered_map>
 
@@ -302,7 +304,13 @@ namespace mir
                     job = std::move(first->second);
                     mPending.erase(first);
                 }
-                Built built = Build(job);
+                Built built = RunGuarded([&] { return Build(job); }, [&](std::string_view what)
+                    {
+                        Built failed;
+                        failed.ticket = job.ticket;
+                        failed.message = std::format("the collision build threw: {}", what);
+                        return failed;
+                    });
                 std::lock_guard lock(mMutex);
                 if (!mClosed)
                     mFinished.push_back(std::move(built));

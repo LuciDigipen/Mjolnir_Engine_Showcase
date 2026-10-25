@@ -3,9 +3,8 @@
  * @author Quy Dong Ta
  * @brief Keeps every AudioEmitter's Wwise game object in step with its WorldTransform.
  *
- * Registered in SystemPhase::PostUpdate *after* TransformPropagateSystem, which
- * is what makes WorldTransform current for the frame - phase ties break by
- * registration order, so the order of the two AddSystem calls matters.
+ * Registered in SystemPhase::LateUpdate, after Propagate makes WorldTransform
+ * current for the frame.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -27,9 +26,10 @@ namespace mir
         void OnUpdate(SystemContext &context) override;
         void OnStop(SystemContext &context) override;
 
-    private:
+        // AudioEmitter's OnRemove: stops its voice and unregisters its game object
         static void OnEmitterRemoved(World &world, Entity entity);
 
+    private:
         Query<const WorldTransform, AudioEmitter> *mQuery = nullptr;
     };
 }

@@ -1,22 +1,60 @@
 # core
 
-The ECS, logging and asserts, executable-relative paths, file reading and
-writing, and the surface contract between a window and a renderer. It knows nothing about windows, graphics APIs or
-assets, and has to stay that way.
+The ECS and the module machinery on top of it, plus a base layer of logging and
+asserts, executable-relative paths, file reading and writing, the crash handler
+and the surface contract between a window and a renderer. It knows nothing about
+windows, graphics APIs or assets, and has to stay that way.
 
-`mir::core` · depends nothing engine-side; `glm` (public, in component headers), `spdlog` (private) · API `modules/core/include/core/` · maintainer Sumin Park · reviewed 2026-09-18
+`mir::core_base` · depends nothing engine-side; `glm` (public), `spdlog` (private) · API `modules/core/include/core/` · `mir::core` · depends `mir::core_base` · API `modules/core/include_ecs/core/ecs/` · maintainer Sumin Park · reviewed 2026-10-24
 
 ## Model
 
-Four pieces share one library because they share one property: no engine
-dependencies.
+One folder builds two libraries, split by include root. `core_base`
+(`include/`) is `log/`, `fs/`, `math/` and `platform/`: process-wide services set
+up in `main`, which link only third-party code. `core` (`include_ecs/`) is
+`ecs/`, built on `core_base`. Both roots use the `core/` prefix, so no include
+changes, but a library that links only `core_base` cannot find an ECS header.
+That is what lets `serial` and `project` stay plain libraries.
 
-`ecs/` is by far the largest. `log/` gives logging and asserts without putting a
-logging library in a public header. `fs/` does two things. It resolves paths against
-the executable rather than the working directory, so a copied build tree still
-runs, and it holds the engine's only file-reading and file-writing primitives.
-`platform/` declares `ISurfaceProvider`, which lets a renderer take a drawing
-surface from something without knowing that it is a window.
+`log/` gives logging and asserts without putting a logging library in a public
+header, and counts the Error and Critical lines for `main`'s shutdown check.
+`fs/` resolves paths against the executable rather than the working directory,
+so a copied build tree still runs, and it holds the engine's only file-reading
+and file-writing primitives. `platform/` declares `ISurfaceProvider`, which lets
+a renderer take a drawing surface from something without knowing that it is a
+window, starts child processes that die with the engine, and holds the crash
+handler.
+
+### Modules, stages and frame slots
+
+A module is a class whose constructor takes a `ModuleContext`, the `World` and
+the `SystemScheduler`, plus the other modules it needs. It registers its parts
+there and frees them in its destructor. `CoreModule` is the first: core's
+components, `EngineModeState`, `EntityChangeListeners`, `FrameCommands`, the
+`RequestQueue` and `TransformPropagateSystem`.
+
+Everything a module registers comes back as a `Registration`, a move-only token
+that undoes the registration when it dies. Component hooks, stage functions,
+frame-slot functions, ImGui drawers and Lua bindings all work this way.
+
+A *stage* is a transition `App` runs: `SceneUnload`, `SceneLoad`, `SceneSaved`,
+`PlayBegin`, `PlayEnd`, `ReloadPrepare`, `ReloadCommit` and `ReloadAbort`. `RunStage` calls the
+stage's functions in registration order, then flushes the command buffer. A
+*frame slot* is host work once per rendered frame, outside the phases; today the
+only one is `FrameBegin`. The scheduler holds both lists next to its phases.
+
+The `RequestQueue` World resource holds the transitions someone asked for during
+a frame. `App` takes them at the top of the next frame, in push order with
+duplicates dropped and `Quit` last.
+
+### Crash handler
+
+`InstallCrashHandler`, called first in `main`, routes access violations, stack
+overflows, `std::terminate`, invalid CRT parameters and pure calls to one
+handler. The faulting thread only records what happened and wakes a thread the
+handler started at install. That thread writes `last-error.json` and a minidump
+with raw OS calls and precomputed strings, starts the error reporter, and ends
+the process with exit 20.
 
 ### Engine mode
 
@@ -89,9 +127,17 @@ const ComponentOps &health = ComponentRegistry::Instance().RegisterRuntime("Heal
 | `RuntimeQuery` | `ecs/RuntimeQuery.h` | The same walk for terms known only at runtime |
 | `ComponentRegistry`, `FieldDesc` | `ecs/ComponentRegistry.h`, `ecs/ComponentFields.h` | Name to erased ops; one named, typed value |
 | `CommandBuffer` | `ecs/CommandBuffer.h` | Deferred structural changes |
-| `ISystem`, `SystemScheduler` | `ecs/System.h`, `ecs/SystemScheduler.h` | Per-frame work, and running it by phase |
+| `ISystem`, `SystemScheduler` | `ecs/System.h`, `ecs/SystemScheduler.h` | Per-frame work, and running it by phase; stage and frame-slot lists |
+| `Stage`, `FrameSlot` | `ecs/System.h` | The transitions App runs, and the host work slots of a frame |
+| `Registration` | `Registration.h` (base) | Move-only token that undoes a registration when it dies |
+| `RegistrationList<F>` | `RegistrationList.h` (base) | Functions run in registration order, each added through a token: stages, frame slots, drawers, Lua bindings, screens |
+| `ModuleContext`, `CoreModule` | `ecs/ModuleContext.h`, `ecs/CoreModule.h` | What every module constructor gets; core's own module |
+| `Request`, `RequestQueue` | `ecs/Requests.h` | Transitions asked for during a frame, applied at the top of the next |
+| `InstallCrashHandler`, `ArmCrashHandler`, `ReclaimCrashHandler` | `platform/CrashHandler.h` | The crash handler; per-thread setup; taking the filter slot back from a library |
+| `ErrorCount` | `log/Log.h` | Error and Critical lines logged so far |
 | `FixedTimestep` | `ecs/FixedTimestep.h` | Frame time to `FixedUpdate` substeps: leftover carries, per-frame cap, bounded backlog |
 | `ISurfaceProvider` | `platform/Surface.h` | Native handle plus dimensions |
+| `ChildProcess` | `platform/Process.h` | A child process in a job object, so it dies with this one however it ends |
 | `LaunchProcess`, `QuoteCommandLineArgument` | `platform/Process.h` | Start a process and optionally wait for its exit code; Windows argument quoting |
 | `ExecutableDir`, `ExecutablePath` | `fs/Paths.h` | The running executable's directory and full path |
 | `ReadBytes`, `ReadFirstBytes`, `ReadText` | `fs/FileIO.h` | A whole file, its first N bytes, or its text |
@@ -140,9 +186,9 @@ binding layer that has to route between the two.
 that a walk is matching against moves.
 
 **A component type has at most one pair of hooks, and its owner sets them.** The
-owning system calls `SetComponentHooks<T>` when it starts and
-`ClearComponentHooks<T>` when it stops, so no hook outlives the object it calls
-into. OnAdd runs after the value is stored. OnRemove runs before the data is
+owning module calls `SetComponentHooks<T>` in its constructor and keeps the
+returned token as one of its last-declared members, so the hooks go before
+anything they call into is destroyed. OnAdd runs after the value is stored. OnRemove runs before the data is
 dropped, on `RemoveComponent` and on `DestroyEntity`, so it can read the
 component it is losing. Tags fire hooks too.
 
@@ -153,8 +199,8 @@ destroys an ancestor, the cascade takes its own entity too. That destroy skips
 the hook already running, so each OnRemove fires exactly once, and the removal
 ends with the destroy. Neither kind may set or clear hooks, because that
 could resize the hook slots or destroy the running hook. World counts the hooks
-that are running, so `SetComponentHooks` and `ClearComponentHooks` assert inside
-one, and in Release they log an error and do nothing.
+that are running, so setting hooks or dropping a hook token asserts inside one,
+and in Release it logs an error and does nothing.
 
 **`DestroyEntity` is bottom-up.** Children are destroyed fully first, last
 child first. Each child stays linked until its own removal, so its hooks still
@@ -239,7 +285,7 @@ field offsets does not work on this type.
 
 `ResolveWorld` refreshes an entity and every stale ancestor before returning, so
 a read is correct at any point in the frame.
-`TransformPropagateSystem` resolves everything once in `PostUpdate`, which is a
+`TransformPropagateSystem` resolves everything once in `Propagate`, which is a
 batching optimisation rather than the correctness mechanism.
 
 The cost is that `ResolveWorld` mutates on read, so it is neither `const` nor
@@ -277,7 +323,44 @@ for a dead handle. `AddComponent` and the rest assert.
 
 **Systems register before `Start`.** `Start` flushes at every phase boundary, so
 an entity spawned in one `OnStart` is visible to the next phase's `OnStart`.
-`OnStop` runs in reverse order.
+`OnStop` runs in the same order as `OnStart`, so scripts stop while the runtimes
+they call still run.
+
+**Only `TransformPropagateSystem` runs in `Propagate`.** `AddSystem` asserts on
+anything else there. Transform writers go before it, in `PostUpdate`, and
+`WorldTransform` readers after it, in `LateUpdate`.
+
+**Inside a phase, systems run by `SystemOrder`.** `AddSystem` takes the phase and
+an order from 0 to 100, with the borders `kEarly` (10), `kNormal` (50) and `kLate`
+(90). The lowest order runs first, and `Start`, `Update` and `Stop` all use that
+order. Equal orders are unspecified, so a system that needs another first takes a
+different order.
+
+**A registration list changes only between runs.** Every `RegistrationList`
+(stages, frame slots, ImGui drawers, Lua bindings, game UI screens) asserts on
+an add or a removal while it runs, because either could move the running
+function. A function that throws stops the run and reaches the caller, which is
+how a `ReloadPrepare` function vetoes a reload. A list asserts in its destructor
+if a registration is still alive, so a token outliving its list is caught where
+it happens.
+
+**A system's destructor touches nothing outside the system.** Systems belong to
+the scheduler, which `App` destroys after every module, so a system outlives the
+runtimes its module owns. Cleanup that reaches Jolt, Wwise, the Lua host or the
+renderer goes in `OnStop`, which `~App` runs while every module is alive, or in
+the owning module's destructor.
+
+**A token dies before its registry.** A token asserts when the `World`,
+scheduler or host it came from is already gone. A module keeps its tokens as its
+last-declared members, because the destructor body runs with every member
+alive and then members die in reverse.
+
+**A C callback or thread entry is `noexcept`.** Its body may fail only by
+allocation, which terminates and reaches the crash handler. An engine-owned
+thread calls `ArmCrashHandler` first: MSVC keeps the terminate handler per
+thread, and the call also reserves stack for the handler. A library thread with
+no init hook still reaches the handler through `abort`, but two of those
+terminating at once can lose the race.
 
 **`World` is neither copyable nor movable.** Archetypes hold pointers back into
 it.
@@ -334,16 +417,20 @@ free to leave in hot paths.
 ## State
 
 *As of 2026-10-24.* Working: entities, archetype storage with tags, filtered and
-runtime queries, deferred structural change, per-type component hooks, phase
-scheduling, typed resources,
+runtime queries, deferred structural change, per-type component hooks behind
+tokens, phase scheduling, stages, the `FrameBegin` slot, the request queue, the
+crash handler, typed resources,
 the transform hierarchy with lazy world-matrix resolution, ordered siblings and
 roots, keep-world reparenting, the component registry
 with named field access, script-declared component types, and the file-byte
 primitives in `fs/FileIO.h`.
 
-Tests in `modules/core/tests/`: `Archetype`, `Query`, `CommandBuffer`,
-`Resources`, `Transform`, `TransformHierarchy`, `System`, `ComponentRegistry`,
-`ComponentHooks`, `RuntimeQuery`, `Paths`, `Process`, `FileIO`.
+Tests in `modules/core/tests/`, two executables. `engine_core_base_tests`:
+`Paths`, `FileIO`, `Process`, `LogHistory`, `SetupError`, `WorldCoordinates`,
+`CrashHandler` (each crash in a `CrashProbe` child process). `engine_core_tests`:
+`Archetype`, `Query`, `CommandBuffer`, `System`, `Stages`, `Requests`,
+`ModuleUnwind`, `Resources`, `Transform`, `TransformHierarchy`,
+`ComponentRegistry`, `ComponentHooks`, `RuntimeQuery` and the rest.
 
 Logging and asserts have no tests of their own. Every other test exercises them,
 and their failure mode is loud.
@@ -376,6 +463,23 @@ layout changes.
    `World::AddComponent` directly, rather than it being convention.
 
 ## Changed
+
+*2026-10-25* — **Systems run by `SystemOrder` inside a phase.** Was: systems in
+one phase ran in registration order, and a few relied on it (the script resolver
+before `ScriptSystem`, the preview's propagate before its resolvers). Now:
+`AddSystem` takes a `SystemOrder` from 0 to 100 after the phase, and equal orders
+are unspecified. Because: registration order is module construction order, which
+nothing enforces, and the script fixed-step callback has to run before physics.
+
+*2026-10-24* — **Modules, stages and tokens; `core` split in two.** Was: one
+`core` library, systems set their component hooks in `OnStart` and cleared them
+in `OnStop`, `OnStop` ran in reverse, transforms propagated in `PostUpdate`, and
+`App` ran every transition by hand. Now: `core_base` and `core` by include root,
+`Registration` tokens for every registration, stages and the `FrameBegin` slot
+in the scheduler, the `RequestQueue`, `Propagate` and `LateUpdate` phases,
+`OnStop` forward, and a crash handler with a minidump. Because: modules register
+their own parts, a hook must not outlive its owner, and scripts' `OnStop` ran
+after the audio and physics they call had stopped.
 
 *2026-10-24* — **Per-type component hooks replace entity hooks; `World` owns the
 scene graph.** Was: `World` ran create and destroy hooks per entity, and

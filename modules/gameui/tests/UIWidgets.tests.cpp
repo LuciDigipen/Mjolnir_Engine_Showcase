@@ -4,8 +4,8 @@
  * @brief Tests for gameui/UIWidgets and the demo screen: each widget's result
  *        by pointer and by UI action, the slider by drag and by step, the
  *        display widgets staying inert, what each draws, and the style alone
- *        swapping grey box for art. Runs a headless ImGui context, so
- *        EndFrame's submit to the backend runs too.
+ *        swapping grey box for art. No backend: what is drawn is read from
+ *        the draw list.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -18,8 +18,6 @@
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
-
-#include <imgui.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -53,24 +51,12 @@ namespace
     class Fixture
     {
     public:
-        Fixture()
-        {
-            mImGui = ImGui::CreateContext();
-            ImGuiIO &io = ImGui::GetIO();
-            io.DisplaySize = ImVec2(kArea.width, kArea.height);
-            io.DeltaTime = 1.0f / 60.0f;
-            io.IniFilename = nullptr;
-            // no renderer: the atlas builds on demand and nothing uploads it
-            io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
-            mInput.SetActiveDevice(DeviceKind::Gamepad);
-        }
-
-        ~Fixture() { ImGui::DestroyContext(mImGui); }
+        Fixture() { mInput.SetActiveDevice(DeviceKind::Gamepad); }
 
         Fixture(const Fixture &) = delete;
         Fixture &operator=(const Fixture &) = delete;
 
-        // one frame of game UI inside one ImGui frame
+        // one frame of game UI
         void Frame(const std::function<void(UIContext &)> &draw, const UIPointer &pointer = kRest,
                    const Actions &actions = {})
         {
@@ -82,22 +68,16 @@ namespace
             navigate.x = actions.mNavigateX;
             navigate.y = actions.mNavigateY;
 
-            ImGui::NewFrame();
             mUI.BeginFrame(mArea, mInput, mMap, pointer);
             draw(mUI);
             mUI.EndFrame();
-            ImGui::EndFrame();
         }
 
         UIContext &UI() { return mUI; }
         InputState &Input() { return mInput; }
 
-        // the area the next frames draw into, and ImGui's display to match
-        void SetArea(const UIRect &area)
-        {
-            mArea = area;
-            ImGui::GetIO().DisplaySize = ImVec2(area.Right(), area.Bottom());
-        }
+        // the area the next frames draw into
+        void SetArea(const UIRect &area) { mArea = area; }
 
     private:
         void SetButton(std::string_view action, bool down)
@@ -107,7 +87,6 @@ namespace
             value.down = down;
         }
 
-        ImGuiContext *mImGui = nullptr;
         UIRect mArea = kArea;
         UIContext mUI;
         InputState mInput;

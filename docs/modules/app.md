@@ -1,21 +1,37 @@
 # app
 
-The composition root and the frame loop. `App` is the one place that knows every
-other module exists. It contains no gameplay and no subsystem of its own, and it
-is not a framework — there is no registry, no service locator, and no virtual
-`Game` to subclass.
+Builds every module, runs the frame loop and the scene and Play transitions.
+`App` is the one place that knows every other module exists. It contains no
+gameplay and no subsystem of its own: what a library needs at startup, per frame
+or at a transition, its module registers.
 
-`mir::app` · depends `mir::core`, `assets`, `window`, `renderer`, `editor`, `imguiruntime`, `scene`, `script`, all public; `input`, `audio`, `physics`, `serial`, `terrain` private · API `modules/app/include/app/` · maintainer Sumin Park · reviewed 2026-09-18
+`mir::app` · depends every module, public, because `App.h` holds them as members; `prefab`, `serial` private · API `modules/app/include/app/` · maintainer Sumin Park · reviewed 2026-10-24
 
 ## Model
 
-Fixed members and three calls: `Initialize(desc)`, then `Run()`, then
-`Shutdown()`.
+`App(desc)` builds everything, `Run()` loops until the window closes, and the
+destructor stops the systems and lets the members die.
 
-The member list is the initialisation order, and reverse-order destruction is
-what makes teardown correct, so declaration order in `App.h` is load-bearing
-rather than cosmetic. Adding a subsystem means editing `App`, which forces a
-decision about where it belongs in that order.
+The members are the modules, declared in dependency order: a module after every
+module it uses, and a bridge after `script` and its library. C++ builds them in
+that order and destroys them in reverse, so a constructor that throws unwinds
+only what was built. Within a system phase, systems run in the same order.
+Adding a library means adding one member, which forces a decision about where
+it belongs.
+
+```
+mDesc, mProject          the checks before anything is built: game directories, project_settings.json
+mSplash                  shown until main closes it
+mCommands, mWorld, mScheduler
+CoreModule, AssetsModule, SceneModule, PrefabModule
+GameUIModule, GameShellModule    before ImGui, whose shutdown frees their textures' GPU side
+WindowModule, RendererModule, InputModule, AnimationModule, ImGuiModule, EditorModule (editor builds)
+CameraModule, AudioModule, PhysicsModule, TerrainModule
+ScriptModule, the five script bridges, TerrainRuntimeModule, GameUIImGuiModule
+```
+
+Between two module members a `SplashStep` sets the splash's status line, so the
+splash follows startup without the constructor body doing it.
 
 `Run` is a plain loop with no fixed timestep.
 
@@ -24,100 +40,76 @@ Start(scheduler)                       systems cache their queries
 while not ShouldClose:
     PollEvents                         close flag and size refresh here
     dt = min(elapsed, mMaxDeltaSeconds)
-    TerrainRuntime::Update                   every mode: finished terrain reads are installed here only
-    if IsEditing(world): imported assets, then TerrainRuntime::Refresh   the Edit safe point
-    ImGuiRuntime::BeginFrame                 the NewFrame trio
-    Editor::DrawLayout -> EditorActions      New/Save/Load/Play/TogglePause/Stop and Open Project acted on here
-    renderer.SetImGuiDrawData(ImGuiRuntime::EndFrame())
-    renderSystem.SetViewportRect(0, Editor::SceneViewportRect())
-    if IsEditing(world):                     viewport 0's camera, only in Edit
-        Editor::UpdateCamera(dt)
-        renderSystem.SetExternalCamera(0, Editor::SceneCamera())
-    else:
-        renderSystem.SetViewportCamera(0, null)   falls back to the World's own Camera
-    ScriptReloadWatcher::Poll
+    ApplyRequests                      last frame's transitions, and a game to switch to
+    RunFrameSlot(FrameBegin)           script reload poll, terrain installs and Edit refresh, import and content browser polls
+    ImGuiModule::RunUI                 Tools drawers (the editor), then Game drawers (the game UI)
     fixedSteps = FixedTimestep::Advance(dt)  every mode; FixedUpdate systems check IsSimulating
-    SystemScheduler::Update            PreUpdate, Update, FixedUpdate x fixedSteps, PostUpdate, Render
+    SystemScheduler::Update            PreUpdate, Update, FixedUpdate x fixedSteps, PostUpdate, Propagate, LateUpdate, Render
     if ToggleFullscreen just pressed: ToggleFullscreen    F11; the swapchain follows next frame
     ++frame
     halfway through mMaxFrames, if mSwitchProjectTo: RequestOpenProject
     if mMaxFrames reached: RequestClose
 ```
 
-`App` contains no ImGui call and never builds a `DrawItem`. `ImGuiRuntime`
-produces a draw-data pointer and the editor a rect, and `RenderSystem` does the drawing from the
-`Render` phase.
+`App` contains no ImGui call and never builds a `DrawItem`. The editor and the
+game shell ask for transitions through the `RequestQueue` World resource, and
+`ApplyRequests` runs them at the top of the next frame, where nothing is drawn
+or running.
 
 A `SystemContext` is rebuilt every tick rather than stored. It bundles references
 to the world and command buffer with the values that change each frame, so
 keeping one around would only be a stale copy.
 
-`App` has one game open for its whole life, a `GameProject` from
-`app/GameProject.h`: the game's directory and name, its window title, the asset
-id root its scene names resolve under, its scene directory and its
-`project_settings.json`. `Initialize` opens `AppDesc::mProject` and loads its
-scene.
+`App` has one game open for its whole life, a `GameProject` (see
+[project.md](project.md)) whose asset id root `main` resolved through `assets`.
 
 Switching games is a restart. `RequestOpenProject(dir)` only checks the directory
 and asks the window to close; `main.cpp` relaunches the executable with
-`--game <dir>` once `Run` and `Shutdown` have returned.
+`--game <dir>` once `Run` has returned and `App` is destroyed. The editor asks
+for it through `RequestQueue::PushOpenProject`.
 
 ```
-Project > Open Project, confirmed -> App::RequestOpenProject(dir)
-    NormalizeGameDir, LoadGameProject      not a game: logged, keep running
+Project > Open Project, confirmed -> RequestQueue::PushOpenProject(dir)
+next frame: App::RequestOpenProject(dir)
+    NormalizeGameDir, LoadGameProject, ResolveAssetIdRoot   not a game: logged, keep running
     mProjectToOpen = game, Window::RequestClose
-Run returns, Shutdown                      imgui.ini written, device and window gone
+Run returns, App destroyed                 imgui.ini written, device and window gone
 main.cpp: ShutdownLog, LaunchProcess(ExecutablePath(), --game dir)
 next process: the ordinary startup path
 ```
 
-`LoadScene` runs the two resolve passes in `src/app/SceneResolve.cpp` after
-`SceneIO` loads, which is what turns saved script and mesh names back into live
-instances and GPU handles. They are private to this module: the unload, release,
-load, resolve order only holds while `App` is the one calling them.
+`main` holds `App` in a `std::optional` declared outside its `try`, so a failure
+in `Run` reports with `App` alive, and a failure while building it reports after
+what was built is torn down.
 
-```cpp
-mir::InitLog();                 // outside App: early failures must still log
-mir::ClearErrorReport();        // a report on disk always belongs to this run
+### Transitions
 
-try
-{
-    mir::GameProject project = mir::ResolveGameProject("games/HelloWorld", mir::ErrorCategory::Usage);
+`App` keeps what defines a transition: the scene commands, the Play snapshot and
+`EngineModeState`. Every other step is a stage function a module registered.
 
-    mir::App app;
-    mir::AppDesc desc{};
-    desc.mProject = project;
-
-    try
-    {
-        app.Initialize(desc);   // loads the game's scene too
-        app.Run();
-    }
-    catch (const mir::SetupError &error)
-    {
-        return mir::ReportFatal(error);   // while app is alive; ~App tears down after
-    }
-
-    app.Shutdown();             // idempotent; the destructor would do it too
-}
-catch (const mir::SetupError &error)
-{
-    return mir::ReportFatal(error);
-}
+```
+NewScene     SceneUnload stage, SceneModule::New, SceneLoad stage
+LoadScene    probe and prompt, SceneUnload, SceneModule::LoadFromDisk, SceneLoad
+SaveScene    SceneModule::Save, SceneSaved stage
+PlayScene    PlayBegin stage, SceneModule::CaptureForPlay, Play mode
+StopScene    PlayEnd stage, SceneModule::RestoreFromPlay, Edit mode, SceneLoad stage
+asset swap   AssetsModule::BeginReload, ReloadPrepare stage, CommitReload, ReloadCommit stage
+             (a veto: ReloadAbort stage, AbortReload)
 ```
 
-Systems are registered on `app.Systems()` between `Initialize` and `Run`.
-
-### Play, Pause, Stop
+`StopScene` runs `PlayEnd` before the restore, so scripts get their `OnStop` in
+the World they ran in. Stop keeps the GPU caches: the restore fires `OnRemove`
+for every Play entity, which drops its per-entity state, and the caches are
+keyed by asset. A `ReloadPrepare` function vetoes the swap by throwing; `App`
+then runs `ReloadAbort`, so the holders that prepared before it drop their
+staging, aborts the reload and tells the import why.
 
 `EngineModeState` (see [core.md](core.md)) is a `World` resource; `App` is the
-only thing that flips it. `PlayScene`/`StopScene`/`TogglePause` are the three
-transitions, wired to the editor toolbar through `SceneMenuAction` and to the
-pause menu through `GameShellAction` (see [gameshell.md](gameshell.md)). The
-menu's Pause and Resume pause and resume the simulation, Restart is Stop then
-Play, and Quit stops Play in the editor and closes the window without it.
-Without the editor there is no Play button, so `Initialize` calls `PlayScene`
-when `mEnableEditorLayout` is off: a game build plays.
+only thing that flips it. The editor's toolbar and the pause menu push `Play`,
+`Stop`, `Pause` and `Resume` requests. The menu's Restart is Stop then Play, and
+Quit stops Play in the editor and closes the window without it. Without the
+editor there is no Play button, so the constructor calls `PlayScene` when
+`mEnableEditorLayout` is off: a game build plays.
 
 ### Without the editor
 
@@ -125,306 +117,52 @@ when `mEnableEditorLayout` is off: a game build plays.
 option (see [build.md](../build.md#a-build-without-the-editor)). It reaches the
 code as `MIR_WITH_EDITOR`, 1 or 0, a PUBLIC compile definition of `mir::app`,
 and `App::kHasEditor` says which build this is. Without it, `App` holds no
-`Editor`, no `AssetImportManager`, no `ContentBrowserWatcher` and no project
-menu; `mEnableEditorLayout` is
-forced off; the scene viewport is the whole window through the World's camera;
-and nothing sets `InputState::SetUiCapture`, since there is no editor UI to
-want the input. Everything else, the game UI included, is the same code.
-
-```cpp
-PlayScene()    // Edit -> Play. Captures the World first (PlaySnapshot).
-StopScene()    // Play -> Edit. Stops every started script, then restores the capture.
-TogglePause()  // Running <-> Paused. No-op outside Play.
-```
-
-`StopScene` calls `ScriptSystem::StopAllScripts` (giving every started script
-its `OnStop`, a Unity-style cleanup hook) *before* calling
-`PlaySnapshot::RestoreWorld`, since the World those scripts ran in is about to
-be destroyed wholesale. It then releases the Play session's GPU resources and
-resolves scripts and meshes again, same as `LoadScene` — `RestoreWorld`'s entities come from `LoadScene` under the hood,
-with the same only-names-round-trip gap.
-
-Terrain is pinned for the whole Play (terrain ADR 0018, local). `PlayScene` runs
-the terrain safe point once more before the snapshot, which puts in place a newer
-release that is already checked and warm; one still being checked or prewarmed
-does not hold Play up, and `TerrainRuntime::BeginPlay` lets its work go until
-Stop (terrain ADR 0025, local). Nothing refreshes terrain during Play, so a
-release published then changes no mesh, query or collider. After `StopScene` the
-viewports upload again the terrain meshes `ReleaseSceneResources` freed, and a
-release published during Play is checked and prewarmed in the background, then
-switched to at a later Edit frame boundary.
+`EditorModule`, `mEnableEditorLayout` is forced off, and the scene viewport is
+the whole window through the World's camera. Everything else, the game UI
+included, is the same code.
 
 ## API
 
 | Type | Header | Role |
 |---|---|---|
 | `AppDesc` | `app/App.h` | Window size, Vulkan app name and validation, editor-layout gate, `dt` clamp, frame limit, the game to open, a scripted game switch for tests |
-| `App` | `app/App.h` | Owns the subsystems, runs the loop, takes a request to open another game |
-| `GameProject` | `app/GameProject.h` | `{mDir, mName, mTitle, mAssetIdRoot, mRootDir, mSceneDir, mProjectSettingsPath}` for one game directory; `mRootDir` is where it is read from (the source tree in a development build), so terrain releases are found under `TerrainReleasesRoot(mRootDir)` |
-
-`app/GameProject.h` also declares `ReadDefaultGame`, `NormalizeGameDir`,
-`LoadGameProject`, `ResolveGameProject` (normalize, then load),
-`EnsureGameDirectories` and `DiscoverGameProjects` (every `games/*/game.json`
-next to the executable). All but `DiscoverGameProjects` throw a `SetupError`.
-The caller passes the category for a game that is not found: Usage when the name
-came from `--game`, Project data when it came from `engine.json`.
-`DiscoverGameProjects` skips a broken game with a logged error, so one bad
-`game.json` does not hide the others from the project menu.
+| `App` | `app/App.h` | Builds the modules, runs the loop, runs the transitions, takes a request to open another game |
 
 `app/ErrorReport.h` declares `ReportFatal`, which logs a `SetupError`, writes
 `logs/last-error.json`, starts `MjolnirErrorReporter` and returns the exit code.
-It also declares `ClearErrorReport` and `ErrorReportPath`.
+It also declares `ClearErrorReport`, `ErrorReportPath`, `CrashDumpPath` and
+`ReporterPath`, which `main` hands to the crash handler too.
 
 `mAppName` stays caller-set even though each game has its own title — it is the
 Vulkan instance name, engine-level, and nothing user-facing ever sees it.
 
-Accessors: `GetWorld()`, `Systems()`, `Scripts()`, `ScriptReload()`, `Splash()`,
-`Assets()`, `Scene()`, `Project()`, `AvailableProjects()` and `ProjectToOpen()`.
-`Renderer()` is marked a temporary seam, because `Renderer.h` is still an empty
-abstraction placeholder.
+Accessors: `GetWorld()`, `Systems()`, `Splash()`, `Assets()`, `Scene()`,
+`Project()` and `ProjectToOpen()`. `Renderer()` is marked a temporary seam,
+because `Renderer.h` is still an empty abstraction placeholder.
 
 `ToggleFullscreen()` switches the window between windowed and fullscreen and
 asks the renderer to recreate its swapchain at the start of the next frame. `Run`
 calls it when the `ToggleFullscreen` action is just pressed, F11 by default (see
 `input/DefaultInputMap.h`). The recreate is requested rather than left to the
 renderer's size check, because a window already the size of its monitor goes
-fullscreen without changing size. The action is read after `Update`, so the frame
-that saw the key renders at the old size and the next one at the new.
+fullscreen without changing size.
 
 Scene control is `NewScene(name)`, `SaveScene()` and `LoadScene()`, each of which
-replaces whatever `Scene()` currently holds. `NewScene`, `LoadScene` and
-`StopScene` release the discarded entities' GPU meshes and materials. Game
-control is `RequestOpenProject(dir)`, and the switch itself is a restart.
-
-`PrefabAuthoringAdapter` bridges editor History and the prefab module's authored
-state; `prefab/PrefabAuthoring` owns the edits themselves. Apply and Revert do not
-write files. On Save Scene, the adapter plans and atomically saves the modified
-Prefab sources used by the scene before the scene files are written. Each
-successful Prefab write updates its saved marker without clearing History. A
-missing source path or failed write stops the save and leaves the scene unsaved;
-files already written by that save remain saved.
-
-In an editor build, the Hierarchy's create, delete, duplicate and reparent run
-inside the editor, as undoable commands (see
-[editor-history.md](editor-history.md)). They reach the scene through the
-private `AppSceneOps`, the `ISceneOps` `App` hands to `Editor::Initialize`. It
-creates with `CreateSceneEntity`, destroys with `DestroySceneEntity`, duplicates
-with `DuplicateSceneEntity`, and captures and restores with `CaptureEntity` and
-`RestoreEntityAt` (see [scene.md](scene.md)). Each goes through `Scene()`, so the
-entity is saved or dropped with the scene. After a restore or a duplicate it
-runs `ResolveSceneScripts`, because a copied or restored `ScriptRef` has no
-script instance and `ScriptSystem` skips it.
-
-`NewScene`, `LoadScene`, `PlayScene` and `StopScene` call
-`Editor::ClearHistory`, since each replaces the entities that history's steps
-point at. Unlike `NewScene`/`SaveScene`/`LoadScene`, the entity operations run
-during Play too, and Stop discards them with the rest of Play's changes.
-
-The editor's unsaved marker is set from here too. A successful `SaveScene`, and
-`NewScene` and `LoadScene` after clearing, call `Editor::SetSceneUnsaved(false)`.
-`PlayScene` remembers whether the scene was unsaved, and `StopScene` puts that
-back, because `RestoreWorld` returns the `World` to the moment Play began.
-
-### Ownership and order
-
-| Member | Created | Destroyed | Because |
-|---|---|---|---|
-| `mSplash` | first | last | shown before the window exists |
-| `mWindow` | early | late | the renderer's surface is built from it |
-| `mRenderer` | after the window | before it | holds `VkSurfaceKHR` and the device |
-| `mEditor` | after the renderer | before it | its Vulkan backend needs a live device, its GLFW backend a live window |
-| `mSceneOps` (`AppSceneOps`, editor builds only) | just before `mEditor.Initialize` | with `App` | holds only a reference to `App`; the editor keeps a pointer to it |
-| `mContentBrowser` (`ContentBrowserWatcher`, editor builds only) | with `App` | with `App` | owns no OS handle - a poll-based watcher only, so no explicit `Shutdown` |
-| `mCommands` | before `mWorld` | after it | outlives the world it records against |
-| `mWorld`, `mScheduler`, `mScriptHost`, `mScene` | with `App` | with `App` | no external resources |
-| `mTerrain` (`TerrainRuntime`, private) | in `Initialize`, after `RenderSystem` | with `App` | holds handles only: its meshes go with the renderer, its height field bodies with the World's `PhysicsWorld`; it unregisters itself from the `ViewDrawSources` and `PhysicsStepGates` resources |
-| `mProject`, `mAvailableProjects`, `mProjectToOpen` | with `App` | with `App` | plain data |
-| `mAssetManifest` | in `Initialize`, after the editor | after the cache | owns the parsed manifest; empty when the build cooked nothing |
-| `mAssetCache` | with the manifest | before it | holds a raw pointer into it |
-
-The manifest and cache pair is the one real aliasing hazard, and it is handled
-twice. Declaration order makes implicit destruction correct, and `Shutdown` also
-calls `reset()` on them explicitly in the same order, because `Initialize` may
-follow.
-
-`mRenderSystem`/`mScriptSystem` are non-owning — `AddSystem<T>` returns a `T&`
-into `mScheduler`'s storage, captured here so `Run` and `StopScene` can reach
-them without a lookup.
-
-### Resolving names back into handles
-
-A `LoadedScene` file (see [scene.md](scene.md)) round-trips a `MeshRenderer`'s
-`meshName`/`materialShader` and a `ScriptRef`'s `scriptName` — strings, not the
-live `MeshHandle`/`instanceRef` `RenderSystem`/`ScriptSystem` actually need.
-`materialShader` and a `scriptName` always turn into handles by asset id under
-the game's `mAssetIdRoot`; a `meshName` does too, *unless* it's one of
-`Shapes.h`'s reserved builtin names (`MakeBuiltinMesh`), in which case it
-generates its geometry on the spot instead — no asset file, used by the
-editor's primitive entities (see [editor.md](editor.md)).
-
-`ResolveSceneScripts`, in the private `SceneResolve.cpp`, runs at the end of both
-places entities come from a `LoadedScene` file: `LoadScene()` and `StopScene()`
-(via `PlaySnapshot::RestoreWorld`). Neither call site can skip it independently,
-because both live inside the same two methods.
-
-Meshes and materials resolve in `MeshResolveSystem`, a private `PostUpdate`
-system registered after `ModelSystem`. Entities also get a `MeshRenderer` outside
-a load: from Duplicate, Paste, Add Component and Inspector edits. A load-time pass
-would leave their handles stale or null, so this runs every frame. It remembers
-the `meshName` and `materialShader` each entity was last resolved from, keyed by
-`PackEntity`. It resolves again only when one of them changes. Handles and
-`MeshBounds` come from caches keyed by name, so renderers naming the same mesh
-share one upload.
-
-A renderer whose names are both empty is never touched, so a handle set from code
-keeps its value. Clearing `meshName` nulls the mesh and removes `MeshBounds`.
-Removing the `MeshRenderer` removes `MeshBounds` too. `Reset()` empties the
-caches and runs wherever `ReleaseSceneResources` does: `StopScene` and
-`UnloadCurrentScene`.
-
-`ApplyImportedAssets` calls `CommitReload` with the new `AssetCache`, after
-`ModelSystem`'s. It frees the cached meshes and forgets every entity's names, so
-the next `PostUpdate` resolves every renderer from the new cache, including one
-whose mesh failed before the import. That runs before `Render`, so no freed mesh
-is drawn. A mesh file that is not valid JSON, lacks a vertex field, or has an
-index past its vertices logs an error and resolves to no mesh.
-
-A `materialShader` whose `CreateMaterial` fails logs an error and resolves to the
-renderer's error material. The mesh then draws magenta, rather than the default
-grey a null handle would give it.
-
-### Terrain (private glue)
-
-App is the only place terrain meets the renderer and physics, since neither
-module may link `terrain`. A scene holds terrain as `TerrainInstance`
-components; the `TerrainWorld` World resource holds what they resolve to (see
-[terrain.md](terrain.md)). `src/app/TerrainRuntime.{h,cpp}` owns everything
-derived from it, shared by every instance of a release: the height field
-pieces a `TerrainCollisionResidency` builds for the bodies that need them
-(#128), and, shared by every viewport, the GPU meshes of the draw units the
-viewports select (#125).
-
-```
-Initialize     -> TerrainRuntime::Bind      streaming settings -> TerrainStreamingSettings, TerrainStreamer resources;
-                                            renderer mesh streaming; collision residency; registers itself in the
-                                            ViewDrawSources and PhysicsStepGates resources
-Run (any mode) -> TerrainRuntime::Update    TerrainStreamer::Update, TerrainReleaseSwitch::Update,
-                                            TerrainMeshResidency::Install, TerrainCollisionResidency::Install: the
-                                            install point; outside Play the bodies' collision needs too; each staged
-                                            release's prewarm reported to the switch
-LoadScene      -> TerrainRuntime::Load      CollectTerrainScene, ResolveTerrainWorld (Async, keepLoaded), collision
-                                            instances
-Run (Edit)     -> TerrainRuntime::Refresh   an edit settled 0.5 s; current pointers polled every 1 s (a newer release
-                                            of a loaded asset starts a background check); a ready switch adopted
-PlayScene      -> Refresh(force), BeginPlay adopt a ready switch, then Play pins what is loaded; a switch in progress
-                                            waits for Stop
-StopScene      -> ForgetMeshes, ReleaseSceneResources, ..., Refresh(force)
-UnloadCurrentScene -> Unload                meshes forgotten, collision pieces removed, TerrainWorld emptied
-FixedUpdate    -> TerrainRuntime::BeforeStep  as a PhysicsStepGate before each step: install pieces, update needs,
-                                            hold or resume each dynamic body, restrict its contacts
-Render         -> TerrainRuntime::Prepare   per viewport: select, SetInterest; then request every viewport's meshes
-                  AppendViewDraws           that view's draws
-                  AppendVolumeDraws         shadow casters at viewport 0's detail
-```
-
-`Bind` reads the game's `terrain_streaming.json` with the machine-local
-`terrain_streaming.local.json` beside the executable layered over it (see
-[terrain.md](terrain.md#streaming-and-cpu-residency-issue-126)). Valid settings
-become the `TerrainStreamingSettings` and `TerrainStreamer` World resources, the
-streamer with a `TerrainWorkerPool` that also builds meshes; the `gpu` section
-configures the renderer's mesh streaming (staging ring, bytes a frame) and a
-`TerrainMeshResidency`. Invalid settings, or missing ones in
-a scene with terrain, are one error, and no terrain loads; a game without
-terrain needs no file.
-
-Releases resolve through the streamer with `TerrainEagerLoad::Async`, so
-nothing waits at load, on Play entry or at an Edit switch, and with
-`keepLoaded`, so a loaded asset keeps its release until its
-`TerrainReleaseSwitch` has checked the newer one on the worker pool (index and
-every pack, one at a time) and prewarmed it. Prewarm runs a second selector per
-viewport over the staged release, never drawn, whose Visible units are asked
-for as Prefetch, and hands the staged release to the collision residency as
-staged instances, built but not placed; it is warm when those selections draw
-only their chosen units and every staged piece is built. The switch then
-retires the old release's meshes, moves the colliders between steps and logs
-what the old release still held and the release directories kept on disk. A
-failed check, mesh or piece of the staged release is one error and the loaded
-release stays. The resolved
-releases and placements go to the collision residency with the streamer's
-mode for each: an Eager release collides as one piece over the map, an
-Interest release (too big for what the budget leaves, or the game asked for
-Interest) in pieces its sources ask for. Every map tile must have source LOD
-and normal records in the index, or the instance is dropped with an error.
-
-Collision sources are every dynamic `RigidBody` (position and velocity from
-Jolt, radius from its shape, gravity as acceleration,
-`collision.bodyToleranceMeters` as tolerance) plus whatever a game puts in the
-`TerrainCollisionSources` resource, which gets each source's status back.
-`TerrainRuntime` is a `PhysicsStepGate`: before every fixed step it installs
-finished pieces, updates the needs with the step's `dt` and holds each body
-whose answer is `Pending` or `Failed` with `PhysicsWorld::HoldBody`, resuming
-it once the answer is `Ready` or `CoarseSufficient`. It logs each hold (at
-spawn, after a teleport or in motion), resume and state change at INFO, with
-the pieces counted and the contact error, and a body with no single owner
-piece once as a warning. Then it restricts each body's contacts
-(`RestrictContacts`) to the pieces its answer names. Pieces placed and retired
-are logged at INFO with spacing, error, build time, bytes and, for a piece a
-body waited for, the time from first need to collidable; a failed piece is an
-error, and the bodies that need it stay held.
-
-Drawing is per viewport. `RenderSystem` hands `Prepare` every viewport's camera
-each frame; for each one, `TerrainRuntime` keeps a `TerrainViewSelector` and a
-streamer interest (both created on the viewport's first frame and removed when
-it has no camera), updates the selection over every loaded instance, replaces
-the interest's wants with the selection's, then hands every viewport's wants to
-the `TerrainMeshResidency` (see
-[terrain.md](terrain.md#gpu-meshes-issue-127)) and turns the drawn units into
-`WorldDrawItem`s. A unit counts as ready only once its GPU mesh is usable, so
-the selector keeps a ready coarser or finer unit drawn until then. The
-residency builds a wanted unit's mesh on the worker pool from the resident LOD
-and normal payloads (through `MakeTerrainRenderMesh`) or the Region payload,
-and `TerrainGpuUploader` (`src/app/TerrainRender.{h,cpp}`) queues it with the
-renderer's `QueueMesh`, with a BLAS only while the project's `rayTracing` is on
-and the device supports it (turning it either way retires every terrain mesh,
-to be made again); meshes are keyed by payload, so instances of one release and
-all viewports share them. A mesh nobody wanted or drew for
-`gpu.meshRetainSeconds` is retired with `RetireMesh`, and a swap retires every
-mesh of a release no longer loaded; neither waits. Each draw sits at placement
-plus the mesh origin, added in double, with the diagnostic tint on the default
-material and a `translationGrid` of 1/4096 m. Each viewport's selection (units
-per kind and level, stand-ins, missing areas, wants, prefetch bytes, GPU meshes
-ready, uploading and building, held and retiring bytes, streamer residency,
-the renderer's uploaded bytes and device and queue waits) is logged when it
-changes, at most every `kTerrainViewLogSeconds`.
-
-A swap retires the meshes of releases no longer loaded (with their builds and
-uploads), replaces the `TerrainWorld` value and hands the new instances to the
-collision residency, which removes the colliders of placements and releases no
-longer there at once; viewports pick the new release from the next frame. A
-piece that cannot be built no longer drops its terrain: it is an error, and the
-bodies that need it stay held. Each problem is logged once per loaded scene. A
-piece is `BuildTerrainUniformSamples`'s block handed to
-`PhysicsWorld::BuildHeightField` on a worker; its static body is
-`CreateStaticHeightField(shape, origin)` at placement plus the block's first
-sample, tagged with the instance's entity, one body per placement of a shared
-shape.
+replaces whatever `Scene()` currently holds. Game control is
+`RequestOpenProject(dir)`, and the switch itself is a restart.
 
 ## Rules
 
-**Register systems before `Run`.** `Run` calls `SystemScheduler::Start`, and a
-system added after that never gets `OnStart`.
+**A module's startup is its constructor.** Every step that fails throws a
+`SetupError` with its fix, and nothing in `App` unwinds by hand.
 
-**`Initialize` throws on any failure.** Every step that fails throws a
-`SetupError` with its fix, and nothing in `Initialize` unwinds by hand. `Run`
-returns immediately when `Initialize` did not finish.
-
-**`Shutdown` is safe on a partial `Initialize`, it is idempotent, and the
-destructor calls it.** Each service's own shutdown is a no-op on what it never
-built, so `Shutdown` always runs in full in the same hand-written order. Calling
-it explicitly is the documented style, and forgetting it is not a leak.
+**Teardown is the destructor.** `~App` runs `SystemScheduler::Stop` while every
+module is alive, so `OnStop` still sees a live world, then `Reset`, then the
+members die in reverse. A module destructor logs what fails and carries on, and
+`main` exits with 15 when anything logged an error during teardown.
 
 **Setup creates the directories a game points at.** `EnsureGameDirectories`
-creates a missing assets, scene or SoundBank directory before any service reads
+creates a missing assets, scene or SoundBank directory before any module reads
 it.
 
 **`project_settings.json` is checked once, at setup.** A missing file means no
@@ -438,18 +176,15 @@ to its defaults on its own and would otherwise lose them all without a word.
 | Usage | A bad command line, or a `--game` that is not a game |
 | Project data | `game.json`, `engine.json`'s `defaultGame`, `project_settings.json` or the scene is broken |
 | Build output | The cooked manifest is corrupt, `engine.json`, `asset_workspace.json`, AssetCooker or the fonts are missing |
-| System | A game directory cannot be created or watched, or the Vulkan renderer cannot start |
+| System | A game directory cannot be created or watched, the Vulkan renderer or the crash handler cannot start |
 | Internal | ImGui or the editor fails for a reason other than missing fonts, or an exception that is not a `SetupError` reaches `main` |
 
 **A broken scene asks before it fails.** `ProbeScene` runs before anything is
 unloaded. In an editor build, a corrupt `scene.json` offers an empty scene, and
 missing entity or instance files offer to open without them. At startup No quits with the
 error. From the menu No keeps the current scene. A game build never asks, and
-`--non-interactive` answers No.
-
-**Systems stop before subsystems die.** `Shutdown` runs `Stop` first, so `OnStop`
-still sees a live world. The renderer and window are already on their way out by
-then, so touching them from `OnStop` is not supported.
+`--non-interactive` answers No. A scene opened either way is incomplete in
+`SceneModule::LastLoad()`, so the editor marks it unsaved.
 
 **Switching games restarts the process.** The component registry, the counter
 behind every component's signature bit, the Lua VM and the asset cache are all
@@ -457,26 +192,13 @@ process-wide. Only a new process opens a game without the last one's leftovers:
 script-spawned entities, Lua globals, `world:declare`d component types.
 `RequestOpenProject` tears nothing down itself.
 
-**`RequestOpenProject` checks before it closes.** A directory that is not a game
-logs an error and returns `false`, and the open game keeps running. It does not
-use `ResolveGameProject`, whose "Loading game" line would claim a load that
-happens in the next process.
+**`RequestOpenProject` checks before it closes.** A directory that is not a game,
+or whose `assetsRoot` is unusable, logs an error and returns `false`, and the
+open game keeps running. It does not use `ResolveGameProject`, whose "Loading
+game" line would claim a load that happens in the next process.
 
 **Unloading a scene does not call `OnStop`.** New and Load destroy the scene's
-entities, and `ScriptSystem`'s `ScriptRef` OnRemove hook only drops each Lua
-instance.
-
-**The game list is read once.** `DiscoverGameProjects` runs in `Initialize`. A
-game added while the engine runs would still need a build to cook its assets, and
-the asset manifest is never re-read.
-
-**The asset manifest loads eagerly, and a missing one is empty.** A build with
-no assets writes no manifest and is still a correct build, so `Assets()` is
-never null after `Initialize`. A corrupt manifest is fatal. In an editor build
-with no manifest but with source assets, `AssetImportManager` queues a full cook,
-and `ApplyImportedAssets` swaps the result in once it finishes. The first frames
-run without those assets. The swap resolves scripts again, and only the scripts
-still unresolved load.
+entities, and the `ScriptRef` OnRemove hook only drops each Lua instance.
 
 **`dt` is clamped, and `mElapsed` accumulates the clamped value.** After a
 breakpoint or a window drag it is behind the wall clock on purpose, because it is
@@ -485,126 +207,70 @@ simulated time rather than a timestamp and must not be used as one.
 The clock is `steady_clock`, so a system clock change cannot produce a negative
 `dt`.
 
-**`App` does not own logging.** `InitLog` and `FlushLog` belong to the caller, so
-a construction failure inside `App` is still visible.
+**`App` does not own logging or the crash handler.** `main` installs both before
+`App` exists, so a construction failure inside `App` is still visible.
 
 **`App` is neither copyable nor movable**, and it hands out references to its own
-members through `SystemContext`.
+members through `SystemContext` and `ModuleContext`.
 
-`MakeContext(0.0f)` is used for both `Start` and `Stop`, since neither is a frame
-and a nonzero `dt` there would be a lie. `mFrame` increments after the update, so
-the first tick runs as frame 0.
+`MakeContext(0.0f)` is used for `Start`, `Stop` and every stage, since none is a
+frame and a nonzero `dt` there would be a lie. `mFrame` increments after the
+update, so the first tick runs as frame 0.
 
 **`PlayScene`/`StopScene`/`TogglePause` are the only way `EngineModeState`
-changes.** `StopScene` calls `StopAllScripts` before `RestoreWorld` runs,
-never after — the World those scripts ran in still has to exist for
-`CallOnStop` to mean anything, and `RestoreWorld` destroys it wholesale a
-moment later.
+changes.**
 
-**Viewport 0's camera is mode-gated, not just fed unconditionally.**
-`Editor::UpdateCamera` only runs in Edit. Feeding it in Play would let a
-right-drag meant to look around the game view — viewport 0 shows the World's
-camera then, not the editor one — silently fly the (invisible) editor camera
-off somewhere, surfacing only later when Stop reverts viewport 0 to wherever
-that ended up.
+**Only `App.h` and `App.cpp` branch on `MIR_WITH_EDITOR`.** The definition is
+PUBLIC because `App.h` lays out `App` differently with it: a file that saw the
+other value would disagree with `App.cpp` about the class. The one editor call
+left in `App` is the import's failure report in `ApplyImportedAssets`.
 
-**Only `App.h` and `App.cpp` branch on `MIR_WITH_EDITOR`.** Every
-editor call goes in a `#if MIR_WITH_EDITOR` block there, the editor's
-per-frame work in `ApplyEditorActions`, so the game build differs from the
-editor's `--no-editor` path by what is missing and nothing else. The definition
-is PUBLIC because `App.h` lays out `App` differently with it: a file that saw
-the other value would disagree with `App.cpp` about the class.
-
-**`NewScene`/`SaveScene`/`LoadScene` refuse while Play is running.** These can corrupt the current scene. Both `Editor` and app will opt out.
-
-**Terrain meshes do not survive `ReleaseSceneResources`.** It frees every mesh,
-queued and retiring ones too. `TerrainRuntime::ForgetMeshes` (Stop) or `Unload`
-(scene change) runs before every release, so the residency holds no handle
-across it (a kept one would miss, since mesh generations move on); the next
-frames upload what the viewports draw again. Dropping terrain while the scene
-stays retires its meshes with `RetireMesh` (a release swap, a change of the
-`rayTracing` setting, or a mesh nobody wanted or drew for
-`gpu.meshRetainSeconds`), freed after their last frame without a wait. Height
-fields live in the process-long `PhysicsWorld`, so `Unload` and every swap
-destroy them explicitly.
-
-**Terrain is drawn per viewport, from what is on the GPU.** Each viewport
-selects its own units and wants their payloads; nothing is drawn that the
-selection did not pick, a unit draws once its GPU mesh is usable, and an area
-with nothing ready is left out while it loads. No terrain mesh is built or
-uploaded on the frame path with a wait: builds run on the worker pool and
-uploads go through `QueueMesh` within the `gpu` budgets.
-
-**A body waits for its ground, alone.** Before every fixed step each dynamic
-body whose predicted range needs terrain collision that is not ready (and has
-no coarse piece within its tolerance) is held at its pose with its velocities
-kept; other bodies simulate. Terrain colliders are placed and removed only in
-`TerrainCollisionResidency::Install`, at the top of a frame or in the step gate,
-never during a step; nothing on the frame path waits for a read or a build.
-
-**Terrain changes only at an Edit frame boundary.** `TerrainRuntime::Refresh`
-runs at the top of an Edit frame, in `PlayScene` before the snapshot and at the
-end of `StopScene`, never during Play: one Play keeps the releases it entered
-with, and a mesh, query or collision piece of another release never shares a
-frame or a physics step with them. A staged release is selected, read, meshed and
-built in Edit, but never drawn or placed, and Play drops its staging.
+**`NewScene`/`SaveScene`/`LoadScene` refuse while Play is running.** These can
+corrupt the current scene.
 
 ## State
 
-*As of 2026-09-14.* The loop runs, the scheduler ticks, scripts drive entities,
+*As of 2026-10-24.* The loop runs, the scheduler ticks, scripts drive entities,
 scenes save and load from the editor's File menu, Project > Open Project restarts
-into another game, and the scene renders. Play/Pause/Stop work end to end: a
-Play session can be entered, its World mutations discarded on Stop via
-`PlaySnapshot`, and resumed indefinitely.
-
-The renderer is a value member rather than a `unique_ptr`, because there is no
-interface to hold.
+into another game, and the scene renders. Play/Pause/Stop work end to end.
 
 No unit tests. `App` is composition, and its behaviour is a window opening, a
 device initialising and a loop running. The parts worth asserting — phase
-ordering, command buffer flushing, asset lookup, scene round-tripping — are
-tested where they live. A headless renderer is the prerequisite for unit testing
-anything here. Until then the `smoke.<game>` tests run the whole `App` for 120
-frames per game through `mMaxFrames`, and `smoke.switch` restarts from one game
-into another twice through `mSwitchProjectTo`. All of them fail on a crash or a
-logged error. `smoke.TerrainCheck` loads a far-world terrain from the release
-the build just published, with ray tracing requested, plus a second terrain
-that streams by interest; `smoke.TerrainCheck.game-mode` plays it from the
-scene camera, which sees both, so the per-viewport selection draws, streams and
-traces them; a sphere on each map is held until its ground is collidable and
-then lands on it. The terrain state machine
-is tested in `terrain` (`TerrainScene.tests.cpp`), the collider assembly in
-`terrain` (`TerrainCollider.tests.cpp`), and collision residency in `terrain`
-with a fake physics side and with Jolt (`TerrainCollisionResidencyJolt.tests.cpp`)
-with Jolt bodies held and resumed the way `TerrainRuntime` does it; the release
-switch in `terrain` (`TerrainReleaseSwitch.tests.cpp`) through the same
-composition with gated reads; the Play/publish/Stop sequence through
-`App` itself was checked with local harnesses (terrain ADR 0018 and 0025).
+ordering, stages, command buffer flushing, member unwind, asset lookup, scene
+round-tripping — are tested where they live. Until a headless renderer exists,
+the `smoke.<game>` tests run the whole `App` for 120 frames per game through
+`mMaxFrames`, and `smoke.switch` restarts from one game into another twice
+through `mSwitchProjectTo`. All of them fail on a crash or a logged error.
+`smoke.TerrainCheck` is described in [terrain_runtime.md](terrain_runtime.md).
 
 ## Backlog
 
 1. **A headless mode**, which needs the renderer abstraction. It is also the
-   prerequisite for any test in this module, and for making `Editor` optional.
+   prerequisite for any test in this module.
 2. **No frame limiter**, and no window-event handling beyond the renderer
    re-querying size.
-3. **`Initialize` after `Shutdown`** is written to work — the explicit resets
-   exist for it — but nothing exercises it.
-4. One `App` per process is assumed everywhere, and nothing enforces it.
-5. **A second viewport for Play+Paused**, showing the editor camera alongside
+3. One `App` per process is assumed everywhere, and nothing enforces it.
+4. **A second viewport for Play+Paused**, showing the editor camera alongside
    the game view. `RenderSystem::AddViewport` exists (see
    [renderer.md](renderer.md)); nothing calls it yet.
-6. **No World diffing for Play/Stop** — `PlaySnapshot` destroys and reloads
+5. **No World diffing for Play/Stop** — `PlaySnapshot` destroys and reloads
    every entity rather than diffing what changed, which is simple but not
    cheap for a large scene.
-7. **`ContentBrowserWatcher`'s Delete guard only checks the one path being
-   deleted** against live `ModelPlayer` references, not every asset
-   recursively under a deleted folder. A full recursive reference scan was
-   left for later; the panel's confirm modal is the primary safety net.
-8. **A scene opened without its missing entities is not marked unsaved.** The
-   editor has no dirty flag, so the prompt's warning is the only notice that the
-   next save drops them.
 
 ## Changed
+
+*2026-10-24* — **App builds modules, and transitions run stages.** Was: fixed
+subsystem members set up in `Initialize` and torn down in a hand-written
+`Shutdown`, every library's components, resources and systems registered in
+`Initialize`, every transition's steps written out in `App`, and the editor's
+actions applied by `App` mid-frame. Now: a constructor that builds one module
+per library as a member, a destructor, stages for the transitions, ImGui drawers
+for the UI and a request queue applied at the top of the frame. The script and
+mesh resolve passes, the terrain glue, `AssetImportManager`,
+`ContentBrowserWatcher`, the scene ops and `CreateGameProject` left `app` for
+`script`, `renderer`, `terrain_runtime` and `editor`. Because: a removed
+component leaked its runtime object (#222), since only `App` knew what each
+library needed, and every new library meant editing `App` in several places.
 
 *2026-10-20* — **Setup failures throw, and the asset manifest loads eagerly.**
 Was: `Initialize` returned `bool` and unwound each failure by hand, a malformed

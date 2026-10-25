@@ -8,25 +8,36 @@
  */
 #pragma once
 
-#include <app/GameProject.h>
-#include <assets/AssetCache.h>
-#include <assets/AssetManifest.h>
+#include <project/GameProject.h>
+#include <animation/AnimationModule.h>
+#include <assets/AssetsModule.h>
+#include <audio/AudioModule.h>
+#include <audio_script/AudioScriptModule.h>
+#include <camera/CameraModule.h>
 #include <core/ecs/CommandBuffer.h>
+#include <core/ecs/CoreModule.h>
 #include <core/ecs/FixedTimestep.h>
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/World.h>
-#include <gameshell/GameShell.h>
-#include <gameui/UIContext.h>
-#include <gameui/UIDemoScreen.h>
-#include <imguiruntime/ImGuiRuntime.h>
-#include <renderer/VulkanRenderer.h>
-#include <scene/PlaySnapshot.h>
-#include <scene/SceneAsset.h>
+#include <gameshell/GameShellModule.h>
+#include <gameui/GameUIModule.h>
+#include <gameui_imgui/GameUIImGuiModule.h>
+#include <imguiruntime/ImGuiModule.h>
+#include <input/InputModule.h>
+#include <input_script/InputScriptModule.h>
+#include <physics/PhysicsModule.h>
+#include <physics_script/PhysicsScriptModule.h>
+#include <renderer/RendererModule.h>
+#include <renderer_script/RendererScriptModule.h>
+#include <prefab/PrefabModule.h>
 #include <scene/SceneIO.h>
-#include <script/ScriptHost.h>
-#include <script/ScriptReloadWatcher.h>
+#include <scene/SceneModule.h>
+#include <script/ScriptModule.h>
+#include <terrain/TerrainModule.h>
+#include <terrain_runtime/TerrainRuntimeModule.h>
+#include <terrain_script/TerrainScriptModule.h>
 #include <window/Splash.h>
-#include <window/Window.h>
+#include <window/WindowModule.h>
 
 // 1 with the editor, 0 for the game alone
 #ifndef MIR_WITH_EDITOR 
@@ -34,10 +45,7 @@
 #endif
 
 #if MIR_WITH_EDITOR
-#include <app/AssetImportManager.h>
-#include <app/ContentBrowserWatcher.h>
-#include <app/PrefabPlayMarks.h>
-#include <editor/Editor.h>
+#include <editor/EditorModule.h>
 #endif
 
 #include <cstdint>
@@ -49,14 +57,6 @@
 
 namespace mir
 {
-    class RenderSystem;
-    class ScriptSystem;
-    class ModelSystem;
-    class TerrainRuntime;
-    class MeshResolveSystem;
-    class AppSceneOps;
-    class PrefabAuthoringAdapter;
-    class PrefabWorkspace;
 
     struct AppDesc
     {
@@ -99,7 +99,8 @@ namespace mir
         //whether this build has the editor in it at all
         static constexpr bool kHasEditor = MIR_WITH_EDITOR != 0;
 
-        App();
+        // Builds every module in member order. A throw unwinds what was built, in reverse
+        explicit App(const AppDesc &desc);
         ~App();
 
         App(const App &) = delete;
@@ -107,40 +108,26 @@ namespace mir
         App(App &&) = delete;
         App &operator=(App &&) = delete;
 
-        // Throws SetupError on any startup failure; the destructor then cleans up what was built
-        void Initialize(const AppDesc &desc);
         void Run();
-
-        // Safe on a partial Initialize and safe to call twice
-        void Shutdown();
 
         World &GetWorld() { return mWorld; }
         SystemScheduler &Systems() { return mScheduler; }
-        ScriptHost &Scripts() { return mScriptHost; }
-        ScriptReloadWatcher &ScriptReload() { return mScriptReloadWatcher; }
 
         // Temporary seam
-        VulkanRenderer &Renderer() { return mRenderer; }
+        VulkanRenderer &Renderer() { return mRenderer.Renderer(); }
 
         // Startup splash
-        SplashScreen &Splash() { return mSplash; }
+        SplashScreen &Splash() { return mSplash.screen; }
 
-        // Never null after Initialize; empty until a build or import cooks something
-        AssetCache *Assets();
+        // Never null; empty until a build or import cooks something
+        AssetCache *Assets() { return &mAssets.Cache(); }
 
         // The scene currently in the World
-        LoadedScene &Scene() { return mScene; }
-
-    #if MIR_WITH_EDITOR
-        // Open Prefab documents and their preview Worlds, for the editor's tabs
-        PrefabWorkspace *OpenPrefabs() { return mPrefabWorkspace.get(); }
-    #endif
+        LoadedScene &Scene() { return mScene.Scene(); }
 
         // The game currently open
         const GameProject &Project() const { return mProject; }
 
-        // Games found at startup
-        const std::vector<GameProject> &AvailableProjects() const { return mAvailableProjects; }
 
         // Validates the game and closes the window; main.cpp then relaunches into it.
         // False (logged) if it is not a game.
@@ -149,8 +136,9 @@ namespace mir
         // The game RequestOpenProject accepted, if any
         const std::optional<GameProject> &ProjectToOpen() const { return mProjectToOpen; }
 
-        // Discards mScene's entities and replaces it with an empty one
-        void NewScene(std::string name = "untitled");
+        // Discards the scene's entities and replaces it with an empty one. incomplete: it
+        // stands in for a scene that could not be read
+        void NewScene(std::string name = "untitled", bool incomplete = false);
 
         // Writes Scene() to the game's scene directory. False on I/O failure
         bool SaveScene();
@@ -168,29 +156,40 @@ namespace mir
         // Toggles Running/Paused. No-op outside Play.
         void TogglePause();
 
-        //carries out what the player asked of the game in the pause menu
-        void ApplyShellAction(GameShellAction action);
-
         //windowed to fullscreen without a restart. called by f11.
         //swapchain is recreated next frame.
         void ToggleFullscreen();
 
     private:
+        // shown while App is built, closed by main or by its destructor
+        struct StartupSplash
+        {
+            SplashScreen screen;
+            explicit StartupSplash(const AppDesc &desc);
+        };
+
+        // a splash status line between two module members
+        struct SplashStep
+        {
+            SplashStep(StartupSplash &splash, const char *status, float progress)
+            {
+                splash.screen.SetProgress(status, progress);
+            }
+        };
+
+        ModuleContext Context();
+
         // context is rebuilt per tick
         SystemContext MakeContext(float dt);
 
-        // UnloadScene, then free the GPU resources
+        // what the editor, the game shell and the import asked for last frame
+        void ApplyRequests();
+
+        // destroys the scene's entities, then the SceneUnload stage frees what they held
         void UnloadCurrentScene();
 
-        //every handle the editor's undo history holds dies with the scene it came from
-        void ClearHistory();
-
-        //true while the scene has changes since its last save, shown as the title bar's *
-        bool SceneUnsaved() const;
-
-        //false = the scene counts as saved from now on, so the * disapears
-        //true = the * stays until the next save
-        void SetSceneUnsaved(bool unsaved);
+        // the functions modules registered for it, then a command flush
+        void RunStage(Stage stage);
 
         // LoadScene if the game has a scene.json; throws SetupError for a broken one the user won't open
         void LoadProjectScene();
@@ -205,93 +204,67 @@ namespace mir
         // Asks what to do with a scene ProbeScene found broken; Refuse when nobody can answer
         SceneLoadChoice ChooseSceneLoad(const SceneProbe &probe, bool atStartup) const;
 
-        // Unload, load and resolve, with no checks
-        void ReplaceSceneFromDisk();
-
-        // The manifest the build or an import cooked; empty when there is none yet
-        void LoadAssetManifest();
+        // Unload and load, with no checks; incomplete when entity files are missing
+        void ReplaceSceneFromDisk(bool incomplete);
 
         // the mSwitchProjectTo test hook
         void RunSwitchHook();
 
-        //the game UI's area: the editor's scene viewport, or the whole window
-        UIRect GameUIArea() const;
-
-        // Save Scene on the Scene tab, Save Prefab on a Prefab tab
-        bool SaveActiveDocument();
-
     #if MIR_WITH_EDITOR
-            //what the editor's menus, toolbar and panels asked for this frame
-        void ApplyEditorActions(const EditorActions &actions);
+        // swaps in what a finished import cooked, at an Edit frame boundary
         void ApplyImportedAssets();
-        void OpenInExternalIde(const std::string &relativePath);
-        void OpenPrefabAsset(const std::string &relativePath);
-
-        // The World the scene viewport and the editing panels draw and edit.
-        World *ActivePreviewWorld();
-        EditorDocuments MakeEditorDocuments();
-        ContentBrowserView MakeContentBrowserView();
-        void RefreshPrefabHistory();
     #endif
 
-        SplashScreen mSplash;
-        std::unique_ptr<Window> mWindow;
-        VulkanRenderer mRenderer;
-        ImGuiRuntime mImGui;
-    #if MIR_WITH_EDITOR
-        Editor mEditor;
-        std::unique_ptr<AppSceneOps> mSceneOps;
-        std::unique_ptr<PrefabAuthoringAdapter> mPrefabAuthoring;
-        PrefabPlayMarks mPrefabMarksBeforePlay;
-    #endif
-        // Stop puts the World back as it was at Play, so it puts this back too
-        bool mUnsavedBeforePlay = false;
-        UIContext mGameUI;
-        UIDemoScreen mUIDemo;
-        GameShell mGameShell;
-    #if MIR_WITH_EDITOR
-        AssetImportManager mAssetImport;
-        ContentBrowserWatcher mContentBrowser;
-    #endif
-
-            // Before mWorld, so it is destroyed after it
-        CommandBuffer mCommands;
-
-        World mWorld;
-        SystemScheduler mScheduler;
-        RenderSystem *mRenderSystem = nullptr;
-        ScriptSystem *mScriptSystem = nullptr;
-        ModelSystem *mModelSystem = nullptr;
-        MeshResolveSystem *mMeshResolveSystem = nullptr;
-        PlaySnapshot mPlaySnapshot;
-        ScriptHost mScriptHost;
-        ScriptReloadWatcher mScriptReloadWatcher{ mScriptHost };
-        LoadedScene mScene;
-
-    #if MIR_WITH_EDITOR
-        // Before mScene and mWorld, after the editor stopped using them
-        std::unique_ptr<PrefabWorkspace> mPrefabWorkspace;
-        std::optional<DocumentId> mPrefabBeforePlay;
-    #endif
-
-        // Handles only, freed with the renderer and the World
-        std::unique_ptr<TerrainRuntime> mTerrain;
-
+        // Startup order, which is dependency order: a module after every module it uses,
+        // a bridge after script and its library. C++ destroys them in reverse. Within a
+        // phase, systems run in this order too
         AppDesc mDesc;
         GameProject mProject;
-        std::vector<GameProject> mAvailableProjects;
+        StartupSplash mSplash;
+
+        // before mWorld, so it is destroyed after it
+        CommandBuffer mCommands;
+        World mWorld;
+        SystemScheduler mScheduler;
+
+        CoreModule mCore;
+        AssetsModule mAssets;
+        SceneModule mScene;
+        PrefabModule mPrefab;
+        // before ImGuiModule: ImGui's shutdown frees the GPU side of the UI's textures,
+        // so the textures must still be there
+        GameUIModule mGameUI;
+        GameShellModule mGameShell;
+        WindowModule mWindow;
+        SplashStep mRendererStep{ mSplash, "Initializing renderer...", 0.2f };
+        RendererModule mRenderer;
+        // before ImGui and the editor, which read input and models
+        InputModule mInput;
+        AnimationModule mAnimation;
+        SplashStep mImGuiStep{ mSplash, "Initializing UI...", 0.4f };
+        ImGuiModule mImGui;
     #if MIR_WITH_EDITOR
-        std::vector<ProjectMenuEntry> mProjectMenu;
+        SplashStep mEditorStep{ mSplash, "Initializing editor...", 0.5f };
+        EditorModule mEditor;
     #endif
+        SplashStep mModulesStep{ mSplash, "Registering components...", 0.75f };
+        CameraModule mCamera;
+        AudioModule mAudio;
+        PhysicsModule mPhysics;
+        TerrainModule mTerrainData;
+        ScriptModule mScript;
+        AudioScriptModule mAudioScript;
+        InputScriptModule mInputScript;
+        PhysicsScriptModule mPhysicsScript;
+        RendererScriptModule mRendererScript;
+        TerrainScriptModule mTerrainScript;
+        TerrainRuntimeModule mTerrain;
+        GameUIImGuiModule mGameUIImGui;
+
         std::optional<GameProject> mProjectToOpen;
         bool mSwitchHookFired = false;
         double mElapsed = 0.0;
         uint64_t mFrame = 0;
         FixedTimestep mFixedTimestep;
-
-        // maintain order of mAssetCache -> mAssetCache
-        std::optional<AssetManifest> mAssetManifest;
-        std::optional<AssetCache> mAssetCache;
-        bool mInitialized = false;
     };
 } // namespace mir

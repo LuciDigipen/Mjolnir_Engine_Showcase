@@ -1013,7 +1013,7 @@ TEST_CASE("TransformPropagateSystem refreshes every cache", "[ecs][transform][hi
     World world;
     mir::CommandBuffer commands;
     mir::SystemScheduler scheduler;
-    scheduler.AddSystem<mir::TransformPropagateSystem>(mir::SystemPhase::PostUpdate);
+    scheduler.AddSystem<mir::TransformPropagateSystem>(mir::SystemPhase::Propagate, mir::SystemOrder{mir::SystemOrder::kNormal});
 
     const Entity parent = MakeAt(world, glm::vec3(10.0f, 0.0f, 0.0f));
     const Entity child = MakeAt(world, glm::vec3(0.0f, 1.0f, 0.0f));
@@ -1031,6 +1031,56 @@ TEST_CASE("TransformPropagateSystem refreshes every cache", "[ecs][transform][hi
     scheduler.Update(context);
 
     RequireNear(OriginOf(world.GetComponent<WorldTransform>(child)->Pose()), glm::vec3(0.0f, 1.0f, 7.0f));
+}
+
+TEST_CASE("A PostUpdate write reaches a LateUpdate reader in the same frame", "[ecs][transform][hierarchy][system]")
+{
+    class Mover final : public mir::ISystem
+    {
+    public:
+        explicit Mover(Entity target) : mTarget(target) {}
+        void OnUpdate(mir::SystemContext &context) override
+        {
+            context.world.GetComponent<Transform>(mTarget)->SetPosition(glm::vec3(0.0f, 0.0f, 5.0f));
+        }
+
+    private:
+        Entity mTarget;
+    };
+
+    class Reader final : public mir::ISystem
+    {
+    public:
+        explicit Reader(Entity target) : mTarget(target) {}
+        void OnUpdate(mir::SystemContext &context) override
+        {
+            seen = OriginOf(context.world.GetComponent<WorldTransform>(mTarget)->Pose());
+        }
+
+        glm::vec3 seen{ 0.0f };
+
+    private:
+        Entity mTarget;
+    };
+
+    World world;
+    mir::CommandBuffer commands;
+    mir::SystemScheduler scheduler;
+
+    const Entity parent = MakeAt(world, glm::vec3(0.0f));
+    const Entity child = MakeAt(world, glm::vec3(1.0f, 0.0f, 0.0f));
+    Link(world, child, parent);
+
+    // registered out of phase order on purpose
+    Reader &reader = scheduler.AddSystem<Reader>(mir::SystemPhase::LateUpdate, mir::SystemOrder{mir::SystemOrder::kNormal}, child);
+    scheduler.AddSystem<mir::TransformPropagateSystem>(mir::SystemPhase::Propagate, mir::SystemOrder{mir::SystemOrder::kNormal});
+    scheduler.AddSystem<Mover>(mir::SystemPhase::PostUpdate, mir::SystemOrder{mir::SystemOrder::kNormal}, parent);
+
+    mir::SystemContext context{ world, commands };
+    scheduler.Start(context);
+    scheduler.Update(context);
+
+    RequireNear(reader.seen, glm::vec3(1.0f, 0.0f, 5.0f));
 }
 
 namespace

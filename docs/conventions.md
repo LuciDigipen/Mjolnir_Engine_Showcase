@@ -102,8 +102,10 @@ on the `CommandBuffer` instead.
 
 Systems cache their queries in `OnStart`.
 
-Ordering between systems is a phase, never registration order. Two systems in the
-same phase that need a specific order should not be in the same phase.
+Ordering between systems is a phase and a `SystemOrder`, never registration order.
+Inside a phase the lowest order runs first, and equal orders are unspecified. Two
+systems that depend on each other get different orders; a system with no
+dependency passes `SystemOrder::kNormal`.
 
 Read-only components are `const T` in the query. Queries then carry the access
 information a parallel scheduler will need.
@@ -130,11 +132,12 @@ rather than from C++
 
 Recoverable failure returns `false`, `nullptr` or `std::optional`, and logs once.
 
-Every setup failure is fatal. Setup is everything inside `App::Initialize`,
-including the first scene load. A failing step throws a `SetupError`
-(`core/log/SetupError.h`) instead of returning. `main` catches it while `App` is
-still alive, so the report is written before anything is torn down. `~App` then
-runs `App::Shutdown`, which every service makes safe on a partial setup.
+Every setup failure is fatal. Setup is everything `App`'s constructor builds,
+every module constructor and the first scene load included. A failing step
+throws a `SetupError` (`core/log/SetupError.h`) instead of returning. C++ then
+destroys the members already built, in reverse, and `main` reports the error.
+A module destructor never throws: it logs what fails and carries on, and `main`
+exits with 15 when teardown logged an error.
 
 A `SetupError` carries what failed, the path, the cause and the fix. The fix
 names a concrete action, such as the file to restore or the command to run. The
@@ -142,12 +145,16 @@ reader is a person or an agent without the engine's source, so the fix must be
 enough on its own. Native codes (`AKRESULT`, `VkResult`, a Win32 or GLFW error,
 a JSON parse position) go into the cause.
 
-Exceptions are allowed anywhere, with three limits. An exception must never
-cross a C callback, because unwinding through a C library's frames is undefined.
-An exception must never leave a thread's entry function, because that calls
-`std::terminate`. So every GLFW, Win32, Vulkan, Wwise and Jolt callback, and
-every thread entry, catches or is `noexcept`. The third limit is about state: at
-runtime, catch only to report and exit, or around an operation that leaves
+Exceptions are allowed anywhere, with two limits. A function called from C code
+or a foreign thread, such as a library callback or a thread entry point, is
+`noexcept`. Unwinding through a C library's frames is undefined, and an
+exception leaving a thread calls `std::terminate`. Its body may fail only by
+allocation, which terminates and reaches the crash handler. Anything else that
+can throw is caught inside, with a stated fallback. Each registration site
+checks the `noexcept` with a `static_assert`. A worker job runs its body through
+`RunGuarded` (`terrain/RunGuarded.h`), which turns an exception into that job's
+error result and lets `std::bad_alloc` terminate. The second limit is about
+state: at runtime, catch only to report and exit, or around an operation that leaves
 nothing half-done, such as a model load. A catch that carries on mid-frame can
 leave the `World` or a command buffer half-updated.
 
@@ -168,12 +175,21 @@ and agents branch on, so a number is never reused.
 | 12 | Build output | Rebuild: the manifest, AssetCooker, `asset_workspace.json`, `engine.json`, the fonts |
 | 13 | System | Fix the machine: GPU driver, display, audio device, permissions |
 | 14 | Internal | Report a bug with the log attached |
+| 15 | Shutdown | The run finished, but something failed while shutting down; the log says what |
+| 20 | Crash | Report a bug with the log and `logs/crash.dmp` attached |
 
 The log is `logs/engine.log` next to the executable, whatever the launch
 directory. Its absolute path is the first line the engine prints. A fatal error
 also writes `logs/last-error.json` with the same fields as the `SetupError`. Each
 run deletes the previous one at startup, so a report on disk belongs to the
 latest run.
+
+A crash or `std::terminate` on any thread goes to the crash handler
+(`core/platform/CrashHandler.h`), installed first in `main`. It writes the same
+report with `kind` set to `crash`, and a minidump at `logs/crash.dmp`, from a
+thread of its own, then ends the process with exit 20. Destructors do not run on
+that path, so anything a crash must not lose is the handler's job, not a
+module's. A caught failure's report has `kind` set to `caught`.
 
 A person sees the error in a box. `MjolnirErrorReporter`, shipped next to the
 engine, shows it after the engine has already exited, so the engine never waits
@@ -224,6 +240,13 @@ Run `ctest --test-dir builds/windows-msvc-debug --output-on-failure` before
 pushing.
 
 ## Changed
+
+*2026-10-24* — **Callbacks and thread entries are `noexcept`, and fail only by
+allocation.** Was: each one caught or was `noexcept`, by choice. Now: all are
+`noexcept`, checked by a `static_assert`, worker jobs go through `RunGuarded`,
+and `std::bad_alloc` always terminates. Because: a throw inside a terrain job
+aborted the process with no report, and swallowing an allocation failure
+inside a callback leaves its state silently wrong.
 
 *2026-10-20* — **Setup failures throw a `SetupError`, and exceptions are
 allowed.** Was: initialization returned `bool` and left the caller to decide,

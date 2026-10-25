@@ -27,22 +27,25 @@ callback.
 `ScriptRef` is a POD component carrying `instanceRef`, `started` and
 `scriptName`, and it is the only thing the ECS knows about a script.
 
+`ScriptResolveSystem` gives every `ScriptRef` its instance. It runs first in
+`PreUpdate`, every frame and in every mode, and creates an instance for every
+`ScriptRef` that has none, loading the script's cooked source the first time
+the name appears. It remembers the name each instance came from, so a rename
+replaces the instance, and it does not retry a name that failed to load until an
+asset reload. Whatever made the `ScriptRef` needs no resolve call of its own.
+
 `ScriptSystem` is the sole driver. It is one `ISystem` in
-`SystemPhase::PreUpdate` walking `Query<ScriptRef>`, calling `OnStart` once and
-then `OnUpdate` every frame. Each entity's callback is isolated from the others
+`SystemPhase::PreUpdate`, after the resolver, walking `Query<ScriptRef>`,
+calling `OnStart` once and then `OnUpdate` every frame. Each entity's callback is isolated from the others
 by a C++ `try`/`catch` and by sol2's `protected_function`, so a script error
 stops that entity's script rather than the frame.
 
-```cpp
-const AssetId id = MakeAssetId("games/HelloWorld/assets/scripts/spin.lua");
-const AssetBlobView *blob = app.Assets()->Load(id);
-
-app.Scripts().LoadScriptSource("spin", AsStringView(*blob));
-app.ScriptReload().Track("spin", id);          // picks up an edit on the next cook
-
-const int32_t instance = app.Scripts().CreateInstance("spin");
-world.AddComponent<ScriptRef>(entity, ScriptRef{.instanceRef = instance});
-```
+`ScriptModule` owns the host, the reload watcher and both systems. It sets the
+`ScriptRef` OnRemove hook, which drops the instance, polls the watcher in the
+`FrameBegin` slot, stops every script at `PlayEnd`, and lets the resolver retry
+failed names at `ReloadCommit`. Every library's own Lua bindings come from a
+bridge (see [script-bridges.md](script-bridges.md)); `script` itself binds only
+`Entity` and `World`.
 
 ```lua
 local Spin = {}
@@ -69,14 +72,19 @@ return Spin
 | `ScriptHost` | `script/ScriptHost.h` | The one Lua-backed implementation; sol2 hidden behind a pimpl |
 | `ScriptRef` | `script/components/ScriptRef.h` | POD link component: `instanceRef`, `started`, `scriptName` |
 | `ScriptSystem` | `script/ScriptSystem.h` | Drives the callbacks per `ScriptRef`, `SystemPhase::PreUpdate` |
+| `ScriptResolveSystem`, `MakeScriptAssetLoader`, `ReleaseScriptInstance` | `script/ScriptResolveSystem.h` | Gives every `ScriptRef` its instance; loads a script from the cooked assets; drops an instance |
+| `ScriptModule` | `script/ScriptModule.h` | The host, the watcher, both systems, the hook and the stage functions |
+| `AddBindings`, `LuaBindings` | `script/BindingApi.h` | How a bridge adds its bindings; behind the `script_bindings` target, the only header with sol2 in it |
 | `ScriptReloadWatcher` | `script/ScriptReloadWatcher.h` | Polls a tracked script's cooked file and reloads on change |
 | `RegisterScriptComponents` | `script/ComponentRegistration.h` | Registers `ScriptRef`, mirroring `core` and `renderer` |
 
 The Lua surface — `world:has/get/set/spawn/destroy/add/remove/each/declare` and
 the `Entity` usertype — lives in `src/script/bindings/` and is not public. Loaded
 Lua source reaches it; no C++ outside this module includes it. The input,
-physics, audio and terrain bindings each extend that same `World` usertype rather than
-adding one of their own, and each is registered after `RegisterWorldBindings`.
+physics, audio, terrain and post-processing bindings live in the bridges, and
+each extends that same `World` usertype rather than adding one of its own. The
+host binds `Entity` and `World` when it builds its state, so every bridge's
+bindings run after them.
 
 The input half is `world:is_down/just_pressed/just_released/axis/axis2d` and
 `world:active_device`. Scripts are gameplay, so the action reads go through
@@ -273,9 +281,8 @@ edit reaching a running instance, and a deliberate error thrown from inside a
 
 `ScriptRef.scriptName` exists so scene files can round-trip which script an
 entity runs. `instanceRef` is this run's live state and is deliberately not
-saved. Resolving the name back into an `instanceRef` after a scene load is
-`ResolveSceneScripts`, a private pass in `app` that `App::LoadScene` runs, rather
-than something this module or `scene` does.
+saved. `ScriptResolveSystem` turns the name back into an `instanceRef`, whatever
+made the `ScriptRef`.
 
 ## Backlog
 
@@ -295,6 +302,17 @@ than something this module or `scene` does.
    flavour underneath.
 
 ## Changed
+
+*2026-10-24* — **A live resolver, `ScriptModule`, and the bindings moved to
+bridges.** Was: `app`'s `ResolveSceneScripts` ran after a scene load, a Stop, a
+duplicate, a restore, a prefab publish and an import, and a new path that made a
+`ScriptRef` had to remember the call; `ScriptHost`'s constructor registered every
+library's bindings, so `script` linked audio, input, physics, renderer and
+terrain. Now: `ScriptResolveSystem` resolves every frame, a rename replaces the
+instance, `ScriptModule` owns the host and its systems, and five bridge
+libraries add their bindings through `AddBindings`. Because: a forgotten resolve
+left a script silently dead, and a library's Lua surface belongs next to it, not
+inside `script`.
 
 *2026-10-19* — **`world:set_motion_blur/get_motion_blur` joins the
 post-processing bindings (#212).** Was: the five effects above. Now: Motion

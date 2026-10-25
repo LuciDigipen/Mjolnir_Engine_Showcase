@@ -41,8 +41,10 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <source_location>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -213,9 +215,13 @@ namespace
         std::shared_ptr<TerrainManualExecutor> checks = std::make_shared<TerrainManualExecutor>();
         std::map<uint64_t, std::shared_ptr<GatedSource>> sources;
         int opens = 0;
+        // opening this release throws, like a path the code page cannot convert
+        std::optional<uint64_t> throwOpening;
         TerrainReleaseOpener open = [this](AssetId id,
                                            TerrainReleaseId release) -> TerrainResult<TerrainReleaseHandle> {
             ++opens;
+            if (throwOpening == release.value)
+                throw std::runtime_error("no mapping for the Unicode character");
             auto source = std::make_shared<GatedSource>(
                 std::make_shared<TerrainFileSource>(TerrainReleaseDir(root, id, release)));
             sources[release.value] = source;
@@ -666,6 +672,27 @@ TEST_CASE("A corrupt, truncated or partial B keeps A in use, is reported once an
     r.FrameUntil([&] { return r.Loaded() == c && r.Settled(); });
     r.Observe(c, 2.0f);
     CHECK(r.Count(Kind::Failed) == 1);
+}
+
+TEST_CASE("A check that throws fails B with the error and keeps A in use", "[terrain][switch]")
+{
+    Runtime r;
+    const TerrainReleaseInfo a = Publish(r.root, r.asset, 0xA, 0.0f);
+    r.Load();
+    r.FrameUntil([&] { return r.Settled(); });
+
+    r.throwOpening = 0xB;
+    const TerrainReleaseInfo b = Publish(r.root, r.asset, 0xB, kSaltB);
+    r.FrameUntil([&] { return r.Count(Kind::Failed) == 1; });
+
+    const auto failed = std::find_if(r.events.begin(), r.events.end(),
+                                     [](const TerrainSwitchEvent &event) { return event.kind == Kind::Failed; });
+    CHECK(failed->candidate.release == b.release);
+    UNSCOPED_INFO(failed->candidate.failure);
+    CHECK(failed->candidate.failure.find("threw: no mapping for the Unicode character") != std::string::npos);
+
+    r.FrameUntil([&] { return r.Settled(); });
+    r.Observe(a, 0.0f);
 }
 
 TEST_CASE("Play entered before B is verified runs on A without waiting, and B's late reads leave it alone",

@@ -232,8 +232,8 @@ namespace
             controller.mTarget = target;
             world.AddComponent<CameraController>(camera, controller);
 
-            scheduler.AddSystem<mir::TransformPropagateSystem>(mir::SystemPhase::PostUpdate);
-            scheduler.AddSystem<mir::CameraControllerSystem>(mir::SystemPhase::PostUpdate);
+            scheduler.AddSystem<mir::TransformPropagateSystem>(mir::SystemPhase::Propagate, mir::SystemOrder{mir::SystemOrder::kNormal});
+            scheduler.AddSystem<mir::CameraControllerSystem>(mir::SystemPhase::LateUpdate, mir::SystemOrder{mir::SystemOrder::kNormal});
             scheduler.Start(context);
         }
 

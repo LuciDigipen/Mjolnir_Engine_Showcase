@@ -35,15 +35,18 @@ namespace
         mir::CommandBuffer commands;
         mir::SystemScheduler scheduler;
         mir::SystemContext context{ world, commands, kStep, 0.0, 0 };
+        // what PhysicsModule sets, so a removed RigidBody frees its body
+        mir::Registration hooks;
 
         explicit PhysicsFixture(mir::EngineMode mode = mir::EngineMode::Play)
         {
             world.EmplaceResource<mir::PhysicsWorld>();
+            hooks = world.SetComponentHooks<mir::RigidBody>({ .onRemove = &mir::PhysicsSystem::OnRigidBodyRemoved });
             world.EmplaceResource<mir::EngineModeState>();
             mir::SetEngineMode(world, mode);
             mir::SetPlayState(world, mir::PlayState::Running);
 
-            scheduler.AddSystem<mir::PhysicsSystem>(mir::SystemPhase::FixedUpdate);
+            scheduler.AddSystem<mir::PhysicsSystem>(mir::SystemPhase::FixedUpdate, mir::SystemOrder{mir::SystemOrder::kNormal});
             scheduler.Start(context);
         }
 

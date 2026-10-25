@@ -298,18 +298,21 @@ namespace
         Reader *reader = nullptr;
         Entity ground;
         Entity ball;
+        // what PhysicsModule sets, so a destroyed body publishes its End
+        mir::Registration hooks;
 
         PublishFixture()
         {
             world.EmplaceResource<PhysicsWorld>();
+            hooks = world.SetComponentHooks<RigidBody>({ .onRemove = &PhysicsSystem::OnRigidBodyRemoved });
             world.EmplaceResource<CollisionEvents>();
             world.EmplaceResource<EngineModeState>();
             SetEngineMode(world, EngineMode::Play);
             SetPlayState(world, PlayState::Running);
 
-            reader = &scheduler.AddSystem<Reader>(SystemPhase::PreUpdate);
-            scheduler.AddSystem<PhysicsSystem>(SystemPhase::FixedUpdate);
-            scheduler.AddSystem<CollisionEventSystem>(SystemPhase::PostUpdate);
+            reader = &scheduler.AddSystem<Reader>(SystemPhase::PreUpdate, SystemOrder{SystemOrder::kNormal});
+            scheduler.AddSystem<PhysicsSystem>(SystemPhase::FixedUpdate, SystemOrder{SystemOrder::kNormal});
+            scheduler.AddSystem<CollisionEventSystem>(SystemPhase::PostUpdate, SystemOrder{SystemOrder::kNormal});
             scheduler.Start(context);
 
             ground = Add({ 0.0, -0.5, 0.0 }, RigidBody{ .motion = PhysicsMotion::Static,

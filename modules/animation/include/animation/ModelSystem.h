@@ -1,12 +1,12 @@
 /**
  * @file ModelSystem.h
  * @author Jackey Cen
- * @brief Turns ModelPlayer instances into GPU draws, in SystemPhase::PostUpdate.
+ * @brief Turns ModelPlayer instances into GPU draws, in SystemPhase::LateUpdate.
  *
  * Loads each referenced model once through AssetCache, uploads its meshes,
  * materials and textures to the VulkanRenderer, advances playback while the
  * world is simulating, evaluates the pose and fills the ModelDrawItems resource
- * that RenderSystem draws. Runs after TransformPropagateSystem so WorldTransform
+ * that RenderSystem draws. LateUpdate runs after Propagate, so WorldTransform
  * is current. PrepareReload/CommitReload swap GPU resources around an import.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
@@ -34,6 +34,10 @@ namespace mir
         void DiscardPreparedReload();
         void OnUpdate(SystemContext &context) override;
 
+        // ModelPlayer's OnRemove: drops the entity's request, poses and morph overrides, so a
+        // packed id the World hands out again starts fresh
+        void Forget(World &world, Entity entity);
+
     private:
         struct GpuPrimitive
         {
@@ -60,7 +64,9 @@ namespace mir
         std::unordered_set<uint64_t> mFailed;
         std::unordered_map<uint64_t, uint64_t> mRequestedModels;
         std::vector<std::vector<glm::vec4>> mDeformations;
-        std::unordered_map<uint64_t, WorldPose> mPreviousPoses;
-        std::unordered_map<uint64_t, WorldPose> mCurrentPoses;
+        // by PackEntity, then node
+        using NodePoses = std::unordered_map<uint32_t, WorldPose>;
+        std::unordered_map<uint64_t, NodePoses> mPreviousPoses;
+        std::unordered_map<uint64_t, NodePoses> mCurrentPoses;
     };
 } // namespace mir

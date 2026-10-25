@@ -36,14 +36,12 @@ Today this is a harness, not an audio system. One hardcoded listener and one
 hardcoded emitter exist so that playback can be proven end to end; there is no
 positioning, no entity mapping and no component.
 
-```cpp
-audio::Init(mProject.mSoundBankDir);        // App::Initialize
-audio::PostEvent("Play_chargeDown");        // after the window is shown
-
-audio::Update();                            // once per frame, after mScheduler.Update
-
-audio::Terminate();                         // App::Shutdown
-```
+`AudioModule` starts Wwise with the game's SoundBank directory in its
+constructor and terminates it in its destructor. It registers the audio
+components, `AudioEmitterSystem`, `AudioListenerSystem` and a render system in
+`LateUpdate`, in that order, and the `AudioEmitter` OnRemove hook. The render
+system runs `audio::Update` every frame, ungated, so UI sounds and fades still
+play in Edit and while paused.
 
 ## API
 
@@ -95,8 +93,8 @@ build directory while a VS Code F5 launch typically runs from the repository
 root, so a CWD-relative path passes the smoke tests and silently finds nothing
 under the debugger.
 
-**A game with no SoundBanks still starts Wwise.** `App::Initialize` creates a
-missing SoundBank directory, and an empty one loads no banks. The sound engine
+**A game with no SoundBanks still starts Wwise.** Setup creates a missing
+SoundBank directory, and an empty one loads no banks. The sound engine
 still comes up, so a silent game and a game with audio take the same path, and a
 Wwise failure is fatal for both.
 

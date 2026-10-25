@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <string>
+#include <type_traits>
 
 namespace mir
 {
@@ -118,6 +119,7 @@ namespace mir
     {
         if (g_windowCount == 0)
         {
+            static_assert(std::is_nothrow_invocable_v<decltype(&OnGLFWError), int, const char *>, "C callbacks and thread entry points must be noexcept (conventions.md)");
             glfwSetErrorCallback(&OnGLFWError);
             if (glfwInit() != GLFW_TRUE)
             {
@@ -157,6 +159,10 @@ namespace mir
 
         // Lets the static callbacks recover the owning instance.
         glfwSetWindowUserPointer(mHandle, this);
+        static_assert(std::is_nothrow_invocable_v<decltype(&GLFWWindow::OnFramebufferSize), GLFWwindow *, int, int> &&
+                          std::is_nothrow_invocable_v<decltype(&GLFWWindow::OnScroll), GLFWwindow *, double, double> &&
+                          std::is_nothrow_invocable_v<decltype(&GLFWWindow::OnDrop), GLFWwindow *, int, const char **>,
+            "C callbacks and thread entry points must be noexcept (conventions.md)");
         glfwSetFramebufferSizeCallback(mHandle, &GLFWWindow::OnFramebufferSize);
         glfwSetScrollCallback(mHandle, &GLFWWindow::OnScroll);
         glfwSetDropCallback(mHandle, &GLFWWindow::OnDrop);

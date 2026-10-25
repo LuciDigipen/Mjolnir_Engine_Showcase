@@ -19,6 +19,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <mutex>
+#include <type_traits>
 
 namespace
 {
@@ -60,7 +61,12 @@ namespace mir::detail
         // allocates anything, and RegisterTypes needs the Factory.
         JPH::RegisterDefaultAllocator();
 
+        static_assert(std::is_nothrow_invocable_v<decltype(&TraceImpl), const char *>, "C callbacks and thread entry points must be noexcept (conventions.md)");
         JPH::Trace = &TraceImpl;
+#ifdef JPH_ENABLE_ASSERTS
+        static_assert(std::is_nothrow_invocable_v<decltype(&AssertFailedImpl), const char *, const char *,
+                          const char *, JPH::uint>, "C callbacks and thread entry points must be noexcept (conventions.md)");
+#endif
         JPH_IF_ENABLE_ASSERTS(JPH::AssertFailed = &AssertFailedImpl;)
 
         // RegisterTypes aborts when the library was built with other defines

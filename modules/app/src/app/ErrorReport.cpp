@@ -19,17 +19,13 @@
 
 namespace mir
 {
-    namespace
+    std::filesystem::path ReporterPath()
     {
-        // Beside the engine, named like it, so a game build ships it the same way
-        std::filesystem::path ReporterPath()
-        {
-            std::filesystem::path path = ExecutablePath();
-            const std::filesystem::path extension = path.extension();
-            path.replace_filename("MjolnirErrorReporter");
-            path += extension;
-            return path;
-        }
+        std::filesystem::path path = ExecutablePath();
+        const std::filesystem::path extension = path.extension();
+        path.replace_filename("MjolnirErrorReporter");
+        path += extension;
+        return path;
     }
 
     std::filesystem::path ErrorReportPath()
@@ -37,10 +33,16 @@ namespace mir
         return LogDir() / kErrorReportFileName;
     }
 
+    std::filesystem::path CrashDumpPath()
+    {
+        return LogDir() / kCrashDumpFileName;
+    }
+
     void ClearErrorReport()
     {
         std::error_code ec;
         std::filesystem::remove(ErrorReportPath(), ec);
+        std::filesystem::remove(CrashDumpPath(), ec);
     }
 
     int ReportFatal(const SetupError &error)
@@ -56,6 +58,7 @@ namespace mir
             MIR_LOG_CRITICAL("  fix:   {}", error.Fix());
 
         const nlohmann::json report{
+            { "kind", "caught" },
             { "category", CategoryName(error.Category()) },
             { "exitCode", exitCode },
             { "what", error.What() },
