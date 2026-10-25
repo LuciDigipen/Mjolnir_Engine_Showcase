@@ -45,7 +45,8 @@ namespace mir
         void OnStart(SystemContext &context) override;
         void OnUpdate(SystemContext &context) override;
 
-        // a script that failed to load is not retried every frame; an asset reload may bring it
+        // a script that failed to load or to make an instance is not retried every frame;
+        // an asset reload may bring it
         void ForgetFailures() { mFailed.clear(); }
 
     private:

@@ -8,11 +8,13 @@
  */
 #include <script/ComponentRegistration.h>
 #include <script/IScriptHost.h>
+#include <script/ScriptHost.h>
 #include <script/ScriptResolveSystem.h>
 
 #include <core/ecs/CommandBuffer.h>
 #include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/World.h>
+#include <core/log/Log.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -149,4 +151,39 @@ TEST_CASE("A copy made with no instance gets its own, and outlives the original"
     f.system.OnUpdate(f.context);
 
     CHECK(f.world.GetComponent<ScriptRef>(copy)->instanceRef >= 0);
+}
+
+TEST_CASE("A script whose chunk returns no table is not retried every frame", "[script][resolve]")
+{
+    // errors are counted only while the log runs
+    mir::InitLog({ .consoleLevel = mir::LogLevel::Error, .fileLevel = mir::LogLevel::Off });
+    mir::RegisterCoreComponents();
+    mir::RegisterScriptComponents();
+    World world;
+    CommandBuffer commands;
+    mir::ScriptHost host;
+    int loads = 0;
+    ScriptResolveSystem system{ host, [&host, &loads](std::string_view name)
+        {
+            ++loads;
+            return host.LoadScriptSource(name, "local x = 1");
+        } };
+    SystemContext context{ world, commands };
+    system.OnStart(context);
+
+    const Entity entity = world.CreateEntity();
+    world.AddComponent(entity, Named("NoTable"));
+
+    system.OnUpdate(context);
+    const uint64_t afterFirstFrame = mir::ErrorCount();
+    system.OnUpdate(context);
+    system.OnUpdate(context);
+
+    CHECK(world.GetComponent<ScriptRef>(entity)->instanceRef == -1);
+    CHECK(mir::ErrorCount() == afterFirstFrame);
+
+    // a reload may have fixed the source, so it is loaded again
+    system.ForgetFailures();
+    system.OnUpdate(context);
+    CHECK(loads == 2);
 }

@@ -92,7 +92,15 @@ namespace mir
                     mLoaded.emplace(name);
                 }
 
+                // a chunk that loads but returns no table fails here, for every entity
+                // naming it, so it waits for a reload like a source that would not load
                 ref.instanceRef = mHost.CreateInstance(name);
+                if (ref.instanceRef < 0)
+                {
+                    mLoaded.erase(std::string(name));
+                    mFailed.emplace(name);
+                    return;
+                }
                 std::memcpy(ref.resolvedName, ref.scriptName, sizeof(ref.resolvedName));
             });
     }
