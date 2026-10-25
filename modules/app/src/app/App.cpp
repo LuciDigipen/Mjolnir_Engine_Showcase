@@ -10,8 +10,6 @@
 #include <app/App.h>
 
 #include "Prompt.h"
-#include <animation/ModelPlayer.h>
-#include <animation/ModelSystem.h>
 #include <assets/AssetIdRoot.h>
 #include <core/EngineVersion.h>
 #include <core/ecs/EngineMode.h>
@@ -21,16 +19,10 @@
 #include <core/log/SetupError.h>
 #include <core/platform/CrashHandler.h>
 #include <input/DefaultInputMap.h>
-#include <input/InputMap.h>
 #include <input/InputState.h>
 #include <prefab/PrefabCoordinator.h>
 #include <project/ProjectSettings.h>
-#include <renderer/MeshResolveSystem.h>
 #include <scene/SceneIO.h>
-#include <script/ScriptModule.h>
-#include <script/ScriptResolveSystem.h>
-#include <script/ScriptSystem.h>
-#include <terrain_runtime/TerrainRuntime.h>
 
 #include <algorithm>
 #include <chrono>
