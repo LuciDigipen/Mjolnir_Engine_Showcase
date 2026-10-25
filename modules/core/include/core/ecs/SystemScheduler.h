@@ -94,16 +94,16 @@ namespace mir
         // for tests and callers without a fixed clock; App passes its substeps
         void Update(SystemContext &context) { Update(context, 1, context.dt); }
 
-        // reverse of Start
+        // same order as Start, so scripts stop while the runtimes they call still run
         void Stop(SystemContext &context)
         {
             if (!mStarted)
                 return;
 
-            for (std::size_t phase = kPhaseCount; phase-- > 0;)
+            for (std::size_t phase = 0; phase < kPhaseCount; ++phase)
             {
-                for (std::size_t i = mPhases[phase].size(); i-- > 0;)
-                    mPhases[phase][i]->OnStop(context);
+                for (const std::unique_ptr<ISystem> &system : mPhases[phase])
+                    system->OnStop(context);
 
                 context.commands.Flush(context.world);
             }

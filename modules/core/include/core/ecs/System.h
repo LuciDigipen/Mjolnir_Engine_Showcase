@@ -81,7 +81,7 @@ namespace mir
         // Called on target phase
         virtual void OnUpdate(SystemContext &context) = 0;
 
-        // Once, at teardown. Runs in reverse registration order.
+        // Once, at teardown. Runs in the same order as OnStart.
         virtual void OnStop(SystemContext &) {}
 
     protected:

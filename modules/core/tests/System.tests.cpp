@@ -108,7 +108,7 @@ TEST_CASE("Systems run in phase order, then registration order", "[ecs][system]"
     REQUIRE(recorder.updated == std::vector<int>{3, 1, 2, 4});
 }
 
-TEST_CASE("OnStart runs once and OnStop runs in reverse", "[ecs][system]")
+TEST_CASE("OnStart runs once and OnStop runs in the same order", "[ecs][system]")
 {
     World world;
     CommandBuffer commands;
@@ -132,12 +132,12 @@ TEST_CASE("OnStart runs once and OnStop runs in reverse", "[ecs][system]")
     REQUIRE(recorder.updated == std::vector<int>{1, 2, 3, 1, 2, 3});
 
     scheduler.Stop(context);
-    REQUIRE(recorder.stopped == std::vector<int>{3, 2, 1});
+    REQUIRE(recorder.stopped == std::vector<int>{1, 2, 3});
     REQUIRE_FALSE(scheduler.Started());
 
     // Stop is idempotent, so App::Shutdown running twice is harmless
     scheduler.Stop(context);
-    REQUIRE(recorder.stopped == std::vector<int>{3, 2, 1});
+    REQUIRE(recorder.stopped == std::vector<int>{1, 2, 3});
 }
 
 TEST_CASE("Commands recorded in one phase are visible to the next", "[ecs][system]")
@@ -282,7 +282,7 @@ TEST_CASE("FixedUpdate runs after Update and before PostUpdate", "[ecs][system]"
 
     REQUIRE(recorder.started == std::vector<int>{1, 2, 3, 4, 5});
     REQUIRE(recorder.updated == std::vector<int>{1, 2, 3, 4, 5});
-    REQUIRE(recorder.stopped == std::vector<int>{5, 4, 3, 2, 1});
+    REQUIRE(recorder.stopped == std::vector<int>{1, 2, 3, 4, 5});
 }
 
 TEST_CASE("FixedUpdate runs once per substep, every other phase once per frame", "[ecs][system]")
