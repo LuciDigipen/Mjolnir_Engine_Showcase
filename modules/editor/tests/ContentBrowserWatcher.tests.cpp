@@ -105,6 +105,27 @@ TEST_CASE("ContentBrowserWatcher reflects an external add, delete and rename wit
     CHECK(watcher.View().mLastRenamedTo == "assets/renamed.txt");
 }
 
+TEST_CASE("ContentBrowserWatcher reports a changed Prefab source once", "[app][content-browser]")
+{
+    TempProject temp;
+    temp.Write("assets/prefabs/one.prefab");
+
+    ContentBrowserWatcher watcher;
+    REQUIRE_NOTHROW(watcher.Initialize(temp.Project()));
+    CHECK_FALSE(watcher.ConsumePrefabSourceChange());
+
+    temp.Write("assets/prefabs/one.prefab", "changed");
+    WaitForNextPoll();
+    watcher.Update();
+    CHECK(watcher.ConsumePrefabSourceChange());
+    CHECK_FALSE(watcher.ConsumePrefabSourceChange());
+
+    temp.Write("assets/other.txt");
+    WaitForNextPoll();
+    watcher.Update();
+    CHECK_FALSE(watcher.ConsumePrefabSourceChange());
+}
+
 TEST_CASE("ContentBrowserWatcher creates, renames and deletes through Handle", "[app][content-browser]")
 {
     TempProject temp;

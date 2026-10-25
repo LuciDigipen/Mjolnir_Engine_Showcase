@@ -94,8 +94,13 @@ Apply and Revert write no files. A `LateUpdate` system runs the open previews in
 Edit, after `PrefabSystem` committed their documents, and the drawer hands the
 active tab's preview to the panels and to `RenderSystem::SetSourceWorld`. Play
 shows the Scene tab, and the `SceneLoad` after Stop reopens the tab it left, by
-prefab id; a prefab deleted during Play leaves the Scene tab. The
-previews' models take part in an asset swap, and their caches reset at
+prefab id; a prefab deleted during Play leaves the Scene tab. `PlayBegin`
+runs before the snapshot: `PrefabModule` commits the pending edits and freezes
+the prefabs, then the editor keeps the Prefab tabs' unsaved marks for Stop to put
+back (`PrefabPlayMarks`). A rename or rewrite of a Prefab file reaches the
+coordinator through `ContentBrowserWatcher` and `PrefabModule::Rescan`, which waits
+while the prefabs are frozen, and a document whose file changed under it loses its
+save point. The previews' models take part in an asset swap, and their caches reset at
 `SceneUnload`, after the renderer freed every upload.
 
 Save on a Prefab tab writes that Prefab. On the Scene tab it first writes the

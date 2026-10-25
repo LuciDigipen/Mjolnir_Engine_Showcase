@@ -17,6 +17,7 @@
 #include <prefab/PrefabFormat.h>
 #include <prefab/PrefabOverrides.h>
 #include <prefab/PrefabSceneInstance.h>
+#include <scene/PlaySnapshot.h>
 #include <scene/SceneInstancePatch.h>
 #include <scene/SceneIO.h>
 
@@ -26,6 +27,8 @@
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <optional>
@@ -307,6 +310,70 @@ namespace
             system.OnUpdate(context);
         }
     };
+
+    struct DiskFixture
+    {
+        World mWorld;
+        LoadedScene mScene;
+        PrefabCoordinator *mCoordinator = nullptr;
+        TempDir mPrefabs;
+        PrefabDocument mDocument;
+        CommandBuffer mCommands;
+        StableId mRoot = kNullStableId;
+
+        DiskFixture()
+        {
+            mir::RegisterCoreComponents();
+            DataOps();
+            ExtraOps();
+            RuntimeOps();
+
+            mWorld.EmplaceResource<mir::EngineModeState>();
+            mWorld.EmplaceResource<EntityChangeListeners>();
+
+            mDocument = Document();
+            REQUIRE(mir::WritePrefabFile(mPrefabs.mPath / "instance.prefab", mDocument));
+
+            mCoordinator = &mWorld.EmplaceResource<PrefabCoordinator>();
+            mCoordinator->ScanSources(mPrefabs.mPath);
+            const PrefabDocument *loaded = mCoordinator->Registry().Find(mDocument.mId);
+            REQUIRE(loaded != nullptr);
+            REQUIRE_FALSE(HasPrefabErrors(mCoordinator->Cache().Compile(*loaded)));
+
+            mScene = NewScene("test");
+            const std::shared_ptr<const CompiledPrefab> prefab = mCoordinator->Cache().Find(mDocument.mId);
+            REQUIRE(prefab != nullptr);
+            mRoot = PlacePrefabInstance(mWorld, mScene, *prefab);
+            REQUIRE(mRoot != kNullStableId);
+            mCoordinator->Bind(mScene);
+        }
+
+        Entity Member(const SceneNodeAddress &address) const
+        {
+            return mScene.mEntities.at(mScene.mInstances.at(mRoot).mBindings.at(address));
+        }
+
+        void Commit()
+        {
+            PrefabSystem system;
+            SystemContext context{ mWorld, mCommands };
+            system.OnUpdate(context);
+        }
+    };
+
+    std::map<std::string, std::string> SnapshotFiles(const std::filesystem::path &root)
+    {
+        std::map<std::string, std::string> files;
+        for (const std::filesystem::directory_entry &entry : std::filesystem::recursive_directory_iterator(root))
+        {
+            if (!entry.is_regular_file())
+                continue;
+            std::ifstream file(entry.path(), std::ios::binary);
+            files[entry.path().lexically_relative(root).generic_string()] =
+                std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+        }
+        return files;
+    }
 }
 
 TEST_CASE("A prefab edit publishes at the next Edit safe point", "[prefab][coordinator]")
@@ -810,4 +877,131 @@ TEST_CASE("Component additions and removals reach the change set", "[prefab][coo
     CHECK(addedExtra);
     CHECK_FALSE(DataOps().Has(fixture.mWorld, second));
     CHECK(ExtraOps().Has(fixture.mWorld, third));
+}
+
+TEST_CASE("A frozen coordinator publishes nothing", "[prefab][coordinator]")
+{
+    Fixture fixture(true);
+    const Entity firstRoot = fixture.Member(fixture.mRoot, SceneNodeAddress{ 1 });
+    const Entity secondRoot = fixture.Member(fixture.mSecondRoot, SceneNodeAddress{ 1 });
+
+    fixture.SetTemplateField(1, "PrefabCoordinatorTestData", "amount", 51.0);
+    fixture.mCoordinator->SetFrozen(true);
+    fixture.Commit();
+
+    CHECK(FloatField(fixture.mWorld, firstRoot, DataOps(), "amount") == 1.0f);
+    CHECK(FloatField(fixture.mWorld, secondRoot, DataOps(), "amount") == 1.0f);
+    CHECK(fixture.mCoordinator->HasPendingWork());
+
+    fixture.mCoordinator->SetFrozen(false);
+    fixture.Commit();
+    CHECK(FloatField(fixture.mWorld, firstRoot, DataOps(), "amount") == 51.0f);
+    CHECK(FloatField(fixture.mWorld, secondRoot, DataOps(), "amount") == 51.0f);
+}
+
+TEST_CASE("A rescan while frozen waits for the next Edit safe point", "[prefab][coordinator]")
+{
+    DiskFixture fixture;
+    const SceneNodeAddress rootAddress{ 1 };
+
+    fixture.mDocument.mNodes.front().mComponents.front().mFields["amount"] = 61.0;
+    REQUIRE(mir::WritePrefabFile(fixture.mPrefabs.mPath / "instance.prefab", fixture.mDocument));
+
+    fixture.mCoordinator->SetFrozen(true);
+    fixture.mCoordinator->RescanSources(fixture.mPrefabs.mPath);
+    CHECK(fixture.mCoordinator->Registry().Find(fixture.mDocument.mId)->mNodes.front().mComponents.front()
+        .mFields.at("amount") == 1.0);
+    fixture.Commit();
+    CHECK(FloatField(fixture.mWorld, fixture.Member(rootAddress), DataOps(), "amount") == 1.0f);
+
+    CHECK(fixture.mCoordinator->ConsumeExternalChanges().empty());
+    fixture.mCoordinator->SetFrozen(false);
+    fixture.Commit();
+    CHECK(fixture.mCoordinator->ConsumeExternalChanges() == std::vector<mir::PrefabId>{ fixture.mDocument.mId });
+    CHECK(fixture.mCoordinator->ConsumeExternalChanges().empty());
+    CHECK(FloatField(fixture.mWorld, fixture.Member(rootAddress), DataOps(), "amount") == 61.0f);
+}
+
+TEST_CASE("A rescan keeps an unsaved in-memory document", "[prefab][coordinator]")
+{
+    DiskFixture fixture;
+    const SceneNodeAddress rootAddress{ 1 };
+
+    PrefabDocument edited = fixture.mDocument;
+    edited.mNodes.front().mComponents.front().mFields["amount"] = 71.0;
+    REQUIRE(fixture.mCoordinator->SetDocument(edited));
+
+    fixture.mDocument.mNodes.front().mComponents.front().mFields["amount"] = 81.0;
+    REQUIRE(mir::WritePrefabFile(fixture.mPrefabs.mPath / "instance.prefab", fixture.mDocument));
+
+    fixture.mCoordinator->RescanSources(fixture.mPrefabs.mPath);
+    CHECK(fixture.mCoordinator->Registry().Find(fixture.mDocument.mId)->mNodes.front().mComponents.front()
+        .mFields.at("amount") == 71.0);
+
+    fixture.Commit();
+    CHECK(fixture.mCoordinator->ConsumeExternalChanges().empty());
+    CHECK(FloatField(fixture.mWorld, fixture.Member(rootAddress), DataOps(), "amount") == 71.0f);
+}
+
+TEST_CASE("A rescan replaces an in-memory document that matches its saved file", "[prefab][coordinator]")
+{
+    DiskFixture fixture;
+    const SceneNodeAddress rootAddress{ 1 };
+
+    REQUIRE(fixture.mCoordinator->SetDocument(fixture.mDocument));
+    fixture.Commit();
+
+    fixture.mDocument.mNodes.front().mComponents.front().mFields["amount"] = 91.0;
+    REQUIRE(mir::WritePrefabFile(fixture.mPrefabs.mPath / "instance.prefab", fixture.mDocument));
+
+    fixture.mCoordinator->RescanSources(fixture.mPrefabs.mPath);
+    CHECK(fixture.mCoordinator->ConsumeExternalChanges() == std::vector<mir::PrefabId>{ fixture.mDocument.mId });
+    CHECK_FALSE(fixture.mCoordinator->Registry().HasMemoryDocument(fixture.mDocument.mId));
+    CHECK(fixture.mCoordinator->Registry().Find(fixture.mDocument.mId)->mNodes.front().mComponents.front()
+        .mFields.at("amount") == 91.0);
+
+    fixture.Commit();
+    CHECK(FloatField(fixture.mWorld, fixture.Member(rootAddress), DataOps(), "amount") == 91.0f);
+}
+
+TEST_CASE("Play and Stop leave an unchanged saved scene byte-identical", "[prefab][coordinator]")
+{
+    Fixture fixture;
+    const SceneNodeAddress rootAddress{ 1 };
+    REQUIRE(SetInstanceFieldOverride(fixture.mWorld, fixture.mScene, fixture.mCoordinator->Registry(),
+        fixture.mRoot, rootAddress, "PrefabCoordinatorTestData", "target", json(nullptr)));
+
+    TempDir sceneDir;
+    REQUIRE(mir::SaveScene(fixture.mWorld, sceneDir.mPath, fixture.mScene, &fixture.mCoordinator->Resolver()));
+    const std::map<std::string, std::string> filesBefore = SnapshotFiles(sceneDir.mPath);
+    const std::map<SceneNodeAddress, StableId> bindingsBefore =
+        fixture.mScene.mInstances.at(fixture.mRoot).mBindings;
+
+    fixture.mCoordinator->Commit(fixture.mWorld);
+    fixture.mCoordinator->SetFrozen(true);
+    mir::PlaySnapshot snapshot = mir::CaptureWorld(fixture.mWorld, fixture.mScene,
+        &fixture.mCoordinator->Resolver());
+    LoadedScene restored = mir::RestoreWorld(fixture.mWorld, snapshot,
+        &fixture.mCoordinator->Resolver());
+    fixture.mCoordinator->Bind(restored);
+    fixture.mCoordinator->SetFrozen(false);
+    fixture.Commit();
+
+    REQUIRE(restored.mInstances.contains(fixture.mRoot));
+    CHECK(restored.mInstances.at(fixture.mRoot).mBindings == bindingsBefore);
+    CHECK(restored.mEntities.contains(bindingsBefore.at(rootAddress)));
+    CHECK(EntityField(fixture.mWorld, restored.mEntities.at(bindingsBefore.at(rootAddress)), DataOps(), "target")
+        .IsNull());
+    const mir::SceneFieldPatch *patch = FindInstanceFieldPatch(restored.mInstances.at(fixture.mRoot), rootAddress,
+        "PrefabCoordinatorTestData", "target");
+    REQUIRE(patch != nullptr);
+
+    REQUIRE(mir::SaveScene(fixture.mWorld, sceneDir.mPath, restored, &fixture.mCoordinator->Resolver()));
+    CHECK(SnapshotFiles(sceneDir.mPath) == filesBefore);
+    CHECK(EntityField(fixture.mWorld, restored.mEntities.at(bindingsBefore.at(rootAddress)), DataOps(), "target")
+        .IsNull());
+    CHECK(FindInstanceFieldPatch(restored.mInstances.at(fixture.mRoot), rootAddress,
+        "PrefabCoordinatorTestData", "target") != nullptr);
+
+    mir::DiscardSnapshot(snapshot);
 }

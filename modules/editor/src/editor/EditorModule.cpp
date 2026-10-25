@@ -38,6 +38,7 @@
 #include <window/WindowModule.h>
 
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <stdexcept>
 #include <utility>
@@ -73,16 +74,19 @@ namespace mir
         class PrefabPreviewSystem final : public ISystem
         {
         public:
-            PrefabPreviewSystem(PrefabWorkspace &workspace, PrefabCoordinator &prefabs, Editor &editor)
-                : mWorkspace(workspace), mPrefabs(prefabs), mEditor(editor)
+            PrefabPreviewSystem(PrefabWorkspace &workspace, PrefabCoordinator &prefabs, Editor &editor,
+                std::function<void()> refreshHistory)
+                : mWorkspace(workspace), mPrefabs(prefabs), mEditor(editor), mRefreshHistory(std::move(refreshHistory))
             {
             }
 
             void OnUpdate(SystemContext &context) override
             {
+                if (IsEditing(context.world))
+                    mWorkspace.Update(context.dt, context.elapsed, context.frame);
+                mRefreshHistory();
                 if (!IsEditing(context.world))
                     return;
-                mWorkspace.Update(context.dt, context.elapsed, context.frame);
 
                 // reference clearing and binding changes at the safe point happen outside History
                 if (mPrefabs.ConsumeSceneMaintenance() && !mEditor.IsSceneUnsaved())
@@ -93,6 +97,7 @@ namespace mir
             PrefabWorkspace &mWorkspace;
             PrefabCoordinator &mPrefabs;
             Editor &mEditor;
+            std::function<void()> mRefreshHistory;
         };
 
         // true while a scene entity plays the model
@@ -142,7 +147,7 @@ namespace mir
         mEditor.SetAuthoredEntities(&mPrefabAuthoring);
         mPrefabWorkspace.BindResolveSystems(&renderer.Renderer(), &assets.Cache(), mProject.mAssetIdRoot);
         context.scheduler.AddSystem<PrefabPreviewSystem>(SystemPhase::LateUpdate, mPrefabWorkspace,
-            prefab.Coordinator(), mEditor);
+            prefab.Coordinator(), mEditor, [this] { RefreshPrefabHistory(); });
 
         mFrameBegin = context.scheduler.AddFrameSlot(FrameSlot::FrameBegin, [this](SystemContext &frame)
             {
@@ -151,6 +156,9 @@ namespace mir
                 if (mImport.PendingApply() && IsEditing(mWorld))
                     mWorld.Resource<RequestQueue>().Push(Request::ApplyImportedAssets);
                 mContentBrowser.Update();
+                if (mContentBrowser.ConsumePrefabSourceChange())
+                    mPrefab.Rescan();
+                RefreshPrefabHistory();
             });
 
         // after the renderer's: it freed every upload, the previews' too
@@ -173,6 +181,8 @@ namespace mir
 
                 // Play's edits are gone with Play's World, so the mark goes back to what it was
                 mEditor.SetSceneUnsaved(mUnsavedBeforePlay);
+                RestorePrefabPlayMarks(mPrefabMarksBeforePlay,
+                    [this](DocumentId document) { mEditor.SetDocumentUnsaved(document, true); });
                 // a prefab deleted during Play fails to open, and the Scene tab stays
                 if (mPrefabBeforePlay.has_value())
                     mPrefabWorkspace.Open(*mPrefabBeforePlay);
@@ -189,9 +199,21 @@ namespace mir
                 }
                 mEditor.SetSceneUnsaved(false);
             });
+        // after PrefabModule's, which committed and froze the prefabs
         mPlayBegin = context.scheduler.AddStage(Stage::PlayBegin, [this](SystemContext &)
             {
+                PrefabCoordinator &prefabs = mPrefab.Coordinator();
+                if (prefabs.ConsumeSceneMaintenance() && !mEditor.IsSceneUnsaved())
+                    mEditor.SetSceneUnsaved(true);
                 mUnsavedBeforePlay = mEditor.IsSceneUnsaved();
+
+                std::vector<DocumentId> documents;
+                for (const PrefabId id : prefabs.DocumentIds())
+                    documents.push_back(DocumentOf(id));
+                RefreshPrefabHistory();
+                mPrefabMarksBeforePlay = CapturePrefabPlayMarks(documents,
+                    [this](DocumentId document) { return mEditor.IsDocumentUnsaved(document); });
+
                 mEditor.ClearHistory();
                 mPrefabBeforePlay = mPrefabWorkspace.ActiveDocument();
                 mPrefabWorkspace.ActivateScene();
@@ -341,11 +363,7 @@ namespace mir
                 }
             }
             if (contentBrowserActionAccepted)
-            {
                 mContentBrowser.Handle(actions.mContentBrowser);
-                if (actions.mContentBrowser.mKind == ContentBrowserActionKind::Rename)
-                    mPrefab.Rescan();
-            }
         }
 
         if (!actions.mOpenProject.empty())
@@ -417,6 +435,12 @@ namespace mir
     PrefabWorkspace::PrefabSaved EditorModule::MarkSavedPrefabs()
     {
         return [this](PrefabId id) { mEditor.SetDocumentUnsaved(DocumentOf(id), false); };
+    }
+
+    void EditorModule::RefreshPrefabHistory()
+    {
+        mPrefabWorkspace.InvalidateExternalSavePoints([this](PrefabId id)
+            { mEditor.SetDocumentUnsaved(DocumentOf(id), true); });
     }
 
     World *EditorModule::ActivePreviewWorld()

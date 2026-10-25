@@ -765,3 +765,65 @@ TEST_CASE("A multi-node Prefab drop before a sibling preserves the requested ord
     children = world.HierarchyIndex().ChildrenOf(root);
     CHECK(std::vector<Entity>(children.begin(), children.end()) == std::vector<Entity>{ second, fourth, third });
 }
+
+TEST_CASE("External Prefab adoption invalidates saved History before undo redo and Save Scene", "[app][prefabs]")
+{
+    Fixture fixture;
+    TempDir directory;
+    const auto path = directory.mPath / "external.prefab";
+    REQUIRE(mir::WritePrefabFile(path, fixture.mDocument));
+    REQUIRE(fixture.mCoordinator->Registry().Scan(directory.mPath).empty());
+    REQUIRE(fixture.mDocuments->Open(fixture.mDocument.mId));
+    fixture.mScene.mInstances[1].mPrefab = ToString(fixture.mDocument.mId);
+    const AuthoredKey key = FieldKey(fixture, { 2 }, "AppDocumentsTestData", "amount");
+    const float value = 42.0f;
+    fixture.Run(MakeAuthoredCommand("Edit amount",
+        { AuthoredEntry{ key, fixture.mAdapter->EncodeField(FieldKind::Float, &value) } }));
+    fixture.Commit();
+    REQUIRE(fixture.SavePrefab(fixture.mDocument.mId));
+    REQUIRE_FALSE(fixture.mHistory.IsUnsaved(fixture.mDocumentId));
+    const DocumentId unrelated{ 123, 456 };
+    fixture.mHistory.SetUnsaved(unrelated, false);
+
+    PrefabDocument external = *fixture.mCoordinator->Registry().Find(fixture.mDocument.mId);
+    external.mNodes[1].mComponents.front().mFields["amount"] = 72.0;
+    REQUIRE(mir::WritePrefabFile(path, external));
+    bool deferred = false;
+    SECTION("Edit adopts before the next UI History flush") {}
+    SECTION("Play defers adoption until the next Edit Commit") { deferred = true; }
+    fixture.mCoordinator->SetFrozen(deferred);
+    fixture.mCoordinator->RescanSources(directory.mPath);
+    auto syncHistory = [&]()
+        {
+            fixture.mDocuments->InvalidateExternalSavePoints([&](PrefabId id)
+                { fixture.mHistory.SetUnsaved(DocumentId{ id.mHigh, id.mLow }, true); });
+        };
+    if (deferred)
+    {
+        syncHistory();
+        CHECK_FALSE(fixture.mHistory.IsUnsaved(fixture.mDocumentId));
+        fixture.mCoordinator->SetFrozen(false);
+        fixture.Commit();
+    }
+    syncHistory();
+    CHECK(fixture.mHistory.IsUnsaved(fixture.mDocumentId));
+    CHECK_FALSE(fixture.mHistory.IsUnsaved(unrelated));
+    fixture.Commit();
+    fixture.Undo();
+    fixture.Commit();
+    fixture.Redo();
+    fixture.Commit();
+    CHECK(fixture.mHistory.IsUnsaved(fixture.mDocumentId));
+    CHECK(fixture.mHistory.StepCount() == 1);
+    CHECK(fixture.SaveScene([&]()
+        {
+            const auto saved = mir::ReadPrefabFile(path);
+            return saved.mDocument && saved.mDocument->mNodes[1].mComponents.front().mFields.at("amount") == 42.0;
+        }));
+    CHECK_FALSE(fixture.mHistory.IsUnsaved(fixture.mDocumentId));
+    syncHistory();
+    CHECK_FALSE(fixture.mHistory.IsUnsaved(fixture.mDocumentId));
+    fixture.Undo();
+    fixture.Redo();
+    CHECK_FALSE(fixture.mHistory.IsUnsaved(fixture.mDocumentId));
+}

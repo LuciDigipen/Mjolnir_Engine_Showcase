@@ -46,6 +46,7 @@ target_sources(engine_editor PRIVATE
     src/editor/EditorWidgets.cpp
     src/editor/EntityBaseline.cpp
     src/editor/PrefabAuthoringAdapter.cpp
+    src/editor/PrefabPlayMarks.cpp
     src/editor/PrefabWorkspace.cpp
     src/editor/history/AuthoredCommand.cpp
     src/editor/history/AuthoredEdit.cpp

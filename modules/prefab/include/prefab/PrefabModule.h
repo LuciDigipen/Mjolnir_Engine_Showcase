@@ -29,7 +29,7 @@ namespace mir
 
         PrefabCoordinator &Coordinator() { return mCoordinator; }
 
-        // after a file under the source directory was renamed
+        // after a prefab file under the source directory changed; waits while Play freezes the prefabs
         void Rescan();
 
     private:
@@ -37,7 +37,8 @@ namespace mir
         PrefabCoordinator &mCoordinator;
         std::filesystem::path mSourceDir;
 
-        // last: unregisters before anything above is destroyed
+        // last: they unregister before anything above is destroyed
+        Registration mPlayBegin;
         Registration mSceneLoad;
     };
 }

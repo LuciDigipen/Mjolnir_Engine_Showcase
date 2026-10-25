@@ -7,6 +7,7 @@ engine_add_module_tests(editor
     EntityCommands.tests.cpp
     History.tests.cpp
     PrefabAuthoringAdapter.tests.cpp
+    PrefabPlayMarks.tests.cpp
     PrefabWorkspace.tests.cpp
 )
 

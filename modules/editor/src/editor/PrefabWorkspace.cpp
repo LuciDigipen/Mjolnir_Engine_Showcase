@@ -262,6 +262,12 @@ namespace mir
         }
     }
 
+    void PrefabWorkspace::InvalidateExternalSavePoints(const std::function<void(PrefabId)> &invalidate)
+    {
+        for (PrefabId id : mCoordinator.ConsumeExternalChanges())
+            invalidate(id);
+    }
+
     bool PrefabWorkspace::SavePrefab(PrefabId id, const PrefabUnsaved &unsaved, const PrefabSaved &markSaved)
     {
         const PrefabSavePlan plan = PlanSavePrefab(mCoordinator.Registry(), id, unsaved);

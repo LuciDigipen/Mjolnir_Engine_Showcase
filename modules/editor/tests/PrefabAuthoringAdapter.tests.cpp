@@ -1007,3 +1007,37 @@ TEST_CASE("Copied unresolved references survive saving until their target is ava
     CHECK(EntityField(loadedWorld, loaded.mEntities.at(ordinaryId), DataOps(), "target") == loaded.mEntities.at(targetId));
     CHECK(loaded.mUnresolvedEntityRefs.empty());
 }
+
+TEST_CASE("A frozen authored view reports no overrides and refuses actions", "[app][authoring]")
+{
+    Fixture fixture;
+    const SceneNodeAddress second{ 2 };
+    const Entity member = fixture.Member(second);
+    const AuthoredKey field = SceneEditKey(fixture, second, "AppAuthoringTestData", "amount");
+    const std::optional<AuthoredKey> component =
+        fixture.mAdapter->ComponentKeyOf(member, "AppAuthoringTestData");
+    REQUIRE(component.has_value());
+
+    fixture.mCoordinator->SetFrozen(true);
+
+    CHECK_FALSE(fixture.mAdapter->KeyOf(member, "AppAuthoringTestData", "amount").has_value());
+    CHECK_FALSE(fixture.mAdapter->ComponentKeyOf(member, "AppAuthoringTestData").has_value());
+    CHECK(fixture.mAdapter->FieldState(field) == AuthoredFieldState::Inherited);
+    CHECK(fixture.mAdapter->ComponentState(member, "AppAuthoringTestData") == AuthoredComponentState::Absent);
+    CHECK(fixture.mAdapter->RemovedComponents(member).empty());
+
+    const AuthoredAction revert = fixture.mAdapter->Revert(field);
+    CHECK_FALSE(revert.mAllowed);
+    CHECK_FALSE(revert.mReason.empty());
+    const AuthoredAction apply = fixture.mAdapter->Apply(field);
+    CHECK_FALSE(apply.mAllowed);
+    CHECK_FALSE(apply.mReason.empty());
+
+    const std::vector<AuthoredEntry> entries{ AuthoredEntry{ field, std::string("93.0") } };
+    const mir::AuthoringWrite write = fixture.mAdapter->Write(entries);
+    CHECK_FALSE(write.mApplied);
+    CHECK(FloatField(fixture.mWorld, member, DataOps(), "amount") == 9.0f);
+
+    fixture.mCoordinator->SetFrozen(false);
+    CHECK(fixture.mAdapter->KeyOf(member, "AppAuthoringTestData", "amount").has_value());
+}

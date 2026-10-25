@@ -18,6 +18,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <utility>
 
 namespace mir
 {
@@ -31,6 +32,10 @@ namespace mir
         void Reject(const std::string &path, std::string diagnostic);
 
         const ContentBrowserView &View() const { return mView; }
+
+        // True once after a prefab file under the source directory was added,
+        // removed or rewritten.
+        bool ConsumePrefabSourceChange() { return std::exchange(mPrefabSourceChanged, false); }
 
         std::optional<std::string> AssetLogicalPath(const std::string &relativePath) const;
 
@@ -48,9 +53,11 @@ namespace mir
 
         GameProject mProject;
         std::filesystem::path mRoot;
+        std::filesystem::path mPrefabRoot;
         std::map<std::filesystem::path, WatchedFile> mWatched;
         std::chrono::steady_clock::time_point mLastPoll{};
         bool mWatchInitialized = false;
+        bool mPrefabSourceChanged = false;
         ContentBrowserView mView;
     };
 } // namespace mir

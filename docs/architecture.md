@@ -290,7 +290,7 @@ order, then flushes the command buffer.
 ```
 New / Load        SceneUnload  ->  scene replaced  ->  SceneLoad
 Save              written      ->  SceneSaved
-Play              snapshot     ->  PlayBegin  ->  Play mode
+Play              PlayBegin    ->  snapshot  ->  Play mode
 Stop              PlayEnd  ->  restore the snapshot  ->  Edit mode  ->  SceneLoad
 Asset reload      BeginReload  ->  ReloadPrepare  ->  CommitReload  ->  ReloadCommit
                                      (a veto)  ->  ReloadAbort  ->  AbortReload

@@ -292,8 +292,9 @@ namespace mir
         if (IsPlaying(mWorld))
             return;
 
-        mScene.CaptureForPlay(&mPrefab.Coordinator().Resolver());
+        // before the snapshot: the prefabs commit and freeze, so it holds what Play runs
         RunStage(Stage::PlayBegin);
+        mScene.CaptureForPlay(&mPrefab.Coordinator().Resolver());
 
         SetPlayState(mWorld, PlayState::Running);
         SetEngineMode(mWorld, EngineMode::Play);

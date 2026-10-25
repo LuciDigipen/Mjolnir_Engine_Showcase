@@ -25,7 +25,8 @@ namespace mir
         return MakeAssetId("prefab:" + ToString(id));
     }
 
-    std::vector<PrefabDiagnostic> PrefabRegistry::Scan(const std::filesystem::path &prefabsDir)
+    std::vector<PrefabDiagnostic> PrefabRegistry::Scan(const std::filesystem::path &prefabsDir,
+        std::vector<PrefabId> *changed)
     {
         std::vector<PrefabDiagnostic> diagnostics;
 
@@ -92,9 +93,44 @@ namespace mir
             diskPaths.emplace(id, paths.front());
         }
 
+        if (changed != nullptr)
+        {
+            changed->clear();
+            for (const auto &[id, document] : disk)
+            {
+                const auto previous = mDisk.find(id);
+                if (previous == mDisk.end() || PrefabToJson(previous->second) != PrefabToJson(document))
+                    changed->push_back(id);
+            }
+            for (const auto &[id, document] : mDisk)
+            {
+                (void)document;
+                if (!disk.contains(id))
+                    changed->push_back(id);
+            }
+        }
+
         mDisk = std::move(disk);
         mDiskPaths = std::move(diskPaths);
         return diagnostics;
+    }
+
+    std::vector<PrefabId> PrefabRegistry::Ids() const
+    {
+        std::vector<PrefabId> ids;
+        ids.reserve(mMemory.size() + mDisk.size());
+        for (const auto &[id, document] : mMemory)
+        {
+            (void)document;
+            ids.push_back(id);
+        }
+        for (const auto &[id, document] : mDisk)
+        {
+            (void)document;
+            if (!mMemory.contains(id))
+                ids.push_back(id);
+        }
+        return ids;
     }
 
     bool PrefabRegistry::SetDocument(const PrefabDocument &doc, std::vector<PrefabDiagnostic> *diagnostics)
@@ -125,6 +161,12 @@ namespace mir
         if (disk != mDisk.end())
             return &disk->second;
         return nullptr;
+    }
+
+    const PrefabDocument *PrefabRegistry::FindOnDisk(PrefabId id) const
+    {
+        const auto disk = mDisk.find(id);
+        return disk != mDisk.end() ? &disk->second : nullptr;
     }
 
     std::optional<std::filesystem::path> PrefabRegistry::PathOf(PrefabId id) const

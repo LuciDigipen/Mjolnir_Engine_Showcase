@@ -12,6 +12,7 @@
 #include <editor/ContentBrowserWatcher.h>
 #include <editor/Editor.h>
 #include <editor/PrefabAuthoringAdapter.h>
+#include <editor/PrefabPlayMarks.h>
 #include <editor/PrefabWorkspace.h>
 #include <editor/WorldSceneOps.h>
 
@@ -88,6 +89,11 @@ namespace mir
         bool mUnsavedBeforePlay = false;
         // Play shows the Scene tab; Stop reopens the Prefab tab it left
         std::optional<PrefabId> mPrefabBeforePlay;
+        // the Prefab tabs' marks: Stop restores them with the World
+        PrefabPlayMarks mPrefabMarksBeforePlay;
+
+        // a Prefab file changed under an open document: its save point no longer holds
+        void RefreshPrefabHistory();
 
         // last: they unregister before anything above is destroyed
         Registration mFrameBegin;

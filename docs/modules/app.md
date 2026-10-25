@@ -91,7 +91,7 @@ what was built is torn down.
 NewScene     SceneUnload stage, SceneModule::New, SceneLoad stage
 LoadScene    probe and prompt, SceneUnload, SceneModule::LoadFromDisk, SceneLoad
 SaveScene    SceneModule::Save, SceneSaved stage
-PlayScene    SceneModule::CaptureForPlay, PlayBegin stage, Play mode
+PlayScene    PlayBegin stage, SceneModule::CaptureForPlay, Play mode
 StopScene    PlayEnd stage, SceneModule::RestoreFromPlay, Edit mode, SceneLoad stage
 asset swap   AssetsModule::BeginReload, ReloadPrepare stage, CommitReload, ReloadCommit stage
              (a veto: ReloadAbort stage, AbortReload)
