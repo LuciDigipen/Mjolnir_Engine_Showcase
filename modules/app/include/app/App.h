@@ -230,6 +230,7 @@ namespace mir
         // The World the scene viewport and the editing panels draw and edit.
         World *ActivePreviewWorld();
         EditorDocuments MakeEditorDocuments();
+        void RefreshPrefabHistory();
     #endif
 
         SplashScreen mSplash;

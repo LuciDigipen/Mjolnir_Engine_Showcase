@@ -762,6 +762,7 @@ namespace mir
                 MIR_LOG_WARN("Prefab '{}' changed on disk; keeping its unsaved in-memory document", ToString(id));
                 continue;
             }
+            mExternalChanges.insert(id);
             if (mRegistry.Find(id) != nullptr)
                 mPendingDocuments.insert(id);
         }
@@ -930,6 +931,13 @@ namespace mir
 
         if (listeners != nullptr && HasChanges(afterChanges))
             listeners->NotifyAfterChange(world, afterChanges);
+    }
+
+    std::vector<PrefabId> PrefabCoordinator::ConsumeExternalChanges()
+    {
+        std::vector<PrefabId> changed(mExternalChanges.begin(), mExternalChanges.end());
+        mExternalChanges.clear();
+        return changed;
     }
 
     bool PrefabCoordinator::ConsumePublishedChanges()

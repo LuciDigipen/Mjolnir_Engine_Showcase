@@ -545,6 +545,7 @@ namespace mir
             std::vector<DocumentId> documents;
             for (const PrefabId id : prefabs->DocumentIds())
                 documents.push_back(DocumentId{ id.mHigh, id.mLow });
+            RefreshPrefabHistory();
             mPrefabMarksBeforePlay = CapturePrefabPlayMarks(documents,
                 [this](DocumentId document) { return mEditor.IsDocumentUnsaved(document); });
         }
@@ -822,6 +823,7 @@ namespace mir
                 if (PrefabCoordinator *prefabs = mWorld.TryResource<PrefabCoordinator>())
                     prefabs->RescanSources(PrefabSourceDir(mProject));
             }
+            RefreshPrefabHistory();
         #endif
 
             // Every mode, before any system runs
@@ -900,6 +902,10 @@ namespace mir
             // after PrefabSystem committed their documents at this safe point
             if (IsEditing(mWorld) && mPrefabWorkspace != nullptr)
                 mPrefabWorkspace->Update(dt, mElapsed, mFrame);
+        #endif
+
+        #if MIR_WITH_EDITOR
+            RefreshPrefabHistory();
         #endif
 
             // reference clearing and binding changes at the safe point happen outside History
@@ -1089,6 +1095,13 @@ namespace mir
                 return mPrefabWorkspace->PreviewWorld(*active);
         }
         return nullptr;
+    }
+
+    void App::RefreshPrefabHistory()
+    {
+        if (mPrefabWorkspace != nullptr)
+            mPrefabWorkspace->InvalidateExternalSavePoints([this](PrefabId id)
+                { mEditor.SetDocumentUnsaved(DocumentId{ id.mHigh, id.mLow }, true); });
     }
 
     EditorDocuments App::MakeEditorDocuments()
