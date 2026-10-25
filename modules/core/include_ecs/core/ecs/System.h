@@ -16,7 +16,7 @@ namespace mir
     class CommandBuffer;
 
     // Ordering primitive:
-    // Each system will execute in the order of assigned phase -> registrated order
+    // Each system will execute in the order of assigned phase -> SystemOrder
     enum class SystemPhase : uint8_t
     {
         PreUpdate,
@@ -32,6 +32,20 @@ namespace mir
         LateUpdate,
         Render,
         kCount
+    };
+
+    // Where a system runs inside its phase, lowest first. Equal orders are unspecified,
+    // so two systems that depend on each other need different orders.
+    // Between the named borders any int in [kMin, kMax] works, e.g. SystemOrder{SystemOrder::kEarly + 5}.
+    struct SystemOrder
+    {
+        static constexpr int kMin = 0;
+        static constexpr int kEarly = 10;
+        static constexpr int kNormal = 50;
+        static constexpr int kLate = 90;
+        static constexpr int kMax = 100;
+
+        int mValue;
     };
 
     // Transitions App runs; each runs the functions modules registered for it, in

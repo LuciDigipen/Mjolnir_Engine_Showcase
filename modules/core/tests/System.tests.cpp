@@ -83,29 +83,68 @@ namespace
     };
 }
 
-TEST_CASE("Systems run in phase order, then registration order", "[ecs][system]")
+TEST_CASE("Systems run in phase order, then by order inside a phase", "[ecs][system]")
 {
     World world;
     CommandBuffer commands;
     SystemScheduler scheduler;
     Recorder recorder;
 
-    // registered out of phase order on purpose
-    scheduler.AddSystem<TagSystem>(SystemPhase::Update, recorder, 1);
-    scheduler.AddSystem<TagSystem>(SystemPhase::PostUpdate, recorder, 4);
-    scheduler.AddSystem<TagSystem>(SystemPhase::Update, recorder, 2);
-    scheduler.AddSystem<TagSystem>(SystemPhase::PreUpdate, recorder, 3);
+    // registered out of phase and order on purpose
+    scheduler.AddSystem<TagSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kLate}, recorder, 1);
+    scheduler.AddSystem<TagSystem>(SystemPhase::PostUpdate, SystemOrder{SystemOrder::kNormal}, recorder, 4);
+    scheduler.AddSystem<TagSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kEarly}, recorder, 2);
+    scheduler.AddSystem<TagSystem>(SystemPhase::PreUpdate, SystemOrder{SystemOrder::kNormal}, recorder, 3);
+    scheduler.AddSystem<TagSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kNormal}, recorder, 5);
+    scheduler.AddSystem<TagSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kEarly + 5}, recorder, 6);
 
-    REQUIRE(scheduler.SystemCount() == 4);
-    REQUIRE(scheduler.SystemCount(SystemPhase::Update) == 2);
+    REQUIRE(scheduler.SystemCount() == 6);
+    REQUIRE(scheduler.SystemCount(SystemPhase::Update) == 4);
     REQUIRE(scheduler.SystemCount(SystemPhase::Render) == 0);
 
     SystemContext context{world, commands};
     scheduler.Start(context);
     scheduler.Update(context);
 
-    REQUIRE(recorder.started == std::vector<int>{3, 1, 2, 4});
-    REQUIRE(recorder.updated == std::vector<int>{3, 1, 2, 4});
+    // Update by order: 2 (10), 6 (15), 5 (50), 1 (90)
+    const std::vector<int> expected{3, 2, 6, 5, 1, 4};
+    REQUIRE(recorder.started == expected);
+    REQUIRE(recorder.updated == expected);
+}
+
+TEST_CASE("OnStop follows the sorted order, and the bounds are inclusive", "[ecs][system]")
+{
+    World world;
+    CommandBuffer commands;
+    SystemScheduler scheduler;
+    Recorder recorder;
+
+    scheduler.AddSystem<TagSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kMax}, recorder, 1);
+    scheduler.AddSystem<TagSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kMin}, recorder, 2);
+
+    SystemContext context{world, commands};
+    scheduler.Start(context);
+    scheduler.Stop(context);
+
+    REQUIRE(recorder.started == std::vector<int>{2, 1});
+    REQUIRE(recorder.stopped == std::vector<int>{2, 1});
+}
+
+TEST_CASE("FixedUpdate keeps the sorted order in every substep", "[ecs][system]")
+{
+    World world;
+    CommandBuffer commands;
+    SystemScheduler scheduler;
+    Recorder recorder;
+
+    scheduler.AddSystem<TagSystem>(SystemPhase::FixedUpdate, SystemOrder{SystemOrder::kNormal}, recorder, 1);
+    scheduler.AddSystem<TagSystem>(SystemPhase::FixedUpdate, SystemOrder{SystemOrder::kEarly}, recorder, 2);
+
+    SystemContext context{world, commands};
+    scheduler.Start(context);
+    scheduler.Update(context, 3, 1.0f / 60.0f);
+
+    REQUIRE(recorder.updated == std::vector<int>{2, 1, 2, 1, 2, 1});
 }
 
 TEST_CASE("OnStart runs once and OnStop runs in the same order", "[ecs][system]")
@@ -115,9 +154,9 @@ TEST_CASE("OnStart runs once and OnStop runs in the same order", "[ecs][system]"
     SystemScheduler scheduler;
     Recorder recorder;
 
-    scheduler.AddSystem<TagSystem>(SystemPhase::PreUpdate, recorder, 1);
-    scheduler.AddSystem<TagSystem>(SystemPhase::Update, recorder, 2);
-    scheduler.AddSystem<TagSystem>(SystemPhase::Update, recorder, 3);
+    scheduler.AddSystem<TagSystem>(SystemPhase::PreUpdate, SystemOrder{SystemOrder::kNormal}, recorder, 1);
+    scheduler.AddSystem<TagSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kNormal}, recorder, 2);
+    scheduler.AddSystem<TagSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kNormal}, recorder, 3);
 
     SystemContext context{world, commands};
     REQUIRE_FALSE(scheduler.Started());
@@ -146,8 +185,8 @@ TEST_CASE("Commands recorded in one phase are visible to the next", "[ecs][syste
     CommandBuffer commands;
     SystemScheduler scheduler;
 
-    scheduler.AddSystem<SpawnSystem>(SystemPhase::PreUpdate);
-    CountSystem &counter = scheduler.AddSystem<CountSystem>(SystemPhase::Update);
+    scheduler.AddSystem<SpawnSystem>(SystemPhase::PreUpdate, SystemOrder{SystemOrder::kNormal});
+    CountSystem &counter = scheduler.AddSystem<CountSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kNormal});
 
     SystemContext context{world, commands};
     scheduler.Start(context);
@@ -166,8 +205,8 @@ TEST_CASE("A spawn is not visible to systems in its own phase", "[ecs][system]")
     CommandBuffer commands;
     SystemScheduler scheduler;
 
-    scheduler.AddSystem<SpawnSystem>(SystemPhase::Update);
-    CountSystem &counter = scheduler.AddSystem<CountSystem>(SystemPhase::Update);
+    scheduler.AddSystem<SpawnSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kNormal});
+    CountSystem &counter = scheduler.AddSystem<CountSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kNormal});
 
     SystemContext context{world, commands};
     scheduler.Start(context);
@@ -208,7 +247,7 @@ TEST_CASE("A system drops its hook token in OnStop, so Reset leaves no hook behi
 
     {
         SystemScheduler scheduler;
-        scheduler.AddSystem<HookSystem>(SystemPhase::PreUpdate, hookCalls);
+        scheduler.AddSystem<HookSystem>(SystemPhase::PreUpdate, SystemOrder{SystemOrder::kNormal}, hookCalls);
 
         SystemContext context{world, commands};
         scheduler.Start(context);
@@ -249,7 +288,7 @@ TEST_CASE("The context carries frame timing through to systems", "[ecs][system]"
         std::vector<uint64_t> frames;
     };
 
-    TimeSystem &timing = scheduler.AddSystem<TimeSystem>(SystemPhase::Update);
+    TimeSystem &timing = scheduler.AddSystem<TimeSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kNormal});
 
     SystemContext context{world, commands};
     scheduler.Start(context);
@@ -270,11 +309,11 @@ TEST_CASE("FixedUpdate runs after Update and before PostUpdate", "[ecs][system]"
     Recorder recorder;
 
     // registered out of phase order on purpose
-    scheduler.AddSystem<TagSystem>(SystemPhase::Render, recorder, 5);
-    scheduler.AddSystem<TagSystem>(SystemPhase::FixedUpdate, recorder, 3);
-    scheduler.AddSystem<TagSystem>(SystemPhase::PreUpdate, recorder, 1);
-    scheduler.AddSystem<TagSystem>(SystemPhase::PostUpdate, recorder, 4);
-    scheduler.AddSystem<TagSystem>(SystemPhase::Update, recorder, 2);
+    scheduler.AddSystem<TagSystem>(SystemPhase::Render, SystemOrder{SystemOrder::kNormal}, recorder, 5);
+    scheduler.AddSystem<TagSystem>(SystemPhase::FixedUpdate, SystemOrder{SystemOrder::kNormal}, recorder, 3);
+    scheduler.AddSystem<TagSystem>(SystemPhase::PreUpdate, SystemOrder{SystemOrder::kNormal}, recorder, 1);
+    scheduler.AddSystem<TagSystem>(SystemPhase::PostUpdate, SystemOrder{SystemOrder::kNormal}, recorder, 4);
+    scheduler.AddSystem<TagSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kNormal}, recorder, 2);
 
     SystemContext context{world, commands};
     scheduler.Start(context);
@@ -293,11 +332,11 @@ TEST_CASE("FixedUpdate runs once per substep, every other phase once per frame",
     SystemScheduler scheduler;
     Recorder recorder;
 
-    scheduler.AddSystem<TagSystem>(SystemPhase::PreUpdate, recorder, 1);
-    scheduler.AddSystem<TagSystem>(SystemPhase::Update, recorder, 2);
-    scheduler.AddSystem<TagSystem>(SystemPhase::FixedUpdate, recorder, 3);
-    scheduler.AddSystem<TagSystem>(SystemPhase::PostUpdate, recorder, 4);
-    scheduler.AddSystem<TagSystem>(SystemPhase::Render, recorder, 5);
+    scheduler.AddSystem<TagSystem>(SystemPhase::PreUpdate, SystemOrder{SystemOrder::kNormal}, recorder, 1);
+    scheduler.AddSystem<TagSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kNormal}, recorder, 2);
+    scheduler.AddSystem<TagSystem>(SystemPhase::FixedUpdate, SystemOrder{SystemOrder::kNormal}, recorder, 3);
+    scheduler.AddSystem<TagSystem>(SystemPhase::PostUpdate, SystemOrder{SystemOrder::kNormal}, recorder, 4);
+    scheduler.AddSystem<TagSystem>(SystemPhase::Render, SystemOrder{SystemOrder::kNormal}, recorder, 5);
 
     SystemContext context{world, commands};
     scheduler.Start(context);
@@ -315,9 +354,9 @@ TEST_CASE("FixedUpdate flushes commands after every substep", "[ecs][system]")
     CommandBuffer commands;
     SystemScheduler scheduler;
 
-    scheduler.AddSystem<SpawnSystem>(SystemPhase::FixedUpdate);
-    CountSystem &fixedCounter = scheduler.AddSystem<CountSystem>(SystemPhase::FixedUpdate);
-    CountSystem &postCounter = scheduler.AddSystem<CountSystem>(SystemPhase::PostUpdate);
+    scheduler.AddSystem<SpawnSystem>(SystemPhase::FixedUpdate, SystemOrder{SystemOrder::kNormal});
+    CountSystem &fixedCounter = scheduler.AddSystem<CountSystem>(SystemPhase::FixedUpdate, SystemOrder{SystemOrder::kNormal});
+    CountSystem &postCounter = scheduler.AddSystem<CountSystem>(SystemPhase::PostUpdate, SystemOrder{SystemOrder::kNormal});
 
     SystemContext context{world, commands};
     scheduler.Start(context);
@@ -344,9 +383,9 @@ TEST_CASE("FixedUpdate gets the fixed step as dt, other phases keep the frame dt
         std::vector<float> deltas;
     };
 
-    DeltaSystem &updateSystem = scheduler.AddSystem<DeltaSystem>(SystemPhase::Update);
-    DeltaSystem &fixedSystem = scheduler.AddSystem<DeltaSystem>(SystemPhase::FixedUpdate);
-    DeltaSystem &postSystem = scheduler.AddSystem<DeltaSystem>(SystemPhase::PostUpdate);
+    DeltaSystem &updateSystem = scheduler.AddSystem<DeltaSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kNormal});
+    DeltaSystem &fixedSystem = scheduler.AddSystem<DeltaSystem>(SystemPhase::FixedUpdate, SystemOrder{SystemOrder::kNormal});
+    DeltaSystem &postSystem = scheduler.AddSystem<DeltaSystem>(SystemPhase::PostUpdate, SystemOrder{SystemOrder::kNormal});
 
     SystemContext context{world, commands};
     scheduler.Start(context);

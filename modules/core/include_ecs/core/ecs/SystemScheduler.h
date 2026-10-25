@@ -14,6 +14,7 @@
 #include "World.h"
 #include "core/log/Assert.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -41,16 +42,24 @@ namespace mir
 
         // Cannot register system after Start
         template <typename S, typename... Args>
-        S &AddSystem(SystemPhase phase, Args &&...args)
+        S &AddSystem(SystemPhase phase, SystemOrder order, Args &&...args)
         {
             static_assert(std::is_base_of_v<ISystem, S>, "SystemScheduler::Add: S must derive from ISystem");
             MIR_ASSERT(!mStarted, "SystemScheduler::Add: systems must be registered before Start");
             MIR_ASSERT((phase != SystemPhase::Propagate || std::is_same_v<S, TransformPropagateSystem>),
                 "SystemScheduler::Add: only TransformPropagateSystem runs in Propagate");
+            MIR_ASSERT(order.mValue >= SystemOrder::kMin && order.mValue <= SystemOrder::kMax,
+                "SystemScheduler::Add: order {} is outside [{}, {}]", order.mValue, SystemOrder::kMin,
+                SystemOrder::kMax);
 
             auto system = std::make_unique<S>(std::forward<Args>(args)...);
             S &ref = *system;
-            mPhases[Index(phase)].push_back(std::move(system));
+
+            // after the last entry that is not later, so equal orders stay in registration order
+            std::vector<Entry> &entries = mPhases[Index(phase)];
+            const auto position = std::upper_bound(entries.begin(), entries.end(), order.mValue,
+                [](int value, const Entry &entry) { return value < entry.order; });
+            entries.insert(position, Entry{ order.mValue, std::move(system) });
             return ref;
         }
 
@@ -61,14 +70,14 @@ namespace mir
 
             for (std::size_t phase = 0; phase < kPhaseCount; ++phase)
             {
-                for (const std::unique_ptr<ISystem> &system : mPhases[phase])
-                    system->OnStart(context);
+                for (const Entry &entry : mPhases[phase])
+                    entry.system->OnStart(context);
 
                 context.commands.Flush(context.world);
             }
         }
 
-        // call systems in the order of phase -> registrated order
+        // call systems in the order of phase -> SystemOrder
         // buffer is flushed after every phase, and after every FixedUpdate substep
         // FixedUpdate runs fixedSteps times with dt = fixedDt; every other phase runs once with context.dt
         void Update(SystemContext &context, uint32_t fixedSteps, float fixedDt)
@@ -104,8 +113,8 @@ namespace mir
 
             for (std::size_t phase = 0; phase < kPhaseCount; ++phase)
             {
-                for (const std::unique_ptr<ISystem> &system : mPhases[phase])
-                    system->OnStop(context);
+                for (const Entry &entry : mPhases[phase])
+                    entry.system->OnStop(context);
 
                 context.commands.Flush(context.world);
             }
@@ -170,8 +179,8 @@ namespace mir
         // one pass over a phase, then flush
         void RunPhase(std::size_t phase, SystemContext &context)
         {
-            for (const std::unique_ptr<ISystem> &system : mPhases[phase])
-                system->OnUpdate(context);
+            for (const Entry &entry : mPhases[phase])
+                entry.system->OnUpdate(context);
 
             context.commands.Flush(context.world);
         }
@@ -179,7 +188,14 @@ namespace mir
         static constexpr std::size_t kStageCount = static_cast<std::size_t>(Stage::kCount);
         static constexpr std::size_t kFrameSlotCount = static_cast<std::size_t>(FrameSlot::kCount);
 
-        std::vector<std::unique_ptr<ISystem>> mPhases[kPhaseCount];
+        struct Entry
+        {
+            int order;
+            std::unique_ptr<ISystem> system;
+        };
+
+        // each phase sorted by order
+        std::vector<Entry> mPhases[kPhaseCount];
         RegistrationList<StageFunction> mStages[kStageCount];
         RegistrationList<StageFunction> mFrameSlots[kFrameSlotCount];
         bool mStarted = false;
