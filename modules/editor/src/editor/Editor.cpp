@@ -21,6 +21,7 @@
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
 #include <editor/EditorWidgets.h>
+#include <physics/PhysicsWorld.h>
 #include <editor/Selection.h>
 #include <editor/history/AuthoredEdit.h>
 #include <editor/history/ComponentCommands.h>
@@ -1260,7 +1261,8 @@ namespace mir
             if (mShowProjectSettings)
             {
                 if (ImGui::Begin("Project Settings", &mShowProjectSettings))
-                    mProjectSettingsPanel.Draw(renderSettings, mProjectSettingsPath, mShowInputSettings);
+                    mProjectSettingsPanel.Draw(renderSettings, mProjectSettingsPath, mShowInputSettings,
+                        sceneWorld.TryResource<PhysicsWorld>(), mode.mMode == EngineMode::Edit);
                 ImGui::End();
             }
             else

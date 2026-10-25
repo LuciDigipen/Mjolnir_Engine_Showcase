@@ -16,6 +16,8 @@ target_link_libraries(engine_editor
            mir::window
            mir::input
            mir::project
+           # ProjectSettingsPanel.h holds a PhysicsLayerTable
+           mir::physics
            # PrefabWorkspace.h and PrefabAuthoringAdapter.h take prefab types
            mir::prefab
     PRIVATE mir::animation

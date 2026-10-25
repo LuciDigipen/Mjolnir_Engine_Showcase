@@ -11,6 +11,7 @@
 #include <physics/CollisionEventSystem.h>
 #include <physics/CollisionEvents.h>
 #include <physics/ComponentRegistration.h>
+#include <physics/PhysicsLayerSettings.h>
 #include <physics/PhysicsInterpolationSystem.h>
 #include <physics/PhysicsSystem.h>
 #include <physics/PhysicsWorld.h>
@@ -21,11 +22,12 @@
 
 namespace mir
 {
-    PhysicsModule::PhysicsModule(ModuleContext context)
+    PhysicsModule::PhysicsModule(ModuleContext context, const std::filesystem::path &projectSettingsPath)
     {
         RegisterPhysicsComponents();
 
-        context.world.EmplaceResource<PhysicsWorld>();
+        PhysicsWorld &physics = context.world.EmplaceResource<PhysicsWorld>();
+        physics.SetLayerTable(ReadPhysicsLayers(projectSettingsPath));
         context.world.EmplaceResource<CollisionEvents>();
 
         // once per fixed substep, before Propagate turns the Transforms it writes into world matrices

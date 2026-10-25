@@ -9,6 +9,10 @@
 
 #include <editor/panels/ProjectSettingsPanel.h>
 
+#include <core/log/SetupError.h>
+#include <physics/PhysicsLayerSettings.h>
+#include <physics/PhysicsWorld.h>
+
 #include <imgui.h>
 
 #include <cstdio>
@@ -96,8 +100,127 @@ namespace mir
         }
     }
 
+    void ProjectSettingsPanel::LoadLayers(const std::filesystem::path &savePath)
+    {
+        try
+        {
+            mDraftLayers = ReadPhysicsLayers(savePath);
+            mLayersStatus.clear();
+        }
+        catch (const SetupError &)
+        {
+            mDraftLayers = PhysicsLayerTable{};
+            mLayersStatus = "The saved layers are invalid, showing the defaults - see log.";
+        }
+
+        for (int i = 0; i < kPhysicsLayerCount; ++i)
+            std::snprintf(mLayerNames[i], sizeof(mLayerNames[i]), "%s", mDraftLayers.names[i].c_str());
+        mLayersLoaded = true;
+    }
+
+    void ProjectSettingsPanel::DrawPhysicsLayers(const std::filesystem::path &savePath, PhysicsWorld *physics, bool editing)
+    {
+        if (!mLayersLoaded)
+            LoadLayers(savePath);
+
+        ImGui::SeparatorText("Physics layers");
+        ImGui::TextWrapped(
+            "A body is on one layer and collides with the layers ticked below. Layer 0 is Default. An empty name is "
+            "a free slot; clearing a name frees it without moving the others. Saved layers apply to the running "
+            "world while editing.");
+
+        if (!editing)
+            ImGui::BeginDisabled();
+
+        if (ImGui::BeginChild("##layerNames", ImVec2(0.0f, 160.0f), ImGuiChildFlags_Borders))
+        {
+            for (int i = 0; i < kPhysicsLayerCount; ++i)
+            {
+                ImGui::PushID(i);
+                ImGui::TextDisabled("%2d", i);
+                ImGui::SameLine();
+                if (i == 0)
+                    ImGui::TextUnformatted("Default");
+                else if (ImGui::InputTextWithHint("##name", "unused", mLayerNames[i], sizeof(mLayerNames[i])))
+                {
+                    mDraftLayers.names[i] = mLayerNames[i];
+                    if (mDraftLayers.names[i].empty())
+                    {
+                        // a freed slot goes back to colliding with everything
+                        for (int other = 0; other < kPhysicsLayerCount; ++other)
+                            mDraftLayers.SetCollide(i, other, true);
+                    }
+                }
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndChild();
+
+        int named[kPhysicsLayerCount];
+        int namedCount = 0;
+        for (int i = 0; i < kPhysicsLayerCount; ++i)
+        {
+            if (!mDraftLayers.names[i].empty())
+                named[namedCount++] = i;
+        }
+
+        ImGui::TextUnformatted("Collides with");
+        if (ImGui::BeginTable("##layerMatrix", namedCount + 1, ImGuiTableFlags_Borders | ImGuiTableFlags_SizingFixedFit))
+        {
+            ImGui::TableSetupColumn("");
+            for (int column = 0; column < namedCount; ++column)
+                ImGui::TableSetupColumn(mDraftLayers.names[named[column]].c_str());
+            ImGui::TableHeadersRow();
+
+            for (int row = 0; row < namedCount; ++row)
+            {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted(mDraftLayers.names[named[row]].c_str());
+                // one box per pair: the lower triangle
+                for (int column = 0; column <= row; ++column)
+                {
+                    ImGui::TableSetColumnIndex(column + 1);
+                    ImGui::PushID(row * kPhysicsLayerCount + column);
+                    bool collide = mDraftLayers.Collide(named[row], named[column]);
+                    if (ImGui::Checkbox("##collide", &collide))
+                        mDraftLayers.SetCollide(named[row], named[column], collide);
+                    ImGui::PopID();
+                }
+            }
+            ImGui::EndTable();
+        }
+
+        if (ImGui::Button("Save##Layers"))
+        {
+            const std::string problem = CheckPhysicsLayers(mDraftLayers);
+            if (!problem.empty())
+                mLayersStatus = "Not saved: " + problem + ".";
+            else if (!WritePhysicsLayers(savePath, mDraftLayers))
+                mLayersStatus = "Save failed - see log.";
+            else
+            {
+                if (physics != nullptr)
+                    physics->SetLayerTable(mDraftLayers);
+                mLayersStatus = "Saved.";
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Revert##Layers"))
+            LoadLayers(savePath);
+
+        if (!editing)
+            ImGui::EndDisabled();
+
+        if (!mLayersStatus.empty())
+        {
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", mLayersStatus.c_str());
+        }
+    }
+
     void ProjectSettingsPanel::Draw(RenderSettings &renderSettings, const std::filesystem::path &savePath,
-        bool &showInputSettings)
+        bool &showInputSettings, PhysicsWorld *physics, bool editing)
     {
         if (!mDraftLoaded)
         {
@@ -111,6 +234,7 @@ namespace mir
             showInputSettings = true;
 
         DrawRendering(renderSettings, mDraftRenderSettings, savePath);
+        DrawPhysicsLayers(savePath, physics, editing);
         DrawExternalTools(savePath);
     }
 }
