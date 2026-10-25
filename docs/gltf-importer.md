@@ -58,7 +58,7 @@ The editor cannot create an entity or add a component yet, so a scene entity is 
 }
 ```
 
-then add that id to the `entities` array in `scene.json`, move `nextId` past it, and reload with `File ▸ Load Scene`. A development build reads and writes the source `games/` tree rather than the copy beside the executable, because `asset_workspace.json` points back at it (`ProjectRoot` in `app/GameProject.cpp`), so edit the files in the repository.
+then add that id to the `entities` array in `scene.json`, move `nextId` past it, and reload with `File ▸ Load Scene`. A development build reads and writes the source `games/` tree rather than the copy beside the executable, because `asset_workspace.json` points back at it (`ProjectRoot` in `project/GameProject.cpp`), so edit the files in the repository.
 
 ### Which model, which clip
 

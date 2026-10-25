@@ -25,8 +25,8 @@ mSplash                  shown until main closes it
 mCommands, mWorld, mScheduler
 CoreModule, AssetsModule, SceneModule, PrefabModule
 GameUIModule, GameShellModule    before ImGui, whose shutdown frees their textures' GPU side
-WindowModule, RendererModule, ImGuiModule, EditorModule (editor builds)
-InputModule, CameraModule, AnimationModule, AudioModule, PhysicsModule, TerrainModule
+WindowModule, RendererModule, InputModule, AnimationModule, ImGuiModule, EditorModule (editor builds)
+CameraModule, AudioModule, PhysicsModule, TerrainModule
 ScriptModule, the five script bridges, TerrainRuntimeModule, GameUIImGuiModule
 ```
 
