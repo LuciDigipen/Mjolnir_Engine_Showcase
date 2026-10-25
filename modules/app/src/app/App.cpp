@@ -173,8 +173,10 @@ namespace mir
         // validate before closing; not ResolveGameProject, which logs "Loading game"
         try
         {
-            mProjectToOpen = LoadGameProject(NormalizeGameDir(requestedDir, ErrorCategory::Usage));
-            ResolveAssetIdRoot(*mProjectToOpen);
+            // set only once it can open: main relaunches into whatever is here
+            GameProject next = LoadGameProject(NormalizeGameDir(requestedDir, ErrorCategory::Usage));
+            ResolveAssetIdRoot(next);
+            mProjectToOpen = std::move(next);
         }
         catch (const SetupError &error)
         {
