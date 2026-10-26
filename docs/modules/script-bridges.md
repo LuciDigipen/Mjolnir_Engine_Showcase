@@ -59,9 +59,9 @@ bindings to a `ScriptHost` the way the bridge does.
 
 Every function is on the `World` usertype, called as `world:name(entity, ...)`. A call that does not do what it says returns `false` (or `nil` for a read), and the reason is logged. A bad call made every frame logs every frame, because the log throttle is not built yet.
 
-**The forms.** A vector is a table `{ x = number, y = number, z = number }`, a rotation adds `w`. A missing key, a value that is not a number, NaN or infinity, an array such as `{ 1, 2, 3 }`, or any other table is refused with one error that names the call, the argument and the form expected, and it never becomes a zero vector. A position is the same table in meters. A layer is a name from the project's table or an index from 0 to 31.
+**The forms.** A vector is a table `{ x = number, y = number, z = number }`, a rotation adds `w`, which is 1 when left out. A missing key, a value that is not a number, NaN or infinity, an array such as `{ 1, 2, 3 }`, or any other table is refused with one error that names the call, the argument and the form expected, and it never becomes a zero vector. A position is the same table in meters. A layer is a name from the project's table or an index from 0 to 31.
 
-**Body fields.** Each `RigidBody` field has a reader `name(entity)` and a writer `set_name(entity, value)`, with the field name in snake case. The writer returns whether the value was taken, and it is applied to the live body on the next step. A reader answers `nil` for an entity with no `RigidBody`.
+**Body fields.** Each `RigidBody` field has a reader `name(entity)` and a writer `set_name(entity, value)`, with the field name in snake case. The writer returns whether the value was taken, and it is applied to the live body on the next step. A value outside what the field allows is refused with one error, and the field keeps its value: a choice from a list must be a whole number in the list, and a number must be inside the range the field declares (`mass` above 0, `restitution` from 0 to 1, `friction` from 0). A reader answers `nil` for an entity with no `RigidBody`.
 
 | Reader | Writer | Value |
 |---|---|---|
@@ -69,7 +69,7 @@ Every function is on the `World` usertype, called as `world:name(entity, ...)`. 
 | `shape` | `set_shape` | `PhysicsShape.Box`, `.Sphere` or `.Capsule` |
 | `half_extent` | `set_half_extent` | vector, every axis above 0 |
 | `radius`, `half_height` | `set_radius`, `set_half_height` | number above 0 |
-| `axis` | `set_axis` | `PhysicsAxis.X`, `.Y` or `.Z` |
+| `capsule_axis` | `set_capsule_axis` | `PhysicsAxis.X`, `.Y` or `.Z`. Not `axis`, which is the input bridge's `world:axis(action)` |
 | `offset` | `set_offset` | vector, in the entity's own axes |
 | `rotation_offset` | `set_rotation_offset` | rotation |
 | `interpolate`, `is_trigger`, `detect_stay`, `allow_sleeping` | `set_interpolate`, `set_is_trigger`, `set_detect_stay`, `set_allow_sleeping` | boolean |

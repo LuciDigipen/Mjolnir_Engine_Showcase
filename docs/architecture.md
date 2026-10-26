@@ -38,7 +38,7 @@ so a hook or stage function never outlives the module it calls into.
 *Base* is `core_base`: logging, paths, file bytes, math, the platform layer and
 the crash handler. It is process-wide, set up in `main`, and links only
 third-party code. *Plain* libraries hold stateless helpers with no lifetime:
-`serial`, `editortheme` and `project`. They link base and other plain libraries.
+`serial`, `editortheme`, `project` and `physics_layers`. They link base and other plain libraries.
 *Modules* are everything else, and may link anything below them. A library
 becomes a module only when it owns runtime state or registers something.
 
@@ -91,12 +91,13 @@ each library links in the engine, besides `core`; `app` links everything.
 | `serial` | plain | `core_base` |
 | `project` | plain | `core_base`, `serial` |
 | `editortheme` | plain | `imgui` only |
+| `physics_layers` | plain | `core_base`, `serial` |
 | `core` | module | `core_base` |
 | `assets` | module | `project` |
 | `scene` | module | `serial` |
 | `prefab` | module | `assets`, `scene`, `serial` |
 | `window`, `audio` | module | none |
-| `physics` | module | `serial` |
+| `physics` | module | `physics_layers` |
 | `input` | module | `window`, `serial` |
 | `camera` | module | `input` |
 | `renderer` | module | `assets`, `serial` |
@@ -109,7 +110,7 @@ each library links in the engine, besides `core`; `app` links everything.
 | `gameui` | module | `assets`, `input` |
 | `gameui_imgui` | module, bridge | `gameui`, `imguiruntime`, `window` |
 | `gameshell` | module | `gameui` |
-| `editor` | module | `imguiruntime`, `renderer`, `window`, `input`, `scene`, `animation`, `assets`, `project`, `gameui`, `physics`, `editortheme` |
+| `editor` | module | `imguiruntime`, `renderer`, `window`, `input`, `scene`, `animation`, `assets`, `project`, `gameui`, `physics_layers`, `editortheme` |
 
 A cross-library piece moves into a library only when that adds no cycle, no new
 third-party code to the library's link closure, and no new runtime setup to its

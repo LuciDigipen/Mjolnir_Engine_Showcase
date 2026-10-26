@@ -2,7 +2,7 @@
 
 Owns the Jolt world, the `RigidBody` component and the systems that keep bodies and Transforms in step. It stays out of Lua, which the `physics_script` bridge adds, and of terrain, which builds its collision on the height field type physics exposes.
 
-`mir::physics` · depends `mir::core` (public), `mir::serial` and Jolt (private) · API `modules/physics/include/physics/` · maintainer Sumin Park · reviewed 2026-10-25
+`mir::physics` · depends `mir::core` and `mir::physics_layers` (public), Jolt (private) · API `modules/physics/include/physics/` · maintainer Sumin Park · reviewed 2026-10-25
 
 ## Model
 
@@ -14,7 +14,7 @@ A body has a shape, a box, a sphere or a capsule that stands along an axis, and 
 
 A body can be a trigger, which reports contacts and never blocks. Jolt calls it a sensor, and by default it reports dynamic and kinematic bodies and not static ones (Sensors).
 
-A body is on one of 32 layers. The project's layer table says which pairs of layers collide, and a pair of static bodies never collides. Jolt keeps this as an object layer per body (Collision Filtering), here the layer and whether the body moves, and the broad phase keeps its two layers, static and moving (Broad Phase).
+A body is on one of 32 layers. The project's layer table, read by the `physics_layers` library, says which pairs of layers collide, and a table saved in the editor is taken when Play begins, and a pair of static bodies never collides. Jolt keeps this as an object layer per body (Collision Filtering), here the layer and whether the body moves, and the broad phase keeps its two layers, static and moving (Broad Phase).
 
 **The step.** `PhysicsSystem` runs in `FixedUpdate` at order `kNormal`, once per fixed substep. A script's `OnFixedUpdate` runs before it, at `kEarly`, so a force or a pose a script sets acts on the same step. Each step applies edits to the live bodies, pushes Transform changes to Jolt, runs the step gates, steps Jolt and writes the poses back. `PhysicsInterpolationSystem` runs in `PostUpdate` and draws interpolating bodies between their last two steps.
 
@@ -36,7 +36,7 @@ A body is on one of 32 layers. The project's layer table says which pairs of lay
 | `PhysicsInterpolationSystem` | `physics/PhysicsInterpolationSystem.h` | The blend between the last two steps |
 | `PhysicsStepGate`, `PhysicsStepGates` | `physics/PhysicsStepGate.h` | Lets another module act on bodies between the sync and the step |
 | `CollisionEvents`, `CollisionEventSystem` | `physics/CollisionEvents.h` | The per-frame event list and its drain |
-| `PhysicsLayerTable`, `ReadPhysicsLayers` | `physics/PhysicsLayers.h`, `physics/PhysicsLayerSettings.h` | The 32 layers and the `physicsLayers` section of `project_settings.json` |
+| `PhysicsLayerTable`, `PhysicsLayerUpdate`, `ReadPhysicsLayers` | `physics_layers/PhysicsLayers.h`, `physics_layers/PhysicsLayerSettings.h` | The 32 layers, the resource the editor leaves a saved table in, and the `physicsLayers` section of `project_settings.json`. A plain library with no Jolt, which the editor links on its own |
 | `PhysicsMotion`, `PhysicsShape`, `PhysicsAxis`, `BodyHandle` | `physics/PhysicsTypes.h` | The enums and the handle, free of Jolt |
 | `HeightFieldDesc`, `SharedHeightField` | `physics/HeightField.h` | Static height field bodies, built by terrain |
 
@@ -70,7 +70,9 @@ The `runtime` block is the live state physics keeps. It is not in the field tabl
 
 **A body is never built while physics steps.** The add hook asserts it, because Jolt's contact callbacks run on job threads and must not add components. Spawn through the `CommandBuffer` instead.
 
-**A size at or below 0 leaves the entity without a body.** The reason and a hint are logged once, on the first attempt only. The entity gets a body when an edit makes the fields buildable, silently, and a second refusal says nothing new. A collider needs a size above 0 on every axis, for a sphere or capsule the radius, and for a capsule the half height.
+**A size that is not above 0 gives an empty collider.** A box needs every half extent above 0, a sphere its radius, a capsule its radius and half height, and the same goes for a world scale of 0 on the entity or a parent. Jolt has no zero-size shape, so the body is built with its `EmptyShape`, which has no volume and collides with nothing. The reason and a hint are logged once for each time the body is built or edited into that state, and fixing the size or the scale swaps the real shape in on the same body, so its handle never changes.
+
+**The shape follows the world scale while Play runs.** The runtime keeps the world scale the shape was built from, and a difference counts as a shape edit. A scale animated every frame therefore replaces the shape every frame and wakes the bodies around it. A change in the last digits, such as a rotating parent leaves in the decomposed scale, is not a change.
 
 **A copy starts without a body handle.** Duplicate, a prefab instance and a snapshot restore all copy the component's bytes, so the `OnAdd` hook clears `runtime` first and builds the copy its own body.
 
@@ -80,7 +82,7 @@ The `runtime` block is the live state physics keeps. It is not in the field tabl
 
 **A Static body can become Dynamic.** Every `RigidBody` body is built allowing it, with the authored mass, so the switch is an in-place edit. Height field bodies are built another way and cannot.
 
-**An edit to a held body waits.** A body held by the terrain release gate is kinematic for the length of the hold, so its edits land once it is resumed.
+**An edit to a held body waits, unless it leaves Dynamic.** A body held by the terrain release gate is kinematic for the length of the hold, so its edits land once it is resumed. An edit that makes it Static or Kinematic releases the hold first, because a gate that only tracks dynamic bodies would never resume it.
 
 ## Jolt behavior the engine relies on
 
@@ -105,4 +107,4 @@ Cited from the Jolt documentation at https://jrouwe.github.io/JoltPhysics/ by se
 
 *2026-10-25*, **Layers and ray cast filters.** Was: every body collided with every other, and a cast hit its own caster. Now: 32 layers with a collision table in `project_settings.json`, and a cast that filters by layer, motion type, trigger and excluded entities. Because: a game needs to say what passes through what and what a cast is for.
 
-*2026-10-25*, **Input is validated and ignored calls say so.** Was: NaN reached Jolt, a vector written in another form became zero, a zero size logged every step, and a call Jolt ignored still returned true. Now: the bindings refuse bad input with one error, a refused size is logged once, and `PhysicsWorld` returns false and logs when a body ignores a force, torque, impulse or velocity. Because: a Lua return value should be trusted.
+*2026-10-25*, **Input is validated and ignored calls say so.** Was: NaN reached Jolt, a vector written in another form became zero, a zero size logged every step, and a call Jolt ignored still returned true. Now: the bindings refuse bad input with one error, a size that cannot be built gives an empty collider and is logged, and `PhysicsWorld` returns false and logs when a body ignores a force, torque, impulse or velocity. Because: a Lua return value should be trusted.

@@ -310,6 +310,8 @@ made the `ScriptRef`.
 
 ## Changed
 
+*2026-10-25*, **`world:set` takes only the documented forms.** Was: a vector, color or rotation table with a missing or misspelled key took 0 for it (1 for a rotation's `w`), and NaN or infinity went into a number field. Now: every key must be a number, NaN and infinity are refused, a number field keeps to the range it declares, a choice from a list must be in the list, and the refusal is one error that names the field and what was expected, with the field left as it was. A rotation may leave out `w`, which is 1. Because: a typo should fail loudly instead of becoming a zero, and a script should not be able to put a field where the editor could not. No script in `games/` wrote a partial table, so none changed.
+
 *2026-10-25*, **`OnFixedUpdate`, and a `ScriptRef` starts clean when it is added.** Was: scripts
 had no callback on the physics step, so a force set in `OnUpdate` landed on whichever step came
 next, and a `ScriptRef` copied from another entity carried that entity's `instanceRef` and
