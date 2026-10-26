@@ -35,8 +35,8 @@ namespace mir
         explicit History(std::size_t budget = kHistoryBudget) : mBudget(budget) {}
 
         void Submit(std::unique_ptr<ICommand> command);
-        void RequestUndo() { --mPending; }
-        void RequestRedo() { ++mPending; }
+        void RequestUndo() { --mPending; ++mSubmissions; }
+        void RequestRedo() { ++mPending; ++mSubmissions; }
 
        
         void EndStep() { mEndStep = true; }
@@ -64,7 +64,7 @@ namespace mir
         std::string RedoName() const;
 
         std::size_t StepCount() const { return mSteps.size(); }
-        // Commands accepted since construction; a pending session compares it across one frame.
+        // Includes queued undo and redo requests.
         std::size_t SubmissionCount() const { return mSubmissions; }
         std::size_t Cursor() const { return mCursor; }
         std::size_t UsedBytes() const { return mUsed; }

@@ -447,6 +447,48 @@ TEST_CASE("A ready snap revalidates before the commit boundary", "[editor][snap]
     }
 }
 
+TEST_CASE("A ready snap gives queued undo and redo precedence", "[editor][snap][history]")
+{
+    for (const bool redo : {false, true})
+    {
+        INFO((redo ? "redo" : "undo"));
+        Editing editing;
+        const Entity entity = editing.Add("snap");
+        mir::AddTransform(editing.mWorld, entity, Transform(WorldVec3{0.0}));
+        editing.Selected() = {entity};
+        SnapToTerrainEdit previous;
+        previous.mPosition = Vec(2.0, 20.0, 3.0);
+        editing.Run(mir::MakeSnapToTerrainCommand(entity, previous, nullptr));
+        if (redo)
+            editing.Undo();
+        editing.Selected() = {entity};
+
+        FakeGround source;
+        GroundQuery &ground = editing.mWorld.EmplaceResource<GroundQuery>();
+        const auto binding = ground.Bind(source);
+        SnapToTerrainSession session;
+        REQUIRE(session.Begin(editing.mWorld, mir::kSceneDocument, ground).mEnabled);
+        REQUIRE(session.CurrentState() == SnapToTerrainSession::State::Ready);
+        const std::size_t frame = editing.mHistory.SubmissionCount();
+        if (redo)
+            editing.mHistory.RequestRedo();
+        else
+            editing.mHistory.RequestUndo();
+
+        const SnapToTerrainCommit commit{frame, editing.mHistory.SubmissionCount(), false};
+        const auto edit = session.TakeEdit(editing.mWorld, mir::kSceneDocument, ground, true, commit);
+        CHECK_FALSE(edit);
+        if (edit)
+            editing.mHistory.Submit(mir::MakeSnapToTerrainCommand(entity, *edit, nullptr));
+        editing.Flush();
+        CHECK(editing.mHistory.StepCount() == 1);
+        CHECK(editing.mHistory.Cursor() == (redo ? 1 : 0));
+        const auto *transform = editing.mWorld.GetComponent<Transform>(entity);
+        REQUIRE(transform);
+        CHECK(transform->Position() == (redo ? previous.mPosition : WorldVec3{0.0}));
+    }
+}
+
 TEST_CASE("A loading snap retries without mutating and times out", "[editor][snap]")
 {
     Fixture fixture;
