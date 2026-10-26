@@ -9,6 +9,7 @@
 #pragma once
 
 #include <renderer/Material.h>
+#include <renderer/MaterialRecordTable.h>
 
 #include <glm/vec4.hpp>
 #include <volk.h>
@@ -16,13 +17,17 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string_view>
 #include <vector>
+
+VK_DEFINE_HANDLE(VmaAllocation)
 
 namespace mir::vk
 {
     class Device;
     class ResourceStore;
+    class MaterialTable;
 
     struct GpuMaterial
     {
@@ -38,7 +43,16 @@ namespace mir::vk
         VkFrontFace mFrontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         VkImageView mBaseColorView = VK_NULL_HANDLE;
         VkSampler mSampler = VK_NULL_HANDLE;
+        uint32_t mBaseColorSlot = 0;
+        uint32_t mSamplerSlot = 0;
         bool mError = false;
+
+        // Absent on a device without the shared-table features.
+        MaterialRecordId mRecordId;
+        uint32_t mRecordOffset = kInvalidMaterialRecordOffset;
+        VkBuffer mRecordBuffer = VK_NULL_HANDLE;
+        VmaAllocation mRecordAllocation = VK_NULL_HANDLE;
+        std::byte *mRecordMapped = nullptr;
     };
 
     // Destroy* and Release* do not wait: the caller idles the device first,
@@ -47,14 +61,19 @@ namespace mir::vk
     {
     public:
         // sharedLayouts are sets 1-3, borrowed for the pipeline layouts; their owners destroy them.
-        // Also creates the default and error materials and the sky pipeline, which reads set 1 alone.
-        bool Initialize(Device &device, ResourceStore &resources, VkFormat colorFormat,
+        // table is null on a device without descriptor indexing. Also creates the default and
+        // error materials and the sky pipeline, which reads set 1 alone.
+        bool Initialize(Device &device, ResourceStore &resources, MaterialTable *table, VkFormat colorFormat,
             const std::array<VkDescriptorSetLayout, 3> &sharedLayouts);
         void Shutdown();
 
         MaterialHandle CreateMaterial(const MaterialDesc &desc, ResourceStore &resources, VkFormat colorFormat);
         // False when the handle is null, stale, the default or the error material.
         bool DestroyMaterial(MaterialHandle handle);
+        // Raw record bytes for this material; published at the next frame.
+        bool UpdateRecord(MaterialHandle handle, std::span<const std::byte> bytes);
+        // After BeginFrame's wait, before recording.
+        void PublishRecords(uint64_t completedFrame, uint64_t frame);
         // Every material but the default and error ones, which move to slots 0 and 1; returns how many were released.
         std::size_t ReleaseMaterials();
 
@@ -87,11 +106,14 @@ namespace mir::vk
         VkPipeline CreateGraphicsPipeline(const PipelineState &state, VkFormat colorFormat);
         VkPipeline BuildPipeline(const MaterialDesc &desc, VkFormat colorFormat);
         bool CreateSkyPipeline(VkDescriptorSetLayout cameraSetLayout, VkFormat colorFormat);
+        bool CreateRecordRef(GpuMaterial &material);
+        void WriteRecordRef(GpuMaterial &material);
         // GPU objects only; the slot and its generation are the caller's.
         void FreeMaterial(GpuMaterial &material);
         void DestroyMaterials();
 
         Device *mDevice = nullptr;
+        MaterialTable *mTable = nullptr;
 
         VkPipelineLayout mPipelineLayout = VK_NULL_HANDLE;
 

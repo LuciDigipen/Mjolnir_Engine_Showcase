@@ -23,6 +23,7 @@ subsystem holds a pointer to the facade or to another subsystem.
 | `FrameSync` | command pools and buffers, image-acquired semaphores, the frame timeline with `kFramesInFlight = 2` |
 | `ResourceStore` | meshes, textures, samplers and the three built-in textures (white, flat normal, error magenta), behind slot/generation handles |
 | `MaterialStore` | materials and their pipelines, set 0, the pipeline layout every material shares, the sky pipeline |
+| `MaterialTable` | set 4 on a descriptor-indexing device: the raw material-record buffer, the stable image rows and the distinct sampler rows, one descriptor set per frame |
 | `CameraBuffer` | set 1: per-view camera data and light list, plus the directional light, ambient, fog and atmosphere |
 | `ModelDescriptors` | set 2: per-draw model data, reset each frame |
 | `ShadowMaps` | set 3: Sun, spot and point shadow maps, their pipelines and casters |
@@ -149,6 +150,8 @@ TextureHandle CreateTexture(const TextureDesc &desc);
 TextureHandle ErrorTexture() const;          // 1x1 magenta, for a caller whose texture failed to load
 MaterialHandle CreateMaterial(const MaterialDesc &desc);
 bool DestroyMaterial(MaterialHandle handle); // same contract; always false on the default and error materials
+bool UpdateMaterialRecord(MaterialHandle handle, std::span<const std::byte> bytes); // published next frame
+uint32_t MaterialRecordOffset(MaterialHandle handle) const; // kInvalidMaterialRecordOffset without shared tables
 MaterialHandle ErrorMaterial() const;        // solid magenta, for a caller whose CreateMaterial failed
 void ReleaseSceneResources();                // every mesh, material and texture but the built-ins
 void ResetHistory();                         // the next frame accumulates fresh: a cut
@@ -195,7 +198,10 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `StagingRing`, `MeshUploadQueue`, `FrameRetireList` | `renderer/MeshStreaming.h` | the CPU bookkeeping behind them, tested without a device: ring space by frame, admission under the frame budget, objects kept until their last frame completes |
 | `ViewDrawSources`, `IViewDrawSource`, `ViewCamera` | `renderer/ViewDrawSource.h` | World resource of producers whose draws depend on the viewport (app's terrain): `Prepare` with every viewport's camera, then `AppendViewDraws` per view and `AppendVolumeDraws` per shadow volume at a view's detail |
 | `TextureDesc`, `TextureHandle` | `renderer/Texture.h` | `{width, height, pixels, srgb}`, tightly-packed RGBA8; `kNullTexture` falls back to a default in `CreateMaterial` |
-| `MaterialDesc`, `MaterialHandle` | `renderer/Material.h` | `{shaderName, cullMode, polygonMode, baseColorTexture, normalTexture}`; `kNullMaterial` means the default |
+| `MaterialDesc`, `MaterialHandle` | `renderer/Material.h` | `{shaderName, cullMode, polygonMode, baseColorTexture, normalTexture, sampler, alphaMode, alphaCutoff, record, recordAlignment}`; `kNullMaterial` means the default. `SamplerDesc` carries the optional `maxAnisotropy` |
+| `MaterialRecordId`, `MaterialRecordTable`, `MaterialRecordRef` | `renderer/MaterialRecordTable.h` | Aligned raw-byte records: create/update/release, a frame-safe published copy and the set-0 reference |
+| `TextureTable` | `renderer/TextureTable.h` | Stable global image rows; a freed row comes back with a new generation |
+| `RendererCapabilities`, `RendererFeatureSupport` | `renderer/RendererCapabilities.h` | Raw descriptor-indexing, ray-tracing and anisotropy bits resolved into the optional paths |
 | `DrawItem` | `renderer/Renderer.h` | `{mesh, model, normalMatrix, tint, material}` — `model` is the world transform, not premultiplied by any camera |
 | `RenderView` | `renderer/VulkanRenderer.h` | `{rect, items, viewProj, cameraPos}` — one camera's `DrawItem`s, clipped to a screen rect; `cameraPos` only the sky pass reads |
 | `Viewport`, `ViewportId` | `renderer/RenderSystem.h` | `RenderSystem`'s per-viewport state: rect plus a World `Entity`, an external camera, or neither (fallback) |
@@ -676,6 +682,33 @@ with the renderer.** `ImGui_ImplVulkan_Init` needs the app's context, and
 `imguiruntime` calls `InitImGuiVulkanBackend`/`ShutdownImGuiVulkanBackend`, and
 the renderer's own `Initialize`/`Shutdown` never touch the overlay.
 
+**Shared material tables are a raster feature that ray tracing also uses, not an
+RT privilege.** `descriptorIndexing`, `descriptorBindingPartiallyBound` and
+`shaderSampledImageArrayNonUniformIndexing` are detected separately from the RT
+extensions; a capable device enables them whether or not it traces, and a device
+without them keeps the legacy material path and logs one warning. `MaterialTable`
+is only constructed when they are present, so no shared-table layout or shader is
+built on an unsupported device. The table set is set 4: binding 0 is the raw
+record buffer, binding 1 the image rows and binding 2 the sampler rows. Set 0
+keeps its legacy base-color/normal bindings and adds binding 2, a 16-byte
+`MaterialRecordRef` UBO carrying the record offset and size. `RasterPushConstants`
+stays 128 bytes, and instance data never uses `firstInstance`. The RT set 0 sees
+the same image and sampler rows at bindings 9 and 10 and the record buffer at 11;
+`RtInstanceInfo` carries the same record offset, plus separate image and sampler
+row indices.
+
+**A material record is opaque bytes.** `MaterialRecordTable` owns the alignment,
+capacity and lifetime; M2 owns the reflected field layout. An update is staged in
+CPU memory and published after `BeginFrame`'s wait, into a copy no in-flight frame
+can still read, so a scene edit cannot rewrite bytes a previous frame is tracing.
+The table has a fixed capacity and reports failure instead of growing; records
+return to the allocator only after the frames that published them complete.
+
+**Anisotropy is part of the sampler cache key.** A request above 1 becomes 1
+without device support and otherwise clamps to `limits.maxSamplerAnisotropy`;
+the effective value is what `SamplerCacheKey` hashes, so two requests that clamp
+to the same state share one sampler and different effective states do not.
+
 **Subsystems initialize in dependency order, and `Device` shuts down last.**
 `MaterialStore` and the sky pipeline borrow set layouts from `CameraBuffer`,
 `ModelDescriptors` and `ShadowMaps`, so those three initialize first, and the
@@ -784,6 +817,25 @@ Everything that needs a device is verified by the smoke tests and
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-10-26* — **Shared raster/RT material tables (#330).** Was: RT remapped
+each frame's distinct (image view, sampler) pairs into a per-frame combined
+`gTextures` array, while raster materials each owned their two combined
+samplers; descriptor indexing was only requested when ray tracing was
+supported, and `MaterialDesc` had no room for a reflected parameter record.
+Now: `TextureTable` keeps a `TextureHandle`'s index as its stable global image
+row and advances the generation on release, `MaterialTable` owns set 4 (raw
+record buffer, image rows, distinct sampler rows) and a three-copy,
+frame-safe record publication, and both raster and RT read the same rows.
+`MaterialStore` adds a set-0 record-reference UBO; `RtInstanceInfo` carries
+the same offset with separate image and sampler indices, so one image can use
+different glTF sampler configurations. Descriptor indexing is requested for
+capable raster-only devices; without it the legacy pipeline/set layout and
+shaders are kept. `SamplerDesc::maxAnisotropy` is clamped to the device limit
+and folded into the sampler cache key. `RasterPushConstants` and
+`firstInstance` are unchanged. Because: M1 must establish the shared GPU
+contract without migrating materials to PBR or adding asset schemas; see
+[ADR 0001](../adr/0001-shared-material-tables.md).
 
 *2026-10-26* — **`Light`'s pick radius is a fixed 0.3 m; `RayIntersectsSphere`.**
 Was: `LightPickRadius` returned `range` for Point and Spot lights and

@@ -8,6 +8,8 @@
  */
 #pragma once
 
+#include <renderer/RendererCapabilities.h>
+
 #include <volk.h>
 
 #include <cstdint>
@@ -45,8 +47,13 @@ namespace mir::vk
 
         const VkPhysicalDeviceProperties &Properties() const { return mProperties; }
 
-        bool RayTracingSupported() const { return mRayTracingSupported; }
+        bool RayTracingSupported() const { return mCapabilities.rayTracing; }
         const VkPhysicalDeviceRayTracingPipelinePropertiesKHR &RtProperties() const { return mRtProperties; }
+
+        // Shared image/sampler/material-record tables, available with or without ray tracing.
+        bool SharedMaterialTablesSupported() const { return mCapabilities.sharedMaterialTables; }
+        bool SamplerAnisotropySupported() const { return mCapabilities.samplerAnisotropy; }
+        float MaxSamplerAnisotropy() const { return mCapabilities.maxSamplerAnisotropy; }
 
         bool NgxSupported() const { return mNgxSupported; }
 
@@ -99,7 +106,7 @@ namespace mir::vk
 
         VmaAllocator mAllocator = VK_NULL_HANDLE;
 
-        bool mRayTracingSupported = false;
+        RendererCapabilities mCapabilities;
         VkPhysicalDeviceRayTracingPipelinePropertiesKHR mRtProperties{};
 
         bool mNgxSupported = false;

@@ -167,6 +167,7 @@ namespace mir::vk
 
             if (accelFeatures.accelerationStructure != VK_TRUE ||
                 rtPipelineFeatures.rayTracingPipeline != VK_TRUE ||
+                features12.descriptorIndexing != VK_TRUE ||
                 features12.descriptorBindingPartiallyBound != VK_TRUE ||
                 features12.shaderSampledImageArrayNonUniformIndexing != VK_TRUE)
                 return false;
@@ -567,18 +568,45 @@ namespace mir::vk
             VK_API_VERSION_PATCH(props.apiVersion),
             mQueueFamily);
 
-        mRayTracingSupported = HasRayTracingSupport(mPhysical, mRtProperties);
-        if (mRayTracingSupported)
+        VkPhysicalDeviceVulkan12Features features12{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
+        VkPhysicalDeviceFeatures2 features{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+            .pNext = &features12 };
+        vkGetPhysicalDeviceFeatures2(mPhysical, &features);
+
+        const bool rayTracing = HasRayTracingSupport(mPhysical, mRtProperties);
+        mCapabilities = ResolveRendererCapabilities(RendererFeatureSupport{
+            .descriptorIndexing = features12.descriptorIndexing == VK_TRUE,
+            .descriptorBindingPartiallyBound = features12.descriptorBindingPartiallyBound == VK_TRUE,
+            .shaderSampledImageArrayNonUniformIndexing =
+                features12.shaderSampledImageArrayNonUniformIndexing == VK_TRUE,
+            .rayTracing = rayTracing,
+            .samplerAnisotropy = features.features.samplerAnisotropy == VK_TRUE,
+            .maxSamplerAnisotropy = props.limits.maxSamplerAnisotropy });
+
+        if (mCapabilities.rayTracing)
             MIR_LOG_INFO("Ray tracing: {} supports VK_KHR_acceleration_structure + VK_KHR_ray_tracing_pipeline", props.deviceName);
         else
             MIR_LOG_WARN("FindPhysicalDevice: Ray tracing unavailable on {}: missing the acceleration-structure/ray-tracing-pipeline "
                 "extensions or feature bits - raster only", props.deviceName);
 
+        if (mCapabilities.sharedMaterialTables)
+            MIR_LOG_INFO("Shared material tables: {} supports descriptor indexing and partially bound arrays", props.deviceName);
+        else
+            MIR_LOG_WARN("FindPhysicalDevice: shared material tables unavailable on {}: missing descriptor-indexing "
+                "features - legacy raster materials only", props.deviceName);
+
+        if (mCapabilities.samplerAnisotropy)
+            MIR_LOG_INFO("Sampler anisotropy: {} supports up to {:.0f}x", props.deviceName, mCapabilities.maxSamplerAnisotropy);
+        else
+            MIR_LOG_INFO("Sampler anisotropy: unavailable on {}", props.deviceName);
+
         mMemoryBudgetSupported = HasDeviceExtension(mPhysical, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
 
     #if MIR_WITH_DLSS
         mNgxDeviceExtensions.clear();
-        mNgxSupported = mRayTracingSupported && mNgxInstanceExtensionsSupported &&
+        mNgxSupported = mCapabilities.rayTracing && mNgxInstanceExtensionsSupported &&
             HasNgxSupport(mInstance, mPhysical) && HasPushDescriptorSupport(mPhysical);
         if (mNgxSupported)
         {
@@ -631,7 +659,7 @@ namespace mir::vk
         // dynamic rendering, sync resources are core, not extensions
         // .pNext to link multiple extensions together
         std::vector<const char *> deviceExtensions{ VK_KHR_SWAPCHAIN_EXTENSION_NAME };
-        if (mRayTracingSupported)
+        if (mCapabilities.rayTracing)
         {
             deviceExtensions.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
             deviceExtensions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
@@ -656,9 +684,9 @@ namespace mir::vk
         VkPhysicalDeviceVulkan12Features features12{
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
             .pNext = &features13,
-            .descriptorIndexing = VK_TRUE,
-            .shaderSampledImageArrayNonUniformIndexing = mRayTracingSupported ? VK_TRUE : VK_FALSE,
-            .descriptorBindingPartiallyBound = mRayTracingSupported ? VK_TRUE : VK_FALSE,
+            .descriptorIndexing = mCapabilities.sharedMaterialTables ? VK_TRUE : VK_FALSE,
+            .shaderSampledImageArrayNonUniformIndexing = mCapabilities.sharedMaterialTables ? VK_TRUE : VK_FALSE,
+            .descriptorBindingPartiallyBound = mCapabilities.sharedMaterialTables ? VK_TRUE : VK_FALSE,
             .timelineSemaphore = VK_TRUE,
             .bufferDeviceAddress = VK_TRUE };
 
@@ -677,7 +705,7 @@ namespace mir::vk
             .pNext = &rtPipelineFeatures,
             .accelerationStructure = VK_TRUE };
 
-        void *rtOrCoreChain = mRayTracingSupported ? static_cast<void *>(&accelFeatures)
+        void *rtOrCoreChain = mCapabilities.rayTracing ? static_cast<void *>(&accelFeatures)
             : static_cast<void *>(&features11);
 
     #if MIR_WITH_DLSS
@@ -695,7 +723,8 @@ namespace mir::vk
         VkPhysicalDeviceFeatures2 features{
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
             .pNext = rtOrCoreChain,
-            .features{ .imageCubeArray = VK_TRUE } };
+            .features{ .imageCubeArray = VK_TRUE,
+                       .samplerAnisotropy = mCapabilities.samplerAnisotropy ? VK_TRUE : VK_FALSE } };
 
         const VkDeviceCreateInfo deviceInfo{
             .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,

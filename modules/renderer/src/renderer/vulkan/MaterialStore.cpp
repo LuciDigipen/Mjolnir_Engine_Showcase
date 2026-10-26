@@ -8,6 +8,7 @@
  */
 #include "MaterialStore.h"
 #include "Device.h"
+#include "MaterialTable.h"
 #include "ResourceStore.h"
 #include "Slots.h"
 #include "VulkanUtil.h"
@@ -17,9 +18,13 @@
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
 
+#include <vk_mem_alloc.h>
+
 #include <glm/glm.hpp>
 
 #include <array>
+#include <cstring>
+#include <format>
 #include <string>
 #include <string_view>
 
@@ -28,12 +33,14 @@ namespace mir::vk
     namespace
     {
         constexpr std::string_view kModelShaderName = "model";
+        constexpr uint32_t kRecordRefBinding = 2;
     }
 
-    bool MaterialStore::Initialize(Device &device, ResourceStore &resources, VkFormat colorFormat,
-        const std::array<VkDescriptorSetLayout, 3> &sharedLayouts)
+    bool MaterialStore::Initialize(Device &device, ResourceStore &resources, MaterialTable *table,
+        VkFormat colorFormat, const std::array<VkDescriptorSetLayout, 3> &sharedLayouts)
     {
         mDevice = &device;
+        mTable = table;
 
         if (!CreatePipelineLayout(sharedLayouts))
             return false;
@@ -97,13 +104,16 @@ namespace mir::vk
             vkDestroyPipelineLayout(mDevice->Handle(), mSkyPipelineLayout, nullptr);
             mSkyPipelineLayout = VK_NULL_HANDLE;
         }
+
+        mTable = nullptr;
     }
 
     bool MaterialStore::CreatePipelineLayout(const std::array<VkDescriptorSetLayout, 3> &sharedLayouts)
     {
-        // binding 0 = base color, binding 1 = normal map. Every material
-        // uses this same layout, whether or not its shader samples them.
-        const std::array<VkDescriptorSetLayoutBinding, 2> setBindings{ {
+        // binding 0 = base color, binding 1 = normal map, binding 2 = the
+        // record reference. Legacy shaders still sample 0 and 1; shared-table
+        // shaders find their bytes through 2.
+        std::array<VkDescriptorSetLayoutBinding, 3> setBindings{ {
             { .binding = 0,
              .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
              .descriptorCount = 1,
@@ -111,11 +121,16 @@ namespace mir::vk
             { .binding = 1,
              .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
              .descriptorCount = 1,
-             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT } } };
+             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT },
+            { .binding = kRecordRefBinding,
+             .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_ALL } } };
+        const uint32_t setBindingCount = mTable != nullptr ? static_cast<uint32_t>(setBindings.size()) : 2u;
 
         const VkDescriptorSetLayoutCreateInfo setLayoutInfo{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-            .bindingCount = static_cast<uint32_t>(setBindings.size()),
+            .bindingCount = setBindingCount,
             .pBindings = setBindings.data() };
 
         if (vkCreateDescriptorSetLayout(mDevice->Handle(), &setLayoutInfo, nullptr, &mSetLayout) != VK_SUCCESS)
@@ -127,16 +142,19 @@ namespace mir::vk
         // One set per material. A model primitive eats two (front and mirrored
         // front face), so this is not as generous as it looks.
         constexpr uint32_t kMaxMaterials = 1024;
-        const VkDescriptorPoolSize poolSize{
-            .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            .descriptorCount = kMaxMaterials * static_cast<uint32_t>(setBindings.size()) };
+        std::array<VkDescriptorPoolSize, 2> poolSizes{ {
+            { .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+              .descriptorCount = kMaxMaterials * 2u },
+            { .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+              .descriptorCount = kMaxMaterials } } };
+        const uint32_t poolSizeCount = mTable != nullptr ? static_cast<uint32_t>(poolSizes.size()) : 1u;
 
         const VkDescriptorPoolCreateInfo poolInfo{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
             .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
             .maxSets = kMaxMaterials,
-            .poolSizeCount = 1,
-            .pPoolSizes = &poolSize };
+            .poolSizeCount = poolSizeCount,
+            .pPoolSizes = poolSizes.data() };
 
         if (vkCreateDescriptorPool(mDevice->Handle(), &poolInfo, nullptr, &mDescriptorPool) != VK_SUCCESS)
         {
@@ -149,14 +167,16 @@ namespace mir::vk
             .offset = 0,
             .size = sizeof(RasterPushConstants) };
 
-        // set 0 = material (textures), set 1 = per-view camera UBO,
-        // set 2 = per-draw model data, set 3 = shadow maps.
-        const std::array<VkDescriptorSetLayout, 4> setLayouts{
-            mSetLayout, sharedLayouts[0], sharedLayouts[1], sharedLayouts[2] };
+        // set 0 = material (textures and record reference), set 1 = per-view camera UBO,
+        // set 2 = per-draw model data, set 3 = shadow maps, set 4 = shared table.
+        const std::array<VkDescriptorSetLayout, 5> setLayouts{
+            mSetLayout, sharedLayouts[0], sharedLayouts[1], sharedLayouts[2],
+            mTable != nullptr ? mTable->SetLayout() : VK_NULL_HANDLE };
+        const uint32_t setLayoutCount = mTable != nullptr ? static_cast<uint32_t>(setLayouts.size()) : 4u;
 
         const VkPipelineLayoutCreateInfo layoutInfo{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-            .setLayoutCount = static_cast<uint32_t>(setLayouts.size()),
+            .setLayoutCount = setLayoutCount,
             .pSetLayouts = setLayouts.data(),
             .pushConstantRangeCount = 1,
             .pPushConstantRanges = &pushConstantRange };
@@ -382,13 +402,15 @@ namespace mir::vk
         if (pipeline == VK_NULL_HANDLE)
             return kNullMaterial;
 
-        const GpuTexture *baseColor = resources.FindTexture(desc.baseColorTexture);
-        if (baseColor == nullptr)
-            baseColor = resources.FindTexture(resources.DefaultWhiteTexture());
+        const TextureHandle baseColorHandle = resources.FindTexture(desc.baseColorTexture) != nullptr
+            ? desc.baseColorTexture
+            : resources.DefaultWhiteTexture();
+        const GpuTexture *const baseColor = resources.FindTexture(baseColorHandle);
 
-        const GpuTexture *normal = resources.FindTexture(desc.normalTexture);
-        if (normal == nullptr)
-            normal = resources.FindTexture(resources.DefaultNormalTexture());
+        const TextureHandle normalHandle = resources.FindTexture(desc.normalTexture) != nullptr
+            ? desc.normalTexture
+            : resources.DefaultNormalTexture();
+        const GpuTexture *const normal = resources.FindTexture(normalHandle);
 
         if (baseColor == nullptr || normal == nullptr)
         {
@@ -399,7 +421,8 @@ namespace mir::vk
 
         // Shared with every other material that asked for the same state, so
         // this is not destroyed with the material.
-        const VkSampler sampler = resources.AcquireSampler(desc.sampler);
+        uint32_t samplerSlot = 0;
+        const VkSampler sampler = resources.AcquireSampler(desc.sampler, &samplerSlot);
         if (sampler == VK_NULL_HANDLE)
         {
             vkDestroyPipeline(mDevice->Handle(), pipeline, nullptr);
@@ -420,6 +443,56 @@ namespace mir::vk
             return kNullMaterial;
         }
 
+        GpuMaterial material;
+        material.mPipeline = pipeline;
+        material.mDescriptorSet = descriptorSet;
+        material.mParameters = glm::vec4{ static_cast<float>(desc.alphaMode), desc.alphaCutoff,
+            desc.cullMode == VK_CULL_MODE_NONE ? 1.0f : 0.0f, 0.0f };
+        material.mModelShader = desc.shaderName == kModelShaderName;
+        material.mUnlit = desc.shaderName == "unlit";
+        material.mCullMode = desc.cullMode;
+        material.mFrontFace = desc.frontFace;
+        material.mBaseColorView = baseColor->mView;
+        material.mSampler = sampler;
+        material.mBaseColorSlot = resources.TextureSlot(baseColorHandle);
+        material.mSamplerSlot = samplerSlot;
+        material.mError = desc.shaderName == "error";
+
+        const auto rollback = [&]
+            {
+                if (material.mRecordBuffer != VK_NULL_HANDLE)
+                    vmaDestroyBuffer(mDevice->Allocator(), material.mRecordBuffer, material.mRecordAllocation);
+                if (mTable != nullptr && !material.mRecordId.IsNull())
+                    mTable->ReleaseRecord(material.mRecordId);
+                if (descriptorSet != VK_NULL_HANDLE)
+                    vkFreeDescriptorSets(mDevice->Handle(), mDescriptorPool, 1, &descriptorSet);
+                vkDestroyPipeline(mDevice->Handle(), pipeline, nullptr);
+            };
+
+        VkDescriptorBufferInfo recordRefInfo{};
+        if (mTable != nullptr)
+        {
+            material.mRecordId = mTable->CreateRecord(desc.record, desc.recordAlignment);
+            if (material.mRecordId.IsNull())
+            {
+                MIR_LOG_CRITICAL("CreateMaterial: material record table is full");
+                rollback();
+                return kNullMaterial;
+            }
+
+            material.mRecordOffset = mTable->RecordOffset(material.mRecordId);
+            if (!CreateRecordRef(material))
+            {
+                MIR_LOG_CRITICAL("CreateMaterial: record reference buffer allocation failed");
+                rollback();
+                return kNullMaterial;
+            }
+            recordRefInfo = VkDescriptorBufferInfo{
+                .buffer = material.mRecordBuffer,
+                .offset = 0,
+                .range = sizeof(MaterialRecordRef) };
+        }
+
         const VkDescriptorImageInfo baseColorInfo{
             .sampler = sampler,
             .imageView = baseColor->mView,
@@ -429,7 +502,7 @@ namespace mir::vk
             .imageView = normal->mView,
             .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
 
-        const std::array<VkWriteDescriptorSet, 2> writes{ {
+        std::array<VkWriteDescriptorSet, 3> writes{ {
             { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
              .dstSet = descriptorSet,
              .dstBinding = 0,
@@ -441,29 +514,58 @@ namespace mir::vk
              .dstBinding = 1,
              .descriptorCount = 1,
              .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-             .pImageInfo = &normalInfo } } };
+             .pImageInfo = &normalInfo },
+            { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+             .dstSet = descriptorSet,
+             .dstBinding = kRecordRefBinding,
+             .descriptorCount = 1,
+             .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+             .pBufferInfo = &recordRefInfo } } };
+        const uint32_t writeCount = mTable != nullptr ? static_cast<uint32_t>(writes.size()) : 2u;
 
-        vkUpdateDescriptorSets(mDevice->Handle(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+        vkUpdateDescriptorSets(mDevice->Handle(), writeCount, writes.data(), 0, nullptr);
 
-        const bool unlit = desc.shaderName == "unlit";
-        // The model shader reads these out of set 2; see ModelDescriptors::Bind.
-        const glm::vec4 parameters{ static_cast<float>(desc.alphaMode), desc.alphaCutoff,
-            desc.cullMode == VK_CULL_MODE_NONE ? 1.0f : 0.0f, 0.0f };
-        const bool modelShader = desc.shaderName == kModelShaderName;
-
-        const bool error = desc.shaderName == "error";
-
-        const uint32_t index = PlaceSlot(mMaterials, mFreeIndices,
-            GpuMaterial{ pipeline, descriptorSet, parameters, modelShader, 0, unlit, desc.cullMode, desc.frontFace,
-                baseColor->mView, sampler, error });
+        const uint32_t index = PlaceSlot(mMaterials, mFreeIndices, material);
+        mDevice->NameObject(VK_OBJECT_TYPE_BUFFER, reinterpret_cast<uint64_t>(mMaterials[index].mRecordBuffer),
+            std::format("Material {} record ref", index).c_str());
 
         MIR_LOG_INFO("Material created: {} (index {})", desc.shaderName, index);
         return MaterialHandle{ index, mMaterials[index].mGeneration };
     }
 
+    bool MaterialStore::CreateRecordRef(GpuMaterial &material)
+    {
+        VmaAllocationInfo info{};
+        if (!CreateBuffer(mDevice->Allocator(), sizeof(MaterialRecordRef),
+            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
+            material.mRecordBuffer, material.mRecordAllocation, &info))
+            return false;
+
+        material.mRecordMapped = static_cast<std::byte *>(info.pMappedData);
+        WriteRecordRef(material);
+        return true;
+    }
+
+    void MaterialStore::WriteRecordRef(GpuMaterial &material)
+    {
+        if (material.mRecordMapped == nullptr)
+            return;
+
+        const MaterialRecordRef ref{
+            .mOffset = material.mRecordOffset,
+            .mSize = mTable != nullptr ? mTable->RecordSize(material.mRecordId) : 0 };
+        std::memcpy(material.mRecordMapped, &ref, sizeof(ref));
+        vmaFlushAllocation(mDevice->Allocator(), material.mRecordAllocation, 0, sizeof(ref));
+    }
+
     void MaterialStore::FreeMaterial(GpuMaterial &material)
     {
         // The sampler belongs to the resource store's cache, not to the material.
+        if (material.mRecordBuffer != VK_NULL_HANDLE)
+            vmaDestroyBuffer(mDevice->Allocator(), material.mRecordBuffer, material.mRecordAllocation);
+        if (mTable != nullptr && !material.mRecordId.IsNull())
+            mTable->ReleaseRecord(material.mRecordId);
         if (material.mDescriptorSet != VK_NULL_HANDLE)
             vkFreeDescriptorSets(mDevice->Handle(), mDescriptorPool, 1, &material.mDescriptorSet);
         if (material.mPipeline != VK_NULL_HANDLE)
@@ -481,6 +583,34 @@ namespace mir::vk
 
         mFreeIndices.push_back(handle.mIndex);
         return true;
+    }
+
+    bool MaterialStore::UpdateRecord(MaterialHandle handle, std::span<const std::byte> bytes)
+    {
+        const GpuMaterial *const material = FindMaterial(handle);
+        if (material == nullptr || mTable == nullptr || material->mRecordId.IsNull())
+            return false;
+
+        return mTable->UpdateRecord(material->mRecordId, bytes);
+    }
+
+    void MaterialStore::PublishRecords(uint64_t completedFrame, uint64_t frame)
+    {
+        if (mTable == nullptr)
+            return;
+
+        for (const MaterialTable::RecordChange &change : mTable->PublishRecords(completedFrame, frame))
+        {
+            for (GpuMaterial &material : mMaterials)
+            {
+                if (material.mRecordId == change.mId)
+                {
+                    material.mRecordOffset = change.mOffset;
+                    WriteRecordRef(material);
+                    break;
+                }
+            }
+        }
     }
 
     std::size_t MaterialStore::ReleaseMaterials()

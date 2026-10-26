@@ -16,6 +16,8 @@
 #include "vulkan/FrameSync.h"
 #include "vulkan/ImGuiOverlay.h"
 #include "vulkan/MaterialStore.h"
+#include "vulkan/MaterialTable.h"
+#include "vulkan/MaterialTableLayout.h"
 #include "vulkan/MeshUploader.h"
 #include "vulkan/ModelDescriptors.h"
 #include "vulkan/PostProcessingStack.h"
@@ -57,6 +59,13 @@ namespace mir
             1, 1, &cameraSet, 1, &cameraOffset);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
             3, 1, &shadowSet, 0, nullptr);
+
+        if (mMaterialTable != nullptr)
+        {
+            const VkDescriptorSet tableSet = mMaterialTable->Set(mFrameSync->Index());
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
+                vk::kMaterialTableSetIndex, 1, &tableSet, 0, nullptr);
+        }
 
         VkPipeline boundPipeline = VK_NULL_HANDLE;
         VkDescriptorSet boundDescriptorSet = VK_NULL_HANDLE;
@@ -246,6 +255,12 @@ namespace mir
             mModelDescriptors->ResetFrame(mFrameSync->Index());
             mMeshUploads->Collect(*mResources, *mRayTracer, mFrameSync->CompletedValue());
             mMeshUploads->Record(frame->cmd, frame->signalValue, *mResources, *mRayTracer);
+
+            if (mMaterialTable != nullptr)
+            {
+                mMaterialStore->PublishRecords(mFrameSync->CompletedValue(), frame->signalValue);
+                mMaterialTable->Sync(mFrameSync->Index(), *mResources);
+            }
         }
         return frame;
     }

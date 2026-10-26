@@ -28,6 +28,7 @@
 #include <glm/vec4.hpp>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -49,6 +50,7 @@ namespace mir::vk
     class ShadowMaps;
     class ModelDescriptors;
     class RayTracer;
+    class MaterialTable;
     class PostProcessingStack;
     class FrameCapture;
     class ImGuiOverlay;
@@ -185,6 +187,11 @@ namespace mir
 
         bool DestroyMaterial(MaterialHandle handle);
 
+        // Raw reflected bytes for one material's record, published at the next
+        // BeginFrame. False without shared material tables, or for a stale handle.
+        bool UpdateMaterialRecord(MaterialHandle handle, std::span<const std::byte> bytes);
+        uint32_t MaterialRecordOffset(MaterialHandle handle) const;
+
         MaterialHandle ErrorMaterial() const;
 
         void CaptureNextFrame(const std::filesystem::path &path);
@@ -303,6 +310,8 @@ namespace mir
         std::unique_ptr<vk::Swapchain> mSwapchain;
         std::unique_ptr<vk::FrameSync> mFrameSync;
         std::unique_ptr<vk::ResourceStore> mResources;
+        // Only on a device with descriptor indexing; null keeps the legacy material path.
+        std::unique_ptr<vk::MaterialTable> mMaterialTable;
         std::unique_ptr<vk::MaterialStore> mMaterialStore;
 
         std::unique_ptr<vk::CameraBuffer> mCameraBuffer;

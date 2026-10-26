@@ -35,9 +35,11 @@ struct RtInstanceInfo
     float4 normalCol1;
     float4 normalCol2;
     uint flags;            // kInstance* bits
-    uint baseColorTexture; // index into gTextures; read only with kInstanceTextured
+    uint baseColorTexture; // index into gImages; read only with kInstanceTextured
+    uint baseColorSampler; // index into gSamplers
+    uint materialRecord;   // byte offset into gMaterialRecords
     float alphaCutoff;     // read only with kInstanceAlphaTest
-    uint pad0;
+    float3 pad0;
     float4x4 prevModel; // camera-relative to THIS frame's camera - see DrawItem::previousModel
 };
 
@@ -50,10 +52,17 @@ static const uint kInstanceTextured = 2u; // the model shader: base color = text
 static const uint kInstanceError = 4u;
 static const uint kInstanceAlphaTest = 8u;
 static const uint kInstanceDoubleSided = 16u;
-static const uint kMaxRtTextures = 1024;
+static const uint kMaxMaterialImages = 1024;
+static const uint kMaxMaterialSamplers = 256;
 
 [[vk::binding(9, 0)]]
-Sampler2D<float4> gTextures[kMaxRtTextures];
+Texture2D<float4> gImages[kMaxMaterialImages];
+
+[[vk::binding(10, 0)]]
+SamplerState gSamplers[kMaxMaterialSamplers];
+
+[[vk::binding(11, 0)]]
+ByteAddressBuffer gMaterialRecords;
 
 static const uint kAaModeOff = 0;
 static const uint kAaModeMsaa = 2;
@@ -155,7 +164,9 @@ float4 ModelBaseColor(RtInstanceInfo info, uint3 indices, float3 barycentrics)
     const float3 uvAlpha = InterpolateUvAlpha(info, indices, barycentrics);
     const float3 vertexColor = InterpolateFloat3(info, indices, barycentrics, kColorOffset);
     // Level 0: there are no ray differentials yet to pick a mip from.
-    const float4 texel = gTextures[NonUniformResourceIndex(info.baseColorTexture)].SampleLevel(uvAlpha.xy, 0.0);
+    const uint image = NonUniformResourceIndex(info.baseColorTexture);
+    const uint sampler = NonUniformResourceIndex(info.baseColorSampler);
+    const float4 texel = gImages[image].SampleLevel(gSamplers[sampler], uvAlpha.xy, 0.0);
     return texel * float4(vertexColor, uvAlpha.z) * info.tint;
 }
 
