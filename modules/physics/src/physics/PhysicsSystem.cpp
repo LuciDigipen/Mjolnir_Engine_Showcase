@@ -29,6 +29,17 @@ namespace mir
         // The shape follows the world scale: a box per axis, a sphere by the largest axis, a capsule by the
         // axis it stands along for its height and the larger of the other two for its radius. The collider
         // offset scales with it; a rotated non-uniform parent is as close as the decomposition gets.
+        // The decomposed scale of a rotating parent wobbles in the last digits, which is not a change.
+        bool SameScale(const glm::vec3 &a, const glm::vec3 &b)
+        {
+            for (int i = 0; i < 3; ++i)
+            {
+                if (std::abs(a[i] - b[i]) > 1.0e-4f * std::max(1.0f, std::abs(a[i])))
+                    return false;
+            }
+            return true;
+        }
+
         // A layer outside 0 to 31 is the Default layer, said once here at creation and at the edit.
         int LayerOf(const RigidBody &rigidBody, Entity entity)
         {
@@ -70,20 +81,13 @@ namespace mir
 
         // The one place a body is built: the add hook, the PlayBegin pass and the first-step fallback share it.
         // The pose is the entity's world pose, and the shape follows the world scale.
-        // A body the physics world refuses (a size at or below 0) is left out, on purpose: the reason was logged
-        // by that first try, and `quiet` keeps the retry after an edit from saying it again.
-        void CreateBodyFor(World &world, PhysicsWorld &physics, Entity entity, RigidBody &rigidBody, bool quiet = false)
+        void CreateBodyFor(World &world, PhysicsWorld &physics, Entity entity, RigidBody &rigidBody)
         {
             const BodyPose pose = detail::PoseOf(world, entity);
 
-            BodyDesc desc = BodyDescFor(rigidBody, pose, entity);
-            desc.mQuiet = quiet;
-            rigidBody.runtime.body = physics.CreateBody(desc);
+            rigidBody.runtime.body = physics.CreateBody(BodyDescFor(rigidBody, pose, entity));
             rigidBody.runtime.applied = AppliedOf(rigidBody);
-            rigidBody.runtime.creationRefused = !rigidBody.runtime.body.IsValid();
-            if (rigidBody.runtime.creationRefused)
-                return;
-
+            rigidBody.runtime.builtScale = pose.scale;
             physics.SetBodyEntity(rigidBody.runtime.body, entity);
             detail::ResetStepPoses(rigidBody, pose.position.Meters(), pose.rotation);
             detail::Stamp(rigidBody, pose);
@@ -126,27 +130,28 @@ namespace mir
             [&](Entity entity, Transform &, RigidBody &rigidBody)
             {
                 if (!rigidBody.runtime.body.IsValid())
-                {
-                    // refused at creation: an edit may have made it buildable, and says nothing if it still is not
-                    if (rigidBody.runtime.creationRefused && AppliedOf(rigidBody) != rigidBody.runtime.applied)
-                        CreateBodyFor(world, physics, entity, rigidBody, true);
                     return;
-                }
 
                 const AppliedBody now = AppliedOf(rigidBody);
                 AppliedBody &applied = rigidBody.runtime.applied;
                 const BodyHandle body = rigidBody.runtime.body;
+                // the shape follows the world scale, so a scale change is a shape change
+                const glm::vec3 scale = detail::PoseOf(world, entity).scale;
+                const bool scaled = !SameScale(scale, rigidBody.runtime.builtScale);
                 // a held body is left alone, and the edit lands once it is resumed
-                if (now == applied || physics.IsBodyHeld(body))
+                if ((now == applied && !scaled) || physics.IsBodyHeld(body))
                     return;
 
                 if (now.motion != applied.motion)
                     physics.SetBodyMotion(body, now.motion);
 
-                if (now.shape != applied.shape || now.halfExtent != applied.halfExtent || now.radius != applied.radius
-                    || now.halfHeight != applied.halfHeight || now.axis != applied.axis || now.offset != applied.offset
-                    || now.rotationOffset != applied.rotationOffset)
+                if (scaled || now.shape != applied.shape || now.halfExtent != applied.halfExtent
+                    || now.radius != applied.radius || now.halfHeight != applied.halfHeight || now.axis != applied.axis
+                    || now.offset != applied.offset || now.rotationOffset != applied.rotationOffset)
+                {
                     physics.SetBodyShape(body, BodyDescFor(rigidBody, detail::PoseOf(world, entity), entity));
+                    rigidBody.runtime.builtScale = scale;
+                }
                 else if (now.mass != applied.mass)
                     physics.SetBodyMass(body, now.mass);
 
@@ -172,10 +177,6 @@ namespace mir
         mQuery->ForEach(
             [&](Entity entity, Transform &, RigidBody &rigidBody)
             {
-                // refused already: it is tried again when its fields change, in ApplyEdits
-                if (!rigidBody.runtime.body.IsValid() && rigidBody.runtime.creationRefused)
-                    return;
-
                 if (!rigidBody.runtime.body.IsValid())
                 {
                     // The Transform came after the RigidBody, so the add hook had nothing to build from.
@@ -322,7 +323,7 @@ namespace mir
         world.ForEach<Transform, RigidBody>(
             [&](Entity entity, Transform &, RigidBody &rigidBody)
             {
-                if (!rigidBody.runtime.body.IsValid() && !rigidBody.runtime.creationRefused)
+                if (!rigidBody.runtime.body.IsValid())
                     CreateBodyFor(world, *physics, entity, rigidBody);
             });
 

@@ -87,8 +87,8 @@ namespace mir
             glm::quat stampedRotation = kIdentityRotation;
             // What the body was last built or updated from, so an edit shows as a difference.
             AppliedBody applied;
-            // The body could not be built from these fields; it is tried again when they change.
-            bool creationRefused = false;
+            // The world scale the shape was built from, so a scale change is a shape change.
+            glm::vec3 builtScale{ 1.0f };
             // A Kinematic body's first Transform write teleports it, later ones move it to the target.
             bool hasMoved = false;
             // Moved to a target this step, so its velocity is cleared once the step has reached it.

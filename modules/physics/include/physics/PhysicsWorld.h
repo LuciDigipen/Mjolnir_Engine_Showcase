@@ -50,8 +50,6 @@ namespace mir
         int mLayer = 0;
         // Never blocks motion; reports contacts like any other body.
         bool mIsTrigger = false;
-        // A refusal is not logged: the caller already said so when it first tried.
-        bool mQuiet = false;
         // Pairs this body touches also get Stay events.
         bool mDetectStay = false;
         // Reads only for Dynamic: a mass at or below 0 leaves the shape's own, from its volume.
@@ -106,7 +104,7 @@ namespace mir
         PhysicsWorld(PhysicsWorld &&) = delete;
         PhysicsWorld &operator=(PhysicsWorld &&) = delete;
 
-        // Bodies live in the fixed Scene world coordinate system. Invalid handle (logged) on a non-positive size.
+        // Bodies live in the fixed Scene world coordinate system. A size that is not above 0 gives a body with an empty collider (logged).
         BodyHandle CreateBody(const BodyDesc &desc);
 
         // Builds the shape once; Step never rebuilds it. Invalid handle (logged) on bad input.

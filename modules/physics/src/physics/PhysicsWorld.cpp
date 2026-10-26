@@ -32,6 +32,7 @@
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/EmptyShape.h>
 #include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
@@ -132,15 +133,14 @@ namespace mir
         // The size-only shape, in its own frame. Null, logged, for a size Jolt cannot build.
         const JPH::Shape *MakeBaseShape(const BodyDesc &desc)
         {
-            const char *hint = "a collider needs a size above 0, so the entity has no body until it is fixed";
+            const char *hint = "a collider needs a size above 0, so this one is empty until it is fixed";
             const auto fits = [](float size) { return std::isfinite(size) && size > 0.0f; };
 
             if (desc.mShape == PhysicsShape::Sphere)
             {
                 if (!fits(desc.mRadius))
                 {
-                    if (!desc.mQuiet)
-                        MIR_LOG_ERROR("PhysicsWorld::CreateBody: radius must be positive; {}", hint);
+                    MIR_LOG_ERROR("PhysicsWorld: radius must be positive; {}", hint);
                     return nullptr;
                 }
                 return new JPH::SphereShape(desc.mRadius);
@@ -150,8 +150,7 @@ namespace mir
             {
                 if (!fits(desc.mRadius) || !fits(desc.mHalfHeight))
                 {
-                    if (!desc.mQuiet)
-                        MIR_LOG_ERROR("PhysicsWorld::CreateBody: radius and halfHeight must be positive; {}", hint);
+                    MIR_LOG_ERROR("PhysicsWorld: radius and halfHeight must be positive; {}", hint);
                     return nullptr;
                 }
                 // halfHeight counts the caps, Jolt wants the cylinder between them, and a body with no
@@ -163,19 +162,20 @@ namespace mir
             const glm::vec3 &halfExtent = desc.mHalfExtent;
             if (!fits(halfExtent.x) || !fits(halfExtent.y) || !fits(halfExtent.z))
             {
-                if (!desc.mQuiet)
-                    MIR_LOG_ERROR("PhysicsWorld::CreateBody: half extent must be positive on every axis; {}", hint);
+                MIR_LOG_ERROR("PhysicsWorld: half extent must be positive on every axis; {}", hint);
                 return nullptr;
             }
             return new JPH::BoxShape(ToJolt(halfExtent));
         }
 
         // The base shape placed in the body's frame by the capsule axis and the collider offset.
+        // A size Jolt cannot build gives a shape with no volume that collides with nothing, so the body keeps
+        // its handle and a later edit swaps the real shape in.
         const JPH::Shape *MakeShape(const BodyDesc &desc)
         {
             const JPH::Shape *base = MakeBaseShape(desc);
             if (base == nullptr)
-                return nullptr;
+                return new JPH::EmptyShape();
 
             const glm::quat rotation = desc.mRotationOffset
                 * (desc.mShape == PhysicsShape::Capsule ? AxisRotation(desc.mAxis) : kIdentityRotation);
@@ -419,9 +419,6 @@ namespace mir
     BodyHandle PhysicsWorld::CreateBody(const BodyDesc &desc)
     {
         const JPH::Shape *shape = MakeShape(desc);
-        if (shape == nullptr)
-            return {};
-
         const BodyHandle body = mImpl->CreateBody(shape, desc.mPosition, desc.mRotation, desc.mMotion, false, &desc);
         if (body.IsValid() && desc.mDetectStay)
             mImpl->mStayBodies.insert(body.mId);
@@ -630,9 +627,6 @@ namespace mir
             return;
 
         const JPH::RefConst<JPH::Shape> shape(MakeShape(desc));
-        if (shape == nullptr)
-            return;
-
         mImpl->Bodies().SetShape(*id, shape, true, JPH::EActivation::Activate);
         // the shape's own volume gave the mass back, so the authored one is put on again
         SetBodyMass(body, desc.mMass);

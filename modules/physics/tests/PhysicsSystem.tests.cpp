@@ -1126,7 +1126,7 @@ TEST_CASE("A force, impulse or velocity call says whether the body took it", "[p
     }
 }
 
-TEST_CASE("A size of zero leaves the entity without a body, says so once, and a fix builds it", "[physics][validation]")
+TEST_CASE("A size of zero gives an empty collider, says so, and a fix swaps the real one in", "[physics][validation]")
 {
     mir::InitLog({ .filePath = (std::filesystem::temp_directory_path() / "mir_physics_validation.log").string() });
     mir::LogHistory::Clear();
@@ -1139,44 +1139,99 @@ TEST_CASE("A size of zero leaves the entity without a body, says so once, and a 
     };
 
     PhysicsFixture fixture;
-    mir::RigidBody flat = kDynamicBox;
-    flat.halfExtent = glm::vec3(0.5f, 0.0f, 0.5f);
-    const mir::Entity entity = fixture.Add(glm::vec3(0.0f, 5.0f, 0.0f), flat);
+    mir::RigidBody flat = kStaticBox;
+    flat.halfExtent = glm::vec3(1.0f, 0.0f, 1.0f);
+    const mir::Entity entity = fixture.Add(glm::vec3(0.0f), flat);
+    const mir::BodyHandle handle = BodyOfEntity(fixture, entity);
 
-    // no body, no step has anything to say about it, and the one refusal was logged when it was added
-    CHECK_FALSE(BodyOfEntity(fixture, entity).IsValid());
-    CHECK(fixture.Physics().BodyCount() == 0);
+    // the body exists and collides with nothing, and the one message was logged when it was built
+    CHECK(handle.IsValid());
+    CHECK(fixture.Physics().BodyCount() == 1);
+    CHECK_FALSE(CastDown(fixture).has_value());
     fixture.Run(10);
     CHECK(refusals() == 1);
 
-    // still not buildable: no new message
-    BodyComponent(fixture, entity).halfExtent = glm::vec3(-1.0f, 0.5f, 0.5f);
-    fixture.Run(5);
-    CHECK_FALSE(BodyOfEntity(fixture, entity).IsValid());
+    // fixed: the real shape is swapped in, on the same body
+    BodyComponent(fixture, entity).halfExtent = glm::vec3(1.0f);
+    fixture.Run(1);
+    REQUIRE(CastDown(fixture).has_value());
+    CHECK(CastDown(fixture)->mDistance == Catch::Approx(9.0f).margin(0.01f));
     CHECK(refusals() == 1);
 
-    // fixed: the body appears, silently
-    BodyComponent(fixture, entity).halfExtent = glm::vec3(0.5f);
-    fixture.Run(1);
-    CHECK(BodyOfEntity(fixture, entity).IsValid());
-    CHECK(fixture.Physics().BodyCount() == 1);
-    CHECK(refusals() == 1);
+    // broken again in Play: empty again, said once more for this edit
+    BodyComponent(fixture, entity).halfExtent = glm::vec3(-1.0f, 1.0f, 1.0f);
+    fixture.Run(5);
+    CHECK_FALSE(CastDown(fixture).has_value());
+    CHECK(refusals() == 2);
+    CHECK(BodyOfEntity(fixture, entity) == handle);
 }
 
-TEST_CASE("Every shape refuses a size that is not above zero", "[physics][validation]")
+TEST_CASE("Every shape gets an empty collider for a size that is not above zero", "[physics][validation]")
 {
     PhysicsFixture fixture;
-    mir::RigidBody sphere = kDynamicSphere;
-    sphere.radius = 0.0f;
-    mir::RigidBody capsule{ .motion = mir::PhysicsMotion::Dynamic, .shape = mir::PhysicsShape::Capsule };
-    capsule.halfHeight = 0.0f;
-    mir::RigidBody nonFinite = kDynamicBox;
-    nonFinite.halfExtent.x = std::numeric_limits<float>::infinity();
+    mir::RigidBody body = kStaticBox;
 
-    CHECK_FALSE(BodyOfEntity(fixture, fixture.Add(glm::vec3(0.0f), sphere)).IsValid());
-    CHECK_FALSE(BodyOfEntity(fixture, fixture.Add(glm::vec3(5.0f, 0.0f, 0.0f), capsule)).IsValid());
-    CHECK_FALSE(BodyOfEntity(fixture, fixture.Add(glm::vec3(10.0f, 0.0f, 0.0f), nonFinite)).IsValid());
-    CHECK(fixture.Physics().BodyCount() == 0);
+    SECTION("a sphere")
+    {
+        body.shape = mir::PhysicsShape::Sphere;
+        body.radius = 0.0f;
+    }
+
+    SECTION("a capsule")
+    {
+        body.shape = mir::PhysicsShape::Capsule;
+        body.halfHeight = 0.0f;
+    }
+
+    SECTION("a size that is not finite")
+    {
+        body.halfExtent.x = std::numeric_limits<float>::infinity();
+    }
+
+    const mir::Entity entity = fixture.Add(glm::vec3(0.0f), body);
+    CHECK(BodyOfEntity(fixture, entity).IsValid());
+    CHECK(fixture.Physics().BodyCount() == 1);
+    CHECK_FALSE(CastDown(fixture).has_value());
+}
+
+TEST_CASE("A world scale change during Play reaches the collider", "[physics][world]")
+{
+    PhysicsFixture fixture;
+    mir::RigidBody box = kStaticBox;
+    box.halfExtent = glm::vec3(1.0f);
+    const mir::Entity entity = fixture.Add(glm::vec3(0.0f), box);
+    const mir::BodyHandle handle = BodyOfEntity(fixture, entity);
+    REQUIRE(CastDown(fixture).value().mDistance == Catch::Approx(9.0f).margin(0.01f));
+
+    fixture.world.GetComponent<mir::Transform>(entity)->SetScale(glm::vec3(1.0f, 3.0f, 1.0f));
+    fixture.Run(1);
+    CHECK(CastDown(fixture).value().mDistance == Catch::Approx(7.0f).margin(0.01f));
+    CHECK(BodyOfEntity(fixture, entity) == handle);
+
+    // a scale of zero is an empty collider, and scaling back brings it again
+    fixture.world.GetComponent<mir::Transform>(entity)->SetScale(glm::vec3(1.0f, 0.0f, 1.0f));
+    fixture.Run(1);
+    CHECK_FALSE(CastDown(fixture).has_value());
+    fixture.world.GetComponent<mir::Transform>(entity)->SetScale(glm::vec3(1.0f));
+    fixture.Run(1);
+    CHECK(CastDown(fixture).value().mDistance == Catch::Approx(9.0f).margin(0.01f));
+}
+
+TEST_CASE("A body born under a zero world scale gets its collider once the scale is fixed", "[physics][world]")
+{
+    PhysicsFixture fixture;
+    const mir::Entity entity = fixture.world.CreateEntity();
+    mir::AddTransform(fixture.world, entity,
+        mir::Transform{ mir::WorldVec3(0.0, 0.0, 0.0), mir::kIdentityRotation, glm::vec3(1.0f, 0.0f, 1.0f) });
+    mir::RigidBody box = kStaticBox;
+    box.halfExtent = glm::vec3(1.0f);
+    fixture.world.AddComponent<mir::RigidBody>(entity, box);
+    REQUIRE(BodyOfEntity(fixture, entity).IsValid());
+    REQUIRE_FALSE(CastDown(fixture).has_value());
+
+    fixture.world.GetComponent<mir::Transform>(entity)->SetScale(glm::vec3(1.0f));
+    fixture.Run(1);
+    CHECK(CastDown(fixture).value().mDistance == Catch::Approx(9.0f).margin(0.01f));
 }
 
 TEST_CASE("A RigidBody gets its body when it is added, before any step", "[physics]")
