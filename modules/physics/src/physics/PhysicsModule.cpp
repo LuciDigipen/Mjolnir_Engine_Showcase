@@ -19,20 +19,25 @@
 
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/World.h>
+#include <core/log/Log.h>
+#include <jobs/JobExecutor.h>
 
 namespace mir
 {
-    PhysicsModule::PhysicsModule(ModuleContext context, const std::filesystem::path &projectSettingsPath)
+    PhysicsModule::PhysicsModule(ModuleContext context, const std::filesystem::path &projectSettingsPath, JobExecutor *jobs)
     {
         RegisterPhysicsComponents();
 
-        PhysicsWorld &physics = context.world.EmplaceResource<PhysicsWorld>();
+        PhysicsWorldDesc desc;
+        if (jobs) desc.mWorkerThreads = static_cast<int>(jobs->WorkerCount());
+        PhysicsWorld &physics = context.world.EmplaceResource<PhysicsWorld>(desc);
+        MIR_LOG_INFO("Physics: {} simulation workers, {} pose workers", physics.WorkerCount(), jobs ? jobs->WorkerCount() : 0);
         physics.SetLayerTable(ReadPhysicsLayers(projectSettingsPath));
         context.world.EmplaceResource<CollisionEvents>();
         context.world.EmplaceResource<PhysicsLayerUpdate>();
 
         // once per fixed substep, before Propagate turns the Transforms it writes into world matrices
-        context.scheduler.AddSystem<PhysicsSystem>(SystemPhase::FixedUpdate, SystemOrder{SystemOrder::kNormal});
+        context.scheduler.AddSystem<PhysicsSystem>(SystemPhase::FixedUpdate, SystemOrder{SystemOrder::kNormal}, jobs);
         context.scheduler.AddSystem<PhysicsInterpolationSystem>(SystemPhase::PostUpdate,
             SystemOrder{SystemOrder::kNormal});
         context.scheduler.AddSystem<CollisionEventSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kNormal});

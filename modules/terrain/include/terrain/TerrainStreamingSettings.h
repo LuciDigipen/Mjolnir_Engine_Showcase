@@ -48,6 +48,8 @@ namespace mir
 
         struct Io
         {
+            // Runtime: concurrency cap on the engine background lane. Standalone
+            // TerrainWorkerPool users may use it as their dedicated thread count.
             uint32_t workerThreads = 0;
             // Finished reads installed by one Update; the rest wait for the next.
             uint32_t maxInstallsPerFrame = 0;

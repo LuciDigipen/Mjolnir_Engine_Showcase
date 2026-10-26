@@ -451,12 +451,23 @@ whole only to check a newly published release before an Edit switch, one pack at
 a time on a worker (see [Release switch](#release-switch-issue-129));
 `VerifyAllPacks` stays in TerrainTool's validate and publish.
 
-**Threads.** `TerrainWorkerPool` (`terrain/TerrainExecutor.h`,
-`io.workerThreads` `std::jthread`s) runs posted jobs; tests inject a
+**Threads.** Runtime uses `TerrainJobExecutor` (`terrain/TerrainExecutor.h`), a
+background lane on the app-owned engine executor. `io.workerThreads` caps terrain
+callbacks in flight, clamped to the engine worker count; no extra terrain threads
+are created. The same lane handles reads/decoding, mesh builds, collision shape
+builds and release verification. The standalone `TerrainWorkerPool` remains for
+tools/tests, and tests can inject a
 `TerrainManualExecutor` and a manual clock. Workers touch only the byte source,
 the immutable index and the decoders. Entries, height queries and the budget
 change only in `Update`, which installs at most `io.maxInstallsPerFrame`
 finished reads per call.
+
+Frame ranges take priority over queued background callbacks. Running IO is not
+preempted. Runtime shutdown closes its lane, drops unstarted callbacks and joins
+running ones before terrain collaborators die. Scene unload keeps the lane and
+uses existing terrain tickets/queues to discard stale results. `--workers 0`
+runs callbacks inline, so streaming updates may do IO/build work synchronously
+in that explicit serial mode. Budgets and install limits still apply.
 
 **Settings.** `TerrainStreamingSettings` (`terrain/TerrainStreamingSettings.h`)
 has no code defaults. `LoadTerrainStreamingSettings` reads the game's

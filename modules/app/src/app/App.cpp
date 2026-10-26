@@ -113,6 +113,7 @@ namespace mir
         : mDesc(Prepared(desc)),
           mProject(mDesc.mProject),
           mSplash(mDesc),
+          mJobs(mDesc.mWorkerThreads),
           mCore(Context(), mCommands),
           mAssets(CookedAssetsDir()),
           mScene(Context(), mProject.mSceneDir),
@@ -127,7 +128,7 @@ namespace mir
                                       .mProjectSettingsPath = mProject.mProjectSettingsPath,
                                       .mAssetIdRoot = mProject.mAssetIdRoot }),
           mInput(Context(), mWindow.Get(), mProject.mProjectSettingsPath),
-          mAnimation(Context(), mRenderer.Renderer(), mAssets, mProject.mAssetIdRoot),
+          mAnimation(Context(), mRenderer.Renderer(), mAssets, mProject.mAssetIdRoot, &mJobs),
           mImGui(Context(), mWindow, mRenderer),
     #if MIR_WITH_EDITOR
           mEditor(Context(), mImGui, mWindow, mRenderer, mScene, mPrefab, mAssets, mProject,
@@ -135,7 +136,7 @@ namespace mir
     #endif
           mCamera(Context()),
           mAudio(Context(), mProject.mSoundBankDir),
-          mPhysics(Context(), mProject.mProjectSettingsPath),
+          mPhysics(Context(), mProject.mProjectSettingsPath, &mJobs),
           mTerrainData(Context()),
           mScript(Context(), mAssets, mProject.mAssetIdRoot),
           mAudioScript(mScript),
@@ -143,7 +144,7 @@ namespace mir
           mPhysicsScript(mScript),
           mRendererScript(mScript),
           mTerrainScript(mScript),
-          mTerrain(Context(), mRenderer, mProject),
+          mTerrain(Context(), mRenderer, mProject, mJobs),
           mGameUIImGui(Context(), mImGui, mWindow, mGameUI),
           mFixedTimestep{ .mStep = mDesc.mFixedDeltaSeconds, .mMaxSteps = mDesc.mMaxFixedSteps }
     {

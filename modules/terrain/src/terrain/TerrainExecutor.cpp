@@ -9,11 +9,19 @@
 #include "terrain/TerrainExecutor.h"
 
 #include <core/platform/CrashHandler.h>
+#include <jobs/BackgroundJobQueue.h>
 
 #include <utility>
 
 namespace mir
 {
+    TerrainJobExecutor::TerrainJobExecutor(JobExecutor &executor, uint32_t concurrency)
+        : mQueue(std::make_unique<BackgroundJobQueue>(executor, concurrency)) {}
+    TerrainJobExecutor::~TerrainJobExecutor() = default;
+    void TerrainJobExecutor::Post(std::function<void()> job) { mQueue->Post(std::move(job)); }
+    void TerrainJobExecutor::CloseAndWait() { mQueue->CloseAndWait(); }
+    size_t TerrainJobExecutor::Concurrency() const { return mQueue->Concurrency(); }
+
     TerrainWorkerPool::TerrainWorkerPool(uint32_t threads)
     {
         static_assert(noexcept(Work(std::stop_token{})), "C callbacks and thread entry points must be noexcept (conventions.md)");

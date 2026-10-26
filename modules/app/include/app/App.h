@@ -38,6 +38,7 @@
 #include <terrain_script/TerrainScriptModule.h>
 #include <window/Splash.h>
 #include <window/WindowModule.h>
+#include <jobs/JobExecutor.h>
 
 // 1 with the editor, 0 for the game alone
 #ifndef MIR_WITH_EDITOR 
@@ -78,6 +79,8 @@ namespace mir
         // 0: run until the window closes
         uint64_t mMaxFrames = 0;
         std::filesystem::path mCapturePath;
+        // Bounded automatic pool; --workers 0 explicitly selects serial execution.
+        uint32_t mWorkerThreads = static_cast<uint32_t>(JobExecutor::DefaultWorkerCount());
 
         // debug: draw UIDemoScreen, every core widget, as the game UI
         bool mUIDemo = false;
@@ -221,6 +224,7 @@ namespace mir
         AppDesc mDesc;
         GameProject mProject;
         StartupSplash mSplash;
+        JobExecutor mJobs;
 
         // before mWorld, so it is destroyed after it
         CommandBuffer mCommands;

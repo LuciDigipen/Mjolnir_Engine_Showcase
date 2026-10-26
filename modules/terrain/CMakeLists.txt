@@ -29,6 +29,7 @@ target_sources(engine_terrain PRIVATE
     src/terrain/TileAddressing.cpp
     src/terrain/TileHeights.cpp
 )
+target_link_libraries(engine_terrain PRIVATE mir::jobs)
 
 target_link_libraries(engine_terrain PUBLIC mir::assets mir::core PRIVATE mir::serial)
 

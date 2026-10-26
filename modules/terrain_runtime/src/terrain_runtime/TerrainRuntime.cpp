@@ -21,6 +21,7 @@
 #include <terrain/TerrainCollision.h>
 #include <terrain/TerrainAssetPath.h>
 #include <terrain/TerrainExecutor.h>
+#include <jobs/JobExecutor.h>
 #include <terrain/TerrainStreamingSettings.h>
 
 #include <glm/geometric.hpp>
@@ -162,6 +163,8 @@ namespace mir
 
     TerrainRuntime::~TerrainRuntime()
     {
+        // Streamer resources can retain the adapter after the runtime dies.
+        if (mPool) mPool->CloseAndWait();
         if (!mWorld)
             return;
         if (ViewDrawSources *sources = mWorld->TryResource<ViewDrawSources>())
@@ -172,7 +175,7 @@ namespace mir
             mCollision->Clear();
     }
 
-    void TerrainRuntime::Bind(World &world, VulkanRenderer &renderer, const GameProject &project)
+    void TerrainRuntime::Bind(World &world, VulkanRenderer &renderer, const GameProject &project, JobExecutor &jobs)
     {
         mWorld = &world;
         mRenderer = &renderer;
@@ -202,10 +205,10 @@ namespace mir
 
         const TerrainStreamingSettings &settings = *load.settings;
         world.EmplaceResource<TerrainStreamingSettings>(settings);
-        mPool = std::make_shared<TerrainWorkerPool>(settings.io.workerThreads);
+        mPool = std::make_shared<TerrainJobExecutor>(jobs, settings.io.workerThreads);
         world.EmplaceResource<TerrainStreamer>(settings, mPool);
-        MIR_LOG_INFO("Terrain streaming: {:.0f} MiB CPU budget, {} read workers, {} residency{}",
-                     MiB(settings.cpu.budgetBytes), settings.io.workerThreads,
+        MIR_LOG_INFO("Terrain streaming: {:.0f} MiB CPU budget, {} shared slots ({} engine workers), {} residency{}",
+                     MiB(settings.cpu.budgetBytes), mPool->Concurrency(), jobs.WorkerCount(),
                      TerrainResidencyModeName(*settings.residency.mode),
                      load.localFileFound ? " (machine-local overrides applied)" : "");
         MIR_LOG_INFO("Terrain views: refine above {} px, merge below {} px, prefetch to {} px within {:.1f} MiB",

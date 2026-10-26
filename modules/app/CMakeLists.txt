@@ -3,6 +3,7 @@ engine_add_module(app)
 # PUBLIC: App.h holds every module as a member
 target_link_libraries(engine_app
     PUBLIC mir::animation
+           mir::jobs
            mir::assets
            mir::audio
            mir::audio_script

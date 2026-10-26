@@ -15,7 +15,9 @@
 #include "JoltRuntime.h"
 
 #include <core/log/Log.h>
+#include <core/log/Assert.h>
 #include <core/platform/CrashHandler.h>
+#include <jobs/JobExecutor.h>
 
 #include <Jolt/Jolt.h>
 
@@ -46,6 +48,7 @@
 #include <algorithm>
 #include <cmath>
 #include <optional>
+#include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
 #include <type_traits>
@@ -204,7 +207,7 @@ namespace mir
             // through the crash handler's terminate route, not the abort fallback
             mJobSystem.SetThreadInitFunction([](int) { ArmCrashHandler(); });
             mJobSystem.Init(static_cast<JPH::uint>(JPH::cMaxPhysicsJobs), static_cast<JPH::uint>(JPH::cMaxPhysicsBarriers),
-                desc.mWorkerThreads > 0 ? static_cast<int>(desc.mWorkerThreads) : -1);
+                desc.mWorkerThreads >= 0 ? desc.mWorkerThreads : static_cast<int>(JobExecutor::DefaultWorkerCount()));
 
             mSystem.Init(desc.mMaxBodies,
                          0, // body mutexes: 0 lets Jolt pick a default
@@ -556,6 +559,36 @@ namespace mir
     glm::vec3 PhysicsWorld::Gravity() const
     {
         return FromJolt(mImpl->mSystem.GetGravity());
+    }
+
+    uint32_t PhysicsWorld::WorkerCount() const
+    {
+        return static_cast<uint32_t>(mImpl->mJobSystem.GetMaxConcurrency() - 1);
+    }
+
+    void PhysicsWorld::ReadBodyPoses(std::span<const BodyHandle> bodies, std::span<BodyPoseSnapshot> poses,
+        JobExecutor *jobs) const
+    {
+        if (bodies.size() != poses.size()) throw std::invalid_argument("physics body/pose span sizes differ");
+        MIR_ASSERT(!mStepping, "PhysicsWorld: readback must run after the physics step has joined");
+        const auto read = [&](size_t begin, size_t end)
+        {
+            for (size_t i = begin; i < end; ++i)
+            {
+                poses[i] = {};
+                if (!bodies[i].IsValid()) continue;
+                const JPH::BodyLockRead lock(mImpl->mSystem.GetBodyLockInterface(), ToBodyId(bodies[i]));
+                if (!lock.SucceededAndIsInBroadPhase()) continue;
+                const auto &body = lock.GetBody();
+                poses[i].position = PositionFromJolt(body.GetPosition());
+                poses[i].rotation = FromJolt(body.GetRotation());
+            }
+        };
+        // Avoid dispatch for small worlds. Each range holds only one read lock at a time.
+        if (jobs && jobs->WorkerCount() > 0 && bodies.size() >= 128)
+            jobs->ParallelFor(bodies.size(), 16, read);
+        else
+            read(0, bodies.size());
     }
 
     std::optional<WorldPosition> PhysicsWorld::BodyPosition(BodyHandle body) const
