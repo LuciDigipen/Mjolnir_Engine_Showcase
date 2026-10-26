@@ -409,6 +409,8 @@ namespace
     std::string StageMove(Options &options, Json &cache, const std::string &logical,
                           const std::filesystem::path &targetRelative)
     {
+        if (IsMaterialPath(std::filesystem::path(logical)))
+            throw std::runtime_error("Surface materials cannot be moved as glTF model packages");
         auto resolved = ResolveModel(options, logical);
         if (!resolved || !std::filesystem::is_regular_file(resolved->second))
             throw std::runtime_error("model to move does not exist: " + logical);

@@ -60,7 +60,6 @@ namespace
         }
         void WriteNormal()
         {
-            // Decoded y/z cancel exactly: +X carries -1/255, -X carries +1/255.
             const uint8_t plus[] = {255, 127, 127, 255};
             const uint8_t minus[] = {0, 128, 128, 255};
             std::vector<uint8_t> ordered;
@@ -251,6 +250,23 @@ TEST_CASE("A material cook drops previously cooked source image entries", "[mate
     for (const char *source : {"base", "ao", "roughness", "displacement", "specular", "normal"})
         CHECK(manifest->Find(MakeAssetId(std::string("assets/textures/") + source + ".png")) == nullptr);
     CHECK(manifest->Find(MakeAssetId(materialPath)) != nullptr);
+}
+
+TEST_CASE("A glTF package move refuses a surface material before moving files", "[material][cook][move]")
+{
+    MaterialFixture fixture;
+    const auto out = fs::path(fixture.root.string() + "-move");
+    const auto result = out / "result.json";
+    const auto source = fixture.root / "materials/sand.material.json";
+    const auto before = ReadBytes(source);
+    REQUIRE(before);
+    auto args = fixture.Args(out, result);
+    args.insert(args.end(), {"--move-model", "assets/materials/sand.material.json", "--move-to", "moved"});
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, args, true) != 0);
+    CHECK(ReadBytes(source) == before);
+    CHECK_FALSE(fs::exists(fixture.root / "moved"));
+    const Json failed = Json::parse(std::ifstream(result));
+    CHECK(failed.at("diagnostic").at("message").get<std::string>().find("cannot be moved") != std::string::npos);
 }
 
 TEST_CASE("The authorized TerrainCheck set cooks at the default 2K resolution", "[material][real]")
