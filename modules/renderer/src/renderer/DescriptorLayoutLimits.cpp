@@ -16,9 +16,7 @@ namespace mir
 {
     namespace
     {
-        // Raster: set 0 has two combined images and the record UBO; set 1 a camera
-        // UBO and light storage buffer; set 2 a model storage buffer; set 3 three
-        // combined shadow images and one storage buffer; set 4 the shared table.
+        // Raster: the legacy sets plus the shared table; fragment also writes color.
         DescriptorUsage RasterUsage()
         {
             constexpr uint32_t combinedImages =
@@ -36,18 +34,18 @@ namespace mir
                 .mPerStageStorageImages = 0,
                 .mPerStageResources = combinedImages + vk::kMaxSharedImages +
                     vk::kMaterialSetRecordUniformBuffers + vk::kCameraSetUniformBuffers +
-                    fragmentStorageBuffers,
-                .mSetSamplers = vk::kMaxSharedSamplers,
-                .mSetSampledImages = vk::kMaxSharedImages,
-                .mSetUniformBuffers = 1,
-                .mSetDynamicUniformBuffers = 1,
-                .mSetStorageBuffers = 1,
-                .mSetDynamicStorageBuffers = 0,
-                .mSetStorageImages = 0 };
+                    fragmentStorageBuffers + 1,
+                .mLayoutSamplers = combinedImages + vk::kMaxSharedSamplers,
+                .mLayoutSampledImages = combinedImages + vk::kMaxSharedImages,
+                .mLayoutUniformBuffers = vk::kMaterialSetRecordUniformBuffers + vk::kCameraSetUniformBuffers,
+                .mLayoutDynamicUniformBuffers =
+                    vk::kMaterialSetRecordUniformBuffers + vk::kCameraSetUniformBuffers,
+                .mLayoutStorageBuffers = fragmentStorageBuffers,
+                .mLayoutDynamicStorageBuffers = 0,
+                .mLayoutStorageImages = 0 };
         }
 
-        // RT: set 0 has the TLAS, two storage buffers (instance info and records),
-        // the table rows and its storage images; set 1 the camera UBO and lights.
+        // RT: its own table set plus the camera and light set.
         DescriptorUsage RtUsage()
         {
             return DescriptorUsage{
@@ -58,15 +56,14 @@ namespace mir
                 .mPerStageStorageBuffers = vk::kRtSetStorageBuffers + vk::kCameraSetStorageBuffers,
                 .mPerStageStorageImages = 4,
                 .mPerStageResources = vk::kMaxSharedImages + vk::kRtSetStorageBuffers +
-                    vk::kCameraSetStorageBuffers + vk::kCameraSetUniformBuffers + 3 +
-                    vk::kRtSetAccelerationStructures,
-                .mSetSamplers = vk::kMaxSharedSamplers,
-                .mSetSampledImages = vk::kMaxSharedImages,
-                .mSetUniformBuffers = vk::kCameraSetUniformBuffers,
-                .mSetDynamicUniformBuffers = vk::kCameraSetUniformBuffers,
-                .mSetStorageBuffers = vk::kRtSetStorageBuffers,
-                .mSetDynamicStorageBuffers = 0,
-                .mSetStorageImages = vk::kRtSetStorageImages };
+                    vk::kCameraSetStorageBuffers + vk::kCameraSetUniformBuffers + 3,
+                .mLayoutSamplers = vk::kMaxSharedSamplers,
+                .mLayoutSampledImages = vk::kMaxSharedImages,
+                .mLayoutUniformBuffers = vk::kCameraSetUniformBuffers,
+                .mLayoutDynamicUniformBuffers = vk::kCameraSetUniformBuffers,
+                .mLayoutStorageBuffers = vk::kRtSetStorageBuffers + vk::kCameraSetStorageBuffers,
+                .mLayoutDynamicStorageBuffers = 0,
+                .mLayoutStorageImages = vk::kRtSetStorageImages };
         }
     }
 
@@ -89,12 +86,12 @@ namespace mir
             limits.maxPerStageStorageBuffers >= usage.mPerStageStorageBuffers &&
             limits.maxPerStageStorageImages >= usage.mPerStageStorageImages &&
             limits.maxPerStageResources >= usage.mPerStageResources &&
-            limits.maxSetSamplers >= usage.mSetSamplers &&
-            limits.maxSetSampledImages >= usage.mSetSampledImages &&
-            limits.maxSetUniformBuffers >= usage.mSetUniformBuffers &&
-            limits.maxSetDynamicUniformBuffers >= usage.mSetDynamicUniformBuffers &&
-            limits.maxSetStorageBuffers >= usage.mSetStorageBuffers &&
-            limits.maxSetDynamicStorageBuffers >= usage.mSetDynamicStorageBuffers &&
-            limits.maxSetStorageImages >= usage.mSetStorageImages;
+            limits.maxSetSamplers >= usage.mLayoutSamplers &&
+            limits.maxSetSampledImages >= usage.mLayoutSampledImages &&
+            limits.maxSetUniformBuffers >= usage.mLayoutUniformBuffers &&
+            limits.maxSetDynamicUniformBuffers >= usage.mLayoutDynamicUniformBuffers &&
+            limits.maxSetStorageBuffers >= usage.mLayoutStorageBuffers &&
+            limits.maxSetDynamicStorageBuffers >= usage.mLayoutDynamicStorageBuffers &&
+            limits.maxSetStorageImages >= usage.mLayoutStorageImages;
     }
 }

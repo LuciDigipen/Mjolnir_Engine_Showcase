@@ -39,18 +39,18 @@ namespace mir
         uint32_t mPerStageStorageBuffers = 0;
         uint32_t mPerStageStorageImages = 0;
         uint32_t mPerStageResources = 0;
-        uint32_t mSetSamplers = 0;
-        uint32_t mSetSampledImages = 0;
-        uint32_t mSetUniformBuffers = 0;
-        uint32_t mSetDynamicUniformBuffers = 0;
-        uint32_t mSetStorageBuffers = 0;
-        uint32_t mSetDynamicStorageBuffers = 0;
-        uint32_t mSetStorageImages = 0;
+        uint32_t mLayoutSamplers = 0;
+        uint32_t mLayoutSampledImages = 0;
+        uint32_t mLayoutUniformBuffers = 0;
+        uint32_t mLayoutDynamicUniformBuffers = 0;
+        uint32_t mLayoutStorageBuffers = 0;
+        uint32_t mLayoutDynamicStorageBuffers = 0;
+        uint32_t mLayoutStorageImages = 0;
     };
 
-    // Worst stage and worst set of the raster layout, legacy bindings included.
+    // The maxDescriptorSet limits and the layout totals below are pipeline-wide,
+    // while the per-stage values are the worst single stage.
     DescriptorUsage SharedRasterDescriptorUsage();
-    // Worst stage and worst set of the RT layout, its camera set included.
     DescriptorUsage SharedRtDescriptorUsage();
     bool DescriptorLayoutFits(const DescriptorLimits &limits, const DescriptorUsage &usage);
 }

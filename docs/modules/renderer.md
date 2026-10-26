@@ -703,15 +703,17 @@ the same image and sampler rows at bindings 9 and 10 and the record buffer at 11
 row indices.
 
 **Feature bits are not enough: the shared layouts must fit the device's descriptor
-limits.** `DescriptorLayoutLimits` derives worst-case per-stage and per-set counts
-from the same constants the layouts use, including the legacy material, camera,
-model and shadow bindings. Raster needs five sets and counts combined images,
-shared images/samplers, uniform buffers and storage buffers. RT counts its storage
-images, two storage buffers and the camera set separately. If raster does not fit,
-the legacy material path stays and shared tables are not constructed; if RT does
-not fit, RT is disabled while a fitting raster shared table remains available.
-`maxPerStageResources` excludes separate samplers, so the budget counts only the
-combined/sampled images and non-sampler resources there.
+limits.** `DescriptorLayoutLimits` derives worst-case per-stage counts and
+pipeline-wide totals from the same constants the layouts use, including the legacy
+material, camera, model and shadow bindings. The `maxDescriptorSet*` limits are
+totals over every set in a pipeline layout, not a worst single set. Raster needs
+five sets; its fragment stage also carries the color attachment, while
+`maxPerStageResources` excludes separate samplers and acceleration structures but
+counts combined/sampled images and non-sampler resources. RT adds its storage
+buffers and camera light buffer to the pipeline storage-buffer total. If raster
+does not fit, the legacy material path stays and shared tables are not constructed;
+if RT does not fit, RT is disabled while a fitting raster shared table remains
+available.
 
 **A material record is opaque bytes.** `MaterialRecordTable` owns the alignment,
 capacity and lifetime; M2 owns the reflected field layout. Free spans are split
@@ -840,11 +842,11 @@ Everything that needs a device is verified by the smoke tests and
 
 *2026-10-26* — **Shared layouts respect descriptor limits.** Was: capability
 checks only looked at descriptor-indexing feature bits, so a legal device with
-lower per-stage, per-set or bound-set limits could fail when the fixed shared
-tables were created. Now: `DescriptorLayoutLimits` computes the exact worst-case
-raster and RT budgets from the same layout constants, including legacy material,
-camera, model and shadow bindings, and distinguishes separate samplers from
-`maxPerStageResources`. Device selection keeps legacy raster when the raster
+lower per-stage, pipeline-wide set or bound-set limits could fail when the fixed
+shared tables were created. Now: `DescriptorLayoutLimits` computes the exact
+worst-case raster and RT per-stage counts and pipeline-layout totals from the same
+layout constants, including legacy material, camera, model and shadow bindings,
+fragment color attachment and separate samplers in `maxPerStageResources`. Device selection keeps legacy raster when the raster
 budget does not fit, disables RT when its budget does not fit, and logs which
 reason applied. `DescriptorLayoutLimits.tests.cpp` covers the exact boundary and
 one-below limits. Because: feature support alone does not make a descriptor layout

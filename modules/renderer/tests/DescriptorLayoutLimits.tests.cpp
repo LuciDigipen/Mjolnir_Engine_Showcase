@@ -24,13 +24,13 @@ namespace
             .maxPerStageStorageBuffers = usage.mPerStageStorageBuffers,
             .maxPerStageStorageImages = usage.mPerStageStorageImages,
             .maxPerStageResources = usage.mPerStageResources,
-            .maxSetSamplers = usage.mSetSamplers,
-            .maxSetSampledImages = usage.mSetSampledImages,
-            .maxSetUniformBuffers = usage.mSetUniformBuffers,
-            .maxSetDynamicUniformBuffers = usage.mSetDynamicUniformBuffers,
-            .maxSetStorageBuffers = usage.mSetStorageBuffers,
-            .maxSetDynamicStorageBuffers = usage.mSetDynamicStorageBuffers,
-            .maxSetStorageImages = usage.mSetStorageImages };
+            .maxSetSamplers = usage.mLayoutSamplers,
+            .maxSetSampledImages = usage.mLayoutSampledImages,
+            .maxSetUniformBuffers = usage.mLayoutUniformBuffers,
+            .maxSetDynamicUniformBuffers = usage.mLayoutDynamicUniformBuffers,
+            .maxSetStorageBuffers = usage.mLayoutStorageBuffers,
+            .maxSetDynamicStorageBuffers = usage.mLayoutDynamicStorageBuffers,
+            .maxSetStorageImages = usage.mLayoutStorageImages };
     }
 }
 
@@ -42,10 +42,12 @@ TEST_CASE("The shared raster budget counts legacy and table descriptors", "[rend
     CHECK(usage.mPerStageSampledImages == 1029);
     CHECK(usage.mPerStageUniformBuffers == 2);
     CHECK(usage.mPerStageStorageBuffers == 4);
-    CHECK(usage.mPerStageResources == 1035);
-    CHECK(usage.mSetSamplers == 256);
-    CHECK(usage.mSetSampledImages == 1024);
-    CHECK(usage.mSetStorageBuffers == 1);
+    CHECK(usage.mPerStageResources == 1036);
+    CHECK(usage.mLayoutSamplers == 261);
+    CHECK(usage.mLayoutSampledImages == 1029);
+    CHECK(usage.mLayoutUniformBuffers == 2);
+    CHECK(usage.mLayoutDynamicUniformBuffers == 2);
+    CHECK(usage.mLayoutStorageBuffers == 4);
 
     const DescriptorLimits exact = LimitsFor(usage);
     CHECK(DescriptorLayoutFits(exact, usage));
@@ -93,9 +95,13 @@ TEST_CASE("The shared RT budget counts its storage images and buffers", "[render
     CHECK(usage.mPerStageSampledImages == 1024);
     CHECK(usage.mPerStageStorageBuffers == 3);
     CHECK(usage.mPerStageStorageImages == 4);
-    CHECK(usage.mPerStageResources == 1032);
-    CHECK(usage.mSetStorageBuffers == 2);
-    CHECK(usage.mSetStorageImages == 7);
+    CHECK(usage.mPerStageResources == 1031);
+    CHECK(usage.mLayoutSamplers == 256);
+    CHECK(usage.mLayoutSampledImages == 1024);
+    CHECK(usage.mLayoutUniformBuffers == 1);
+    CHECK(usage.mLayoutDynamicUniformBuffers == 1);
+    CHECK(usage.mLayoutStorageBuffers == 3);
+    CHECK(usage.mLayoutStorageImages == 7);
 
     const DescriptorLimits exact = LimitsFor(usage);
     CHECK(DescriptorLayoutFits(exact, usage));
@@ -110,6 +116,9 @@ TEST_CASE("The shared RT budget counts its storage images and buffers", "[render
     below.maxPerStageSampledImages -= 1;
     CHECK_FALSE(DescriptorLayoutFits(below, usage));
     below = exact;
+    below.maxPerStageUniformBuffers -= 1;
+    CHECK_FALSE(DescriptorLayoutFits(below, usage));
+    below = exact;
     below.maxPerStageStorageBuffers -= 1;
     CHECK_FALSE(DescriptorLayoutFits(below, usage));
     below = exact;
@@ -117,6 +126,18 @@ TEST_CASE("The shared RT budget counts its storage images and buffers", "[render
     CHECK_FALSE(DescriptorLayoutFits(below, usage));
     below = exact;
     below.maxPerStageResources -= 1;
+    CHECK_FALSE(DescriptorLayoutFits(below, usage));
+    below = exact;
+    below.maxSetSamplers -= 1;
+    CHECK_FALSE(DescriptorLayoutFits(below, usage));
+    below = exact;
+    below.maxSetSampledImages -= 1;
+    CHECK_FALSE(DescriptorLayoutFits(below, usage));
+    below = exact;
+    below.maxSetUniformBuffers -= 1;
+    CHECK_FALSE(DescriptorLayoutFits(below, usage));
+    below = exact;
+    below.maxSetDynamicUniformBuffers -= 1;
     CHECK_FALSE(DescriptorLayoutFits(below, usage));
     below = exact;
     below.maxSetStorageBuffers -= 1;
