@@ -179,6 +179,24 @@ namespace mir
             float mX0, mY0, mWidth, mHeight;
         };
 
+
+        ImDrawList *ViewportOverlayDrawList()
+        {
+            const ImGuiViewport *viewport = ImGui::GetMainViewport();
+            ImGui::SetNextWindowPos(viewport->Pos);
+            ImGui::SetNextWindowSize(viewport->Size);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+            ImGui::Begin("##ViewportOverlay", nullptr,
+                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoBackground |
+                    ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
+                    ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing |
+                    ImGuiWindowFlags_NoBringToFrontOnFocus);
+            ImDrawList *drawList = ImGui::GetWindowDrawList();
+            ImGui::End();
+            ImGui::PopStyleVar();
+            return drawList;
+        }
+
         // The tab bar over the scene viewport; the viewport itself starts below it.
         float DrawDocumentTabs(float x, float y, float width, const EditorDocuments &documents, EditorActions &actions,
             bool revealActive)
@@ -553,7 +571,8 @@ namespace mir
         if (mode.mMode != EngineMode::Edit)
             return;
 
-        if (!ImGui::GetIO().WantTextInput && !mWindow->RawInput().IsDown(MouseButton::Right))
+        const bool modalOpen = ImGui::GetTopMostPopupModal() != nullptr;
+        if (!modalOpen && !ImGui::GetIO().WantTextInput && !mWindow->RawInput().IsDown(MouseButton::Right))
         {
             if (ImGui::IsKeyPressed(ImGuiKey_W, false))
                 mGizmoOperation = GizmoOperation::Translate;
@@ -648,12 +667,17 @@ namespace mir
 
         ImGuizmo::SetOrthographic(false);
         ImGuizmo::BeginFrame();
-        ImGuizmo::SetDrawlist(ImGui::GetForegroundDrawList(ImGui::GetMainViewport()));
+        ImGuizmo::SetDrawlist(ViewportOverlayDrawList());
         ImGuizmo::SetRect(x, y, width, height);
+        ImGuizmo::Enable(!modalOpen);
 
         const ImGuizmo::MODE gizmoMode = mGizmoSpace == GizmoSpace::Local ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
         const bool changed = ImGuizmo::Manipulate(glm::value_ptr(view), glm::value_ptr(proj),
             ToImGuizmoOperation(mGizmoOperation), gizmoMode, glm::value_ptr(gizmoMatrix));
+
+        
+        if (ImGuizmo::IsUsing() && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
+            ImGuizmo::Enable(false);
 
         
         const bool usingGizmo = ImGuizmo::IsUsing();
@@ -908,7 +932,7 @@ namespace mir
         const WorldPose camera = mCamera.Pose();
         const glm::mat4 viewProj = MakeCameraRelativeViewProjection(camera, mCamera.mLens, width / height);
 
-        ImDrawList *drawList = ImGui::GetForegroundDrawList(ImGui::GetMainViewport());
+        ImDrawList *drawList = ViewportOverlayDrawList();
         drawList->PushClipRect(ImVec2(x0, y0), ImVec2(x0 + width, y0 + height), true);
         const Entity primary = selection->Primary();
 
@@ -975,7 +999,7 @@ namespace mir
         const WorldPose camera = mCamera.Pose();
         const glm::mat4 viewProj = MakeCameraRelativeViewProjection(camera, mCamera.mLens, width / height);
 
-        ImDrawList *drawList = ImGui::GetForegroundDrawList(ImGui::GetMainViewport());
+        ImDrawList *drawList = ViewportOverlayDrawList();
         drawList->PushClipRect(ImVec2(x0, y0), ImVec2(x0 + width, y0 + height), true);
 
         const ScreenGizmoCanvas canvas(drawList, viewProj, x0, y0, width, height);
