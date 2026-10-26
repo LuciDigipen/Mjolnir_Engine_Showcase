@@ -250,35 +250,35 @@ namespace mir
 
     void PhysicsSystem::PullPoses(World &world, PhysicsWorld &physics)
     {
-        mQuery->ForEach(
-            [&](Entity entity, Transform &transform, RigidBody &rigidBody)
+        detail::ParentFirst(world, *mQuery, mOrder);
+        for (const Entity entity : mOrder)
+        {
+            Transform &transform = *world.GetComponent<Transform>(entity);
+            RigidBody &rigidBody = *world.GetComponent<RigidBody>(entity);
+
+            // The step reached the target, so the velocity MoveKinematic set must not carry it on.
+            if (rigidBody.runtime.movedToTarget)
             {
-                if (!HasMovingBody(rigidBody))
-                    return;
+                physics.SetBodyLinearVelocity(rigidBody.runtime.body, glm::vec3(0.0f));
+                physics.SetBodyAngularVelocity(rigidBody.runtime.body, glm::vec3(0.0f));
+                rigidBody.runtime.movedToTarget = false;
+            }
 
-                // The step reached the target, so the velocity MoveKinematic set must not carry it on.
-                if (rigidBody.runtime.movedToTarget)
-                {
-                    physics.SetBodyLinearVelocity(rigidBody.runtime.body, glm::vec3(0.0f));
-                    physics.SetBodyAngularVelocity(rigidBody.runtime.body, glm::vec3(0.0f));
-                    rigidBody.runtime.movedToTarget = false;
-                }
+            rigidBody.runtime.previousPosition = rigidBody.runtime.currentPosition;
+            rigidBody.runtime.previousRotation = rigidBody.runtime.currentRotation;
 
-                rigidBody.runtime.previousPosition = rigidBody.runtime.currentPosition;
-                rigidBody.runtime.previousRotation = rigidBody.runtime.currentRotation;
+            // A body Jolt left at a non-finite position, or one that does not fit back through its
+            // parents, keeps its last Transform instead of writing that back.
+            if (const std::optional<WorldPosition> position = physics.BodyPosition(rigidBody.runtime.body))
+                detail::WriteWorldPose(world, entity, transform, *position, physics.BodyRotation(rigidBody.runtime.body));
 
-                // A body Jolt left at a non-finite position, or one that does not fit back through its
-                // parents, keeps its last Transform instead of writing that back.
-                if (const std::optional<WorldPosition> position = physics.BodyPosition(rigidBody.runtime.body))
-                    detail::WriteWorldPose(world, entity, transform, *position, physics.BodyRotation(rigidBody.runtime.body));
-
-                // What the entity resolves to now, not Jolt's pose: the round trip through the parents can
-                // differ by float rounding, and the next push compares against this.
-                const BodyPose pose = detail::PoseOf(world, entity);
-                rigidBody.runtime.currentPosition = pose.position.Meters();
-                rigidBody.runtime.currentRotation = pose.rotation;
-                detail::Stamp(rigidBody, pose);
-            });
+            // What the entity resolves to now, not Jolt's pose: the round trip through the parents can
+            // differ by float rounding, and the next push compares against this.
+            const BodyPose pose = detail::PoseOf(world, entity);
+            rigidBody.runtime.currentPosition = pose.position.Meters();
+            rigidBody.runtime.currentRotation = pose.rotation;
+            detail::Stamp(rigidBody, pose);
+        }
     }
 
     bool PhysicsSystem::Teleport(World &world, Entity entity, const WorldPosition &position,

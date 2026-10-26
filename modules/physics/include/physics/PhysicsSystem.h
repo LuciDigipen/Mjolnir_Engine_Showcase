@@ -22,6 +22,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <optional>
+#include <vector>
 
 namespace mir
 {
@@ -55,5 +56,7 @@ namespace mir
         void PullPoses(World &world, PhysicsWorld &physics);
 
         Query<Transform, RigidBody> *mQuery = nullptr;
+        // the moving bodies, parents first, for the pull
+        std::vector<Entity> mOrder;
     };
 }

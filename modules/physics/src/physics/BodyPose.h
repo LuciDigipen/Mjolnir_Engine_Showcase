@@ -10,13 +10,17 @@
 
 #include <physics/components/RigidBody.h>
 
+#include <core/ecs/Query.h>
 #include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/World.h>
 
 #include <glm/gtc/quaternion.hpp>
 #include <glm/vec3.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <optional>
+#include <vector>
 
 namespace mir::detail
 {
@@ -27,14 +31,51 @@ namespace mir::detail
         glm::vec3 scale{ 1.0f };
     };
 
-    // Shear is dropped by the decomposition, which is as close as a Jolt body can get.
+    // Shear is dropped by the decomposition, which is as close as a Jolt body can get. A rotated child under a
+    // non-uniform scale has shear, so the quaternion it gives is not a unit one and is made so here.
     inline BodyPose PoseOf(World &world, Entity entity)
     {
         const WorldPose pose = ResolveWorld(world, entity);
         BodyPose out;
         out.position = pose.position;
         DecomposeRotationScale(pose.linear, out.rotation, out.scale);
+
+        const float length = glm::length(out.rotation);
+        out.rotation = length > 0.0f && std::isfinite(length) ? out.rotation / length : kIdentityRotation;
         return out;
+    }
+
+    // The entities of the query whose body moves, every parent before its children. A child's local pose is worked
+    // out against its parent's Transform, so the parent has to be written first or its later write moves the child's
+    // world pose away from the child's body.
+    inline void ParentFirst(World &world, Query<Transform, RigidBody> &query, std::vector<Entity> &out)
+    {
+        struct Item
+        {
+            uint32_t depth;
+            Entity entity;
+        };
+
+        std::vector<Item> items;
+        query.ForEach(
+            [&](Entity entity, Transform &, RigidBody &rigidBody)
+            {
+                if (!HasMovingBody(rigidBody))
+                    return;
+                uint32_t depth = 0;
+                for (Entity parent = ParentOf(world, entity); parent != kNullEntity; parent = ParentOf(world, parent))
+                    ++depth;
+                items.push_back({ depth, entity });
+            });
+
+        // the index breaks ties, so the order is the same every step
+        std::sort(items.begin(), items.end(),
+            [](const Item &a, const Item &b)
+            { return a.depth != b.depth ? a.depth < b.depth : a.entity.mIndex < b.entity.mIndex; });
+
+        out.clear();
+        for (const Item &item : items)
+            out.push_back(item.entity);
     }
 
     inline void Stamp(RigidBody &rigidBody, const BodyPose &pose)

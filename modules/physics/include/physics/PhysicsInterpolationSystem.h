@@ -24,6 +24,8 @@
 #include <core/ecs/System.h>
 #include <core/ecs/components/Transform.h>
 
+#include <vector>
+
 namespace mir
 {
     class PhysicsInterpolationSystem final : public ISystem
@@ -34,5 +36,6 @@ namespace mir
 
     private:
         Query<Transform, RigidBody> *mQuery = nullptr;
+        std::vector<Entity> mOrder;
     };
 }

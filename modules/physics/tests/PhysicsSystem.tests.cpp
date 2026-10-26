@@ -1331,6 +1331,43 @@ TEST_CASE("A layer table the editor leaves is taken when Play begins", "[physics
     CHECK_FALSE(fixture.world.Resource<mir::PhysicsLayerUpdate>().mPending.has_value());
 }
 
+TEST_CASE("A parent's body is written before its child's, whatever order they were made in", "[physics][world]")
+{
+    PhysicsFixture fixture;
+    mir::RigidBody still = kDynamicSphere;
+    still.gravityFactor = 0.0f;
+
+    // the child is made first, so it comes before its parent in the storage
+    const mir::Entity child = fixture.Add(glm::vec3(1.0f, 20.0f, 0.0f), still);
+    const mir::Entity parent = fixture.Add(glm::vec3(0.0f, 20.0f, 0.0f), kDynamicSphere);
+    mir::SetParent(fixture.world, child, parent);
+
+    fixture.Run(30);
+
+    // the parent falls, and the child's body, which nothing pushes, stays where it was: if the parent's write
+    // moved the child's world pose after the child was pulled, the child would be dragged down after it
+    REQUIRE(fixture.Physics().BodyPosition(BodyOfEntity(fixture, parent))->Meters().y < 19.0);
+    CHECK(fixture.Physics().BodyPosition(BodyOfEntity(fixture, child))->Meters().y == Catch::Approx(20.0).margin(1e-3));
+}
+
+TEST_CASE("A rotated child under a non-uniform scale gives Jolt a unit rotation", "[physics][world]")
+{
+    mir::InitLog({ .filePath = (std::filesystem::temp_directory_path() / "mir_physics_unit_rotation.log").string() });
+    mir::LogHistory::Clear();
+
+    PhysicsFixture fixture;
+    const mir::Entity parent = AddParent(fixture,
+        mir::Transform{ mir::WorldVec3(0.0, 5.0, 0.0), glm::angleAxis(0.785f, glm::vec3(0.0f, 0.0f, 1.0f)), glm::vec3(1.0f, 3.0f, 1.0f) });
+    const mir::Entity child = AddChild(fixture, parent,
+        mir::Transform{ mir::WorldVec3(0.0, 1.0, 0.0), glm::angleAxis(0.5f, glm::vec3(1.0f, 0.0f, 0.0f)) }, kDynamicBox);
+    fixture.Run(10);
+
+    const glm::quat rotation = fixture.Physics().BodyRotation(BodyOfEntity(fixture, child));
+    CHECK(glm::length(rotation) == Catch::Approx(1.0f).margin(1e-4f));
+    for (const mir::LogEntry &entry : mir::LogHistory::Snapshot())
+        CHECK(entry.message.find("Jolt assert") == std::string::npos);
+}
+
 TEST_CASE("A RigidBody gets its body when it is added, before any step", "[physics]")
 {
     PhysicsFixture fixture;
