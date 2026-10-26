@@ -13,11 +13,13 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <vector>
 
 namespace
 {
@@ -46,6 +48,27 @@ namespace
         out.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     }
 
+    void EmulateUpload(ImTextureData *texture)
+    {
+        texture->SetTexID(static_cast<ImTextureID>(0x1234));
+        texture->BackendUserData = reinterpret_cast<void *>(0x5678);
+        texture->SetStatus(ImTextureStatus_OK);
+    }
+
+    void EmulateBackendDestroy(ImTextureData *texture)
+    {
+        texture->SetTexID(ImTextureID_Invalid);
+        texture->BackendUserData = nullptr;
+        texture->WantDestroyNextFrame = true;
+        texture->SetStatus(ImTextureStatus_Destroyed);
+    }
+
+    bool Contains(const ImGuiContext *ctx, ImTextureData *texture)
+    {
+        return std::find(ctx->UserTextures.Data, ctx->UserTextures.Data + ctx->UserTextures.Size, texture) !=
+            ctx->UserTextures.Data + ctx->UserTextures.Size;
+    }
+
     struct ShutdownProbe
     {
         bool mRan = false;
@@ -60,7 +83,7 @@ namespace
     }
 }
 
-TEST_CASE("Background textures are released at context shutdown after the backend", "[editor][background]")
+TEST_CASE("Uploaded background textures survive owner destruction until backend teardown", "[editor][background]")
 {
     const std::filesystem::path directory =
         std::filesystem::temp_directory_path() / "mir_background_image_tests";
@@ -69,18 +92,33 @@ TEST_CASE("Background textures are released at context shutdown after the backen
     WriteOnePixelBmp(imagePath);
 
     ImGui::CreateContext();
+    std::vector<ImTextureData *> owned;
     {
         mir::BackgroundImage image;
         std::string error;
         REQUIRE(image.Load(imagePath, error));
-        REQUIRE(image.HasImage());
         REQUIRE(image.Load(imagePath, error));
-        REQUIRE(image.HasImage());
+
+        ImGuiContext *const ctx = ImGui::GetCurrentContext();
+        REQUIRE(ctx != nullptr);
+        REQUIRE(ctx->UserTextures.Size == 2);
+        owned.assign(ctx->UserTextures.Data, ctx->UserTextures.Data + ctx->UserTextures.Size);
+        for (ImTextureData *texture : owned)
+            EmulateUpload(texture);
     }
 
     ImGuiContext *const ctx = ImGui::GetCurrentContext();
     REQUIRE(ctx != nullptr);
     CHECK(ctx->UserTextures.Size == 2);
+    for (ImTextureData *texture : owned)
+    {
+        CHECK(Contains(ctx, texture));
+        CHECK(texture->TexID != ImTextureID_Invalid);
+        CHECK(texture->BackendUserData != nullptr);
+    }
+
+    for (ImTextureData *texture : owned)
+        EmulateBackendDestroy(texture);
 
     ShutdownProbe probe;
     ImGuiContextHook hook{};
@@ -92,4 +130,35 @@ TEST_CASE("Background textures are released at context shutdown after the backen
     ImGui::DestroyContext();
     CHECK(probe.mRan);
     CHECK(probe.mUserTextures == 0);
+}
+
+TEST_CASE("Never-uploaded background textures are safe when their owner dies after the context", "[editor][background]")
+{
+    const std::filesystem::path directory =
+        std::filesystem::temp_directory_path() / "mir_background_image_tests";
+    std::filesystem::create_directories(directory);
+    const std::filesystem::path imagePath = directory / "pixel.bmp";
+    WriteOnePixelBmp(imagePath);
+
+    ImGui::CreateContext();
+    auto *image = new mir::BackgroundImage;
+    std::string error;
+    REQUIRE(image->Load(imagePath, error));
+
+    ImGuiContext *const ctx = ImGui::GetCurrentContext();
+    REQUIRE(ctx != nullptr);
+    REQUIRE(ctx->UserTextures.Size == 1);
+
+    ShutdownProbe probe;
+    ImGuiContextHook hook{};
+    hook.Type = ImGuiContextHookType_Shutdown;
+    hook.Callback = ProbeShutdown;
+    hook.UserData = &probe;
+    ImGui::AddContextHook(ctx, &hook);
+
+    ImGui::DestroyContext();
+    CHECK(probe.mRan);
+    CHECK(probe.mUserTextures == 0);
+
+    delete image;
 }

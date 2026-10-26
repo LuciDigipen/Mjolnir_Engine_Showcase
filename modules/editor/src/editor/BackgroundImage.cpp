@@ -37,23 +37,29 @@
 
 namespace mir
 {
+    struct BackgroundTextureState
+    {
+        std::vector<ImTextureData *> mTextures;
+        bool mHandled = false;
+    };
+
     namespace
     {
         // keeps a mistaken pick from allocating hundreds of MB on the GPU
         constexpr int kMaxSide = 8192;
 
-        struct BackgroundTextureCleanup
-        {
-            std::vector<ImTextureData *> mTextures;
-        };
+        using TextureStateHolder = std::shared_ptr<BackgroundTextureState>;
 
         void FreeBackgroundTextures(ImGuiContext *ctx, ImGuiContextHook *hook)
         {
-            auto *cleanup = static_cast<BackgroundTextureCleanup *>(hook->UserData);
-            if (cleanup == nullptr)
+            auto *holder = static_cast<TextureStateHolder *>(hook->UserData);
+            if (holder == nullptr)
                 return;
 
-            for (ImTextureData *texture : cleanup->mTextures)
+            const TextureStateHolder state = *holder;
+            delete holder;
+
+            for (ImTextureData *texture : state->mTextures)
             {
                 if (texture->TexID != ImTextureID_Invalid || texture->BackendUserData != nullptr)
                     MIR_LOG_ERROR("Editor background texture still had renderer data at ImGui shutdown");
@@ -62,35 +68,43 @@ namespace mir
                     ctx->PlatformIO.Textures.find_erase(texture);
                 delete texture;
             }
-            delete cleanup;
+            state->mTextures.clear();
+            state->mHandled = true;
         }
     }
 
     BackgroundImage::~BackgroundImage()
     {
+        if (mCleanup != nullptr && mCleanup->mHandled)
+        {
+            mTexture = nullptr;
+            mRetired.clear();
+            return;
+        }
+
+        if (mCleanup != nullptr)
+        {
+            const auto remember = [this](ImTextureData *texture)
+            {
+                if (std::find(mCleanup->mTextures.begin(), mCleanup->mTextures.end(), texture) ==
+                    mCleanup->mTextures.end())
+                    mCleanup->mTextures.push_back(texture);
+            };
+            if (mTexture != nullptr)
+                remember(mTexture);
+            for (ImTextureData *texture : mRetired)
+                remember(texture);
+
+            mTexture = nullptr;
+            mRetired.clear();
+            return;
+        }
+
         std::vector<ImTextureData *> textures = std::move(mRetired);
         if (mTexture != nullptr)
             textures.push_back(mTexture);
         mTexture = nullptr;
         mRetired.clear();
-
-        if (textures.empty())
-            return;
-
-        // Editor::Shutdown runs before ImGuiRuntime::Shutdown, so the backend still
-        // owns the GPU textures. Hand CPU cleanup to ImGui's shutdown, which runs
-        // after the renderer backend destroys them.
-        if (mContext != nullptr && ImGui::GetCurrentContext() == mContext)
-        {
-            auto *cleanup = new BackgroundTextureCleanup{ std::move(textures) };
-            ImGuiContextHook hook{};
-            hook.Type = ImGuiContextHookType_Shutdown;
-            hook.Callback = FreeBackgroundTextures;
-            hook.UserData = cleanup;
-            ImGui::AddContextHook(mContext, &hook);
-            mContext = nullptr;
-            return;
-        }
 
         for (ImTextureData *texture : textures)
         {
@@ -103,11 +117,40 @@ namespace mir
         }
     }
 
+    bool BackgroundImage::EnsureCleanup()
+    {
+        if (mCleanup != nullptr)
+            return true;
+        if (mContext == nullptr)
+            return false;
+
+        mCleanup = std::make_shared<BackgroundTextureState>();
+        auto *holder = new TextureStateHolder(mCleanup);
+        ImGuiContextHook hook{};
+        hook.Type = ImGuiContextHookType_Shutdown;
+        hook.Callback = FreeBackgroundTextures;
+        hook.UserData = holder;
+        ImGui::AddContextHook(mContext, &hook);
+        return true;
+    }
+
     bool BackgroundImage::Load(const std::filesystem::path &path, std::string &error)
     {
-        if (ImGui::GetCurrentContext() == nullptr)
+        ImGuiContext *const context = ImGui::GetCurrentContext();
+        if (context == nullptr)
         {
             error = "no ImGui context";
+            return false;
+        }
+        if (mContext != nullptr && mContext != context)
+        {
+            error = "ImGui context changed";
+            return false;
+        }
+        mContext = context;
+        if (!EnsureCleanup())
+        {
+            error = "cannot register background cleanup";
             return false;
         }
 
@@ -149,11 +192,11 @@ namespace mir
         texture->UseColors = true;
         texture->UsedRect = ImTextureRect{0, 0, static_cast<unsigned short>(width), static_cast<unsigned short>(height)};
         ImGui::RegisterUserTexture(texture);
+        mCleanup->mTextures.push_back(texture);
 
         if (mTexture != nullptr)
             Retire(mTexture);
         mTexture = texture;
-        mContext = ImGui::GetCurrentContext();
         return true;
     }
 
@@ -174,12 +217,14 @@ namespace mir
 
     void BackgroundImage::CollectRetired()
     {
-        std::erase_if(mRetired, [](ImTextureData *texture)
+        std::erase_if(mRetired, [this](ImTextureData *texture)
             {
                 if (texture->Status != ImTextureStatus_Destroyed)
                     return false;
                 ImGui::UnregisterUserTexture(texture);
                 ImGui::GetPlatformIO().Textures.find_erase(texture);
+                if (mCleanup != nullptr)
+                    std::erase(mCleanup->mTextures, texture);
                 delete texture;
                 return true;
             });
