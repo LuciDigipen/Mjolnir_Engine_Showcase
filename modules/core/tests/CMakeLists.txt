@@ -3,6 +3,7 @@ engine_add_module_tests(core_base
     FileIO.tests.cpp
     Process.tests.cpp
     LogHistory.tests.cpp
+    LogRepeats.tests.cpp
     SetupError.tests.cpp
     WorldCoordinates.tests.cpp
     RegistrationList.tests.cpp

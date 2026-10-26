@@ -3,6 +3,7 @@ engine_add_module_tests(script
     ScriptSystem.tests.cpp
     ScriptFixedSystem.tests.cpp
     ScriptHostRunning.tests.cpp
+    ScriptErrors.tests.cpp
     ScriptResolveSystem.tests.cpp
     ScriptModule.tests.cpp
 )
