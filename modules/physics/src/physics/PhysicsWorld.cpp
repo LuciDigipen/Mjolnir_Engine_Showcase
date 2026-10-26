@@ -31,17 +31,23 @@
 #include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/EmptyShape.h>
 #include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
+#include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 
 #include <glm/geometric.hpp>
+#include <glm/gtc/constants.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -64,26 +70,128 @@ namespace mir
             return bodies.GetCenterOfMassPosition(id) + worldOffset;
         }
 
-        // Null, logged, for a size Jolt cannot build. A shape other than Sphere is a box.
-        const JPH::Shape *MakeShape(const BodyDesc &desc)
+        // A cast hits only the layers asked for, by the object layer's user layer.
+        class RayLayerFilter final : public JPH::ObjectLayerFilter
         {
+        public:
+            explicit RayLayerFilter(uint32_t layers) : mLayers(layers) {}
+
+            bool ShouldCollide(JPH::ObjectLayer layer) const override
+            {
+                return ((mLayers >> detail::Layers::UserLayer(layer)) & 1u) != 0;
+            }
+
+        private:
+            uint32_t mLayers;
+        };
+
+        // The excluded bodies, the motion types asked for and whether triggers count.
+        class RayBodyFilter final : public JPH::BodyFilter
+        {
+        public:
+            explicit RayBodyFilter(const RayFilter &filter) : mFilter(filter)
+            {
+                for (const BodyHandle body : filter.mExclude)
+                    mExcluded.push_back(ToBodyId(body));
+            }
+
+            bool ShouldCollide(const JPH::BodyID &id) const override
+            {
+                return std::find(mExcluded.begin(), mExcluded.end(), id) == mExcluded.end();
+            }
+
+            bool ShouldCollideLocked(const JPH::Body &body) const override
+            {
+                if (body.IsSensor() && !mFilter.mHitTriggers)
+                    return false;
+
+                const PhysicsMotion motion = body.GetMotionType() == JPH::EMotionType::Static ? PhysicsMotion::Static
+                    : body.GetMotionType() == JPH::EMotionType::Dynamic                       ? PhysicsMotion::Dynamic
+                                                                                              : PhysicsMotion::Kinematic;
+                return (mFilter.mMotions & MotionBit(motion)) != 0;
+            }
+
+        private:
+            const RayFilter &mFilter;
+            std::vector<JPH::BodyID> mExcluded;
+        };
+
+        // Kinematic bodies move like dynamic ones as far as layers and activation go.
+        bool Moves(PhysicsMotion motion) { return motion != PhysicsMotion::Static; }
+
+        JPH::EMotionType MotionTypeOf(PhysicsMotion motion)
+        {
+            return motion == PhysicsMotion::Dynamic ? JPH::EMotionType::Dynamic
+                : Moves(motion)                     ? JPH::EMotionType::Kinematic
+                                                    : JPH::EMotionType::Static;
+        }
+
+        // Jolt stands a capsule along Y, so the other axes turn it.
+        glm::quat AxisRotation(PhysicsAxis axis)
+        {
+            switch (axis)
+            {
+            case PhysicsAxis::X:
+                return glm::angleAxis(-glm::half_pi<float>(), glm::vec3(0.0f, 0.0f, 1.0f));
+            case PhysicsAxis::Z:
+                return glm::angleAxis(glm::half_pi<float>(), glm::vec3(1.0f, 0.0f, 0.0f));
+            default:
+                return kIdentityRotation;
+            }
+        }
+
+        // The size-only shape, in its own frame. Null, logged, for a size Jolt cannot build.
+        const JPH::Shape *MakeBaseShape(const BodyDesc &desc)
+        {
+            const char *hint = "a collider needs a size above 0, so this one is empty until it is fixed";
+            const auto fits = [](float size) { return std::isfinite(size) && size > 0.0f; };
+
             if (desc.mShape == PhysicsShape::Sphere)
             {
-                if (desc.mRadius <= 0.0f)
+                if (!fits(desc.mRadius))
                 {
-                    MIR_LOG_ERROR("PhysicsWorld::CreateBody: radius must be positive");
+                    MIR_LOG_ERROR("PhysicsWorld: radius must be positive; {}", hint);
                     return nullptr;
                 }
                 return new JPH::SphereShape(desc.mRadius);
             }
 
-            const glm::vec3 &halfExtent = desc.mHalfExtent;
-            if (halfExtent.x <= 0.0f || halfExtent.y <= 0.0f || halfExtent.z <= 0.0f)
+            if (desc.mShape == PhysicsShape::Capsule)
             {
-                MIR_LOG_ERROR("PhysicsWorld::CreateBody: half extent must be positive");
+                if (!fits(desc.mRadius) || !fits(desc.mHalfHeight))
+                {
+                    MIR_LOG_ERROR("PhysicsWorld: radius and halfHeight must be positive; {}", hint);
+                    return nullptr;
+                }
+                // halfHeight counts the caps, Jolt wants the cylinder between them, and a body with no
+                // cylinder at all is a sphere that Jolt's capsule refuses
+                const float cylinder = std::max(desc.mHalfHeight - desc.mRadius, 1.0e-3f);
+                return new JPH::CapsuleShape(cylinder, desc.mRadius);
+            }
+
+            const glm::vec3 &halfExtent = desc.mHalfExtent;
+            if (!fits(halfExtent.x) || !fits(halfExtent.y) || !fits(halfExtent.z))
+            {
+                MIR_LOG_ERROR("PhysicsWorld: half extent must be positive on every axis; {}", hint);
                 return nullptr;
             }
             return new JPH::BoxShape(ToJolt(halfExtent));
+        }
+
+        // The base shape placed in the body's frame by the capsule axis and the collider offset.
+        // A size Jolt cannot build gives a shape with no volume that collides with nothing, so the body keeps
+        // its handle and a later edit swaps the real shape in.
+        const JPH::Shape *MakeShape(const BodyDesc &desc)
+        {
+            const JPH::Shape *base = MakeBaseShape(desc);
+            if (base == nullptr)
+                return new JPH::EmptyShape();
+
+            const glm::quat rotation = desc.mRotationOffset
+                * (desc.mShape == PhysicsShape::Capsule ? AxisRotation(desc.mAxis) : kIdentityRotation);
+            if (rotation == kIdentityRotation && desc.mOffset == glm::vec3(0.0f))
+                return base;
+            return new JPH::RotatedTranslatedShape(ToJolt(desc.mOffset), ToJolt(rotation), base);
         }
     }
 
@@ -137,18 +245,43 @@ namespace mir
         }
 
         BodyHandle CreateBody(const JPH::Shape *shape, WorldPosition position, const glm::quat &rotation,
-                              PhysicsMotion motion, bool enhancedInternalEdgeRemoval = false)
+                              PhysicsMotion motion, bool enhancedInternalEdgeRemoval = false,
+                              const BodyDesc *properties = nullptr)
         {
+            const int layer = properties != nullptr ? properties->mLayer : 0;
+            if (!IsPhysicsLayer(layer))
+            {
+                MIR_LOG_ERROR("PhysicsWorld::CreateBody: layer {} is outside 0 to {}", layer, kPhysicsLayerCount - 1);
+                return {};
+            }
+
             const JPH::RefConst<JPH::Shape> owned(shape);
             const bool dynamic = motion == PhysicsMotion::Dynamic;
+            // Kinematic bodies move, so they live in the moving layer and start awake
+            const bool moving = Moves(motion);
 
-            JPH::BodyCreationSettings settings(owned, ToJolt(position), ToJolt(rotation),
-                                               dynamic ? JPH::EMotionType::Dynamic : JPH::EMotionType::Static,
-                                               dynamic ? detail::Layers::kMoving : detail::Layers::kNonMoving);
+            JPH::BodyCreationSettings settings(owned, ToJolt(position), ToJolt(rotation), MotionTypeOf(motion),
+                                               detail::Layers::Of(layer, moving));
             settings.mEnhancedInternalEdgeRemoval = enhancedInternalEdgeRemoval;
+            if (properties != nullptr)
+            {
+                // so a Static body can become Dynamic or Kinematic later without being rebuilt
+                settings.mAllowDynamicOrKinematic = true;
+                settings.mIsSensor = properties->mIsTrigger;
+                settings.mFriction = properties->mFriction;
+                settings.mRestitution = properties->mRestitution;
+                settings.mGravityFactor = properties->mGravityFactor;
+                settings.mAllowSleeping = properties->mAllowSleeping;
+                // the shape gives the inertia, the mass scales it; given whatever the motion, for a later switch
+                if (properties->mMass > 0.0f)
+                {
+                    settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
+                    settings.mMassPropertiesOverride.mMass = properties->mMass;
+                }
+            }
 
             const JPH::BodyID id = Bodies().CreateAndAddBody(
-                settings, dynamic ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+                settings, moving ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
 
             if (id.IsInvalid())
             {
@@ -156,13 +289,77 @@ namespace mir
                 return {};
             }
 
-            if (!dynamic)
+            if (!moving)
                 mBroadPhaseDirty = true;
-            else
+            else if (dynamic)
                 Bodies().SetCollisionGroup(id, JPH::CollisionGroup(nullptr, detail::kDynamicGroup, id.GetIndex()));
 
             return BodyHandle{id.GetIndexAndSequenceNumber()};
         }
+
+        // What a call moves a body by decides which bodies take it.
+        enum class Call
+        {
+            Force,    // forces and torques: a Dynamic body
+            Impulse,  // impulses: a Dynamic body, or a held one, which keeps them as velocity
+            Velocity, // velocities: any body that moves, a held one included
+        };
+
+        // The body's id when it takes the call, else nullopt with the reason logged (the stale handle, a vector that is
+        // not finite, or a motion type that ignores the call), so a false from the caller can be trusted.
+        std::optional<JPH::BodyID> Resolve(BodyHandle body, Call call, const char *name,
+            std::initializer_list<glm::vec3> vectors) const
+        {
+            const std::optional<JPH::BodyID> id = Live(body);
+            if (!id)
+            {
+                MIR_LOG_ERROR("PhysicsWorld::{}: the body no longer exists", name);
+                return std::nullopt;
+            }
+
+            for (const glm::vec3 &vector : vectors)
+            {
+                if (!std::isfinite(vector.x) || !std::isfinite(vector.y) || !std::isfinite(vector.z))
+                {
+                    MIR_LOG_ERROR("PhysicsWorld::{}: a vector must be finite, not NaN or infinite", name);
+                    return std::nullopt;
+                }
+            }
+
+            const JPH::EMotionType type = Bodies().GetMotionType(*id);
+            const bool held = FindHeld(body) != nullptr;
+            switch (call)
+            {
+            case Call::Force:
+                if (type == JPH::EMotionType::Dynamic)
+                    return id;
+                MIR_LOG_ERROR("PhysicsWorld::{}: {}", name,
+                    held ? "a held body takes no force" : "only a Dynamic body takes a force or a torque");
+                return std::nullopt;
+            case Call::Impulse:
+                if (type == JPH::EMotionType::Dynamic || held)
+                    return id;
+                MIR_LOG_ERROR("PhysicsWorld::{}: only a Dynamic body takes an impulse", name);
+                return std::nullopt;
+            case Call::Velocity:
+                if (type != JPH::EMotionType::Static)
+                    return id;
+                MIR_LOG_ERROR("PhysicsWorld::{}: a Static body has no velocity", name);
+                return std::nullopt;
+            }
+            return std::nullopt;
+        }
+
+        // Where bodies resting on or against this one are, with a margin.
+        JPH::AABox WakeBounds(JPH::BodyID id) const
+        {
+            JPH::AABox bounds = Bodies().GetTransformedShape(id).GetWorldSpaceBounds();
+            bounds.ExpandBy(JPH::Vec3::sReplicate(kWakeMargin));
+            return bounds;
+        }
+
+        // An edit to a body changes what rests on it or against it, and Jolt wakes nothing by itself.
+        void WakeAround(JPH::BodyID id) { Bodies().ActivateBodiesInAABox(WakeBounds(id), {}, {}); }
 
         // Mass properties are read while the body is still dynamic; Jolt only answers them then.
         struct Held
@@ -202,7 +399,8 @@ namespace mir
 
         detail::BroadPhaseLayerInterfaceImpl mBroadPhaseLayers;
         detail::ObjectVsBroadPhaseLayerFilterImpl mObjectVsBroadPhase;
-        detail::ObjectLayerPairFilterImpl mObjectLayerPairs;
+        PhysicsLayerTable mLayerTable;
+        detail::ObjectLayerPairFilterImpl mObjectLayerPairs{mLayerTable};
 
         // Before mSystem, which keeps a pointer to it.
         detail::ContactTracker mContacts;
@@ -218,6 +416,8 @@ namespace mir
         std::unordered_map<uint32_t, SharedHeightField> mHeightFieldShapes;
         JPH::Ref<detail::ContactRestriction> mRestriction = new detail::ContactRestriction();
         std::unordered_map<uint32_t, Held> mHeld;
+        // Handle ids of the bodies whose pairs get Stay events.
+        std::unordered_set<uint32_t> mStayBodies;
     };
 
     PhysicsWorld::PhysicsWorld(const PhysicsWorldDesc &desc) : mImpl(std::make_unique<Impl>(desc))
@@ -229,10 +429,10 @@ namespace mir
     BodyHandle PhysicsWorld::CreateBody(const BodyDesc &desc)
     {
         const JPH::Shape *shape = MakeShape(desc);
-        if (shape == nullptr)
-            return {};
-
-        return mImpl->CreateBody(shape, desc.mPosition, desc.mRotation, desc.mMotion);
+        const BodyHandle body = mImpl->CreateBody(shape, desc.mPosition, desc.mRotation, desc.mMotion, false, &desc);
+        if (body.IsValid() && desc.mDetectStay)
+            mImpl->mStayBodies.insert(body.mId);
+        return body;
     }
 
     BodyHandle PhysicsWorld::CreateStaticHeightField(const HeightFieldDesc &desc)
@@ -268,8 +468,7 @@ namespace mir
         JPH::BodyInterface &bodies = mImpl->Bodies();
 
         // Jolt's removal wakes nothing.
-        JPH::AABox bounds = bodies.GetTransformedShape(*id).GetWorldSpaceBounds();
-        bounds.ExpandBy(JPH::Vec3::sReplicate(kWakeMargin));
+        const JPH::AABox bounds = mImpl->WakeBounds(*id);
 
         mImpl->mContacts.ForgetBody(*id, bodies, mImpl->mCollisionEvents);
 
@@ -278,6 +477,7 @@ namespace mir
         mImpl->mHeightFieldInfo.erase(body.mId);
         mImpl->mHeightFieldShapes.erase(body.mId);
         mImpl->mHeld.erase(body.mId);
+        mImpl->mStayBodies.erase(body.mId);
         mImpl->mRestriction->mAllowed.erase(id->GetIndex());
 
         bodies.ActivateBodiesInAABox(bounds, {}, {});
@@ -407,133 +607,306 @@ namespace mir
         mImpl->Bodies().SetPositionAndRotation(*id, ToJolt(position), ToJolt(rotation), JPH::EActivation::Activate);
     }
 
-    void PhysicsWorld::SetBodyLinearVelocity(BodyHandle body, const glm::vec3 &velocity)
+    void PhysicsWorld::SetBodyMotion(BodyHandle body, PhysicsMotion motion)
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        if (!id || mImpl->FindHeld(body))
+            return;
+
+        const bool dynamic = motion == PhysicsMotion::Dynamic;
+        const bool moving = Moves(motion);
+
+        JPH::BodyInterface &bodies = mImpl->Bodies();
+        bodies.SetObjectLayer(*id, detail::Layers::Of(detail::Layers::UserLayer(bodies.GetObjectLayer(*id)), moving));
+        bodies.SetMotionType(*id, MotionTypeOf(motion), moving ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+        bodies.SetCollisionGroup(*id,
+            dynamic ? JPH::CollisionGroup(nullptr, detail::kDynamicGroup, id->GetIndex()) : JPH::CollisionGroup());
+        if (!moving)
+            mImpl->mBroadPhaseDirty = true;
+        mImpl->WakeAround(*id);
+    }
+
+    void PhysicsWorld::SetBodyShape(BodyHandle body, const BodyDesc &desc)
     {
         const std::optional<JPH::BodyID> id = mImpl->Live(body);
         if (!id)
             return;
+
+        const JPH::RefConst<JPH::Shape> shape(MakeShape(desc));
+        mImpl->Bodies().SetShape(*id, shape, true, JPH::EActivation::Activate);
+        // the shape's own volume gave the mass back, so the authored one is put on again
+        SetBodyMass(body, desc.mMass);
+        mImpl->mBroadPhaseDirty = true;
+        mImpl->WakeAround(*id);
+    }
+
+    void PhysicsWorld::SetBodyTrigger(BodyHandle body, bool trigger)
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        if (!id)
+            return;
+
+        mImpl->Bodies().SetIsSensor(*id, trigger);
+        mImpl->WakeAround(*id);
+    }
+
+    void PhysicsWorld::SetBodyLayer(BodyHandle body, int layer)
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        if (!id)
+            return;
+        if (!IsPhysicsLayer(layer))
+        {
+            MIR_LOG_ERROR("PhysicsWorld::SetBodyLayer: layer {} is outside 0 to {}", layer, kPhysicsLayerCount - 1);
+            return;
+        }
+
+        JPH::BodyInterface &bodies = mImpl->Bodies();
+        bodies.SetObjectLayer(*id, detail::Layers::Of(layer, detail::Layers::IsMoving(bodies.GetObjectLayer(*id))));
+        mImpl->WakeAround(*id);
+    }
+
+    void PhysicsWorld::SetLayerTable(const PhysicsLayerTable &table)
+    {
+        mImpl->mLayerTable = table;
+
+        JPH::BodyIDVector ids;
+        mImpl->mSystem.GetBodies(ids);
+        if (!ids.empty())
+            mImpl->Bodies().ActivateBodies(ids.data(), static_cast<int>(ids.size()));
+    }
+
+    const PhysicsLayerTable &PhysicsWorld::LayerTable() const
+    {
+        return mImpl->mLayerTable;
+    }
+
+    void PhysicsWorld::SetBodyMaterial(BodyHandle body, float friction, float restitution)
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        if (!id)
+            return;
+
+        mImpl->Bodies().SetFriction(*id, friction);
+        mImpl->Bodies().SetRestitution(*id, restitution);
+        mImpl->WakeAround(*id);
+    }
+
+    void PhysicsWorld::SetBodyGravityFactor(BodyHandle body, float factor)
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        if (!id)
+            return;
+
+        mImpl->Bodies().SetGravityFactor(*id, factor);
+        mImpl->Bodies().ActivateBody(*id);
+    }
+
+    void PhysicsWorld::SetBodyMass(BodyHandle body, float mass)
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        if (!id || mass <= 0.0f)
+            return;
+
+        {
+            const JPH::BodyLockWrite lock(mImpl->mSystem.GetBodyLockInterface(), *id);
+            // a Static body has no mass of its own to scale until it moves, and Jolt asserts on asking it
+            if (!lock.Succeeded() || lock.GetBody().GetMotionType() != JPH::EMotionType::Dynamic)
+                return;
+            lock.GetBody().GetMotionProperties()->ScaleToMass(mass);
+        }
+        // after the lock is released: the body interface takes it again
+        mImpl->Bodies().ActivateBody(*id);
+    }
+
+    void PhysicsWorld::SetBodyAllowSleeping(BodyHandle body, bool allow)
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        if (!id)
+            return;
+
+        {
+            const JPH::BodyLockWrite lock(mImpl->mSystem.GetBodyLockInterface(), *id);
+            if (!lock.Succeeded())
+                return;
+            lock.GetBody().SetAllowSleeping(allow);
+        }
+        // a body asleep stays asleep when sleeping is turned off; the body interface takes the lock again
+        if (!allow)
+            mImpl->Bodies().ActivateBody(*id);
+    }
+
+    void PhysicsWorld::WakeBody(BodyHandle body)
+    {
+        if (const std::optional<JPH::BodyID> id = mImpl->Live(body))
+            mImpl->Bodies().ActivateBody(*id);
+    }
+
+    void PhysicsWorld::SetBodyDetectsStay(BodyHandle body, bool detects)
+    {
+        if (!mImpl->Live(body))
+            return;
+
+        if (detects)
+            mImpl->mStayBodies.insert(body.mId);
+        else
+            mImpl->mStayBodies.erase(body.mId);
+    }
+
+    bool PhysicsWorld::IsBodySleeping(BodyHandle body) const
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        return id && mImpl->Bodies().GetMotionType(*id) != JPH::EMotionType::Static && !mImpl->Bodies().IsActive(*id);
+    }
+
+    void PhysicsWorld::MoveBodyKinematic(BodyHandle body, WorldPosition position, const glm::quat &rotation, float dt)
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        if (!id || mImpl->Bodies().GetMotionType(*id) != JPH::EMotionType::Kinematic || dt <= 0.0f)
+            return;
+
+        mImpl->Bodies().MoveKinematic(*id, ToJolt(position), ToJolt(rotation), dt);
+    }
+
+    bool PhysicsWorld::SetBodyLinearVelocity(BodyHandle body, const glm::vec3 &velocity)
+    {
+        const std::optional<JPH::BodyID> id = mImpl->Resolve(body, Impl::Call::Velocity, "SetBodyLinearVelocity", { velocity });
+        if (!id)
+            return false;
         if (Impl::Held *held = mImpl->FindHeld(body))
         {
             held->mLinear = ToJolt(velocity);
-            return;
+            return true;
         }
 
         mImpl->Bodies().SetLinearVelocity(*id, ToJolt(velocity));
+        return true;
     }
 
-    void PhysicsWorld::SetBodyAngularVelocity(BodyHandle body, const glm::vec3 &velocity)
+    bool PhysicsWorld::SetBodyAngularVelocity(BodyHandle body, const glm::vec3 &velocity)
     {
-        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        const std::optional<JPH::BodyID> id = mImpl->Resolve(body, Impl::Call::Velocity, "SetBodyAngularVelocity", { velocity });
         if (!id)
-            return;
+            return false;
         if (Impl::Held *held = mImpl->FindHeld(body))
         {
             held->mAngular = ToJolt(velocity);
-            return;
+            return true;
         }
 
         mImpl->Bodies().SetAngularVelocity(*id, ToJolt(velocity));
+        return true;
     }
 
-    void PhysicsWorld::AddLinearVelocity(BodyHandle body, const glm::vec3 &velocity)
+    bool PhysicsWorld::AddLinearVelocity(BodyHandle body, const glm::vec3 &velocity)
     {
-        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        const std::optional<JPH::BodyID> id = mImpl->Resolve(body, Impl::Call::Velocity, "AddLinearVelocity", { velocity });
         if (!id)
-            return;
+            return false;
         if (Impl::Held *held = mImpl->FindHeld(body))
         {
             held->mLinear += ToJolt(velocity);
-            return;
+            return true;
         }
 
         mImpl->Bodies().AddLinearVelocity(*id, ToJolt(velocity));
+        return true;
     }
 
-    void PhysicsWorld::AddAngularVelocity(BodyHandle body, const glm::vec3 &velocity)
+    bool PhysicsWorld::AddAngularVelocity(BodyHandle body, const glm::vec3 &velocity)
     {
-        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        const std::optional<JPH::BodyID> id = mImpl->Resolve(body, Impl::Call::Velocity, "AddAngularVelocity", { velocity });
         if (!id)
-            return;
+            return false;
         if (Impl::Held *held = mImpl->FindHeld(body))
         {
             held->mAngular += ToJolt(velocity);
-            return;
+            return true;
         }
 
         mImpl->Bodies().AddLinearAndAngularVelocity(*id, JPH::Vec3::sZero(), ToJolt(velocity));
+        return true;
     }
 
-    void PhysicsWorld::AddForce(BodyHandle body, const glm::vec3 &force)
+    bool PhysicsWorld::AddForce(BodyHandle body, const glm::vec3 &force)
     {
-        const std::optional<JPH::BodyID> id = mImpl->Live(body);
-        if (!id || mImpl->FindHeld(body))
-            return;
+        const std::optional<JPH::BodyID> id = mImpl->Resolve(body, Impl::Call::Force, "AddForce", { force });
+        if (!id)
+            return false;
 
         mImpl->Bodies().AddForce(*id, ToJolt(force));
+        return true;
     }
 
-    void PhysicsWorld::AddTorque(BodyHandle body, const glm::vec3 &torque)
+    bool PhysicsWorld::AddTorque(BodyHandle body, const glm::vec3 &torque)
     {
-        const std::optional<JPH::BodyID> id = mImpl->Live(body);
-        if (!id || mImpl->FindHeld(body))
-            return;
+        const std::optional<JPH::BodyID> id = mImpl->Resolve(body, Impl::Call::Force, "AddTorque", { torque });
+        if (!id)
+            return false;
 
         mImpl->Bodies().AddTorque(*id, ToJolt(torque));
+        return true;
     }
 
-    void PhysicsWorld::AddImpulse(BodyHandle body, const glm::vec3 &impulse)
+    bool PhysicsWorld::AddImpulse(BodyHandle body, const glm::vec3 &impulse)
     {
-        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        const std::optional<JPH::BodyID> id = mImpl->Resolve(body, Impl::Call::Impulse, "AddImpulse", { impulse });
         if (!id)
-            return;
+            return false;
         if (Impl::Held *held = mImpl->FindHeld(body))
         {
             mImpl->HeldImpulse(*id, *held, ToJolt(impulse), JPH::Vec3::sZero());
-            return;
+            return true;
         }
 
         mImpl->Bodies().AddImpulse(*id, ToJolt(impulse));
+        return true;
     }
 
-    void PhysicsWorld::AddAngularImpulse(BodyHandle body, const glm::vec3 &angularImpulse)
+    bool PhysicsWorld::AddAngularImpulse(BodyHandle body, const glm::vec3 &angularImpulse)
     {
-        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        const std::optional<JPH::BodyID> id = mImpl->Resolve(body, Impl::Call::Impulse, "AddAngularImpulse", { angularImpulse });
         if (!id)
-            return;
+            return false;
         if (Impl::Held *held = mImpl->FindHeld(body))
         {
             mImpl->HeldImpulse(*id, *held, JPH::Vec3::sZero(), ToJolt(angularImpulse));
-            return;
+            return true;
         }
 
         mImpl->Bodies().AddAngularImpulse(*id, ToJolt(angularImpulse));
+        return true;
     }
 
-    void PhysicsWorld::AddForceAtOffset(BodyHandle body, const glm::vec3 &force, const glm::vec3 &localOffset)
+    bool PhysicsWorld::AddForceAtOffset(BodyHandle body, const glm::vec3 &force, const glm::vec3 &localOffset)
     {
-        const std::optional<JPH::BodyID> id = mImpl->Live(body);
-        if (!id || mImpl->FindHeld(body))
-            return;
+        const std::optional<JPH::BodyID> id =
+            mImpl->Resolve(body, Impl::Call::Force, "AddForceAtOffset", { force, localOffset });
+        if (!id)
+            return false;
 
         JPH::BodyInterface &bodies = mImpl->Bodies();
         bodies.AddForce(*id, ToJolt(force), OffsetToWorldPoint(bodies, *id, localOffset));
+        return true;
     }
 
-    void PhysicsWorld::AddImpulseAtOffset(BodyHandle body, const glm::vec3 &impulse, const glm::vec3 &localOffset)
+    bool PhysicsWorld::AddImpulseAtOffset(BodyHandle body, const glm::vec3 &impulse, const glm::vec3 &localOffset)
     {
-        const std::optional<JPH::BodyID> id = mImpl->Live(body);
+        const std::optional<JPH::BodyID> id =
+            mImpl->Resolve(body, Impl::Call::Impulse, "AddImpulseAtOffset", { impulse, localOffset });
         if (!id)
-            return;
+            return false;
 
         JPH::BodyInterface &bodies = mImpl->Bodies();
         if (Impl::Held *held = mImpl->FindHeld(body))
         {
             const JPH::Vec3 arm = bodies.GetRotation(*id) * ToJolt(localOffset);
             mImpl->HeldImpulse(*id, *held, ToJolt(impulse), arm.Cross(ToJolt(impulse)));
-            return;
+            return true;
         }
 
         bodies.AddImpulse(*id, ToJolt(impulse), OffsetToWorldPoint(bodies, *id, localOffset));
+        return true;
     }
 
     void PhysicsWorld::SetBodyEntity(BodyHandle body, Entity entity)
@@ -552,8 +925,19 @@ namespace mir
     }
 
     std::optional<RayHit> PhysicsWorld::RayCast(WorldPosition origin, const glm::vec3 &direction,
-                                                float maxDistance) const
+                                                float maxDistance, const RayFilter &filter) const
     {
+        if (filter.mLayers == 0)
+        {
+            MIR_LOG_ERROR("PhysicsWorld::RayCast: the filter asks for no layer, so nothing can be hit");
+            return std::nullopt;
+        }
+        if ((filter.mMotions & kAllMotions) == 0)
+        {
+            MIR_LOG_ERROR("PhysicsWorld::RayCast: the filter asks for no motion type, so nothing can be hit");
+            return std::nullopt;
+        }
+
         if (!(maxDistance > 0.0f))
         {
             MIR_LOG_ERROR("PhysicsWorld::RayCast: maxDistance must be positive");
@@ -574,7 +958,9 @@ namespace mir
 
         const JPH::RRayCast ray(ToJolt(origin), ToJolt(span));
         JPH::RayCastResult hit;
-        if (!mImpl->mSystem.GetNarrowPhaseQuery().CastRay(ray, hit))
+        const RayLayerFilter layerFilter(filter.mLayers);
+        const RayBodyFilter bodyFilter(filter);
+        if (!mImpl->mSystem.GetNarrowPhaseQuery().CastRay(ray, hit, {}, layerFilter, bodyFilter))
             return std::nullopt;
 
         // origin + fraction * span: the float product is added in world precision
@@ -627,6 +1013,13 @@ namespace mir
         if (dt <= 0.0f)
             return;
 
+        struct SteppingScope
+        {
+            explicit SteppingScope(bool &flag) : mFlag(flag) { mFlag = true; }
+            ~SteppingScope() { mFlag = false; }
+            bool &mFlag;
+        } stepping(mStepping);
+
         if (mImpl->mBroadPhaseDirty)
         {
             mImpl->mSystem.OptimizeBroadPhase();
@@ -646,6 +1039,9 @@ namespace mir
 
     std::vector<CollisionEvent> PhysicsWorld::DrainCollisionEvents()
     {
-        return std::exchange(mImpl->mCollisionEvents, {});
+        std::vector<CollisionEvent> events = std::exchange(mImpl->mCollisionEvents, {});
+        if (!mImpl->mStayBodies.empty())
+            mImpl->mContacts.AppendStay(mImpl->Bodies(), mImpl->mStayBodies, events);
+        return events;
     }
 }

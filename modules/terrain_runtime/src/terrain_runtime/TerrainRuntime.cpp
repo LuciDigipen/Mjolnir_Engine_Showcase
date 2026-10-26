@@ -631,19 +631,19 @@ namespace mir
             mWorld->GetOrCreateQuery<RigidBody>().ForEach([&](Entity entity, RigidBody &rigidBody) {
                 if (!HasDynamicBody(rigidBody))
                     return;
-                const std::optional<WorldPosition> at = physics->BodyPosition(rigidBody.body);
+                const std::optional<WorldPosition> at = physics->BodyPosition(rigidBody.runtime.body);
                 if (!at)
                     return;
                 TerrainCollisionSource source;
                 source.position = *at;
-                source.velocity = glm::dvec3(physics->BodyLinearVelocity(rigidBody.body));
+                source.velocity = glm::dvec3(physics->BodyLinearVelocity(rigidBody.runtime.body));
                 source.radius = rigidBody.shape == PhysicsShape::Sphere ? double(rigidBody.radius)
                                                                         : double(glm::length(rigidBody.halfExtent));
                 source.acceleration = gravity;
                 source.tolerance = settings.collision.bodyToleranceMeters;
                 mSources.push_back(source);
-                mBodies.push_back(rigidBody.body);
-                mGuards[rigidBody.body.mId].entity = entity;
+                mBodies.push_back(rigidBody.runtime.body);
+                mGuards[rigidBody.runtime.body.mId].entity = entity;
             });
         }
         if (const TerrainCollisionSources *game = mWorld->TryResource<TerrainCollisionSources>())

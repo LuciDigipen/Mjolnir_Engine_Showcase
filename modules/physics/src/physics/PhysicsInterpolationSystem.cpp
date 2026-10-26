@@ -8,6 +8,8 @@
  */
 #include <physics/PhysicsInterpolationSystem.h>
 
+#include "BodyPose.h"
+
 #include <core/ecs/EngineMode.h>
 #include <core/ecs/World.h>
 
@@ -30,25 +32,29 @@ namespace mir
 
         const float alpha = std::clamp(context.fixedAlpha, 0.0f, 1.0f);
 
-        mQuery->ForEach(
-            [&](Entity, Transform &transform, RigidBody &rigidBody)
-            {
-                if (!rigidBody.interpolate || !HasDynamicBody(rigidBody))
-                    return;
+        World &world = context.world;
+        detail::ParentFirst(world, *mQuery, mOrder);
+        for (const Entity entity : mOrder)
+        {
+            Transform &transform = *world.GetComponent<Transform>(entity);
+            RigidBody &rigidBody = *world.GetComponent<RigidBody>(entity);
+            if (!rigidBody.interpolate)
+                continue;
 
-                if (transform.Version() != rigidBody.transformVersion)
-                    return;
+            // Moved by something else since physics last placed it: that write stands until the next push.
+            const detail::BodyPose pose = detail::PoseOf(world, entity);
+            if (detail::PositionWritten(rigidBody, pose) || detail::RotationWritten(rigidBody, pose))
+                continue;
 
-                const WorldVec3 position =
-                    glm::mix(rigidBody.previousPosition, rigidBody.currentPosition, static_cast<WorldReal>(alpha));
-                const glm::quat rotation = glm::slerp(rigidBody.previousRotation, rigidBody.currentRotation, alpha);
+            const WorldVec3 position =
+                glm::mix(rigidBody.runtime.previousPosition, rigidBody.runtime.currentPosition, static_cast<WorldReal>(alpha));
+            const glm::quat rotation = glm::slerp(rigidBody.runtime.previousRotation, rigidBody.runtime.currentRotation, alpha);
 
-                if (position != transform.Position())
-                    transform.SetPosition(position);
-                if (rotation != transform.Rotation())
-                    transform.SetRotation(rotation);
+            const std::optional<WorldPosition> blended = WorldPosition::FromMeters(position);
+            if (!blended || !detail::WriteWorldPose(world, entity, transform, *blended, rotation))
+                continue;
 
-                rigidBody.transformVersion = transform.Version();
-            });
+            detail::Stamp(rigidBody, detail::PoseOf(world, entity));
+        }
     }
 }

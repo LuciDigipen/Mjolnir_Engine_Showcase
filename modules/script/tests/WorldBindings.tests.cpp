@@ -248,6 +248,27 @@ TEST_CASE("world:get/set keep a far position exact and world_position resolves a
     CHECK(anchor->FindField("anchor")->mKind == FieldKind::WorldPosition);
 }
 
+TEST_CASE("world:set takes a rotation with no w as w = 1, and refuses one that misses another key", "[script]")
+{
+    mir::RegisterCoreComponents();
+    const ComponentOps &probe = PositionProbeOps();
+    World world;
+    const Entity entity = world.CreateEntity();
+    mir::AddTransform(world, entity, Transform{ mir::WorldVec3(0.0) });
+    probe.AddDefault(world, entity);
+    RunOnStart("partial_rotation", R"LUA(
+local T = {}
+function T.NewInstanceData() return {} end
+function T.OnStart(self, world, entity)
+    local withoutW = world:set(entity, "Transform", "rotation", { x = 0.0, y = 0.0, z = 0.0 })
+    local missingY = world:set(entity, "Transform", "rotation", { x = 0.0, z = 0.0, w = 1.0 })
+    world:set(entity, "PositionProbe", "rejected", (withoutW and 0 or 1) + (missingY and 1 or 0))
+end
+return T
+)LUA", world, entity);
+    CHECK(ReadProbe(probe, world, entity, "rejected") == 0);
+}
+
 TEST_CASE("world:set refuses a non-finite position and leaves the Transform untouched", "[script]")
 {
     mir::RegisterCoreComponents();

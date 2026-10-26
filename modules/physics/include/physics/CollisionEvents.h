@@ -24,9 +24,10 @@ namespace mir
     {
         Begin,
         End,
+        Stay,
     };
 
-    // One per body pair, not per contact point; a pair asleep in contact stays touching.
+    // One per body pair
     struct CollisionEvent
     {
         CollisionPhase mPhase = CollisionPhase::Begin;
@@ -34,7 +35,7 @@ namespace mir
         BodyHandle mBodyB;
         Entity mEntityA;
         Entity mEntityB;
-        // End reuses the pair's last contact.
+        // End and Stay reuse the pair's last contact.
         WorldPosition mPoint;
         // Points from A toward B.
         glm::vec3 mNormal{ 0.0f };

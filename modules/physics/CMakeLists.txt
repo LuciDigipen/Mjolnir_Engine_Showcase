@@ -1,6 +1,7 @@
 engine_add_module(physics)
 
-target_link_libraries(engine_physics PUBLIC mir::core)
+# PUBLIC physics_layers: PhysicsWorld.h holds a PhysicsLayerTable
+target_link_libraries(engine_physics PUBLIC mir::core mir::physics_layers)
 
 find_package(Jolt CONFIG REQUIRED)
 

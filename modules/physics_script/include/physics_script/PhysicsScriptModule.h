@@ -14,8 +14,6 @@ namespace mir
 {
     class ScriptModule;
 
-    // A bridge: physics never sees Lua, and script never sees physics. Declared after
-    // ScriptModule and physics's own module
     class PhysicsScriptModule
     {
     public:

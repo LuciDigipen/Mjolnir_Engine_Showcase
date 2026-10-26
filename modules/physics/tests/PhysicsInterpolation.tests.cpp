@@ -10,6 +10,7 @@
 #include <physics/PhysicsInterpolationSystem.h>
 #include <physics/PhysicsSystem.h>
 
+#include <physics/PhysicsStepGate.h>
 #include <physics/PhysicsWorld.h>
 #include <physics/components/RigidBody.h>
 
@@ -19,7 +20,11 @@
 #include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/World.h>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+
+#include <glm/geometric.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <cmath>
 #include <optional>
@@ -35,10 +40,15 @@ namespace
         mir::CommandBuffer commands;
         mir::SystemScheduler scheduler;
         mir::SystemContext context{ world, commands, kStep, 0.0, 0 };
+        // what PhysicsModule sets, so an added RigidBody gets its body
+        mir::Registration hooks;
 
         InterpolationFixture()
         {
             world.EmplaceResource<mir::PhysicsWorld>();
+            world.Resource<mir::PhysicsWorld>().SetSimulationLive(true);
+            hooks = world.SetComponentHooks<mir::RigidBody>(
+                { .onAdd = &mir::PhysicsSystem::OnRigidBodyAdded, .onRemove = &mir::PhysicsSystem::OnRigidBodyRemoved });
             world.EmplaceResource<mir::EngineModeState>();
             mir::SetEngineMode(world, mir::EngineMode::Play);
             mir::SetPlayState(world, mir::PlayState::Running);
@@ -81,7 +91,7 @@ namespace
         mir::WorldVec3 SimulatedMeters(mir::Entity entity)
         {
             const std::optional<mir::WorldPosition> position =
-                world.Resource<mir::PhysicsWorld>().BodyPosition(BodyOf(entity).body);
+                world.Resource<mir::PhysicsWorld>().BodyPosition(BodyOf(entity).runtime.body);
             REQUIRE(position);
             return position->Meters();
         }
@@ -97,8 +107,8 @@ TEST_CASE("An interpolating body is drawn between its last two steps", "[physics
         fixture.Frame(1, 1.0f);
 
     const mir::RigidBody &body = fixture.BodyOf(entity);
-    const double previousY = body.previousPosition.y;
-    const double currentY = body.currentPosition.y;
+    const double previousY = body.runtime.previousPosition.y;
+    const double currentY = body.runtime.currentPosition.y;
     REQUIRE(previousY > currentY); // falling
 
     // A frame between steps: half way from the last pose to the newest.
@@ -120,7 +130,7 @@ TEST_CASE("A body without interpolate still shows its latest step", "[physics][i
         fixture.Frame(1, 1.0f);
     fixture.Frame(0, 0.25f);
 
-    REQUIRE(fixture.TransformOf(entity).Position() == fixture.BodyOf(entity).currentPosition);
+    REQUIRE(fixture.TransformOf(entity).Position() == fixture.BodyOf(entity).runtime.currentPosition);
 }
 
 TEST_CASE("Interpolated writes are not read back as a teleport", "[physics][interpolation]")
@@ -159,4 +169,190 @@ TEST_CASE("An outside Transform write between steps wins over the blend", "[phys
     REQUIRE(std::abs(drawn.x - 3.0) < 1e-5);
     REQUIRE(std::abs(drawn.y - 10.0) < 1e-5);
     REQUIRE(fixture.SimulatedMeters(entity).y < 10.0);
+}
+
+namespace
+{
+    // Reads what the body is at, after the push and before the step, which is where a write lands.
+    class BodyProbe final : public mir::PhysicsStepGate
+    {
+    public:
+        explicit BodyProbe(mir::World &world) : mWorld(world)
+        {
+            mWorld.EmplaceResource<mir::PhysicsStepGates>().mGates.push_back(this);
+        }
+
+        ~BodyProbe() override { mWorld.Resource<mir::PhysicsStepGates>().mGates.clear(); }
+
+        void Watch(mir::BodyHandle body) { mBody = body; }
+
+        void BeforeStep(mir::World &, mir::PhysicsWorld &physics, float) override
+        {
+            position = physics.BodyPosition(mBody).value().Meters();
+            rotation = physics.BodyRotation(mBody);
+            linear = physics.BodyLinearVelocity(mBody);
+            angular = physics.BodyAngularVelocity(mBody);
+        }
+
+        mir::WorldVec3 position{ 0.0 };
+        glm::quat rotation{ 1.0f, 0.0f, 0.0f, 0.0f };
+        glm::vec3 linear{ 0.0f };
+        glm::vec3 angular{ 0.0f };
+
+    private:
+        mir::World &mWorld;
+        mir::BodyHandle mBody;
+    };
+
+    // A body in flight with both position and rotation changing, drawn half way between its steps so the
+    // entity lags the body.
+    struct InFlight
+    {
+        InterpolationFixture fixture;
+        BodyProbe probe{ fixture.world };
+        mir::Entity entity;
+        mir::WorldVec3 bodyPosition{ 0.0 };
+        glm::quat bodyRotation{ 1.0f, 0.0f, 0.0f, 0.0f };
+        glm::vec3 linear{ 0.0f };
+        glm::vec3 angular{ 0.0f };
+
+        explicit InFlight(bool interpolate = true)
+        {
+            entity = fixture.Add(mir::WorldVec3(0.0, 500.0, 0.0), interpolate);
+            const mir::BodyHandle body = fixture.BodyOf(entity).runtime.body;
+            probe.Watch(body);
+            fixture.world.Resource<mir::PhysicsWorld>().SetBodyLinearVelocity(body, glm::vec3(4.0f, 0.0f, 0.0f));
+            fixture.world.Resource<mir::PhysicsWorld>().SetBodyAngularVelocity(body, glm::vec3(0.0f, 0.0f, 3.0f));
+            for (int i = 0; i < 5; ++i)
+                fixture.Frame(1, 0.5f);
+            Record();
+        }
+
+        // what the body is at right now, before the write under test
+        void Record()
+        {
+            mir::PhysicsWorld &physics = fixture.world.Resource<mir::PhysicsWorld>();
+            const mir::BodyHandle body = fixture.BodyOf(entity).runtime.body;
+            bodyPosition = physics.BodyPosition(body).value().Meters();
+            bodyRotation = physics.BodyRotation(body);
+            linear = physics.BodyLinearVelocity(body);
+            angular = physics.BodyAngularVelocity(body);
+        }
+    };
+
+    bool Same(const glm::quat &a, const glm::quat &b) { return std::abs(glm::dot(a, b)) > 0.999999f; }
+}
+
+TEST_CASE("Writing the position of an interpolated body moves it there and keeps its rotation", "[physics][interpolation]")
+{
+    InFlight f;
+    // the entity lags the body, so a write that reads every field back would pull the body to the lagging pose
+    REQUIRE(f.fixture.TransformOf(f.entity).Position() != f.bodyPosition);
+
+    const mir::WorldVec3 target(100.0, 500.0, 0.0);
+    f.fixture.TransformOf(f.entity).SetPosition(target);
+    f.fixture.Frame(1, 0.5f);
+
+    CHECK(f.probe.position == target);
+    CHECK(Same(f.probe.rotation, f.bodyRotation));
+    CHECK(f.probe.linear == f.linear);
+    CHECK(f.probe.angular == f.angular);
+}
+
+TEST_CASE("Writing the rotation of an interpolated body turns it and keeps its position", "[physics][interpolation]")
+{
+    InFlight f;
+    REQUIRE(!Same(f.fixture.TransformOf(f.entity).Rotation(), f.bodyRotation));
+
+    const glm::quat target = glm::angleAxis(1.0f, glm::vec3(0.0f, 1.0f, 0.0f));
+    f.fixture.TransformOf(f.entity).SetRotation(target);
+    f.fixture.Frame(1, 0.5f);
+
+    CHECK(Same(f.probe.rotation, target));
+    CHECK(f.probe.position == f.bodyPosition);
+    CHECK(f.probe.linear == f.linear);
+}
+
+TEST_CASE("Writing the scale of an interpolated body leaves its pose alone", "[physics][interpolation]")
+{
+    InFlight f;
+    f.fixture.TransformOf(f.entity).SetScale(glm::vec3(2.0f));
+    f.fixture.Frame(1, 0.5f);
+
+    CHECK(f.probe.position == f.bodyPosition);
+    CHECK(Same(f.probe.rotation, f.bodyRotation));
+
+    // and the next drawn frame does not jump: alpha 1 is the newest step, as without the write
+    f.fixture.Frame(0, 1.0f);
+    CHECK(f.fixture.TransformOf(f.entity).Position() == f.fixture.BodyOf(f.entity).runtime.currentPosition);
+}
+
+TEST_CASE("After a position write interpolation restarts from the new pose", "[physics][interpolation]")
+{
+    InFlight f;
+    const mir::WorldVec3 target(100.0, 500.0, 0.0);
+    f.fixture.TransformOf(f.entity).SetPosition(target);
+
+    // alpha 0 draws the pose the step started from: the written position, not the old one
+    f.fixture.Frame(1, 0.0f);
+    CHECK(f.fixture.TransformOf(f.entity).Position().x == Catch::Approx(100.0).margin(1e-9));
+    CHECK(f.fixture.TransformOf(f.entity).Position().y == Catch::Approx(500.0).margin(1e-9));
+
+    // alpha 1 draws the stepped pose, one step of the 4 m/s on from the written position
+    f.fixture.Frame(0, 1.0f);
+    CHECK(f.fixture.TransformOf(f.entity).Position().x == Catch::Approx(100.0 + 4.0 / 60.0).margin(1e-3));
+}
+
+TEST_CASE("A position write on a body that is not interpolated keeps its rotation", "[physics][interpolation]")
+{
+    InFlight f(false);
+    const mir::WorldVec3 target(50.0, 500.0, 0.0);
+    f.fixture.TransformOf(f.entity).SetPosition(target);
+    f.fixture.Frame(1, 0.5f);
+
+    CHECK(f.probe.position == target);
+    CHECK(Same(f.probe.rotation, f.bodyRotation));
+}
+
+TEST_CASE("A local write on a parented interpolated body is read through its parent", "[physics][interpolation]")
+{
+    InterpolationFixture fixture;
+    BodyProbe probe(fixture.world);
+
+    const mir::Entity parent = fixture.world.CreateEntity();
+    mir::AddTransform(fixture.world, parent, mir::Transform{ mir::WorldVec3(10.0, 0.0, 0.0) });
+    const mir::Entity child = fixture.world.CreateEntity();
+    mir::AddTransform(fixture.world, child, mir::Transform{ mir::WorldVec3(0.0, 500.0, 0.0) }, parent);
+    fixture.world.AddComponent<mir::RigidBody>(child,
+        mir::RigidBody{ .motion = mir::PhysicsMotion::Dynamic, .shape = mir::PhysicsShape::Sphere, .radius = 0.5f, .interpolate = true });
+    probe.Watch(fixture.BodyOf(child).runtime.body);
+    for (int i = 0; i < 5; ++i)
+        fixture.Frame(1, 0.5f);
+
+    fixture.TransformOf(child).SetPosition(mir::WorldVec3(3.0, 500.0, 0.0));
+    fixture.Frame(1, 0.5f);
+
+    // local 3 under a parent at 10 is world 13
+    CHECK(probe.position.x == Catch::Approx(13.0).margin(1e-9));
+}
+
+TEST_CASE("A kinematic body moved by velocity is drawn between its steps", "[physics][interpolation][kinematic]")
+{
+    InterpolationFixture fixture;
+    const mir::Entity entity = fixture.world.CreateEntity();
+    mir::AddTransform(fixture.world, entity, mir::Transform{ mir::WorldVec3(0.0, 5.0, 0.0) });
+    fixture.world.AddComponent<mir::RigidBody>(entity,
+        mir::RigidBody{ .motion = mir::PhysicsMotion::Kinematic, .shape = mir::PhysicsShape::Sphere, .radius = 0.5f, .interpolate = true });
+    fixture.world.Resource<mir::PhysicsWorld>().SetBodyLinearVelocity(
+        fixture.BodyOf(entity).runtime.body, glm::vec3(6.0f, 0.0f, 0.0f));
+
+    for (int i = 0; i < 10; ++i)
+        fixture.Frame(1, 1.0f);
+
+    const double previousX = fixture.BodyOf(entity).runtime.previousPosition.x;
+    const double currentX = fixture.BodyOf(entity).runtime.currentPosition.x;
+    REQUIRE(currentX > previousX);
+
+    fixture.Frame(0, 0.5f);
+    CHECK(fixture.TransformOf(entity).Position().x == Catch::Approx((previousX + currentX) * 0.5).margin(1e-6));
 }

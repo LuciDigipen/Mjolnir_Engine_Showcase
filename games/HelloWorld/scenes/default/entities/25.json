@@ -1,0 +1,69 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [
+          0.4,
+          1.4,
+          -0.8
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.3,
+          0.3,
+          0.3
+        ]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [
+          0.4,
+          1.4,
+          -0.8
+        ]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "materialShader": "default",
+        "meshName": "meshes/cube.mesh.json",
+        "tint": [
+          0.35,
+          0.5,
+          1.0,
+          1.0
+        ]
+      },
+      "type": "MeshRenderer"
+    },
+    {
+      "fields": {
+        "halfExtent": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "layer": 1,
+        "motion": 1,
+        "shape": 0
+      },
+      "type": "RigidBody"
+    },
+    {
+      "fields": {
+        "name": "GhostCrate"
+      },
+      "type": "Name"
+    }
+  ],
+  "id": 25,
+  "parent": 0
+}

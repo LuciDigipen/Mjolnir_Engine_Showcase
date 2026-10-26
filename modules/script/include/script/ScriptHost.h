@@ -41,6 +41,8 @@ namespace mir
         void CallOnStart(World &world, CommandBuffer &commands, Entity entity, int32_t instanceRef) override;
         void CallOnUpdate(World &world, CommandBuffer &commands, Entity entity, int32_t instanceRef,
                            float dt) override;
+        void CallOnFixedUpdate(World &world, CommandBuffer &commands, Entity entity, int32_t instanceRef,
+                               float dt) override;
         void CallOnStop(World &world, CommandBuffer &commands, Entity entity, int32_t instanceRef) override;
 
         // for AddBindings (script/BindingApi.h), which keeps sol2 out of this header

@@ -497,6 +497,14 @@ or the dialog themselves. History needs neither, and its tests are in
 
 ## Changed
 
+*2026-10-25*, **A Physics layers section in `ProjectSettingsPanel`.** Was: the panel drew Input, Rendering and
+External Tools, and every body collided with every other. Now: it edits the `physicsLayers` section of
+`project_settings.json` (up to 32 layer names and a collision grid), which the physics module reads, and a saved
+table is applied to the running `PhysicsWorld` while editing. Because: a game needs to say which layers pass
+through each other, and the settings window is where the other project-wide choices live. The table type and its
+file are in the plain `physics_layers` library, which the editor links instead of `physics`; a saved table is left
+in a `PhysicsLayerUpdate` resource for physics to take when Play begins.
+
 *2026-10-24* — **`EditorModule`; the import, content browser, scene ops, Prefab
 documents and project creation moved in from `app`.** Was: `App` held the
 `Editor`, the `AssetImportManager`, the `ContentBrowserWatcher`, `AppSceneOps`,

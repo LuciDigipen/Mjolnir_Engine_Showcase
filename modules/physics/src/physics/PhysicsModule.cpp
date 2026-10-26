@@ -11,6 +11,7 @@
 #include <physics/CollisionEventSystem.h>
 #include <physics/CollisionEvents.h>
 #include <physics/ComponentRegistration.h>
+#include <physics_layers/PhysicsLayerSettings.h>
 #include <physics/PhysicsInterpolationSystem.h>
 #include <physics/PhysicsSystem.h>
 #include <physics/PhysicsWorld.h>
@@ -21,12 +22,14 @@
 
 namespace mir
 {
-    PhysicsModule::PhysicsModule(ModuleContext context)
+    PhysicsModule::PhysicsModule(ModuleContext context, const std::filesystem::path &projectSettingsPath)
     {
         RegisterPhysicsComponents();
 
-        context.world.EmplaceResource<PhysicsWorld>();
+        PhysicsWorld &physics = context.world.EmplaceResource<PhysicsWorld>();
+        physics.SetLayerTable(ReadPhysicsLayers(projectSettingsPath));
         context.world.EmplaceResource<CollisionEvents>();
+        context.world.EmplaceResource<PhysicsLayerUpdate>();
 
         // once per fixed substep, before Propagate turns the Transforms it writes into world matrices
         context.scheduler.AddSystem<PhysicsSystem>(SystemPhase::FixedUpdate, SystemOrder{SystemOrder::kNormal});
@@ -34,6 +37,12 @@ namespace mir
             SystemOrder{SystemOrder::kNormal});
         context.scheduler.AddSystem<CollisionEventSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kNormal});
 
-        mHooks = context.world.SetComponentHooks<RigidBody>({ .onRemove = &PhysicsSystem::OnRigidBodyRemoved });
+        mHooks = context.world.SetComponentHooks<RigidBody>(
+            { .onAdd = &PhysicsSystem::OnRigidBodyAdded, .onRemove = &PhysicsSystem::OnRigidBodyRemoved });
+
+        mPlayBegin = context.scheduler.AddStage(Stage::PlayBegin,
+            [](SystemContext &frame) { PhysicsSystem::OnPlayBegin(frame.world); });
+        mPlayEnd = context.scheduler.AddStage(Stage::PlayEnd,
+            [](SystemContext &frame) { PhysicsSystem::OnPlayEnd(frame.world); });
     }
 }

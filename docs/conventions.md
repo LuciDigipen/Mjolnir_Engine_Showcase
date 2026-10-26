@@ -104,7 +104,7 @@ Systems cache their queries in `OnStart`.
 
 Ordering between systems is a phase and a `SystemOrder`, never registration order.
 Inside a phase the lowest order runs first, and equal orders are unspecified. Two
-systems that depend on each other get different orders; a system with no
+systems that depend on each other get different orders, and a system with no
 dependency passes `SystemOrder::kNormal`.
 
 Read-only components are `const T` in the query. Queries then carry the access

@@ -35,6 +35,8 @@ namespace mir
         virtual void CallOnStart(World &world, CommandBuffer &commands, Entity entity, int32_t instanceRef) = 0;
         virtual void CallOnUpdate(World &world, CommandBuffer &commands, Entity entity, int32_t instanceRef,
                                    float dt) = 0;
+        virtual void CallOnFixedUpdate(World &world, CommandBuffer &commands, Entity entity, int32_t instanceRef,
+                                       float dt) = 0;
         virtual void CallOnStop(World &world, CommandBuffer &commands, Entity entity, int32_t instanceRef) = 0;
     };
 }

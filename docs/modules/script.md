@@ -2,7 +2,7 @@
 
 Embeds Lua as the gameplay scripting layer, through sol2 over LuaJIT. A script
 reads per-frame ECS state and drives triggers, entity behaviour and UI logic. It
-does not touch physics or flight dynamics, and never draws a frame itself - its
+reaches physics only through the `physics_script` bridge, and never draws a frame itself - its
 one reach into rendering is the post-processing settings resource, a handful of
 plain numbers, not the renderer's own state.
 
@@ -18,7 +18,7 @@ bindings never mention a C++ component type.
 There are two lifetimes, kept separate.
 
 **Code** is one Lua table per loaded script *name*, holding only the functions
-that script defines — `OnStart`, `OnUpdate`, `OnStop` and `NewInstanceData`. It
+that script defines — `OnStart`, `OnUpdate`, `OnFixedUpdate`, `OnStop` and `NewInstanceData`. It
 is shared across every entity running that script.
 
 **State** is one small private table per `instanceRef`, passed as `self` to every
@@ -40,7 +40,14 @@ calling `OnStart` once and then `OnUpdate` every frame. Each entity's callback i
 by a C++ `try`/`catch` and by sol2's `protected_function`, so a script error
 stops that entity's script rather than the frame.
 
-`ScriptModule` owns the host, the reload watcher and both systems. It sets the
+`ScriptFixedSystem` calls `OnFixedUpdate(self, world, entity, dt)` once per physics step, with
+the fixed step as `dt`. It runs in `SystemPhase::FixedUpdate` at `SystemOrder::kEarly`, before
+`PhysicsSystem`, so forces and velocities a script sets there act on the same step. A frame with no
+step never calls it, and a frame that catches up several steps calls it once for each. It skips a
+script whose `OnStart` has not run yet, so `OnStart` always comes first, and it isolates each
+entity's callback like the others.
+
+`ScriptModule` owns the host, the reload watcher and the three systems. It sets the
 `ScriptRef` OnRemove hook, which drops the instance, polls the watcher in the
 `FrameBegin` slot, stops every script at `PlayEnd`, and lets the resolver retry
 failed names at `ReloadCommit`. Every library's own Lua bindings come from a
@@ -318,6 +325,14 @@ made the `ScriptRef`.
 
 ## Changed
 
+*2026-10-25*, **`world:set` takes only the documented forms.** Was: a vector, color or rotation table with a missing or misspelled key took 0 for it (1 for a rotation's `w`), and NaN or infinity went into a number field. Now: every key must be a number, NaN and infinity are refused, a number field keeps to the range it declares, a choice from a list must be in the list, and the refusal is one error that names the field and what was expected, with the field left as it was. A rotation may leave out `w`, which is 1. Because: a typo should fail loudly instead of becoming a zero, and a script should not be able to put a field where the editor could not. No script in `games/` wrote a partial table, so none changed.
+
+*2026-10-25*, **`OnFixedUpdate`, and a `ScriptRef` starts clean when it is added.** Was: scripts
+had no callback on the physics step, so a force set in `OnUpdate` landed on whichever step came
+next, and a `ScriptRef` copied from another entity carried that entity's `instanceRef` and
+`started`. Now: `ScriptFixedSystem` runs `OnFixedUpdate` before each physics step, and the
+`ScriptRef` OnAdd hook resets `instanceRef` and `started`. Because: physics work belongs on the
+fixed step, and a copy must not share the original's instance.
 *2026-10-25* — **Script writes respect field limits; `world:mesh_bounds` and
 `world:is_playing` added (#219).** Was: `world:set` and `world:add` wrote any
 value of the right shape, so a script could set `Light.type = 9`, a negative

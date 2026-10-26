@@ -1,6 +1,8 @@
 engine_add_module_tests(script
     WorldBindings.tests.cpp
     ScriptSystem.tests.cpp
+    ScriptFixedSystem.tests.cpp
+    ScriptHostRunning.tests.cpp
     ScriptResolveSystem.tests.cpp
     ScriptModule.tests.cpp
 )

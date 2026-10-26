@@ -135,7 +135,7 @@ namespace mir
     #endif
           mCamera(Context()),
           mAudio(Context(), mProject.mSoundBankDir),
-          mPhysics(Context()),
+          mPhysics(Context(), mProject.mProjectSettingsPath),
           mTerrainData(Context()),
           mScript(Context(), mAssets, mProject.mAssetIdRoot),
           mAudioScript(mScript),

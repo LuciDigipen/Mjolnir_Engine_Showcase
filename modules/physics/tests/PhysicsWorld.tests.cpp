@@ -291,23 +291,30 @@ TEST_CASE("A body carries the entity it was tagged with", "[physics]")
     CHECK(world.BodyEntity(reused) == mir::kNullEntity);
 }
 
-TEST_CASE("Degenerate shapes are rejected, not asserted on", "[physics]")
+TEST_CASE("Degenerate shapes become empty colliders, not asserted on", "[physics]")
 {
     mir::PhysicsWorld world;
 
-    REQUIRE_FALSE(world.CreateBody({.mMotion = mir::PhysicsMotion::Static,
-                                    .mShape = mir::PhysicsShape::Sphere,
-                                    .mPosition = mir::WorldPosition{},
-                                    .mRadius = 0.0f}).IsValid());
-    REQUIRE_FALSE(world.CreateBody({.mMotion = mir::PhysicsMotion::Dynamic,
-                                    .mShape = mir::PhysicsShape::Sphere,
-                                    .mPosition = mir::WorldPosition{},
-                                    .mRadius = -1.0f}).IsValid());
-    REQUIRE_FALSE(world.CreateBody({.mMotion = mir::PhysicsMotion::Static,
-                                    .mShape = mir::PhysicsShape::Box,
-                                    .mPosition = mir::WorldPosition{},
-                                    .mHalfExtent = glm::vec3(1.0f, 0.0f, 1.0f)}).IsValid());
-    REQUIRE(world.BodyCount() == 0);
+    const mir::BodyHandle sphere = world.CreateBody({.mMotion = mir::PhysicsMotion::Static,
+                                                     .mShape = mir::PhysicsShape::Sphere,
+                                                     .mPosition = mir::WorldPosition{},
+                                                     .mRadius = 0.0f});
+    const mir::BodyHandle negative = world.CreateBody({.mMotion = mir::PhysicsMotion::Dynamic,
+                                                       .mShape = mir::PhysicsShape::Sphere,
+                                                       .mPosition = mir::WorldPosition{},
+                                                       .mRadius = -1.0f});
+    const mir::BodyHandle flat = world.CreateBody({.mMotion = mir::PhysicsMotion::Static,
+                                                   .mShape = mir::PhysicsShape::Box,
+                                                   .mPosition = mir::WorldPosition{},
+                                                   .mHalfExtent = glm::vec3(1.0f, 0.0f, 1.0f)});
+
+    // each is a body with a handle that nothing can hit
+    CHECK(sphere.IsValid());
+    CHECK(negative.IsValid());
+    CHECK(flat.IsValid());
+    CHECK(world.BodyCount() == 3);
+    CHECK_FALSE(world.RayCast(mir::WorldPosition::FromMeters(mir::WorldVec3(0.0, 5.0, 0.0)).value(),
+        glm::vec3(0.0f, -1.0f, 0.0f), 10.0f).has_value());
 }
 
 TEST_CASE("A non-positive step does nothing", "[physics]")

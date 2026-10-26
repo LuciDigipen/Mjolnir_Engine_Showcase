@@ -27,6 +27,7 @@ target_link_libraries(engine_script_bindings INTERFACE mir::script sol2::sol2 Pk
 
 target_sources(engine_script PRIVATE
     src/script/ComponentRegistration.cpp
+    src/script/ScriptFixedSystem.cpp
     src/script/ScriptHost.cpp
     src/script/ScriptModule.cpp
     src/script/ScriptReloadWatcher.cpp

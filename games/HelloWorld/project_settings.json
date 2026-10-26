@@ -3,6 +3,18 @@
     "args": "--new-window {project} {file}",
     "path": "C:\\Users\\rahul\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe"
   },
+  "physicsLayers": {
+    "ignore": [
+      [
+        "Default",
+        "Ghost"
+      ]
+    ],
+    "names": [
+      "Default",
+      "Ghost"
+    ]
+  },
   "postProcessing": {
     "effects": {
       "Bloom": {

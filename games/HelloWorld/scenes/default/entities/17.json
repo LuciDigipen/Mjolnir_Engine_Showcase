@@ -1,0 +1,68 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [
+          2.0,
+          -1.2,
+          0.5
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          -0.17364817766693033,
+          0.984807753012208
+        ],
+        "scale": [
+          2.2,
+          0.15,
+          1.2
+        ]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [
+          2.0,
+          -1.2,
+          0.5
+        ]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "materialShader": "default",
+        "meshName": "meshes/cube.mesh.json",
+        "tint": [
+          0.55,
+          0.5,
+          0.4,
+          1.0
+        ]
+      },
+      "type": "MeshRenderer"
+    },
+    {
+      "fields": {
+        "halfExtent": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "motion": 0,
+        "shape": 0
+      },
+      "type": "RigidBody"
+    },
+    {
+      "fields": {
+        "name": "Ramp"
+      },
+      "type": "Name"
+    }
+  ],
+  "id": 17,
+  "parent": 0
+}

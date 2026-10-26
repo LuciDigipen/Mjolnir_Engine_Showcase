@@ -12,6 +12,8 @@
  */
 #include <physics_script/PhysicsBindings.h>
 #include <script/BindingApi.h>
+#include <script/ComponentRegistration.h>
+#include <script/ScriptFixedSystem.h>
 #include <script/ScriptHost.h>
 
 #include <core/ecs/CommandBuffer.h>
@@ -20,10 +22,12 @@
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/World.h>
+#include <physics/ComponentRegistration.h>
 #include <physics/PhysicsSystem.h>
 #include <physics/PhysicsWorld.h>
 #include <physics/components/RigidBody.h>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <glm/geometric.hpp>
@@ -46,10 +50,12 @@ namespace
     // does expect to move is never mistaken for noise.
     constexpr float kStill = 1.0e-3f;
 
+    // The mass of a unit cube at Jolt's default density, which is what the forces below were chosen for.
     constexpr mir::RigidBody kDynamicBox{
         .motion = mir::PhysicsMotion::Dynamic,
         .shape = mir::PhysicsShape::Box,
         .halfExtent = glm::vec3(0.5f),
+        .mass = 1000.0f,
     };
 
     // Where a script writes what it read, so the test can check it. Same trick
@@ -81,6 +87,8 @@ namespace
         mir::SystemContext context{ world, commands, kStep, 0.0, 0 };
         mir::ScriptHost host;
         const mir::Registration bindings = mir::AddBindings(host, &mir::RegisterPhysicsBindings);
+        // what PhysicsModule sets, so the body exists as soon as the RigidBody does
+        mir::Registration hooks;
         mir::Entity entity{};
         int32_t instance = -1;
 
@@ -89,10 +97,18 @@ namespace
             // No gravity: an applied push is then the only thing moving the
             // body, so every assertion below can be about that push alone.
             world.EmplaceResource<mir::PhysicsWorld>(mir::PhysicsWorldDesc{ .mGravity = glm::vec3(0.0f) });
+            Physics().SetSimulationLive(true);
+            hooks = world.SetComponentHooks<mir::RigidBody>(
+                { .onAdd = &mir::PhysicsSystem::OnRigidBodyAdded, .onRemove = &mir::PhysicsSystem::OnRigidBodyRemoved });
             world.EmplaceResource<mir::EngineModeState>();
             mir::SetEngineMode(world, mir::EngineMode::Play);
             mir::SetPlayState(world, mir::PlayState::Running);
+            mir::RegisterScriptComponents();
+            mir::RegisterPhysicsComponents();
 
+            // the same order ScriptModule and PhysicsModule give them: scripts first
+            scheduler.AddSystem<mir::ScriptFixedSystem>(mir::SystemPhase::FixedUpdate,
+                mir::SystemOrder{ mir::SystemOrder::kEarly }, host);
             scheduler.AddSystem<mir::PhysicsSystem>(mir::SystemPhase::FixedUpdate, mir::SystemOrder{mir::SystemOrder::kNormal});
             scheduler.Start(context);
 
@@ -121,7 +137,7 @@ namespace
 
         mir::PhysicsWorld &Physics() { return world.Resource<mir::PhysicsWorld>(); }
 
-        mir::BodyHandle Body() { return world.GetComponent<mir::RigidBody>(entity)->body; }
+        mir::BodyHandle Body() { return world.GetComponent<mir::RigidBody>(entity)->runtime.body; }
 
         glm::vec3 Linear() { return Physics().BodyLinearVelocity(Body()); }
         glm::vec3 Angular() { return Physics().BodyAngularVelocity(Body()); }
@@ -291,6 +307,580 @@ end
 
 return T
 )LUA";
+}
+
+namespace
+{
+    constexpr std::string_view kLaunchOnStart = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    world:set_linear_velocity(entity, { x = 6.0, y = 0.0, z = 0.0 })
+end
+
+return T
+)LUA";
+
+    constexpr std::string_view kLaunchOnFixedUpdate = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnFixedUpdate(self, world, entity, dt)
+    world:set_linear_velocity(entity, { x = 6.0, y = 0.0, z = 0.0 })
+end
+
+return T
+)LUA";
+}
+
+TEST_CASE("a velocity set in OnStart takes effect on the next step", "[script][physics]")
+{
+    Fixture f(kLaunchOnStart);
+    // the body is already there when OnStart runs
+    REQUIRE(f.Body().IsValid());
+
+    f.Start();
+    f.Step();
+
+    const std::optional<mir::WorldPosition> at = f.Physics().BodyPosition(f.Body());
+    REQUIRE(at.has_value());
+    CHECK(at->Meters().x > 0.05);
+}
+
+TEST_CASE("OnFixedUpdate runs before the step, so what it sets acts on that step", "[script][physics]")
+{
+    Fixture f(kLaunchOnFixedUpdate);
+    f.world.AddComponent<mir::ScriptRef>(f.entity, mir::ScriptRef{});
+    mir::ScriptRef *ref = f.world.GetComponent<mir::ScriptRef>(f.entity);
+    ref->instanceRef = f.instance;
+    ref->started = true;
+
+    f.Step();
+
+    // one step at 6 m/s is 0.1 m; had the callback run after the step it would still be at rest
+    const std::optional<mir::WorldPosition> at = f.Physics().BodyPosition(f.Body());
+    REQUIRE(at.has_value());
+    CHECK(at->Meters().x > 0.05);
+}
+
+namespace
+{
+    constexpr std::string_view kEditFields = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    local ok = true
+    ok = ok and world:set_friction(entity, 0.7)
+    ok = ok and world:set_half_extent(entity, { x = 1.0, y = 2.0, z = 3.0 })
+    ok = ok and world:set_offset(entity, { x = 0.0, y = 4.0, z = 0.0 })
+    ok = ok and world:set_rotation_offset(entity, { x = 0.0, y = 0.0, z = 0.0, w = 1.0 })
+    ok = ok and world:set_is_trigger(entity, true)
+    ok = ok and world:set_detect_stay(entity, true)
+    ok = ok and world:set_motion(entity, PhysicsMotion.Kinematic)
+    ok = ok and world:set_shape(entity, PhysicsShape.Capsule)
+    ok = ok and world:set_capsule_axis(entity, PhysicsAxis.Z)
+    ok = ok and world:set_mass(entity, 25.0)
+    ok = ok and world:set_gravity_factor(entity, 0.5)
+    ok = ok and world:set_restitution(entity, 0.3)
+    ok = ok and world:set_allow_sleeping(entity, false)
+    ok = ok and world:set_half_height(entity, 2.5)
+    ok = ok and world:set_radius(entity, 0.75)
+    ok = ok and world:set_interpolate(entity, true)
+
+    local read = math.abs(world:friction(entity) - 0.7) < 1e-6
+        and world:half_extent(entity).y == 2.0
+        and world:offset(entity).y == 4.0
+        and world:is_trigger(entity) == true
+        and world:motion(entity) == 2
+        and world:shape(entity) == 2
+        and world:capsule_axis(entity) == 2
+    world:set(entity, "PhysicsBindingsProbe", "ok", ok and read)
+end
+
+return T
+)LUA";
+
+    constexpr std::string_view kTeleport = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    local moved = world:teleport(entity, { x = 20.0, y = 5.0, z = 0.0 })
+    world:set(entity, "PhysicsBindingsProbe", "ok", moved == true)
+end
+
+return T
+)LUA";
+
+    constexpr std::string_view kTeleportNothing = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    local moved = world:teleport(entity, { x = 20.0, y = 5.0, z = 0.0 })
+    world:set(entity, "PhysicsBindingsProbe", "ok", moved == false)
+end
+
+return T
+)LUA";
+
+    constexpr std::string_view kSleepControl = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    world:wake(entity)
+    world:set(entity, "PhysicsBindingsProbe", "ok", world:is_sleeping(entity) == false)
+end
+
+return T
+)LUA";
+}
+
+namespace
+{
+    constexpr std::string_view kFreezeInFixedUpdate = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    world:set_linear_velocity(entity, { x = 6.0, y = 0.0, z = 0.0 })
+end
+
+function T.OnFixedUpdate(self, world, entity, dt)
+    world:set_motion(entity, PhysicsMotion.Static)
+end
+
+return T
+)LUA";
+}
+
+TEST_CASE("a RigidBody edit made in OnFixedUpdate reaches the body in the same step", "[script][physics][fields]")
+{
+    Fixture f(kFreezeInFixedUpdate);
+    f.world.AddComponent<mir::ScriptRef>(f.entity, mir::ScriptRef{});
+    mir::ScriptRef *ref = f.world.GetComponent<mir::ScriptRef>(f.entity);
+    ref->instanceRef = f.instance;
+    ref->started = true;
+    f.Start();
+
+    const mir::BodyHandle before = f.Body();
+    f.Step();
+
+    // the body was moving at 6 m/s, and the edit made it Static before the step moved it
+    CHECK(f.Physics().BodyPosition(f.Body())->Meters().x == Catch::Approx(0.0).margin(1e-6));
+    CHECK(f.Body() == before);
+}
+
+namespace
+{
+    // The caster is the fixture's box at the origin; the floor below it is added by the test.
+    constexpr std::string_view kCastSelf = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+local function near(a, b) return math.abs(a - b) < 0.02 end
+
+function T.OnStart(self, world, entity)
+    local from, down = { x = 0.0, y = 3.0, z = 0.0 }, { x = 0.0, y = -1.0, z = 0.0 }
+    local plain = world:raycast(from, down, 20.0)
+    local self_hit = world:raycast(from, down, 20.0, { ignoreSelf = false })
+    local excluded = world:raycast(from, down, 20.0, { ignoreSelf = false, exclude = { entity } })
+    local ok = plain.hit and near(plain.distance, 5.5)
+        and self_hit.hit and near(self_hit.distance, 2.5)
+        and excluded.hit and near(excluded.distance, 5.5)
+    world:set(entity, "PhysicsBindingsProbe", "ok", ok)
+end
+
+return T
+)LUA";
+
+    constexpr std::string_view kCastFilters = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+local function near(a, b) return math.abs(a - b) < 0.02 end
+
+function T.OnStart(self, world, entity)
+    local from, down = { x = 0.0, y = 3.0, z = 0.0 }, { x = 0.0, y = -1.0, z = 0.0 }
+    local byName = world:raycast(from, down, 20.0, { layers = { "Floor" } })
+    local byIndex = world:raycast(from, down, 20.0, { layers = { 2 } })
+    local wrongLayer = world:raycast(from, down, 20.0, { layers = { "Default" } })
+    local isStatic = world:raycast(from, down, 20.0, { motion = { PhysicsMotion.Static } })
+    local isKinematic = world:raycast(from, down, 20.0, { motion = { PhysicsMotion.Kinematic } })
+    local typo = world:raycast(from, down, 20.0, { layer = { "Floor" } })
+    local nobody = world:raycast(from, down, 20.0, { layers = { "Nobody" } })
+    local ok = byName.hit and near(byName.distance, 5.5)
+        and byIndex.hit and near(byIndex.distance, 5.5)
+        and not wrongLayer.hit
+        and isStatic.hit and near(isStatic.distance, 5.5)
+        and not isKinematic.hit
+        and not typo.hit
+        and not nobody.hit
+    world:set(entity, "PhysicsBindingsProbe", "ok", ok)
+end
+
+return T
+)LUA";
+
+    constexpr std::string_view kCastTriggers = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    local from, down = { x = 0.0, y = 3.0, z = 0.0 }, { x = 0.0, y = -1.0, z = 0.0 }
+    local skipped = world:raycast(from, down, 20.0)
+    local asked = world:raycast(from, down, 20.0, { hitTriggers = true })
+    world:set(entity, "PhysicsBindingsProbe", "ok", not skipped.hit and asked.hit)
+end
+
+return T
+)LUA";
+
+    // A floor under the caster, 5.5 meters below the cast's start.
+    void AddFloor(Fixture &f, int layer = 0, bool trigger = false)
+    {
+        mir::RigidBody floor{ .motion = mir::PhysicsMotion::Static, .shape = mir::PhysicsShape::Box,
+            .halfExtent = glm::vec3(5.0f, 0.5f, 5.0f) };
+        floor.layer = layer;
+        floor.isTrigger = trigger;
+        const mir::Entity entity = f.world.CreateEntity();
+        mir::AddTransform(f.world, entity, mir::Transform{ mir::WorldVec3(0.0, -3.0, 0.0) });
+        f.world.AddComponent<mir::RigidBody>(entity, floor);
+    }
+}
+
+TEST_CASE("a cast does not hit its caster unless it says so, and can exclude entities", "[script][physics][raycast]")
+{
+    Fixture f(kCastSelf);
+    AddFloor(f);
+    f.Start();
+    CHECK(ReadProbeField<bool>(f.world, f.entity, "ok"));
+}
+
+TEST_CASE("a cast filters by layer name or index and by motion type, and refuses an unknown option", "[script][physics][raycast]")
+{
+    Fixture f(kCastFilters);
+    mir::PhysicsLayerTable table;
+    table.names[2] = "Floor";
+    f.Physics().SetLayerTable(table);
+    AddFloor(f, 2);
+    f.Start();
+    CHECK(ReadProbeField<bool>(f.world, f.entity, "ok"));
+}
+
+TEST_CASE("a cast skips triggers unless hitTriggers is set", "[script][physics][raycast]")
+{
+    Fixture f(kCastTriggers);
+    AddFloor(f, 0, true);
+    f.Start();
+    CHECK(ReadProbeField<bool>(f.world, f.entity, "ok"));
+}
+
+namespace
+{
+    constexpr std::string_view kStaticForce = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    local force = world:add_force(entity, { x = 1.0, y = 0.0, z = 0.0 })
+    local velocity = world:set_linear_velocity(entity, { x = 1.0, y = 0.0, z = 0.0 })
+    world:set(entity, "PhysicsBindingsProbe", "ok", force == false and velocity == false)
+end
+
+return T
+)LUA";
+
+    constexpr std::string_view kBadInput = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    local nan, inf = 0 / 0, 1 / 0
+    local ok = true
+    -- a vector that is NaN, infinite, an array, missing a key or not numbers is refused
+    ok = ok and world:add_force(entity, { x = nan, y = 0.0, z = 0.0 }) == false
+    ok = ok and world:add_impulse(entity, { x = 0.0, y = inf, z = 0.0 }) == false
+    ok = ok and world:set_linear_velocity(entity, { 1.0, 2.0, 3.0 }) == false
+    ok = ok and world:set_linear_velocity(entity, { x = 1.0, y = 2.0 }) == false
+    ok = ok and world:set_linear_velocity(entity, { x = "1", y = "2", z = "3" }) == false
+    ok = ok and world:add_torque(entity, 5) == false
+    ok = ok and world:add_force(entity, { x = 1.0, y = 0.0, z = 0.0 }, { x = nan, y = 0.0, z = 0.0 }) == false
+    -- a ray with a bad origin, direction or distance misses
+    ok = ok and not world:raycast({ x = nan, y = 0.0, z = 0.0 }, { x = 0.0, y = -1.0, z = 0.0 }, 10.0).hit
+    ok = ok and not world:raycast({ x = 0.0, y = 0.0, z = 0.0 }, { 0.0, -1.0, 0.0 }, 10.0).hit
+    ok = ok and not world:raycast({ x = 0.0, y = 0.0, z = 0.0 }, { x = 0.0, y = -1.0, z = 0.0 }, inf).hit
+    -- teleport and the field setters refuse them too
+    ok = ok and world:teleport(entity, { x = nan, y = 0.0, z = 0.0 }) == false
+    ok = ok and world:teleport(entity, { x = 1.0, y = 0.0, z = 0.0 }, { x = 0.0, y = 0.0, z = 0.0, w = 0.0 }) == false
+    ok = ok and world:set_mass(entity, nan) == false
+    ok = ok and world:set_friction(entity, inf) == false
+    ok = ok and world:set_half_extent(entity, { x = 1.0, y = 2.0 }) == false
+    ok = ok and world:set_offset(entity, { x = nan, y = 0.0, z = 0.0 }) == false
+    -- and the good form still works
+    ok = ok and world:add_force(entity, { x = 1.0, y = 0.0, z = 0.0 }) == true
+    ok = ok and world:set_linear_velocity(entity, { x = 0.0, y = 0.0, z = 0.0 }) == true
+    world:set(entity, "PhysicsBindingsProbe", "ok", ok)
+end
+
+return T
+)LUA";
+}
+
+TEST_CASE("Lua input that is not finite or not the documented form is refused and changes nothing", "[script][physics][validation]")
+{
+    Fixture f(kBadInput);
+    const mir::RigidBody before = *f.world.GetComponent<mir::RigidBody>(f.entity);
+    f.Start();
+
+    CHECK(ReadProbeField<bool>(f.world, f.entity, "ok"));
+
+    // no setter that was refused changed the component
+    const mir::RigidBody &after = *f.world.GetComponent<mir::RigidBody>(f.entity);
+    CHECK(after.mass == before.mass);
+    CHECK(after.friction == before.friction);
+    CHECK(after.halfExtent == before.halfExtent);
+    CHECK(after.offset == before.offset);
+}
+
+TEST_CASE("a force or velocity on a Static body returns false from Lua", "[script][physics][validation]")
+{
+    Fixture f(kStaticForce);
+    f.world.GetComponent<mir::RigidBody>(f.entity)->motion = mir::PhysicsMotion::Static;
+    f.Step();
+    f.Start();
+
+    CHECK(ReadProbeField<bool>(f.world, f.entity, "ok"));
+}
+
+namespace
+{
+    constexpr std::string_view kRanges = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    local ok = true
+    -- a choice from a list, and numbers outside the range the field declares
+    ok = ok and world:set_capsule_axis(entity, 3) == false
+    ok = ok and world:set_capsule_axis(entity, 1.5) == false
+    ok = ok and world:set_motion(entity, 7) == false
+    ok = ok and world:set_shape(entity, -1) == false
+    ok = ok and world:set_mass(entity, -1) == false
+    ok = ok and world:set_mass(entity, 0) == false
+    ok = ok and world:set_restitution(entity, 5) == false
+    ok = ok and world:set_friction(entity, -0.1) == false
+    -- and a value inside it is taken
+    ok = ok and world:set_mass(entity, 3.0) == true
+    ok = ok and world:set_restitution(entity, 0.5) == true
+    world:set(entity, "PhysicsBindingsProbe", "ok", ok)
+end
+
+return T
+)LUA";
+
+    constexpr std::string_view kInputAxis = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    world:set(entity, "PhysicsBindingsProbe", "ok", world:axis("Move") == 0.5)
+end
+
+return T
+)LUA";
+}
+
+TEST_CASE("Field values outside what the field allows are refused", "[script][physics][validation]")
+{
+    Fixture f(kRanges);
+    f.Start();
+
+    CHECK(ReadProbeField<bool>(f.world, f.entity, "ok"));
+    const mir::RigidBody &body = *f.world.GetComponent<mir::RigidBody>(f.entity);
+    CHECK(body.axis == mir::PhysicsAxis::Y);
+    CHECK(body.motion == mir::PhysicsMotion::Dynamic);
+    CHECK(body.mass == 3.0f);
+}
+
+TEST_CASE("The physics bindings leave the input bridge's world:axis alone", "[script][physics][validation]")
+{
+    mir::ScriptHost host;
+    // stands in for the input bridge, registered first as App does
+    const mir::Registration input = mir::AddBindings(host,
+        [](sol::state &lua)
+        {
+            sol::table worldType = lua["World"];
+            worldType.set_function("axis", [](mir::World &, std::string_view) { return 0.5f; });
+        });
+    const mir::Registration physics = mir::AddBindings(host, &mir::RegisterPhysicsBindings);
+
+    mir::RegisterScriptComponents();
+    mir::RegisterPhysicsComponents();
+    mir::World world;
+    mir::CommandBuffer commands;
+    const mir::Entity entity = world.CreateEntity();
+    ProbeOps().AddDefault(world, entity);
+    REQUIRE(host.LoadScriptSource("axis_probe", kInputAxis));
+    const int32_t instance = host.CreateInstance("axis_probe");
+    REQUIRE(instance != -1);
+
+    host.CallOnStart(world, commands, entity, instance);
+    host.DestroyInstance(instance);
+
+    CHECK(ReadProbeField<bool>(world, entity, "ok"));
+}
+
+namespace
+{
+    constexpr std::string_view kLayers = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    local ok = true
+    ok = ok and world:layer_index("Enemy") == 3
+    ok = ok and world:layer_index("Nobody") == nil
+    ok = ok and world:set_layer(entity, "Enemy")
+    ok = ok and world:layer(entity) == 3
+    ok = ok and world:set_layer(entity, 5)
+    ok = ok and world:layer(entity) == 5
+    -- a name that does not exist, an index out of range and a wrong type are refused and change nothing
+    ok = ok and world:set_layer(entity, "Nobody") == false
+    ok = ok and world:set_layer(entity, 40) == false
+    ok = ok and world:set_layer(entity, 1.5) == false
+    ok = ok and world:set_layer(entity, true) == false
+    ok = ok and world:layer(entity) == 5
+    world:set(entity, "PhysicsBindingsProbe", "ok", ok)
+end
+
+return T
+)LUA";
+}
+
+TEST_CASE("layers are set by name or index and looked up by name", "[script][physics][layers]")
+{
+    Fixture f(kLayers);
+    mir::PhysicsLayerTable table;
+    table.names[3] = "Enemy";
+    f.Physics().SetLayerTable(table);
+    f.Start();
+
+    CHECK(ReadProbeField<bool>(f.world, f.entity, "ok"));
+    CHECK(f.world.GetComponent<mir::RigidBody>(f.entity)->layer == 5);
+}
+
+TEST_CASE("every RigidBody field can be read and written from Lua", "[script][physics][fields]")
+{
+    Fixture f(kEditFields);
+    f.Start();
+
+    CHECK(ReadProbeField<bool>(f.world, f.entity, "ok"));
+
+    // and the component holds what the script wrote, the same field the editor edits
+    const mir::RigidBody &rigidBody = *f.world.GetComponent<mir::RigidBody>(f.entity);
+    CHECK(rigidBody.friction == Catch::Approx(0.7f));
+    CHECK(rigidBody.halfExtent == glm::vec3(1.0f, 2.0f, 3.0f));
+    CHECK(rigidBody.offset == glm::vec3(0.0f, 4.0f, 0.0f));
+    CHECK(rigidBody.isTrigger);
+    CHECK(rigidBody.detectStay);
+    CHECK(rigidBody.motion == mir::PhysicsMotion::Kinematic);
+    CHECK(rigidBody.shape == mir::PhysicsShape::Capsule);
+    CHECK(rigidBody.axis == mir::PhysicsAxis::Z);
+    CHECK(rigidBody.mass == 25.0f);
+    CHECK(rigidBody.gravityFactor == 0.5f);
+    CHECK(rigidBody.restitution == Catch::Approx(0.3f));
+    CHECK_FALSE(rigidBody.allowSleeping);
+    CHECK(rigidBody.halfHeight == 2.5f);
+    CHECK(rigidBody.radius == 0.75f);
+    CHECK(rigidBody.interpolate);
+}
+
+TEST_CASE("the RigidBody getters answer nil and the setters false for an entity without one", "[script][physics][fields]")
+{
+    Fixture f(kEditFields, false);
+    f.Start();
+
+    // the first setter fails, so the script reports it
+    CHECK_FALSE(ReadProbeField<bool>(f.world, f.entity, "ok"));
+}
+
+TEST_CASE("world:teleport puts the Transform and the body at a world pose", "[script][physics][teleport]")
+{
+    Fixture f(kTeleport);
+    f.Start();
+    CHECK(ReadProbeField<bool>(f.world, f.entity, "ok"));
+
+    CHECK(f.world.GetComponent<mir::Transform>(f.entity)->Position() == mir::WorldVec3(20.0, 5.0, 0.0));
+    const std::optional<mir::WorldPosition> at = f.Physics().BodyPosition(f.Body());
+    REQUIRE(at.has_value());
+    CHECK(at->Meters() == mir::WorldVec3(20.0, 5.0, 0.0));
+
+    // a step afterwards does not undo it
+    f.Step();
+    CHECK(f.world.GetComponent<mir::Transform>(f.entity)->Position().x == Catch::Approx(20.0).margin(1e-3));
+}
+
+TEST_CASE("world:teleport on an entity with no body is false", "[script][physics][teleport]")
+{
+    Fixture f(kTeleportNothing, false);
+    f.Start();
+    CHECK(ReadProbeField<bool>(f.world, f.entity, "ok"));
+}
+
+TEST_CASE("world:wake and world:is_sleeping drive the body's sleep", "[script][physics][sleep]")
+{
+    Fixture f(kSleepControl);
+    f.Start();
+    CHECK(ReadProbeField<bool>(f.world, f.entity, "ok"));
 }
 
 TEST_CASE("world:add_force with no offset pushes the center of mass", "[script][physics]")
@@ -475,6 +1065,8 @@ return T
         mir::CommandBuffer commands;
         mir::SystemScheduler scheduler;
         mir::SystemContext context{ world, commands, kStep, 0.0, 0 };
+        // what PhysicsModule sets, so an added RigidBody gets its body
+        mir::Registration hooks;
         mir::ScriptHost host;
         const mir::Registration bindings = mir::AddBindings(host, &mir::RegisterPhysicsBindings);
         std::vector<float> samples;
@@ -484,6 +1076,9 @@ return T
         {
             // No gravity, so a dynamic body stays where the ray expects it.
             world.EmplaceResource<mir::PhysicsWorld>(mir::PhysicsWorldDesc{ .mGravity = glm::vec3(0.0f) });
+            world.Resource<mir::PhysicsWorld>().SetSimulationLive(true);
+            hooks = world.SetComponentHooks<mir::RigidBody>(
+                { .onAdd = &mir::PhysicsSystem::OnRigidBodyAdded, .onRemove = &mir::PhysicsSystem::OnRigidBodyRemoved });
             world.EmplaceResource<mir::EngineModeState>();
             mir::SetEngineMode(world, mir::EngineMode::Play);
             mir::SetPlayState(world, mir::PlayState::Running);

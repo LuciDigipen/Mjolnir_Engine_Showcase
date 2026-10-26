@@ -11,13 +11,16 @@
 #include <core/ecs/ModuleContext.h>
 #include <core/Registration.h>
 
+#include <filesystem>
+
 namespace mir
 {
     // PhysicsWorld and CollisionEvents are World resources, so a Stop's restore keeps them
     class PhysicsModule
     {
     public:
-        explicit PhysicsModule(ModuleContext context);
+        // projectSettingsPath: the "physicsLayers" section sets which layers collide
+        PhysicsModule(ModuleContext context, const std::filesystem::path &projectSettingsPath);
 
         PhysicsModule(const PhysicsModule &) = delete;
         PhysicsModule &operator=(const PhysicsModule &) = delete;
@@ -25,5 +28,7 @@ namespace mir
     private:
         // last: unregisters before anything above is destroyed
         Registration mHooks;
+        Registration mPlayBegin;
+        Registration mPlayEnd;
     };
 }

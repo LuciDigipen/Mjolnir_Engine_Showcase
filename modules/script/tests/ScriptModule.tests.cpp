@@ -34,13 +34,14 @@ namespace
             REQUIRE(scripts.Host().LoadScriptSource("Spin", "return {}"));
         }
 
+        // the instance is attached after the add, the way the resolver does it
         mir::Entity Scripted()
         {
-            mir::ScriptRef ref;
-            ref.instanceRef = scripts.Host().CreateInstance("Spin");
-            REQUIRE(ref.instanceRef >= 0);
             const mir::Entity entity = world.CreateEntity();
-            world.AddComponent(entity, ref);
+            world.AddComponent(entity, mir::ScriptRef{});
+            mir::ScriptRef *ref = world.GetComponent<mir::ScriptRef>(entity);
+            ref->instanceRef = scripts.Host().CreateInstance("Spin");
+            REQUIRE(ref->instanceRef >= 0);
             return entity;
         }
     };
@@ -54,6 +55,20 @@ TEST_CASE("Removing a ScriptRef destroys its instance", "[script][module]")
 
     f.world.RemoveComponent<mir::ScriptRef>(entity);
     CHECK(f.scripts.Host().InstanceCount() == 0);
+}
+
+TEST_CASE("A ScriptRef added with another run's instance and started flag starts clean", "[script][module]")
+{
+    Fixture f;
+    mir::ScriptRef copied;
+    copied.instanceRef = 7;
+    copied.started = true;
+
+    const mir::Entity entity = f.world.CreateEntity();
+    f.world.AddComponent(entity, copied);
+
+    CHECK(f.world.GetComponent<mir::ScriptRef>(entity)->instanceRef == -1);
+    CHECK_FALSE(f.world.GetComponent<mir::ScriptRef>(entity)->started);
 }
 
 TEST_CASE("Destroying a scripted entity destroys its instance", "[script][module]")
