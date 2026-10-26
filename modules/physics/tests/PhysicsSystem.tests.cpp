@@ -1316,6 +1316,21 @@ TEST_CASE("A capsule axis outside X, Y and Z does not index past the scale", "[p
     CHECK(BodyOfEntity(fixture, entity).IsValid());
 }
 
+TEST_CASE("A layer table the editor leaves is taken when Play begins", "[physics][layers]")
+{
+    PhysicsFixture fixture(mir::EngineMode::Edit);
+    mir::PhysicsLayerTable table;
+    table.names[4] = "Enemy";
+    table.SetCollide(0, 4, false);
+    fixture.world.EmplaceResource<mir::PhysicsLayerUpdate>().mPending = table;
+
+    mir::PhysicsSystem::OnPlayBegin(fixture.world);
+
+    CHECK(fixture.Physics().LayerTable().IndexOf("Enemy") == 4);
+    CHECK_FALSE(fixture.Physics().LayerTable().Collide(0, 4));
+    CHECK_FALSE(fixture.world.Resource<mir::PhysicsLayerUpdate>().mPending.has_value());
+}
+
 TEST_CASE("A RigidBody gets its body when it is added, before any step", "[physics]")
 {
     PhysicsFixture fixture;

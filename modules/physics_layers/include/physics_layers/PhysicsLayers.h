@@ -1,9 +1,7 @@
 /**
  * @file PhysicsLayers.h
  * @author sumin.park
- * @brief The layers a RigidBody can sit on and which layers collide.
- *
- * Deliberately free of any Jolt header, like PhysicsTypes.h.
+ * @brief The layers for masking etc.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -20,8 +18,8 @@ namespace mir
 {
     inline constexpr int kPhysicsLayerCount = 32;
 
-    // Layer 0 is "Default". An unnamed layer has an empty name and is still a valid index.
-    // A table that was never set has every pair colliding.
+    constexpr bool IsPhysicsLayer(int layer) { return layer >= 0 && layer < kPhysicsLayerCount; }
+
     struct PhysicsLayerTable
     {
         // collides[a] has bit b set when layer a may collide with layer b, kept symmetric
@@ -55,5 +53,11 @@ namespace mir
             }
             return std::nullopt;
         }
+    };
+
+    // A World resource the editor writes a saved table into and physics takes, so neither links the other.
+    struct PhysicsLayerUpdate
+    {
+        std::optional<PhysicsLayerTable> mPending;
     };
 }

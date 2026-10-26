@@ -2,7 +2,6 @@ engine_add_module_tests(physics
     CollisionEvents.tests.cpp
     HeightField.tests.cpp
     PhysicsInterpolation.tests.cpp
-    PhysicsLayerSettings.tests.cpp
     PhysicsSystem.tests.cpp
     PhysicsWorld.tests.cpp
 )

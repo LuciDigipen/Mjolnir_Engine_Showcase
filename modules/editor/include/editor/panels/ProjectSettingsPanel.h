@@ -9,7 +9,7 @@
 #pragma once
 
 #include <editor/IdeSettings.h>
-#include <physics/PhysicsLayers.h>
+#include <physics_layers/PhysicsLayers.h>
 #include <renderer/RenderSettings.h>
 
 #include <filesystem>
@@ -17,14 +17,12 @@
 
 namespace mir
 {
-    class PhysicsWorld;
-
     class ProjectSettingsPanel
     {
     public:
-        // physics: where a saved layer table is applied, null when there is no world; editing: only in Edit
+        // layerUpdate: where a saved layer table is left for physics, null when there is none; editing: only in Edit
         void Draw(RenderSettings &renderSettings, const std::filesystem::path &savePath, bool &showInputSettings,
-            PhysicsWorld *physics, bool editing);
+            PhysicsLayerUpdate *layerUpdate, bool editing);
 
         void OnHidden()
         {
@@ -40,7 +38,7 @@ namespace mir
         void DrawRendering(RenderSettings &renderSettings, RenderSettings &draftRenderSettings,
             const std::filesystem::path &savePath);
         void DrawExternalTools(const std::filesystem::path &savePath);
-        void DrawPhysicsLayers(const std::filesystem::path &savePath, PhysicsWorld *physics, bool editing);
+        void DrawPhysicsLayers(const std::filesystem::path &savePath, PhysicsLayerUpdate *layerUpdate, bool editing);
         void LoadLayers(const std::filesystem::path &savePath);
 
         std::string mRenderingStatusMessage;

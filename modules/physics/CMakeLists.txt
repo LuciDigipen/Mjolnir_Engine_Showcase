@@ -1,7 +1,7 @@
 engine_add_module(physics)
 
-# serial: the "physicsLayers" section of project_settings.json
-target_link_libraries(engine_physics PUBLIC mir::core PRIVATE mir::serial)
+# PUBLIC physics_layers: PhysicsWorld.h holds a PhysicsLayerTable
+target_link_libraries(engine_physics PUBLIC mir::core mir::physics_layers)
 
 find_package(Jolt CONFIG REQUIRED)
 
@@ -31,7 +31,6 @@ target_sources(engine_physics PRIVATE
     src/physics/ContactTracker.cpp
     src/physics/HeightField.cpp
     src/physics/JoltRuntime.cpp
-    src/physics/PhysicsLayerSettings.cpp
     src/physics/PhysicsInterpolationSystem.cpp
     src/physics/PhysicsSystem.cpp
     src/physics/PhysicsWorld.cpp

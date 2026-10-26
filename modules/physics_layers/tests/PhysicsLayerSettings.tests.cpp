@@ -6,7 +6,7 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
-#include <physics/PhysicsLayerSettings.h>
+#include <physics_layers/PhysicsLayerSettings.h>
 
 #include <core/log/SetupError.h>
 

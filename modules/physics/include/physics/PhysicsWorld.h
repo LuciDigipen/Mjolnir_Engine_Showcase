@@ -13,7 +13,7 @@
 
 #include <physics/CollisionEvents.h>
 #include <physics/HeightField.h>
-#include <physics/PhysicsLayers.h>
+#include <physics_layers/PhysicsLayers.h>
 #include <physics/PhysicsTypes.h>
 
 #include <core/ecs/Entity.h>

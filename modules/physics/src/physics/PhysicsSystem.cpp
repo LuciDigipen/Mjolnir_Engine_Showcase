@@ -43,7 +43,7 @@ namespace mir
         // A layer outside 0 to 31 is the Default layer, said once here at creation and at the edit.
         int LayerOf(const RigidBody &rigidBody, Entity entity)
         {
-            if (rigidBody.layer >= 0 && rigidBody.layer < kPhysicsLayerCount)
+            if (IsPhysicsLayer(rigidBody.layer))
                 return rigidBody.layer;
 
             MIR_LOG_WARN("PhysicsSystem: entity {} has layer {}, which is outside 0 to {}; using layer 0",
@@ -92,6 +92,17 @@ namespace mir
             physics.SetBodyEntity(rigidBody.runtime.body, entity);
             detail::ResetStepPoses(rigidBody, pose.position.Meters(), pose.rotation);
             detail::Stamp(rigidBody, pose);
+        }
+
+        // The editor leaves a saved layer table for physics to take, which it does before bodies are built.
+        void TakeLayerUpdate(World &world, PhysicsWorld &physics)
+        {
+            PhysicsLayerUpdate *update = world.TryResource<PhysicsLayerUpdate>();
+            if (update == nullptr || !update->mPending)
+                return;
+
+            physics.SetLayerTable(*update->mPending);
+            update->mPending.reset();
         }
 
         // Spawns and teleports are already in the world, so they pass the gates like any move.
@@ -333,6 +344,8 @@ namespace mir
             return;
 
         MIR_ASSERT(!physics->IsSimulationLive(), "PhysicsSystem: PlayBegin ran twice without a PlayEnd");
+
+        TakeLayerUpdate(world, *physics);
 
         world.ForEach<Transform, RigidBody>(
             [&](Entity entity, Transform &, RigidBody &rigidBody)

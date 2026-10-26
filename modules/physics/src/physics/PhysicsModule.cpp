@@ -11,7 +11,7 @@
 #include <physics/CollisionEventSystem.h>
 #include <physics/CollisionEvents.h>
 #include <physics/ComponentRegistration.h>
-#include <physics/PhysicsLayerSettings.h>
+#include <physics_layers/PhysicsLayerSettings.h>
 #include <physics/PhysicsInterpolationSystem.h>
 #include <physics/PhysicsSystem.h>
 #include <physics/PhysicsWorld.h>
@@ -29,6 +29,7 @@ namespace mir
         PhysicsWorld &physics = context.world.EmplaceResource<PhysicsWorld>();
         physics.SetLayerTable(ReadPhysicsLayers(projectSettingsPath));
         context.world.EmplaceResource<CollisionEvents>();
+        context.world.EmplaceResource<PhysicsLayerUpdate>();
 
         // once per fixed substep, before Propagate turns the Transforms it writes into world matrices
         context.scheduler.AddSystem<PhysicsSystem>(SystemPhase::FixedUpdate, SystemOrder{SystemOrder::kNormal});

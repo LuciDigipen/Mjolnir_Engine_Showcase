@@ -10,8 +10,7 @@
 #include <editor/panels/ProjectSettingsPanel.h>
 
 #include <core/log/SetupError.h>
-#include <physics/PhysicsLayerSettings.h>
-#include <physics/PhysicsWorld.h>
+#include <physics_layers/PhysicsLayerSettings.h>
 
 #include <imgui.h>
 
@@ -118,7 +117,8 @@ namespace mir
         mLayersLoaded = true;
     }
 
-    void ProjectSettingsPanel::DrawPhysicsLayers(const std::filesystem::path &savePath, PhysicsWorld *physics, bool editing)
+    void ProjectSettingsPanel::DrawPhysicsLayers(
+        const std::filesystem::path &savePath, PhysicsLayerUpdate *layerUpdate, bool editing)
     {
         if (!mLayersLoaded)
             LoadLayers(savePath);
@@ -200,8 +200,8 @@ namespace mir
                 mLayersStatus = "Save failed - see log.";
             else
             {
-                if (physics != nullptr)
-                    physics->SetLayerTable(mDraftLayers);
+                if (layerUpdate != nullptr)
+                    layerUpdate->mPending = mDraftLayers;
                 mLayersStatus = "Saved.";
             }
         }
@@ -220,7 +220,7 @@ namespace mir
     }
 
     void ProjectSettingsPanel::Draw(RenderSettings &renderSettings, const std::filesystem::path &savePath,
-        bool &showInputSettings, PhysicsWorld *physics, bool editing)
+        bool &showInputSettings, PhysicsLayerUpdate *layerUpdate, bool editing)
     {
         if (!mDraftLoaded)
         {
@@ -234,7 +234,7 @@ namespace mir
             showInputSettings = true;
 
         DrawRendering(renderSettings, mDraftRenderSettings, savePath);
-        DrawPhysicsLayers(savePath, physics, editing);
+        DrawPhysicsLayers(savePath, layerUpdate, editing);
         DrawExternalTools(savePath);
     }
 }

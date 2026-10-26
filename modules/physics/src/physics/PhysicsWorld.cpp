@@ -239,7 +239,7 @@ namespace mir
                               const BodyDesc *properties = nullptr)
         {
             const int layer = properties != nullptr ? properties->mLayer : 0;
-            if (layer < 0 || layer >= kPhysicsLayerCount)
+            if (!IsPhysicsLayer(layer))
             {
                 MIR_LOG_ERROR("PhysicsWorld::CreateBody: layer {} is outside 0 to {}", layer, kPhysicsLayerCount - 1);
                 return {};
@@ -649,7 +649,7 @@ namespace mir
         const std::optional<JPH::BodyID> id = mImpl->Live(body);
         if (!id)
             return;
-        if (layer < 0 || layer >= kPhysicsLayerCount)
+        if (!IsPhysicsLayer(layer))
         {
             MIR_LOG_ERROR("PhysicsWorld::SetBodyLayer: layer {} is outside 0 to {}", layer, kPhysicsLayerCount - 1);
             return;

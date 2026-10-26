@@ -8,7 +8,7 @@
  */
 #pragma once
 
-#include <physics/PhysicsLayers.h>
+#include <physics_layers/PhysicsLayers.h>
 
 #include <Jolt/Jolt.h>
 
