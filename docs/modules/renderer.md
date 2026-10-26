@@ -201,7 +201,7 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `Viewport`, `ViewportId` | `renderer/RenderSystem.h` | `RenderSystem`'s per-viewport state: rect plus a World `Entity`, an external camera, or neither (fallback) |
 | `MeshRenderer`, `Camera` | `renderer/components/` | Handles, and `fovY`/`near`/`far` (`far` 0 = no far plane), declared here rather than in `core` |
 | `MeshBounds` | `renderer/components/MeshBounds.h` | `{mLocalMin, mLocalMax}`, a mesh's own local-space AABB; attached and kept current by `app`'s `MeshResolveSystem` (see [app.md](app.md)), read by the editor's viewport click-picking (see [editor.md](editor.md)) — not used for rendering at all |
-| `Ray`, `RayIntersectsAABB`, `WorldRay`, `MakeCameraRay`, `RayIntersectsBox` | `renderer/CameraMath.h` | `WorldRay` is a camera ray with a double `WorldPosition` origin and a float direction; `RayIntersectsBox` places a `WorldPose` box relative to that origin in double, then runs the local ray/AABB slab test — the same file `MakeViewProjection` lives in, so both stay in the same Vulkan-convention math |
+| `Ray`, `RayIntersectsAABB`, `WorldRay`, `MakeCameraRay`, `RayIntersectsBox`, `RayIntersectsSphere` | `renderer/CameraMath.h` | `WorldRay` is a camera ray with a double `WorldPosition` origin and a float direction; `RayIntersectsBox` places a `WorldPose` box relative to that origin in double, then runs the local ray/AABB slab test; `RayIntersectsSphere` returns where a unit-direction ray enters a sphere, 0 if it starts inside — the same file `MakeViewProjection` lives in, so both stay in the same Vulkan-convention math |
 | `RenderSystem` | `renderer/RenderSystem.h` | The ECS-to-renderer bridge, `SystemPhase::Render` |
 | `Shapes.h` | `renderer/Shapes.h` | `MakeCube()` and friends — plain vectors, no Vulkan |
 | `AntiAliasingMode`, `AntiAliasingParams`, `ClampAntiAliasingMode`, `ClampRtSampleCount` | `renderer/AntiAliasingEffect.h` | Off/Fxaa/Msaa/Dlss and `rtSampleCount`; the Post-Processing entry's json shape; the mode and sample-count enforcement `ResolvePostProcessing` applies every frame - see Rules |
@@ -784,6 +784,13 @@ Everything that needs a device is verified by the smoke tests and
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-10-26* — **`Light`'s pick radius is a fixed 0.3 m; `RayIntersectsSphere`.**
+Was: `LightPickRadius` returned `range` for Point and Spot lights and
+1.5 × `areaSize` for Area lights (the 2026-09-27 entry), so a light took every
+viewport click within its range. Now: 0.3 m for every type, and the editor
+ranks it with the new `RayIntersectsSphere`, which measures where the ray
+enters the sphere instead of how far along the ray its center lies.
 
 *2026-10-25* — **`Sky` fields carry limits (#219).** Was: no field had a
 range, so a scale height of 0, a `mieG` of 1 or a negative `mieCoeff` or

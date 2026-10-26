@@ -220,7 +220,9 @@ next poll with no restart.
 Clicking an entity in `Hierarchy`, or clicking it directly in the scene
 viewport (`Editor::UpdateViewportPicking`, a ray/AABB test against every
 `(WorldTransform, MeshRenderer, MeshBounds)` entity - see
-[renderer.md](renderer.md) for `MeshBounds`), writes it into `Selection`
+[renderer.md](renderer.md) for `MeshBounds` - plus `RayIntersectsSphere`
+against every component that registered a pick radius, such as `Light`; the
+nearest entry along the ray wins), writes it into `Selection`
 (`editor/Selection.h`), a `World` resource `HierarchyPanel` installs on
 first draw if nothing already has. Both call the same
 `ApplyClick(Selection&, Entity, bool additive)`: a plain click replaces the
@@ -504,6 +506,15 @@ or the dialog themselves. History needs neither, and its tests are in
    deleted, not everything recursively under a deleted folder.
 
 ## Changed
+
+*2026-10-26* — **A light no longer takes viewport clicks across its whole
+range.** Was: a Point or Spot light's pick sphere had the light's `range` as
+its radius (an Area light's was 1.5 × `areaSize`), and the light was ranked by
+its center's distance along the ray, so a click on empty space or on an object
+behind the light's center anywhere inside that range selected the light. Now:
+every light picks with a 0.3 m sphere at its origin, ranked by where the ray
+enters it (`RayIntersectsSphere`, see [renderer.md](renderer.md)), the same
+measure the mesh boxes use.
 
 *2026-10-25*, **A Physics layers section in `ProjectSettingsPanel`.** Was: the panel drew Input, Rendering and
 External Tools, and every body collided with every other. Now: it edits the `physicsLayers` section of

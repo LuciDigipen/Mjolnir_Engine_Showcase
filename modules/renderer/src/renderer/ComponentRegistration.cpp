@@ -102,22 +102,11 @@ namespace mir
             world.AddComponent<Name>(entity, MakeName(std::format("{}_Entity{}", displayName, entity.mIndex)));
         }
 
-        // Viewport click-pick: a world-space sphere radius around the entity's transform origin.
-        float LightPickRadius(const void *component)
+        // Viewport click-pick: a small sphere at the light's origin, whatever its type,
+        // so a light's range never takes clicks meant for what it lights.
+        float LightPickRadius(const void *)
         {
-            const Light &light = *static_cast<const Light *>(component);
-            constexpr float kBaseRadius = 0.3f;
-            switch (light.mType)
-            {
-            case LightType::Sun:
-                return kBaseRadius;
-            case LightType::Point:
-            case LightType::Spot:
-                return std::max(kBaseRadius, light.mRange);
-            case LightType::Area:
-                return std::max(kBaseRadius, light.mAreaSize * 1.5f);
-            }
-            return kBaseRadius;
+            return 0.3f;
         }
 
         void DrawLightGizmo(const void *component, const glm::mat4 &worldMatrix, bool selected,
