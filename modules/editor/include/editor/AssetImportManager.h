@@ -47,7 +47,7 @@ namespace mir
     private:
         struct Batch
         {
-            std::set<std::string> models;
+            std::set<std::string> models, materials;
             std::set<std::filesystem::path> changed;
             std::set<std::string> removals;
             std::map<std::string, std::filesystem::path> moves;
@@ -57,8 +57,8 @@ namespace mir
             std::filesystem::path importSource, packageRoot, targetDirectory;
             bool Empty() const
             {
-                return models.empty() && changed.empty() && removals.empty() && moves.empty() && importSource.empty() &&
-                       !fullCook;
+                return models.empty() && materials.empty() && changed.empty() && removals.empty() && moves.empty() &&
+                       importSource.empty() && !fullCook;
             }
             void Clear() { *this = {}; }
         };

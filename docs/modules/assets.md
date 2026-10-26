@@ -38,6 +38,7 @@ if (AssetCache *cache = app.Assets())
 | `AssetManifest` | `assets/AssetManifest.h` | id to type tag, content version and path, over a shared path table |
 | `AssetCache` | `assets/AssetCache.h` | `Load`, `Get`, `Invalidate`, `ResolvedPath` |
 | `AssetsModule` | `assets/AssetsModule.h` | The manifest and cache, loaded at startup, and the reload candidate |
+| `TextureAsset`, `TextureMip`, `SurfaceMaterialAsset` | `assets/ModelAsset.h` | Typed texture v2 (format, color space, level 0 and higher mip descriptors) and the generic `.material.json` surface material, distinct from the glTF `MaterialAsset` |
 | `ResolveAssetIdRoot` | `assets/AssetIdRoot.h` | Fills a `GameProject`'s asset id root; fails setup on an unusable `assetsRoot` |
 
 `AssetsModule` loads the manifest in its constructor: a missing one is an empty
@@ -86,20 +87,29 @@ header matches the current format.** An mtime test on its own would skip every
 file after a format-version bump, while the manifest recorded the new version.
 
 **Bump `contentVersion` whenever a payload layout changes.** That bump is what
-forces a recook instead of a silent mismatch at load.
+forces a recook instead of a silent mismatch at load. `TextureAsset` is at
+version 2 because it now carries format, color space and every mip above 0.
+
+**A material's source images are not standalone assets.** A `.material.json`
+packs its six image roles into three cooked textures. The full cook leaves the
+source images out, and a partial material cook drops an older standalone
+manifest entry for them.
 
 ## State
 
-*As of 2026-10-02.* Ids, the blob container, the manifest and the cache all work.
+*As of 2026-10-26.* Ids, the blob container, the manifest and the cache all work.
 
 `.gltf` and `.glb` cook to typed model payloads, see
 [gltf-importer.md](../gltf-importer.md). A standalone `.png`, `.jpg` or `.jpeg`
-cooks to a `TextureAsset`, decoded to RGBA8, under the id of its own path; an
-image a glTF references is left to that model's import and stays a raw blob.
-Everything else cooks as a raw passthrough blob.
+cooks to a `TextureAsset` v2, decoded to RGBA8 with a complete mip chain, under
+the id of its own path; an image a glTF references is left to that model's
+import and stays a raw blob. A `.material.json` cooks to a
+`SurfaceMaterialAsset` plus three packed `TextureAsset`s, see
+[material-pipeline.md](../material-pipeline.md). Everything else cooks as a raw
+passthrough blob.
 
 Tests in `modules/assets/tests/`: `AssetBlob`, `AssetCache`, `AssetManifest`,
-`AssetPath`. The cooker side of path identity is checked in
+`AssetPath`, `ModelAsset`. The cooker side of path identity is checked in
 `tools/AssetCooker/tests/GltfImporter.tests.cpp` ("Cooker ids match the engine's
 logical paths for any root spelling").
 
@@ -117,6 +127,14 @@ logical paths for any root spelling").
    at the cost of a file per asset and a registry to keep in sync.
 
 ## Changed
+
+*2026-10-26* — **Surface materials and cooked mip chains.** Was: a texture was
+RGBA8 level 0 only and the runtime generated mips. Now: `TextureAsset` v2
+serializes format, color space and every mip level, and a `.material.json`
+cooks a generic `SurfaceMaterialAsset` plus packed albedo/normal/surface
+textures. Because the surface frontend needs deterministic packing and the GPU
+must receive the authored chain unchanged. See
+[material-pipeline.md](../material-pipeline.md).
 
 *2026-10-24* — **`AssetsModule` and `ResolveAssetIdRoot`.** Was: `App` held the
 manifest and cache, rebuilt the cache object on every import, and `app`'s

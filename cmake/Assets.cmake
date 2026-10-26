@@ -7,6 +7,48 @@
 # the root string is hashed into every asset id, so it has to mean the same
 # thing no matter which CMakeLists asks for it.
 #
+# A .material.json body names its shader and source images. Add the files it
+# resolves to inside the same or engine asset root, so editing one reruns the
+# cook. The cooker performs the authoritative validation and diagnostics.
+function(_engine_material_cook_dependencies root_abs out_var)
+    file(GLOB_RECURSE material_files CONFIGURE_DEPENDS "${root_abs}/*.material.json")
+    set(dependencies "")
+    foreach(material IN LISTS material_files)
+        file(READ "${material}" json)
+        string(JSON version ERROR_VARIABLE error GET "${json}" version)
+        if(error OR NOT version STREQUAL "1")
+            continue()
+        endif()
+        set(references "")
+        string(JSON shader ERROR_VARIABLE error GET "${json}" shader file)
+        if(NOT error)
+            list(APPEND references "${shader}")
+        endif()
+        string(JSON textures ERROR_VARIABLE error TYPE "${json}" textures)
+        if(NOT error AND textures STREQUAL "OBJECT")
+            foreach(role baseColor normal displacement roughness specular ao)
+                string(JSON reference ERROR_VARIABLE error GET "${json}" textures "${role}" path)
+                if(NOT error)
+                    list(APPEND references "${reference}")
+                endif()
+            endforeach()
+        endif()
+        foreach(reference IN LISTS references)
+            cmake_path(IS_ABSOLUTE reference is_absolute)
+            if(is_absolute OR reference MATCHES "(^|/)\\.\\.(/|$)")
+                message(WARNING "engine_cook_assets: ${material} names the escaping path '${reference}'")
+                continue()
+            endif()
+            foreach(base "${root_abs}" "${CMAKE_SOURCE_DIR}/assets")
+                if(EXISTS "${base}/${reference}")
+                    list(APPEND dependencies "${base}/${reference}")
+                endif()
+            endforeach()
+        endforeach()
+    endforeach()
+    set(${out_var} ${dependencies} PARENT_SCOPE)
+endfunction()
+
 # Runs AssetCooker over every SOURCE_ROOTS directory into OUT_DIR, then copies
 # OUT_DIR next to the executable as cooked/ so the run directory is
 # self-contained and the exe works when moved.
@@ -52,6 +94,8 @@ function(engine_cook_assets target)
         # TerrainTool sync handles them, so editing a recipe must not rerun the cook.
         list(FILTER root_files EXCLUDE REGEX "(\\.terrain\\.json|\\.tindex|\\.tpack)$")
         list(APPEND source_files ${root_files})
+        _engine_material_cook_dependencies("${root_abs}" material_dependencies)
+        list(APPEND source_files ${material_dependencies})
 
         # Passed as given, not resolved to absolute: AssetCooker hashes
         # "<root>/<relative path>" into each asset's id, so an absolute path

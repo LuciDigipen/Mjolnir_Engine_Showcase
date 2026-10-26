@@ -31,6 +31,13 @@ namespace mir
     namespace
     {
         using Json = nlohmann::json;
+        std::string LowerFilename(const std::filesystem::path &path)
+        {
+            std::string value = path.filename().string();
+            std::transform(value.begin(), value.end(), value.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            return value;
+        }
         bool IsModel(const std::filesystem::path &path)
         {
             auto ext = path.extension().string();
@@ -38,12 +45,16 @@ namespace mir
                            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
             return ext == ".gltf" || ext == ".glb";
         }
+        bool IsMaterial(const std::filesystem::path &path) { return LowerFilename(path).ends_with(".material.json"); }
         bool IsWatched(const std::filesystem::path &path)
         {
+            if (IsMaterial(path))
+                return true;
             auto ext = path.extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(),
                            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            return ext == ".gltf" || ext == ".glb" || ext == ".bin" || ext == ".png" || ext == ".jpg" || ext == ".jpeg";
+            return ext == ".gltf" || ext == ".glb" || ext == ".bin" || ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
+                   ext == ".slang";
         }
         // The key AssetCooker uses for a model under the source asset root
         AssetPathResult LogicalModelPath(std::string_view idRoot, const std::filesystem::path &relative)
@@ -177,11 +188,17 @@ namespace mir
             break;
         case AssetImportActionKind::Reimport:
         case AssetImportActionKind::Retry:
-            mQueued.models.insert(action.mModelPath);
+            if (IsMaterial(action.mModelPath))
+                mQueued.materials.insert(action.mModelPath);
+            else
+                mQueued.models.insert(action.mModelPath);
             SetStatus(action.mModelPath, AssetImportStatus::Queued);
             break;
         case AssetImportActionKind::ForceReimport:
-            mQueued.models.insert(action.mModelPath);
+            if (IsMaterial(action.mModelPath))
+                mQueued.materials.insert(action.mModelPath);
+            else
+                mQueued.models.insert(action.mModelPath);
             mQueued.force = true;
             SetStatus(action.mModelPath, AssetImportStatus::Queued);
             break;
@@ -203,6 +220,8 @@ namespace mir
             {
                 for (const auto &model : mQueued.models)
                     SetStatus(model, AssetImportStatus::Canceled);
+                for (const auto &material : mQueued.materials)
+                    SetStatus(material, AssetImportStatus::Canceled);
                 for (const auto &model : mQueued.removals)
                     SetStatus(model, AssetImportStatus::Canceled);
                 for (const auto &[model, destination] : mQueued.moves)
@@ -323,6 +342,12 @@ namespace mir
             args.push_back(model);
             SetStatus(model, AssetImportStatus::Processing);
         }
+        for (const auto &material : mRunning.materials)
+        {
+            args.push_back("--material");
+            args.push_back(material);
+            SetStatus(material, AssetImportStatus::Processing);
+        }
         for (const auto &changed : mRunning.changed)
         {
             args.push_back("--changed");
@@ -330,7 +355,7 @@ namespace mir
         }
         for (const auto &model : mRunning.removals)
         {
-            args.push_back("--remove-model");
+            args.push_back(IsMaterial(model) ? "--remove-material" : "--remove-model");
             args.push_back(model);
         }
         for (const auto &[model, destination] : mRunning.moves)
@@ -351,13 +376,16 @@ namespace mir
         {
             for (const auto &model : mRunning.models)
                 SetStatus(model, AssetImportStatus::Failed, "could not start AssetCooker");
+            for (const auto &material : mRunning.materials)
+                SetStatus(material, AssetImportStatus::Failed, "could not start AssetCooker");
             mRunning.Clear();
             return;
         }
         mView.mProcessRunning = true;
         mCancelRequested = false;
         mRunningStale = false;
-        MIR_LOG_INFO("Started AssetCooker for {} queued model(s)", mRunning.models.size());
+        MIR_LOG_INFO("Started AssetCooker for {} queued model(s) and {} material(s)", mRunning.models.size(),
+            mRunning.materials.size());
     }
 
     void AssetImportManager::FinishBatch(int exitCode, bool editing)
@@ -367,6 +395,8 @@ namespace mir
         {
             for (const auto &model : mRunning.models)
                 SetStatus(model, AssetImportStatus::Canceled);
+            for (const auto &material : mRunning.materials)
+                SetStatus(material, AssetImportStatus::Canceled);
             for (const auto &model : mRunning.removals)
                 SetStatus(model, AssetImportStatus::Canceled);
             for (const auto &[model, destination] : mRunning.moves)
@@ -383,6 +413,8 @@ namespace mir
                         result.value("diagnostic", Json::object()).value("message", "AssetCooker failed");
                     for (const auto &model : mRunning.models)
                         SetStatus(model, AssetImportStatus::Failed, message);
+                    for (const auto &material : mRunning.materials)
+                        SetStatus(material, AssetImportStatus::Failed, message);
                     mView.mLastError = message;
                     MIR_LOG_ERROR("Asset import failed: {}", message);
                 }
@@ -412,11 +444,14 @@ namespace mir
             {
                 for (const auto &model : mRunning.models)
                     SetStatus(model, AssetImportStatus::Failed, error.what());
+                for (const auto &material : mRunning.materials)
+                    SetStatus(material, AssetImportStatus::Failed, error.what());
             }
         }
         if (mRunningStale)
         {
             mQueued.models.insert(mRunning.models.begin(), mRunning.models.end());
+            mQueued.materials.insert(mRunning.materials.begin(), mRunning.materials.end());
             mQueued.changed.insert(mRunning.changed.begin(), mRunning.changed.end());
             mQueued.fullCook |= mRunning.fullCook;
         }
@@ -463,12 +498,15 @@ namespace mir
             }
             if (mView.mAutoImport && it->second.pending && now - it->second.changedAt >= std::chrono::milliseconds(500))
             {
-                if (IsModel(path))
+                if (IsModel(path) || IsMaterial(path))
                 {
                     const auto relative = std::filesystem::relative(path, mSourceAssetRoot);
                     if (const AssetPathResult logical = LogicalModelPath(mProject.mAssetIdRoot, relative); logical.Ok())
                     {
-                        mQueued.models.insert(logical.path);
+                        if (IsMaterial(path))
+                            mQueued.materials.insert(logical.path);
+                        else
+                            mQueued.models.insert(logical.path);
                         SetStatus(logical.path, AssetImportStatus::Queued);
                     }
                     else
@@ -509,7 +547,7 @@ namespace mir
     {
         std::map<std::string, AssetImportModelView> models;
         for (const auto &entry : std::filesystem::recursive_directory_iterator(mSourceAssetRoot))
-            if (entry.is_regular_file() && IsModel(entry.path()))
+            if (entry.is_regular_file() && (IsModel(entry.path()) || IsMaterial(entry.path())))
             {
                 // Runs every frame: an unusable name is logged once, when the watcher sees it
                 const auto relative = std::filesystem::relative(entry.path(), mSourceAssetRoot);
@@ -519,22 +557,26 @@ namespace mir
         try
         {
             const Json cache = ReadJson(mCookedRoot / "import-cache.json");
-            const Json cachedModels = cache.value("models", Json::object());
-            for (const auto &[path, record] : cachedModels.items())
-            {
-                auto &model = models[path];
-                model.mPath = path;
-                model.mAssetId = record.value("modelId", 0ull);
-                model.mLastSuccess = record.value("lastSuccess", 0ll);
-                model.mStatus =
-                    record.value("missing", false) ? AssetImportStatus::Missing : AssetImportStatus::UpToDate;
-                for (const auto &dependency : record.value("dependencies", Json::array()))
-                    model.mDependencies.push_back(dependency.get<std::string>());
-                for (const auto &entry : record.value("contents", Json::array()))
-                    model.mContents.push_back({entry.value("kind", std::string{}), entry.value("name", std::string{}),
-                                               entry.value("id", 0ull), entry.value("index", 0u)});
-                model.mDiagnostic = record.value("lastError", "");
-            }
+            auto applyRecords = [&](const Json &records, const char *idKey) {
+                for (const auto &[path, record] : records.items())
+                {
+                    auto &model = models[path];
+                    model.mPath = path;
+                    model.mAssetId = record.value(idKey, 0ull);
+                    model.mLastSuccess = record.value("lastSuccess", 0ll);
+                    model.mStatus =
+                        record.value("missing", false) ? AssetImportStatus::Missing : AssetImportStatus::UpToDate;
+                    for (const auto &dependency : record.value("dependencies", Json::array()))
+                        model.mDependencies.push_back(dependency.get<std::string>());
+                    for (const auto &entry : record.value("contents", Json::array()))
+                        model.mContents.push_back({entry.value("kind", std::string{}),
+                                                   entry.value("name", std::string{}), entry.value("id", 0ull),
+                                                   entry.value("index", 0u)});
+                    model.mDiagnostic = record.value("lastError", "");
+                }
+            };
+            applyRecords(cache.value("models", Json::object()), "modelId");
+            applyRecords(cache.value("materials", Json::object()), "materialId");
         }
         catch (const std::exception &error)
         {

@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cctype>
 #include <climits>
+#include <cmath>
 #include <memory>
 #include <stb_image.h>
 #include <stdexcept>
@@ -21,7 +22,13 @@
 
 namespace mir::cook
 {
-    TextureAsset DecodeImage(std::span<const std::byte> bytes)
+    namespace
+    {
+        float ToLinear(float v) { return v <= 0.04045f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f); }
+        float ToSrgb(float v) { return v <= 0.0031308f ? v * 12.92f : 1.055f * std::pow(v, 1.0f / 2.4f) - 0.055f; }
+    } // namespace
+
+    TextureAsset DecodeImage(std::span<const std::byte> bytes, TextureColorSpace colorSpace, bool generateMips)
     {
         if (bytes.size() > INT_MAX)
             throw std::runtime_error("encoded image too large");
@@ -35,8 +42,59 @@ namespace mir::cook
                                                                     stbi_image_free);
         if (pixels == nullptr)
             throw std::runtime_error("image decode failed");
-        return TextureAsset{
-            static_cast<uint32_t>(w), static_cast<uint32_t>(h), {pixels.get(), pixels.get() + size_t(w) * h * 4}};
+        TextureAsset texture;
+        texture.width = static_cast<uint32_t>(w);
+        texture.height = static_cast<uint32_t>(h);
+        texture.colorSpace = colorSpace;
+        texture.format = colorSpace == TextureColorSpace::Srgb ? TextureFormat::Rgba8Srgb : TextureFormat::Rgba8Unorm;
+        texture.rgba.assign(pixels.get(), pixels.get() + size_t(w) * h * 4);
+        if (generateMips)
+            BuildTextureMipChain(texture);
+        return texture;
+    }
+
+    void BuildTextureMipChain(TextureAsset &texture)
+    {
+        texture.mips.clear();
+        texture.mipData.clear();
+        const bool srgb = texture.colorSpace == TextureColorSpace::Srgb;
+        std::vector<uint8_t> level = texture.rgba;
+        uint32_t width = texture.width, height = texture.height;
+        while (width > 1 || height > 1)
+        {
+            const uint32_t nextWidth = std::max(width / 2, 1u);
+            const uint32_t nextHeight = std::max(height / 2, 1u);
+            std::vector<uint8_t> next(static_cast<size_t>(nextWidth) * nextHeight * 4);
+            for (uint32_t y = 0; y < nextHeight; ++y)
+                for (uint32_t x = 0; x < nextWidth; ++x)
+                    for (uint32_t c = 0; c < 4; ++c)
+                    {
+                        float sum = 0;
+                        uint32_t samples = 0;
+                        for (uint32_t sy = y * height / nextHeight; sy < (y + 1) * height / nextHeight; ++sy)
+                            for (uint32_t sx = x * width / nextWidth; sx < (x + 1) * width / nextWidth; ++sx)
+                            {
+                                const float v = level[(static_cast<size_t>(sy) * width + sx) * 4 + c] / 255.0f;
+                                sum += c < 3 && srgb ? ToLinear(v) : v;
+                                ++samples;
+                            }
+                        float v = sum / static_cast<float>(samples);
+                        if (c < 3 && srgb)
+                            v = ToSrgb(v);
+                        next[(static_cast<size_t>(y) * nextWidth + x) * 4 + c] =
+                            static_cast<uint8_t>(std::clamp<long>(std::lround(v * 255.0f), 0, 255));
+                    }
+            TextureMip mip;
+            mip.width = nextWidth;
+            mip.height = nextHeight;
+            mip.offset = static_cast<uint32_t>(texture.mipData.size());
+            mip.length = static_cast<uint32_t>(next.size());
+            texture.mips.push_back(mip);
+            texture.mipData.insert(texture.mipData.end(), next.begin(), next.end());
+            level = std::move(next);
+            width = nextWidth;
+            height = nextHeight;
+        }
     }
 
     bool IsImagePath(const std::filesystem::path &path)

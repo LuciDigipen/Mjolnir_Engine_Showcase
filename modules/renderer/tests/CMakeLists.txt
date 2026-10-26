@@ -14,5 +14,6 @@ engine_add_module_tests(renderer
     RenderSettings.tests.cpp
     RenderSystem.tests.cpp
     Shapes.tests.cpp
+    TextureMips.tests.cpp
     ViewSubmission.tests.cpp
 )

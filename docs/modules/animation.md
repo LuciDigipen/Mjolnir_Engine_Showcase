@@ -91,8 +91,10 @@ primitive then gets the renderer's `ErrorTexture()`. A `CreateMaterial` that
 returns null logs an error, and the primitive gets `ErrorMaterial()`. In every
 case the primitive's tint becomes magenta too, because the ray tracer reads
 only the tint. A failed texture is cached as the error texture, so it logs
-once per texture and is retried on the next reload. A failed `CreateMesh`
-still fails the whole model, since there is nothing to draw.
+once per texture and is retried on the next reload. A cooked `TextureAsset`
+supplies its own format, color space and complete mip chain, so `CreateTexture`
+uploads that chain instead of generating one. A failed `CreateMesh` still fails
+the whole model, since there is nothing to draw.
 
 ## State
 
