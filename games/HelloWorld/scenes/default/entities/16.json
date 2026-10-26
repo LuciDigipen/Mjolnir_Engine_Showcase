@@ -1,0 +1,70 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [
+          -1.0,
+          2.0,
+          0.5
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.4,
+          0.4,
+          0.4
+        ]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [
+          -1.0,
+          2.0,
+          0.5
+        ]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "materialShader": "default",
+        "meshName": "meshes/cube.mesh.json",
+        "tint": [
+          1.0,
+          0.45,
+          0.75,
+          1.0
+        ]
+      },
+      "type": "MeshRenderer"
+    },
+    {
+      "fields": {
+        "halfExtent": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "interpolate": true,
+        "motion": 1,
+        "restitution": 0.85,
+        "shape": 0
+      },
+      "type": "RigidBody"
+    },
+    {
+      "fields": {
+        "name": "Bouncy"
+      },
+      "type": "Name"
+    }
+  ],
+  "id": 16,
+  "parent": 0
+}

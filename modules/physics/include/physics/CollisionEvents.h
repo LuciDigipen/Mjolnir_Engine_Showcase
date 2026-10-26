@@ -24,11 +24,10 @@ namespace mir
     {
         Begin,
         End,
-        // A pair still touching at the end of a frame, once per frame, for a body with detectStay.
         Stay,
     };
 
-    // One per body pair, not per contact point; a pair asleep in contact stays touching.
+    // One per body pair
     struct CollisionEvent
     {
         CollisionPhase mPhase = CollisionPhase::Begin;
