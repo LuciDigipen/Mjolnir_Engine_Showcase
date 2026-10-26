@@ -9,6 +9,7 @@
 #include "Device.h"
 #include "VulkanSurface.h"
 
+#include <renderer/DescriptorLayoutLimits.h>
 #include <renderer/DlssConfig.h>
 #include <renderer/VulkanRenderer.h>
 
@@ -575,27 +576,61 @@ namespace mir::vk
             .pNext = &features12 };
         vkGetPhysicalDeviceFeatures2(mPhysical, &features);
 
-        const bool rayTracing = HasRayTracingSupport(mPhysical, mRtProperties);
-        mCapabilities = ResolveRendererCapabilities(RendererFeatureSupport{
+        const RendererFeatureSupport support{
             .descriptorIndexing = features12.descriptorIndexing == VK_TRUE,
             .descriptorBindingPartiallyBound = features12.descriptorBindingPartiallyBound == VK_TRUE,
             .shaderSampledImageArrayNonUniformIndexing =
                 features12.shaderSampledImageArrayNonUniformIndexing == VK_TRUE,
-            .rayTracing = rayTracing,
+            .rayTracing = HasRayTracingSupport(mPhysical, mRtProperties),
             .samplerAnisotropy = features.features.samplerAnisotropy == VK_TRUE,
-            .maxSamplerAnisotropy = props.limits.maxSamplerAnisotropy });
+            .maxSamplerAnisotropy = props.limits.maxSamplerAnisotropy };
+
+        const DescriptorLimits descriptorLimits{
+            .maxBoundDescriptorSets = props.limits.maxBoundDescriptorSets,
+            .maxPerStageSamplers = props.limits.maxPerStageDescriptorSamplers,
+            .maxPerStageSampledImages = props.limits.maxPerStageDescriptorSampledImages,
+            .maxPerStageUniformBuffers = props.limits.maxPerStageDescriptorUniformBuffers,
+            .maxPerStageStorageBuffers = props.limits.maxPerStageDescriptorStorageBuffers,
+            .maxPerStageStorageImages = props.limits.maxPerStageDescriptorStorageImages,
+            .maxPerStageResources = props.limits.maxPerStageResources,
+            .maxSetSamplers = props.limits.maxDescriptorSetSamplers,
+            .maxSetSampledImages = props.limits.maxDescriptorSetSampledImages,
+            .maxSetUniformBuffers = props.limits.maxDescriptorSetUniformBuffers,
+            .maxSetDynamicUniformBuffers = props.limits.maxDescriptorSetUniformBuffersDynamic,
+            .maxSetStorageBuffers = props.limits.maxDescriptorSetStorageBuffers,
+            .maxSetDynamicStorageBuffers = props.limits.maxDescriptorSetStorageBuffersDynamic,
+            .maxSetStorageImages = props.limits.maxDescriptorSetStorageImages };
+
+        const bool sharedFeatures = support.descriptorIndexing && support.descriptorBindingPartiallyBound &&
+            support.shaderSampledImageArrayNonUniformIndexing;
+        const bool rasterFits = DescriptorLayoutFits(descriptorLimits, SharedRasterDescriptorUsage());
+        const bool rtFits = DescriptorLayoutFits(descriptorLimits, SharedRtDescriptorUsage());
+
+        mCapabilities = ResolveRendererCapabilities(support);
+        mCapabilities.sharedMaterialTables = sharedFeatures && rasterFits;
+        mCapabilities.rayTracing = support.rayTracing && mCapabilities.sharedMaterialTables && rtFits;
 
         if (mCapabilities.rayTracing)
             MIR_LOG_INFO("Ray tracing: {} supports VK_KHR_acceleration_structure + VK_KHR_ray_tracing_pipeline", props.deviceName);
-        else
+        else if (!support.rayTracing)
             MIR_LOG_WARN("FindPhysicalDevice: Ray tracing unavailable on {}: missing the acceleration-structure/ray-tracing-pipeline "
                 "extensions or feature bits - raster only", props.deviceName);
+        else if (!mCapabilities.sharedMaterialTables)
+            MIR_LOG_WARN("FindPhysicalDevice: Ray tracing disabled on {}: the shared material table layout does not fit - raster only",
+                props.deviceName);
+        else
+            MIR_LOG_WARN("FindPhysicalDevice: Ray tracing disabled on {}: descriptor limits do not fit the RT layout - raster only",
+                props.deviceName);
 
         if (mCapabilities.sharedMaterialTables)
-            MIR_LOG_INFO("Shared material tables: {} supports descriptor indexing and partially bound arrays", props.deviceName);
-        else
+            MIR_LOG_INFO("Shared material tables: {} supports descriptor indexing, partially bound arrays and their layout limits",
+                props.deviceName);
+        else if (!sharedFeatures)
             MIR_LOG_WARN("FindPhysicalDevice: shared material tables unavailable on {}: missing descriptor-indexing "
                 "features - legacy raster materials only", props.deviceName);
+        else
+            MIR_LOG_WARN("FindPhysicalDevice: shared material tables unavailable on {}: descriptor limits do not fit the raster "
+                "layout - legacy raster materials only", props.deviceName);
 
         if (mCapabilities.samplerAnisotropy)
             MIR_LOG_INFO("Sampler anisotropy: {} supports up to {:.0f}x", props.deviceName, mCapabilities.maxSamplerAnisotropy);

@@ -363,6 +363,7 @@ namespace mir::vk
         };
 
         constexpr uint32_t kRtImageCount = static_cast<uint32_t>(RtImage::Count);
+        static_assert(kRtImageCount == kRtSetStorageImages, "RT image table and descriptor budget differ");
 
         // Indexed by RtImage.
         constexpr std::array<RtImageDesc, kRtImageCount> kRtImages{ {
@@ -516,11 +517,16 @@ namespace mir::vk
         }
 
         const std::array<VkDescriptorPoolSize, 5> poolSizes{ {
-            { .type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, .descriptorCount = kFramesInFlight },
-            { .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = kFramesInFlight * kRtImageCount },
-            { .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = kFramesInFlight * 2 },
-            { .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, .descriptorCount = kFramesInFlight * kMaxSharedImages },
-            { .type = VK_DESCRIPTOR_TYPE_SAMPLER, .descriptorCount = kFramesInFlight * kMaxSharedSamplers } } };
+            { .type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR,
+              .descriptorCount = kFramesInFlight * kRtSetAccelerationStructures },
+            { .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+              .descriptorCount = kFramesInFlight * kRtSetStorageImages },
+            { .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+              .descriptorCount = kFramesInFlight * kRtSetStorageBuffers },
+            { .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+              .descriptorCount = kFramesInFlight * kMaxSharedImages },
+            { .type = VK_DESCRIPTOR_TYPE_SAMPLER,
+              .descriptorCount = kFramesInFlight * kMaxSharedSamplers } } };
 
         const VkDescriptorPoolCreateInfo poolInfo{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
@@ -551,7 +557,8 @@ namespace mir::vk
             }
         }
 
-        const std::array<VkDescriptorSetLayout, 2> setLayouts{ mSetLayout, cameraSetLayout };
+        static_assert(kRtPipelineSetCount == 2);
+        const std::array<VkDescriptorSetLayout, kRtPipelineSetCount> setLayouts{ mSetLayout, cameraSetLayout };
 
         const VkPushConstantRange pushConstantRange{
             .stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,

@@ -203,6 +203,7 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `RtInstanceInfo` | `renderer/RtInstanceInfo.h` | CPU mirror of `raytrace.slang`'s per-instance struct; scalar padding keeps the offsets and ArrayStride identical |
 | `TextureTable` | `renderer/TextureTable.h` | Stable global image rows; a freed row comes back with a new generation |
 | `RendererCapabilities`, `RendererFeatureSupport` | `renderer/RendererCapabilities.h` | Raw descriptor-indexing, ray-tracing and anisotropy bits resolved into the optional paths |
+| `DescriptorLimits`, `DescriptorUsage`, `DescriptorLayoutFits` | `renderer/DescriptorLayoutLimits.h` | Physical descriptor limits against the exact shared raster/RT layout budgets |
 | `DrawItem` | `renderer/Renderer.h` | `{mesh, model, normalMatrix, tint, material}` — `model` is the world transform, not premultiplied by any camera |
 | `RenderView` | `renderer/VulkanRenderer.h` | `{rect, items, viewProj, cameraPos}` — one camera's `DrawItem`s, clipped to a screen rect; `cameraPos` only the sky pass reads |
 | `Viewport`, `ViewportId` | `renderer/RenderSystem.h` | `RenderSystem`'s per-viewport state: rect plus a World `Entity`, an external camera, or neither (fallback) |
@@ -701,6 +702,17 @@ the same image and sampler rows at bindings 9 and 10 and the record buffer at 11
 `RtInstanceInfo` carries the same record offset, plus separate image and sampler
 row indices.
 
+**Feature bits are not enough: the shared layouts must fit the device's descriptor
+limits.** `DescriptorLayoutLimits` derives worst-case per-stage and per-set counts
+from the same constants the layouts use, including the legacy material, camera,
+model and shadow bindings. Raster needs five sets and counts combined images,
+shared images/samplers, uniform buffers and storage buffers. RT counts its storage
+images, two storage buffers and the camera set separately. If raster does not fit,
+the legacy material path stays and shared tables are not constructed; if RT does
+not fit, RT is disabled while a fitting raster shared table remains available.
+`maxPerStageResources` excludes separate samplers, so the budget counts only the
+combined/sampled images and non-sampler resources there.
+
 **A material record is opaque bytes.** `MaterialRecordTable` owns the alignment,
 capacity and lifetime; M2 owns the reflected field layout. Free spans are split
 around the requested base alignment, so a record is aligned whether it starts a
@@ -825,6 +837,18 @@ Everything that needs a device is verified by the smoke tests and
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-10-26* — **Shared layouts respect descriptor limits.** Was: capability
+checks only looked at descriptor-indexing feature bits, so a legal device with
+lower per-stage, per-set or bound-set limits could fail when the fixed shared
+tables were created. Now: `DescriptorLayoutLimits` computes the exact worst-case
+raster and RT budgets from the same layout constants, including legacy material,
+camera, model and shadow bindings, and distinguishes separate samplers from
+`maxPerStageResources`. Device selection keeps legacy raster when the raster
+budget does not fit, disables RT when its budget does not fit, and logs which
+reason applied. `DescriptorLayoutLimits.tests.cpp` covers the exact boundary and
+one-below limits. Because: feature support alone does not make a descriptor layout
+legal.
 
 *2026-10-26* — **RT instance layout matches Slang.** Was: the CPU
 `RtInstanceInfo` used `float pad[3]` after `alphaCutoff`, while Slang's `float3`

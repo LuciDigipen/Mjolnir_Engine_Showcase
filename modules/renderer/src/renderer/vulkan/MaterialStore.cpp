@@ -135,7 +135,7 @@ namespace mir::vk
             { .binding = kRecordRefBinding,
              .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
              .descriptorCount = 1,
-             .stageFlags = VK_SHADER_STAGE_ALL } } };
+             .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT } } };
         const uint32_t setBindingCount = mTable != nullptr ? static_cast<uint32_t>(setBindings.size()) : 2u;
 
         const VkDescriptorSetLayoutCreateInfo setLayoutInfo{
@@ -153,9 +153,9 @@ namespace mir::vk
         // front face), so this is not as generous as it looks.
         std::array<VkDescriptorPoolSize, 2> poolSizes{ {
             { .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-              .descriptorCount = kMaxMaterials * 2u },
+              .descriptorCount = kMaxMaterials * kMaterialSetCombinedImages },
             { .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
-              .descriptorCount = kMaxMaterials } } };
+              .descriptorCount = kMaxMaterials * kMaterialSetRecordUniformBuffers } } };
         const uint32_t poolSizeCount = mTable != nullptr ? static_cast<uint32_t>(poolSizes.size()) : 1u;
 
         const VkDescriptorPoolCreateInfo poolInfo{
@@ -178,10 +178,13 @@ namespace mir::vk
 
         // set 0 = material (textures and record reference), set 1 = per-view camera UBO,
         // set 2 = per-draw model data, set 3 = shadow maps, set 4 = shared table.
-        const std::array<VkDescriptorSetLayout, 5> setLayouts{
+        static_assert(kRasterPipelineSetCount == 5);
+        const std::array<VkDescriptorSetLayout, kRasterPipelineSetCount> setLayouts{
             mSetLayout, sharedLayouts[0], sharedLayouts[1], sharedLayouts[2],
             mTable != nullptr ? mTable->SetLayout() : VK_NULL_HANDLE };
-        const uint32_t setLayoutCount = mTable != nullptr ? static_cast<uint32_t>(setLayouts.size()) : 4u;
+        const uint32_t setLayoutCount = mTable != nullptr
+            ? kRasterPipelineSetCount
+            : kRasterPipelineSetCount - 1;
 
         const VkPipelineLayoutCreateInfo layoutInfo{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,

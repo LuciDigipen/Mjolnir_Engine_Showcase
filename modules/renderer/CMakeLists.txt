@@ -48,6 +48,7 @@ target_sources(engine_renderer PRIVATE
     src/renderer/CameraMath.cpp
     src/renderer/ComponentRegistration.cpp
     src/renderer/DepthOfFieldEffect.cpp
+    src/renderer/DescriptorLayoutLimits.cpp
     src/renderer/FilmEffect.cpp
     src/renderer/MeshResolveSystem.cpp
     src/renderer/MeshStreaming.cpp

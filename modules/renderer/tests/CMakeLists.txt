@@ -3,6 +3,7 @@ engine_add_module_tests(renderer
     BloomEffect.tests.cpp
     CameraMath.tests.cpp
     DepthOfFieldEffect.tests.cpp
+    DescriptorLayoutLimits.tests.cpp
     FilmEffect.tests.cpp
     Material.tests.cpp
     MaterialRecordTable.tests.cpp

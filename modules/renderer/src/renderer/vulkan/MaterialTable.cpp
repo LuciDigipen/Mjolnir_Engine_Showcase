@@ -44,15 +44,15 @@ namespace mir::vk
             { .binding = kMaterialRecordBinding,
               .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
               .descriptorCount = 1,
-              .stageFlags = VK_SHADER_STAGE_ALL },
+              .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT },
             { .binding = kMaterialImageBinding,
               .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
               .descriptorCount = kMaxSharedImages,
-              .stageFlags = VK_SHADER_STAGE_ALL },
+              .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT },
             { .binding = kMaterialSamplerBinding,
               .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
               .descriptorCount = kMaxSharedSamplers,
-              .stageFlags = VK_SHADER_STAGE_ALL } } };
+              .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT } } };
 
         constexpr std::array<VkDescriptorBindingFlags, 3> bindingFlags{ {
             0,
