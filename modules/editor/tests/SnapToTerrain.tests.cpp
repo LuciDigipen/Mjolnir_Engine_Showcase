@@ -65,6 +65,7 @@ namespace
     using mir::MeshBounds;
     using mir::Selection;
     using mir::SnapToTerrainAction;
+    using mir::SnapToTerrainCommit;
     using mir::SnapToTerrainEdit;
     using mir::SnapToTerrainSession;
     using mir::Transform;
@@ -375,7 +376,7 @@ TEST_CASE("A ready snap writes nothing until its edit is taken", "[editor][snap]
     REQUIRE(session.CurrentState() == SnapToTerrainSession::State::Ready);
     CHECK(fixture.TransformOf().Position() == Vec(3.0, 10.0, 4.0));
 
-    const std::optional<SnapToTerrainEdit> edit = session.TakeEdit();
+    const std::optional<SnapToTerrainEdit> edit = session.TakeEdit(fixture.mWorld, mir::kSceneDocument, *fixture.mGround, true, {});
     REQUIRE(edit);
     CHECK(edit->mPosition.y == Catch::Approx(5.0).epsilon(1e-5));
     CHECK(edit->mPosition.x == Catch::Approx(3.0).epsilon(1e-5));
@@ -385,6 +386,65 @@ TEST_CASE("A ready snap writes nothing until its edit is taken", "[editor][snap]
     CHECK(std::abs(glm::dot(edit->mRotation,
                             glm::angleAxis(0.5f, glm::vec3(0.0f, 1.0f, 0.0f)))) ==
           Catch::Approx(1.0f).epsilon(1e-5));
+}
+
+TEST_CASE("A ready snap revalidates before the commit boundary", "[editor][snap]")
+{
+    SECTION("selection")
+    {
+        Fixture fixture;
+        SnapToTerrainSession session;
+        REQUIRE(session.Begin(fixture.mWorld, mir::kSceneDocument, *fixture.mGround).mEnabled);
+        fixture.Select(fixture.mWorld.CreateEntity());
+        CHECK_FALSE(session.TakeEdit(fixture.mWorld, mir::kSceneDocument, *fixture.mGround, true, {}));
+        CHECK(session.TakeFailure().find("selection") != std::string::npos);
+    }
+    SECTION("transform")
+    {
+        Fixture fixture;
+        SnapToTerrainSession session;
+        REQUIRE(session.Begin(fixture.mWorld, mir::kSceneDocument, *fixture.mGround).mEnabled);
+        fixture.TransformOf().SetRotation(glm::angleAxis(0.2f, glm::vec3(0.0f, 1.0f, 0.0f)));
+        CHECK_FALSE(session.TakeEdit(fixture.mWorld, mir::kSceneDocument, *fixture.mGround, true, {}));
+        CHECK(session.TakeFailure().find("Transform") != std::string::npos);
+    }
+    SECTION("terrain")
+    {
+        Fixture fixture;
+        SnapToTerrainSession session;
+        REQUIRE(session.Begin(fixture.mWorld, mir::kSceneDocument, *fixture.mGround).mEnabled);
+        fixture.mGround->Invalidate();
+        CHECK_FALSE(session.TakeEdit(fixture.mWorld, mir::kSceneDocument, *fixture.mGround, true, {}));
+        CHECK(session.TakeFailure().find("terrain") != std::string::npos);
+    }
+    SECTION("queued edit")
+    {
+        Fixture fixture;
+        SnapToTerrainSession session;
+        REQUIRE(session.Begin(fixture.mWorld, mir::kSceneDocument, *fixture.mGround).mEnabled);
+
+        mir::History history;
+        const std::size_t frame = history.SubmissionCount();
+        SnapToTerrainEdit edit;
+        edit.mPosition = Vec(1.0, 2.0, 3.0);
+        std::unique_ptr<mir::ICommand> command = mir::MakeSnapToTerrainCommand(fixture.mEntity, edit, nullptr);
+        REQUIRE(command);
+        history.Submit(std::move(command));
+        REQUIRE(history.SubmissionCount() == frame + 1);
+
+        const SnapToTerrainCommit commit{frame, history.SubmissionCount(), false};
+        CHECK_FALSE(session.TakeEdit(fixture.mWorld, mir::kSceneDocument, *fixture.mGround, true, commit));
+        CHECK(session.TakeFailure().find("Another edit") != std::string::npos);
+    }
+    SECTION("transition")
+    {
+        Fixture fixture;
+        SnapToTerrainSession session;
+        REQUIRE(session.Begin(fixture.mWorld, mir::kSceneDocument, *fixture.mGround).mEnabled);
+        CHECK_FALSE(session.TakeEdit(fixture.mWorld, mir::kSceneDocument, *fixture.mGround, true,
+                                     SnapToTerrainCommit{0, 0, true}));
+        CHECK(session.TakeFailure().find("scene") != std::string::npos);
+    }
 }
 
 TEST_CASE("A loading snap retries without mutating and times out", "[editor][snap]")
@@ -403,7 +463,7 @@ TEST_CASE("A loading snap retries without mutating and times out", "[editor][sna
     fixture.mSource.mLoading = false;
     session.Update(fixture.mWorld, mir::kSceneDocument, *fixture.mGround, 0.1f, true);
     CHECK(session.CurrentState() == SnapToTerrainSession::State::Ready);
-    REQUIRE(session.TakeEdit());
+    REQUIRE(session.TakeEdit(fixture.mWorld, mir::kSceneDocument, *fixture.mGround, true, {}));
 
     fixture.mSource.mLoading = true;
     REQUIRE(session.Begin(fixture.mWorld, mir::kSceneDocument, *fixture.mGround).mEnabled);
@@ -496,7 +556,7 @@ TEST_CASE("A uniform parent scale reaches the footprint and final contact", "[ed
 
     SnapToTerrainSession session;
     REQUIRE(session.Begin(fixture.mWorld, mir::kSceneDocument, *fixture.mGround).mEnabled);
-    const std::optional<SnapToTerrainEdit> edit = session.TakeEdit();
+    const std::optional<SnapToTerrainEdit> edit = session.TakeEdit(fixture.mWorld, mir::kSceneDocument, *fixture.mGround, true, {});
     REQUIRE(edit);
 
     const mir::WorldPose parentPose = mir::ResolveWorld(fixture.mWorld, parent);
@@ -527,7 +587,7 @@ TEST_CASE("The second fitted normal also places an off-centre footprint", "[edit
 
     SnapToTerrainSession session;
     REQUIRE(session.Begin(fixture.mWorld, mir::kSceneDocument, *fixture.mGround).mEnabled);
-    const std::optional<SnapToTerrainEdit> edit = session.TakeEdit();
+    const std::optional<SnapToTerrainEdit> edit = session.TakeEdit(fixture.mWorld, mir::kSceneDocument, *fixture.mGround, true, {});
     REQUIRE(edit);
 
     const glm::dvec3 normal = glm::normalize(glm::dvec3(-0.2, 1.0, 0.1));

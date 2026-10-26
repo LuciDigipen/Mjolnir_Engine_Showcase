@@ -78,6 +78,14 @@ namespace mir
         std::string mStatus;
     };
 
+    // Counts commands accepted before the frame and at the commit boundary, so a same-frame edit wins.
+    struct SnapToTerrainCommit
+    {
+        std::size_t mFrameSubmissions = 0;
+        std::size_t mCurrentSubmissions = 0;
+        bool mTransitionRequested = false;
+    };
+
     // One command for position and rotation; a Prefab member's fields go through the authored backend.
     [[nodiscard]] std::unique_ptr<ICommand> MakeSnapToTerrainCommand(Entity entity,
                                                                      const SnapToTerrainEdit &edit,
@@ -114,8 +122,10 @@ namespace mir
         Entity Target() const { return mBindings.mEntity; }
         const std::string &Status() const { return mMessage; }
 
-        // Ready only; consumes the edit.
-        [[nodiscard]] std::optional<SnapToTerrainEdit> TakeEdit();
+        // Ready only; revalidates the binding and same-frame command boundary before consuming.
+        [[nodiscard]] std::optional<SnapToTerrainEdit> TakeEdit(World &world, DocumentId document,
+                                                                const GroundQuery &ground, bool editing,
+                                                                const SnapToTerrainCommit &commit);
         // Failed only; consumes the failure.
         [[nodiscard]] std::string TakeFailure();
 

@@ -798,10 +798,25 @@ namespace mir
         }
     }
 
-    std::optional<SnapToTerrainEdit> SnapToTerrainSession::TakeEdit()
+    std::optional<SnapToTerrainEdit> SnapToTerrainSession::TakeEdit(World &world, DocumentId document,
+                                                                    const GroundQuery &ground, bool editing,
+                                                                    const SnapToTerrainCommit &commit)
     {
         if (mState != State::Ready)
             return std::nullopt;
+        if (commit.mTransitionRequested)
+        {
+            Fail("The scene changed before the snap committed.");
+            return std::nullopt;
+        }
+        if (commit.mFrameSubmissions != commit.mCurrentSubmissions)
+        {
+            Fail("Another edit was submitted before the snap committed.");
+            return std::nullopt;
+        }
+        if (!StillBound(world, document, ground, editing))
+            return std::nullopt;
+
         const SnapToTerrainEdit edit = mEdit;
         mState = State::Idle;
         mMessage.clear();

@@ -1069,6 +1069,7 @@ namespace mir
 
         const bool documentTab = documents.mActive != kSceneDocument;
         GroundQuery *ground = activeWorld.TryResource<GroundQuery>();
+        mSnapFrameSubmissions = mHistory.SubmissionCount();
         PollSnapToTerrain(activeWorld, documents.mActive, mode, dt);
         SnapToTerrainAction snap = SnapToTerrainActionFor(activeWorld, documents.mActive, ground);
         snap.mWaiting = mSnapToTerrain.Active();
@@ -1353,9 +1354,15 @@ namespace mir
             mSceneViewportRect = VkRect2D{};
         }
 
+        const bool snapTransitionRequested =
+            actions.mScene == SceneMenuAction::New || actions.mScene == SceneMenuAction::Load ||
+            actions.mScene == SceneMenuAction::Play || actions.mScene == SceneMenuAction::Stop ||
+            !actions.mOpenProject.empty() || !actions.mCreateProjectName.empty() ||
+            actions.mDocument.mKind != EditorDocumentActionKind::None;
         if (snapRequested)
             StartSnapToTerrain(activeWorld, documents.mActive);
-        FinishSnapToTerrain();
+        FinishSnapToTerrain(activeWorld, documents.mActive, ground, mode.mMode == EngineMode::Edit,
+                            snapTransitionRequested);
 
         if (mSceneOps != nullptr)
             mHistory.Flush(sceneWorld, *mSceneOps);
@@ -1404,15 +1411,35 @@ namespace mir
             MIR_LOG_WARN("Snap to Terrain: {}", action.mReason);
     }
 
-    void Editor::FinishSnapToTerrain()
+    void Editor::FinishSnapToTerrain(World &world, DocumentId document, const GroundQuery *ground, bool editing,
+                                     bool transitionRequested)
     {
+        if (transitionRequested && mSnapToTerrain.Active())
+            mSnapToTerrain.Cancel("The scene changed before the snap committed.");
+
         const std::string failure = mSnapToTerrain.TakeFailure();
         if (!failure.empty())
             MIR_LOG_WARN("Snap to Terrain: {}", failure);
 
-        const std::optional<SnapToTerrainEdit> edit = mSnapToTerrain.TakeEdit();
-        if (!edit)
+        if (mSnapToTerrain.CurrentState() != SnapToTerrainSession::State::Ready)
             return;
+        if (ground == nullptr)
+        {
+            mSnapToTerrain.Cancel("The scene has no terrain.");
+            MIR_LOG_WARN("Snap to Terrain: {}", mSnapToTerrain.TakeFailure());
+            return;
+        }
+
+        const SnapToTerrainCommit commit{mSnapFrameSubmissions, mHistory.SubmissionCount(), transitionRequested};
+        const std::optional<SnapToTerrainEdit> edit =
+            mSnapToTerrain.TakeEdit(world, document, *ground, editing, commit);
+        if (!edit)
+        {
+            const std::string refused = mSnapToTerrain.TakeFailure();
+            if (!refused.empty())
+                MIR_LOG_WARN("Snap to Terrain: {}", refused);
+            return;
+        }
 
         const Entity entity = mSnapToTerrain.Target();
         std::unique_ptr<ICommand> command = MakeSnapToTerrainCommand(entity, *edit, mAuthoredEntities);

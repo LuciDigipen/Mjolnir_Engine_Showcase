@@ -64,6 +64,8 @@ namespace mir
         std::string RedoName() const;
 
         std::size_t StepCount() const { return mSteps.size(); }
+        // Commands accepted since construction; a pending session compares it across one frame.
+        std::size_t SubmissionCount() const { return mSubmissions; }
         std::size_t Cursor() const { return mCursor; }
         std::size_t UsedBytes() const { return mUsed; }
         const EntityIds &Ids() const { return mIds; }
@@ -117,6 +119,7 @@ namespace mir
         std::size_t mUsed = 0;
         std::size_t mBudget;
         uint64_t mNextSerial = 1;
+        std::size_t mSubmissions = 0;
 
         //serials only go up, so a serial dropped from history never matches again
         std::map<DocumentId, DocumentState> mDocuments;

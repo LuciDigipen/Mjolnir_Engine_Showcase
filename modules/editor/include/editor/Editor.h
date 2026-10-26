@@ -194,7 +194,8 @@ namespace mir
         // Retries a pending snap outside any panel's Draw; it only reads the World until an edit is ready.
         void PollSnapToTerrain(World &world, DocumentId document, const EngineModeState &mode, float dt);
         void StartSnapToTerrain(World &world, DocumentId document);
-        void FinishSnapToTerrain();
+        void FinishSnapToTerrain(World &world, DocumentId document, const GroundQuery *ground, bool editing,
+            bool transitionRequested);
         void UpdateHistoryShortcuts(EditorActions &actions, const EngineModeState &mode);
 
         // Each document keeps its own camera; a document opened first focuses on its root.
@@ -243,6 +244,7 @@ namespace mir
 
         History mHistory;
         SnapToTerrainSession mSnapToTerrain;
+        std::size_t mSnapFrameSubmissions = 0;
         ISceneOps *mSceneOps = nullptr;
         IAuthoredEntities *mAuthoredEntities = nullptr;
 

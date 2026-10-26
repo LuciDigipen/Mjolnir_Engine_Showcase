@@ -77,7 +77,9 @@ bottom footprint from a `GroundQuery` probe, fits a plane, samples a second
 tilted footprint, and then submits one `Snap to Terrain` position+rotation
 command through `AuthoredEdit`. Sampling retries outside the panel's `Draw`;
 the session cancels on timeout, selection/document/Play changes, or a Transform,
-parent or terrain revision change.
+parent or terrain revision change. At the commit boundary it revalidates that
+context and refuses to queue its command when this frame submitted another edit
+or requested a scene, Play or document transition.
 
 `DrawLayout(true)` builds the dockspace once. It splits into left, right and
 bottom with `DockBuilderSplitNode`, keeps the centre undocked through
