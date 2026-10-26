@@ -200,6 +200,7 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `TextureDesc`, `TextureHandle` | `renderer/Texture.h` | `{width, height, pixels, srgb}`, tightly-packed RGBA8; `kNullTexture` falls back to a default in `CreateMaterial` |
 | `MaterialDesc`, `MaterialHandle` | `renderer/Material.h` | `{shaderName, cullMode, polygonMode, baseColorTexture, normalTexture, sampler, alphaMode, alphaCutoff, record, recordAlignment}`; `kNullMaterial` means the default. `SamplerDesc` carries the optional `maxAnisotropy` |
 | `MaterialRecordId`, `MaterialRecordTable`, `MaterialRecordRef` | `renderer/MaterialRecordTable.h` | Aligned raw-byte records: create/update/release, a frame-safe published copy and the set-0 reference |
+| `RtInstanceInfo` | `renderer/RtInstanceInfo.h` | CPU mirror of `raytrace.slang`'s per-instance struct; scalar padding keeps the offsets and ArrayStride identical |
 | `TextureTable` | `renderer/TextureTable.h` | Stable global image rows; a freed row comes back with a new generation |
 | `RendererCapabilities`, `RendererFeatureSupport` | `renderer/RendererCapabilities.h` | Raw descriptor-indexing, ray-tracing and anisotropy bits resolved into the optional paths |
 | `DrawItem` | `renderer/Renderer.h` | `{mesh, model, normalMatrix, tint, material}` — `model` is the world transform, not premultiplied by any camera |
@@ -824,6 +825,17 @@ Everything that needs a device is verified by the smoke tests and
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-10-26* — **RT instance layout matches Slang.** Was: the CPU
+`RtInstanceInfo` used `float pad[3]` after `alphaCutoff`, while Slang's `float3`
+aligned to 16, so `prevModel` sat at 128 in the shader and the runtime array
+stride was 192 instead of the CPU's 176. Every instance after the first then read
+the wrong vertex/index addresses. Now: `renderer/RtInstanceInfo.h` owns the CPU
+struct with scalar padding and static offset/size assertions, `raytrace.slang`
+uses three scalar pads, and `RtInstanceLayout.tests.cpp` runs slangc against the
+actual shader, compares reflection field offsets/sizes with `offsetof` and reads
+the SPIR-V ArrayStride. Because: the previous tests only asserted C++ against
+itself, so a CPU/Slang ABI split could not fail.
 
 *2026-10-26* — **Shared raster/RT material tables (#330).** Was: RT remapped
 each frame's distinct (image view, sampler) pairs into a per-frame combined

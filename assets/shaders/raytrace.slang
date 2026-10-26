@@ -39,7 +39,9 @@ struct RtInstanceInfo
     uint baseColorSampler; // index into gSamplers
     uint materialRecord;   // byte offset into gMaterialRecords
     float alphaCutoff;     // read only with kInstanceAlphaTest
-    float3 pad0;
+    float pad0;
+    float pad1;
+    float pad2;
     float4x4 prevModel; // camera-relative to THIS frame's camera - see DrawItem::previousModel
 };
 

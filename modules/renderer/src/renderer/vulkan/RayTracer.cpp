@@ -9,6 +9,7 @@
 #include "RayTracer.h"
 #include "RayFacing.h"
 #include "Device.h"
+#include <renderer/RtInstanceInfo.h>
 #include "MaterialStore.h"
 #include "MaterialTable.h"
 #include "MaterialTableLayout.h"
@@ -35,23 +36,6 @@ namespace mir::vk
 {
     namespace
     {
-        struct RtInstanceInfo
-        {
-            VkDeviceAddress vertexAddress;
-            VkDeviceAddress indexAddress;
-            glm::vec4 tint;
-            glm::vec4 normalCol0;
-            glm::vec4 normalCol1;
-            glm::vec4 normalCol2;
-            uint32_t flags; // kInstance* bits
-            uint32_t baseColorTexture;
-            uint32_t baseColorSampler;
-            uint32_t materialRecord;
-            float alphaCutoff;
-            float pad[3];
-            glm::mat4 prevModel;
-        };
-
         // RtInstanceInfo::flags; keep in sync with raytrace.slang.
         constexpr uint32_t kInstanceUnlit = 1u;
         constexpr uint32_t kInstanceTextured = 2u;
