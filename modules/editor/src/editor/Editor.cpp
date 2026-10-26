@@ -859,8 +859,8 @@ namespace mir
                 }
             });
 
-        // Any component whose owning module registered a pick radius (e.g. Light): a simple
-        // world-space sphere test around the entity's transform origin.
+        // Any component whose owning module registered a pick radius (e.g. Light): a world-space
+        // sphere around the entity's transform origin, ranked where the ray enters it.
         for (const ComponentOps *ops : ComponentRegistry::Instance().All())
         {
             if (ops->mPickRadius == nullptr)
@@ -874,25 +874,12 @@ namespace mir
                     if (transform == nullptr)
                         return;
 
-                    const std::optional<glm::vec3> fromRay =
-                        TryCameraRelativeFloat(transform->Position(), ray.origin);
-                    if (!fromRay)
-                        return;
-                    const glm::vec3 pos = *fromRay;
-                    const float t = glm::dot(pos, ray.direction);
-                    if (t < 0.0f)
-                        return;
-
                     const void *component = ops->GetComponent(world, entity);
-                    const float pickRadius = ops->mPickRadius(component);
-
-                    const glm::vec3 closest = ray.direction * t;
-                    if (glm::length(pos - closest) > pickRadius)
-                        return;
-
-                    if (t < hitDistance)
+                    const std::optional<float> distance =
+                        RayIntersectsSphere(ray, transform->Position(), ops->mPickRadius(component));
+                    if (distance && *distance < hitDistance)
                     {
-                        hitDistance = t;
+                        hitDistance = *distance;
                         hitEntity = entity;
                     }
                 });

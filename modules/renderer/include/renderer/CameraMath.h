@@ -71,6 +71,9 @@ namespace mir
     std::optional<float> RayIntersectsBox(const WorldRay &ray, const WorldPose &box,
         const glm::vec3 &localMin, const glm::vec3 &localMax);
 
+    // Distance in meters along a unit-direction ray to where it enters the sphere, 0 if it starts inside.
+    std::optional<float> RayIntersectsSphere(const WorldRay &ray, WorldPosition center, float radius);
+
     // The index'th term of the Halton(2,3) low-discrepancy sequence.
     glm::vec2 HaltonJitter(uint32_t index);
 }
