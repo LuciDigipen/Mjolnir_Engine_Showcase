@@ -185,6 +185,10 @@ namespace mir
                 const double number = value.as<double>();
                 if (!(number >= -2147483648.0 && number <= 2147483647.0))
                     return refuse("the number is NaN, infinite or outside the range of an integer");
+                // a choice from a list is one of its entries
+                if (field.mWidget == FieldWidget::Enum
+                    && (std::floor(number) != number || number < 0.0 || number >= static_cast<double>(field.mEnumNames.size())))
+                    return refuse("it must be a whole number from 0 to " + std::to_string(field.mEnumNames.size() - 1));
                 scratch.asInt = static_cast<int32_t>(number);
                 return true;
             }
@@ -195,6 +199,9 @@ namespace mir
                 const double number = value.as<double>();
                 if (std::isnan(number) || std::isinf(number) || !std::isfinite(static_cast<float>(number)))
                     return refuse("the number is NaN, infinite or too large");
+                // the range the field declares, which the Inspector keeps to as well
+                if (field.mClamped && (number < field.mMin || number > field.mMax))
+                    return refuse("it must be between " + std::to_string(field.mMin) + " and " + std::to_string(field.mMax));
                 scratch.asFloat = static_cast<float>(number);
                 return true;
             }
@@ -227,7 +234,7 @@ namespace mir
             case FieldKind::Quat:
             {
                 double c[4]{};
-                if (const std::string why = VectorProblem(value, "value", kQuatKeys, c); !why.empty())
+                if (const std::string why = QuatProblem(value, "value", c); !why.empty())
                     return refuse(why);
                 scratch.asQuat = glm::quat(static_cast<float>(c[3]), static_cast<float>(c[0]), static_cast<float>(c[1]),
                                            static_cast<float>(c[2]));

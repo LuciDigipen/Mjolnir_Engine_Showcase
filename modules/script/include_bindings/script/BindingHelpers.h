@@ -13,6 +13,8 @@
 
 #include <core/log/Log.h>
 #include <core/math/WorldReal.h>
+#include <glm/geometric.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <glm/vec3.hpp>
 #include <sol/sol.hpp>
 
@@ -75,6 +77,28 @@ namespace mir
     inline constexpr const char *kVec3Keys[] = { "x", "y", "z" };
     inline constexpr const char *kQuatKeys[] = { "x", "y", "z", "w" };
 
+    // A rotation is { x, y, z, w }, and a missing w is 1, so { x, y, z } alone is the identity turned by nothing.
+    // Empty when it is one, else what is wrong, starting with `argument`.
+    inline std::string QuatProblem(const sol::object &value, std::string_view argument, double *out)
+    {
+        if (const std::string problem = VectorProblem(value, argument, std::span<const char *const>(kVec3Keys), out);
+            !problem.empty())
+            return problem;
+
+        out[3] = 1.0;
+        const sol::object w = value.as<sol::table>()["w"];
+        if (w.get_type() == sol::type::nil)
+            return {};
+        if (w.get_type() != sol::type::number)
+            return std::string(argument) + ".w must be a number";
+        out[3] = w.as<double>();
+        if (std::isnan(out[3]))
+            return std::string(argument) + ".w is NaN";
+        if (std::isinf(out[3]))
+            return std::string(argument) + ".w is infinite";
+        return {};
+    }
+
     // The documented vector form. False, nothing written, for anything else; does not log.
     inline bool ToVec3(const sol::object &value, glm::vec3 &out)
     {
@@ -128,6 +152,27 @@ namespace mir
         if (!position)
             MIR_LOG_ERROR("script: {}: {} is outside the range the world can hold", call, argument);
         return position;
+    }
+
+    // A rotation, normalized. False, logged, for anything that is not one or has no length.
+    inline bool ReadQuat(const sol::object &value, glm::quat &out, std::string_view call, std::string_view argument)
+    {
+        double c[4]{};
+        if (const std::string problem = QuatProblem(value, argument, c); !problem.empty())
+        {
+            MIR_LOG_ERROR("script: {}: {}", call, problem);
+            return false;
+        }
+
+        const glm::quat q(static_cast<float>(c[3]), static_cast<float>(c[0]), static_cast<float>(c[1]), static_cast<float>(c[2]));
+        const float length = glm::length(q);
+        if (!(length > 0.0f) || !std::isfinite(length))
+        {
+            MIR_LOG_ERROR("script: {}: {} must not be all zeros", call, argument);
+            return false;
+        }
+        out = q / length;
+        return true;
     }
 
     // A finite number. False, logged, for anything else.

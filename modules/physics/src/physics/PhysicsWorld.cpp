@@ -719,9 +719,15 @@ namespace mir
         if (!id)
             return;
 
-        const JPH::BodyLockWrite lock(mImpl->mSystem.GetBodyLockInterface(), *id);
-        if (lock.Succeeded())
+        {
+            const JPH::BodyLockWrite lock(mImpl->mSystem.GetBodyLockInterface(), *id);
+            if (!lock.Succeeded())
+                return;
             lock.GetBody().SetAllowSleeping(allow);
+        }
+        // a body asleep stays asleep when sleeping is turned off; the body interface takes the lock again
+        if (!allow)
+            mImpl->Bodies().ActivateBody(*id);
     }
 
     void PhysicsWorld::WakeBody(BodyHandle body)

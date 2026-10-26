@@ -474,21 +474,10 @@ namespace mir
             std::optional<glm::quat> turned;
             if (Given(rotation))
             {
-                double components[4]{};
-                const std::string problem = VectorProblem(*rotation, "rotation", kQuatKeys, components);
-                if (!problem.empty())
-                {
-                    MIR_LOG_ERROR("script: world:teleport: {}", problem);
+                glm::quat q;
+                if (!ReadQuat(*rotation, q, "world:teleport", "rotation"))
                     return false;
-                }
-                const glm::quat q(static_cast<float>(components[3]), static_cast<float>(components[0]),
-                                  static_cast<float>(components[1]), static_cast<float>(components[2]));
-                if (!(glm::length(q) > 0.0f) || !std::isfinite(glm::length(q)))
-                {
-                    MIR_LOG_ERROR("script: world:teleport: rotation must not be all zeros");
-                    return false;
-                }
-                turned = glm::normalize(q);
+                turned = q;
             }
 
             return PhysicsSystem::Teleport(world, entity, *target, turned);
@@ -547,7 +536,8 @@ namespace mir
         // every RigidBody field: <name>(entity) reads it, set_<name>(entity, value) writes it
         for (const FieldDesc &field : kRigidBodyFields)
         {
-            const std::string snake = SnakeCase(field.mName);
+            // `axis` is the input bridge's world:axis(action), so the capsule's is spelled out
+            const std::string snake = field.mName == "axis" ? std::string("capsule_axis") : SnakeCase(field.mName);
             worldType.set_function(snake,
                 [name = std::string(field.mName)](sol::this_state state, World &world, Entity entity)
                 { return ReadRigidBodyField(state, world, entity, name); });

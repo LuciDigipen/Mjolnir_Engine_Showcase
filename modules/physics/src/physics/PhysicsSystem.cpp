@@ -54,7 +54,8 @@ namespace mir
         BodyDesc BodyDescFor(const RigidBody &rigidBody, const BodyPose &pose, Entity entity)
         {
             const glm::vec3 scale = glm::abs(pose.scale);
-            const int axis = static_cast<int>(rigidBody.axis);
+            // the enum can hold any int a field write puts in it
+            const int axis = std::clamp(static_cast<int>(rigidBody.axis), 0, 2);
             const float along = scale[axis];
             const float across = std::max(scale[(axis + 1) % 3], scale[(axis + 2) % 3]);
             const bool capsule = rigidBody.shape == PhysicsShape::Capsule;
@@ -138,12 +139,25 @@ namespace mir
                 // the shape follows the world scale, so a scale change is a shape change
                 const glm::vec3 scale = detail::PoseOf(world, entity).scale;
                 const bool scaled = !SameScale(scale, rigidBody.runtime.builtScale);
-                // a held body is left alone, and the edit lands once it is resumed
-                if ((now == applied && !scaled) || physics.IsBodyHeld(body))
+                if (now == applied && !scaled)
                     return;
 
+                // A held body waits for its resume, except when it is edited away from Dynamic: nothing that
+                // tracks dynamic bodies would resume it then, so it is let go now.
+                if (physics.IsBodyHeld(body))
+                {
+                    if (now.motion == PhysicsMotion::Dynamic)
+                        return;
+                    physics.ResumeBody(body);
+                }
+
                 if (now.motion != applied.motion)
+                {
                     physics.SetBodyMotion(body, now.motion);
+                    // a mass edited while it could not apply is put on when the body starts to move by force
+                    if (now.motion == PhysicsMotion::Dynamic)
+                        physics.SetBodyMass(body, now.mass);
+                }
 
                 if (scaled || now.shape != applied.shape || now.halfExtent != applied.halfExtent
                     || now.radius != applied.radius || now.halfHeight != applied.halfHeight || now.axis != applied.axis

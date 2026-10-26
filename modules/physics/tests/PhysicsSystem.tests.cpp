@@ -1234,6 +1234,88 @@ TEST_CASE("A body born under a zero world scale gets its collider once the scale
     CHECK(CastDown(fixture).value().mDistance == Catch::Approx(9.0f).margin(0.01f));
 }
 
+TEST_CASE("A mass edited while Static is the mass once the body turns Dynamic", "[physics][edit]")
+{
+    PhysicsFixture fixture;
+    mir::RigidBody body = kDynamicSphere;
+    body.motion = mir::PhysicsMotion::Static;
+    body.gravityFactor = 0.0f;
+    const mir::Entity entity = fixture.Add(glm::vec3(0.0f, 5.0f, 0.0f), body);
+    fixture.Run(1);
+
+    BodyComponent(fixture, entity).mass = 10.0f;
+    fixture.Run(1);
+    BodyComponent(fixture, entity).motion = mir::PhysicsMotion::Dynamic;
+    fixture.Run(1);
+
+    const mir::BodyHandle handle = BodyOfEntity(fixture, entity);
+    REQUIRE(fixture.Physics().AddImpulse(handle, glm::vec3(10.0f, 0.0f, 0.0f)));
+    fixture.Run(1);
+    CHECK(fixture.Physics().BodyLinearVelocity(handle).x == Catch::Approx(1.0f).margin(0.05f));
+}
+
+TEST_CASE("Turning allowSleeping off in Play wakes a body that already sleeps", "[physics][edit]")
+{
+    PhysicsFixture fixture;
+    fixture.Add(glm::vec3(0.0f), kStaticBox);
+    const mir::Entity ball = fixture.Add(glm::vec3(0.0f, 1.0f, 0.0f), kDynamicSphere);
+    fixture.Run(300);
+    REQUIRE(fixture.Physics().IsBodySleeping(BodyOfEntity(fixture, ball)));
+
+    BodyComponent(fixture, ball).allowSleeping = false;
+    fixture.Run(1);
+    CHECK_FALSE(fixture.Physics().IsBodySleeping(BodyOfEntity(fixture, ball)));
+}
+
+TEST_CASE("A held body edited away from Dynamic is let go, for a gate that tracks only dynamic bodies", "[physics][edit]")
+{
+    PhysicsFixture fixture;
+    const mir::Entity entity = fixture.Add(glm::vec3(0.0f, 5.0f, 0.0f), kDynamicSphere);
+    const mir::BodyHandle handle = BodyOfEntity(fixture, entity);
+
+    // holds and resumes the way TerrainRuntime does: only bodies whose authored motion is Dynamic
+    struct TerrainLikeGate final : mir::PhysicsStepGate
+    {
+        bool ready = false;
+
+        void BeforeStep(mir::World &world, mir::PhysicsWorld &physics, float) override
+        {
+            world.ForEach<mir::RigidBody>(
+                [&](mir::Entity, mir::RigidBody &rigidBody)
+                {
+                    if (!mir::HasDynamicBody(rigidBody))
+                        return;
+                    const mir::BodyHandle body = rigidBody.runtime.body;
+                    if (!ready && !physics.IsBodyHeld(body))
+                        physics.HoldBody(body);
+                    else if (ready && physics.IsBodyHeld(body))
+                        physics.ResumeBody(body);
+                });
+        }
+    } gate;
+    fixture.world.EmplaceResource<mir::PhysicsStepGates>().mGates.push_back(&gate);
+
+    fixture.Run(1);
+    REQUIRE(fixture.Physics().IsBodyHeld(handle));
+
+    BodyComponent(fixture, entity).motion = mir::PhysicsMotion::Static;
+    fixture.Run(3);
+    CHECK_FALSE(fixture.Physics().IsBodyHeld(handle));
+
+    // and it is Static now, so a push does nothing
+    CHECK_FALSE(fixture.Physics().AddImpulse(handle, glm::vec3(1.0f, 0.0f, 0.0f)));
+}
+
+TEST_CASE("A capsule axis outside X, Y and Z does not index past the scale", "[physics][validation]")
+{
+    PhysicsFixture fixture;
+    mir::RigidBody capsule{ .motion = mir::PhysicsMotion::Static, .shape = mir::PhysicsShape::Capsule };
+    capsule.axis = static_cast<mir::PhysicsAxis>(3);
+    const mir::Entity entity = fixture.Add(glm::vec3(0.0f), capsule);
+
+    CHECK(BodyOfEntity(fixture, entity).IsValid());
+}
+
 TEST_CASE("A RigidBody gets its body when it is added, before any step", "[physics]")
 {
     PhysicsFixture fixture;

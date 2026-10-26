@@ -389,7 +389,7 @@ function T.OnStart(self, world, entity)
     ok = ok and world:set_detect_stay(entity, true)
     ok = ok and world:set_motion(entity, PhysicsMotion.Kinematic)
     ok = ok and world:set_shape(entity, PhysicsShape.Capsule)
-    ok = ok and world:set_axis(entity, PhysicsAxis.Z)
+    ok = ok and world:set_capsule_axis(entity, PhysicsAxis.Z)
     ok = ok and world:set_mass(entity, 25.0)
     ok = ok and world:set_gravity_factor(entity, 0.5)
     ok = ok and world:set_restitution(entity, 0.3)
@@ -404,7 +404,7 @@ function T.OnStart(self, world, entity)
         and world:is_trigger(entity) == true
         and world:motion(entity) == 2
         and world:shape(entity) == 2
-        and world:axis(entity) == 2
+        and world:capsule_axis(entity) == 2
     world:set(entity, "PhysicsBindingsProbe", "ok", ok and read)
 end
 
@@ -651,7 +651,7 @@ function T.OnStart(self, world, entity)
     ok = ok and not world:raycast({ x = 0.0, y = 0.0, z = 0.0 }, { x = 0.0, y = -1.0, z = 0.0 }, inf).hit
     -- teleport and the field setters refuse them too
     ok = ok and world:teleport(entity, { x = nan, y = 0.0, z = 0.0 }) == false
-    ok = ok and world:teleport(entity, { x = 1.0, y = 0.0, z = 0.0 }, { x = 0.0, y = 0.0, z = 0.0 }) == false
+    ok = ok and world:teleport(entity, { x = 1.0, y = 0.0, z = 0.0 }, { x = 0.0, y = 0.0, z = 0.0, w = 0.0 }) == false
     ok = ok and world:set_mass(entity, nan) == false
     ok = ok and world:set_friction(entity, inf) == false
     ok = ok and world:set_half_extent(entity, { x = 1.0, y = 2.0 }) == false
@@ -690,6 +690,90 @@ TEST_CASE("a force or velocity on a Static body returns false from Lua", "[scrip
     f.Start();
 
     CHECK(ReadProbeField<bool>(f.world, f.entity, "ok"));
+}
+
+namespace
+{
+    constexpr std::string_view kRanges = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    local ok = true
+    -- a choice from a list, and numbers outside the range the field declares
+    ok = ok and world:set_capsule_axis(entity, 3) == false
+    ok = ok and world:set_capsule_axis(entity, 1.5) == false
+    ok = ok and world:set_motion(entity, 7) == false
+    ok = ok and world:set_shape(entity, -1) == false
+    ok = ok and world:set_mass(entity, -1) == false
+    ok = ok and world:set_mass(entity, 0) == false
+    ok = ok and world:set_restitution(entity, 5) == false
+    ok = ok and world:set_friction(entity, -0.1) == false
+    -- and a value inside it is taken
+    ok = ok and world:set_mass(entity, 3.0) == true
+    ok = ok and world:set_restitution(entity, 0.5) == true
+    world:set(entity, "PhysicsBindingsProbe", "ok", ok)
+end
+
+return T
+)LUA";
+
+    constexpr std::string_view kInputAxis = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    world:set(entity, "PhysicsBindingsProbe", "ok", world:axis("Move") == 0.5)
+end
+
+return T
+)LUA";
+}
+
+TEST_CASE("Field values outside what the field allows are refused", "[script][physics][validation]")
+{
+    Fixture f(kRanges);
+    f.Start();
+
+    CHECK(ReadProbeField<bool>(f.world, f.entity, "ok"));
+    const mir::RigidBody &body = *f.world.GetComponent<mir::RigidBody>(f.entity);
+    CHECK(body.axis == mir::PhysicsAxis::Y);
+    CHECK(body.motion == mir::PhysicsMotion::Dynamic);
+    CHECK(body.mass == 3.0f);
+}
+
+TEST_CASE("The physics bindings leave the input bridge's world:axis alone", "[script][physics][validation]")
+{
+    mir::ScriptHost host;
+    // stands in for the input bridge, registered first as App does
+    const mir::Registration input = mir::AddBindings(host,
+        [](sol::state &lua)
+        {
+            sol::table worldType = lua["World"];
+            worldType.set_function("axis", [](mir::World &, std::string_view) { return 0.5f; });
+        });
+    const mir::Registration physics = mir::AddBindings(host, &mir::RegisterPhysicsBindings);
+
+    mir::RegisterScriptComponents();
+    mir::RegisterPhysicsComponents();
+    mir::World world;
+    mir::CommandBuffer commands;
+    const mir::Entity entity = world.CreateEntity();
+    ProbeOps().AddDefault(world, entity);
+    REQUIRE(host.LoadScriptSource("axis_probe", kInputAxis));
+    const int32_t instance = host.CreateInstance("axis_probe");
+    REQUIRE(instance != -1);
+
+    host.CallOnStart(world, commands, entity, instance);
+    host.DestroyInstance(instance);
+
+    CHECK(ReadProbeField<bool>(world, entity, "ok"));
 }
 
 namespace
