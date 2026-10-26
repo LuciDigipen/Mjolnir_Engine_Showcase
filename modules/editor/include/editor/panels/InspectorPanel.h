@@ -10,6 +10,7 @@
 #pragma once
 
 #include <core/ecs/World.h>
+#include <editor/SnapToTerrain.h>
 #include <editor/panels/AssetImportPanel.h>
 
 #include <cstddef>
@@ -25,8 +26,9 @@ namespace mir
     {
     public:
         
-        void Draw(World &world, const AssetImportView &assets, History &history,
-            IAuthoredEntities *authored = nullptr);
+        // True when Snap to Terrain was clicked from the Transform menu.
+        bool Draw(World &world, const AssetImportView &assets, History &history,
+            IAuthoredEntities *authored, const SnapToTerrainAction &snap);
 
         // One field's value
         struct alignas(16) FieldBuffer

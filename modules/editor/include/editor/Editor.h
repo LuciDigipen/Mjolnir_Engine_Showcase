@@ -14,6 +14,7 @@
 #include <editor/BackgroundImage.h>
 #include <editor/EditorCamera.h>
 #include <editor/EditorPreferences.h>
+#include <editor/SnapToTerrain.h>
 #include <editor/history/History.h>
 #include <editor/panels/AssetImportPanel.h>
 #include <editor/panels/ContentBrowserPanel.h>
@@ -143,7 +144,7 @@ namespace mir
                                  std::span<const ProjectMenuEntry> projects, std::string_view currentProject,
                                  World &activeWorld, World &sceneWorld, const EditorDocuments &documents,
                                  const AssetImportView &assetImport, const VulkanRenderer &renderer,
-                                 const ContentBrowserView &contentBrowser);
+                                 const ContentBrowserView &contentBrowser, float dt);
 
         VkRect2D SceneViewportRect() const { return mSceneViewportRect; }
 
@@ -157,6 +158,9 @@ namespace mir
         bool WantsCaptureMouse() const;
 
         void ClearHistory() { mHistory.Clear(); }
+
+        // Scene, Play and document transitions cancel a pending snap.
+        void CancelSnapToTerrain() { mSnapToTerrain.Cancel("The scene changed."); }
 
         // true while the scene has changes since its last save, shown as the title bar's *
         bool IsSceneUnsaved() const { return mHistory.IsUnsaved(); }
@@ -187,6 +191,10 @@ namespace mir
         void DrawComponentGizmos(const EngineModeState &mode, World &world);
         void DrawNewProjectModal(EditorActions &actions, std::span<const ProjectMenuEntry> projects);
         void DrawEditMenu();
+        // Retries a pending snap outside any panel's Draw; it only reads the World until an edit is ready.
+        void PollSnapToTerrain(World &world, DocumentId document, const EngineModeState &mode, float dt);
+        void StartSnapToTerrain(World &world, DocumentId document);
+        void FinishSnapToTerrain();
         void UpdateHistoryShortcuts(EditorActions &actions, const EngineModeState &mode);
 
         // Each document keeps its own camera; a document opened first focuses on its root.
@@ -234,6 +242,7 @@ namespace mir
         bool mShownDocumentKnown = false;
 
         History mHistory;
+        SnapToTerrainSession mSnapToTerrain;
         ISceneOps *mSceneOps = nullptr;
         IAuthoredEntities *mAuthoredEntities = nullptr;
 

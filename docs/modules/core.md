@@ -91,6 +91,12 @@ world.EmplaceResource<EntityChangeListeners>();
 EntityChangeListeners *listeners = world.TryResource<EntityChangeListeners>();
 ```
 
+`GroundQuery` is a World resource for consumers that cannot link terrain.
+`Bind` registers an `IGroundQuerySource` through a `Registration`; `Sample`
+answers at the finest source spacing, `Probe` reports coverage and source
+spacing from layout metadata without loading payloads, and `Revision` moves when
+the binding or the terrain behind it changes so a pending consumer can cancel.
+
 ### Access by name
 
 Some callers have a name rather than a type — a script binding, an inspector, a

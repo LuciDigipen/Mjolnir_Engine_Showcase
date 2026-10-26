@@ -40,6 +40,7 @@ target_sources(engine_core PRIVATE
     src/core/ecs/HierarchyIndex.cpp
     src/core/ecs/ComponentRegistry.cpp
     src/core/ecs/EntityPresetRegistry.cpp
+    src/core/ecs/GroundQuery.cpp
     src/core/ecs/RuntimeQuery.cpp
     src/core/ecs/DeferredAccess.cpp
     src/core/ecs/CoreModule.cpp)

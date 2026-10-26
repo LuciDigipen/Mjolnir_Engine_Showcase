@@ -11,6 +11,7 @@
 #include <editor/Editor.h>
 
 #include <core/ecs/ComponentGizmo.h>
+#include <core/ecs/GroundQuery.h>
 #include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/Query.h>
 #include <core/ecs/TransformHierarchy.h>
@@ -1062,11 +1063,18 @@ namespace mir
         PostProcessingSettings &postProcessingSettings, const EngineModeState &mode,
         std::span<const ProjectMenuEntry> projects, std::string_view currentProject, World &activeWorld,
         World &sceneWorld, const EditorDocuments &documents, const AssetImportView &assetImport,
-        const VulkanRenderer &renderer, const ContentBrowserView &contentBrowser)
+        const VulkanRenderer &renderer, const ContentBrowserView &contentBrowser, float dt)
     {
         EditorActions actions;
 
         const bool documentTab = documents.mActive != kSceneDocument;
+        GroundQuery *ground = activeWorld.TryResource<GroundQuery>();
+        PollSnapToTerrain(activeWorld, documents.mActive, mode, dt);
+        SnapToTerrainAction snap = SnapToTerrainActionFor(activeWorld, documents.mActive, ground);
+        snap.mWaiting = mSnapToTerrain.Active();
+        if (snap.mWaiting)
+            snap.mStatus = mSnapToTerrain.Status();
+        bool snapRequested = false;
 
         if (mThemePending)
         {
@@ -1152,7 +1160,7 @@ namespace mir
             ImGui::End();
 
             if (ImGui::Begin("Inspector"))
-                mInspectorPanel.Draw(activeWorld, assetImport, mHistory, mAuthoredEntities);
+                snapRequested |= mInspectorPanel.Draw(activeWorld, assetImport, mHistory, mAuthoredEntities, snap);
             ImGui::End();
 
             if (ImGui::Begin("Output"))
@@ -1345,7 +1353,10 @@ namespace mir
             mSceneViewportRect = VkRect2D{};
         }
 
-        
+        if (snapRequested)
+            StartSnapToTerrain(activeWorld, documents.mActive);
+        FinishSnapToTerrain();
+
         if (mSceneOps != nullptr)
             mHistory.Flush(sceneWorld, *mSceneOps);
 
@@ -1365,6 +1376,54 @@ namespace mir
 
         if (ImGui::MenuItem((redo + "###Redo").c_str(), "Ctrl+Y", false, mHistory.CanRedo()))
             mHistory.RequestRedo();
+    }
+
+    void Editor::PollSnapToTerrain(World &world, DocumentId document, const EngineModeState &mode, float dt)
+    {
+        if (!mSnapToTerrain.Active())
+            return;
+        GroundQuery *ground = world.TryResource<GroundQuery>();
+        if (ground == nullptr)
+        {
+            mSnapToTerrain.Cancel("The scene has no terrain.");
+            return;
+        }
+        mSnapToTerrain.Update(world, document, *ground, dt, mode.mMode == EngineMode::Edit);
+    }
+
+    void Editor::StartSnapToTerrain(World &world, DocumentId document)
+    {
+        GroundQuery *ground = world.TryResource<GroundQuery>();
+        if (ground == nullptr)
+        {
+            MIR_LOG_WARN("Snap to Terrain: the scene has no terrain.");
+            return;
+        }
+        const SnapToTerrainAction action = mSnapToTerrain.Begin(world, document, *ground);
+        if (!action.mEnabled)
+            MIR_LOG_WARN("Snap to Terrain: {}", action.mReason);
+    }
+
+    void Editor::FinishSnapToTerrain()
+    {
+        const std::string failure = mSnapToTerrain.TakeFailure();
+        if (!failure.empty())
+            MIR_LOG_WARN("Snap to Terrain: {}", failure);
+
+        const std::optional<SnapToTerrainEdit> edit = mSnapToTerrain.TakeEdit();
+        if (!edit)
+            return;
+
+        const Entity entity = mSnapToTerrain.Target();
+        std::unique_ptr<ICommand> command = MakeSnapToTerrainCommand(entity, *edit, mAuthoredEntities);
+        if (!command)
+        {
+            MIR_LOG_ERROR("Snap to Terrain: the Transform edit could not be built.");
+            return;
+        }
+        mHistory.Submit(std::move(command));
+        MIR_LOG_INFO("Snap to Terrain: {} samples, {:.3f} m residual, source spacing {:.3f} m", edit->mSamples,
+                     edit->mResidual, edit->mSourceSpacing);
     }
 
     void Editor::UpdateHistoryShortcuts(EditorActions &actions, const EngineModeState &mode)

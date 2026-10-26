@@ -131,7 +131,8 @@ shape.
 | Type | Header | Role |
 |---|---|---|
 | `TerrainRuntimeModule` | `terrain_runtime/TerrainRuntimeModule.h` | The module: binds the runtime, registers its `FrameBegin` work and its stage functions |
-| `TerrainRuntime` | `terrain_runtime/TerrainRuntime.h` | Streaming, residencies, release switching, per-viewport drawing, the physics step gate |
+| `TerrainRuntime` | `terrain_runtime/TerrainRuntime.h` | Streaming, residencies, release switching, per-viewport drawing, the physics step gate, and the World's `GroundQuery` binding |
+| `TerrainGroundBridge` | `terrain_runtime/TerrainGroundBridge.h` | Registers the scene's `TerrainWorld` as the World's `GroundQuery` source; unregisters through its `Registration`; invalidates the query when a resolve or unload replaces the terrain |
 | `TerrainGpuUploader` | `terrain_runtime/TerrainRender.h` | Queues a built terrain mesh with the renderer |
 
 ## Rules

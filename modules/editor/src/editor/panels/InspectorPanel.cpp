@@ -56,6 +56,8 @@ namespace mir
             History &mHistory;
             IAuthoredEntities *mAuthored = nullptr;
             bool mSubmitted = false;
+            bool mSnapRequested = false;
+            const SnapToTerrainAction *mSnap = nullptr;
 
             void Submit(std::unique_ptr<ICommand> command)
             {
@@ -299,6 +301,19 @@ namespace mir
                 }
             }
 
+            if (edits.mSnap != nullptr && ops.mType.name == "Transform")
+            {
+                ImGui::Separator();
+                ImGui::BeginDisabled(!edits.mSnap->mEnabled);
+                if (ImGui::MenuItem("Snap to Terrain"))
+                    edits.mSnapRequested = true;
+                ImGui::EndDisabled();
+                if (!edits.mSnap->mEnabled)
+                    ImGui::SetItemTooltip("%s", edits.mSnap->mReason.c_str());
+                else if (!edits.mSnap->mStatus.empty())
+                    ImGui::SetItemTooltip("%s", edits.mSnap->mStatus.c_str());
+            }
+
             ImGui::Separator();
 
             // shown disabled rather than hidden, so the baseline's protection is visible
@@ -502,8 +517,8 @@ namespace mir
         }
     } // namespace
 
-    void InspectorPanel::Draw(World &world, const AssetImportView &assets, History &history,
-        IAuthoredEntities *authored)
+    bool InspectorPanel::Draw(World &world, const AssetImportView &assets, History &history,
+        IAuthoredEntities *authored, const SnapToTerrainAction &snap)
     {
         EndEditIfReleased(history);
 
@@ -513,7 +528,7 @@ namespace mir
         if (selectedCount > 1)
         {
             ImGui::TextDisabled("%zu objects selected.", selectedCount);
-            return;
+            return false;
         }
 
         const Entity entity = selectedCount == 1 ? selection->mSelected.front() : kNullEntity;
@@ -521,17 +536,19 @@ namespace mir
         if (entity.IsNull() || !world.IsAlive(entity))
         {
             ImGui::TextDisabled("No entity selected.");
-            return;
+            return false;
         }
 
         //history applies these at the end of the frame, so nothing below makes a change to archety midway
         Edits edits{ history, authored };
+        edits.mSnap = &snap;
 
         ImGui::AlignTextToFramePadding();
         if (const Name *name = world.GetComponent<Name>(entity))
             ImGui::Text(ICON_FA_CUBE "  %s", name->mValue);
         else
             ImGui::Text(ICON_FA_CUBE "  Entity %u", entity.mIndex);
+
         DrawAddComponent(world, entity, mClipboard, edits);
 
         widgets::SearchBox("##details-search", mFilter, sizeof(mFilter), "Search Details");
@@ -549,6 +566,7 @@ namespace mir
 
         mEditing |= edits.mSubmitted;
         EndEditIfReleased(history);
+        return edits.mSnapRequested;
     }
 
     void InspectorPanel::EndEditIfReleased(History &history)
