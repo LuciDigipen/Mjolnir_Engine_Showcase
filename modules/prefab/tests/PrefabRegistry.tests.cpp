@@ -8,7 +8,10 @@
  */
 #include <prefab/PrefabRegistry.h>
 
+#include <assets/AssetCache.h>
 #include <assets/AssetManifest.h>
+#include <core/fs/FileIO.h>
+#include <prefab/PrefabAsset.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -17,6 +20,7 @@
 #include <fstream>
 #include <optional>
 #include <random>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -97,6 +101,24 @@ namespace
         child.mParent = doc.mRootNode;
         doc.mNodes.push_back(child);
         return doc;
+    }
+
+    void WriteCookedPrefab(TempDir &dir, std::string_view name, const PrefabDocument &doc)
+    {
+        REQUIRE(mir::WriteBytes(dir.mPath / name, mir::BuildPrefabAsset(doc)));
+    }
+
+    mir::AssetManifestSourceEntry CookedEntry(const PrefabDocument &doc, std::string_view file)
+    {
+        return { { mir::PrefabAssetId(doc.mId), mir::kPrefabAssetTypeTag, mir::kPrefabAssetContentVersion, 0, 0 },
+            file };
+    }
+
+    std::optional<mir::AssetManifest> WriteManifest(TempDir &dir,
+        std::span<const mir::AssetManifestSourceEntry> entries)
+    {
+        REQUIRE(mir::WriteBytes(dir.mPath / mir::kAssetManifestFileName, mir::BuildAssetManifestBlob(entries)));
+        return mir::AssetManifest::LoadFile(dir.mPath / mir::kAssetManifestFileName);
     }
 }
 
@@ -290,4 +312,47 @@ TEST_CASE("ResolveAssetId adapts UUIDs and checks collisions", "[prefab]")
         REQUIRE(manifest.has_value());
         REQUIRE(registry.ResolveAssetId(doc.mId, &*manifest) == expected);
     }
+}
+
+TEST_CASE("Cooked prefabs fill the disk table without source paths", "[prefab]")
+{
+    TempDir dir;
+    const PrefabDocument doc = DocWithChild();
+    WriteCookedPrefab(dir, "hero.blob", doc);
+    const std::array<mir::AssetManifestSourceEntry, 1> entries{ CookedEntry(doc, "hero.blob") };
+    const std::optional<mir::AssetManifest> manifest = WriteManifest(dir, entries);
+    REQUIRE(manifest.has_value());
+    mir::AssetCache cache(&*manifest, dir.mPath);
+
+    PrefabRegistry registry;
+    CHECK(registry.LoadCooked(*manifest, cache).empty());
+    REQUIRE(registry.Find(doc.mId) != nullptr);
+    CHECK(registry.Find(doc.mId)->mNodes.size() == doc.mNodes.size());
+    CHECK(registry.PathOf(doc.mId) == std::nullopt);
+}
+
+TEST_CASE("Cooked prefab bad blobs are diagnosed and skipped", "[prefab]")
+{
+    TempDir dir;
+    const PrefabDocument good = mir::NewPrefabDocument();
+    const PrefabDocument bad = mir::NewPrefabDocument();
+    WriteCookedPrefab(dir, "good.blob", good);
+    const std::string corrupt = "not a prefab";
+    REQUIRE(mir::WriteBytes(dir.mPath / "bad.blob", mir::BuildAssetBlob(mir::kPrefabAssetTypeTag,
+        mir::kPrefabAssetContentVersion, std::as_bytes(std::span(corrupt)))));
+    const std::array<mir::AssetManifestSourceEntry, 2> entries{ CookedEntry(good, "good.blob"),
+        CookedEntry(bad, "bad.blob") };
+    const std::optional<mir::AssetManifest> manifest = WriteManifest(dir, entries);
+    REQUIRE(manifest.has_value());
+    mir::AssetCache cache(&*manifest, dir.mPath);
+
+    PrefabRegistry registry;
+    const std::vector<PrefabDiagnostic> diagnostics = registry.LoadCooked(*manifest, cache);
+    CHECK(HasErrors(diagnostics));
+    bool namesBadBlob = false;
+    for (const PrefabDiagnostic &diagnostic : diagnostics)
+        namesBadBlob = namesBadBlob || diagnostic.mPath.find("bad.blob") != std::string::npos;
+    CHECK(namesBadBlob);
+    REQUIRE(registry.Find(good.mId) != nullptr);
+    CHECK(registry.Find(bad.mId) == nullptr);
 }

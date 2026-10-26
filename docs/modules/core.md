@@ -464,7 +464,14 @@ layout changes.
 
 ## Changed
 
-*2026-10-25*, **Systems run by `SystemOrder` inside a phase.** Was: systems in
+*2026-10-25* — **`FieldDesc::Constrain` (#219).** Was: a field's enum names and
+clamp were read only by the Inspector's widgets. Now: `Constrain` applies them
+to a value about to be written, refusing an enum index with no name or a NaN and
+clamping a clamped `Float`; `script`'s `world:set` and `world:add` call it.
+Because: a script could write values the Inspector never lets through. `Write`
+stays unchecked, so scene load and other C++ writers are unchanged.
+
+*2026-10-25* — **Systems run by `SystemOrder` inside a phase.** Was: systems in
 one phase ran in registration order, and a few relied on it (the script resolver
 before `ScriptSystem`, the preview's propagate before its resolvers). Now:
 `AddSystem` takes a `SystemOrder` from 0 to 100 after the phase, and equal orders

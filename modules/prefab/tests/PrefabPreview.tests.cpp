@@ -141,7 +141,8 @@ namespace
 
             mDocument = Document();
             REQUIRE(mCoordinator->Registry().SetDocument(mDocument));
-            REQUIRE_FALSE(HasPrefabErrors(mCoordinator->Cache().Compile(mDocument)));
+            REQUIRE_FALSE(HasPrefabErrors(
+                mCoordinator->Cache().Compile(mDocument, mir::RegistryLookup(mCoordinator->Registry()))));
 
             const std::shared_ptr<const CompiledPrefab> prefab = mCoordinator->Cache().Find(mDocument.mId);
             REQUIRE(prefab != nullptr);

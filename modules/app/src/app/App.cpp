@@ -116,7 +116,7 @@ namespace mir
           mCore(Context(), mCommands),
           mAssets(CookedAssetsDir()),
           mScene(Context(), mProject.mSceneDir),
-          mPrefab(Context(), mScene, PrefabSourceDir(mProject)),
+          mPrefab(Context(), mScene, PrefabSourceDir(mProject), kHasEditor ? nullptr : &mAssets),
           mGameUI(Context()),
           mGameShell(Context(), mGameUI, mAssets,
               GameShellSettings{ .mUIDemo = mDesc.mUIDemo, .mQuitStopsPlay = mDesc.mEnableEditorLayout }),

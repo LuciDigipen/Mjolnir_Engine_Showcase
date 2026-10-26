@@ -7,6 +7,8 @@
  *
  */
 #include <prefab/CompiledPrefab.h>
+#include <prefab/PrefabInstantiate.h>
+#include <core/ecs/World.h>
 
 #include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/components/Transform.h>
@@ -16,8 +18,10 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace
@@ -36,6 +40,8 @@ namespace
     using mir::PrefabDiagnostic;
     using mir::PrefabDiagnosticSeverity;
     using mir::PrefabDocument;
+    using mir::PrefabDocumentLookup;
+    using mir::PrefabId;
     using mir::PrefabNode;
     using mir::PrefabNodeAddress;
     using mir::PrefabNodeId;
@@ -46,6 +52,23 @@ namespace
 
     const char *kUuidA = "11111111-2222-4333-8444-555555555555";
     const char *kUuidB = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+
+    PrefabDocumentLookup NoLookup()
+    {
+        return [](PrefabId) -> const PrefabDocument *
+        {
+            return nullptr;
+        };
+    }
+
+    PrefabDocumentLookup LookupOf(const std::map<PrefabId, PrefabDocument> &documents)
+    {
+        return [&documents](PrefabId id) -> const PrefabDocument *
+        {
+            const auto it = documents.find(id);
+            return it == documents.end() ? nullptr : &it->second;
+        };
+    }
 
     const ComponentOps &StatsOps()
     {
@@ -183,7 +206,7 @@ TEST_CASE("CompilePrefab decodes authored fields over registered defaults", "[pr
     StatsOps();
 
     const PrefabDocument doc = ParseDocument(CompileDocumentJson());
-    const PrefabCompileResult result = mir::CompilePrefab(doc);
+    const PrefabCompileResult result = mir::CompilePrefab(doc, NoLookup());
 
     REQUIRE(result.mPrefab != nullptr);
     CHECK_FALSE(mir::HasPrefabErrors(result.mDiagnostics));
@@ -242,7 +265,7 @@ TEST_CASE("CompilePrefab warns and skips what this build cannot use", "[prefab]"
     doc.mNodes[0].mComponents.push_back(PrefabComponentInstance{
         "PrefabCompileTestStats", json{ { "speed", 1.0 }, { "bogus", 3 } } });
 
-    const PrefabCompileResult result = mir::CompilePrefab(doc);
+    const PrefabCompileResult result = mir::CompilePrefab(doc, NoLookup());
 
     REQUIRE(result.mPrefab != nullptr);
     CHECK_FALSE(mir::HasPrefabErrors(result.mDiagnostics));
@@ -263,12 +286,12 @@ TEST_CASE("CompilePrefab rejects invalid templates", "[prefab]")
         PrefabDocument doc = mir::NewPrefabDocument();
         doc.mRootNode = 99;
 
-        const PrefabCompileResult result = mir::CompilePrefab(doc);
+        const PrefabCompileResult result = mir::CompilePrefab(doc, NoLookup());
 
         CHECK(result.mPrefab == nullptr);
         CHECK(mir::HasPrefabErrors(result.mDiagnostics));
     }
-    SECTION("nested prefab node")
+    SECTION("missing nested prefab document")
     {
         PrefabDocument doc = mir::NewPrefabDocument();
         PrefabNode nested;
@@ -279,12 +302,12 @@ TEST_CASE("CompilePrefab rejects invalid templates", "[prefab]")
         doc.mNodes.push_back(nested);
         doc.mNextNodeId = 3;
 
-        const PrefabCompileResult result = mir::CompilePrefab(doc);
+        const PrefabCompileResult result = mir::CompilePrefab(doc, NoLookup());
 
         CHECK(result.mPrefab == nullptr);
-        CHECK(HasErrorContaining(result.mDiagnostics, "nested prefab nodes are not supported yet"));
+        CHECK(HasErrorContaining(result.mDiagnostics, "not registered"));
     }
-    SECTION("multi-segment EntityRef address")
+    SECTION("multi-segment EntityRef address through an entity")
     {
         PrefabDocument doc = mir::NewPrefabDocument();
         PrefabNode child;
@@ -295,10 +318,10 @@ TEST_CASE("CompilePrefab rejects invalid templates", "[prefab]")
         doc.mNodes[0].mComponents.push_back(PrefabComponentInstance{
             "PrefabCompileTestStats", json{ { "target", json::array({ "1", "3" }) } } });
 
-        const PrefabCompileResult result = mir::CompilePrefab(doc);
+        const PrefabCompileResult result = mir::CompilePrefab(doc, NoLookup());
 
         CHECK(result.mPrefab == nullptr);
-        CHECK(HasErrorContaining(result.mDiagnostics, "nested"));
+        CHECK(HasErrorContaining(result.mDiagnostics, "not a nested reference"));
     }
     SECTION("undecodable authored field")
     {
@@ -306,7 +329,7 @@ TEST_CASE("CompilePrefab rejects invalid templates", "[prefab]")
         doc.mNodes[0].mComponents.push_back(PrefabComponentInstance{
             "PrefabCompileTestStats", json{ { "speed", "fast" } } });
 
-        const PrefabCompileResult result = mir::CompilePrefab(doc);
+        const PrefabCompileResult result = mir::CompilePrefab(doc, NoLookup());
 
         CHECK(result.mPrefab == nullptr);
         CHECK(HasErrorContaining(result.mDiagnostics, "node 1"));
@@ -325,7 +348,7 @@ TEST_CASE("CompiledPrefabCache keeps the last valid template and bumps revisions
         "Transform", json{ { "position", json::array({ 1.0, 2.0, 3.0 }) } } });
 
     CompiledPrefabCache cache;
-    CHECK_FALSE(mir::HasPrefabErrors(cache.Compile(doc)));
+    CHECK_FALSE(mir::HasPrefabErrors(cache.Compile(doc, NoLookup())));
 
     const std::shared_ptr<const CompiledPrefab> first = cache.Find(doc.mId);
     REQUIRE(first != nullptr);
@@ -333,7 +356,7 @@ TEST_CASE("CompiledPrefabCache keeps the last valid template and bumps revisions
     CHECK(ReadField<WorldVec3>(RootTransform(*first), "position") == WorldVec3(1.0, 2.0, 3.0));
 
     doc.mNodes[0].mComponents[0].mFields["position"] = json::array({ 4.0, 5.0, 6.0 });
-    CHECK_FALSE(mir::HasPrefabErrors(cache.Compile(doc)));
+    CHECK_FALSE(mir::HasPrefabErrors(cache.Compile(doc, NoLookup())));
 
     const std::shared_ptr<const CompiledPrefab> second = cache.Find(doc.mId);
     REQUIRE(second != nullptr);
@@ -343,10 +366,380 @@ TEST_CASE("CompiledPrefabCache keeps the last valid template and bumps revisions
     CHECK(ReadField<WorldVec3>(RootTransform(*first), "position") == WorldVec3(1.0, 2.0, 3.0));
 
     doc.mRootNode = 99;
-    CHECK(mir::HasPrefabErrors(cache.Compile(doc)));
+    CHECK(mir::HasPrefabErrors(cache.Compile(doc, NoLookup())));
     CHECK(cache.Find(doc.mId) == second);
     CHECK(cache.Find(doc.mId)->Revision() == 2);
 
     cache.Remove(doc.mId);
     CHECK(cache.Find(doc.mId) == nullptr);
+}
+
+namespace
+{
+    PrefabDocument InnerDocument()
+    {
+        json root;
+        root["formatVersion"] = 1;
+        root["prefabId"] = kUuidB;
+        root["nextNodeId"] = "3";
+        root["rootNode"] = "1";
+        root["nodes"] = json::array({
+            json{
+                { "id", "1" },
+                { "kind", "entity" },
+                { "components", json::array({
+                    json{ { "type", "PrefabCompileTestStats" }, { "fields", json{
+                        { "speed", 2.0 },
+                        { "target", json::array({ "2" }) },
+                    } } },
+                }) },
+            },
+            json{
+                { "id", "2" },
+                { "kind", "entity" },
+                { "parent", "1" },
+                { "components", json::array({
+                    json{ { "type", "PrefabCompileTestStats" }, { "fields", json{ { "speed", 3.0 } } } },
+                }) },
+            },
+        });
+        return ParseDocument(root);
+    }
+
+    PrefabDocument OuterDocument(PrefabId inner, const char *firstPatchTarget = "2")
+    {
+        json root;
+        root["formatVersion"] = 1;
+        root["prefabId"] = kUuidA;
+        root["nextNodeId"] = "4";
+        root["rootNode"] = "1";
+        root["nodes"] = json::array({
+            json{ { "id", "1" }, { "kind", "entity" } },
+            json{
+                { "id", "2" },
+                { "kind", "prefab" },
+                { "parent", "1" },
+                { "prefab", mir::ToString(inner) },
+                { "patches", json::array({
+                    json{
+                        { "target", json::array({ firstPatchTarget }) },
+                        { "fields", json::array({
+                            json{ { "component", "PrefabCompileTestStats" }, { "field", "speed" }, { "value", 5.0 } },
+                        }) },
+                    },
+                }) },
+            },
+            json{
+                { "id", "3" },
+                { "kind", "prefab" },
+                { "parent", "1" },
+                { "prefab", mir::ToString(inner) },
+                { "patches", json::array({
+                    json{
+                        { "target", json::array({ "2" }) },
+                        { "fields", json::array({
+                            json{ { "component", "PrefabCompileTestStats" }, { "field", "speed" }, { "value", 6.0 } },
+                        }) },
+                    },
+                }) },
+            },
+        });
+        return ParseDocument(root);
+    }
+
+    const CompiledPrefabNode &NodeAt(const CompiledPrefab &prefab, const PrefabNodeAddress &address)
+    {
+        for (const CompiledPrefabNode &node : prefab.Nodes())
+        {
+            if (node.mAddress == address)
+                return node;
+        }
+        FAIL("node missing");
+        return prefab.Nodes().front();
+    }
+}
+
+TEST_CASE("CompilePrefab expands repeated nested occurrences at their addresses", "[prefab]")
+{
+    mir::RegisterCoreComponents();
+    StatsOps();
+
+    const PrefabDocument inner = InnerDocument();
+    const PrefabDocument outer = OuterDocument(inner.mId);
+    const std::map<PrefabId, PrefabDocument> documents{ { inner.mId, inner }, { outer.mId, outer } };
+
+    const PrefabCompileResult result = mir::CompilePrefab(outer, LookupOf(documents));
+
+    REQUIRE(result.mPrefab != nullptr);
+    CHECK_FALSE(mir::HasPrefabErrors(result.mDiagnostics));
+    const CompiledPrefab &prefab = *result.mPrefab;
+    REQUIRE(prefab.Nodes().size() == 5);
+
+    const std::array<PrefabNodeAddress, 5> expected{
+        PrefabNodeAddress{ 1 },
+        PrefabNodeAddress{ 2, 1 },
+        PrefabNodeAddress{ 2, 2 },
+        PrefabNodeAddress{ 3, 1 },
+        PrefabNodeAddress{ 3, 2 },
+    };
+    for (std::size_t i = 0; i < expected.size(); ++i)
+        CHECK(prefab.Nodes()[i].mAddress == expected[i]);
+
+    CHECK_FALSE(prefab.Nodes()[0].mParent.has_value());
+    CHECK(prefab.Nodes()[1].mParent == 0);
+    CHECK(prefab.Nodes()[2].mParent == 1);
+    CHECK(prefab.Nodes()[3].mParent == 0);
+    CHECK(prefab.Nodes()[4].mParent == 3);
+
+    CHECK(ReadField<float>(ComponentNamed(NodeAt(prefab, PrefabNodeAddress{ 2, 1 }), "PrefabCompileTestStats"),
+        "speed") == 2.0f);
+    CHECK(ReadField<float>(ComponentNamed(NodeAt(prefab, PrefabNodeAddress{ 2, 2 }), "PrefabCompileTestStats"),
+        "speed") == 5.0f);
+    CHECK(ReadField<float>(ComponentNamed(NodeAt(prefab, PrefabNodeAddress{ 3, 2 }), "PrefabCompileTestStats"),
+        "speed") == 6.0f);
+
+    REQUIRE(prefab.Relocations().size() == 2);
+    CHECK(prefab.Relocations()[0].mNode == 1);
+    CHECK(prefab.Relocations()[0].mTargetNode == 2);
+    CHECK(prefab.Relocations()[1].mNode == 3);
+    CHECK(prefab.Relocations()[1].mTargetNode == 4);
+
+    REQUIRE(prefab.Dependencies().size() == 1);
+    CHECK(prefab.Dependencies()[0] == inner.mId);
+}
+
+TEST_CASE("A stale nested patch warns and is skipped", "[prefab]")
+{
+    mir::RegisterCoreComponents();
+    StatsOps();
+
+    const PrefabDocument inner = InnerDocument();
+    const PrefabDocument outer = OuterDocument(inner.mId, "9");
+    const std::map<PrefabId, PrefabDocument> documents{ { inner.mId, inner }, { outer.mId, outer } };
+
+    const PrefabCompileResult result = mir::CompilePrefab(outer, LookupOf(documents));
+
+    REQUIRE(result.mPrefab != nullptr);
+    CHECK(HasWarningContaining(result.mDiagnostics, "stale"));
+    CHECK(ReadField<float>(ComponentNamed(NodeAt(*result.mPrefab, PrefabNodeAddress{ 2, 2 }),
+        "PrefabCompileTestStats"), "speed") == 3.0f);
+}
+
+TEST_CASE("Nested compilation rejects cycles, missing documents and excessive expansion", "[prefab]")
+{
+    mir::RegisterCoreComponents();
+    StatsOps();
+
+    SECTION("indirect cycle")
+    {
+        PrefabDocument first = mir::NewPrefabDocument();
+        PrefabDocument second = mir::NewPrefabDocument();
+
+        PrefabNode firstNested;
+        firstNested.mId = 2;
+        firstNested.mKind = PrefabNodeKind::Prefab;
+        firstNested.mParent = 1;
+        firstNested.mPrefab = second.mId;
+        first.mNodes.push_back(firstNested);
+        first.mNextNodeId = 3;
+
+        PrefabNode secondNested;
+        secondNested.mId = 2;
+        secondNested.mKind = PrefabNodeKind::Prefab;
+        secondNested.mParent = 1;
+        secondNested.mPrefab = first.mId;
+        second.mNodes.push_back(secondNested);
+        second.mNextNodeId = 3;
+
+        const std::map<PrefabId, PrefabDocument> documents{ { first.mId, first }, { second.mId, second } };
+        const PrefabCompileResult result = mir::CompilePrefab(first, LookupOf(documents));
+
+        CHECK(result.mPrefab == nullptr);
+        CHECK(HasErrorContaining(result.mDiagnostics, "is a cycle"));
+    }
+    SECTION("nesting depth limit")
+    {
+        std::vector<PrefabDocument> chain;
+        std::vector<PrefabId> ids;
+        for (std::size_t i = 0; i < mir::kMaxPrefabNestingDepth + 2; ++i)
+        {
+            chain.push_back(mir::NewPrefabDocument());
+            ids.push_back(chain.back().mId);
+        }
+        for (std::size_t i = 0; i <= mir::kMaxPrefabNestingDepth; ++i)
+        {
+            PrefabNode nested;
+            nested.mId = 2;
+            nested.mKind = PrefabNodeKind::Prefab;
+            nested.mParent = 1;
+            nested.mPrefab = ids[i + 1];
+            chain[i].mNodes.push_back(nested);
+            chain[i].mNextNodeId = 3;
+        }
+
+        std::map<PrefabId, PrefabDocument> documents;
+        for (const PrefabDocument &document : chain)
+            documents.emplace(document.mId, document);
+
+        const PrefabCompileResult result = mir::CompilePrefab(chain.front(), LookupOf(documents));
+
+        CHECK(result.mPrefab == nullptr);
+        CHECK(HasErrorContaining(result.mDiagnostics, "depth limit"));
+    }
+    SECTION("node limit")
+    {
+        const PrefabDocument inner = mir::NewPrefabDocument();
+        PrefabDocument outer = mir::NewPrefabDocument();
+        for (std::size_t i = 0; i < mir::kMaxCompiledPrefabNodes; ++i)
+        {
+            PrefabNode nested;
+            nested.mId = i + 2;
+            nested.mKind = PrefabNodeKind::Prefab;
+            nested.mParent = 1;
+            nested.mPrefab = inner.mId;
+            outer.mNodes.push_back(nested);
+        }
+        outer.mNextNodeId = mir::kMaxCompiledPrefabNodes + 2;
+
+        const std::map<PrefabId, PrefabDocument> documents{ { inner.mId, inner }, { outer.mId, outer } };
+        const PrefabCompileResult result = mir::CompilePrefab(outer, LookupOf(documents));
+
+        CHECK(result.mPrefab == nullptr);
+        CHECK(HasErrorContaining(result.mDiagnostics, "node limit"));
+    }
+    SECTION("cache keeps the last valid template")
+    {
+        const PrefabDocument inner = InnerDocument();
+        const PrefabDocument outer = OuterDocument(inner.mId);
+        const std::map<PrefabId, PrefabDocument> documents{ { inner.mId, inner }, { outer.mId, outer } };
+
+        CompiledPrefabCache cache;
+        REQUIRE_FALSE(mir::HasPrefabErrors(cache.Compile(outer, LookupOf(documents))));
+        const std::shared_ptr<const CompiledPrefab> valid = cache.Find(outer.mId);
+        REQUIRE(valid != nullptr);
+
+        CHECK(mir::HasPrefabErrors(cache.Compile(outer, NoLookup())));
+        CHECK(cache.Find(outer.mId) == valid);
+        CHECK(cache.Find(outer.mId)->Revision() == valid->Revision());
+    }
+}
+
+TEST_CASE("Nested component replacement retains its new references", "[prefab][review307]")
+{
+    const ComponentOps &ops = StatsOps();
+    const PrefabDocument inner = InnerDocument();
+    PrefabDocument outer = OuterDocument(inner.mId);
+    json fields = { { "target", json::array({ "2", "1" }) }, { "speed", 8.0 } };
+    bool hasTarget = true;
+    SECTION("a new reference replaces the inherited reference") {}
+    SECTION("an omitted reference resets to null")
+    {
+        fields.erase("target");
+        hasTarget = false;
+    }
+    SECTION("an explicit null resets the inherited reference")
+    {
+        fields["target"] = nullptr;
+        hasTarget = false;
+    }
+    mir::PrefabPatch patch;
+    patch.mTarget = { 1 };
+    patch.mAddedComponents.push_back({ "PrefabCompileTestStats", fields });
+    outer.mNodes[1].mPatches = { patch };
+    const std::map<PrefabId, PrefabDocument> documents{ { inner.mId, inner } };
+    const PrefabCompileResult compiled = mir::CompilePrefab(outer, LookupOf(documents));
+    REQUIRE(compiled.mPrefab != nullptr);
+    CHECK(compiled.mDiagnostics.empty());
+    mir::World world;
+    const auto instance = mir::InstantiatePrefab(world, *compiled.mPrefab);
+    const Entity owner = instance.mEntities.at(PrefabNodeAddress{ 2, 1 });
+    Entity target = mir::kNullEntity;
+    REQUIRE(ops.GetComponent(world, owner) != nullptr);
+    ops.FindField("target")->Read(ops.GetComponent(world, owner), &target);
+    CHECK(target == (hasTarget ? owner : mir::kNullEntity));
+    float speed = 0.0f;
+    ops.FindField("speed")->Read(ops.GetComponent(world, owner), &speed);
+    CHECK(speed == 8.0f);
+    const Entity other = instance.mEntities.at(PrefabNodeAddress{ 3, 1 });
+    ops.FindField("target")->Read(ops.GetComponent(world, other), &target);
+    CHECK(target == instance.mEntities.at(PrefabNodeAddress{ 3, 2 }));
+}
+
+TEST_CASE("Skipped nested reference overrides preserve inherited targets", "[prefab][review307]")
+{
+    const ComponentOps &ops = StatsOps();
+    const PrefabDocument inner = InnerDocument();
+    PrefabDocument outer = OuterDocument(inner.mId);
+    json value = json::array({ "2", "99" });
+    PrefabNodeAddress expected{ 2, 2 };
+    bool warning = true;
+    bool wrap = false;
+    bool topOverride = false;
+    bool valid = true;
+    SECTION("a missing target preserves the inherited reference") {}
+    SECTION("a malformed address is rejected by validation") { value = 123; valid = false; }
+    SECTION("a valid forward reference replaces the inherited reference")
+    {
+        value = json::array({ "3", "1" });
+        expected = { 3, 1 };
+        warning = false;
+    }
+    SECTION("explicit null clears the inherited reference")
+    {
+        value = nullptr;
+        expected.clear();
+        warning = false;
+    }
+    SECTION("a skipped reference stays inherited through another nesting layer") { wrap = true; }
+    SECTION("a stale outer override preserves the intermediate override")
+    {
+        wrap = true;
+        topOverride = true;
+        value = json::array({ "3", "1" });
+        expected = { 3, 1 };
+    }
+    mir::PrefabPatch patch;
+    patch.mTarget = { 1 };
+    patch.mFields.push_back({ "PrefabCompileTestStats", "target", value });
+    outer.mNodes[1].mPatches = { patch };
+    std::map<PrefabId, PrefabDocument> documents{ { inner.mId, inner }, { outer.mId, outer } };
+    PrefabDocument source = outer;
+    PrefabNodeAddress ownerAddress{ 2, 1 };
+    if (wrap)
+    {
+        source = mir::NewPrefabDocument();
+        PrefabNode occurrence;
+        occurrence.mId = 2;
+        occurrence.mParent = source.mRootNode;
+        occurrence.mKind = PrefabNodeKind::Prefab;
+        occurrence.mPrefab = outer.mId;
+        if (topOverride)
+        {
+            mir::PrefabPatch stale;
+            stale.mTarget = { 2, 1 };
+            stale.mFields.push_back({ "PrefabCompileTestStats", "target", json::array({ "2", "99" }) });
+            occurrence.mPatches.push_back(stale);
+        }
+        source.mNodes.push_back(occurrence);
+        source.mNextNodeId = 3;
+        ownerAddress.insert(ownerAddress.begin(), 2);
+        expected.insert(expected.begin(), 2);
+    }
+    const PrefabCompileResult compiled = mir::CompilePrefab(source, LookupOf(documents));
+    if (!valid)
+    {
+        CHECK(compiled.mPrefab == nullptr);
+        CHECK(mir::HasPrefabErrors(compiled.mDiagnostics));
+        return;
+    }
+    REQUIRE(compiled.mPrefab != nullptr);
+    CHECK_FALSE(mir::HasPrefabErrors(compiled.mDiagnostics));
+    CHECK(HasWarningContaining(compiled.mDiagnostics, "skipped") == warning);
+    mir::World world;
+    const auto instance = mir::InstantiatePrefab(world, *compiled.mPrefab);
+    const Entity owner = instance.mEntities.at(ownerAddress);
+    Entity target = mir::kNullEntity;
+    REQUIRE(ops.GetComponent(world, owner) != nullptr);
+    ops.FindField("target")->Read(ops.GetComponent(world, owner), &target);
+    CHECK(target == (expected.empty() ? mir::kNullEntity : instance.mEntities.at(expected)));
 }

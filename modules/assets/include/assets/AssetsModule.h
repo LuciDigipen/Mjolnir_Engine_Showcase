@@ -29,6 +29,7 @@ namespace mir
 
         // Never null, and the same object across a reload, so holders keep their pointer
         AssetCache &Cache() { return *mCache; }
+        const AssetManifest &Manifest() const { return *mManifest; }
 
         // false when startup found no manifest
         bool HadManifest() const { return mHadManifest; }

@@ -28,6 +28,8 @@ namespace mir
 
     inline constexpr std::string_view kCameraModeNames[] = { "Follow", "FreeFly" };
 
+    inline constexpr float kFreeFlyMaxPitchDegrees = 89.0f;
+
     struct CameraController
     {
         CameraMode mMode = CameraMode::Follow;
@@ -75,5 +77,10 @@ namespace mir
          .mOffset = offsetof(CameraController, mLookSensitivity), .mClamped = true, .mMin = 0.0f, .mMax = FLT_MAX},
         {.mName = "stickLookRate", .mKind = FieldKind::Float, .mOffset = offsetof(CameraController, mStickLookRate),
          .mClamped = true, .mMin = 0.0f, .mMax = FLT_MAX},
+        // free-fly look state, for scripts; switching into FreeFly re-seeds both from the Transform
+        {.mName = "yawDegrees", .mKind = FieldKind::Float, .mOffset = offsetof(CameraController, mYawDegrees),
+         .mHidden = true},
+        {.mName = "pitchDegrees", .mKind = FieldKind::Float, .mOffset = offsetof(CameraController, mPitchDegrees),
+         .mClamped = true, .mMin = -kFreeFlyMaxPitchDegrees, .mMax = kFreeFlyMaxPitchDegrees, .mHidden = true},
     };
 }

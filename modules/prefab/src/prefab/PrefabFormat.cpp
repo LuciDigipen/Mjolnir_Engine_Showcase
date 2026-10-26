@@ -241,9 +241,8 @@ namespace mir
             return patch;
         }
 
-        std::optional<PrefabNode> ReadNode(const json &blob, const Reader &reader, std::size_t index)
+        std::optional<PrefabNode> ReadNode(const json &blob, const Reader &reader, const std::string &context)
         {
-            const std::string context = "nodes[" + std::to_string(index) + "]";
             if (!blob.is_object())
             {
                 reader.Error(context + " must be an object");
@@ -520,6 +519,39 @@ namespace mir
         return false;
     }
 
+    std::optional<PrefabNode> ParsePrefabNode(const json &blob, std::vector<PrefabDiagnostic> &diagnostics,
+        std::string_view path, std::string_view context)
+    {
+        const Reader reader{ diagnostics, path };
+        return ReadNode(blob, reader, std::string(context));
+    }
+
+    nlohmann::json PrefabNodeToJson(const PrefabDocument &doc, const PrefabNode &node)
+    {
+        json out;
+        out["id"] = std::to_string(node.mId);
+        out["kind"] = node.mKind == PrefabNodeKind::Entity ? "entity" : "prefab";
+        if (node.mId != doc.mRootNode)
+            out["parent"] = std::to_string(node.mParent);
+
+        if (node.mKind == PrefabNodeKind::Entity)
+        {
+            json components = json::array();
+            for (const PrefabComponentInstance &component : node.mComponents)
+                components.push_back(ComponentToJson(component));
+            out["components"] = std::move(components);
+        }
+        else
+        {
+            out["prefab"] = ToString(node.mPrefab);
+            json patches = json::array();
+            for (const PrefabPatch &patch : node.mPatches)
+                patches.push_back(PatchToJson(patch));
+            out["patches"] = std::move(patches);
+        }
+        return out;
+    }
+
     PrefabParseResult ParsePrefab(const json &root, std::string_view path)
     {
         PrefabParseResult result;
@@ -628,7 +660,8 @@ namespace mir
         {
             for (std::size_t i = 0; i < nodes->size(); ++i)
             {
-                std::optional<PrefabNode> node = ReadNode((*nodes)[i], reader, i);
+                std::optional<PrefabNode> node = ParsePrefabNode((*nodes)[i], result.mDiagnostics, path,
+                    "nodes[" + std::to_string(i) + "]");
                 decodeOk = decodeOk && node.has_value();
                 if (node.has_value())
                     doc.mNodes.push_back(std::move(*node));
@@ -806,30 +839,7 @@ namespace mir
 
         json nodes = json::array();
         for (const PrefabNode &node : doc.mNodes)
-        {
-            json out;
-            out["id"] = std::to_string(node.mId);
-            out["kind"] = node.mKind == PrefabNodeKind::Entity ? "entity" : "prefab";
-            if (node.mId != doc.mRootNode)
-                out["parent"] = std::to_string(node.mParent);
-
-            if (node.mKind == PrefabNodeKind::Entity)
-            {
-                json components = json::array();
-                for (const PrefabComponentInstance &component : node.mComponents)
-                    components.push_back(ComponentToJson(component));
-                out["components"] = std::move(components);
-            }
-            else
-            {
-                out["prefab"] = ToString(node.mPrefab);
-                json patches = json::array();
-                for (const PrefabPatch &patch : node.mPatches)
-                    patches.push_back(PatchToJson(patch));
-                out["patches"] = std::move(patches);
-            }
-            nodes.push_back(std::move(out));
-        }
+            nodes.push_back(PrefabNodeToJson(doc, node));
         root["nodes"] = std::move(nodes);
         return root;
     }

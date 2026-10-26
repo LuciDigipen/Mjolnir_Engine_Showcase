@@ -15,14 +15,16 @@
 
 namespace mir
 {
+    class AssetsModule;
     class PrefabCoordinator;
     class SceneModule;
 
     class PrefabModule
     {
     public:
-        // scans sourceDir for prefab documents when it exists
-        PrefabModule(ModuleContext context, SceneModule &scene, const std::filesystem::path &sourceDir);
+        // Loads cooked assets when supplied; otherwise scans sourceDir when it exists.
+        PrefabModule(ModuleContext context, SceneModule &scene, const std::filesystem::path &sourceDir,
+            AssetsModule *cookedAssets = nullptr);
 
         PrefabModule(const PrefabModule &) = delete;
         PrefabModule &operator=(const PrefabModule &) = delete;

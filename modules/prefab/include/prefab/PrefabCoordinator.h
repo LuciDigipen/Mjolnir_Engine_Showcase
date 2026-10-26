@@ -23,6 +23,8 @@
 
 namespace mir
 {
+    class AssetCache;
+    class AssetManifest;
     class World;
 
     // Owns the prefab registry and compiled cache, and remembers the template
@@ -45,6 +47,9 @@ namespace mir
 
         // Rebuilds the disk table and logs what Scan found.
         void ScanSources(const std::filesystem::path &prefabsDir);
+
+        // Rebuilds the disk table from cooked prefab assets; logs what it found.
+        void LoadCooked(const AssetManifest &manifest, AssetCache &cache);
 
         // Applies the same scan and queues every changed source for the next
         // Commit. While frozen the scan waits for the next unfrozen Commit.
@@ -113,6 +118,8 @@ namespace mir
         void CommitScene(World &world, LoadedScene &scene, PublishedTable &published, bool mainScene);
         bool SceneHasPendingWork(const LoadedScene *scene, const PublishedTable &published) const;
         void ApplyRescan(const std::filesystem::path &prefabsDir);
+        void AddPendingDocument(PrefabId id);
+        std::vector<PrefabId> PendingInDependencyOrder() const;
 
         PrefabRegistry mRegistry;
         CompiledPrefabCache mCache;

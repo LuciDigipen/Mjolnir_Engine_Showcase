@@ -59,8 +59,7 @@ namespace mir
             char asString[kFieldStringCapacity];
 
             FieldScratch() : asMat4()
-            {
-            }
+            {}
         };
 
         sol::object FieldToLua(sol::state_view lua, const FieldDesc &field, const void *component)
@@ -68,213 +67,213 @@ namespace mir
             switch (field.mKind)
             {
             case FieldKind::Bool:
-            {
-                bool value = false;
-                field.Read(component, &value);
-                return sol::make_object(lua, value);
-            }
+                {
+                    bool value = false;
+                    field.Read(component, &value);
+                    return sol::make_object(lua, value);
+                }
             case FieldKind::Int:
-            {
-                int32_t value = 0;
-                field.Read(component, &value);
-                return sol::make_object(lua, value);
-            }
+                {
+                    int32_t value = 0;
+                    field.Read(component, &value);
+                    return sol::make_object(lua, value);
+                }
             case FieldKind::Float:
-            {
-                float value = 0.0f;
-                field.Read(component, &value);
-                return sol::make_object(lua, value);
-            }
+                {
+                    float value = 0.0f;
+                    field.Read(component, &value);
+                    return sol::make_object(lua, value);
+                }
             case FieldKind::Vec3:
-            {
-                glm::vec3 value{};
-                field.Read(component, &value);
-                sol::table out = lua.create_table();
-                out["x"] = value.x;
-                out["y"] = value.y;
-                out["z"] = value.z;
-                return out;
-            }
+                {
+                    glm::vec3 value{};
+                    field.Read(component, &value);
+                    sol::table out = lua.create_table();
+                    out["x"] = value.x;
+                    out["y"] = value.y;
+                    out["z"] = value.z;
+                    return out;
+                }
             case FieldKind::WorldPosition:
-            {
-                WorldVec3 value{};
-                field.Read(component, &value);
-                return WorldVec3ToLua(lua, value);
-            }
+                {
+                    WorldVec3 value{};
+                    field.Read(component, &value);
+                    return WorldVec3ToLua(lua, value);
+                }
             case FieldKind::Vec4:
-            {
-                glm::vec4 value{};
-                field.Read(component, &value);
-                sol::table out = lua.create_table();
-                out["x"] = value.x;
-                out["y"] = value.y;
-                out["z"] = value.z;
-                out["w"] = value.w;
-                return out;
-            }
+                {
+                    glm::vec4 value{};
+                    field.Read(component, &value);
+                    sol::table out = lua.create_table();
+                    out["x"] = value.x;
+                    out["y"] = value.y;
+                    out["z"] = value.z;
+                    out["w"] = value.w;
+                    return out;
+                }
             case FieldKind::Quat:
-            {
-                glm::quat value{};
-                field.Read(component, &value);
-                sol::table out = lua.create_table();
-                out["x"] = value.x;
-                out["y"] = value.y;
-                out["z"] = value.z;
-                out["w"] = value.w;
-                return out;
-            }
+                {
+                    glm::quat value{};
+                    field.Read(component, &value);
+                    sol::table out = lua.create_table();
+                    out["x"] = value.x;
+                    out["y"] = value.y;
+                    out["z"] = value.z;
+                    out["w"] = value.w;
+                    return out;
+                }
             case FieldKind::Mat4:
-            {
-                glm::mat4 value{};
-                field.Read(component, &value);
-                sol::table out = lua.create_table();
-                const float *m = glm::value_ptr(value);
-                for (int i = 0; i < 16; ++i)
-                    out[i + 1] = m[i];
-                return out;
-            }
+                {
+                    glm::mat4 value{};
+                    field.Read(component, &value);
+                    sol::table out = lua.create_table();
+                    const float *m = glm::value_ptr(value);
+                    for (int i = 0; i < 16; ++i)
+                        out[i + 1] = m[i];
+                    return out;
+                }
             case FieldKind::EntityRef:
-            {
-                Entity value{};
-                field.Read(component, &value);
-                return sol::make_object(lua, value);
-            }
+                {
+                    Entity value{};
+                    field.Read(component, &value);
+                    return sol::make_object(lua, value);
+                }
             case FieldKind::Handle:
-            {
-                RawHandle value{};
-                field.Read(component, &value);
-                sol::table out = lua.create_table();
-                out["index"] = value.index;
-                out["generation"] = value.generation;
-                return out;
-            }
+                {
+                    RawHandle value{};
+                    field.Read(component, &value);
+                    sol::table out = lua.create_table();
+                    out["index"] = value.index;
+                    out["generation"] = value.generation;
+                    return out;
+                }
             case FieldKind::String:
-            {
-                char buffer[kFieldStringCapacity];
-                field.Read(component, buffer);
-                return sol::make_object(lua, std::string(buffer));
-            }
+                {
+                    char buffer[kFieldStringCapacity];
+                    field.Read(component, buffer);
+                    return sol::make_object(lua, std::string(buffer));
+                }
             }
             return sol::nil;
         }
 
         // `problem` gets the reason when the value cannot be the field's, for the one error the caller logs.
         bool LuaValueToField(const FieldDesc &field, const sol::object &value, FieldScratch &scratch,
-                             std::string *problem = nullptr)
+            std::string *problem = nullptr)
         {
             const auto refuse = [&](std::string why)
-            {
-                if (problem != nullptr)
-                    *problem = std::move(why);
-                return false;
-            };
+                {
+                    if (problem != nullptr)
+                        *problem = std::move(why);
+                    return false;
+                };
 
             switch (field.mKind)
             {
             case FieldKind::Bool:
-            {
-                if (!value.is<bool>())
-                    return false;
-                scratch.asBool = value.as<bool>();
-                return true;
-            }
+                {
+                    if (!value.is<bool>())
+                        return false;
+                    scratch.asBool = value.as<bool>();
+                    return true;
+                }
             case FieldKind::Int:
-            {
-                if (value.get_type() != sol::type::number)
-                    return false;
-                const double number = value.as<double>();
-                if (!(number >= -2147483648.0 && number <= 2147483647.0))
-                    return refuse("the number is NaN, infinite or outside the range of an integer");
-                // a choice from a list is one of its entries
-                if (field.mWidget == FieldWidget::Enum
-                    && (std::floor(number) != number || number < 0.0 || number >= static_cast<double>(field.mEnumNames.size())))
-                    return refuse("it must be a whole number from 0 to " + std::to_string(field.mEnumNames.size() - 1));
-                scratch.asInt = static_cast<int32_t>(number);
-                return true;
-            }
+                {
+                    if (value.get_type() != sol::type::number)
+                        return false;
+                    const double number = value.as<double>();
+                    if (!(number >= -2147483648.0 && number <= 2147483647.0))
+                        return refuse("the number is NaN, infinite or outside the range of an integer");
+                    // a choice from a list is one of its entries
+                    if (field.mWidget == FieldWidget::Enum
+                        && (std::floor(number) != number || number < 0.0 || number >= static_cast<double>(field.mEnumNames.size())))
+                        return refuse("it must be a whole number from 0 to " + std::to_string(field.mEnumNames.size() - 1));
+                    scratch.asInt = static_cast<int32_t>(number);
+                    return true;
+                }
             case FieldKind::Float:
-            {
-                if (value.get_type() != sol::type::number)
-                    return false;
-                const double number = value.as<double>();
-                if (std::isnan(number) || std::isinf(number) || !std::isfinite(static_cast<float>(number)))
-                    return refuse("the number is NaN, infinite or too large");
-                // the range the field declares, which the Inspector keeps to as well
-                if (field.mClamped && (number < field.mMin || number > field.mMax))
-                    return refuse("it must be between " + std::to_string(field.mMin) + " and " + std::to_string(field.mMax));
-                scratch.asFloat = static_cast<float>(number);
-                return true;
-            }
+                {
+                    if (value.get_type() != sol::type::number)
+                        return false;
+                    const double number = value.as<double>();
+                    if (std::isnan(number) || std::isinf(number) || !std::isfinite(static_cast<float>(number)))
+                        return refuse("the number is NaN, infinite or too large");
+                    // the range the field declares, which the Inspector keeps to as well
+                    if (field.mClamped && (number < field.mMin || number > field.mMax))
+                        return refuse("it must be between " + std::to_string(field.mMin) + " and " + std::to_string(field.mMax));
+                    scratch.asFloat = static_cast<float>(number);
+                    return true;
+                }
             case FieldKind::Vec3:
-            {
-                double c[3]{};
-                if (const std::string why = VectorProblem(value, "value", kVec3Keys, c); !why.empty())
-                    return refuse(why);
-                scratch.asVec3 = glm::vec3(static_cast<float>(c[0]), static_cast<float>(c[1]), static_cast<float>(c[2]));
-                return true;
-            }
+                {
+                    double c[3]{};
+                    if (const std::string why = VectorProblem(value, "value", kVec3Keys, c); !why.empty())
+                        return refuse(why);
+                    scratch.asVec3 = glm::vec3(static_cast<float>(c[0]), static_cast<float>(c[1]), static_cast<float>(c[2]));
+                    return true;
+                }
             case FieldKind::WorldPosition:
-            {
-                // Pre-examine valid or not cuz Transform is silent about invalid conversion
-                const std::optional<WorldVec3> position = WorldVec3FromLua(value);
-                if (!position)
-                    return false;
-                scratch.asWorldPosition = *position;
-                return true;
-            }
+                {
+                    // Pre-examine valid or not cuz Transform is silent about invalid conversion
+                    const std::optional<WorldVec3> position = WorldVec3FromLua(value);
+                    if (!position)
+                        return false;
+                    scratch.asWorldPosition = *position;
+                    return true;
+                }
             case FieldKind::Vec4:
-            {
-                double c[4]{};
-                if (const std::string why = VectorProblem(value, "value", kQuatKeys, c); !why.empty())
-                    return refuse(why);
-                scratch.asVec4 = glm::vec4(static_cast<float>(c[0]), static_cast<float>(c[1]), static_cast<float>(c[2]),
-                                           static_cast<float>(c[3]));
-                return true;
-            }
+                {
+                    double c[4]{};
+                    if (const std::string why = VectorProblem(value, "value", kQuatKeys, c); !why.empty())
+                        return refuse(why);
+                    scratch.asVec4 = glm::vec4(static_cast<float>(c[0]), static_cast<float>(c[1]), static_cast<float>(c[2]),
+                        static_cast<float>(c[3]));
+                    return true;
+                }
             case FieldKind::Quat:
-            {
-                double c[4]{};
-                if (const std::string why = QuatProblem(value, "value", c); !why.empty())
-                    return refuse(why);
-                scratch.asQuat = glm::quat(static_cast<float>(c[3]), static_cast<float>(c[0]), static_cast<float>(c[1]),
-                                           static_cast<float>(c[2]));
-                return true;
-            }
+                {
+                    double c[4]{};
+                    if (const std::string why = QuatProblem(value, "value", c); !why.empty())
+                        return refuse(why);
+                    scratch.asQuat = glm::quat(static_cast<float>(c[3]), static_cast<float>(c[0]), static_cast<float>(c[1]),
+                        static_cast<float>(c[2]));
+                    return true;
+                }
             case FieldKind::Mat4:
-            {
-                if (!value.is<sol::table>())
-                    return false;
-                const sol::table t = value.as<sol::table>();
-                float *m = glm::value_ptr(scratch.asMat4);
-                for (int i = 0; i < 16; ++i)
-                    m[i] = t.get_or(i + 1, 0.0f);
-                return true;
-            }
+                {
+                    if (!value.is<sol::table>())
+                        return false;
+                    const sol::table t = value.as<sol::table>();
+                    float *m = glm::value_ptr(scratch.asMat4);
+                    for (int i = 0; i < 16; ++i)
+                        m[i] = t.get_or(i + 1, 0.0f);
+                    return true;
+                }
             case FieldKind::EntityRef:
-            {
-                if (!value.is<Entity>())
-                    return false;
-                scratch.asEntity = value.as<Entity>();
-                return true;
-            }
+                {
+                    if (!value.is<Entity>())
+                        return false;
+                    scratch.asEntity = value.as<Entity>();
+                    return true;
+                }
             case FieldKind::Handle:
-            {
-                if (!value.is<sol::table>())
-                    return false;
-                const sol::table t = value.as<sol::table>();
-                scratch.asHandle = RawHandle{t.get_or("index", 0u), t.get_or("generation", 0u)};
-                return true;
-            }
+                {
+                    if (!value.is<sol::table>())
+                        return false;
+                    const sol::table t = value.as<sol::table>();
+                    scratch.asHandle = RawHandle{ t.get_or("index", 0u), t.get_or("generation", 0u) };
+                    return true;
+                }
             case FieldKind::String:
-            {
-                if (!value.is<std::string>())
-                    return false;
-                const std::string s = value.as<std::string>();
-                const std::size_t n = std::min(s.size(), sizeof(scratch.asString) - 1);
-                std::memcpy(scratch.asString, s.data(), n);
-                scratch.asString[n] = '\0';
-                return true;
-            }
+                {
+                    if (!value.is<std::string>())
+                        return false;
+                    const std::string s = value.as<std::string>();
+                    const std::size_t n = std::min(s.size(), sizeof(scratch.asString) - 1);
+                    std::memcpy(scratch.asString, s.data(), n);
+                    scratch.asString[n] = '\0';
+                    return true;
+                }
             }
             return false;
         }
@@ -349,7 +348,7 @@ namespace mir
         }
 
         bool WorldSet(World &world, Entity entity, std::string_view componentName, std::string_view fieldName,
-                      const sol::object &value)
+            const sol::object &value)
         {
             const ComponentOps *ops = ComponentRegistry::Instance().Find(componentName);
             if (ops == nullptr)
@@ -374,8 +373,22 @@ namespace mir
             if (!LuaValueToField(*field, value, scratch, &problem))
             {
                 MIR_LOG_ERROR("script: world:set '{}.{}' - value is the wrong shape or non-finite for a {}{}",
-                              componentName, fieldName, FieldKindName(field->mKind),
-                              problem.empty() ? std::string() : ": " + problem);
+                    componentName, fieldName, FieldKindName(field->mKind),
+                    problem.empty() ? std::string() : ": " + problem);
+                return false;
+            }
+
+            if (!field->Constrain(&scratch))
+            {
+                MIR_LOG_ERROR("script: world:set '{}.{}' - value is outside the field's range", componentName,
+                    fieldName);
+                return false;
+            }
+
+            if (!field->Constrain(&scratch))
+            {
+                MIR_LOG_ERROR("script: world:set '{}.{}' - value is outside the field's range", componentName,
+                    fieldName);
                 return false;
             }
 
@@ -429,7 +442,7 @@ namespace mir
         }
 
         bool WorldAdd(World &world, Entity entity, std::string_view componentName,
-                      sol::optional<sol::table> maybeFields)
+            sol::optional<sol::table> maybeFields)
         {
             const ComponentOps *ops = ComponentRegistry::Instance().Find(componentName);
             if (ops == nullptr)
@@ -452,7 +465,13 @@ namespace mir
                     if (!LuaValueToField(field, value, scratch))
                     {
                         MIR_LOG_ERROR("script: world:add '{}.{}' - value is the wrong shape or non-finite for a {}",
-                                      componentName, field.mName, FieldKindName(field.mKind));
+                            componentName, field.mName, FieldKindName(field.mKind));
+                        continue;
+                    }
+                    if (!field.Constrain(&scratch))
+                    {
+                        MIR_LOG_ERROR("script: world:add '{}.{}' - value is outside the field's range", componentName,
+                            field.mName);
                         continue;
                     }
                     field.Write(buffer.data(), &scratch);
@@ -585,7 +604,7 @@ namespace mir
                 if (name.empty() || !kind)
                 {
                     MIR_LOG_ERROR("script: world:declare '{}' - bad field entry (name='{}', kind='{}')",
-                                  componentName, name, kindStr);
+                        componentName, name, kindStr);
                     return false;
                 }
                 for (const std::string &seen : nameStorage)
@@ -598,7 +617,7 @@ namespace mir
                 }
 
                 nameStorage.push_back(name);
-                decls.push_back(RuntimeFieldDecl{std::string_view(nameStorage.back()), *kind});
+                decls.push_back(RuntimeFieldDecl{ std::string_view(nameStorage.back()), *kind });
             }
 
             if (const ComponentOps *existing = ComponentRegistry::Instance().Find(componentName))
@@ -612,14 +631,16 @@ namespace mir
                 const bool sameLayout =
                     existing->mFields.size() == decls.size() &&
                     std::equal(existing->mFields.begin(), existing->mFields.end(), decls.begin(),
-                               [](const FieldDesc &a, const RuntimeFieldDecl &b)
-                               { return a.mName == b.mName && a.mKind == b.mKind; });
+                        [](const FieldDesc &a, const RuntimeFieldDecl &b)
+                        {
+                            return a.mName == b.mName && a.mKind == b.mKind;
+                        });
 
                 if (!sameLayout)
                 {
                     MIR_LOG_ERROR("script: world:declare '{}' - already declared with a different field list; "
-                                  "restart to change a component's fields",
-                                  componentName);
+                        "restart to change a component's fields",
+                        componentName);
                     return false;
                 }
                 // Identical layout: RegisterRuntime's hot-reload path below is a no-op.
@@ -633,16 +654,16 @@ namespace mir
     void RegisterWorldBindings(sol::state &lua)
     {
         lua.new_usertype<World>("World",
-                                "has", &WorldHas,
-                                "get", &WorldGet,
-                                "set", &WorldSet,
-                                "world_position", &WorldWorldPosition,
-                                "world_pose", &WorldWorldPose,
-                                "spawn", &WorldSpawn,
-                                "destroy", &WorldDestroy,
-                                "add", &WorldAdd,
-                                "remove", &WorldRemove,
-                                "each", &WorldEach,
-                                "declare", &WorldDeclare);
+            "has", &WorldHas,
+            "get", &WorldGet,
+            "set", &WorldSet,
+            "world_position", &WorldWorldPosition,
+            "world_pose", &WorldWorldPose,
+            "spawn", &WorldSpawn,
+            "destroy", &WorldDestroy,
+            "add", &WorldAdd,
+            "remove", &WorldRemove,
+            "each", &WorldEach,
+            "declare", &WorldDeclare);
     }
 }

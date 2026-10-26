@@ -10,8 +10,10 @@
 #include "core/ecs/ComponentAsserts.h"
 #include "core/ecs/ComponentFields.h"
 
+#include <cfloat>
 #include <cstddef>
 #include <glm/vec3.hpp>
+#include <string_view>
 
 namespace mir
 {
@@ -19,6 +21,8 @@ namespace mir
     {
         Nishita = 0,
     };
+
+    inline constexpr std::string_view kSkyModeNames[] = { "Nishita" };
 
     struct Sky
     {
@@ -42,14 +46,20 @@ namespace mir
     MIR_ASSERT_COMPONENT(Sky);
 
     inline constexpr FieldDesc kSkyFields[] = {
-        { "mode", FieldKind::Int, offsetof(Sky, mMode) },
+        { .mName = "mode", .mKind = FieldKind::Int, .mOffset = offsetof(Sky, mMode),
+          .mWidget = FieldWidget::Enum, .mEnumNames = kSkyModeNames },
         { "planetRadiusKm", FieldKind::Float, offsetof(Sky, mPlanetRadiusKm) },
         { "atmosphereRadiusKm", FieldKind::Float, offsetof(Sky, mAtmosphereRadiusKm) },
         { "rayleighCoeff", FieldKind::Vec3, offsetof(Sky, mRayleighCoeff) },
-        { "mieCoeff", FieldKind::Float, offsetof(Sky, mMieCoeff) },
-        { "rayleighScaleHeightKm", FieldKind::Float, offsetof(Sky, mRayleighScaleHeightKm) },
-        { "mieScaleHeightKm", FieldKind::Float, offsetof(Sky, mMieScaleHeightKm) },
-        { "mieG", FieldKind::Float, offsetof(Sky, mMieG) },
-        { "sunIntensity", FieldKind::Float, offsetof(Sky, mSunIntensity) },
+        { .mName = "mieCoeff", .mKind = FieldKind::Float, .mOffset = offsetof(Sky, mMieCoeff),
+          .mClamped = true, .mMin = 0.0f, .mMax = FLT_MAX },
+        { .mName = "rayleighScaleHeightKm", .mKind = FieldKind::Float, .mOffset = offsetof(Sky, mRayleighScaleHeightKm),
+          .mClamped = true, .mMin = 0.01f, .mMax = FLT_MAX }, // the shader divides by it
+        { .mName = "mieScaleHeightKm", .mKind = FieldKind::Float, .mOffset = offsetof(Sky, mMieScaleHeightKm),
+          .mClamped = true, .mMin = 0.01f, .mMax = FLT_MAX }, // the shader divides by it
+        { .mName = "mieG", .mKind = FieldKind::Float, .mOffset = offsetof(Sky, mMieG),
+          .mClamped = true, .mMin = 0.0f, .mMax = 0.999f }, // 1 divides by zero looking at the sun
+        { .mName = "sunIntensity", .mKind = FieldKind::Float, .mOffset = offsetof(Sky, mSunIntensity),
+          .mClamped = true, .mMin = 0.0f, .mMax = FLT_MAX },
     };
 }

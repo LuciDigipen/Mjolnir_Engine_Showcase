@@ -16,8 +16,11 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <glm/gtc/quaternion.hpp>
 #include <glm/vec3.hpp>
 
+#include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <string_view>
 
@@ -317,4 +320,160 @@ TEST_CASE("world:world_pose hands a script the resolved position and linear part
         probe.FindField(columns[c])->Read(probe.GetComponent(world, root), &column);
         CHECK(column == expected.linear[c]);
     }
+}
+
+namespace
+{
+    struct LimitsProbe
+    {
+        int32_t kind = 0;
+        float radius = 1.0f;
+    };
+
+    inline constexpr std::string_view kLimitsKindNames[] = {"First", "Second"};
+
+    inline constexpr mir::FieldDesc kLimitsProbeFields[] = {
+        {.mName = "kind", .mKind = FieldKind::Int, .mOffset = offsetof(LimitsProbe, kind),
+         .mWidget = mir::FieldWidget::Enum, .mEnumNames = kLimitsKindNames},
+        {.mName = "radius", .mKind = FieldKind::Float, .mOffset = offsetof(LimitsProbe, radius), .mClamped = true,
+         .mMin = 0.5f, .mMax = 2.0f},
+    };
+
+    const ComponentOps &LimitsResultsOps()
+    {
+        static const RuntimeFieldDecl fields[] = {
+            {"enumOutOfRange", FieldKind::Int}, {"enumNegative", FieldKind::Int}, {"enumInRange", FieldKind::Int},
+            {"nanRefused", FieldKind::Int},     {"clampedOk", FieldKind::Int},    {"spawned", FieldKind::EntityRef},
+        };
+        return ComponentRegistry::Instance().RegisterRuntime("LimitsResults", fields);
+    }
+
+    constexpr std::string_view kLimitsSource = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    world:set(entity, "LimitsResults", "enumOutOfRange", world:set(entity, "LimitsProbe", "kind", 2) and 0 or 1)
+    world:set(entity, "LimitsResults", "enumNegative", world:set(entity, "LimitsProbe", "kind", -1) and 0 or 1)
+    world:set(entity, "LimitsResults", "enumInRange", world:set(entity, "LimitsProbe", "kind", 1) and 1 or 0)
+    world:set(entity, "LimitsResults", "nanRefused", world:set(entity, "LimitsProbe", "radius", 0 / 0) and 0 or 1)
+    world:set(entity, "LimitsResults", "clampedOk", world:set(entity, "LimitsProbe", "radius", -5.0) and 1 or 0)
+
+    local spawned = world:spawn()
+    world:add(spawned, "LimitsProbe", { kind = 9, radius = 100.0 })
+    world:set(entity, "LimitsResults", "spawned", spawned)
+end
+
+return T
+)LUA";
+
+    const ComponentOps &RotationProbeOps()
+    {
+        static const RuntimeFieldDecl fields[] = {{"normalized", FieldKind::Int}, {"refused", FieldKind::Int}};
+        return ComponentRegistry::Instance().RegisterRuntime("RotationProbe", fields);
+    }
+
+    constexpr std::string_view kRotationSource = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    world:set(entity, "RotationProbe", "normalized", world:set(entity, "Transform", "rotation", { y = 1 }) and 1 or 0)
+end
+
+return T
+)LUA";
+
+    constexpr std::string_view kRejectRotationSource = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    local zero = world:set(entity, "Transform", "rotation", { w = 0 })
+    local nan = world:set(entity, "Transform", "rotation", { w = 0 / 0 })
+    world:set(entity, "RotationProbe", "refused", (not zero and not nan) and 1 or 0)
+end
+
+return T
+)LUA";
+}
+
+TEST_CASE("world:set and world:add keep a field inside its enum range and clamp", "[script]")
+{
+    const ComponentOps &limits = ComponentRegistry::Instance().Register<LimitsProbe>(kLimitsProbeFields);
+    const ComponentOps &results = LimitsResultsOps();
+
+    World world;
+    const Entity entity = world.CreateEntity();
+    limits.AddDefault(world, entity);
+    results.AddDefault(world, entity);
+
+    RunOnStart("limits", kLimitsSource, world, entity);
+
+    CHECK(ReadProbe(results, world, entity, "enumOutOfRange") == 1);
+    CHECK(ReadProbe(results, world, entity, "enumNegative") == 1);
+    CHECK(ReadProbe(results, world, entity, "enumInRange") == 1);
+    CHECK(ReadProbe(results, world, entity, "nanRefused") == 1);
+    CHECK(ReadProbe(results, world, entity, "clampedOk") == 1);
+
+    const LimitsProbe *written = world.GetComponent<LimitsProbe>(entity);
+    REQUIRE(written != nullptr);
+    CHECK(written->kind == 1);
+    CHECK(written->radius == 0.5f);
+
+    // the bad enum value is skipped and left at its default; the float is clamped
+    Entity spawned{};
+    results.FindField("spawned")->Read(results.GetComponent(world, entity), &spawned);
+    const LimitsProbe *added = world.GetComponent<LimitsProbe>(spawned);
+    REQUIRE(added != nullptr);
+    CHECK(added->kind == 0);
+    CHECK(added->radius == 2.0f);
+}
+
+TEST_CASE("world:set normalizes a rotation", "[script]")
+{
+    mir::RegisterCoreComponents();
+    const ComponentOps &probe = RotationProbeOps();
+
+    World world;
+    const Entity entity = world.CreateEntity();
+    mir::AddTransform(world, entity, Transform{});
+    probe.AddDefault(world, entity);
+
+    RunOnStart("normalize_rotation", kRotationSource, world, entity);
+
+    CHECK(ReadProbe(probe, world, entity, "normalized") == 1);
+    const glm::quat rotation = world.GetComponent<Transform>(entity)->Rotation();
+    CHECK(std::abs(glm::length(rotation) - 1.0f) < 1e-6f);
+    CHECK(std::abs(rotation.w - std::sqrt(0.5f)) < 1e-6f);
+    CHECK(std::abs(rotation.y - std::sqrt(0.5f)) < 1e-6f);
+}
+
+TEST_CASE("world:set refuses a zero-length or NaN rotation and leaves the Transform untouched", "[script]")
+{
+    mir::RegisterCoreComponents();
+    const ComponentOps &probe = RotationProbeOps();
+
+    const glm::quat turn = glm::angleAxis(glm::radians(30.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+
+    World world;
+    const Entity entity = world.CreateEntity();
+    mir::AddTransform(world, entity, Transform{mir::WorldVec3(0.0), turn});
+    probe.AddDefault(world, entity);
+    const uint32_t version = world.GetComponent<Transform>(entity)->Version();
+
+    RunOnStart("reject_rotation", kRejectRotationSource, world, entity);
+
+    CHECK(ReadProbe(probe, world, entity, "refused") == 1);
+    CHECK(world.GetComponent<Transform>(entity)->Rotation() == turn);
+    CHECK(world.GetComponent<Transform>(entity)->Version() == version);
 }

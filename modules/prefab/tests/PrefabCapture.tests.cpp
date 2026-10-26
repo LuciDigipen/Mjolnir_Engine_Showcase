@@ -9,6 +9,7 @@
 #include <prefab/CompiledPrefab.h>
 #include <prefab/PrefabCapture.h>
 #include <prefab/PrefabFormat.h>
+#include <prefab/PrefabOverrides.h>
 #include <prefab/PrefabSceneInstance.h>
 
 #include <core/ecs/ComponentRegistry.h>
@@ -130,6 +131,17 @@ namespace
         return nullptr;
     }
 
+    const mir::PrefabFieldOverride *FindPatchField(const mir::PrefabPatch &patch, std::string_view component,
+        std::string_view field)
+    {
+        for (const mir::PrefabFieldOverride &entry : patch.mFields)
+        {
+            if (entry.mComponent == component && entry.mField == field)
+                return &entry;
+        }
+        return nullptr;
+    }
+
     StableId IdOf(const LoadedScene &scene, Entity entity)
     {
         for (const auto &[id, candidate] : scene.mEntities)
@@ -219,7 +231,7 @@ TEST_CASE("Capture keeps the hierarchy and internal references", "[prefab][captu
     CHECK(rootWorldTransform->mFields.empty());
     CHECK(FindComponent(document.mNodes[1], "WorldTransform") != nullptr);
     CHECK_FALSE(HasPrefabErrors(ValidatePrefab(document)));
-    const mir::PrefabCompileResult compiled = mir::CompilePrefab(document);
+    const mir::PrefabCompileResult compiled = mir::CompilePrefab(document, mir::PrefabDocumentLookup{});
     REQUIRE(compiled.mPrefab != nullptr);
 
     const StableId capturedRoot = mir::PlacePrefabInstance(fixture.mWorld, fixture.mScene, *compiled.mPrefab);
@@ -281,6 +293,167 @@ TEST_CASE("An intended file name is sanitized and made unique", "[prefab][captur
     const std::filesystem::path path = UniquePrefabPath(directory.mPath, "Chair", registry);
     CHECK(path.filename() == "Chair 2.prefab");
     CHECK(mir::PrefabNameForFile("Desk/Side:Table?") == "Desk_Side_Table_");
+}
+
+namespace
+{
+    PrefabDocument RefDocument()
+    {
+        PrefabDocument document = NewPrefabDocument();
+        document.mNodes[0].mComponents.push_back(
+            PrefabComponentInstance{ "PrefabCaptureTestRef", json{ { "target", nullptr }, { "spare", nullptr } } });
+        document.mNodes[0].mComponents.push_back(PrefabComponentInstance{ "Transform", json::object() });
+
+        PrefabNode child;
+        child.mId = 2;
+        child.mParent = 1;
+        child.mComponents.push_back(
+            PrefabComponentInstance{ "PrefabCaptureTestRef", json{ { "target", nullptr }, { "spare", nullptr } } });
+        child.mComponents.push_back(PrefabComponentInstance{ "Transform", json::object() });
+        document.mNodes.push_back(std::move(child));
+        document.mNextNodeId = 3;
+        return document;
+    }
+
+    StableId PlaceInnerInstance(Fixture &fixture, const PrefabDocument &inner, PrefabRegistry &registry)
+    {
+        REQUIRE(registry.SetDocument(inner));
+        const mir::PrefabCompileResult compiled =
+            mir::CompilePrefab(inner, [](mir::PrefabId) -> const PrefabDocument * { return nullptr; });
+        REQUIRE(compiled.mPrefab != nullptr);
+        const StableId instanceRoot =
+            mir::PlacePrefabInstance(fixture.mWorld, fixture.mScene, *compiled.mPrefab, fixture.mChild);
+        REQUIRE(instanceRoot != kNullStableId);
+        return instanceRoot;
+    }
+}
+
+TEST_CASE("Capture keeps a whole Prefab instance as a nested reference", "[prefab][capture]")
+{
+    Fixture fixture;
+    const PrefabDocument inner = RefDocument();
+    PrefabRegistry registry;
+    const StableId instanceRoot = PlaceInnerInstance(fixture, inner, registry);
+    const StableId innerChild = fixture.mScene.mInstances.at(instanceRoot).mBindings.at(SceneNodeAddress{ 2 });
+
+    REQUIRE(mir::SetInstanceFieldOverride(fixture.mWorld, fixture.mScene, registry, instanceRoot,
+        SceneNodeAddress{ 1 }, "PrefabCaptureTestRef", "target", innerChild));
+    SetRef(fixture.mWorld, fixture.mChild, "target", fixture.mScene.mEntities.at(innerChild));
+
+    const StableId nextId = fixture.mScene.mNextId;
+    const PrefabCaptureResult captured = CapturePrefab(fixture.mWorld, fixture.mScene, fixture.mRoot);
+    CHECK(captured.mRefusal.empty());
+    REQUIRE(captured.mDocument.has_value());
+
+    const PrefabDocument &document = *captured.mDocument;
+    REQUIRE(document.mNodes.size() == 4);
+    const PrefabNode *occurrence = nullptr;
+    for (const PrefabNode &node : document.mNodes)
+    {
+        if (node.mKind == mir::PrefabNodeKind::Prefab)
+            occurrence = &node;
+    }
+    REQUIRE(occurrence != nullptr);
+    CHECK(occurrence->mPrefab == inner.mId);
+    CHECK(occurrence->mParent == 2);
+
+    const std::string occurrenceText = std::to_string(occurrence->mId);
+    REQUIRE(occurrence->mPatches.size() == 1);
+    const mir::PrefabPatch &placement = occurrence->mPatches.front();
+    CHECK(placement.mTarget == SceneNodeAddress{ 1 });
+    const mir::PrefabFieldOverride *targetField =
+        FindPatchField(placement, "PrefabCaptureTestRef", "target");
+    REQUIRE(targetField != nullptr);
+    CHECK(targetField->mValue == json::array({ occurrenceText, "2" }));
+    const mir::PrefabFieldOverride *positionField = FindPatchField(placement, "Transform", "position");
+    REQUIRE(positionField != nullptr);
+    CHECK(positionField->mValue == json::array({ 0.0, 0.0, 0.0 }));
+
+    const PrefabComponentInstance *childRef = FindComponent(document.mNodes[1], "PrefabCaptureTestRef");
+    REQUIRE(childRef != nullptr);
+    CHECK(childRef->mFields.at("target") == json::array({ occurrenceText, "2" }));
+
+    CHECK_FALSE(HasPrefabErrors(ValidatePrefab(document)));
+    const mir::PrefabCompileResult expanded = mir::CompilePrefab(document,
+        [&inner](mir::PrefabId id) -> const PrefabDocument * { return id == inner.mId ? &inner : nullptr; });
+    CHECK_FALSE(HasPrefabErrors(expanded.mDiagnostics));
+    REQUIRE(expanded.mPrefab != nullptr);
+
+    CHECK(fixture.mScene.mInstances.contains(instanceRoot));
+    CHECK(fixture.mScene.mNextId == nextId);
+}
+
+TEST_CASE("Capture turns a nested instance's placement into its occurrence patch", "[prefab][capture]")
+{
+    Fixture fixture;
+    const PrefabDocument inner = RefDocument();
+    PrefabRegistry registry;
+    const StableId instanceRoot = PlaceInnerInstance(fixture, inner, registry);
+    const Entity placedRoot = fixture.mScene.mEntities.at(instanceRoot);
+    fixture.mWorld.GetComponent<Transform>(placedRoot)->SetPosition(mir::WorldVec3(9.0, 0.0, 0.0));
+
+    const PrefabCaptureResult captured = CapturePrefab(fixture.mWorld, fixture.mScene, fixture.mRoot);
+    REQUIRE(captured.mDocument.has_value());
+    const PrefabDocument &document = *captured.mDocument;
+
+    const PrefabNode *occurrence = nullptr;
+    for (const PrefabNode &node : document.mNodes)
+    {
+        if (node.mKind == mir::PrefabNodeKind::Prefab)
+            occurrence = &node;
+    }
+    REQUIRE(occurrence != nullptr);
+    REQUIRE(occurrence->mPatches.size() == 1);
+    const mir::PrefabFieldOverride *position =
+        FindPatchField(occurrence->mPatches.front(), "Transform", "position");
+    REQUIRE(position != nullptr);
+    CHECK(position->mValue == json::array({ 9.0, 0.0, 0.0 }));
+
+    const mir::PrefabCompileResult expanded = mir::CompilePrefab(document,
+        [&inner](mir::PrefabId id) -> const PrefabDocument * { return id == inner.mId ? &inner : nullptr; });
+    REQUIRE(expanded.mPrefab != nullptr);
+    const StableId capturedRoot = mir::PlacePrefabInstance(fixture.mWorld, fixture.mScene, *expanded.mPrefab);
+    REQUIRE(capturedRoot != kNullStableId);
+    const ScenePrefabInstance &placed = fixture.mScene.mInstances.at(capturedRoot);
+    const Entity nestedRoot = fixture.mScene.mEntities.at(
+        placed.mBindings.at(SceneNodeAddress{ occurrence->mId, inner.mRootNode }));
+    CHECK(fixture.mWorld.GetComponent<Transform>(nestedRoot)->Position() == mir::WorldVec3(9.0, 0.0, 0.0));
+}
+
+TEST_CASE("Capture refuses a partial Prefab instance", "[prefab][capture]")
+{
+    Fixture fixture;
+    const StableId outsideId = IdOf(fixture.mScene, fixture.mOutside);
+    const StableId childId = IdOf(fixture.mScene, fixture.mChild);
+
+    ScenePrefabInstance partial;
+    partial.mPrefab = ToString(GeneratePrefabId());
+    partial.mRoot = outsideId;
+    partial.mBindings[SceneNodeAddress{ 1 }] = outsideId;
+    partial.mBindings[SceneNodeAddress{ 2 }] = childId;
+    fixture.mScene.mInstances[outsideId] = partial;
+
+    const PrefabCaptureResult captured = CapturePrefab(fixture.mWorld, fixture.mScene, fixture.mRoot);
+    CHECK_FALSE(captured.mDocument.has_value());
+    CHECK_FALSE(captured.mRefusal.empty());
+    CHECK(fixture.mScene.mInstances.contains(outsideId));
+}
+
+TEST_CASE("Capture refuses an instance patch that points outside the selection", "[prefab][capture]")
+{
+    Fixture fixture;
+    const PrefabDocument inner = RefDocument();
+    PrefabRegistry registry;
+    const StableId instanceRoot = PlaceInnerInstance(fixture, inner, registry);
+    const StableId outsideId = IdOf(fixture.mScene, fixture.mOutside);
+
+    REQUIRE(mir::SetInstanceFieldOverride(fixture.mWorld, fixture.mScene, registry, instanceRoot,
+        SceneNodeAddress{ 1 }, "PrefabCaptureTestRef", "target", outsideId));
+
+    const PrefabCaptureResult captured = CapturePrefab(fixture.mWorld, fixture.mScene, fixture.mRoot);
+    CHECK_FALSE(captured.mDocument.has_value());
+    CHECK(captured.mRefusal.find("outside the selection") != std::string::npos);
+    CHECK(fixture.mScene.mInstances.contains(instanceRoot));
 }
 
 TEST_CASE("Capture refuses unavailable references instead of persisting a null handle", "[prefab][capture]")

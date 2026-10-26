@@ -264,6 +264,37 @@ TEST_CASE("A prefab without a file path is reported and nothing is written", "[p
     CHECK(result.mWritten.empty());
 }
 
+TEST_CASE("Saving an outer prefab writes its unsaved nested Prefab first", "[prefab][save]")
+{
+    Fixture fixture;
+    const PrefabDocument inner = Named(mir::NewPrefabDocument(), "Inner");
+    const PrefabDocument outer = Named(WithDependency(mir::NewPrefabDocument(), inner.mId), "Outer");
+    fixture.Save(inner);
+    fixture.Save(outer);
+    fixture.Scan();
+
+    PrefabDocument changedInner = inner;
+    changedInner.mNodes[0].mComponents.front().mFields["name"] = "Changed Inner";
+    PrefabDocument changedOuter = outer;
+    changedOuter.mNodes[0].mComponents.front().mFields["name"] = "Changed Outer";
+    REQUIRE(fixture.mRegistry.SetDocument(changedInner));
+    REQUIRE(fixture.mRegistry.SetDocument(changedOuter));
+
+    const PrefabSavePlan plan = PlanSavePrefab(fixture.mRegistry, outer.mId, [](PrefabId) { return true; });
+    REQUIRE_FALSE(HasPrefabErrors(plan.mDiagnostics));
+    REQUIRE(plan.mSteps.size() == 2);
+    CHECK(plan.mSteps[0].mPrefab == inner.mId);
+    CHECK(plan.mSteps[1].mPrefab == outer.mId);
+
+    const PrefabSaveResult result = ExecuteSavePlan(fixture.mRegistry, plan);
+    REQUIRE(result.mSucceeded);
+    REQUIRE(result.mWritten.size() == 2);
+    CHECK(result.mWritten[0] == inner.mId);
+    CHECK(result.mWritten[1] == outer.mId);
+    CHECK(ReadText(*fixture.mRegistry.PathOf(inner.mId)).find("Changed Inner") != std::string::npos);
+    CHECK(ReadText(*fixture.mRegistry.PathOf(outer.mId)).find("Changed Outer") != std::string::npos);
+}
+
 TEST_CASE("First Prefab save rechecks path ownership after planning", "[prefab][save]")
 {
     Fixture fixture;

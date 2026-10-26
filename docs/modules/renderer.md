@@ -785,6 +785,16 @@ Everything that needs a device is verified by the smoke tests and
 
 ## Changed
 
+*2026-10-25* — **`Sky` fields carry limits (#219).** Was: no field had a
+range, so a scale height of 0, a `mieG` of 1 or a negative `mieCoeff` or
+`sunIntensity` reached the atmosphere shader. Now: `mode` is an enum over
+`kSkyModeNames`, both scale heights are at least 0.01 km, `mieG` is in
+`[0, 0.999]`, and `mieCoeff` and `sunIntensity` are at least 0, in the Inspector
+and for scripts alike. Because: the shader divides by the scale heights, and
+`mieG` of 1 divides by zero looking at the sun. The radii and `rayleighCoeff`
+have no limit: the radii's constraint is between two fields, and a `Vec3`
+cannot be clamped.
+
 *2026-10-24* — **`RendererModule`, and `MeshResolveSystem` moved in from
 `app`.** Was: `App` started the renderer, registered its components and
 systems, and owned `MeshResolveSystem`; `ReleaseSceneResources` also reset the

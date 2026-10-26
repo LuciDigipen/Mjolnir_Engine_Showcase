@@ -125,7 +125,7 @@ namespace mir
         const GameProject &project, bool enableLayout)
         : mWorld(context.world), mRenderer(renderer), mScene(scene), mPrefab(prefab), mProject(project),
           mEnableLayout(enableLayout), mProjectMenu(BuildProjectMenu()),
-          mPrefabAuthoring(context.world, prefab.Coordinator(), prefab.SourceDir()),
+          mPrefabAuthoring(context.world, prefab.Coordinator(), mProject.mRootDir, prefab.SourceDir()),
           mPrefabWorkspace(prefab.Coordinator(), mPrefabAuthoring),
           mSceneOps(context.world, scene.Scene(), mPrefabWorkspace, mProject.mRootDir)
     {

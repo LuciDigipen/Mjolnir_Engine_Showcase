@@ -13,12 +13,16 @@ A scene is a directory, not a file.
 scenes/<scene>/
   scene.json              manifest: ordered StableId array, mNextId, scene settings
   entities/
-    <id>.json             one entity: {id, name, parent, siblingIndex, components[]}
+    <id>.json             one ordinary entity: {id, parent, siblingIndex, components[]}
+  instances/
+    <root>.json           one Prefab instance: prefab UUID, placement, bindings, patches
 ```
 
 Splitting by entity keeps a diff proportional to what changed. Adding or removing
 an entity is a file add or delete, and two people editing different entities
-touch disjoint files, so their edits merge.
+touch disjoint files, so their edits merge. A Prefab instance is one record
+instead of one file per member, because its members are owned by a template; the
+record stores each member's `StableId` binding and only the scene's overrides.
 
 Components round-trip generically. Save walks every registered `ComponentOps`,
 asks `Has`, and writes one value per `FieldDesc`. Load looks the type name up in
@@ -40,6 +44,16 @@ parent. Both passes run in the order of `(siblingIndex, id)`, so one sort
 restores the order of the roots and of every parent's children.
 `SpawnEntities` installs the hierarchy before it creates anything, so a scene of
 only roots still gets a root list.
+
+An instance record is not an entity file. `LoadScene` reads every instance, hands
+its record to a `ScenePrefabResolver`, and registers the materialized members
+under the record's bindings before ordinary entity files are read. A binding
+owns its `StableId`, so a stale member file cannot shadow the template. The
+resolver also reports the template's default `EntityRef` targets; `SaveScene`
+uses that to write a field patch only where the live value differs. A resolver
+is optional: without one the record loads unchanged and nothing is materialized,
+which is what an editor's preview World and a test that only needs the record
+use.
 
 `PlaySnapshot` is `SaveScene`/`LoadScene` reused for a second purpose: a
 whole-World capture and restore around a Play session, rather than an
@@ -84,7 +98,10 @@ around them.
 | Type | Header | Role |
 |---|---|---|
 | `StableId`, `kNullStableId` | `scene/SceneAsset.h` | `uint64_t` save-file identity, distinct from `Entity` |
-| `LoadedScene` | `scene/SceneAsset.h` | `{mName, std::map<StableId, Entity>, mNextId}` |
+| `LoadedScene` | `scene/SceneAsset.h` | `{mName, mEntities, mInstances, mUnresolvedEntityRefs, mNextId}` |
+| `ScenePrefabInstance`, `SceneInstancePatch`, `SceneFieldPatch`, `SceneComponentRecord` | `scene/SceneAsset.h` | One instance record: Prefab UUID, placement, address-to-`StableId` bindings and scene overrides |
+| `ScenePrefabResolver`, `InstancePlacementFromWorld`, `CaptureInstanceRecord`, `RestoreInstanceRecord` | `scene/SceneIO.h` | The seam a Prefab module implements, and the record capture/restore used by undo |
+| `SetInstanceEntityRef` | `scene/SceneAsset.h` | Writes one member's `EntityRef` and records the override |
 | `NewScene`, `AllocateStableId`, `CreateSceneEntity`, `DestroySceneEntity` | `scene/SceneAsset.h` | Authoring entry points |
 | `SaveScene`, `LoadScene`, `UnloadScene` | `scene/SceneIO.h` | Directory in, directory out, scoped destroy |
 | `ProbeScene`, `SceneProbe` | `scene/SceneIO.h` | What `LoadScene` would skip, found without a `World` |
@@ -151,6 +168,18 @@ with no real change.
 Sorted order also means a new entity, which always has a higher id, appends to
 the array instead of reordering it.
 
+**A binding, not an entity file, owns a Prefab member.** `SaveScene` writes one
+`instances/<root>.json` per instance and skips every `StableId` that appears in
+a binding. `LoadScene` reads the records first, so a stale member file cannot
+materialize a second entity under the same id. A record whose Prefab is
+unavailable keeps its bindings and loads nothing.
+
+**A scene override stores presence, not difference.** A field patch equal to the
+template value still saves, so a clear is distinct from never having overridden
+the field. `SetInstanceEntityRef` writes a null override when the user clears a
+reference; a missing target keeps its saved `StableId` in
+`mUnresolvedEntityRefs` until it can resolve again.
+
 **`siblingIndex` counts only the siblings being saved.** An entity outside the
 save, such as an editor-only root, leaves no gap and does not shift the numbers.
 Load sorts by `siblingIndex` and then by id. A missing index sorts after every
@@ -193,14 +222,15 @@ that another loaded scene owns.
 **An entity file is named by its `StableId`, and `LoadScene` finds it by that
 name.** The manifest lists ids, and each id maps to `entities/<id>.json`.
 
-**`SaveScene` deletes the file of every entity no longer in the scene.** A deleted
-entity's file would otherwise stay on disk and in version control. `LoadScene`
-would never read it, but a reader of the directory would take it for a live
-entity. The sweep runs after the manifest is written, so the manifest on disk
-never lists a file the sweep removed. A crash before the sweep leaves stale
-files, which load ignores. Only names of the
-form `<number>.json` are touched, so anything else put in `entities/` survives. A
-file that cannot be deleted logs a warning, and the save still succeeds.
+**`SaveScene` deletes the file of every entity no longer in the scene, and of
+every instance record no longer present.** A deleted entity's file or a dropped
+instance's record would otherwise stay on disk and in version control.
+`LoadScene` would never read it, but a reader of the directory would take it for
+a live object. The sweep runs after the manifest is written, so the manifest on
+disk never lists a file the sweep removed. A crash before the sweep leaves stale
+files, which load ignores. Only names of the form `<number>.json` are touched, so
+anything else put in `entities/` or `instances/` survives. A file that cannot be
+deleted logs a warning, and the save still succeeds.
 
 **`LoadScene` is lenient, and `ProbeScene` says what it would skip.** A
 `scene.json` that is unreadable or holds a wrongly typed value (a non-id in
@@ -233,6 +263,11 @@ through `siblingIndex`, and a duplicate lands right after its source.
 [editor-history.md](editor-history.md)). A test saves a scene, deletes and
 restores a middle child and a root, saves again and compares every file byte
 for byte.
+
+*As of 2026-10-23.* Instance records load through a `ScenePrefabResolver` and
+round-trip their bindings, placement and field/component patches, including
+nested occurrences, explicit nulls and cross-instance references. A missing
+Prefab keeps the record unchanged.
 
 Tests in `modules/scene/tests/SceneIO.tests.cpp`,
 `modules/scene/tests/PlaySnapshot.tests.cpp` and
@@ -276,6 +311,13 @@ values make `scene.json` unreadable, and `ProbeScene` reports it along with
 missing entity and instance files. Because: `App` refuses or asks about a broken
 scene instead of loading part of it, so a silently skipped id would hide the
 damage it exists to catch.
+
+*2026-10-23* — **Scene Prefab instances.** Was: a scene saved one entity file
+per entity, so a Prefab's members were flattened into the scene. Now:
+`instances/<root>.json` stores the Prefab UUID, bindings and scene overrides,
+and `LoadScene` materializes them through the resolver. Member entities are not
+written as entity files, so a template and its instance never both own the same
+component values.
 
 *2026-10-19* — **Undo gives a deleted entity its `StableId` back.** Was:
 `RestoreEntity` registered every restored entity under a new `StableId` and

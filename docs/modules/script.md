@@ -98,9 +98,11 @@ The input half is `world:is_down/just_pressed/just_released/axis/axis2d` and
 `InputState::ForGame`: every action reads at rest while a game UI screen, such
 as the pause menu, holds the input. See [gameui.md](gameui.md).
 
-The audio half is `world:post_event/stop_event/set_rtpc/set_switch/set_state`.
+The audio half is `world:post_event/stop_event/is_playing/set_rtpc/set_switch/set_state`.
 All but `set_state` take the entity and reach the `AkGameObject` its
 `AudioEmitter` carries; `set_state` takes none, because a Wwise state is global.
+`is_playing` is true while the voice the emitter last started, by `post_event`
+or `playOnStart`, is still playing.
 
 ```lua
 function T.OnUpdate(self, world, entity, dt)
@@ -108,6 +110,11 @@ function T.OnUpdate(self, world, entity, dt)
     world:set_rtpc(entity, "Speed", self.charge * 100.0)   -- false if refused
 end
 ```
+
+The renderer bridge adds `world:mesh_bounds(entity)`: the local-space
+`{ min = {x, y, z}, max = {x, y, z} }` box of the entity's resolved mesh, or
+`nil` when there is none yet. `MeshBounds` is derived and never registered, so
+`world:get` cannot reach it.
 
 ### Post-processing
 
@@ -249,6 +256,14 @@ sol::type::number` rather than `is<int32_t>()`. That check's strictness is
 coupled to the Lua version, and neither variant of it means "is this usable as an
 int".
 
+**`world:set` and `world:add` keep a value inside the field's limits**, through
+`FieldDesc::Constrain`: an enum `Int` refuses an index with no name, and a
+clamped `Float` is clamped to `[mMin, mMax]`, the same limits the Inspector
+applies. `world:set` returns `false` for a refusal; `world:add` logs it and
+leaves that field at its default. Any `Float` refuses NaN. A `quat` is
+normalized, and refused when it has zero length or is not finite, because a
+table with a missing key defaults `w` to 1 and the rest to 0.
+
 **`world:each`'s `RuntimeQuery` is cached per term list, as a `World` resource**,
 so its lifetime matches the `World`'s. A process-wide cache could alias a reused
 heap address across `World` instances, between Catch2 test cases for example.
@@ -318,6 +333,14 @@ next, and a `ScriptRef` copied from another entity carried that entity's `instan
 `started`. Now: `ScriptFixedSystem` runs `OnFixedUpdate` before each physics step, and the
 `ScriptRef` OnAdd hook resets `instanceRef` and `started`. Because: physics work belongs on the
 fixed step, and a copy must not share the original's instance.
+*2026-10-25* — **Script writes respect field limits; `world:mesh_bounds` and
+`world:is_playing` added (#219).** Was: `world:set` and `world:add` wrote any
+value of the right shape, so a script could set `Light.type = 9`, a negative
+`Light.intensity` or a NaN, and `{ y = 1 }` stored a non-unit rotation; a script
+could not read a mesh's bounds or ask whether an emitter was still playing. Now:
+writes go through `FieldDesc::Constrain`, quaternions are normalized, and the
+two bindings exist. Because: the Inspector's limits only guarded the Inspector,
+and the #219 audit found these as the gaps a script could not work around.
 
 *2026-10-24* — **A live resolver, `ScriptModule`, and the bindings moved to
 bridges.** Was: `app`'s `ResolveSceneScripts` ran after a scene load, a Stop, a
