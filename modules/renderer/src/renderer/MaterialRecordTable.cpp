@@ -53,22 +53,42 @@ namespace mir
         return block.mOffset + copy * block.mStride;
     }
 
-    bool MaterialRecordTable::AllocateRange(uint32_t bytes, uint32_t &outOffset)
+    bool MaterialRecordTable::AllocateRange(uint32_t bytes, uint32_t alignment, uint32_t &outOffset)
     {
-        if (bytes == 0)
+        if (bytes == 0 || alignment == 0)
             return false;
 
         for (std::size_t i = 0; i < mFreeRanges.size(); ++i)
         {
             FreeSpan &range = mFreeRanges[i];
-            if (range.mSize < bytes)
+            const uint64_t aligned = AlignUp(range.mOffset, alignment);
+            if (aligned > UINT32_MAX)
                 continue;
 
-            outOffset = range.mOffset;
-            range.mOffset += bytes;
-            range.mSize -= bytes;
-            if (range.mSize == 0)
+            const uint64_t end = aligned + bytes;
+            if (end > static_cast<uint64_t>(range.mOffset) + range.mSize)
+                continue;
+
+            const uint32_t prefix = static_cast<uint32_t>(aligned) - range.mOffset;
+            const uint32_t suffix = range.mSize - prefix - bytes;
+
+            if (prefix > 0 && suffix > 0)
+            {
+                range.mSize = prefix;
+                mFreeRanges.insert(mFreeRanges.begin() + static_cast<std::ptrdiff_t>(i + 1),
+                    FreeSpan{ .mOffset = static_cast<uint32_t>(end), .mSize = suffix });
+            }
+            else if (prefix > 0)
+                range.mSize = prefix;
+            else if (suffix > 0)
+            {
+                range.mOffset = static_cast<uint32_t>(end);
+                range.mSize = suffix;
+            }
+            else
                 mFreeRanges.erase(mFreeRanges.begin() + static_cast<std::ptrdiff_t>(i));
+
+            outOffset = static_cast<uint32_t>(aligned);
             return true;
         }
         return false;
@@ -111,7 +131,7 @@ namespace mir
             return kNullMaterialRecord;
 
         uint32_t offset = 0;
-        if (!AllocateRange(static_cast<uint32_t>(blockBytes), offset))
+        if (!AllocateRange(static_cast<uint32_t>(blockBytes), requestedAlignment, offset))
             return kNullMaterialRecord;
 
         std::fill_n(mStorage.begin() + offset, static_cast<std::size_t>(blockBytes), std::byte{});

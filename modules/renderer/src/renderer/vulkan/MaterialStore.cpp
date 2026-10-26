@@ -22,9 +22,9 @@
 
 #include <glm/glm.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstring>
-#include <format>
 #include <string>
 #include <string_view>
 
@@ -42,10 +42,19 @@ namespace mir::vk
         mDevice = &device;
         mTable = table;
 
+        const uint64_t alignment = std::max<uint64_t>(
+            mDevice->Properties().limits.minUniformBufferOffsetAlignment, 1);
+        mRecordRefStride = static_cast<uint32_t>(
+            (sizeof(MaterialRecordRef) + alignment - 1) / alignment * alignment);
+        mRecordRefFrameStride = mRecordRefStride * kMaxMaterials;
+
         if (!CreatePipelineLayout(sharedLayouts))
             return false;
 
         if (!CreateSkyPipeline(sharedLayouts[0], colorFormat))
+            return false;
+
+        if (mTable != nullptr && !CreateRecordRefBuffer())
             return false;
 
         mDefaultMaterial = CreateMaterial(MaterialDesc{}, resources, colorFormat);
@@ -74,6 +83,7 @@ namespace mir::vk
         DestroyMaterials();
         mDefaultMaterial = kNullMaterial;
         mErrorMaterial = kNullMaterial;
+        DestroyRecordRefBuffer();
 
         if (mDescriptorPool != VK_NULL_HANDLE)
         {
@@ -123,7 +133,7 @@ namespace mir::vk
              .descriptorCount = 1,
              .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT },
             { .binding = kRecordRefBinding,
-             .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+             .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
              .descriptorCount = 1,
              .stageFlags = VK_SHADER_STAGE_ALL } } };
         const uint32_t setBindingCount = mTable != nullptr ? static_cast<uint32_t>(setBindings.size()) : 2u;
@@ -141,11 +151,10 @@ namespace mir::vk
 
         // One set per material. A model primitive eats two (front and mirrored
         // front face), so this is not as generous as it looks.
-        constexpr uint32_t kMaxMaterials = 1024;
         std::array<VkDescriptorPoolSize, 2> poolSizes{ {
             { .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
               .descriptorCount = kMaxMaterials * 2u },
-            { .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            { .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
               .descriptorCount = kMaxMaterials } } };
         const uint32_t poolSizeCount = mTable != nullptr ? static_cast<uint32_t>(poolSizes.size()) : 1u;
 
@@ -460,8 +469,6 @@ namespace mir::vk
 
         const auto rollback = [&]
             {
-                if (material.mRecordBuffer != VK_NULL_HANDLE)
-                    vmaDestroyBuffer(mDevice->Allocator(), material.mRecordBuffer, material.mRecordAllocation);
                 if (mTable != nullptr && !material.mRecordId.IsNull())
                     mTable->ReleaseRecord(material.mRecordId);
                 if (descriptorSet != VK_NULL_HANDLE)
@@ -481,14 +488,8 @@ namespace mir::vk
             }
 
             material.mRecordOffset = mTable->RecordOffset(material.mRecordId);
-            if (!CreateRecordRef(material))
-            {
-                MIR_LOG_CRITICAL("CreateMaterial: record reference buffer allocation failed");
-                rollback();
-                return kNullMaterial;
-            }
             recordRefInfo = VkDescriptorBufferInfo{
-                .buffer = material.mRecordBuffer,
+                .buffer = mRecordRefBuffer,
                 .offset = 0,
                 .range = sizeof(MaterialRecordRef) };
         }
@@ -519,51 +520,91 @@ namespace mir::vk
              .dstSet = descriptorSet,
              .dstBinding = kRecordRefBinding,
              .descriptorCount = 1,
-             .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+             .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
              .pBufferInfo = &recordRefInfo } } };
         const uint32_t writeCount = mTable != nullptr ? static_cast<uint32_t>(writes.size()) : 2u;
 
         vkUpdateDescriptorSets(mDevice->Handle(), writeCount, writes.data(), 0, nullptr);
 
         const uint32_t index = PlaceSlot(mMaterials, mFreeIndices, material);
-        mDevice->NameObject(VK_OBJECT_TYPE_BUFFER, reinterpret_cast<uint64_t>(mMaterials[index].mRecordBuffer),
-            std::format("Material {} record ref", index).c_str());
+        mMaterials[index].mMaterialIndex = index;
+        if (mTable != nullptr)
+            WriteRecordRefEverywhere(index);
 
         MIR_LOG_INFO("Material created: {} (index {})", desc.shaderName, index);
         return MaterialHandle{ index, mMaterials[index].mGeneration };
     }
 
-    bool MaterialStore::CreateRecordRef(GpuMaterial &material)
+    bool MaterialStore::CreateRecordRefBuffer()
     {
+        const VkDeviceSize bytes = VkDeviceSize{ kFramesInFlight } * mRecordRefFrameStride;
         VmaAllocationInfo info{};
-        if (!CreateBuffer(mDevice->Allocator(), sizeof(MaterialRecordRef),
+        if (!CreateBuffer(mDevice->Allocator(), bytes,
             VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
             VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
-            material.mRecordBuffer, material.mRecordAllocation, &info))
+            mRecordRefBuffer, mRecordRefAllocation, &info))
+        {
+            MIR_LOG_CRITICAL("CreateRecordRefBuffer: allocation failed");
             return false;
+        }
 
-        material.mRecordMapped = static_cast<std::byte *>(info.pMappedData);
-        WriteRecordRef(material);
+        mRecordRefMapped = static_cast<std::byte *>(info.pMappedData);
+        mDevice->NameObject(VK_OBJECT_TYPE_BUFFER, reinterpret_cast<uint64_t>(mRecordRefBuffer),
+            "Material record references");
         return true;
     }
 
-    void MaterialStore::WriteRecordRef(GpuMaterial &material)
+    void MaterialStore::DestroyRecordRefBuffer()
     {
-        if (material.mRecordMapped == nullptr)
+        if (mRecordRefBuffer != VK_NULL_HANDLE)
+        {
+            vmaDestroyBuffer(mDevice->Allocator(), mRecordRefBuffer, mRecordRefAllocation);
+            mRecordRefBuffer = VK_NULL_HANDLE;
+            mRecordRefAllocation = VK_NULL_HANDLE;
+            mRecordRefMapped = nullptr;
+        }
+    }
+
+    void MaterialStore::WriteRecordRef(uint32_t frame, uint32_t material)
+    {
+        if (mRecordRefMapped == nullptr || material >= mMaterials.size())
+            return;
+
+        const GpuMaterial &entry = mMaterials[material];
+        if (entry.mPipeline == VK_NULL_HANDLE)
             return;
 
         const MaterialRecordRef ref{
-            .mOffset = material.mRecordOffset,
-            .mSize = mTable != nullptr ? mTable->RecordSize(material.mRecordId) : 0 };
-        std::memcpy(material.mRecordMapped, &ref, sizeof(ref));
-        vmaFlushAllocation(mDevice->Allocator(), material.mRecordAllocation, 0, sizeof(ref));
+            .mOffset = entry.mRecordOffset,
+            .mSize = mTable != nullptr && !entry.mRecordId.IsNull() ? mTable->RecordSize(entry.mRecordId) : 0 };
+        std::memcpy(mRecordRefMapped + RecordRefDynamicOffset(frame, material), &ref, sizeof(ref));
+    }
+
+    void MaterialStore::WriteRecordRefEverywhere(uint32_t material)
+    {
+        if (mRecordRefMapped == nullptr)
+            return;
+
+        for (uint32_t frame = 0; frame < kFramesInFlight; ++frame)
+            WriteRecordRef(frame, material);
+        vmaFlushAllocation(mDevice->Allocator(), mRecordRefAllocation, 0, VK_WHOLE_SIZE);
+    }
+
+    void MaterialStore::RefreshRecordRefs(uint32_t frame)
+    {
+        if (mRecordRefMapped == nullptr)
+            return;
+
+        for (uint32_t i = 0; i < mMaterials.size(); ++i)
+            WriteRecordRef(frame, i);
+
+        const VkDeviceSize offset = VkDeviceSize{ frame } * mRecordRefFrameStride;
+        vmaFlushAllocation(mDevice->Allocator(), mRecordRefAllocation, offset, mRecordRefFrameStride);
     }
 
     void MaterialStore::FreeMaterial(GpuMaterial &material)
     {
         // The sampler belongs to the resource store's cache, not to the material.
-        if (material.mRecordBuffer != VK_NULL_HANDLE)
-            vmaDestroyBuffer(mDevice->Allocator(), material.mRecordBuffer, material.mRecordAllocation);
         if (mTable != nullptr && !material.mRecordId.IsNull())
             mTable->ReleaseRecord(material.mRecordId);
         if (material.mDescriptorSet != VK_NULL_HANDLE)
@@ -594,7 +635,7 @@ namespace mir::vk
         return mTable->UpdateRecord(material->mRecordId, bytes);
     }
 
-    void MaterialStore::PublishRecords(uint64_t completedFrame, uint64_t frame)
+    void MaterialStore::PublishRecords(uint64_t completedFrame, uint64_t frame, uint32_t frameIndex)
     {
         if (mTable == nullptr)
             return;
@@ -606,11 +647,12 @@ namespace mir::vk
                 if (material.mRecordId == change.mId)
                 {
                     material.mRecordOffset = change.mOffset;
-                    WriteRecordRef(material);
                     break;
                 }
             }
         }
+
+        RefreshRecordRefs(frameIndex);
     }
 
     std::size_t MaterialStore::ReleaseMaterials()
@@ -639,9 +681,16 @@ namespace mir::vk
         mMaterials.clear();
         mMaterials.push_back(keptDefault);
         mMaterials.push_back(keptError);
+        mMaterials[0].mMaterialIndex = 0;
+        mMaterials[1].mMaterialIndex = 1;
         mFreeIndices.clear();
         mDefaultMaterial = MaterialHandle{ 0, keptDefault.mGeneration };
         mErrorMaterial = MaterialHandle{ 1, keptError.mGeneration };
+        if (mTable != nullptr)
+        {
+            for (uint32_t frame = 0; frame < kFramesInFlight; ++frame)
+                RefreshRecordRefs(frame);
+        }
         return released;
     }
 

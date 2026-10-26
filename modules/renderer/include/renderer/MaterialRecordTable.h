@@ -87,8 +87,10 @@ namespace mir
             uint32_t mOffset = kInvalidMaterialRecordOffset;
         };
 
-        // Bytes to upload since the last Publish (and any Create).
+        // Bytes to upload since the last Publish (and any Create). ClearWrites
+        // lets the GPU owner consume them exactly once.
         std::span<const Write> Writes() const { return mWrites; }
+        void ClearWrites() { mWrites.clear(); }
         // Records whose published offset changed at the last Publish (or Create).
         std::span<const OffsetChange> OffsetChanges() const { return mOffsetChanges; }
 
@@ -116,7 +118,7 @@ namespace mir
 
         Block *FindBlock(MaterialRecordId id);
         const Block *FindBlock(MaterialRecordId id) const;
-        bool AllocateRange(uint32_t bytes, uint32_t &outOffset);
+        bool AllocateRange(uint32_t bytes, uint32_t alignment, uint32_t &outOffset);
         void FreeRange(uint32_t offset, uint32_t size);
         void Reclaim(uint64_t completedFrame);
         uint32_t CopyOffset(const Block &block, uint32_t copy) const;

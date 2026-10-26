@@ -230,6 +230,9 @@ namespace mir::vk
             std::memcpy(mRecordMapped + write.mOffset, write.mBytes.data(), write.mBytes.size());
 
         vmaFlushAllocation(mDevice->Allocator(), mRecordAllocation, 0, VK_WHOLE_SIZE);
+        // Consumed exactly once: a later Create must not replay ranges that an
+        // in-flight frame may already read.
+        mRecords->ClearWrites();
     }
 
     void MaterialTable::Sync(uint32_t frame, ResourceStore &resources)

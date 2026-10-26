@@ -11,6 +11,8 @@
 #include <renderer/Material.h>
 #include <renderer/MaterialRecordTable.h>
 
+#include "VulkanConstants.h"
+
 #include <glm/vec4.hpp>
 #include <volk.h>
 
@@ -50,9 +52,7 @@ namespace mir::vk
         // Absent on a device without the shared-table features.
         MaterialRecordId mRecordId;
         uint32_t mRecordOffset = kInvalidMaterialRecordOffset;
-        VkBuffer mRecordBuffer = VK_NULL_HANDLE;
-        VmaAllocation mRecordAllocation = VK_NULL_HANDLE;
-        std::byte *mRecordMapped = nullptr;
+        uint32_t mMaterialIndex = 0;
     };
 
     // Destroy* and Release* do not wait: the caller idles the device first,
@@ -60,6 +60,15 @@ namespace mir::vk
     class MaterialStore
     {
     public:
+        static constexpr uint32_t kMaxMaterials = 1024;
+
+        // Set 0's dynamic record-reference row for a material in one frame slot.
+        // The stride is aligned to minUniformBufferOffsetAlignment at Initialize.
+        uint32_t RecordRefDynamicOffset(uint32_t frame, uint32_t material) const
+        {
+            return frame * mRecordRefFrameStride + material * mRecordRefStride;
+        }
+
         // sharedLayouts are sets 1-3, borrowed for the pipeline layouts; their owners destroy them.
         // table is null on a device without descriptor indexing. Also creates the default and
         // error materials and the sky pipeline, which reads set 1 alone.
@@ -72,8 +81,9 @@ namespace mir::vk
         bool DestroyMaterial(MaterialHandle handle);
         // Raw record bytes for this material; published at the next frame.
         bool UpdateRecord(MaterialHandle handle, std::span<const std::byte> bytes);
-        // After BeginFrame's wait, before recording.
-        void PublishRecords(uint64_t completedFrame, uint64_t frame);
+        // After BeginFrame's wait, before recording: publishes staged record bytes,
+        // then refreshes this frame slot's record-reference rows.
+        void PublishRecords(uint64_t completedFrame, uint64_t frame, uint32_t frameIndex);
         // Every material but the default and error ones, which move to slots 0 and 1; returns how many were released.
         std::size_t ReleaseMaterials();
 
@@ -106,8 +116,11 @@ namespace mir::vk
         VkPipeline CreateGraphicsPipeline(const PipelineState &state, VkFormat colorFormat);
         VkPipeline BuildPipeline(const MaterialDesc &desc, VkFormat colorFormat);
         bool CreateSkyPipeline(VkDescriptorSetLayout cameraSetLayout, VkFormat colorFormat);
-        bool CreateRecordRef(GpuMaterial &material);
-        void WriteRecordRef(GpuMaterial &material);
+        bool CreateRecordRefBuffer();
+        void DestroyRecordRefBuffer();
+        void WriteRecordRef(uint32_t frame, uint32_t material);
+        void WriteRecordRefEverywhere(uint32_t material);
+        void RefreshRecordRefs(uint32_t frame);
         // GPU objects only; the slot and its generation are the caller's.
         void FreeMaterial(GpuMaterial &material);
         void DestroyMaterials();
@@ -120,9 +133,16 @@ namespace mir::vk
         VkPipelineLayout mSkyPipelineLayout = VK_NULL_HANDLE;
         VkPipeline mSkyPipeline = VK_NULL_HANDLE;
 
-        // set 0: binding 0 = base color, binding 1 = normal map.
+        // set 0: binding 0 = base color, binding 1 = normal map,
+        // binding 2 = this frame's record-reference row (dynamic).
         VkDescriptorSetLayout mSetLayout = VK_NULL_HANDLE;
         VkDescriptorPool mDescriptorPool = VK_NULL_HANDLE;
+
+        VkBuffer mRecordRefBuffer = VK_NULL_HANDLE;
+        VmaAllocation mRecordRefAllocation = VK_NULL_HANDLE;
+        std::byte *mRecordRefMapped = nullptr;
+        uint32_t mRecordRefStride = sizeof(MaterialRecordRef);
+        uint32_t mRecordRefFrameStride = 0;
 
         std::vector<GpuMaterial> mMaterials;
         std::vector<uint32_t> mFreeIndices;

@@ -25,14 +25,17 @@ material type or PBR migration exists.
    Materials reference an image row and a sampler row separately, preserving the
    same image with different glTF sampler configurations.
 3. Material parameters are opaque, aligned raw bytes. `MaterialRecordTable` owns
-   creation, update, release, capacity and alignment; the field layout belongs to
-   the later material-type reflection work.
+   creation, update, release, capacity and alignment, including splitting a free
+   span around the requested base alignment; the field layout belongs to the
+   later material-type reflection work.
 4. Publication is frame-safe. Staged bytes are copied into a record copy that no
-   in-flight frame can still read, and a copy is reclaimed only after the frames
-   that may have read it complete.
-5. Raster finds the record through set 0's record-reference UBO. Ray tracing
-   finds the same offset through `RtInstanceInfo`. `RasterPushConstants` stays at
-   its 128-byte guaranteed size and instance data does not use `firstInstance`.
+   in-flight frame can still read, a copy is reclaimed only after the frames that
+   may have read it complete, and uploaded write lists are consumed once so a later
+   creation cannot replay an in-flight range.
+5. Raster finds the record through set 0's dynamic record-reference rows, with one
+   frame slice refreshed after that frame slot's wait. Ray tracing finds the same
+   offset through `RtInstanceInfo`. `RasterPushConstants` stays at its 128-byte
+   guaranteed size and instance data does not use `firstInstance`.
 6. Descriptor indexing, partially bound descriptors and non-uniform sampled
    image indexing are detected separately from ray tracing. A capable raster-only
    device enables and uses the shared tables; an incapable device keeps the

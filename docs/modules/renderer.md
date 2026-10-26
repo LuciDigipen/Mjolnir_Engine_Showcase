@@ -690,19 +690,26 @@ without them keeps the legacy material path and logs one warning. `MaterialTable
 is only constructed when they are present, so no shared-table layout or shader is
 built on an unsupported device. The table set is set 4: binding 0 is the raw
 record buffer, binding 1 the image rows and binding 2 the sampler rows. Set 0
-keeps its legacy base-color/normal bindings and adds binding 2, a 16-byte
-`MaterialRecordRef` UBO carrying the record offset and size. `RasterPushConstants`
+keeps its legacy base-color/normal bindings and adds binding 2, a dynamic UBO
+whose frame slice contains one `MaterialRecordRef` row per material, with the row
+stride aligned to `minUniformBufferOffsetAlignment`. `BeginFrame` refreshes only
+the current frame slot after its wait, so an offset change never rewrites a row
+an in-flight frame may still read. `RasterPushConstants`
 stays 128 bytes, and instance data never uses `firstInstance`. The RT set 0 sees
 the same image and sampler rows at bindings 9 and 10 and the record buffer at 11;
 `RtInstanceInfo` carries the same record offset, plus separate image and sampler
 row indices.
 
 **A material record is opaque bytes.** `MaterialRecordTable` owns the alignment,
-capacity and lifetime; M2 owns the reflected field layout. An update is staged in
-CPU memory and published after `BeginFrame`'s wait, into a copy no in-flight frame
-can still read, so a scene edit cannot rewrite bytes a previous frame is tracing.
-The table has a fixed capacity and reports failure instead of growing; records
-return to the allocator only after the frames that published them complete.
+capacity and lifetime; M2 owns the reflected field layout. Free spans are split
+around the requested base alignment, so a record is aligned whether it starts a
+fresh span or follows a smaller-alignment neighbour. An update is staged in CPU
+memory and published after `BeginFrame`'s wait, into a copy no in-flight frame can
+still read, so a scene edit cannot rewrite bytes a previous frame is tracing. The
+table has a fixed capacity and reports failure instead of growing; records return
+to the allocator only after the frames that published them complete. GPU uploads
+consume the table's fresh write list exactly once, so creating a material later
+cannot replay a range an in-flight frame already reads.
 
 **Anisotropy is part of the sampler cache key.** A request above 1 becomes 1
 without device support and otherwise clamps to `limits.maxSamplerAnisotropy`;
@@ -827,7 +834,8 @@ Now: `TextureTable` keeps a `TextureHandle`'s index as its stable global image
 row and advances the generation on release, `MaterialTable` owns set 4 (raw
 record buffer, image rows, distinct sampler rows) and a three-copy,
 frame-safe record publication, and both raster and RT read the same rows.
-`MaterialStore` adds a set-0 record-reference UBO; `RtInstanceInfo` carries
+`MaterialStore` adds set-0 dynamic record-reference rows, one frame slice at a
+time; `RtInstanceInfo` carries
 the same offset with separate image and sampler indices, so one image can use
 different glTF sampler configurations. Descriptor indexing is requested for
 capable raster-only devices; without it the legacy pipeline/set layout and

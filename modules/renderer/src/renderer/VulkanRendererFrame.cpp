@@ -69,6 +69,7 @@ namespace mir
 
         VkPipeline boundPipeline = VK_NULL_HANDLE;
         VkDescriptorSet boundDescriptorSet = VK_NULL_HANDLE;
+        uint32_t boundRecordRefOffset = UINT32_MAX;
 
         // no mesh/material batching yet, just draw per item
         for (const DrawItem &item : view.items)
@@ -96,11 +97,17 @@ namespace mir
                 boundPipeline = material->mPipeline;
             }
 
-            if (material->mDescriptorSet != boundDescriptorSet)
+            const bool sharedTables = mMaterialTable != nullptr;
+            const uint32_t recordRefOffset = sharedTables
+                ? mMaterialStore->RecordRefDynamicOffset(mFrameSync->Index(), material->mMaterialIndex)
+                : 0;
+            if (material->mDescriptorSet != boundDescriptorSet || recordRefOffset != boundRecordRefOffset)
             {
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
-                    0, 1, &material->mDescriptorSet, 0, nullptr);
+                    0, 1, &material->mDescriptorSet, sharedTables ? 1u : 0u,
+                    sharedTables ? &recordRefOffset : nullptr);
                 boundDescriptorSet = material->mDescriptorSet;
+                boundRecordRefOffset = recordRefOffset;
             }
 
             const VkDeviceSize vertexOffset = 0;
@@ -258,7 +265,8 @@ namespace mir
 
             if (mMaterialTable != nullptr)
             {
-                mMaterialStore->PublishRecords(mFrameSync->CompletedValue(), frame->signalValue);
+                mMaterialStore->PublishRecords(mFrameSync->CompletedValue(), frame->signalValue,
+                    mFrameSync->Index());
                 mMaterialTable->Sync(mFrameSync->Index(), *mResources);
             }
         }
