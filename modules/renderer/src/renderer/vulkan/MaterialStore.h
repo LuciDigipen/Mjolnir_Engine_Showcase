@@ -39,6 +39,8 @@ namespace mir::vk
         // shader through set 2, since the push constant range is full.
         glm::vec4 mParameters{};
         bool mModelShader = false;
+        bool mSurfaceMaterial = false;
+        uint32_t mRayTracingSbtOffset = 0;
         uint32_t mGeneration = 0;
         bool mUnlit = false;
         VkCullModeFlags mCullMode = VK_CULL_MODE_BACK_BIT;
@@ -61,6 +63,7 @@ namespace mir::vk
     {
     public:
         static constexpr uint32_t kMaxMaterials = 1024;
+        static constexpr std::string_view kDefaultSurfaceShaderName = "default_DefaultMaterial";
 
         // Set 0's dynamic record-reference row for a material in one frame slot.
         // The stride is aligned to minUniformBufferOffsetAlignment at Initialize.

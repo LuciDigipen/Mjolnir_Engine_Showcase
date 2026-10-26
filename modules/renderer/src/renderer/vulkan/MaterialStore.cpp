@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -57,7 +58,13 @@ namespace mir::vk
         if (mTable != nullptr && !CreateRecordRefBuffer())
             return false;
 
-        mDefaultMaterial = CreateMaterial(MaterialDesc{}, resources, colorFormat);
+        MaterialDesc defaultDesc;
+        if (mTable != nullptr)
+        {
+            defaultDesc.shaderName = std::string(kDefaultSurfaceShaderName);
+            defaultDesc.surfaceMaterial = true;
+        }
+        mDefaultMaterial = CreateMaterial(defaultDesc, resources, colorFormat);
         if (mDefaultMaterial.IsNull())
             return false;
 
@@ -325,7 +332,9 @@ namespace mir::vk
                 // them for the others is legal but makes the validation layer
                 // complain about attributes no shader consumes.
                 .vertexAttributeDescriptionCount =
-                    desc.shaderName == kModelShaderName ? static_cast<uint32_t>(vertexAttributes.size()) : 3u,
+                    desc.shaderName == kModelShaderName || desc.surfaceMaterial
+                    ? static_cast<uint32_t>(vertexAttributes.size())
+                    : 3u,
                 .pVertexAttributeDescriptions = vertexAttributes.data() },
             .topology = desc.topology,
             .rasterizer{
@@ -461,6 +470,8 @@ namespace mir::vk
         material.mParameters = glm::vec4{ static_cast<float>(desc.alphaMode), desc.alphaCutoff,
             desc.cullMode == VK_CULL_MODE_NONE ? 1.0f : 0.0f, 0.0f };
         material.mModelShader = desc.shaderName == kModelShaderName;
+        material.mSurfaceMaterial = desc.surfaceMaterial;
+        material.mRayTracingSbtOffset = desc.surfaceMaterial ? 2 : 0;
         material.mUnlit = desc.shaderName == "unlit";
         material.mCullMode = desc.cullMode;
         material.mFrontFace = desc.frontFace;
@@ -479,10 +490,18 @@ namespace mir::vk
                 vkDestroyPipeline(mDevice->Handle(), pipeline, nullptr);
             };
 
+        // The default surface material has no .material.json yet; its constant
+        // parameters are the record. A surface material without a table cannot
+        // run, so the caller keeps the legacy "default" shader instead.
+        const DefaultSurfaceMaterial defaultSurfaceRecord{};
+        std::span<const std::byte> record = desc.record;
+        if (record.empty() && desc.surfaceMaterial)
+            record = std::as_bytes(std::span{ &defaultSurfaceRecord, 1 });
+
         VkDescriptorBufferInfo recordRefInfo{};
         if (mTable != nullptr)
         {
-            material.mRecordId = mTable->CreateRecord(desc.record, desc.recordAlignment);
+            material.mRecordId = mTable->CreateRecord(record, desc.recordAlignment);
             if (material.mRecordId.IsNull())
             {
                 MIR_LOG_CRITICAL("CreateMaterial: material record table is full");

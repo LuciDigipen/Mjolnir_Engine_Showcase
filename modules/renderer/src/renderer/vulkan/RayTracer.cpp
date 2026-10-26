@@ -424,12 +424,15 @@ namespace mir::vk
 
     bool RayTracer::CreatePipeline(VkDescriptorSetLayout cameraSetLayout)
     {
-        // Indexed by stage: raygen, miss, shadow miss, closest hit, any hit, shadow any hit.
-        constexpr std::array<const char *, 6> kEntryPoints{
-            "rayGenMain", "missMain", "shadowMissMain", "closestHitMain", "anyHitMain", "shadowAnyHitMain" };
-        constexpr std::array<VkShaderStageFlagBits, 6> kStages{
+        // Indexed by stage: raygen, miss, shadow miss, legacy closest hit, legacy any hit,
+        // shadow any hit, then the default surface material's closest hit.
+        constexpr std::array<const char *, 7> kEntryPoints{
+            "rayGenMain", "missMain", "shadowMissMain", "closestHitMain", "anyHitMain", "shadowAnyHitMain",
+            "closestHitSurface" };
+        constexpr std::array<VkShaderStageFlagBits, 7> kStages{
             VK_SHADER_STAGE_RAYGEN_BIT_KHR, VK_SHADER_STAGE_MISS_BIT_KHR, VK_SHADER_STAGE_MISS_BIT_KHR,
-            VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, VK_SHADER_STAGE_ANY_HIT_BIT_KHR, VK_SHADER_STAGE_ANY_HIT_BIT_KHR };
+            VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, VK_SHADER_STAGE_ANY_HIT_BIT_KHR, VK_SHADER_STAGE_ANY_HIT_BIT_KHR,
+            VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR };
 
         std::array<VkShaderModule, kEntryPoints.size()> modules{};
         const auto destroyModules = [&]
@@ -441,7 +444,10 @@ namespace mir::vk
 
         for (size_t i = 0; i < modules.size(); ++i)
         {
-            modules[i] = CreateShaderModule(mDevice->Handle(), ShaderPath(std::format("raytrace.{}.spv", kEntryPoints[i])));
+            const std::string file = i + 1 == modules.size()
+                ? std::format("{}.{}.spv", MaterialStore::kDefaultSurfaceShaderName, kEntryPoints[i])
+                : std::format("raytrace.{}.spv", kEntryPoints[i]);
+            modules[i] = CreateShaderModule(mDevice->Handle(), ShaderPath(file));
             if (modules[i] == VK_NULL_HANDLE)
             {
                 destroyModules();
@@ -607,10 +613,13 @@ namespace mir::vk
                     .intersectionShader = VK_SHADER_UNUSED_KHR };
             };
 
-        // Raygen, the two misses, then a hit group per ray type: TraceRay's hit group
-        // offset picks 0 for camera rays and 1 for shadow rays (see TraceShadowRay).
-        const std::array<VkRayTracingShaderGroupCreateInfoKHR, 5> groups{
-            generalGroup(0), generalGroup(1), generalGroup(2), hitGroup(3, 4), hitGroup(VK_SHADER_UNUSED_KHR, 5) };
+        // Raygen, the two misses, then hit groups 0/1 for legacy camera/shadow rays
+        // and group 2 for the default surface material. Surface instances set
+        // instanceShaderBindingTableRecordOffset to 2; shadow rays stay on group 1,
+        // whose any-hit test reads the instance's own alpha state.
+        const std::array<VkRayTracingShaderGroupCreateInfoKHR, 6> groups{
+            generalGroup(0), generalGroup(1), generalGroup(2), hitGroup(3, 4), hitGroup(VK_SHADER_UNUSED_KHR, 5),
+            hitGroup(6, VK_SHADER_UNUSED_KHR) };
 
         const VkRayTracingPipelineCreateInfoKHR pipelineInfo{
             .sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR,
@@ -672,7 +681,7 @@ namespace mir::vk
         const VkDeviceAddress sbtBase = GetBufferAddress(mDevice->Handle(), mSbtBuffer);
         mSbtRaygenRegion = { .deviceAddress = sbtBase + 0 * regionSize, .stride = regionSize, .size = regionSize };
         mSbtMissRegion = { .deviceAddress = sbtBase + 1 * regionSize, .stride = regionSize, .size = 2 * regionSize };
-        mSbtHitRegion = { .deviceAddress = sbtBase + 3 * regionSize, .stride = regionSize, .size = 2 * regionSize };
+        mSbtHitRegion = { .deviceAddress = sbtBase + 3 * regionSize, .stride = regionSize, .size = 3 * regionSize };
         mSbtCallableRegion = {};
 
         return true;
@@ -927,7 +936,7 @@ namespace mir::vk
                 .transform = ToTransformMatrixKHR(item.model),
                 .instanceCustomIndex = instanceCount,
                 .mask = 0xFF,
-                .instanceShaderBindingTableRecordOffset = 0,
+                .instanceShaderBindingTableRecordOffset = material != nullptr ? material->mRayTracingSbtOffset : 0,
                 .flags = *facing | opacity,
                 .accelerationStructureReference = mBlases[item.mesh.mIndex].mAddress };
 

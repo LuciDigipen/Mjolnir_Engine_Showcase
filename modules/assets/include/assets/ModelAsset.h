@@ -24,6 +24,8 @@ namespace mir
     inline constexpr uint32_t kAnimationAssetTypeTag = 0x4d494e41;
     inline constexpr uint32_t kMaterialAssetTypeTag = 0x4c54414d;
     inline constexpr uint32_t kTextureAssetTypeTag = 0x52584554;
+    // Generic .material.json surface material, distinct from a glTF material.
+    inline constexpr uint32_t kSurfaceMaterialAssetTypeTag = 0x4d525355;
     inline constexpr uint32_t kModelAssetContentVersion = 1;
     // Mesh payload v2 replaces the previous RAW!/v1 JSON passthrough representation.
     inline constexpr uint32_t kMeshAssetContentVersion = 2;
@@ -31,6 +33,7 @@ namespace mir
     inline constexpr uint32_t kAnimationAssetContentVersion = 1;
     inline constexpr uint32_t kMaterialAssetContentVersion = 1;
     inline constexpr uint32_t kTextureAssetContentVersion = 1;
+    inline constexpr uint32_t kSurfaceMaterialAssetContentVersion = 1;
     inline constexpr uint32_t kNoAssetIndex = UINT32_MAX;
 
     enum class MeshTopology : uint32_t
@@ -169,6 +172,33 @@ namespace mir
         std::vector<uint8_t> rgba;
     };
 
+    enum class SurfaceTextureColorSpace : uint32_t
+    {
+        Linear,
+        Srgb
+    };
+
+    struct SurfaceMaterialTexture
+    {
+        std::string role, path;
+        SurfaceTextureColorSpace colorSpace = SurfaceTextureColorSpace::Linear;
+    };
+
+    struct SurfaceMaterialAsset
+    {
+        uint32_t version = 1;
+        std::string shaderFile, shaderType;
+        std::vector<std::string> frontends;
+        // Reflected parameter values, kept as the source JSON object.
+        std::string parametersJson = "{}";
+        std::vector<SurfaceMaterialTexture> textures;
+        // The cooker's packed outputs, all null for a constant material.
+        AssetId albedoTexture, normalTexture, surfaceTexture;
+        uint32_t resolution = 2048;
+        // Root keys the schema does not know, so an editor saves them back.
+        std::string unknownJson = "{}";
+    };
+
     class AssetCache;
 
     uint32_t TypedAssetVersion(uint32_t typeTag);
@@ -185,5 +215,6 @@ namespace mir
     MIR_TYPED_ASSET(AnimationClipAsset)
     MIR_TYPED_ASSET(MaterialAsset)
     MIR_TYPED_ASSET(TextureAsset)
+    MIR_TYPED_ASSET(SurfaceMaterialAsset)
 #undef MIR_TYPED_ASSET
 } // namespace mir

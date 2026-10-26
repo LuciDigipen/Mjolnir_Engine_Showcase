@@ -257,6 +257,22 @@ foreach(manifest IN LISTS game_manifests)
     endif()
 endforeach()
 
+set(approved_asset_roots assets ${game_asset_roots})
+engine_add_surface_materials(MjolnirEngine
+    NAMESPACE default
+    ROOT assets
+    APPROVED_ROOTS ${approved_asset_roots})
+foreach(game_name IN LISTS game_names)
+    set(game_assets_root "games/${game_name}/assets")
+    if(IS_DIRECTORY "${CMAKE_SOURCE_DIR}/${game_assets_root}")
+        engine_add_surface_materials(MjolnirEngine
+            NAMESPACE ${game_name}
+            ROOT ${game_assets_root}
+            APPROVED_ROOTS ${approved_asset_roots})
+    endif()
+endforeach()
+engine_write_shader_manifest(MjolnirEngine)
+
 engine_cook_assets(MjolnirEngine
     SOURCE_ROOTS assets/ ${game_asset_roots}
     OUT_DIR ${CMAKE_BINARY_DIR}/cooked_assets)

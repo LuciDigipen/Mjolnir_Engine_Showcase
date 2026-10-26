@@ -24,6 +24,7 @@ subsystem holds a pointer to the facade or to another subsystem.
 | `ResourceStore` | meshes, textures, samplers and the three built-in textures (white, flat normal, error magenta), behind slot/generation handles |
 | `MaterialStore` | materials and their pipelines, set 0, the pipeline layout every material shares, the sky pipeline |
 | `MaterialTable` | set 4 on a descriptor-indexing device: the raw material-record buffer, the stable image rows and the distinct sampler rows, one descriptor set per frame |
+| `MaterialReflection` | parses a material type's typed-witness reflection into field offsets and packs `.material.json` parameters into the shared record bytes; also namespaces shader output stems |
 | `CameraBuffer` | set 1: per-view camera data and light list, plus the directional light, ambient, fog and atmosphere |
 | `ModelDescriptors` | set 2: per-draw model data, reset each frame |
 | `ShadowMaps` | set 3: Sun, spot and point shadow maps, their pipelines and casters |
@@ -218,6 +219,18 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `RenderSettings` | `renderer/RenderSettings.h` | Project Settings' `"rendering"` section (`rayTracing: bool`, `fog: bool`); `LoadFile`/`SaveFile`, a World resource `RendererModule` loads |
 
 ## Rules
+
+**Surface materials.** `SurfaceCommon.slang` defines `SurfaceInput`,
+`SurfaceOutput`, `IMaterial`, `MaterialContext` and `MeshFrontend`;
+`SurfaceForward.slang` and `SurfaceRt.slang` are the fixed pass entries, and a
+material type is specialized into them by CMake. Materials never declare
+bindings. The default material is `assets/materials/default.slang` and reads its
+record through the shared tables; a device without them keeps the legacy
+`default.slang` Blinn-Phong pair. RT uses SBT hit group 2 for surface materials,
+while groups 0 and 1 stay on `raytrace.slang`'s legacy camera and shadow paths.
+`shaders/shader_manifest.json` is the single source of the compile commands,
+reflections and depfiles for both the build and the future reload path. See
+`docs/material-pipeline.md` and ADR 0002.
 
 **Vulkan 1.4 with `dynamicRendering`, `synchronization2`, `timelineSemaphore` and
 `shaderDrawParameters`.** A device missing any of them is rejected during

@@ -4,4 +4,5 @@ engine_add_module_tests(assets
     AssetPath.tests.cpp
     AssetCache.tests.cpp
     AssetsModule.tests.cpp
+    SurfaceMaterial.tests.cpp
 )
