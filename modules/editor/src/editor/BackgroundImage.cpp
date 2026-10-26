@@ -25,6 +25,7 @@
 #include <climits>
 #include <cstring>
 #include <memory>
+#include <utility>
 
 #if defined(_WIN32)
 #ifndef NOMINMAX
@@ -40,29 +41,65 @@ namespace mir
     {
         // keeps a mistaken pick from allocating hundreds of MB on the GPU
         constexpr int kMaxSide = 8192;
+
+        struct BackgroundTextureCleanup
+        {
+            std::vector<ImTextureData *> mTextures;
+        };
+
+        void FreeBackgroundTextures(ImGuiContext *ctx, ImGuiContextHook *hook)
+        {
+            auto *cleanup = static_cast<BackgroundTextureCleanup *>(hook->UserData);
+            if (cleanup == nullptr)
+                return;
+
+            for (ImTextureData *texture : cleanup->mTextures)
+            {
+                if (texture->TexID != ImTextureID_Invalid || texture->BackendUserData != nullptr)
+                    MIR_LOG_ERROR("Editor background texture still had renderer data at ImGui shutdown");
+                ImGui::UnregisterUserTexture(texture);
+                if (ctx != nullptr)
+                    ctx->PlatformIO.Textures.find_erase(texture);
+                delete texture;
+            }
+            delete cleanup;
+        }
     }
 
     BackgroundImage::~BackgroundImage()
     {
-        std::vector<ImTextureData *> textures = mRetired;
+        std::vector<ImTextureData *> textures = std::move(mRetired);
         if (mTexture != nullptr)
             textures.push_back(mTexture);
+        mTexture = nullptr;
+        mRetired.clear();
 
-        // After ImGuiRuntime::Shutdown the backend has already freed the GPU side.
-        const bool contextAlive = mContext != nullptr && ImGui::GetCurrentContext() == mContext;
+        if (textures.empty())
+            return;
+
+        // Editor::Shutdown runs before ImGuiRuntime::Shutdown, so the backend still
+        // owns the GPU textures. Hand CPU cleanup to ImGui's shutdown, which runs
+        // after the renderer backend destroys them.
+        if (mContext != nullptr && ImGui::GetCurrentContext() == mContext)
+        {
+            auto *cleanup = new BackgroundTextureCleanup{ std::move(textures) };
+            ImGuiContextHook hook{};
+            hook.Type = ImGuiContextHookType_Shutdown;
+            hook.Callback = FreeBackgroundTextures;
+            hook.UserData = cleanup;
+            ImGui::AddContextHook(mContext, &hook);
+            mContext = nullptr;
+            return;
+        }
+
         for (ImTextureData *texture : textures)
         {
-            if (contextAlive)
+            if (texture->TexID == ImTextureID_Invalid && texture->BackendUserData == nullptr)
             {
-                if (texture->TexID != ImTextureID_Invalid || texture->BackendUserData != nullptr)
-                {
-                    MIR_LOG_ERROR("Editor background texture outlived by its renderer backend is leaked");
-                    continue;
-                }
-                ImGui::UnregisterUserTexture(texture);
-                ImGui::GetPlatformIO().Textures.find_erase(texture);
+                delete texture;
+                continue;
             }
-            delete texture;
+            MIR_LOG_ERROR("Editor background texture still had renderer data without a live ImGui context");
         }
     }
 

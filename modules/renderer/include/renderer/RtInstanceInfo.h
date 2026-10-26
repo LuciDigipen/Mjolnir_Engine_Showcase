@@ -20,8 +20,8 @@
 namespace mir
 {
     // Must match RtInstanceInfo in assets/shaders/raytrace.slang, including its
-    // StructuredBuffer ArrayStride. The scalar padding keeps prevModel at 112;
-    // a float3 here would align to 16 and push it to 128.
+    // StructuredBuffer ArrayStride. Scalar padding keeps the layout explicit;
+    // a float3 here would use a wider alignment.
     struct RtInstanceInfo
     {
         VkDeviceAddress vertexAddress;
