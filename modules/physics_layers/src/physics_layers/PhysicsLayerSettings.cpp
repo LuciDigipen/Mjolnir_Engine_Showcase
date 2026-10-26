@@ -67,13 +67,10 @@ namespace mir
                     + std::to_string(kPhysicsLayerCount));
 
             PhysicsLayerTable table;
-            std::set<std::string> seen;
             for (size_t i = 0; i < names.size(); ++i)
-            {
-                if (!names[i].empty() && !seen.insert(names[i]).second)
-                    Invalid(path, "the layer name '" + names[i] + "' is used twice");
                 table.names[i] = names[i];
-            }
+            if (const std::string problem = CheckPhysicsLayers(table); !problem.empty())
+                Invalid(path, problem);
 
             if (const auto found = section.find("ignore"); found != section.end())
             {

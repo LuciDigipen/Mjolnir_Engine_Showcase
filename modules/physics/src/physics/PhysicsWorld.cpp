@@ -116,6 +116,16 @@ namespace mir
             std::vector<JPH::BodyID> mExcluded;
         };
 
+        // Kinematic bodies move like dynamic ones as far as layers and activation go.
+        bool Moves(PhysicsMotion motion) { return motion != PhysicsMotion::Static; }
+
+        JPH::EMotionType MotionTypeOf(PhysicsMotion motion)
+        {
+            return motion == PhysicsMotion::Dynamic ? JPH::EMotionType::Dynamic
+                : Moves(motion)                     ? JPH::EMotionType::Kinematic
+                                                    : JPH::EMotionType::Static;
+        }
+
         // Jolt stands a capsule along Y, so the other axes turn it.
         glm::quat AxisRotation(PhysicsAxis axis)
         {
@@ -248,12 +258,9 @@ namespace mir
             const JPH::RefConst<JPH::Shape> owned(shape);
             const bool dynamic = motion == PhysicsMotion::Dynamic;
             // Kinematic bodies move, so they live in the moving layer and start awake
-            const bool moving = motion != PhysicsMotion::Static;
-            const JPH::EMotionType type = dynamic ? JPH::EMotionType::Dynamic
-                : moving                          ? JPH::EMotionType::Kinematic
-                                                  : JPH::EMotionType::Static;
+            const bool moving = Moves(motion);
 
-            JPH::BodyCreationSettings settings(owned, ToJolt(position), ToJolt(rotation), type,
+            JPH::BodyCreationSettings settings(owned, ToJolt(position), ToJolt(rotation), MotionTypeOf(motion),
                                                detail::Layers::Of(layer, moving));
             settings.mEnhancedInternalEdgeRemoval = enhancedInternalEdgeRemoval;
             if (properties != nullptr)
@@ -343,13 +350,16 @@ namespace mir
             return std::nullopt;
         }
 
-        // An edit to a body changes what rests on it or against it, and Jolt wakes nothing by itself.
-        void WakeAround(JPH::BodyID id)
+        // Where bodies resting on or against this one are, with a margin.
+        JPH::AABox WakeBounds(JPH::BodyID id) const
         {
             JPH::AABox bounds = Bodies().GetTransformedShape(id).GetWorldSpaceBounds();
             bounds.ExpandBy(JPH::Vec3::sReplicate(kWakeMargin));
-            Bodies().ActivateBodiesInAABox(bounds, {}, {});
+            return bounds;
         }
+
+        // An edit to a body changes what rests on it or against it, and Jolt wakes nothing by itself.
+        void WakeAround(JPH::BodyID id) { Bodies().ActivateBodiesInAABox(WakeBounds(id), {}, {}); }
 
         // Mass properties are read while the body is still dynamic; Jolt only answers them then.
         struct Held
@@ -458,8 +468,7 @@ namespace mir
         JPH::BodyInterface &bodies = mImpl->Bodies();
 
         // Jolt's removal wakes nothing.
-        JPH::AABox bounds = bodies.GetTransformedShape(*id).GetWorldSpaceBounds();
-        bounds.ExpandBy(JPH::Vec3::sReplicate(kWakeMargin));
+        const JPH::AABox bounds = mImpl->WakeBounds(*id);
 
         mImpl->mContacts.ForgetBody(*id, bodies, mImpl->mCollisionEvents);
 
@@ -605,14 +614,11 @@ namespace mir
             return;
 
         const bool dynamic = motion == PhysicsMotion::Dynamic;
-        const bool moving = motion != PhysicsMotion::Static;
-        const JPH::EMotionType type = dynamic ? JPH::EMotionType::Dynamic
-            : moving                          ? JPH::EMotionType::Kinematic
-                                              : JPH::EMotionType::Static;
+        const bool moving = Moves(motion);
 
         JPH::BodyInterface &bodies = mImpl->Bodies();
         bodies.SetObjectLayer(*id, detail::Layers::Of(detail::Layers::UserLayer(bodies.GetObjectLayer(*id)), moving));
-        bodies.SetMotionType(*id, type, moving ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+        bodies.SetMotionType(*id, MotionTypeOf(motion), moving ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
         bodies.SetCollisionGroup(*id,
             dynamic ? JPH::CollisionGroup(nullptr, detail::kDynamicGroup, id->GetIndex()) : JPH::CollisionGroup());
         if (!moving)

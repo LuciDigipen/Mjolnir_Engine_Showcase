@@ -99,58 +99,61 @@ namespace mir
         return {};
     }
 
-    // The documented vector form. False, nothing written, for anything else; does not log.
-    inline bool ToVec3(const sol::object &value, glm::vec3 &out)
+    // The documented vector form, parsed once: the vector, or the problem in `problem`.
+    inline std::optional<glm::vec3> ParseVec3(const sol::object &value, std::string_view argument, std::string &problem)
     {
-        double components[3]{};
-        if (!VectorProblem(value, "", kVec3Keys, components).empty())
-            return false;
+        double c[3]{};
+        problem = VectorProblem(value, argument, kVec3Keys, c);
+        if (!problem.empty())
+            return std::nullopt;
 
-        out = glm::vec3(static_cast<float>(components[0]), static_cast<float>(components[1]), static_cast<float>(components[2]));
-        return std::isfinite(out.x) && std::isfinite(out.y) && std::isfinite(out.z);
+        const glm::vec3 out(static_cast<float>(c[0]), static_cast<float>(c[1]), static_cast<float>(c[2]));
+        if (!std::isfinite(out.x) || !std::isfinite(out.y) || !std::isfinite(out.z))
+        {
+            problem = std::string(argument) + " is too large to use";
+            return std::nullopt;
+        }
+        return out;
     }
 
+    inline std::optional<WorldVec3> ParseWorldVec3(const sol::object &value, std::string_view argument, std::string &problem)
+    {
+        double c[3]{};
+        problem = VectorProblem(value, argument, kVec3Keys, c);
+        if (!problem.empty())
+            return std::nullopt;
+
+        const std::optional<WorldVec3> position = TryWorldVec3FromDouble(glm::dvec3(c[0], c[1], c[2]));
+        if (!position)
+            problem = std::string(argument) + " is outside the range the world can hold";
+        return position;
+    }
+
+    // Without logging, for a caller that makes its own message.
     inline std::optional<WorldVec3> WorldVec3FromLua(const sol::object &value)
     {
-        double components[3]{};
-        if (!VectorProblem(value, "", kVec3Keys, components).empty())
-            return std::nullopt;
-        return TryWorldVec3FromDouble(glm::dvec3(components[0], components[1], components[2]));
+        std::string problem;
+        return ParseWorldVec3(value, "", problem);
     }
 
     // The same, but logs one error naming the call and the argument when it is not the form.
     inline bool ReadVec3(const sol::object &value, glm::vec3 &out, std::string_view call, std::string_view argument)
     {
-        double components[3]{};
-        const std::string problem = VectorProblem(value, argument, kVec3Keys, components);
-        if (!problem.empty())
-        {
+        std::string problem;
+        const std::optional<glm::vec3> parsed = ParseVec3(value, argument, problem);
+        if (!parsed)
             MIR_LOG_ERROR("script: {}: {}", call, problem);
-            return false;
-        }
-
-        out = glm::vec3(static_cast<float>(components[0]), static_cast<float>(components[1]), static_cast<float>(components[2]));
-        if (!std::isfinite(out.x) || !std::isfinite(out.y) || !std::isfinite(out.z))
-        {
-            MIR_LOG_ERROR("script: {}: {} is too large to use", call, argument);
-            return false;
-        }
-        return true;
+        else
+            out = *parsed;
+        return parsed.has_value();
     }
 
     inline std::optional<WorldVec3> ReadWorldVec3(const sol::object &value, std::string_view call, std::string_view argument)
     {
-        double components[3]{};
-        const std::string problem = VectorProblem(value, argument, kVec3Keys, components);
-        if (!problem.empty())
-        {
-            MIR_LOG_ERROR("script: {}: {}", call, problem);
-            return std::nullopt;
-        }
-
-        const std::optional<WorldVec3> position = TryWorldVec3FromDouble(glm::dvec3(components[0], components[1], components[2]));
+        std::string problem;
+        const std::optional<WorldVec3> position = ParseWorldVec3(value, argument, problem);
         if (!position)
-            MIR_LOG_ERROR("script: {}: {} is outside the range the world can hold", call, argument);
+            MIR_LOG_ERROR("script: {}: {}", call, problem);
         return position;
     }
 

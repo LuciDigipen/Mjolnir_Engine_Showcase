@@ -170,6 +170,16 @@ namespace mir
         const PhysicsLayerTable &LayerTableOf(World &world);
         std::optional<int> ResolveLayer(const PhysicsLayerTable &table, const sol::object &value, std::string_view call);
 
+        // The caster does not hit itself unless it says so.
+        void ExcludeCaster(World &world, sol::state_view lua, std::vector<BodyHandle> &excluded)
+        {
+            const Entity caster = RunningScriptEntity(lua);
+            if (caster.IsNull())
+                return;
+            if (const std::optional<BodyRef> ref = ResolveBody(world, caster))
+                excluded.push_back(ref->body);
+        }
+
         // The options table of world:raycast, turned into the filter and the bodies it excludes.
         // False, logged, for anything it does not understand, so a typo never quietly casts without its filter.
         bool ReadCastOptions(World &world, sol::state_view lua, const sol::table &options, RayFilter &filter,
@@ -259,16 +269,8 @@ namespace mir
                 }
             }
 
-            // the caster does not hit itself unless it says so
             if (ignoreSelf)
-            {
-                const Entity caster = RunningScriptEntity(lua);
-                if (!caster.IsNull())
-                {
-                    if (const std::optional<BodyRef> ref = ResolveBody(world, caster))
-                        excluded.push_back(ref->body);
-                }
-            }
+                ExcludeCaster(world, lua, excluded);
             filter.mExclude = excluded;
             return true;
         }
@@ -322,12 +324,7 @@ namespace mir
             else
             {
                 // no options: the default still keeps the caster out of its own cast
-                const Entity caster = RunningScriptEntity(lua);
-                if (!caster.IsNull())
-                {
-                    if (const std::optional<BodyRef> ref = ResolveBody(world, caster))
-                        excluded.push_back(ref->body);
-                }
+                ExcludeCaster(world, lua, excluded);
                 filter.mExclude = excluded;
             }
 
