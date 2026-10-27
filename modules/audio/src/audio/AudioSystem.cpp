@@ -180,7 +180,7 @@ namespace mir::audio {
 
         struct Bank
         {
-            AkBankID mId = AK_INVALID_BANK_ID;
+            std::string mName; // as first asked for, for the log
             BankState mState = BankState::Unknown;
         };
 
@@ -191,7 +191,8 @@ namespace mir::audio {
         };
 
         std::filesystem::path g_bankDir;
-        std::unordered_map<std::string, Bank> g_banks; // by name, without ".bnk"
+        // by bank ID: Wwise hashes a name lowercased, so "Music" and "music" are one bank
+        std::unordered_map<AkBankID, Bank> g_banks;
         std::size_t g_banksLoading = 0;
 
         std::mutex g_bankMutex;
@@ -224,16 +225,24 @@ namespace mir::audio {
             return std::string(name);
         }
 
+        Bank &FindBank(const std::string &name)
+        {
+            return g_banks[AK::SoundEngine::GetIDFromString(name.c_str())];
+        }
+
         BankState QueueBank(const std::string &name)
         {
-            Bank &bank = g_banks[name];
+            Bank &bank = FindBank(name);
             if (bank.mState != BankState::Unknown)
                 return bank.mState;
+
+            bank.mName = name;
 
             static_assert(std::is_nothrow_invocable_v<decltype(&OnBankLoaded), AkUInt32, const void *, AKRESULT,
                               void *>, "C callbacks and thread entry points must be noexcept (conventions.md)");
             const std::string file = name + ".bnk";
-            if (const AKRESULT result = AK::SoundEngine::LoadBank(file.c_str(), &OnBankLoaded, nullptr, bank.mId);
+            AkBankID bankId = AK_INVALID_BANK_ID;
+            if (const AKRESULT result = AK::SoundEngine::LoadBank(file.c_str(), &OnBankLoaded, nullptr, bankId);
                 result != AK_Success)
             {
                 MIR_LOG_ERROR("SoundBank '{}' could not be queued for loading ({})", name, ResultText(result));
@@ -255,25 +264,25 @@ namespace mir::audio {
 
             for (const BankResult &done : g_bankScratch)
             {
-                for (auto &[name, bank] : g_banks)
-                {
-                    if (bank.mId != done.mId || bank.mState != BankState::Loading)
-                        continue;
+                const auto found = g_banks.find(done.mId);
+                if (found == g_banks.end() || found->second.mState != BankState::Loading)
+                    continue;
 
-                    --g_banksLoading;
-                    if (done.mResult == AK_Success)
-                    {
-                        bank.mState = BankState::Loaded;
-                        MIR_LOG_INFO("SoundBank '{}' loaded", name);
-                    }
-                    else
-                    {
-                        bank.mState = BankState::Failed;
-                        MIR_LOG_ERROR("SoundBank '{}' failed to load ({}), so its events will not play. Regenerate the "
-                                      "SoundBanks with the Wwise version the engine links, then copy them into '{}'",
-                            name, ResultText(done.mResult), g_bankDir.string());
-                    }
-                    break;
+                Bank &bank = found->second;
+                --g_banksLoading;
+
+                // already in means loaded by someone else, which is still loaded
+                if (done.mResult == AK_Success || done.mResult == AK_BankAlreadyLoaded)
+                {
+                    bank.mState = BankState::Loaded;
+                    MIR_LOG_INFO("SoundBank '{}' loaded", bank.mName);
+                }
+                else
+                {
+                    bank.mState = BankState::Failed;
+                    MIR_LOG_ERROR("SoundBank '{}' failed to load ({}), so its events will not play. Regenerate the "
+                                  "SoundBanks with the Wwise version the engine links, then copy them into '{}'",
+                        bank.mName, ResultText(done.mResult), g_bankDir.string());
                 }
             }
 
@@ -313,10 +322,7 @@ namespace mir::audio {
             // with no bank named, the event may be in any of them
             BankState state = g_banksLoading > 0 ? BankState::Loading : BankState::Loaded;
             if (!g_music.mBank.empty())
-            {
-                const auto bank = g_banks.find(g_music.mBank);
-                state = bank != g_banks.end() ? bank->second.mState : BankState::Failed;
-            }
+                state = FindBank(g_music.mBank).mState;
 
             if (state == BankState::Loading)
                 return;
@@ -405,8 +411,10 @@ namespace mir::audio {
         // Init.bnk is the bus layout every other bank resolves against, so it alone loads before Init returns
         if (!banks.empty())
         {
-            Bank &init = g_banks[BankName(kInitBank.string())];
-            if (const AKRESULT result = AK::SoundEngine::LoadBank(kInitBank.string().c_str(), init.mId);
+            Bank &init = FindBank(BankName(kInitBank.string()));
+            init.mName = BankName(kInitBank.string());
+            AkBankID initId = AK_INVALID_BANK_ID;
+            if (const AKRESULT result = AK::SoundEngine::LoadBank(kInitBank.string().c_str(), initId);
                 result != AK_Success)
             {
                 Fail(ErrorCategory::ProjectData, "SoundBank " + kInitBank.string() + " failed to load",

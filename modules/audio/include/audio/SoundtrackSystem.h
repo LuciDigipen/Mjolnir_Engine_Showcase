@@ -12,6 +12,7 @@
 
 #include <audio/components/Soundtrack.h>
 
+#include <core/ecs/Entity.h>
 #include <core/ecs/Query.h>
 #include <core/ecs/System.h>
 
@@ -32,6 +33,7 @@ namespace mir
 
     private:
         Query<Soundtrack> *mQuery = nullptr;
+        Entity mOwner = kNullEntity;
         bool mWarnedMultipleSoundtracks = false;
     };
 }

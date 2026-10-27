@@ -133,6 +133,19 @@ throw out of. The bank is marked Failed and never queued again, and a soundtrack
 waiting on it gives up with one warning. The smoke tests fail on the error, so
 broken banks still stop CI.
 
+**A bank is known by its Wwise ID, not its spelling.** Wwise hashes a name
+lowercased, so `Music` and `music` are one bank; keyed by the string, the second
+spelling would queue a second load, get `AK_BankAlreadyLoaded`, and be marked
+Failed while the bank sat loaded. `AK_BankAlreadyLoaded` counts as loaded for the
+same reason.
+
+**One `Soundtrack` plays, and it keeps playing.** `SoundtrackSystem` remembers
+the entity whose music it started and stays with it while that entity has a
+`Soundtrack`, whatever order the query visits them in; another one only takes
+over once that one is gone. Picking the first in query order instead could start
+a second one, and removing the first would then stop the second's music for
+good.
+
 **The music volume is a contract with the authoring project.** No Wwise call
 sets one bus's volume, so the engine writes the global game parameter
 `Music_Volume`, in dB from -96 to 0, over 100 ms so the change does not click.

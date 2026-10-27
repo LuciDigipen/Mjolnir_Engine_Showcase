@@ -15,6 +15,7 @@
 #include <core/log/Log.h>
 
 #include <algorithm>
+#include <cstddef>
 
 namespace mir
 {
@@ -42,32 +43,37 @@ namespace mir
         if (!audio::IsInitialized())
             return;
 
-        const bool playing = IsPlaying(context.world);
-        bool found = false;
-
-        mQuery->ForEach([&](Entity, Soundtrack &track)
+        // the owner keeps the music whatever order the query visits them in, so only one is ever started
+        Soundtrack *track = mOwner.IsNull() ? nullptr : context.world.GetComponent<Soundtrack>(mOwner);
+        std::size_t count = 0;
+        mQuery->ForEach([&](Entity entity, Soundtrack &candidate)
             {
-                if (found)
+                ++count;
+                if (track == nullptr)
                 {
-                    if (!mWarnedMultipleSoundtracks)
-                    {
-                        MIR_LOG_WARN("more than one Soundtrack in the scene; only the first plays");
-                        mWarnedMultipleSoundtracks = true;
-                    }
-                    return;
+                    track = &candidate;
+                    mOwner = entity;
                 }
-
-                found = true;
-
-                if (track.mBankName[0] != '\0')
-                    audio::RequestBank(track.mBankName);
-
-                // Pause keeps the music going
-                if (playing && !track.mStarted && track.mEventName[0] != '\0')
-                    track.mStarted = audio::PlayMusic(track.mEventName, track.mBankName);
-                else if (!playing)
-                    StopSoundtrack(track, kCutFadeMs);
             });
+
+        if (count > 1 && !mWarnedMultipleSoundtracks)
+        {
+            MIR_LOG_WARN("more than one Soundtrack in the scene; only one plays");
+            mWarnedMultipleSoundtracks = true;
+        }
+
+        if (track == nullptr)
+            return;
+
+        if (track->mBankName[0] != '\0')
+            audio::RequestBank(track->mBankName);
+
+        // Pause keeps the music going
+        const bool playing = IsPlaying(context.world);
+        if (playing && !track->mStarted && track->mEventName[0] != '\0')
+            track->mStarted = audio::PlayMusic(track->mEventName, track->mBankName);
+        else if (!playing)
+            StopSoundtrack(*track, kCutFadeMs);
     }
 
     void SoundtrackSystem::OnPlayEnd(SystemContext &context)
