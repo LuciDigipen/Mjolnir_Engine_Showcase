@@ -537,6 +537,22 @@ defaults without affecting DDGI or ray tracing; invalid drafts cannot be saved.
 | `intensity` | `1` | Multiplier, 0–10 |
 | `halfResolution` | `true` | Trace at half width and height |
 
+When SSGI is requested in raster mode, `vk::RasterSurfaces` captures four
+per-frame RGBA16F inputs: camera-relative world normals/material kind, diffuse
+albedo, unfogged diffuse radiance, and direct lighting including specular.
+Ambient is excluded from the lighting inputs. Lit surfaces receive kind 1;
+unlit surfaces use kind 2 and supply their color as radiance; error surfaces
+use kind 3 and supply no bounce radiance. Cleared/unsupported pixels use kind 0.
+Transparent draws and sky are excluded.
+
+The depth-equal pass shares material vertex processing, alpha tests and model
+descriptor sets with the scene pass. Camera data is written once per view and
+reused by surface capture and motion blur. Images are allocated only while
+requested, capped at 256 MiB across frame slots, and released on disable, RT
+switch or scene unload. Unsupported opaque shaders, formats/limits or missing optional shaders
+retain existing raster rendering. Surface capture does not change the displayed
+lighting; tracing and composition are still pending.
+
 `rendering.ddgi` persists one axis-aligned, world-anchored diffuse GI volume.
 Project Settings > Rendering > Diffuse Global Illumination edits a draft and
 applies it only after Save succeeds. Settings are retained independently of

@@ -96,6 +96,12 @@ add_subdirectory(tools/TerrainTool)
 add_executable(MjolnirEngine WIN32)
 target_sources(MjolnirEngine PRIVATE main.cpp)
 
+foreach(surface_shader default model unlit error)
+    engine_add_shaders(MjolnirEngine
+        SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/${surface_shader}Surface.slang"
+        ENTRIES vertexMain:vertex fragmentMain:fragment)
+endforeach()
+
 if(MIR_WITH_RTXGI)
     engine_add_shaders(MjolnirEngine
         SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/raytraceGi.slang

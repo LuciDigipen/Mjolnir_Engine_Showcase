@@ -1,4 +1,7 @@
 #include "ShadowMapCommon.slang"
+#ifdef MIR_SSGI_SURFACE
+#include "RasterSurfaceCommon.slang"
+#endif
 
 struct VSInput
 {
@@ -78,8 +81,13 @@ struct RasterPushConstants
     output.normal = pushData.normalCol0.xyz * n.x + pushData.normalCol1.xyz * n.y + pushData.normalCol2.xyz * n.z;
     output.pointSize = 1;
     return output;
-}[shader("fragment")] float4 fragmentMain(VSOutput input, bool front : SV_IsFrontFace)
-    : SV_Target
+}
+[shader("fragment")]
+#ifdef MIR_SSGI_SURFACE
+RasterSurfaceOutput fragmentMain(VSOutput input, bool front : SV_IsFrontFace)
+#else
+float4 fragmentMain(VSOutput input, bool front : SV_IsFrontFace) : SV_Target
+#endif
 {
     float4 color = baseColor.Sample(input.uv) * input.color;
     float4 material = deformation[2];
@@ -93,6 +101,12 @@ struct RasterPushConstants
     ShadowMapVisibility visibility;
     visibility.worldPos = input.worldPos;
     visibility.geoN = GeometricNormal(input.worldPos, normal);
+#ifdef MIR_SSGI_SURFACE
+    float3 diffuse;
+    float3 direct = ShadeLitAndDiffuse(visibility, color.rgb, normal, input.worldPos, float3(0), diffuse);
+    return MakeRasterSurface(normal, 1, color.rgb, diffuse, direct);
+#else
     const float3 lit = ShadeLit(visibility, color.rgb, normal, input.worldPos);
     return float4(ApplyFog(lit, length(cameraPos.xyz - input.worldPos)), color.a);
+#endif
 }

@@ -51,6 +51,7 @@ namespace mir::vk
     class ShadowMaps;
     class ModelDescriptors;
     class RayTracer;
+    class RasterSurfaces;
     class Ddgi;
     class PostProcessingStack;
     class FrameCapture;
@@ -269,6 +270,7 @@ namespace mir
         // A disabled Bloom/DepthOfField/MotionBlur skips its GPU chain for the frame.
         void SetPostProcessing(const PostProcessingState &state);
         void SetGlobalIllumination(const DdgiSettings &settings);
+        void SetScreenSpaceGlobalIllumination(const SsgiSettings &settings) { mSsgiSettings = settings; }
 
         void SetAtmosphere(const Sky &sky);
 
@@ -297,7 +299,8 @@ namespace mir
         void RecordRtFrame(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views);
 
         void RecordCommands(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views);
-        void RecordView(VkCommandBuffer cmd, const RenderView &view, uint32_t viewIndex);
+        uint32_t RecordView(VkCommandBuffer cmd, const RenderView &view, uint32_t viewIndex,
+            bool surfaces = false, uint32_t cameraOffset = 0);
         uint32_t WriteCameraData(const RenderView &view, uint32_t viewIndex, bool applyJitter = false,
             glm::vec2 *outJitter = nullptr);
 
@@ -314,6 +317,8 @@ namespace mir
         std::unique_ptr<vk::FrameSync> mFrameSync;
         std::unique_ptr<vk::ResourceStore> mResources;
         std::unique_ptr<vk::MaterialStore> mMaterialStore;
+        std::unique_ptr<vk::RasterSurfaces> mRasterSurfaces;
+        SsgiSettings mSsgiSettings;
 
         std::unique_ptr<vk::CameraBuffer> mCameraBuffer;
         std::unique_ptr<vk::ShadowMaps> mShadowMaps;

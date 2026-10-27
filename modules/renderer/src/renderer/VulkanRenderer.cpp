@@ -17,6 +17,7 @@
 #include "vulkan/ModelDescriptors.h"
 #include "vulkan/PostProcessingStack.h"
 #include "vulkan/RayTracer.h"
+#include "vulkan/RasterSurfaces.h"
 #include "vulkan/ResourceStore.h"
 #include "vulkan/ShadowMaps.h"
 #include "vulkan/Swapchain.h"
@@ -35,6 +36,7 @@ namespace mir
         mFrameSync(std::make_unique<vk::FrameSync>()),
         mResources(std::make_unique<vk::ResourceStore>()),
         mMaterialStore(std::make_unique<vk::MaterialStore>()),
+        mRasterSurfaces(std::make_unique<vk::RasterSurfaces>()),
         mCameraBuffer(std::make_unique<vk::CameraBuffer>()),
         mShadowMaps(std::make_unique<vk::ShadowMaps>()),
         mModelDescriptors(std::make_unique<vk::ModelDescriptors>()),
@@ -108,6 +110,7 @@ namespace mir
             return false;
 
         mMeshUploads->Initialize(*mDevice);
+        mRasterSurfaces->Initialize(*mDevice);
 #if MIR_WITH_RTXGI
         if (mDevice->RayTracingSupported())
             mDdgi->Initialize(*mDevice, mRayTracer->SceneLayout(), mCameraBuffer->SetLayout());
@@ -130,6 +133,8 @@ namespace mir
             mSwapchain->MarkOutOfDate();
             return false;
         }
+        mRasterSurfaces->Resize(mSwapchain->Extent());
+        if (!mRasterSurfaces->Active()) mMaterialStore->ReleaseSurfacePipelines();
         return true;
     }
 
@@ -144,6 +149,7 @@ namespace mir
             mMeshUploads->Shutdown(*mRayTracer);
 
             mPostProcessing->Shutdown();
+            mRasterSurfaces->Shutdown();
 #if MIR_WITH_RTXGI
             mDdgi->Shutdown();
 #endif
@@ -315,6 +321,8 @@ namespace mir
         mDevice->WaitIdle();
 
         mMeshUploads->Clear(*mRayTracer);
+        mRasterSurfaces->Shutdown();
+        mMaterialStore->ReleaseSurfacePipelines();
 #if MIR_WITH_RTXGI
         mDdgi->Shutdown();
 #endif

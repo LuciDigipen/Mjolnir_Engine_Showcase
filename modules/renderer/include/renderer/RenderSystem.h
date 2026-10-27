@@ -135,6 +135,7 @@ namespace mir
         {
             const RenderSettings &renderSettings = context.world.Resource<RenderSettings>();
             mRenderer.SetGlobalIllumination(renderSettings.ddgi);
+            mRenderer.SetScreenSpaceGlobalIllumination(renderSettings.ssgi);
 
             World &source = mSourceWorld != nullptr ? *mSourceWorld : context.world;
             BindQueries(source);
