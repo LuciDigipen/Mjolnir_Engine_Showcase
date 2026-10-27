@@ -3,7 +3,7 @@
 Owns the Wwise sound engine's lifetime and its per-frame pump, and keeps the AK
 SDK out of the rest of the engine. 
 
-`mir::audio` · depends `mir::core`, `Wwise` (private) · API `modules/audio/include/audio/` · maintainer Dong Ta · reviewed 2026-09-18
+`mir::audio` · depends `mir::core`, `Wwise` (private) · API `modules/audio/include/audio/` · maintainer Dong Ta · reviewed 2026-10-26
 
 ## Model
 
@@ -38,17 +38,48 @@ positioning, no entity mapping and no component.
 
 `AudioModule` starts Wwise with the game's SoundBank directory in its
 constructor and terminates it in its destructor. It registers the audio
-components, `AudioEmitterSystem`, `AudioListenerSystem` and a render system in
-`LateUpdate`, in that order, and the `AudioEmitter` OnRemove hook. The render
-system runs `audio::Update` every frame, ungated, so UI sounds and fades still
-play in Edit and while paused.
+components, `AudioEmitterSystem`, `AudioListenerSystem`, `SoundtrackSystem` and a
+render system in `LateUpdate`, in that order, and the `AudioEmitter` and
+`Soundtrack` OnRemove hooks. The render system runs `audio::Update` every frame,
+ungated, so UI sounds and fades still play in Edit and while paused.
+
+Banks load in the background. `Init` loads `Init.bnk` itself and queues every
+other bank with Wwise's asynchronous `LoadBank`, so startup no longer grows with
+bank size. Wwise calls back on its bank thread, which only queues the result;
+`Update` applies it, so a bank's state only changes on the main thread, at the
+start of a frame.
+
+Music has a path of its own. A scene names its soundtrack with a `Soundtrack`
+component: a Wwise event, the bank it lives in, and a fade-out.
+`SoundtrackSystem` asks for the bank while the scene is being edited, calls
+`PlayMusic` on Play, and cuts the music on Stop; Pause keeps it playing. The
+cut runs in the `PlayEnd` stage, before the restore removes Play's entities,
+because their `OnRemove` fades: the fade-out is for a `Soundtrack` removed
+during Play. `PlayMusic` holds the post until that bank has loaded, then posts on a
+game object of its own. The authoring project routes the music to a `Music` bus,
+and the volume and mute reach it through one game parameter.
+
+```json
+{ "type": "Soundtrack", "fields": { "eventName": "Play_Soundtrack", "bankName": "Music", "fadeOutMs": 1000 } }
+```
+
+The soundtrack's media is streamed. A track marked Stream in Wwise is written
+next to the banks as `Media/<id>.wem` rather than into its bank, and the
+low-level I/O reads it from there in pieces while it plays. The pieces come out
+of the stream manager's I/O pool, which `Init` reserves once (2 MB by default),
+so a playing track costs the same memory whatever its length.
 
 ## API
 
 | Name | Header | Role |
 |---|---|---|
-| `Init` | `audio/AudioSystem.h` | Brings up all four Wwise stages and loads every bank in a game's SoundBank directory; throws `SetupError` on any failure |
-| `Update` | `audio/AudioSystem.h` | One `RenderAudio()`; nothing is mixed without it |
+| `Init` | `audio/AudioSystem.h` | Brings up all four Wwise stages, loads `Init.bnk` and queues every other bank in a game's SoundBank directory; throws `SetupError` on any failure before that |
+| `Update` | `audio/AudioSystem.h` | Applies finished bank loads, posts a soundtrack whose bank is in, then one `RenderAudio()`; nothing is mixed without it |
+| `RequestBank`, `AreBanksLoading` | `audio/AudioSystem.h` | Queues a bank by name, once, and answers its `BankState`; whether any bank is still loading |
+| `PlayMusic`, `StopMusic`, `IsMusicPlaying` | `audio/AudioSystem.h` | The one soundtrack: posted once its bank has loaded, stopped with a fade |
+| `SetMusicVolume`, `SetMusicMuted` | `audio/AudioSystem.h` | The Music bus's volume, linear from 0 to 1, and its mute; kept while audio is down |
+| `Soundtrack` | `audio/components/Soundtrack.h` | A scene's music: `eventName`, `bankName`, `fadeOutMs` |
+| `SoundtrackSystem` | `audio/SoundtrackSystem.h` | Requests the bank, starts the music on Play and cuts it on Stop |
 | `Terminate` | `audio/AudioSystem.h` | Reverse-order teardown, safe whether or not `Init` succeeded |
 | `PostEvent` | `audio/AudioSystem.h` | Fires an event by name on the fixed global game object |
 | `SetRTPCValue` | `audio/AudioSystem.h` | Writes a game parameter on one object, or globally with a `gameObject` of 0 |
@@ -80,11 +111,49 @@ flag, so a partially-initialised engine tears down correctly. Debug Wwise assert
 at `MemoryMgr::Term` if anything is still allocated, which is what makes a clean
 Debug exit evidence rather than luck.
 
-**`Init` loads every `.bnk` directly in the SoundBank directory, `Init.bnk`
-first.** `Init.bnk` carries the bus layout every other bank resolves against, and
-loading a content bank first fails. A directory that holds banks but no
-`Init.bnk` is rejected before any Wwise stage comes up, so the error names the
-missing file instead of a failed `LoadBank`.
+**`Init` loads `Init.bnk` and queues every other `.bnk` directly in the
+SoundBank directory.** `Init.bnk` carries the bus layout every other bank
+resolves against, so it is the one bank `Init` waits for; it is a few hundred
+bytes. A directory that holds banks but no `Init.bnk` is rejected before any
+Wwise stage comes up, so the error names the missing file instead of a failed
+`LoadBank`.
+
+**An event posted before its bank has loaded does not play.** Wwise looks the
+event up when it is posted and drops it when it is not there yet; nothing retries
+it. So whatever posts waits: `AudioEmitterSystem` starts no `playOnStart`
+emitter while any bank is still loading, since it does not know which bank holds
+the event, and `PlayMusic` waits for the bank its `Soundtrack` names, or for
+every bank when none is named. A post that fails anyway while banks are loading
+is a warning that says so, not the usual error. This matters most in a game build,
+where Play starts on the first frame.
+
+**A bank that fails to load in the background is reported once, as an error, and
+the engine keeps running.** `Init` has returned by then, so there is nothing to
+throw out of. The bank is marked Failed and never queued again, and a soundtrack
+waiting on it gives up with one warning. The smoke tests fail on the error, so
+broken banks still stop CI.
+
+**The music volume is a contract with the authoring project.** No Wwise call
+sets one bus's volume, so the engine writes the global game parameter
+`Music_Volume`, in dB from -96 to 0, over 100 ms so the change does not click.
+The project must define it and drive the `Music` bus's Bus Volume from it, with
+-96 mapped to silence; muting writes -96 and keeps the volume to come back to. A
+project without it takes the writes and nothing changes, as with any misspelled
+game parameter.
+
+**Vorbis needs its decoder linked and registered.** `AkVorbisDecoder` is in
+`FindWwise.cmake`'s library list and its factory header is included in
+`AudioSystem.cpp`. Without either, a Vorbis source plays silence with no error.
+
+**Streamed media is found under `Media/`.** `AkGeneratedSoundBanksResolver`
+looks for a streamed file at `<SoundBank directory>/Media/<id>.wem`, which is
+where Wwise generates it. Copy the folder with the banks; the asset cooker skips
+`.wem`, and the game's assets copy carries subfolders.
+
+**Do not ask Wwise for the speaker configuration on the first frames.**
+`GetSpeakerConfiguration` waits for the output device to open, about 150 ms in
+the first `Update`. The Wwise Profiler shows the output's channels without the
+wait.
 
 **The bank path is resolved from the executable, never the working directory.**
 `GameProject::mSoundBankDir` is built from `mir::ExecutableDir()`, and `Init`
@@ -107,7 +176,9 @@ process holds the profiler port.
 | Category | Raised when |
 |---|---|
 | System | The SoundBank directory is missing, a Wwise stage fails to start (the cause carries the `AKRESULT`), or the profiler connection fails |
-| Project data | Banks are present without `Init.bnk`, or a bank fails to load |
+| Project data | Banks are present without `Init.bnk`, or `Init.bnk` fails to load |
+
+Any other bank that fails is logged, not thrown, by the rule above.
 
 **`RenderAudio()` runs once per frame, after `mScheduler.Update`.** Calls queued
 before it are processed that frame; anything posted after waits for the next one.
@@ -149,6 +220,28 @@ are describing a version this project does not use.
 
 ## State
 
+*As of 2026-10-26.* The soundtrack path works in `SoundtrackCheck`, a game made
+for it: a 3-minute stereo placeholder loop, streamed, on a `Music` bus, with M to
+mute and Up and Down to step the volume from Lua. Its banks are built from
+nothing by `tools/wwise/build_soundtrack_check.ps1`, which synthesizes the track
+(`PlaceholderTrack.cs`), authors a scratch Wwise project through WAAPI
+(`soundtrack_check.lua`) and copies the output into the game. `Init.bnk` is 757
+bytes, `Music.bnk` 559 and the track a 1.17 MB Vorbis `.wem`, 2 channels at
+48 kHz.
+
+Measured in a Debug game build with temporary logging, now removed: `Init` takes
+about 7 ms and returns with `Music.bnk` still loading. While the track plays,
+Wwise holds 0 KB of media and its 2,050 KB stream I/O pool, and its total stays
+at about 4.9 MB over the run. The longest audio `Update` in the first 200 frames
+was 0.08–0.10 ms with the soundtrack and 0.06 ms without. Wwise reports a
+2-channel output on the test machine. The editor's Profiler panel, the Wwise
+Profiler and listening have not been checked in this pass.
+
+`smoke.SoundtrackCheck` opens it in the editor and `smoke.SoundtrackCheck.game-mode`
+plays it from the first frame, so the soundtrack is posted while its bank may
+still be loading. The music Lua functions are tested in `AudioBindings.tests.cpp`
+with no sound engine.
+
 *As of 2026-09-18.* Working: the full init and teardown sequence in Debug and
 Release, and both of `HelloWorld`'s banks loading, confirmed on hardware. The
 Wwise Profiler connects to Debug and Profile builds.
@@ -177,9 +270,10 @@ IDs rather than names, none of their names can be recovered from this repository
 to volume or pitch, before `games/HelloWorld/assets/scripts/audio_rtpc.lua` can
 be heard doing anything.
 
-The test bank's media is PCM, so no codec library is linked. `Profile` maps to
-CMake's `RelWithDebInfo` and there is no preset for it, so that branch of the
-config mapping has never been exercised.
+`HelloWorld`'s test bank is PCM; `SoundtrackCheck`'s track is Vorbis, so the
+Vorbis decoder is linked. `Profile` maps to CMake's `RelWithDebInfo` and there
+is no preset for it, so that branch of the config mapping has never been
+exercised.
 
 ## Backlog
 
@@ -192,24 +286,39 @@ config mapping has never been exercised.
 2. **Per-object unregistration.** `Terminate` calls `UnregisterAllGameObj`, which is
    enough while the object set is fixed. Once entities come and go during play,
    destruction needs to unregister, or the session leaks game objects.
-3. **Bank lifecycle.** Everything loads at init and unloads at term. A real
-   project wants banks per level or per scene.
+3. **Bank lifecycle.** Every bank still loads at startup, in the background now,
+   and none unloads before Terminate. A real project wants banks per level or per
+   scene; `RequestBank` is the start of that, and an unload with a reference
+   count is the rest.
 4. **Exercise the Profile configuration**, either through a preset or a one-off
    `RelWithDebInfo` configure. It is the only config path in `FindWwise.cmake`
    that has never been built.
-5. **A codec library** once any sound leaves PCM conversion. Wwise defaults to
-   Vorbis, and a Vorbis bank plays silently with no error when
-   `AkVorbisDecoder` is not linked.
-6. **Settle where the authoring project lives.** It was removed from this
+5. **Settle where the authoring project lives.** It was removed from this
    repository, so `games/HelloWorld/audio/SoundBanks/` is currently a pair of
    binaries nobody can regenerate without rebuilding the Wwise project from
-   scratch. Its own repository, shared storage, or back here once the content
-   settles are all defensible; what would decide it is whether anyone outside
-   the engine programmers edits audio. Per-game banks raise the stakes a little:
-   each game that gains audio needs its own generation target, and its own
-   `Init.bnk`.
+   scratch. `SoundtrackCheck` avoids it with a script that builds its project from
+   nothing, which suits generated placeholder content and nothing a sound
+   designer edits. Its own repository, shared storage, or back here once the
+   content settles are all defensible; what would decide it is whether anyone
+   outside the engine programmers edits audio. Per-game banks raise the stakes a
+   little: each game that gains audio needs its own generation target, and its
+   own `Init.bnk`.
+6. **Soundtrack transitions.** A second `PlayMusic` cuts the first with a 10 ms
+   fade. A crossfade, or a Wwise music switch driven by a state, would let a
+   scene change its music without a gap.
+7. **Wwise's own memory in the Profiler panel.** The panel shows the whole
+   process; a Wwise line needs a route to the editor that does not link audio.
 
 ## Changed
+
+*2026-10-26* — **Banks load in the background, and a scene can have a
+soundtrack.** Was: `Init` loaded every bank before returning, any bank failure
+threw, and music was only an event an emitter could post. Now: `Init` waits for
+`Init.bnk` alone and the rest load on Wwise's bank thread; a failed bank is
+logged once; play-on-start emitters wait for loading to finish; and a
+`Soundtrack` component plays a streamed track on a `Music` bus from Play to Stop,
+with its volume and mute in Lua. Because: bank size went straight into startup
+time, and music needs its own volume and must not sit in memory whole.
 
 *2026-10-20* — **Every setup failure is fatal, and every bank loads.** Was: a
 missing SoundBank directory ran silent, `Init` returned false on any failure,

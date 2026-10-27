@@ -46,6 +46,9 @@ namespace mir
 
         const bool sessionOver = !IsPlaying(context.world);
 
+        // an event posted before its bank has loaded fails, and its bank is not known here
+        const bool banksLoading = audio::AreBanksLoading();
+
         mQuery->ForEach([&](Entity, const WorldTransform &worldTransform, AudioEmitter &emitter)
             {
                 if (emitter.mGameObject == 0)
@@ -80,7 +83,7 @@ namespace mir
                         emitter.mPlayingId = 0;
 
                     // mLoop reposts whatever this emitter started, once it ends
-                    const bool start = emitter.mPlayOnStart && !emitter.mStarted;
+                    const bool start = emitter.mPlayOnStart && !emitter.mStarted && !banksLoading;
                     const bool repost = emitter.mLoop && emitter.mStarted && emitter.mPlayingId == 0;
 
                     if (start || repost)

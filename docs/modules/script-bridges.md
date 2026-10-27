@@ -23,7 +23,7 @@ other library, `script`'s other public headers included.
 
 | Type | Header | Role |
 |---|---|---|
-| `AudioScriptModule`, `RegisterAudioBindings` | `audio_script/` | `world:post_event/stop_event/set_rtpc/set_switch/set_state` |
+| `AudioScriptModule`, `RegisterAudioBindings` | `audio_script/` | `world:post_event/stop_event/set_rtpc/set_switch/set_state`, and the music volume and mute |
 | `InputScriptModule`, `RegisterInputBindings` | `input_script/` | `world:is_down/just_pressed/just_released/axis/axis2d/active_device` |
 | `PhysicsScriptModule`, `RegisterPhysicsBindings` | `physics_script/` | Rigid bodies, every `RigidBody` field, `teleport`, sleep control, raycasts and collision events |
 | `RendererScriptModule`, `RegisterPostProcessingBindings` | `renderer_script/` | `world:set_fog/get_fog` and the other post-processing pairs |

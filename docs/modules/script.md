@@ -111,6 +111,20 @@ function T.OnUpdate(self, world, entity, dt)
 end
 ```
 
+The music bus has its own four, which take no entity:
+`world:set_music_volume(volume)`, `world:music_volume()`,
+`world:set_music_muted(muted)` and `world:music_muted()`. The volume is linear,
+from 0 to 1; a value outside that, NaN, or a mute that is not a boolean is
+refused with an error and the old value stays. Both are kept while the sound
+engine is down and applied when it starts, so a settings screen can write them at
+any time. Muting keeps the volume to come back to.
+
+```lua
+if world:just_pressed("MusicMute") then
+    world:set_music_muted(not world:music_muted())
+end
+```
+
 The renderer bridge adds `world:mesh_bounds(entity)`: the local-space
 `{ min = {x, y, z}, max = {x, y, z} }` box of the entity's resolved mesh, or
 `nil` when there is none yet. `MeshBounds` is derived and never registered, so

@@ -1,0 +1,36 @@
+{
+  "input": {
+    "actions": [
+      {
+        "bindings": [
+          {
+            "device": "Keyboard",
+            "key": "M"
+          }
+        ],
+        "name": "MusicMute",
+        "type": "Button"
+      },
+      {
+        "bindings": [
+          {
+            "device": "Keyboard",
+            "key": "Up"
+          }
+        ],
+        "name": "MusicVolumeUp",
+        "type": "Button"
+      },
+      {
+        "bindings": [
+          {
+            "device": "Keyboard",
+            "key": "Down"
+          }
+        ],
+        "name": "MusicVolumeDown",
+        "type": "Button"
+      }
+    ]
+  }
+}

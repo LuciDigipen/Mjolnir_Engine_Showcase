@@ -12,7 +12,9 @@
 #include <audio/AudioListenerSystem.h>
 #include <audio/AudioSystem.h>
 #include <audio/ComponentRegistration.h>
+#include <audio/SoundtrackSystem.h>
 #include <audio/components/AudioEmitter.h>
+#include <audio/components/Soundtrack.h>
 
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/World.h>
@@ -37,13 +39,19 @@ namespace mir
         // WorldTransform readers; the render after both, so it sends this frame's positions
         context.scheduler.AddSystem<AudioEmitterSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kNormal});
         context.scheduler.AddSystem<AudioListenerSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kNormal});
+        context.scheduler.AddSystem<SoundtrackSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kNormal});
         context.scheduler.AddSystem<AudioRenderSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kLate});
 
         mHooks = context.world.SetComponentHooks<AudioEmitter>({ .onRemove = &AudioEmitterSystem::OnEmitterRemoved });
+        mSoundtrackHooks =
+            context.world.SetComponentHooks<Soundtrack>({ .onRemove = &SoundtrackSystem::OnSoundtrackRemoved });
+        mPlayEnd = context.scheduler.AddStage(Stage::PlayEnd, &SoundtrackSystem::OnPlayEnd);
     }
 
     AudioModule::~AudioModule()
     {
+        mPlayEnd.Reset();
+        mSoundtrackHooks.Reset();
         mHooks.Reset();
         audio::Terminate();
     }

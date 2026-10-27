@@ -352,6 +352,15 @@ if(BUILD_TESTING)
             TIMEOUT 120)
     endif()
 
+    # SoundtrackCheck plays from the first frame, so its soundtrack is posted while its bank may still be loading
+    if(EXISTS "${CMAKE_SOURCE_DIR}/games/SoundtrackCheck/game.json")
+        add_test(NAME smoke.SoundtrackCheck.game-mode
+            COMMAND MjolnirEngine --non-interactive --game games/SoundtrackCheck --no-editor --frames 120)
+        set_tests_properties(smoke.SoundtrackCheck.game-mode PROPERTIES
+            LABELS smoke
+            TIMEOUT 120)
+    endif()
+
     # Restarts HelloWorld -> EmptyScene -> HelloWorld, as Open Project does
     if(EXISTS "${CMAKE_SOURCE_DIR}/games/HelloWorld/game.json"
        AND EXISTS "${CMAKE_SOURCE_DIR}/games/EmptyScene/game.json")

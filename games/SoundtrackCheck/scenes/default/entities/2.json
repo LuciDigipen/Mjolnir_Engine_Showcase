@@ -1,0 +1,61 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "Sky"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "atmosphereRadiusKm": 6471.0,
+        "mieCoeff": 21.0,
+        "mieG": 0.758,
+        "mieScaleHeightKm": 1.2,
+        "mode": 0,
+        "planetRadiusKm": 6371.0,
+        "rayleighCoeff": [
+          5.5,
+          13.0,
+          22.4
+        ],
+        "rayleighScaleHeightKm": 8.0,
+        "sunIntensity": 22.0
+      },
+      "type": "Sky"
+    }
+  ],
+  "id": 2,
+  "parent": 0
+}

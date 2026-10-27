@@ -18,7 +18,7 @@ namespace mir
     class AudioModule
     {
     public:
-        // Starts Wwise and loads every bank in bankDir; throws SetupError when it cannot
+        // Starts Wwise and queues every bank in bankDir; throws SetupError when it cannot
         AudioModule(ModuleContext context, const std::filesystem::path &bankDir);
         ~AudioModule();
 
@@ -28,5 +28,7 @@ namespace mir
     private:
         // Wwise is process state, not a member, so the destructor drops this before Terminate
         Registration mHooks;
+        Registration mSoundtrackHooks;
+        Registration mPlayEnd;
     };
 }
