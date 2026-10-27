@@ -111,10 +111,9 @@ namespace mir
         // The last Update's detail inside another volume, such as a shadow caster pass.
         void Collect(const TerrainCullVolume &volume, const TerrainUnitReady &ready,
                      std::vector<TerrainDrawUnit> &out) const;
-        // One coverage traversal over a union, including ready geometry beyond
-        // the camera far plane. Does not create new payload wants.
-        void CollectForRayTracing(std::span<const TerrainCullVolume> volumes, const TerrainUnitReady &ready,
-            std::vector<TerrainDrawUnit> &out) const;
+        // All resident coverage, including shadow blockers outside the camera.
+        // Does not create new payload wants.
+        void CollectForRayTracing(const TerrainUnitReady &ready, std::vector<TerrainDrawUnit> &out) const;
         // Visible for what is drawn or chosen in view, Prefetch within the budget for the rest.
         std::span<const TerrainPayloadWant> Wants() const;
         const TerrainViewStats &Stats() const;

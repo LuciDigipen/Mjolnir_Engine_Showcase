@@ -16,6 +16,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -107,11 +108,12 @@ namespace mir::vk
             VkDescriptorSet descriptors = VK_NULL_HANDLE;
             VkDescriptorSetLayout layout = VK_NULL_HANDLE;
             uint32_t instanceCount = 0;
-            bool truncated = false;
+            bool truncated = false; // Requested scene exceeded capacity, even if camera fallback succeeded.
         };
 
         PreparedScene PrepareScene(VkCommandBuffer cmd, uint32_t frame, std::span<const DrawItem> items,
-            const ResourceStore &resources, const MaterialStore &materials);
+            const ResourceStore &resources, const MaterialStore &materials,
+            std::optional<std::span<const DrawItem>> fallbackItems = std::nullopt);
         VkDescriptorSetLayout SceneLayout() const { return mSetLayout; }
 
         // Borrowed from Ddgi for this frame's final camera trace only.
@@ -167,7 +169,8 @@ namespace mir::vk
         // Aligned to minAccelerationStructureScratchOffsetAlignment.
         bool CreateScratchBuffer(VkDeviceSize size, VkBuffer &outBuffer, VmaAllocation &outAllocation);
         PreparedScene RecordTlasBuild(VkCommandBuffer cmd, uint32_t frame, std::span<const DrawItem> items,
-            const ResourceStore &resources, const MaterialStore &materials);
+            const ResourceStore &resources, const MaterialStore &materials,
+            std::optional<std::span<const DrawItem>> fallbackItems);
 
         Device *mDevice = nullptr;
         VkDeviceSize mScratchAlignment = 1;

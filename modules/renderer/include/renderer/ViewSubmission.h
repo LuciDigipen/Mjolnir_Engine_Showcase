@@ -34,19 +34,16 @@ namespace mir
 
     struct GiTraceVolume
     {
-        DrawVolume coverage;
-        float maxRayDistance = 0.0f;
+        WorldPosition origin;
+        // SDK default; probe density does not bound visibility.
+        float maxRayDistance = 1e27f;
     };
 
-    // The probe grid plus one grid diagonal of ray reach and one spacing of
-    // relocation/bias allowance on every side.
     // nullopt for invalid settings or an unrepresentable world center.
     std::optional<GiTraceVolume> MakeGiTraceVolume(const DdgiSettings &settings);
 
-    // Keep ordinary world draws conservatively (their submission has no mesh
-    // bounds); sources collect the union of camera and GI coverage once.
+    // Include resident geometry for both probe rays and their shadow rays.
     // Output must not alias worldItems. Prepare has already run on the sources.
     void CollectRayTracingWorldDraws(std::span<const WorldDrawItem> worldItems,
-        std::span<IViewDrawSource *const> sources, size_t view, const ViewCamera &camera,
-        const GiTraceVolume &gi, std::vector<WorldDrawItem> &out);
+        std::span<IViewDrawSource *const> sources, size_t view, std::vector<WorldDrawItem> &out);
 }

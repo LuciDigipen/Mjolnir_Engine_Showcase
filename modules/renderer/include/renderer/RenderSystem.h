@@ -455,13 +455,12 @@ namespace mir
             {
                 mRayTracingItems.clear();
                 if (kRtxgiCompiledIn && renderSettings.ddgi.enabled)
-                    if (const auto volume = MakeGiTraceVolume(renderSettings.ddgi))
+                    if (MakeGiTraceVolume(renderSettings.ddgi))
                     {
                         const std::span<IViewDrawSource *const> sources = viewSources
                             ? std::span<IViewDrawSource *const>(viewSources->sources)
                             : std::span<IViewDrawSource *const>{};
-                        CollectRayTracingWorldDraws(mDrawItems, sources, 0, mViewCameras.front(),
-                            *volume, mRayTracingWorldItems);
+                        CollectRayTracingWorldDraws(mDrawItems, sources, 0, mRayTracingWorldItems);
                         // Identity clip matrix preserves insertion order within opaque/
                         // transparent groups; no camera-depth sorting for the TLAS.
                         mRenderViews.front().rayTracingSceneComplete =

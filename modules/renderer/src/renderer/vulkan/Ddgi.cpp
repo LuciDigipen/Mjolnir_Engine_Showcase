@@ -375,7 +375,7 @@ namespace mir::vk
         if (!state.mVolume) return std::nullopt;
         if (!complete || scene.truncated) { state.mReset = true; return std::nullopt; }
         const auto coverage = MakeGiTraceVolume(state.mSettings);
-        const auto relative = TryCameraRelativeFloat(coverage->coverage.origin, camera);
+        const auto relative = TryCameraRelativeFloat(coverage->origin, camera);
         if (!relative) { state.mReset = true; return std::nullopt; }
         const uint32_t total = uint32_t(state.mSettings.ProbeCount());
         const uint32_t count = uint32_t(state.mSettings.probesPerFrame);

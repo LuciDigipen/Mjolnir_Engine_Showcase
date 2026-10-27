@@ -37,13 +37,6 @@ namespace mir
         glm::mat4 viewProj{1.0f};
     };
 
-    struct DrawVolume
-    {
-        WorldPosition origin;
-        // Vulkan clip volume: -w <= x,y <= w and 0 <= z <= w.
-        glm::mat4 viewProj{ 1.0f };
-    };
-
     // RenderSystem calls Prepare once a frame with every viewport that has a camera, before it asks for any
     // view's draws or for other volumes drawn at a view's detail, such as shadow casters.
     class IViewDrawSource
@@ -57,11 +50,9 @@ namespace mir
         // viewProj is relative to origin, as BuildViewDrawItems takes it.
         virtual void AppendVolumeDraws(size_t view, WorldPosition origin, const glm::mat4 &viewProj,
                                        std::vector<WorldDrawItem> &out) = 0;
-        // Collect once over the union, without overlapping LOD fallbacks or
-        // new streaming requests. Include ready geometry beyond the lens far
-        // plane when it intersects another supplied volume.
-        virtual void AppendRayTracingDraws(size_t view, std::span<const DrawVolume> volumes,
-            std::vector<WorldDrawItem> &out) = 0;
+        // Collect resident geometry once, without culling shadow blockers,
+        // overlapping LOD fallbacks or requesting new payloads.
+        virtual void AppendRayTracingDraws(size_t view, std::vector<WorldDrawItem> &out) = 0;
     };
 
     // World resource; a source stays registered while it lives.

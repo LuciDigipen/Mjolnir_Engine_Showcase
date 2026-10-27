@@ -547,16 +547,18 @@ defaults without discarding other rendering settings.
 
 For a single RT viewport, `RenderSystem` supplies a camera-relative extended
 scene through `RenderView::rayTracingItems`. Ordinary meshes remain included
-conservatively. Draw sources collect the union of the camera frustum and the
-GI volume expanded by its maximum ray reach and relocation allowance. Terrain
-includes ready off-camera geometry without requesting additional streaming
-or overlapping coarse/fine fallback meshes. World positions are subtracted
-before narrowing to floats.
+conservatively. Draw sources include resident geometry outside the camera and
+probe grid so primary and shadow rays can find distant blockers. Terrain does
+not request additional streaming or overlap coarse/fine fallback meshes.
+Probe ray distance uses the SDK default independently of grid size. World
+positions are subtracted before narrowing to floats.
 
 `RayTracer::PrepareScene` builds the frame-slot TLAS, updates material
 descriptors and inserts the build-to-ray-read barrier. Its borrowed handles
-remain valid until that slot is prepared again. Instance/texture overflow or
-omitted world draws invalidate GI history and use ambient fallback.
+remain valid until that slot is prepared again. If the extended scene exceeds
+instance/texture capacity, it is replaced by the ordinary camera submission
+before recording a TLAS build. Overflow or omitted world draws invalidate GI
+history and use ambient fallback.
 
 The facade records these passes on the graphics queue:
 

@@ -699,7 +699,7 @@ TEST_CASE("Wants are Visible for what the view draws and chooses, Prefetch for t
                        [](const TerrainPayloadWant &w) { return w.demand == Demand::Prefetch; }));
 }
 
-TEST_CASE("RT volume union covers resident terrain once beyond the camera far plane", "[terrain][selection]")
+TEST_CASE("RT covers resident shadow blockers once outside camera and probe reach", "[terrain][selection]")
 {
     const Fixture f;
     const TerrainSelectionInstance instance = f.Instance();
@@ -707,14 +707,10 @@ TEST_CASE("RT volume union covers resident terrain once beyond the camera far pl
     TerrainViewSelector selector(ViewSettings(0));
     selector.Update({ &instance, 1 }, camera, AllReady());
     const size_t wantsBefore = selector.Wants().size();
-    // Overlapping volumes must participate in one fallback traversal, so a
-    // coarse stand-in cannot overlap finer geometry from the other volume.
-    const TerrainCullVolume volumes[]{ camera.frustum, { f.At({0.0, 0.0, 0.0}), Everything() },
-        { f.At({0.0, 0.0, 0.0}), Everything() } };
     SECTION("all resident")
     {
         std::vector<TerrainDrawUnit> draws;
-        selector.CollectForRayTracing(volumes, AllReady(), draws);
+        selector.CollectForRayTracing(AllReady(), draws);
         CheckCoveredOnce(f, draws);
         CHECK(std::any_of(draws.begin(), draws.end(), [](const TerrainDrawUnit &unit)
             { return unit.distance > 150.0; }));
@@ -725,7 +721,7 @@ TEST_CASE("RT volume union covers resident terrain once beyond the camera far pl
         const auto root = TerrainPayloadKeyOf(f.info, *f.Index().FindRegion({ top, 0, 0 }));
         const auto ready = [&](const TerrainDrawUnit &unit) { return unit.geometry == root; };
         std::vector<TerrainDrawUnit> draws;
-        selector.CollectForRayTracing(volumes, ready, draws);
+        selector.CollectForRayTracing(ready, draws);
         CheckCoveredOnce(f, draws);
         REQUIRE(draws.size() == 1);
         CHECK(draws[0].geometry == root);

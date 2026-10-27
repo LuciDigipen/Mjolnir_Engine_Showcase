@@ -53,28 +53,15 @@ namespace mir
             glm::dvec3(settings.origin[0], settings.origin[1], settings.origin[2]));
         if (!center)
             return std::nullopt;
-        const glm::dvec3 extent = glm::dvec3(settings.probeCounts[0] - 1,
-            settings.probeCounts[1] - 1, settings.probeCounts[2] - 1) * double(settings.probeSpacing);
-        const float rayDistance = static_cast<float>(glm::length(extent));
-        // One spacing also covers relocation offsets and tracing biases.
-        const glm::vec3 halfExtent = glm::vec3(extent * 0.5) + rayDistance + settings.probeSpacing;
-        glm::mat4 clip{ 1.0f };
-        clip[0][0] = 1.0f / halfExtent.x;
-        clip[1][1] = 1.0f / halfExtent.y;
-        clip[2][2] = 0.5f / halfExtent.z;
-        clip[3][2] = 0.5f;
-        return GiTraceVolume{ { *center, clip }, rayDistance };
+        return GiTraceVolume{ *center };
     }
 
     void CollectRayTracingWorldDraws(std::span<const WorldDrawItem> worldItems,
-        std::span<IViewDrawSource *const> sources, size_t view, const ViewCamera &camera,
-        const GiTraceVolume &gi, std::vector<WorldDrawItem> &out)
+        std::span<IViewDrawSource *const> sources, size_t view, std::vector<WorldDrawItem> &out)
     {
         out.assign(worldItems.begin(), worldItems.end());
-        const std::array<DrawVolume, 2> volumes{
-            DrawVolume{ camera.pose.position, camera.viewProj }, gi.coverage };
         for (IViewDrawSource *source : sources)
-            source->AppendRayTracingDraws(view, volumes, out);
+            source->AppendRayTracingDraws(view, out);
     }
 
     size_t BuildViewDrawItems(std::span<const WorldDrawItem> items, WorldPosition viewportCamera,

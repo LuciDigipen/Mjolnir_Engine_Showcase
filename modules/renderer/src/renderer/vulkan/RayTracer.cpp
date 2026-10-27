@@ -825,7 +825,8 @@ namespace mir::vk
     }
 
     RayTracer::PreparedScene RayTracer::RecordTlasBuild(VkCommandBuffer cmd, uint32_t frameIndex, std::span<const DrawItem> items,
-        const ResourceStore &resources, const MaterialStore &materials)
+        const ResourceStore &resources, const MaterialStore &materials,
+        std::optional<std::span<const DrawItem>> fallbackItems)
     {
         auto *const instances = reinterpret_cast<VkAccelerationStructureInstanceKHR *>(mInstanceMapped[frameIndex]);
         auto *const instanceInfos = reinterpret_cast<RtInstanceInfo *>(mInstanceInfoMapped[frameIndex]);
@@ -932,6 +933,15 @@ namespace mir::vk
                 .prevModel = item.previousModel };
 
             ++instanceCount;
+        }
+
+        if (truncated && fallbackItems)
+        {
+            // Refill before recording a build or updating descriptors. Only the
+            // camera scene reaches the GPU; GI must still reject this frame.
+            PreparedScene scene = RecordTlasBuild(cmd, frameIndex, *fallbackItems, resources, materials, std::nullopt);
+            scene.truncated = true;
+            return scene;
         }
 
         const VkDeviceSize instanceBytes = sizeof(VkAccelerationStructureInstanceKHR) * instanceCount;
@@ -1111,9 +1121,10 @@ namespace mir::vk
     }
 
     RayTracer::PreparedScene RayTracer::PrepareScene(VkCommandBuffer cmd, uint32_t frame,
-        std::span<const DrawItem> items, const ResourceStore &resources, const MaterialStore &materials)
+        std::span<const DrawItem> items, const ResourceStore &resources, const MaterialStore &materials,
+        std::optional<std::span<const DrawItem>> fallbackItems)
     {
-        const PreparedScene scene = RecordTlasBuild(cmd, frame, items, resources, materials);
+        const PreparedScene scene = RecordTlasBuild(cmd, frame, items, resources, materials, fallbackItems);
 
         if (!mTextureInfos.empty())
         {

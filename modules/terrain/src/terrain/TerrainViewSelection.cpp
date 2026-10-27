@@ -82,7 +82,8 @@ namespace mir
 
         bool OutsideAll(std::span<const LocalCullVolume> volumes, const Box &box)
         {
-            return std::all_of(volumes.begin(), volumes.end(), [&](const LocalCullVolume &volume)
+            // No cull volumes means all resident RT coverage.
+            return !volumes.empty() && std::all_of(volumes.begin(), volumes.end(), [&](const LocalCullVolume &volume)
                 { return Outside(volume.planes, Shifted(box, volume.origin)); });
         }
     } // namespace
@@ -794,10 +795,9 @@ namespace mir
         CollectVolumes({ &volume, 1 }, ready, out, false);
     }
 
-    void TerrainViewSelector::CollectForRayTracing(std::span<const TerrainCullVolume> volumes,
-        const TerrainUnitReady &ready, std::vector<TerrainDrawUnit> &out) const
+    void TerrainViewSelector::CollectForRayTracing(const TerrainUnitReady &ready, std::vector<TerrainDrawUnit> &out) const
     {
-        CollectVolumes(volumes, ready, out, true);
+        CollectVolumes({}, ready, out, true);
     }
 
     void TerrainViewSelector::CollectVolumes(std::span<const TerrainCullVolume> volumes,
@@ -814,7 +814,7 @@ namespace mir
             for (const TerrainCullVolume &volume : volumes)
                 if (const auto origin = TryWorldToTerrainLocal(volume.origin, inst.input.placement.translation))
                     local.push_back({ PlanesOf(volume.viewProj), origin->Meters() });
-            if (local.empty())
+            if (!volumes.empty() && local.empty())
                 continue;
             for (uint32_t root = 0; root < inst.roots; ++root)
                 impl.Cover(inst, i, root, local, includeBeyondFar, ready, out, nullptr);
