@@ -41,6 +41,8 @@ namespace mir::vk
             uint32_t pad;
         };
         static_assert(sizeof(FilterPush) == 120);
+        struct CompositePush { uint32_t offset[2], size[2]; float intensity; };
+        static_assert(sizeof(CompositePush) == 20);
         VkExtent2D MipExtent(VkExtent2D extent, uint32_t mip)
         { return { std::max(1u, extent.width >> mip), std::max(1u, extent.height >> mip) }; }
     }
@@ -137,11 +139,15 @@ namespace mir::vk
                 DestroyImage2D(*mDevice, frame.history); DestroyImage2D(*mDevice, frame.geometry);
                 DestroyImage2D(*mDevice, frame.scratch); DestroyImage2D(*mDevice, frame.resolved);
                 frame.historyLayout = false; frame.filterSets = {};
+                frame.compositeSet = VK_NULL_HANDLE;
             }
         for (auto &pipeline : mPipelines) { vkDestroyPipeline(dev, pipeline, nullptr); pipeline = VK_NULL_HANDLE; }
         for (auto &pipeline : mFilterPipelines) { vkDestroyPipeline(dev, pipeline, nullptr); pipeline = VK_NULL_HANDLE; }
         vkDestroyPipelineLayout(dev, mFilterLayout, nullptr); mFilterLayout = VK_NULL_HANDLE;
         vkDestroyDescriptorSetLayout(dev, mFilterSetLayout, nullptr); mFilterSetLayout = VK_NULL_HANDLE;
+        vkDestroyPipeline(dev, mCompositePipeline, nullptr); mCompositePipeline = VK_NULL_HANDLE;
+        vkDestroyPipelineLayout(dev, mCompositeLayout, nullptr); mCompositeLayout = VK_NULL_HANDLE;
+        vkDestroyDescriptorSetLayout(dev, mCompositeSetLayout, nullptr); mCompositeSetLayout = VK_NULL_HANDLE;
         vkDestroyDescriptorPool(dev, mPool, nullptr); mPool = VK_NULL_HANDLE;
         vkDestroyPipelineLayout(dev, mLayout, nullptr); mLayout = VK_NULL_HANDLE;
         vkDestroyDescriptorSetLayout(dev, mSetLayout, nullptr); mSetLayout = VK_NULL_HANDLE;
@@ -224,14 +230,15 @@ namespace mir::vk
             vkDestroyShaderModule(dev, module, nullptr);
             if (result != VK_SUCCESS) return false;
         }
-        if (!CreateFilterPipelines()) return false;
+        if (!CreateFilterPipelines() || !CreateCompositePipeline()) return false;
         uint32_t count = 0;
         for (const auto &view : mViews) count += (MipCount(view.rect.extent) + 1) * kFramesInFlight;
         const auto filterCount = uint32_t(mViews.size()) * kFramesInFlight * 3;
-        const VkDescriptorPoolSize sizes[]{ { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, count * 4 + filterCount * 5 },
+        const auto compositeCount = uint32_t(mViews.size()) * kFramesInFlight;
+        const VkDescriptorPoolSize sizes[]{ { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, count * 4 + (filterCount + compositeCount) * 5 },
             { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, (count + filterCount) * 2 } };
         const VkDescriptorPoolCreateInfo poolInfo{ .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-            .maxSets = count + filterCount, .poolSizeCount = 2, .pPoolSizes = sizes };
+            .maxSets = count + filterCount + compositeCount, .poolSizeCount = 2, .pPoolSizes = sizes };
         if (vkCreateDescriptorPool(dev, &poolInfo, nullptr, &mPool) != VK_SUCCESS) return false;
         uint64_t allocated = 0, filterAllocated = 0;
         const auto image = [&](Image2D &out, VkFormat format, VkExtent2D extent, uint32_t mips, bool filter = false)
@@ -262,6 +269,7 @@ namespace mir::vk
                 if (!image(frame.resolved, VK_FORMAT_R32G32B32A32_SFLOAT, view.rect.extent, 1, true)) return false;
                 for (auto &set : frame.filterSets)
                     if (!AllocateDescriptorSet(dev, mPool, mFilterSetLayout, set)) return false;
+                if (!AllocateDescriptorSet(dev, mPool, mCompositeSetLayout, frame.compositeSet)) return false;
                 for (uint32_t mip = 0; mip < mips; ++mip)
                 {
                     const VkImageViewCreateInfo info{ .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -311,6 +319,82 @@ namespace mir::vk
             if (result != VK_SUCCESS) return false;
         }
         return true;
+    }
+
+    bool SsgiTrace::CreateCompositePipeline()
+    {
+        auto dev = mDevice->Handle();
+        for (const char *file : { "SsgiComposite.vertexMain.spv", "SsgiComposite.fragmentMain.spv" })
+        {
+            std::error_code error;
+            if (!std::filesystem::is_regular_file(ShaderPath(file), error)) return false;
+        }
+        std::array<VkDescriptorSetLayoutBinding, 5> bindings{};
+        for (uint32_t i = 0; i < bindings.size(); ++i)
+            bindings[i] = { i, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr };
+        const VkDescriptorSetLayoutCreateInfo setInfo{ .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = uint32_t(bindings.size()), .pBindings = bindings.data() };
+        if (vkCreateDescriptorSetLayout(dev, &setInfo, nullptr, &mCompositeSetLayout) != VK_SUCCESS) return false;
+        VkDescriptorSetLayout layouts[]{ mCompositeSetLayout, mCameraLayout };
+        const VkPushConstantRange push{ VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(CompositePush) };
+        const VkPipelineLayoutCreateInfo layoutInfo{ .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+            .setLayoutCount = 2, .pSetLayouts = layouts, .pushConstantRangeCount = 1, .pPushConstantRanges = &push };
+        if (vkCreatePipelineLayout(dev, &layoutInfo, nullptr, &mCompositeLayout) != VK_SUCCESS) return false;
+        auto vert = CreateShaderModule(dev, ShaderPath("SsgiComposite.vertexMain.spv"));
+        auto frag = CreateShaderModule(dev, ShaderPath("SsgiComposite.fragmentMain.spv"));
+        const VkPipelineColorBlendAttachmentState blend{
+            .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT };
+        const bool ok = vert && frag && CreateFullscreenPipeline(*mDevice,
+            { vert, frag, "fragmentMain", mCompositeLayout, &blend, kHdrColorFormat }, "SSGI composition", mCompositePipeline);
+        vkDestroyShaderModule(dev, vert, nullptr); vkDestroyShaderModule(dev, frag, nullptr);
+        return ok;
+    }
+
+    void SsgiTrace::Compose(VkCommandBuffer cmd, uint32_t index, VkImage hdr, VkImageView hdrView, VkExtent2D extent,
+        VkImage depth, VkImageView depthView, const RasterSurfaces &surfaces, VkDescriptorSet cameraSet,
+        std::span<const uint32_t> offsets, const SsgiSettings &settings)
+    {
+        if (!Active() || offsets.size() < mViews.size()) return;
+        constexpr auto tests = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+        constexpr auto depthAccess = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        ImageBarrier(cmd, depth, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, tests, depthAccess,
+            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        ImageBarrier(cmd, hdr, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+        BeginFullscreenPass(cmd, hdrView, extent, VK_ATTACHMENT_LOAD_OP_LOAD);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mCompositePipeline);
+        for (size_t v = 0; v < mViews.size(); ++v)
+        {
+            const auto &view = mViews[v];
+            const auto &frame = view.frames[index];
+            const VkDescriptorImageInfo images[]{
+                { {}, depthView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+                { {}, surfaces.Image(RasterSurface::NormalKind, index).view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+                { {}, surfaces.Image(RasterSurface::Albedo, index).view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+                { {}, surfaces.Image(RasterSurface::DirectLighting, index).view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+                { {}, frame.resolved.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } };
+            std::array<VkWriteDescriptorSet, 5> writes{};
+            for (uint32_t i = 0; i < writes.size(); ++i)
+                writes[i] = { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = frame.compositeSet,
+                    .dstBinding = i, .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, .pImageInfo = &images[i] };
+            vkUpdateDescriptorSets(mDevice->Handle(), uint32_t(writes.size()), writes.data(), 0, nullptr);
+            VkDescriptorSet sets[]{ frame.compositeSet, cameraSet };
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mCompositeLayout, 0, 2, sets, 1, &offsets[v]);
+            const VkViewport viewport{ float(view.rect.offset.x), float(view.rect.offset.y),
+                float(view.rect.extent.width), float(view.rect.extent.height), 0, 1 };
+            vkCmdSetViewport(cmd, 0, 1, &viewport); vkCmdSetScissor(cmd, 0, 1, &view.rect);
+            const CompositePush push{ { uint32_t(view.rect.offset.x), uint32_t(view.rect.offset.y) },
+                { view.rect.extent.width, view.rect.extent.height }, settings.intensity };
+            vkCmdPushConstants(cmd, mCompositeLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
+            vkCmdDraw(cmd, 3, 1, 0, 0);
+        }
+        vkCmdEndRendering(cmd);
+        ImageBarrier(cmd, depth, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+            VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, tests, depthAccess);
     }
 
     void SsgiTrace::Filter(VkCommandBuffer cmd, uint32_t index, View &view, VkImageView depthView,

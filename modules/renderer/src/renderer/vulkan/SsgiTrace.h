@@ -26,6 +26,9 @@ namespace mir::vk
         void Record(VkCommandBuffer cmd, uint32_t frame, VkImage depth, VkImageView depthView,
             const class RasterSurfaces &surfaces, VkDescriptorSet cameraSet,
             std::span<const uint32_t> cameraOffsets, const SsgiSettings &settings);
+        void Compose(VkCommandBuffer cmd, uint32_t frame, VkImage hdr, VkImageView hdrView, VkExtent2D extent,
+            VkImage depth, VkImageView depthView, const RasterSurfaces &surfaces, VkDescriptorSet cameraSet,
+            std::span<const uint32_t> cameraOffsets, const SsgiSettings &settings);
         bool Active() const { return mPool != VK_NULL_HANDLE; }
         const Image2D &Raw(uint32_t view, uint32_t frame) const { return mViews[view].frames[frame].raw; }
         const Image2D &Filtered(uint32_t view, uint32_t frame) const { return mViews[view].frames[frame].resolved; }
@@ -43,6 +46,7 @@ namespace mir::vk
             Image2D pyramid, raw, history, geometry, scratch, resolved;
             bool historyLayout = false;
             std::array<VkDescriptorSet, 3> filterSets{};
+            VkDescriptorSet compositeSet = VK_NULL_HANDLE;
             std::vector<VkImageView> mips;
             std::vector<VkDescriptorSet> sets;
         };
@@ -60,6 +64,7 @@ namespace mir::vk
         };
         bool Create();
         bool CreateFilterPipelines();
+        bool CreateCompositePipeline();
         void Filter(VkCommandBuffer cmd, uint32_t frame, View &view, VkImageView depthView,
             VkImageView normalView, VkDescriptorSet cameraSet, uint32_t cameraOffset, const SsgiSettings &settings);
         void Destroy();
@@ -68,6 +73,9 @@ namespace mir::vk
         VkPipelineLayout mLayout = VK_NULL_HANDLE;
         VkDescriptorSetLayout mFilterSetLayout = VK_NULL_HANDLE;
         VkPipelineLayout mFilterLayout = VK_NULL_HANDLE;
+        VkDescriptorSetLayout mCompositeSetLayout = VK_NULL_HANDLE;
+        VkPipelineLayout mCompositeLayout = VK_NULL_HANDLE;
+        VkPipeline mCompositePipeline = VK_NULL_HANDLE;
         VkDescriptorPool mPool = VK_NULL_HANDLE;
         std::array<VkPipeline, 3> mPipelines{};
         std::array<VkPipeline, 3> mFilterPipelines{};

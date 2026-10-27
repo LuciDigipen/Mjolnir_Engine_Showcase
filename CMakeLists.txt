@@ -158,6 +158,10 @@ engine_add_shaders(MjolnirEngine
     ENTRIES temporalMain:compute spatialMain:compute resolveMain:compute)
 
 engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/SsgiComposite.slang
+    ENTRIES vertexMain:vertex fragmentMain:fragment)
+
+engine_add_shaders(MjolnirEngine
     SOURCE assets/shaders/default.slang
     ENTRIES vertexMain:vertex fragmentMain:fragment)
 

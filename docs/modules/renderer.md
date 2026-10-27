@@ -524,8 +524,7 @@ on the startup path catches.
 
 `rendering.ssgi` stores raster SSGI settings, edited under Project Settings >
 Rendering > Screen Space Global Illumination. Settings are saved independently
-of ray tracing and RTXGI availability. SSGI does not yet contribute to displayed
-lighting; the current raster lighting remains active. Invalid SSGI blocks load as disabled
+of ray tracing and RTXGI availability. Invalid SSGI blocks load as disabled
 defaults without affecting DDGI or ray tracing; invalid drafts cannot be saved.
 
 | Field | Default | Meaning / limits |
@@ -550,8 +549,7 @@ descriptor sets with the scene pass. Camera data is written once per view and
 reused by surface capture and motion blur. Images are allocated only while
 requested, capped at 256 MiB across frame slots, and released on disable, RT
 switch or scene unload. Unsupported opaque shaders, formats/limits or missing optional shaders
-retain existing raster rendering. Surface capture does not change the displayed
-lighting.
+retain existing raster rendering.
 
 `vk::SsgiTrace` builds a conservative reversed-Z depth pyramid per viewport,
 then traces cosine-weighted hemisphere rays against visible depth. It writes
@@ -569,8 +567,14 @@ layout/resolution changes, camera identity or projection changes, large camera
 cuts, trace-setting changes, and `ResetHistory()`. Direct `RenderView` callers
 should supply a stable `historyId` or reset history when switching cameras.
 Filtering has a separate 256 MiB allocation cap across frame slots; unsupported
-layouts retain existing lighting. Composition is still pending, so the filtered
-estimate does not yet contribute to the displayed image.
+layouts retain existing lighting.
+
+Composition preserves direct lighting/specular and replaces ambient in proportion
+to resolved confidence, adding albedo times irradiance / pi. Fog applies to the
+combined lighting once, followed by transparent draws and post-processing. Unlit,
+error and background pixels retain their original shading. Intensity below one
+blends from ambient toward SSGI; above one boosts indirect light. Zero intensity
+uses the ordinary raster path and releases SSGI resources.
 
 `rendering.ddgi` persists one axis-aligned, world-anchored diffuse GI volume.
 Project Settings > Rendering > Diffuse Global Illumination edits a draft and

@@ -302,8 +302,9 @@ namespace mir
         void RecordRtFrame(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views);
 
         void RecordCommands(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views);
+        enum class RasterPass { Scene, Opaque, Surface, Transparent };
         uint32_t RecordView(VkCommandBuffer cmd, const RenderView &view, uint32_t viewIndex,
-            bool surfaces = false, uint32_t cameraOffset = 0);
+            RasterPass pass = RasterPass::Scene, uint32_t cameraOffset = 0);
         uint32_t WriteCameraData(const RenderView &view, uint32_t viewIndex, bool applyJitter = false,
             glm::vec2 *outJitter = nullptr);
 

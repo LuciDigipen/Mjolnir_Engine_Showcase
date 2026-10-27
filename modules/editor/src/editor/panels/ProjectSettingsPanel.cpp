@@ -64,7 +64,7 @@ namespace mir
         if (ImGui::TreeNode("Screen Space Global Illumination"))
         {
             ImGui::Checkbox("Enable SSGI", &ssgi.enabled);
-            ImGui::TextWrapped("SSGI is unavailable in this version. Settings can still be saved; existing raster lighting remains active.");
+            ImGui::TextWrapped("Uses visible opaque surfaces for indirect lighting; unresolved samples fall back to ambient light.");
             if (draftRenderSettings.rayTracing)
                 ImGui::TextWrapped("SSGI settings apply to raster rendering. Ray tracing uses its own GI settings.");
             constexpr const char *qualities[]{ "Low", "Medium", "High" };

@@ -42,8 +42,9 @@
 namespace mir
 {
     uint32_t VulkanRenderer::RecordView(VkCommandBuffer cmd, const RenderView &view, uint32_t viewIndex,
-        bool surfaces, uint32_t cameraOffset)
+        RasterPass pass, uint32_t cameraOffset)
     {
+        const bool surfaces = pass == RasterPass::Surface;
         const VkRect2D rect = vk::ResolveViewRect(view.rect, mSwapchain->Extent());
 
         const VkViewport viewport{
@@ -57,7 +58,7 @@ namespace mir
         vkCmdSetScissor(cmd, 0, 1, &rect);
 
         auto &modelSets = mRasterSurfaces->ModelSets(viewIndex);
-        if (!surfaces)
+        if (pass == RasterPass::Scene || pass == RasterPass::Opaque)
         {
             cameraOffset = WriteCameraData(view, viewIndex);
             if (mRasterSurfaces->Active()) modelSets.assign(view.items.size(), VK_NULL_HANDLE);
@@ -78,18 +79,18 @@ namespace mir
         {
             const size_t draw = surfaces ? view.items.size() - 1 - iteration : iteration;
             const DrawItem &item = view.items[draw];
-            if (surfaces && item.transparent) continue;
+            const vk::GpuMaterial *const material = mMaterialStore->FindOrDefault(item.material);
+            if (material == nullptr) continue;
+            const bool transparent = item.transparent || material->mDescription.alphaMode == MaterialAlphaMode::Blend;
+            if ((pass == RasterPass::Opaque || surfaces) && transparent) continue;
+            if (pass == RasterPass::Transparent && !transparent) continue;
             const vk::GpuMesh *const mesh = mResources->FindMesh(item.mesh);
             if (mesh == nullptr)
             {
-                if (!item.mesh.IsNull())
+                if (!surfaces && !item.mesh.IsNull())
                     ++mSkippedDraws;
                 continue;
             }
-
-            const vk::GpuMaterial *const material = mMaterialStore->FindOrDefault(item.material);
-            if (material == nullptr)
-                continue;
 
             const VkPipeline pipeline = surfaces ? mMaterialStore->SurfacePipeline(item.material) : material->mPipeline;
             if (!pipeline) continue;
@@ -145,7 +146,7 @@ namespace mir
         // where nothing above wrote depth, i.e. still at the clear value - a
         // fullscreen ray-marched shader paying its cost only on actual
         // background pixels, with early-z doing the rejection.
-        if (mSkyVisible && !surfaces)
+        if (mSkyVisible && (pass == RasterPass::Scene || pass == RasterPass::Opaque))
         {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->SkyPipeline());
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->SkyPipelineLayout(),
@@ -209,9 +210,10 @@ namespace mir
         }
 
         const size_t viewCount = std::min<size_t>(views.size(), vk::kMaxViewsPerFrame);
+        const bool ssgi = mSsgiTrace->Active();
         std::array<uint32_t, vk::kMaxViewsPerFrame> cameraOffsets{};
         for (size_t i = 0; i < viewCount; ++i)
-            cameraOffsets[i] = RecordView(cmd, views[i], static_cast<uint32_t>(i));
+            cameraOffsets[i] = RecordView(cmd, views[i], static_cast<uint32_t>(i), ssgi ? RasterPass::Opaque : RasterPass::Scene);
 
         mDevice->EndLabel(cmd);
         vkCmdEndRendering(cmd);
@@ -221,13 +223,37 @@ namespace mir
             mDevice->BeginLabel(cmd, "Raster Surface Pass", { 0.5f, 0.8f, 0.3f, 1.0f });
             mRasterSurfaces->Begin(cmd, frame, mSwapchain->DepthImage(frame), mSwapchain->DepthView(frame));
             for (size_t i = viewCount; i-- > 0;)
-                RecordView(cmd, views[i], uint32_t(i), true, cameraOffsets[i]);
+                RecordView(cmd, views[i], uint32_t(i), RasterPass::Surface, cameraOffsets[i]);
             mRasterSurfaces->End(cmd, frame, mSwapchain->DepthImage(frame));
             mDevice->EndLabel(cmd);
             mDevice->BeginLabel(cmd, "SSGI Trace", { 0.3f, 0.8f, 0.5f, 1.0f });
             mSsgiTrace->Record(cmd, frame, mSwapchain->DepthImage(frame), mSwapchain->DepthView(frame),
                 *mRasterSurfaces, mCameraBuffer->Set(frame), std::span(cameraOffsets).first(viewCount), mSsgiSettings);
             mDevice->EndLabel(cmd);
+        }
+
+        if (ssgi)
+        {
+            mDevice->BeginLabel(cmd, "SSGI Composition", { 0.3f, 0.8f, 0.5f, 1.0f });
+            mSsgiTrace->Compose(cmd, frame, mSwapchain->HdrColorImage(frame), mSwapchain->HdrColorView(frame), extent,
+                mSwapchain->DepthImage(frame), mSwapchain->DepthView(frame), *mRasterSurfaces,
+                mCameraBuffer->Set(frame), std::span(cameraOffsets).first(viewCount), mSsgiSettings);
+            mDevice->EndLabel(cmd);
+            vk::ImageBarrier(cmd, mSwapchain->HdrColorImage(frame), VK_IMAGE_ASPECT_COLOR_BIT,
+                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+            auto colorLoad = hdrColorAttachment; colorLoad.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            auto depthLoad = depthAttachment; depthLoad.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            auto transparentInfo = renderingInfo;
+            transparentInfo.pColorAttachments = &colorLoad; transparentInfo.pDepthAttachment = &depthLoad;
+            vkCmdBeginRendering(cmd, &transparentInfo);
+            mDevice->BeginLabel(cmd, "Transparent Pass", { 0.5f, 0.5f, 0.8f, 1.0f });
+            for (size_t i = 0; i < viewCount; ++i)
+                RecordView(cmd, views[i], uint32_t(i), RasterPass::Transparent, cameraOffsets[i]);
+            mDevice->EndLabel(cmd);
+            vkCmdEndRendering(cmd);
         }
 
         vk::ImageBarrier(cmd, mSwapchain->HdrColorImage(frame), VK_IMAGE_ASPECT_COLOR_BIT,
@@ -294,7 +320,7 @@ namespace mir
     void VulkanRenderer::DrawFrame(std::span<const RenderView> views)
     {
         const bool hadSurfaces = mRasterSurfaces->Active();
-        bool captureSurfaces = mSsgiSettings.enabled && mSsgiSettings.ValidationError() == nullptr;
+        bool captureSurfaces = mSsgiSettings.enabled && mSsgiSettings.ValidationError() == nullptr && mSsgiSettings.intensity > 0;
         if (captureSurfaces)
             for (const auto &view : views)
                 for (const auto &item : view.items)
