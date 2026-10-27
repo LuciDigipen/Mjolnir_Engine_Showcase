@@ -614,7 +614,9 @@ defaults without discarding other rendering settings.
 **Scene submission and pass order.**
 
 For a single RT viewport, `RenderSystem` supplies a camera-relative extended
-scene through `RenderView::rayTracingItems`. Ordinary meshes remain included
+scene through `RenderView::rayTracingItems`. The renderer uses it only while
+DDGI can update the volume for this camera; otherwise primary and shadow rays use the
+ordinary camera scene. Ordinary meshes remain included
 conservatively. Draw sources include resident geometry outside the camera and
 probe grid so primary and shadow rays can find distant blockers. Terrain does
 not request additional streaming or overlap coarse/fine fallback meshes.

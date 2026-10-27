@@ -42,6 +42,7 @@ namespace mir::vk
         // Before BeginFrame: waits only when replacing/freeing GPU resources.
         void Configure(const DdgiSettings &settings, bool active);
         void ResetHistory();
+        bool CanUpdate(WorldPosition camera) const;
         std::optional<RayTracer::GiShading> Record(VkCommandBuffer cmd, uint32_t frame, WorldPosition camera,
             VkDescriptorSet cameraSet, uint32_t cameraOffset, const RayTracer::PreparedScene &scene, bool complete);
         void Shutdown(); // Caller has idled the device.

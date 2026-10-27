@@ -366,21 +366,26 @@ namespace mir::vk
     }
 
     void Ddgi::ResetHistory() { mImpl->mReset = true; }
+    bool Ddgi::CanUpdate(WorldPosition camera) const
+    {
+        const auto &state = *mImpl;
+        if (!state.mVolume) return false;
+        const auto coverage = MakeGiTraceVolume(state.mSettings);
+        return coverage && TryCameraRelativeFloat(coverage->origin, camera).has_value() &&
+            uint64_t(state.mSettings.probesPerFrame) * state.mSettings.raysPerProbe <=
+                state.mDevice->RtProperties().maxRayDispatchInvocationCount;
+    }
     void Ddgi::Shutdown() { mImpl->Destroy(); mImpl->mFailed.reset(); }
 
     std::optional<RayTracer::GiShading> Ddgi::Record(VkCommandBuffer cmd, uint32_t frame, WorldPosition camera,
         VkDescriptorSet cameraSet, uint32_t cameraOffset, const RayTracer::PreparedScene &scene, bool complete)
     {
         auto &state = *mImpl;
-        if (!state.mVolume) return std::nullopt;
-        if (!complete || scene.truncated) { state.mReset = true; return std::nullopt; }
+        if (!CanUpdate(camera) || !complete || scene.truncated) { state.mReset = true; return std::nullopt; }
         const auto coverage = MakeGiTraceVolume(state.mSettings);
         const auto relative = TryCameraRelativeFloat(coverage->origin, camera);
-        if (!relative) { state.mReset = true; return std::nullopt; }
         const uint32_t total = uint32_t(state.mSettings.ProbeCount());
         const uint32_t count = uint32_t(state.mSettings.probesPerFrame);
-        if (uint64_t(count) * state.mSettings.raysPerProbe > state.mDevice->RtProperties().maxRayDispatchInvocationCount)
-            return std::nullopt;
         if (state.mReset) state.mSchedule.Reset();
         const auto budget = state.mSchedule.Batch(total, count);
         state.mVolume->SetOrigin({ relative->x, relative->y, relative->z });

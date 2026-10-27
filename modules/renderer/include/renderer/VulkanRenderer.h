@@ -162,7 +162,8 @@ namespace mir
         float nearZ = 0.1f;
         // farZ 0 = no far plane
         float farZ = 0.0f;
-        // Optional extended scene, in this view's camera-relative coordinates.
+        // Optional extended GI scene, used while DDGI can update this camera's volume.
+        // Coordinates are relative to this view's camera.
         // nullopt keeps the ordinary RT path; an empty span is an empty scene.
         std::optional<std::span<const DrawItem>> rayTracingItems;
         // False when narrowing the extended scene omitted world draws. The

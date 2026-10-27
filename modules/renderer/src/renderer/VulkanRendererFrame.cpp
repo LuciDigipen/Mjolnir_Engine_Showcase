@@ -356,7 +356,10 @@ namespace mir
         const uint32_t cameraOffset = WriteCameraData(view, 0, applyJitter, &jitterPixels);
 
         mDevice->BeginLabel(cmd, "RT Scene Preparation", { 0.0f, 0.7f, 1.0f, 1.0f });
-        const bool extended = view.rayTracingItems.has_value() && view.rayTracingSceneComplete;
+        bool extended = false;
+#if MIR_WITH_RTXGI
+        extended = mDdgi->CanUpdate(view.cameraPosition) && view.rayTracingItems.has_value() && view.rayTracingSceneComplete;
+#endif
         [[maybe_unused]] const auto scene = mRayTracer->PrepareScene(cmd, frame,
             extended ? *view.rayTracingItems : view.items, *mResources, *mMaterialStore,
             extended ? std::optional(view.items) : std::nullopt);
