@@ -110,7 +110,8 @@ namespace mir
             return false;
 
         if (mDevice->RayTracingSupported() &&
-            !mRayTracer->Initialize(*mDevice, mSwapchain->Extent(), mCameraBuffer->SetLayout(), *mMaterialTable))
+            !mRayTracer->Initialize(*mDevice, mSwapchain->Extent(), mCameraBuffer->SetLayout(), *mMaterialTable,
+                mMaterialStore->SurfaceMaterials().materials))
             return false;
 
         mMeshUploads->Initialize(*mDevice);

@@ -26,9 +26,10 @@ engine code, and slangc specializes an entry point with `-specialize`.
    `lightColor` already carries the existing brightness convention).
 3. Raster reads the material record through set 0's dynamic `MaterialRecordRef`
    and set 4's byte-address buffer. RT reads the same bytes through
-   `RtInstanceInfo.materialRecord` and set 0's binding 11. The default material
-   record is `DefaultSurfaceMaterial` in `renderer/Material.h`; a compiled Slang
-   reflection test keeps its two `float4` fields at offsets 0 and 16.
+   `RtInstanceInfo.materialRecord` and set 0's binding 11. The default and
+   other source-declared records are packed at startup from the build-generated
+   `surface_materials.json` plus the material's typed-witness reflection JSON;
+   there is no C++ field mirror and no per-type C++ edit.
 4. A raw `ByteAddressBuffer.Load<M>` reflection does not expose `M`'s fields.
    `SurfaceLayout.slang` compiles the same type into a
    `StructuredBuffer<M>` witness, and `MaterialReflection` turns its
@@ -38,23 +39,31 @@ engine code, and slangc specializes an entry point with `-specialize`.
    Its PBR constants preserve the old look: albedo 0.5, F0 0.04, roughness
    `pow(2/34, 0.25)`, AO on ambient only. A legacy `default.slang` remains as
    the fallback for devices without shared material tables.
-6. CMake discovers `materials/*.material.json` under the engine assets root and
-   each game's assets root, validates the shared v1 schema, deduplicates by
-   `<namespace>_<type>`, and compiles vertex, fragment, RT and layout outputs
-   through the frontend templates. The namespace is `default` for engine
-   materials and the game directory name for game materials.
+6. CMake recursively discovers `*.material.json` under the engine assets root
+   and each game's assets root, validates the shared v1 schema, resolves shader
+   paths through normalized approved roots, and keys compilation by normalized
+   shader source + type + frontend. The output stem is
+   `<namespace>_<sanitized type>_<FNV-1a>`; two assets sharing a shader compile
+   once but keep separate catalog records. The namespace is `default` or the
+   game directory name.
 7. The same CMake variables write `shaders/shader_manifest.json`: slangc path,
-   working directory, common argument array, one record per output (sources,
-   entry, stage, type, specialization, output, reflection, depfile, arguments)
-   and the mesh frontend templates. Legacy shaders are in the same manifest.
-8. Every output compiles with `-reflection-json` and `-depfile`; CMake receives
-   the depfile through the `DEPFILE` source property, so a material source edit
-   rebuilds its outputs without a wrapper source.
-9. RT keeps the legacy hit group at SBT offset 0 and the shadow any-hit group at
-   1. Surface-material instances use offset 2, a distinct closest-hit group
-   compiled from `SurfaceRt.slang`; the legacy alpha any-hit and double-sided
-   rules stay in `raytrace.slang`. A material without shared tables stays on the
-   legacy raster default.
+   working directory, the exact common argument array, one record per output
+   (sources, entry, stage, type, specialization, output, reflection, depfile,
+   arguments) and the mesh frontend templates. Legacy shaders are in the same
+   manifest. The same command writes `shaders/surface_materials.json`, the
+   runtime catalog of per-asset stems, parameters and reflection filenames.
+8. Every output compiles with `-reflection-json` and `-depfile`; the depfile is
+   passed to `add_custom_command(DEPFILE ...)`, and the command uses the same
+   argument array serialized in the manifest. Debug builds select `-g -O0`,
+   other configurations `-O3`.
+9. RT keeps the legacy primary group 0 and shadow any-hit group 1, then adds a
+   primary/shadow record pair per catalog surface material. A surface instance's
+   even base offset is `2 + 2*i`, so primary `TraceRay(..., 0, ...)` and shadow
+   `TraceRay(..., 1, ...)` both address valid records. A missing registration
+   rejects material creation; it never routes a custom type to the default
+   group. The legacy alpha any-hit and double-sided rules stay in
+   `raytrace.slang`; a device without shared tables stays on the legacy raster
+   default.
 10. `MaterialContext` hides the only raster/RT difference: raster uses
     `SampleGrad` with screen derivatives, RT uses `SampleLevel` until ray
     differentials exist. `TextureRef` carries stable image and sampler rows.
@@ -65,7 +74,10 @@ engine code, and slangc specializes an entry point with `-specialize`.
   space. World axes, camera at the origin; never double-precision world space.
 - `localPos`: the drawn mesh's object space.
 - `uv0`: backend-defined. `MeshFrontend` uses the artist UV.
-- `bitangentSign`: the vertex tangent's handedness, unchanged from the asset.
+- `tangentWS`: the object tangent transformed by the model linear matrix, then
+  orthogonalized against the normal. `bitangentSign` starts from the asset's
+  tangent.w and flips for a mirroring model determinant; raster and RT use the
+  same steps.
 - `frontFace`: the raster `SV_IsFrontFace` result; RT derives the same test from
   the ray direction and the instance's double-sided flag.
 
@@ -73,9 +85,11 @@ engine code, and slangc specializes an entry point with `-specialize`.
 
 `MaterialLayout` is the refresh unit for a future parameter panel and SPV
 reload: field name, kind, offset and size, plus the aligned record size. A
-material type's reflection JSON and the manifest output record are keyed by the
-same namespaced output stem. A shader reload can compare descriptor layouts,
-recompile with the manifest command, and repack the record from the same field
+material type's reflection JSON, the manifest output record and the runtime
+catalog entry are keyed by the same hashed stem. The catalog keeps one entry per
+source asset even when two assets share a compiled stem, so each retains its own
+parameters. A shader reload can compare descriptor layouts, recompile with the
+manifest command, and repack the record from the same field
 names without a second parameter declaration.
 
 ## Prototype evidence

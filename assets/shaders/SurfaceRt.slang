@@ -34,6 +34,9 @@ struct RtInstanceInfo
     float pad1;
     float pad2;
     float4x4 prevModel;
+    float4 modelCol0;
+    float4 modelCol1;
+    float4 modelCol2;
 };
 
 struct RayPayload
@@ -73,11 +76,6 @@ static const float kSunShadowDistance = 10000.0;
 struct SurfaceRayVisibility : IShadowVisibility
 {
     float3 origin;
-
-    float3 Offset(float3 L)
-    {
-        return origin;
-    }
 
     float Sun(float3 L)
     {
@@ -184,7 +182,17 @@ void closestHitSurface<M : IMaterial>(inout RayPayload payload, in BuiltInTriang
     if (!frontFace)
         N = -N;
 
-    const float4 tangent = InterpolateTangent(info, indices, barycentrics);
+    const float4 sourceTangent = InterpolateTangent(info, indices, barycentrics);
+    const float3x3 linear = float3x3(info.modelCol0.xyz, info.modelCol1.xyz, info.modelCol2.xyz);
+    float3 tangent = mul(linear, sourceTangent.xyz);
+    tangent -= N * dot(N, tangent);
+    if (dot(tangent, tangent) < 1e-12)
+        tangent = cross(N, abs(N.y) < 0.99 ? float3(0, 1, 0) : float3(1, 0, 0));
+    tangent = normalize(tangent);
+    float handedness = sourceTangent.w < 0.0 ? -1.0 : 1.0;
+    if (determinant(linear) < 0.0)
+        handedness = -handedness;
+    const float4 tangentFrame = float4(tangent, handedness);
     const float4 vertexColor = float4(InterpolateFloat3(info, indices, barycentrics, kColorOffset),
                                     InterpolateFloat(info, indices, barycentrics, kAlphaOffset)) *
                                info.tint;
@@ -198,7 +206,7 @@ void closestHitSurface<M : IMaterial>(inout RayPayload payload, in BuiltInTriang
 
     const M material = gSurfaceRecords.Load<M>(info.materialRecord);
     const SurfaceInput surfaceInput =
-        MeshFrontend::Build(hitWorldPos, N, tangent, uv, objectPos, vertexColor, frontFace);
+        MeshFrontend::Build(hitWorldPos, N, tangentFrame, uv, objectPos, vertexColor, frontFace);
     const SurfaceOutput surface = material.Evaluate(surfaceInput, context);
 
     SurfaceRayVisibility visibility;

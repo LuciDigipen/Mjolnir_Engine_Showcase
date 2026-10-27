@@ -47,13 +47,19 @@ SurfaceVSOutput vertexMain(SurfaceVSInput input)
     const float4 worldPos = mul(pushData.model, float4(input.pos, 1.0));
     output.position = mul(viewProj, worldPos);
     output.worldPos = worldPos.xyz;
-    output.normal = pushData.normalCol0.xyz * input.normal.x +
-                    pushData.normalCol1.xyz * input.normal.y +
-                    pushData.normalCol2.xyz * input.normal.z;
-    output.tangent = float4(pushData.normalCol0.xyz * input.tangent.x +
-                                pushData.normalCol1.xyz * input.tangent.y +
-                                pushData.normalCol2.xyz * input.tangent.z,
-        input.tangent.w);
+    output.normal = normalize(pushData.normalCol0.xyz * input.normal.x +
+                              pushData.normalCol1.xyz * input.normal.y +
+                              pushData.normalCol2.xyz * input.normal.z);
+    const float3x3 linear = (float3x3)pushData.model;
+    float3 tangent = mul(linear, input.tangent.xyz);
+    tangent -= output.normal * dot(output.normal, tangent);
+    if (dot(tangent, tangent) < 1e-12)
+        tangent = cross(output.normal, abs(output.normal.y) < 0.99 ? float3(0, 1, 0) : float3(1, 0, 0));
+    tangent = normalize(tangent);
+    float handedness = input.tangent.w < 0.0 ? -1.0 : 1.0;
+    if (determinant(linear) < 0.0)
+        handedness = -handedness;
+    output.tangent = float4(tangent, handedness);
     output.uv = input.uv;
     output.color = float4(input.color, input.alpha) * pushData.tint;
     output.localPos = input.pos;

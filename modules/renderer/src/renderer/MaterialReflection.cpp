@@ -11,6 +11,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <limits>
 
@@ -308,8 +309,24 @@ namespace mir
         return bytes;
     }
 
-    std::string MaterialShaderStem(std::string_view nameSpace, std::string_view type)
+    std::string MaterialShaderStem(std::string_view nameSpace, std::string_view type,
+        std::string_view shaderPath, std::string_view frontend)
     {
+        std::string normalized(shaderPath);
+        std::replace(normalized.begin(), normalized.end(), '\\', '/');
+        for (char &character : normalized)
+            character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
+        while (normalized.rfind("./", 0) == 0)
+            normalized.erase(0, 2);
+
+        const std::string key = normalized + "|" + std::string(type) + "|" + std::string(frontend);
+        uint32_t hash = 2166136261u;
+        for (const unsigned char byte : key)
+        {
+            hash ^= byte;
+            hash *= 16777619u;
+        }
+
         std::string stem;
         if (!nameSpace.empty())
         {
@@ -324,6 +341,8 @@ namespace mir
             if (!allowed)
                 character = '_';
         }
+        stem.push_back('_');
+        stem.append(std::to_string(hash));
         return stem;
     }
 

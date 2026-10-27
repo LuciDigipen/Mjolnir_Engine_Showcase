@@ -13,18 +13,19 @@
 #include <windows.h>
 #endif
 
-#include <renderer/Material.h>
 #include <renderer/MaterialReflection.h>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <set>
 #include <string>
 #include <vector>
@@ -66,7 +67,7 @@ namespace
 TEST_CASE("The default surface record matches the compiled Slang layout", "[renderer][material][reflection]")
 {
     const std::filesystem::path directory =
-        std::filesystem::temp_directory_path() / "mir_surface_material_layout";
+        std::filesystem::path(MIR_RENDERER_TEST_DIR) / "surface_material_layout";
     std::filesystem::create_directories(directory);
     const std::filesystem::path reflectionPath = directory / "default.layout.reflection.json";
     const std::filesystem::path spirvPath = directory / "default.layout.spv";
@@ -90,10 +91,12 @@ TEST_CASE("The default surface record matches the compiled Slang layout", "[rend
     REQUIRE(layout.has_value());
     REQUIRE(layout->fields.size() == 2);
     CHECK(layout->fields[0].name == "albedoRoughness");
-    CHECK(layout->fields[0].offset == offsetof(mir::DefaultSurfaceMaterial, albedoRoughness));
+    CHECK(layout->fields[0].offset == 0);
+    CHECK(layout->fields[0].size == 16);
     CHECK(layout->fields[1].name == "surfaceParams");
-    CHECK(layout->fields[1].offset == offsetof(mir::DefaultSurfaceMaterial, surfaceParams));
-    CHECK(layout->size == sizeof(mir::DefaultSurfaceMaterial));
+    CHECK(layout->fields[1].offset == 16);
+    CHECK(layout->fields[1].size == 16);
+    CHECK(layout->size == 32);
 
     std::ifstream materialFile(MIR_DEFAULT_MATERIAL_JSON);
     nlohmann::json material;
@@ -101,8 +104,10 @@ TEST_CASE("The default surface record matches the compiled Slang layout", "[rend
     const auto record = mir::PackMaterialRecord(*layout, material.at("parameters").dump(), &error);
     INFO(error);
     REQUIRE(record.has_value());
-    const mir::DefaultSurfaceMaterial expected{};
-    CHECK(std::memcmp(record->data(), &expected, sizeof(expected)) == 0);
+    REQUIRE(record->size() == 32);
+    float roughness = 0.0f;
+    std::memcpy(&roughness, record->data() + 12, sizeof(roughness));
+    CHECK(roughness == 0.4924790605f);
 }
 
 TEST_CASE("The shader manifest covers legacy and namespaced surface outputs", "[renderer][material][manifest]")
@@ -118,6 +123,12 @@ TEST_CASE("The shader manifest covers legacy and namespaced surface outputs", "[
     CHECK(manifest.at("frontendTemplates").is_array());
     REQUIRE(manifest.at("outputs").is_array());
 
+    const std::string defaultStem =
+        mir::MaterialShaderStem("default", "DefaultMaterial", "assets/materials/default.slang", "mesh");
+    const auto &common = manifest.at("commonArguments");
+    CHECK(std::find(common.begin(), common.end(), "-g") != common.end());
+    CHECK(std::find(common.begin(), common.end(), "-O0") != common.end());
+
     std::set<std::string> outputs;
     bool legacyDefault = false;
     bool surfaceDefault = false;
@@ -132,11 +143,60 @@ TEST_CASE("The shader manifest covers legacy and namespaced surface outputs", "[
         CHECK(output.at("depfile").is_string());
         CHECK(outputs.insert(output.at("output").get<std::string>()).second);
 
+        const nlohmann::json &arguments = output.at("arguments");
+        REQUIRE(arguments.is_array());
+        CHECK(arguments.at(0) == manifest.at("slangc"));
+        CHECK(std::find(arguments.begin(), arguments.end(), output.at("entry")) != arguments.end());
+        CHECK(std::find(arguments.begin(), arguments.end(), output.at("stage")) != arguments.end());
+        CHECK(std::find(arguments.begin(), arguments.end(), output.at("reflection")) != arguments.end());
+        CHECK(std::find(arguments.begin(), arguments.end(), output.at("depfile")) != arguments.end());
+
         const std::string path = output.at("output").get<std::string>();
         legacyDefault = legacyDefault || path.find("default.vertexMain.spv") != std::string::npos;
-        surfaceDefault = surfaceDefault ||
-            path.find("default_DefaultMaterial.fragmentMain.spv") != std::string::npos;
+        surfaceDefault = surfaceDefault || path.find(defaultStem + ".fragmentMain.spv") != std::string::npos;
     }
     CHECK(legacyDefault);
     CHECK(surfaceDefault);
+}
+
+TEST_CASE("The runtime surface catalog names unique compiled stems", "[renderer][material][manifest]")
+{
+    std::ifstream catalogFile(MIR_SURFACE_CATALOG);
+    REQUIRE(catalogFile);
+    nlohmann::json catalog;
+    catalogFile >> catalog;
+    CHECK(catalog.at("version") == 1);
+    REQUIRE(catalog.at("materials").is_array());
+    CHECK(catalog.at("materials").size() >= 3);
+
+    std::set<std::string> stems;
+    bool defaultMaterial = false;
+    for (const nlohmann::json &material : catalog.at("materials"))
+    {
+        const std::string stem = material.at("stem").get<std::string>();
+        CHECK(stems.insert(stem).second);
+        CHECK(material.at("frontend") == "mesh");
+        CHECK(material.at("parameters").is_object());
+        CHECK(material.at("reflection").get<std::string>().find('/') == std::string::npos);
+        defaultMaterial = defaultMaterial ||
+            material.at("asset") == "assets/materials/default.material.json";
+    }
+    CHECK(defaultMaterial);
+
+    const std::filesystem::path shaderDir = std::filesystem::path(MIR_SURFACE_CATALOG).parent_path();
+    for (const nlohmann::json &material : catalog.at("materials"))
+    {
+        std::ifstream reflectionFile(shaderDir / material.at("reflection").get<std::string>());
+        REQUIRE(reflectionFile);
+        const std::string reflection{ std::istreambuf_iterator<char>(reflectionFile),
+            std::istreambuf_iterator<char>() };
+        std::string error;
+        const auto layout = mir::ParseMaterialLayout(reflection, &error);
+        INFO(error);
+        REQUIRE(layout.has_value());
+        const auto record = mir::PackMaterialRecord(*layout, material.at("parameters").dump(), &error);
+        INFO(error);
+        REQUIRE(record.has_value());
+        CHECK(record->size() == layout->size);
+    }
 }

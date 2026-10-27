@@ -38,9 +38,10 @@ by an editor writing it back.
 - `textures`, when present, uses exactly the six roles above. Missing textures
   are valid for a constant material.
 
-`SurfaceMaterialAsset` (tag `0x4d525355`, content version 1) is the typed
-payload. It is distinct from the legacy glTF `MaterialAsset`. Its packed
-references are `albedoTexture`, `normalTexture` and `surfaceTexture`.
+The typed `SurfaceMaterialAsset` (tag `0x4d525355`, content version 1) is owned
+by the M3 asset work; M2 only parses the source contract for compilation and
+packing. The packed outputs map to the reflected `albedoTexture`,
+`normalTexture` and `surfaceTexture` fields.
 
 ## Material types
 
@@ -60,21 +61,32 @@ declare bindings. Sampling goes through `context.Sample(texture, uv)`.
 
 ## Building
 
-`engine_add_surface_materials` discovers `materials/*.material.json` at
+`engine_add_surface_materials` recursively discovers `*.material.json` at
 configure time for the engine and every game. A new material needs no wrapper
-source and no CMake edit. The output stem is `<namespace>_<type>`, where the
-namespace is `default` or the game directory. For `default_DefaultMaterial`:
+source and no CMake edit. The compile key is the normalized shader source path
+plus type plus frontend; the output stem is
+`<namespace>_<sanitized type>_<FNV-1a 32>` (`default` or the game directory for
+the namespace). Two assets sharing a shader compile once while keeping separate
+catalog records; two same-named types from different sources get different
+stems. Terrain-only declarations defer without suppressing a later mesh one.
+
+For the default type the outputs are:
 
 | Output | Source | Entry | Specialization |
 |---|---|---|---|
-| `default_DefaultMaterial.vertexMain.spv` | `SurfaceForward.slang` | `vertexMain` | none |
-| `default_DefaultMaterial.fragmentMain.spv` | `SurfaceForward.slang` + material | `fragmentMain` | `DefaultMaterial` |
-| `default_DefaultMaterial.closestHitSurface.spv` | `SurfaceRt.slang` + material | `closestHitSurface` | `DefaultMaterial` |
-| `default_DefaultMaterial.layout.spv` | `SurfaceLayout.slang` + material | `layoutMain` | `DefaultMaterial` |
+| `<stem>.vertexMain.spv` | `SurfaceForward.slang` | `vertexMain` | none |
+| `<stem>.fragmentMain.spv` | `SurfaceForward.slang` + material | `fragmentMain` | `DefaultMaterial` |
+| `<stem>.closestHitSurface.spv` | `SurfaceRt.slang` + material | `closestHitSurface` | `DefaultMaterial` |
+| `<stem>.layout.spv` | `SurfaceLayout.slang` + material | `layoutMain` | `DefaultMaterial` |
 
-Every output writes a reflection JSON and a depfile. `shaders/shader_manifest.json`
-records the complete commands, argument arrays and mesh frontend templates, and
-is copied next to the executable for the future editor reload path.
+Every output writes a reflection JSON and a depfile; the depfile is handed to
+CMake as the command's `DEPFILE`, and the same argument array is written to
+`shaders/shader_manifest.json`. `shaders/surface_materials.json` records each
+asset's stem, type, frontend, normalized asset/shader paths, authored parameters
+and reflection filename. Both files are copied next to the executable. The
+runtime reads that catalog and the reflection JSON to pack records; it never
+runs slangc and never reads the source checkout. Debug builds use `-g -O0`,
+other configurations use `-O3` in both the command and the manifest.
 
 ## Default
 
@@ -86,7 +98,9 @@ keep the legacy Blinn-Phong `assets/shaders/default.slang`.
 ## RT hit groups
 
 The RT pipeline has legacy camera and shadow hit groups at SBT offsets 0 and 1,
-plus the default surface material at offset 2. Surface instances set
-`instanceShaderBindingTableRecordOffset` from their material. Shadow rays keep
-offset 1, whose any-hit test reads the instance's alpha state; alpha, double-sided
-and error/unlit/model materials remain on the legacy path.
+then a primary/shadow record pair for every catalog registration. A surface
+instance's `instanceShaderBindingTableRecordOffset` is `2 + 2*i`, so
+`TraceRay`'s primary offset 0 and shadow offset 1 land on that pair. A missing
+catalog registration fails material creation instead of falling back to the
+default shader. Alpha, double-sided and error/unlit/model materials remain on
+the legacy path.

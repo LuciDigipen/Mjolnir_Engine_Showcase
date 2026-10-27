@@ -43,6 +43,15 @@ namespace mir::vk
         mDevice = &device;
         mTable = table;
 
+        std::string catalogError;
+        const auto catalog = LoadSurfaceMaterialCatalog(&catalogError);
+        if (!catalog)
+        {
+            MIR_LOG_CRITICAL("MaterialStore: {}", catalogError);
+            return false;
+        }
+        mSurfaceMaterials = *catalog;
+
         const uint64_t alignment = std::max<uint64_t>(
             mDevice->Properties().limits.minUniformBufferOffsetAlignment, 1);
         mRecordRefStride = static_cast<uint32_t>(
@@ -61,7 +70,15 @@ namespace mir::vk
         MaterialDesc defaultDesc;
         if (mTable != nullptr)
         {
-            defaultDesc.shaderName = std::string(kDefaultSurfaceShaderName);
+            const SurfaceMaterialRegistration *const registration =
+                mSurfaceMaterials.FindByAsset("assets/materials/default.material.json");
+            if (registration == nullptr)
+            {
+                MIR_LOG_CRITICAL("MaterialStore: no default surface material registration");
+                return false;
+            }
+            defaultDesc.shaderName = registration->stem;
+            defaultDesc.surfaceAsset = registration->asset;
             defaultDesc.surfaceMaterial = true;
         }
         mDefaultMaterial = CreateMaterial(defaultDesc, resources, colorFormat);
@@ -471,7 +488,6 @@ namespace mir::vk
             desc.cullMode == VK_CULL_MODE_NONE ? 1.0f : 0.0f, 0.0f };
         material.mModelShader = desc.shaderName == kModelShaderName;
         material.mSurfaceMaterial = desc.surfaceMaterial;
-        material.mRayTracingSbtOffset = desc.surfaceMaterial ? 2 : 0;
         material.mUnlit = desc.shaderName == "unlit";
         material.mCullMode = desc.cullMode;
         material.mFrontFace = desc.frontFace;
@@ -490,13 +506,49 @@ namespace mir::vk
                 vkDestroyPipeline(mDevice->Handle(), pipeline, nullptr);
             };
 
-        // The default surface material has no .material.json yet; its constant
-        // parameters are the record. A surface material without a table cannot
-        // run, so the caller keeps the legacy "default" shader instead.
-        const DefaultSurfaceMaterial defaultSurfaceRecord{};
         std::span<const std::byte> record = desc.record;
-        if (record.empty() && desc.surfaceMaterial)
-            record = std::as_bytes(std::span{ &defaultSurfaceRecord, 1 });
+        if (desc.surfaceMaterial)
+        {
+            if (mTable == nullptr)
+            {
+                MIR_LOG_ERROR("CreateMaterial: surface materials require the shared material tables");
+                rollback();
+                return kNullMaterial;
+            }
+
+            const SurfaceMaterialRegistration *const registration =
+                mSurfaceMaterials.Find(desc.shaderName, desc.surfaceAsset);
+            if (registration == nullptr)
+            {
+                MIR_LOG_CRITICAL("CreateMaterial: no surface material registration for '{}'",
+                    desc.surfaceAsset.empty() ? desc.shaderName : desc.surfaceAsset);
+                rollback();
+                return kNullMaterial;
+            }
+
+            const uint32_t index = mSurfaceMaterials.IndexOf(registration);
+            if (index == UINT32_MAX)
+            {
+                MIR_LOG_CRITICAL("CreateMaterial: surface material registration is stale");
+                rollback();
+                return kNullMaterial;
+            }
+            material.mRayTracingSbtOffset = SurfaceMaterialCatalog::HitGroupRecordOffset(index);
+
+            if (record.empty())
+            {
+                std::string packError;
+                const auto packed = PackSurfaceMaterialRecord(*registration, &packError);
+                if (!packed)
+                {
+                    MIR_LOG_CRITICAL("CreateMaterial: {}", packError);
+                    rollback();
+                    return kNullMaterial;
+                }
+                material.mRecordBytes = *packed;
+                record = material.mRecordBytes;
+            }
+        }
 
         VkDescriptorBufferInfo recordRefInfo{};
         if (mTable != nullptr)

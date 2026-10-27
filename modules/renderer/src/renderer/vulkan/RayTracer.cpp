@@ -29,6 +29,7 @@
 #include <cstring>
 #include <format>
 #include <iterator>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -78,10 +79,11 @@ namespace mir::vk
     }
 
     bool RayTracer::Initialize(Device &device, VkExtent2D extent, VkDescriptorSetLayout cameraSetLayout,
-        MaterialTable &table)
+        MaterialTable &table, std::span<const SurfaceMaterialRegistration> surfaceMaterials)
     {
         mDevice = &device;
         mTable = &table;
+        mSurfaceMaterials.assign(surfaceMaterials.begin(), surfaceMaterials.end());
         std::fill(std::begin(mTableVersion), std::end(mTableVersion), UINT64_MAX);
 
         VkPhysicalDeviceAccelerationStructurePropertiesKHR accelerationProperties{
@@ -425,16 +427,26 @@ namespace mir::vk
     bool RayTracer::CreatePipeline(VkDescriptorSetLayout cameraSetLayout)
     {
         // Indexed by stage: raygen, miss, shadow miss, legacy closest hit, legacy any hit,
-        // shadow any hit, then the default surface material's closest hit.
-        constexpr std::array<const char *, 7> kEntryPoints{
-            "rayGenMain", "missMain", "shadowMissMain", "closestHitMain", "anyHitMain", "shadowAnyHitMain",
-            "closestHitSurface" };
-        constexpr std::array<VkShaderStageFlagBits, 7> kStages{
+        // shadow any hit, then one closest hit per registered surface material.
+        constexpr std::array<const char *, 6> kLegacyEntryPoints{
+            "rayGenMain", "missMain", "shadowMissMain", "closestHitMain", "anyHitMain", "shadowAnyHitMain" };
+        constexpr std::array<VkShaderStageFlagBits, 6> kLegacyStages{
             VK_SHADER_STAGE_RAYGEN_BIT_KHR, VK_SHADER_STAGE_MISS_BIT_KHR, VK_SHADER_STAGE_MISS_BIT_KHR,
-            VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, VK_SHADER_STAGE_ANY_HIT_BIT_KHR, VK_SHADER_STAGE_ANY_HIT_BIT_KHR,
-            VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR };
+            VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, VK_SHADER_STAGE_ANY_HIT_BIT_KHR, VK_SHADER_STAGE_ANY_HIT_BIT_KHR };
 
-        std::array<VkShaderModule, kEntryPoints.size()> modules{};
+        std::vector<std::string> entryPoints(kLegacyEntryPoints.begin(), kLegacyEntryPoints.end());
+        std::vector<VkShaderStageFlagBits> stageFlags(kLegacyStages.begin(), kLegacyStages.end());
+        std::vector<std::string> shaderFiles;
+        for (const char *entry : kLegacyEntryPoints)
+            shaderFiles.push_back(std::format("raytrace.{}.spv", entry));
+        for (const SurfaceMaterialRegistration &material : mSurfaceMaterials)
+        {
+            entryPoints.push_back("closestHitSurface");
+            stageFlags.push_back(VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR);
+            shaderFiles.push_back(std::format("{}.closestHitSurface.spv", material.stem));
+        }
+
+        std::vector<VkShaderModule> modules(shaderFiles.size(), VK_NULL_HANDLE);
         const auto destroyModules = [&]
             {
                 for (VkShaderModule module : modules)
@@ -444,12 +456,10 @@ namespace mir::vk
 
         for (size_t i = 0; i < modules.size(); ++i)
         {
-            const std::string file = i + 1 == modules.size()
-                ? std::format("{}.{}.spv", MaterialStore::kDefaultSurfaceShaderName, kEntryPoints[i])
-                : std::format("raytrace.{}.spv", kEntryPoints[i]);
-            modules[i] = CreateShaderModule(mDevice->Handle(), ShaderPath(file));
+            modules[i] = CreateShaderModule(mDevice->Handle(), ShaderPath(shaderFiles[i]));
             if (modules[i] == VK_NULL_HANDLE)
             {
+                MIR_LOG_CRITICAL("CreatePipeline: missing RT material shader '{}'", shaderFiles[i]);
                 destroyModules();
                 return false;
             }
@@ -585,12 +595,12 @@ namespace mir::vk
             return false;
         }
 
-        std::array<VkPipelineShaderStageCreateInfo, kEntryPoints.size()> stages{};
+        std::vector<VkPipelineShaderStageCreateInfo> stages(entryPoints.size());
         for (size_t i = 0; i < stages.size(); ++i)
             stages[i] = { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-                         .stage = kStages[i],
+                         .stage = stageFlags[i],
                          .module = modules[i],
-                         .pName = kEntryPoints[i] };
+                         .pName = entryPoints[i].c_str() };
 
         const auto generalGroup = [](uint32_t shader)
             {
@@ -613,13 +623,16 @@ namespace mir::vk
                     .intersectionShader = VK_SHADER_UNUSED_KHR };
             };
 
-        // Raygen, the two misses, then hit groups 0/1 for legacy camera/shadow rays
-        // and group 2 for the default surface material. Surface instances set
-        // instanceShaderBindingTableRecordOffset to 2; shadow rays stay on group 1,
-        // whose any-hit test reads the instance's own alpha state.
-        const std::array<VkRayTracingShaderGroupCreateInfoKHR, 6> groups{
-            generalGroup(0), generalGroup(1), generalGroup(2), hitGroup(3, 4), hitGroup(VK_SHADER_UNUSED_KHR, 5),
-            hitGroup(6, VK_SHADER_UNUSED_KHR) };
+        // Raygen, the two misses, legacy camera/shadow groups 0/1, then a
+        // primary+shadow record pair per surface material. An instance's even
+        // base offset makes TraceRay's 0/1 record offset address both records.
+        std::vector<VkRayTracingShaderGroupCreateInfoKHR> groups{
+            generalGroup(0), generalGroup(1), generalGroup(2), hitGroup(3, 4), hitGroup(VK_SHADER_UNUSED_KHR, 5) };
+        for (size_t i = 0; i < mSurfaceMaterials.size(); ++i)
+        {
+            groups.push_back(hitGroup(static_cast<uint32_t>(6 + i), 4));
+            groups.push_back(hitGroup(VK_SHADER_UNUSED_KHR, 5));
+        }
 
         const VkRayTracingPipelineCreateInfoKHR pipelineInfo{
             .sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR,
@@ -681,7 +694,8 @@ namespace mir::vk
         const VkDeviceAddress sbtBase = GetBufferAddress(mDevice->Handle(), mSbtBuffer);
         mSbtRaygenRegion = { .deviceAddress = sbtBase + 0 * regionSize, .stride = regionSize, .size = regionSize };
         mSbtMissRegion = { .deviceAddress = sbtBase + 1 * regionSize, .stride = regionSize, .size = 2 * regionSize };
-        mSbtHitRegion = { .deviceAddress = sbtBase + 3 * regionSize, .stride = regionSize, .size = 3 * regionSize };
+        mSbtHitRegion = { .deviceAddress = sbtBase + 3 * regionSize, .stride = regionSize,
+            .size = static_cast<VkDeviceSize>(kGroupCount - 3) * regionSize };
         mSbtCallableRegion = {};
 
         return true;
@@ -952,7 +966,10 @@ namespace mir::vk
                 .baseColorSampler = samplerSlot,
                 .materialRecord = materialRecord,
                 .alphaCutoff = material != nullptr ? material->mParameters.y : 0.0f,
-                .prevModel = item.previousModel };
+                .prevModel = item.previousModel,
+                .modelCol0 = item.model[0],
+                .modelCol1 = item.model[1],
+                .modelCol2 = item.model[2] };
 
             ++instanceCount;
         }

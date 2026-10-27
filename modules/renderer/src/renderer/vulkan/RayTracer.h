@@ -8,6 +8,7 @@
  */
 #pragma once
 
+#include <renderer/SurfaceMaterialCatalog.h>
 #include <renderer/VulkanRenderer.h>
 #include "Image2D.h"
 #include "VulkanConstants.h"
@@ -54,7 +55,7 @@ namespace mir::vk
         // The output images match `extent`; the camera set is borrowed as set 1 of the pipeline
         // layout. The shared table supplies set 0's image, sampler and record rows.
         bool Initialize(Device &device, VkExtent2D extent, VkDescriptorSetLayout cameraSetLayout,
-            MaterialTable &table);
+            MaterialTable &table, std::span<const SurfaceMaterialRegistration> surfaceMaterials);
         void Shutdown();
 
         // Recreates the output images at the swapchain's new extent; the caller idles the device first.
@@ -151,6 +152,7 @@ namespace mir::vk
 
         Device *mDevice = nullptr;
         MaterialTable *mTable = nullptr;
+        std::vector<SurfaceMaterialRegistration> mSurfaceMaterials;
         VkDeviceSize mScratchAlignment = 1;
 
         VkDescriptorSetLayout mSetLayout = VK_NULL_HANDLE;

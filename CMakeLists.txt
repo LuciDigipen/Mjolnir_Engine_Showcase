@@ -273,6 +273,12 @@ foreach(game_name IN LISTS game_names)
 endforeach()
 engine_write_shader_manifest(MjolnirEngine)
 
+# The reflection/manifest tests read the generated files, so a test build must
+# produce the same shader outputs as a game build.
+if(TARGET engine_renderer_tests AND TARGET MjolnirEngine_surface_shaders_default)
+    add_dependencies(engine_renderer_tests MjolnirEngine_surface_shaders_default)
+endif()
+
 engine_cook_assets(MjolnirEngine
     SOURCE_ROOTS assets/ ${game_asset_roots}
     OUT_DIR ${CMAKE_BINARY_DIR}/cooked_assets)
@@ -331,6 +337,9 @@ target_link_libraries(MjolnirEngine PRIVATE
 # They need a GPU; skip them with `ctest -LE smoke`.
 # --non-interactive: a broken scene fails at once instead of waiting on its prompt until the timeout.
 if(BUILD_TESTING)
+    add_test(NAME surface_material_discovery
+        COMMAND "${CMAKE_COMMAND}" -DSLANGC_EXECUTABLE=${SLANGC_EXECUTABLE}
+                -P "${CMAKE_SOURCE_DIR}/tools/tests/SurfaceMaterialDiscovery.cmake")
     foreach(game_name IN LISTS game_names)
         add_test(NAME smoke.${game_name}
             COMMAND MjolnirEngine --non-interactive --game games/${game_name} --frames 120)

@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "shader": { "file": "materials/diagnosticBlue.slang", "type": "DiagnosticBlueMaterial" },
+  "frontends": ["mesh"],
+  "parameters": { "uvScale": [1.0, 2.0], "color": [0.0, 0.0, 1.0, 1.0] }
+}

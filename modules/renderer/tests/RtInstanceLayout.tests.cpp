@@ -39,7 +39,7 @@ namespace
         std::size_t mSize;
     };
 
-    constexpr std::array<Field, 15> kFields{ {
+    constexpr std::array<Field, 18> kFields{ {
         { "vertexAddress", offsetof(mir::RtInstanceInfo, vertexAddress), sizeof(VkDeviceAddress) },
         { "indexAddress", offsetof(mir::RtInstanceInfo, indexAddress), sizeof(VkDeviceAddress) },
         { "tint", offsetof(mir::RtInstanceInfo, tint), sizeof(glm::vec4) },
@@ -54,7 +54,10 @@ namespace
         { "pad0", offsetof(mir::RtInstanceInfo, pad0), sizeof(float) },
         { "pad1", offsetof(mir::RtInstanceInfo, pad1), sizeof(float) },
         { "pad2", offsetof(mir::RtInstanceInfo, pad2), sizeof(float) },
-        { "prevModel", offsetof(mir::RtInstanceInfo, prevModel), sizeof(glm::mat4) } } };
+        { "prevModel", offsetof(mir::RtInstanceInfo, prevModel), sizeof(glm::mat4) },
+        { "modelCol0", offsetof(mir::RtInstanceInfo, modelCol0), sizeof(glm::vec4) },
+        { "modelCol1", offsetof(mir::RtInstanceInfo, modelCol1), sizeof(glm::vec4) },
+        { "modelCol2", offsetof(mir::RtInstanceInfo, modelCol2), sizeof(glm::vec4) } } };
 
     int RunSlangc(const std::string &commandLine, const std::filesystem::path &executable)
     {
@@ -116,7 +119,7 @@ namespace
 TEST_CASE("The CPU RtInstanceInfo matches the compiled Slang layout", "[renderer][material][rt]")
 {
     const std::filesystem::path directory =
-        std::filesystem::temp_directory_path() / "mir_rt_instance_layout";
+        std::filesystem::path(MIR_RENDERER_TEST_DIR) / "rt_instance_layout";
     std::filesystem::create_directories(directory);
     const std::filesystem::path reflectionPath = directory / "raytrace.reflection.json";
     const std::filesystem::path spirvPath = directory / "raytrace.closestHitMain.spv";

@@ -12,8 +12,6 @@
 
 #include <volk.h>
 
-#include <glm/vec4.hpp>
-
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -63,15 +61,6 @@ namespace mir
         Blend
     };
 
-    // The default material's reflected record; DefaultMaterial in
-    // assets/materials/default.slang must keep these offsets.
-    struct DefaultSurfaceMaterial
-    {
-        glm::vec4 albedoRoughness{ 0.5f, 0.5f, 0.5f, 0.49f };
-        glm::vec4 surfaceParams{ 0.04f, 1.0f, 0.0f, 0.0f };
-    };
-    static_assert(sizeof(DefaultSurfaceMaterial) == 32, "DefaultSurfaceMaterial must match the Slang layout");
-
     struct MaterialDesc
     {
         std::string shaderName = "default";
@@ -98,5 +87,8 @@ namespace mir
         // True for a SurfaceForward/SurfaceRt material: it reads the record
         // through the shared table and gets its own RT hit group.
         bool surfaceMaterial = false;
+        // Normalized repo-relative .material.json path; empty selects the first
+        // registration with shaderName.
+        std::string surfaceAsset;
     };
 }

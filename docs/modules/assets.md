@@ -39,7 +39,6 @@ if (AssetCache *cache = app.Assets())
 | `AssetCache` | `assets/AssetCache.h` | `Load`, `Get`, `Invalidate`, `ResolvedPath` |
 | `AssetsModule` | `assets/AssetsModule.h` | The manifest and cache, loaded at startup, and the reload candidate |
 | `ResolveAssetIdRoot` | `assets/AssetIdRoot.h` | Fills a `GameProject`'s asset id root; fails setup on an unusable `assetsRoot` |
-| `SurfaceMaterialAsset` | `assets/ModelAsset.h` | Typed `.material.json` payload (`kSurfaceMaterialAssetTypeTag`), distinct from a glTF `MaterialAsset`: shader file/type, frontends, reflected parameters JSON, six source texture roles and the three packed texture ids |
 
 `AssetsModule` loads the manifest in its constructor: a missing one is an empty
 manifest, a corrupt one fails setup. `Cache()` is the same object for the

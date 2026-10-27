@@ -229,8 +229,13 @@ record through the shared tables; a device without them keeps the legacy
 `default.slang` Blinn-Phong pair. RT uses SBT hit group 2 for surface materials,
 while groups 0 and 1 stay on `raytrace.slang`'s legacy camera and shadow paths.
 `shaders/shader_manifest.json` is the single source of the compile commands,
-reflections and depfiles for both the build and the future reload path. See
-`docs/material-pipeline.md` and ADR 0002.
+reflections and depfiles for both the build and the future reload path; the
+build-generated `shaders/surface_materials.json` is the runtime registration
+catalog. Records are packed from each entry's authored parameters and typed
+reflection, never from a C++ field mirror. RT allocates a primary/shadow SBT
+record pair per catalog entry; a surface instance's even base offset is
+`2 + 2*i`, so primary and shadow rays both stay in bounds. See
+`docs/material-pipeline.md` and ADR 0003.
 
 **Vulkan 1.4 with `dynamicRendering`, `synchronization2`, `timelineSemaphore` and
 `shaderDrawParameters`.** A device missing any of them is rejected during

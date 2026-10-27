@@ -54,9 +54,11 @@ namespace mir
     std::optional<std::vector<std::byte>> PackMaterialRecord(const MaterialLayout &layout,
         std::string_view parametersJson, std::string *error = nullptr);
 
-    // "<namespace>_<type>", sanitized for a shader filename. Keeps the game or
-    // asset identity so two games' same-named types cannot overwrite each other.
-    std::string MaterialShaderStem(std::string_view nameSpace, std::string_view type);
+    // "<namespace>_<type>_<hash>". The hash covers the normalized shader source,
+    // type and frontend, so two same-named types or punctuation/case variants
+    // cannot alias; CMake uses the same key and stem.
+    std::string MaterialShaderStem(std::string_view nameSpace, std::string_view type,
+        std::string_view shaderPath, std::string_view frontend);
 
     // "<stem>.<entry>.spv", the name ShaderPath and the manifest agree on.
     std::string MaterialShaderOutput(std::string_view stem, std::string_view entry);

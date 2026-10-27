@@ -10,6 +10,7 @@
 
 #include <renderer/Material.h>
 #include <renderer/MaterialRecordTable.h>
+#include <renderer/SurfaceMaterialCatalog.h>
 
 #include "VulkanConstants.h"
 
@@ -55,6 +56,8 @@ namespace mir::vk
         MaterialRecordId mRecordId;
         uint32_t mRecordOffset = kInvalidMaterialRecordOffset;
         uint32_t mMaterialIndex = 0;
+        // Backing bytes for a record packed from the catalog at creation.
+        std::vector<std::byte> mRecordBytes;
     };
 
     // Destroy* and Release* do not wait: the caller idles the device first,
@@ -63,7 +66,6 @@ namespace mir::vk
     {
     public:
         static constexpr uint32_t kMaxMaterials = 1024;
-        static constexpr std::string_view kDefaultSurfaceShaderName = "default_DefaultMaterial";
 
         // Set 0's dynamic record-reference row for a material in one frame slot.
         // The stride is aligned to minUniformBufferOffsetAlignment at Initialize.
@@ -97,6 +99,7 @@ namespace mir::vk
 
         MaterialHandle DefaultMaterial() const { return mDefaultMaterial; }
         MaterialHandle ErrorMaterial() const { return mErrorMaterial; }
+        const SurfaceMaterialCatalog &SurfaceMaterials() const { return mSurfaceMaterials; }
         VkPipelineLayout PipelineLayout() const { return mPipelineLayout; }
 
         VkPipeline SkyPipeline() const { return mSkyPipeline; }
@@ -130,6 +133,7 @@ namespace mir::vk
 
         Device *mDevice = nullptr;
         MaterialTable *mTable = nullptr;
+        SurfaceMaterialCatalog mSurfaceMaterials;
 
         VkPipelineLayout mPipelineLayout = VK_NULL_HANDLE;
 

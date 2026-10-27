@@ -106,9 +106,14 @@ TEST_CASE("Material packing rejects fields it cannot lay out", "[renderer][mater
 
 TEST_CASE("Material shader names carry their namespace", "[renderer][material][reflection]")
 {
-    CHECK(MaterialShaderStem("", "DefaultMaterial") == "DefaultMaterial");
-    CHECK(MaterialShaderStem("TerrainCheck", "Icelandic Sand") == "TerrainCheck_Icelandic_Sand");
-    CHECK(MaterialShaderStem("default", "DefaultMaterial") == "default_DefaultMaterial");
-    CHECK(MaterialShaderOutput("default_DefaultMaterial", "fragmentMain") ==
-          "default_DefaultMaterial.fragmentMain.spv");
+    const std::string base = MaterialShaderStem("", "DefaultMaterial", "assets/materials/default.slang", "mesh");
+    CHECK(base == "DefaultMaterial_3610072657");
+    CHECK(MaterialShaderStem("default", "DefaultMaterial", "assets/materials/default.slang", "mesh") ==
+          "default_DefaultMaterial_3610072657");
+    CHECK(MaterialShaderStem("", "DefaultMaterial", "assets/materials/default.slang", "mesh") == base);
+    CHECK(MaterialShaderStem("", "DefaultMaterial", "assets/materials/DEFAULT.slang", "mesh") == base);
+    CHECK(MaterialShaderStem("", "A-B", "assets/materials/default.slang", "mesh") !=
+          MaterialShaderStem("", "A_B", "assets/materials/default.slang", "mesh"));
+    CHECK(MaterialShaderStem("", "DefaultMaterial", "assets/materials/other.slang", "mesh") != base);
+    CHECK(MaterialShaderOutput(base, "fragmentMain") == base + ".fragmentMain.spv");
 }

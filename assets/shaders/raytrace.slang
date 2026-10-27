@@ -43,6 +43,9 @@ struct RtInstanceInfo
     float pad1;
     float pad2;
     float4x4 prevModel; // camera-relative to THIS frame's camera - see DrawItem::previousModel
+    float4 modelCol0;   // model linear transform, for tangents under non-uniform scale
+    float4 modelCol1;
+    float4 modelCol2;
 };
 
 [[vk::binding(2, 0)]]
