@@ -108,6 +108,8 @@ reject instead of falling back.
 The default continues to ignore authored vertex colors. `SurfaceInput.vertexColor`
 retains that raw data for materials which use it; the shared passes apply the
 draw tint to albedo and emissive after evaluation, before lighting and guides.
+The existing raster push block is visible to both vertex and fragment stages;
+its size stays unchanged, and the command update uses the same shared stage mask.
 
 ## PBR and guides
 

@@ -184,7 +184,7 @@ namespace mir::vk
         }
 
         const VkPushConstantRange pushConstantRange{
-            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+            .stageFlags = kRasterPushConstantStages,
             .offset = 0,
             .size = sizeof(RasterPushConstants) };
 

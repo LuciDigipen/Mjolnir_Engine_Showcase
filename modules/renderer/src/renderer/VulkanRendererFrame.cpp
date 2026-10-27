@@ -122,7 +122,7 @@ namespace mir
                 .normalCol2 = glm::vec4(item.normalMatrix[2], 0.0f),
                 .tint = item.tint };
 
-            vkCmdPushConstants(cmd, mMaterialStore->PipelineLayout(), VK_SHADER_STAGE_VERTEX_BIT,
+            vkCmdPushConstants(cmd, mMaterialStore->PipelineLayout(), vk::kRasterPushConstantStages,
                 0, sizeof(vk::RasterPushConstants), &pushData);
 
             vkCmdDrawIndexed(cmd, mesh->mIndexCount, 1, 0, 0, 0);

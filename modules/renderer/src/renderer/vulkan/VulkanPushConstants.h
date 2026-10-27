@@ -8,6 +8,7 @@
  */
 #pragma once
 
+#include <volk.h>
 #include <glm/mat4x4.hpp>
 #include <glm/vec2.hpp>
 #include <glm/vec4.hpp>
@@ -16,6 +17,9 @@
 
 namespace mir::vk
 {
+    inline constexpr VkShaderStageFlags kRasterPushConstantStages =
+        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+
     // normalCols = Normal matrix
     // vulkan's guaranteed minimum constant size = 128
     // vulkan pads every column to 16 anyways
