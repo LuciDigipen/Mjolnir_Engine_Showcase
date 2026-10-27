@@ -55,7 +55,7 @@ SurfaceVSOutput vertexMain(SurfaceVSInput input)
     const float3 c2 = mul(pushData.model, float4(0, 0, 1, 0)).xyz;
     output.tangent = TransformTangentFrame(c0, c1, c2, input.tangent, output.normal);
     output.uv = input.uv;
-    output.color = float4(input.color, input.alpha) * pushData.tint;
+    output.color = float4(input.color, input.alpha);
     output.localPos = input.pos;
     return output;
 }
@@ -72,7 +72,7 @@ float4 fragmentMain<M : IMaterial>(SurfaceVSOutput input, bool frontFace : SV_Is
 
     const SurfaceInput surfaceInput = MeshFrontend::Build(input.worldPos, normalize(input.normal),
         input.tangent, input.uv, input.localPos, input.color, frontFace);
-    const SurfaceOutput surface = material.Evaluate(surfaceInput, context);
+    const SurfaceOutput surface = ApplySurfaceTint(material.Evaluate(surfaceInput, context), pushData.tint);
 
     ShadowMapVisibility visibility;
     visibility.worldPos = input.worldPos;

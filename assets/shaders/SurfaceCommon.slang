@@ -83,6 +83,13 @@ struct SurfaceOutput
     float3 emissive;
 };
 
+SurfaceOutput ApplySurfaceTint(SurfaceOutput surface, float4 tint)
+{
+    surface.albedo *= tint.rgb;
+    surface.emissive *= tint.rgb;
+    return surface;
+}
+
 struct MaterialContext
 {
     bool rayTraced;

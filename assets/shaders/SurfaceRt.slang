@@ -189,8 +189,7 @@ void closestHitSurface<M : IMaterial>(inout RayPayload payload, in BuiltInTriang
     const float4 tangentFrame = TransformTangentFrame(info.modelCol0.xyz, info.modelCol1.xyz,
         info.modelCol2.xyz, sourceTangent, N);
     const float4 vertexColor = float4(InterpolateFloat3(info, indices, barycentrics, kColorOffset),
-                                    InterpolateFloat(info, indices, barycentrics, kAlphaOffset)) *
-                               info.tint;
+                                    InterpolateFloat(info, indices, barycentrics, kAlphaOffset));
     const float2 uv = float2(InterpolateFloat(info, indices, barycentrics, kUvOffset),
         InterpolateFloat(info, indices, barycentrics, kUvOffset + 1));
 
@@ -202,7 +201,7 @@ void closestHitSurface<M : IMaterial>(inout RayPayload payload, in BuiltInTriang
     const M material = gSurfaceRecords.Load<M>(info.materialRecord);
     const SurfaceInput surfaceInput =
         MeshFrontend::Build(hitWorldPos, N, tangentFrame, uv, objectPos, vertexColor, frontFace);
-    const SurfaceOutput surface = material.Evaluate(surfaceInput, context);
+    const SurfaceOutput surface = ApplySurfaceTint(material.Evaluate(surfaceInput, context), info.tint);
 
     SurfaceRayVisibility visibility;
     visibility.origin = hitWorldPos + FaceNormal(info, op0, op1, op2) *

@@ -45,7 +45,10 @@ engine code, and slangc specializes an entry point with `-specialize`.
    written.
 5. The default material is a surface type (`assets/materials/default.slang`).
    Its PBR constants preserve the old look: albedo 0.5, F0 0.04, roughness
-   `pow(2/34, 0.25)`, AO on ambient only. `ResolveMaterialDesc` normalizes a
+   `pow(2/34, 0.25)`, AO on ambient only. It preserves the legacy choice to ignore
+   authored vertex colors. Both surface passes apply instance tint to albedo and
+   emissive after evaluation; raw vertex colors remain available to materials.
+   `ResolveMaterialDesc` normalizes a
    public `shaderName == "default"` request to the catalog registration on a
    shared-table device, preserving topology, culling, alpha, sampler and an
    explicit record; a legacy `default.slang` remains only for devices without

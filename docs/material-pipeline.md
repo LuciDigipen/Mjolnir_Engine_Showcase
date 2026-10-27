@@ -105,6 +105,10 @@ alpha, sampler and explicit record. Devices without the shared tables keep the
 legacy Blinn-Phong `assets/shaders/default.slang`; unknown surface requests
 reject instead of falling back.
 
+The default continues to ignore authored vertex colors. `SurfaceInput.vertexColor`
+retains that raw data for materials which use it; the shared passes apply the
+draw tint to albedo and emissive after evaluation, before lighting and guides.
+
 ## PBR and guides
 
 Direct light uses `(diffuse + pi * specular) * lightColor * saturate(NdotL)`

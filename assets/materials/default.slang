@@ -10,7 +10,8 @@ struct DefaultMaterial : IMaterial
     SurfaceOutput Evaluate(SurfaceInput input, MaterialContext context)
     {
         SurfaceOutput output;
-        output.albedo = albedoRoughness.rgb * input.vertexColor.rgb;
+        // The legacy default ignores authored vertex colors.
+        output.albedo = albedoRoughness.rgb;
         output.normalWS = normalize(input.normalWS);
         output.roughness = albedoRoughness.a;
         output.f0 = surfaceParams.x;
