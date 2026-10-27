@@ -10,14 +10,16 @@
 
 #include <audio/components/AudioEmitter.h>
 #include <audio/components/AudioListener.h>
+#include <audio/components/Soundtrack.h>
 
 #include <core/ecs/ComponentRegistry.h>
 
-namespace mir 
+namespace mir
 {
     void RegisterAudioComponents()
     {
         ComponentRegistry::Instance().Register<AudioEmitter>(kAudioEmitterFields);
         ComponentRegistry::Instance().Register<AudioListener>();
+        ComponentRegistry::Instance().Register<Soundtrack>(kSoundtrackFields);
     }
 }

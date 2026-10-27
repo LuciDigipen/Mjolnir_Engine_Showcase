@@ -1,0 +1,7 @@
+{
+    "name": "SoundtrackCheck",
+    "title": "MjolnirEngine - SoundtrackCheck",
+    "assetsRoot": "assets",
+    "sceneDir": "scenes/default",
+    "soundBanksRoot": "assets/audio/SoundBanks"
+}

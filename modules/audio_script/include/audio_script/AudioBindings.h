@@ -1,7 +1,8 @@
 /**
  * @file AudioBindings.h
  * @author Quy Dong Ta
- * @brief Extends the World usertype with world:post_event/stop_event/is_playing/set_rtpc/set_switch/set_state.
+ * @brief Extends the World usertype with world:post_event/stop_event/is_playing/set_rtpc/set_switch/set_state
+ *        and the music volume and mute.
  *
  * Must run after RegisterWorldBindings - extends its World usertype rather than
  * creating a new one. Every call looks the entity's AudioEmitter up again, so

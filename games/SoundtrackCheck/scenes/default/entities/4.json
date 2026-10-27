@@ -1,0 +1,70 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "Soundtrack"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "materialShader": "",
+        "meshName": "meshes/cube.mesh.json",
+        "tint": [
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "type": "MeshRenderer"
+    },
+    {
+      "fields": {
+        "bankName": "Music",
+        "eventName": "Play_Soundtrack",
+        "fadeOutMs": 1000
+      },
+      "type": "Soundtrack"
+    },
+    {
+      "fields": {
+        "scriptName": "music_controls"
+      },
+      "type": "ScriptRef"
+    }
+  ],
+  "id": 4,
+  "parent": 0
+}

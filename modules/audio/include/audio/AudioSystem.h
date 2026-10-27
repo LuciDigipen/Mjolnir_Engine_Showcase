@@ -14,8 +14,16 @@
 #include <core/math/WorldCoordinates.h>
 namespace mir::audio
 {
+    enum class BankState : uint8_t
+    {
+        Unknown,
+        Loading,
+        Loaded,
+        Failed,
+    };
 
-    // Throws SetupError on any failure
+    // Loads Init.bnk and queues every other bank in bankDir, which then load on
+    // Wwise's bank thread. Throws SetupError on any failure before that
     void Init(const std::filesystem::path &bankDir);
 
     void Update();
@@ -56,6 +64,31 @@ namespace mir::audio
 
     //states are global by design, no game object takes part.
     bool SetState(const char *stateGroup, const char *state);
+
+    // Queues the bank the first time it is named, with or without ".bnk". The
+    // state changes in Update(), so a load finishing now is seen next frame
+    BankState RequestBank(const char *bankName);
+
+    // An event posted before its bank has loaded does not play
+    bool AreBanksLoading();
+
+    // False without Init
+    bool PlayMusic(const char *eventName, const char *bankName);
+
+    void StopMusic(int fadeMs);
+
+
+    bool IsMusicPlaying();
+
+    // Linear, 0 to 1, written to the Music_Volume game parameter
+    void SetMusicVolume(float volume);
+
+    float GetMusicVolume();
+
+    // Silences the Music bus and keeps the volume to come back to
+    void SetMusicMuted(bool muted);
+
+    bool IsMusicMuted();
 
     bool IsInitialized();
 

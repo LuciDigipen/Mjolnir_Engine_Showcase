@@ -1,7 +1,7 @@
 /**
  * @file AudioBindings.cpp
  * @author Quy Dong Ta
- * @brief The Lua audio surface, scoped to an entity's AudioEmitter.
+ * @brief The Lua audio surface, scoped to an entity's AudioEmitter, and the music bus.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -147,6 +147,46 @@ namespace mir
 
             return audio::SetState(group.c_str(), value.c_str());
         }
+
+        
+        bool WorldSetMusicVolume(World &, const sol::object &volume)
+        {
+            float value = 0.0f;
+            if (!ToNumber(volume, "set_music_volume", value))
+                return false;
+
+            // written so NaN fails it too
+            if (!(value >= 0.0f && value <= 1.0f))
+            {
+                MIR_LOG_ERROR("script: world:set_music_volume needs a number from 0 to 1, got {}", value);
+                return false;
+            }
+
+            audio::SetMusicVolume(value);
+            return true;
+        }
+
+        float WorldMusicVolume(World &)
+        {
+            return audio::GetMusicVolume();
+        }
+
+        bool WorldSetMusicMuted(World &, const sol::object &muted)
+        {
+            if (muted.get_type() != sol::type::boolean)
+            {
+                MIR_LOG_ERROR("script: world:set_music_muted needs a boolean");
+                return false;
+            }
+
+            audio::SetMusicMuted(muted.as<bool>());
+            return true;
+        }
+
+        bool WorldMusicMuted(World &)
+        {
+            return audio::IsMusicMuted();
+        }
     }
 
     void RegisterAudioBindings(sol::state &lua)
@@ -158,5 +198,9 @@ namespace mir
         worldType.set_function("set_rtpc", &WorldSetRtpc);
         worldType.set_function("set_switch", &WorldSetSwitch);
         worldType.set_function("set_state", &WorldSetState);
+        worldType.set_function("set_music_volume", &WorldSetMusicVolume);
+        worldType.set_function("music_volume", &WorldMusicVolume);
+        worldType.set_function("set_music_muted", &WorldSetMusicMuted);
+        worldType.set_function("music_muted", &WorldMusicMuted);
     }
 }
