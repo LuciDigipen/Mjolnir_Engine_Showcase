@@ -66,6 +66,32 @@ ones are fast. If you already cloned without `--recurse-submodules`, run
 
 Then build and check it: [Build loop](#build-loop) and [Verify](#verify).
 
+## Optional RTXGI DDGI SDK
+
+Configure with `cmake --preset windows-msvc-debug -DMIR_WITH_RTXGI=ON`.
+This fetches RTXGI-DDGI SDK 1.3.6 at commit
+`f33e496ca31b3f0eec1c4e2cbaa8bb620e337fa6` without its samples or
+submodules. Review the SDK's `License.txt` before redistributing it.
+The default `OFF` adds no RTXGI download or DXC requirement.
+
+An enabled build requires DXC with SPIR-V support, found first in the Vulkan
+SDK and then on PATH; override it with `-DRTXGI_DXC_EXECUTABLE=<path>`.
+The SDK's Vulkan sources use the engine's Volk loader, with resource management
+disabled so the renderer will own probe allocations. Host code and shaders use
+right-handed, Y-up coordinates. SDK shader resources use set 0: volume constants
+at binding 0, ray data at 1, irradiance at 2, distance at 3, probe data at 4,
+and variability at 5; the SDK push-constant layout is used.
+
+`cmake --build builds/windows-msvc-debug --target engine_rtxgi` checks the SDK
+and six probe-update/reset shaders. The engine build copies these shaders to
+`shaders/rtxgi` beside the executable. Irradiance/distance atlas interiors are
+6/14 texels; blending reads the ray count dynamically instead of specializing
+it at compile time. Existing engine shaders continue to use Slang.
+
+This is build support only: it does not allocate probes or enable runtime GI.
+`renderer/RtxgiConfig.h` reports SDK compilation separately from future runtime
+availability. DLSS remains an independent option.
+
 ## Build loop
 
 Every build is the same three steps.

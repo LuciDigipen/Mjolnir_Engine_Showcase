@@ -1,0 +1,15 @@
+/**
+ * @file RtxgiConfig.h
+ * @author Rahul Nair
+ * @brief Generated SDK build availability; runtime GI availability is separate.
+ *
+ * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
+ */
+#pragma once
+
+#cmakedefine01 MIR_WITH_RTXGI
+
+namespace mir
+{
+    inline constexpr bool kRtxgiCompiledIn = MIR_WITH_RTXGI != 0;
+}

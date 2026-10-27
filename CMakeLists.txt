@@ -44,6 +44,10 @@ option(MIR_WITH_AUDIO "Build Wwise audio and Lua audio bindings" ON)
 # ON: fetches the public NVIDIA/DLSS SDK via CMake FetchContent at configure
 # time (cmake/FindNGX.cmake), pinned to an exact release tag - never committed.
 option(MIR_WITH_DLSS "Fetch NGX/DLSS-RR SDK and build Ray Reconstruction" OFF)
+
+# Optional DDGI SDK and offline-compiled probe update shaders. OFF does not
+# fetch RTXGI or require DXC; runtime GI is integrated separately.
+option(MIR_WITH_RTXGI "Fetch RTXGI DDGI SDK and build Vulkan probe shaders" OFF)
 if(BUILD_TESTING)
     enable_testing()
     find_package(Catch2 3 CONFIG REQUIRED)
@@ -91,6 +95,15 @@ add_subdirectory(tools/TerrainTool)
 
 add_executable(MjolnirEngine WIN32)
 target_sources(MjolnirEngine PRIVATE main.cpp)
+
+if(MIR_WITH_RTXGI)
+    get_property(rtxgi_shader_outputs GLOBAL PROPERTY MIR_RTXGI_SHADER_OUTPUTS)
+    add_custom_command(TARGET MjolnirEngine POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:MjolnirEngine>/shaders/rtxgi"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            ${rtxgi_shader_outputs} "$<TARGET_FILE_DIR:MjolnirEngine>/shaders/rtxgi"
+        VERBATIM COMMAND_EXPAND_LISTS)
+endif()
 
 # ReportFatal looks for the reporter beside the engine, so every build ships it there
 add_dependencies(MjolnirEngine MjolnirErrorReporter)

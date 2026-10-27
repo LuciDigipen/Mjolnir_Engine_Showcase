@@ -5,6 +5,10 @@ configure_file(
     ${CMAKE_CURRENT_BINARY_DIR}/generated_include/renderer/DlssConfig.h
     @ONLY)
 target_include_directories(engine_renderer PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/generated_include)
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/RtxgiConfig.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/generated_include/renderer/RtxgiConfig.h
+    @ONLY)
 
 # volk: function pointers w/o boiler plate
 find_package(volk CONFIG REQUIRED)
@@ -90,6 +94,11 @@ if(MIR_WITH_DLSS)
     include(FindNGX)
     target_sources(engine_renderer PRIVATE src/renderer/vulkan/DlssRayReconstruction.cpp)
     target_link_libraries(engine_renderer PRIVATE NGX::NGX)
+endif()
+
+if(MIR_WITH_RTXGI)
+    include(Rtxgi)
+    target_link_libraries(engine_renderer PRIVATE RTXGI::DDGI)
 endif()
 
 if(ENGINE_FAMILY_DESKTOP)
