@@ -45,6 +45,9 @@ frame ranges to take priority. `CloseAndWait` cancels callbacks not yet started,
 releases their captures, and waits for this lane's running callbacks and pending
 submissions. It does not drain unrelated work or stop the executor. The executor
 must outlive its lanes. Queued no-op wrappers own their state after close.
+`WaitIdle` finishes submitted callbacks without cancellation and leaves the lane
+open for subsequent posts. Call it outside callbacks with external producers
+stopped while waiting.
 
 Range joins track completed ranges, not every worker: a worker doing unrelated
 background IO does not hold up a completed frame batch. Running IO is not
@@ -60,7 +63,12 @@ access, structural commands, renderer calls and lifecycle transitions stay on ma
 
 `--workers N` accepts 0–32 workers and survives project relaunches. Normal launches
 use `DefaultWorkerCount()`: hardware threads minus one, capped at four, or zero
-if only one hardware thread is available/known. `--workers 0` explicitly runs
+if only one hardware thread is available/known. Four is a conservative initial
+limit to reduce contention with the separate Jolt and audio pools while terrain
+work can overlap them. It is not a measured optimum: the current small scene
+does not establish a benefit from eight workers. Use `--workers N` to compare
+counts on representative workloads before changing the default.
+`--workers 0` explicitly runs
 animation, physics readback, terrain background callbacks and Jolt simulation on the calling thread.
 PhysicsModule applies the same count to Jolt's own pool. These are separate
 pools: Jolt simulation joins before engine jobs read poses, and animation runs
@@ -80,8 +88,11 @@ Physics uses the executor to read body positions/rotations in ranges of 16 for
 slots. Entity queries, body changes and parent-first transform commits remain
 on main. Readback joins before any commit or lifecycle transition.
 
-Terrain uses `TerrainJobExecutor` to adapt reads, decoding, mesh/collision builds
+Terrain uses `terrain_runtime/TerrainJobExecutor.h` to adapt reads, decoding, mesh/collision builds
 and release checks to a shared background lane. `io.workerThreads` caps that
 lane's concurrency. Terrain keeps its internal demand queues and per-frame
-installation budgets. Its runtime closes the lane before collaborators die;
-scene unload uses existing cancellation tickets to discard stale results.
+installation budgets. Runtime teardown waits for submitted callbacks before
+collaborators die, then releases its share of the lane. It does not close the
+lane: a retained streamer can finish outstanding reads and post new work. The
+last consumer closes the lane; the app-owned executor outlives the World and
+modules. Scene unload uses existing cancellation tickets to discard stale results.

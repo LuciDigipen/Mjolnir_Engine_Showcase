@@ -163,8 +163,9 @@ namespace mir
 
     TerrainRuntime::~TerrainRuntime()
     {
-        // Streamer resources can retain the adapter after the runtime dies.
-        if (mPool) mPool->CloseAndWait();
+        // Finish runtime-owned builds before their collaborators die, but keep the
+        // shared lane open for a streamer that outlives or replaces this runtime.
+        if (mPool) mPool->WaitIdle();
         if (!mWorld)
             return;
         if (ViewDrawSources *sources = mWorld->TryResource<ViewDrawSources>())

@@ -1,3 +1,11 @@
+/**
+ * @file BackgroundJobQueue.h
+ * @author Rahul Nair
+ * @brief A consumer-owned background lane on the shared engine executor.
+ *
+ * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
+ *
+ */
 #pragma once
 #include <cstddef>
 #include <functional>
@@ -21,6 +29,9 @@ namespace mir
         // Cancel callbacks not yet started and wait only for this lane's running
         // callbacks. The shared executor and other consumers remain available.
         void CloseAndWait();
+        // Finish submitted callbacks without cancelling them or closing the lane.
+        // Call outside callbacks, with external producers stopped while waiting.
+        void WaitIdle();
         std::size_t Concurrency() const;
     private:
         struct State;

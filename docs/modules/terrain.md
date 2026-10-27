@@ -451,7 +451,7 @@ whole only to check a newly published release before an Edit switch, one pack at
 a time on a worker (see [Release switch](#release-switch-issue-129));
 `VerifyAllPacks` stays in TerrainTool's validate and publish.
 
-**Threads.** Runtime uses `TerrainJobExecutor` (`terrain/TerrainExecutor.h`), a
+**Threads.** Runtime uses `TerrainJobExecutor` (`terrain_runtime/TerrainJobExecutor.h`), a
 background lane on the app-owned engine executor. `io.workerThreads` caps terrain
 callbacks in flight, clamped to the engine worker count; no extra terrain threads
 are created. The same lane handles reads/decoding, mesh builds, collision shape

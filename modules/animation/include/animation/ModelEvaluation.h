@@ -1,3 +1,11 @@
+/**
+ * @file ModelEvaluation.h
+ * @author Rahul Nair
+ * @brief Immutable model evaluation inputs and worker-owned deformation results.
+ *
+ * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
+ *
+ */
 #pragma once
 #include <animation/ModelAnimation.h>
 #include <core/ecs/components/WorldTransform.h>

@@ -9,6 +9,7 @@
 #pragma once
 
 #include <terrain_runtime/TerrainRender.h>
+#include <terrain_runtime/TerrainJobExecutor.h>
 
 #include <project/GameProject.h>
 #include <core/ecs/Entity.h>

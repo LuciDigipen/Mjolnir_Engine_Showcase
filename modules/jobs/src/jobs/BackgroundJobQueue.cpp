@@ -1,3 +1,11 @@
+/**
+ * @file BackgroundJobQueue.cpp
+ * @author Rahul Nair
+ * @brief A consumer-owned background lane on the shared engine executor.
+ *
+ * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
+ *
+ */
 #include <jobs/BackgroundJobQueue.h>
 #include <jobs/JobExecutor.h>
 #include <algorithm>
@@ -102,6 +110,14 @@ namespace mir
         mState->closed = true;
         discarded.swap(mState->pending);
         mState->complete.wait(lock, [&] { return mState->running == 0 && mState->submitting == 0; });
+    }
+    void BackgroundJobQueue::WaitIdle()
+    {
+        std::unique_lock lock(mState->mutex);
+        mState->complete.wait(lock, [&]
+            {
+                return mState->pending.empty() && mState->running == 0 && mState->submitting == 0;
+            });
     }
     std::size_t BackgroundJobQueue::Concurrency() const { return mState->limit; }
 }

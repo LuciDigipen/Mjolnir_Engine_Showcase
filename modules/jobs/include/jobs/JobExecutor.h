@@ -1,3 +1,11 @@
+/**
+ * @file JobExecutor.h
+ * @author Rahul Nair
+ * @brief Shared worker execution for synchronous ranges and background callbacks.
+ *
+ * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
+ *
+ */
 #pragma once
 #include <cstddef>
 #include <functional>

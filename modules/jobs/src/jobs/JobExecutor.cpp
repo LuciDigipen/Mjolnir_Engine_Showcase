@@ -1,3 +1,11 @@
+/**
+ * @file JobExecutor.cpp
+ * @author Rahul Nair
+ * @brief Shared worker execution for synchronous ranges and background callbacks.
+ *
+ * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
+ *
+ */
 #include <jobs/JobExecutor.h>
 #include <core/platform/CrashHandler.h>
 #include <core/log/SetupError.h>
@@ -14,6 +22,14 @@
 
 namespace mir
 {
+    namespace
+    {
+        // Conservative default: terrain can overlap Jolt and audio on separate
+        // pools. Four limits contention until larger scenes justify more workers;
+        // it is not a measured optimum. --workers overrides this default.
+        constexpr std::size_t kDefaultWorkerLimit = 4;
+    }
+
     struct JobExecutor::Impl
     {
         using Function = std::function<void(std::size_t, std::size_t)>;
@@ -170,7 +186,7 @@ namespace mir
     std::size_t JobExecutor::DefaultWorkerCount()
     {
         const auto threads = std::thread::hardware_concurrency();
-        return threads > 1 ? std::min<std::size_t>(threads - 1, 4) : 0;
+        return threads > 1 ? std::min<std::size_t>(threads - 1, kDefaultWorkerLimit) : 0;
     }
     std::size_t JobExecutor::WorkerCount() const { return mImpl->mWorkers.size(); }
     void JobExecutor::Post(std::function<void()> function) { mImpl->Post(std::move(function)); }

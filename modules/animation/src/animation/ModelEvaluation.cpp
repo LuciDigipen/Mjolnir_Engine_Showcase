@@ -1,3 +1,11 @@
+/**
+ * @file ModelEvaluation.cpp
+ * @author Rahul Nair
+ * @brief Evaluates model animation and deformation without World or renderer access.
+ *
+ * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
+ *
+ */
 #include <animation/ModelEvaluation.h>
 #include <glm/gtc/matrix_inverse.hpp>
 #include <algorithm>
