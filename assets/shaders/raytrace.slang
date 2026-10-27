@@ -1,4 +1,7 @@
 #include "RaySceneCommon.slang"
+#ifdef MIR_DDGI
+#include "DdgiSampling.slang"
+#endif
 
 
 [[vk::binding(1, 0)]]
@@ -52,6 +55,8 @@ struct RtPushConstants
     uint2 outputOffset;
     uint aaMode;
     uint sampleCount;
+    float giIntensity;
+    float giWeight;
 };
 
 [[vk::push_constant]]
@@ -216,7 +221,22 @@ void closestHitMain(inout RayPayload payload, in BuiltInTriangleIntersectionAttr
         RayVisibility visibility;
         visibility.origin = hitWorldPos + FaceNormal(info, op0, op1, op2) *
                                               max(kShadowNormalBias, length(hitWorldPos) * kShadowNormalBiasPerDistance);
+#ifdef MIR_DDGI
+        const DDGIVolumeDescGPU volume = UnpackDDGIVolumeDescGPU(gVolumes[0]);
+        const float weight = DDGIGetVolumeBlendWeight(hitWorldPos, volume) * pushData.giWeight;
+        float3 indirect = ambientColor.rgb;
+        if (weight > 0.0)
+        {
+            const float3 geometricNormal = FaceNormal(info, op0, op1, op2);
+            const float3 irradiance = SampleProbeIrradiance(hitWorldPos, geometricNormal, WorldRayDirection(), volume);
+            // Replace ambient, rather than adding it again. Black valid GI is
+            // allowed to darken an occluded surface; unavailable GI uses the base pipeline.
+            indirect = lerp(ambientColor.rgb, irradiance * (pushData.giIntensity / 3.14159265359), weight);
+        }
+        color = ShadeLitWithIndirect(visibility, albedo, N, hitWorldPos, indirect);
+#else
         color = ShadeLit(visibility, albedo, N, hitWorldPos);
+#endif
 
         if (pushData.aaMode == kAaModeDlss)
         {

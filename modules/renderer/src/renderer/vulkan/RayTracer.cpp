@@ -1143,7 +1143,8 @@ namespace mir::vk
     }
 
     void RayTracer::RecordTrace(VkCommandBuffer cmd, uint32_t frame, const VkRect2D &rect,
-        VkDescriptorSet cameraSet, uint32_t cameraOffset, AntiAliasingMode aaMode, uint32_t rtSampleCount)
+        VkDescriptorSet cameraSet, uint32_t cameraOffset, AntiAliasingMode aaMode, uint32_t rtSampleCount,
+        const GiShading *gi)
     {
         // Without guide images their bindings are unwritten, so the shader's Dlss branches must not run.
         if (aaMode == AntiAliasingMode::Dlss && !HasDlssGuides())
@@ -1177,21 +1178,25 @@ namespace mir::vk
 
         if (rect.extent.width > 0 && rect.extent.height > 0)
         {
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, mPipeline);
+            const VkPipelineLayout layout = gi ? gi->layout : mPipelineLayout;
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, gi ? gi->pipeline : mPipeline);
 
-            const std::array<VkDescriptorSet, 2> sets{ mSets[frame], cameraSet };
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, mPipelineLayout,
-                0, static_cast<uint32_t>(sets.size()), sets.data(), 1, &cameraOffset);
+            const std::array<VkDescriptorSet, 3> sets{ mSets[frame], cameraSet, gi ? gi->descriptors : VK_NULL_HANDLE };
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, layout,
+                0, gi ? 3u : 2u, sets.data(), 1, &cameraOffset);
 
             const RtPushConstants pushConstants{
                 .outputOffset{ static_cast<uint32_t>(rect.offset.x), static_cast<uint32_t>(rect.offset.y) },
                 .aaMode = static_cast<uint32_t>(aaMode),
-                .sampleCount = rtSampleCount };
-            vkCmdPushConstants(cmd, mPipelineLayout,
+                .sampleCount = rtSampleCount,
+                .giIntensity = gi ? gi->intensity : 0.0f,
+                .giWeight = gi ? gi->weight : 0.0f };
+            vkCmdPushConstants(cmd, layout,
                 VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,
                 0, sizeof(RtPushConstants), &pushConstants);
 
-            vkCmdTraceRaysKHR(cmd, &mSbtRaygenRegion, &mSbtMissRegion, &mSbtHitRegion, &mSbtCallableRegion,
+            vkCmdTraceRaysKHR(cmd, gi ? &gi->raygen : &mSbtRaygenRegion, gi ? &gi->miss : &mSbtMissRegion,
+                gi ? &gi->hit : &mSbtHitRegion, gi ? &gi->callable : &mSbtCallableRegion,
                 rect.extent.width, rect.extent.height, 1);
         }
 

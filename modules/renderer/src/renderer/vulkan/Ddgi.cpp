@@ -9,6 +9,7 @@
 #include "Ddgi.h"
 #include "Device.h"
 #include "VulkanUtil.h"
+#include "VulkanPushConstants.h"
 
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
@@ -62,10 +63,14 @@ namespace mir::vk
         struct Constants { VkBuffer buffer{}; VmaAllocation allocation{}; void *mapped = nullptr; };
         std::array<Constants, kFramesInFlight> mConstants{};
         VkDeviceSize mBudgetOffset = 0;
-        VkBuffer mSbt{};
-        VmaAllocation mSbtAllocation{};
-        VkStridedDeviceAddressRegionKHR mRaygen{}, mMiss{}, mHit{}, mCallable{};
-        VkPipeline mTrace{};
+        struct TraceState
+        {
+            VkPipeline pipeline{};
+            VkBuffer buffer{};
+            VmaAllocation allocation{};
+            VkStridedDeviceAddressRegionKHR raygen{}, miss{}, hit{}, callable{};
+        };
+        TraceState mProbe, mCamera;
         std::array<VkPipeline, 6> mCompute{};
         std::unique_ptr<ProbeVolume> mVolume;
         DdgiSettings mSettings;
@@ -80,8 +85,12 @@ namespace mir::vk
             const VkDevice handle = mDevice->Handle();
             mVolume.reset();
             for (auto &pipeline : mCompute) { if (pipeline) vkDestroyPipeline(handle, pipeline, nullptr); pipeline = {}; }
-            if (mTrace) vkDestroyPipeline(handle, mTrace, nullptr);
-            if (mSbt) vmaDestroyBuffer(mDevice->Allocator(), mSbt, mSbtAllocation);
+            for (auto *trace : { &mProbe, &mCamera })
+            {
+                if (trace->pipeline) vkDestroyPipeline(handle, trace->pipeline, nullptr);
+                if (trace->buffer) vmaDestroyBuffer(mDevice->Allocator(), trace->buffer, trace->allocation);
+                *trace = {};
+            }
             if (mPool) vkDestroyDescriptorPool(handle, mPool, nullptr);
             if (mTraceLayout) vkDestroyPipelineLayout(handle, mTraceLayout, nullptr);
             if (mComputeLayout) vkDestroyPipelineLayout(handle, mComputeLayout, nullptr);
@@ -98,7 +107,7 @@ namespace mir::vk
                 if (slot.buffer) vmaDestroyBuffer(mDevice->Allocator(), slot.buffer, slot.allocation);
                 slot = {};
             }
-            mTrace = {}; mSbt = {}; mSbtAllocation = {}; mPool = {}; mTraceLayout = {}; mComputeLayout = {};
+            mPool = {}; mTraceLayout = {}; mComputeLayout = {};
             mSetLayout = {}; mSampler = {}; mSchedule.Reset(); mImageBytes = 0;
             mReset = true; mInitializedImages = false;
         }
@@ -156,8 +165,11 @@ namespace mir::vk
                 .setLayoutCount = 1, .pSetLayouts = &mSetLayout, .pushConstantRangeCount = 1, .pPushConstantRanges = &push };
             if (vkCreatePipelineLayout(handle, &computeInfo, nullptr, &mComputeLayout) != VK_SUCCESS) return false;
             const std::array<VkDescriptorSetLayout, 3> layouts{ mSceneLayout, mCameraLayout, mSetLayout };
+            const VkPushConstantRange tracePush{ VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,
+                0, sizeof(RtPushConstants) };
             const VkPipelineLayoutCreateInfo traceInfo{ .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-                .setLayoutCount = uint32_t(layouts.size()), .pSetLayouts = layouts.data() };
+                .setLayoutCount = uint32_t(layouts.size()), .pSetLayouts = layouts.data(),
+                .pushConstantRangeCount = 1, .pPushConstantRanges = &tracePush };
             if (vkCreatePipelineLayout(handle, &traceInfo, nullptr, &mTraceLayout) != VK_SUCCESS) return false;
             const std::array<VkDescriptorPoolSize, 4> sizes{{
                 {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * kFramesInFlight},
@@ -228,9 +240,8 @@ namespace mir::vk
             return true;
         }
 
-        bool CreateTrace()
+        bool CreateTrace(const char *shader, const std::array<const char *, 6> &names, TraceState &output)
         {
-            constexpr const char *names[]{ "probeRayGen", "probeMiss", "shadowMissMain", "probeClosestHit", "probeAnyHit", "shadowAnyHitMain" };
             constexpr VkShaderStageFlagBits types[]{ VK_SHADER_STAGE_RAYGEN_BIT_KHR, VK_SHADER_STAGE_MISS_BIT_KHR,
                 VK_SHADER_STAGE_MISS_BIT_KHR, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, VK_SHADER_STAGE_ANY_HIT_BIT_KHR,
                 VK_SHADER_STAGE_ANY_HIT_BIT_KHR };
@@ -239,13 +250,13 @@ namespace mir::vk
             for (const char *name : names)
             {
                 std::error_code error;
-                if (!std::filesystem::is_regular_file(ShaderPath(std::string("ddgiProbe.") + name + ".spv"), error))
+                if (!std::filesystem::is_regular_file(ShaderPath(std::string(shader) + "." + name + ".spv"), error))
                     return false;
             }
             bool loaded = true;
             for (size_t i = 0; i < modules.size(); ++i)
             {
-                modules[i] = CreateShaderModule(mDevice->Handle(), ShaderPath(std::string("ddgiProbe.") + names[i] + ".spv"));
+                modules[i] = CreateShaderModule(mDevice->Handle(), ShaderPath(std::string(shader) + "." + names[i] + ".spv"));
                 loaded &= modules[i] != VK_NULL_HANDLE;
                 stages[i] = { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
                     .stage = types[i], .module = modules[i], .pName = names[i] };
@@ -261,13 +272,13 @@ namespace mir::vk
             const VkRayTracingPipelineCreateInfoKHR info{ .sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR,
                 .stageCount = uint32_t(stages.size()), .pStages = stages.data(),
                 .groupCount = uint32_t(groups.size()), .pGroups = groups.data(), .maxPipelineRayRecursionDepth = 2, .layout = mTraceLayout };
-            const VkResult result = loaded ? vkCreateRayTracingPipelinesKHR(mDevice->Handle(), {}, {}, 1, &info, nullptr, &mTrace) : VK_ERROR_INITIALIZATION_FAILED;
+            const VkResult result = loaded ? vkCreateRayTracingPipelinesKHR(mDevice->Handle(), {}, {}, 1, &info, nullptr, &output.pipeline) : VK_ERROR_INITIALIZATION_FAILED;
             for (auto module : modules) if (module) vkDestroyShaderModule(mDevice->Handle(), module, nullptr);
             if (result != VK_SUCCESS) return false;
             const auto &properties = mDevice->RtProperties();
             const uint32_t stride = AlignUp(properties.shaderGroupHandleSize, properties.shaderGroupBaseAlignment);
             std::vector<std::byte> handles(properties.shaderGroupHandleSize * groups.size());
-            if (vkGetRayTracingShaderGroupHandlesKHR(mDevice->Handle(), mTrace, 0, uint32_t(groups.size()), handles.size(), handles.data()) != VK_SUCCESS)
+            if (vkGetRayTracingShaderGroupHandlesKHR(mDevice->Handle(), output.pipeline, 0, uint32_t(groups.size()), handles.size(), handles.data()) != VK_SUCCESS)
                 return false;
             const VkBufferCreateInfo bufferInfo{ .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
                 .size = stride * groups.size(), .usage = VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
@@ -276,15 +287,15 @@ namespace mir::vk
                 VMA_ALLOCATION_CREATE_MAPPED_BIT, .usage = VMA_MEMORY_USAGE_AUTO };
             VmaAllocationInfo mapped{};
             if (vmaCreateBufferWithAlignment(mDevice->Allocator(), &bufferInfo, &allocationInfo, properties.shaderGroupBaseAlignment,
-                &mSbt, &mSbtAllocation, &mapped) != VK_SUCCESS) return false;
+                &output.buffer, &output.allocation, &mapped) != VK_SUCCESS) return false;
             for (size_t i = 0; i < groups.size(); ++i)
                 std::memcpy(static_cast<std::byte *>(mapped.pMappedData) + i * stride,
                     handles.data() + i * properties.shaderGroupHandleSize, properties.shaderGroupHandleSize);
-            vmaFlushAllocation(mDevice->Allocator(), mSbtAllocation, 0, VK_WHOLE_SIZE);
-            const VkBufferDeviceAddressInfo addressInfo{ .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, .buffer = mSbt };
+            vmaFlushAllocation(mDevice->Allocator(), output.allocation, 0, VK_WHOLE_SIZE);
+            const VkBufferDeviceAddressInfo addressInfo{ .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, .buffer = output.buffer };
             const VkDeviceAddress address = vkGetBufferDeviceAddress(mDevice->Handle(), &addressInfo);
-            mRaygen = { address, stride, stride }; mMiss = { address + stride, stride, 2 * stride };
-            mHit = { address + 3 * stride, stride, 2 * stride };
+            output.raygen = { address, stride, stride }; output.miss = { address + stride, stride, 2 * stride };
+            output.hit = { address + 3 * stride, stride, 2 * stride };
             return true;
         }
 
@@ -313,7 +324,12 @@ namespace mir::vk
                 rtxgi::EDDGIVolumeTextureType::Data, rtxgi::EDDGIVolumeTextureType::Variability };
             for (size_t i = 0; i < mImages.size(); ++i)
                 if (!CreateAtlas(desc, types[i], mImages[i])) return false;
-            if (!CreateDescriptors() || !CreateCompute() || !CreateTrace()) return false;
+            constexpr std::array<const char *, 6> probeEntries{
+                "probeRayGen", "probeMiss", "shadowMissMain", "probeClosestHit", "probeAnyHit", "shadowAnyHitMain" };
+            constexpr std::array<const char *, 6> cameraEntries{
+                "rayGenMain", "missMain", "shadowMissMain", "closestHitMain", "anyHitMain", "shadowAnyHitMain" };
+            if (!CreateDescriptors() || !CreateCompute() ||
+                !CreateTrace("ddgiProbe", probeEntries, mProbe) || !CreateTrace("raytraceGi", cameraEntries, mCamera)) return false;
             mVolume = std::make_unique<ProbeVolume>(desc);
             MIR_LOG_INFO("DDGI: {} probes, {} rays/probe, {:.2f} MiB probe images", mSettings.ProbeCount(), mSettings.raysPerProbe,
                 double(mImageBytes) / (1024.0 * 1024.0));
@@ -353,19 +369,19 @@ namespace mir::vk
     void Ddgi::ResetHistory() { mImpl->mReset = true; }
     void Ddgi::Shutdown() { mImpl->Destroy(); mImpl->mFailed.reset(); }
 
-    bool Ddgi::Record(VkCommandBuffer cmd, uint32_t frame, WorldPosition camera,
+    std::optional<RayTracer::GiShading> Ddgi::Record(VkCommandBuffer cmd, uint32_t frame, WorldPosition camera,
         VkDescriptorSet cameraSet, uint32_t cameraOffset, const RayTracer::PreparedScene &scene, bool complete)
     {
         auto &state = *mImpl;
-        if (!state.mVolume) return false;
-        if (!complete || scene.truncated) { state.mReset = true; return false; }
+        if (!state.mVolume) return std::nullopt;
+        if (!complete || scene.truncated) { state.mReset = true; return std::nullopt; }
         const auto coverage = MakeGiTraceVolume(state.mSettings);
         const auto relative = TryCameraRelativeFloat(coverage->coverage.origin, camera);
-        if (!relative) { state.mReset = true; return false; }
+        if (!relative) { state.mReset = true; return std::nullopt; }
         const uint32_t total = uint32_t(state.mSettings.ProbeCount());
         const uint32_t count = uint32_t(state.mSettings.probesPerFrame);
         if (uint64_t(count) * state.mSettings.raysPerProbe > state.mDevice->RtProperties().maxRayDispatchInvocationCount)
-            return false;
+            return std::nullopt;
         if (state.mReset) state.mSchedule.Reset();
         const auto budget = state.mSchedule.Batch(total, count);
         state.mVolume->SetOrigin({ relative->x, relative->y, relative->z });
@@ -405,11 +421,11 @@ namespace mir::vk
             };
         state.mDevice->BeginLabel(cmd, "DDGI Probe Update", { 0.3f, 0.9f, 0.3f, 1.0f });
         if (state.mReset) { dispatch(4, (total + 31) / 32, 1, 1); dispatch(5, (total + 31) / 32, 1, 1); }
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, state.mTrace);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, state.mProbe.pipeline);
         const std::array<VkDescriptorSet, 3> sets{ scene.descriptors, cameraSet, state.mSets[frame] };
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, state.mTraceLayout, 0, uint32_t(sets.size()),
             sets.data(), 1, &cameraOffset);
-        vkCmdTraceRaysKHR(cmd, &state.mRaygen, &state.mMiss, &state.mHit, &state.mCallable, uint32_t(state.mSettings.raysPerProbe), count, 1);
+        vkCmdTraceRaysKHR(cmd, &state.mProbe.raygen, &state.mProbe.miss, &state.mProbe.hit, &state.mProbe.callable, uint32_t(state.mSettings.raysPerProbe), count, 1);
         ProbeBarrier(cmd);
         // Right-handed Y-up SDK layout: atlas X/Z dimensions, Y array layers.
         const auto &counts = state.mSettings.probeCounts;
@@ -420,6 +436,10 @@ namespace mir::vk
         state.mDevice->EndLabel(cmd);
         state.mReset = false;
         state.mSchedule.Advance(total, count);
-        return true;
+        const float weight = state.mSchedule.SamplingWeight();
+        if (weight == 0.0f) return std::nullopt;
+        return RayTracer::GiShading{ state.mCamera.pipeline, state.mTraceLayout, state.mSets[frame],
+            state.mCamera.raygen, state.mCamera.miss, state.mCamera.hit, state.mCamera.callable,
+            state.mSettings.intensity, weight };
     }
 }

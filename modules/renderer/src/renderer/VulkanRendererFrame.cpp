@@ -258,6 +258,7 @@ namespace mir
 #if MIR_WITH_RTXGI
         mDdgi->Configure(mDdgiSettings, false);
 #endif
+        mGiWasShading = false;
         const std::optional<vk::FrameContext> frame = BeginFrame();
         if (!frame)
             return;
@@ -286,13 +287,19 @@ namespace mir
             view.rayTracingItems.value_or(view.items), *mResources, *mMaterialStore);
         mDevice->EndLabel(cmd);
 
+        std::optional<vk::RayTracer::GiShading> gi;
 #if MIR_WITH_RTXGI
-        mDdgi->Record(cmd, frame, view.cameraPosition, mCameraBuffer->Set(frame), cameraOffset,
+        gi = mDdgi->Record(cmd, frame, view.cameraPosition, mCameraBuffer->Set(frame), cameraOffset,
             scene, view.rayTracingSceneComplete);
 #endif
+        if (gi.has_value() != mGiWasShading)
+        {
+            mPostProcessing->ResetHistory();
+            mGiWasShading = gi.has_value();
+        }
         mDevice->BeginLabel(cmd, "Ray Trace Pass", { 0.0f, 1.0f, 1.0f, 1.0f });
         mRayTracer->RecordTrace(cmd, frame, rect, mCameraBuffer->Set(frame),
-            cameraOffset, effectiveAaMode, mPostProcessing->RtSampleCount());
+            cameraOffset, effectiveAaMode, mPostProcessing->RtSampleCount(), gi ? &*gi : nullptr);
         mDevice->EndLabel(cmd);
 
         const bool hasRect = rect.extent.width > 0 && rect.extent.height > 0;

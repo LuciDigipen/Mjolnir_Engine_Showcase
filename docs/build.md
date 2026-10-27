@@ -90,8 +90,8 @@ and six probe-update/reset shaders. The engine build copies these shaders to
 6/14 texels; blending reads the ray count dynamically instead of specializing
 it at compile time. Existing engine shaders continue to use Slang.
 
-Enabled GI settings allocate probes and run bounded probe updates. Final camera
-shading does not yet sample those probes. `renderer/RtxgiConfig.h` reports SDK
+Enabled GI settings allocate probes, run bounded updates, and sample indirect
+diffuse lighting during final RT shading. `renderer/RtxgiConfig.h` reports SDK
 compilation separately from runtime resource availability. DLSS remains an
 independent option. See [renderer](modules/renderer.md) for pass order and ownership.
 

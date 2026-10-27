@@ -74,6 +74,7 @@ TEST_CASE("Probe batches cover the volume before enabling history and respect up
             {
                 const auto batch = schedule.Batch(total, count);
                 CHECK(batch[3] == 0);
+                CHECK(schedule.SamplingWeight() == 0.0f);
                 std::vector<bool> thisFrame(total, false);
                 for (uint32_t dispatch = 0; dispatch < batch[1]; ++dispatch)
                 {
@@ -86,9 +87,20 @@ TEST_CASE("Probe batches cover the volume before enabling history and respect up
             }
             CHECK(std::all_of(seen.begin(), seen.end(), [](bool value) { return value; }));
             CHECK(schedule.Batch(total, count)[3] == 1);
+            float previous = schedule.SamplingWeight();
+            CHECK(previous > 0.0f);
+            for (int frame = 0; frame < 8; ++frame)
+            {
+                schedule.Advance(total, count);
+                CHECK(schedule.SamplingWeight() >= previous);
+                CHECK(schedule.SamplingWeight() <= 1.0f);
+                previous = schedule.SamplingWeight();
+            }
+            CHECK(schedule.SamplingWeight() == 1.0f);
             schedule.Reset();
             CHECK(schedule.Batch(total, count)[0] == 0);
             CHECK(schedule.Batch(total, count)[3] == 0);
+            CHECK(schedule.SamplingWeight() == 0.0f);
         }
 }
 

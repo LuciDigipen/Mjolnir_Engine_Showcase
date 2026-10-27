@@ -1,14 +1,9 @@
 #include "RaySceneCommon.slang"
-#include "ddgi/Irradiance.hlsl"
+#include "DdgiSampling.slang"
 #include "ddgi/include/ProbeRayCommon.hlsl"
 
-[[vk::binding(0, 2)]] StructuredBuffer<DDGIVolumeDescGPUPacked> gVolumes;
 [[vk::binding(1, 2)]] RWTexture2DArray<float4> gRayData;
 [[vk::binding(7, 2)]] StructuredBuffer<uint4> gBudget;
-[[vk::binding(8, 2)]] Texture2DArray<float4> gIrradiance;
-[[vk::binding(9, 2)]] Texture2DArray<float4> gProbeDistance;
-[[vk::binding(10, 2)]] Texture2DArray<float4> gProbeData;
-[[vk::binding(11, 2)]] SamplerState gProbeSampler;
 
 struct ProbePayload { float3 radiance; float distance; uint kind; };
 
@@ -125,13 +120,7 @@ void probeClosestHit(inout ProbePayload payload, BuiltInTriangleIntersectionAttr
     if (gBudget[0].w != 0)
     {
         DDGIVolumeDescGPU volume = UnpackDDGIVolumeDescGPU(gVolumes[0]);
-        DDGIVolumeResources resources;
-        resources.probeIrradiance = gIrradiance;
-        resources.probeDistance = gProbeDistance;
-        resources.probeData = gProbeData;
-        resources.bilinearSampler = gProbeSampler;
-        float3 irradiance = DDGIGetVolumeIrradiance(position,
-            DDGIGetSurfaceBias(normal, WorldRayDirection(), volume), normal, volume, resources);
+        float3 irradiance = SampleProbeIrradiance(position, normal, WorldRayDirection(), volume);
         payload.radiance += min(albedo, float3(0.9)) * (1.0 / 3.14159265359) * irradiance *
             DDGIGetVolumeBlendWeight(position, volume);
     }

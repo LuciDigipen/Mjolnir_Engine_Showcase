@@ -299,6 +299,13 @@ namespace mir
             mPostProcessing->ResetHistory();
     }
 
+    void VulkanRenderer::SetGlobalIllumination(const DdgiSettings &settings)
+    {
+        if (settings == mDdgiSettings) return;
+        mDdgiSettings = settings;
+        if (mGiWasShading) mPostProcessing->ResetHistory();
+    }
+
     void VulkanRenderer::ReleaseSceneResources()
     {
         if (mDevice->Handle() == VK_NULL_HANDLE)

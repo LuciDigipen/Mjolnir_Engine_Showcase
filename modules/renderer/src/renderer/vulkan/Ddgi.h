@@ -21,14 +21,17 @@ namespace mir::vk
     public:
         std::array<uint32_t, 4> Batch(uint32_t total, uint32_t count) const
             { return { mFirst, count, total, mVisited >= total ? 1u : 0u }; }
-        void Reset() { mFirst = mVisited = 0; }
+        void Reset() { mFirst = mVisited = mReadyFrames = 0; }
         void Advance(uint32_t total, uint32_t count)
         {
             mFirst = (mFirst + count) % total;
             mVisited = mVisited + count < total ? mVisited + count : total;
+            if (mVisited >= total && mReadyFrames < 8) ++mReadyFrames;
         }
+        // Eight successful updates fade into sampling after the first full sweep.
+        float SamplingWeight() const { return float(mReadyFrames) / 8.0f; }
     private:
-        uint32_t mFirst = 0, mVisited = 0;
+        uint32_t mFirst = 0, mVisited = 0, mReadyFrames = 0;
     };
 
     class Ddgi
@@ -40,7 +43,7 @@ namespace mir::vk
         // Before BeginFrame: waits only when replacing/freeing GPU resources.
         void Configure(const DdgiSettings &settings, bool active);
         void ResetHistory();
-        bool Record(VkCommandBuffer cmd, uint32_t frame, WorldPosition camera,
+        std::optional<RayTracer::GiShading> Record(VkCommandBuffer cmd, uint32_t frame, WorldPosition camera,
             VkDescriptorSet cameraSet, uint32_t cameraOffset, const RayTracer::PreparedScene &scene, bool complete);
         void Shutdown(); // Caller has idled the device.
 

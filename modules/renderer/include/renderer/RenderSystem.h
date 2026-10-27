@@ -90,6 +90,7 @@ namespace mir
             mSourceWorld = world;
             mPreviousPoses.clear();
             mCurrentPoses.clear();
+            mRenderer.ResetHistory();
         }
 
         ViewportId AddViewport(VkRect2D rect)

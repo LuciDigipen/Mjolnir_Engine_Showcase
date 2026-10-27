@@ -525,8 +525,8 @@ on the startup path catches.
 `rendering.ddgi` persists one axis-aligned, world-anchored diffuse GI volume.
 Project Settings > Rendering > Diffuse Global Illumination edits a draft and
 applies it only after Save succeeds. Settings are retained independently of
-the RTXGI build option and the ray tracing checkbox. Enabled RTXGI builds now
-update probe lighting; final camera shading does not yet sample it.
+the RTXGI build option and the ray tracing checkbox. Enabled RTXGI builds update
+probe lighting and sample it during final RT shading.
 
 | Field | Default | Meaning / limits |
 |---|---|---|
@@ -588,7 +588,7 @@ In an RTXGI build, the facade owns `vk::Ddgi` independently of `RayTracer`.
 Its SDK base volume handles probe constants, indexing and randomized ray
 rotation. The renderer owns five persistent array images, a bilinear sampler,
 per-frame constants/budget buffers and descriptor sets, six compute pipelines,
-and a separate probe RT pipeline/SBT. Images use RGBA32F to match the compiled
+and separate probe and GI camera RT pipelines/SBTs. Images use RGBA32F to match the compiled
 storage-image types; distance uses RG and variability uses R. The variability
 atlas is bound for the SDK kernels, but adaptive variability reduction is off.
 
@@ -606,7 +606,8 @@ The shared atlases remain GENERAL and run on the graphics queue, with explicit
 barriers between passes and across frames. Constants are written only after
 the frame-slot wait. Camera movement updates the relative volume origin without
 clearing history. Initial/reset sweeps use zero hysteresis and disable recursive
-history until every probe has been visited. Later updates use SDK hysteresis.
+history until every probe has been visited. Final shading then fades from the
+ambient fallback to GI over eight successful updates. Later updates use SDK hysteresis.
 
 Configuration runs before BeginFrame. Layout/placement changes and disabling
 GI wait for outstanding work before freeing resources; allocation/pipeline
@@ -614,7 +615,37 @@ failures clean up partial resources and retain existing RT lighting. The same
 failed settings are not retried every frame. Scene unload releases resources;
 explicit history resets invalidate them for the next update. Swapchain resize
 preserves the world-space probe cache. Raster frames release any active DDGI
-resources. Final camera sampling and ambient replacement remain step 5.
+resources. Source-World switches reset history as well as scene-load/play events.
+
+The GI camera pipeline samples with geometric normals and the SDK surface bias,
+then applies diffuse albedo times irradiance / pi and the intensity setting.
+Its indirect term blends from the existing constant ambient to GI according to
+volume coverage and initialization fade; ambient is replaced, not added twice.
+Outside the volume, during initialization, or when resources/scene coverage are
+unavailable, the existing ambient path is used. Valid black irradiance stays
+black; intensity zero suppresses indirect lighting inside the volume. Direct
+lighting, shadows, unlit/error materials, fog, and DLSS guide writes keep their
+existing behavior. Raster uses the original lighting entry point.
+
+`Ddgi::Record` returns a frame-local borrowed camera pipeline, descriptor set and
+SBT only when probe data is ready. `RayTracer::RecordTrace` selects it for that
+dispatch and otherwise uses its original pipeline. The GI pipelines are owned
+and freed with the DDGI volume; no GI descriptors need to be bound in fallback
+or SDK-disabled builds. GI settings changes and transitions into/out of sampling
+reset DLSS temporal history without discarding the world-space probe cache for
+ordinary camera motion or intensity changes.
+
+Validation on the RTX 4060 Laptop GPU: a static colored-wall fixture confirmed
+positive indirect lighting and increasing intensity, exact fallback outside
+the volume, and identical raster output with GI requested on/off (comparing
+scene pixels, excluding the HUD). A renderer-session driver exercised toggles,
+history reset, incomplete-scene fallback, volume changes, resize, MSAA,
+raster/RT transitions, and scene resource release/reload at large coordinates;
+the non-NGX run had no validation errors and zero live VMA allocations at exit.
+GI plus DLSS Ray Reconstruction also evaluated successfully without validation
+errors. Combined-build shutdown remains unverified here: NGX shutdown stalled
+in both GI-enabled and GI-disabled drivers, including a run that never allocated
+DDGI resources.
 
 **`volk` is compiled from source in this module**, so the platform defines are
 ours. VMA is configured with `VMA_STATIC_VULKAN_FUNCTIONS=0` and

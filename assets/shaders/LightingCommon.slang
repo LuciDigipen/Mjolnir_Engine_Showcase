@@ -48,13 +48,14 @@ interface IShadowVisibility
 }
 
 // Visibility is only queried where a light contributes, so RT skips rays it doesn't need.
-float3 ShadeLit<V : IShadowVisibility>(V visibility, float3 albedo, float3 N, float3 worldPos)
+float3 ShadeLitWithIndirect<V : IShadowVisibility>(V visibility, float3 albedo, float3 N, float3 worldPos,
+    float3 indirectDiffuse)
 {
     const float3 L = normalize(lightDirWS.xyz);
     const float3 viewDir = normalize(cameraPos.xyz - worldPos);
     const float3 H = normalize(L + viewDir);
 
-    float3 color = albedo * ambientColor.rgb;
+    float3 color = albedo * indirectDiffuse;
 
     const float diffuse = max(dot(N, L), 0.0);
     if (diffuse > 0.0)
@@ -86,6 +87,11 @@ float3 ShadeLit<V : IShadowVisibility>(V visibility, float3 albedo, float3 N, fl
     }
 
     return color;
+}
+
+float3 ShadeLit<V : IShadowVisibility>(V visibility, float3 albedo, float3 N, float3 worldPos)
+{
+    return ShadeLitWithIndirect(visibility, albedo, N, worldPos, ambientColor.rgb);
 }
 
 float3 ApplyFog(float3 color, float dist)

@@ -268,7 +268,7 @@ namespace mir
         // Every Post-Processing effect for the frame, already resolved by ResolvePostProcessing.
         // A disabled Bloom/DepthOfField/MotionBlur skips its GPU chain for the frame.
         void SetPostProcessing(const PostProcessingState &state);
-        void SetGlobalIllumination(const DdgiSettings &settings) { mDdgiSettings = settings; }
+        void SetGlobalIllumination(const DdgiSettings &settings);
 
         void SetAtmosphere(const Sky &sky);
 
@@ -324,6 +324,7 @@ namespace mir
         std::unique_ptr<vk::Ddgi> mDdgi;
 #endif
         DdgiSettings mDdgiSettings;
+        bool mGiWasShading = false;
 
         // Every screen-space effect between the scene/trace pass and the swapchain.
         std::unique_ptr<vk::PostProcessingStack> mPostProcessing;

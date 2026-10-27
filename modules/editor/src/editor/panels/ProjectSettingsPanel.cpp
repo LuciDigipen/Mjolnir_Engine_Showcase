@@ -11,6 +11,7 @@
 
 #include <core/log/SetupError.h>
 #include <physics_layers/PhysicsLayerSettings.h>
+#include <renderer/RtxgiConfig.h>
 
 #include <imgui.h>
 
@@ -29,7 +30,10 @@ namespace mir
         if (ImGui::TreeNode("Diffuse Global Illumination"))
         {
             ImGui::Checkbox("Enable GI", &gi.enabled);
-            ImGui::TextWrapped("GI settings are saved; GI rendering is not yet available.");
+            if (!kRtxgiCompiledIn)
+                ImGui::TextWrapped("GI is unavailable in this build. Settings can still be saved.");
+            else
+                ImGui::TextWrapped("GI requires hardware ray tracing and a single viewport. Ambient lighting is used outside the volume.");
             if (!draftRenderSettings.rayTracing)
                 ImGui::TextWrapped("GI requires ray tracing. Raster rendering uses its existing lighting.");
             ImGui::InputScalarN("Volume center (world meters)", ImGuiDataType_Double, gi.origin.data(), 3,
