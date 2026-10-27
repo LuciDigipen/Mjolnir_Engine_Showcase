@@ -22,9 +22,7 @@ set (CMAKE_CXX_EXTENSIONS OFF)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg.json")
 
-#line for wwise
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-#end
 include(cmake/EnginePlatform.cmake)
 include(cmake/EngineModule.cmake)
 include(cmake/Shaders.cmake)
@@ -38,6 +36,8 @@ option(BUILD_TESTING "Build unit tests (per module, run via ctest)" ON)
 # are not built, and nothing links engine_editor. The windows-msvc-game-*
 # presets set it.
 option(MJOLNIR_WITH_EDITOR "Build the editor into MjolnirEngine" ON)
+
+option(MIR_WITH_AUDIO "Build Wwise audio and Lua audio bindings" ON)
 
 # OFF (default): no network fetch, no NVIDIA SDK dependency - DLSS Ray
 # Reconstruction anti-aliasing stays unreachable, same as unsupported hardware.
@@ -55,8 +55,10 @@ add_subdirectory(third_party)
 add_subdirectory(modules/animation)
 add_subdirectory(modules/app)
 add_subdirectory(modules/assets)
-add_subdirectory(modules/audio)
-add_subdirectory(modules/audio_script)
+if(MIR_WITH_AUDIO)
+    add_subdirectory(modules/audio)
+    add_subdirectory(modules/audio_script)
+endif()
 add_subdirectory(modules/camera)
 add_subdirectory(modules/core)
 add_subdirectory(modules/editor)
@@ -298,7 +300,6 @@ find_package(nlohmann_json CONFIG REQUIRED)
 target_link_libraries(MjolnirEngine PRIVATE
     mir::app
     mir::assets
-    mir::audio
     mir::core
     mir::gameshell
     mir::input
