@@ -80,8 +80,9 @@ namespace mir::vk
             uint64_t pixels = uint64_t(output.width) * output.height;
             if (pixels > kBudget / (16 * kFramesInFlight)) return false;
             bytes += pixels * 16 * kFramesInFlight;
-            if (pixels > kBudget / (48 * kFramesInFlight)) return false;
-            filterBytes += pixels * 48 * kFramesInFlight;
+            const uint64_t filterPixelBytes = half ? 48 : 32;
+            if (pixels > kBudget / (filterPixelBytes * kFramesInFlight)) return false;
+            filterBytes += pixels * filterPixelBytes * kFramesInFlight;
             const uint64_t fullPixels = uint64_t(r.extent.width) * r.extent.height;
             if (fullPixels > kBudget / (16 * kFramesInFlight)) return false;
             filterBytes += fullPixels * 16 * kFramesInFlight;
@@ -264,8 +265,9 @@ namespace mir::vk
                 auto mips = MipCount(view.rect.extent);
                 if (!image(frame.pyramid, VK_FORMAT_R32_SFLOAT, view.rect.extent, mips) ||
                     !image(frame.raw, VK_FORMAT_R32G32B32A32_SFLOAT, view.output, 1)) return false;
-                for (auto target : { &frame.history, &frame.geometry, &frame.scratch })
+                for (auto target : { &frame.history, &frame.geometry })
                     if (!image(*target, VK_FORMAT_R32G32B32A32_SFLOAT, view.output, 1, true)) return false;
+                if (mHalfResolution && !image(frame.scratch, VK_FORMAT_R32G32B32A32_SFLOAT, view.output, 1, true)) return false;
                 if (!image(frame.resolved, VK_FORMAT_R32G32B32A32_SFLOAT, view.rect.extent, 1, true)) return false;
                 for (auto &set : frame.filterSets)
                     if (!AllocateDescriptorSet(dev, mPool, mFilterSetLayout, set)) return false;
@@ -420,9 +422,9 @@ namespace mir::vk
                     VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
             previous.historyLayout = true;
         }
-        for (uint32_t pass = 0; pass < 3; ++pass)
+        for (uint32_t pass = 0; pass < (mHalfResolution ? 3u : 2u); ++pass)
         {
-            auto &output = pass == 0 ? frame.history : pass == 1 ? frame.scratch : frame.resolved;
+            auto &output = pass == 0 ? frame.history : pass == 1 && mHalfResolution ? frame.scratch : frame.resolved;
             ImageBarrier(cmd, output.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                 VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                 VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,

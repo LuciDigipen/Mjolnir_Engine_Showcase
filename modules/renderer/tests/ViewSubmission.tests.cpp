@@ -93,6 +93,8 @@ TEST_CASE("SSGI tracing bounds odd resolutions, view isolation and total GPU sto
     rects[0].extent = { 2560, 1440 };
     CHECK(fits());
     CHECK_FALSE(fits(false));
+    rects[0].extent = { 2000, 1200 };
+    CHECK(fits(false)); // Full-resolution filtering does not allocate an upsampling scratch image.
     rects = { { {}, { 640, 360 } }, { { 640, 0 }, { 640, 360 } } };
     CHECK(fits());
     rects[1].offset.x = 639;
@@ -108,6 +110,13 @@ TEST_CASE("SSGI tracing bounds odd resolutions, view isolation and total GPU sto
     SECTION("sampled binding limit") { limits.maxPerStageDescriptorSampledImages = 4; CHECK_FALSE(fits()); }
     SECTION("filter push constant limit") { limits.maxPushConstantsSize = 119; CHECK_FALSE(fits()); }
     SECTION("empty views") { rects.clear(); CHECK_FALSE(fits()); }
+    SECTION("filter budget is shared across views")
+    {
+        rects = { { {}, { 1280, 1080 } }, { { 1280, 0 }, { 1280, 1080 } } };
+        CHECK(fits(false));
+        rects.push_back({ { 2560, 0 }, { 1280, 1080 } });
+        CHECK_FALSE(fits(false));
+    }
     SECTION("too many views") { rects.resize(17); CHECK_FALSE(fits()); }
     SECTION("large products cannot wrap the budget")
     {

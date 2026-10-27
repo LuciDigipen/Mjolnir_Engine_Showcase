@@ -536,6 +536,19 @@ defaults without affecting DDGI or ray tracing; invalid drafts cannot be saved.
 | `intensity` | `1` | Multiplier, 0–10 |
 | `halfResolution` | `true` | Trace at half width and height |
 
+Enable SSGI here and Save, with Ray Tracing disabled. Start with Medium, half
+resolution, and intensity 1. High resolves more rays at greater GPU cost; Low
+leaves more lighting to ambient fallback. Full resolution improves small details
+at greater time and memory cost. Match trace distance to the scene's local
+geometry; increase thickness cautiously to close missed intersections, since
+large values can leak light through thin surfaces.
+
+SSGI supplies one diffuse bounce from visible raster surfaces. It cannot recover
+off-screen/hidden geometry or sky lighting, and thin geometry, screen edges,
+fast motion and disocclusions can produce noise or flicker. It supports perspective
+cameras and non-overlapping viewports; other projections produce no GI estimate.
+Allocation/format limits and missing shaders retain ordinary raster lighting.
+
 When SSGI is requested in raster mode, `vk::RasterSurfaces` captures four
 per-frame RGBA16F inputs: camera-relative world normals/material kind, diffuse
 albedo, unfogged diffuse radiance, and direct lighting including specular.
@@ -562,7 +575,8 @@ surface inputs share scene depth.
 Temporal accumulation reprojects using camera-relative positions and checks the
 previous depth and normal before reusing irradiance/confidence. Neighborhood
 clamping limits stale lighting. A bilateral spatial pass and depth/normal-aware
-resolve produce a full-resolution estimate per viewport. History resets on
+resolve produce a full-resolution estimate per viewport. Full-resolution tracing
+uses one spatial pass without upsampling scratch storage. History resets on
 layout/resolution changes, camera identity or projection changes, large camera
 cuts, trace-setting changes, and `ResetHistory()`. Direct `RenderView` callers
 should supply a stable `historyId` or reset history when switching cameras.

@@ -61,21 +61,28 @@ float4 Trace(float3 origin, float3 direction, uint2 receiver)
     {
         float2 uv = uv0 + line * f;
         if (any(uv < 0) || any(uv >= 1)) break;
-        uint2 size = max(uint2(1), pc.viewSize >> mip);
-        uint2 cell = min(uint2(uv * float2(size)), size - 1);
-        float next = end;
-        for (uint axis = 0; axis < 2; ++axis)
+        uint2 cell = 0;
+        float next = end, nearest = 0, rayZ0 = 0, rayZ1 = 0;
+        // A step advances one cell; descent is bounded separately by the pyramid height.
+        for (uint descent = 0; descent < pc.mipCount; ++descent)
         {
-            if (abs(line[axis]) < 1e-15) continue;
-            float boundary = float(cell[axis] + (line[axis] > 0 ? 1u : 0u)) / float(size[axis]);
-            next = min(next, max(f, (boundary - uv0[axis]) / line[axis]));
+            uint2 size = max(uint2(1), pc.viewSize >> mip);
+            cell = min(uint2(uv * float2(size)), size - 1);
+            next = end;
+            for (uint axis = 0; axis < 2; ++axis)
+            {
+                if (abs(line[axis]) < 1e-15) continue;
+                float boundary = float(cell[axis] + (line[axis] > 0 ? 1u : 0u)) / float(size[axis]);
+                next = min(next, max(f, (boundary - uv0[axis]) / line[axis]));
+            }
+            nearest = pyramid.Load(int3(cell, mip));
+            rayZ0 = lerp(start.z / start.w, finish.z / finish.w, f);
+            rayZ1 = lerp(start.z / start.w, finish.z / finish.w, next);
+            if (mip == 0 || nearest <= 0 || min(rayZ0, rayZ1) > nearest) break;
+            --mip;
         }
-        float nearest = pyramid.Load(int3(cell, mip));
-        float rayZ0 = lerp(start.z / start.w, finish.z / finish.w, f);
-        float rayZ1 = lerp(start.z / start.w, finish.z / finish.w, next);
-        if (nearest > 0 && min(rayZ0, rayZ1) <= nearest)
+        if (mip == 0 && nearest > 0 && min(rayZ0, rayZ1) <= nearest)
         {
-            if (mip > 0) { --mip; continue; }
             if (any(cell != receiver))
             {
                 float2 hitUv = (float2(cell) + 0.5) / float2(pc.viewSize);
