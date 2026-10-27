@@ -80,7 +80,7 @@ namespace mir::audio
 
     bool IsMusicPlaying();
 
-    // Linear, 0 to 1, written to the Music_Volume game parameter
+    // 0 to 1, on a cubic curve so steps sound even, written to the Music_Volume game parameter
     void SetMusicVolume(float volume);
 
     float GetMusicVolume();
@@ -90,7 +90,7 @@ namespace mir::audio
 
     bool IsMusicMuted();
 
-    // Linear, 0 to 1, written to the SFX_Volume game parameter
+    // 0 to 1, on a cubic curve so steps sound even, written to the SFX_Volume game parameter
     void SetSfxVolume(float volume);
 
     float GetSfxVolume();

@@ -32,8 +32,9 @@ namespace mir
         };
 
         constexpr double kMinSaveIntervalSeconds = 0.5; // a slider being dragged writes on every frame
+        constexpr double kRetryAfterFailureSeconds = 5.0; // each failure logs an error
 
-        
+
         class AudioSettingsSystem final : public ISystem
         {
         public:
@@ -57,10 +58,16 @@ namespace mir
                 if (current == mSaved)
                     return;
 
-                // a failed write is logged there and not retried until the values change again
-                SaveAudioSettings(mPath, current);
-                mSaved = current;
-                mLastSave = now;
+                // a failed write keeps mSaved stale, so it is retried later and again at shutdown
+                if (SaveAudioSettings(mPath, current))
+                {
+                    mSaved = current;
+                    mLastSave = now;
+                }
+                else
+                {
+                    mLastSave = now + kRetryAfterFailureSeconds - kMinSaveIntervalSeconds;
+                }
             }
 
             std::filesystem::path mPath;

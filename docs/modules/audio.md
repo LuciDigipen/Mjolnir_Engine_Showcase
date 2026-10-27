@@ -168,6 +168,9 @@ good.
 **The volumes are a contract with the authoring project.** No Wwise call sets
 one bus's volume, so the engine writes the global game parameters `Music_Volume`
 and `SFX_Volume`, in dB from -96 to 0, over 100 ms so the change does not click.
+A volume becomes `60·log10(volume)` dB, the cube of the amplitude, so 0.5 is
+-18 dB and 0.1 is -60 dB and each step sounds about as big as the last; the plain
+`20·log10` crowded nine of ten steps into the top 20 dB, where they barely differ.
 The project must define them and drive the `Music` and `SFX` busses' Bus Volume
 from them, with -96 mapped to silence; muting writes -96 and keeps the volume to
 come back to. A project without them takes the writes and nothing changes, as

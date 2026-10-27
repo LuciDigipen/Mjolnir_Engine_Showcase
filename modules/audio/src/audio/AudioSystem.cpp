@@ -56,6 +56,8 @@ namespace mir::audio {
         // the authored curves make the bottom of the range silence, so any volume above 0 stops short of it
         constexpr float kSilentDb = -96.0f;
         constexpr float kQuietestDb = -95.0f;
+        // cubic in amplitude, so equal steps sound about equal: 0.5 is -18 dB, 0.1 is -60 dB
+        constexpr float kVolumeCurveDb = 60.0f;
         constexpr AkTimeMs kVolumeRampMs = 100; // a jump in gain clicks
         constexpr int kMusicReplaceFadeMs = 10;
 
@@ -317,7 +319,7 @@ namespace mir::audio {
                 return;
 
             const float decibels =
-                channel.Silent() ? kSilentDb : (std::max)(kQuietestDb, 20.0f * std::log10(channel.mVolume));
+                channel.Silent() ? kSilentDb : (std::max)(kQuietestDb, kVolumeCurveDb * std::log10(channel.mVolume));
 
             Check(AK::SoundEngine::SetRTPCValue(channel.mParameter, decibels, AK_INVALID_GAME_OBJECT, rampMs),
                 "SetRTPCValue");
