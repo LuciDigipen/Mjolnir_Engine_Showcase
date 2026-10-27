@@ -23,6 +23,73 @@ namespace mir
     namespace
     {
         using json = nlohmann::json;
+
+        template <typename Value>
+        bool ReadNumberValue(const json &node, Value &value)
+        {
+            if (!node.is_number())
+                return false;
+            const double number = node.get<double>();
+            if (!std::isfinite(number) || number < std::numeric_limits<Value>::lowest() ||
+                number > std::numeric_limits<Value>::max() ||
+                (std::is_integral_v<Value> && std::trunc(number) != number))
+                return false;
+            value = static_cast<Value>(number);
+            return true;
+        }
+
+        template <typename Value>
+        bool ReadNumber(const json &object, const char *key, Value &value)
+        {
+            const auto it = object.find(key);
+            return it == object.end() || ReadNumberValue(*it, value);
+        }
+
+        bool ReadBool(const json &object, const char *key, bool &value)
+        {
+            const auto it = object.find(key);
+            if (it == object.end())
+                return true;
+            if (!it->is_boolean())
+                return false;
+            value = it->get<bool>();
+            return true;
+        }
+    }
+
+    uint32_t SsgiSettings::RaysPerPixel() const
+    {
+        switch (quality)
+        {
+        case SsgiQuality::Low: return 1;
+        case SsgiQuality::Medium: return 2;
+        case SsgiQuality::High: return 4;
+        default: return 0;
+        }
+    }
+
+    uint32_t SsgiSettings::MaxRaySteps() const
+    {
+        switch (quality)
+        {
+        case SsgiQuality::Low: return 16;
+        case SsgiQuality::Medium: return 32;
+        case SsgiQuality::High: return 64;
+        default: return 0;
+        }
+    }
+
+    const char *SsgiSettings::ValidationError() const
+    {
+        if (RaysPerPixel() == 0)
+            return "SSGI quality must be Low, Medium or High.";
+        if (!std::isfinite(maxTraceDistance) || maxTraceDistance < 0.01f || maxTraceDistance > 10000.0f)
+            return "SSGI trace distance must be between 0.01 and 10000 meters.";
+        if (!std::isfinite(thickness) || thickness < 0.001f || thickness > 10.0f || thickness > maxTraceDistance)
+            return "SSGI thickness must be between 0.001 and 10 meters and no greater than trace distance.";
+        if (!std::isfinite(intensity) || intensity < 0.0f || intensity > 10.0f)
+            return "SSGI intensity must be between 0 and 10.";
+        return nullptr;
     }
 
     uint64_t DdgiSettings::ProbeCount() const
@@ -88,27 +155,9 @@ namespace mir
             // Reject a malformed GI block as a unit, preserving other settings.
             DdgiSettings draft;
             bool valid = true;
-            const auto readValue = [&](const json &node, auto &value)
-                {
-                    if (!node.is_number())
-                    {
-                        valid = false;
-                        return;
-                    }
-                    const double number = node.get<double>();
-                    using Value = std::remove_reference_t<decltype(value)>;
-                    if (!std::isfinite(number) || number < std::numeric_limits<Value>::lowest() ||
-                        number > std::numeric_limits<Value>::max() ||
-                        (std::is_integral_v<Value> && std::trunc(number) != number))
-                        valid = false;
-                    else
-                        value = static_cast<Value>(number);
-                };
             const auto readNumber = [&](const char *key, auto &value)
                 {
-                    const auto it = gi->find(key);
-                    if (it != gi->end())
-                        readValue(*it, value);
+                    valid = ReadNumber(*gi, key, value) && valid;
                 };
             const auto readArray = [&](const char *key, auto &values)
                 {
@@ -121,16 +170,9 @@ namespace mir
                         return;
                     }
                     for (size_t i = 0; i < values.size(); ++i)
-                        readValue((*it)[i], values[i]);
+                        valid = ReadNumberValue((*it)[i], values[i]) && valid;
                 };
-            const auto enabled = gi->find("enabled");
-            if (enabled != gi->end())
-            {
-                if (enabled->is_boolean())
-                    draft.enabled = enabled->get<bool>();
-                else
-                    valid = false;
-            }
+            valid = ReadBool(*gi, "enabled", draft.enabled) && valid;
             readArray("origin", draft.origin);
             readArray("probeCounts", draft.probeCounts);
             readNumber("probeSpacing", draft.probeSpacing);
@@ -140,12 +182,33 @@ namespace mir
             if (valid && draft.ValidationError() == nullptr)
                 settings.ddgi = draft;
         }
+
+        const auto ssgi = renderingIt->find("ssgi");
+        if (ssgi != renderingIt->end() && ssgi->is_object())
+        {
+            SsgiSettings draft;
+            bool valid = ReadBool(*ssgi, "enabled", draft.enabled) &&
+                ReadBool(*ssgi, "halfResolution", draft.halfResolution) &&
+                ReadNumber(*ssgi, "maxTraceDistance", draft.maxTraceDistance) &&
+                ReadNumber(*ssgi, "thickness", draft.thickness) &&
+                ReadNumber(*ssgi, "intensity", draft.intensity);
+            const auto quality = ssgi->find("quality");
+            if (quality != ssgi->end())
+            {
+                if (*quality == "low") draft.quality = SsgiQuality::Low;
+                else if (*quality == "medium") draft.quality = SsgiQuality::Medium;
+                else if (*quality == "high") draft.quality = SsgiQuality::High;
+                else valid = false;
+            }
+            if (valid && draft.ValidationError() == nullptr)
+                settings.ssgi = draft;
+        }
         return settings;
     }
 
     bool RenderSettings::SaveFile(const std::filesystem::path &path) const
     {
-        if (ddgi.ValidationError() != nullptr)
+        if (ddgi.ValidationError() != nullptr || ssgi.ValidationError() != nullptr)
             return false;
         return UpdateJsonFile(path, [this](json &root)
             {
@@ -154,7 +217,13 @@ namespace mir
                         { "enabled", ddgi.enabled }, { "origin", ddgi.origin },
                         { "probeCounts", ddgi.probeCounts }, { "probeSpacing", ddgi.probeSpacing },
                         { "raysPerProbe", ddgi.raysPerProbe }, { "probesPerFrame", ddgi.probesPerFrame },
-                        { "intensity", ddgi.intensity } } } };
+                        { "intensity", ddgi.intensity } } },
+                    { "ssgi", {
+                        { "enabled", ssgi.enabled },
+                        { "quality", ssgi.quality == SsgiQuality::Low ? "low" :
+                            ssgi.quality == SsgiQuality::Medium ? "medium" : "high" },
+                        { "maxTraceDistance", ssgi.maxTraceDistance }, { "thickness", ssgi.thickness },
+                        { "intensity", ssgi.intensity }, { "halfResolution", ssgi.halfResolution } } } };
             });
     }
 }

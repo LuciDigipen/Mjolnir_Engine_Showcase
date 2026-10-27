@@ -522,6 +522,21 @@ the raw node when the key exists, and reading `"rayTracing"` out of a
 `"rendering"` that is `null` or a number throws `type_error 306`, which nothing
 on the startup path catches.
 
+`rendering.ssgi` stores raster SSGI settings, edited under Project Settings >
+Rendering > Screen Space Global Illumination. Settings are saved independently
+of ray tracing and RTXGI availability. SSGI rendering is not implemented yet;
+the current raster lighting remains active. Invalid SSGI blocks load as disabled
+defaults without affecting DDGI or ray tracing; invalid drafts cannot be saved.
+
+| Field | Default | Meaning / limits |
+|---|---|---|
+| `enabled` | `false` | Requested raster SSGI toggle |
+| `quality` | `"medium"` | `"low"`: 1 ray/16 steps; `"medium"`: 2/32; `"high"`: 4/64 per traced pixel |
+| `maxTraceDistance` | `10` | 0.01–10,000 meters |
+| `thickness` | `0.1` | 0.001–10 meters, no greater than trace distance |
+| `intensity` | `1` | Multiplier, 0–10 |
+| `halfResolution` | `true` | Trace at half width and height |
+
 `rendering.ddgi` persists one axis-aligned, world-anchored diffuse GI volume.
 Project Settings > Rendering > Diffuse Global Illumination edits a draft and
 applies it only after Save succeeds. Settings are retained independently of

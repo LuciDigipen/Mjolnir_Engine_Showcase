@@ -60,14 +60,36 @@ namespace mir
             ImGui::TreePop();
         }
 
-        const char *validationError = gi.ValidationError();
-        if (validationError)
-            ImGui::TextWrapped("%s", validationError);
+        SsgiSettings &ssgi = draftRenderSettings.ssgi;
+        if (ImGui::TreeNode("Screen Space Global Illumination"))
+        {
+            ImGui::Checkbox("Enable SSGI", &ssgi.enabled);
+            ImGui::TextWrapped("SSGI is unavailable in this version. Settings can still be saved; existing raster lighting remains active.");
+            if (draftRenderSettings.rayTracing)
+                ImGui::TextWrapped("SSGI settings apply to raster rendering. Ray tracing uses its own GI settings.");
+            constexpr const char *qualities[]{ "Low", "Medium", "High" };
+            int quality = static_cast<int>(ssgi.quality);
+            if (ImGui::Combo("Quality", &quality, qualities, 3))
+                ssgi.quality = static_cast<SsgiQuality>(quality);
+            ImGui::Text("%u rays/pixel, up to %u steps/ray", ssgi.RaysPerPixel(), ssgi.MaxRaySteps());
+            ImGui::InputFloat("Maximum trace distance (meters)", &ssgi.maxTraceDistance);
+            ImGui::InputFloat("Surface thickness (meters)", &ssgi.thickness, 0.0f, 0.0f, "%.3f");
+            ImGui::SliderFloat("Indirect intensity", &ssgi.intensity, 0.0f, 10.0f);
+            ImGui::Checkbox("Half resolution", &ssgi.halfResolution);
+            ImGui::TreePop();
+        }
+
+        const char *giError = gi.ValidationError();
+        const char *ssgiError = ssgi.ValidationError();
+        if (giError)
+            ImGui::TextWrapped("%s", giError);
+        if (ssgiError)
+            ImGui::TextWrapped("%s", ssgiError);
 
         if (!mRenderingStatusMessage.empty() && draftRenderSettings != mMessageSnapshot)
             mRenderingStatusMessage.clear();
 
-        ImGui::BeginDisabled(validationError != nullptr);
+        ImGui::BeginDisabled(giError != nullptr || ssgiError != nullptr);
         if (ImGui::Button("Save##Rendering"))
         {
             if (draftRenderSettings.SaveFile(savePath))

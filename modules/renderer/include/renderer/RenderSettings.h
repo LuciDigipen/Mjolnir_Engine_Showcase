@@ -16,6 +16,23 @@
 
 namespace mir
 {
+    enum class SsgiQuality { Low, Medium, High };
+
+    struct SsgiSettings
+    {
+        bool enabled = false;
+        SsgiQuality quality = SsgiQuality::Medium;
+        float maxTraceDistance = 10.0f;
+        float thickness = 0.1f;
+        float intensity = 1.0f;
+        bool halfResolution = true;
+
+        bool operator==(const SsgiSettings &) const = default;
+        const char *ValidationError() const;
+        uint32_t RaysPerPixel() const;
+        uint32_t MaxRaySteps() const;
+    };
+
     // One world-anchored, axis-aligned volume. Origin is the grid center in
     // double-precision world meters; spacing is uniform in all three axes.
     struct DdgiSettings
@@ -43,6 +60,7 @@ namespace mir
     {
         bool rayTracing = false;
         DdgiSettings ddgi;
+        SsgiSettings ssgi;
 
         bool operator==(const RenderSettings &) const = default;
 
