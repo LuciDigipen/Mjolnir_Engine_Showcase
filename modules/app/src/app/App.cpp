@@ -111,41 +111,45 @@ namespace mir
 
     App::App(const AppDesc &desc)
         : mDesc(Prepared(desc)),
-          mProject(mDesc.mProject),
-          mSplash(mDesc),
-          mCore(Context(), mCommands),
-          mAssets(CookedAssetsDir()),
-          mScene(Context(), mProject.mSceneDir),
-          mPrefab(Context(), mScene, PrefabSourceDir(mProject), kHasEditor ? nullptr : &mAssets),
-          mGameUI(Context()),
-          mGameShell(Context(), mGameUI, mAssets,
-              GameShellSettings{ .mUIDemo = mDesc.mUIDemo, .mQuitStopsPlay = mDesc.mEnableEditorLayout }),
-          mWindow(MakeWindowDesc(mDesc)),
-          mRenderer(Context(), mWindow.Get(), mAssets,
-              RendererModuleSettings{ .mAppName = mDesc.mAppName,
-                                      .mEnableValidation = mDesc.mEnableValidation,
-                                      .mProjectSettingsPath = mProject.mProjectSettingsPath,
-                                      .mAssetIdRoot = mProject.mAssetIdRoot }),
-          mInput(Context(), mWindow.Get(), mProject.mProjectSettingsPath),
-          mAnimation(Context(), mRenderer.Renderer(), mAssets, mProject.mAssetIdRoot),
-          mImGui(Context(), mWindow, mRenderer),
+        mProject(mDesc.mProject),
+        mSplash(mDesc),
+        mCore(Context(), mCommands),
+        mAssets(CookedAssetsDir()),
+        mScene(Context(), mProject.mSceneDir),
+        mPrefab(Context(), mScene, PrefabSourceDir(mProject), kHasEditor ? nullptr : &mAssets),
+        mGameUI(Context()),
+        mGameShell(Context(), mGameUI, mAssets,
+            GameShellSettings{ .mUIDemo = mDesc.mUIDemo, .mQuitStopsPlay = mDesc.mEnableEditorLayout }),
+        mWindow(MakeWindowDesc(mDesc)),
+        mRenderer(Context(), mWindow.Get(), mAssets,
+            RendererModuleSettings{ .mAppName = mDesc.mAppName,
+                                    .mEnableValidation = mDesc.mEnableValidation,
+                                    .mProjectSettingsPath = mProject.mProjectSettingsPath,
+                                    .mAssetIdRoot = mProject.mAssetIdRoot }),
+        mInput(Context(), mWindow.Get(), mProject.mProjectSettingsPath),
+        mAnimation(Context(), mRenderer.Renderer(), mAssets, mProject.mAssetIdRoot),
+        mImGui(Context(), mWindow, mRenderer),
     #if MIR_WITH_EDITOR
-          mEditor(Context(), mImGui, mWindow, mRenderer, mScene, mPrefab, mAssets, mProject,
-              mDesc.mEnableEditorLayout),
+        mEditor(Context(), mImGui, mWindow, mRenderer, mScene, mPrefab, mAssets, mProject,
+            mDesc.mEnableEditorLayout),
     #endif
-          mCamera(Context()),
-          mAudio(Context(), mProject.mSoundBankDir),
-          mPhysics(Context(), mProject.mProjectSettingsPath),
-          mTerrainData(Context()),
-          mScript(Context(), mAssets, mProject.mAssetIdRoot),
-          mAudioScript(mScript),
-          mInputScript(mScript),
-          mPhysicsScript(mScript),
-          mRendererScript(mScript),
-          mTerrainScript(mScript),
-          mTerrain(Context(), mRenderer, mProject),
-          mGameUIImGui(Context(), mImGui, mWindow, mGameUI),
-          mFixedTimestep{ .mStep = mDesc.mFixedDeltaSeconds, .mMaxSteps = mDesc.mMaxFixedSteps }
+        mCamera(Context()),
+    #if MIR_WITH_AUDIO
+        mAudio(Context(), mProject.mSoundBankDir),
+    #endif
+        mPhysics(Context(), mProject.mProjectSettingsPath),
+        mTerrainData(Context()),
+        mScript(Context(), mAssets, mProject.mAssetIdRoot),
+    #if MIR_WITH_AUDIO
+        mAudioScript(mScript),
+    #endif
+        mInputScript(mScript),
+        mPhysicsScript(mScript),
+        mRendererScript(mScript),
+        mTerrainScript(mScript),
+        mTerrain(Context(), mRenderer, mProject),
+        mGameUIImGui(Context(), mImGui, mWindow, mGameUI),
+        mFixedTimestep{ .mStep = mDesc.mFixedDeltaSeconds, .mMaxSteps = mDesc.mMaxFixedSteps }
     {
         mSplash.screen.SetProgress("Loading scene...", 0.9f);
         LoadProjectScene();
@@ -277,14 +281,14 @@ namespace mir
                 ").\n\nStart with an empty scene? Saving it will overwrite the broken file; restore it from git "
                 "first if you need it.\n\n" + refuse;
             return AskYesNo("Scene file is corrupt", message, mDesc.mNonInteractive) ? SceneLoadChoice::StartEmpty
-                                                                                     : SceneLoadChoice::Refuse;
+                : SceneLoadChoice::Refuse;
         }
 
         const std::string message = std::to_string(MissingFileCount(probe)) + " file(s) listed in " + manifest +
             " are missing or unreadable (" + MissingFileList(probe) + ").\n\nOpen the scene without them? Saving it will drop them for good; restore them from git first "
             "if you need them.\n\n" + refuse;
         return AskYesNo("Scene has missing entities", message, mDesc.mNonInteractive) ? SceneLoadChoice::Load
-                                                                                        : SceneLoadChoice::Refuse;
+            : SceneLoadChoice::Refuse;
     }
 
     void App::PlayScene()
