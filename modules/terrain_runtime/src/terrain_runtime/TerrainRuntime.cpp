@@ -926,6 +926,20 @@ namespace mir
         return [this](const TerrainDrawUnit &unit) { return mMeshes->Ready(unit.geometry); };
     }
 
+    void TerrainRuntime::AppendRayTracingDraws(size_t view, std::span<const DrawVolume> volumes,
+        std::vector<WorldDrawItem> &out)
+    {
+        if (view >= mFrameViews.size() || !mMeshes)
+            return;
+        std::vector<TerrainCullVolume> coverage;
+        coverage.reserve(volumes.size());
+        for (const DrawVolume &volume : volumes)
+            coverage.push_back({ volume.origin, volume.viewProj });
+        std::vector<TerrainDrawUnit> units;
+        mViews[mFrameViews[view]].selector->CollectForRayTracing(coverage, Ready(), units);
+        AppendDraws(units, out);
+    }
+
     void TerrainRuntime::AppendDraws(std::span<const TerrainDrawUnit> units, std::vector<WorldDrawItem> &out)
     {
         const std::span<const TerrainInstanceState> instances = mWorld->Resource<TerrainWorld>().Instances();

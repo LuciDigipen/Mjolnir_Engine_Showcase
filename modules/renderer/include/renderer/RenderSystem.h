@@ -19,6 +19,7 @@
 #include <renderer/PostProcessingSettings.h>
 #include <renderer/PostProcessingState.h>
 #include <renderer/RenderSettings.h>
+#include <renderer/RtxgiConfig.h>
 #include <renderer/components/Camera.h>
 #include <renderer/components/Light.h>
 #include <renderer/components/MeshRenderer.h>
@@ -450,6 +451,22 @@ namespace mir
             const bool traceable = mRenderer.RayTracingActive(renderSettings.rayTracing);
             if (traceable && mRenderViews.size() == 1)
             {
+                mRayTracingItems.clear();
+                if (kRtxgiCompiledIn && renderSettings.ddgi.enabled)
+                    if (const auto volume = MakeGiTraceVolume(renderSettings.ddgi))
+                    {
+                        const std::span<IViewDrawSource *const> sources = viewSources
+                            ? std::span<IViewDrawSource *const>(viewSources->sources)
+                            : std::span<IViewDrawSource *const>{};
+                        CollectRayTracingWorldDraws(mDrawItems, sources, 0, mViewCameras.front(),
+                            *volume, mRayTracingWorldItems);
+                        // Identity clip matrix preserves insertion order within opaque/
+                        // transparent groups; no camera-depth sorting for the TLAS.
+                        mRenderViews.front().rayTracingSceneComplete =
+                            BuildViewDrawItems(mRayTracingWorldItems, mRenderViews.front().cameraPosition,
+                                glm::mat4(1.0f), mRayTracingItems) == 0;
+                        mRenderViews.front().rayTracingItems = mRayTracingItems;
+                    }
                 mRenderer.TraceFrame(mRenderViews);
             }
             else
@@ -498,6 +515,8 @@ namespace mir
         // Parallel to mViewCameras.
         std::vector<std::vector<DrawItem>> mDrawItemsPerViewport;
         std::vector<RenderView> mRenderViews;
+        std::vector<WorldDrawItem> mRayTracingWorldItems;
+        std::vector<DrawItem> mRayTracingItems;
         std::vector<DrawItem> mSunShadowItems;
         std::array<std::vector<DrawItem>, VulkanRenderer::kMaxSpotShadows> mSpotShadowItems;
         std::array<std::array<std::vector<DrawItem>, 6>, VulkanRenderer::kMaxPointShadows> mPointShadowItems;

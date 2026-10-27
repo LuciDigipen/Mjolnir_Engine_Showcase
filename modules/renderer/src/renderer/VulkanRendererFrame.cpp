@@ -275,9 +275,15 @@ namespace mir
         glm::vec2 jitterPixels{ 0.0f };
         const uint32_t cameraOffset = WriteCameraData(view, 0, applyJitter, &jitterPixels);
 
+        mDevice->BeginLabel(cmd, "RT Scene Preparation", { 0.0f, 0.7f, 1.0f, 1.0f });
+        [[maybe_unused]] const auto scene = mRayTracer->PrepareScene(cmd, frame,
+            view.rayTracingItems.value_or(view.items), *mResources, *mMaterialStore);
+        mDevice->EndLabel(cmd);
+
+        // Probe updates can consume scene here, before the final image trace.
         mDevice->BeginLabel(cmd, "Ray Trace Pass", { 0.0f, 1.0f, 1.0f, 1.0f });
-        mRayTracer->Record(cmd, frame, view.items, rect, mCameraBuffer->Set(frame),
-            cameraOffset, *mResources, *mMaterialStore, effectiveAaMode, mPostProcessing->RtSampleCount());
+        mRayTracer->RecordTrace(cmd, frame, rect, mCameraBuffer->Set(frame),
+            cameraOffset, effectiveAaMode, mPostProcessing->RtSampleCount());
         mDevice->EndLabel(cmd);
 
         const bool hasRect = rect.extent.width > 0 && rect.extent.height > 0;

@@ -86,6 +86,8 @@ namespace mir
         void AppendViewDraws(size_t view, std::vector<WorldDrawItem> &out) override;
         void AppendVolumeDraws(size_t view, WorldPosition origin, const glm::mat4 &viewProj,
                                std::vector<WorldDrawItem> &out) override;
+        void AppendRayTracingDraws(size_t view, std::span<const DrawVolume> volumes,
+            std::vector<WorldDrawItem> &out) override;
 
         // Holds the dynamic bodies whose terrain collision is not ready, resumes the rest and tells each which
         // terrain pieces it may touch.

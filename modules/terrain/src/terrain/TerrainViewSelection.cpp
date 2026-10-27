@@ -73,6 +73,18 @@ namespace mir
         {
             return {box.min - origin, box.max - origin};
         }
+
+        struct LocalCullVolume
+        {
+            Planes planes;
+            glm::dvec3 origin;
+        };
+
+        bool OutsideAll(std::span<const LocalCullVolume> volumes, const Box &box)
+        {
+            return std::all_of(volumes.begin(), volumes.end(), [&](const LocalCullVolume &volume)
+                { return Outside(volume.planes, Shifted(box, volume.origin)); });
+        }
     } // namespace
 
     struct TerrainViewSelector::Impl
@@ -402,11 +414,11 @@ namespace mir
         }
 
         // Draws what the volume sees of the node's area at most once; false when part of it has nothing ready.
-        bool Cover(const Instance &inst, uint32_t instance, uint32_t at, const Planes &planes, const glm::dvec3 &origin,
+        bool Cover(const Instance &inst, uint32_t instance, uint32_t at, std::span<const LocalCullVolume> volumes, bool includeBeyondFar,
                    const TerrainUnitReady &ready, std::vector<TerrainDrawUnit> &out, Sink *sink) const
         {
             const Node &node = inst.nodes[at];
-            if (node.beyondFar)
+            if (node.beyondFar && !includeBeyondFar)
                 return true;
             const TerrainIndex &index = inst.input.release->Index();
 
@@ -417,13 +429,13 @@ namespace mir
                 const TerrainViewStats before = sink ? sink->impl.stats : TerrainViewStats{};
                 bool complete = true;
                 for (uint32_t child = node.firstChild; child < node.firstChild + node.childCount; ++child)
-                    complete = Cover(inst, instance, child, planes, origin, ready, out, sink) && complete;
+                    complete = Cover(inst, instance, child, volumes, includeBeyondFar, ready, out, sink) && complete;
                 if (complete)
                     return true;
                 const TerrainTileRecord *record = index.FindRegion({node.level, node.coord.x, node.coord.z});
                 if (!record)
                     return false;
-                if (Outside(planes, Shifted(node.box, origin)))
+                if (OutsideAll(volumes, node.box))
                     return false;
                 const TerrainDrawUnit unit = RegionUnit(inst, instance, *record, node.distance);
                 if (ready(unit))
@@ -446,7 +458,7 @@ namespace mir
                 return false;
             }
 
-            if (Outside(planes, Shifted(node.box, origin)))
+            if (OutsideAll(volumes, node.box))
                 return true;
             if (sink)
                 sink->instance.inView[at] = 1;
@@ -472,7 +484,7 @@ namespace mir
                 return true;
             }
             // A merge can take many frames to load; ready children remain stand-ins throughout.
-            if (Substitute(inst, instance, node, planes, origin, ready, out, sink))
+            if (Substitute(inst, instance, node, volumes, ready, out, sink))
             {
                 if (sink)
                     ++sink->impl.stats.otherFallbacks;
@@ -484,8 +496,8 @@ namespace mir
         }
 
         // Another LOD of the tile, or the Region's children, when they are ready.
-        bool Substitute(const Instance &inst, uint32_t instance, const Node &node, const Planes &planes,
-                        const glm::dvec3 &origin, const TerrainUnitReady &ready, std::vector<TerrainDrawUnit> &out,
+        bool Substitute(const Instance &inst, uint32_t instance, const Node &node, std::span<const LocalCullVolume> volumes,
+                        const TerrainUnitReady &ready, std::vector<TerrainDrawUnit> &out,
                         Sink *sink) const
         {
             const auto take = [&](const TerrainDrawUnit &unit) {
@@ -536,7 +548,7 @@ namespace mir
                 {
                     const TerrainTileRecord *record = index.FindRegion(child);
                     const Box box = RegionBox(index, child, record);
-                    if (Outside(planes, Shifted(box, origin)))
+                    if (OutsideAll(volumes, box))
                         continue;
                     if (!record)
                         return false;
@@ -553,7 +565,7 @@ namespace mir
                     for (int32_t x = tiles.min.x; x <= tiles.max.x; ++x)
                     {
                         const TileInfo &info = inst.catalog->Tile({x, z});
-                        if (Outside(planes, Shifted(info.box, origin)))
+                        if (OutsideAll(volumes, info.box))
                             continue;
                         const std::optional<TerrainDrawUnit> unit =
                             readyLevel({x, z}, Distance(inst.eye, info.box), true);
@@ -755,9 +767,10 @@ namespace mir
             Impl::Instance &inst = impl.instances[i];
             if (!inst.catalog)
                 continue;
+            const LocalCullVolume volume{ planes, inst.eye };
             Impl::Sink sink{inst, impl};
             for (uint32_t root = 0; root < inst.roots; ++root)
-                impl.Cover(inst, i, root, planes, inst.eye, ready, impl.draws, &sink);
+                impl.Cover(inst, i, root, { &volume, 1 }, false, ready, impl.draws, &sink);
         }
         for (const TerrainDrawUnit &unit : impl.draws)
             ++(unit.kind == TerrainUnitKind::Tile ? impl.stats.drawnTiles : impl.stats.drawnRegions);
@@ -778,19 +791,33 @@ namespace mir
     void TerrainViewSelector::Collect(const TerrainCullVolume &volume, const TerrainUnitReady &ready,
                                       std::vector<TerrainDrawUnit> &out) const
     {
+        CollectVolumes({ &volume, 1 }, ready, out, false);
+    }
+
+    void TerrainViewSelector::CollectForRayTracing(std::span<const TerrainCullVolume> volumes,
+        const TerrainUnitReady &ready, std::vector<TerrainDrawUnit> &out) const
+    {
+        CollectVolumes(volumes, ready, out, true);
+    }
+
+    void TerrainViewSelector::CollectVolumes(std::span<const TerrainCullVolume> volumes,
+        const TerrainUnitReady &ready, std::vector<TerrainDrawUnit> &out, bool includeBeyondFar) const
+    {
         const Impl &impl = *mImpl;
-        const Planes planes = PlanesOf(volume.viewProj);
         for (uint32_t i = 0; i < impl.instances.size(); ++i)
         {
             const Impl::Instance &inst = impl.instances[i];
             if (!inst.catalog)
                 continue;
-            const std::optional<TerrainLocalPosition> origin =
-                TryWorldToTerrainLocal(volume.origin, inst.input.placement.translation);
-            if (!origin)
+            std::vector<LocalCullVolume> local;
+            local.reserve(volumes.size());
+            for (const TerrainCullVolume &volume : volumes)
+                if (const auto origin = TryWorldToTerrainLocal(volume.origin, inst.input.placement.translation))
+                    local.push_back({ PlanesOf(volume.viewProj), origin->Meters() });
+            if (local.empty())
                 continue;
             for (uint32_t root = 0; root < inst.roots; ++root)
-                impl.Cover(inst, i, root, planes, origin->Meters(), ready, out, nullptr);
+                impl.Cover(inst, i, root, local, includeBeyondFar, ready, out, nullptr);
         }
     }
 

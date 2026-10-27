@@ -8,6 +8,8 @@
  */
 #pragma once
 
+#include "renderer/RenderSettings.h"
+#include "renderer/ViewDrawSource.h"
 #include "renderer/VulkanRenderer.h"
 #include "renderer/components/Camera.h"
 
@@ -29,4 +31,22 @@ namespace mir
     // Narrows world positions to float; returns how many draws did not fit.
     size_t BuildViewDrawItems(std::span<const WorldDrawItem> items, WorldPosition viewportCamera,
                               const glm::mat4 &viewProj, std::vector<DrawItem> &out);
+
+    struct GiTraceVolume
+    {
+        DrawVolume coverage;
+        float maxRayDistance = 0.0f;
+    };
+
+    // The probe grid plus one grid diagonal of ray reach and one spacing of
+    // relocation/bias allowance on every side.
+    // nullopt for invalid settings or an unrepresentable world center.
+    std::optional<GiTraceVolume> MakeGiTraceVolume(const DdgiSettings &settings);
+
+    // Keep ordinary world draws conservatively (their submission has no mesh
+    // bounds); sources collect the union of camera and GI coverage once.
+    // Output must not alias worldItems. Prepare has already run on the sources.
+    void CollectRayTracingWorldDraws(std::span<const WorldDrawItem> worldItems,
+        std::span<IViewDrawSource *const> sources, size_t view, const ViewCamera &camera,
+        const GiTraceVolume &gi, std::vector<WorldDrawItem> &out);
 }

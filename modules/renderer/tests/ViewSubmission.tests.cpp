@@ -62,6 +62,71 @@ namespace
     const mir::Camera kLens{60.0f, 0.1f, 100.0f};
 }
 
+TEST_CASE("GI trace coverage stays anchored and includes probe ray reach", "[renderer][ddgi]")
+{
+    mir::DdgiSettings settings;
+    settings.origin = { kEdgeA.x, kEdgeA.y, kEdgeA.z };
+    const auto volume = mir::MakeGiTraceVolume(settings);
+    REQUIRE(volume);
+    CHECK(volume->coverage.origin.Meters() == At(kEdgeA).Meters());
+    const glm::vec3 gridHalfExtent(7.0f);
+    const glm::vec4 clip = volume->coverage.viewProj *
+        glm::vec4(gridHalfExtent + volume->maxRayDistance, 1.0f);
+    CHECK(std::abs(clip.x) <= clip.w);
+    CHECK(std::abs(clip.y) <= clip.w);
+    CHECK(clip.z >= 0.0f);
+    CHECK(clip.z <= clip.w);
+    settings.origin = { 0.0, 0.0, 0.0 };
+    const auto near = mir::MakeGiTraceVolume(settings);
+    REQUIRE(near);
+    CHECK(near->coverage.viewProj == volume->coverage.viewProj);
+    settings.probeSpacing = 0.0f;
+    CHECK_FALSE(mir::MakeGiTraceVolume(settings));
+}
+
+TEST_CASE("RT submission asks sources for one union and keeps off-camera world draws", "[renderer][ddgi]")
+{
+    struct Source : mir::IViewDrawSource
+    {
+        int calls = 0;
+        std::vector<mir::DrawVolume> received;
+        void Prepare(std::span<const mir::ViewCamera>) override {}
+        void AppendViewDraws(size_t, std::vector<WorldDrawItem> &) override { FAIL("Expected union collection"); }
+        void AppendVolumeDraws(size_t, WorldPosition, const glm::mat4 &, std::vector<WorldDrawItem> &) override
+            { FAIL("Expected union collection"); }
+        void AppendRayTracingDraws(size_t view, std::span<const mir::DrawVolume> volumes,
+            std::vector<WorldDrawItem> &out) override
+        {
+            CHECK(view == 0);
+            ++calls;
+            received.assign(volumes.begin(), volumes.end());
+            out.push_back(ItemAt(kEdgeA + glm::dvec3(0, 0, 10)));
+        }
+    } source;
+    mir::IViewDrawSource *sources[]{ &source };
+    mir::ViewCamera camera{ 0, WorldPose{ At(kEdgeA) }, kLens, { 800, 600 },
+        mir::MakeCameraRelativeViewProjection(WorldPose{ At(kEdgeA) }, kLens, 4.0f / 3.0f) };
+    mir::DdgiSettings settings;
+    settings.origin = { kEdgeB.x, kEdgeB.y, kEdgeB.z };
+    const auto gi = mir::MakeGiTraceVolume(settings);
+    REQUIRE(gi);
+    const std::vector<WorldDrawItem> world{ ItemAt(kEdgeA + glm::dvec3(0, 0, -5)),
+        ItemAt(kEdgeA + glm::dvec3(0, 0, 20)) };
+    std::vector<WorldDrawItem> collected;
+    mir::CollectRayTracingWorldDraws(world, sources, 0, camera, *gi, collected);
+    CHECK(source.calls == 1);
+    REQUIRE(source.received.size() == 2);
+    CHECK(source.received[0].origin.Meters() == camera.pose.position.Meters());
+    CHECK(source.received[0].viewProj == camera.viewProj);
+    CHECK(source.received[1].origin.Meters() == gi->coverage.origin.Meters());
+    REQUIRE(collected.size() == 3);
+    std::vector<DrawItem> relative;
+    CHECK(mir::BuildViewDrawItems(collected, camera.pose.position, glm::mat4(1.0f), relative) == 0);
+    REQUIRE(relative.size() == 3);
+    CHECK(Translation(relative[1]).z == 20.0);
+    CHECK(Translation(relative[2]).z == 10.0);
+}
+
 TEST_CASE("A far draw keeps a millimeter offset from its viewport camera", "[renderer][lwc]")
 {
     if (!mir::kLargeWorld)

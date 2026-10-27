@@ -157,6 +157,12 @@ namespace mir
         float nearZ = 0.1f;
         // farZ 0 = no far plane
         float farZ = 0.0f;
+        // Optional extended scene, in this view's camera-relative coordinates.
+        // nullopt keeps the ordinary RT path; an empty span is an empty scene.
+        std::optional<std::span<const DrawItem>> rayTracingItems;
+        // False when narrowing the extended scene omitted world draws. The
+        // final camera trace can still run; GI must fall back for this frame.
+        bool rayTracingSceneComplete = true;
     };
 
     class VulkanRenderer

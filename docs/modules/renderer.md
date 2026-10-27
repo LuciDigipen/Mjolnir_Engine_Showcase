@@ -53,7 +53,8 @@ completed frames Ready, frees retired objects whose last frame completed, and
 records this frame's mesh copies and BLAS builds. `DrawFrame` records the shadow passes, then each
 view, then the ImGui overlay and any capture, and `FrameSync::End` submits and
 presents. `TraceFrame` goes through the same `BeginFrame` and `End`, with
-`RayTracer::Record` and a blit to the swapchain image in between.
+`RayTracer::PrepareScene`, `RecordTrace` and the existing post-processing/composite
+in between.
 
 `RenderSystem` is the only thing connecting the ECS to it. It is an `ISystem` in
 `SystemPhase::Render` holding a `VulkanRenderer&`, and it owns a list of
@@ -394,7 +395,7 @@ viewport rect's size, and rebuilt only when that size changes - a swapchain
 resize only recreates the output images. `RayTracer`'s guide bindings (5-8,
 the `kRtImages` rows marked `guide`) are `PARTIALLY_BOUND`, so the descriptor
 set stays valid with them unwritten;
-the shader only touches them on its Dlss branches, and `RayTracer::Record`
+the shader only touches them on its Dlss branches, and `RayTracer::RecordTrace`
 downgrades a Dlss trace to Msaa if the guides are missing. That flag is why
 ray tracing support now also requires `descriptorBindingPartiallyBound`.
 
@@ -545,6 +546,41 @@ shows estimated memory and update work for valid drafts and disables Save
 for invalid ones. `SaveFile` also rejects invalid settings before writing.
 Missing fields retain defaults; malformed or over-budget GI blocks reset as
 a unit to disabled defaults without discarding the ray tracing setting.
+
+**Preparing the RT scene for GI.**
+
+`RayTracer::PrepareScene` now records the frame-slot TLAS build, updates material
+texture descriptors and inserts the acceleration-structure build-to-ray-read
+barrier. It returns borrowed `PreparedScene` handles (TLAS, descriptor set and
+layout), instance count and a `truncated` flag. `RecordTrace` only clears and
+traces the final camera outputs; the facade leaves a probe-update insertion
+point between these calls. FrameSync must have waited for the slot before
+preparation; borrowed resources expire when that slot is prepared again or
+the ray tracer is destroyed. Both dispatches use the same camera-relative TLAS.
+
+For a single RT view with the RTXGI SDK compiled in and GI requested,
+`RenderSystem` supplies an extended scene through `RenderView::rayTracingItems`.
+Ordinary world/model meshes remain conservatively included because these draw
+submissions have no geometry bounds and direct-light shadow rays can leave
+the camera frustum. Draw sources receive the union of the camera frustum and
+the GI grid expanded by one grid diagonal of ray reach plus one probe spacing
+for relocation/bias. `MakeGiTraceVolume` returns that maximum probe ray distance
+for the upcoming probe pass to enforce; it is derived from the grid rather than
+the camera lens. Volume centers remain world anchored; collection and TLAS
+transforms narrow only after subtracting a world origin in world precision.
+
+Terrain's `CollectForRayTracing` traverses this union once, using the primary
+view's chosen detail and currently ready meshes. It includes resident terrain
+beyond the camera far plane without adding streaming requests. One traversal
+prevents overlapping coarse/fine fallback geometry between the volumes.
+Raster and the ordinary GI-disabled RT submissions retain their existing paths.
+
+The 16,384-instance limit retains the first traceable submissions in stable
+submission order. Invalid/nonresident handles do not consume slots. Instance
+or texture capacity overflow marks the prepared scene truncated; future GI
+consumers must fall back for that frame. Float conversion omissions similarly
+set `RenderView::rayTracingSceneComplete` false. Final camera tracing retains
+its existing capacity fallback. Probe resources and shading are the next step.
 
 **`volk` is compiled from source in this module**, so the platform defines are
 ours. VMA is configured with `VMA_STATIC_VULKAN_FUNCTIONS=0` and
