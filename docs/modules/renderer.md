@@ -207,7 +207,7 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `AntiAliasingMode`, `AntiAliasingParams`, `ClampAntiAliasingMode`, `ClampRtSampleCount` | `renderer/AntiAliasingEffect.h` | Off/Fxaa/Msaa/Dlss and `rtSampleCount`; the Post-Processing entry's json shape; the mode and sample-count enforcement `ResolvePostProcessing` applies every frame - see Rules |
 | `PostProcessingState`, `ResolvePostProcessing` | `renderer/PostProcessingState.h` | `PostProcessingSettings` resolved into the exact values `SetPostProcessing` applies: defaults for a missing entry, neutral values for a disabled one (fog density 0, exposure 1/None, bloom intensity 0, neutral film), motion blur's sample count at least 1, AA clamped. Pure, so it is unit-tested without a device |
 | `DlssConfig.h` | `renderer/DlssConfig.h` (generated) | `MIR_WITH_DLSS`/`kDlssCompiledIn` and the NGX project id |
-| `RenderSettings` | `renderer/RenderSettings.h` | Project Settings' `"rendering"` section (`rayTracing: bool`, `fog: bool`); `LoadFile`/`SaveFile`, a World resource `RendererModule` loads |
+| `RenderSettings` | `renderer/RenderSettings.h` | Project Settings' `"rendering"` section (`rayTracing` and `ddgi`); `LoadFile`/`SaveFile`, a World resource `RendererModule` loads |
 
 ## Rules
 
@@ -520,6 +520,31 @@ The key is read with `find` rather than nlohmann's `value`. `value` hands back
 the raw node when the key exists, and reading `"rayTracing"` out of a
 `"rendering"` that is `null` or a number throws `type_error 306`, which nothing
 on the startup path catches.
+
+`rendering.ddgi` persists one axis-aligned, world-anchored diffuse GI volume.
+Project Settings > Rendering > Diffuse Global Illumination edits a draft and
+applies it only after Save succeeds. Settings are retained independently of
+the RTXGI build option and the ray tracing checkbox. Runtime GI is not yet
+connected; these controls currently configure the requested settings only.
+
+| Field | Default | Meaning / limits |
+|---|---|---|
+| `enabled` | `false` | Requested GI toggle; runtime availability is separate |
+| `origin` | `[0,0,0]` | Grid center in double-precision world meters, all finite |
+| `probeCounts` | `[8,8,8]` | 2–128 probes per axis, at most 32,768 total |
+| `probeSpacing` | `2` | Uniform spacing, 0.01–10,000 meters |
+| `raysPerProbe` | `128` | 64, 128, 256, 512 or 1024 |
+| `probesPerFrame` | `512` | 1–total probes, at most 1,048,576 rays per frame |
+| `intensity` | `1` | Finite multiplier, 0–10 |
+
+Volumes must also fit a conservative 256 MiB planning allowance: two copies
+of 16-byte ray data and atlas texels, using 8×8 irradiance/variability,
+16×16 distance, and one probe-state texel per probe. The future resource owner
+must still check actual device limits and allocation requirements. The editor
+shows estimated memory and update work for valid drafts and disables Save
+for invalid ones. `SaveFile` also rejects invalid settings before writing.
+Missing fields retain defaults; malformed or over-budget GI blocks reset as
+a unit to disabled defaults without discarding the ray tracing setting.
 
 **`volk` is compiled from source in this module**, so the platform defines are
 ours. VMA is configured with `VMA_STATIC_VULKAN_FUNCTIONS=0` and

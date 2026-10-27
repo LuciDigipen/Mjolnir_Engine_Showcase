@@ -9,14 +9,40 @@
  */
 #pragma once
 
+#include <array>
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 
 namespace mir
 {
+    // One world-anchored, axis-aligned volume. Origin is the grid center in
+    // double-precision world meters; spacing is uniform in all three axes.
+    struct DdgiSettings
+    {
+        bool enabled = false;
+        std::array<double, 3> origin{ 0.0, 0.0, 0.0 };
+        std::array<int, 3> probeCounts{ 8, 8, 8 };
+        float probeSpacing = 2.0f;
+        int raysPerProbe = 128;
+        int probesPerFrame = 512;
+        float intensity = 1.0f;
+
+        static constexpr uint64_t kMaxProbes = 32768;
+        static constexpr uint64_t kMaxRaysPerFrame = 1048576;
+        static constexpr uint64_t kMaxEstimatedBytes = 256ull * 1024 * 1024;
+
+        bool operator==(const DdgiSettings &) const = default;
+        // nullptr means valid. Check before using the budget helpers.
+        const char *ValidationError() const;
+        uint64_t ProbeCount() const;
+        uint64_t EstimatedBytes() const;
+    };
+
     struct RenderSettings
     {
         bool rayTracing = false;
+        DdgiSettings ddgi;
 
         bool operator==(const RenderSettings &) const = default;
 

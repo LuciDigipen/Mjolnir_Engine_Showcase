@@ -25,9 +25,45 @@ namespace mir
 
         ImGui::Checkbox("Ray Tracing", &draftRenderSettings.rayTracing);
 
+        DdgiSettings &gi = draftRenderSettings.ddgi;
+        if (ImGui::TreeNode("Diffuse Global Illumination"))
+        {
+            ImGui::Checkbox("Enable GI", &gi.enabled);
+            ImGui::TextWrapped("GI settings are saved; GI rendering is not yet available.");
+            if (!draftRenderSettings.rayTracing)
+                ImGui::TextWrapped("GI requires ray tracing. Raster rendering uses its existing lighting.");
+            ImGui::InputScalarN("Volume center (world meters)", ImGuiDataType_Double, gi.origin.data(), 3,
+                nullptr, nullptr, "%.6f");
+            ImGui::InputInt3("Probe counts (XYZ)", gi.probeCounts.data());
+            ImGui::InputFloat("Probe spacing (meters)", &gi.probeSpacing);
+            constexpr int rayCounts[]{ 64, 128, 256, 512, 1024 };
+            constexpr const char *rayLabels[]{ "64", "128", "256", "512", "1024" };
+            int rayChoice = 0;
+            for (int i = 0; i < 5; ++i)
+                if (gi.raysPerProbe == rayCounts[i])
+                    rayChoice = i;
+            if (ImGui::Combo("Rays per probe", &rayChoice, rayLabels, 5))
+                gi.raysPerProbe = rayCounts[rayChoice];
+            ImGui::InputInt("Probes updated per frame", &gi.probesPerFrame);
+            ImGui::SliderFloat("GI intensity", &gi.intensity, 0.0f, 10.0f);
+            if (gi.ValidationError() == nullptr)
+            {
+                ImGui::Text("%llu probes, %llu rays/frame, %.1f MiB estimated",
+                    static_cast<unsigned long long>(gi.ProbeCount()),
+                    static_cast<unsigned long long>(uint64_t(gi.probesPerFrame) * gi.raysPerProbe),
+                    double(gi.EstimatedBytes()) / (1024.0 * 1024.0));
+            }
+            ImGui::TreePop();
+        }
+
+        const char *validationError = gi.ValidationError();
+        if (validationError)
+            ImGui::TextWrapped("%s", validationError);
+
         if (!mRenderingStatusMessage.empty() && draftRenderSettings != mMessageSnapshot)
             mRenderingStatusMessage.clear();
 
+        ImGui::BeginDisabled(validationError != nullptr);
         if (ImGui::Button("Save##Rendering"))
         {
             if (draftRenderSettings.SaveFile(savePath))
@@ -41,6 +77,7 @@ namespace mir
             }
             mMessageSnapshot = draftRenderSettings;
         }
+        ImGui::EndDisabled();
 
         if (!mRenderingStatusMessage.empty())
         {
