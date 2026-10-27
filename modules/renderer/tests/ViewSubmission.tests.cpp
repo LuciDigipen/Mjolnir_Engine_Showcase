@@ -7,6 +7,7 @@
  *
  */
 #include <renderer/ViewSubmission.h>
+#include "../src/renderer/vulkan/Ddgi.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -60,6 +61,35 @@ namespace
     }
 
     const mir::Camera kLens{60.0f, 0.1f, 100.0f};
+}
+
+TEST_CASE("Probe batches cover the volume before enabling history and respect update budgets", "[renderer][ddgi]")
+{
+    for (uint32_t total : { 8u, 24u, 64u, 512u })
+        for (uint32_t count : { 1u, 7u, total })
+        {
+            mir::vk::ProbeUpdateSchedule schedule;
+            std::vector<bool> seen(total, false);
+            for (uint32_t frame = 0; frame < (total + count - 1) / count; ++frame)
+            {
+                const auto batch = schedule.Batch(total, count);
+                CHECK(batch[3] == 0);
+                std::vector<bool> thisFrame(total, false);
+                for (uint32_t dispatch = 0; dispatch < batch[1]; ++dispatch)
+                {
+                    const uint32_t index = (batch[0] + dispatch) % batch[2];
+                    CHECK_FALSE(thisFrame[index]);
+                    thisFrame[index] = seen[index] = true;
+                }
+                CHECK(std::count(thisFrame.begin(), thisFrame.end(), true) == count);
+                schedule.Advance(total, count);
+            }
+            CHECK(std::all_of(seen.begin(), seen.end(), [](bool value) { return value; }));
+            CHECK(schedule.Batch(total, count)[3] == 1);
+            schedule.Reset();
+            CHECK(schedule.Batch(total, count)[0] == 0);
+            CHECK(schedule.Batch(total, count)[3] == 0);
+        }
 }
 
 TEST_CASE("GI trace coverage stays anchored and includes probe ray reach", "[renderer][ddgi]")

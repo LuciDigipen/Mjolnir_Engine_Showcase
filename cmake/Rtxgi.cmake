@@ -72,12 +72,16 @@ file(GLOB_RECURSE _rtxgi_shader_deps CONFIGURE_DEPENDS
 
 function(_mir_rtxgi_shader name source entry)
     set(output "${MIR_RTXGI_SHADER_DIR}/${name}.spv")
+    set(source_file "${_rtxgi_root}/shaders/ddgi/${source}.hlsl")
+    if(source STREQUAL "DdgiUpdate")
+        set(source_file "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../assets/shaders/DdgiUpdate.hlsl")
+    endif()
     add_custom_command(OUTPUT "${output}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${MIR_RTXGI_SHADER_DIR}"
-        COMMAND "${RTXGI_DXC_EXECUTABLE}" "${_rtxgi_root}/shaders/ddgi/${source}.hlsl"
+        COMMAND "${RTXGI_DXC_EXECUTABLE}" "${source_file}" -I "${_rtxgi_root}/shaders"
             -spirv -fspv-target-env=vulkan1.2 -T cs_6_0 -E "${entry}"
             ${_rtxgi_define_args} ${ARGN} -Fo "${output}"
-        DEPENDS ${_rtxgi_shader_deps}
+        DEPENDS "${source_file}" ${_rtxgi_shader_deps}
         COMMENT "DXC RTXGI ${name}"
         VERBATIM COMMAND_EXPAND_LISTS)
     set_property(GLOBAL APPEND PROPERTY MIR_RTXGI_SHADER_OUTPUTS "${output}")
@@ -85,18 +89,21 @@ endfunction()
 
 # No shared-memory ray-count specialization: later settings may vary rays per
 # probe without rebuilding shaders. Atlas interiors are 6/14 texels (+2 border).
-_mir_rtxgi_shader(ProbeIrradiance ProbeBlendingCS DDGIProbeBlendingCS
+_mir_rtxgi_shader(ProbeIrradiance DdgiUpdate DDGIProbeBlendingCS -DMIR_DDGI_PASS=0
     -DRTXGI_DDGI_BLEND_RADIANCE=1 -DOUTPUT_REGISTER=2
     -DRTXGI_DDGI_PROBE_NUM_TEXELS=8 -DRTXGI_DDGI_PROBE_NUM_INTERIOR_TEXELS=6)
-_mir_rtxgi_shader(ProbeDistance ProbeBlendingCS DDGIProbeBlendingCS
+_mir_rtxgi_shader(ProbeDistance DdgiUpdate DDGIProbeBlendingCS -DMIR_DDGI_PASS=0
     -DRTXGI_DDGI_BLEND_RADIANCE=0 -DOUTPUT_REGISTER=3
     -DRTXGI_DDGI_PROBE_NUM_TEXELS=16 -DRTXGI_DDGI_PROBE_NUM_INTERIOR_TEXELS=14)
-_mir_rtxgi_shader(ProbeRelocation ProbeRelocationCS DDGIProbeRelocationCS)
+_mir_rtxgi_shader(ProbeRelocation DdgiUpdate DDGIProbeRelocationCS -DMIR_DDGI_PASS=1)
 _mir_rtxgi_shader(ProbeRelocationReset ProbeRelocationCS DDGIProbeRelocationResetCS)
-_mir_rtxgi_shader(ProbeClassification ProbeClassificationCS DDGIProbeClassificationCS)
+_mir_rtxgi_shader(ProbeClassification DdgiUpdate DDGIProbeClassificationCS -DMIR_DDGI_PASS=2)
 _mir_rtxgi_shader(ProbeClassificationReset ProbeClassificationCS DDGIProbeClassificationResetCS)
 get_property(_rtxgi_outputs GLOBAL PROPERTY MIR_RTXGI_SHADER_OUTPUTS)
 add_custom_target(engine_rtxgi_shaders DEPENDS ${_rtxgi_outputs})
 add_dependencies(engine_rtxgi engine_rtxgi_shaders)
+
+set(MIR_RTXGI_INCLUDE_DIR "${_rtxgi_root}/shaders" PARENT_SCOPE)
+set(MIR_RTXGI_SHADER_DEPENDS "${_rtxgi_shader_deps}" PARENT_SCOPE)
 
 message(STATUS "RTXGI DDGI: SDK 1.3.6 (f33e496), renderer-owned resources, DXC ${RTXGI_DXC_EXECUTABLE}")

@@ -97,6 +97,13 @@ add_executable(MjolnirEngine WIN32)
 target_sources(MjolnirEngine PRIVATE main.cpp)
 
 if(MIR_WITH_RTXGI)
+    engine_add_shaders(MjolnirEngine
+        SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/ddgiProbe.slang
+        INCLUDE_DIRS ${MIR_RTXGI_INCLUDE_DIR}
+        DEFINES HLSL=1 RTXGI_COORDINATE_SYSTEM=2
+        EXTRA_DEPENDS ${MIR_RTXGI_SHADER_DEPENDS}
+        ENTRIES probeRayGen:raygeneration probeMiss:miss probeClosestHit:closesthit
+            probeAnyHit:anyhit shadowMissMain:miss shadowAnyHitMain:anyhit)
     get_property(rtxgi_shader_outputs GLOBAL PROPERTY MIR_RTXGI_SHADER_OUTPUTS)
     add_custom_command(TARGET MjolnirEngine POST_BUILD
         COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:MjolnirEngine>/shaders/rtxgi"

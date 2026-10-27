@@ -21,6 +21,9 @@
 #include "vulkan/ShadowMaps.h"
 #include "vulkan/Swapchain.h"
 #include "vulkan/VulkanConstants.h"
+#if MIR_WITH_RTXGI
+#include "vulkan/Ddgi.h"
+#endif
 
 #include <core/log/Log.h>
 
@@ -36,6 +39,9 @@ namespace mir
         mShadowMaps(std::make_unique<vk::ShadowMaps>()),
         mModelDescriptors(std::make_unique<vk::ModelDescriptors>()),
         mRayTracer(std::make_unique<vk::RayTracer>()),
+#if MIR_WITH_RTXGI
+        mDdgi(std::make_unique<vk::Ddgi>()),
+#endif
         mPostProcessing(std::make_unique<vk::PostProcessingStack>()),
         mCapture(std::make_unique<vk::FrameCapture>()),
         mImGuiOverlay(std::make_unique<vk::ImGuiOverlay>()),
@@ -102,6 +108,10 @@ namespace mir
             return false;
 
         mMeshUploads->Initialize(*mDevice);
+#if MIR_WITH_RTXGI
+        if (mDevice->RayTracingSupported())
+            mDdgi->Initialize(*mDevice, mRayTracer->SceneLayout(), mCameraBuffer->SetLayout());
+#endif
 
         return mPostProcessing->Initialize(*mDevice, mSwapchain->Format(), mSwapchain->Extent(),
             mCameraBuffer->SetLayout());
@@ -134,6 +144,9 @@ namespace mir
             mMeshUploads->Shutdown(*mRayTracer);
 
             mPostProcessing->Shutdown();
+#if MIR_WITH_RTXGI
+            mDdgi->Shutdown();
+#endif
             mMaterialStore->Shutdown();
             mRayTracer->Shutdown();
             mResources->Shutdown();
@@ -279,6 +292,9 @@ namespace mir
 
     void VulkanRenderer::ResetHistory()
     {
+#if MIR_WITH_RTXGI
+        mDdgi->ResetHistory();
+#endif
         if (mPostProcessing)
             mPostProcessing->ResetHistory();
     }
@@ -292,6 +308,9 @@ namespace mir
         mDevice->WaitIdle();
 
         mMeshUploads->Clear(*mRayTracer);
+#if MIR_WITH_RTXGI
+        mDdgi->Shutdown();
+#endif
         mRayTracer->DestroyBlases();
         const std::size_t meshCount = mResources->ReleaseMeshes();
         mModelDescriptors->ResetFrames();

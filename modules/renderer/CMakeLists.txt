@@ -98,6 +98,7 @@ endif()
 
 if(MIR_WITH_RTXGI)
     include(Rtxgi)
+    target_sources(engine_renderer PRIVATE src/renderer/vulkan/Ddgi.cpp)
     target_link_libraries(engine_renderer PRIVATE RTXGI::DDGI)
 endif()
 

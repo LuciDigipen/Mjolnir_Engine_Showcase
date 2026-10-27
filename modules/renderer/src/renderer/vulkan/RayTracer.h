@@ -112,6 +112,7 @@ namespace mir::vk
 
         PreparedScene PrepareScene(VkCommandBuffer cmd, uint32_t frame, std::span<const DrawItem> items,
             const ResourceStore &resources, const MaterialStore &materials);
+        VkDescriptorSetLayout SceneLayout() const { return mSetLayout; }
 
         // Traces the already prepared frame's TLAS into the output image,
         // which ends in SHADER_READ_ONLY for the caller to sample (PostProcess's tonemap pass).

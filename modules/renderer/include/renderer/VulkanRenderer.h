@@ -15,6 +15,8 @@
 #include <renderer/Mesh.h>
 #include <renderer/MeshStreaming.h>
 #include <renderer/PostProcessingState.h>
+#include <renderer/RenderSettings.h>
+#include <renderer/RtxgiConfig.h>
 #include <renderer/Texture.h>
 #include <renderer/components/Sky.h>
 
@@ -49,6 +51,7 @@ namespace mir::vk
     class ShadowMaps;
     class ModelDescriptors;
     class RayTracer;
+    class Ddgi;
     class PostProcessingStack;
     class FrameCapture;
     class ImGuiOverlay;
@@ -265,6 +268,7 @@ namespace mir
         // Every Post-Processing effect for the frame, already resolved by ResolvePostProcessing.
         // A disabled Bloom/DepthOfField/MotionBlur skips its GPU chain for the frame.
         void SetPostProcessing(const PostProcessingState &state);
+        void SetGlobalIllumination(const DdgiSettings &settings) { mDdgiSettings = settings; }
 
         void SetAtmosphere(const Sky &sky);
 
@@ -316,6 +320,10 @@ namespace mir
         std::unique_ptr<vk::ModelDescriptors> mModelDescriptors;
         // Initialized only on a device with ray tracing; its Shutdown is a no-op otherwise.
         std::unique_ptr<vk::RayTracer> mRayTracer;
+#if MIR_WITH_RTXGI
+        std::unique_ptr<vk::Ddgi> mDdgi;
+#endif
+        DdgiSettings mDdgiSettings;
 
         // Every screen-space effect between the scene/trace pass and the swapchain.
         std::unique_ptr<vk::PostProcessingStack> mPostProcessing;

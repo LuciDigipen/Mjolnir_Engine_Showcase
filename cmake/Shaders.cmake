@@ -47,8 +47,20 @@ function(_engine_scan_shader_includes source_file out_var)
             string(REGEX REPLACE "^[ \t]*#include[ \t]+\"([^\"]+)\".*" "\\1"
                 included "${line}")
             get_filename_component(included_abs "${current_dir}/${included}" ABSOLUTE)
-            list(APPEND result "${included_abs}")
-            list(APPEND pending "${included_abs}")
+            if(NOT EXISTS "${included_abs}")
+                foreach(include_dir IN LISTS ARGN)
+                    if(EXISTS "${include_dir}/${included}")
+                        get_filename_component(included_abs "${include_dir}/${included}" ABSOLUTE)
+                        break()
+                    endif()
+                endforeach()
+            endif()
+            # Conditional SDK includes may refer to optional config files.
+            # The compiler diagnoses unresolved active includes.
+            if(EXISTS "${included_abs}")
+                list(APPEND result "${included_abs}")
+                list(APPEND pending "${included_abs}")
+            endif()
         endforeach()
     endwhile()
 
@@ -62,7 +74,7 @@ endfunction()
 # Emits one .spv per entry point, then copies them next to the executable so
 # the run directory is self-contained and the exe works when moved.
 function(engine_add_shaders target)
-    cmake_parse_arguments(ARG "" "SOURCE" "ENTRIES" ${ARGN})
+    cmake_parse_arguments(ARG "" "SOURCE" "ENTRIES;INCLUDE_DIRS;DEFINES;EXTRA_DEPENDS" ${ARGN})
 
     if(NOT ARG_SOURCE)
         message(FATAL_ERROR "engine_add_shaders: SOURCE is required")
@@ -81,7 +93,7 @@ function(engine_add_shaders target)
     get_filename_component(source_abs "${ARG_SOURCE}" ABSOLUTE)
     get_filename_component(source_name "${ARG_SOURCE}" NAME_WE)
 
-    _engine_scan_shader_includes("${source_abs}" included_deps)
+    _engine_scan_shader_includes("${source_abs}" included_deps ${ARG_INCLUDE_DIRS})
 
     # No generator expression in this path: add_custom_command(OUTPUT) paths
     # containing a genex cannot be matched against add_custom_target(DEPENDS),
@@ -95,6 +107,13 @@ function(engine_add_shaders target)
     # configuration, so a per-config flag would leave one config reading the
     # other's .spv.
     set(debug_flags -g -O0)
+    set(extra_flags "")
+    foreach(directory IN LISTS ARG_INCLUDE_DIRS)
+        list(APPEND extra_flags -I "${directory}")
+    endforeach()
+    foreach(define IN LISTS ARG_DEFINES)
+        list(APPEND extra_flags "-D${define}")
+    endforeach()
 
     foreach(entry IN LISTS ARG_ENTRIES)
         string(REPLACE ":" ";" parts "${entry}")
@@ -117,10 +136,11 @@ function(engine_add_shaders target)
                     # Matches GLM's default
                     -matrix-layout-column-major
                     ${debug_flags}
+                    ${extra_flags}
                     -o "${spv}"
             # DEPENDS on the source (plus anything it #includes,
             # transitively) gives recompile-on-edit for free.
-            DEPENDS "${source_abs}" ${included_deps}
+            DEPENDS "${source_abs}" ${included_deps} ${ARG_EXTRA_DEPENDS}
             COMMENT "slangc ${source_name}.slang [${entry_name}/${entry_stage}]"
             VERBATIM
             COMMAND_EXPAND_LISTS)

@@ -133,6 +133,7 @@ namespace mir
         void OnUpdate(SystemContext &context) override
         {
             const RenderSettings &renderSettings = context.world.Resource<RenderSettings>();
+            mRenderer.SetGlobalIllumination(renderSettings.ddgi);
 
             World &source = mSourceWorld != nullptr ? *mSourceWorld : context.world;
             BindQueries(source);

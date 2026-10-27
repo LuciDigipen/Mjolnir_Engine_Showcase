@@ -80,7 +80,9 @@ The SDK's Vulkan sources use the engine's Volk loader, with resource management
 disabled so the renderer will own probe allocations. Host code and shaders use
 right-handed, Y-up coordinates. SDK shader resources use set 0: volume constants
 at binding 0, ray data at 1, irradiance at 2, distance at 3, probe data at 4,
-and variability at 5; the SDK push-constant layout is used.
+and variability at 5; batch constants use binding 7 and the SDK push-constant
+layout is used. The probe RT pipeline binds these resources as set 2, with
+sampled irradiance/distance/state at bindings 8–10 and a sampler at 11.
 
 `cmake --build builds/windows-msvc-debug --target engine_rtxgi` checks the SDK
 and six probe-update/reset shaders. The engine build copies these shaders to
@@ -88,9 +90,10 @@ and six probe-update/reset shaders. The engine build copies these shaders to
 6/14 texels; blending reads the ray count dynamically instead of specializing
 it at compile time. Existing engine shaders continue to use Slang.
 
-This is build support only: it does not allocate probes or enable runtime GI.
-`renderer/RtxgiConfig.h` reports SDK compilation separately from future runtime
-availability. DLSS remains an independent option.
+Enabled GI settings allocate probes and run bounded probe updates. Final camera
+shading does not yet sample those probes. `renderer/RtxgiConfig.h` reports SDK
+compilation separately from runtime resource availability. DLSS remains an
+independent option. See [renderer](modules/renderer.md) for pass order and ownership.
 
 ## Build loop
 

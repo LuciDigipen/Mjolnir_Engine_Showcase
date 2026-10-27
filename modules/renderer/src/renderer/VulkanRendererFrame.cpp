@@ -20,6 +20,9 @@
 #include "vulkan/ModelDescriptors.h"
 #include "vulkan/PostProcessingStack.h"
 #include "vulkan/RayTracer.h"
+#if MIR_WITH_RTXGI
+#include "vulkan/Ddgi.h"
+#endif
 #include "vulkan/ResourceStore.h"
 #include "vulkan/ShadowMaps.h"
 #include "vulkan/Swapchain.h"
@@ -252,6 +255,9 @@ namespace mir
 
     void VulkanRenderer::DrawFrame(std::span<const RenderView> views)
     {
+#if MIR_WITH_RTXGI
+        mDdgi->Configure(mDdgiSettings, false);
+#endif
         const std::optional<vk::FrameContext> frame = BeginFrame();
         if (!frame)
             return;
@@ -280,7 +286,10 @@ namespace mir
             view.rayTracingItems.value_or(view.items), *mResources, *mMaterialStore);
         mDevice->EndLabel(cmd);
 
-        // Probe updates can consume scene here, before the final image trace.
+#if MIR_WITH_RTXGI
+        mDdgi->Record(cmd, frame, view.cameraPosition, mCameraBuffer->Set(frame), cameraOffset,
+            scene, view.rayTracingSceneComplete);
+#endif
         mDevice->BeginLabel(cmd, "Ray Trace Pass", { 0.0f, 1.0f, 1.0f, 1.0f });
         mRayTracer->RecordTrace(cmd, frame, rect, mCameraBuffer->Set(frame),
             cameraOffset, effectiveAaMode, mPostProcessing->RtSampleCount());
@@ -339,6 +348,10 @@ namespace mir
 
         if (views.empty())
             return;
+
+#if MIR_WITH_RTXGI
+        mDdgi->Configure(mDdgiSettings, views[0].rayTracingItems.has_value());
+#endif
 
         const std::optional<vk::FrameContext> frame = BeginFrame();
         if (!frame)

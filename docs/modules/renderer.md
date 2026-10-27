@@ -525,8 +525,8 @@ on the startup path catches.
 `rendering.ddgi` persists one axis-aligned, world-anchored diffuse GI volume.
 Project Settings > Rendering > Diffuse Global Illumination edits a draft and
 applies it only after Save succeeds. Settings are retained independently of
-the RTXGI build option and the ray tracing checkbox. Runtime GI is not yet
-connected; these controls currently configure the requested settings only.
+the RTXGI build option and the ray tracing checkbox. Enabled RTXGI builds now
+update probe lighting; final camera shading does not yet sample it.
 
 | Field | Default | Meaning / limits |
 |---|---|---|
@@ -540,8 +540,8 @@ connected; these controls currently configure the requested settings only.
 
 Volumes must also fit a conservative 256 MiB planning allowance: two copies
 of 16-byte ray data and atlas texels, using 8×8 irradiance/variability,
-16×16 distance, and one probe-state texel per probe. The future resource owner
-must still check actual device limits and allocation requirements. The editor
+16×16 distance, and one probe-state texel per probe. The resource owner
+checks actual device limits and allocation requirements as well. The editor
 shows estimated memory and update work for valid drafts and disables Save
 for invalid ones. `SaveFile` also rejects invalid settings before writing.
 Missing fields retain defaults; malformed or over-budget GI blocks reset as
@@ -553,8 +553,8 @@ a unit to disabled defaults without discarding the ray tracing setting.
 texture descriptors and inserts the acceleration-structure build-to-ray-read
 barrier. It returns borrowed `PreparedScene` handles (TLAS, descriptor set and
 layout), instance count and a `truncated` flag. `RecordTrace` only clears and
-traces the final camera outputs; the facade leaves a probe-update insertion
-point between these calls. FrameSync must have waited for the slot before
+traces the final camera outputs; the facade records `Ddgi::Record` between
+these calls. FrameSync must have waited for the slot before
 preparation; borrowed resources expire when that slot is prepared again or
 the ray tracer is destroyed. Both dispatches use the same camera-relative TLAS.
 
@@ -565,7 +565,7 @@ submissions have no geometry bounds and direct-light shadow rays can leave
 the camera frustum. Draw sources receive the union of the camera frustum and
 the GI grid expanded by one grid diagonal of ray reach plus one probe spacing
 for relocation/bias. `MakeGiTraceVolume` returns that maximum probe ray distance
-for the upcoming probe pass to enforce; it is derived from the grid rather than
+which the probe pass enforces; it is derived from the grid rather than
 the camera lens. Volume centers remain world anchored; collection and TLAS
 transforms narrow only after subtracting a world origin in world precision.
 
@@ -577,10 +577,44 @@ Raster and the ordinary GI-disabled RT submissions retain their existing paths.
 
 The 16,384-instance limit retains the first traceable submissions in stable
 submission order. Invalid/nonresident handles do not consume slots. Instance
-or texture capacity overflow marks the prepared scene truncated; future GI
-consumers must fall back for that frame. Float conversion omissions similarly
+or texture capacity overflow marks the prepared scene truncated; DDGI updates
+skip that frame and invalidate history. Float conversion omissions similarly
 set `RenderView::rayTracingSceneComplete` false. Final camera tracing retains
-its existing capacity fallback. Probe resources and shading are the next step.
+its existing capacity fallback.
+
+**DDGI resources and passes.**
+
+In an RTXGI build, the facade owns `vk::Ddgi` independently of `RayTracer`.
+Its SDK base volume handles probe constants, indexing and randomized ray
+rotation. The renderer owns five persistent array images, a bilinear sampler,
+per-frame constants/budget buffers and descriptor sets, six compute pipelines,
+and a separate probe RT pipeline/SBT. Images use RGBA32F to match the compiled
+storage-image types; distance uses RG and variability uses R. The variability
+atlas is bound for the SDK kernels, but adaptive variability reduction is off.
+
+Pass order is mesh uploads/BLAS, scene TLAS, optional history clear and
+relocation/classification reset, probe tracing, irradiance blending (including
+border copies), distance blending, relocation, classification, final camera
+tracing, and existing post-processing. A circular batch honors `probesPerFrame`;
+compute guards use the same batch as tracing so untraced probes retain their
+history. Inactive probes still trace the SDK's fixed rays for reclassification.
+Recursive diffuse lighting reads prior irradiance before blending new results.
+Probe lighting shares RT material/alpha testing and shadow visibility helpers;
+it excludes ambient, camera specular, fog, and screen-space guide writes.
+
+The shared atlases remain GENERAL and run on the graphics queue, with explicit
+barriers between passes and across frames. Constants are written only after
+the frame-slot wait. Camera movement updates the relative volume origin without
+clearing history. Initial/reset sweeps use zero hysteresis and disable recursive
+history until every probe has been visited. Later updates use SDK hysteresis.
+
+Configuration runs before BeginFrame. Layout/placement changes and disabling
+GI wait for outstanding work before freeing resources; allocation/pipeline
+failures clean up partial resources and retain existing RT lighting. The same
+failed settings are not retried every frame. Scene unload releases resources;
+explicit history resets invalidate them for the next update. Swapchain resize
+preserves the world-space probe cache. Raster frames release any active DDGI
+resources. Final camera sampling and ambient replacement remain step 5.
 
 **`volk` is compiled from source in this module**, so the platform defines are
 ours. VMA is configured with `VMA_STATIC_VULKAN_FUNCTIONS=0` and
