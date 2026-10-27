@@ -61,7 +61,7 @@ struct RtPushConstants
 
 [[vk::push_constant]] RtPushConstants pushData;
 
-static const uint kInstanceDoubleSided = 16u;
+static const uint kInstanceRasterFacingCorrection = 32u;
 static const uint kAaModeDlss = 3u;
 static const uint kVertexStrideFloats = 16;
 static const uint kColorOffset = 3;
@@ -178,15 +178,12 @@ void closestHitSurface<M : IMaterial>(inout RayPayload payload, in BuiltInTriang
     float3 N = normalize(info.normalCol0.xyz * objNormal.x + info.normalCol1.xyz * objNormal.y +
                          info.normalCol2.xyz * objNormal.z);
 
-    // frontFace follows the actual geometric winding, matching SV_IsFrontFace;
-    // a double-sided back face flips the shading normal, not the winding.
-    const float3 geoEdges = cross(op1 - op0, op2 - op0);
-    const float3 geometric = normalize(
-        info.normalCol0.xyz * geoEdges.x + info.normalCol1.xyz * geoEdges.y +
-        info.normalCol2.xyz * geoEdges.z);
-    const bool frontFace = dot(geometric, WorldRayDirection()) < 0.0;
-    if (!frontFace && (info.flags & kInstanceDoubleSided) != 0)
-        N = -N;
+    // HitKind carries the instance's facing flip; the per-instance correction
+    // makes it match the raster frontFace/mirror convention. Materials orient
+    // their normal from frontFace if they need a back-face response.
+    bool frontFace = HitKind() == HIT_KIND_TRIANGLE_FRONT_FACE;
+    if ((info.flags & kInstanceRasterFacingCorrection) != 0)
+        frontFace = !frontFace;
 
     const float4 sourceTangent = InterpolateTangent(info, indices, barycentrics);
     const float4 tangentFrame = TransformTangentFrame(info.modelCol0.xyz, info.modelCol1.xyz,
@@ -223,8 +220,11 @@ void closestHitSurface<M : IMaterial>(inout RayPayload payload, in BuiltInTriang
     if (pushData.aaMode == kAaModeDlss)
     {
         const uint2 guidePixel = DispatchRaysIndex().xy + pushData.outputOffset;
+        const float3 viewDir = normalize(cameraPos.xyz - hitWorldPos);
+        const float NoV = saturate(dot(normalize(surface.normalWS), viewDir));
         gAlbedo[guidePixel] = float4(surface.albedo, 1.0);
-        gSpecularAlbedo[guidePixel] = float4(surface.f0.xxx, 1.0);
+        gSpecularAlbedo[guidePixel] =
+            float4(SpecularAlbedoGuide(surface.f0.xxx, surface.roughness * surface.roughness, NoV), 1.0);
         gNormal[guidePixel] = float4(surface.normalWS, surface.roughness);
     }
 }

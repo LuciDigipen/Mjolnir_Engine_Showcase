@@ -20,6 +20,7 @@ engine_add_module_tests(renderer
     PostEffectRegistry.tests.cpp
     PostProcessingSettings.tests.cpp
     PostProcessingState.tests.cpp
+    RayFacing.tests.cpp
     RenderSettings.tests.cpp
     RenderSystem.tests.cpp
     RtInstanceLayout.tests.cpp

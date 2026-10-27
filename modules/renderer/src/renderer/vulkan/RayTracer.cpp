@@ -43,6 +43,7 @@ namespace mir::vk
         constexpr uint32_t kInstanceError = 4u;
         constexpr uint32_t kInstanceAlphaTest = 8u;
         constexpr uint32_t kInstanceDoubleSided = 16u;
+        constexpr uint32_t kInstanceRasterFacingCorrection = 32u;
 
         VkTransformMatrixKHR ToTransformMatrixKHR(const glm::mat4 &m)
         {
@@ -941,6 +942,10 @@ namespace mir::vk
                 }
                 materialRecord = material->mRecordOffset;
             }
+
+            if (RtRasterFacingCorrection(material ? material->mFrontFace : VK_FRONT_FACE_COUNTER_CLOCKWISE,
+                    item.model, *facing))
+                flags |= kInstanceRasterFacingCorrection;
 
             // Non-opaque instances run the any-hit shaders, which do the alpha test.
             const VkGeometryInstanceFlagsKHR opacity =

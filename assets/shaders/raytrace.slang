@@ -57,6 +57,7 @@ static const uint kInstanceTextured = 2u; // the model shader: base color = text
 static const uint kInstanceError = 4u;
 static const uint kInstanceAlphaTest = 8u;
 static const uint kInstanceDoubleSided = 16u;
+static const uint kInstanceRasterFacingCorrection = 32u;
 static const uint kMaxMaterialImages = 1024;
 static const uint kMaxMaterialSamplers = 256;
 

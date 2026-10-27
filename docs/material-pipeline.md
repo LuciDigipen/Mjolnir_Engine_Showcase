@@ -105,16 +105,29 @@ alpha, sampler and explicit record. Devices without the shared tables keep the
 legacy Blinn-Phong `assets/shaders/default.slang`; unknown surface requests
 reject instead of falling back.
 
+## PBR and guides
+
+Direct light uses `(diffuse + pi * specular) * lightColor * saturate(NdotL)`
+for both the Sun and local lights; the pi cancels GGX's `1/pi` while preserving
+the existing brightness convention. AO is ambient-only. RT specular albedo uses
+the NVIDIA Streamline RR §4.2.1 approximation
+`F0 + (max(1 - roughness^2, F0) - F0) * (1 - NoV)^5`; the normal guide retains
+linear roughness in `w`. `PbrProbe.slang` covers the analytic F0=0 Lambert
+oracle (`0.5 * NdotL`, including multiple angles), back-face zero, finite
+grazing and guide roughness/F0 dependence. The probe is compiled and
+spirv-val checked here; its GPU readback values remain supervisor evidence.
+
 ## Tangent frame
 
 `TangentFrame.slang` is the single helper used by `SurfaceForward` and
 `SurfaceRt`: it forms the tangent with an explicit sum of the model's linear
 columns, orthogonalizes/normalizes it with a finite fallback, and flips
 handedness for a mirroring determinant. Raster passes `SV_IsFrontFace`; RT
-derives the same winding test from the geometric normal and only flips the
-shading normal for a double-sided back face. `TangentFrameProbe.slang` covers a
-rotation plus non-uniform scale, a mirror and a degenerate tangent for
-supervisor GPU readback.
+starts from `HitKind` and applies a per-instance correction for authored CW,
+mirrored and front-cull settings, so both frontends agree. Materials orient
+their normal from `frontFace` if they need a back-face response.
+`TangentFrameProbe.slang` covers a rotation plus non-uniform scale, a mirror
+and a degenerate tangent for supervisor GPU readback.
 
 ## RT hit groups
 

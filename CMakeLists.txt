@@ -355,6 +355,13 @@ if(BUILD_TESTING)
                 -DSOURCE=${CMAKE_SOURCE_DIR}/tools/tests/TangentFrameProbe.slang
                 -DOUTPUT=${CMAKE_BINARY_DIR}/tangent_frame_probe.spv
                 -P "${CMAKE_SOURCE_DIR}/tools/tests/TangentFrameProbe.cmake")
+    add_test(NAME pbr_probe
+        COMMAND "${CMAKE_COMMAND}"
+                -DSLANGC_EXECUTABLE=${SLANGC_EXECUTABLE}
+                -DVULKAN_SDK=${VULKAN_SDK}
+                -DSOURCE=${CMAKE_SOURCE_DIR}/tools/tests/PbrProbe.slang
+                -DOUTPUT=${CMAKE_BINARY_DIR}/pbr_probe.spv
+                -P "${CMAKE_SOURCE_DIR}/tools/tests/PbrProbe.cmake")
     foreach(game_name IN LISTS game_names)
         add_test(NAME smoke.${game_name}
             COMMAND MjolnirEngine --non-interactive --game games/${game_name} --frames 120)

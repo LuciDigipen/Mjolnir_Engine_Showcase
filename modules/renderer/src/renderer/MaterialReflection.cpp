@@ -26,6 +26,37 @@ namespace mir
                 *error = std::move(message);
         }
 
+        bool ReadU32(const nlohmann::json &value, uint32_t &out)
+        {
+            if (!value.is_number_unsigned())
+                return false;
+            const uint64_t wide = value.get<uint64_t>();
+            if (wide > UINT32_MAX)
+                return false;
+            out = static_cast<uint32_t>(wide);
+            return true;
+        }
+
+        uint32_t FieldAlignment(MaterialFieldKind kind)
+        {
+            switch (kind)
+            {
+            case MaterialFieldKind::Float:
+            case MaterialFieldKind::Uint:
+            case MaterialFieldKind::Int:
+            case MaterialFieldKind::Bool:
+                return 4;
+            case MaterialFieldKind::Float2:
+                return 8;
+            case MaterialFieldKind::Float3:
+            case MaterialFieldKind::Float4:
+                return 16;
+            case MaterialFieldKind::TextureRef:
+                return 4;
+            }
+            return 4;
+        }
+
         uint32_t ExpectedSize(MaterialFieldKind kind)
         {
             switch (kind)
@@ -106,15 +137,13 @@ namespace mir
             }
 
             const nlohmann::json &binding = field.at("binding");
-            if (!binding.contains("offset") || !binding.at("offset").is_number_unsigned() ||
-                !binding.contains("size") || !binding.at("size").is_number_unsigned())
+            if (!binding.contains("offset") || !binding.contains("size") ||
+                !ReadU32(binding.at("offset"), layout.offset) || !ReadU32(binding.at("size"), layout.size))
             {
                 SetError(error, "material field '" + layout.name + "' has an invalid binding");
                 return std::nullopt;
             }
-            layout.offset = binding.at("offset").get<uint32_t>();
-            layout.size = binding.at("size").get<uint32_t>();
-            if (layout.offset % 4 != 0 || layout.size == 0 || layout.offset > UINT32_MAX - layout.size)
+            if (layout.size == 0 || layout.offset > UINT32_MAX - layout.size)
             {
                 SetError(error, "material field '" + layout.name + "' has an invalid offset or size");
                 return std::nullopt;
@@ -127,6 +156,11 @@ namespace mir
                 if (layout.size != ExpectedSize(layout.kind))
                 {
                     SetError(error, "material field '" + layout.name + "' has the wrong size");
+                    return std::nullopt;
+                }
+                if (layout.offset % FieldAlignment(layout.kind) != 0)
+                {
+                    SetError(error, "material field '" + layout.name + "' has the wrong alignment");
                     return std::nullopt;
                 }
                 return layout;
@@ -154,17 +188,17 @@ namespace mir
                     const std::string innerName = inner.at("name").get<std::string>();
                     const nlohmann::json &innerBinding = inner.at("binding");
                     const nlohmann::json &innerType = inner.at("type");
+                    uint32_t offset = 0;
+                    uint32_t size = 0;
                     if ((innerName != "image" && innerName != "sampler") || !innerType.is_object() ||
                         innerType.value("kind", "") != "scalar" ||
-                        innerType.value("scalarType", "") != "uint32" ||
-                        !innerBinding.contains("offset") || !innerBinding.at("offset").is_number_unsigned() ||
-                        !innerBinding.contains("size") || !innerBinding.at("size").is_number_unsigned() ||
-                        innerBinding.at("size").get<uint32_t>() != 4)
+                        innerType.value("scalarType", "") != "uint32" || !innerBinding.contains("offset") ||
+                        !innerBinding.contains("size") || !ReadU32(innerBinding.at("offset"), offset) ||
+                        !ReadU32(innerBinding.at("size"), size) || size != 4 || offset % 4 != 0)
                     {
                         SetError(error, "material texture '" + layout.name + "' has an unsupported member");
                         return std::nullopt;
                     }
-                    const uint32_t offset = innerBinding.at("offset").get<uint32_t>();
                     if (innerName == "image")
                         imageOffset = offset;
                     else
@@ -179,6 +213,11 @@ namespace mir
                 if (layout.size != innerSize)
                 {
                     SetError(error, "material texture '" + layout.name + "' has the wrong size");
+                    return std::nullopt;
+                }
+                if (layout.offset % FieldAlignment(layout.kind) != 0)
+                {
+                    SetError(error, "material texture '" + layout.name + "' has the wrong alignment");
                     return std::nullopt;
                 }
                 return layout;
@@ -423,7 +462,13 @@ namespace mir
                     SetError(error, "material parameter '" + field.name + "' must be an integer");
                     return std::nullopt;
                 }
-                const int64_t wide = value.get<int64_t>();
+                if (value.is_number_unsigned() && value.get<uint64_t>() > INT32_MAX)
+                {
+                    SetError(error, "material parameter '" + field.name + "' is out of int32 range");
+                    return std::nullopt;
+                }
+                const int64_t wide = value.is_number_unsigned() ? static_cast<int64_t>(value.get<uint64_t>())
+                                                                 : value.get<int64_t>();
                 if (wide < INT32_MIN || wide > INT32_MAX)
                 {
                     SetError(error, "material parameter '" + field.name + "' is out of int32 range");

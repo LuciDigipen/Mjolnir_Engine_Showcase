@@ -229,8 +229,10 @@ record through the shared tables; `ResolveMaterialDesc` maps the public
 `shaderName == "default"` request to that registration, while a device without
 shared tables keeps the legacy `default.slang` Blinn-Phong pair. `TangentFrame.slang`
 is shared by raster and RT (explicit model columns, orthogonalization, mirror
-handedness); RT uses SBT hit group 2 for surface materials, while groups 0 and 1
-stay on `raytrace.slang`'s legacy camera and shadow paths.
+handedness). RT `frontFace` is `HitKind` plus a per-instance correction for the
+authored frontFace/mirror/flip flags. Direct PBR applies `NdotL` once and the
+specular guide uses `F0/roughness²/NoV`; RT uses SBT hit group 2 for surface
+materials, while groups 0 and 1 stay on `raytrace.slang`'s legacy paths.
 `shaders/shader_manifest.json` is the single source of the compile commands,
 reflections and depfiles for both the build and the future reload path; the
 build-generated `shaders/surface_materials.json` is the runtime registration

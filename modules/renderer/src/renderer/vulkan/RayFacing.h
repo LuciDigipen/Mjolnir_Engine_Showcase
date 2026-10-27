@@ -27,4 +27,17 @@ namespace mir::vk
         flip ^= glm::determinant(glm::mat3(model)) < 0;
         return flip ? VK_GEOMETRY_INSTANCE_TRIANGLE_FLIP_FACING_BIT_KHR : VkGeometryInstanceFlagsKHR(0);
     }
+
+    // HitKind already reflects the instance's TRIANGLE_FLIP_FACING flag, while
+    // SV_IsFrontFace reflects the raster frontFace/mirror settings. This
+    // correction makes the RT surface frontFace match the raster value.
+    inline bool RtRasterFacingCorrection(VkFrontFace front, const glm::mat4 &model,
+        VkGeometryInstanceFlagsKHR instanceFlags)
+    {
+        const bool desiredFlip = (front == VK_FRONT_FACE_CLOCKWISE) ^
+            (glm::determinant(glm::mat3(model)) < 0.0f);
+        const bool actualFlip =
+            (instanceFlags & VK_GEOMETRY_INSTANCE_TRIANGLE_FLIP_FACING_BIT_KHR) != 0;
+        return desiredFlip != actualFlip;
+    }
 }

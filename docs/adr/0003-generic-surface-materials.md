@@ -23,7 +23,12 @@ engine code, and slangc specializes an entry point with `-specialize`.
 2. `SurfaceForward.slang` owns the raster vertex stage and a material-generic
    fragment stage. `SurfaceRt.slang` owns a material-generic closest-hit stage.
    Both call the shared `ShadePbr` (Lambert + GGX/Smith/Schlick, no `/pi`:
-   `lightColor` already carries the existing brightness convention).
+   `lightColor` already carries the existing brightness convention). Direct
+   light is `(diffuse + pi * specular) * lightColor * NdotL`, so the GGX `1/pi`
+   is cancelled once and the cosine is not duplicated or dropped. The DLSS RR
+   specular guide follows NVIDIA's Streamline Ray Reconstruction guide §4.2.1
+   (`F0 + (max(1 - roughness^2, F0) - F0) * (1 - NoV)^5`, MIT-licensed
+   reference); `gNormal.w` stays linear roughness.
 3. Raster reads the material record through set 0's dynamic `MaterialRecordRef`
    and set 4's byte-address buffer. RT reads the same bytes through
    `RtInstanceInfo.materialRecord` and set 0's binding 11. The default and
@@ -84,8 +89,11 @@ engine code, and slangc specializes an entry point with `-specialize`.
   orthogonalized against the normal. `bitangentSign` starts from the asset's
   tangent.w and flips for a mirroring model determinant; raster and RT use the
   same steps.
-- `frontFace`: the raster `SV_IsFrontFace` result; RT derives the same test from
-  the ray direction and the instance's double-sided flag.
+- `frontFace`: the raster `SV_IsFrontFace` result. RT starts from `HitKind` and
+  applies a per-instance correction derived from the authored frontFace,
+  mirrored determinant and the instance's `TRIANGLE_FLIP_FACING` flag, so both
+  frontends agree for BACK/FRONT/NONE culling; materials orient their normal
+  from `frontFace` if they want a back-face response.
 
 ## Frame and refresh metadata
 

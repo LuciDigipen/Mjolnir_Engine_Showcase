@@ -129,6 +129,21 @@ TEST_CASE("Malformed material layouts reject before packing", "[renderer][materi
         "resultType":{"fields":[{"name":"a","type":{"kind":"vector","elementCount":3,
         "elementType":{"kind":"scalar","scalarType":"float32"}},"binding":{"offset":0,"size":8}}]}}}]}]})";
     CHECK_FALSE(ParseMaterialLayout(wrongSize, &error).has_value());
+
+    const char *wideOffset = R"({"entryPoints":[{"parameters":[{"type":{"baseShape":"structuredBuffer",
+        "resultType":{"fields":[{"name":"a","type":{"kind":"scalar","scalarType":"float32"},
+        "binding":{"offset":4294967296,"size":4}}]}}}]}]})";
+    CHECK_FALSE(ParseMaterialLayout(wideOffset, &error).has_value());
+
+    const char *oversized = R"({"entryPoints":[{"parameters":[{"type":{"baseShape":"structuredBuffer",
+        "resultType":{"fields":[{"name":"a","type":{"kind":"scalar","scalarType":"float32"},
+        "binding":{"offset":0,"size":4294967295}}]}}}]}]})";
+    CHECK_FALSE(ParseMaterialLayout(oversized, &error).has_value());
+
+    const char *misalignedVector = R"({"entryPoints":[{"parameters":[{"type":{"baseShape":"structuredBuffer",
+        "resultType":{"fields":[{"name":"a","type":{"kind":"vector","elementCount":2,
+        "elementType":{"kind":"scalar","scalarType":"float32"}},"binding":{"offset":4,"size":8}}]}}}]}]})";
+    CHECK_FALSE(ParseMaterialLayout(misalignedVector, &error).has_value());
 }
 
 TEST_CASE("Material packing rejects wrong JSON types and out-of-range numbers", "[renderer][material][reflection]")
@@ -148,6 +163,15 @@ TEST_CASE("Material packing rejects wrong JSON types and out-of-range numbers", 
     CHECK_FALSE(PackMaterialRecord(*layout, R"({"flag":true,"index":1,"count":1,"value":1e300})").has_value());
     CHECK_FALSE(PackMaterialRecord(*layout, R"({"flag":true,"index":1,"count":1,"value":1,"extra":1})")
                     .has_value());
+    CHECK_FALSE(PackMaterialRecord(*layout,
+        R"({"flag":true,"index":1,"count":18446744073709551615,"value":1})")
+                    .has_value());
+    CHECK(PackMaterialRecord(*layout,
+        R"({"flag":true,"index":4294967295,"count":-2147483648,"value":-3.5})")
+              .has_value());
+    CHECK(PackMaterialRecord(*layout,
+        R"({"flag":false,"index":0,"count":2147483647,"value":3.5})")
+              .has_value());
 }
 
 TEST_CASE("Material shader names carry their namespace", "[renderer][material][reflection]")
