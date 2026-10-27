@@ -96,7 +96,8 @@ each library links in the engine, besides `core`; `app` links everything.
 | `assets` | module | `project` |
 | `scene` | module | `serial` |
 | `prefab` | module | `assets`, `scene`, `serial` |
-| `window`, `audio` | module | none |
+| `window` | module | none |
+| `audio` | module | `serial` |
 | `physics` | module | `physics_layers` |
 | `input` | module | `window`, `serial` |
 | `camera` | module | `input` |

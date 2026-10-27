@@ -10,6 +10,7 @@
 
 #include <audio/AudioEmitterSystem.h>
 #include <audio/AudioListenerSystem.h>
+#include <audio/AudioSettings.h>
 #include <audio/AudioSystem.h>
 #include <audio/ComponentRegistration.h>
 #include <audio/SoundtrackSystem.h>
@@ -23,16 +24,58 @@ namespace mir
 {
     namespace
     {
-        // Renders the frame's audio. Ungated: Edit and Pause still play UI sounds and fades
+        // Renders the frame's audio, Edit and Pause still play UI sounds and fades
         class AudioRenderSystem final : public ISystem
         {
         public:
             void OnUpdate(SystemContext &) override { audio::Update(); }
         };
+
+        constexpr double kMinSaveIntervalSeconds = 0.5; // a slider being dragged writes on every frame
+
+        
+        class AudioSettingsSystem final : public ISystem
+        {
+        public:
+            AudioSettingsSystem(std::filesystem::path path, const AudioSettings &saved)
+                : mPath(std::move(path)), mSaved(saved)
+            {
+            }
+
+            void OnUpdate(SystemContext &context) override
+            {
+                if (context.elapsed - mLastSave >= kMinSaveIntervalSeconds)
+                    Save(context.elapsed);
+            }
+
+            void OnStop(SystemContext &) override { Save(mLastSave); }
+
+        private:
+            void Save(double now)
+            {
+                const AudioSettings current = CurrentAudioSettings();
+                if (current == mSaved)
+                    return;
+
+                // a failed write is logged there and not retried until the values change again
+                SaveAudioSettings(mPath, current);
+                mSaved = current;
+                mLastSave = now;
+            }
+
+            std::filesystem::path mPath;
+            AudioSettings mSaved;
+            double mLastSave = -kMinSaveIntervalSeconds;
+        };
     }
 
-    AudioModule::AudioModule(ModuleContext context, const std::filesystem::path &bankDir)
+    AudioModule::AudioModule(ModuleContext context, const std::filesystem::path &bankDir,
+        const std::filesystem::path &settingsPath)
     {
+        // before Init, which applies the volumes without a ramp
+        const AudioSettings settings = LoadAudioSettings(settingsPath);
+        ApplyAudioSettings(settings);
+
         audio::Init(bankDir);
         RegisterAudioComponents();
 
@@ -41,6 +84,8 @@ namespace mir
         context.scheduler.AddSystem<AudioListenerSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kNormal});
         context.scheduler.AddSystem<SoundtrackSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kNormal});
         context.scheduler.AddSystem<AudioRenderSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kLate});
+        context.scheduler.AddSystem<AudioSettingsSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kLate},
+            settingsPath, settings);
 
         mHooks = context.world.SetComponentHooks<AudioEmitter>({ .onRemove = &AudioEmitterSystem::OnEmitterRemoved });
         mSoundtrackHooks =

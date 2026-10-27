@@ -12,6 +12,7 @@ target_sources(engine_audio PRIVATE
     include/audio/components/Soundtrack.h
     src/audio/AudioEmitterSystem.cpp
     src/audio/AudioListenerSystem.cpp
+    src/audio/AudioSettings.cpp
     src/audio/AudioSystem.cpp
     src/audio/ComponentRegistration.cpp
     src/audio/SoundtrackSystem.cpp
@@ -20,10 +21,15 @@ target_sources(engine_audio PRIVATE
 
 
 target_link_libraries(engine_audio PUBLIC mir::core)
-target_link_libraries(engine_audio PRIVATE Wwise::Wwise)
+# serial: the per-user settings file
+target_link_libraries(engine_audio PRIVATE Wwise::Wwise mir::serial)
 
 target_compile_definitions(engine_audio PRIVATE UNICODE _UNICODE)
 
 target_include_directories(engine_audio PRIVATE
     "${WWISE_SDK_ROOT}/samples/SoundEngine/Win32"
     "${WWISE_SDK_ROOT}/samples/SoundEngine/Common")
+
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()

@@ -30,6 +30,36 @@
         ],
         "name": "MusicVolumeDown",
         "type": "Button"
+      },
+      {
+        "bindings": [
+          {
+            "device": "Keyboard",
+            "key": "N"
+          }
+        ],
+        "name": "SfxMute",
+        "type": "Button"
+      },
+      {
+        "bindings": [
+          {
+            "device": "Keyboard",
+            "key": "Right"
+          }
+        ],
+        "name": "SfxVolumeUp",
+        "type": "Button"
+      },
+      {
+        "bindings": [
+          {
+            "device": "Keyboard",
+            "key": "Left"
+          }
+        ],
+        "name": "SfxVolumeDown",
+        "type": "Button"
       }
     ]
   }

@@ -134,7 +134,7 @@ namespace mir
               mDesc.mEnableEditorLayout),
     #endif
           mCamera(Context()),
-          mAudio(Context(), mProject.mSoundBankDir),
+          mAudio(Context(), mProject.mSoundBankDir, UserDataDir() / mProject.mName / "settings.json"),
           mPhysics(Context(), mProject.mProjectSettingsPath),
           mTerrainData(Context()),
           mScript(Context(), mAssets, mProject.mAssetIdRoot),

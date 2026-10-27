@@ -26,6 +26,7 @@
 #include "core/log/Log.h"
 #include "core/log/SetupError.h"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <exception>
@@ -52,11 +53,10 @@ namespace mir::audio {
         constexpr AkGameObjectID kListener = 2;
         constexpr AkGameObjectID kMusicObject = 3;
 
-        constexpr const char *kMusicVolumeParameter = "Music_Volume";
-        // the authored curve makes the bottom of the range silence, so any volume above 0 stops short of it
-        constexpr float kMusicSilentDb = -96.0f;
-        constexpr float kMusicQuietestDb = -95.0f;
-        constexpr AkTimeMs kMusicVolumeRampMs = 100; // a jump in gain clicks
+        // the authored curves make the bottom of the range silence, so any volume above 0 stops short of it
+        constexpr float kSilentDb = -96.0f;
+        constexpr float kQuietestDb = -95.0f;
+        constexpr AkTimeMs kVolumeRampMs = 100; // a jump in gain clicks
         constexpr int kMusicReplaceFadeMs = 10;
 
         const std::filesystem::path kInitBank = "Init.bnk";
@@ -298,25 +298,93 @@ namespace mir::audio {
         };
 
         Music g_music;
-        float g_musicVolume = 1.0f;
-        bool g_musicMuted = false;
 
-        void ApplyMusicVolume(AkTimeMs rampMs)
+        struct Channel
+        {
+            const char *mParameter;
+            float mVolume = 1.0f;
+            bool mMuted = false;
+
+            bool Silent() const { return mMuted || mVolume <= 0.0f; }
+        };
+
+        Channel g_musicChannel{"Music_Volume"};
+        Channel g_sfxChannel{"SFX_Volume"};
+
+        void ApplyVolume(const Channel &channel, AkTimeMs rampMs)
         {
             if (!g_Initialized)
                 return;
 
-            const float decibels = g_musicMuted || g_musicVolume <= 0.0f
-                ? kMusicSilentDb
-                : (std::max)(kMusicQuietestDb, 20.0f * std::log10(g_musicVolume));
+            const float decibels =
+                channel.Silent() ? kSilentDb : (std::max)(kQuietestDb, 20.0f * std::log10(channel.mVolume));
 
-            Check(AK::SoundEngine::SetRTPCValue(kMusicVolumeParameter, decibels, AK_INVALID_GAME_OBJECT, rampMs),
-                "SetRTPCValue(Music_Volume)");
+            Check(AK::SoundEngine::SetRTPCValue(channel.mParameter, decibels, AK_INVALID_GAME_OBJECT, rampMs),
+                "SetRTPCValue");
+        }
+
+        bool EverythingSilent()
+        {
+            return g_musicChannel.Silent() && g_sfxChannel.Silent();
+        }
+
+        using Clock = std::chrono::steady_clock;
+
+        // Suspended, Wwise mixes nothing, so its audio thread idles
+        bool g_suspended = false;
+        bool g_suspendPending = false;
+        constexpr std::chrono::milliseconds kSuspendedRenderInterval{100};
+        Clock::time_point g_lastSuspendedRender;
+        Clock::time_point g_silentSince;
+        AkUInt32 g_suspendedAtTick = 0;
+
+        void WakeUp()
+        {
+            g_suspendPending = false;
+            if (!g_suspended)
+                return;
+
+            const double seconds = std::chrono::duration<double>(Clock::now() - g_silentSince).count();
+            const AkUInt32 buffers = AK::SoundEngine::GetBufferTick() - g_suspendedAtTick;
+            Check(AK::SoundEngine::WakeupFromSuspend(), "WakeupFromSuspend");
+            g_suspended = false;
+            MIR_LOG_INFO("wwise awake after {:.1f} s silent, {} audio buffer(s) rendered meanwhile", seconds, buffers);
+        }
+
+        
+        void OnChannelChanged()
+        {
+            if (!g_Initialized)
+                return;
+
+            if (!EverythingSilent())
+                WakeUp();
+            else if (!g_suspended && !g_suspendPending)
+            {
+                g_suspendPending = true;
+                g_silentSince = Clock::now();
+            }
+        }
+
+        // after the ramp down has finished, so the suspend cuts nothing audible
+        void SuspendOnceSilent()
+        {
+            if (!g_suspendPending || Clock::now() - g_silentSince < std::chrono::milliseconds(kVolumeRampMs))
+                return;
+
+            g_suspendPending = false;
+            g_suspendedAtTick = AK::SoundEngine::GetBufferTick();
+            if (Check(AK::SoundEngine::Suspend(false, true), "Suspend"))
+            {
+                g_suspended = true;
+                MIR_LOG_INFO("wwise suspended: music and SFX are both silent");
+            }
         }
 
         void StartWaitingMusic()
         {
-            if (!g_music.mWaiting)
+        
+            if (!g_music.mWaiting || EverythingSilent())
                 return;
 
             // with no bank named, the event may be in any of them
@@ -434,7 +502,9 @@ namespace mir::audio {
         for (std::size_t i = 1; i < banks.size(); ++i)
             QueueBank(BankName(banks[i].string()));
 
-        ApplyMusicVolume(0);
+        ApplyVolume(g_musicChannel, 0);
+        ApplyVolume(g_sfxChannel, 0);
+        OnChannelChanged();
         MIR_LOG_INFO("wwise initialized, {} SoundBank(s) in '{}', {} still loading", banks.size(), bankDir.string(),
             g_banksLoading);
     }
@@ -448,8 +518,15 @@ namespace mir::audio {
         // before RenderAudio, so a soundtrack whose bank just loaded is posted this frame
         ApplyBankResults();
         StartWaitingMusic();
+        SuspendOnceSilent();
 
-        AK::SoundEngine::RenderAudio();
+        
+        const Clock::time_point now = Clock::now();
+        if (!g_suspended || now - g_lastSuspendedRender >= kSuspendedRenderInterval)
+        {
+            AK::SoundEngine::RenderAudio();
+            g_lastSuspendedRender = now;
+        }
 
         {
             std::lock_guard<std::mutex> lock(g_endedMutex);
@@ -510,7 +587,8 @@ namespace mir::audio {
 
     uint32_t PostEventOn(const char* eventName, uint64_t gameObject)
     {
-        if (!g_Initialized)
+        // a post while silent would start the moment a channel comes back, however stale
+        if (!g_Initialized || EverythingSilent())
             return 0;
 
         static_assert(std::is_nothrow_invocable_v<decltype(&OnEventEnded), AkCallbackType, AkEventCallbackInfo *,
@@ -622,29 +700,69 @@ namespace mir::audio {
         return g_music.mWaiting || IsVoicePlaying(g_music.mPlayingId);
     }
 
+    namespace
+    {
+        void SetChannelVolume(Channel &channel, float volume)
+        {
+            if (std::isnan(volume))
+                return;
+
+            channel.mVolume = std::clamp(volume, 0.0f, 1.0f);
+            OnChannelChanged();
+            ApplyVolume(channel, kVolumeRampMs);
+        }
+
+        void SetChannelMuted(Channel &channel, bool muted)
+        {
+            channel.mMuted = muted;
+            OnChannelChanged();
+            ApplyVolume(channel, kVolumeRampMs);
+        }
+    }
+
     void SetMusicVolume(float volume)
     {
-        if (std::isnan(volume))
-            return;
-
-        g_musicVolume = std::clamp(volume, 0.0f, 1.0f);
-        ApplyMusicVolume(kMusicVolumeRampMs);
+        SetChannelVolume(g_musicChannel, volume);
     }
 
     float GetMusicVolume()
     {
-        return g_musicVolume;
+        return g_musicChannel.mVolume;
     }
 
     void SetMusicMuted(bool muted)
     {
-        g_musicMuted = muted;
-        ApplyMusicVolume(kMusicVolumeRampMs);
+        SetChannelMuted(g_musicChannel, muted);
     }
 
     bool IsMusicMuted()
     {
-        return g_musicMuted;
+        return g_musicChannel.mMuted;
+    }
+
+    void SetSfxVolume(float volume)
+    {
+        SetChannelVolume(g_sfxChannel, volume);
+    }
+
+    float GetSfxVolume()
+    {
+        return g_sfxChannel.mVolume;
+    }
+
+    void SetSfxMuted(bool muted)
+    {
+        SetChannelMuted(g_sfxChannel, muted);
+    }
+
+    bool IsSfxMuted()
+    {
+        return g_sfxChannel.mMuted;
+    }
+
+    bool IsIdle()
+    {
+        return EverythingSilent();
     }
 
     void Terminate()
@@ -685,6 +803,8 @@ namespace mir::audio {
             g_bankResults.clear();
         }
         g_music = Music{};
+        g_suspended = false;
+        g_suspendPending = false;
 
         g_Initialized = false;
     }

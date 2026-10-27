@@ -18,8 +18,10 @@ namespace mir
     class AudioModule
     {
     public:
-        // Starts Wwise and queues every bank in bankDir; throws SetupError when it cannot
-        AudioModule(ModuleContext context, const std::filesystem::path &bankDir);
+        // Restores the volumes from settingsPath, starts Wwise and queues every bank in
+        // bankDir also throws SetupError when it cannot start
+        AudioModule(ModuleContext context, const std::filesystem::path &bankDir,
+            const std::filesystem::path &settingsPath);
         ~AudioModule();
 
         AudioModule(const AudioModule &) = delete;
