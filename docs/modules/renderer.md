@@ -559,8 +559,18 @@ raw irradiance (RGB) and resolved confidence (alpha), keeping dark hits distinct
 from missing screen-space information. Quality bounds ray and traversal counts;
 full/half resolution changes the output size. Trace resources have a separate
 256 MiB cap across frame slots. Overlapping viewports fall back because the
-surface inputs share scene depth. Filtering and composition are still pending;
-the raw trace does not contribute to the displayed image.
+surface inputs share scene depth.
+
+Temporal accumulation reprojects using camera-relative positions and checks the
+previous depth and normal before reusing irradiance/confidence. Neighborhood
+clamping limits stale lighting. A bilateral spatial pass and depth/normal-aware
+resolve produce a full-resolution estimate per viewport. History resets on
+layout/resolution changes, camera identity or projection changes, large camera
+cuts, trace-setting changes, and `ResetHistory()`. Direct `RenderView` callers
+should supply a stable `historyId` or reset history when switching cameras.
+Filtering has a separate 256 MiB allocation cap across frame slots; unsupported
+layouts retain existing lighting. Composition is still pending, so the filtered
+estimate does not yet contribute to the displayed image.
 
 `rendering.ddgi` persists one axis-aligned, world-anchored diffuse GI volume.
 Project Settings > Rendering > Diffuse Global Illumination edits a draft and

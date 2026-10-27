@@ -200,13 +200,15 @@ namespace mir
             bool haveDefaultCamera = false;
             WorldPose defaultCameraPose;
             Camera defaultCamera{};
+            Entity defaultCameraEntity = kNullEntity;
 
-            mCameraQuery->ForEach([&](Entity, const WorldTransform &world, const Camera &camera)
+            mCameraQuery->ForEach([&](Entity entity, const WorldTransform &world, const Camera &camera)
                 {
                     if (haveDefaultCamera)
                         return;
                     defaultCameraPose = world.Pose();
                     defaultCamera = camera;
+                    defaultCameraEntity = entity;
                     haveDefaultCamera = true;
                 });
 
@@ -436,6 +438,9 @@ namespace mir
                 mRenderViews.push_back(RenderView{ mViewports[view.viewport].mRect, items, view.viewProj,
                                                   view.pose.position, view.lens.mNearZ,
                                                   view.lens.HasFarPlane() ? view.lens.mFarZ : 0.0f });
+                const auto &viewport = mViewports[view.viewport];
+                mRenderViews.back().historyId = viewport.mUseExternalCamera ? UINT64_MAX :
+                    PackEntity(viewport.mCameraEntity.IsNull() ? defaultCameraEntity : viewport.mCameraEntity);
             }
 
             if (warnNoCamera && !mWarnedNoCamera)

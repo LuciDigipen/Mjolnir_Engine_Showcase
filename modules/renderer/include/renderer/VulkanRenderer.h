@@ -168,6 +168,8 @@ namespace mir
         // False when narrowing the extended scene omitted world draws. The
         // final camera trace can still run; GI must fall back for this frame.
         bool rayTracingSceneComplete = true;
+        // Stable camera identity for temporal effects; callers with no ID reset history on camera switches.
+        uint64_t historyId = 0;
     };
 
     class VulkanRenderer

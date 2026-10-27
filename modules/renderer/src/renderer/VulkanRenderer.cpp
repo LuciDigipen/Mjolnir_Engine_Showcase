@@ -303,6 +303,7 @@ namespace mir
 
     void VulkanRenderer::ResetHistory()
     {
+        mSsgiTrace->ResetHistory();
 #if MIR_WITH_RTXGI
         mDdgi->ResetHistory();
 #endif

@@ -88,6 +88,9 @@ TEST_CASE("SSGI tracing bounds odd resolutions, view isolation and total GPU sto
     CHECK(fits());
     CHECK(fits(false));
     rects[0].extent = { 3840, 2160 };
+    CHECK_FALSE(fits());
+    CHECK_FALSE(fits(false));
+    rects[0].extent = { 2560, 1440 };
     CHECK(fits());
     CHECK_FALSE(fits(false));
     rects = { { {}, { 640, 360 } }, { { 640, 0 }, { 640, 360 } } };
@@ -102,6 +105,8 @@ TEST_CASE("SSGI tracing bounds odd resolutions, view isolation and total GPU sto
     SECTION("zero dimensions") { rects[0].extent.width = 0; CHECK_FALSE(fits()); }
     SECTION("workgroup limit") { limits.maxComputeWorkGroupCount[0] = 79; CHECK_FALSE(fits()); }
     SECTION("storage binding limit") { limits.maxPerStageDescriptorStorageImages = 1; CHECK_FALSE(fits()); }
+    SECTION("sampled binding limit") { limits.maxPerStageDescriptorSampledImages = 4; CHECK_FALSE(fits()); }
+    SECTION("filter push constant limit") { limits.maxPushConstantsSize = 119; CHECK_FALSE(fits()); }
     SECTION("empty views") { rects.clear(); CHECK_FALSE(fits()); }
     SECTION("too many views") { rects.resize(17); CHECK_FALSE(fits()); }
     SECTION("large products cannot wrap the budget")
@@ -110,6 +115,29 @@ TEST_CASE("SSGI tracing bounds odd resolutions, view isolation and total GPU sto
         rects[0].extent = { UINT32_MAX, UINT32_MAX };
         CHECK_FALSE(fits());
     }
+}
+
+TEST_CASE("SSGI history rejects cuts and projection changes while retaining camera-relative motion", "[renderer][ssgi]")
+{
+    using mir::vk::SsgiTrace;
+    const auto position = At(kEdgeA);
+    const auto matrix = mir::MakeCameraRelativeViewProjection(WorldPose{ position }, kLens, 1.5f);
+    const auto compatible = [&](const glm::mat4 &next, WorldPosition camera = At(kEdgeA))
+        { return SsgiTrace::HistoryCompatible(matrix, position, next, camera, 10); };
+    CHECK(compatible(matrix));
+    CHECK(compatible(matrix, At(kEdgeA + glm::dvec3(0.1, 0, 0))));
+    CHECK_FALSE(compatible(matrix, At(kEdgeA + glm::dvec3(20, 0, 0))));
+    auto turn = glm::mat3_cast(glm::angleAxis(glm::radians(3.0f), glm::vec3(0, 1, 0)));
+    CHECK(compatible(mir::MakeCameraRelativeViewProjection(WorldPose{ position, turn }, kLens, 1.5f)));
+    turn = glm::mat3_cast(glm::angleAxis(glm::radians(90.0f), glm::vec3(0, 1, 0)));
+    CHECK_FALSE(compatible(mir::MakeCameraRelativeViewProjection(WorldPose{ position, turn }, kLens, 1.5f)));
+    CHECK_FALSE(compatible(mir::MakeCameraRelativeViewProjection(WorldPose{ position }, mir::Camera{ 70, 0.1f, 100 }, 1.5f)));
+    CHECK_FALSE(compatible(mir::MakeCameraRelativeViewProjection(WorldPose{ position }, kLens, 2.0f)));
+    CHECK_FALSE(compatible(mir::MakeCameraRelativeViewProjection(WorldPose{ position }, mir::Camera{ 60, 0.2f, 100 }, 1.5f)));
+    CHECK_FALSE(compatible(glm::mat4(1)));
+    CHECK_FALSE(compatible(glm::mat4(0)));
+    auto invalid = matrix; invalid[0][0] = std::numeric_limits<float>::quiet_NaN();
+    CHECK_FALSE(compatible(invalid));
 }
 
 TEST_CASE("Raster surface inputs respect attachment limits and the allocation budget", "[renderer][ssgi]")
