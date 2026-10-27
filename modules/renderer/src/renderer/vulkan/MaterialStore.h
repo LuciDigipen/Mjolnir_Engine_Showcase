@@ -81,7 +81,7 @@ namespace mir::vk
             const std::array<VkDescriptorSetLayout, 3> &sharedLayouts);
         void Shutdown();
 
-        MaterialHandle CreateMaterial(const MaterialDesc &desc, ResourceStore &resources, VkFormat colorFormat);
+        MaterialHandle CreateMaterial(MaterialDesc desc, ResourceStore &resources, VkFormat colorFormat);
         // False when the handle is null, stale, the default or the error material.
         bool DestroyMaterial(MaterialHandle handle);
         // Raw record bytes for this material; published at the next frame.

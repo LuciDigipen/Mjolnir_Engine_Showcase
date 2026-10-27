@@ -225,9 +225,12 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 `SurfaceForward.slang` and `SurfaceRt.slang` are the fixed pass entries, and a
 material type is specialized into them by CMake. Materials never declare
 bindings. The default material is `assets/materials/default.slang` and reads its
-record through the shared tables; a device without them keeps the legacy
-`default.slang` Blinn-Phong pair. RT uses SBT hit group 2 for surface materials,
-while groups 0 and 1 stay on `raytrace.slang`'s legacy camera and shadow paths.
+record through the shared tables; `ResolveMaterialDesc` maps the public
+`shaderName == "default"` request to that registration, while a device without
+shared tables keeps the legacy `default.slang` Blinn-Phong pair. `TangentFrame.slang`
+is shared by raster and RT (explicit model columns, orthogonalization, mirror
+handedness); RT uses SBT hit group 2 for surface materials, while groups 0 and 1
+stay on `raytrace.slang`'s legacy camera and shadow paths.
 `shaders/shader_manifest.json` is the single source of the compile commands,
 reflections and depfiles for both the build and the future reload path; the
 build-generated `shaders/surface_materials.json` is the runtime registration

@@ -8,7 +8,7 @@ engine_add_module_tests(renderer
     Material.tests.cpp
     MaterialRecordTable.tests.cpp
     MaterialReflection.tests.cpp
-    MeshFrontend.tests.cpp
+    MaterialResolution.tests.cpp
     SurfaceMaterialCatalog.tests.cpp
     SurfaceMaterialLayout.tests.cpp
     MeshStreaming.tests.cpp
@@ -44,4 +44,5 @@ target_compile_definitions(engine_renderer_tests PRIVATE
     MIR_DEFAULT_MATERIAL_JSON="${MIR_DEFAULT_MATERIAL_JSON_PATH}"
     MIR_SHADER_MANIFEST="${MIR_SHADER_MANIFEST_PATH}"
     MIR_SURFACE_CATALOG="${MIR_SURFACE_CATALOG_PATH}"
-    MIR_RENDERER_TEST_DIR="${MIR_RENDERER_TEST_DIR_PATH}")
+    MIR_RENDERER_TEST_DIR="${MIR_RENDERER_TEST_DIR_PATH}"
+    MIR_BUILD_TYPE="${CMAKE_BUILD_TYPE}")

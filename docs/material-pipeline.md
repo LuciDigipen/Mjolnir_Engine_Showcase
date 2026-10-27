@@ -88,12 +88,33 @@ runtime reads that catalog and the reflection JSON to pack records; it never
 runs slangc and never reads the source checkout. Debug builds use `-g -O0`,
 other configurations use `-O3` in both the command and the manifest.
 
+Reflection and parameters are validated before allocation or writes: supported
+field sizes, non-overlapping offsets, duplicate names, record bounds, JSON types,
+finite floats and uint/int ranges. A malformed catalog, reflection or authored
+parameter object returns a bounded error instead of throwing through renderer
+startup. Missing fields remain an explicit failure.
+
 ## Default
 
 `assets/materials/default.slang` is the default opaque material: albedo 0.5,
 dielectric F0 0.04, roughness `pow(2/34, 0.25)`, AO on ambient only. It uses the
-shared PBR lighting, so raster and RT agree. Devices without the shared tables
-keep the legacy Blinn-Phong `assets/shaders/default.slang`.
+shared PBR lighting, so raster and RT agree. A public `MaterialDesc` whose
+`shaderName` is the explicit `"default"` (as serialized by scenes) is normalized
+to this catalog registration while preserving the caller's topology, culling,
+alpha, sampler and explicit record. Devices without the shared tables keep the
+legacy Blinn-Phong `assets/shaders/default.slang`; unknown surface requests
+reject instead of falling back.
+
+## Tangent frame
+
+`TangentFrame.slang` is the single helper used by `SurfaceForward` and
+`SurfaceRt`: it forms the tangent with an explicit sum of the model's linear
+columns, orthogonalizes/normalizes it with a finite fallback, and flips
+handedness for a mirroring determinant. Raster passes `SV_IsFrontFace`; RT
+derives the same winding test from the geometric normal and only flips the
+shading normal for a double-sided back face. `TangentFrameProbe.slang` covers a
+rotation plus non-uniform scale, a mirror and a degenerate tangent for
+supervisor GPU readback.
 
 ## RT hit groups
 

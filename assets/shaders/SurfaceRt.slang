@@ -177,22 +177,20 @@ void closestHitSurface<M : IMaterial>(inout RayPayload payload, in BuiltInTriang
     const float3 objNormal = InterpolateFloat3(info, indices, barycentrics, kNormalOffset);
     float3 N = normalize(info.normalCol0.xyz * objNormal.x + info.normalCol1.xyz * objNormal.y +
                          info.normalCol2.xyz * objNormal.z);
-    const bool frontFace = !((info.flags & kInstanceDoubleSided) != 0 &&
-                             dot(N, WorldRayDirection()) > 0.0);
-    if (!frontFace)
+
+    // frontFace follows the actual geometric winding, matching SV_IsFrontFace;
+    // a double-sided back face flips the shading normal, not the winding.
+    const float3 geoEdges = cross(op1 - op0, op2 - op0);
+    const float3 geometric = normalize(
+        info.normalCol0.xyz * geoEdges.x + info.normalCol1.xyz * geoEdges.y +
+        info.normalCol2.xyz * geoEdges.z);
+    const bool frontFace = dot(geometric, WorldRayDirection()) < 0.0;
+    if (!frontFace && (info.flags & kInstanceDoubleSided) != 0)
         N = -N;
 
     const float4 sourceTangent = InterpolateTangent(info, indices, barycentrics);
-    const float3x3 linear = float3x3(info.modelCol0.xyz, info.modelCol1.xyz, info.modelCol2.xyz);
-    float3 tangent = mul(linear, sourceTangent.xyz);
-    tangent -= N * dot(N, tangent);
-    if (dot(tangent, tangent) < 1e-12)
-        tangent = cross(N, abs(N.y) < 0.99 ? float3(0, 1, 0) : float3(1, 0, 0));
-    tangent = normalize(tangent);
-    float handedness = sourceTangent.w < 0.0 ? -1.0 : 1.0;
-    if (determinant(linear) < 0.0)
-        handedness = -handedness;
-    const float4 tangentFrame = float4(tangent, handedness);
+    const float4 tangentFrame = TransformTangentFrame(info.modelCol0.xyz, info.modelCol1.xyz,
+        info.modelCol2.xyz, sourceTangent, N);
     const float4 vertexColor = float4(InterpolateFloat3(info, indices, barycentrics, kColorOffset),
                                     InterpolateFloat(info, indices, barycentrics, kAlphaOffset)) *
                                info.tint;

@@ -1,0 +1,1 @@
+int SurfaceMaterialFixtureAnchor = 0;

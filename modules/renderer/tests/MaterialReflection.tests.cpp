@@ -104,6 +104,52 @@ TEST_CASE("Material packing rejects fields it cannot lay out", "[renderer][mater
     CHECK_FALSE(error.empty());
 }
 
+TEST_CASE("Malformed material layouts reject before packing", "[renderer][material][reflection]")
+{
+    const char *overflow = R"({"entryPoints":[{"parameters":[{"type":{"baseShape":"structuredBuffer",
+        "resultType":{"fields":[{"name":"data","type":{"kind":"scalar","scalarType":"float32"},
+        "binding":{"offset":4294967295,"size":8}}]}}}]}]})";
+    std::string error;
+    CHECK_FALSE(ParseMaterialLayout(overflow, &error).has_value());
+    CHECK_FALSE(error.empty());
+
+    const char *overlap = R"({"entryPoints":[{"parameters":[{"type":{"baseShape":"structuredBuffer",
+        "resultType":{"fields":[
+        {"name":"a","type":{"kind":"scalar","scalarType":"float32"},"binding":{"offset":0,"size":4}},
+        {"name":"b","type":{"kind":"scalar","scalarType":"float32"},"binding":{"offset":0,"size":4}}]}}}]}]})";
+    CHECK_FALSE(ParseMaterialLayout(overlap, &error).has_value());
+
+    const char *duplicate = R"({"entryPoints":[{"parameters":[{"type":{"baseShape":"structuredBuffer",
+        "resultType":{"fields":[
+        {"name":"a","type":{"kind":"scalar","scalarType":"float32"},"binding":{"offset":0,"size":4}},
+        {"name":"a","type":{"kind":"scalar","scalarType":"float32"},"binding":{"offset":4,"size":4}}]}}}]}]})";
+    CHECK_FALSE(ParseMaterialLayout(duplicate, &error).has_value());
+
+    const char *wrongSize = R"({"entryPoints":[{"parameters":[{"type":{"baseShape":"structuredBuffer",
+        "resultType":{"fields":[{"name":"a","type":{"kind":"vector","elementCount":3,
+        "elementType":{"kind":"scalar","scalarType":"float32"}},"binding":{"offset":0,"size":8}}]}}}]}]})";
+    CHECK_FALSE(ParseMaterialLayout(wrongSize, &error).has_value());
+}
+
+TEST_CASE("Material packing rejects wrong JSON types and out-of-range numbers", "[renderer][material][reflection]")
+{
+    const char *reflection = R"({"entryPoints":[{"parameters":[{"type":{"baseShape":"structuredBuffer",
+        "resultType":{"fields":[
+        {"name":"flag","type":{"kind":"scalar","scalarType":"bool"},"binding":{"offset":0,"size":4}},
+        {"name":"index","type":{"kind":"scalar","scalarType":"uint32"},"binding":{"offset":4,"size":4}},
+        {"name":"count","type":{"kind":"scalar","scalarType":"int32"},"binding":{"offset":8,"size":4}},
+        {"name":"value","type":{"kind":"scalar","scalarType":"float32"},"binding":{"offset":12,"size":4}}]}}}]}]})";
+    const auto layout = ParseMaterialLayout(reflection);
+    REQUIRE(layout.has_value());
+
+    CHECK_FALSE(PackMaterialRecord(*layout, R"({"flag":"true","index":1,"count":1,"value":1})").has_value());
+    CHECK_FALSE(PackMaterialRecord(*layout, R"({"flag":true,"index":-1,"count":1,"value":1})").has_value());
+    CHECK_FALSE(PackMaterialRecord(*layout, R"({"flag":true,"index":1,"count":1.5,"value":1})").has_value());
+    CHECK_FALSE(PackMaterialRecord(*layout, R"({"flag":true,"index":1,"count":1,"value":1e300})").has_value());
+    CHECK_FALSE(PackMaterialRecord(*layout, R"({"flag":true,"index":1,"count":1,"value":1,"extra":1})")
+                    .has_value());
+}
+
 TEST_CASE("Material shader names carry their namespace", "[renderer][material][reflection]")
 {
     const std::string base = MaterialShaderStem("", "DefaultMaterial", "assets/materials/default.slang", "mesh");

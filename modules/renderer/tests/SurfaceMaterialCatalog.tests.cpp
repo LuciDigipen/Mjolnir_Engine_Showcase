@@ -45,6 +45,27 @@ namespace
     })";
 }
 
+TEST_CASE("Surface catalog rejects malformed versions and entries", "[renderer][material]")
+{
+    const std::filesystem::path shaders = ShaderPath("");
+    std::filesystem::create_directories(shaders);
+    {
+        std::ofstream catalog(ShaderPath("surface_materials.json"));
+        catalog << R"({"version":"1","materials":[]})";
+    }
+    std::string error;
+    CHECK_FALSE(LoadSurfaceMaterialCatalog(&error).has_value());
+    CHECK_FALSE(error.empty());
+
+    {
+        std::ofstream catalog(ShaderPath("surface_materials.json"));
+        catalog << R"({"version":1,"materials":[{"stem":1}]})";
+    }
+    CHECK_FALSE(LoadSurfaceMaterialCatalog(&error).has_value());
+
+    std::filesystem::remove(ShaderPath("surface_materials.json"));
+}
+
 TEST_CASE("Surface catalog keeps per-asset records while sharing a stem", "[renderer][material]")
 {
     const std::filesystem::path shaders = ShaderPath("");

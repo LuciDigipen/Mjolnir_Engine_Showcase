@@ -15,6 +15,8 @@
 #include "VulkanConstants.h"
 #include "VulkanPushConstants.h"
 
+#include <renderer/MaterialResolution.h>
+
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
 
@@ -67,21 +69,7 @@ namespace mir::vk
         if (mTable != nullptr && !CreateRecordRefBuffer())
             return false;
 
-        MaterialDesc defaultDesc;
-        if (mTable != nullptr)
-        {
-            const SurfaceMaterialRegistration *const registration =
-                mSurfaceMaterials.FindByAsset("assets/materials/default.material.json");
-            if (registration == nullptr)
-            {
-                MIR_LOG_CRITICAL("MaterialStore: no default surface material registration");
-                return false;
-            }
-            defaultDesc.shaderName = registration->stem;
-            defaultDesc.surfaceAsset = registration->asset;
-            defaultDesc.surfaceMaterial = true;
-        }
-        mDefaultMaterial = CreateMaterial(defaultDesc, resources, colorFormat);
+        mDefaultMaterial = CreateMaterial(MaterialDesc{}, resources, colorFormat);
         if (mDefaultMaterial.IsNull())
             return false;
 
@@ -434,8 +422,17 @@ namespace mir::vk
         return true;
     }
 
-    MaterialHandle MaterialStore::CreateMaterial(const MaterialDesc &desc, ResourceStore &resources, VkFormat colorFormat)
+    MaterialHandle MaterialStore::CreateMaterial(MaterialDesc desc, ResourceStore &resources, VkFormat colorFormat)
     {
+        std::string resolutionError;
+        const auto resolved = ResolveMaterialDesc(desc, mSurfaceMaterials, mTable != nullptr, &resolutionError);
+        if (!resolved)
+        {
+            MIR_LOG_ERROR("CreateMaterial: {}", resolutionError);
+            return kNullMaterial;
+        }
+        desc = *resolved;
+
         const VkPipeline pipeline = BuildPipeline(desc, colorFormat);
         if (pipeline == VK_NULL_HANDLE)
             return kNullMaterial;

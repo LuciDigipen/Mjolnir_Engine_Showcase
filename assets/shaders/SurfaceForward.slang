@@ -50,16 +50,10 @@ SurfaceVSOutput vertexMain(SurfaceVSInput input)
     output.normal = normalize(pushData.normalCol0.xyz * input.normal.x +
                               pushData.normalCol1.xyz * input.normal.y +
                               pushData.normalCol2.xyz * input.normal.z);
-    const float3x3 linear = (float3x3)pushData.model;
-    float3 tangent = mul(linear, input.tangent.xyz);
-    tangent -= output.normal * dot(output.normal, tangent);
-    if (dot(tangent, tangent) < 1e-12)
-        tangent = cross(output.normal, abs(output.normal.y) < 0.99 ? float3(0, 1, 0) : float3(1, 0, 0));
-    tangent = normalize(tangent);
-    float handedness = input.tangent.w < 0.0 ? -1.0 : 1.0;
-    if (determinant(linear) < 0.0)
-        handedness = -handedness;
-    output.tangent = float4(tangent, handedness);
+    const float3 c0 = mul(pushData.model, float4(1, 0, 0, 0)).xyz;
+    const float3 c1 = mul(pushData.model, float4(0, 1, 0, 0)).xyz;
+    const float3 c2 = mul(pushData.model, float4(0, 0, 1, 0)).xyz;
+    output.tangent = TransformTangentFrame(c0, c1, c2, input.tangent, output.normal);
     output.uv = input.uv;
     output.color = float4(input.color, input.alpha) * pushData.tint;
     output.localPos = input.pos;

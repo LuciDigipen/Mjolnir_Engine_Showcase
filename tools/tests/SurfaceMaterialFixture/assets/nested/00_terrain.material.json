@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "shader": { "file": "nested/deferred.slang", "type": "DeferredFixtureMaterial" },
+  "frontends": ["terrain"],
+  "parameters": { "color": [1.0, 1.0, 1.0, 1.0] }
+}

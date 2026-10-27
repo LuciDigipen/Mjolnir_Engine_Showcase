@@ -1,4 +1,4 @@
-# ADR 0002: Generic surface material framework and default PBR
+# ADR 0003: Generic surface material framework and default PBR
 
 - Status: Accepted
 - Date: 2026-10-26
@@ -34,11 +34,17 @@ engine code, and slangc specializes an entry point with `-specialize`.
    `SurfaceLayout.slang` compiles the same type into a
    `StructuredBuffer<M>` witness, and `MaterialReflection` turns its
    `resultType.fields` into offsets and a 16-byte-rounded record size. This is
-   the only field table; there is no handwritten duplicate.
+   the only field table; there is no handwritten duplicate. Malformed layouts,
+   overlaps, duplicate names, out-of-bounds fields, wrong JSON types and
+   non-finite/out-of-range numbers are rejected before any record bytes are
+   written.
 5. The default material is a surface type (`assets/materials/default.slang`).
    Its PBR constants preserve the old look: albedo 0.5, F0 0.04, roughness
-   `pow(2/34, 0.25)`, AO on ambient only. A legacy `default.slang` remains as
-   the fallback for devices without shared material tables.
+   `pow(2/34, 0.25)`, AO on ambient only. `ResolveMaterialDesc` normalizes a
+   public `shaderName == "default"` request to the catalog registration on a
+   shared-table device, preserving topology, culling, alpha, sampler and an
+   explicit record; a legacy `default.slang` remains only for devices without
+   shared material tables.
 6. CMake recursively discovers `*.material.json` under the engine assets root
    and each game's assets root, validates the shared v1 schema, resolves shader
    paths through normalized approved roots, and keys compilation by normalized
@@ -111,5 +117,7 @@ The pass loaded `ProbeMaterial` from a `ByteAddressBuffer`; the layout came
 from a separate `StructuredBuffer<M>` witness because the raw buffer reflection
 has no fields. The same `-fvk-use-gl-layout` flag is used for every surface
 specialization here. The `SurfaceMaterialLayout` test compiles the real default
-type and checks the packed bytes against the C++ record. GPU pixel checks
-remain supervisor work.
+type and packs the authored JSON through the production reflection packer. The
+`TangentFrameProbe.slang` fixture compiles a rotation plus non-uniform scale,
+mirror and degenerate-tangent probe for supervisor GPU readback. GPU pixel
+checks remain supervisor work.

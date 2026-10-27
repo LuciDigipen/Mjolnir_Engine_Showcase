@@ -126,8 +126,16 @@ TEST_CASE("The shader manifest covers legacy and namespaced surface outputs", "[
     const std::string defaultStem =
         mir::MaterialShaderStem("default", "DefaultMaterial", "assets/materials/default.slang", "mesh");
     const auto &common = manifest.at("commonArguments");
-    CHECK(std::find(common.begin(), common.end(), "-g") != common.end());
-    CHECK(std::find(common.begin(), common.end(), "-O0") != common.end());
+    if (std::string(MIR_BUILD_TYPE) == "Debug")
+    {
+        CHECK(std::find(common.begin(), common.end(), "-g") != common.end());
+        CHECK(std::find(common.begin(), common.end(), "-O0") != common.end());
+    }
+    else
+    {
+        CHECK(std::find(common.begin(), common.end(), "-O3") != common.end());
+        CHECK(std::find(common.begin(), common.end(), "-g") == common.end());
+    }
 
     std::set<std::string> outputs;
     bool legacyDefault = false;

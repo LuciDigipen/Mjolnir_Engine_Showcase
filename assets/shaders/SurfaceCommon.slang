@@ -14,6 +14,7 @@
 #define MIR_SURFACE_COMMON
 
 #include "LightingCommon.slang"
+#include "TangentFrame.slang"
 
 #ifndef MIR_SURFACE_SET
 #define MIR_SURFACE_SET 4

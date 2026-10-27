@@ -87,44 +87,68 @@ namespace mir
             return std::nullopt;
         }
 
-        if (!root.is_object() || root.value("version", 0u) != 1 || !root.contains("materials") ||
-            !root.at("materials").is_array())
+        try
         {
-            SetError(error, "surface material catalog has an unsupported shape or version");
-            return std::nullopt;
-        }
-
-        SurfaceMaterialCatalog catalog;
-        for (const nlohmann::json &entry : root.at("materials"))
-        {
-            if (!entry.is_object())
+            if (!root.is_object() || !root.contains("version") ||
+                !root.at("version").is_number_unsigned() || root.at("version").get<uint32_t>() != 1 ||
+                !root.contains("materials") || !root.at("materials").is_array())
             {
-                SetError(error, "surface material catalog entry is not an object");
+                SetError(error, "surface material catalog has an unsupported shape or version");
                 return std::nullopt;
             }
-            SurfaceMaterialRegistration material;
-            material.stem = entry.value("stem", "");
-            material.type = entry.value("type", "");
-            material.frontend = entry.value("frontend", "");
-            material.asset = entry.value("asset", "");
-            material.shader = entry.value("shader", "");
-            material.parametersJson = entry.value("parameters", nlohmann::json::object()).dump();
-            material.reflectionFile = entry.value("reflection", "");
-            if (material.stem.empty() || material.type.empty() || material.frontend != "mesh" ||
-                material.asset.empty() || material.shader.empty() || material.reflectionFile.empty())
+
+            SurfaceMaterialCatalog catalog;
+            for (const nlohmann::json &entry : root.at("materials"))
             {
-                SetError(error, "surface material catalog entry is incomplete");
+                if (!entry.is_object())
+                {
+                    SetError(error, "surface material catalog entry is not an object");
+                    return std::nullopt;
+                }
+                for (const char *key : { "stem", "type", "frontend", "asset", "shader", "reflection" })
+                {
+                    if (!entry.contains(key) || !entry.at(key).is_string())
+                    {
+                        SetError(error, std::string("surface material catalog entry is missing string '") +
+                                            key + "'");
+                        return std::nullopt;
+                    }
+                }
+                if (!entry.contains("parameters") || !entry.at("parameters").is_object())
+                {
+                    SetError(error, "surface material catalog entry parameters must be an object");
+                    return std::nullopt;
+                }
+
+                SurfaceMaterialRegistration material;
+                material.stem = entry.at("stem").get<std::string>();
+                material.type = entry.at("type").get<std::string>();
+                material.frontend = entry.at("frontend").get<std::string>();
+                material.asset = entry.at("asset").get<std::string>();
+                material.shader = entry.at("shader").get<std::string>();
+                material.parametersJson = entry.at("parameters").dump();
+                material.reflectionFile = entry.at("reflection").get<std::string>();
+                if (material.stem.empty() || material.type.empty() || material.frontend != "mesh" ||
+                    material.asset.empty() || material.shader.empty() || material.reflectionFile.empty())
+                {
+                    SetError(error, "surface material catalog entry is incomplete");
+                    return std::nullopt;
+                }
+                catalog.materials.push_back(std::move(material));
+            }
+
+            if (catalog.materials.empty())
+            {
+                SetError(error, "surface material catalog is empty");
                 return std::nullopt;
             }
-            catalog.materials.push_back(std::move(material));
+            return catalog;
         }
-
-        if (catalog.materials.empty())
+        catch (const std::exception &exception)
         {
-            SetError(error, "surface material catalog is empty");
+            SetError(error, std::string("surface material catalog is malformed: ") + exception.what());
             return std::nullopt;
         }
-        return catalog;
     }
 
     std::optional<std::vector<std::byte>> PackSurfaceMaterialRecord(
