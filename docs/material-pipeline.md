@@ -110,8 +110,9 @@ reject instead of falling back.
 Direct light uses `(diffuse + pi * specular) * lightColor * saturate(NdotL)`
 for both the Sun and local lights; the pi cancels GGX's `1/pi` while preserving
 the existing brightness convention. AO is ambient-only. RT specular albedo uses
-the NVIDIA Streamline RR §4.2.1 approximation
-`F0 + (max(1 - roughness^2, F0) - F0) * (1 - NoV)^5`; the normal guide retains
+the rational `EnvBRDFApprox2` directional-albedo fit documented in
+[NVIDIA Streamline RR §4.2.1](https://github.com/NVIDIA-RTX/Streamline/blob/main/docs/ProgrammingGuideDLSS_RR.md#421-specular-albedo-generation),
+evaluated with F0, squared roughness and the view cosine; the normal guide retains
 linear roughness in `w`. `PbrProbe.slang` covers the analytic F0=0 Lambert
 oracle (`0.5 * NdotL`, including multiple angles), back-face zero, finite
 grazing and guide roughness/F0 dependence. The probe is compiled and

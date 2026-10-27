@@ -15,8 +15,8 @@ float DistributionGgx(float NdotH, float roughness)
 {
     const float a = roughness * roughness;
     const float a2 = a * a;
-    const float d = NdotH * NdotH * (a2 - 1.0) + 1.0;
-    return a2 / max(kPi * d * d, 1e-7);
+    const float d = (1.0 - NdotH * NdotH) + NdotH * NdotH * a2;
+    return a2 / max(kPi * d * d, 1e-12);
 }
 
 float GeometrySmith(float NdotV, float NdotL, float roughness)
@@ -37,9 +37,12 @@ float3 SpecularBrdf(float3 f0, float roughness, float3 N, float3 V, float3 L)
 {
     const float NdotL = saturate(dot(N, L));
     const float NdotV = max(saturate(dot(N, V)), kMinNdotV);
-    if (NdotL <= 0.0)
+    if (NdotL <= 0.0 || dot(N, V) <= 0.0)
         return float3(0.0, 0.0, 0.0);
-    const float3 H = normalize(L + V);
+    const float3 halfVector = L + V;
+    if (dot(halfVector, halfVector) < 1e-12)
+        return float3(0.0, 0.0, 0.0);
+    const float3 H = normalize(halfVector);
     const float NdotH = saturate(dot(N, H));
     const float VdotH = saturate(dot(V, H));
     const float3 F = FresnelSchlick(VdotH, f0);
@@ -61,15 +64,27 @@ float3 EvaluateDirectPbr(float3 diffuseAlbedo, float3 f0, float roughness, float
     return (diffuseAlbedo + kPi * specular) * lightColor * NdotL;
 }
 
-// NVIDIA DLSS Ray Reconstruction specular-albedo guide approximation:
-// F0 + (max(1 - roughness^2, F0) - F0) * (1 - NoV)^5.
-// The caller passes squared roughness; gNormal.w keeps linear roughness.
+// Directional-albedo fit from Ray Tracing Gems, referenced by NVIDIA DLSS RR.
 float3 SpecularAlbedoGuide(float3 f0, float squaredRoughness, float NoV)
 {
-    const float3 dielectric = float3(1.0 - squaredRoughness, 1.0 - squaredRoughness,
-        1.0 - squaredRoughness);
-    const float3 reflectance = max(dielectric, f0);
-    return saturate(f0 + (reflectance - f0) * pow(saturate(1.0 - NoV), 5.0));
+    const float n = saturate(abs(NoV));
+    const float n2 = n * n;
+    const float n3 = n2 * n;
+    const float a = saturate(squaredRoughness);
+    const float a3 = a * a * a;
+    const float biasNumerator = 0.99044 - 1.28514 * n + (1.29678 - 0.755907 * n) * a;
+    const float biasDenominator = 1.0 + 2.92338 * n + 59.4188 * n3 +
+        (20.3225 - 27.0302 * n + 222.592 * n3) * a +
+        (121.563 + 626.13 * n + 316.627 * n3) * a3;
+    const float scaleNumerator = 0.0365463 + 3.32707 * n + (9.0632 - 9.04756 * n) * a;
+    const float scaleDenominator = 1.0 + 3.59685 * n2 - 1.36772 * n3 +
+        (9.04401 - 16.3174 * n2 + 9.22949 * n3) * a +
+        (5.56589 + 19.7886 * n2 - 20.2123 * n3) * a3;
+    const float3 reflectance = saturate(f0);
+    const float bias = max(0.0, biasNumerator / max(biasDenominator, 1e-6)) *
+        saturate(reflectance.g * 50.0);
+    const float scale = max(0.0, scaleNumerator / max(scaleDenominator, 1e-6));
+    return saturate(reflectance * scale + bias);
 }
 
 float3 ShadePbr<V : IShadowVisibility>(V visibility, SurfaceOutput surface, float3 worldPos)

@@ -27,8 +27,8 @@ engine code, and slangc specializes an entry point with `-specialize`.
    light is `(diffuse + pi * specular) * lightColor * NdotL`, so the GGX `1/pi`
    is cancelled once and the cosine is not duplicated or dropped. The DLSS RR
    specular guide follows NVIDIA's Streamline Ray Reconstruction guide §4.2.1
-   (`F0 + (max(1 - roughness^2, F0) - F0) * (1 - NoV)^5`, MIT-licensed
-   reference); `gNormal.w` stays linear roughness.
+   (the `EnvBRDFApprox2` rational directional-albedo fit from Ray Tracing Gems,
+   using F0, squared roughness and the view cosine); `gNormal.w` stays linear roughness.
 3. Raster reads the material record through set 0's dynamic `MaterialRecordRef`
    and set 4's byte-address buffer. RT reads the same bytes through
    `RtInstanceInfo.materialRecord` and set 0's binding 11. The default and

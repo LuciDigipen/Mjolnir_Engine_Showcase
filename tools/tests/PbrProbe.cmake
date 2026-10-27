@@ -4,7 +4,7 @@ endif()
 
 execute_process(
     COMMAND "${SLANGC_EXECUTABLE}" "${SOURCE}"
-            -target spirv -profile spirv_1_5 -entry main -stage compute
+            -target spirv -profile spirv_1_5 -entry probeMain -stage compute
             -fvk-use-entrypoint-name -matrix-layout-column-major -O0
             -o "${OUTPUT}"
     RESULT_VARIABLE compile_result)
