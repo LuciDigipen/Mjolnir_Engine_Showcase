@@ -1,7 +1,7 @@
-// Synthesizes the SoundtrackCheck placeholder: 64 bars at 84 BPM, 48 kHz stereo,
-// C - Am - F - G7 with a pad, bass, an arpeggio that pans across the field and a
-// melody in the second and fourth sections. Every tail wraps to the start, so
-// the file loops without a seam.
+// Synthesizes SoundtrackCheck's placeholders. The track: 64 bars at 84 BPM, 48 kHz
+// stereo, C - Am - F - G7 with a pad, bass, an arpeggio that pans across the field
+// and a melody in the second and fourth sections. Every tail wraps to the start,
+// so both files loop without a seam.
 using System;
 using System.IO;
 
@@ -164,6 +164,26 @@ public static class PlaceholderTrack
             }
         }
 
+        Save(path);
+    }
+
+    // The SFX placeholder: a 2 s loop of high blips that ping-pong between the
+    // speakers, far enough from the music to tell the two volumes apart
+    public static void WriteSfxLoop(string path)
+    {
+        sFrames = 2 * SampleRate;
+        sLeft = new float[sFrames];
+        sRight = new float[sFrames];
+
+        int[] notes = { 84, 88, 91, 88 };
+        for (int step = 0; step < 4; ++step)
+            Pluck(step * 0.5, notes[step], 0.3, step % 2 == 0 ? -0.9 : 0.9, 0.08);
+
+        Save(path);
+    }
+
+    static void Save(string path)
+    {
         float peak = 0.0f;
         for (int i = 0; i < sFrames; ++i)
             peak = Math.Max(peak, Math.Max(Math.Abs(sLeft[i]), Math.Abs(sRight[i])));

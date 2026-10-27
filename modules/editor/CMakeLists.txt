@@ -31,7 +31,7 @@ target_link_libraries(engine_editor
             iconfontcppheaders::iconfontcppheaders
 )
 
-# background image: open-file dialog and the LocalAppData lookup
+# background image: open-file dialog
 if(WIN32)
     target_link_libraries(engine_editor PRIVATE ole32 shell32 uuid)
 endif()

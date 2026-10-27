@@ -111,13 +111,16 @@ function T.OnUpdate(self, world, entity, dt)
 end
 ```
 
-The music bus has its own four, which take no entity:
+The music and SFX busses have four each, which take no entity:
 `world:set_music_volume(volume)`, `world:music_volume()`,
-`world:set_music_muted(muted)` and `world:music_muted()`. The volume is linear,
-from 0 to 1; a value outside that, NaN, or a mute that is not a boolean is
-refused with an error and the old value stays. Both are kept while the sound
-engine is down and applied when it starts, so a settings screen can write them at
-any time. Muting keeps the volume to come back to.
+`world:set_music_muted(muted)` and `world:music_muted()`, and the same with
+`sfx` for `music`. The volume is linear, from 0 to 1; a value outside that, NaN,
+infinity, or a mute that is not a boolean is refused with an error and the old
+value stays, so it never reaches Wwise. They are kept while the sound engine is
+down and applied when it starts, so a settings screen can write them at any time,
+and the engine saves them per user. Muting keeps the volume to come back to. With
+both channels silent, `world:post_event` returns 0: see
+[audio.md](audio.md).
 
 ```lua
 if world:just_pressed("MusicMute") then

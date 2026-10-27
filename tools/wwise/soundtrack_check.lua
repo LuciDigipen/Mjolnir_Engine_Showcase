@@ -1,59 +1,79 @@
 -- Authors SoundtrackCheck's Wwise project through WAAPI. Run by
 -- build_soundtrack_check.ps1 on a blank project, with the track's WAV in
--- SOUNDTRACK_CHECK_WAV (Windows PowerShell drops a "--" before script arguments).
+-- SOUNDTRACK_CHECK_WAV and the SFX loop's in SOUNDTRACK_CHECK_SFX_WAV (Windows
+-- PowerShell drops a "--" before script arguments).
 --
 -- What the engine relies on:
---   Music        a bus under Main Audio Bus that the soundtrack is routed to
---   Music_Volume the game parameter audio::SetMusicVolume writes, in dB from
---                -96 (muted) to 0, driving the Music bus's volume
---   Play_Soundtrack in the Music bank, a streamed, looping playlist
+--   Music, SFX   busses under Main Audio Bus
+--   Music_Volume, SFX_Volume
+--                the game parameters audio::SetMusicVolume and SetSfxVolume write,
+--                in dB from -96 (muted) to 0, each driving its bus's volume
+--   Play_Soundtrack in the Music bank, a streamed, looping playlist on Music
+--   Play_Sfx_Loop   in the Sfx bank, a looping sound on SFX
 
-local wav = os.getenv("SOUNDTRACK_CHECK_WAV")
-assert(wav ~= nil and wav ~= "", "SOUNDTRACK_CHECK_WAV must name the track's WAV")
+local function env(name)
+    local value = os.getenv(name)
+    assert(value ~= nil and value ~= "", name .. " must name a WAV")
+    return value
+end
+
+local wav = env("SOUNDTRACK_CHECK_WAV")
+local sfxWav = env("SOUNDTRACK_CHECK_SFX_WAV")
 
 local mainBus = "\\Busses\\Default Work Unit\\Main Audio Bus"
-local musicBus = mainBus .. "\\Music"
-local volume = "\\Game Parameters\\Default Work Unit\\Music_Volume"
+local parameters = "\\Game Parameters\\Default Work Unit"
 local playlist = "\\Containers\\Default Work Unit\\Soundtrack"
 local segment = playlist .. "\\Soundtrack_Loop"
-local event = "\\Events\\Default Work Unit\\Play_Soundtrack"
-local bank = "\\SoundBanks\\Default Work Unit\\Music"
+local sfxSound = "\\Containers\\Default Work Unit\\Sfx_Loop"
+local vorbisLow = "\\Conversion Settings\\Factory Conversion Settings\\Vorbis\\Vorbis Quality Low"
+
+local function volumeParameter(name)
+    return { type = "GameParameter", name = name, ["@Min"] = -96, ["@Max"] = 0, ["@InitialValue"] = 0 }
+end
+
+local function volumeBus(name, parameter)
+    return {
+        type = "Bus",
+        name = name,
+        ["@RTPC"] = {
+            {
+                type = "RTPC",
+                name = "",
+                ["@PropertyName"] = "BusVolume",
+                ["@ControlInput"] = parameters .. "\\" .. parameter,
+                -- 1:1 in dB, except the bottom step, which is silence rather than -96 dB
+                ["@Curve"] = {
+                    type = "Curve",
+                    points = {
+                        { x = -96, y = -200, shape = "Linear" },
+                        { x = -95, y = -95, shape = "Linear" },
+                        { x = 0, y = 0, shape = "Linear" },
+                    },
+                },
+            },
+        },
+    }
+end
+
+local function playEvent(name, target)
+    return {
+        type = "Event",
+        name = name,
+        children = { { type = "Action", name = "", ["@ActionType"] = 1, ["@Target"] = target } },
+    }
+end
 
 wa_call("ak.wwise.core.object.set", {
     onNameConflict = "merge",
     listMode = "replaceAll",
     objects = {
         {
-            object = "\\Game Parameters\\Default Work Unit",
-            children = {
-                { type = "GameParameter", name = "Music_Volume", ["@Min"] = -96, ["@Max"] = 0, ["@InitialValue"] = 0 },
-            },
+            object = parameters,
+            children = { volumeParameter("Music_Volume"), volumeParameter("SFX_Volume") },
         },
         {
             object = mainBus,
-            children = {
-                {
-                    type = "Bus",
-                    name = "Music",
-                    ["@RTPC"] = {
-                        {
-                            type = "RTPC",
-                            name = "",
-                            ["@PropertyName"] = "BusVolume",
-                            ["@ControlInput"] = volume,
-                            -- 1:1 in dB, except the bottom step, which is silence rather than -96 dB
-                            ["@Curve"] = {
-                                type = "Curve",
-                                points = {
-                                    { x = -96, y = -200, shape = "Linear" },
-                                    { x = -95, y = -95, shape = "Linear" },
-                                    { x = 0, y = 0, shape = "Linear" },
-                                },
-                            },
-                        },
-                    },
-                },
-            },
+            children = { volumeBus("Music", "Music_Volume"), volumeBus("SFX", "SFX_Volume") },
         },
         {
             object = "\\Containers\\Default Work Unit",
@@ -62,9 +82,9 @@ wa_call("ak.wwise.core.object.set", {
                     type = "MusicPlaylistContainer",
                     name = "Soundtrack",
                     ["@OverrideOutput"] = true,
-                    ["@OutputBus"] = musicBus,
+                    ["@OutputBus"] = mainBus .. "\\Music",
                     ["@OverrideConversion"] = true,
-                    ["@Conversion"] = "\\Conversion Settings\\Factory Conversion Settings\\Vorbis\\Vorbis Quality Low",
+                    ["@Conversion"] = vorbisLow,
                     ["@PlaylistRoot"] = {
                         type = "MusicPlaylistItem",
                         name = "",
@@ -91,37 +111,43 @@ wa_call("ak.wwise.core.object.set", {
                         },
                     },
                 },
-            },
-        },
-        {
-            object = "\\Events\\Default Work Unit",
-            children = {
                 {
-                    type = "Event",
-                    name = "Play_Soundtrack",
-                    children = {
-                        { type = "Action", name = "", ["@ActionType"] = 1, ["@Target"] = playlist },
-                    },
+                    type = "Sound",
+                    name = "Sfx_Loop",
+                    ["@OverrideOutput"] = true,
+                    ["@OutputBus"] = mainBus .. "\\SFX",
+                    ["@OverrideConversion"] = true,
+                    ["@Conversion"] = vorbisLow,
+                    ["@IsLoopingEnabled"] = true,
+                    ["@IsLoopingInfinite"] = true,
+                    import = { files = { { audioFile = sfxWav } } },
                 },
             },
         },
         {
+            object = "\\Events\\Default Work Unit",
+            children = { playEvent("Play_Soundtrack", playlist), playEvent("Play_Sfx_Loop", sfxSound) },
+        },
+        {
             object = "\\SoundBanks\\Default Work Unit",
-            children = {
-                { type = "SoundBank", name = "Music" },
-            },
+            children = { { type = "SoundBank", name = "Music" }, { type = "SoundBank", name = "Sfx" } },
         },
     },
 }, {})
 
-wa_call("ak.wwise.core.soundbank.setInclusions", {
-    soundbank = bank,
-    operation = "add",
-    inclusions = { { object = event, filter = { "events", "structures", "media" } } },
-}, {})
+local function include(bank, event)
+    wa_call("ak.wwise.core.soundbank.setInclusions", {
+        soundbank = "\\SoundBanks\\Default Work Unit\\" .. bank,
+        operation = "add",
+        inclusions = { { object = "\\Events\\Default Work Unit\\" .. event, filter = { "events", "structures", "media" } } },
+    }, {})
+    print("authored " .. event .. " in " .. bank)
+end
+
+include("Music", "Play_Soundtrack")
+include("Sfx", "Play_Sfx_Loop")
 
 wa_call("ak.wwise.core.project.save", {}, {})
-print("authored " .. event .. " in " .. bank)
 
 -- WwiseConsole exits with what the script returns, and anything but 0 is a failure
 return 0

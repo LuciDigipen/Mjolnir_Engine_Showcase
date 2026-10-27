@@ -214,13 +214,59 @@ end
 return T
 )LUA";
 
-    // the music volume is process state, so each test puts it back
+    constexpr std::string_view kSfx = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    local volumeSet = world:set_sfx_volume(0.6)
+    local mutedSet = world:set_sfx_muted(true)
+    world:set(entity, "AudioBindingsProbe", "rtpc", volumeSet and mutedSet)
+    world:set(entity, "AudioBindingsProbe", "volume", world:sfx_volume())
+    world:set(entity, "AudioBindingsProbe", "muted", world:sfx_muted())
+    world:set(entity, "AudioBindingsProbe", "reached", true)
+end
+
+return T
+)LUA";
+
+    constexpr std::string_view kSfxMalformed = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    local anySucceeded = world:set_sfx_volume(2)
+        or world:set_sfx_volume(-1)
+        or world:set_sfx_volume(0 / 0)
+        or world:set_sfx_volume(math.huge)
+        or world:set_sfx_volume({})
+        or world:set_sfx_muted(0)
+        or world:set_sfx_muted(nil)
+
+    world:set(entity, "AudioBindingsProbe", "rtpc", not anySucceeded)
+    world:set(entity, "AudioBindingsProbe", "volume", world:sfx_volume())
+    world:set(entity, "AudioBindingsProbe", "muted", world:sfx_muted())
+    world:set(entity, "AudioBindingsProbe", "reached", true)
+end
+
+return T
+)LUA";
+
+    // the volumes are process state, so each test puts them back
     struct MusicReset
     {
         ~MusicReset()
         {
             mir::audio::SetMusicVolume(1.0f);
             mir::audio::SetMusicMuted(false);
+            mir::audio::SetSfxVolume(1.0f);
+            mir::audio::SetSfxMuted(false);
         }
     };
 }
@@ -365,4 +411,33 @@ TEST_CASE("music cannot start without a sound engine", "[audio]")
 
     // safe to call with nothing to stop
     mir::audio::StopMusic(0);
+}
+
+TEST_CASE("the SFX volume and mute are kept apart from the music's", "[script][audio]")
+{
+    const MusicReset reset;
+    Fixture fixture(kSfx, "audio_probe_sfx");
+
+    fixture.Start();
+
+    CHECK(ReadProbeField<bool>(fixture.world, fixture.entity, "reached"));
+    CHECK(ReadProbeField<bool>(fixture.world, fixture.entity, "rtpc"));
+    CHECK(ReadProbeField<float>(fixture.world, fixture.entity, "volume") == 0.6f);
+    CHECK(ReadProbeField<bool>(fixture.world, fixture.entity, "muted"));
+    CHECK(mir::audio::GetMusicVolume() == 1.0f);
+    CHECK_FALSE(mir::audio::IsMusicMuted());
+}
+
+TEST_CASE("an SFX volume outside 0 to 1, or a mute that is not a boolean, is refused", "[script][audio]")
+{
+    const MusicReset reset;
+    mir::audio::SetSfxVolume(0.5f);
+    Fixture fixture(kSfxMalformed, "audio_probe_sfx_malformed");
+
+    fixture.Start();
+
+    CHECK(ReadProbeField<bool>(fixture.world, fixture.entity, "reached"));
+    CHECK(ReadProbeField<bool>(fixture.world, fixture.entity, "rtpc"));
+    CHECK(ReadProbeField<float>(fixture.world, fixture.entity, "volume") == 0.5f);
+    CHECK_FALSE(ReadProbeField<bool>(fixture.world, fixture.entity, "muted"));
 }

@@ -3,7 +3,7 @@
 Owns the Wwise sound engine's lifetime and its per-frame pump, and keeps the AK
 SDK out of the rest of the engine. 
 
-`mir::audio` · depends `mir::core`, `Wwise` (private) · API `modules/audio/include/audio/` · maintainer Dong Ta · reviewed 2026-10-26
+`mir::audio` · depends `mir::core`, `Wwise`, `mir::serial` (private) · API `modules/audio/include/audio/` · maintainer Dong Ta · reviewed 2026-10-27
 
 ## Model
 
@@ -69,6 +69,22 @@ low-level I/O reads it from there in pieces while it plays. The pieces come out
 of the stream manager's I/O pool, which `Init` reserves once (2 MB by default),
 so a playing track costs the same memory whatever its length.
 
+Music and SFX each have a volume, linear from 0 to 1, and a mute, set through
+`AudioSystem.h` or from Lua. Each writes its own game parameter, which the
+authoring project maps onto its own bus, so neither moves the other. When both
+are silent, muted or at 0, the engine waits out the ramp and suspends Wwise, so
+its audio thread stops mixing. Unmuting either wakes it, and what was playing
+carries on from where it stopped.
+
+The values outlive the run. `AudioModule` reads them from
+`%LOCALAPPDATA%/Mjolnir/<game>/settings.json` before Wwise starts, and writes them
+back there once they change, through `serial`. The file is per user, so it is
+never `project_settings.json`, which is the game's and goes into source control.
+
+```json
+{ "audio": { "music": { "volume": 0.3, "muted": true }, "sfx": { "volume": 0.7, "muted": false } } }
+```
+
 ## API
 
 | Name | Header | Role |
@@ -78,6 +94,9 @@ so a playing track costs the same memory whatever its length.
 | `RequestBank`, `AreBanksLoading` | `audio/AudioSystem.h` | Queues a bank by name, once, and answers its `BankState`; whether any bank is still loading |
 | `PlayMusic`, `StopMusic`, `IsMusicPlaying` | `audio/AudioSystem.h` | The one soundtrack: posted once its bank has loaded, stopped with a fade |
 | `SetMusicVolume`, `SetMusicMuted` | `audio/AudioSystem.h` | The Music bus's volume, linear from 0 to 1, and its mute; kept while audio is down |
+| `SetSfxVolume`, `SetSfxMuted` | `audio/AudioSystem.h` | The same for the SFX bus |
+| `IsIdle` | `audio/AudioSystem.h` | Whether both channels are silent, so Wwise is suspended and posts are refused |
+| `LoadAudioSettings`, `SaveAudioSettings` | `audio/AudioSettings.h` | The per-user file's `audio` section, read with fallbacks and written keeping the other sections |
 | `Soundtrack` | `audio/components/Soundtrack.h` | A scene's music: `eventName`, `bankName`, `fadeOutMs` |
 | `SoundtrackSystem` | `audio/SoundtrackSystem.h` | Requests the bank, starts the music on Play and cuts it on Stop |
 | `Terminate` | `audio/AudioSystem.h` | Reverse-order teardown, safe whether or not `Init` succeeded |
@@ -146,13 +165,37 @@ over once that one is gone. Picking the first in query order instead could start
 a second one, and removing the first would then stop the second's music for
 good.
 
-**The music volume is a contract with the authoring project.** No Wwise call
-sets one bus's volume, so the engine writes the global game parameter
-`Music_Volume`, in dB from -96 to 0, over 100 ms so the change does not click.
-The project must define it and drive the `Music` bus's Bus Volume from it, with
--96 mapped to silence; muting writes -96 and keeps the volume to come back to. A
-project without it takes the writes and nothing changes, as with any misspelled
-game parameter.
+**The volumes are a contract with the authoring project.** No Wwise call sets
+one bus's volume, so the engine writes the global game parameters `Music_Volume`
+and `SFX_Volume`, in dB from -96 to 0, over 100 ms so the change does not click.
+A volume becomes `60·log10(volume)` dB, the cube of the amplitude, so 0.5 is
+-18 dB and 0.1 is -60 dB and each step sounds about as big as the last; the plain
+`20·log10` crowded nine of ten steps into the top 20 dB, where they barely differ.
+The project must define them and drive the `Music` and `SFX` busses' Bus Volume
+from them, with -96 mapped to silence; muting writes -96 and keeps the volume to
+come back to. A project without them takes the writes and nothing changes, as
+with any misspelled game parameter, so `HelloWorld`, whose emitters go to the main
+bus and whose authoring project is not here, is not affected by either volume.
+
+**Nothing is posted while everything is silent.** Suspended, Wwise still
+queues a posted event, and it would start the moment a channel came back however
+stale it was, so `PostEventOn` returns 0 instead and logs nothing. Anything that
+should be playing comes back on its own: `AudioEmitterSystem` holds its starts and
+loop reposts while `IsIdle`, and a soundtrack waits as it waits for its bank. A
+one-shot fired while silent is gone, which is what muted means.
+
+**Suspended, `RenderAudio` runs ten times a second, not every frame.** Wwise
+still needs it to take queued calls such as emitter positions off its queue, but
+every call wakes the audio thread. Called every frame while suspended, it kept
+that thread as busy as when playing; at ten a second the queue stays short.
+
+**The settings file is reported once, and written at most twice a second.** A
+missing file is one Info line and a broken one, or a bad value, one Warning, and
+either falls back to the defaults without stopping anything. The file is parsed
+here rather than through `ReadJsonFile`, whose parse error would count as a
+second report and fail the smoke tests over a user's own file. A slider can
+change a volume on every frame, so the writes are throttled, and whatever is left
+is written at shutdown.
 
 **Vorbis needs its decoder linked and registered.** `AkVorbisDecoder` is in
 `FindWwise.cmake`'s library list and its factory header is included in
@@ -233,6 +276,27 @@ are describing a version this project does not use.
 
 ## State
 
+*As of 2026-10-27.* `SoundtrackCheck` also plays a 2-second SFX loop on the `SFX`
+bus from a second cube, with N to mute it and Right and Left to step its volume;
+both channels step in tenths. Its banks now add `Sfx.bnk`, 12.8 KB with the loop
+in memory, and `Init.bnk` carries both busses and both game parameters.
+
+Measured in a Debug game build with temporary logging, now removed: while the
+music and SFX play, Wwise's audio thread uses about 100–130 million cycles a
+second; suspended it uses about 5 million, and Wwise renders about 11 buffers a
+second instead of one per game frame. Two other threads rise while suspended, one
+from about 21 to 40 million cycles a second and one from nothing to about 6
+million, so the process saves less than the audio thread alone. Unmuting resumed
+the soundtrack without a restart. Saving and restoring were run end to end with
+a driver script: the values saved were the values loaded on relaunch, a launch
+with both muted came up suspended with the soundtrack waiting, and a broken file
+gave one warning and the defaults. Listening, and the same steps by hand in
+SoundtrackCheck, have not been done.
+
+`AudioSettings.tests.cpp`, in the new `modules/audio/tests/`, covers the file
+without a sound engine: defaults, round trips, broken input and other sections
+kept. The SFX Lua functions are tested next to the music ones.
+
 *As of 2026-10-26.* The soundtrack path works in `SoundtrackCheck`, a game made
 for it: a 3-minute stereo placeholder loop, streamed, on a `Music` bus, with M to
 mute and Up and Down to step the volume from Lua. Its banks are built from
@@ -269,7 +333,7 @@ outside this module today; audible output was proven with a temporary call and
 that call was not kept. No positioning, no distance attenuation, no entity
 mapping.
 
-There is no `modules/audio/tests/`. Coverage comes from `smoke.HelloWorld`, which
+Apart from the settings tests, coverage comes from `smoke.HelloWorld`, which
 runs the engine for 120 frames and fails on any logged Error or Critical; since
 every failure path in `Init` throws, a passing smoke test means the engine came up
 and both banks loaded. It does not and cannot assert that sound reached the
@@ -323,6 +387,14 @@ exercised.
    process; a Wwise line needs a route to the editor that does not link audio.
 
 ## Changed
+
+*2026-10-27* — **Music and SFX volumes, an idle Wwise, and saved settings.**
+Was: only the music had a volume and mute, Wwise mixed silence when it was muted,
+and nothing outlived the run. Now: SFX has its own volume and mute on an `SFX`
+bus, Wwise is suspended while both are silent and posts are refused then, and both
+are saved per user and restored at the next launch. Because: the game's settings
+menu (#305) needs both channels, a muted game should not spend CPU on audio, and
+a setting that resets every launch is not a setting.
 
 *2026-10-26* — **Banks load in the background, and a scene can have a
 soundtrack.** Was: `Init` loaded every bank before returning, any bank failure

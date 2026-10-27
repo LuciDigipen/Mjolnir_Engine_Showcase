@@ -26,4 +26,7 @@ namespace mir
 
     // engine.log and last-error.json; beside the exe so it never depends on the launch directory
     std::filesystem::path LogDir();
+
+    // Per-user files: %LOCALAPPDATA%/Mjolnir on Windows, next to the executable elsewhere
+    std::filesystem::path UserDataDir();
 }

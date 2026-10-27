@@ -1,9 +1,15 @@
--- SoundtrackCheck's controls: M mutes the music, Up and Down step its volume.
--- The cube spins, its size follows the volume, and it turns red while muted.
-local STEP = 0.1
+-- SoundtrackCheck's music controls: M mutes the music, Up and Down step its volume
+-- in tenths. The cube spins, its size follows the volume, and it turns red while
+-- muted. Both survive a restart: the engine saves them per user.
+local STEPS = 10
 local SPIN = 0.6 -- radians a second
 
 local MusicControls = {}
+
+local function Step(volume, direction)
+    local steps = math.floor(volume * STEPS + 0.5) + direction
+    return math.max(0, math.min(STEPS, steps)) / STEPS
+end
 
 function MusicControls.NewInstanceData()
     return { angle = 0.0 }
@@ -15,9 +21,9 @@ function MusicControls.OnUpdate(self, world, entity, dt)
     end
 
     if world:just_pressed("MusicVolumeUp") then
-        world:set_music_volume(math.min(1.0, world:music_volume() + STEP))
+        world:set_music_volume(Step(world:music_volume(), 1))
     elseif world:just_pressed("MusicVolumeDown") then
-        world:set_music_volume(math.max(0.0, world:music_volume() - STEP))
+        world:set_music_volume(Step(world:music_volume(), -1))
     end
 
     self.angle = self.angle + SPIN * dt

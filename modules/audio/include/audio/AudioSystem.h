@@ -80,7 +80,7 @@ namespace mir::audio
 
     bool IsMusicPlaying();
 
-    // Linear, 0 to 1, written to the Music_Volume game parameter
+    // 0 to 1, on a cubic curve so steps sound even, written to the Music_Volume game parameter
     void SetMusicVolume(float volume);
 
     float GetMusicVolume();
@@ -89,6 +89,19 @@ namespace mir::audio
     void SetMusicMuted(bool muted);
 
     bool IsMusicMuted();
+
+    // 0 to 1, on a cubic curve so steps sound even, written to the SFX_Volume game parameter
+    void SetSfxVolume(float volume);
+
+    float GetSfxVolume();
+
+    void SetSfxMuted(bool muted);
+
+    bool IsSfxMuted();
+
+    // True while music and SFX are both muted or at 0. Wwise is suspended then,
+    // and posts are refused rather than queued to start on unmute
+    bool IsIdle();
 
     bool IsInitialized();
 

@@ -48,7 +48,7 @@ games/                one directory per game — no C++
     assets/               meshes and Lua scripts, cooked separately
     scenes/               scene.json plus one file per entity
   EmptyScene/           a game with an empty scene, for the smoke test
-  SoundtrackCheck/      a streamed soundtrack on the Music bus, with Lua volume and mute
+  SoundtrackCheck/      a streamed soundtrack and an SFX loop, with saved Lua volumes and mutes
 
 tools/                AssetCooker, new_module.ps1, new_file.ps1, wwise/ (SoundtrackCheck's banks)
 templates/            what the scaffolding scripts stamp out
