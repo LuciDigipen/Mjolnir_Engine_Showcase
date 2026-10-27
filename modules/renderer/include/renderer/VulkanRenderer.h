@@ -52,6 +52,7 @@ namespace mir::vk
     class ModelDescriptors;
     class RayTracer;
     class RasterSurfaces;
+    class SsgiTrace;
     class Ddgi;
     class PostProcessingStack;
     class FrameCapture;
@@ -318,6 +319,7 @@ namespace mir
         std::unique_ptr<vk::ResourceStore> mResources;
         std::unique_ptr<vk::MaterialStore> mMaterialStore;
         std::unique_ptr<vk::RasterSurfaces> mRasterSurfaces;
+        std::unique_ptr<vk::SsgiTrace> mSsgiTrace;
         SsgiSettings mSsgiSettings;
 
         std::unique_ptr<vk::CameraBuffer> mCameraBuffer;

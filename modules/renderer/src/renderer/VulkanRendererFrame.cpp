@@ -21,6 +21,7 @@
 #include "vulkan/PostProcessingStack.h"
 #include "vulkan/RayTracer.h"
 #include "vulkan/RasterSurfaces.h"
+#include "vulkan/SsgiTrace.h"
 #if MIR_WITH_RTXGI
 #include "vulkan/Ddgi.h"
 #endif
@@ -223,6 +224,10 @@ namespace mir
                 RecordView(cmd, views[i], uint32_t(i), true, cameraOffsets[i]);
             mRasterSurfaces->End(cmd, frame, mSwapchain->DepthImage(frame));
             mDevice->EndLabel(cmd);
+            mDevice->BeginLabel(cmd, "SSGI Trace", { 0.3f, 0.8f, 0.5f, 1.0f });
+            mSsgiTrace->Record(cmd, frame, mSwapchain->DepthImage(frame), mSwapchain->DepthView(frame),
+                *mRasterSurfaces, mCameraBuffer->Set(frame), std::span(cameraOffsets).first(viewCount), mSsgiSettings);
+            mDevice->EndLabel(cmd);
         }
 
         vk::ImageBarrier(cmd, mSwapchain->HdrColorImage(frame), VK_IMAGE_ASPECT_COLOR_BIT,
@@ -304,6 +309,7 @@ namespace mir
         if (!frame)
             return;
 
+        mSsgiTrace->Configure(mRasterSurfaces->Active(), mSwapchain->Extent(), views, mSsgiSettings.halfResolution);
         mShadowMaps->RecordPasses(frame->cmd, mFrameSync->Index(), *mResources);
         RecordCommands(frame->cmd, frame->imageIndex, views);
         const bool submitted = mFrameSync->End(*mSwapchain, *frame);
@@ -392,6 +398,7 @@ namespace mir
     {
         const bool hadSurfaces = mRasterSurfaces->Active();
         mRasterSurfaces->Configure(false, mSwapchain->Extent());
+        mSsgiTrace->Configure(false, mSwapchain->Extent(), {}, mSsgiSettings.halfResolution);
         if (hadSurfaces) mMaterialStore->ReleaseSurfacePipelines();
         if (!mDevice->RayTracingSupported())
         {

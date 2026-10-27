@@ -146,6 +146,14 @@ if(MSVC)
 endif()
 
 engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/SsgiDepth.slang
+    ENTRIES initMain:compute reduceMain:compute)
+
+engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/SsgiTrace.slang
+    ENTRIES traceMain:compute)
+
+engine_add_shaders(MjolnirEngine
     SOURCE assets/shaders/default.slang
     ENTRIES vertexMain:vertex fragmentMain:fragment)
 

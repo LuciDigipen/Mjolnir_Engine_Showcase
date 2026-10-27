@@ -524,8 +524,8 @@ on the startup path catches.
 
 `rendering.ssgi` stores raster SSGI settings, edited under Project Settings >
 Rendering > Screen Space Global Illumination. Settings are saved independently
-of ray tracing and RTXGI availability. SSGI rendering is not implemented yet;
-the current raster lighting remains active. Invalid SSGI blocks load as disabled
+of ray tracing and RTXGI availability. SSGI does not yet contribute to displayed
+lighting; the current raster lighting remains active. Invalid SSGI blocks load as disabled
 defaults without affecting DDGI or ray tracing; invalid drafts cannot be saved.
 
 | Field | Default | Meaning / limits |
@@ -551,7 +551,16 @@ reused by surface capture and motion blur. Images are allocated only while
 requested, capped at 256 MiB across frame slots, and released on disable, RT
 switch or scene unload. Unsupported opaque shaders, formats/limits or missing optional shaders
 retain existing raster rendering. Surface capture does not change the displayed
-lighting; tracing and composition are still pending.
+lighting.
+
+`vk::SsgiTrace` builds a conservative reversed-Z depth pyramid per viewport,
+then traces cosine-weighted hemisphere rays against visible depth. It writes
+raw irradiance (RGB) and resolved confidence (alpha), keeping dark hits distinct
+from missing screen-space information. Quality bounds ray and traversal counts;
+full/half resolution changes the output size. Trace resources have a separate
+256 MiB cap across frame slots. Overlapping viewports fall back because the
+surface inputs share scene depth. Filtering and composition are still pending;
+the raw trace does not contribute to the displayed image.
 
 `rendering.ddgi` persists one axis-aligned, world-anchored diffuse GI volume.
 Project Settings > Rendering > Diffuse Global Illumination edits a draft and

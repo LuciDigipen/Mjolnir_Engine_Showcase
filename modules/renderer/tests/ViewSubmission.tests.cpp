@@ -9,6 +9,7 @@
 #include <renderer/ViewSubmission.h>
 #include "../src/renderer/vulkan/Ddgi.h"
 #include "../src/renderer/vulkan/RasterSurfaces.h"
+#include "../src/renderer/vulkan/SsgiTrace.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -63,6 +64,52 @@ namespace
     }
 
     const mir::Camera kLens{60.0f, 0.1f, 100.0f};
+}
+
+TEST_CASE("SSGI tracing bounds odd resolutions, view isolation and total GPU storage", "[renderer][ssgi]")
+{
+    using mir::vk::SsgiTrace;
+    CHECK(SsgiTrace::MipCount({ 0, 0 }) == 0);
+    CHECK(SsgiTrace::MipCount({ 1, 1 }) == 1);
+    CHECK(SsgiTrace::MipCount({ 641, 359 }) == 10);
+    CHECK(SsgiTrace::TraceExtent({ 641, 359 }, true).width == 321);
+    CHECK(SsgiTrace::TraceExtent({ 641, 359 }, true).height == 180);
+    CHECK(SsgiTrace::TraceExtent({ 641, 359 }, false).width == 641);
+    VkPhysicalDeviceLimits limits{};
+    limits.maxImageDimension2D = 16384;
+    limits.maxPushConstantsSize = 128;
+    limits.maxComputeWorkGroupInvocations = 128;
+    limits.maxComputeWorkGroupSize[0] = limits.maxComputeWorkGroupSize[1] = 128;
+    limits.maxComputeWorkGroupCount[0] = limits.maxComputeWorkGroupCount[1] = 65535;
+    limits.maxPerStageDescriptorSampledImages = 16;
+    limits.maxPerStageDescriptorStorageImages = 4;
+    std::vector<VkRect2D> rects{ { {}, { 1920, 1080 } } };
+    const auto fits = [&](bool half = true) { return SsgiTrace::FitsBudget(rects, half, limits); };
+    CHECK(fits());
+    CHECK(fits(false));
+    rects[0].extent = { 3840, 2160 };
+    CHECK(fits());
+    CHECK_FALSE(fits(false));
+    rects = { { {}, { 640, 360 } }, { { 640, 0 }, { 640, 360 } } };
+    CHECK(fits());
+    rects[1].offset.x = 639;
+    CHECK_FALSE(fits());
+    rects[1].offset = { 0, 360 };
+    CHECK(fits());
+    rects[1].offset.y = 359;
+    CHECK_FALSE(fits());
+    rects.resize(1);
+    SECTION("zero dimensions") { rects[0].extent.width = 0; CHECK_FALSE(fits()); }
+    SECTION("workgroup limit") { limits.maxComputeWorkGroupCount[0] = 79; CHECK_FALSE(fits()); }
+    SECTION("storage binding limit") { limits.maxPerStageDescriptorStorageImages = 1; CHECK_FALSE(fits()); }
+    SECTION("empty views") { rects.clear(); CHECK_FALSE(fits()); }
+    SECTION("too many views") { rects.resize(17); CHECK_FALSE(fits()); }
+    SECTION("large products cannot wrap the budget")
+    {
+        limits.maxImageDimension2D = limits.maxComputeWorkGroupCount[0] = limits.maxComputeWorkGroupCount[1] = UINT32_MAX;
+        rects[0].extent = { UINT32_MAX, UINT32_MAX };
+        CHECK_FALSE(fits());
+    }
 }
 
 TEST_CASE("Raster surface inputs respect attachment limits and the allocation budget", "[renderer][ssgi]")
