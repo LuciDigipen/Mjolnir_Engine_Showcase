@@ -172,7 +172,8 @@ namespace mir
         void RemoveInterest(TerrainInterestId interest);
 
         // The one install point per frame: takes height-query requests, installs finished reads, cancels,
-        // retries, evicts and starts reads. Never reads a file or waits.
+        // retries, evicts and starts reads. Reads run through the executor;
+        // asynchronous except when an explicitly inline executor is supplied.
         void Update();
 
         // Stop-gap for consumers that need a whole release: updates until every payload of an Eager

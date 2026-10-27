@@ -22,7 +22,7 @@
 namespace mir
 {
     AnimationModule::AnimationModule(ModuleContext context, VulkanRenderer &renderer, AssetsModule &assets,
-        std::string assetIdRoot)
+        std::string assetIdRoot, JobExecutor *jobs)
     {
         RegisterModelPlayer();
 
@@ -32,7 +32,7 @@ namespace mir
         // a WorldTransform reader
         mModels = &context.scheduler.AddSystem<ModelSystem>(SystemPhase::LateUpdate,
             SystemOrder{SystemOrder::kNormal}, renderer, &assets.Cache(),
-            std::move(assetIdRoot));
+            std::move(assetIdRoot), jobs);
 
         mHooks = context.world.SetComponentHooks<ModelPlayer>({ .onRemove = [this](World &world, Entity entity)
             {

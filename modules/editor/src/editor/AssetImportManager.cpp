@@ -129,8 +129,8 @@ namespace mir
             const Json assets = settings->value("assets", Json::object());
             mView.mAutoImport = assets.is_object() && assets.value("autoImport", false);
         }
-        RefreshView();
         PollWatcher();
+        RefreshView();
     }
 
     void AssetImportManager::QueueFullCook()
@@ -160,6 +160,7 @@ namespace mir
 
     void AssetImportManager::SetStatus(const std::string &model, AssetImportStatus status, std::string diagnostic)
     {
+        mViewDirty = true;
         mStatus[model] = status;
         if (!diagnostic.empty())
             mDiagnostics[model] = std::move(diagnostic);
@@ -437,6 +438,17 @@ namespace mir
             now - mLastWatchPoll < std::chrono::milliseconds(250))
             return;
         mLastWatchPoll = now;
+        // External cooker runs can replace or remove the cache without changing
+        // source files. Check metadata at the watcher cadence, not every frame.
+        std::error_code cacheError;
+        const std::filesystem::directory_entry cacheFile(mCookedRoot / "import-cache.json", cacheError);
+        const std::optional<uint64_t> cacheSignature = !cacheError && cacheFile.is_regular_file(cacheError)
+            ? std::optional<uint64_t>(Signature(cacheFile)) : std::nullopt;
+        if (cacheError == std::errc::no_such_file_or_directory)
+            cacheError.clear();
+        if (cacheSignature != mImportCacheSignature || cacheError)
+            mViewDirty = true;
+        mImportCacheSignature = cacheSignature;
         std::set<std::filesystem::path> present;
         const bool cookerChangesSource =
             mView.mProcessRunning && (!mRunning.importSource.empty() || !mRunning.moves.empty());
@@ -448,6 +460,7 @@ namespace mir
             present.insert(path);
             const uint64_t signature = Signature(entry);
             auto [it, inserted] = mWatched.try_emplace(path, WatchedFile{signature, now, false});
+            mViewDirty |= inserted;
             if (inserted && mWatchInitialized)
             {
                 it->second.changedAt = now;
@@ -456,6 +469,7 @@ namespace mir
             }
             if (!inserted && it->second.signature != signature)
             {
+                mViewDirty = true;
                 it->second.signature = signature;
                 it->second.changedAt = now;
                 it->second.pending = true;
@@ -483,6 +497,7 @@ namespace mir
         {
             if (!present.contains(it->first))
             {
+                mViewDirty = true;
                 mRunningStale |= mView.mProcessRunning && !cookerChangesSource;
                 if (mView.mAutoImport)
                     mQueued.changed.insert(it->first);
@@ -502,7 +517,8 @@ namespace mir
                 FinishBatch(*code, editing);
         if (!mView.mProcessRunning)
             StartBatch();
-        RefreshView();
+        if (mViewDirty)
+            RefreshView();
     }
 
     void AssetImportManager::RefreshView()
@@ -511,7 +527,7 @@ namespace mir
         for (const auto &entry : std::filesystem::recursive_directory_iterator(mSourceAssetRoot))
             if (entry.is_regular_file() && IsModel(entry.path()))
             {
-                // Runs every frame: an unusable name is logged once, when the watcher sees it
+                // An unusable name is logged once, when the watcher sees it.
                 const auto relative = std::filesystem::relative(entry.path(), mSourceAssetRoot);
                 if (const AssetPathResult logical = LogicalModelPath(mProject.mAssetIdRoot, relative); logical.Ok())
                     models[logical.path].mPath = logical.path;
@@ -550,6 +566,7 @@ namespace mir
         mView.mModels.clear();
         for (auto &[path, model] : models)
             mView.mModels.push_back(std::move(model));
+        mViewDirty = false;
     }
 
     void AssetImportManager::SaveAutoImport()

@@ -88,9 +88,18 @@ namespace mir
         uint32_t mMaxBodyPairs = 1024;
         uint32_t mMaxContactConstraints = 1024;
 
-        uint32_t mWorkerThreads = 0;
+        // -1 selects the bounded engine default; 0 runs on the calling thread.
+        int mWorkerThreads = -1;
 
         int mCollisionSteps = 1;
+    };
+
+    class JobExecutor;
+
+    struct BodyPoseSnapshot
+    {
+        std::optional<WorldPosition> position;
+        glm::quat rotation = kIdentityRotation;
     };
 
     class PhysicsWorld
@@ -129,6 +138,13 @@ namespace mir
         bool IsBodyHeld(BodyHandle body) const;
 
         glm::vec3 Gravity() const;
+        uint32_t WorkerCount() const;
+
+        // Between steps, with body lifetime/mutations paused until return. Reads
+        // independent bodies under Jolt read locks; joins before returning.
+        // Invalid/stale handles produce an empty position; spans must match size.
+        void ReadBodyPoses(std::span<const BodyHandle> bodies, std::span<BodyPoseSnapshot> poses,
+            JobExecutor *jobs = nullptr) const;
 
         // nullopt for an invalid handle, or if the simulation left the body at
         // a non-finite position; there is no default place to report instead.

@@ -77,6 +77,24 @@
             "cacheVariables": {
                 "MIR_LARGE_WORLD": false
             }
+        },
+        {
+            "name": "ci-windows-editor-debug",
+            "inherits": "windows-msvc-debug",
+            "cacheVariables": {
+                "MIR_WITH_AUDIO": "OFF",
+                "MIR_WITH_DLSS": "OFF",
+                "BUILD_TESTING": "ON"
+            }
+        },
+        {
+            "name": "ci-windows-game-release",
+            "inherits": "windows-msvc-game-release",
+            "cacheVariables": {
+                "MIR_WITH_AUDIO": "OFF",
+                "MIR_WITH_DLSS": "OFF",
+                "BUILD_TESTING": "ON"
+            }
         }
     ],
     "buildPresets": [
@@ -104,6 +122,50 @@
             "name": "windows-msvc-debug-float",
             "displayName": "Debug (float world)",
             "configurePreset": "windows-msvc-debug-float"
+        },
+        {
+            "name": "ci-windows-editor-debug",
+            "configurePreset": "ci-windows-editor-debug",
+            "jobs": 2
+        },
+        {
+            "name": "ci-windows-game-release",
+            "configurePreset": "ci-windows-game-release",
+            "jobs": 2
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "ci-windows-editor-debug",
+            "configurePreset": "ci-windows-editor-debug",
+            "output": {
+                "outputOnFailure": true
+            },
+            "filter": {
+                "exclude": {
+                    "label": "smoke"
+                }
+            },
+            "execution": {
+                "noTestsAction": "error",
+                "jobs": 2
+            }
+        },
+        {
+            "name": "ci-windows-game-release",
+            "configurePreset": "ci-windows-game-release",
+            "output": {
+                "outputOnFailure": true
+            },
+            "filter": {
+                "exclude": {
+                    "label": "smoke"
+                }
+            },
+            "execution": {
+                "noTestsAction": "error",
+                "jobs": 2
+            }
         }
     ]
 }
