@@ -101,10 +101,6 @@ namespace mir
         }
 
         ImGui::SeparatorText("External Tools");
-        ImGui::TextWrapped(
-            "Double-clicking a .lua or .json file in the Content Browser opens the whole project folder as the "
-            "workspace root in a new IDE window, with the file open. Empty IDE path auto-detects VS Code. Launch "
-            "args: {project} and {file} are substituted; a non-VS Code tool may need a different template.");
 
         if (ImGui::InputTextWithHint("IDE path", "auto-detect (VS Code)", mIdePathBuffer, sizeof(mIdePathBuffer)))
             mDraftIdeSettings.path = mIdePathBuffer;
@@ -165,10 +161,7 @@ namespace mir
             LoadLayers(savePath);
 
         ImGui::SeparatorText("Physics layers");
-        ImGui::TextWrapped(
-            "A body is on one layer and collides with the layers ticked below. Layer 0 is Default. An empty name is "
-            "a free slot; clearing a name frees it without moving the others. Saved layers apply to the running "
-            "world while editing.");
+        ImGui::TextWrapped("A body is on one layer and collides with the layers ticked below. Layer 0 is Default.");
 
         if (!editing)
             ImGui::BeginDisabled();

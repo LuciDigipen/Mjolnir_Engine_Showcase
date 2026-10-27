@@ -538,114 +538,66 @@ probe lighting and sample it during final RT shading.
 | `probesPerFrame` | `512` | 1–total probes, at most 1,048,576 rays per frame |
 | `intensity` | `1` | Finite multiplier, 0–10 |
 
-Volumes must also fit a conservative 256 MiB planning allowance: two copies
-of 16-byte ray data and atlas texels, using 8×8 irradiance/variability,
-16×16 distance, and one probe-state texel per probe. The resource owner
-checks actual device limits and allocation requirements as well. The editor
-shows estimated memory and update work for valid drafts and disables Save
-for invalid ones. `SaveFile` also rejects invalid settings before writing.
-Missing fields retain defaults; malformed or over-budget GI blocks reset as
-a unit to disabled defaults without discarding the ray tracing setting.
+Volumes must fit a conservative 256 MiB memory allowance; allocation also
+checks device limits. The editor shows estimated memory and ray work and
+rejects invalid drafts. Malformed or over-budget GI blocks load as disabled
+defaults without discarding other rendering settings.
 
-**Preparing the RT scene for GI.**
+**Scene submission and pass order.**
 
-`RayTracer::PrepareScene` now records the frame-slot TLAS build, updates material
-texture descriptors and inserts the acceleration-structure build-to-ray-read
-barrier. It returns borrowed `PreparedScene` handles (TLAS, descriptor set and
-layout), instance count and a `truncated` flag. `RecordTrace` only clears and
-traces the final camera outputs; the facade records `Ddgi::Record` between
-these calls. FrameSync must have waited for the slot before
-preparation; borrowed resources expire when that slot is prepared again or
-the ray tracer is destroyed. Both dispatches use the same camera-relative TLAS.
+For a single RT viewport, `RenderSystem` supplies a camera-relative extended
+scene through `RenderView::rayTracingItems`. Ordinary meshes remain included
+conservatively. Draw sources collect the union of the camera frustum and the
+GI volume expanded by its maximum ray reach and relocation allowance. Terrain
+includes ready off-camera geometry without requesting additional streaming
+or overlapping coarse/fine fallback meshes. World positions are subtracted
+before narrowing to floats.
 
-For a single RT view with the RTXGI SDK compiled in and GI requested,
-`RenderSystem` supplies an extended scene through `RenderView::rayTracingItems`.
-Ordinary world/model meshes remain conservatively included because these draw
-submissions have no geometry bounds and direct-light shadow rays can leave
-the camera frustum. Draw sources receive the union of the camera frustum and
-the GI grid expanded by one grid diagonal of ray reach plus one probe spacing
-for relocation/bias. `MakeGiTraceVolume` returns that maximum probe ray distance
-which the probe pass enforces; it is derived from the grid rather than
-the camera lens. Volume centers remain world anchored; collection and TLAS
-transforms narrow only after subtracting a world origin in world precision.
+`RayTracer::PrepareScene` builds the frame-slot TLAS, updates material
+descriptors and inserts the build-to-ray-read barrier. Its borrowed handles
+remain valid until that slot is prepared again. Instance/texture overflow or
+omitted world draws invalidate GI history and use ambient fallback.
 
-Terrain's `CollectForRayTracing` traverses this union once, using the primary
-view's chosen detail and currently ready meshes. It includes resident terrain
-beyond the camera far plane without adding streaming requests. One traversal
-prevents overlapping coarse/fine fallback geometry between the volumes.
-Raster and the ordinary GI-disabled RT submissions retain their existing paths.
+The facade records these passes on the graphics queue:
 
-The 16,384-instance limit retains the first traceable submissions in stable
-submission order. Invalid/nonresident handles do not consume slots. Instance
-or texture capacity overflow marks the prepared scene truncated; DDGI updates
-skip that frame and invalidate history. Float conversion omissions similarly
-set `RenderView::rayTracingSceneComplete` false. Final camera tracing retains
-its existing capacity fallback.
+1. Mesh uploads/BLAS and scene TLAS.
+2. Optional probe clear and relocation/classification reset.
+3. Probe tracing, irradiance and distance blending, relocation, classification.
+4. Final camera tracing and existing post-processing.
 
-**DDGI resources and passes.**
+Probe tracing reuses the scene's materials, alpha tests and shadow visibility.
+It evaluates diffuse direct light and prior-frame irradiance. Circular batches
+honor `probesPerFrame`; only traced probes are blended. Inactive probes still
+trace fixed rays so classification can reactivate them.
 
-In an RTXGI build, the facade owns `vk::Ddgi` independently of `RayTracer`.
-Its SDK base volume handles probe constants, indexing and randomized ray
-rotation. The renderer owns five persistent array images, a bilinear sampler,
-per-frame constants/budget buffers and descriptor sets, six compute pipelines,
-and separate probe and GI camera RT pipelines/SBTs. Images use RGBA32F to match the compiled
-storage-image types; distance uses RG and variability uses R. The variability
-atlas is bound for the SDK kernels, but adaptive variability reduction is off.
+**Resources, history and shading.**
 
-Pass order is mesh uploads/BLAS, scene TLAS, optional history clear and
-relocation/classification reset, probe tracing, irradiance blending (including
-border copies), distance blending, relocation, classification, final camera
-tracing, and existing post-processing. A circular batch honors `probesPerFrame`;
-compute guards use the same batch as tracing so untraced probes retain their
-history. Inactive probes still trace the SDK's fixed rays for reclassification.
-Recursive diffuse lighting reads prior irradiance before blending new results.
-Probe lighting shares RT material/alpha testing and shadow visibility helpers;
-it excludes ambient, camera specular, fog, and screen-space guide writes.
+`vk::Ddgi` owns the SDK volume, five RGBA32F array images (rays, irradiance,
+distance, state, variability), per-frame constants/descriptors, six compute
+pipelines, and separate probe/camera RT pipelines and SBTs. The SDK supplies
+packing, indexing, ray rotation and update kernels; adaptive variability is
+disabled. Atlases remain in GENERAL layout, with barriers between passes and
+across frames. Constants are written after the frame-slot wait.
 
-The shared atlases remain GENERAL and run on the graphics queue, with explicit
-barriers between passes and across frames. Constants are written only after
-the frame-slot wait. Camera movement updates the relative volume origin without
-clearing history. Initial/reset sweeps use zero hysteresis and disable recursive
-history until every probe has been visited. Final shading then fades from the
-ambient fallback to GI over eight successful updates. Later updates use SDK hysteresis.
+Configuration runs before `BeginFrame`; replacing or freeing resources waits
+for the device. Allocation/pipeline failures release partial resources and
+retain ambient fallback. Failed settings are retried only after a settings
+change. Scene unload and raster rendering release the volume; history resets
+invalidate it. Camera motion rebases the volume without clearing history, and
+swapchain resize preserves it.
 
-Configuration runs before BeginFrame. Layout/placement changes and disabling
-GI wait for outstanding work before freeing resources; allocation/pipeline
-failures clean up partial resources and retain existing RT lighting. The same
-failed settings are not retried every frame. Scene unload releases resources;
-explicit history resets invalidate them for the next update. Swapchain resize
-preserves the world-space probe cache. Raster frames release any active DDGI
-resources. Source-World switches reset history as well as scene-load/play events.
+Initial sweeps disable hysteresis and recursive lighting until all probes are
+visited, then fade into GI over eight updates. Final shading uses geometric
+normals and SDK surface bias, applying albedo times irradiance / pi and the
+intensity setting. GI replaces ambient within coverage. Outside coverage or
+while unavailable, ambient remains. Direct lighting, shadows, unlit materials,
+fog, DLSS guides and raster lighting retain their existing behavior.
 
-The GI camera pipeline samples with geometric normals and the SDK surface bias,
-then applies diffuse albedo times irradiance / pi and the intensity setting.
-Its indirect term blends from the existing constant ambient to GI according to
-volume coverage and initialization fade; ambient is replaced, not added twice.
-Outside the volume, during initialization, or when resources/scene coverage are
-unavailable, the existing ambient path is used. Valid black irradiance stays
-black; intensity zero suppresses indirect lighting inside the volume. Direct
-lighting, shadows, unlit/error materials, fog, and DLSS guide writes keep their
-existing behavior. Raster uses the original lighting entry point.
-
-`Ddgi::Record` returns a frame-local borrowed camera pipeline, descriptor set and
-SBT only when probe data is ready. `RayTracer::RecordTrace` selects it for that
-dispatch and otherwise uses its original pipeline. The GI pipelines are owned
-and freed with the DDGI volume; no GI descriptors need to be bound in fallback
-or SDK-disabled builds. GI settings changes and transitions into/out of sampling
-reset DLSS temporal history without discarding the world-space probe cache for
-ordinary camera motion or intensity changes.
-
-Validation on the RTX 4060 Laptop GPU: a static colored-wall fixture confirmed
-positive indirect lighting and increasing intensity, exact fallback outside
-the volume, and identical raster output with GI requested on/off (comparing
-scene pixels, excluding the HUD). A renderer-session driver exercised toggles,
-history reset, incomplete-scene fallback, volume changes, resize, MSAA,
-raster/RT transitions, and scene resource release/reload at large coordinates;
-the non-NGX run had no validation errors and zero live VMA allocations at exit.
-GI plus DLSS Ray Reconstruction also evaluated successfully without validation
-errors. Combined-build shutdown remains unverified here: NGX shutdown stalled
-in both GI-enabled and GI-disabled drivers, including a run that never allocated
-DDGI resources.
+`Ddgi::Record` lends the camera pipeline, descriptors and SBT for the final
+trace only when data is ready. Transitions into/out of GI and settings changes
+reset post-processing history. The implementation supports one axis-aligned
+volume and one RT viewport; coarse spacing and thin walls can cause light
+leakage, and partial updates/hysteresis delay lighting changes.
 
 **`volk` is compiled from source in this module**, so the platform defines are
 ours. VMA is configured with `VMA_STATIC_VULKAN_FUNCTIONS=0` and

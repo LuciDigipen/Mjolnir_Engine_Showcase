@@ -14,8 +14,7 @@
 
 namespace mir::vk
 {
-    // Calls use validated, nonzero counts. The batch maps dispatch Y to
-    // (first + Y) % total, so every probe is visited before history is ready.
+    // Validated nonzero counts; dispatch Y maps to (first + Y) % total.
     class ProbeUpdateSchedule
     {
     public:

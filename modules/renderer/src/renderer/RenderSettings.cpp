@@ -32,10 +32,8 @@ namespace mir
 
     uint64_t DdgiSettings::EstimatedBytes() const
     {
-        // Conservative planning allowance: 16 bytes per ray/atlas texel,
-        // 8x8 irradiance/variability, 16x16 distance and one state texel,
-        // with two complete copies for history/frame overlap. Actual device
-        // allocation requirements must also be checked by the runtime owner.
+        // Two copies of 16-byte ray/atlas texels: 8x8 irradiance/variability,
+        // 16x16 distance and one state texel. Runtime checks actual allocations.
         return 2 * ProbeCount() * (uint64_t(raysPerProbe) + 64 + 64 + 256 + 1) * 16;
     }
 
@@ -87,8 +85,7 @@ namespace mir
         const auto gi = renderingIt->find("ddgi");
         if (gi != renderingIt->end() && gi->is_object())
         {
-            // A malformed GI block falls back as a unit, preserving valid
-            // rendering settings. Check types before narrowing JSON numbers.
+            // Reject a malformed GI block as a unit, preserving other settings.
             DdgiSettings draft;
             bool valid = true;
             const auto readValue = [&](const json &node, auto &value)

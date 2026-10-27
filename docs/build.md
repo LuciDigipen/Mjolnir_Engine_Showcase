@@ -68,32 +68,23 @@ Then build and check it: [Build loop](#build-loop) and [Verify](#verify).
 
 ## Optional RTXGI DDGI SDK
 
-Configure with `cmake --preset windows-msvc-debug -DMIR_WITH_RTXGI=ON`.
-This fetches RTXGI-DDGI SDK 1.3.6 at commit
-`f33e496ca31b3f0eec1c4e2cbaa8bb620e337fa6` without its samples or
-submodules. Review the SDK's `License.txt` before redistributing it.
-The default `OFF` adds no RTXGI download or DXC requirement.
+Enable GI support before building:
 
-An enabled build requires DXC with SPIR-V support, found first in the Vulkan
-SDK and then on PATH; override it with `-DRTXGI_DXC_EXECUTABLE=<path>`.
-The SDK's Vulkan sources use the engine's Volk loader, with resource management
-disabled so the renderer will own probe allocations. Host code and shaders use
-right-handed, Y-up coordinates. SDK shader resources use set 0: volume constants
-at binding 0, ray data at 1, irradiance at 2, distance at 3, probe data at 4,
-and variability at 5; batch constants use binding 7 and the SDK push-constant
-layout is used. The probe RT pipeline binds these resources as set 2, with
-sampled irradiance/distance/state at bindings 8–10 and a sampler at 11.
+```powershell
+cmake --preset windows-msvc-debug -DMIR_WITH_RTXGI=ON
+cmake --build --preset windows-msvc-debug
+```
 
-`cmake --build builds/windows-msvc-debug --target engine_rtxgi` checks the SDK
-and six probe-update/reset shaders. The engine build copies these shaders to
-`shaders/rtxgi` beside the executable. Irradiance/distance atlas interiors are
-6/14 texels; blending reads the ray count dynamically instead of specializing
-it at compile time. Existing engine shaders continue to use Slang.
+The default is `OFF`. Enabling it fetches RTXGI-DDGI SDK 1.3.6 at commit
+`f33e496ca31b3f0eec1c4e2cbaa8bb620e337fa6`, without samples or submodules.
+It requires DXC with SPIR-V support from the Vulkan SDK or PATH; override its
+location with `-DRTXGI_DXC_EXECUTABLE=<path>`. Review the SDK's `License.txt`
+before redistributing it.
 
-Enabled GI settings allocate probes, run bounded updates, and sample indirect
-diffuse lighting during final RT shading. `renderer/RtxgiConfig.h` reports SDK
-compilation separately from runtime resource availability. DLSS remains an
-independent option. See [renderer](modules/renderer.md) for pass order and ownership.
+The engine owns probe resources and copies the SDK compute shaders to
+`shaders/rtxgi` beside the executable. Enable ray tracing and GI in Project
+Settings to use them. DLSS is configured independently. See the
+[renderer reference](modules/renderer.md) for settings and runtime behavior.
 
 ## Build loop
 

@@ -4,8 +4,7 @@ if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     message(FATAL_ERROR "RTXGI DDGI requires a 64-bit build.")
 endif()
 
-# Keep the SDK's top-level project out of our build: it configures sample
-# dependencies and downloads DXC. Only fetch sources, without submodules.
+# Fetch sources only; the upstream project downloads sample dependencies and DXC.
 include(FetchContent)
 FetchContent_Declare(rtxgi_sdk
     GIT_REPOSITORY https://github.com/NVIDIAGameWorks/RTXGI-DDGI.git
@@ -15,8 +14,7 @@ FetchContent_Declare(rtxgi_sdk
 FetchContent_MakeAvailable(rtxgi_sdk)
 set(_rtxgi_root "${rtxgi_sdk_SOURCE_DIR}/rtxgi-sdk")
 
-# Use the engine's existing Volk loader. The SDK's VulkanExtensions.cpp
-# defines vk* wrapper functions that collide with Volk's function pointers.
+# Omit VulkanExtensions.cpp: its vk* wrappers conflict with Volk.
 add_library(engine_rtxgi STATIC
     "${_rtxgi_root}/src/Math.cpp"
     "${_rtxgi_root}/src/ddgi/DDGIVolume.cpp"
@@ -34,8 +32,7 @@ else()
     target_compile_options(engine_rtxgi PRIVATE -include volk.h)
 endif()
 
-# SDK HLSL uses DXC's explicit Vulkan bindings and push constants. Keep the
-# engine's Slang path unchanged and require DXC only for this optional build.
+# SDK kernels require DXC; engine shaders continue to use Slang.
 find_program(RTXGI_DXC_EXECUTABLE NAMES dxc
     PATHS "$ENV{VULKAN_SDK}/Bin" "$ENV{VULKAN_SDK}/bin" NO_DEFAULT_PATH)
 find_program(RTXGI_DXC_EXECUTABLE NAMES dxc)
@@ -65,8 +62,7 @@ set(_rtxgi_define_args "")
 foreach(define IN LISTS _rtxgi_defines)
     list(APPEND _rtxgi_define_args "-D${define}")
 endforeach()
-# SDK shader includes reach into include/rtxgi; track both trees so header
-# changes trigger recompilation, including with a local FetchContent override.
+# Track both SDK include trees for shader rebuilds.
 file(GLOB_RECURSE _rtxgi_shader_deps CONFIGURE_DEPENDS
     "${_rtxgi_root}/shaders/*.hlsl" "${_rtxgi_root}/include/*.h")
 
@@ -87,8 +83,7 @@ function(_mir_rtxgi_shader name source entry)
     set_property(GLOBAL APPEND PROPERTY MIR_RTXGI_SHADER_OUTPUTS "${output}")
 endfunction()
 
-# No shared-memory ray-count specialization: later settings may vary rays per
-# probe without rebuilding shaders. Atlas interiors are 6/14 texels (+2 border).
+# Runtime ray counts; atlas interiors are 6/14 texels plus borders.
 _mir_rtxgi_shader(ProbeIrradiance DdgiUpdate DDGIProbeBlendingCS -DMIR_DDGI_PASS=0
     -DRTXGI_DDGI_BLEND_RADIANCE=1 -DOUTPUT_REGISTER=2
     -DRTXGI_DDGI_PROBE_NUM_TEXELS=8 -DRTXGI_DDGI_PROBE_NUM_INTERIOR_TEXELS=6)

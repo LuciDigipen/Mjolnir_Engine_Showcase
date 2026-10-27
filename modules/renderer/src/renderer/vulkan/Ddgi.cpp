@@ -27,8 +27,7 @@ namespace mir::vk
     namespace
     {
         static_assert(sizeof(rtxgi::DDGIVolumeDescGPUPacked) == 128);
-        // The SDK base implements packing, indexing and randomized ray rotation.
-        // All Vulkan objects are owned below rather than by the SDK volume.
+        // Use SDK volume math with renderer-owned Vulkan resources.
         class ProbeVolume final : public rtxgi::DDGIVolumeBase
         {
         public:

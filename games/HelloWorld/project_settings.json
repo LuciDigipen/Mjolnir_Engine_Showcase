@@ -17,6 +17,13 @@
   },
   "postProcessing": {
     "effects": {
+      "Anti-Aliasing": {
+        "enabled": true,
+        "params": {
+          "mode": "dlss",
+          "rtSampleCount": 4
+        }
+      },
       "Bloom": {
         "enabled": true,
         "params": {
@@ -51,6 +58,23 @@
     }
   },
   "rendering": {
+    "ddgi": {
+      "enabled": true,
+      "intensity": 1.0,
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "probeCounts": [
+        8,
+        8,
+        8
+      ],
+      "probeSpacing": 2.0,
+      "probesPerFrame": 512,
+      "raysPerProbe": 128
+    },
     "rayTracing": true
   }
 }

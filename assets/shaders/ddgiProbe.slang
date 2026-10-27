@@ -71,8 +71,7 @@ void shadowAnyHitMain(inout ShadowPayload payload, BuiltInTriangleIntersectionAt
     if (!AlphaTestPasses(attribs)) IgnoreHit();
 }
 
-// Probe radiance uses diffuse direct lighting only: no ambient, camera specular,
-// fog or screen-space guide writes. Visibility and material evaluation are shared.
+// Diffuse direct lighting excludes ambient to avoid feeding it into probe history.
 float3 ProbeDirectDiffuse(RayVisibility visibility, float3 albedo, float3 normal, float3 position)
 {
     float3 light = normalize(lightDirWS.xyz);
