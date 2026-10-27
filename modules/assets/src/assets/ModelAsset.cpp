@@ -433,7 +433,6 @@ namespace mir
                 uint64_t(a.width) * a.height * 4 == a.rgba.size()) ||
                Fail(e, "invalid RGBA texture");
     }
-
 #define MIR_IMPL_TYPED(Type, Tag)                                                                                      \
     std::vector<std::byte> BuildTypedAsset(const Type &asset)                                                          \
     {                                                                                                                  \
