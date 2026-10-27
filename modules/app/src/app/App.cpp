@@ -131,15 +131,19 @@ namespace mir
           mAnimation(Context(), mRenderer.Renderer(), mAssets, mProject.mAssetIdRoot, &mJobs),
           mImGui(Context(), mWindow, mRenderer),
     #if MIR_WITH_EDITOR
-          mEditor(Context(), mImGui, mWindow, mRenderer, mScene, mPrefab, mAssets, mProject,
-              mDesc.mEnableEditorLayout),
+        mEditor(Context(), mImGui, mWindow, mRenderer, mScene, mPrefab, mAssets, mProject,
+            mDesc.mEnableEditorLayout),
     #endif
           mCamera(Context()),
+    #if MIR_WITH_AUDIO
           mAudio(Context(), mProject.mSoundBankDir),
+    #endif
           mPhysics(Context(), mProject.mProjectSettingsPath, &mJobs),
           mTerrainData(Context()),
           mScript(Context(), mAssets, mProject.mAssetIdRoot),
+    #if MIR_WITH_AUDIO
           mAudioScript(mScript),
+    #endif
           mInputScript(mScript),
           mPhysicsScript(mScript),
           mRendererScript(mScript),
@@ -278,14 +282,14 @@ namespace mir
                 ").\n\nStart with an empty scene? Saving it will overwrite the broken file; restore it from git "
                 "first if you need it.\n\n" + refuse;
             return AskYesNo("Scene file is corrupt", message, mDesc.mNonInteractive) ? SceneLoadChoice::StartEmpty
-                                                                                     : SceneLoadChoice::Refuse;
+                : SceneLoadChoice::Refuse;
         }
 
         const std::string message = std::to_string(MissingFileCount(probe)) + " file(s) listed in " + manifest +
             " are missing or unreadable (" + MissingFileList(probe) + ").\n\nOpen the scene without them? Saving it will drop them for good; restore them from git first "
             "if you need them.\n\n" + refuse;
         return AskYesNo("Scene has missing entities", message, mDesc.mNonInteractive) ? SceneLoadChoice::Load
-                                                                                        : SceneLoadChoice::Refuse;
+            : SceneLoadChoice::Refuse;
     }
 
     void App::PlayScene()

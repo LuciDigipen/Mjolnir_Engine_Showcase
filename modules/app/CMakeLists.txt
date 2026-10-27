@@ -5,8 +5,6 @@ target_link_libraries(engine_app
     PUBLIC mir::animation
            mir::jobs
            mir::assets
-           mir::audio
-           mir::audio_script
            mir::camera
            mir::core
            mir::gameshell
@@ -47,4 +45,10 @@ target_compile_definitions(engine_app PUBLIC MIR_WITH_EDITOR=$<BOOL:${MJOLNIR_WI
 # the editor, and the asset import queue that only its panel drives
 if(MJOLNIR_WITH_EDITOR)
     target_link_libraries(engine_app PUBLIC mir::editor)
+endif()
+
+# App.h exposes audio members only when audio is built.
+target_compile_definitions(engine_app PUBLIC MIR_WITH_AUDIO=$<BOOL:${MIR_WITH_AUDIO}>)
+if(MIR_WITH_AUDIO)
+    target_link_libraries(engine_app PUBLIC mir::audio mir::audio_script)
 endif()

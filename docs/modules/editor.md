@@ -339,6 +339,13 @@ source. There is no compiler or runtime check for it.
 
 **The rect is only valid within or after `DrawLayout(true)` in the same frame.**
 
+**Viewport gizmos draw into the `##ViewportOverlay` window, not a foreground or
+background draw list.** The window sits behind every other window, so panels,
+menus and modals, dimming included, cover the transform gizmo, the selection
+boxes and component gizmos. The foreground list paints over every window, and
+the game UI paints over the background list. The window spans the main viewport
+because ImGuizmo hit-tests its rect. Each draw clips itself to the scene viewport.
+
 **The Open Project dialog is opened after the menu bar ends, not from the menu
 item.** `OpenPopup` and `BeginPopupModal` have to run under the same ID stack.
 Called from inside the menu, `OpenPopup` opens a popup that nothing ever draws.
@@ -506,6 +513,15 @@ or the dialog themselves. History needs neither, and its tests are in
    deleted, not everything recursively under a deleted folder.
 
 ## Changed
+
+*2026-10-26* — **A modal covers the viewport gizmos.** Was: the transform
+gizmo, the selection boxes and component gizmos drew into the main viewport's
+foreground draw list, which ImGui paints after every window, so they showed
+through a modal and its dimming, and the gizmo could still be hovered and
+dragged through the backdrop. Now: they draw into `##ViewportOverlay` (see
+Rules). While `GetTopMostPopupModal()` is set, `ImGuizmo::Enable` is off, which
+also greys the gizmo, and W, E and R leave the operation alone. Floating panels
+and open menus over the viewport cover the gizmos too.
 
 *2026-10-26* — **A light no longer takes viewport clicks across its whole
 range.** Was: a Point or Spot light's pick sphere had the light's `range` as

@@ -11,8 +11,13 @@
 #include <project/GameProject.h>
 #include <animation/AnimationModule.h>
 #include <assets/AssetsModule.h>
+#ifndef MIR_WITH_AUDIO
+#error "MIR_WITH_AUDIO is set by linking mir::app"
+#endif
+#if MIR_WITH_AUDIO
 #include <audio/AudioModule.h>
 #include <audio_script/AudioScriptModule.h>
+#endif
 #include <camera/CameraModule.h>
 #include <core/ecs/CommandBuffer.h>
 #include <core/ecs/CoreModule.h>
@@ -253,11 +258,15 @@ namespace mir
     #endif
         SplashStep mModulesStep{ mSplash, "Registering components...", 0.75f };
         CameraModule mCamera;
+    #if MIR_WITH_AUDIO
         AudioModule mAudio;
+    #endif
         PhysicsModule mPhysics;
         TerrainModule mTerrainData;
         ScriptModule mScript;
+    #if MIR_WITH_AUDIO
         AudioScriptModule mAudioScript;
+    #endif
         InputScriptModule mInputScript;
         PhysicsScriptModule mPhysicsScript;
         RendererScriptModule mRendererScript;
