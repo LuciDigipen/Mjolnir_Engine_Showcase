@@ -20,11 +20,12 @@
 
 namespace mir
 {
+    class JobExecutor;
     class ModelSystem final : public ISystem
     {
     public:
-        ModelSystem(VulkanRenderer &renderer, AssetCache *assets, std::string root)
-            : mRenderer(renderer), mAssets(assets), mRoot(std::move(root))
+        ModelSystem(VulkanRenderer &renderer, AssetCache *assets, std::string root, JobExecutor *jobs = nullptr)
+            : mRenderer(renderer), mAssets(assets), mRoot(std::move(root)), mJobs(jobs)
         {}
         void Reset();
         // Frees this World's uploads without releasing resources owned by other Worlds.
@@ -57,6 +58,7 @@ namespace mir
         VulkanRenderer &mRenderer;
         AssetCache *mAssets;
         std::string mRoot;
+        JobExecutor *mJobs;
         std::unordered_map<uint64_t, Loaded> mModels;
         std::unordered_map<uint64_t, TextureHandle> mTextures;
         std::unordered_map<uint64_t, Loaded> mPreparedModels;

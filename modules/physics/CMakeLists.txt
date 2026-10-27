@@ -22,7 +22,7 @@ if((MIR_LARGE_WORLD AND NOT _jolt_double) OR (NOT MIR_LARGE_WORLD AND _jolt_doub
         "(the root CMakeLists.txt sets it), and vcpkg must pick up vcpkg-overlays/; reconfigure.")
 endif()
 
-target_link_libraries(engine_physics PRIVATE Jolt::Jolt)
+target_link_libraries(engine_physics PRIVATE Jolt::Jolt mir::jobs)
 
 target_sources(engine_physics PRIVATE
     src/physics/PhysicsModule.cpp

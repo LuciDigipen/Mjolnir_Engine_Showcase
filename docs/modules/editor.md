@@ -106,6 +106,14 @@ the history and sets the mark from `SceneModule::LastLoad()`, `SceneSaved`
 clears it, `PlayBegin` remembers it for Stop to put back, and `ReloadCommit`
 marks the import applied.
 
+`AssetImportManager` caches the import panel's model view. Source additions,
+edits and removals invalidate it through the existing 250 ms watcher poll;
+that poll also checks the cooked import-cache file's timestamp/size signature
+for external replacement, creation or deletion. Unchanged frames reuse the view
+without rescanning sources or reparsing JSON. Explicit actions, cooker completion
+and reload apply/failure still refresh immediately, so statuses and diagnostics
+do not wait for the next poll. Layout-disabled editor builds keep these services.
+
 The Prefab documents are a `PrefabWorkspace`, one preview World per open Prefab
 tab, and a `PrefabAuthoringAdapter`. The adapter bridges History and the prefab
 module's authored state; `prefab/PrefabAuthoring` owns the edits themselves.

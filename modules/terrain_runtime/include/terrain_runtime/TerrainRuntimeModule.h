@@ -17,12 +17,13 @@ namespace mir
 {
     class RendererModule;
     class TerrainRuntime;
+    class JobExecutor;
     struct GameProject;
 
     class TerrainRuntimeModule
     {
     public:
-        TerrainRuntimeModule(ModuleContext context, RendererModule &renderer, const GameProject &project);
+        TerrainRuntimeModule(ModuleContext context, RendererModule &renderer, const GameProject &project, JobExecutor &jobs);
         ~TerrainRuntimeModule();
 
         TerrainRuntimeModule(const TerrainRuntimeModule &) = delete;

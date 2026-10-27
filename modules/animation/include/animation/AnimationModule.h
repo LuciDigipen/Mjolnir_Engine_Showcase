@@ -18,11 +18,13 @@ namespace mir
     class AssetsModule;
     class ModelSystem;
     class VulkanRenderer;
+    class JobExecutor;
 
     class AnimationModule
     {
     public:
-        AnimationModule(ModuleContext context, VulkanRenderer &renderer, AssetsModule &assets, std::string assetIdRoot);
+        AnimationModule(ModuleContext context, VulkanRenderer &renderer, AssetsModule &assets, std::string assetIdRoot,
+            JobExecutor *jobs = nullptr);
 
         AnimationModule(const AnimationModule &) = delete;
         AnimationModule &operator=(const AnimationModule &) = delete;
