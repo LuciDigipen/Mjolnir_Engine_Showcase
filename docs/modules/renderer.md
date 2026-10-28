@@ -582,6 +582,9 @@ uses one spatial pass without upsampling scratch storage. History resets on
 layout/resolution changes, camera identity or projection changes, large camera
 cuts, trace-setting changes, and `ResetHistory()`. Direct `RenderView` callers
 should supply a stable `historyId` or reset history when switching cameras.
+A `historyId` change is a camera cut for the other temporal state too:
+`CameraBuffer` drops that view slot's previous view-projection and jitter
+sequence, so motion blur sees no camera motion, and `TraceFrame` resets DLSS.
 Filtering has a separate 256 MiB allocation cap across frame slots; unsupported
 layouts retain existing lighting.
 
@@ -851,8 +854,9 @@ Play.** It remembers each camera's flag from last frame: a camera flagged since
 then wins and the others are cleared; a camera that arrives already flagged (a
 duplicate, a paste, a prefab) is cleared if another is active. The Inspector,
 `world:set` and `world:set_active_camera` all go through it, so a change made
-before the Render phase shows that frame. The flags it clears are not in the
-editor's history, so undoing an activation leaves no camera active. With none
+before the Render phase shows that frame. The Inspector clears the other
+cameras itself in the same undo step (`MakeFieldEditCommand`, see
+[editor.md](editor.md)), so undo brings the previous camera back. With none
 flagged, Play draws through the lowest-index `Camera`; with no `Camera` at all,
 from the origin with a default lens. Each warns once per scene load and Play
 session.
@@ -960,6 +964,13 @@ Everything that needs a device is verified by the smoke tests and
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-10-27* — **A camera cut resets motion blur's and DLSS's history
+(#231).** Was: switching the active camera kept the previous camera's
+view-projection and DLSS history, so the first frame after a cut blurred or
+ghosted across the whole screen. Now: a view whose `historyId` changes starts
+with no previous view-projection or jitter sequence, and `TraceFrame` resets
+DLSS. Because: the frames on either side of a cut share nothing to reproject.
 
 *2026-10-27* — **Post effects read exposure, focus and shutter from the
 `Camera` (#231).** Was: `exposure` (HDR), `focusDistance` and `aperture`

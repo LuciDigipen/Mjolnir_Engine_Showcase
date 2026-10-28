@@ -520,6 +520,16 @@ or the dialog themselves. History needs neither, and its tests are in
 
 ## Changed
 
+*2026-10-27* — **Switching the active camera is one undo step;
+`MakeCommandGroup` (#231).** Was: the Inspector recorded only the camera it
+turned on, and `ActiveCameraSystem` cleared the old one outside history, so
+undo left no camera active. Now: the Inspector's field edits and Paste Values
+go through `MakeFieldEditCommand` (`editor/history/ActiveCameraEdit.h`), which
+groups turning a `Camera` on with clearing every other active one, using
+`MakeCommandGroup` (`editor/history/CommandGroup.h`): several commands done in
+order and undone in reverse as one step. Because: undo should bring back the
+camera that was active.
+
 *2026-10-27* — **The scene camera has no depth of field or motion blur
 (#231).** Was: the Post-Processing panel's focus, aperture and shutter applied
 to the scene view as to every camera. Now: those values and exposure are

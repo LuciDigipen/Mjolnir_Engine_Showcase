@@ -438,6 +438,13 @@ namespace mir
         if (views.empty())
             return;
 
+        // different camera starts it over.
+        if (views[0].historyId != mTracedHistoryId)
+        {
+            mPostProcessing->ResetHistory();
+            mTracedHistoryId = views[0].historyId;
+        }
+
 #if MIR_WITH_RTXGI
         mDdgi->Configure(mDdgiSettings, views[0].rayTracingItems.has_value());
 #endif
