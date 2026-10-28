@@ -806,10 +806,8 @@ namespace mir
 
         // The start axes are unit length, so this is the drag's rotation, or its stretch along them.
         const glm::mat3 change = mGizmoPivot.linear * glm::transpose(mGizmoDragStart.linear);
-        const glm::mat3 rotation = glm::mat3_cast(glm::normalize(glm::quat_cast(change)));
-        const glm::vec3 stretch{ glm::length(mGizmoPivot.linear[0]), glm::length(mGizmoPivot.linear[1]),
-            glm::length(mGizmoPivot.linear[2]) };
-        const WorldMat3 aboutPivot(rotate ? rotation : change);
+        const glm::mat3 about = rotate ? glm::mat3_cast(glm::normalize(glm::quat_cast(change))) : change;
+        const WorldMat3 aboutPivot(about);
 
         std::vector<std::unique_ptr<ICommand>> commands;
         for (const GizmoTarget &target : mGizmoTargets)
@@ -835,18 +833,16 @@ namespace mir
                 AddTransformField(values, *ops, "position", position->Meters());
             }
 
-            if (rotate)
+            if (!translate)
             {
-                // the world rotation, seen on the parent's axes
-                glm::quat localRotation{};
-                glm::vec3 scale{};
-                DecomposeRotationScale(glm::inverse(target.mParent.linear) * rotation * target.mParent.linear,
-                    localRotation, scale);
-                AddTransformField(values, *ops, "rotation", glm::normalize(localRotation * target.mStart.Rotation()));
-            }
-            else if (!translate)
-            {
-                AddTransformField(values, *ops, "scale", target.mStart.Scale() * stretch);
+                const glm::mat3 axes = glm::inverse(target.mParent.linear) * about * target.mParent.linear * glm::mat3_cast(target.mStart.Rotation());
+                glm::quat turned{};
+                glm::vec3 stretched{};
+                DecomposeRotationScale(axes, turned, stretched);
+                if (rotate)
+                    AddTransformField(values, *ops, "rotation", glm::normalize(turned));
+                else
+                    AddTransformField(values, *ops, "scale", target.mStart.Scale() * stretched);
             }
 
             const Name *name = world.GetComponent<Name>(target.mEntity);
