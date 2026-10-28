@@ -388,7 +388,7 @@ namespace mir
                 }
                 else
                 {
-                    bool cooked = false;
+                    bool cooked = result.value("assetsChanged", false);
                     const Json resultModels = result.value("models", Json::array());
                     for (const auto &model : resultModels)
                     {

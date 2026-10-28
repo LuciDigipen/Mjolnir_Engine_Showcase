@@ -9,7 +9,7 @@
 #pragma once
 
 #include "particles/ParticleRuntime.h"
-#include "particles/components/ParticleEmitter.h"
+#include "particles/components/ParticleSystem.h"
 
 #include <core/ecs/World.h>
 
@@ -31,13 +31,14 @@ namespace mir
         bool Start(Entity owner);
         bool Stop(Entity owner);
         bool Pause(Entity owner, bool paused);
+        bool SetParameters(Entity owner, const ParticleUserParameters &parameters);
         bool Reset(Entity owner);
         bool Destroy(Entity owner);
-        const ParticleInstance *Find(Entity owner) const;
+        const ParticleSystemInstance *Find(Entity owner) const;
         ParticleRuntime &Runtime() { return mRuntime; }
         const ParticleRuntime &Runtime() const { return mRuntime; }
 
-        void Synchronize(Entity owner, ParticleEmitter &emitter, const WorldPose &pose);
+        void Synchronize(Entity owner, ParticleSystem &emitter, const WorldPose &pose);
         void Clear();
         void Detach(Entity owner);
         void PrepareReload(AssetCache &candidate);

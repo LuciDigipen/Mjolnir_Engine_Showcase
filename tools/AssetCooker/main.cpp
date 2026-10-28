@@ -500,14 +500,38 @@ namespace
             options.models.push_back(moved);
             completedMoves.emplace_back(model, moved);
         }
-        const bool partial =
-            !options.models.empty() || !options.changed.empty() || !options.removals.empty() || !options.moves.empty();
+        // Particle dependencies form a small source graph, a changed member recooks
+        // the complete graph before publishing its replacement manifest.
+        bool particleChange = std::any_of(options.changed.begin(), options.changed.end(), [](const auto &path)
+            {
+                const auto name = path.filename().string();
+                return name.ends_with(".particle.json") || name.ends_with(".emitter.json");
+            });
+        if (!particleChange && !options.changed.empty())
+            for (const auto &root : options.roots)
+                for (const auto &entry : std::filesystem::recursive_directory_iterator(root.physical))
+                {
+                    if (!entry.is_regular_file() || !entry.path().filename().string().ends_with(".emitter.json"))
+                        continue;
+                    const auto bytes = mir::ReadBytes(entry.path());
+                    if (!bytes) continue;
+                    const auto emitter = mir::ReadParticleEmitterSource(
+                        {reinterpret_cast<const char *>(bytes->data()), bytes->size()}, root.logical);
+                    if (!emitter.mEmitter) continue;
+                    const auto texture = std::filesystem::weakly_canonical(root.physical / emitter.mTexturePath);
+                    particleChange = particleChange || std::any_of(options.changed.begin(), options.changed.end(),
+                        [&](const auto &changed) { return std::filesystem::weakly_canonical(changed) == texture; });
+                }
+        const bool partial = !options.models.empty() || !options.changed.empty() || !options.removals.empty() ||
+                             !options.moves.empty();
         std::unordered_map<uint64_t, Output> outputs;
+        std::unordered_map<uint64_t, Output> previousOutputs;
+        if (auto previous = mir::AssetManifest::LoadFile(options.out / mir::kAssetManifestFileName))
+            for (const auto &entry : previous->Entries())
+                previousOutputs.emplace(entry.id.value,
+                    Output{entry.id, entry.typeTag, entry.contentVersion, std::string(previous->PathOf(entry))});
         if (partial)
-            if (auto previous = mir::AssetManifest::LoadFile(options.out / mir::kAssetManifestFileName))
-                for (const auto &entry : previous->Entries())
-                    outputs.emplace(entry.id.value, Output{entry.id, entry.typeTag, entry.contentVersion,
-                                                           std::string(previous->PathOf(entry))});
+            outputs = previousOutputs;
 
         std::set<std::string> requested(options.models.begin(), options.models.end()), changedCanonical;
         for (const auto &path : options.changed)
@@ -550,6 +574,7 @@ namespace
                     resolved && std::filesystem::exists(resolved->second))
                     identityOwners.emplace(cachedRecord.at("identityPath").get<std::string>(), cachedPath);
         std::unordered_map<uint64_t, std::string> prefabAssetOwners;
+        bool assetsChanged = false;
         auto emit = [&](mir::AssetId id, const std::vector<std::byte> &bytes) {
             const auto blob = mir::ParseAssetBlob(bytes);
             if (!blob)
@@ -565,6 +590,8 @@ namespace
             if (!same)
                 Publish(path, bytes);
             Output output{id, blob->header.typeTag, blob->header.contentVersion, file};
+            const auto baseline = previousOutputs.find(id.value);
+            assetsChanged = assetsChanged || baseline == previousOutputs.end() || baseline->second.file != file;
             outputs[id.value] = output;
             return output;
         };
@@ -593,6 +620,22 @@ namespace
                     existing->second.file + "'; regenerate the prefab UUID");
             prefabAssetOwners.emplace(id.value, logical);
             emit(id, mir::BuildPrefabAsset(*parsed.mDocument));
+        };
+
+        auto cookParticleEmitter = [&](const SourceRoot &root, const std::filesystem::path &path)
+        {
+            const auto bytes = mir::ReadBytes(path);
+            if (!bytes) throw std::runtime_error("missing particle emitter: " + path.string());
+            const auto emitter = mir::ReadParticleEmitterSource(
+                {reinterpret_cast<const char *>(bytes->data()), bytes->size()}, root.logical);
+            if (!emitter.mEmitter)
+                throw std::runtime_error(LogicalPath(root, path) + ": " + emitter.mError);
+            const auto texturePath = root.physical / emitter.mTexturePath;
+            const auto textureBytes = mir::ReadBytes(texturePath);
+            if (!textureBytes || !mir::cook::IsImagePath(texturePath))
+                throw std::runtime_error("missing or unsupported particle texture: " + texturePath.string());
+            emit(emitter.mEmitter->texture, mir::BuildTypedAsset(mir::cook::DecodeImage(*textureBytes)));
+            emit(mir::MakeAssetId(LogicalPath(root, path)), mir::BuildParticleEmitterAsset(*emitter.mEmitter));
         };
 
         for (const auto &logical : options.removals)
@@ -748,6 +791,11 @@ namespace
                             outputs[output.id.value] = output;
                     }
                 }
+        }
+        // Standalone assets are rooted in the configured source roots. Particle changes
+        // recook this graph while retaining manifest entries from roots outside the request.
+        if (!partial || particleChange)
+        {
             //a gltf's images are cooked by its import, under its own ids
             std::unordered_set<std::string> modelImages;
             for (const auto &[logical, record] : cache["models"].items())
@@ -776,6 +824,11 @@ namespace
                         cookPrefab(logical, path);
                         continue;
                     }
+                    if (filename.ends_with(".emitter.json"))
+                    {
+                        cookParticleEmitter(root, path);
+                        continue;
+                    }
                     if (filename.ends_with(".particle.json"))
                     {
                         const auto effectBytes = mir::ReadBytes(path);
@@ -785,11 +838,8 @@ namespace
                             {reinterpret_cast<const char *>(effectBytes->data()), effectBytes->size()}, root.logical);
                         if (!effect.mEffect)
                             throw std::runtime_error(logical + ": " + effect.mError);
-                        const auto texturePath = root.physical / effect.mTexturePath;
-                        const auto textureBytes = mir::ReadBytes(texturePath);
-                        if (!textureBytes || !mir::cook::IsImagePath(texturePath))
-                            throw std::runtime_error("missing or unsupported particle texture: " + texturePath.string());
-                        emit(effect.mEffect->texture, mir::BuildTypedAsset(mir::cook::DecodeImage(*textureBytes)));
+                        for (const auto &emitterPath : effect.mEmitterPaths)
+                            cookParticleEmitter(root, root.physical / emitterPath);
                         emit(mir::MakeAssetId(logical), mir::BuildParticleEffectAsset(*effect.mEffect));
                         continue;
                     }
@@ -829,9 +879,12 @@ namespace
         for (const auto &output : ordered)
             entries.push_back({{output.id, output.tag, output.version}, output.file});
         const auto manifestPath = options.out / mir::kAssetManifestFileName;
+        const auto manifestBytes = mir::BuildAssetManifestBlob(entries);
+        const auto previousManifestBytes = mir::ReadBytes(manifestPath);
+        const bool manifestChanged = !previousManifestBytes || *previousManifestBytes != manifestBytes;
         if (auto bytes = mir::ReadBytes(manifestPath))
             Publish(options.out / kPreviousManifestFileName, *bytes);
-        Publish(manifestPath, mir::BuildAssetManifestBlob(entries));
+        Publish(manifestPath, manifestBytes);
         PublishText(options.out / "import-cache.json", cache.dump(2) + "\n");
 
         std::unordered_set<std::string> keep{std::string(mir::kAssetManifestFileName),
@@ -849,7 +902,10 @@ namespace
             const std::string status = v.value("status", "");
             return status == "cooked" || status == "removed";
         });
-        WriteResult(options, BuildResult(changed ? "succeeded" : "unchanged", resultModels));
+        assetsChanged = assetsChanged || manifestChanged;
+        auto result = BuildResult(changed || assetsChanged ? "succeeded" : "unchanged", resultModels);
+        result["assetsChanged"] = assetsChanged;
+        WriteResult(options, result);
         MIR_LOG_INFO("AssetCooker: {} assets in manifest ({} model requests)", ordered.size(), models.size());
         return 0;
     }

@@ -1,6 +1,6 @@
 add_executable(ParticleGpuCheck main.cpp)
 find_package(glfw3 CONFIG REQUIRED)
-target_link_libraries(ParticleGpuCheck PRIVATE mir::renderer mir::window glfw)
+target_link_libraries(ParticleGpuCheck PRIVATE mir::particles_gpu mir::particles_runtime mir::particles mir::window glfw)
 set_target_properties(ParticleGpuCheck PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 add_dependencies(ParticleGpuCheck MjolnirEngine)
 add_test(NAME smoke.particle-gpu

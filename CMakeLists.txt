@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.26)
+cmake_minimum_required(VERSION 3.26)
 
 
 option(MIR_LARGE_WORLD "Double-precision world positions and Jolt" ON)
@@ -68,6 +68,7 @@ add_subdirectory(modules/imguiruntime)
 add_subdirectory(modules/input)
 add_subdirectory(modules/input_script)
 add_subdirectory(modules/particles)
+add_subdirectory(modules/particles_gpu)
 add_subdirectory(modules/particles_runtime)
 add_subdirectory(modules/particles_script)
 add_subdirectory(modules/physics)
@@ -157,15 +158,14 @@ engine_add_shaders(MjolnirEngine
     ENTRIES vertexMain:vertex compositeMain:fragment)
 
 engine_add_shaders(MjolnirEngine
-    SOURCE assets/shaders/particlePool.slang
+    SOURCE modules/particles_gpu/shaders/particlePool.slang
     ENTRIES computeMain:compute vertexMain:vertex fragmentMain:fragment)
 
 engine_add_shaders(MjolnirEngine
-    SOURCE assets/shaders/particleProbe.slang
+    SOURCE assets/shaders/fxComposition.slang
     ENTRIES vertexMain:vertex fragmentMain:fragment)
 
 if(BUILD_TESTING)
-    add_subdirectory(tools/ParticleCompositionCheck)
     add_subdirectory(tools/ParticleGpuCheck)
 endif()
 
@@ -319,6 +319,7 @@ target_link_libraries(MjolnirEngine PRIVATE
     mir::gameshell
     mir::input
     mir::particles
+    mir::particles_gpu
     mir::particles_runtime
     mir::particles_script
     mir::physics

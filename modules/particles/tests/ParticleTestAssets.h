@@ -42,11 +42,18 @@ namespace mir::test
         ParticleTestAssets &operator=(const ParticleTestAssets &) = delete;
 
         static AssetId EffectId() { return MakeAssetId("assets/effects/exhaust.particle.json"); }
+        static AssetId EmitterId() { return MakeAssetId("assets/effects/exhaust.emitter.json"); }
         static AssetId TextureId() { return MakeAssetId("assets/textures/white.png"); }
         const std::filesystem::path &Root() const { return mRoot; }
         ParticleEffect Definition(float lifetime = 0.05f) const
         {
-            return ParticleEffect{lifetime, 60.0f, 256, TextureId()};
+            ParticleEmitterAsset emitter;
+            emitter.lifetime = lifetime;
+            emitter.texture = TextureId();
+            ParticleEffect system;
+            system.emitters.push_back(EmitterId());
+            system.emitterDefinitions.push_back(emitter);
+            return system;
         }
 
         void Write(std::string_view name, const std::vector<std::byte> &bytes)
@@ -65,6 +72,7 @@ namespace mir::test
                 effect = BuildAssetBlob(kParticleEffectTypeTag, effectVersion, view->content);
             }
             Write("effect.blob", effect);
+            Write("emitter.blob", BuildParticleEmitterAsset(Definition(lifetime).emitterDefinitions[0]));
             const auto texture = textureTyped
                 ? BuildTypedAsset(TextureAsset{1, 1, {255, 255, 255, 255}})
                 : BuildAssetBlob(kRawAssetTypeTag, 1, {});
@@ -77,6 +85,7 @@ namespace mir::test
             }
             const AssetManifestSourceEntry entries[]{
                 {{EffectId(), kParticleEffectTypeTag, effectVersion}, "effect.blob"},
+                {{EmitterId(), kParticleEmitterTypeTag, kParticleEmitterContentVersion}, "emitter.blob"},
                 {{TextureId(), textureTyped ? kTextureAssetTypeTag : kRawAssetTypeTag, 1}, "texture.blob"}};
             Write(kAssetManifestFileName, BuildAssetManifestBlob(entries));
         }

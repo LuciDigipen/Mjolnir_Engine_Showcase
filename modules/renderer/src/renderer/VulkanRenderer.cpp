@@ -11,6 +11,7 @@
 #include "vulkan/Device.h"
 #include "vulkan/FrameCapture.h"
 #include "vulkan/FrameSync.h"
+#include "vulkan/FxCompositionPass.h"
 #include "vulkan/ImGuiOverlay.h"
 #include "vulkan/MaterialStore.h"
 #include "vulkan/MeshUploader.h"
@@ -23,6 +24,7 @@
 #include "vulkan/VulkanConstants.h"
 
 #include <core/log/Log.h>
+#include <core/log/SetupError.h>
 
 namespace mir
 {
@@ -37,6 +39,7 @@ namespace mir
         mModelDescriptors(std::make_unique<vk::ModelDescriptors>()),
         mRayTracer(std::make_unique<vk::RayTracer>()),
         mPostProcessing(std::make_unique<vk::PostProcessingStack>()),
+        mFxComposition(std::make_unique<vk::FxCompositionPass>()),
         mCapture(std::make_unique<vk::FrameCapture>()),
         mImGuiOverlay(std::make_unique<vk::ImGuiOverlay>()),
         mMeshUploads(std::make_unique<vk::MeshUploader>())
@@ -49,19 +52,24 @@ namespace mir
 
     bool VulkanRenderer::DlssAvailable() const { return mPostProcessing->DlssAvailable(); }
 
-    void VulkanRenderer::SubmitParticles(std::span<const ParticleSubmission> inputs)
+    FxDeviceContext VulkanRenderer::FxDevice() const
     {
-        mPostProcessing->Particles().Submit(inputs);
+        return {mDevice->Handle(), mDevice->Allocator(), mDevice->ValidationEnabled()};
     }
 
-    ParticleGpuStats VulkanRenderer::ParticleStats() const
+    Registration VulkanRenderer::RegisterFxSystem(IFxSystem &system)
     {
-        return mPostProcessing->Particles().Stats();
-    }
-
-    void VulkanRenderer::SetParticleCompositionProbe(std::optional<WorldPosition> anchor)
-    {
-        mPostProcessing->SetParticleCompositionProbe(anchor);
+        if (mFxSystem)
+            throw SetupError(ErrorCategory::Internal, "Register FX system", "renderer",
+                "An FX provider is already registered", "Unregister the existing provider before registering another.");
+        mFxSystem = &system;
+        return Registration(mFxLifetime, [this, provider = &system]
+        {
+            if (mFxSystem != provider) return;
+            if (mDevice->Handle()) mDevice->WaitIdle();
+            provider->Shutdown();
+            mFxSystem = nullptr;
+        });
     }
 
     VulkanRenderer::GpuMemoryUsage VulkanRenderer::GetGpuMemoryUsage() const
@@ -129,6 +137,7 @@ namespace mir
         // The swapchain cannot reach ray tracing, so the facade resizes its output images.
         if (!mSwapchain->Recreate(*mWindow) ||
             (mDevice->RayTracingSupported() && !mRayTracer->Resize(mSwapchain->Extent())) ||
+            !mFxComposition->Resize(mSwapchain->Extent()) ||
             !mPostProcessing->Resize(mSwapchain->Extent()))
         {
             // Recreate may have cleared the flag already; set it so the next frame retries.
@@ -148,6 +157,8 @@ namespace mir
 
             mMeshUploads->Shutdown(*mRayTracer);
 
+            if (mFxSystem) { mFxSystem->Shutdown(); mFxSystem = nullptr; }
+            mFxComposition->Shutdown();
             mPostProcessing->Shutdown();
             mMaterialStore->Shutdown();
             mRayTracer->Shutdown();
@@ -300,8 +311,7 @@ namespace mir
 
     void VulkanRenderer::ReleaseSceneResources()
     {
-        mPostProcessing->SetParticleCompositionProbe(std::nullopt);
-        mPostProcessing->Particles().Submit({});
+        if (mFxSystem) mFxSystem->ClearScene();
         if (mDevice->Handle() == VK_NULL_HANDLE)
             return;
 

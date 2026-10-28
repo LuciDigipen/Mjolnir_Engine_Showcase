@@ -2,7 +2,6 @@ engine_add_module_tests(renderer
     AntiAliasingEffect.tests.cpp
     BloomEffect.tests.cpp
     CameraMath.tests.cpp
-    ParticleCompositionProbe.tests.cpp
     DepthOfFieldEffect.tests.cpp
     FilmEffect.tests.cpp
     MeshStreaming.tests.cpp

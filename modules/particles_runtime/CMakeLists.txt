@@ -5,4 +5,4 @@ target_sources(engine_particles_runtime PRIVATE
 )
 
 # PUBLIC because ModuleContext appears in the bridge header.
-target_link_libraries(engine_particles_runtime PUBLIC mir::core PRIVATE mir::particles mir::renderer)
+target_link_libraries(engine_particles_runtime PUBLIC mir::core mir::particles_gpu PRIVATE mir::particles)

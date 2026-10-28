@@ -29,13 +29,13 @@ namespace mir
             explicit ParticleUpdateSystem(ParticleWorld &particles) : mParticles(particles) {}
             void OnStart(SystemContext &context) override
             {
-                mQuery = &context.world.GetOrCreateQuery<ParticleEmitter, const WorldTransform>();
+                mQuery = &context.world.GetOrCreateQuery<ParticleSystem, const WorldTransform>();
             }
             void OnUpdate(SystemContext &context) override
             {
                 if (!IsSimulating(context.world))
                     return;
-                mQuery->ForEach([this](Entity owner, ParticleEmitter &emitter, const WorldTransform &transform)
+                mQuery->ForEach([this](Entity owner, ParticleSystem &emitter, const WorldTransform &transform)
                     {
                         mParticles.Synchronize(owner, emitter, transform.Pose());
                     });
@@ -43,7 +43,7 @@ namespace mir
             }
         private:
             ParticleWorld &mParticles;
-            Query<ParticleEmitter, const WorldTransform> *mQuery = nullptr;
+            Query<ParticleSystem, const WorldTransform> *mQuery = nullptr;
         };
     }
 
@@ -53,10 +53,10 @@ namespace mir
             context.world, assets.Cache(), std::move(assetIdRoot), capacity))
     {
         RegisterParticleComponents();
-        mHooks = context.world.SetComponentHooks<ParticleEmitter>({
+        mHooks = context.world.SetComponentHooks<ParticleSystem>({
             .onAdd = [](World &world, Entity owner)
             {
-                auto &emitter = *world.GetComponent<ParticleEmitter>(owner);
+                auto &emitter = *world.GetComponent<ParticleSystem>(owner);
                 emitter.instance = {};
                 emitter.initialized = false;
                 emitter.wantsPlay = false;

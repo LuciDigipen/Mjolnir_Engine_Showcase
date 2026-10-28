@@ -17,6 +17,7 @@
 #include <core/ecs/TransformHierarchy.h>
 #include <particles/ParticlesModule.h>
 #include <particles/ParticleWorld.h>
+#include <particles/components/ParticleSystem.h>
 
 #include <cstring>
 
@@ -40,14 +41,14 @@ namespace mir::test
         }
         ~ParticleTestWorld() { scheduler.Stop(context); }
         ParticleWorld &Particles() { return module.Particles(); }
-        Entity Emitter(bool autoStart = true)
+        Entity System(bool autoStart = true)
         {
             const Entity owner = world.CreateEntity();
             AddTransform(world, owner);
-            ParticleEmitter emitter;
-            std::strcpy(emitter.effectName, "effects/exhaust.particle.json");
-            emitter.playOnStart = autoStart;
-            world.AddComponent<ParticleEmitter>(owner, emitter);
+            ParticleSystem system;
+            std::strcpy(system.systemName, "effects/exhaust.particle.json");
+            system.playOnStart = autoStart;
+            world.AddComponent<ParticleSystem>(owner, system);
             return owner;
         }
         void Tick(float dt = 1.0f / 60.0f)

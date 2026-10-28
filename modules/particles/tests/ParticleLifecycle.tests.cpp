@@ -15,10 +15,10 @@
 
 #include <cstring>
 
-TEST_CASE("Particle emitters allocate in LateUpdate and stop pause reset have distinct lifetimes", "[particles]")
+TEST_CASE("Particle systems allocate in LateUpdate and stop pause reset have distinct lifetimes", "[particles]")
 {
     mir::test::ParticleTestWorld test;
-    const auto owner = test.Emitter();
+    const auto owner = test.System();
     CHECK_FALSE(test.Particles().Find(owner));
     test.Tick();
     REQUIRE(test.Particles().Find(owner));
@@ -27,7 +27,7 @@ TEST_CASE("Particle emitters allocate in LateUpdate and stop pause reset have di
     REQUIRE(test.Particles().Pause(owner, true));
     for (int i = 0; i < 10; ++i) test.Tick();
     REQUIRE(test.Particles().Find(owner));
-    CHECK(test.Particles().Find(owner)->phase == mir::ParticlePhase::Draining);
+    CHECK(test.Particles().Find(owner)->state == mir::ParticleExecutionState::Inactive);
     REQUIRE(test.Particles().Pause(owner, false));
     for (int i = 0; i < 3; ++i) test.Tick();
     CHECK_FALSE(test.Particles().Find(owner));
@@ -45,7 +45,7 @@ TEST_CASE("Particle emitters allocate in LateUpdate and stop pause reset have di
     REQUIRE(test.Particles().Destroy(owner));
     test.Tick();
     CHECK_FALSE(test.Particles().Find(owner));
-    const auto manual = test.Emitter(false);
+    const auto manual = test.System(false);
     test.Tick();
     CHECK_FALSE(test.Particles().Find(manual));
     test.Particles().Start(manual);
@@ -56,7 +56,7 @@ TEST_CASE("Particle emitters allocate in LateUpdate and stop pause reset have di
 TEST_CASE("Particle paused worlds freeze drains and removed owners release bounded instances", "[particles]")
 {
     mir::test::ParticleTestWorld test;
-    const auto owner = test.Emitter();
+    const auto owner = test.System();
     test.Tick();
     const auto handle = test.Particles().Find(owner)->handle;
     test.Particles().Stop(owner);
@@ -72,17 +72,17 @@ TEST_CASE("Particle paused worlds freeze drains and removed owners release bound
     CHECK(test.Particles().Runtime().Stats().active == 0);
 }
 
-TEST_CASE("Particle copied components cannot share handles and excess emitters wait for capacity", "[particles]")
+TEST_CASE("Particle copied components cannot share handles and excess systems wait for capacity", "[particles]")
 {
     mir::test::ParticleTestWorld test;
-    const auto first = test.Emitter();
+    const auto first = test.System();
     test.Tick();
-    const auto copy = *test.world.GetComponent<mir::ParticleEmitter>(first);
+    const auto copy = *test.world.GetComponent<mir::ParticleSystem>(first);
     const auto second = test.world.CreateEntity();
     mir::AddTransform(test.world, second);
-    test.world.AddComponent<mir::ParticleEmitter>(second, copy);
-    CHECK(test.world.GetComponent<mir::ParticleEmitter>(second)->instance.IsNull());
-    const auto third = test.Emitter();
+    test.world.AddComponent<mir::ParticleSystem>(second, copy);
+    CHECK(test.world.GetComponent<mir::ParticleSystem>(second)->instance.IsNull());
+    const auto third = test.System();
     test.Tick();
     CHECK(test.Particles().Runtime().Stats().active == 2);
     REQUIRE(test.Particles().Find(first));
@@ -98,19 +98,19 @@ TEST_CASE("Particle copied components cannot share handles and excess emitters w
 TEST_CASE("Particle cleared effect references release instances and component removal drains", "[particles]")
 {
     mir::test::ParticleTestWorld test;
-    const auto owner = test.Emitter();
+    const auto owner = test.System();
     test.Tick();
     const auto first = test.Particles().Find(owner)->handle;
-    auto &emitter = *test.world.GetComponent<mir::ParticleEmitter>(owner);
-    emitter.effectName[0] = '\0';
+    auto &emitter = *test.world.GetComponent<mir::ParticleSystem>(owner);
+    emitter.systemName[0] = '\0';
     test.Tick();
     CHECK_FALSE(test.Particles().Runtime().Find(first));
     CHECK(test.Particles().Runtime().Stats().active == 0);
-    std::strcpy(emitter.effectName, "effects/exhaust.particle.json");
+    std::strcpy(emitter.systemName, "effects/exhaust.particle.json");
     test.Tick();
     REQUIRE(test.Particles().Find(owner));
     const auto second = test.Particles().Find(owner)->handle;
-    test.world.RemoveComponent<mir::ParticleEmitter>(owner);
+    test.world.RemoveComponent<mir::ParticleSystem>(owner);
     REQUIRE(test.Particles().Runtime().Find(second));
     CHECK(test.Particles().Runtime().Find(second)->owner.IsNull());
     for (int i = 0; i < 3; ++i) test.Tick();
@@ -120,7 +120,7 @@ TEST_CASE("Particle cleared effect references release instances and component re
 TEST_CASE("Particle reload stages preserve old state on abort and reset bindings on commit", "[particles]")
 {
     mir::test::ParticleTestWorld test;
-    const auto owner = test.Emitter();
+    const auto owner = test.System();
     test.Tick();
     const auto old = test.Particles().Find(owner)->handle;
 
@@ -130,7 +130,7 @@ TEST_CASE("Particle reload stages preserve old state on abort and reset bindings
     test.StageEvent(mir::Stage::ReloadAbort);
     test.assets.AbortReload();
     REQUIRE(test.Particles().Runtime().Find(old));
-    CHECK(test.Particles().Find(owner)->effect.lifetime == 0.05f);
+    CHECK(test.Particles().Find(owner)->effect.emitterDefinitions[0].lifetime == 0.05f);
 
     test.files.Publish(0.1f);
     test.assets.BeginReload();
@@ -143,7 +143,7 @@ TEST_CASE("Particle reload stages preserve old state on abort and reset bindings
     test.Tick();
     REQUIRE(test.Particles().Find(owner));
     CHECK(test.Particles().Find(owner)->paused);
-    CHECK(test.Particles().Find(owner)->effect.lifetime == 0.1f);
+    CHECK(test.Particles().Find(owner)->effect.emitterDefinitions[0].lifetime == 0.1f);
     test.Particles().Stop(owner);
     test.files.Publish(0.2f);
     test.assets.BeginReload();
@@ -158,7 +158,7 @@ TEST_CASE("Particle save load and repeated play scene transitions never serializ
 {
     mir::test::ParticleTestWorld test;
     auto scene = mir::NewScene("particle lifecycle");
-    auto owner = test.Emitter();
+    auto owner = test.System();
     scene.mEntities.emplace(mir::AllocateStableId(scene), owner);
     const auto dir = test.files.Root() / "scene";
     test.Tick();
@@ -172,14 +172,18 @@ TEST_CASE("Particle save load and repeated play scene transitions never serializ
     REQUIRE(scene.mEntities.size() == 1);
     owner = scene.mEntities.begin()->second;
     test.StageEvent(mir::Stage::SceneLoad);
-    const auto *emitter = test.world.GetComponent<mir::ParticleEmitter>(owner);
+    const auto *emitter = test.world.GetComponent<mir::ParticleSystem>(owner);
     REQUIRE(emitter);
     CHECK(emitter->instance.IsNull());
-    CHECK(std::string(emitter->effectName) == "effects/exhaust.particle.json");
+    CHECK(std::string(emitter->systemName) == "effects/exhaust.particle.json");
 
-    const auto *ops = mir::ComponentRegistry::Instance().Find("ParticleEmitter");
+    const auto *ops = mir::ComponentRegistry::Instance().Find("ParticleSystem");
     REQUIRE(ops);
-    CHECK(ops->mFields.size() == 2);
+    CHECK(ops->mFields.size() == 5);
+    CHECK(ops->FindField("spawnRateScale") != nullptr);
+    CHECK(ops->FindField("sizeScale") != nullptr);
+    CHECK(ops->FindField("effectName") == nullptr);
+    CHECK(mir::ComponentRegistry::Instance().Find("ParticleEmitter") == nullptr);
     CHECK(ops->FindField("instance") == nullptr);
     for (int i = 0; i < 10; ++i)
     {
@@ -189,6 +193,118 @@ TEST_CASE("Particle save load and repeated play scene transitions never serializ
         CHECK(test.Particles().Runtime().Stats().active == 1);
         test.StageEvent(mir::Stage::PlayEnd);
         CHECK(test.Particles().Runtime().Stats().active == 0);
-        CHECK(test.world.GetComponent<mir::ParticleEmitter>(owner)->instance.IsNull());
+        CHECK(test.world.GetComponent<mir::ParticleSystem>(owner)->instance.IsNull());
     }
+}
+
+TEST_CASE("Particle system user overrides persist and update only the selected instance", "[particles]")
+{
+    mir::test::ParticleTestWorld test;
+    const auto owner = test.System();
+    auto &component = *test.world.GetComponent<mir::ParticleSystem>(owner);
+    component.overrideParameters = true;
+    component.userParameters = {0.5f, 2};
+    test.Tick();
+    REQUIRE(test.Particles().Find(owner));
+    const auto handle = test.Particles().Find(owner)->handle;
+    const auto emitter = test.Particles().Find(owner)->emitters[0];
+    CHECK(test.Particles().Runtime().FindEmitter(emitter)->spawns == 0);
+    test.Tick();
+    CHECK(test.Particles().Runtime().FindEmitter(emitter)->spawns == 1);
+    CHECK(test.Particles().Find(owner)->parameters.sizeScale == 2);
+    CHECK(test.Particles().Find(owner)->effect.parameters.spawnRateScale == 1);
+    const auto other = test.System();
+    test.Tick();
+    REQUIRE(test.Particles().Find(other));
+    CHECK(test.Particles().Find(other)->parameters.spawnRateScale == 1);
+    REQUIRE(test.Particles().SetParameters(owner, {2, 3}));
+    test.Tick();
+    CHECK(test.Particles().Find(owner)->handle == handle);
+    CHECK(test.Particles().Runtime().FindEmitter(emitter)->spawns == 2);
+    CHECK(test.Particles().Find(other)->parameters.sizeScale == 1);
+    CHECK_FALSE(test.Particles().SetParameters(owner, {-1, 1}));
+    CHECK(test.Particles().Find(owner)->parameters.spawnRateScale == 2);
+
+    auto scene = mir::NewScene("particle overrides");
+    scene.mEntities.emplace(mir::AllocateStableId(scene), owner);
+    const auto dir = test.files.Root() / "overrides-scene";
+    REQUIRE(mir::SaveScene(test.world, dir, scene));
+    mir::UnloadScene(test.world, scene);
+    test.StageEvent(mir::Stage::SceneUnload);
+    scene = mir::LoadScene(test.world, dir);
+    REQUIRE(scene.mEntities.size() == 1);
+    const auto loaded = scene.mEntities.begin()->second;
+    const auto *saved = test.world.GetComponent<mir::ParticleSystem>(loaded);
+    REQUIRE(saved);
+    CHECK(saved->instance.IsNull());
+    CHECK(saved->overrideParameters);
+    CHECK(saved->userParameters.spawnRateScale == 2);
+    CHECK(saved->userParameters.sizeScale == 3);
+    test.StageEvent(mir::Stage::SceneLoad);
+    test.Tick();
+    REQUIRE(test.Particles().Find(loaded));
+    CHECK(test.Particles().Find(loaded)->parameters.spawnRateScale == 2);
+    CHECK(test.Particles().Find(loaded)->parameters.sizeScale == 3);
+}
+
+TEST_CASE("Particle world resolves two emitter dependencies and retires both after owner removal", "[particles]")
+{
+    mir::test::ParticleTestWorld test;
+    auto definition = test.files.Definition();
+    const auto secondId = mir::MakeAssetId("assets/effects/secondary.emitter.json");
+    auto second = definition.emitterDefinitions[0];
+    second.spawnRate = 30;
+    second.lifetime = 0.2f;
+    definition.emitters.push_back(secondId);
+    definition.emitterDefinitions.push_back(second);
+    test.files.Write("effect.blob", mir::BuildParticleEffectAsset(definition));
+    test.files.Write("secondary.blob", mir::BuildParticleEmitterAsset(second));
+    const mir::AssetManifestSourceEntry entries[]{
+        {{test.files.EffectId(), mir::kParticleEffectTypeTag, mir::kParticleEffectContentVersion}, "effect.blob"},
+        {{test.files.EmitterId(), mir::kParticleEmitterTypeTag, mir::kParticleEmitterContentVersion}, "emitter.blob"},
+        {{secondId, mir::kParticleEmitterTypeTag, mir::kParticleEmitterContentVersion}, "secondary.blob"},
+        {{test.files.TextureId(), mir::kTextureAssetTypeTag, 1}, "texture.blob"}};
+    test.files.Write(mir::kAssetManifestFileName, mir::BuildAssetManifestBlob(entries));
+    test.assets.BeginReload();
+    test.StageEvent(mir::Stage::ReloadPrepare);
+    test.assets.CommitReload();
+    test.StageEvent(mir::Stage::ReloadCommit);
+    const auto owner = test.System();
+    test.Tick();
+    REQUIRE(test.Particles().Find(owner));
+    const auto handle = test.Particles().Find(owner)->handle;
+    REQUIRE(test.Particles().Find(owner)->emitters.size() == 2);
+    const auto firstEmitter = test.Particles().Find(owner)->emitters[0];
+    const auto secondEmitter = test.Particles().Find(owner)->emitters[1];
+    CHECK(firstEmitter != secondEmitter);
+    CHECK(test.Particles().Runtime().Stats().activeEmitters == 2);
+    CHECK(test.Particles().Runtime().FindEmitter(firstEmitter)->spawns == 1);
+    CHECK(test.Particles().Runtime().FindEmitter(secondEmitter)->spawns == 0);
+    test.world.DestroyEntity(owner);
+    for (int i = 0; i < 3; ++i) test.Tick();
+    REQUIRE(test.Particles().Runtime().Find(handle));
+    CHECK(test.Particles().Runtime().FindEmitter(firstEmitter)->state == mir::ParticleExecutionState::Complete);
+    for (int i = 0; i < 10; ++i) test.Tick();
+    CHECK_FALSE(test.Particles().Runtime().Find(handle));
+    CHECK_FALSE(test.Particles().Runtime().FindEmitter(firstEmitter));
+    CHECK_FALSE(test.Particles().Runtime().FindEmitter(secondEmitter));
+    CHECK(test.Particles().Runtime().Stats().activeEmitters == 0);
+}
+
+TEST_CASE("Inactive particle systems reconcile reflected user overrides while draining", "[particles]")
+{
+    mir::test::ParticleTestWorld test;
+    test.files.Publish(1.0f);
+    const auto owner = test.System();
+    test.Tick();
+    REQUIRE(test.Particles().Stop(owner));
+    auto &component = *test.world.GetComponent<mir::ParticleSystem>(owner);
+    component.overrideParameters = true;
+    component.userParameters = {0.5f, 2};
+    test.Tick();
+    REQUIRE(test.Particles().Find(owner));
+    CHECK(test.Particles().Find(owner)->parameters.sizeScale == 2);
+    component.overrideParameters = false;
+    test.Tick();
+    CHECK(test.Particles().Find(owner)->parameters.sizeScale == 1);
 }

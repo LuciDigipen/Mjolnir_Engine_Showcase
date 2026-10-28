@@ -14,6 +14,7 @@
 #include "vulkan/Device.h"
 #include "vulkan/FrameCapture.h"
 #include "vulkan/FrameSync.h"
+#include "vulkan/FxCompositionPass.h"
 #include "vulkan/ImGuiOverlay.h"
 #include "vulkan/MaterialStore.h"
 #include "vulkan/MeshUploader.h"
@@ -196,7 +197,7 @@ namespace mir
             for (size_t i = 0; i < viewCount; ++i)
                 velocityCameraOffsets[i] = WriteCameraData(views[i], static_cast<uint32_t>(i));
 
-        const VkImageView colorSource = mPostProcessing->RecordRaster(cmd, frame, {
+        VkImageView colorSource = mPostProcessing->RecordRaster(cmd, frame, {
             .sceneColor = mSwapchain->HdrColorView(frame),
             .depthImage = mSwapchain->DepthImage(frame),
             .depthView = mSwapchain->DepthView(frame),
@@ -206,6 +207,10 @@ namespace mir
             .resources = mResources.get(),
             .extent = extent });
 
+        colorSource = mFxComposition->Record(*mDevice, mFxSystem,
+            {{FxDevice(), cmd, frame, mFrameSync->LastIssuedValue()}, colorSource, mSwapchain->DepthView(frame),
+                drawnViews, extent, false, {}, vk::kHdrColorFormat});
+        mPostProcessing->RecordBloom(cmd, frame, colorSource, extent);
         const bool fxaaActive = mPostProcessing->PrepareComposite(cmd, frame, colorSource, extent);
 
         vk::ImageBarrier(cmd, mSwapchain->Image(imageIndex), VK_IMAGE_ASPECT_COLOR_BIT,
@@ -243,7 +248,12 @@ namespace mir
         // After Begin's wait: this slot's last frame is done with its set 2 buffers.
         if (frame)
         {
-            mPostProcessing->Particles().Simulate(*mDevice, frame->cmd, mFrameSync->Index(), frame->signalValue);
+            if (mFxSystem)
+            {
+                mDevice->BeginLabel(frame->cmd, "FX simulation", {1, 0.5f, 0.1f, 1});
+                mFxSystem->RecordSimulation({FxDevice(), frame->cmd, mFrameSync->Index(), frame->signalValue});
+                mDevice->EndLabel(frame->cmd);
+            }
             mModelDescriptors->ResetFrame(mFrameSync->Index());
             mMeshUploads->Collect(*mResources, *mRayTracer, mFrameSync->CompletedValue());
             mMeshUploads->Record(frame->cmd, frame->signalValue, *mResources, *mRayTracer);
@@ -283,7 +293,7 @@ namespace mir
 
         const bool hasRect = rect.extent.width > 0 && rect.extent.height > 0;
 
-        const VkImageView colorSource = hasRect
+        VkImageView colorSource = hasRect
             ? mPostProcessing->RecordRayTraced(cmd, frame, *mRayTracer, view, jitterPixels, mSwapchain->Extent())
             : mRayTracer->View(vk::RtImage::Output, frame);
 
@@ -293,6 +303,15 @@ namespace mir
             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+
+        if (hasRect)
+        {
+            colorSource = mFxComposition->Record(*mDevice, mFxSystem,
+                {{FxDevice(), cmd, frame, mFrameSync->LastIssuedValue()}, colorSource,
+                    mRayTracer->View(vk::RtImage::Distance, frame), std::span(&view, 1),
+                    mSwapchain->Extent(), true, jitterPixels, vk::kHdrColorFormat});
+            mPostProcessing->RecordBloom(cmd, frame, colorSource, mSwapchain->Extent());
+        }
 
         // Cleared: outside the view rect nothing else draws.
         vk::BeginFullscreenPass(cmd, mSwapchain->View(imageIndex), mSwapchain->Extent(), VK_ATTACHMENT_LOAD_OP_CLEAR,

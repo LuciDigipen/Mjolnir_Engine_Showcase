@@ -11,16 +11,21 @@
 #include <core/ecs/ModuleContext.h>
 #include <core/Registration.h>
 
+#include <particles_gpu/ParticleSubmission.h>
+
 #include <array>
+#include <vector>
 
 namespace mir
 {
     class ParticlesModule;
-    class RendererModule;
+    class ParticleRuntime;
+    class ParticlesGpuModule;
+    std::vector<ParticleSubmission> BuildParticleRenderData(const ParticleRuntime &runtime, bool simulating);
     class ParticlesRuntimeModule
     {
     public:
-        ParticlesRuntimeModule(ModuleContext context, ParticlesModule &particles, RendererModule &renderer);
+        ParticlesRuntimeModule(ModuleContext context, ParticlesModule &particles, ParticlesGpuModule &gpu);
         ParticlesRuntimeModule(const ParticlesRuntimeModule &) = delete;
         ParticlesRuntimeModule &operator=(const ParticlesRuntimeModule &) = delete;
     private:

@@ -23,19 +23,19 @@ namespace mir
         : mWorld(world), mAssets(assets), mAssetIdRoot(std::move(assetIdRoot)), mRuntime(capacity)
     {}
 
-    const ParticleInstance *ParticleWorld::Find(Entity owner) const
+    const ParticleSystemInstance *ParticleWorld::Find(Entity owner) const
     {
-        const auto *emitter = mWorld.GetComponent<ParticleEmitter>(owner);
+        const auto *emitter = mWorld.GetComponent<ParticleSystem>(owner);
         const auto *instance = emitter ? mRuntime.Find(emitter->instance) : nullptr;
         return instance != nullptr && instance->owner == owner ? instance : nullptr;
     }
 
     bool ParticleWorld::Start(Entity owner)
     {
-        auto *emitter = mWorld.GetComponent<ParticleEmitter>(owner);
+        auto *emitter = mWorld.GetComponent<ParticleSystem>(owner);
         if (emitter == nullptr)
             return false;
-        if (const auto *instance = Find(owner); instance && instance->phase == ParticlePhase::Draining)
+        if (const auto *instance = Find(owner); instance && instance->state == ParticleExecutionState::Inactive)
         {
             mRuntime.ResumeEmission(instance->handle);
         }
@@ -47,7 +47,7 @@ namespace mir
 
     bool ParticleWorld::Stop(Entity owner)
     {
-        auto *emitter = mWorld.GetComponent<ParticleEmitter>(owner);
+        auto *emitter = mWorld.GetComponent<ParticleSystem>(owner);
         if (emitter == nullptr)
             return false;
         emitter->initialized = true;
@@ -59,7 +59,7 @@ namespace mir
 
     bool ParticleWorld::Pause(Entity owner, bool paused)
     {
-        auto *emitter = mWorld.GetComponent<ParticleEmitter>(owner);
+        auto *emitter = mWorld.GetComponent<ParticleSystem>(owner);
         if (emitter == nullptr)
             return false;
         emitter->paused = paused;
@@ -68,9 +68,21 @@ namespace mir
         return true;
     }
 
+    bool ParticleWorld::SetParameters(Entity owner, const ParticleUserParameters &parameters)
+    {
+        auto *system = mWorld.GetComponent<ParticleSystem>(owner);
+        std::string error;
+        if (!system || !ValidateParticleUserParameters(parameters, error)) return false;
+        if (const auto *instance = Find(owner))
+            if (!mRuntime.SetParameters(instance->handle, parameters)) return false;
+        system->overrideParameters = true;
+        system->userParameters = parameters;
+        return true;
+    }
+
     bool ParticleWorld::Destroy(Entity owner)
     {
-        auto *emitter = mWorld.GetComponent<ParticleEmitter>(owner);
+        auto *emitter = mWorld.GetComponent<ParticleSystem>(owner);
         if (emitter == nullptr)
             return false;
         if (const auto *instance = Find(owner))
@@ -86,13 +98,13 @@ namespace mir
     {
         if (!Destroy(owner))
             return false;
-        auto &emitter = *mWorld.GetComponent<ParticleEmitter>(owner);
+        auto &emitter = *mWorld.GetComponent<ParticleSystem>(owner);
         emitter.initialized = false;
         emitter.paused = false;
         return true;
     }
 
-    void ParticleWorld::Synchronize(Entity owner, ParticleEmitter &emitter, const WorldPose &pose)
+    void ParticleWorld::Synchronize(Entity owner, ParticleSystem &emitter, const WorldPose &pose)
     {
         if (!emitter.initialized)
         {
@@ -100,9 +112,17 @@ namespace mir
             emitter.wantsPlay = emitter.playOnStart;
         }
         if (!emitter.wantsPlay)
+        {
+            if (const auto *current = Find(owner))
+            {
+                mRuntime.SetParameters(current->handle,
+                    emitter.overrideParameters ? emitter.userParameters : current->effect.parameters);
+                mRuntime.Pause(current->handle, emitter.paused);
+            }
             return;
-        const auto end = std::find(std::begin(emitter.effectName), std::end(emitter.effectName), '\0');
-        const std::string_view name(emitter.effectName, static_cast<size_t>(end - std::begin(emitter.effectName)));
+        }
+        const auto end = std::find(std::begin(emitter.systemName), std::end(emitter.systemName), '\0');
+        const std::string_view name(emitter.systemName, static_cast<size_t>(end - std::begin(emitter.systemName)));
         if (name.empty())
         {
             if (const auto *instance = Find(owner))
@@ -113,7 +133,7 @@ namespace mir
         }
         const auto logical = MakeLogicalAssetPath(mAssetIdRoot, name);
         const AssetId id = logical.Ok() ? MakeAssetId(logical.path) : MakeAssetId(name);
-        const ParticleInstance *instance = Find(owner);
+        const ParticleSystemInstance *instance = Find(owner);
         if (instance != nullptr && instance->effectId != id)
         {
             mRuntime.Destroy(instance->handle);
@@ -127,7 +147,7 @@ namespace mir
                 return;
             if (!mRuntime.HasCapacity())
                 return;
-            auto parsed = logical.Ok() && end != std::end(emitter.effectName)
+            auto parsed = logical.Ok() && end != std::end(emitter.systemName)
                 ? LoadParticleEffect(mAssets, id) : ParticleEffectResult{};
             if (!parsed.mEffect)
             {
@@ -136,11 +156,14 @@ namespace mir
                     parsed.mError.empty() ? "invalid effect asset path" : parsed.mError);
                 return;
             }
-            emitter.instance = mRuntime.Start(id, *parsed.mEffect, pose, owner);
+            emitter.instance = mRuntime.Start(id, *parsed.mEffect, pose, owner,
+                emitter.overrideParameters ? &emitter.userParameters : nullptr);
             if (emitter.instance.IsNull())
                 return; // Capacity failures may recover after other instances drain.
             emitter.failedEffect = {};
         }
+        if (emitter.overrideParameters) mRuntime.SetParameters(emitter.instance, emitter.userParameters);
+        else if (const auto *current = mRuntime.Find(emitter.instance)) mRuntime.SetParameters(emitter.instance, current->effect.parameters);
         mRuntime.SetPose(emitter.instance, pose);
         mRuntime.Pause(emitter.instance, emitter.paused);
     }
@@ -153,8 +176,8 @@ namespace mir
     void ParticleWorld::Clear()
     {
         mRuntime.Clear();
-        auto &query = mWorld.GetOrCreateQuery<ParticleEmitter>();
-        query.ForEach([](Entity, ParticleEmitter &emitter)
+        auto &query = mWorld.GetOrCreateQuery<ParticleSystem>();
+        query.ForEach([](Entity, ParticleSystem &emitter)
             {
                 emitter.instance = {};
                 emitter.initialized = false;
@@ -185,8 +208,8 @@ namespace mir
         if (!mReloadPrepared)
             return;
         mRuntime.Clear();
-        auto &query = mWorld.GetOrCreateQuery<ParticleEmitter>();
-        query.ForEach([](Entity, ParticleEmitter &emitter)
+        auto &query = mWorld.GetOrCreateQuery<ParticleSystem>();
+        query.ForEach([](Entity, ParticleSystem &emitter)
             {
                 // Preserve stopped/paused intent, reset only transient bindings.
                 emitter.instance = {};

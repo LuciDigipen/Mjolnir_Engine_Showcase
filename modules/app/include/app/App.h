@@ -30,6 +30,7 @@
 #include <particles/ParticlesModule.h>
 #include <particles_script/ParticlesScriptModule.h>
 #include <particles_runtime/ParticlesRuntimeModule.h>
+#include <particles_gpu/ParticlesGpuModule.h>
 #include <renderer/RendererModule.h>
 #include <renderer_script/RendererScriptModule.h>
 #include <prefab/PrefabModule.h>
@@ -242,6 +243,7 @@ namespace mir
         WindowModule mWindow;
         SplashStep mRendererStep{ mSplash, "Initializing renderer...", 0.2f };
         RendererModule mRenderer;
+        ParticlesGpuModule mParticlesGpu;
         // before ImGui and the editor, which read input and models
         InputModule mInput;
         AnimationModule mAnimation;

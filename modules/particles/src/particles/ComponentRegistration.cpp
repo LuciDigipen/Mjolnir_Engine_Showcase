@@ -7,7 +7,7 @@
  *
  */
 #include "particles/ComponentRegistration.h"
-#include "particles/components/ParticleEmitter.h"
+#include "particles/components/ParticleSystem.h"
 
 #include <core/ecs/ComponentRegistry.h>
 
@@ -15,6 +15,6 @@ namespace mir
 {
     void RegisterParticleComponents()
     {
-        ComponentRegistry::Instance().Register<ParticleEmitter>(kParticleEmitterFields);
+        ComponentRegistry::Instance().Register<ParticleSystem>(kParticleSystemFields);
     }
 }

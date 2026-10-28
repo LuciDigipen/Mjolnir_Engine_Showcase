@@ -15,7 +15,8 @@
 #include <renderer/Mesh.h>
 #include <renderer/MeshStreaming.h>
 #include <renderer/PostProcessingState.h>
-#include <renderer/ParticleSubmission.h>
+#include <renderer/FxSystem.h>
+#include <core/Registration.h>
 #include <renderer/Texture.h>
 #include <renderer/components/Sky.h>
 
@@ -52,6 +53,7 @@ namespace mir::vk
     class RayTracer;
     class PostProcessingStack;
     class FrameCapture;
+    class FxCompositionPass;
     class ImGuiOverlay;
     class MeshUploader;
 }
@@ -195,14 +197,8 @@ namespace mir
         // the next frame starts temporal accumulation fresh (DLSS ray reconstruction's history)
         void ResetHistory();
 
-        // Replaces the pending snapshot, omitted indices retire and an empty snapshot clears all.
-        // The next accepted frame consumes it once, skipped frames retain only the newest snapshot.
-        // Without another submission, instances remain frozen with zero births.
-        void SubmitParticles(std::span<const ParticleSubmission> inputs);
-        ParticleGpuStats ParticleStats() const;
-
-        // Opt-in composition experiment: static world-space quad/trail, no simulator.
-        void SetParticleCompositionProbe(std::optional<WorldPosition> anchor);
+        // Exactly one FX provider, unregistration completes recorded uses before releasing it.
+        Registration RegisterFxSystem(IFxSystem &system);
 
         // Releases a selected model generation after a replacement has been
         // prepared. Handles not present in these spans remain valid.
@@ -288,6 +284,7 @@ namespace mir
         void Shutdown();
 
     private:
+        FxDeviceContext FxDevice() const;
         bool RecreateSwapchain();
         // Shared prelude of DrawFrame and TraceFrame; nullopt skips the frame.
         std::optional<vk::FrameContext> BeginFrame();
@@ -323,6 +320,9 @@ namespace mir
 
         // Every screen-space effect between the scene/trace pass and the swapchain.
         std::unique_ptr<vk::PostProcessingStack> mPostProcessing;
+        std::unique_ptr<vk::FxCompositionPass> mFxComposition;
+        IFxSystem *mFxSystem = nullptr;
+        std::shared_ptr<const void> mFxLifetime = std::make_shared<int>(0);
 
         std::unique_ptr<vk::FrameCapture> mCapture;
 

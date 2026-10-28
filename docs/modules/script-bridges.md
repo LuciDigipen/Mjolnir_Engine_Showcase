@@ -28,7 +28,7 @@ other library, `script`'s other public headers included.
 | `PhysicsScriptModule`, `RegisterPhysicsBindings` | `physics_script/` | Rigid bodies, every `RigidBody` field, `teleport`, sleep control, raycasts and collision events |
 | `RendererScriptModule`, `RegisterPostProcessingBindings` | `renderer_script/` | `world:set_fog/get_fog` and the other post-processing pairs |
 | `TerrainScriptModule`, `RegisterTerrainBindings` | `terrain_script/` | `world:terrain_height_at` |
-| `ParticlesScriptModule`, `RegisterParticleBindings` | `particles_script/` | `world:particle_start/particle_stop/particle_pause/particle_reset/particle_destroy/particle_state`, see [particles.md](particles.md) |
+| `ParticlesScriptModule`, `RegisterParticleBindings` | `particles_script/` | `world:particle_system_start/particle_system_stop/particle_system_pause/particle_system_reset/particle_system_destroy/particle_system_state/particle_system_parameters`, see [particles.md](particles.md) |
 
 ## Rules
 

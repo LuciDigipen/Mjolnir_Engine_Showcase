@@ -41,8 +41,6 @@ namespace mir::vk
 
     void PostProcessingStack::Shutdown()
     {
-        mParticles.Shutdown();
-        mParticleProbe.Shutdown();
         mMotionBlur.Shutdown();
         mVelocityPass.Shutdown();
         mDepthOfField.Shutdown();
@@ -57,7 +55,7 @@ namespace mir::vk
 
     bool PostProcessingStack::Resize(VkExtent2D extent)
     {
-        if (!mParticles.Resize(extent) || !mParticleProbe.Resize(extent) || !mFxaa.Resize(extent) ||
+        if (!mFxaa.Resize(extent) ||
             !mBloom.Resize(extent) ||
             !mDepthOfField.Resize(extent) ||
             !mVelocityPass.Resize(extent) ||
@@ -192,17 +190,6 @@ namespace mir::vk
             colorSource = mMotionBlur.OutputView(frame);
         }
 
-        colorSource = mParticleProbe.Record(*mDevice, cmd, frame, colorSource, inputs.depthView,
-            inputs.views, false, inputs.extent);
-        colorSource = mParticles.Record(cmd, frame, colorSource, inputs.depthView, inputs.views, false, inputs.extent);
-
-        if (mBloomEnabled)
-        {
-            mDevice->BeginLabel(cmd, "Bloom Pass", { 1.0f, 0.5f, 0.0f, 1.0f });
-            mBloom.Record(cmd, frame, colorSource, inputs.extent);
-            mDevice->EndLabel(cmd);
-        }
-
         return colorSource;
     }
 
@@ -279,19 +266,15 @@ namespace mir::vk
             colorSource = mMotionBlur.OutputView(frame);
         }
 
-        colorSource = mParticleProbe.Record(*mDevice, cmd, frame, colorSource,
-            rayTracer.View(RtImage::Distance, frame), std::span(&view, 1), true, extent, jitterPixels);
-        colorSource = mParticles.Record(cmd, frame, colorSource, rayTracer.View(RtImage::Distance, frame),
-            std::span(&view, 1), true, extent, jitterPixels);
-
-        if (mBloomEnabled)
-        {
-            mDevice->BeginLabel(cmd, "Bloom Pass", { 1.0f, 0.5f, 0.0f, 1.0f });
-            mBloom.Record(cmd, frame, colorSource, extent);
-            mDevice->EndLabel(cmd);
-        }
-
         return colorSource;
+    }
+
+    void PostProcessingStack::RecordBloom(VkCommandBuffer cmd, uint32_t frame, VkImageView color, VkExtent2D extent)
+    {
+        if (!mBloomEnabled) return;
+        mDevice->BeginLabel(cmd, "Bloom Pass", {1, 0.5f, 0, 1});
+        mBloom.Record(cmd, frame, color, extent);
+        mDevice->EndLabel(cmd);
     }
 
     bool PostProcessingStack::PrepareComposite(VkCommandBuffer cmd, uint32_t frame, VkImageView color,

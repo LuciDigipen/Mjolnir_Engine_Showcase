@@ -12,6 +12,9 @@
 #include <core/log/Log.h>
 #include <core/platform/CrashHandler.h>
 #include <renderer/CameraMath.h>
+#include <particles_gpu/ParticlesGpuModule.h>
+#include <particles/ParticleRuntime.h>
+#include <particles_runtime/ParticlesRuntimeModule.h>
 #include <renderer/VulkanRenderer.h>
 #include <window/Window.h>
 
@@ -26,6 +29,7 @@
 #include <array>
 #include <exception>
 #include <filesystem>
+#include <memory>
 #include <stdexcept>
 #include <string_view>
 
@@ -51,6 +55,7 @@ int main(int argc, char **argv)
         window->Show();
         mir::VulkanRenderer renderer;
         Require(renderer.Initialize({window.get(), "ParticleGpuCheck", true}), "Renderer initialization failed");
+        auto particles = std::make_unique<mir::ParticlesGpuModule>(renderer);
         const bool rt = mode == "rt" || mode == "dlss";
         if (rt && !renderer.RayTracingSupported()) { renderer.Shutdown(); return 77; }
         if (mode == "dlss")
@@ -99,29 +104,29 @@ int main(int argc, char **argv)
         };
         auto submit = [&](const mir::ParticleSubmission &p)
         {
-            renderer.SubmitParticles(std::span(&p, 1));
+            particles->Submit(std::span(&p, 1));
             draw();
         };
         auto check = [&](uint32_t low, uint32_t high, const char *message)
         {
-            auto stats = renderer.ParticleStats();
+            auto stats = particles->Stats();
             MIR_LOG_INFO("{}: completed={}, alive={}, spawned={}, dropped={}", message,
                 stats.completedFrame, stats.alive, stats.spawned, stats.dropped);
             Require(stats.completedFrame != 0 && stats.alive >= low && stats.alive <= high, message);
         };
         auto quiet = input;
         quiet.spawns = 5000;
-        renderer.SubmitParticles(std::span(&quiet, 1));
+        particles->Submit(std::span(&quiet, 1));
         quiet.spawns = 0;
-        renderer.SubmitParticles(std::span(&quiet, 1));
-        Require(renderer.ParticleStats().droppedSubmitSpawns == 5000,
+        particles->Submit(std::span(&quiet, 1));
+        Require(particles->Stats().droppedSubmitSpawns == 5000,
             "Superseded snapshots and upload-budget drops were not counted");
         for (int i = 0; i < 5; ++i) submit(quiet);
         check(0, 0, "Zero births leave the empty pool empty");
         quiet.capacity = 0;
-        const auto invalid = renderer.ParticleStats().rejectedSubmissions;
+        const auto invalid = particles->Stats().rejectedSubmissions;
         submit(quiet);
-        Require(renderer.ParticleStats().rejectedSubmissions == invalid + 1,
+        Require(particles->Stats().rejectedSubmissions == invalid + 1,
             "Zero capacity submission was not rejected");
         for (uint32_t frame = 0; frame < 150; ++frame)
         {
@@ -142,9 +147,9 @@ int main(int argc, char **argv)
         // Pause advances neither age nor emission.
         input.seconds = 0;
         input.spawns = 0;
-        const auto pausedAlive = renderer.ParticleStats().alive;
+        const auto pausedAlive = particles->Stats().alive;
         for (int i = 0; i < 8; ++i) submit(input);
-        Require(renderer.ParticleStats().alive == pausedAlive, "Pause changed live count");
+        Require(particles->Stats().alive == pausedAlive, "Pause changed live count");
         input.seconds = 1.0f / 60;
         for (int i = 0; i < 40; ++i) submit(input);
         check(0, 0, "Stopped emitter drains to zero");
@@ -167,12 +172,12 @@ int main(int argc, char **argv)
         input.spawns = mir::kGpuParticleSpawnsPerFrame;
         for (int i = 0; i < 24; ++i) submit(input);
         check(mir::kGpuParticleCapacity, mir::kGpuParticleCapacity, "Global pool saturation");
-        Require(renderer.ParticleStats().dropped == mir::kGpuParticleSpawnsPerFrame, "Full pool did not count dropped births");
+        Require(particles->Stats().dropped == mir::kGpuParticleSpawnsPerFrame, "Full pool did not count dropped births");
         // Actual window resize exercises per-frame HDR images and descriptor replacement.
         glfwSetWindowSize(static_cast<GLFWwindow *>(window->NativeHandleForImGui()), 800, 450);
         for (int i = 0; i < 8; ++i) submit(input);
         check(mir::kGpuParticleCapacity, mir::kGpuParticleCapacity, "Resize preserves the persistent pool");
-        renderer.SubmitParticles({});
+        particles->Submit({});
         for (int i = 0; i < 6; ++i) draw();
         check(0, 0, "Unload clears indirect counts");
         // Every logical slot gets a disjoint range, one generation can retire independently.
@@ -186,22 +191,55 @@ int main(int argc, char **argv)
             many[i].spawns = 1;
             many[i].seconds = 0;
         }
-        renderer.SubmitParticles(many);
+        particles->Submit(many);
         draw();
         for (auto &p : many) p.spawns = 0;
-        for (int i = 0; i < 5; ++i) { renderer.SubmitParticles(many); draw(); }
+        for (int i = 0; i < 5; ++i) { particles->Submit(many); draw(); }
         check(64, 64, "All instance slots have disjoint ranges");
         ++many[0].generation;
-        for (int i = 0; i < 5; ++i) { renderer.SubmitParticles(many); draw(); }
+        for (int i = 0; i < 5; ++i) { particles->Submit(many); draw(); }
         check(63, 63, "Generation replacement preserves other instances");
         many[0].capacity = mir::kGpuParticleCapacity;
-        const auto rejected = renderer.ParticleStats().rejectedSubmissions;
-        for (int i = 0; i < 5; ++i) { renderer.SubmitParticles(many); draw(); }
+        const auto rejected = particles->Stats().rejectedSubmissions;
+        for (int i = 0; i < 5; ++i) { particles->Submit(many); draw(); }
         check(63, 63, "Range exhaustion preserves existing instances");
-        Require(renderer.ParticleStats().rejectedSubmissions > rejected, "Range exhaustion was not counted");
-        renderer.SubmitParticles({});
+        Require(particles->Stats().rejectedSubmissions > rejected, "Range exhaustion was not counted");
+        particles->Submit({});
         for (int i = 0; i < 5; ++i) draw();
         check(0, 0, "All instance ranges retired");
+        // A system owns two emitter instances, the scene proxy publishes distinct GPU identities.
+        mir::ParticleEffect system;
+        system.emitters = {mir::AssetId{101}, mir::AssetId{102}};
+        mir::ParticleEmitterAsset firstEmitter;
+        firstEmitter.texture = mir::AssetId{201};
+        firstEmitter.capacity = 64;
+        firstEmitter.lifetime = 1;
+        auto secondEmitter = firstEmitter;
+        secondEmitter.spawnRate = 120;
+        system.emitterDefinitions = {firstEmitter, secondEmitter};
+        mir::ParticleRuntime runtime;
+        const auto systemHandle = runtime.Start(mir::AssetId{301}, system);
+        Require(!systemHandle.IsNull(), "Two-emitter system did not start");
+        for (int i = 0; i < 10; ++i)
+        {
+            runtime.Advance(1.0f / 60);
+            const auto snapshot = mir::BuildParticleRenderData(runtime, true);
+            Require(snapshot.size() == 2 && snapshot[0].index != snapshot[1].index,
+                "System emitters share a GPU instance identity");
+            particles->Submit(snapshot);
+            draw();
+        }
+        Require(runtime.Pause(systemHandle, true), "Two-emitter system pause failed");
+        for (int i = 0; i < 5; ++i)
+        {
+            runtime.Advance(1.0f / 60);
+            particles->Submit(mir::BuildParticleRenderData(runtime, true));
+            draw();
+        }
+        check(30, 30, "One GPU range per emitter in a two-emitter system");
+        renderer.ReleaseSceneResources();
+        for (int i = 0; i < 5; ++i) draw();
+        check(0, 0, "Renderer scene hook clears the external FX provider");
         input.capacity = 128;
         input.lifetime = 1;
         input.spawns = 32;
@@ -210,6 +248,15 @@ int main(int argc, char **argv)
         input.spawns = 0;
         for (int i = 0; i < 6; ++i) submit(input);
         check(32, 32, "Range recycled after unload");
+        // Unregistration waits only at teardown, retires the old backend before its storage dies.
+        particles.reset();
+        draw();
+        particles = std::make_unique<mir::ParticlesGpuModule>(renderer);
+        input.spawns = 32;
+        submit(input);
+        input.spawns = 0;
+        for (int i = 0; i < 6; ++i) submit(input);
+        check(32, 32, "FX provider unregisters and can be replaced");
         renderer.CaptureNextFrame(output);
         submit(input);
         renderer.Shutdown();
