@@ -12,7 +12,7 @@ TEST_CASE("Entity drag payload preserves the source row handle", "[editor][entit
     const mir::Entity source = world.CreateEntity();
     const uint64_t packed = mir::PackEntity(source);
     // Deliberately unaligned: payload storage need not be a uint64_t pointer.
-    std::array<char, sizeof(packed) + 1> storage{};
+    alignas(uint64_t) std::array<char, sizeof(packed) + 1> storage{};
     std::memcpy(storage.data() + 1, &packed, sizeof(packed));
     ImGuiPayload payload;
     payload.DataFrameCount = 0;

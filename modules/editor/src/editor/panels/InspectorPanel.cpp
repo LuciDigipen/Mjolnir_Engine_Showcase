@@ -75,7 +75,7 @@ namespace mir
 
         constexpr const char *kValueId = "##value";
 
-        bool DrawEntityRefWidget(World &world, void *bytes, Entity &selectAfterDraw)
+        bool DrawEntityRefWidget(World &world, void *bytes, Entity &selectAfterDraw, bool writable)
         {
             Entity &target = *static_cast<Entity *>(bytes);
             const bool live = world.IsAlive(target);
@@ -90,6 +90,7 @@ namespace mir
             const ImGuiStyle &style = ImGui::GetStyle();
             const float clearWidth = ImGui::CalcTextSize(ICON_FA_XMARK).x + style.FramePadding.x * 2.0f;
             const float width = std::max(1.0f, ImGui::CalcItemWidth() - clearWidth - style.ItemSpacing.x);
+            ImGui::BeginGroup();
             const bool clicked = ImGui::Button(kValueId, ImVec2(width, 0.0f));
             const ImVec2 min = ImGui::GetItemRectMin();
             const ImVec2 max = ImGui::GetItemRectMax();
@@ -105,7 +106,7 @@ namespace mir
                 ImGui::SetItemTooltip("%s\nClick to select", preview.c_str());
 
             bool edited = false;
-            if (ImGui::BeginDragDropTarget())
+            if (writable && ImGui::BeginDragDropTarget())
             {
                 const ImGuiPayload *active = ImGui::GetDragDropPayload();
                 const std::optional<Entity> dropped = active != nullptr
@@ -137,6 +138,9 @@ namespace mir
             const bool clear = ImGui::Button(ICON_FA_XMARK "##clear", ImVec2(clearWidth, 0.0f));
             ImGui::SetItemTooltip("Clear reference");
             ImGui::EndDisabled();
+            // Expose the whole field to the caller's authored-field context menu,
+            // including when the clear button is disabled for a null reference.
+            ImGui::EndGroup();
             if (clear)
             {
                 target = kNullEntity;
@@ -200,7 +204,7 @@ namespace mir
                     return changed;
                 }
             case FieldKind::EntityRef:
-                return DrawEntityRefWidget(world, bytes, selectAfterDraw);
+                return DrawEntityRefWidget(world, bytes, selectAfterDraw, !field.ReadOnly());
             case FieldKind::Handle:
                 return ImGui::DragScalarN(label, ImGuiDataType_U32, bytes, 2);
             case FieldKind::String:
