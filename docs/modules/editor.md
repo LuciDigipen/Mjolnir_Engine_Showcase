@@ -346,6 +346,12 @@ boxes and component gizmos. The foreground list paints over every window, and
 the game UI paints over the background list. The window spans the main viewport
 because ImGuizmo hit-tests its rect. Each draw clips itself to the scene viewport.
 
+**A component gizmo's line is cut where it passes behind the scene camera, not
+dropped.** `DrawWorldLine` clips the segment at a small positive clip-space `w`,
+so a long line such as a selected `Camera`'s frustum still shows while the scene
+camera stands inside it. `GizmoCanvas::Aspect` gives the drawer the scene
+viewport's width over height, which is also the aspect Play renders at.
+
 **The Open Project dialog is opened after the menu bar ends, not from the menu
 item.** `OpenPopup` and `BeginPopupModal` have to run under the same ID stack.
 Called from inside the menu, `OpenPopup` opens a popup that nothing ever draws.
@@ -513,6 +519,13 @@ or the dialog themselves. History needs neither, and its tests are in
    deleted, not everything recursively under a deleted folder.
 
 ## Changed
+
+*2026-10-27* — **Gizmo lines clip at the scene camera; `GizmoCanvas::Aspect`
+(#231).** Was: a gizmo line with either end behind the scene camera was not
+drawn, and a drawer could not size anything to the viewport. Now: the line is
+cut where it crosses behind the camera, and the canvas reports the viewport's
+aspect. Because: a `Camera`'s frustum runs from its near plane to a far plane
+100 m out, so standing inside it hid it.
 
 *2026-10-26* — **A modal covers the viewport gizmos.** Was: the transform
 gizmo, the selection boxes and component gizmos drew into the main viewport's

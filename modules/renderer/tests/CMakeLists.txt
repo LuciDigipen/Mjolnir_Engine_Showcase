@@ -2,6 +2,7 @@ engine_add_module_tests(renderer
     ActiveCamera.tests.cpp
     AntiAliasingEffect.tests.cpp
     BloomEffect.tests.cpp
+    CameraGizmo.tests.cpp
     CameraMath.tests.cpp
     DepthOfFieldEffect.tests.cpp
     FilmEffect.tests.cpp

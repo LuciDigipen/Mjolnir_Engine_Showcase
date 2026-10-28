@@ -202,6 +202,7 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `MeshRenderer`, `Camera` | `renderer/components/` | Handles, and `active`/`fovY`/`near`/`far` (`far` 0 = no far plane), declared here rather than in `core` |
 | `FindActiveCamera`, `SetActiveCamera`, `ResolvePlayCamera`, `ActiveCameraSystem` | `renderer/ActiveCamera.h` | The flagged `Camera`; flag one and clear the rest; the camera Play draws through (flagged, else lowest index); the `SystemPhase::Render` system, before `RenderSystem`, that keeps one flagged |
 | `MeshBounds` | `renderer/components/MeshBounds.h` | `{mLocalMin, mLocalMax}`, a mesh's own local-space AABB; attached and kept current by `app`'s `MeshResolveSystem` (see [app.md](app.md)), read by the editor's viewport click-picking (see [editor.md](editor.md)) — not used for rendering at all |
+| `FrustumSliceCorners` | `renderer/CameraMath.h` | A lens's view rectangle at a distance, in camera space; the `Camera` gizmo draws its near and far planes from it |
 | `Ray`, `RayIntersectsAABB`, `WorldRay`, `MakeCameraRay`, `RayIntersectsBox`, `RayIntersectsSphere` | `renderer/CameraMath.h` | `WorldRay` is a camera ray with a double `WorldPosition` origin and a float direction; `RayIntersectsBox` places a `WorldPose` box relative to that origin in double, then runs the local ray/AABB slab test; `RayIntersectsSphere` returns where a unit-direction ray enters a sphere, 0 if it starts inside — the same file `MakeViewProjection` lives in, so both stay in the same Vulkan-convention math |
 | `RenderSystem` | `renderer/RenderSystem.h` | The ECS-to-renderer bridge, `SystemPhase::Render` |
 | `Shapes.h` | `renderer/Shapes.h` | `MakeCube()` and friends — plain vectors, no Vulkan |
@@ -796,6 +797,14 @@ Everything that needs a device is verified by the smoke tests and
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-10-27* — **`Camera` has a viewport gizmo and a pick radius (#231).**
+Was: a camera entity drew nothing in the scene viewport and could only be
+selected from the Hierarchy. Now: a small frustum marks every camera and takes
+clicks within 0.3 m; selected, it draws its near and far planes sized by fov
+and the viewport's aspect, following the entity's world transform. A lens with
+no far plane draws 20 m of open edges. Because: placing a camera needs to show
+what it will see.
 
 *2026-10-27* — **Play draws through the active `Camera` (#231).** Was: the
 first `Camera` the query reached, so a scene with two rendered from an
