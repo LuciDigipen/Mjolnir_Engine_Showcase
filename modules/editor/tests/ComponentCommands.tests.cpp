@@ -9,6 +9,7 @@
 #include "EditingFixture.h"
 
 #include <editor/history/ComponentCommands.h>
+#include <editor/history/AuthoredEdit.h>
 #include <editor/history/EntityCommands.h>
 
 #include <core/ecs/TypeId.h>
@@ -175,6 +176,44 @@ TEST_CASE("A reference field follows its target through a delete and its undo", 
     e.Redo();
     CHECK(e.Find(x) != s.x);
     CHECK(TargetOf(e.mWorld, s.b) == e.Find(x));
+}
+
+TEST_CASE("Discrete reference edits cannot merge with neighboring edits", "[editor][history]")
+{
+    Editing e;
+    const Sample s = BuildSample(e);
+    const Entity original = TargetOf(e.mWorld, s.b);
+    auto edit = [&](Entity target)
+    {
+        return mir::MakeSetFieldsEditCommand(s.b, RefOps(),
+            { ValueOf(RefOps(), "target", target) }, "", nullptr);
+    };
+
+    e.mHistory.SetUnsaved(false);
+    e.mHistory.Submit(edit(s.x));
+    e.mHistory.Submit(edit(s.z), true);
+    e.mHistory.Submit(edit(kNullEntity), true);
+    e.mHistory.Submit(edit(s.w));
+    e.Flush();
+    REQUIRE(e.mHistory.StepCount() == 4);
+    CHECK(e.mHistory.IsUnsaved());
+    CHECK(TargetOf(e.mWorld, s.b) == s.w);
+    e.Undo();
+    CHECK(TargetOf(e.mWorld, s.b) == kNullEntity);
+    e.Undo();
+    CHECK(TargetOf(e.mWorld, s.b) == s.z);
+    e.Undo();
+    CHECK(TargetOf(e.mWorld, s.b) == s.x);
+    e.Undo();
+    CHECK(TargetOf(e.mWorld, s.b) == original);
+    CHECK_FALSE(e.mHistory.IsUnsaved());
+    for (int i = 0; i < 4; ++i)
+        e.Redo();
+    CHECK(TargetOf(e.mWorld, s.b) == s.w);
+
+    e.mHistory.Submit(edit(s.w), true);
+    e.Flush();
+    CHECK(e.mHistory.StepCount() == 4);
 }
 
 TEST_CASE("An edit that cannot run or changes nothing records no step", "[editor][history]")

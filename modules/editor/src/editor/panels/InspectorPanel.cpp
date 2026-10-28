@@ -58,9 +58,9 @@ namespace mir
             IAuthoredEntities *mAuthored = nullptr;
             bool mSubmitted = false;
 
-            void Submit(std::unique_ptr<ICommand> command)
+            void Submit(std::unique_ptr<ICommand> command, bool discrete = false)
             {
-                mHistory.Submit(std::move(command));
+                mHistory.Submit(std::move(command), discrete);
                 mSubmitted = true;
             }
         };
@@ -477,7 +477,7 @@ namespace mir
                             if (field.mWidget == FieldWidget::AssetRef)
                                 AddResetValues(ops, field.mResetOnChange, values);
                             edits.Submit(MakeSetFieldsEditCommand(entity, ops, std::move(values), "",
-                                edits.mAuthored));
+                                edits.mAuthored), field.mKind == FieldKind::EntityRef);
                         }
                         ImGui::PopID();
                     }
