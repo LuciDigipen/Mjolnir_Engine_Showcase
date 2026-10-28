@@ -74,7 +74,49 @@ namespace mir
 
         constexpr const char *kValueId = "##value";
 
-        bool DrawFieldWidget(const FieldDesc &field, void *bytes)
+        bool DrawEntityRefWidget(World &world, void *bytes, Entity &selectAfterDraw)
+        {
+            Entity &target = *static_cast<Entity *>(bytes);
+            const bool live = world.IsAlive(target);
+            std::string preview = "None";
+            if (live)
+            {
+                const Name *name = world.GetComponent<Name>(target);
+                preview = name != nullptr && name->mValue[0] != '\0'
+                    ? std::string(name->mValue) : "Entity " + std::to_string(target.mIndex);
+            }
+
+            const ImGuiStyle &style = ImGui::GetStyle();
+            const float clearWidth = ImGui::CalcTextSize(ICON_FA_XMARK).x + style.FramePadding.x * 2.0f;
+            const float width = std::max(1.0f, ImGui::CalcItemWidth() - clearWidth - style.ItemSpacing.x);
+            const bool clicked = ImGui::Button(kValueId, ImVec2(width, 0.0f));
+            const ImVec2 min = ImGui::GetItemRectMin();
+            const ImVec2 max = ImGui::GetItemRectMax();
+            const ImVec4 clip(min.x + style.FramePadding.x, min.y,
+                std::max(min.x + style.FramePadding.x, max.x - style.FramePadding.x), max.y);
+            ImGui::GetWindowDrawList()->AddText(nullptr, 0.0f,
+                ImVec2(min.x + style.FramePadding.x, min.y + style.FramePadding.y),
+                ImGui::GetColorU32(live ? ImGuiCol_Text : ImGuiCol_TextDisabled),
+                preview.c_str(), nullptr, 0.0f, &clip);
+            if (clicked && live)
+                selectAfterDraw = target;
+            if (live)
+                ImGui::SetItemTooltip("%s\nClick to select", preview.c_str());
+
+            ImGui::SameLine();
+            ImGui::BeginDisabled(target.IsNull());
+            const bool clear = ImGui::Button(ICON_FA_XMARK "##clear", ImVec2(clearWidth, 0.0f));
+            ImGui::SetItemTooltip("Clear reference");
+            ImGui::EndDisabled();
+            if (clear)
+            {
+                target = kNullEntity;
+                return true;
+            }
+            return false;
+        }
+
+        bool DrawFieldWidget(const FieldDesc &field, void *bytes, World &world, Entity &selectAfterDraw)
         {
             const char *label = kValueId;
 
@@ -129,12 +171,7 @@ namespace mir
                     return changed;
                 }
             case FieldKind::EntityRef:
-                {
-                    const Entity *ref = static_cast<const Entity *>(bytes);
-                    ImGui::AlignTextToFramePadding();
-                    ImGui::Text("Entity %u", ref->mIndex);
-                    return false;
-                }
+                return DrawEntityRefWidget(world, bytes, selectAfterDraw);
             case FieldKind::Handle:
                 return ImGui::DragScalarN(label, ImGuiDataType_U32, bytes, 2);
             case FieldKind::String:
@@ -325,7 +362,7 @@ namespace mir
         }
 
         void DrawComponent(World &world, const ComponentOps &ops, Entity entity, const AssetImportView &assets,
-            std::string_view filter, Clipboard &clipboard, Edits &edits)
+            std::string_view filter, Clipboard &clipboard, Edits &edits, Entity &selectAfterDraw)
         {
             if (!ComponentVisible(ops, filter))
                 return;
@@ -393,7 +430,7 @@ namespace mir
                             edited = field.mClamped
                                 ? ImGui::DragFloat(kValueId, reinterpret_cast<float *>(buffer.mBytes),
                                     0.05f, field.mMin, field.mMax, "%.3f", ImGuiSliderFlags_AlwaysClamp)
-                                : DrawFieldWidget(field, buffer.mBytes);
+                                : DrawFieldWidget(field, buffer.mBytes, world, selectAfterDraw);
                             break;
                         }
                         ImGui::EndDisabled();
@@ -526,6 +563,7 @@ namespace mir
 
         //history applies these at the end of the frame, so nothing below makes a change to archety midway
         Edits edits{ history, authored };
+        Entity selectAfterDraw = kNullEntity;
 
         ImGui::AlignTextToFramePadding();
         if (const Name *name = world.GetComponent<Name>(entity))
@@ -542,13 +580,16 @@ namespace mir
             if (!ops->Has(world, entity))
                 continue;
 
-            DrawComponent(world, *ops, entity, assets, mFilter, mClipboard, edits);
+            DrawComponent(world, *ops, entity, assets, mFilter, mClipboard, edits, selectAfterDraw);
         }
 
         DrawRemovedComponents(entity, edits);
 
         mEditing |= edits.mSubmitted;
         EndEditIfReleased(history);
+        // Keep the inspected entity stable throughout this draw, including later components.
+        if (world.IsAlive(selectAfterDraw))
+            ApplyClick(world.Resource<Selection>(), selectAfterDraw, false);
     }
 
     void InspectorPanel::EndEditIfReleased(History &history)
