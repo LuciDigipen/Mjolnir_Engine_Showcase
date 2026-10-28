@@ -64,7 +64,7 @@ namespace mir
         if (ImGui::TreeNode("Screen Space Global Illumination"))
         {
             ImGui::Checkbox("Enable SSGI", &ssgi.enabled);
-            \            if (draftRenderSettings.rayTracing)
+            if (draftRenderSettings.rayTracing)
                 ImGui::TextWrapped("SSGI settings apply to raster rendering. Ray tracing uses its own GI settings.");
             constexpr const char *qualities[]{ "Low", "Medium", "High" };
             int quality = static_cast<int>(ssgi.quality);
