@@ -10,6 +10,8 @@
 #pragma once
 
 #include <core/ecs/EngineMode.h>
+#include <core/ecs/Entity.h>
+#include <core/ecs/components/Transform.h>
 #include <core/platform/Surface.h>
 #include <editor/BackgroundImage.h>
 #include <editor/EditorCamera.h>
@@ -179,6 +181,9 @@ namespace mir
         void DrawOpenProjectConfirm(EditorActions &actions);
         void DrawViewportGizmo(const EngineModeState &mode, World &world, EditorActions &actions,
             bool prefabDocument);
+        void BeginGizmoDrag(World &world, std::span<const Entity> selected);
+        // Applies the pivot's change since the drag began to every target, as one merging command.
+        void ApplyGizmoDrag(World &world);
         void DrawViewportPrefabDrop(bool documentTab, World &world);
         void UpdateViewportPicking(const EngineModeState &mode, World &world);
         // F moves the scene camera next to the primary selection.
@@ -255,6 +260,19 @@ namespace mir
 
         // last frame's ImGuizmo::IsUsing
         bool mGizmoWasUsing = false;
+
+        struct GizmoTarget
+        {
+            Entity mEntity;
+            WorldPose mParent;
+            WorldOffset mFromPivot;
+            Transform mStart;
+        };
+
+        // kept between frames while dragged, so the drag is measured from where it began
+        WorldPose mGizmoPivot;
+        WorldPose mGizmoDragStart;
+        std::vector<GizmoTarget> mGizmoTargets;
 
         // New Project modal
         bool mNewProjectRequested = false;

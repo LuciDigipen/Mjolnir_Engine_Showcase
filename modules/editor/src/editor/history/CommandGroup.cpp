@@ -64,6 +64,31 @@ namespace mir
 
             std::string Name() const override { return mName; }
 
+            //each applied command of next merges into one here, or joins the group after it
+            bool TryMerge(ICommand &next) override
+            {
+                auto *other = dynamic_cast<CommandGroup *>(&next);
+                if (other == nullptr || other->mName != mName)
+                    return false;
+
+                for (std::size_t i = 0; i < other->mCommands.size(); ++i)
+                {
+                    if (!other->mApplied[i])
+                        continue;
+
+                    bool merged = false;
+                    for (std::size_t j = 0; j < mCommands.size() && !merged; ++j)
+                        merged = mApplied[j] && mCommands[j]->TryMerge(*other->mCommands[i]);
+
+                    if (!merged)
+                    {
+                        mCommands.push_back(std::move(other->mCommands[i]));
+                        mApplied.push_back(true);
+                    }
+                }
+                return true;
+            }
+
             void CollectIds(std::vector<HistoryId> &out) const override
             {
                 for (const auto &command : mCommands)
