@@ -18,6 +18,7 @@
 
 namespace mir
 {
+    class ActiveCameraSystem;
     class AssetsModule;
     class MeshResolveSystem;
     class RenderSystem;
@@ -53,6 +54,7 @@ namespace mir
 
         // owned by the scheduler, which outlives this module
         MeshResolveSystem *mMeshes = nullptr;
+        ActiveCameraSystem *mActiveCamera = nullptr;
         RenderSystem *mRenderSystem = nullptr;
 
         // last: they unregister before the renderer above shuts down
@@ -60,6 +62,7 @@ namespace mir
         Registration mSceneUnload;
         Registration mSceneLoad;
         Registration mPlayBegin;
+        Registration mPlayEnd;
         Registration mReloadCommit;
     };
 }

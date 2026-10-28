@@ -195,6 +195,15 @@ namespace mir
                 world.AddComponent<Name>(entity, MakeName(std::format("Sky_Entity{}", entity.mIndex)));
             }, &CanCreateSky);
 
+        EntityPresetRegistry::Instance().Register("Camera", [](World &world, Entity entity)
+            {
+                AddTransform(world, entity);
+                Camera camera{};
+                camera.mActive = !AnyEntityHas(world, [](const World &w, Entity e) { return w.Has<Camera>(e); });
+                world.AddComponent<Camera>(entity, camera);
+                world.AddComponent<Name>(entity, MakeName(std::format("Camera_Entity{}", entity.mIndex)));
+            });
+
         EntityPresetRegistry::Instance().Register("Primitive/Cube", [](World &world, Entity entity)
             {
                 CreatePrimitiveEntity(world, entity, kCubeMeshName, "Cube");

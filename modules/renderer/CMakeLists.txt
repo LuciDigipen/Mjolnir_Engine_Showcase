@@ -43,6 +43,7 @@ target_compile_definitions(engine_renderer PRIVATE
 )
 
 target_sources(engine_renderer PRIVATE
+    src/renderer/ActiveCamera.cpp
     src/renderer/AntiAliasingEffect.cpp
     src/renderer/BloomEffect.cpp
     src/renderer/CameraMath.cpp

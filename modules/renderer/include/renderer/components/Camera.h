@@ -23,6 +23,8 @@ namespace mir
         // 0 means no far plane. Depth is reverse-Z, so a large or missing far
         // plane costs no precision; it only decides what gets clipped.
         float mFarZ = 100.0f;
+        // Play renders through the one active Camera; ActiveCameraSystem keeps it to one.
+        bool mActive = false;
 
         // Anything not beyond the near plane counts as "none", so a bad value
         // cannot make a degenerate projection.
@@ -32,6 +34,7 @@ namespace mir
     MIR_ASSERT_COMPONENT(Camera);
 
     inline constexpr FieldDesc kCameraFields[] = {
+        {"active", FieldKind::Bool, offsetof(Camera, mActive)},
         {"fovYDegrees", FieldKind::Float, offsetof(Camera, mFovYDegrees)},
         {"nearZ", FieldKind::Float, offsetof(Camera, mNearZ)},
         {"farZ", FieldKind::Float, offsetof(Camera, mFarZ)},

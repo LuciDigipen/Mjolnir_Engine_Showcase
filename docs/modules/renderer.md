@@ -57,12 +57,12 @@ presents. `TraceFrame` goes through the same `BeginFrame` and `End`, with
 
 `RenderSystem` is the only thing connecting the ECS to it. It is an `ISystem` in
 `SystemPhase::Render` holding a `VulkanRenderer&`, and it owns a list of
-`Viewport`s. Viewport 0 always exists(whole window, first `Camera` found),
+`Viewport`s. Viewport 0 always exists(whole window, the active `Camera`),
 and can add more with `AddViewPort`.
 
 Each frame, for every viewport, `RenderSystem` resolves a camera (a specific
 World `Entity` via `SetViewportCamera`, an externally-owned one via
-`SetExternalCamera`, or that same first-match `Camera` as a fallback), builds
+`SetExternalCamera`, or the World's active `Camera` as a fallback), builds
 one view-projection matrix scaled to that viewport's own rect, builds one
 `DrawItem` per `(WorldTransform, MeshRenderer)` pair, and packages the result as
 a `RenderView`. All of a frame's `RenderView`s go to `VulkanRenderer::DrawFrame`
@@ -199,7 +199,8 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `DrawItem` | `renderer/Renderer.h` | `{mesh, model, normalMatrix, tint, material}` — `model` is the world transform, not premultiplied by any camera |
 | `RenderView` | `renderer/VulkanRenderer.h` | `{rect, items, viewProj, cameraPos}` — one camera's `DrawItem`s, clipped to a screen rect; `cameraPos` only the sky pass reads |
 | `Viewport`, `ViewportId` | `renderer/RenderSystem.h` | `RenderSystem`'s per-viewport state: rect plus a World `Entity`, an external camera, or neither (fallback) |
-| `MeshRenderer`, `Camera` | `renderer/components/` | Handles, and `fovY`/`near`/`far` (`far` 0 = no far plane), declared here rather than in `core` |
+| `MeshRenderer`, `Camera` | `renderer/components/` | Handles, and `active`/`fovY`/`near`/`far` (`far` 0 = no far plane), declared here rather than in `core` |
+| `FindActiveCamera`, `SetActiveCamera`, `ResolvePlayCamera`, `ActiveCameraSystem` | `renderer/ActiveCamera.h` | The flagged `Camera`; flag one and clear the rest; the camera Play draws through (flagged, else lowest index); the `SystemPhase::Render` system, before `RenderSystem`, that keeps one flagged |
 | `MeshBounds` | `renderer/components/MeshBounds.h` | `{mLocalMin, mLocalMax}`, a mesh's own local-space AABB; attached and kept current by `app`'s `MeshResolveSystem` (see [app.md](app.md)), read by the editor's viewport click-picking (see [editor.md](editor.md)) — not used for rendering at all |
 | `Ray`, `RayIntersectsAABB`, `WorldRay`, `MakeCameraRay`, `RayIntersectsBox`, `RayIntersectsSphere` | `renderer/CameraMath.h` | `WorldRay` is a camera ray with a double `WorldPosition` origin and a float direction; `RayIntersectsBox` places a `WorldPose` box relative to that origin in double, then runs the local ray/AABB slab test; `RayIntersectsSphere` returns where a unit-direction ray enters a sphere, 0 if it starts inside — the same file `MakeViewProjection` lives in, so both stay in the same Vulkan-convention math |
 | `RenderSystem` | `renderer/RenderSystem.h` | The ECS-to-renderer bridge, `SystemPhase::Render` |
@@ -684,13 +685,24 @@ it destroys the allocator, so every other subsystem has to be gone by then for
 that count to report leaks.
 
 **A viewport's camera resolves in this order: external, then a specific
-`Entity`, then the first `Camera` found.** `SetExternalCamera` is for a camera
+`Entity`, then the active `Camera`.** `SetExternalCamera` is for a camera
 the World doesn't own, such as the editor's free-fly camera — its transform is
 a raw `glm::mat4`, not a `WorldTransform`, because `WorldTransform`'s matrix is
 resolver-only and unconstructable outside the ECS hierarchy resolve.
 `SetViewportCamera(id, kNullEntity)` clears both and falls back to the
-first-match `Camera`, which is how a viewport hands itself back to whatever the
+active `Camera`, which is how a viewport hands itself back to whatever the
 World considers its default camera.
+
+**One `Camera` is active, and `ActiveCameraSystem` keeps it that way in Edit and
+Play.** It remembers each camera's flag from last frame: a camera flagged since
+then wins and the others are cleared; a camera that arrives already flagged (a
+duplicate, a paste, a prefab) is cleared if another is active. The Inspector,
+`world:set` and `world:set_active_camera` all go through it, so a change made
+before the Render phase shows that frame. The flags it clears are not in the
+editor's history, so undoing an activation leaves no camera active. With none
+flagged, Play draws through the lowest-index `Camera`; with no `Camera` at all,
+from the origin with a default lens. Each warns once per scene load and Play
+session.
 
 **RenderDoc object naming is applied under validation**, and shaders are built
 `-g -O0` unconditionally, so a capture shows Slang source.
@@ -784,6 +796,14 @@ Everything that needs a device is verified by the smoke tests and
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-10-27* — **Play draws through the active `Camera` (#231).** Was: the
+first `Camera` the query reached, so a scene with two rendered from an
+arbitrary one, and a scene with none drew nothing. Now: `Camera.active`, kept
+to one by `ActiveCameraSystem`; the lowest-index camera with a warning when
+none is flagged; the origin and a default lens with a warning when there is no
+camera; a Camera entity type in the Create menu, active if it is the scene's
+first. Because: Play needs a defined viewpoint, and the scene should say which.
 
 *2026-10-26* — **`Light`'s pick radius is a fixed 0.3 m; `RayIntersectsSphere`.**
 Was: `LightPickRadius` returned `range` for Point and Spot lights and

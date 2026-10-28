@@ -7,6 +7,7 @@
  *
  */
 #pragma once
+#include "renderer/ActiveCamera.h"
 #include "renderer/CameraMath.h"
 #include "renderer/ViewDrawSource.h"
 #include "renderer/ViewSubmission.h"
@@ -14,6 +15,7 @@
 
 #include <core/ecs/Query.h>
 #include <core/ecs/System.h>
+#include <core/ecs/components/Name.h>
 #include <core/ecs/components/WorldTransform.h>
 #include <core/log/Log.h>
 #include <renderer/PostProcessingSettings.h>
@@ -29,8 +31,10 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <format>
 #include <limits>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -73,7 +77,7 @@ namespace mir
         explicit RenderSystem(VulkanRenderer &renderer)
             : mRenderer(renderer)
         {
-            // Viewport 0 : whole window, first World Camera.
+            // Viewport 0 : whole window, the active World Camera.
             mViewports.push_back(Viewport{});
         }
 
@@ -127,6 +131,13 @@ namespace mir
                 mViewports[id].mExternalCamera = camera;
                 mViewports[id].mUseExternalCamera = true;
             }
+        }
+
+        // Each scene load and Play session reports a missing camera once.
+        void ResetCameraReports()
+        {
+            mWarnedNoCamera = false;
+            mWarnedNoActiveCamera = false;
         }
 
         void OnUpdate(SystemContext &context) override
@@ -193,18 +204,16 @@ namespace mir
             }
             mRenderer.SetSkyVisible(haveSky);
 
-            bool haveDefaultCamera = false;
+            // No Camera at all draws from the origin with a default lens.
+            const PlayCamera playCamera = ResolvePlayCamera(source);
             WorldPose defaultCameraPose;
             Camera defaultCamera{};
-
-            mCameraQuery->ForEach([&](Entity, const WorldTransform &world, const Camera &camera)
-                {
-                    if (haveDefaultCamera)
-                        return;
-                    defaultCameraPose = world.Pose();
-                    defaultCamera = camera;
-                    haveDefaultCamera = true;
-                });
+            if (!playCamera.mEntity.IsNull())
+            {
+                defaultCameraPose = source.GetComponent<WorldTransform>(playCamera.mEntity)->Pose();
+                defaultCamera = *source.GetComponent<Camera>(playCamera.mEntity);
+            }
+            bool usedDefaultCamera = false;
 
             const VkExtent2D swapchainExtent = mRenderer.SwapchainExtent();
 
@@ -236,11 +245,12 @@ namespace mir
                             haveCamera = true;
                         });
                 }
-                else if (haveDefaultCamera)
+                else
                 {
                     cameraPose = defaultCameraPose;
                     camera = defaultCamera;
                     haveCamera = true;
+                    usedDefaultCamera = true;
                 }
 
                 if (!haveCamera)
@@ -436,8 +446,24 @@ namespace mir
 
             if (warnNoCamera && !mWarnedNoCamera)
             {
-                MIR_LOG_WARN("RenderSystem: a viewport has no Camera entity in the world; nothing will be drawn for it");
+                MIR_LOG_WARN("RenderSystem: a viewport's Camera entity is not in the world; nothing will be drawn for it");
                 mWarnedNoCamera = true;
+            }
+
+            if (usedDefaultCamera && !playCamera.mActive && !mWarnedNoActiveCamera)
+            {
+                if (playCamera.mEntity.IsNull())
+                {
+                    MIR_LOG_WARN("RenderSystem: the scene has no Camera; drawing from the origin with a default lens");
+                }
+                else
+                {
+                    const Name *name = source.GetComponent<Name>(playCamera.mEntity);
+                    const std::string label = name != nullptr ? std::string(name->mValue)
+                                                              : std::format("entity {}", playCamera.mEntity.mIndex);
+                    MIR_LOG_WARN("RenderSystem: no Camera is active; drawing through '{}' until one is", label);
+                }
+                mWarnedNoActiveCamera = true;
             }
 
             if (skippedItems > 0 && !mWarnedSkippedItems)
@@ -503,6 +529,7 @@ namespace mir
         std::array<std::array<std::vector<DrawItem>, 6>, VulkanRenderer::kMaxPointShadows> mPointShadowItems;
 
         bool mWarnedNoCamera = false;
+        bool mWarnedNoActiveCamera = false;
         bool mWarnedNoRayTracing = false;
         bool mWarnedMultiViewRayTracing = false;
         bool mWarnedSkippedItems = false;

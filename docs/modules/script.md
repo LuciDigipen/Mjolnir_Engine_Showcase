@@ -133,6 +133,11 @@ The renderer bridge adds `world:mesh_bounds(entity)`: the local-space
 `nil` when there is none yet. `MeshBounds` is derived and never registered, so
 `world:get` cannot reach it.
 
+`world:get_active_camera()` returns the entity whose `Camera` is active, or
+`nil`. `world:set_active_camera(entity)` flags that camera and clears every
+other one at once, so the change shows the same frame; it returns `false` and
+logs an error if the entity has no `Camera`.
+
 ### Post-processing
 
 `world:set_fog/get_fog`, `world:set_hdr/get_hdr`, `world:set_bloom/get_bloom`,
