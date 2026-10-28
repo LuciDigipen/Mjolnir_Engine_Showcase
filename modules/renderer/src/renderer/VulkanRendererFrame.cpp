@@ -243,6 +243,7 @@ namespace mir
         // After Begin's wait: this slot's last frame is done with its set 2 buffers.
         if (frame)
         {
+            mPostProcessing->Particles().Simulate(*mDevice, frame->cmd, mFrameSync->Index(), frame->signalValue);
             mModelDescriptors->ResetFrame(mFrameSync->Index());
             mMeshUploads->Collect(*mResources, *mRayTracer, mFrameSync->CompletedValue());
             mMeshUploads->Record(frame->cmd, frame->signalValue, *mResources, *mRayTracer);

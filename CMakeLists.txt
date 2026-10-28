@@ -68,6 +68,7 @@ add_subdirectory(modules/imguiruntime)
 add_subdirectory(modules/input)
 add_subdirectory(modules/input_script)
 add_subdirectory(modules/particles)
+add_subdirectory(modules/particles_runtime)
 add_subdirectory(modules/particles_script)
 add_subdirectory(modules/physics)
 add_subdirectory(modules/physics_layers)
@@ -156,11 +157,16 @@ engine_add_shaders(MjolnirEngine
     ENTRIES vertexMain:vertex compositeMain:fragment)
 
 engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/particlePool.slang
+    ENTRIES computeMain:compute vertexMain:vertex fragmentMain:fragment)
+
+engine_add_shaders(MjolnirEngine
     SOURCE assets/shaders/particleProbe.slang
     ENTRIES vertexMain:vertex fragmentMain:fragment)
 
 if(BUILD_TESTING)
     add_subdirectory(tools/ParticleCompositionCheck)
+    add_subdirectory(tools/ParticleGpuCheck)
 endif()
 
 engine_add_shaders(MjolnirEngine
@@ -313,6 +319,7 @@ target_link_libraries(MjolnirEngine PRIVATE
     mir::gameshell
     mir::input
     mir::particles
+    mir::particles_runtime
     mir::particles_script
     mir::physics
     mir::prefab

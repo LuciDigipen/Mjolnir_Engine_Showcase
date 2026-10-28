@@ -241,7 +241,8 @@ namespace mir::vk
 
             for (uint32_t i = 0; i < count; ++i)
             {
-                if ((families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) == 0)
+                if ((families[i].queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) !=
+                    (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT))
                     continue;
 
                 VkBool32 presentSupported = VK_FALSE;
@@ -283,7 +284,7 @@ namespace mir::vk
             return false;
 
         NameObject(VK_OBJECT_TYPE_DEVICE, reinterpret_cast<uint64_t>(mDevice), "MjolnirEngine device");
-        NameObject(VK_OBJECT_TYPE_QUEUE, reinterpret_cast<uint64_t>(mQueue), "Graphics+present queue");
+        NameObject(VK_OBJECT_TYPE_QUEUE, reinterpret_cast<uint64_t>(mQueue), "Graphics+compute+present queue");
 
         return true;
     }
@@ -536,7 +537,7 @@ namespace mir::vk
             const uint32_t family = FindGraphicsPresentFamily(device, mSurface);
             if (family == UINT32_MAX)
             {
-                MIR_LOG_INFO("Rejected {}: no graphics+present queue family", props.deviceName);
+                MIR_LOG_INFO("Rejected {}: no graphics+compute+present queue family", props.deviceName);
                 continue;
             }
 
@@ -559,7 +560,7 @@ namespace mir::vk
 
         vkGetPhysicalDeviceProperties(mPhysical, &mProperties);
         const VkPhysicalDeviceProperties &props = mProperties;
-        MIR_LOG_INFO("GPU: {} | {} | Vulkan {}.{}.{} | graphics+present family {}",
+        MIR_LOG_INFO("GPU: {} | {} | Vulkan {}.{}.{} | graphics+compute+present family {}",
             props.deviceName,
             props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? "discrete" : "integrated",
             VK_API_VERSION_MAJOR(props.apiVersion),

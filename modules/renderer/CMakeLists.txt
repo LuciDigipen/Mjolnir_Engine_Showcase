@@ -33,6 +33,7 @@ find_file(VOLK_SOURCE volk.c PATHS ${_volk_includes} NO_DEFAULT_PATH REQUIRED)
 target_sources(engine_renderer PRIVATE
     ${VOLK_SOURCE}
     src/renderer/ParticleCompositionProbe.cpp
+    src/renderer/vulkan/ParticlePool.cpp
     src/renderer/vulkan/ParticleProbePass.cpp
 )
 

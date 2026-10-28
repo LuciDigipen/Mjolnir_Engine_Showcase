@@ -41,6 +41,7 @@ namespace mir::vk
 
     void PostProcessingStack::Shutdown()
     {
+        mParticles.Shutdown();
         mParticleProbe.Shutdown();
         mMotionBlur.Shutdown();
         mVelocityPass.Shutdown();
@@ -56,7 +57,7 @@ namespace mir::vk
 
     bool PostProcessingStack::Resize(VkExtent2D extent)
     {
-        if (!mParticleProbe.Resize(extent) || !mFxaa.Resize(extent) ||
+        if (!mParticles.Resize(extent) || !mParticleProbe.Resize(extent) || !mFxaa.Resize(extent) ||
             !mBloom.Resize(extent) ||
             !mDepthOfField.Resize(extent) ||
             !mVelocityPass.Resize(extent) ||
@@ -193,6 +194,7 @@ namespace mir::vk
 
         colorSource = mParticleProbe.Record(*mDevice, cmd, frame, colorSource, inputs.depthView,
             inputs.views, false, inputs.extent);
+        colorSource = mParticles.Record(cmd, frame, colorSource, inputs.depthView, inputs.views, false, inputs.extent);
 
         if (mBloomEnabled)
         {
@@ -279,6 +281,8 @@ namespace mir::vk
 
         colorSource = mParticleProbe.Record(*mDevice, cmd, frame, colorSource,
             rayTracer.View(RtImage::Distance, frame), std::span(&view, 1), true, extent, jitterPixels);
+        colorSource = mParticles.Record(cmd, frame, colorSource, rayTracer.View(RtImage::Distance, frame),
+            std::span(&view, 1), true, extent, jitterPixels);
 
         if (mBloomEnabled)
         {

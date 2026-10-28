@@ -16,6 +16,7 @@
 #include "Fxaa.h"
 #include "MotionBlur.h"
 #include "ParticleProbePass.h"
+#include "ParticlePool.h"
 #include "PostProcess.h"
 #include "VelocityPass.h"
 
@@ -58,6 +59,9 @@ namespace mir::vk
         // False on a build or device without NGX, or after an init/resize/evaluate failure.
         bool DlssAvailable() const;
         void ResetHistory();
+
+        ParticlePool &Particles() { return mParticles; }
+        const ParticlePool &Particles() const { return mParticles; }
 
         // T0 experiment only, nullopt disables it without reallocating in-flight images.
         void SetParticleCompositionProbe(std::optional<WorldPosition> anchor) { mParticleProbe.SetAnchor(anchor); }
@@ -114,6 +118,7 @@ namespace mir::vk
         VelocityPass mVelocityPass;
         MotionBlur mMotionBlur;
         ParticleProbePass mParticleProbe;
+        ParticlePool mParticles;
     #if MIR_WITH_DLSS
         DlssRayReconstruction mDlss;
         bool mDlssReady = false;

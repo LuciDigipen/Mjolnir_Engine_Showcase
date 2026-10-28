@@ -15,6 +15,7 @@
 #include <renderer/Mesh.h>
 #include <renderer/MeshStreaming.h>
 #include <renderer/PostProcessingState.h>
+#include <renderer/ParticleSubmission.h>
 #include <renderer/Texture.h>
 #include <renderer/components/Sky.h>
 
@@ -193,6 +194,12 @@ namespace mir
 
         // the next frame starts temporal accumulation fresh (DLSS ray reconstruction's history)
         void ResetHistory();
+
+        // Replaces the pending snapshot, omitted indices retire and an empty snapshot clears all.
+        // The next accepted frame consumes it once, skipped frames retain only the newest snapshot.
+        // Without another submission, instances remain frozen with zero births.
+        void SubmitParticles(std::span<const ParticleSubmission> inputs);
+        ParticleGpuStats ParticleStats() const;
 
         // Opt-in composition experiment: static world-space quad/trail, no simulator.
         void SetParticleCompositionProbe(std::optional<WorldPosition> anchor);

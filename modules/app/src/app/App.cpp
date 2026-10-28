@@ -139,6 +139,7 @@ namespace mir
           mPhysics(Context(), mProject.mProjectSettingsPath),
           mTerrainData(Context()),
           mScript(Context(), mAssets, mProject.mAssetIdRoot),
+          mParticlesRuntime(Context(), mParticles, mRenderer),
           mParticlesScript(mScript),
           mAudioScript(mScript),
           mInputScript(mScript),

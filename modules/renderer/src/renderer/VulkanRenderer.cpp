@@ -49,6 +49,16 @@ namespace mir
 
     bool VulkanRenderer::DlssAvailable() const { return mPostProcessing->DlssAvailable(); }
 
+    void VulkanRenderer::SubmitParticles(std::span<const ParticleSubmission> inputs)
+    {
+        mPostProcessing->Particles().Submit(inputs);
+    }
+
+    ParticleGpuStats VulkanRenderer::ParticleStats() const
+    {
+        return mPostProcessing->Particles().Stats();
+    }
+
     void VulkanRenderer::SetParticleCompositionProbe(std::optional<WorldPosition> anchor)
     {
         mPostProcessing->SetParticleCompositionProbe(anchor);
@@ -291,6 +301,7 @@ namespace mir
     void VulkanRenderer::ReleaseSceneResources()
     {
         mPostProcessing->SetParticleCompositionProbe(std::nullopt);
+        mPostProcessing->Particles().Submit({});
         if (mDevice->Handle() == VK_NULL_HANDLE)
             return;
 

@@ -104,6 +104,7 @@ each library links in the engine, besides `core`; `app` links everything.
 | `renderer` | module | `assets`, `serial` |
 | `animation` | module | `assets`, `renderer` |
 | `terrain` | module | `assets`, `serial` |
+| `particles_runtime` | module, bridge | `particles`, `renderer` |
 | `terrain_runtime` | module, bridge | `terrain`, `renderer`, `physics`, `project` |
 | `script` | module | `assets` |
 | `audio_script`, `input_script`, `physics_script`, `renderer_script`, `terrain_script`, `particles_script` | module, bridge | `script` and its library |

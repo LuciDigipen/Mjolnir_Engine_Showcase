@@ -15,6 +15,7 @@
 #include <renderer/PostProcessingSettings.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/Shapes.h>
+#include <renderer/components/Camera.h>
 #include <renderer/components/Light.h>
 #include <renderer/components/MeshRenderer.h>
 

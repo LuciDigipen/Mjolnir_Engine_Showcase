@@ -29,6 +29,7 @@
 #include <physics_script/PhysicsScriptModule.h>
 #include <particles/ParticlesModule.h>
 #include <particles_script/ParticlesScriptModule.h>
+#include <particles_runtime/ParticlesRuntimeModule.h>
 #include <renderer/RendererModule.h>
 #include <renderer_script/RendererScriptModule.h>
 #include <prefab/PrefabModule.h>
@@ -256,6 +257,7 @@ namespace mir
         PhysicsModule mPhysics;
         TerrainModule mTerrainData;
         ScriptModule mScript;
+        ParticlesRuntimeModule mParticlesRuntime;
         ParticlesScriptModule mParticlesScript;
         AudioScriptModule mAudioScript;
         InputScriptModule mInputScript;
