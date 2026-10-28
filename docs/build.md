@@ -66,6 +66,26 @@ ones are fast. If you already cloned without `--recurse-submodules`, run
 
 Then build and check it: [Build loop](#build-loop) and [Verify](#verify).
 
+## Optional RTXGI DDGI SDK
+
+Enable GI support before building:
+
+```powershell
+cmake --preset windows-msvc-debug -DMIR_WITH_RTXGI=ON
+cmake --build --preset windows-msvc-debug
+```
+
+The default is `OFF`. Enabling it fetches RTXGI-DDGI SDK 1.3.6 at commit
+`f33e496ca31b3f0eec1c4e2cbaa8bb620e337fa6`, without samples or submodules.
+It requires DXC with SPIR-V support from the Vulkan SDK or PATH; override its
+location with `-DRTXGI_DXC_EXECUTABLE=<path>`. Review the SDK's `License.txt`
+before redistributing it.
+
+The engine owns probe resources and copies the SDK compute shaders to
+`shaders/rtxgi` beside the executable. Enable ray tracing and GI in Project
+Settings to use them. DLSS is configured independently. See the
+[renderer reference](modules/renderer.md) for settings and runtime behavior.
+
 ## Build loop
 
 Every build is the same three steps.

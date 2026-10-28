@@ -19,6 +19,7 @@
 #include <renderer/PostProcessingSettings.h>
 #include <renderer/PostProcessingState.h>
 #include <renderer/RenderSettings.h>
+#include <renderer/RtxgiConfig.h>
 #include <renderer/components/Camera.h>
 #include <renderer/components/Light.h>
 #include <renderer/components/MeshRenderer.h>
@@ -89,6 +90,7 @@ namespace mir
             mSourceWorld = world;
             mPreviousPoses.clear();
             mCurrentPoses.clear();
+            mRenderer.ResetHistory();
         }
 
         ViewportId AddViewport(VkRect2D rect)
@@ -132,6 +134,8 @@ namespace mir
         void OnUpdate(SystemContext &context) override
         {
             const RenderSettings &renderSettings = context.world.Resource<RenderSettings>();
+            mRenderer.SetGlobalIllumination(renderSettings.ddgi);
+            mRenderer.SetScreenSpaceGlobalIllumination(renderSettings.ssgi);
 
             World &source = mSourceWorld != nullptr ? *mSourceWorld : context.world;
             BindQueries(source);
@@ -196,13 +200,15 @@ namespace mir
             bool haveDefaultCamera = false;
             WorldPose defaultCameraPose;
             Camera defaultCamera{};
+            Entity defaultCameraEntity = kNullEntity;
 
-            mCameraQuery->ForEach([&](Entity, const WorldTransform &world, const Camera &camera)
+            mCameraQuery->ForEach([&](Entity entity, const WorldTransform &world, const Camera &camera)
                 {
                     if (haveDefaultCamera)
                         return;
                     defaultCameraPose = world.Pose();
                     defaultCamera = camera;
+                    defaultCameraEntity = entity;
                     haveDefaultCamera = true;
                 });
 
@@ -432,6 +438,9 @@ namespace mir
                 mRenderViews.push_back(RenderView{ mViewports[view.viewport].mRect, items, view.viewProj,
                                                   view.pose.position, view.lens.mNearZ,
                                                   view.lens.HasFarPlane() ? view.lens.mFarZ : 0.0f });
+                const auto &viewport = mViewports[view.viewport];
+                mRenderViews.back().historyId = viewport.mUseExternalCamera ? UINT64_MAX :
+                    PackEntity(viewport.mCameraEntity.IsNull() ? defaultCameraEntity : viewport.mCameraEntity);
             }
 
             if (warnNoCamera && !mWarnedNoCamera)
@@ -450,6 +459,21 @@ namespace mir
             const bool traceable = mRenderer.RayTracingActive(renderSettings.rayTracing);
             if (traceable && mRenderViews.size() == 1)
             {
+                mRayTracingItems.clear();
+                if (kRtxgiCompiledIn && renderSettings.ddgi.enabled)
+                    if (MakeGiTraceVolume(renderSettings.ddgi))
+                    {
+                        const std::span<IViewDrawSource *const> sources = viewSources
+                            ? std::span<IViewDrawSource *const>(viewSources->sources)
+                            : std::span<IViewDrawSource *const>{};
+                        CollectRayTracingWorldDraws(mDrawItems, sources, 0, mRayTracingWorldItems);
+                        // Identity clip matrix preserves insertion order within opaque/
+                        // transparent groups; no camera-depth sorting for the TLAS.
+                        mRenderViews.front().rayTracingSceneComplete =
+                            BuildViewDrawItems(mRayTracingWorldItems, mRenderViews.front().cameraPosition,
+                                glm::mat4(1.0f), mRayTracingItems) == 0;
+                        mRenderViews.front().rayTracingItems = mRayTracingItems;
+                    }
                 mRenderer.TraceFrame(mRenderViews);
             }
             else
@@ -498,6 +522,8 @@ namespace mir
         // Parallel to mViewCameras.
         std::vector<std::vector<DrawItem>> mDrawItemsPerViewport;
         std::vector<RenderView> mRenderViews;
+        std::vector<WorldDrawItem> mRayTracingWorldItems;
+        std::vector<DrawItem> mRayTracingItems;
         std::vector<DrawItem> mSunShadowItems;
         std::array<std::vector<DrawItem>, VulkanRenderer::kMaxSpotShadows> mSpotShadowItems;
         std::array<std::array<std::vector<DrawItem>, 6>, VulkanRenderer::kMaxPointShadows> mPointShadowItems;

@@ -36,7 +36,10 @@ namespace mir::vk
         glm::uvec2 outputOffset;
         uint32_t aaMode;
         uint32_t sampleCount;
+        float giIntensity; // GI camera pipeline only; zero for the fallback.
+        float giWeight;    // Initialization fade; volume coverage is evaluated in the shader.
     };
+    static_assert(sizeof(RtPushConstants) == 24);
 
     // Shadow depth passes have no camera UBO, so the light's viewProj rides along.
     struct ShadowPushConstants

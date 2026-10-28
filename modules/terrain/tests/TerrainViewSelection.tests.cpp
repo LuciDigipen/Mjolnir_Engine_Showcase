@@ -699,6 +699,38 @@ TEST_CASE("Wants are Visible for what the view draws and chooses, Prefetch for t
                        [](const TerrainPayloadWant &w) { return w.demand == Demand::Prefetch; }));
 }
 
+TEST_CASE("RT covers resident shadow blockers once outside camera and probe reach", "[terrain][selection]")
+{
+    const Fixture f;
+    const TerrainSelectionInstance instance = f.Instance();
+    const TerrainView camera = Looking(f.At({-190.0, 20.0, -130.0}), {1.0, -0.2, 1.0}, 60.0, 720.0, 150.0);
+    TerrainViewSelector selector(ViewSettings(0));
+    selector.Update({ &instance, 1 }, camera, AllReady());
+    const size_t wantsBefore = selector.Wants().size();
+    SECTION("all resident")
+    {
+        std::vector<TerrainDrawUnit> draws;
+        selector.CollectForRayTracing(AllReady(), draws);
+        CheckCoveredOnce(f, draws);
+        CHECK(std::any_of(draws.begin(), draws.end(), [](const TerrainDrawUnit &unit)
+            { return unit.distance > 150.0; }));
+    }
+    SECTION("only coarse fallback resident")
+    {
+        const uint32_t top = f.Grid().Levels() - 1;
+        const auto root = TerrainPayloadKeyOf(f.info, *f.Index().FindRegion({ top, 0, 0 }));
+        const auto ready = [&](const TerrainDrawUnit &unit) { return unit.geometry == root; };
+        std::vector<TerrainDrawUnit> draws;
+        selector.CollectForRayTracing(ready, draws);
+        CheckCoveredOnce(f, draws);
+        REQUIRE(draws.size() == 1);
+        CHECK(draws[0].geometry == root);
+    }
+    CHECK(selector.Wants().size() == wantsBefore);
+    for (const auto &unit : selector.Draws())
+        CHECK(unit.distance <= 150.0);
+}
+
 TEST_CASE("Nothing past the far plane is drawn or wanted", "[terrain][selection]")
 {
     const Fixture f;

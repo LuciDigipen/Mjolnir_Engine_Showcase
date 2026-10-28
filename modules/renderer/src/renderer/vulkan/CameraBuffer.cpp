@@ -68,7 +68,7 @@ namespace mir::vk
 
         mCameraAlignedSize = AlignUp(sizeof(CameraData), mDevice->Properties().limits.minUniformBufferOffsetAlignment);
 
-        VkShaderStageFlags cameraStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        VkShaderStageFlags cameraStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
         VkShaderStageFlags lightListStages = VK_SHADER_STAGE_FRAGMENT_BIT;
         if (mDevice->RayTracingSupported())
         {

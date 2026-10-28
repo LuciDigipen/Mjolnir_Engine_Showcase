@@ -17,10 +17,15 @@
 #include "vulkan/ModelDescriptors.h"
 #include "vulkan/PostProcessingStack.h"
 #include "vulkan/RayTracer.h"
+#include "vulkan/RasterSurfaces.h"
+#include "vulkan/SsgiTrace.h"
 #include "vulkan/ResourceStore.h"
 #include "vulkan/ShadowMaps.h"
 #include "vulkan/Swapchain.h"
 #include "vulkan/VulkanConstants.h"
+#if MIR_WITH_RTXGI
+#include "vulkan/Ddgi.h"
+#endif
 
 #include <core/log/Log.h>
 
@@ -32,10 +37,15 @@ namespace mir
         mFrameSync(std::make_unique<vk::FrameSync>()),
         mResources(std::make_unique<vk::ResourceStore>()),
         mMaterialStore(std::make_unique<vk::MaterialStore>()),
+        mRasterSurfaces(std::make_unique<vk::RasterSurfaces>()),
+        mSsgiTrace(std::make_unique<vk::SsgiTrace>()),
         mCameraBuffer(std::make_unique<vk::CameraBuffer>()),
         mShadowMaps(std::make_unique<vk::ShadowMaps>()),
         mModelDescriptors(std::make_unique<vk::ModelDescriptors>()),
         mRayTracer(std::make_unique<vk::RayTracer>()),
+#if MIR_WITH_RTXGI
+        mDdgi(std::make_unique<vk::Ddgi>()),
+#endif
         mPostProcessing(std::make_unique<vk::PostProcessingStack>()),
         mCapture(std::make_unique<vk::FrameCapture>()),
         mImGuiOverlay(std::make_unique<vk::ImGuiOverlay>()),
@@ -102,6 +112,12 @@ namespace mir
             return false;
 
         mMeshUploads->Initialize(*mDevice);
+        mRasterSurfaces->Initialize(*mDevice);
+        mSsgiTrace->Initialize(*mDevice, mCameraBuffer->SetLayout());
+#if MIR_WITH_RTXGI
+        if (mDevice->RayTracingSupported())
+            mDdgi->Initialize(*mDevice, mRayTracer->SceneLayout(), mCameraBuffer->SetLayout());
+#endif
 
         return mPostProcessing->Initialize(*mDevice, mSwapchain->Format(), mSwapchain->Extent(),
             mCameraBuffer->SetLayout());
@@ -120,6 +136,9 @@ namespace mir
             mSwapchain->MarkOutOfDate();
             return false;
         }
+        mRasterSurfaces->Resize(mSwapchain->Extent());
+        mSsgiTrace->Shutdown();
+        if (!mRasterSurfaces->Active()) mMaterialStore->ReleaseSurfacePipelines();
         return true;
     }
 
@@ -134,6 +153,11 @@ namespace mir
             mMeshUploads->Shutdown(*mRayTracer);
 
             mPostProcessing->Shutdown();
+            mRasterSurfaces->Shutdown();
+            mSsgiTrace->Shutdown();
+#if MIR_WITH_RTXGI
+            mDdgi->Shutdown();
+#endif
             mMaterialStore->Shutdown();
             mRayTracer->Shutdown();
             mResources->Shutdown();
@@ -279,8 +303,19 @@ namespace mir
 
     void VulkanRenderer::ResetHistory()
     {
+        mSsgiTrace->ResetHistory();
+#if MIR_WITH_RTXGI
+        mDdgi->ResetHistory();
+#endif
         if (mPostProcessing)
             mPostProcessing->ResetHistory();
+    }
+
+    void VulkanRenderer::SetGlobalIllumination(const DdgiSettings &settings)
+    {
+        if (settings == mDdgiSettings) return;
+        mDdgiSettings = settings;
+        if (mGiWasShading) mPostProcessing->ResetHistory();
     }
 
     void VulkanRenderer::ReleaseSceneResources()
@@ -292,6 +327,12 @@ namespace mir
         mDevice->WaitIdle();
 
         mMeshUploads->Clear(*mRayTracer);
+        mRasterSurfaces->Shutdown();
+        mSsgiTrace->Shutdown();
+        mMaterialStore->ReleaseSurfacePipelines();
+#if MIR_WITH_RTXGI
+        mDdgi->Shutdown();
+#endif
         mRayTracer->DestroyBlases();
         const std::size_t meshCount = mResources->ReleaseMeshes();
         mModelDescriptors->ResetFrames();

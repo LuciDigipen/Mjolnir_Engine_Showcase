@@ -16,6 +16,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -101,14 +102,39 @@ namespace mir::vk
         void DestroyBLAS(MeshBlas &blas);
         void DestroyBlases();
 
-        // Builds the frame's TLAS from `items` and traces `rect` into the output image,
+        struct PreparedScene
+        {
+            VkAccelerationStructureKHR tlas = VK_NULL_HANDLE;
+            VkDescriptorSet descriptors = VK_NULL_HANDLE;
+            VkDescriptorSetLayout layout = VK_NULL_HANDLE;
+            uint32_t instanceCount = 0;
+            bool truncated = false; // Requested scene exceeded capacity, even if camera fallback succeeded.
+        };
+
+        PreparedScene PrepareScene(VkCommandBuffer cmd, uint32_t frame, std::span<const DrawItem> items,
+            const ResourceStore &resources, const MaterialStore &materials,
+            std::optional<std::span<const DrawItem>> fallbackItems = std::nullopt);
+        VkDescriptorSetLayout SceneLayout() const { return mSetLayout; }
+
+        // Borrowed from Ddgi for this frame's final camera trace only.
+        struct GiShading
+        {
+            VkPipeline pipeline = VK_NULL_HANDLE;
+            VkPipelineLayout layout = VK_NULL_HANDLE;
+            VkDescriptorSet descriptors = VK_NULL_HANDLE;
+            VkStridedDeviceAddressRegionKHR raygen{}, miss{}, hit{}, callable{};
+            float intensity = 1.0f;
+            float weight = 0.0f;
+        };
+
+        // Traces the already prepared frame's TLAS into the output image,
         // which ends in SHADER_READ_ONLY for the caller to sample (PostProcess's tonemap pass).
         // aaMode selects rayGenMain's branch: Off/Dlss trace one sample per pixel (Dlss's jitter
         // already rode in through cameraSet's CameraData), Msaa loops rtSampleCount (1/2/4/8) standard-pattern
         // sub-pixel samples and averages color only - distance/velocity keep the first sample.
-        void Record(VkCommandBuffer cmd, uint32_t frame, std::span<const DrawItem> items, const VkRect2D &rect,
-            VkDescriptorSet cameraSet, uint32_t cameraOffset, const ResourceStore &resources,
-            const MaterialStore &materials, AntiAliasingMode aaMode, uint32_t rtSampleCount);
+        void RecordTrace(VkCommandBuffer cmd, uint32_t frame, const VkRect2D &rect,
+            VkDescriptorSet cameraSet, uint32_t cameraOffset, AntiAliasingMode aaMode, uint32_t rtSampleCount,
+            const GiShading *gi = nullptr);
 
         // VK_NULL_HANDLE for a guide buffer while Dlss is inactive.
         VkImage Image(RtImage image, uint32_t frame) const { return Slot(image, frame).image; }
@@ -142,8 +168,9 @@ namespace mir::vk
             VkBuffer &outScratchBuffer, VmaAllocation &outScratchAllocation);
         // Aligned to minAccelerationStructureScratchOffsetAlignment.
         bool CreateScratchBuffer(VkDeviceSize size, VkBuffer &outBuffer, VmaAllocation &outAllocation);
-        void RecordTlasBuild(VkCommandBuffer cmd, uint32_t frame, std::span<const DrawItem> items,
-            const ResourceStore &resources, const MaterialStore &materials);
+        PreparedScene RecordTlasBuild(VkCommandBuffer cmd, uint32_t frame, std::span<const DrawItem> items,
+            const ResourceStore &resources, const MaterialStore &materials,
+            std::optional<std::span<const DrawItem>> fallbackItems);
 
         Device *mDevice = nullptr;
         VkDeviceSize mScratchAlignment = 1;

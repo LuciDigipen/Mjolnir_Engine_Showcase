@@ -44,6 +44,10 @@ option(MIR_WITH_AUDIO "Build Wwise audio and Lua audio bindings" ON)
 # ON: fetches the public NVIDIA/DLSS SDK via CMake FetchContent at configure
 # time (cmake/FindNGX.cmake), pinned to an exact release tag - never committed.
 option(MIR_WITH_DLSS "Fetch NGX/DLSS-RR SDK and build Ray Reconstruction" OFF)
+
+# Optional DDGI SDK and offline-compiled probe update shaders. OFF does not
+# fetch RTXGI or require DXC; runtime GI is integrated separately.
+option(MIR_WITH_RTXGI "Fetch RTXGI DDGI SDK and build Vulkan probe shaders" OFF)
 if(BUILD_TESTING)
     enable_testing()
     find_package(Catch2 3 CONFIG REQUIRED)
@@ -92,6 +96,35 @@ add_subdirectory(tools/TerrainTool)
 add_executable(MjolnirEngine WIN32)
 target_sources(MjolnirEngine PRIVATE main.cpp)
 
+foreach(surface_shader default model unlit error)
+    engine_add_shaders(MjolnirEngine
+        SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/${surface_shader}Surface.slang"
+        ENTRIES vertexMain:vertex fragmentMain:fragment)
+endforeach()
+
+if(MIR_WITH_RTXGI)
+    engine_add_shaders(MjolnirEngine
+        SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/raytraceGi.slang
+        INCLUDE_DIRS ${MIR_RTXGI_INCLUDE_DIR}
+        DEFINES HLSL=1 RTXGI_COORDINATE_SYSTEM=2
+        EXTRA_DEPENDS ${MIR_RTXGI_SHADER_DEPENDS}
+        ENTRIES rayGenMain:raygeneration missMain:miss closestHitMain:closesthit
+            anyHitMain:anyhit shadowMissMain:miss shadowAnyHitMain:anyhit)
+    engine_add_shaders(MjolnirEngine
+        SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/ddgiProbe.slang
+        INCLUDE_DIRS ${MIR_RTXGI_INCLUDE_DIR}
+        DEFINES HLSL=1 RTXGI_COORDINATE_SYSTEM=2
+        EXTRA_DEPENDS ${MIR_RTXGI_SHADER_DEPENDS}
+        ENTRIES probeRayGen:raygeneration probeMiss:miss probeClosestHit:closesthit
+            probeAnyHit:anyhit shadowMissMain:miss shadowAnyHitMain:anyhit)
+    get_property(rtxgi_shader_outputs GLOBAL PROPERTY MIR_RTXGI_SHADER_OUTPUTS)
+    add_custom_command(TARGET MjolnirEngine POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:MjolnirEngine>/shaders/rtxgi"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            ${rtxgi_shader_outputs} "$<TARGET_FILE_DIR:MjolnirEngine>/shaders/rtxgi"
+        VERBATIM COMMAND_EXPAND_LISTS)
+endif()
+
 # ReportFatal looks for the reporter beside the engine, so every build ships it there
 add_dependencies(MjolnirEngine MjolnirErrorReporter)
 add_custom_command(TARGET MjolnirEngine POST_BUILD
@@ -111,6 +144,22 @@ endif()
 if(MSVC)
     set_target_properties(MjolnirEngine PROPERTIES LINK_FLAGS "/ENTRY:mainCRTStartup")
 endif()
+
+engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/SsgiDepth.slang
+    ENTRIES initMain:compute reduceMain:compute)
+
+engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/SsgiTrace.slang
+    ENTRIES traceMain:compute)
+
+engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/SsgiFilter.slang
+    ENTRIES temporalMain:compute spatialMain:compute resolveMain:compute)
+
+engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/SsgiComposite.slang
+    ENTRIES vertexMain:vertex fragmentMain:fragment)
 
 engine_add_shaders(MjolnirEngine
     SOURCE assets/shaders/default.slang

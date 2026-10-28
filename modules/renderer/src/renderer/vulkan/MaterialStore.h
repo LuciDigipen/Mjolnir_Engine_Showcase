@@ -39,6 +39,9 @@ namespace mir::vk
         VkImageView mBaseColorView = VK_NULL_HANDLE;
         VkSampler mSampler = VK_NULL_HANDLE;
         bool mError = false;
+        MaterialDesc mDescription;
+        VkPipeline mSurfacePipeline = VK_NULL_HANDLE;
+        bool mSurfaceTried = false;
     };
 
     // Destroy* and Release* do not wait: the caller idles the device first,
@@ -62,6 +65,9 @@ namespace mir::vk
         // What a draw with `handle` uses: the material; else the default for a null handle and the error
         // material for a stale one; null only when both are gone.
         const GpuMaterial *FindOrDefault(MaterialHandle handle) const;
+        bool SupportsSurfaceInputs(MaterialHandle handle) const;
+        VkPipeline SurfacePipeline(MaterialHandle handle);
+        void ReleaseSurfacePipelines(); // Caller has idled the device.
 
         MaterialHandle DefaultMaterial() const { return mDefaultMaterial; }
         MaterialHandle ErrorMaterial() const { return mErrorMaterial; }
@@ -84,8 +90,8 @@ namespace mir::vk
             VkPipelineLayout layout = VK_NULL_HANDLE;
         };
 
-        VkPipeline CreateGraphicsPipeline(const PipelineState &state, VkFormat colorFormat);
-        VkPipeline BuildPipeline(const MaterialDesc &desc, VkFormat colorFormat);
+        VkPipeline CreateGraphicsPipeline(const PipelineState &state, VkFormat colorFormat, bool surfaces = false);
+        VkPipeline BuildPipeline(const MaterialDesc &desc, VkFormat colorFormat, bool surfaces = false);
         bool CreateSkyPipeline(VkDescriptorSetLayout cameraSetLayout, VkFormat colorFormat);
         // GPU objects only; the slot and its generation are the caller's.
         void FreeMaterial(GpuMaterial &material);

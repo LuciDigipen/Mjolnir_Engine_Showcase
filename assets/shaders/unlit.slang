@@ -1,3 +1,6 @@
+#ifdef MIR_SSGI_SURFACE
+#include "RasterSurfaceCommon.slang"
+#endif
 struct VSInput
 {
     float3 pos    : POSITION;
@@ -50,6 +53,12 @@ VSOutput vertexMain(VSInput input)
 }
 
 [shader("fragment")]
+#ifdef MIR_SSGI_SURFACE
+RasterSurfaceOutput fragmentMain(VSOutput input)
+{
+    return MakeRasterSurface(RasterSurfaceFaceNormal(input.worldPos), 2, float3(0), input.color, input.color);
+}
+#else
 float4 fragmentMain(VSOutput input) : SV_Target
 {
     float dist = length(cameraPos.xyz - input.worldPos);
@@ -59,3 +68,4 @@ float4 fragmentMain(VSOutput input) : SV_Target
 
     return float4(color, 1.0);
 }
+#endif
