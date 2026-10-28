@@ -619,7 +619,7 @@ DDGI can update the volume for this camera; otherwise primary and shadow rays us
 ordinary camera scene. Ordinary meshes remain included
 conservatively. Draw sources include resident geometry outside the camera and
 probe grid so primary and shadow rays can find distant blockers. Terrain does
-not request additional streaming or overlap coarse/fine fallback meshes.
+not request additional streaming, renew mesh retention, or overlap coarse/fine fallback meshes.
 Probe ray distance uses the SDK default independently of grid size. World
 positions are subtracted before narrowing to floats.
 
@@ -627,8 +627,10 @@ positions are subtracted before narrowing to floats.
 descriptors and inserts the build-to-ray-read barrier. Its borrowed handles
 remain valid until that slot is prepared again. If the extended scene exceeds
 instance/texture capacity, it is replaced by the ordinary camera submission
-before recording a TLAS build. Overflow or omitted world draws invalidate GI
-history and use ambient fallback.
+before recording a TLAS build. Overflow or omitted world draws skip probe updates
+without discarding cached history. Eight missed updates retain its weight;
+further misses fade it over 24 updates, while successful updates recover weight
+gradually. Expired history restarts on the next complete scene.
 
 The facade records these passes on the graphics queue:
 

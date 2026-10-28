@@ -78,6 +78,14 @@ namespace mir::vk
         bool mReset = true, mInitializedImages = false;
         uint64_t mImageBytes = 0;
 
+        std::optional<RayTracer::GiShading> Shading(uint32_t frame) const
+        {
+            const float weight = mSchedule.SamplingWeight();
+            if (weight == 0.0f) return std::nullopt;
+            return RayTracer::GiShading{ mCamera.pipeline, mTraceLayout, mSets[frame],
+                mCamera.raygen, mCamera.miss, mCamera.hit, mCamera.callable, mSettings.intensity, weight };
+        }
+
         void Destroy()
         {
             if (!mDevice) return;
@@ -381,7 +389,14 @@ namespace mir::vk
         VkDescriptorSet cameraSet, uint32_t cameraOffset, const RayTracer::PreparedScene &scene, bool complete)
     {
         auto &state = *mImpl;
-        if (!CanUpdate(camera) || !complete || scene.truncated) { state.mReset = true; return std::nullopt; }
+        if (!CanUpdate(camera)) { state.mReset = true; return std::nullopt; }
+        const bool update = complete && !scene.truncated;
+        if (!update)
+        {
+            if (state.mReset) return std::nullopt;
+            state.mSchedule.SkipUpdate();
+            if (state.mSchedule.Expired()) { state.mReset = true; return std::nullopt; }
+        }
         const auto coverage = MakeGiTraceVolume(state.mSettings);
         const auto relative = TryCameraRelativeFloat(coverage->origin, camera);
         const uint32_t total = uint32_t(state.mSettings.ProbeCount());
@@ -389,8 +404,11 @@ namespace mir::vk
         if (state.mReset) state.mSchedule.Reset();
         const auto budget = state.mSchedule.Batch(total, count);
         state.mVolume->SetOrigin({ relative->x, relative->y, relative->z });
-        state.mVolume->SetProbeHysteresis(budget[3] == 0 ? 0.0f : 0.97f);
-        state.mVolume->Update();
+        if (update)
+        {
+            state.mVolume->SetProbeHysteresis(budget[3] == 0 ? 0.0f : 0.97f);
+            state.mVolume->Update();
+        }
         const auto packed = state.mVolume->GetDescGPUPacked();
         auto &constants = state.mConstants[frame];
         std::memcpy(constants.mapped, &packed, sizeof(packed));
@@ -399,6 +417,7 @@ namespace mir::vk
 
         // Includes previous-frame atlas reads/writes on the same graphics queue.
         ProbeBarrier(cmd);
+        if (!update) return state.Shading(frame);
         if (state.mReset)
         {
             for (auto &atlas : state.mImages)
@@ -440,10 +459,6 @@ namespace mir::vk
         state.mDevice->EndLabel(cmd);
         state.mReset = false;
         state.mSchedule.Advance(total, count);
-        const float weight = state.mSchedule.SamplingWeight();
-        if (weight == 0.0f) return std::nullopt;
-        return RayTracer::GiShading{ state.mCamera.pipeline, state.mTraceLayout, state.mSets[frame],
-            state.mCamera.raygen, state.mCamera.miss, state.mCamera.hit, state.mCamera.callable,
-            state.mSettings.intensity, weight };
+        return state.Shading(frame);
     }
 }

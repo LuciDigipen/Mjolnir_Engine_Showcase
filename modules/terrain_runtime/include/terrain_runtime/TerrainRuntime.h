@@ -153,7 +153,7 @@ namespace mir
         std::string NameOf(Entity entity) const;
         // A unit draws once its GPU mesh is usable.
         TerrainUnitReady Ready() const;
-        void AppendDraws(std::span<const TerrainDrawUnit> units, std::vector<WorldDrawItem> &out);
+        void AppendDraws(std::span<const TerrainDrawUnit> units, std::vector<WorldDrawItem> &out, bool retain = true);
         void ReportMeshFailures();
         void LogView(ViewState &state, const ViewCamera &camera);
         void Report(const std::string &message);

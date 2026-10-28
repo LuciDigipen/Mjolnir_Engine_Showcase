@@ -216,6 +216,51 @@ TEST_CASE("Probe batches cover the volume before enabling history and respect up
         }
 }
 
+TEST_CASE("Probe history survives intermittent incomplete scenes and expires after prolonged gaps", "[renderer][ddgi]")
+{
+    mir::vk::ProbeUpdateSchedule schedule;
+    schedule.Advance(64, 8);
+    const auto partial = schedule.Batch(64, 8);
+    schedule.SkipUpdate();
+    CHECK(schedule.Batch(64, 8) == partial);
+    CHECK_FALSE(schedule.Expired());
+    CHECK(schedule.SamplingWeight() == 0.0f);
+    for (int i = 0; i < 16; ++i) schedule.Advance(64, 8);
+    REQUIRE(schedule.SamplingWeight() == 1.0f);
+    for (int i = 0; i < 200; ++i)
+    {
+        const auto batch = schedule.Batch(64, 8);
+        schedule.SkipUpdate();
+        CHECK(schedule.Batch(64, 8) == batch);
+        CHECK(schedule.SamplingWeight() == 1.0f);
+        CHECK_FALSE(schedule.Expired());
+        schedule.Advance(64, 8);
+    }
+    for (int i = 0; i < 8; ++i) schedule.SkipUpdate();
+    CHECK(schedule.SamplingWeight() == 1.0f);
+    float previous = 1.0f;
+    for (int i = 0; i < 12; ++i)
+    {
+        schedule.SkipUpdate();
+        CHECK(schedule.SamplingWeight() < previous);
+        previous = schedule.SamplingWeight();
+    }
+    CHECK(previous > 0);
+    for (int i = 0; i < 4; ++i)
+    {
+        schedule.Advance(64, 8);
+        CHECK(schedule.SamplingWeight() > previous);
+        previous = schedule.SamplingWeight();
+    }
+    for (int i = 0; i < 100; ++i) schedule.SkipUpdate();
+    CHECK(schedule.Expired());
+    CHECK(schedule.SamplingWeight() == 0.0f);
+    schedule.Reset();
+    CHECK_FALSE(schedule.Expired());
+    CHECK(schedule.Batch(64, 8) == std::array<uint32_t, 4>{0, 8, 64, 0});
+    CHECK(schedule.SamplingWeight() == 0.0f);
+}
+
 TEST_CASE("GI visibility reach is independent of probe density and placement", "[renderer][ddgi]")
 {
     mir::DdgiSettings settings;

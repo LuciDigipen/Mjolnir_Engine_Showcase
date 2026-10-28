@@ -932,17 +932,18 @@ namespace mir
             return;
         std::vector<TerrainDrawUnit> units;
         mViews[mFrameViews[view]].selector->CollectForRayTracing(Ready(), units);
-        AppendDraws(units, out);
+        AppendDraws(units, out, false);
     }
 
-    void TerrainRuntime::AppendDraws(std::span<const TerrainDrawUnit> units, std::vector<WorldDrawItem> &out)
+    void TerrainRuntime::AppendDraws(std::span<const TerrainDrawUnit> units, std::vector<WorldDrawItem> &out, bool retain)
     {
         const std::span<const TerrainInstanceState> instances = mWorld->Resource<TerrainWorld>().Instances();
         for (const TerrainDrawUnit &unit : units)
         {
             if (unit.instance >= instances.size())
                 continue;
-            const TerrainResidentMesh *mesh = mMeshes->Acquire(unit.geometry, mFrameTime);
+            const TerrainResidentMesh *mesh = retain ? mMeshes->Acquire(unit.geometry, mFrameTime)
+                : mMeshes->FindReady(unit.geometry);
             if (!mesh)
                 continue;
             if (std::optional<WorldDrawItem> draw = MakeTerrainDraw(*mesh, instances[unit.instance].placement))

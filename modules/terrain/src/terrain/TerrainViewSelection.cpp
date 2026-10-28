@@ -792,32 +792,34 @@ namespace mir
     void TerrainViewSelector::Collect(const TerrainCullVolume &volume, const TerrainUnitReady &ready,
                                       std::vector<TerrainDrawUnit> &out) const
     {
-        CollectVolumes({ &volume, 1 }, ready, out, false);
+        CollectVolume(&volume, ready, out, false);
     }
 
     void TerrainViewSelector::CollectForRayTracing(const TerrainUnitReady &ready, std::vector<TerrainDrawUnit> &out) const
     {
-        CollectVolumes({}, ready, out, true);
+        CollectVolume(nullptr, ready, out, true);
     }
 
-    void TerrainViewSelector::CollectVolumes(std::span<const TerrainCullVolume> volumes,
+    void TerrainViewSelector::CollectVolume(const TerrainCullVolume *volume,
         const TerrainUnitReady &ready, std::vector<TerrainDrawUnit> &out, bool includeBeyondFar) const
     {
         const Impl &impl = *mImpl;
+        const Planes planes = volume ? PlanesOf(volume->viewProj) : Planes{};
         for (uint32_t i = 0; i < impl.instances.size(); ++i)
         {
             const Impl::Instance &inst = impl.instances[i];
             if (!inst.catalog)
                 continue;
-            std::vector<LocalCullVolume> local;
-            local.reserve(volumes.size());
-            for (const TerrainCullVolume &volume : volumes)
-                if (const auto origin = TryWorldToTerrainLocal(volume.origin, inst.input.placement.translation))
-                    local.push_back({ PlanesOf(volume.viewProj), origin->Meters() });
-            if (!volumes.empty() && local.empty())
-                continue;
+            std::optional<LocalCullVolume> local;
+            if (volume)
+            {
+                const auto origin = TryWorldToTerrainLocal(volume->origin, inst.input.placement.translation);
+                if (!origin) continue;
+                local = LocalCullVolume{ planes, origin->Meters() };
+            }
+            const auto cull = local ? std::span<const LocalCullVolume>(&*local, 1) : std::span<const LocalCullVolume>{};
             for (uint32_t root = 0; root < inst.roots; ++root)
-                impl.Cover(inst, i, root, local, includeBeyondFar, ready, out, nullptr);
+                impl.Cover(inst, i, root, cull, includeBeyondFar, ready, out, nullptr);
         }
     }
 

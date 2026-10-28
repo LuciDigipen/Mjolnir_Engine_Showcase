@@ -119,7 +119,7 @@ namespace mir
         const TerrainViewStats &Stats() const;
 
       private:
-        void CollectVolumes(std::span<const TerrainCullVolume> volumes, const TerrainUnitReady &ready,
+        void CollectVolume(const TerrainCullVolume *volume, const TerrainUnitReady &ready,
             std::vector<TerrainDrawUnit> &out, bool includeBeyondFar) const;
         struct Impl;
         std::unique_ptr<Impl> mImpl;
