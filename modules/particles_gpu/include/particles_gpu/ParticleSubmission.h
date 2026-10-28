@@ -61,6 +61,20 @@ namespace mir
         glm::vec4 color{1, 0.4f, 0.1f, 0.5f};
     };
 
+    struct RibbonPointSubmission
+    {
+        WorldPosition position;
+        double textureDistance = 0;
+        uint64_t ribbon = 0;
+        uint64_t link = 0;
+        float width = 0;
+        glm::vec4 color{0};
+    };
+    struct RibbonSubmission
+    {
+        std::vector<RibbonPointSubmission> points;
+    };
+
     // Shared with particlePool.slang, offsets are part of the GPU ABI.
     struct GpuParticle
     {

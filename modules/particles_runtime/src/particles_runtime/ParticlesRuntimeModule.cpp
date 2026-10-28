@@ -57,6 +57,21 @@ namespace mir
         }
         return submissions;
     }
+    std::vector<RibbonSubmission> BuildRibbonRenderData(const ParticleRuntime &runtime)
+    {
+        std::vector<RibbonSubmission> result;
+        for (const auto &emitter : runtime.EmitterSlots())
+        {
+            if (emitter.handle.IsNull() || emitter.definition.simulationTarget != ParticleSimulationTarget::CPU ||
+                emitter.state == ParticleExecutionState::Complete || emitter.ribbon.points.empty()) continue;
+            RibbonSubmission input;
+            input.points.reserve(emitter.ribbon.points.size());
+            for (const auto &point : emitter.ribbon.points)
+                input.points.push_back({point.position, point.textureDistance, point.ribbon, point.link, point.width, point.color});
+            result.push_back(std::move(input));
+        }
+        return result;
+    }
     namespace
     {
         class ParticleSubmitSystem final : public ISystem
@@ -66,7 +81,7 @@ namespace mir
             void OnUpdate(SystemContext &context) override
             {
                 const auto snapshot = BuildParticleRenderData(mParticles.Runtime(), IsSimulating(context.world));
-                mGpu.Submit(snapshot);
+                mGpu.Submit(snapshot, BuildRibbonRenderData(mParticles.Runtime()));
             }
         private:
             ParticleWorld &mParticles;

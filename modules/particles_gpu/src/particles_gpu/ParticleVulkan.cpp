@@ -65,10 +65,10 @@ namespace mir::gpu
         rect.extent.height = std::min(rect.extent.height, extent.height - uint32_t(rect.offset.y));
         return rect;
     }
-    bool CreateSpritePipeline(VkDevice device, VkPipelineLayout layout, VkFormat format, VkPipeline &pipeline)
+    bool CreateSpritePipeline(VkDevice device, VkPipelineLayout layout, VkFormat format, VkPipeline &pipeline, bool ribbon)
     {
-        const auto vert = LoadShader(device, "particlePool.vertexMain.spv");
-        const auto frag = LoadShader(device, "particlePool.fragmentMain.spv");
+        const auto vert = LoadShader(device, ribbon ? "particlePool.ribbonVertex.spv" : "particlePool.vertexMain.spv");
+        const auto frag = LoadShader(device, ribbon ? "particlePool.ribbonFragment.spv" : "particlePool.fragmentMain.spv");
         const VkPipelineColorBlendAttachmentState blend{
             .blendEnable = VK_TRUE, .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
             .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, .colorBlendOp = VK_BLEND_OP_ADD,
@@ -78,11 +78,11 @@ namespace mir::gpu
             { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
              .stage = VK_SHADER_STAGE_VERTEX_BIT,
              .module = vert,
-             .pName = "vertexMain" },
+             .pName = ribbon ? "ribbonVertex" : "vertexMain" },
             { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
              .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
              .module = frag,
-             .pName = "fragmentMain" } };
+             .pName = ribbon ? "ribbonFragment" : "fragmentMain" } };
 
         const VkPipelineVertexInputStateCreateInfo vertexInput{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };

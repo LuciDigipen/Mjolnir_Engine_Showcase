@@ -9,6 +9,7 @@
 #pragma once
 
 #include "particles/ParticleEffect.h"
+#include "particles/ParticleRibbon.h"
 
 #include <core/ecs/Entity.h>
 #include <core/ecs/components/WorldTransform.h>
@@ -70,6 +71,7 @@ namespace mir
 
     struct ParticleEmitterInstance
     {
+        ParticleRibbonState ribbon;
         ParticleEmitterHandle handle;
         ParticleHandle system;
         AssetId emitterId;
@@ -101,6 +103,8 @@ namespace mir
         uint32_t activeEmitters = 0;
         uint64_t rejectedStarts = 0;
         uint64_t droppedBudgetSpawns = 0;
+        uint64_t evictedRibbonPoints = 0;
+        uint64_t rejectedRibbonPoints = 0;
         uint64_t ticks = 0;
         double droppedSeconds = 0.0;
     };

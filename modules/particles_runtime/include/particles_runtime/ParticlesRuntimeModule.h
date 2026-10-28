@@ -22,6 +22,7 @@ namespace mir
     class ParticleRuntime;
     class ParticlesGpuModule;
     std::vector<ParticleSubmission> BuildParticleRenderData(const ParticleRuntime &runtime, bool simulating);
+    std::vector<RibbonSubmission> BuildRibbonRenderData(const ParticleRuntime &runtime);
     class ParticlesRuntimeModule
     {
     public:

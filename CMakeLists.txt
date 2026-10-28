@@ -159,7 +159,7 @@ engine_add_shaders(MjolnirEngine
 
 engine_add_shaders(MjolnirEngine
     SOURCE modules/particles_gpu/shaders/particlePool.slang
-    ENTRIES vertexMain:vertex fragmentMain:fragment)
+    ENTRIES vertexMain:vertex fragmentMain:fragment ribbonVertex:vertex ribbonFragment:fragment)
 # Incremental build trees must not package the replaced fixed compute shader.
 file(REMOVE "${CMAKE_BINARY_DIR}/shaders/particlePool.computeMain.spv")
 

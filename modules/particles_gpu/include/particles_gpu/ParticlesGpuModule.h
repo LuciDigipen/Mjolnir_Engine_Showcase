@@ -26,7 +26,7 @@ namespace mir
         ~ParticlesGpuModule();
         ParticlesGpuModule(const ParticlesGpuModule &) = delete;
         ParticlesGpuModule &operator=(const ParticlesGpuModule &) = delete;
-        void Submit(std::span<const ParticleSubmission> inputs);
+        void Submit(std::span<const ParticleSubmission> inputs, std::span<const RibbonSubmission> ribbons = {});
         ParticleGpuStats Stats() const;
         void Clear();
     private:

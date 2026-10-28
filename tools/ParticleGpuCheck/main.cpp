@@ -383,9 +383,58 @@ int main(int argc, char **argv)
             submit(sample);
         }
         MIR_LOG_INFO("Moving exhaust: swept births, tile continuity, translated precision, seeded curves and flipbook checks passed");
-        input.spawns = 32;
+        // Ribbons use the production CPU runtime, immutable bridge and FX renderer.
+        mir::ParticleRuntime ribbons;
+        mir::ParticleEmitterAsset trail;
+        trail.simulationTarget = mir::ParticleSimulationTarget::CPU;
+        trail.texture = {1};
+        trail.spawnRate = 0;
+        trail.spawnPerMeter = 12;
+        trail.capacity = 128;
+        trail.lifetime = 4;
+        trail.size = 0.12f;
+        trail.color = {0.8f,0.9f,1,0.6f};
+        trail.spawnModules = {{"RibbonSpawn", {0.1f}}};
+        trail.updateModules = {{"RibbonAge", {}}, {"RibbonWind", {}}, {"RibbonWidth", {2}}, {"RibbonFade", {}}};
+        mir::ParticleEffect trailEffect;
+        trailEffect.emitters = {{1}};
+        trailEffect.emitterDefinitions = {trail};
+        trailEffect.parameters.wind = {0,0.3f,0};
+        const auto trailHandle = ribbons.Start({2},trailEffect);
+        Require(!trailHandle.IsNull(), "CPU ribbon fixture failed to start");
+        auto drawRibbons = [&]
+        {
+            particles->Submit({},mir::BuildRibbonRenderData(ribbons));
+            draw();
+        };
+        for (int f = 1; f <= 90; ++f)
+        {
+            mir::WorldPose pose;
+            pose.position = *mir::WorldPosition::FromMeters(mir::WorldVec3(-2.0 + f / 20.0, 0.3 * std::sin(f / 20.0), -6));
+            Require(ribbons.SetPose(trailHandle,pose), "CPU ribbon pose rejected");
+            ribbons.Advance(1.0f/60);
+            drawRibbons();
+        }
+        split = !rt;
+        for (int f = 0; f < 4; ++f) drawRibbons();
+        split = false;
+        if constexpr (sizeof(mir::WorldReal) != sizeof(float))
+        {
+            const auto oldCamera = view.cameraPosition;
+            const auto snapshot = mir::BuildRibbonRenderData(ribbons);
+            auto translated = snapshot;
+            for (auto &ribbon : translated)
+                for (auto &point : ribbon.points)
+                    point.position = *mir::WorldPosition::FromMeters(point.position.Meters() + mir::WorldVec3(1000000,0,0));
+            view.cameraPosition = *mir::WorldPosition::FromMeters(oldCamera.Meters() + mir::WorldVec3(1000000,0,0));
+            for (int f = 0; f < 4; ++f) { particles->Submit({},translated); draw(); }
+            view.cameraPosition = oldCamera;
+        }
         renderer.CaptureNextFrame(output);
-        submit(input);
+        drawRibbons();
+        particles->Clear();
+        for (int f = 0; f < 3; ++f) draw();
+        MIR_LOG_INFO("CPU ribbon uploads, split views, remote camera and clear passed");
         renderer.Shutdown();
         Require(std::filesystem::exists(output), "No GPU output capture");
         MIR_LOG_INFO("Particle GPU checks passed, mode={}, validation includes synchronization checks", mode);

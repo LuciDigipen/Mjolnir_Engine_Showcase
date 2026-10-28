@@ -1,6 +1,6 @@
 # particles_gpu
 
-GPU particle datasets, compute simulation, and sprite rendering behind the renderer FX interface. The renderer owns composition images, frame scheduling, and synchronization.
+GPU particle datasets, compute simulation, sprite and ribbon rendering behind the renderer FX interface. The renderer owns composition images, frame scheduling, and synchronization.
 
 `mir::particles_gpu` ? depends `mir::renderer` (public), VMA (private) ? API `modules/particles_gpu/include/particles_gpu/` ? maintainer Sumin Park ? reviewed 2026-10-28
 
@@ -27,13 +27,13 @@ A scene clear discards pending submissions and live ranges. Unregistration waits
 
 ## State
 
-As of 2026-10-28, GPU simulation and radial sprite draws work for raster and RT/RR composition. The backend has two frame slots, a 65,536-record pool, 64 emitter ranges, per-frame birth and range bounds, timeline-completed counters, and resize/unload support. It has no ribbon renderer, sorting, lighting, or particle participation in reflections, shadows, or GI.
+As of 2026-10-28, GPU simulation and radial sprite draws work for raster and RT/RR composition. The backend has two frame slots, a 65,536-record pool, 64 emitter ranges, per-frame birth and range bounds, timeline-completed counters, and resize/unload support. Ribbons have per-segment sorting. It has no sprite sorting, lighting, or particle participation in reflections, shadows, or GI.
 
 `ParticleGpuCheck` exercises the production module, including two distinct emitter ranges from one system. Renderer raster comparison against the T2 output is pixel-identical. The fixture also checks RT and DLSS/RR modes, scene clear and backend unregistration. RenderDoc inspection records compute dispatch, counter data, draw, and synchronization barriers.
 
 ## Backlog
 
-Later tasks add production renderer properties, ribbons, sorting, lighting, and RT integration.
+Later tasks add production renderer properties, sprite sorting, lighting, and RT integration.
 
 ## Cooked dispatch
 
@@ -74,3 +74,27 @@ size, alpha, frame and sequence allow numerical GPU regression checks without
 synchronous state readback. Tests cover swept initialization, stationary survivors
 across repeated tile changes, one-million-metre translated births, seed replay,
 lifetime curves, flipbook advance and texture replacement while frames are in flight.
+
+## CPU ribbon rendering
+
+The scene bridge snapshots CPU history into `RibbonSubmission` without simulation
+state. `BuildRibbonGeometry` subtracts each view camera in world precision before
+narrowing. Shared strip corners join adjacent links, disconnected ribbon IDs and
+missing links never connect. End-on views use a finite perpendicular fallback,
+duplicate samples emit no triangle. Segments sort back to front per view.
+
+The renderer uploads at most 65,532 vertices across all views in one frame,
+using two mapped storage buffers (about 6 MiB total), protected by the existing
+frame-slot timeline wait. Capacity exhaustion truncates geometry, simulation
+continues. Views farther than 10,000 km from a sample omit it. This avoids float
+geometry overflow and never changes stored history. Camera changes rebuild only
+geometry. No extra queue wait, readback, or device-idle operation is introduced.
+
+Ribbon shaders sample the existing raster reversed-Z or RT ray-distance depth,
+blend premultiplied HDR into the FX target, and inherit the existing placement
+after opaque DoF/motion blur and RR, before bloom/tonemapping. Width falloff and
+a periodic longitudinal pattern use continuous distance-based UVs, subtracting
+whole repeats preserves phase after eviction. Ribbon shading is procedural in
+this step, the emitter texture remains a validated dependency. Textured renderer
+properties, fog, lighting, sprite/ribbon interleaving and soft intersections belong
+to the production rendering task. Ribbons do not participate in RT secondary rays.

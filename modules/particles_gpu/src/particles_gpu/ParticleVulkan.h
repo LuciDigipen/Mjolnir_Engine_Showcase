@@ -21,5 +21,5 @@ namespace mir::gpu
     void MemoryBarrier(VkCommandBuffer commands, VkPipelineStageFlags2 src, VkAccessFlags2 srcAccess,
         VkPipelineStageFlags2 dst, VkAccessFlags2 dstAccess);
     VkRect2D ResolveRect(VkRect2D requested, VkExtent2D extent);
-    bool CreateSpritePipeline(VkDevice device, VkPipelineLayout layout, VkFormat format, VkPipeline &pipeline);
+    bool CreateSpritePipeline(VkDevice device, VkPipelineLayout layout, VkFormat format, VkPipeline &pipeline, bool ribbon = false);
 }

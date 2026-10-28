@@ -1,4 +1,4 @@
-# @file CMakeLists.txt
+﻿# @file CMakeLists.txt
 # @author sumin.park
 # @brief Builds the CPU particle asset and playback module.
 # @copyright Copyright (c) 2026 DigiPen (USA) Corporation
@@ -12,6 +12,7 @@ target_link_libraries(engine_particles PUBLIC mir::core mir::assets PRIVATE nloh
 target_sources(engine_particles PRIVATE
     src/particles/ComponentRegistration.cpp
     src/particles/ParticleEffect.cpp
+    src/particles/ParticleRibbon.cpp
     src/particles/ParticleRuntime.cpp
     src/particles/ParticlesModule.cpp
     src/particles/ParticleWorld.cpp

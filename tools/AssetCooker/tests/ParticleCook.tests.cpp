@@ -305,3 +305,26 @@ TEST_CASE("Particle cooker compiles moving exhaust modules and shares scripts ac
     CHECK(layout->typeTag == mir::kParticleScriptLayoutTypeTag);
     CHECK(layout->contentVersion == mir::kParticleScriptLayoutContentVersion);
 }
+
+TEST_CASE("CPU ribbon stacks cook and load without GPU script dependencies", "[particles][cooker][ribbon]")
+{
+    CookFixture fixture;
+    std::ofstream(fixture.source / "exhaust.emitter.json") << R"({
+        "version":1,"target":"cpu","lifetime":30,"spawnRate":0,"spawnPerMeter":0.5,
+        "capacity":512,"texture":"checker.png",
+        "spawnModules":[{"name":"RibbonSpawn","parameters":[0.25]}],
+        "updateModules":[{"name":"RibbonAge"},{"name":"RibbonWind"},
+            {"name":"RibbonWidth","parameters":[8]},{"name":"RibbonFade"}]})";
+    REQUIRE(fixture.Cook() == 0);
+    auto manifest = mir::AssetManifest::LoadFile(fixture.out / mir::kAssetManifestFileName);
+    REQUIRE(manifest);
+    CHECK(manifest->Count() == 3);
+    mir::AssetCache cache(&*manifest,fixture.out);
+    const auto loaded = mir::LoadParticleEffect(cache,mir::MakeAssetId("assets/exhaust.particle.json"));
+    REQUIRE(loaded.mEffect);
+    const auto &emitter = loaded.mEffect->emitterDefinitions[0];
+    CHECK(emitter.simulationTarget == mir::ParticleSimulationTarget::CPU);
+    CHECK(emitter.script.IsNull());
+    CHECK(emitter.scriptCode.empty());
+    CHECK(emitter.updateModules[2].parameters[0] == 8);
+}

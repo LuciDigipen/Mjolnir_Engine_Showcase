@@ -167,7 +167,7 @@ namespace mir
             if (auto *emitter = MutableEmitter(emitterHandle))
             {
                 emitter->paused = paused;
-                if (resumed) emitter->resetMotionOnPose = true;
+                if (resumed) { emitter->resetMotionOnPose = true; emitter->ribbon.connected = false; }
                 if (paused)
                 {
                     emitter->spawns = 0;
@@ -242,6 +242,7 @@ namespace mir
             if (auto *emitter = MutableEmitter(emitterHandle))
             {
                 emitter->state = state;
+                emitter->ribbon.connected = false;
                 emitter->spawns = 0;
                 emitter->births.clear();
                 emitter->distanceRemainder = 0;
@@ -372,6 +373,14 @@ namespace mir
                     emitter->attachmentVelocity = emitter->teleported ? glm::vec3(0) :
                         glm::vec3(displacement / WorldReal(emitter->motionSeconds));
                     if (emitter->teleported) emitter->distanceRemainder = 0;
+                    if (emitter->definition.simulationTarget == ParticleSimulationTarget::CPU)
+                    {
+                        AdvanceParticleRibbon(*emitter, instance.parameters, budget, mStats);
+                        emitter->previousPosition = emitter->attachmentPosition;
+                        emitter->motionSeconds = 0;
+                        any = true;
+                        continue;
+                    }
                     uint64_t requested = 0;
                     auto append = [&](double amount, double &remainder)
                     {
@@ -415,6 +424,8 @@ namespace mir
                 }
                 else if (emitter->state == ParticleExecutionState::Inactive)
                 {
+                    if (emitter->definition.simulationTarget == ParticleSimulationTarget::CPU)
+                        AdvanceParticleRibbon(*emitter, instance.parameters, budget, mStats);
                     emitter->drainRemaining -= steps * kStep;
                     if (emitter->drainRemaining <= 1e-6)
                     {

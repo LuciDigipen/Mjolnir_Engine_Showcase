@@ -9,4 +9,10 @@ target_sources(engine_particles_gpu PRIVATE
     src/particles_gpu/ParticleDataset.cpp
     src/particles_gpu/ParticleDispatch.cpp
     src/particles_gpu/ParticleSpriteRenderer.cpp
+    src/particles_gpu/ParticleRibbonGeometry.cpp
+    src/particles_gpu/ParticleRibbonRenderer.cpp
     src/particles_gpu/ParticleVulkan.cpp)
+
+if(BUILD_TESTING)
+    engine_add_module_tests(particles_gpu tests/ParticleRibbonGeometry.tests.cpp)
+endif()

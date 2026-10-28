@@ -2,7 +2,9 @@
   "version": 2,
   "emitters": [
     "particles/left.emitter.json",
-    "particles/right.emitter.json"
+    "particles/right.emitter.json",
+    "particles/contrail-left.emitter.json",
+    "particles/contrail-right.emitter.json"
   ],
   "parameters": {
     "spawnRateScale": 1,

@@ -87,3 +87,33 @@ float4 fragmentMain(Varying i) : SV_Target
 }
 
 
+
+struct RibbonVertexData
+{
+    float4 position;
+    float4 color;
+    float4 uv;
+};
+[[vk::binding(8)]] StructuredBuffer<RibbonVertexData> ribbonVertices;
+[shader("vertex")]
+Varying ribbonVertex(uint vertex : SV_VertexID)
+{
+    RibbonVertexData p = ribbonVertices[vertex];
+    Varying o;
+    o.position = mul(view.viewProj, p.position);
+    o.uv = p.uv.xy;
+    o.color = p.color;
+    o.distance = length(p.position.xyz);
+    o.grid = o.frame = 0;
+    return o;
+}
+[shader("fragment")]
+float4 ribbonFragment(Varying i) : SV_Target
+{
+    float2 uv = (i.position.xy - float2(view.right.w, view.up.w)) * view.sampling.xy;
+    float d = depth.Sample(uv).r;
+    if (view.sampling.z != 0 ? (d > 0 && i.distance > d) : i.position.z < d) discard;
+    float alpha = i.color.a * (1 - smoothstep(0.3, 1.0, abs(i.uv.y)));
+    alpha *= 0.9 + 0.1 * cos(i.uv.x * 6.2831853);
+    return float4(i.color.rgb * alpha, alpha);
+}

@@ -148,8 +148,7 @@ Each entry has a `name` and a numeric `parameters` array. The initial GPU regist
 supports spawn `Initialize` (no parameters) and update `Age`, `Integrate` (no
 parameters), and `Acceleration` (three finite floats, metres per second squared).
 Omitted GPU stacks default to Initialize and Age/Integrate, reproducing the original
-pool behavior. CPU stacks default to empty, these initial GPU modules reject CPU
-targets. CPU simulation modules are introduced with the CPU emitter implementation.
+pool behavior. GPU operations reject CPU targets. CPU ribbons require the stack described below.
 Stacks are bounded to 32 entries per stage and execute in authored order.
 
 AssetCooker composes Slang from the registered operations and invokes the configured
@@ -211,4 +210,31 @@ Place Age before lifetime curves. Flipbooks sample the cooked texture atlas.
 a follow camera, time/distance spawning, bursts, rotating offsets, world wind,
 seeded spread, size/alpha curves and a four-frame flipbook. Its 96 m radius path
 crosses shared tile boundaries. The existing `ParticleCheck` remains the static
-three-emitter comparison scene. CPU ribbon contrails are the next task.
+three-emitter comparison scene. Two CPU ribbon emitters provide persistent contrails.
+
+## CPU ribbon emitters
+
+CPU emitters execute `RibbonSpawn(maxInterval)` followed by `RibbonAge`,
+`RibbonWind`, `RibbonWidth(endScale)`, and `RibbonFade`, in that order. This focused
+stack has no GPU script dependency. Set `spawnRate` and `burst` to zero, use
+`spawnPerMeter` for distance spacing. A point is emitted at whichever comes first,
+distance spacing or maximum interval (1/60 to 10 seconds). Zero spawnRateScale
+stops emission and breaks the ribbon while existing samples continue simulating.
+
+Each sample stores a WorldPosition, simulation birth time, ribbon ID, monotonic
+link order and accumulated texture distance. World-space wind advects samples,
+width interpolates to endScale, alpha fades linearly to zero. The model prescribes
+wind and does not simulate wake or fluid dynamics. Float-world samples that drift
+beyond the supported absolute range retire with a rejection counter.
+
+Teleports, stop/resume and pause/resume start new ribbon IDs. Removed owners drain
+unpaused under the established lifetime policy. Scene/play/reload resets discard
+history. Offscreen samples still age and drift. Eviction removes the oldest
+sample without changing remaining texture coordinates or link IDs.
+
+At most 1,024 samples belong to each of 64 emitter instances (65,536 total).
+CPU and GPU scheduling share the 4,096 birth-work budget, overflow is counted and
+never queued. Runtime stats expose evicted and rejected ribbon points. State tests
+compare constant-wind straight flight within 0.1 mm near the origin and within
+1 cm after a 1,000 km translation, and retain old history after the aircraft moves
+another 1,000 km. Geometry tests independently return a camera to that history.

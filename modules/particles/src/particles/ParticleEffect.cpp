@@ -38,6 +38,11 @@ namespace mir
         };
 
         const ModuleDefinition kModules[]{
+            {"RibbonSpawn", true, ParticleSimulationTarget::CPU, {"maxInterval"}},
+            {"RibbonAge", false, ParticleSimulationTarget::CPU, {}},
+            {"RibbonWind", false, ParticleSimulationTarget::CPU, {}},
+            {"RibbonWidth", false, ParticleSimulationTarget::CPU, {"endScale"}},
+            {"RibbonFade", false, ParticleSimulationTarget::CPU, {}},
             {"Initialize", true, ParticleSimulationTarget::GPU, {}},
             {"VelocityVariation", true, ParticleSimulationTarget::GPU, {"x", "y", "z"}},
             {"Age", false, ParticleSimulationTarget::GPU, {}},
@@ -185,6 +190,8 @@ namespace mir
                         return false;
                     }
                     const bool invalidValues =
+                        (module.name == "RibbonSpawn" && module.parameters.size() == 1 && (module.parameters[0] < 1.0f / 60 || module.parameters[0] > 10)) ||
+                        (module.name == "RibbonWidth" && module.parameters.size() == 1 && (module.parameters[0] < 0 || module.parameters[0] > 64)) ||
                         (module.name == "Drag" && module.parameters.size() == 1 && (module.parameters[0] < 0 || module.parameters[0] > 10000)) ||
                         (module.name == "SizeOverLife" && module.parameters.size() == 1 && (module.parameters[0] < 0 || module.parameters[0] > 64)) ||
                         (module.name == "FadeOverLife" && module.parameters.size() == 1 && (module.parameters[0] < 0 || module.parameters[0] > 1)) ||
@@ -201,6 +208,16 @@ namespace mir
                         return false;
                     }
                 }
+            }
+            if (emitter.simulationTarget == ParticleSimulationTarget::CPU &&
+                (emitter.capacity > 1024 || emitter.spawnRate != 0 || emitter.burst != 0 ||
+                 emitter.spawnModules.size() != 1 || emitter.spawnModules[0].name != "RibbonSpawn" ||
+                 emitter.updateModules.size() != 4 || emitter.updateModules[0].name != "RibbonAge" ||
+                 emitter.updateModules[1].name != "RibbonWind" || emitter.updateModules[2].name != "RibbonWidth" ||
+                 emitter.updateModules[3].name != "RibbonFade"))
+            {
+                error = "CPU ribbons require capacity <= 1024, zero spawnRate/burst, RibbonSpawn and RibbonAge/Wind/Width/Fade";
+                return false;
             }
             error.clear();
             return true;
