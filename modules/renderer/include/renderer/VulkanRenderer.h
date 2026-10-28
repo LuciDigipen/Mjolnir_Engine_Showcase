@@ -336,6 +336,8 @@ namespace mir
 #endif
         DdgiSettings mDdgiSettings;
         bool mGiWasShading = false;
+        // views[0]'s camera on the last TraceFrame.
+        uint64_t mTracedHistoryId = 0;
 
         // Every screen-space effect between the scene/trace pass and the swapchain.
         std::unique_ptr<vk::PostProcessingStack> mPostProcessing;

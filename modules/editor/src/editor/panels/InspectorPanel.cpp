@@ -17,6 +17,7 @@
 #include <editor/EditorWidgets.h>
 #include <editor/EntityBaseline.h>
 #include <editor/Selection.h>
+#include <editor/history/ActiveCameraEdit.h>
 #include <editor/history/AuthoredEdit.h>
 #include <editor/history/ComponentCommands.h>
 #include <editor/history/History.h>
@@ -271,7 +272,7 @@ namespace mir
                 values.push_back(ToValue(static_cast<uint32_t>(i), clipboard.mValues[i]));
 
             if (ops.Has(world, entity))
-                edits.Submit(MakeSetFieldsEditCommand(entity, ops, std::move(values),
+                edits.Submit(MakeFieldEditCommand(world, entity, ops, std::move(values),
                     "Paste " + std::string(ops.mType.name) + " Values", edits.mAuthored));
             else
                 edits.Submit(MakeAddComponentEditCommand(entity, ops, std::move(values), edits.mAuthored));
@@ -410,7 +411,7 @@ namespace mir
                             std::vector<FieldValue> values{ ToValue(index, buffer) };
                             if (field.mWidget == FieldWidget::AssetRef)
                                 AddResetValues(ops, field.mResetOnChange, values);
-                            edits.Submit(MakeSetFieldsEditCommand(entity, ops, std::move(values), "",
+                            edits.Submit(MakeFieldEditCommand(world, entity, ops, std::move(values), "",
                                 edits.mAuthored));
                         }
                         ImGui::PopID();

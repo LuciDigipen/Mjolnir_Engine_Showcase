@@ -27,8 +27,7 @@ namespace mir
             HdrParams hdr = ReadHdrParams(params);
             bool changed = false;
 
-            changed |= ImGui::DragFloat("Exposure", &hdr.exposure, 0.01f, 0.01f, 16.0f, "%.2f",
-                ImGuiSliderFlags_AlwaysClamp);
+            ImGui::TextDisabled("Exposure is set on each Camera.");
 
             constexpr std::array<const char *, 3> kOperatorNames{ "None", "Reinhard", "ACES" };
             int operatorIndex = static_cast<int>(hdr.op);
@@ -70,14 +69,12 @@ namespace mir
     HdrParams ReadHdrParams(const nlohmann::json &params)
     {
         HdrParams hdr;
-        hdr.exposure = params.value("exposure", hdr.exposure);
         hdr.op = ParseOperator(params.value("tonemapOperator", std::string(ToString(hdr.op))));
         return hdr;
     }
 
     void WriteHdrParams(nlohmann::json &params, const HdrParams &hdr)
     {
-        params["exposure"] = hdr.exposure;
         params["tonemapOperator"] = std::string(ToString(hdr.op));
     }
 
