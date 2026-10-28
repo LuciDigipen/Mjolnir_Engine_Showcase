@@ -33,7 +33,7 @@ namespace mir
             if (!kRtxgiCompiledIn)
                 ImGui::TextWrapped("GI is unavailable in this build. Settings can still be saved.");
             else
-                ImGui::TextWrapped("GI requires hardware ray tracing and a single viewport. Ambient lighting is used outside the volume.");
+                ImGui::TextWrapped("GI is available in this build.");
             if (!draftRenderSettings.rayTracing)
                 ImGui::TextWrapped("GI requires ray tracing. Raster rendering uses its existing lighting.");
             ImGui::InputScalarN("Volume center (world meters)", ImGuiDataType_Double, gi.origin.data(), 3,
@@ -64,7 +64,6 @@ namespace mir
         if (ImGui::TreeNode("Screen Space Global Illumination"))
         {
             ImGui::Checkbox("Enable SSGI", &ssgi.enabled);
-            ImGui::TextWrapped("Uses visible opaque surfaces for indirect lighting; unresolved samples fall back to ambient light.");
             if (draftRenderSettings.rayTracing)
                 ImGui::TextWrapped("SSGI settings apply to raster rendering. Ray tracing uses its own GI settings.");
             constexpr const char *qualities[]{ "Low", "Medium", "High" };
