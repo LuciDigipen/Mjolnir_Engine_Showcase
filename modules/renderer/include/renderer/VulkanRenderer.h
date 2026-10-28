@@ -15,6 +15,8 @@
 #include <renderer/Mesh.h>
 #include <renderer/MeshStreaming.h>
 #include <renderer/PostProcessingState.h>
+#include <renderer/RenderSettings.h>
+#include <renderer/RtxgiConfig.h>
 #include <renderer/Texture.h>
 #include <renderer/components/Sky.h>
 
@@ -49,6 +51,9 @@ namespace mir::vk
     class ShadowMaps;
     class ModelDescriptors;
     class RayTracer;
+    class RasterSurfaces;
+    class SsgiTrace;
+    class Ddgi;
     class PostProcessingStack;
     class FrameCapture;
     class ImGuiOverlay;
@@ -157,6 +162,15 @@ namespace mir
         float nearZ = 0.1f;
         // farZ 0 = no far plane
         float farZ = 0.0f;
+        // Optional extended GI scene, used while DDGI can update this camera's volume.
+        // Coordinates are relative to this view's camera.
+        // nullopt keeps the ordinary RT path; an empty span is an empty scene.
+        std::optional<std::span<const DrawItem>> rayTracingItems;
+        // False when narrowing the extended scene omitted world draws. The
+        // final camera trace can still run; GI must fall back for this frame.
+        bool rayTracingSceneComplete = true;
+        // Stable camera identity for temporal effects; callers with no ID reset history on camera switches.
+        uint64_t historyId = 0;
     };
 
     class VulkanRenderer
@@ -259,6 +273,8 @@ namespace mir
         // Every Post-Processing effect for the frame, already resolved by ResolvePostProcessing.
         // A disabled Bloom/DepthOfField/MotionBlur skips its GPU chain for the frame.
         void SetPostProcessing(const PostProcessingState &state);
+        void SetGlobalIllumination(const DdgiSettings &settings);
+        void SetScreenSpaceGlobalIllumination(const SsgiSettings &settings) { mSsgiSettings = settings; }
 
         void SetAtmosphere(const Sky &sky);
 
@@ -287,7 +303,9 @@ namespace mir
         void RecordRtFrame(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views);
 
         void RecordCommands(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views);
-        void RecordView(VkCommandBuffer cmd, const RenderView &view, uint32_t viewIndex);
+        enum class RasterPass { Scene, Opaque, Surface, Transparent };
+        uint32_t RecordView(VkCommandBuffer cmd, const RenderView &view, uint32_t viewIndex,
+            RasterPass pass = RasterPass::Scene, uint32_t cameraOffset = 0);
         uint32_t WriteCameraData(const RenderView &view, uint32_t viewIndex, bool applyJitter = false,
             glm::vec2 *outJitter = nullptr);
 
@@ -304,12 +322,20 @@ namespace mir
         std::unique_ptr<vk::FrameSync> mFrameSync;
         std::unique_ptr<vk::ResourceStore> mResources;
         std::unique_ptr<vk::MaterialStore> mMaterialStore;
+        std::unique_ptr<vk::RasterSurfaces> mRasterSurfaces;
+        std::unique_ptr<vk::SsgiTrace> mSsgiTrace;
+        SsgiSettings mSsgiSettings;
 
         std::unique_ptr<vk::CameraBuffer> mCameraBuffer;
         std::unique_ptr<vk::ShadowMaps> mShadowMaps;
         std::unique_ptr<vk::ModelDescriptors> mModelDescriptors;
         // Initialized only on a device with ray tracing; its Shutdown is a no-op otherwise.
         std::unique_ptr<vk::RayTracer> mRayTracer;
+#if MIR_WITH_RTXGI
+        std::unique_ptr<vk::Ddgi> mDdgi;
+#endif
+        DdgiSettings mDdgiSettings;
+        bool mGiWasShading = false;
 
         // Every screen-space effect between the scene/trace pass and the swapchain.
         std::unique_ptr<vk::PostProcessingStack> mPostProcessing;

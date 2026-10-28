@@ -33,7 +33,8 @@ namespace mir::vk
         void ResetFrames();
 
         // Uploads one draw's deformation, with the material parameters in slot 2, and binds it as set 2.
-        bool Bind(VkCommandBuffer cmd, VkPipelineLayout layout, uint32_t frame,
+        // The returned set can be rebound by later passes in the same frame.
+        VkDescriptorSet Bind(VkCommandBuffer cmd, VkPipelineLayout layout, uint32_t frame,
             std::span<const glm::vec4> deformation, const glm::vec4 &materialParameters);
 
         VkDescriptorSetLayout SetLayout() const { return mSetLayout; }

@@ -62,7 +62,7 @@ namespace mir::vk
             }
         return true;
     }
-    bool ModelDescriptors::Bind(VkCommandBuffer cmd, VkPipelineLayout layout, uint32_t frame,
+    VkDescriptorSet ModelDescriptors::Bind(VkCommandBuffer cmd, VkPipelineLayout layout, uint32_t frame,
         std::span<const glm::vec4> deformation, const glm::vec4 &materialParameters)
     {
         std::vector<glm::vec4> data(deformation.begin(), deformation.end());
@@ -73,14 +73,14 @@ namespace mir::vk
         if (data.size() * sizeof(glm::vec4) > mDevice->Properties().limits.maxStorageBufferRange)
         {
             MIR_LOG_ERROR("Bind: model exceeds maxStorageBufferRange");
-            return false;
+            return VK_NULL_HANDLE;
         }
         FrameBuffer buffer{};
         if (!CreateUploadBuffer(mDevice->Allocator(), std::as_bytes(std::span(data)),
             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, buffer.buffer, buffer.allocation))
         {
             MIR_LOG_ERROR("Bind: model frame buffer allocation failed");
-            return false;
+            return VK_NULL_HANDLE;
         }
         mBuffers[frame].push_back(buffer);
         VkDescriptorSetAllocateInfo alloc{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
@@ -91,7 +91,7 @@ namespace mir::vk
         if (vkAllocateDescriptorSets(mDevice->Handle(), &alloc, &set) != VK_SUCCESS)
         {
             MIR_LOG_ERROR("Bind: model descriptor capacity exceeded ({} draws per frame)", kMaxModelDrawsPerFrame);
-            return false;
+            return VK_NULL_HANDLE;
         }
         VkDescriptorBufferInfo bufferInfo{ buffer.buffer, 0, VK_WHOLE_SIZE };
         VkWriteDescriptorSet write{ VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
@@ -102,7 +102,7 @@ namespace mir::vk
         write.pBufferInfo = &bufferInfo;
         vkUpdateDescriptorSets(mDevice->Handle(), 1, &write, 0, nullptr);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 2, 1, &set, 0, nullptr);
-        return true;
+        return set;
     }
     void ModelDescriptors::ResetFrame(uint32_t frame)
     {

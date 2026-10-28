@@ -53,7 +53,8 @@ completed frames Ready, frees retired objects whose last frame completed, and
 records this frame's mesh copies and BLAS builds. `DrawFrame` records the shadow passes, then each
 view, then the ImGui overlay and any capture, and `FrameSync::End` submits and
 presents. `TraceFrame` goes through the same `BeginFrame` and `End`, with
-`RayTracer::Record` and a blit to the swapchain image in between.
+`RayTracer::PrepareScene`, `RecordTrace` and the existing post-processing/composite
+in between.
 
 `RenderSystem` is the only thing connecting the ECS to it. It is an `ISystem` in
 `SystemPhase::Render` holding a `VulkanRenderer&`, and it owns a list of
@@ -209,7 +210,7 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `AntiAliasingMode`, `AntiAliasingParams`, `ClampAntiAliasingMode`, `ClampRtSampleCount` | `renderer/AntiAliasingEffect.h` | Off/Fxaa/Msaa/Dlss and `rtSampleCount`; the Post-Processing entry's json shape; the mode and sample-count enforcement `ResolvePostProcessing` applies every frame - see Rules |
 | `PostProcessingState`, `ResolvePostProcessing` | `renderer/PostProcessingState.h` | `PostProcessingSettings` and the viewing `Camera`'s lens resolved into the exact values `SetPostProcessing` applies: defaults for a missing entry, neutral values for a disabled one (fog density 0, exposure 1/None, bloom intensity 0, neutral film), negative lens values 0, motion blur's sample count at least 1, AA clamped. Pure, so it is unit-tested without a device |
 | `DlssConfig.h` | `renderer/DlssConfig.h` (generated) | `MIR_WITH_DLSS`/`kDlssCompiledIn` and the NGX project id |
-| `RenderSettings` | `renderer/RenderSettings.h` | Project Settings' `"rendering"` section (`rayTracing: bool`, `fog: bool`); `LoadFile`/`SaveFile`, a World resource `RendererModule` loads |
+| `RenderSettings` | `renderer/RenderSettings.h` | Project Settings' `"rendering"` section (`rayTracing` and `ddgi`); `LoadFile`/`SaveFile`, a World resource `RendererModule` loads |
 
 ## Rules
 
@@ -396,7 +397,7 @@ viewport rect's size, and rebuilt only when that size changes - a swapchain
 resize only recreates the output images. `RayTracer`'s guide bindings (5-8,
 the `kRtImages` rows marked `guide`) are `PARTIALLY_BOUND`, so the descriptor
 set stays valid with them unwritten;
-the shader only touches them on its Dlss branches, and `RayTracer::Record`
+the shader only touches them on its Dlss branches, and `RayTracer::RecordTrace`
 downgrades a Dlss trace to Msaa if the guides are missing. That flag is why
 ray tracing support now also requires `descriptorBindingPartiallyBound`.
 
@@ -522,6 +523,157 @@ The key is read with `find` rather than nlohmann's `value`. `value` hands back
 the raw node when the key exists, and reading `"rayTracing"` out of a
 `"rendering"` that is `null` or a number throws `type_error 306`, which nothing
 on the startup path catches.
+
+`rendering.ssgi` stores raster SSGI settings, edited under Project Settings >
+Rendering > Screen Space Global Illumination. Settings are saved independently
+of ray tracing and RTXGI availability. Invalid SSGI blocks load as disabled
+defaults without affecting DDGI or ray tracing; invalid drafts cannot be saved.
+
+| Field | Default | Meaning / limits |
+|---|---|---|
+| `enabled` | `false` | Requested raster SSGI toggle |
+| `quality` | `"medium"` | `"low"`: 1 ray/16 steps; `"medium"`: 2/32; `"high"`: 4/64 per traced pixel |
+| `maxTraceDistance` | `10` | 0.01–10,000 meters |
+| `thickness` | `0.1` | 0.001–10 meters, no greater than trace distance |
+| `intensity` | `1` | Multiplier, 0–10 |
+| `halfResolution` | `true` | Trace at half width and height |
+
+Enable SSGI here and Save, with Ray Tracing disabled. Start with Medium, half
+resolution, and intensity 1. High resolves more rays at greater GPU cost; Low
+leaves more lighting to ambient fallback. Full resolution improves small details
+at greater time and memory cost. Match trace distance to the scene's local
+geometry; increase thickness cautiously to close missed intersections, since
+large values can leak light through thin surfaces.
+
+SSGI supplies one diffuse bounce from visible raster surfaces. It cannot recover
+off-screen/hidden geometry or sky lighting, and thin geometry, screen edges,
+fast motion and disocclusions can produce noise or flicker. It supports perspective
+cameras and non-overlapping viewports; other projections produce no GI estimate.
+Allocation/format limits and missing shaders retain ordinary raster lighting.
+
+When SSGI is requested in raster mode, `vk::RasterSurfaces` captures four
+per-frame RGBA16F inputs: camera-relative world normals/material kind, diffuse
+albedo, unfogged diffuse radiance, and direct lighting including specular.
+Ambient is excluded from the lighting inputs. Lit surfaces receive kind 1;
+unlit surfaces use kind 2 and supply their color as radiance; error surfaces
+use kind 3 and supply no bounce radiance. Cleared/unsupported pixels use kind 0.
+Transparent draws and sky are excluded.
+
+The depth-equal pass shares material vertex processing, alpha tests and model
+descriptor sets with the scene pass. Camera data is written once per view and
+reused by surface capture and motion blur. Images are allocated only while
+requested, capped at 256 MiB across frame slots, and released on disable, RT
+switch or scene unload. Unsupported opaque shaders, formats/limits or missing optional shaders
+retain existing raster rendering.
+
+`vk::SsgiTrace` builds a conservative reversed-Z depth pyramid per viewport,
+then traces cosine-weighted hemisphere rays against visible depth. It writes
+raw irradiance (RGB) and resolved confidence (alpha), keeping dark hits distinct
+from missing screen-space information. Quality bounds ray and traversal counts;
+full/half resolution changes the output size. Trace resources have a separate
+256 MiB cap across frame slots. Overlapping viewports fall back because the
+surface inputs share scene depth.
+
+Temporal accumulation reprojects using camera-relative positions and checks the
+previous depth and normal before reusing irradiance/confidence. Neighborhood
+clamping limits stale lighting. A bilateral spatial pass and depth/normal-aware
+resolve produce a full-resolution estimate per viewport. Full-resolution tracing
+uses one spatial pass without upsampling scratch storage. History resets on
+layout/resolution changes, camera identity or projection changes, large camera
+cuts, trace-setting changes, and `ResetHistory()`. Direct `RenderView` callers
+should supply a stable `historyId` or reset history when switching cameras.
+Filtering has a separate 256 MiB allocation cap across frame slots; unsupported
+layouts retain existing lighting.
+
+Composition preserves direct lighting/specular and replaces ambient in proportion
+to resolved confidence, adding albedo times irradiance / pi. Fog applies to the
+combined lighting once, followed by transparent draws and post-processing. Unlit,
+error and background pixels retain their original shading. Intensity below one
+blends from ambient toward SSGI; above one boosts indirect light. Zero intensity
+uses the ordinary raster path and releases SSGI resources.
+
+`rendering.ddgi` persists one axis-aligned, world-anchored diffuse GI volume.
+Project Settings > Rendering > Diffuse Global Illumination edits a draft and
+applies it only after Save succeeds. Settings are retained independently of
+the RTXGI build option and the ray tracing checkbox. Enabled RTXGI builds update
+probe lighting and sample it during final RT shading.
+
+| Field | Default | Meaning / limits |
+|---|---|---|
+| `enabled` | `false` | Requested GI toggle; runtime availability is separate |
+| `origin` | `[0,0,0]` | Grid center in double-precision world meters, all finite |
+| `probeCounts` | `[8,8,8]` | 2–128 probes per axis, at most 32,768 total |
+| `probeSpacing` | `2` | Uniform spacing, 0.01–10,000 meters |
+| `raysPerProbe` | `128` | 64, 128, 256, 512 or 1024 |
+| `probesPerFrame` | `512` | 1–total probes, at most 1,048,576 rays per frame |
+| `intensity` | `1` | Finite multiplier, 0–10 |
+
+Volumes must fit a conservative 256 MiB memory allowance; allocation also
+checks device limits. The editor shows estimated memory and ray work and
+rejects invalid drafts. Malformed or over-budget GI blocks load as disabled
+defaults without discarding other rendering settings.
+
+**Scene submission and pass order.**
+
+For a single RT viewport, `RenderSystem` supplies a camera-relative extended
+scene through `RenderView::rayTracingItems`. The renderer uses it only while
+DDGI can update the volume for this camera; otherwise primary and shadow rays use the
+ordinary camera scene. Ordinary meshes remain included
+conservatively. Draw sources include resident geometry outside the camera and
+probe grid so primary and shadow rays can find distant blockers. Terrain does
+not request additional streaming, renew mesh retention, or overlap coarse/fine fallback meshes.
+Probe ray distance uses the SDK default independently of grid size. World
+positions are subtracted before narrowing to floats.
+
+`RayTracer::PrepareScene` builds the frame-slot TLAS, updates material
+descriptors and inserts the build-to-ray-read barrier. Its borrowed handles
+remain valid until that slot is prepared again. If the extended scene exceeds
+instance/texture capacity, it is replaced by the ordinary camera submission
+before recording a TLAS build. Overflow or omitted world draws skip probe updates
+without discarding cached history. Eight missed updates retain its weight;
+further misses fade it over 24 updates, while successful updates recover weight
+gradually. Expired history restarts on the next complete scene.
+
+The facade records these passes on the graphics queue:
+
+1. Mesh uploads/BLAS and scene TLAS.
+2. Optional probe clear and relocation/classification reset.
+3. Probe tracing, irradiance and distance blending, relocation, classification.
+4. Final camera tracing and existing post-processing.
+
+Probe tracing reuses the scene's materials, alpha tests and shadow visibility.
+It evaluates diffuse direct light and prior-frame irradiance. Circular batches
+honor `probesPerFrame`; only traced probes are blended. Inactive probes still
+trace fixed rays so classification can reactivate them.
+
+**Resources, history and shading.**
+
+`vk::Ddgi` owns the SDK volume, five RGBA32F array images (rays, irradiance,
+distance, state, variability), per-frame constants/descriptors, six compute
+pipelines, and separate probe/camera RT pipelines and SBTs. The SDK supplies
+packing, indexing, ray rotation and update kernels; adaptive variability is
+disabled. Atlases remain in GENERAL layout, with barriers between passes and
+across frames. Constants are written after the frame-slot wait.
+
+Configuration runs before `BeginFrame`; replacing or freeing resources waits
+for the device. Allocation/pipeline failures release partial resources and
+retain ambient fallback. Failed settings are retried only after a settings
+change. Scene unload and raster rendering release the volume; history resets
+invalidate it. Camera motion rebases the volume without clearing history, and
+swapchain resize preserves it.
+
+Initial sweeps disable hysteresis and recursive lighting until all probes are
+visited, then fade into GI over eight updates. Final shading uses geometric
+normals and SDK surface bias, applying albedo times irradiance / pi and the
+intensity setting. GI replaces ambient within coverage. Outside coverage or
+while unavailable, ambient remains. Direct lighting, shadows, unlit materials,
+fog, DLSS guides and raster lighting retain their existing behavior.
+
+`Ddgi::Record` lends the camera pipeline, descriptors and SBT for the final
+trace only when data is ready. Transitions into/out of GI and settings changes
+reset post-processing history. The implementation supports one axis-aligned
+volume and one RT viewport; coarse spacing and thin walls can cause light
+leakage, and partial updates/hysteresis delay lighting changes.
 
 **`volk` is compiled from source in this module**, so the platform defines are
 ours. VMA is configured with `VMA_STATIC_VULKAN_FUNCTIONS=0` and

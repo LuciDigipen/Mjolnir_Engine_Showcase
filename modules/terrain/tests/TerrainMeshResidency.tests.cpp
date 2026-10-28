@@ -306,6 +306,32 @@ TEST_CASE("A Visible mesh makes room by retiring unwanted, then Prefetch meshes,
     CHECK(h.residency.Stats().evicted == 2);
 }
 
+TEST_CASE("Resident RT mesh lookups do not renew retention", "[terrain][gpu]")
+{
+    const Release a(0x127, {0.0, 0.0, 0.0});
+    const Payloads payloads{&a};
+    Harness h(GpuSettings(uint64_t(1) << 30, uint64_t(1) << 30, 2.0));
+    const auto tile = a.Tile({2, 1});
+    REQUIRE(h.residency.FindReady(tile) == nullptr);
+    h.Request({&a.instance, 1}, {{tile, Demand::Visible, 1.0f}}, payloads.streamer);
+    h.BuildAll();
+    h.Request({&a.instance, 1}, {{tile, Demand::Visible, 1.0f}}, payloads.streamer);
+    REQUIRE(h.residency.FindReady(tile) == nullptr);
+    h.uploader.Frame(); h.uploader.Frame(); h.residency.Install();
+    REQUIRE(h.residency.Acquire(tile, h.now) != nullptr);
+    for (double time : {0.5, 1.0, 1.5})
+    {
+        h.now = time;
+        REQUIRE(h.residency.FindReady(tile) != nullptr);
+        h.Request({&a.instance, 1}, {}, payloads.streamer);
+        REQUIRE(h.residency.Ready(tile));
+    }
+    h.now = 2.0;
+    h.Request({&a.instance, 1}, {}, payloads.streamer);
+    CHECK(h.residency.FindReady(tile) == nullptr);
+    CHECK(h.uploader.retired == std::vector<TerrainPayloadKey>{tile});
+}
+
 TEST_CASE("A mesh nobody wants or draws retires after meshRetainSeconds", "[terrain][gpu]")
 {
     const Release a(0x127, {0.0, 0.0, 0.0});

@@ -86,6 +86,7 @@ namespace mir
         void AppendViewDraws(size_t view, std::vector<WorldDrawItem> &out) override;
         void AppendVolumeDraws(size_t view, WorldPosition origin, const glm::mat4 &viewProj,
                                std::vector<WorldDrawItem> &out) override;
+        void AppendRayTracingDraws(size_t view, std::vector<WorldDrawItem> &out) override;
 
         // Holds the dynamic bodies whose terrain collision is not ready, resumes the rest and tells each which
         // terrain pieces it may touch.
@@ -152,7 +153,7 @@ namespace mir
         std::string NameOf(Entity entity) const;
         // A unit draws once its GPU mesh is usable.
         TerrainUnitReady Ready() const;
-        void AppendDraws(std::span<const TerrainDrawUnit> units, std::vector<WorldDrawItem> &out);
+        void AppendDraws(std::span<const TerrainDrawUnit> units, std::vector<WorldDrawItem> &out, bool retain = true);
         void ReportMeshFailures();
         void LogView(ViewState &state, const ViewCamera &camera);
         void Report(const std::string &message);

@@ -824,8 +824,9 @@ namespace mir::vk
         }
     }
 
-    void RayTracer::RecordTlasBuild(VkCommandBuffer cmd, uint32_t frameIndex, std::span<const DrawItem> items,
-        const ResourceStore &resources, const MaterialStore &materials)
+    RayTracer::PreparedScene RayTracer::RecordTlasBuild(VkCommandBuffer cmd, uint32_t frameIndex, std::span<const DrawItem> items,
+        const ResourceStore &resources, const MaterialStore &materials,
+        std::optional<std::span<const DrawItem>> fallbackItems)
     {
         auto *const instances = reinterpret_cast<VkAccelerationStructureInstanceKHR *>(mInstanceMapped[frameIndex]);
         auto *const instanceInfos = reinterpret_cast<RtInstanceInfo *>(mInstanceInfoMapped[frameIndex]);
@@ -835,18 +836,9 @@ namespace mir::vk
         std::map<std::pair<VkImageView, VkSampler>, uint32_t> textureSlots;
 
         uint32_t instanceCount = 0;
+        bool truncated = false;
         for (const DrawItem &item : items)
         {
-            if (instanceCount >= kMaxInstances)
-            {
-                if (!mWarnedInstanceCap)
-                {
-                    MIR_LOG_WARN("RecordTlasBuild: more than {} draws; the rest are not traced", kMaxInstances);
-                    mWarnedInstanceCap = true;
-                }
-                break;
-            }
-
             const GpuMesh *const mesh = resources.FindMesh(item.mesh);
             if (mesh == nullptr || item.mesh.mIndex >= mBlases.size() || mBlases[item.mesh.mIndex].mBlas == VK_NULL_HANDLE)
                 continue;
@@ -857,6 +849,17 @@ namespace mir::vk
                 material ? material->mFrontFace : VK_FRONT_FACE_COUNTER_CLOCKWISE, item.model);
             if (!facing)
                 continue;
+
+            if (instanceCount >= kMaxInstances)
+            {
+                truncated = true;
+                if (!mWarnedInstanceCap)
+                {
+                    MIR_LOG_WARN("RecordTlasBuild: more than {} draws; the rest are not traced", kMaxInstances);
+                    mWarnedInstanceCap = true;
+                }
+                break;
+            }
 
             // Only the model shader samples its texture and reads its alpha and side parameters.
             uint32_t flags = 0;
@@ -886,11 +889,15 @@ namespace mir::vk
                             .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL });
                         flags |= kInstanceTextured;
                     }
-                    else if (!mWarnedTextureCap)
+                    else
                     {
-                        MIR_LOG_WARN("RecordTlasBuild: more than {} textures; the rest are traced untextured",
-                            kMaxRtTextures);
-                        mWarnedTextureCap = true;
+                        truncated = true;
+                        if (!mWarnedTextureCap)
+                        {
+                            MIR_LOG_WARN("RecordTlasBuild: more than {} textures; the rest are traced untextured",
+                                kMaxRtTextures);
+                            mWarnedTextureCap = true;
+                        }
                     }
 
                     if (static_cast<MaterialAlphaMode>(static_cast<uint32_t>(material->mParameters.x)) !=
@@ -928,6 +935,15 @@ namespace mir::vk
             ++instanceCount;
         }
 
+        if (truncated && fallbackItems)
+        {
+            // Refill before recording a build or updating descriptors. Only the
+            // camera scene reaches the GPU; GI must still reject this frame.
+            PreparedScene scene = RecordTlasBuild(cmd, frameIndex, *fallbackItems, resources, materials, std::nullopt);
+            scene.truncated = true;
+            return scene;
+        }
+
         const VkDeviceSize instanceBytes = sizeof(VkAccelerationStructureInstanceKHR) * instanceCount;
         if (instanceBytes > 0)
             vmaFlushAllocation(mDevice->Allocator(), mInstanceAllocations[frameIndex], 0, instanceBytes);
@@ -960,6 +976,7 @@ namespace mir::vk
         const VkAccelerationStructureBuildRangeInfoKHR *pRange = &range;
 
         vkCmdBuildAccelerationStructuresKHR(cmd, 1, &buildInfo, &pRange);
+        return { mTlas[frameIndex], mSets[frameIndex], mSetLayout, instanceCount, truncated };
     }
 
     bool RayTracer::CreateScratchBuffer(VkDeviceSize size, VkBuffer &outBuffer, VmaAllocation &outAllocation)
@@ -1103,9 +1120,42 @@ namespace mir::vk
         return true;
     }
 
-    void RayTracer::Record(VkCommandBuffer cmd, uint32_t frame, std::span<const DrawItem> items, const VkRect2D &rect,
-        VkDescriptorSet cameraSet, uint32_t cameraOffset, const ResourceStore &resources,
-        const MaterialStore &materials, AntiAliasingMode aaMode, uint32_t rtSampleCount)
+    RayTracer::PreparedScene RayTracer::PrepareScene(VkCommandBuffer cmd, uint32_t frame,
+        std::span<const DrawItem> items, const ResourceStore &resources, const MaterialStore &materials,
+        std::optional<std::span<const DrawItem>> fallbackItems)
+    {
+        const PreparedScene scene = RecordTlasBuild(cmd, frame, items, resources, materials, fallbackItems);
+
+        if (!mTextureInfos.empty())
+        {
+            const VkWriteDescriptorSet textureWrite{
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstSet = mSets[frame],
+                .dstBinding = kTextureBinding,
+                .descriptorCount = static_cast<uint32_t>(mTextureInfos.size()),
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .pImageInfo = mTextureInfos.data() };
+            vkUpdateDescriptorSets(mDevice->Handle(), 1, &textureWrite, 0, nullptr);
+        }
+
+        const VkMemoryBarrier2 tlasBarrier{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+            .srcStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+            .srcAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
+            .dstStageMask = VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR,
+            .dstAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR };
+        const VkDependencyInfo tlasDep{
+            .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .memoryBarrierCount = 1,
+            .pMemoryBarriers = &tlasBarrier };
+        vkCmdPipelineBarrier2(cmd, &tlasDep);
+
+        return scene;
+    }
+
+    void RayTracer::RecordTrace(VkCommandBuffer cmd, uint32_t frame, const VkRect2D &rect,
+        VkDescriptorSet cameraSet, uint32_t cameraOffset, AntiAliasingMode aaMode, uint32_t rtSampleCount,
+        const GiShading *gi)
     {
         // Without guide images their bindings are unwritten, so the shader's Dlss branches must not run.
         if (aaMode == AntiAliasingMode::Dlss && !HasDlssGuides())
@@ -1137,49 +1187,27 @@ namespace mir::vk
                 VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                 VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
 
-        RecordTlasBuild(cmd, frame, items, resources, materials);
-
-        if (!mTextureInfos.empty())
-        {
-            const VkWriteDescriptorSet textureWrite{
-                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = mSets[frame],
-                .dstBinding = kTextureBinding,
-                .descriptorCount = static_cast<uint32_t>(mTextureInfos.size()),
-                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                .pImageInfo = mTextureInfos.data() };
-            vkUpdateDescriptorSets(mDevice->Handle(), 1, &textureWrite, 0, nullptr);
-        }
-
-        const VkMemoryBarrier2 tlasBarrier{
-            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-            .srcStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-            .srcAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
-            .dstStageMask = VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR,
-            .dstAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR };
-        const VkDependencyInfo tlasDep{
-            .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-            .memoryBarrierCount = 1,
-            .pMemoryBarriers = &tlasBarrier };
-        vkCmdPipelineBarrier2(cmd, &tlasDep);
-
         if (rect.extent.width > 0 && rect.extent.height > 0)
         {
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, mPipeline);
+            const VkPipelineLayout layout = gi ? gi->layout : mPipelineLayout;
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, gi ? gi->pipeline : mPipeline);
 
-            const std::array<VkDescriptorSet, 2> sets{ mSets[frame], cameraSet };
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, mPipelineLayout,
-                0, static_cast<uint32_t>(sets.size()), sets.data(), 1, &cameraOffset);
+            const std::array<VkDescriptorSet, 3> sets{ mSets[frame], cameraSet, gi ? gi->descriptors : VK_NULL_HANDLE };
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, layout,
+                0, gi ? 3u : 2u, sets.data(), 1, &cameraOffset);
 
             const RtPushConstants pushConstants{
                 .outputOffset{ static_cast<uint32_t>(rect.offset.x), static_cast<uint32_t>(rect.offset.y) },
                 .aaMode = static_cast<uint32_t>(aaMode),
-                .sampleCount = rtSampleCount };
-            vkCmdPushConstants(cmd, mPipelineLayout,
+                .sampleCount = rtSampleCount,
+                .giIntensity = gi ? gi->intensity : 0.0f,
+                .giWeight = gi ? gi->weight : 0.0f };
+            vkCmdPushConstants(cmd, layout,
                 VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,
                 0, sizeof(RtPushConstants), &pushConstants);
 
-            vkCmdTraceRaysKHR(cmd, &mSbtRaygenRegion, &mSbtMissRegion, &mSbtHitRegion, &mSbtCallableRegion,
+            vkCmdTraceRaysKHR(cmd, gi ? &gi->raygen : &mSbtRaygenRegion, gi ? &gi->miss : &mSbtMissRegion,
+                gi ? &gi->hit : &mSbtHitRegion, gi ? &gi->callable : &mSbtCallableRegion,
                 rect.extent.width, rect.extent.height, 1);
         }
 
