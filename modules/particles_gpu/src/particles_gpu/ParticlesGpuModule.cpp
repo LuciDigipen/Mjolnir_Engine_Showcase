@@ -21,7 +21,7 @@ namespace mir::gpu
     public:
         void Submit(std::span<const ParticleSubmission> inputs) { mDataset.Submit(inputs); }
         ParticleGpuStats Stats() const { return mDataset.Stats(); }
-        void RecordSimulation(const FxFrameContext &context) override { mDispatch.Record(context, mDataset); }
+        void RecordSimulation(const FxFrameContext &context) override { mDispatch.Record(context, mDataset); mSprites.PrepareTextures(context, mDataset); }
         bool HasRenderData() const override { return mDataset.Initialized(); }
         void RecordDraw(const FxRenderContext &context) override { mSprites.Record(context, mDataset); }
         void ClearScene() override { Submit({}); }

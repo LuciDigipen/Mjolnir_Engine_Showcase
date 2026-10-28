@@ -35,6 +35,7 @@ namespace mir
         { "systemName", FieldKind::String, offsetof(ParticleSystem, systemName) },
         { "playOnStart", FieldKind::Bool, offsetof(ParticleSystem, playOnStart) },
         { "overrideParameters", FieldKind::Bool, offsetof(ParticleSystem, overrideParameters) },
+        { "wind", FieldKind::Vec3, offsetof(ParticleSystem, userParameters) + offsetof(ParticleUserParameters, wind) },
         { "spawnRateScale", FieldKind::Float, offsetof(ParticleSystem, userParameters) + offsetof(ParticleUserParameters, spawnRateScale) },
         { "sizeScale", FieldKind::Float, offsetof(ParticleSystem, userParameters) + offsetof(ParticleUserParameters, sizeScale) },
     };

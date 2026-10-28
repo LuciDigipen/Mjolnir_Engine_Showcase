@@ -127,6 +127,9 @@ TEST_CASE("Particle loading resolves typed emitter and texture dependencies atom
     REQUIRE(valid.mEffect);
     REQUIRE(valid.mEffect->emitterDefinitions.size() == 1);
     CHECK(valid.mEffect->emitterDefinitions[0].texture == files.TextureId());
+    CHECK(valid.mEffect->emitterDefinitions[0].textureWidth == 1);
+    CHECK(valid.mEffect->emitterDefinitions[0].textureHeight == 1);
+    CHECK(valid.mEffect->emitterDefinitions[0].texturePixels == (std::vector<uint8_t>{255, 255, 255, 255}));
 
     SECTION("Missing emitter")
     {
@@ -146,6 +149,11 @@ TEST_CASE("Particle loading resolves typed emitter and texture dependencies atom
     SECTION("Wrong texture type")
     {
         files.Publish(0.05f, true, false);
+        CHECK_FALSE(load().mEffect);
+    }
+    SECTION("Oversized particle texture")
+    {
+        files.Write("texture.blob", mir::BuildTypedAsset(mir::TextureAsset{2049, 1, std::vector<uint8_t>(2049 * 4, 255)}));
         CHECK_FALSE(load().mEffect);
     }
     SECTION("Unsupported system version")
@@ -292,4 +300,122 @@ TEST_CASE("Particle blob readers reject malformed type version and asset framing
     auto corrupt = mir::BuildParticleEffectAsset(files.Definition());
     corrupt.back() ^= std::byte{1};
     CHECK_FALSE(mir::ParseAssetBlob(corrupt));
+}
+
+TEST_CASE("Particle motion inputs and wind survive source and cooked roundtrips", "[particles]")
+{
+    const auto source = mir::ReadParticleEmitterSource(
+        R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":30,"capacity":256,"texture":"x.png",
+            "localOffset":[-2,0.5,1],"spawnPerMeter":8.5,"burst":12,"seed":4294967295,
+            "inheritVelocity":0.75,"teleportDistance":150})", "assets");
+    REQUIRE(source.mEmitter);
+    const auto bytes = mir::BuildParticleEmitterAsset(*source.mEmitter);
+    const auto cooked = mir::ReadParticleEmitterAsset(*mir::ParseAssetBlob(bytes));
+    REQUIRE(cooked.mEmitter);
+    CHECK(cooked.mEmitter->localOffset == glm::vec3(-2, 0.5f, 1));
+    CHECK(cooked.mEmitter->spawnPerMeter == 8.5f);
+    CHECK(cooked.mEmitter->burst == 12);
+    CHECK(cooked.mEmitter->seed == UINT32_MAX);
+    CHECK(cooked.mEmitter->inheritVelocity == 0.75f);
+    CHECK(cooked.mEmitter->teleportDistance == 150);
+
+    const auto system = mir::ReadParticleEffectSource(
+        R"({"version":2,"emitters":["x.emitter.json"],"parameters":{"wind":[3,-1,12]}})", "assets");
+    REQUIRE(system.mEffect);
+    const auto systemBytes = mir::BuildParticleEffectAsset(*system.mEffect);
+    const auto loaded = mir::ReadParticleEffectAsset(*mir::ParseAssetBlob(systemBytes));
+    REQUIRE(loaded.mEffect);
+    CHECK(loaded.mEffect->parameters.wind == glm::vec3(3, -1, 12));
+    CHECK(loaded.mEffect->parameters.spawnRateScale == 1);
+    CHECK(loaded.mEffect->parameters.sizeScale == 1);
+
+    auto changedMotion = *source.mEmitter;
+    changedMotion.localOffset = glm::vec3(20, -3, 1);
+    changedMotion.spawnPerMeter = 0;
+    changedMotion.burst = 0;
+    changedMotion.seed = 5;
+    changedMotion.inheritVelocity = 1;
+    changedMotion.teleportDistance = 10;
+    CHECK(mir::GenerateParticleScript(changedMotion) == mir::GenerateParticleScript(*source.mEmitter));
+}
+
+TEST_CASE("Particle motion sources reject malformed values before cooking", "[particles]")
+{
+    for (const std::string_view fields : {
+        R"("localOffset":[1,2])", R"("localOffset":[1,2,1e100])", R"("localOffset":[4097,0,0])",
+        R"("spawnPerMeter":-1)", R"("spawnPerMeter":65537)", R"("spawnPerMeter":"1")",
+        R"("burst":-1)", R"("burst":65537)", R"("burst":1.5)",
+        R"("seed":-1)", R"("seed":4294967296)", R"("seed":false)",
+        R"("inheritVelocity":-1)", R"("inheritVelocity":17)", R"("inheritVelocity":1e100)",
+        R"("teleportDistance":0)", R"("teleportDistance":65537)", R"("teleportDistance":null)"})
+    {
+        const auto text = std::string(R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png",)") +
+            std::string(fields) + "}";
+        INFO(text);
+        const auto result = mir::ReadParticleEmitterSource(text, "assets");
+        CHECK_FALSE(result.mEmitter);
+        CHECK_FALSE(result.mError.empty());
+    }
+    for (const std::string_view wind : {"null", "[1,2]", "[1,2,3,4]", "[1,true,3]", "[4097,0,0]", "[0,1e100,0]"})
+    {
+        const auto text = std::string(R"({"version":2,"emitters":["x.emitter.json"],"parameters":{"wind":)") +
+            std::string(wind) + "}}";
+        INFO(text);
+        CHECK_FALSE(mir::ReadParticleEffectSource(text, "assets").mEffect);
+    }
+}
+
+TEST_CASE("Particle motion modules validate declared stages targets and numeric bounds", "[particles]")
+{
+    mir::ParticleEmitterAsset valid;
+    valid.texture = mir::MakeAssetId("assets/x.png");
+    valid.spawnModules = {{"Initialize", {}}, {"VelocityVariation", {1, 2, 3}}};
+    valid.updateModules = {{"Age", {}}, {"Drag", {2}}, {"Integrate", {}},
+        {"SizeOverLife", {3}}, {"FadeOverLife", {0}}, {"Flipbook", {4, 2, 24}}};
+    std::string error;
+    REQUIRE(mir::ValidateParticleEmitterAsset(valid, error));
+    const auto source = mir::GenerateParticleScript(valid);
+    CHECK(source.find("p.wind.xyz - a.velocityLifetime.xyz") != std::string::npos);
+    CHECK(source.find("SignedNoise(randomSeed)") != std::string::npos);
+    CHECK(source.find("lerp(1.0, 3.0") != std::string::npos);
+    CHECK(source.find("a.sizeRotation.w = asfloat(131076u)") != std::string::npos);
+    CHECK(source.find("a.identity = uint4(instance, p.range.z, birth.sequence, 1u)") != std::string::npos);
+    CHECK(source.find("UpdateParticle(a, p, birth.age)") != std::string::npos);
+    CHECK(source.find("a.positionAge.xyz += p.tileDelta.xyz") != std::string::npos);
+
+    for (const mir::ParticleModule &module : std::vector<mir::ParticleModule>{
+        {"Drag", {-1}}, {"Drag", {10001}}, {"Drag", {}},
+        {"SizeOverLife", {-1}}, {"SizeOverLife", {65}}, {"FadeOverLife", {-0.1f}}, {"FadeOverLife", {1.1f}},
+        {"Flipbook", {0, 1, 24}}, {"Flipbook", {1.5f, 2, 24}}, {"Flipbook", {1, 65, 24}},
+        {"Flipbook", {1, 1, -1}}, {"Flipbook", {1, 1, 241}}, {"Flipbook", {1, 1}},
+        {"VelocityVariation", {1, 2, 3}}})
+    {
+        auto changed = valid;
+        changed.updateModules = {module};
+        INFO(module.name);
+        CHECK_FALSE(mir::ValidateParticleEmitterAsset(changed, error));
+    }
+    for (const mir::ParticleModule &module : std::vector<mir::ParticleModule>{
+        {"VelocityVariation", {-1, 0, 0}}, {"VelocityVariation", {0, 4097, 0}},
+        {"VelocityVariation", {0, 1}}, {"VelocityVariation", {0, 1, std::numeric_limits<float>::infinity()}},
+        {"Drag", {1}}, {"SizeOverLife", {2}}, {"FadeOverLife", {0}}, {"Flipbook", {1, 1, 24}}})
+    {
+        auto changed = valid;
+        changed.spawnModules = {module};
+        INFO(module.name);
+        CHECK_FALSE(mir::ValidateParticleEmitterAsset(changed, error));
+    }
+    for (const auto &module : valid.updateModules)
+    {
+        auto cpu = valid;
+        cpu.simulationTarget = mir::ParticleSimulationTarget::CPU;
+        cpu.spawnModules.clear();
+        cpu.updateModules = {module};
+        CHECK_FALSE(mir::ValidateParticleEmitterAsset(cpu, error));
+    }
+    auto cpu = valid;
+    cpu.simulationTarget = mir::ParticleSimulationTarget::CPU;
+    cpu.updateModules.clear();
+    cpu.spawnModules = {{"VelocityVariation", {1, 2, 3}}};
+    CHECK_FALSE(mir::ValidateParticleEmitterAsset(cpu, error));
 }

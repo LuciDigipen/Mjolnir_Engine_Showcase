@@ -10,6 +10,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <glm/geometric.hpp>
+
 #include <cmath>
 #include <limits>
 
@@ -273,4 +275,248 @@ TEST_CASE("Invalid unresolved systems and user parameters never consume instance
     CHECK(runtime.Stats().active == 0);
     CHECK(runtime.Stats().activeEmitters == 0);
     REQUIRE_FALSE(runtime.Start({2}, Definition()).IsNull());
+}
+
+TEST_CASE("Moving particle schedules agree at 30 60 90 120 and 144 Hz", "[particles][motion]")
+{
+    for (const uint32_t hz : {30u, 60u, 90u, 120u, 144u})
+    {
+        CAPTURE(hz);
+        mir::ParticleRuntime runtime;
+        auto definition = Definition(4, 37);
+        definition.emitterDefinitions[0].spawnPerMeter = 2.5f;
+        definition.emitterDefinitions[0].burst = 7;
+        const auto handle = runtime.Start({2}, definition);
+        REQUIRE_FALSE(handle.IsNull());
+        const auto emitterHandle = runtime.Find(handle)->emitters[0];
+        uint32_t count = 0;
+        double lastX = 0;
+        for (uint32_t frame = 0; frame < hz * 2; ++frame)
+        {
+            mir::WorldPose pose;
+            pose.position = *mir::WorldPosition::FromMeters(mir::WorldVec3(10.0 * (frame + 1) / hz, 0, 0));
+            REQUIRE(runtime.SetPose(handle, pose));
+            runtime.Advance(1.0f / hz);
+            const auto &emitter = *runtime.FindEmitter(emitterHandle);
+            REQUIRE(emitter.births.size() == emitter.spawns);
+            for (const auto &birth : emitter.births)
+            {
+                CHECK(birth.sequence == count++);
+                CHECK(birth.fraction >= 0);
+                CHECK(birth.fraction <= 1);
+                CHECK(birth.age >= 0);
+                CHECK(birth.age <= emitter.seconds);
+                const auto position = emitter.spawnStart.Meters() +
+                    (emitter.attachmentPosition.Meters() - emitter.spawnStart.Meters()) * mir::WorldReal(birth.fraction);
+                CHECK(double(position.x) + 1e-5 >= lastX);
+                lastX = double(position.x);
+            }
+        }
+        // Two seconds at 37/s, twenty metres at 2.5/m, and one burst of seven.
+        CHECK(count == 131);
+        CHECK(runtime.FindEmitter(emitterHandle)->birthSequence == 131);
+        CHECK(runtime.Stats().droppedBudgetSpawns == 0);
+        REQUIRE(runtime.Stop(handle));
+        REQUIRE(runtime.ResumeEmission(handle));
+        REQUIRE(runtime.SetParameters(handle, {0, 1}));
+        runtime.Advance(1.0f / 60);
+        CHECK(runtime.FindEmitter(emitterHandle)->spawns == 0);
+    }
+}
+
+TEST_CASE("Swept particle emission remains local within one centimetre at one thousand kilometres", "[particles][motion]")
+{
+    if constexpr (!mir::kLargeWorld)
+        SKIP("Float world mode explicitly rejects the translated fixture");
+    mir::ParticleRuntime nearRuntime, farRuntime;
+    auto definition = Definition(4, 83);
+    definition.emitterDefinitions[0].spawnPerMeter = 3;
+    definition.emitterDefinitions[0].localOffset = {0.125f, -0.25f, 0.5f};
+    mir::WorldPose translated;
+    const mir::WorldVec3 origin(1000000, 1000000, -1000000);
+    translated.position = *mir::WorldPosition::FromMeters(origin);
+    const auto nearHandle = nearRuntime.Start({2}, definition);
+    const auto farHandle = farRuntime.Start({2}, definition, translated);
+    REQUIRE_FALSE(nearHandle.IsNull());
+    REQUIRE_FALSE(farHandle.IsNull());
+    const auto nearEmitter = nearRuntime.Find(nearHandle)->emitters[0];
+    const auto farEmitter = farRuntime.Find(farHandle)->emitters[0];
+    uint32_t checked = 0;
+    for (uint32_t frame = 0; frame < 240; ++frame)
+    {
+        mir::WorldPose pose;
+        const mir::WorldVec3 path(0.137 * (frame + 1), 0.019 * (frame + 1), 0);
+        pose.position = *mir::WorldPosition::FromMeters(path);
+        translated.position = *mir::WorldPosition::FromMeters(origin + path);
+        REQUIRE(nearRuntime.SetPose(nearHandle, pose));
+        REQUIRE(farRuntime.SetPose(farHandle, translated));
+        nearRuntime.Advance(1.0f / 120);
+        farRuntime.Advance(1.0f / 120);
+        const auto &near = *nearRuntime.FindEmitter(nearEmitter);
+        const auto &far = *farRuntime.FindEmitter(farEmitter);
+        REQUIRE(near.births.size() == far.births.size());
+        for (size_t i = 0; i < near.births.size(); ++i)
+        {
+            const auto nearPosition = near.spawnStart.Meters() +
+                (near.attachmentPosition.Meters() - near.spawnStart.Meters()) * mir::WorldReal(near.births[i].fraction);
+            const auto farPosition = far.spawnStart.Meters() - origin +
+                (far.attachmentPosition.Meters() - far.spawnStart.Meters()) * mir::WorldReal(far.births[i].fraction);
+            CHECK(glm::length(nearPosition - farPosition) <= 0.01);
+            CHECK(near.births[i].sequence == far.births[i].sequence);
+            ++checked;
+        }
+    }
+    CHECK(checked > 250);
+}
+
+TEST_CASE("Rotating particle attachments inherit point motion and rotate local velocity", "[particles][motion]")
+{
+    mir::ParticleRuntime runtime;
+    auto definition = Definition(1, 60);
+    definition.emitterDefinitions[0].localOffset = {2, 0, 0};
+    definition.emitterDefinitions[0].velocity = {1, 0, 0};
+    definition.emitterDefinitions[0].inheritVelocity = 1;
+    const auto handle = runtime.Start({2}, definition);
+    REQUIRE_FALSE(handle.IsNull());
+    const auto emitterHandle = runtime.Find(handle)->emitters[0];
+    mir::WorldPose pose;
+    pose.linear = glm::mat3(glm::vec3(0, 1, 0), glm::vec3(-1, 0, 0), glm::vec3(0, 0, 1));
+    REQUIRE(runtime.SetPose(handle, pose));
+    runtime.Advance(1.0f / 60);
+    const auto &emitter = *runtime.FindEmitter(emitterHandle);
+    CHECK(glm::length(emitter.spawnStart.Meters() - mir::WorldVec3(2, 0, 0)) < 1e-5);
+    CHECK(glm::length(emitter.attachmentPosition.Meters() - mir::WorldVec3(0, 2, 0)) < 1e-5);
+    CHECK(glm::length(emitter.attachmentVelocity - glm::vec3(-120, 120, 0)) < 0.001f);
+    CHECK(glm::length(emitter.emissionVelocity - glm::vec3(0, 1, 0)) < 1e-5f);
+    CHECK_FALSE(emitter.teleported);
+}
+
+TEST_CASE("Particle hitches cap swept work and teleports do not emit connecting distance particles", "[particles][motion]")
+{
+    mir::ParticleRuntime runtime;
+    auto definition = Definition(4, 60);
+    definition.emitterDefinitions[0].spawnPerMeter = 10;
+    const auto handle = runtime.Start({2}, definition);
+    REQUIRE_FALSE(handle.IsNull());
+    const auto emitterHandle = runtime.Find(handle)->emitters[0];
+    mir::WorldPose pose;
+    pose.position = *mir::WorldPosition::FromMeters(mir::WorldVec3(10, 0, 0));
+    REQUIRE(runtime.SetPose(handle, pose));
+    runtime.Advance(1);
+    const auto &hitch = *runtime.FindEmitter(emitterHandle);
+    CHECK(hitch.spawns == 10);
+    CHECK(hitch.seconds <= 4.0f / 60);
+    CHECK(std::abs(hitch.spawnStart.Meters().x - mir::WorldReal(10 - 2.0 / 3)) < 1e-5);
+    CHECK(std::abs(hitch.attachmentVelocity.x - 10) < 1e-5);
+    CHECK(runtime.Stats().droppedSeconds > 0.9);
+    runtime.Advance(0);
+    CHECK(runtime.FindEmitter(emitterHandle)->births.empty());
+    pose.position = *mir::WorldPosition::FromMeters(mir::WorldVec3(1000, 0, 0));
+    REQUIRE(runtime.SetPose(handle, pose));
+    runtime.Advance(1.0f / 60);
+    const auto &teleport = *runtime.FindEmitter(emitterHandle);
+    CHECK(teleport.teleported);
+    CHECK(teleport.spawns == 1);
+    CHECK(glm::length(teleport.spawnStart.Meters() - teleport.attachmentPosition.Meters()) == 0);
+    CHECK(glm::length(teleport.attachmentVelocity) == 0);
+    CHECK(teleport.distanceRemainder == 0);
+    runtime.Advance(1.0f / 60);
+    CHECK(runtime.FindEmitter(emitterHandle)->spawns == 1);
+    CHECK_FALSE(runtime.FindEmitter(emitterHandle)->teleported);
+}
+
+TEST_CASE("Particle system tile shifts are shared by emitter instances at the radius boundary", "[particles][motion]")
+{
+    mir::ParticleRuntime runtime;
+    auto definition = Definition(4, 60, 2);
+    definition.emitterDefinitions[0].localOffset = {-3, 0, 0};
+    definition.emitterDefinitions[1].localOffset = {3, 0, 0};
+    const auto handle = runtime.Start({2}, definition);
+    REQUIRE_FALSE(handle.IsNull());
+    const auto first = runtime.Find(handle)->emitters[0];
+    const auto second = runtime.Find(handle)->emitters[1];
+    mir::WorldPose pose;
+    pose.position = *mir::WorldPosition::FromMeters(mir::WorldVec3(mir::kParticleTileRadius, 0, 0));
+    REQUIRE(runtime.SetPose(handle, pose));
+    runtime.Advance(1.0f / 60);
+    CHECK(runtime.Find(handle)->tileOrigin.Meters().x == 0);
+    pose.position = *mir::WorldPosition::FromMeters(mir::WorldVec3(mir::kParticleTileRadius + 1, 0, 0));
+    REQUIRE(runtime.SetPose(handle, pose));
+    runtime.Advance(1.0f / 60);
+    CHECK(runtime.Find(handle)->tileOrigin.Meters().x == mir::kParticleTileRadius + 1);
+    CHECK(runtime.FindEmitter(first)->system == runtime.FindEmitter(second)->system);
+    const auto origin = runtime.Find(handle)->tileOrigin.Meters();
+    CHECK(runtime.FindEmitter(first)->attachmentPosition.Meters().x - origin.x == -3);
+    CHECK(runtime.FindEmitter(second)->attachmentPosition.Meters().x - origin.x == 3);
+    CHECK(runtime.Stats().activeEmitters == 2);
+    CHECK(runtime.FindEmitter(first)->birthSequence == 2);
+    CHECK(runtime.FindEmitter(second)->birthSequence == 2);
+}
+
+TEST_CASE("Float particle worlds explicitly reject positions outside their precision budget", "[particles][motion]")
+{
+    mir::ParticleRuntime runtime;
+    const auto definition = Definition(1, 60);
+    mir::WorldPose remote;
+    remote.position = *mir::WorldPosition::FromMeters(mir::WorldVec3(1000000, 0, 0));
+    if constexpr (mir::kLargeWorld)
+    {
+        CHECK_FALSE(runtime.Start({2}, definition, remote).IsNull());
+    }
+    else
+    {
+        CHECK(runtime.Start({2}, definition, remote).IsNull());
+        CHECK(runtime.Stats().rejectedStarts == 1);
+        const auto handle = runtime.Start({2}, definition);
+        REQUIRE_FALSE(handle.IsNull());
+        CHECK_FALSE(runtime.SetPose(handle, remote));
+        CHECK(runtime.Find(handle)->pose.position.Meters().x == 0);
+        auto offsetDefinition = definition;
+        offsetDefinition.emitterDefinitions[0].localOffset = {2, 0, 0};
+        mir::WorldPose edge;
+        edge.position = *mir::WorldPosition::FromMeters(mir::WorldVec3(mir::kParticleFloatWorldLimitMeters - 1, 0, 0));
+        CHECK(runtime.Start({2}, offsetDefinition, edge).IsNull());
+    }
+}
+
+TEST_CASE("Resuming particle emission never sweeps stopped or paused attachment motion", "[particles][motion]")
+{
+    mir::ParticleRuntime runtime;
+    auto definition = Definition(4, 0);
+    definition.emitterDefinitions[0].spawnPerMeter = 10;
+    const auto handle = runtime.Start({2}, definition);
+    REQUIRE_FALSE(handle.IsNull());
+    const auto emitter = runtime.Find(handle)->emitters[0];
+    auto move = [&](float x)
+    {
+        mir::WorldPose pose;
+        pose.position = *mir::WorldPosition::FromMeters(mir::WorldVec3(x, 0, 0));
+        REQUIRE(runtime.SetPose(handle, pose));
+    };
+    move(1);
+    runtime.Advance(1.0f / 60);
+    CHECK(runtime.FindEmitter(emitter)->spawns == 10);
+    REQUIRE(runtime.Stop(handle));
+    runtime.Advance(0.05f);
+    REQUIRE(runtime.ResumeEmission(handle));
+    move(5);
+    runtime.Advance(1.0f / 60);
+    CHECK(runtime.FindEmitter(emitter)->spawns == 0);
+    CHECK(glm::length(runtime.FindEmitter(emitter)->attachmentVelocity) == 0);
+    move(6);
+    runtime.Advance(1.0f / 60);
+    CHECK(runtime.FindEmitter(emitter)->spawns == 10);
+    CHECK(std::abs(runtime.FindEmitter(emitter)->attachmentVelocity.x - 60) < 0.001f);
+
+    // A pose can move while paused even when the simulation receives no intervening tick.
+    REQUIRE(runtime.Pause(handle, true));
+    move(8);
+    REQUIRE(runtime.Pause(handle, false));
+    move(9);
+    runtime.Advance(1.0f / 60);
+    CHECK(runtime.FindEmitter(emitter)->spawns == 0);
+    CHECK(glm::length(runtime.FindEmitter(emitter)->attachmentVelocity) == 0);
+    move(10);
+    runtime.Advance(1.0f / 60);
+    CHECK(runtime.FindEmitter(emitter)->spawns == 10);
 }

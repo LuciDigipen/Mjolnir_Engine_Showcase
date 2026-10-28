@@ -46,7 +46,14 @@ namespace mir
         worldType.set_function("particle_system_parameters", [](World &world, Entity owner, float spawnRateScale, float sizeScale)
             {
                 auto *particles = world.TryResource<ParticleWorld>();
-                return particles != nullptr && particles->SetParameters(owner, {spawnRateScale, sizeScale});
+                if (!particles) return false;
+                const auto *component = world.GetComponent<ParticleSystem>(owner);
+                if (!component) return false;
+                const auto *instance = particles->Find(owner);
+                auto parameters = instance ? instance->parameters : component->userParameters;
+                parameters.spawnRateScale = spawnRateScale;
+                parameters.sizeScale = sizeScale;
+                return particles->SetParameters(owner, parameters);
             });
         worldType.set_function("particle_system_state", [](World &world, Entity owner)
             {

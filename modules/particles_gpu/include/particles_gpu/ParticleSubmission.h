@@ -23,6 +23,15 @@ namespace mir
     inline constexpr uint32_t kGpuParticleCapacity = 65536;
     inline constexpr uint32_t kGpuParticleSpawnsPerFrame = 4096;
 
+    struct ParticleGpuBirth
+    {
+        float fraction = 1;
+        float age = 0;
+        uint32_t sequence = 0;
+        uint32_t reserved = 0;
+    };
+    static_assert(sizeof(ParticleGpuBirth) == 16);
+
     // Immutable input, no dependency on the particle module or its handles.
     struct ParticleSubmission
     {
@@ -33,6 +42,18 @@ namespace mir
         uint32_t capacity = 0;
         uint32_t spawns = 0;
         WorldPosition anchor;
+        WorldPosition emissionStart;
+        WorldPosition tileOrigin;
+        bool explicitTile = false;
+        bool swept = false;
+        glm::vec3 attachmentVelocity{0};
+        glm::vec3 wind{0};
+        float inheritVelocity = 0;
+        uint32_t seed = 1;
+        std::vector<ParticleGpuBirth> births;
+        uint64_t textureKey = 0;
+        uint32_t textureWidth = 0, textureHeight = 0;
+        std::vector<uint8_t> texturePixels;
         float seconds = 0;
         float lifetime = 1;
         glm::vec3 velocity{0, 1, 0};
@@ -57,6 +78,14 @@ namespace mir
 
     struct ParticleGpuStats
     {
+        WorldPosition firstPosition;
+        glm::vec3 firstVelocity{0};
+        float firstAge = 0;
+        float firstSize = 0;
+        float firstAlpha = 0;
+        uint32_t firstFrame = 0;
+        uint32_t firstSequence = 0;
+        uint64_t tileShifts = 0;
         uint64_t completedFrame = 0;
         uint32_t alive = 0;
         uint32_t spawned = 0;

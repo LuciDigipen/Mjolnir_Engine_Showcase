@@ -22,6 +22,8 @@ namespace mir
 {
     inline constexpr uint32_t kMaxParticleEmitterInstances = 64;
     inline constexpr uint32_t kParticleSpawnBudget = 4096;
+    inline constexpr float kParticleFloatWorldLimitMeters = 65536.0f;
+    inline constexpr float kParticleTileRadius = 64.0f;
 
     struct ParticleHandle
     {
@@ -47,6 +49,7 @@ namespace mir
         AssetId effectId;
         ParticleEffect effect;
         WorldPose pose;
+        WorldPosition tileOrigin;
         Entity owner = kNullEntity;
         ParticleExecutionState state = ParticleExecutionState::Active;
         bool paused = false;
@@ -54,6 +57,16 @@ namespace mir
         ParticleUserParameters parameters;
         std::vector<ParticleEmitterHandle> emitters;
     };
+
+    // Fractions interpolate the accepted attachment sweep, ages are at packet end.
+    struct ParticleBirth
+    {
+        float fraction = 1.0f;
+        float age = 0.0f;
+        uint32_t sequence = 0;
+        uint32_t reserved = 0;
+    };
+    static_assert(sizeof(ParticleBirth) == 16);
 
     struct ParticleEmitterInstance
     {
@@ -64,6 +77,18 @@ namespace mir
         WorldPose pose;
         ParticleExecutionState state = ParticleExecutionState::Active;
         bool paused = false;
+        WorldPosition attachmentPosition;
+        WorldPosition previousPosition;
+        WorldPosition spawnStart;
+        glm::vec3 attachmentVelocity{0};
+        glm::vec3 emissionVelocity{0};
+        std::vector<ParticleBirth> births;
+        double motionSeconds = 0.0;
+        double distanceRemainder = 0.0;
+        uint32_t birthSequence = 0;
+        bool burstPending = true;
+        bool resetMotionOnPose = false;
+        bool teleported = false;
         double spawnRemainder = 0.0;
         double drainRemaining = 0.0;
         uint32_t spawns = 0;

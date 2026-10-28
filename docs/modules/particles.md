@@ -48,7 +48,7 @@ parameters in [0, 16]. Each `.emitter.json` version 1 defines target (`gpu` or
 (size, color and velocity). Emitter and texture paths resolve from the asset root
 and must stay inside it. Textures use the typed texture cooker. Missing or invalid
 dependencies fail before manifest publication. System blobs use type tag
-`0x54524150`, version 2; emitter blobs use type tag `0x454D4954`, version 2.
+`0x54524150`, version 2; emitter blobs use type tag `0x454D4954`, version 3.
 Cooked system assets retain emitter IDs, while loaded system definitions resolve
 those emitter and texture assets through `AssetCache`. Runtime never reads source
 JSON or decodes images.
@@ -155,8 +155,8 @@ Stacks are bounded to 32 entries per stage and execute in authored order.
 AssetCooker composes Slang from the registered operations and invokes the configured
 `slangc` process, using SPIR-V 1.5 and the `computeMain` entry point. Parameters for
 module operations are compiled constants. Per-frame values use a generated, versioned
-80-byte input layout. Script and layout blobs are typed dependencies of emitter
-content version 2. Equal stacks and operation parameters share one script regardless
+160-byte input layout. Script and layout blobs are typed dependencies of emitter
+content version 3. Equal stacks and operation parameters share one script regardless
 of per-emitter renderer values, capacity, or spawn rate. Compilation and validation
 must succeed before the new manifest is published. Partial recooks retain other
 roots and remove unreferenced script/layout manifest entries.
@@ -164,3 +164,51 @@ roots and remove unreferenced script/layout manifest entries.
 Runtime asset loading validates script type, version, SPIR-V framing and the exact
 supported input layout, then supplies cooked bytes through the scene proxy. The
 game never invokes Slang or reads emitter source JSON.
+
+## Moving emitters and tiles
+
+The CPU world manager schedules bounded GPU birth records from time rate,
+`spawnPerMeter`, and one initial `burst`. Fractional time and distance remainders
+persist per emitter. Burst, time, then distance consume the shared 4,096-birth
+budget, accepted births are ordered by their fraction along the swept attachment
+span. Sequence numbers also advance over dropped work. Scheduling belongs to the
+CPU instance, cooked GPU modules initialize and simulate the accepted records.
+
+`localOffset` is transformed by the propagated pose. The difference between
+accepted attachment poses includes translation and rotation, divided by elapsed
+input time to give world-relative attachment velocity. `inheritVelocity` scales
+this velocity before adding it to the transformed authored velocity. `Drag`
+converges world velocity toward the supplied world-space `wind`, wind is not
+added a second time. Wind is an optional system user parameter and reflected
+ParticleSystem override, bounded to 4,096 m/s per axis.
+
+Ordinary clock remainders preserve the complete sweep, including 90/144 Hz input.
+Hitches simulate at most four 60 Hz ticks, emitting along the final accepted
+portion of motion. Teleports beyond `teleportDistance` collapse the emission span,
+zero inherited velocity and reset fractional distance, avoiding a connecting
+streak. Stopped and paused motion does not replay on resume. Bursts are once per
+new instance, resuming a drain does not replay them.
+
+All emitters in a system share a world-precision tile origin. When the system is
+more than 64 m away, the next accepted tick moves the tile to the system position.
+The GPU dataset subtracts old and new origins in world precision, then translates
+every survivor in its regular update dispatch. Per-view tile-to-camera subtraction
+also precedes narrowing. There is no extra rebase dispatch. Live GPU positions
+have a 65,536 m local spatial budget, float spacing remains below one centimetre
+inside it. Particles outside that budget retire. Float-world builds reject system
+and attachment coordinates beyond 65,536 m on any absolute axis, rather than
+claiming large-world precision.
+
+Additional GPU operations are spawn `VelocityVariation` (three nonnegative velocity
+amplitudes), and update `Drag` (coefficient), `SizeOverLife` (end size multiplier),
+`FadeOverLife` (end alpha), and `Flipbook` (integer columns, integer rows, frames per
+second). Curves interpolate linearly with normalized age, authored module order
+is respected. Seeded variation hashes the emitter seed and birth sequence, it
+promises repeatability for the same stream/timing, not cross-GPU bitwise identity.
+Place Age before lifetime curves. Flipbooks sample the cooked texture atlas.
+
+`ParticleFlight` is a normal game project with a scripted two-engine aircraft,
+a follow camera, time/distance spawning, bursts, rotating offsets, world wind,
+seeded spread, size/alpha curves and a four-frame flipbook. Its 96 m radius path
+crosses shared tile boundaries. The existing `ParticleCheck` remains the static
+three-emitter comparison scene. CPU ribbon contrails are the next task.

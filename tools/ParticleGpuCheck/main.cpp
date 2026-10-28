@@ -30,6 +30,7 @@
 #endif
 
 #include <array>
+#include <cmath>
 #include <exception>
 #include <filesystem>
 #include <memory>
@@ -282,6 +283,107 @@ int main(int argc, char **argv)
         input.spawns = 0;
         for (int i = 0; i < 6; ++i) submit(input);
         check(32, 32, "FX provider unregisters and can be replaced");
+        // Asynchronous samples prove swept births and tile shifts through the production path.
+        auto position = [](double x, double y = 0.0, double z = 0.0)
+        {
+            return *mir::WorldPosition::FromDoubleMeters(glm::dvec3(x, y, z));
+        };
+        auto sample = input;
+        sample.velocity = glm::vec3(0);
+        sample.lifetime = 120;
+        sample.spawns = 4;
+        sample.swept = true;
+        sample.explicitTile = true;
+        sample.anchor = position(4);
+        sample.emissionStart = position(0);
+        sample.tileOrigin = position(0);
+        sample.births.clear();
+        for (uint32_t b = 0; b < 4; ++b)
+            sample.births.push_back({float(b + 1) / 4, (1 - float(b + 1) / 4) * sample.seconds, 10 + b, 0});
+        ++sample.generation;
+        submit(sample);
+        sample.spawns = 0;
+        sample.births.clear();
+        sample.seconds = 0;
+        for (int f = 0; f < 5; ++f) submit(sample);
+        auto sweptStats = particles->Stats();
+        Require(sweptStats.alive == 4 && sweptStats.firstSequence == 10 &&
+            std::abs(sweptStats.firstPosition.Meters().x - 1) < 0.001,
+            "Swept birth positions or deterministic sequence differ");
+        const auto shifts = sweptStats.tileShifts;
+        for (int f = 1; f <= 8; ++f)
+        {
+            sample.anchor = sample.tileOrigin = position(f * 64.0);
+            submit(sample);
+        }
+        auto tileStats = particles->Stats();
+        Require(tileStats.alive == 4 && tileStats.tileShifts > shifts &&
+            std::abs(tileStats.firstPosition.Meters().x - 1) < 0.001,
+            "Tile changes moved or dropped persistent particles");
+        if constexpr (mir::kLargeWorld)
+        {
+            ++sample.generation;
+            sample.anchor = position(1000004);
+            sample.emissionStart = sample.tileOrigin = position(1000000);
+            sample.spawns = 4;
+            for (uint32_t b = 0; b < 4; ++b) sample.births.push_back({float(b + 1) / 4, 0, 10 + b, 0});
+            submit(sample);
+            sample.spawns = 0;
+            sample.births.clear();
+            for (int f = 0; f < 5; ++f) submit(sample);
+            const auto farStats = particles->Stats();
+            Require(farStats.alive == 4 && std::abs(farStats.firstPosition.Meters().x - 1000001) < 0.01,
+                "Translated GPU births exceed one centimetre error");
+        }
+        else
+        {
+            const auto rejectedFar = particles->Stats().rejectedSubmissions;
+            sample.anchor = position(1000000);
+            submit(sample);
+            Require(particles->Stats().rejectedSubmissions == rejectedFar + 1,
+                "Float-world GPU submissions must reject remote unsupported origins");
+        }
+        // Exercise cooked variation, wind, lifetime curves, flipbooks and texture replacement.
+        const auto advanced = mir::LoadParticleEmitterAsset(cache, mir::MakeAssetId("assets/advanced.emitter.json"));
+        Require(advanced.mEmitter.has_value(), "Missing advanced cooked GPU script");
+        sample.scriptKey = advanced.mEmitter->script.value;
+        sample.scriptCode = advanced.mEmitter->scriptCode;
+        sample.textureKey = advanced.mEmitter->texture.value;
+        sample.textureWidth = advanced.mEmitter->textureWidth;
+        sample.textureHeight = advanced.mEmitter->textureHeight;
+        sample.texturePixels = advanced.mEmitter->texturePixels;
+        sample.anchor = sample.emissionStart = sample.tileOrigin = position(0);
+        sample.swept = sample.explicitTile = false;
+        sample.seed = 1702;
+        sample.wind = {2, 0, -1};
+        sample.velocity = {0, 0, 4};
+        sample.seconds = 1.0f / 60;
+        sample.lifetime = 3;
+        sample.size = 0.15f;
+        sample.color.a = 0.75f;
+        glm::vec3 seededVelocity{};
+        for (int repeat = 0; repeat < 2; ++repeat)
+        {
+            ++sample.generation;
+            sample.spawns = 1;
+            submit(sample);
+            sample.spawns = 0;
+            for (int f = 0; f < 12; ++f) submit(sample);
+            const auto advancedStats = particles->Stats();
+            Require(advancedStats.alive == 1 && advancedStats.firstSize > sample.size &&
+                advancedStats.firstAlpha < sample.color.a && advancedStats.firstFrame >= 1,
+                "Cooked lifetime curves or flipbook did not advance");
+            if (repeat == 0) seededVelocity = advancedStats.firstVelocity;
+            else Require(glm::length(advancedStats.firstVelocity - seededVelocity) < 0.0001f,
+                "Repeated seed and timeline changed GPU velocity");
+        }
+        for (int reload = 0; reload < 6; ++reload)
+        {
+            sample.texturePixels[0] ^= 0xff;
+            submit(sample);
+        }
+        MIR_LOG_INFO("Moving exhaust: swept births, tile continuity, translated precision, seeded curves and flipbook checks passed");
+        input.spawns = 32;
         renderer.CaptureNextFrame(output);
         submit(input);
         renderer.Shutdown();

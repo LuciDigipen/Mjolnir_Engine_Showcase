@@ -25,11 +25,12 @@ namespace mir::gpu
         const VkDescriptorSetLayoutBinding bindings[]{
             {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
             {3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
-            {4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}};
+            {4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+            {6, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}};
         const VkDescriptorSetLayoutCreateInfo set{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-            .bindingCount = 3, .pBindings = bindings};
+            .bindingCount = 4, .pBindings = bindings};
         if (vkCreateDescriptorSetLayout(mDevice, &set, nullptr, &mSetLayout) != VK_SUCCESS) return false;
-        const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 * kFxFramesInFlight};
+        const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4 * kFxFramesInFlight};
         const VkDescriptorPoolCreateInfo pool{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
             .maxSets = kFxFramesInFlight, .poolSizeCount = 1, .pPoolSizes = &size};
         if (vkCreateDescriptorPool(mDevice, &pool, nullptr, &mPool) != VK_SUCCESS) return false;
@@ -40,12 +41,12 @@ namespace mir::gpu
             if (vkAllocateDescriptorSets(mDevice, &allocate, &mSets[f]) != VK_SUCCESS) return false;
             const VkDescriptorBufferInfo buffers[]{
                 {data.mParticles.handle, 0, VK_WHOLE_SIZE}, {data.mCounters.handle, 0, VK_WHOLE_SIZE},
-                {data.mInputs[f].handle, 0, VK_WHOLE_SIZE}};
-            VkWriteDescriptorSet writes[3]{};
-            for (uint32_t i = 0; i < 3; ++i)
-                writes[i] = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = mSets[f], .dstBinding = i + 2,
+                {data.mInputs[f].handle, 0, VK_WHOLE_SIZE}, {data.mBirths[f].handle, 0, VK_WHOLE_SIZE}};
+            VkWriteDescriptorSet writes[4]{};
+            for (uint32_t i = 0; i < 4; ++i)
+                writes[i] = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = mSets[f], .dstBinding = i == 3 ? 6u : i + 2,
                     .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .pBufferInfo = &buffers[i]};
-            vkUpdateDescriptorSets(mDevice, 3, writes, 0, nullptr);
+            vkUpdateDescriptorSets(mDevice, 4, writes, 0, nullptr);
         }
         const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(uint32_t)};
         const VkPipelineLayoutCreateInfo layout{.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
@@ -154,6 +155,13 @@ namespace mir::gpu
             VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_TRANSFER_READ_BIT);
         const VkBufferCopy copy{0, 0, sizeof(ParticleDataset::Counters) * kGpuParticleInstances};
         vkCmdCopyBuffer(cmd, data.mCounters.handle, data.mReadback[frame].handle, 1, &copy);
+        for (uint32_t i = 0; i < kGpuParticleInstances; ++i)
+            if (data.mSlots[i].allocated)
+            {
+                const VkBufferCopy sample{data.mSlots[i].start * sizeof(GpuParticle),
+                    sizeof(ParticleDataset::Counters) * kGpuParticleInstances + i * sizeof(GpuParticle), sizeof(GpuParticle)};
+                vkCmdCopyBuffer(cmd, data.mParticles.handle, data.mReadback[frame].handle, 1, &sample);
+            }
         MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
             VK_PIPELINE_STAGE_2_HOST_BIT, VK_ACCESS_2_HOST_READ_BIT);
         data.mSignals[frame] = context.signalValue;

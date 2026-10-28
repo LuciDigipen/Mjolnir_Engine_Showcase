@@ -34,11 +34,25 @@ namespace mir
             input.capacity = emitter.definition.capacity;
             input.spawns = simulating ? emitter.spawns : 0;
             input.seconds = simulating ? emitter.seconds : 0;
-            input.anchor = emitter.pose.position;
+            input.anchor = emitter.attachmentPosition;
+            input.emissionStart = emitter.spawnStart;
+            input.tileOrigin = system->tileOrigin;
+            input.explicitTile = input.swept = true;
+            input.attachmentVelocity = emitter.attachmentVelocity;
+            input.inheritVelocity = emitter.definition.inheritVelocity;
+            input.wind = system->parameters.wind;
+            input.seed = emitter.definition.seed;
+            input.textureKey = emitter.definition.texture.value;
+            input.textureWidth = emitter.definition.textureWidth;
+            input.textureHeight = emitter.definition.textureHeight;
+            input.texturePixels = emitter.definition.texturePixels;
+            if (simulating)
+                for (const auto &birth : emitter.births)
+                    input.births.push_back({birth.fraction, birth.age, birth.sequence, 0});
             input.lifetime = emitter.definition.lifetime;
             input.size = emitter.definition.size * system->parameters.sizeScale;
             input.color = emitter.definition.color;
-            input.velocity = emitter.definition.velocity;
+            input.velocity = emitter.emissionVelocity;
             submissions.push_back(input);
         }
         return submissions;

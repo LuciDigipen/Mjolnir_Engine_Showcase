@@ -26,11 +26,11 @@ namespace mir
     inline constexpr uint32_t kParticleEffectTypeTag = 0x54524150u;
     inline constexpr uint32_t kParticleEffectContentVersion = 2u;
     inline constexpr uint32_t kParticleEmitterTypeTag = 0x54494D45u;
-    inline constexpr uint32_t kParticleEmitterContentVersion = 2u;
+    inline constexpr uint32_t kParticleEmitterContentVersion = 3u;
     inline constexpr uint32_t kParticleScriptTypeTag = 0x52435350u;
-    inline constexpr uint32_t kParticleScriptContentVersion = 1u;
+    inline constexpr uint32_t kParticleScriptContentVersion = 2u;
     inline constexpr uint32_t kParticleScriptLayoutTypeTag = 0x594C5350u;
-    inline constexpr uint32_t kParticleScriptLayoutContentVersion = 1u;
+    inline constexpr uint32_t kParticleScriptLayoutContentVersion = 2u;
     inline constexpr uint32_t kMaxSystemEmitters = 8;
     inline constexpr uint32_t kMaxEffectParticles = 65536;
     inline constexpr float kMaxEffectLifetime = 120.0f;
@@ -41,6 +41,7 @@ namespace mir
     {
         float spawnRateScale = 1.0f;
         float sizeScale = 1.0f;
+        glm::vec3 wind{0.0f};
     };
 
     struct ParticleModule
@@ -54,6 +55,12 @@ namespace mir
         float lifetime = 2.0f;
         float spawnRate = 60.0f;
         uint32_t capacity = 256;
+        glm::vec3 localOffset{0.0f};
+        float spawnPerMeter = 0.0f;
+        uint32_t burst = 0;
+        uint32_t seed = 1;
+        float inheritVelocity = 0.0f;
+        float teleportDistance = 100.0f;
         AssetId texture;
         ParticleSimulationTarget simulationTarget = ParticleSimulationTarget::GPU;
         float size = 0.15f;
@@ -65,6 +72,8 @@ namespace mir
         AssetId scriptLayout;
         // Loaded cooked dependency, no source shader reaches the runtime.
         std::vector<std::byte> scriptCode;
+        uint32_t textureWidth = 0, textureHeight = 0;
+        std::vector<uint8_t> texturePixels;
     };
 
     struct ParticleEffect

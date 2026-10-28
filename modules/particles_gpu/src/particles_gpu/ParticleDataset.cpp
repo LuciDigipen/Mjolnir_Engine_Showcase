@@ -33,8 +33,18 @@ namespace mir::gpu
         }
         for (const auto &input : inputs)
         {
-            if (input.scriptKey == 0 || input.scriptCode.size() < 20 || input.scriptCode.size() % 4 != 0 ||
+            if ((!kLargeWorld && (glm::any(glm::greaterThan(glm::abs(input.anchor.Meters()), WorldVec3(65536))) ||
+                    (input.explicitTile && glm::any(glm::greaterThan(glm::abs(input.tileOrigin.Meters()), WorldVec3(65536)))))) ||
+                input.scriptKey == 0 || input.scriptCode.size() < 20 || input.scriptCode.size() % 4 != 0 ||
                 input.index >= kGpuParticleInstances || input.generation == 0 ||
+                input.births.size() > kGpuParticleSpawnsPerFrame ||
+                (!input.births.empty() && input.births.size() != input.spawns) ||
+                !std::isfinite(input.inheritVelocity) || input.inheritVelocity < 0 || input.inheritVelocity > 16 ||
+                !std::isfinite(input.wind.x) || !std::isfinite(input.wind.y) || !std::isfinite(input.wind.z) ||
+                !std::isfinite(input.attachmentVelocity.x) || !std::isfinite(input.attachmentVelocity.y) || !std::isfinite(input.attachmentVelocity.z) ||
+                std::any_of(input.births.begin(), input.births.end(), [&](const auto &birth)
+                    { return !std::isfinite(birth.fraction) || birth.fraction < 0 || birth.fraction > 1 ||
+                        !std::isfinite(birth.age) || birth.age < 0 || birth.age > input.seconds + 1e-6f; }) ||
                 input.capacity > kGpuParticleCapacity || input.capacity == 0 ||
                 !std::isfinite(input.seconds) || input.seconds < 0 || input.seconds > 4.0f / 60.0f + 1e-6f ||
                 !std::isfinite(input.lifetime) || input.lifetime <= 0 || input.lifetime > 120 ||
@@ -71,15 +81,17 @@ namespace mir::gpu
     {
         mDevice = device;
         if (!MakeBuffer(mParticles, sizeof(GpuParticle) * kGpuParticleCapacity,
-                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false) ||
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT, false) ||
             !MakeBuffer(mCounters, sizeof(Counters) * kGpuParticleInstances,
                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
                 VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, false))
             return false;
         for (uint32_t f = 0; f < kFxFramesInFlight; ++f)
-            if (!MakeBuffer(mInputs[f], sizeof(Parameters) * kGpuParticleInstances,
+            if (!MakeBuffer(mBirths[f], sizeof(ParticleGpuBirth) * kGpuParticleSpawnsPerFrame,
                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true) ||
-                !MakeBuffer(mReadback[f], sizeof(Counters) * kGpuParticleInstances,
+                !MakeBuffer(mInputs[f], sizeof(Parameters) * kGpuParticleInstances,
+                    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true) ||
+                !MakeBuffer(mReadback[f], (sizeof(Counters) + sizeof(GpuParticle)) * kGpuParticleInstances,
                     VK_BUFFER_USAGE_TRANSFER_DST_BIT, true, true))
                 return false;
         NameBuffer(device, mCounters.handle, "Particle GPU indirect counts");
@@ -111,10 +123,25 @@ namespace mir::gpu
                 mStats.spawned += c[i].spawned;
                 mStats.dropped += c[i].dropped;
             }
+            const auto *samples = reinterpret_cast<const GpuParticle *>(c + kGpuParticleInstances);
+            for (uint32_t i = 0; i < kGpuParticleInstances; ++i)
+                if (c[i].alive)
+                {
+                    const auto &sample = samples[i];
+                    const auto position = WorldPosition::FromMeters(mReadbackOrigins[frame][i].Meters() + WorldVec3(sample.positionAge));
+                    if (position) mStats.firstPosition = *position;
+                    mStats.firstVelocity = glm::vec3(sample.velocityLifetime);
+                    mStats.firstAge = sample.positionAge.w;
+                    mStats.firstSize = sample.sizeRotation.x;
+                    mStats.firstAlpha = sample.color.a;
+                    mStats.firstFrame = static_cast<uint32_t>(sample.sizeRotation.z);
+                    mStats.firstSequence = sample.identity.z;
+                    break;
+                }
             mStats.completedFrame = mSignals[frame];
         }
         if (!mSubmitted)
-            for (auto &p : mPending) { p.seconds = 0; p.spawns = 0; }
+            for (auto &p : mPending) { p.seconds = 0; p.spawns = 0; p.births.clear(); p.emissionStart = p.anchor; }
         // Removed generations release their ranges. Reuse is ordered after all previous draws
         // on the same queue by the barrier below, no host wait or per-instance allocation.
         for (uint32_t i = 0; i < kGpuParticleInstances; ++i)
@@ -122,6 +149,8 @@ namespace mir::gpu
                 mPending[i].capacity != mSlots[i].input.capacity))
                 mSlots[i].allocated = false;
         auto *parameters = static_cast<Parameters *>(mInputs[frame].mapped);
+        auto *births = static_cast<ParticleGpuBirth *>(mBirths[frame].mapped);
+        uint32_t birthCursor = 0;
         for (uint32_t i = 0; i < kGpuParticleInstances; ++i)
         {
             auto &slot = mSlots[i];
@@ -156,18 +185,40 @@ namespace mir::gpu
             Parameters p{};
             if (slot.allocated)
             {
+                const auto previousOrigin = slot.anchor;
+                if (input.explicitTile) slot.anchor = input.tileOrigin;
+                else
+                {
+                    const auto displacement = TryCameraRelativeFloat(input.anchor, slot.anchor);
+                    if (!displacement || glm::any(glm::greaterThan(glm::abs(*displacement), glm::vec3(64))))
+                        slot.anchor = input.anchor;
+                }
+                const auto delta = TryCameraRelativeFloat(previousOrigin, slot.anchor);
                 const auto offset = TryCameraRelativeFloat(input.anchor, slot.anchor);
-                const bool bounded = offset && glm::all(glm::lessThanEqual(glm::abs(*offset), glm::vec3(1024)));
+                const auto start = TryCameraRelativeFloat(input.swept ? input.emissionStart : input.anchor, slot.anchor);
+                const bool bounded = delta && offset && start &&
+                    glm::all(glm::lessThanEqual(glm::abs(*offset), glm::vec3(65536))) &&
+                    glm::all(glm::lessThanEqual(glm::abs(*start), glm::vec3(65536)));
+                if (delta && glm::any(glm::notEqual(*delta, glm::vec3(0)))) ++mStats.tileShifts;
                 if (!bounded) mStats.droppedSubmitSpawns += input.spawns;
                 p.range = {slot.start, input.capacity, input.generation, bounded ? input.spawns : 0};
                 p.time = {input.seconds, input.lifetime, input.size, fresh ? 1.0f : 0.0f};
                 p.velocity = glm::vec4(input.velocity, 0);
                 p.color = input.color;
-                p.emission = glm::vec4(bounded ? *offset : glm::vec3(0), 0);
+                p.emission = glm::vec4(offset.value_or(glm::vec3(0)), 0);
+                p.emissionStart = glm::vec4(start.value_or(glm::vec3(0)), input.inheritVelocity);
+                p.attachmentVelocity = glm::vec4(input.attachmentVelocity, 0);
+                p.tileDelta = glm::vec4(delta.value_or(glm::vec3(0)), 0);
+                p.wind = glm::vec4(input.wind, 0);
+                const uint32_t count = bounded && !input.births.empty() ? input.spawns : 0;
+                p.birthRange = {birthCursor, count, input.seed, 0};
+                for (uint32_t birth = 0; birth < count; ++birth) births[birthCursor++] = input.births[birth];
+                mReadbackOrigins[frame][i] = slot.anchor;
             }
             parameters[i] = p;
         }
         vmaFlushAllocation(device.allocator, mInputs[frame].allocation, 0, VK_WHOLE_SIZE);
+        vmaFlushAllocation(device.allocator, mBirths[frame].allocation, 0, VK_WHOLE_SIZE);
         return true;
     }
 
@@ -181,7 +232,7 @@ namespace mir::gpu
         };
         destroy(mParticles);
         destroy(mCounters);
-        for (uint32_t f = 0; f < kFxFramesInFlight; ++f) { destroy(mInputs[f]); destroy(mReadback[f]); }
+        for (uint32_t f = 0; f < kFxFramesInFlight; ++f) { destroy(mInputs[f]); destroy(mBirths[f]); destroy(mReadback[f]); }
         mDevice.reset();
         mSlots = {};
         for (auto &signal : mSignals) signal = 0;

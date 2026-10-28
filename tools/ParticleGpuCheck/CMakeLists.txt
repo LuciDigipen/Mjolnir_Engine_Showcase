@@ -20,10 +20,11 @@ file(MAKE_DIRECTORY "${particle_fixture_source}")
 configure_file(../AssetCooker/tests/fixtures/checker.png "${particle_fixture_source}/checker.png" COPYONLY)
 configure_file(../AssetCooker/tests/particle_fixtures/exhaust.emitter.json "${particle_fixture_source}/exhaust.emitter.json" COPYONLY)
 configure_file(../AssetCooker/tests/particle_fixtures/accelerated.emitter.json "${particle_fixture_source}/accelerated.emitter.json" COPYONLY)
+configure_file(../AssetCooker/tests/particle_fixtures/advanced.emitter.json "${particle_fixture_source}/advanced.emitter.json" COPYONLY)
 add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/particle_gpu_cooked.stamp"
     COMMAND AssetCooker --source-dir "${particle_fixture_source}" --id-root assets --out "${CMAKE_BINARY_DIR}/particle_gpu_cooked"
     COMMAND "${CMAKE_COMMAND}" -E touch "${CMAKE_BINARY_DIR}/particle_gpu_cooked.stamp"
-    DEPENDS AssetCooker "${particle_fixture_source}/exhaust.emitter.json" "${particle_fixture_source}/accelerated.emitter.json" "${particle_fixture_source}/checker.png"
+    DEPENDS AssetCooker "${particle_fixture_source}/advanced.emitter.json" "${particle_fixture_source}/exhaust.emitter.json" "${particle_fixture_source}/accelerated.emitter.json" "${particle_fixture_source}/checker.png"
     VERBATIM)
 add_custom_target(ParticleGpuCheck_assets DEPENDS "${CMAKE_BINARY_DIR}/particle_gpu_cooked.stamp")
 add_dependencies(ParticleGpuCheck ParticleGpuCheck_assets)

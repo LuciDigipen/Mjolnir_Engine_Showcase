@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "target": "gpu",
+  "lifetime": 3,
+  "spawnRate": 60,
+  "spawnPerMeter": 4,
+  "burst": 12,
+  "seed": 1701,
+  "inheritVelocity": 0.35,
+  "teleportDistance": 150,
+  "capacity": 2048,
+  "texture": "textures/exhaust.png",
+  "localOffset": [
+    -0.8,
+    0,
+    1.5
+  ],
+  "renderer": {
+    "size": 0.15,
+    "color": [
+      2,
+      1.2,
+      0.7,
+      0.75
+    ],
+    "velocity": [
+      0,
+      0,
+      4
+    ]
+  },
+  "spawnModules": [
+    {
+      "name": "Initialize"
+    },
+    {
+      "name": "VelocityVariation",
+      "parameters": [
+        0.35,
+        0.35,
+        0.35
+      ]
+    }
+  ],
+  "updateModules": [
+    {
+      "name": "Age"
+    },
+    {
+      "name": "Drag",
+      "parameters": [
+        0.7
+      ]
+    },
+    {
+      "name": "Integrate"
+    },
+    {
+      "name": "SizeOverLife",
+      "parameters": [
+        3
+      ]
+    },
+    {
+      "name": "FadeOverLife",
+      "parameters": [
+        0
+      ]
+    },
+    {
+      "name": "Flipbook",
+      "parameters": [
+        4,
+        1,
+        6
+      ]
+    }
+  ]
+}

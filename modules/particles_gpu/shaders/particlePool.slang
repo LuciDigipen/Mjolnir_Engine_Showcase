@@ -18,6 +18,7 @@ struct Particle
 [[vk::binding(0)]] Sampler2D<float4> scene;
 [[vk::binding(1)]] Sampler2D<float4> depth;
 [[vk::binding(5)]] StructuredBuffer<Particle> particleRead;
+[[vk::binding(7)]] Sampler2D<float4> sprite;
 
 struct View
 {
@@ -34,6 +35,8 @@ struct Varying
     float2 uv : TEXCOORD0;
     float4 color : COLOR0;
     float distance : TEXCOORD1;
+    nointerpolation uint grid : TEXCOORD2;
+    nointerpolation uint frame : TEXCOORD3;
 };
 [shader("vertex")]
 Varying vertexMain(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
@@ -46,6 +49,7 @@ Varying vertexMain(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
         o.uv = uv;
         o.color = 1;
         o.distance = 0;
+        o.grid = o.frame = 0;
         return o;
     }
     const float2 corners[6] = {float2(-1,-1),float2(1,-1),float2(1,1),
@@ -57,7 +61,9 @@ Varying vertexMain(uint vertex : SV_VertexID, uint instance : SV_InstanceID)
     o.position = mul(view.viewProj, float4(position, 1));
     o.uv = corner;
     o.color = p.color;
-    o.color.a *= saturate(1 - p.positionAge.w / p.velocityLifetime.w);
+    if ((p.identity.w & 1) == 0) o.color.a *= saturate(1 - p.positionAge.w / p.velocityLifetime.w);
+    o.grid = asuint(p.sizeRotation.w);
+    o.frame = uint(p.sizeRotation.z);
     o.distance = length(position);
     return o;
 }
@@ -68,8 +74,16 @@ float4 fragmentMain(Varying i) : SV_Target
     float2 uv = (i.position.xy - float2(view.right.w, view.up.w)) * view.sampling.xy;
     float d = depth.Sample(uv).r;
     if (view.sampling.z != 0 ? (d > 0 && i.distance > d) : i.position.z < d) discard;
-    float alpha = i.color.a * (1 - smoothstep(0.65, 1.0, length(i.uv)));
-    return float4(i.color.rgb * alpha, alpha);
+    float4 texel = 1;
+    if (i.grid != 0)
+    {
+        uint columns = i.grid & 65535;
+        uint rows = i.grid >> 16;
+        float2 uv = (i.uv * 0.5 + 0.5 + float2(i.frame % columns, i.frame / columns)) / float2(columns, rows);
+        texel = sprite.Sample(uv);
+    }
+    float alpha = i.color.a * texel.a * (1 - smoothstep(0.65, 1.0, length(i.uv)));
+    return float4(i.color.rgb * texel.rgb * alpha, alpha);
 }
 
 

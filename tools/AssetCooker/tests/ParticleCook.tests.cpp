@@ -251,3 +251,57 @@ TEST_CASE("Invalid particle module stacks retain the previous manifest", "[parti
     CHECK(fixture.Cook() != 0);
     CHECK(mir::ReadBytes(fixture.out / mir::kAssetManifestFileName) == previous);
 }
+
+TEST_CASE("Particle cooker compiles moving exhaust modules and shares scripts across motion inputs", "[particles][cooker]")
+{
+    CookFixture fixture;
+    const auto emitter = nlohmann::json::parse(R"({"version":1,"target":"gpu","lifetime":3,"spawnRate":90,"capacity":512,
+        "texture":"checker.png","localOffset":[-1,0,0],"spawnPerMeter":12,"burst":8,"seed":99,
+        "inheritVelocity":0.8,"teleportDistance":150,
+        "spawnModules":[{"name":"Initialize"},{"name":"VelocityVariation","parameters":[0.2,0.3,0.4]}],
+        "updateModules":[{"name":"Age"},{"name":"Drag","parameters":[0.4]},{"name":"Integrate"},
+            {"name":"SizeOverLife","parameters":[2]},{"name":"FadeOverLife","parameters":[0]},
+            {"name":"Flipbook","parameters":[2,2,12]}]})");
+    std::ofstream(fixture.source / "exhaust.emitter.json") << emitter.dump();
+    auto second = emitter;
+    second["localOffset"] = {1, 0, 0};
+    second["spawnPerMeter"] = 20;
+    second["burst"] = 4;
+    second["seed"] = 1234;
+    second["inheritVelocity"] = 0.5;
+    second["teleportDistance"] = 80;
+    std::ofstream(fixture.source / "second.emitter.json") << second.dump();
+    std::ofstream(fixture.source / "exhaust.particle.json") <<
+        R"({"version":2,"emitters":["exhaust.emitter.json","second.emitter.json"],"parameters":{"wind":[8,0,-2]}})";
+    REQUIRE(fixture.Cook() == 0);
+    const auto manifest = mir::AssetManifest::LoadFile(fixture.out / mir::kAssetManifestFileName);
+    REQUIRE(manifest);
+    CHECK(manifest->Count() == 6);
+    mir::AssetCache cache(&*manifest, fixture.out);
+    const auto system = mir::LoadParticleEffect(cache, mir::MakeAssetId("assets/exhaust.particle.json"));
+    REQUIRE(system.mEffect);
+    REQUIRE(system.mEffect->emitterDefinitions.size() == 2);
+    CHECK(system.mEffect->parameters.wind == glm::vec3(8, 0, -2));
+    const auto &firstLoaded = system.mEffect->emitterDefinitions[0];
+    const auto &secondLoaded = system.mEffect->emitterDefinitions[1];
+    CHECK(firstLoaded.script == secondLoaded.script);
+    CHECK(firstLoaded.scriptCode == secondLoaded.scriptCode);
+    CHECK(firstLoaded.localOffset == glm::vec3(-1, 0, 0));
+    CHECK(secondLoaded.localOffset == glm::vec3(1, 0, 0));
+    CHECK(firstLoaded.spawnPerMeter == 12);
+    CHECK(firstLoaded.burst == 8);
+    CHECK(firstLoaded.seed == 99);
+    CHECK(firstLoaded.inheritVelocity == 0.8f);
+    CHECK(firstLoaded.teleportDistance == 150);
+    CHECK(firstLoaded.textureWidth > 0);
+    CHECK(firstLoaded.textureHeight > 0);
+    CHECK(firstLoaded.texturePixels.size() == size_t(firstLoaded.textureWidth) * firstLoaded.textureHeight * 4);
+    const auto *script = manifest->Find(firstLoaded.script);
+    const auto *layout = manifest->Find(firstLoaded.scriptLayout);
+    REQUIRE(script);
+    REQUIRE(layout);
+    CHECK(script->typeTag == mir::kParticleScriptTypeTag);
+    CHECK(script->contentVersion == mir::kParticleScriptContentVersion);
+    CHECK(layout->typeTag == mir::kParticleScriptLayoutTypeTag);
+    CHECK(layout->contentVersion == mir::kParticleScriptLayoutContentVersion);
+}

@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "emitters": [
+    "particles/left.emitter.json",
+    "particles/right.emitter.json"
+  ],
+  "parameters": {
+    "spawnRateScale": 1,
+    "sizeScale": 1,
+    "wind": [
+      2,
+      0,
+      -1
+    ]
+  }
+}

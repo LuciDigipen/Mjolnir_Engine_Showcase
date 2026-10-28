@@ -179,7 +179,8 @@ TEST_CASE("Particle save load and repeated play scene transitions never serializ
 
     const auto *ops = mir::ComponentRegistry::Instance().Find("ParticleSystem");
     REQUIRE(ops);
-    CHECK(ops->mFields.size() == 5);
+    CHECK(ops->mFields.size() == 6);
+    CHECK(ops->FindField("wind") != nullptr);
     CHECK(ops->FindField("spawnRateScale") != nullptr);
     CHECK(ops->FindField("sizeScale") != nullptr);
     CHECK(ops->FindField("effectName") == nullptr);

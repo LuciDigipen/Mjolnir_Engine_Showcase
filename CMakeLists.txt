@@ -365,6 +365,13 @@ if(BUILD_TESTING)
             TIMEOUT 120)
     endif()
 
+    if(EXISTS "${CMAKE_SOURCE_DIR}/games/ParticleFlight/game.json")
+        add_test(NAME smoke.ParticleFlight.game-mode
+            COMMAND MjolnirEngine --non-interactive --game games/ParticleFlight --no-editor --frames 240)
+        set_tests_properties(smoke.ParticleFlight.game-mode PROPERTIES
+            LABELS smoke RUN_SERIAL TRUE TIMEOUT 120)
+    endif()
+
     if(EXISTS "${CMAKE_SOURCE_DIR}/games/ParticleCheck/game.json")
         add_test(NAME smoke.ParticleCheck.game-mode
             COMMAND MjolnirEngine --non-interactive --game games/ParticleCheck --no-editor --frames 180)
