@@ -1,11 +1,11 @@
 # script bridges
 
-Five small libraries, one per engine library with a Lua surface: `audio_script`,
+Six small libraries, one per engine library with a Lua surface: `audio_script`,
 `input_script`, `physics_script`, `renderer_script` (post-processing) and
-`terrain_script`. Each adds its library's Lua bindings to the script host, so
+`terrain_script` and `particles_script`. Each adds its library's Lua bindings to the script host, so
 neither side links the other.
 
-`mir::audio_script`, `mir::input_script`, `mir::physics_script`, `mir::renderer_script`, `mir::terrain_script` · each depends `mir::script`, `script_bindings` (public) and its own library (private) · API `modules/<name>_script/include/<name>_script/` · maintainer Sumin Park · reviewed 2026-10-24
+`mir::audio_script`, `mir::input_script`, `mir::physics_script`, `mir::renderer_script`, `mir::terrain_script`, `mir::particles_script` · each depends `mir::script`, `script_bindings` (public) and its own library (private) · API `modules/<name>_script/include/<name>_script/` · maintainer Sumin Park · reviewed 2026-10-27
 
 ## Model
 
@@ -28,6 +28,7 @@ other library, `script`'s other public headers included.
 | `PhysicsScriptModule`, `RegisterPhysicsBindings` | `physics_script/` | Rigid bodies, every `RigidBody` field, `teleport`, sleep control, raycasts and collision events |
 | `RendererScriptModule`, `RegisterPostProcessingBindings` | `renderer_script/` | `world:set_fog/get_fog` and the other post-processing pairs |
 | `TerrainScriptModule`, `RegisterTerrainBindings` | `terrain_script/` | `world:terrain_height_at` |
+| `ParticlesScriptModule`, `RegisterParticleBindings` | `particles_script/` | `world:particle_start/particle_stop/particle_pause/particle_reset/particle_destroy/particle_state`, see [particles.md](particles.md) |
 
 ## Rules
 
@@ -44,11 +45,14 @@ later.
 
 ## State
 
-*As of 2026-10-24.* All five work, moved from `script/src/script/bindings/`
+*As of 2026-10-27.* The original five work, moved from `script/src/script/bindings/`
 unchanged. Their tests moved with them: `AudioBindings`, `InputBindings`,
 `PhysicsBindings`, `CollisionBindings`, `TerrainContactScript`,
 `PostProcessingBindings` and `TerrainBindings`, each test adding its bridge's
 bindings to a `ScriptHost` the way the bridge does.
+
+`particles_script` adds CPU emitter controls, verified by `ParticleBindings`
+against the headless playback resource. It does not create a renderer dependency.
 
 ## Backlog
 

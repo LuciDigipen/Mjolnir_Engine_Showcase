@@ -169,6 +169,11 @@ composition behavior, not production particle throughput or ray-visible particle
 
 ## Release cleanup gate
 
+The production CPU effect definitions and lifecycle now live in the
+[particles module](modules/particles.md). They do not call the temporary probe.
+GPU simulation and production drawing remain separate follow-up work, so this
+fixture is retained as a composition reference for those changes.
+
 Once production particle rendering replaces this experiment, remove the temporary
 probe API, pass, shader, probe-only data helpers and build registrations from the
 engine. Disabling the probe at runtime does not satisfy release acceptance.

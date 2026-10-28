@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "lifetime": 2.0,
+  "spawnRate": 60.0,
+  "capacity": 256,
+  "texture": "checker.png"
+}

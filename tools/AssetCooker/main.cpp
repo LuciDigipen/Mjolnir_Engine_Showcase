@@ -26,6 +26,7 @@
 #include <nlohmann/json.hpp>
 #include <prefab/PrefabAsset.h>
 #include <prefab/PrefabRegistry.h>
+#include <particles/ParticleEffect.h>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -773,6 +774,23 @@ namespace
                     if (ext == ".prefab")
                     {
                         cookPrefab(logical, path);
+                        continue;
+                    }
+                    if (filename.ends_with(".particle.json"))
+                    {
+                        const auto effectBytes = mir::ReadBytes(path);
+                        if (!effectBytes)
+                            throw std::runtime_error("cannot read " + path.string());
+                        const auto effect = mir::ReadParticleEffectSource(
+                            {reinterpret_cast<const char *>(effectBytes->data()), effectBytes->size()}, root.logical);
+                        if (!effect.mEffect)
+                            throw std::runtime_error(logical + ": " + effect.mError);
+                        const auto texturePath = root.physical / effect.mTexturePath;
+                        const auto textureBytes = mir::ReadBytes(texturePath);
+                        if (!textureBytes || !mir::cook::IsImagePath(texturePath))
+                            throw std::runtime_error("missing or unsupported particle texture: " + texturePath.string());
+                        emit(effect.mEffect->texture, mir::BuildTypedAsset(mir::cook::DecodeImage(*textureBytes)));
+                        emit(mir::MakeAssetId(logical), mir::BuildParticleEffectAsset(*effect.mEffect));
                         continue;
                     }
                     auto bytes = mir::ReadBytes(path);

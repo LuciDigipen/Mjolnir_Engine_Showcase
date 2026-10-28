@@ -27,6 +27,8 @@
 #include <input_script/InputScriptModule.h>
 #include <physics/PhysicsModule.h>
 #include <physics_script/PhysicsScriptModule.h>
+#include <particles/ParticlesModule.h>
+#include <particles_script/ParticlesScriptModule.h>
 #include <renderer/RendererModule.h>
 #include <renderer_script/RendererScriptModule.h>
 #include <prefab/PrefabModule.h>
@@ -229,6 +231,7 @@ namespace mir
 
         CoreModule mCore;
         AssetsModule mAssets;
+        ParticlesModule mParticles;
         SceneModule mScene;
         PrefabModule mPrefab;
         // before ImGuiModule: ImGui's shutdown frees the GPU side of the UI's textures,
@@ -253,6 +256,7 @@ namespace mir
         PhysicsModule mPhysics;
         TerrainModule mTerrainData;
         ScriptModule mScript;
+        ParticlesScriptModule mParticlesScript;
         AudioScriptModule mAudioScript;
         InputScriptModule mInputScript;
         PhysicsScriptModule mPhysicsScript;

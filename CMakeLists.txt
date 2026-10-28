@@ -67,6 +67,8 @@ add_subdirectory(modules/gameui_imgui)
 add_subdirectory(modules/imguiruntime)
 add_subdirectory(modules/input)
 add_subdirectory(modules/input_script)
+add_subdirectory(modules/particles)
+add_subdirectory(modules/particles_script)
 add_subdirectory(modules/physics)
 add_subdirectory(modules/physics_layers)
 add_subdirectory(modules/physics_script)
@@ -310,6 +312,8 @@ target_link_libraries(MjolnirEngine PRIVATE
     mir::core
     mir::gameshell
     mir::input
+    mir::particles
+    mir::particles_script
     mir::physics
     mir::prefab
     mir::project

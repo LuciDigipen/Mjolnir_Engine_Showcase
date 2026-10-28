@@ -29,7 +29,8 @@ namespace
     {
     public:
         ProbeCut(mir::Entity camera, mir::VulkanRenderer &renderer, bool cut)
-            : mCamera(camera), mRenderer(renderer), mCut(cut) {}
+            : mCamera(camera), mRenderer(renderer), mCut(cut)
+        {}
         void OnUpdate(mir::SystemContext &context) override
         {
             if (mCut && context.frame == 45)
@@ -65,7 +66,7 @@ int main(int argc, char **argv)
         const std::string_view scenario = argc == 4 ? argv[3] : "still";
         if ((mode != "raster" && mode != "rt" && mode != "dlss") ||
             (scenario != "still" && scenario != "cut" && scenario != "offset" &&
-             scenario != "effects" && scenario != "off"))
+                scenario != "effects" && scenario != "off"))
         {
             MIR_LOG_ERROR("Invalid particle composition fixture mode/scenario");
             return 10;
@@ -92,9 +93,9 @@ int main(int argc, char **argv)
 
             const auto camera = world.CreateEntity();
             mir::AddTransform(world, camera, mir::Transform(origin + mir::WorldVec3(0, 0, 8)));
-            world.AddComponent<mir::Camera>(camera, mir::Camera{60.0f, 0.1f, 100.0f});
+            world.AddComponent<mir::Camera>(camera, mir::Camera{ 60.0f, 0.1f, 100.0f });
             app.Systems().AddSystem<ProbeCut>(mir::SystemPhase::PostUpdate,
-                mir::SystemOrder{mir::SystemOrder::kLate}, camera, renderer, scenario == "cut");
+                mir::SystemOrder{ mir::SystemOrder::kLate }, camera, renderer, scenario == "cut");
 
             // Front cube must hide both shapes, rear cube must show through them.
             for (int i = 0; i < 2; ++i)
@@ -119,12 +120,12 @@ int main(int argc, char **argv)
             world.Resource<mir::RenderSettings>().rayTracing = mode != "raster";
             auto &effects = world.Resource<mir::PostProcessingSettings>().effects;
             effects.clear();
-            effects["Anti-Aliasing"] = {true, {{"mode", mode == "dlss" ? "dlss" : "off"}}};
+            effects["Anti-Aliasing"] = { true,{ { "mode", mode == "dlss" ? "dlss" : "off" } } };
             if (scenario == "effects")
             {
-                effects["DepthOfField"] = {true, {{"focusDistance", 8.0f}}};
-                effects["MotionBlur"] = {true, nlohmann::json::object()};
-                effects["Bloom"] = {true, nlohmann::json::object()};
+                effects["DepthOfField"] = { true,{ { "focusDistance", 8.0f } } };
+                effects["MotionBlur"] = { true, nlohmann::json::object() };
+                effects["Bloom"] = { true, nlohmann::json::object() };
             }
             MIR_LOG_INFO("Particle probe: mode={}, scenario={}, 960x540, 90 frames, validation on", mode, scenario);
             if (unavailable)
