@@ -30,7 +30,11 @@ target_link_libraries(engine_renderer
 # due to platform definition issues
 get_target_property(_volk_includes volk::volk_headers INTERFACE_INCLUDE_DIRECTORIES)
 find_file(VOLK_SOURCE volk.c PATHS ${_volk_includes} NO_DEFAULT_PATH REQUIRED)
-target_sources(engine_renderer PRIVATE ${VOLK_SOURCE})
+target_sources(engine_renderer PRIVATE
+    ${VOLK_SOURCE}
+    src/renderer/ParticleCompositionProbe.cpp
+    src/renderer/vulkan/ParticleProbePass.cpp
+)
 
 # for volk macro definition
 engine_target_vulkan_platform_defines(engine_renderer)

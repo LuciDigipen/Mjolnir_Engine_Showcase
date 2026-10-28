@@ -78,8 +78,15 @@ visible.
 
 ## Comments
 
-Plain `//` for everything, whether it documents a declaration or notes something
-inline.
+Keep the block file header shown above on newly created C/C++ and shader files,
+with `@file`, `@author`, `@brief` and the copyright line. Use the
+language's comment syntax for other source files. Keep existing author credits
+when editing an existing file.
+
+Use plain `//` for declaration and inline comments outside the file header.
+Prefer commas to semicolons in comment prose. Never use an em dash in comments.
+Use a comma, parentheses or a separate sentence instead. Preserve semicolons that
+belong to code syntax or literal code examples.
 
 ## ECS
 
@@ -141,7 +148,7 @@ exits with 15 when teardown logged an error.
 
 A `SetupError` carries what failed, the path, the cause and the fix. The fix
 names a concrete action, such as the file to restore or the command to run. The
-reader is a person or an agent without the engine's source, so the fix must be
+reader is a developer without the engine's source, so the fix must be
 enough on its own. Native codes (`AKRESULT`, `VkResult`, a Win32 or GLFW error,
 a JSON parse position) go into the cause.
 
@@ -164,7 +171,7 @@ Nothing outside `tools/` uses `iostream`.
 
 A fatal error ends the process with the exit code of its category. The category
 says what the reader does next. These numbers are a public contract that scripts
-and agents branch on, so a number is never reused.
+and tools branch on, so a number is never reused.
 
 | Exit | Category | What to do |
 |---|---|---|

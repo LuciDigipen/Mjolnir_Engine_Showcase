@@ -154,6 +154,14 @@ engine_add_shaders(MjolnirEngine
     ENTRIES vertexMain:vertex compositeMain:fragment)
 
 engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/particleProbe.slang
+    ENTRIES vertexMain:vertex fragmentMain:fragment)
+
+if(BUILD_TESTING)
+    add_subdirectory(tools/ParticleCompositionCheck)
+endif()
+
+engine_add_shaders(MjolnirEngine
     SOURCE assets/shaders/shadowDepth.slang
     ENTRIES vertexMain:vertex)
 

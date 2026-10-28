@@ -41,6 +41,7 @@ namespace mir::vk
 
     void PostProcessingStack::Shutdown()
     {
+        mParticleProbe.Shutdown();
         mMotionBlur.Shutdown();
         mVelocityPass.Shutdown();
         mDepthOfField.Shutdown();
@@ -55,7 +56,7 @@ namespace mir::vk
 
     bool PostProcessingStack::Resize(VkExtent2D extent)
     {
-        if (!mFxaa.Resize(extent) ||
+        if (!mParticleProbe.Resize(extent) || !mFxaa.Resize(extent) ||
             !mBloom.Resize(extent) ||
             !mDepthOfField.Resize(extent) ||
             !mVelocityPass.Resize(extent) ||
@@ -190,6 +191,9 @@ namespace mir::vk
             colorSource = mMotionBlur.OutputView(frame);
         }
 
+        colorSource = mParticleProbe.Record(*mDevice, cmd, frame, colorSource, inputs.depthView,
+            inputs.views, false, inputs.extent);
+
         if (mBloomEnabled)
         {
             mDevice->BeginLabel(cmd, "Bloom Pass", { 1.0f, 0.5f, 0.0f, 1.0f });
@@ -213,8 +217,9 @@ namespace mir::vk
     }
 
     VkImageView PostProcessingStack::RecordRayTraced(VkCommandBuffer cmd, uint32_t frame, const RayTracer &rayTracer,
-        VkRect2D rect, glm::vec2 jitterPixels, float nearZ, float farZ, VkExtent2D extent)
+        const RenderView &view, glm::vec2 jitterPixels, VkExtent2D extent)
     {
+        const VkRect2D rect = ResolveViewRect(view.rect, extent);
         VkImageView colorSource = rayTracer.View(RtImage::Output, frame);
 
     #if MIR_WITH_DLSS
@@ -259,7 +264,7 @@ namespace mir::vk
         {
             mDevice->BeginLabel(cmd, "Depth Of Field Pass", { 0.5f, 0.0f, 1.0f, 1.0f });
             mDepthOfField.Record(cmd, frame, colorSource, rayTracer.View(RtImage::Distance, frame),
-                /*isLinearDepth*/ true, nearZ, farZ, extent);
+                /*isLinearDepth*/ true, view.nearZ, view.farZ, extent);
             mDevice->EndLabel(cmd);
             colorSource = mDepthOfField.OutputView(frame);
         }
@@ -271,6 +276,9 @@ namespace mir::vk
             mDevice->EndLabel(cmd);
             colorSource = mMotionBlur.OutputView(frame);
         }
+
+        colorSource = mParticleProbe.Record(*mDevice, cmd, frame, colorSource,
+            rayTracer.View(RtImage::Distance, frame), std::span(&view, 1), true, extent, jitterPixels);
 
         if (mBloomEnabled)
         {

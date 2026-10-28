@@ -194,6 +194,9 @@ namespace mir
         // the next frame starts temporal accumulation fresh (DLSS ray reconstruction's history)
         void ResetHistory();
 
+        // Opt-in composition experiment: static world-space quad/trail, no simulator.
+        void SetParticleCompositionProbe(std::optional<WorldPosition> anchor);
+
         // Releases a selected model generation after a replacement has been
         // prepared. Handles not present in these spans remain valid.
         void ReleaseModelResources(std::span<const MeshHandle> meshes,

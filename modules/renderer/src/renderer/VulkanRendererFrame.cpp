@@ -283,8 +283,7 @@ namespace mir
         const bool hasRect = rect.extent.width > 0 && rect.extent.height > 0;
 
         const VkImageView colorSource = hasRect
-            ? mPostProcessing->RecordRayTraced(cmd, frame, *mRayTracer, rect, jitterPixels, view.nearZ, view.farZ,
-                mSwapchain->Extent())
+            ? mPostProcessing->RecordRayTraced(cmd, frame, *mRayTracer, view, jitterPixels, mSwapchain->Extent())
             : mRayTracer->View(vk::RtImage::Output, frame);
 
         vk::ImageBarrier(cmd, mSwapchain->Image(imageIndex), VK_IMAGE_ASPECT_COLOR_BIT,

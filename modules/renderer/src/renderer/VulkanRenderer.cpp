@@ -49,6 +49,11 @@ namespace mir
 
     bool VulkanRenderer::DlssAvailable() const { return mPostProcessing->DlssAvailable(); }
 
+    void VulkanRenderer::SetParticleCompositionProbe(std::optional<WorldPosition> anchor)
+    {
+        mPostProcessing->SetParticleCompositionProbe(anchor);
+    }
+
     VulkanRenderer::GpuMemoryUsage VulkanRenderer::GetGpuMemoryUsage() const
     {
         const vk::Device::MemoryBudget budget = mDevice->GpuMemoryBudget();
@@ -285,6 +290,7 @@ namespace mir
 
     void VulkanRenderer::ReleaseSceneResources()
     {
+        mPostProcessing->SetParticleCompositionProbe(std::nullopt);
         if (mDevice->Handle() == VK_NULL_HANDLE)
             return;
 

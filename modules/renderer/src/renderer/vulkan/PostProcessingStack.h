@@ -15,6 +15,7 @@
 #include "DepthOfField.h"
 #include "Fxaa.h"
 #include "MotionBlur.h"
+#include "ParticleProbePass.h"
 #include "PostProcess.h"
 #include "VelocityPass.h"
 
@@ -58,6 +59,9 @@ namespace mir::vk
         bool DlssAvailable() const;
         void ResetHistory();
 
+        // T0 experiment only, nullopt disables it without reallocating in-flight images.
+        void SetParticleCompositionProbe(std::optional<WorldPosition> anchor) { mParticleProbe.SetAnchor(anchor); }
+
         struct RasterInputs
         {
             VkImageView sceneColor;
@@ -89,7 +93,7 @@ namespace mir::vk
         // Runs Ray Reconstruction, depth of field, motion blur and bloom over RayTracer's outputs
         // inside rect, and returns the color the composite reads.
         VkImageView RecordRayTraced(VkCommandBuffer cmd, uint32_t frame, const RayTracer &rayTracer,
-            VkRect2D rect, glm::vec2 jitterPixels, float nearZ, float farZ, VkExtent2D extent);
+            const RenderView &view, glm::vec2 jitterPixels, VkExtent2D extent);
 
         // Raster, outside any render pass: with FXAA active, tonemaps color into FXAA's
         // intermediate. Returns whether FXAA is active - pass it on to RecordComposite.
@@ -109,6 +113,7 @@ namespace mir::vk
         DepthOfField mDepthOfField;
         VelocityPass mVelocityPass;
         MotionBlur mMotionBlur;
+        ParticleProbePass mParticleProbe;
     #if MIR_WITH_DLSS
         DlssRayReconstruction mDlss;
         bool mDlssReady = false;
