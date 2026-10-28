@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "emitters": [
+    "particles/arc.emitter.json"
+  ],
+  "parameters": {
+    "spawnRateScale": 1,
+    "sizeScale": 1
+  }
+}

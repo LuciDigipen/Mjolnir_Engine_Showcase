@@ -9,6 +9,9 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#include <assets/AssetCache.h>
+#include <assets/AssetManifest.h>
+#include <core/fs/Paths.h>
 #include <core/log/Log.h>
 #include <core/platform/CrashHandler.h>
 #include <renderer/CameraMath.h>
@@ -68,7 +71,18 @@ int main(int argc, char **argv)
         mir::RenderView view;
         view.cameraPosition = *mir::WorldPosition::FromMeters(mir::WorldVec3(0, 0, 8));
         view.viewProj = mir::MakeViewProjection(glm::mat4(1), mir::Camera{60, 0.1f, 100}, 640.0f / 360);
+        auto manifest = mir::AssetManifest::LoadFile(mir::ExecutableDir() / "particle_gpu_cooked" / mir::kAssetManifestFileName);
+        Require(manifest.has_value(), "Missing cooked manifest");
+        mir::AssetCache cache(&*manifest, mir::ExecutableDir() / "particle_gpu_cooked");
+        auto cookedEmitter = mir::LoadParticleEmitterAsset(cache,
+            mir::MakeAssetId("assets/exhaust.emitter.json"));
+        Require(cookedEmitter.mEmitter.has_value(), "Missing cooked exhaust script");
         mir::ParticleSubmission input;
+        input.scriptKey = cookedEmitter.mEmitter->script.value;
+        input.scriptCode = cookedEmitter.mEmitter->scriptCode;
+        auto accelerated = mir::LoadParticleEmitterAsset(cache, mir::MakeAssetId("assets/accelerated.emitter.json"));
+        Require(accelerated.mEmitter.has_value(), "Missing alternate cooked script");
+        Require(accelerated.mEmitter->script != cookedEmitter.mEmitter->script, "Changed stack reused old script identity");
         input.generation = 1;
         input.capacity = 64;
         input.seconds = 1.0f / 60;
@@ -144,6 +158,17 @@ int main(int argc, char **argv)
         check(29, 31, "Repeated recycling remains bounded");
         Require(renderer.MeshStreaming().deviceWaits == waits && renderer.MeshStreaming().queueWaits == queueWaits,
             "Steady-state simulation waited idle");
+        // Replace scripts repeatedly while previous frame slots remain in flight.
+        for (int i = 0; i < 12; ++i)
+        {
+            const auto &definition = i % 2 ? *cookedEmitter.mEmitter : *accelerated.mEmitter;
+            input.scriptKey = definition.script.value;
+            input.scriptCode = definition.scriptCode;
+            submit(input);
+        }
+        check(29, 31, "Changed cooked stacks replace pipelines without changing lifetime counts");
+        input.scriptKey = cookedEmitter.mEmitter->script.value;
+        input.scriptCode = cookedEmitter.mEmitter->scriptCode;
         // Pause advances neither age nor emission.
         input.seconds = 0;
         input.spawns = 0;
@@ -210,7 +235,7 @@ int main(int argc, char **argv)
         // A system owns two emitter instances, the scene proxy publishes distinct GPU identities.
         mir::ParticleEffect system;
         system.emitters = {mir::AssetId{101}, mir::AssetId{102}};
-        mir::ParticleEmitterAsset firstEmitter;
+        mir::ParticleEmitterAsset firstEmitter = *cookedEmitter.mEmitter;
         firstEmitter.texture = mir::AssetId{201};
         firstEmitter.capacity = 64;
         firstEmitter.lifetime = 1;

@@ -1,3 +1,11 @@
+/**
+ * @file particlePool.slang
+ * @author sumin.park
+ * @brief Sprite drawing for cooked GPU emitter datasets.
+ *
+ * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
+ *
+ */
 
 struct Particle
 {
@@ -7,69 +15,9 @@ struct Particle
     float4 color;
     uint4 identity;
 };
-struct Parameters
-{
-    uint4 range;
-    float4 time;
-    float4 velocity;
-    float4 color;
-    float4 emission;
-};
-struct Counts
-{
-    uint vertices, alive, firstVertex, firstInstance;
-    uint spawned, dropped, generation, reserved;
-};
 [[vk::binding(0)]] Sampler2D<float4> scene;
 [[vk::binding(1)]] Sampler2D<float4> depth;
-[[vk::binding(2)]] RWStructuredBuffer<Particle> particles;
-[[vk::binding(3)]] RWStructuredBuffer<Counts> counts;
-[[vk::binding(4)]] StructuredBuffer<Parameters> inputs;
 [[vk::binding(5)]] StructuredBuffer<Particle> particleRead;
-
-// One invocation owns one disjoint range. Compaction preserves spawn order,
-// free slots are the suffix, no atomics or unbounded allocation are needed.
-[shader("compute")]
-[numthreads(64, 1, 1)]
-void computeMain(uint3 id : SV_DispatchThreadID)
-{
-    uint instance = id.x;
-    if (instance >= 64) return;
-    Parameters p = inputs[instance];
-    Counts old = counts[instance];
-    uint alive = 0;
-    uint previous = old.generation == p.range.z && p.time.w == 0 ? min(old.alive, p.range.y) : 0;
-    for (uint i = 0; i < previous; ++i)
-    {
-        Particle a = particles[p.range.x + i];
-        a.positionAge.w += p.time.x;
-        a.positionAge.xyz += a.velocityLifetime.xyz * p.time.x;
-        if (a.positionAge.w < a.velocityLifetime.w && all(abs(a.positionAge.xyz) <= 1024.0))
-            particles[p.range.x + alive++] = a;
-    }
-    uint spawned = min(p.range.w, p.range.y - alive);
-    uint spawnBase = old.generation == p.range.z && p.time.w == 0 ? old.reserved : 0;
-    for (uint i = 0; i < spawned; ++i)
-    {
-        Particle a;
-        a.positionAge = float4(p.emission.xyz, 0);
-        a.velocityLifetime = float4(p.velocity.xyz, p.time.y);
-        a.sizeRotation = float4(p.time.z, p.time.z, 0, 0);
-        a.color = p.color;
-        a.identity = uint4(instance, p.range.z, spawnBase + i, 0);
-        particles[p.range.x + alive + i] = a;
-    }
-    Counts c;
-    c.vertices = 6;
-    c.alive = alive + spawned;
-    c.firstVertex = 0;
-    c.firstInstance = 0;
-    c.spawned = spawned;
-    c.dropped = p.range.w - spawned;
-    c.generation = p.range.z;
-    c.reserved = spawnBase + spawned;
-    counts[instance] = c;
-}
 
 struct View
 {

@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "target": "gpu",
+  "lifetime": 3.0,
+  "spawnRate": 18,
+  "capacity": 512,
+  "texture": "textures/sprite.png",
+  "renderer": {
+    "size": 0.06,
+    "color": [
+      0.1,
+      2.5,
+      4,
+      0.65
+    ],
+    "velocity": [
+      1.6,
+      2.8,
+      0
+    ]
+  },
+  "spawnModules": [
+    {
+      "name": "Initialize",
+      "parameters": []
+    }
+  ],
+  "updateModules": [
+    {
+      "name": "Age",
+      "parameters": []
+    },
+    {
+      "name": "Acceleration",
+      "parameters": [
+        -1.2,
+        -1.6,
+        0
+      ]
+    },
+    {
+      "name": "Integrate",
+      "parameters": []
+    }
+  ]
+}

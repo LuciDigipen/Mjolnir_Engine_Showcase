@@ -20,6 +20,7 @@
 #include <cctype>
 #include <chrono>
 #include <core/log/Log.h>
+#include <core/platform/Process.h>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -101,6 +102,40 @@ namespace
     void PublishText(const std::filesystem::path &path, const std::string &value)
     {
         Publish(path, std::as_bytes(std::span(value)));
+    }
+    std::vector<std::byte> CompileParticleScript(const std::string &source, const std::filesystem::path &out)
+    {
+        // The output lock serializes compiler scratch files with manifest publication.
+        const auto path = std::filesystem::absolute(out / ("particle-" + Hex(mir::Fnv1a64(source)) + ".slang"));
+        const auto spirv = std::filesystem::path(path.string() + ".spv");
+        struct Scratch
+        {
+            std::filesystem::path source, spirv;
+            ~Scratch()
+            {
+                std::error_code error;
+                std::filesystem::remove(source, error);
+                std::filesystem::remove(spirv, error);
+            }
+        } scratch{path, spirv};
+        PublishText(path, source);
+        // Remove an interrupted cook's output so a failed compile cannot reuse it.
+        std::filesystem::remove(spirv);
+        const std::vector<std::string> args{path.string(), "-target", "spirv", "-profile", "spirv_1_5",
+            "-entry", "computeMain", "-stage", "compute", "-fvk-use-entrypoint-name",
+            "-matrix-layout-column-major", "-O0", "-o", spirv.string()};
+        mir::ChildProcess compiler;
+        if (!compiler.Start(PARTICLE_SLANGC_EXECUTABLE, args))
+            throw std::runtime_error("cannot start particle shader compiler: " + std::string(PARTICLE_SLANGC_EXECUTABLE));
+        const auto exit = compiler.Wait();
+        if (!exit || *exit != 0)
+            throw std::runtime_error("particle shader compilation failed, slangc exit " + std::to_string(exit.value_or(-1)));
+        const auto bytes = mir::ReadBytes(spirv);
+        if (!bytes || bytes->size() < 20 || bytes->size() % 4 != 0 ||
+            std::to_integer<uint8_t>((*bytes)[0]) != 0x03 || std::to_integer<uint8_t>((*bytes)[1]) != 0x02 ||
+            std::to_integer<uint8_t>((*bytes)[2]) != 0x23 || std::to_integer<uint8_t>((*bytes)[3]) != 0x07)
+            throw std::runtime_error("particle compiler emitted missing or invalid SPIR-V");
+        return *bytes;
     }
     bool ProcessExists(uint64_t pid)
     {
@@ -622,11 +657,12 @@ namespace
             emit(id, mir::BuildPrefabAsset(*parsed.mDocument));
         };
 
+        std::unordered_map<uint64_t, std::string> particleScripts;
         auto cookParticleEmitter = [&](const SourceRoot &root, const std::filesystem::path &path)
         {
             const auto bytes = mir::ReadBytes(path);
             if (!bytes) throw std::runtime_error("missing particle emitter: " + path.string());
-            const auto emitter = mir::ReadParticleEmitterSource(
+            auto emitter = mir::ReadParticleEmitterSource(
                 {reinterpret_cast<const char *>(bytes->data()), bytes->size()}, root.logical);
             if (!emitter.mEmitter)
                 throw std::runtime_error(LogicalPath(root, path) + ": " + emitter.mError);
@@ -634,6 +670,26 @@ namespace
             const auto textureBytes = mir::ReadBytes(texturePath);
             if (!textureBytes || !mir::cook::IsImagePath(texturePath))
                 throw std::runtime_error("missing or unsupported particle texture: " + texturePath.string());
+            if (emitter.mEmitter->simulationTarget == mir::ParticleSimulationTarget::GPU)
+            {
+                const auto source = mir::GenerateParticleScript(*emitter.mEmitter);
+                const auto layout = mir::ParticleScriptLayout();
+                const auto scriptId = mir::MakeAssetId("particles/generated/" + Hex(mir::Fnv1a64(source)) + ".spv");
+                const auto layoutId = mir::MakeAssetId("particles/generated/" + Hex(mir::Fnv1a64(layout)) + ".layout");
+                const auto found = particleScripts.find(scriptId.value);
+                if (found != particleScripts.end() && found->second != source)
+                    throw std::runtime_error("particle script identity collision");
+                if (found == particleScripts.end())
+                {
+                    const auto code = CompileParticleScript(source, options.out);
+                    emit(scriptId, mir::BuildAssetBlob(mir::kParticleScriptTypeTag, mir::kParticleScriptContentVersion, code));
+                    emit(layoutId, mir::BuildAssetBlob(mir::kParticleScriptLayoutTypeTag,
+                        mir::kParticleScriptLayoutContentVersion, std::as_bytes(std::span(layout))));
+                    particleScripts.emplace(scriptId.value, source);
+                }
+                emitter.mEmitter->script = scriptId;
+                emitter.mEmitter->scriptLayout = layoutId;
+            }
             emit(emitter.mEmitter->texture, mir::BuildTypedAsset(mir::cook::DecodeImage(*textureBytes)));
             emit(mir::MakeAssetId(LogicalPath(root, path)), mir::BuildParticleEmitterAsset(*emitter.mEmitter));
         };
@@ -870,6 +926,31 @@ namespace
         }
         for (const auto &imported : metadata)
             PublishText(imported.metadataPath, imported.metadata);
+        // Generated scripts may be shared across source roots, retire only dependencies
+        // unreferenced by every emitter retained in the replacement manifest.
+        std::unordered_set<uint64_t> particleDependencies;
+        bool canRetireParticleScripts = true;
+        for (const auto &[id, output] : outputs)
+            if (output.tag == mir::kParticleEmitterTypeTag)
+            {
+                const auto bytes = mir::ReadBytes(options.out / output.file);
+                const auto blob = bytes ? mir::ParseAssetBlob(*bytes) : std::nullopt;
+                const auto emitter = blob ? mir::ReadParticleEmitterAsset(*blob) : mir::ParticleEmitterAssetResult{};
+                if (!emitter.mEmitter)
+                {
+                    canRetireParticleScripts = false;
+                    break;
+                }
+                particleDependencies.insert(emitter.mEmitter->script.value);
+                particleDependencies.insert(emitter.mEmitter->scriptLayout.value);
+            }
+        if (canRetireParticleScripts)
+            std::erase_if(outputs, [&](const auto &entry)
+                {
+                    const auto &output = entry.second;
+                    return (output.tag == mir::kParticleScriptTypeTag || output.tag == mir::kParticleScriptLayoutTypeTag) &&
+                        !particleDependencies.contains(output.id.value);
+                });
         std::vector<Output> ordered;
         for (const auto &[id, output] : outputs)
             ordered.push_back(output);

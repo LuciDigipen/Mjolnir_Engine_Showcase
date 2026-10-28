@@ -10,6 +10,11 @@
 
 #include <renderer/FxSystem.h>
 
+#include <cstddef>
+#include <map>
+#include <span>
+#include <vector>
+
 namespace mir::gpu
 {
     class ParticleDataset;
@@ -23,12 +28,19 @@ namespace mir::gpu
         void Shutdown();
     private:
         bool Initialize(const FxDeviceContext &device, ParticleDataset &data);
+        VkPipeline Pipeline(uint64_t key, std::span<const std::byte> code);
+        struct ScriptPipeline
+        {
+            VkPipeline pipeline = VK_NULL_HANDLE;
+            uint64_t lastUse = 0;
+            std::vector<std::byte> code;
+        };
         VkDevice mDevice = VK_NULL_HANDLE;
         VkDescriptorSetLayout mSetLayout = VK_NULL_HANDLE;
         VkDescriptorPool mPool = VK_NULL_HANDLE;
         VkDescriptorSet mSets[kFxFramesInFlight]{};
         VkPipelineLayout mLayout = VK_NULL_HANDLE;
-        VkPipeline mPipeline = VK_NULL_HANDLE;
+        std::map<uint64_t, ScriptPipeline> mPipelines;
         bool mFirst = true;
     };
 }

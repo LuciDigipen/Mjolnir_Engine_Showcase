@@ -6,6 +6,8 @@ add_library(gltf_importer STATIC GltfImporter.cpp ImageImporter.cpp)
 target_include_directories(gltf_importer PRIVATE ${Stb_INCLUDE_DIR})
 target_link_libraries(gltf_importer PUBLIC mir::assets PRIVATE fastgltf::fastgltf nlohmann_json::nlohmann_json)
 target_sources(AssetCooker PRIVATE main.cpp)
+# The compiler is a cooker dependency, game binaries load only cooked SPIR-V.
+target_compile_definitions(AssetCooker PRIVATE PARTICLE_SLANGC_EXECUTABLE="${SLANGC_EXECUTABLE}")
 # terrain: only for IsTerrainFileExcludedFromCook.
 target_link_libraries(AssetCooker PRIVATE gltf_importer mir::assets mir::core mir::terrain mir::prefab mir::particles nlohmann_json::nlohmann_json)
 if(BUILD_TESTING)

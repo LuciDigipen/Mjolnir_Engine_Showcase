@@ -26,7 +26,11 @@ namespace mir
     inline constexpr uint32_t kParticleEffectTypeTag = 0x54524150u;
     inline constexpr uint32_t kParticleEffectContentVersion = 2u;
     inline constexpr uint32_t kParticleEmitterTypeTag = 0x54494D45u;
-    inline constexpr uint32_t kParticleEmitterContentVersion = 1u;
+    inline constexpr uint32_t kParticleEmitterContentVersion = 2u;
+    inline constexpr uint32_t kParticleScriptTypeTag = 0x52435350u;
+    inline constexpr uint32_t kParticleScriptContentVersion = 1u;
+    inline constexpr uint32_t kParticleScriptLayoutTypeTag = 0x594C5350u;
+    inline constexpr uint32_t kParticleScriptLayoutContentVersion = 1u;
     inline constexpr uint32_t kMaxSystemEmitters = 8;
     inline constexpr uint32_t kMaxEffectParticles = 65536;
     inline constexpr float kMaxEffectLifetime = 120.0f;
@@ -39,6 +43,12 @@ namespace mir
         float sizeScale = 1.0f;
     };
 
+    struct ParticleModule
+    {
+        std::string name;
+        std::vector<float> parameters;
+    };
+
     struct ParticleEmitterAsset
     {
         float lifetime = 2.0f;
@@ -49,6 +59,12 @@ namespace mir
         float size = 0.15f;
         glm::vec4 color{1.0f, 0.4f, 0.1f, 0.5f};
         glm::vec3 velocity{0.0f, 1.0f, 0.0f};
+        std::vector<ParticleModule> spawnModules{{"Initialize", {}}};
+        std::vector<ParticleModule> updateModules{{"Age", {}}, {"Integrate", {}}};
+        AssetId script;
+        AssetId scriptLayout;
+        // Loaded cooked dependency, no source shader reaches the runtime.
+        std::vector<std::byte> scriptCode;
     };
 
     struct ParticleEffect
@@ -75,6 +91,8 @@ namespace mir
 
     bool ValidateParticleUserParameters(const ParticleUserParameters &parameters, std::string &error);
     bool ValidateParticleEmitterAsset(const ParticleEmitterAsset &emitter, std::string &error);
+    std::string GenerateParticleScript(const ParticleEmitterAsset &emitter);
+    std::string ParticleScriptLayout();
     // Unresolved definitions may be empty, runtime instances require every dependency.
     bool ValidateParticleEffect(const ParticleEffect &effect, std::string &error);
     ParticleEffectResult ReadParticleEffectSource(std::string_view text, std::string_view assetIdRoot);

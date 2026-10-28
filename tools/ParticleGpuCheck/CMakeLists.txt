@@ -13,3 +13,17 @@ if(RENDERDOC_INCLUDE_DIR)
     target_include_directories(ParticleGpuCheck PRIVATE "${RENDERDOC_INCLUDE_DIR}")
     target_compile_definitions(ParticleGpuCheck PRIVATE MIR_PARTICLE_RENDERDOC=1)
 endif()
+
+# Cook test inputs through the same compiler and asset path used by the game.
+set(particle_fixture_source "${CMAKE_BINARY_DIR}/particle_gpu_source")
+file(MAKE_DIRECTORY "${particle_fixture_source}")
+configure_file(../AssetCooker/tests/fixtures/checker.png "${particle_fixture_source}/checker.png" COPYONLY)
+configure_file(../AssetCooker/tests/particle_fixtures/exhaust.emitter.json "${particle_fixture_source}/exhaust.emitter.json" COPYONLY)
+configure_file(../AssetCooker/tests/particle_fixtures/accelerated.emitter.json "${particle_fixture_source}/accelerated.emitter.json" COPYONLY)
+add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/particle_gpu_cooked.stamp"
+    COMMAND AssetCooker --source-dir "${particle_fixture_source}" --id-root assets --out "${CMAKE_BINARY_DIR}/particle_gpu_cooked"
+    COMMAND "${CMAKE_COMMAND}" -E touch "${CMAKE_BINARY_DIR}/particle_gpu_cooked.stamp"
+    DEPENDS AssetCooker "${particle_fixture_source}/exhaust.emitter.json" "${particle_fixture_source}/accelerated.emitter.json" "${particle_fixture_source}/checker.png"
+    VERBATIM)
+add_custom_target(ParticleGpuCheck_assets DEPENDS "${CMAKE_BINARY_DIR}/particle_gpu_cooked.stamp")
+add_dependencies(ParticleGpuCheck ParticleGpuCheck_assets)

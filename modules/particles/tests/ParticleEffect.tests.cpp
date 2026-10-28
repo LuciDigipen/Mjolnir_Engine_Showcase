@@ -14,7 +14,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <filesystem>
+#include <limits>
 #include <tuple>
+#include <utility>
 
 TEST_CASE("Particle system source cooks emitter references and user parameter defaults", "[particles]")
 {
@@ -151,6 +153,119 @@ TEST_CASE("Particle loading resolves typed emitter and texture dependencies atom
         files.Publish(0.05f, true, true, 999);
         CHECK_FALSE(load().mEffect);
     }
+    SECTION("Missing script")
+    {
+        std::filesystem::remove(files.Root() / "script.blob");
+        CHECK_FALSE(load().mEffect);
+    }
+    SECTION("Wrong script type")
+    {
+        files.Write("script.blob", mir::BuildAssetBlob(mir::kRawAssetTypeTag, 1, {}));
+        CHECK_FALSE(load().mEffect);
+    }
+    SECTION("Malformed SPIR-V")
+    {
+        const uint32_t words[]{0, 0, 0, 0, 0};
+        files.Write("script.blob", mir::BuildAssetBlob(mir::kParticleScriptTypeTag,
+            mir::kParticleScriptContentVersion, std::as_bytes(std::span(words))));
+        CHECK_FALSE(load().mEffect);
+    }
+    SECTION("Missing layout")
+    {
+        std::filesystem::remove(files.Root() / "layout.blob");
+        CHECK_FALSE(load().mEffect);
+    }
+    SECTION("Wrong layout type")
+    {
+        files.Write("layout.blob", mir::BuildAssetBlob(mir::kRawAssetTypeTag, 1, {}));
+        CHECK_FALSE(load().mEffect);
+    }
+    SECTION("Incompatible layout")
+    {
+        const std::string layout = R"({"stride":96})";
+        files.Write("layout.blob", mir::BuildAssetBlob(mir::kParticleScriptLayoutTypeTag,
+            mir::kParticleScriptLayoutContentVersion, std::as_bytes(std::span(layout))));
+        CHECK_FALSE(load().mEffect);
+    }
+}
+
+TEST_CASE("Particle module stacks reject unknown modules unsupported stages targets and parameters", "[particles]")
+{
+    for (const std::string_view fields : {
+        R"("spawnModules":[{"name":"Unknown"}])",
+        R"("spawnModules":[{"name":"Integrate"}])",
+        R"("updateModules":[{"name":"Initialize"}])",
+        R"("updateModules":[{"name":"Age","parameters":[1]}])",
+        R"("updateModules":[{"name":"Acceleration","parameters":[1,2]}])",
+        R"("updateModules":[{"name":"Acceleration","parameters":[1,2,1e100]}])",
+        R"("updateModules":[{"name":"Acceleration","parameters":[1,"2",3]}])",
+        R"("updateModules":[{"name":"Age","typo":0}])",
+        R"("updateModules":[{"parameters":[]}])",
+        R"("updateModules":{})"})
+    {
+        const auto text = std::string(R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png",)") +
+            std::string(fields) + "}";
+        const auto result = mir::ReadParticleEmitterSource(text, "assets");
+        INFO(text);
+        CHECK_FALSE(result.mEmitter);
+        CHECK_FALSE(result.mError.empty());
+    }
+    const auto cpu = mir::ReadParticleEmitterSource(
+        R"({"version":1,"target":"cpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","updateModules":[{"name":"Age"}]})", "assets");
+    CHECK_FALSE(cpu.mEmitter);
+    mir::ParticleEmitterAsset emitter;
+    emitter.texture = mir::MakeAssetId("assets/x.png");
+    emitter.updateModules = {{"Acceleration", {0, std::numeric_limits<float>::infinity(), 0}}};
+    std::string error;
+    CHECK_FALSE(mir::ValidateParticleEmitterAsset(emitter, error));
+}
+
+TEST_CASE("Particle module stack order survives cooking and determines generated execution order", "[particles]")
+{
+    const auto parsed = mir::ReadParticleEmitterSource(
+        R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png",
+            "spawnModules":[{"name":"Initialize"}],
+            "updateModules":[{"name":"Acceleration","parameters":[0,-9.8,0]},{"name":"Integrate"},{"name":"Age"}]})", "assets");
+    REQUIRE(parsed.mEmitter);
+    const auto bytes = mir::BuildParticleEmitterAsset(*parsed.mEmitter);
+    const auto cooked = mir::ReadParticleEmitterAsset(*mir::ParseAssetBlob(bytes));
+    REQUIRE(cooked.mEmitter);
+    REQUIRE(cooked.mEmitter->updateModules.size() == 3);
+    CHECK(cooked.mEmitter->updateModules[0].name == "Acceleration");
+    CHECK(cooked.mEmitter->updateModules[0].parameters == (std::vector<float>{0, -9.8f, 0}));
+    CHECK(cooked.mEmitter->updateModules[1].name == "Integrate");
+    CHECK(cooked.mEmitter->updateModules[2].name == "Age");
+    const auto source = mir::GenerateParticleScript(*cooked.mEmitter);
+    const auto acceleration = source.find("a.velocityLifetime.xyz +=");
+    const auto integrate = source.find("a.positionAge.xyz +=");
+    const auto age = source.find("a.positionAge.w +=");
+    REQUIRE(acceleration != std::string::npos);
+    REQUIRE(integrate != std::string::npos);
+    REQUIRE(age != std::string::npos);
+    CHECK(acceleration < integrate);
+    CHECK(integrate < age);
+    auto reversed = *cooked.mEmitter;
+    std::swap(reversed.updateModules[0], reversed.updateModules[2]);
+    const auto changed = mir::GenerateParticleScript(reversed);
+    CHECK(changed != source);
+    CHECK(changed.find("a.positionAge.w +=") < changed.find("a.velocityLifetime.xyz +="));
+}
+
+TEST_CASE("Identical particle stacks share generated code independently of emitter values", "[particles]")
+{
+    mir::ParticleEmitterAsset first;
+    first.texture = mir::MakeAssetId("assets/a.png");
+    auto second = first;
+    second.texture = mir::MakeAssetId("assets/b.png");
+    second.lifetime = 10;
+    second.capacity = 1000;
+    second.spawnRate = 120;
+    second.size = 2;
+    second.color = {0.5f, 0.5f, 0.5f, 0.5f};
+    second.velocity = {1, 2, 3};
+    CHECK(mir::GenerateParticleScript(first) == mir::GenerateParticleScript(second));
+    second.updateModules.push_back({"Acceleration", {0, -1, 0}});
+    CHECK(mir::GenerateParticleScript(first) != mir::GenerateParticleScript(second));
 }
 
 TEST_CASE("Particle blob readers reject malformed type version and asset framing", "[particles]")

@@ -48,7 +48,7 @@ parameters in [0, 16]. Each `.emitter.json` version 1 defines target (`gpu` or
 (size, color and velocity). Emitter and texture paths resolve from the asset root
 and must stay inside it. Textures use the typed texture cooker. Missing or invalid
 dependencies fail before manifest publication. System blobs use type tag
-`0x54524150`, version 2; emitter blobs use type tag `0x454D4954`, version 1.
+`0x54524150`, version 2; emitter blobs use type tag `0x454D4954`, version 2.
 Cooked system assets retain emitter IDs, while loaded system definitions resolve
 those emitter and texture assets through `AssetCache`. Runtime never reads source
 JSON or decodes images.
@@ -131,8 +131,7 @@ and supports 64 emitter ranges. Each dispatch compacts survivors, adds births,
 and writes indirect draw counts. Same-queue barriers protect range reuse and make
 compute output available to indirect drawing and readback. Only completed frame
 slot counters are exposed. The current backend is a bounded GPU sprite foundation,
-not a performance sign-off; it does not yet cook per-emitter Slang scripts or
-render cooked textures, and particles do not participate in reflections, shadows
+not a performance sign-off; it does not yet render cooked textures, and particles do not participate in reflections, shadows
 or GI.
 
 `ParticleGpuCheck` uses the production API to verify empty/full pools, steady
@@ -141,3 +140,27 @@ generation replacement, range exhaustion, resize, unload, and two GPU emitters
 owned by one system. `gltf_importer_tests` covers system/emitter asset cooking,
 changed emitter recooks, dependency failure, and preserving manifest entries
 from other roots during particle-only recooks.
+
+## Cooked module stacks
+
+Emitter source version 1 accepts ordered `spawnModules` and `updateModules` arrays.
+Each entry has a `name` and a numeric `parameters` array. The initial GPU registry
+supports spawn `Initialize` (no parameters) and update `Age`, `Integrate` (no
+parameters), and `Acceleration` (three finite floats, metres per second squared).
+Omitted GPU stacks default to Initialize and Age/Integrate, reproducing the original
+pool behavior. CPU stacks default to empty, these initial GPU modules reject CPU
+targets. CPU simulation modules are introduced with the CPU emitter implementation.
+Stacks are bounded to 32 entries per stage and execute in authored order.
+
+AssetCooker composes Slang from the registered operations and invokes the configured
+`slangc` process, using SPIR-V 1.5 and the `computeMain` entry point. Parameters for
+module operations are compiled constants. Per-frame values use a generated, versioned
+80-byte input layout. Script and layout blobs are typed dependencies of emitter
+content version 2. Equal stacks and operation parameters share one script regardless
+of per-emitter renderer values, capacity, or spawn rate. Compilation and validation
+must succeed before the new manifest is published. Partial recooks retain other
+roots and remove unreferenced script/layout manifest entries.
+
+Runtime asset loading validates script type, version, SPIR-V framing and the exact
+supported input layout, then supplies cooked bytes through the scene proxy. The
+game never invokes Slang or reads emitter source JSON.

@@ -74,7 +74,7 @@ TEST_CASE("Particle system cooks and resolves its emitter and typed texture depe
     REQUIRE(fixture.Cook() == 0);
     auto manifest = mir::AssetManifest::LoadFile(fixture.out / mir::kAssetManifestFileName);
     REQUIRE(manifest);
-    CHECK(manifest->Count() == 3);
+    CHECK(manifest->Count() == 5);
     const auto id = mir::MakeAssetId("assets/exhaust.particle.json");
     const auto *entry = manifest->Find(id);
     REQUIRE(entry);
@@ -186,4 +186,68 @@ TEST_CASE("Particle-only recook retains assets from other source roots", "[parti
     manifest = mir::AssetManifest::LoadFile(fixture.out / mir::kAssetManifestFileName);
     REQUIRE(manifest);
     CHECK(manifest->Find(retained));
+}
+
+TEST_CASE("Particle stacks share scripts and changed stacks replace dependencies", "[particles][cooker]")
+{
+    CookFixture fixture;
+    std::filesystem::copy_file(fixture.source / "exhaust.emitter.json", fixture.source / "second.emitter.json");
+    REQUIRE(fixture.Cook() == 0);
+    auto manifest = mir::AssetManifest::LoadFile(fixture.out / mir::kAssetManifestFileName);
+    REQUIRE(manifest);
+    CHECK(manifest->Count() == 6);
+    mir::AssetCache cache(&*manifest, fixture.out);
+    const auto first = mir::LoadParticleEmitterAsset(cache, mir::MakeAssetId("assets/exhaust.emitter.json"));
+    const auto second = mir::LoadParticleEmitterAsset(cache, mir::MakeAssetId("assets/second.emitter.json"));
+    REQUIRE(first.mEmitter);
+    REQUIRE(second.mEmitter);
+    CHECK(first.mEmitter->script == second.mEmitter->script);
+    CHECK(first.mEmitter->scriptLayout == second.mEmitter->scriptLayout);
+    CHECK_FALSE(first.mEmitter->scriptCode.empty());
+
+    std::filesystem::copy_file(std::filesystem::path(PARTICLE_FIXTURE_DIR) / "accelerated.emitter.json",
+        fixture.source / "second.emitter.json", std::filesystem::copy_options::overwrite_existing);
+    REQUIRE(fixture.Cook(fixture.source / "second.emitter.json") == 0);
+    auto changedManifest = mir::AssetManifest::LoadFile(fixture.out / mir::kAssetManifestFileName);
+    REQUIRE(changedManifest);
+    CHECK(changedManifest->Count() == 7);
+    mir::AssetCache changedCache(&*changedManifest, fixture.out);
+    const auto changed = mir::LoadParticleEmitterAsset(changedCache, mir::MakeAssetId("assets/second.emitter.json"));
+    REQUIRE(changed.mEmitter);
+    CHECK(changed.mEmitter->script != first.mEmitter->script);
+    CHECK(changed.mEmitter->scriptCode != first.mEmitter->scriptCode);
+    CHECK(changed.mEmitter->scriptLayout == first.mEmitter->scriptLayout);
+
+    std::filesystem::copy_file(fixture.source / "exhaust.emitter.json", fixture.source / "second.emitter.json",
+        std::filesystem::copy_options::overwrite_existing);
+    REQUIRE(fixture.Cook(fixture.source / "second.emitter.json") == 0);
+    auto reverted = mir::AssetManifest::LoadFile(fixture.out / mir::kAssetManifestFileName);
+    REQUIRE(reverted);
+    CHECK(reverted->Count() == 6);
+}
+
+TEST_CASE("Invalid particle module stacks retain the previous manifest", "[particles][cooker]")
+{
+    CookFixture fixture;
+    REQUIRE(fixture.Cook() == 0);
+    const auto previous = mir::ReadBytes(fixture.out / mir::kAssetManifestFileName);
+    std::ifstream input(fixture.source / "exhaust.emitter.json");
+    const auto source = nlohmann::json::parse(input);
+    input.close();
+    for (const auto &modules : {
+        nlohmann::json::parse(R"([{"name":"Unknown"}])"),
+        nlohmann::json::parse(R"([{"name":"Initialize"}])"),
+        nlohmann::json::parse(R"([{"name":"Acceleration","parameters":[1,2]}])")})
+    {
+        auto changed = source;
+        changed["updateModules"] = modules;
+        std::ofstream(fixture.source / "exhaust.emitter.json") << changed.dump();
+        CHECK(fixture.Cook(fixture.source / "exhaust.emitter.json") != 0);
+        CHECK(mir::ReadBytes(fixture.out / mir::kAssetManifestFileName) == previous);
+    }
+    auto changed = source;
+    changed["target"] = "cpu";
+    std::ofstream(fixture.source / "exhaust.emitter.json") << changed.dump();
+    CHECK(fixture.Cook() != 0);
+    CHECK(mir::ReadBytes(fixture.out / mir::kAssetManifestFileName) == previous);
 }

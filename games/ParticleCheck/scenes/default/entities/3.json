@@ -1,0 +1,47 @@
+{
+  "id": 3,
+  "parent": 0,
+  "components": [
+    {
+      "type": "Name",
+      "fields": {
+        "name": "Orange - Default Exhaust"
+      }
+    },
+    {
+      "type": "Transform",
+      "fields": {
+        "position": [
+          -3,
+          -1,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "type": "WorldTransform",
+      "fields": {}
+    },
+    {
+      "type": "ParticleSystem",
+      "fields": {
+        "systemName": "particles/exhaust.particle.json",
+        "playOnStart": true,
+        "overrideParameters": false,
+        "spawnRateScale": 1,
+        "sizeScale": 1
+      }
+    }
+  ]
+}

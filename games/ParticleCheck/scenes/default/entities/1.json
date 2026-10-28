@@ -1,0 +1,53 @@
+{
+  "id": 1,
+  "parent": 0,
+  "components": [
+    {
+      "type": "Name",
+      "fields": {
+        "name": "Camera - Free Fly"
+      }
+    },
+    {
+      "type": "Transform",
+      "fields": {
+        "position": [
+          0,
+          1,
+          11
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "type": "WorldTransform",
+      "fields": {}
+    },
+    {
+      "type": "Camera",
+      "fields": {
+        "nearZ": 0.1,
+        "farZ": 100,
+        "fovYDegrees": 60
+      }
+    },
+    {
+      "type": "CameraController",
+      "fields": {
+        "mode": 1,
+        "moveSpeed": 5,
+        "lookSensitivity": 0.15
+      }
+    }
+  ]
+}

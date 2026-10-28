@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "target": "gpu",
+  "lifetime": 1.8,
+  "spawnRate": 75,
+  "capacity": 512,
+  "texture": "textures/sprite.png",
+  "renderer": {
+    "size": 0.18,
+    "color": [
+      4,
+      0.65,
+      0.08,
+      0.7
+    ],
+    "velocity": [
+      0,
+      2.2,
+      0
+    ]
+  },
+  "spawnModules": [
+    {
+      "name": "Initialize",
+      "parameters": []
+    }
+  ],
+  "updateModules": [
+    {
+      "name": "Age",
+      "parameters": []
+    },
+    {
+      "name": "Integrate",
+      "parameters": []
+    }
+  ]
+}

@@ -159,7 +159,9 @@ engine_add_shaders(MjolnirEngine
 
 engine_add_shaders(MjolnirEngine
     SOURCE modules/particles_gpu/shaders/particlePool.slang
-    ENTRIES computeMain:compute vertexMain:vertex fragmentMain:fragment)
+    ENTRIES vertexMain:vertex fragmentMain:fragment)
+# Incremental build trees must not package the replaced fixed compute shader.
+file(REMOVE "${CMAKE_BINARY_DIR}/shaders/particlePool.computeMain.spv")
 
 engine_add_shaders(MjolnirEngine
     SOURCE assets/shaders/fxComposition.slang
@@ -361,6 +363,13 @@ if(BUILD_TESTING)
         set_tests_properties(smoke.game-mode PROPERTIES
             LABELS smoke
             TIMEOUT 120)
+    endif()
+
+    if(EXISTS "${CMAKE_SOURCE_DIR}/games/ParticleCheck/game.json")
+        add_test(NAME smoke.ParticleCheck.game-mode
+            COMMAND MjolnirEngine --non-interactive --game games/ParticleCheck --no-editor --frames 180)
+        set_tests_properties(smoke.ParticleCheck.game-mode PROPERTIES
+            LABELS smoke RUN_SERIAL TRUE TIMEOUT 120)
     endif()
 
     # TerrainCheck from its scene camera, which sees both terrains: per-viewport selection, streaming and tracing

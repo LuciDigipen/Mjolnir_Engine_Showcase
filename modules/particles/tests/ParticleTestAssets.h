@@ -50,6 +50,8 @@ namespace mir::test
             ParticleEmitterAsset emitter;
             emitter.lifetime = lifetime;
             emitter.texture = TextureId();
+            emitter.script = AssetId{901};
+            emitter.scriptLayout = AssetId{902};
             ParticleEffect system;
             system.emitters.push_back(EmitterId());
             system.emitterDefinitions.push_back(emitter);
@@ -83,7 +85,13 @@ namespace mir::test
                 std::error_code error;
                 std::filesystem::remove(mRoot / "texture.blob", error);
             }
+            const uint32_t code[]{0x07230203, 0x00010500, 0, 1, 0};
+            Write("script.blob", BuildAssetBlob(kParticleScriptTypeTag, kParticleScriptContentVersion, std::as_bytes(std::span(code))));
+            const auto layout = ParticleScriptLayout();
+            Write("layout.blob", BuildAssetBlob(kParticleScriptLayoutTypeTag, kParticleScriptLayoutContentVersion, std::as_bytes(std::span(layout))));
             const AssetManifestSourceEntry entries[]{
+                {{AssetId{901}, kParticleScriptTypeTag, kParticleScriptContentVersion}, "script.blob"},
+                {{AssetId{902}, kParticleScriptLayoutTypeTag, kParticleScriptLayoutContentVersion}, "layout.blob"},
                 {{EffectId(), kParticleEffectTypeTag, effectVersion}, "effect.blob"},
                 {{EmitterId(), kParticleEmitterTypeTag, kParticleEmitterContentVersion}, "emitter.blob"},
                 {{TextureId(), textureTyped ? kTextureAssetTypeTag : kRawAssetTypeTag, 1}, "texture.blob"}};

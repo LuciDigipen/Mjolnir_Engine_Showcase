@@ -27,6 +27,8 @@ namespace mir
             const auto *system = runtime.Find(emitter.system);
             if (!system) continue;
             ParticleSubmission input;
+            input.scriptKey = emitter.definition.script.value;
+            input.scriptCode = emitter.definition.scriptCode;
             input.index = emitter.handle.index;
             input.generation = emitter.handle.generation;
             input.capacity = emitter.definition.capacity;

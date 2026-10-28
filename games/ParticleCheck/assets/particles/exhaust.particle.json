@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "emitters": [
+    "particles/exhaust.emitter.json"
+  ],
+  "parameters": {
+    "spawnRateScale": 1,
+    "sizeScale": 1
+  }
+}

@@ -260,6 +260,8 @@ TEST_CASE("Particle world resolves two emitter dependencies and retires both aft
     test.files.Write("effect.blob", mir::BuildParticleEffectAsset(definition));
     test.files.Write("secondary.blob", mir::BuildParticleEmitterAsset(second));
     const mir::AssetManifestSourceEntry entries[]{
+        {{mir::AssetId{901}, mir::kParticleScriptTypeTag, mir::kParticleScriptContentVersion}, "script.blob"},
+        {{mir::AssetId{902}, mir::kParticleScriptLayoutTypeTag, mir::kParticleScriptLayoutContentVersion}, "layout.blob"},
         {{test.files.EffectId(), mir::kParticleEffectTypeTag, mir::kParticleEffectContentVersion}, "effect.blob"},
         {{test.files.EmitterId(), mir::kParticleEmitterTypeTag, mir::kParticleEmitterContentVersion}, "emitter.blob"},
         {{secondId, mir::kParticleEmitterTypeTag, mir::kParticleEmitterContentVersion}, "secondary.blob"},

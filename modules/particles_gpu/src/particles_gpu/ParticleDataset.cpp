@@ -33,7 +33,8 @@ namespace mir::gpu
         }
         for (const auto &input : inputs)
         {
-            if (input.index >= kGpuParticleInstances || input.generation == 0 ||
+            if (input.scriptKey == 0 || input.scriptCode.size() < 20 || input.scriptCode.size() % 4 != 0 ||
+                input.index >= kGpuParticleInstances || input.generation == 0 ||
                 input.capacity > kGpuParticleCapacity || input.capacity == 0 ||
                 !std::isfinite(input.seconds) || input.seconds < 0 || input.seconds > 4.0f / 60.0f + 1e-6f ||
                 !std::isfinite(input.lifetime) || input.lifetime <= 0 || input.lifetime > 120 ||

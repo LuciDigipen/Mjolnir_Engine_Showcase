@@ -1,0 +1,32 @@
+{
+    "version": 1,
+    "target": "gpu",
+    "lifetime": 2,
+    "spawnRate": 60,
+    "capacity": 256,
+    "texture": "checker.png",
+    "spawnModules": [
+        {
+            "name": "Initialize",
+            "parameters": []
+        }
+    ],
+    "updateModules": [
+        {
+            "name": "Age",
+            "parameters": []
+        },
+        {
+            "name": "Acceleration",
+            "parameters": [
+                0,
+                0.1,
+                0
+            ]
+        },
+        {
+            "name": "Integrate",
+            "parameters": []
+        }
+    ]
+}

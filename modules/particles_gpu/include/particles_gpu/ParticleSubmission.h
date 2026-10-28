@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <vector>
 
 namespace mir
 {
@@ -25,6 +26,8 @@ namespace mir
     // Immutable input, no dependency on the particle module or its handles.
     struct ParticleSubmission
     {
+        uint64_t scriptKey = 0;
+        std::vector<std::byte> scriptCode;
         uint32_t index = 0;
         uint32_t generation = 0;
         uint32_t capacity = 0;
