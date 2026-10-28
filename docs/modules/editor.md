@@ -520,6 +520,13 @@ or the dialog themselves. History needs neither, and its tests are in
 
 ## Changed
 
+*2026-10-27* — **The scene camera has no depth of field or motion blur
+(#231).** Was: the Post-Processing panel's focus, aperture and shutter applied
+to the scene view as to every camera. Now: those values and exposure are
+`Camera` fields read from the viewing lens, and `EditorCamera::mLens` sets
+aperture and shutter to 0, with exposure 1. Because: a game camera's focus
+distance and shutter mean nothing from wherever the scene camera is flying.
+
 *2026-10-27* — **Gizmo lines clip at the scene camera; `GizmoCanvas::Aspect`
 (#231).** Was: a gizmo line with either end behind the scene camera was not
 drawn, and a drawer could not size anything to the viewport. Now: the line is

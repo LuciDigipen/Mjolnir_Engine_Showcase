@@ -75,7 +75,7 @@ namespace mir::vk
 
     void PostProcessingStack::Apply(const PostProcessingState &state, RayTracer &rayTracer, VkExtent2D extent)
     {
-        mPostProcess.SetParams(state.hdr.exposure, static_cast<int>(state.hdr.op));
+        mPostProcess.SetParams(state.exposure, static_cast<int>(state.hdr.op));
         mPostProcess.SetFilmParams(state.film.grain, state.film.contrast, state.film.saturation,
             state.film.vignetteStrength, state.film.vignetteRadius);
 
@@ -83,11 +83,10 @@ namespace mir::vk
         mBloom.SetParams(state.bloom.threshold, state.bloom.intensity, state.bloom.radius);
 
         mDepthOfFieldEnabled = state.depthOfFieldEnabled;
-        mDepthOfField.SetParams(state.depthOfField.focusDistance, state.depthOfField.aperture,
-            state.depthOfField.maxBlur);
+        mDepthOfField.SetParams(state.focusDistance, state.aperture, state.depthOfField.maxBlur);
 
         mMotionBlurEnabled = state.motionBlurEnabled;
-        mMotionBlur.SetParams(state.motionBlur.shutterStrength, static_cast<uint32_t>(state.motionBlur.sampleCount));
+        mMotionBlur.SetParams(state.shutterStrength, static_cast<uint32_t>(state.motionBlur.sampleCount));
 
         mAntiAliasingRtSampleCount = static_cast<uint32_t>(state.antiAliasing.rtSampleCount);
         const AntiAliasingMode mode = state.antiAliasing.mode;

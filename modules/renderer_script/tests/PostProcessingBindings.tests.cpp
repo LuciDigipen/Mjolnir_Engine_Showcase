@@ -63,10 +63,7 @@ namespace
             { "fogStart", FieldKind::Float },
             { "fogEnd", FieldKind::Float },
             { "fogColorX", FieldKind::Float },
-            { "hdrExposure", FieldKind::Float },
             { "hdrOperatorIsAces", FieldKind::Bool },
-            { "dofFocusDistance", FieldKind::Float },
-            { "dofAperture", FieldKind::Float },
             { "dofMaxBlur", FieldKind::Float },
             { "filmGrain", FieldKind::Float },
             { "filmContrast", FieldKind::Float },
@@ -127,8 +124,8 @@ function T.OnStart(self, world, entity)
     local ok = world:set_bloom({ enabled = true, threshold = 1.25, intensity = 0.75, radius = 2.0 })
         and world:set_fog({ enabled = true, color = { x = 0.1, y = 0.2, z = 0.3 },
                              density = 0.02, startDistance = 5.0, endDistance = 50.0 })
-        and world:set_hdr({ enabled = true, exposure = 1.5, tonemapOperator = "aces" })
-        and world:set_depth_of_field({ enabled = true, focusDistance = 12.5, aperture = 0.3, maxBlur = 24.0 })
+        and world:set_hdr({ enabled = true, tonemapOperator = "aces" })
+        and world:set_depth_of_field({ enabled = true, maxBlur = 24.0 })
         and world:set_film({ enabled = true, grain = 0.1, contrast = 1.2, saturation = 0.9,
                               vignetteStrength = 0.4, vignetteRadius = 1.5 })
 
@@ -147,10 +144,7 @@ function T.OnStart(self, world, entity)
     world:set(entity, "PostProcessingBindingsProbe", "fogStart", fog.startDistance)
     world:set(entity, "PostProcessingBindingsProbe", "fogEnd", fog.endDistance)
     world:set(entity, "PostProcessingBindingsProbe", "fogColorX", fog.color.x)
-    world:set(entity, "PostProcessingBindingsProbe", "hdrExposure", hdr.exposure)
     world:set(entity, "PostProcessingBindingsProbe", "hdrOperatorIsAces", hdr.tonemapOperator == "aces")
-    world:set(entity, "PostProcessingBindingsProbe", "dofFocusDistance", dof.focusDistance)
-    world:set(entity, "PostProcessingBindingsProbe", "dofAperture", dof.aperture)
     world:set(entity, "PostProcessingBindingsProbe", "dofMaxBlur", dof.maxBlur)
     world:set(entity, "PostProcessingBindingsProbe", "filmGrain", film.grain)
     world:set(entity, "PostProcessingBindingsProbe", "filmContrast", film.contrast)
@@ -196,11 +190,34 @@ function T.OnStart(self, world, entity)
     local anySucceeded = world:set_bloom({ threshold = "bright" })
         or world:set_fog({ color = "red" })
         or world:set_hdr({ tonemapOperator = "nonsense" })
-        or world:set_depth_of_field({ focusDistance = "close" })
+        or world:set_depth_of_field({ maxBlur = "lots" })
 
     local bloom = world:get_bloom()
     world:set(entity, "PostProcessingBindingsProbe", "setOk", not anySucceeded)
     world:set(entity, "PostProcessingBindingsProbe", "bloomThreshold", bloom.threshold)
+    world:set(entity, "PostProcessingBindingsProbe", "reached", true)
+end
+
+return T
+)LUA";
+
+    constexpr std::string_view kCameraFieldsRefused = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    world:set_hdr({ enabled = true, tonemapOperator = "aces" })
+
+    local anySucceeded = world:set_hdr({ exposure = 2.0, tonemapOperator = "none" })
+        or world:set_depth_of_field({ focusDistance = 5.0 })
+        or world:set_depth_of_field({ aperture = 0.2 })
+        or world:set_motion_blur({ shutterStrength = 1.0 })
+
+    world:set(entity, "PostProcessingBindingsProbe", "setOk", not anySucceeded)
+    world:set(entity, "PostProcessingBindingsProbe", "hdrOperatorIsAces", world:get_hdr().tonemapOperator == "aces")
     world:set(entity, "PostProcessingBindingsProbe", "reached", true)
 end
 
@@ -246,11 +263,8 @@ TEST_CASE("set_bloom/set_fog/set_hdr/set_depth_of_field/set_film write PostProce
     CHECK(ReadProbeField<float>(fixture.world, fixture.entity, "fogEnd") == 50.0f);
     CHECK(ReadProbeField<float>(fixture.world, fixture.entity, "fogColorX") == 0.1f);
 
-    CHECK(ReadProbeField<float>(fixture.world, fixture.entity, "hdrExposure") == 1.5f);
     CHECK(ReadProbeField<bool>(fixture.world, fixture.entity, "hdrOperatorIsAces"));
 
-    CHECK(ReadProbeField<float>(fixture.world, fixture.entity, "dofFocusDistance") == 12.5f);
-    CHECK(ReadProbeField<float>(fixture.world, fixture.entity, "dofAperture") == 0.3f);
     CHECK(ReadProbeField<float>(fixture.world, fixture.entity, "dofMaxBlur") == 24.0f);
 
     CHECK(ReadProbeField<float>(fixture.world, fixture.entity, "filmGrain") == 0.1f);
@@ -264,7 +278,7 @@ TEST_CASE("set_bloom/set_fog/set_hdr/set_depth_of_field/set_film write PostProce
     const FogParams fog = ReadFogParams(settings.effects.at("Fog").params);
     CHECK(fog.end == 50.0f);
     const HdrParams hdr = ReadHdrParams(settings.effects.at("HDR").params);
-    CHECK(hdr.exposure == 1.5f);
+    CHECK(hdr.op == mir::TonemapOperator::ACES);
     const DepthOfFieldParams dof = ReadDepthOfFieldParams(settings.effects.at("DepthOfField").params);
     CHECK(dof.maxBlur == 24.0f);
     const FilmParams film = ReadFilmParams(settings.effects.at("Film").params);
@@ -292,6 +306,18 @@ TEST_CASE("a wrong-shaped field refuses the whole set_* call, not just that fiel
     CHECK(ReadProbeField<bool>(fixture.world, fixture.entity, "setOk"));
     // The bad call wrote nothing: the earlier, valid threshold survives.
     CHECK(ReadProbeField<float>(fixture.world, fixture.entity, "bloomThreshold") == 1.25f);
+}
+
+TEST_CASE("set_hdr/set_depth_of_field/set_motion_blur refuse the lens keys that moved to the Camera",
+    "[script][postprocessing]")
+{
+    Fixture fixture(kCameraFieldsRefused, "postfx_camera_fields");
+    fixture.Start();
+
+    CHECK(ReadProbeField<bool>(fixture.world, fixture.entity, "reached"));
+    CHECK(ReadProbeField<bool>(fixture.world, fixture.entity, "setOk"));
+    // The refused set_hdr wrote nothing: the earlier operator survives.
+    CHECK(ReadProbeField<bool>(fixture.world, fixture.entity, "hdrOperatorIsAces"));
 }
 
 TEST_CASE("the bindings refuse rather than crash when a world has no PostProcessingSettings",

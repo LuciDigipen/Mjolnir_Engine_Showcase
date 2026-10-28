@@ -147,9 +147,6 @@ namespace mir
             World &source = mSourceWorld != nullptr ? *mSourceWorld : context.world;
             BindQueries(source);
 
-            mRenderer.SetPostProcessing(ResolvePostProcessing(context.world.Resource<PostProcessingSettings>(),
-                mRenderer.RayTracingActive(renderSettings.rayTracing), mRenderer.DlssAvailable()));
-
             bool haveSunLight = false;
             glm::vec3 sunDirWS{ 0.0f, 1.0f, 0.0f };
             mLightItems.clear();
@@ -268,6 +265,12 @@ namespace mir
                 mViewCameras.push_back(ViewCamera{ i, cameraPose, camera, viewExtent,
                                                   MakeCameraRelativeViewProjection(cameraPose, camera, aspect) });
             }
+
+            // Post effects read viewport 0's lens: the editor camera's in Edit, the active Camera's in Play.
+            const bool havePrimaryView = !mViewCameras.empty() && mViewCameras.front().viewport == 0;
+            mRenderer.SetPostProcessing(ResolvePostProcessing(context.world.Resource<PostProcessingSettings>(),
+                havePrimaryView ? mViewCameras.front().lens : Camera{},
+                mRenderer.RayTracingActive(renderSettings.rayTracing), mRenderer.DlssAvailable()));
 
             ViewDrawSources *viewSources = source.TryResource<ViewDrawSources>();
             if (viewSources)

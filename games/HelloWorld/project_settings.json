@@ -17,6 +17,10 @@
   },
   "postProcessing": {
     "effects": {
+      "Anti-Aliasing": {
+        "enabled": false,
+        "params": {}
+      },
       "Bloom": {
         "enabled": true,
         "params": {
@@ -26,7 +30,7 @@
         }
       },
       "DepthOfField": {
-        "enabled": false,
+        "enabled": true,
         "params": {}
       },
       "Film": {
@@ -40,12 +44,11 @@
       "HDR": {
         "enabled": true,
         "params": {
-          "exposure": 1.0,
           "tonemapOperator": "aces"
         }
       },
       "MotionBlur": {
-        "enabled": false,
+        "enabled": true,
         "params": {}
       }
     }

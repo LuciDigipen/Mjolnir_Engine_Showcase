@@ -17,30 +17,25 @@ TEST_CASE("MotionBlurEffect: ReadMotionBlurParams on an empty params object retu
     const nlohmann::json params = nlohmann::json::object();
     const mir::MotionBlurParams motionBlur = mir::ReadMotionBlurParams(params);
 
-    CHECK(motionBlur.shutterStrength == mir::MotionBlurParams{}.shutterStrength);
     CHECK(motionBlur.sampleCount == mir::MotionBlurParams{}.sampleCount);
 }
 
-TEST_CASE("MotionBlurEffect: ReadMotionBlurParams falls back per field when some are missing", "[renderer]")
+TEST_CASE("MotionBlurEffect: shutter strength is the Camera's, not part of the params", "[renderer]")
 {
-    const nlohmann::json params = { { "sampleCount", 16 } };
-    const mir::MotionBlurParams motionBlur = mir::ReadMotionBlurParams(params);
+    nlohmann::json written = nlohmann::json::object();
+    mir::WriteMotionBlurParams(written, mir::MotionBlurParams{});
 
-    CHECK(motionBlur.shutterStrength == mir::MotionBlurParams{}.shutterStrength);
-    CHECK(motionBlur.sampleCount == 16);
+    CHECK_FALSE(written.contains("shutterStrength"));
 }
 
 TEST_CASE("MotionBlurEffect: WriteMotionBlurParams then ReadMotionBlurParams round-trips every field",
     "[renderer]")
 {
     mir::MotionBlurParams saved;
-    saved.shutterStrength = 1.25f;
     saved.sampleCount = 12;
 
     nlohmann::json params = nlohmann::json::object();
     mir::WriteMotionBlurParams(params, saved);
 
-    const mir::MotionBlurParams loaded = mir::ReadMotionBlurParams(params);
-    CHECK(loaded.shutterStrength == saved.shutterStrength);
-    CHECK(loaded.sampleCount == saved.sampleCount);
+    CHECK(mir::ReadMotionBlurParams(params).sampleCount == saved.sampleCount);
 }

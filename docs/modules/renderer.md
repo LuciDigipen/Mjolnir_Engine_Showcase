@@ -199,7 +199,7 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `DrawItem` | `renderer/Renderer.h` | `{mesh, model, normalMatrix, tint, material}` — `model` is the world transform, not premultiplied by any camera |
 | `RenderView` | `renderer/VulkanRenderer.h` | `{rect, items, viewProj, cameraPos}` — one camera's `DrawItem`s, clipped to a screen rect; `cameraPos` only the sky pass reads |
 | `Viewport`, `ViewportId` | `renderer/RenderSystem.h` | `RenderSystem`'s per-viewport state: rect plus a World `Entity`, an external camera, or neither (fallback) |
-| `MeshRenderer`, `Camera` | `renderer/components/` | Handles, and `active`/`fovY`/`near`/`far` (`far` 0 = no far plane), declared here rather than in `core` |
+| `MeshRenderer`, `Camera` | `renderer/components/` | Handles, and `active`/`fovY`/`near`/`far` (`far` 0 = no far plane) plus the lens values post effects read (`exposure`, `focusDistance`, `aperture`, `shutterStrength`), declared here rather than in `core` |
 | `FindActiveCamera`, `SetActiveCamera`, `ResolvePlayCamera`, `ActiveCameraSystem` | `renderer/ActiveCamera.h` | The flagged `Camera`; flag one and clear the rest; the camera Play draws through (flagged, else lowest index); the `SystemPhase::Render` system, before `RenderSystem`, that keeps one flagged |
 | `MeshBounds` | `renderer/components/MeshBounds.h` | `{mLocalMin, mLocalMax}`, a mesh's own local-space AABB; attached and kept current by `app`'s `MeshResolveSystem` (see [app.md](app.md)), read by the editor's viewport click-picking (see [editor.md](editor.md)) — not used for rendering at all |
 | `FrustumSliceCorners` | `renderer/CameraMath.h` | A lens's view rectangle at a distance, in camera space; the `Camera` gizmo draws its near and far planes from it |
@@ -207,7 +207,7 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `RenderSystem` | `renderer/RenderSystem.h` | The ECS-to-renderer bridge, `SystemPhase::Render` |
 | `Shapes.h` | `renderer/Shapes.h` | `MakeCube()` and friends — plain vectors, no Vulkan |
 | `AntiAliasingMode`, `AntiAliasingParams`, `ClampAntiAliasingMode`, `ClampRtSampleCount` | `renderer/AntiAliasingEffect.h` | Off/Fxaa/Msaa/Dlss and `rtSampleCount`; the Post-Processing entry's json shape; the mode and sample-count enforcement `ResolvePostProcessing` applies every frame - see Rules |
-| `PostProcessingState`, `ResolvePostProcessing` | `renderer/PostProcessingState.h` | `PostProcessingSettings` resolved into the exact values `SetPostProcessing` applies: defaults for a missing entry, neutral values for a disabled one (fog density 0, exposure 1/None, bloom intensity 0, neutral film), motion blur's sample count at least 1, AA clamped. Pure, so it is unit-tested without a device |
+| `PostProcessingState`, `ResolvePostProcessing` | `renderer/PostProcessingState.h` | `PostProcessingSettings` and the viewing `Camera`'s lens resolved into the exact values `SetPostProcessing` applies: defaults for a missing entry, neutral values for a disabled one (fog density 0, exposure 1/None, bloom intensity 0, neutral film), negative lens values 0, motion blur's sample count at least 1, AA clamped. Pure, so it is unit-tested without a device |
 | `DlssConfig.h` | `renderer/DlssConfig.h` (generated) | `MIR_WITH_DLSS`/`kDlssCompiledIn` and the NGX project id |
 | `RenderSettings` | `renderer/RenderSettings.h` | Project Settings' `"rendering"` section (`rayTracing: bool`, `fog: bool`); `LoadFile`/`SaveFile`, a World resource `RendererModule` loads |
 
@@ -705,6 +705,17 @@ flagged, Play draws through the lowest-index `Camera`; with no `Camera` at all,
 from the origin with a default lens. Each warns once per scene load and Play
 session.
 
+**Exposure, focus distance, aperture and shutter strength come from viewport
+0's `Camera`.** `RenderSystem` resolves the viewports first and hands that lens
+to `ResolvePostProcessing`, so in Play the active `Camera` drives HDR, Depth of
+Field and Motion Blur, and switching cameras switches them the same frame. In
+Edit it is the editor camera's lens: exposure 1 and aperture and shutter 0, so
+the scene view has no depth of field or motion blur and does not preview a
+camera's exposure. The
+Post-Processing panel still turns each effect on and holds its look settings
+(tonemap operator, max blur, sample count); other viewports share viewport 0's
+values, since post-processing runs once per frame.
+
 **RenderDoc object naming is applied under validation**, and shaders are built
 `-g -O0` unconditionally, so a capture shows Slang source.
 
@@ -797,6 +808,15 @@ Everything that needs a device is verified by the smoke tests and
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-10-27* — **Post effects read exposure, focus and shutter from the
+`Camera` (#231).** Was: `exposure` (HDR), `focusDistance` and `aperture`
+(Depth of Field) and `shutterStrength` (Motion Blur) were Post-Processing
+entries in Project Settings, one set for every camera. Now: they are `Camera`
+fields, `ResolvePostProcessing` takes the viewing lens, and the effects' params
+and panel sections no longer hold them; `HelloWorld`'s project settings lost
+its `exposure` of 1, the new default. Because: each camera should carry its own
+lens, so cutting to another camera changes focus and exposure with it.
 
 *2026-10-27* — **`Camera` has a viewport gizmo and a pick radius (#231).**
 Was: a camera entity drew nothing in the scene viewport and could only be
