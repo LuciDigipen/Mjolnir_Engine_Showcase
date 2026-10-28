@@ -16,6 +16,7 @@
 #include <core/math/WorldReal.h>
 #include <editor/EditorWidgets.h>
 #include <editor/EntityBaseline.h>
+#include <editor/EntityDragPayload.h>
 #include <editor/Selection.h>
 #include <editor/history/AuthoredEdit.h>
 #include <editor/history/ComponentCommands.h>
@@ -103,6 +104,34 @@ namespace mir
             if (live)
                 ImGui::SetItemTooltip("%s\nClick to select", preview.c_str());
 
+            bool edited = false;
+            if (ImGui::BeginDragDropTarget())
+            {
+                const ImGuiPayload *active = ImGui::GetDragDropPayload();
+                const std::optional<Entity> dropped = active != nullptr
+                    ? DecodeEntityDragPayload(*active) : std::nullopt;
+                // Validate before accepting so malformed or dead handles never highlight.
+                if (dropped && world.IsAlive(*dropped))
+                {
+                    if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kEntityPayload,
+                        ImGuiDragDropFlags_AcceptBeforeDelivery))
+                    {
+                        if (payload->IsPreview())
+                        {
+                            ImGui::BeginTooltip();
+                            ImGui::TextUnformatted("Set reference to the entity whose row started the drag.");
+                            ImGui::EndTooltip();
+                        }
+                        if (payload->IsDelivery() && target != *dropped)
+                        {
+                            target = *dropped;
+                            edited = true;
+                        }
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+
             ImGui::SameLine();
             ImGui::BeginDisabled(target.IsNull());
             const bool clear = ImGui::Button(ICON_FA_XMARK "##clear", ImVec2(clearWidth, 0.0f));
@@ -113,7 +142,7 @@ namespace mir
                 target = kNullEntity;
                 return true;
             }
-            return false;
+            return edited;
         }
 
         bool DrawFieldWidget(const FieldDesc &field, void *bytes, World &world, Entity &selectAfterDraw)
