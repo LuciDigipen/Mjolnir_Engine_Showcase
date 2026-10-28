@@ -14,6 +14,7 @@
 #include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/components/Name.h>
 #include <editor/EditorWidgets.h>
+#include <editor/EntityDragPayload.h>
 #include <editor/Selection.h>
 #include <editor/history/AuthoredView.h>
 #include <editor/panels/ContentBrowserPanel.h>
@@ -65,8 +66,6 @@ namespace mir
 
             ImGui::EndPopup();
         }
-
-        constexpr const char *kEntityPayload = "MIR_HIERARCHY_ENTITIES";
 
         constexpr double kOpenOnHoverSeconds = 0.7;
         constexpr float kAutoScrollBand = 8.0f;
