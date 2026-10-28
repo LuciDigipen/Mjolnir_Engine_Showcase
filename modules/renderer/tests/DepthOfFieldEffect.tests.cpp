@@ -17,34 +17,26 @@ TEST_CASE("DepthOfFieldEffect: ReadDepthOfFieldParams on an empty params object 
     const nlohmann::json params = nlohmann::json::object();
     const mir::DepthOfFieldParams dof = mir::ReadDepthOfFieldParams(params);
 
-    CHECK(dof.focusDistance == mir::DepthOfFieldParams{}.focusDistance);
-    CHECK(dof.aperture == mir::DepthOfFieldParams{}.aperture);
     CHECK(dof.maxBlur == mir::DepthOfFieldParams{}.maxBlur);
 }
 
-TEST_CASE("DepthOfFieldEffect: ReadDepthOfFieldParams falls back per field when some are missing", "[renderer]")
+TEST_CASE("DepthOfFieldEffect: focus distance and aperture are the Camera's, not part of the params", "[renderer]")
 {
-    const nlohmann::json params = { { "aperture", 0.25f } };
-    const mir::DepthOfFieldParams dof = mir::ReadDepthOfFieldParams(params);
+    nlohmann::json written = nlohmann::json::object();
+    mir::WriteDepthOfFieldParams(written, mir::DepthOfFieldParams{});
 
-    CHECK(dof.focusDistance == mir::DepthOfFieldParams{}.focusDistance);
-    CHECK(dof.aperture == 0.25f);
-    CHECK(dof.maxBlur == mir::DepthOfFieldParams{}.maxBlur);
+    CHECK_FALSE(written.contains("focusDistance"));
+    CHECK_FALSE(written.contains("aperture"));
 }
 
 TEST_CASE("DepthOfFieldEffect: WriteDepthOfFieldParams then ReadDepthOfFieldParams round-trips every field",
     "[renderer]")
 {
     mir::DepthOfFieldParams saved;
-    saved.focusDistance = 25.0f;
-    saved.aperture = 0.4f;
     saved.maxBlur = 32.0f;
 
     nlohmann::json params = nlohmann::json::object();
     mir::WriteDepthOfFieldParams(params, saved);
 
-    const mir::DepthOfFieldParams loaded = mir::ReadDepthOfFieldParams(params);
-    CHECK(loaded.focusDistance == saved.focusDistance);
-    CHECK(loaded.aperture == saved.aperture);
-    CHECK(loaded.maxBlur == saved.maxBlur);
+    CHECK(mir::ReadDepthOfFieldParams(params).maxBlur == saved.maxBlur);
 }

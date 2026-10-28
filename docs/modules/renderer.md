@@ -58,12 +58,12 @@ in between.
 
 `RenderSystem` is the only thing connecting the ECS to it. It is an `ISystem` in
 `SystemPhase::Render` holding a `VulkanRenderer&`, and it owns a list of
-`Viewport`s. Viewport 0 always exists(whole window, first `Camera` found),
+`Viewport`s. Viewport 0 always exists(whole window, the active `Camera`),
 and can add more with `AddViewPort`.
 
 Each frame, for every viewport, `RenderSystem` resolves a camera (a specific
 World `Entity` via `SetViewportCamera`, an externally-owned one via
-`SetExternalCamera`, or that same first-match `Camera` as a fallback), builds
+`SetExternalCamera`, or the World's active `Camera` as a fallback), builds
 one view-projection matrix scaled to that viewport's own rect, builds one
 `DrawItem` per `(WorldTransform, MeshRenderer)` pair, and packages the result as
 a `RenderView`. All of a frame's `RenderView`s go to `VulkanRenderer::DrawFrame`
@@ -200,13 +200,15 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `DrawItem` | `renderer/Renderer.h` | `{mesh, model, normalMatrix, tint, material}` — `model` is the world transform, not premultiplied by any camera |
 | `RenderView` | `renderer/VulkanRenderer.h` | `{rect, items, viewProj, cameraPos}` — one camera's `DrawItem`s, clipped to a screen rect; `cameraPos` only the sky pass reads |
 | `Viewport`, `ViewportId` | `renderer/RenderSystem.h` | `RenderSystem`'s per-viewport state: rect plus a World `Entity`, an external camera, or neither (fallback) |
-| `MeshRenderer`, `Camera` | `renderer/components/` | Handles, and `fovY`/`near`/`far` (`far` 0 = no far plane), declared here rather than in `core` |
+| `MeshRenderer`, `Camera` | `renderer/components/` | Handles, and `active`/`fovY`/`near`/`far` (`far` 0 = no far plane) plus the lens values post effects read (`exposure`, `focusDistance`, `aperture`, `shutterStrength`), declared here rather than in `core` |
+| `FindActiveCamera`, `SetActiveCamera`, `ResolvePlayCamera`, `ActiveCameraSystem` | `renderer/ActiveCamera.h` | The flagged `Camera`; flag one and clear the rest; the camera Play draws through (flagged, else lowest index); the `SystemPhase::Render` system, before `RenderSystem`, that keeps one flagged |
 | `MeshBounds` | `renderer/components/MeshBounds.h` | `{mLocalMin, mLocalMax}`, a mesh's own local-space AABB; attached and kept current by `app`'s `MeshResolveSystem` (see [app.md](app.md)), read by the editor's viewport click-picking (see [editor.md](editor.md)) — not used for rendering at all |
+| `FrustumSliceCorners` | `renderer/CameraMath.h` | A lens's view rectangle at a distance, in camera space; the `Camera` gizmo draws its near and far planes from it |
 | `Ray`, `RayIntersectsAABB`, `WorldRay`, `MakeCameraRay`, `RayIntersectsBox`, `RayIntersectsSphere` | `renderer/CameraMath.h` | `WorldRay` is a camera ray with a double `WorldPosition` origin and a float direction; `RayIntersectsBox` places a `WorldPose` box relative to that origin in double, then runs the local ray/AABB slab test; `RayIntersectsSphere` returns where a unit-direction ray enters a sphere, 0 if it starts inside — the same file `MakeViewProjection` lives in, so both stay in the same Vulkan-convention math |
 | `RenderSystem` | `renderer/RenderSystem.h` | The ECS-to-renderer bridge, `SystemPhase::Render` |
 | `Shapes.h` | `renderer/Shapes.h` | `MakeCube()` and friends — plain vectors, no Vulkan |
 | `AntiAliasingMode`, `AntiAliasingParams`, `ClampAntiAliasingMode`, `ClampRtSampleCount` | `renderer/AntiAliasingEffect.h` | Off/Fxaa/Msaa/Dlss and `rtSampleCount`; the Post-Processing entry's json shape; the mode and sample-count enforcement `ResolvePostProcessing` applies every frame - see Rules |
-| `PostProcessingState`, `ResolvePostProcessing` | `renderer/PostProcessingState.h` | `PostProcessingSettings` resolved into the exact values `SetPostProcessing` applies: defaults for a missing entry, neutral values for a disabled one (fog density 0, exposure 1/None, bloom intensity 0, neutral film), motion blur's sample count at least 1, AA clamped. Pure, so it is unit-tested without a device |
+| `PostProcessingState`, `ResolvePostProcessing` | `renderer/PostProcessingState.h` | `PostProcessingSettings` and the viewing `Camera`'s lens resolved into the exact values `SetPostProcessing` applies: defaults for a missing entry, neutral values for a disabled one (fog density 0, exposure 1/None, bloom intensity 0, neutral film), negative lens values 0, motion blur's sample count at least 1, AA clamped. Pure, so it is unit-tested without a device |
 | `DlssConfig.h` | `renderer/DlssConfig.h` (generated) | `MIR_WITH_DLSS`/`kDlssCompiledIn` and the NGX project id |
 | `RenderSettings` | `renderer/RenderSettings.h` | Project Settings' `"rendering"` section (`rayTracing` and `ddgi`); `LoadFile`/`SaveFile`, a World resource `RendererModule` loads |
 
@@ -580,6 +582,9 @@ uses one spatial pass without upsampling scratch storage. History resets on
 layout/resolution changes, camera identity or projection changes, large camera
 cuts, trace-setting changes, and `ResetHistory()`. Direct `RenderView` callers
 should supply a stable `historyId` or reset history when switching cameras.
+A `historyId` change is a camera cut for the other temporal state too:
+`CameraBuffer` drops that view slot's previous view-projection and jitter
+sequence, so motion blur sees no camera motion, and `TraceFrame` resets DLSS.
 Filtering has a separate 256 MiB allocation cap across frame slots; unsupported
 layouts retain existing lighting.
 
@@ -836,13 +841,36 @@ it destroys the allocator, so every other subsystem has to be gone by then for
 that count to report leaks.
 
 **A viewport's camera resolves in this order: external, then a specific
-`Entity`, then the first `Camera` found.** `SetExternalCamera` is for a camera
+`Entity`, then the active `Camera`.** `SetExternalCamera` is for a camera
 the World doesn't own, such as the editor's free-fly camera — its transform is
 a raw `glm::mat4`, not a `WorldTransform`, because `WorldTransform`'s matrix is
 resolver-only and unconstructable outside the ECS hierarchy resolve.
 `SetViewportCamera(id, kNullEntity)` clears both and falls back to the
-first-match `Camera`, which is how a viewport hands itself back to whatever the
+active `Camera`, which is how a viewport hands itself back to whatever the
 World considers its default camera.
+
+**One `Camera` is active, and `ActiveCameraSystem` keeps it that way in Edit and
+Play.** It remembers each camera's flag from last frame: a camera flagged since
+then wins and the others are cleared; a camera that arrives already flagged (a
+duplicate, a paste, a prefab) is cleared if another is active. The Inspector,
+`world:set` and `world:set_active_camera` all go through it, so a change made
+before the Render phase shows that frame. The Inspector clears the other
+cameras itself in the same undo step (`MakeFieldEditCommand`, see
+[editor.md](editor.md)), so undo brings the previous camera back. With none
+flagged, Play draws through the lowest-index `Camera`; with no `Camera` at all,
+from the origin with a default lens. Each warns once per scene load and Play
+session.
+
+**Exposure, focus distance, aperture and shutter strength come from viewport
+0's `Camera`.** `RenderSystem` resolves the viewports first and hands that lens
+to `ResolvePostProcessing`, so in Play the active `Camera` drives HDR, Depth of
+Field and Motion Blur, and switching cameras switches them the same frame. In
+Edit it is the editor camera's lens: exposure 1 and aperture and shutter 0, so
+the scene view has no depth of field or motion blur and does not preview a
+camera's exposure. The
+Post-Processing panel still turns each effect on and holds its look settings
+(tonemap operator, max blur, sample count); other viewports share viewport 0's
+values, since post-processing runs once per frame.
 
 **RenderDoc object naming is applied under validation**, and shaders are built
 `-g -O0` unconditionally, so a capture shows Slang source.
@@ -936,6 +964,38 @@ Everything that needs a device is verified by the smoke tests and
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-10-27* — **A camera cut resets motion blur's and DLSS's history
+(#231).** Was: switching the active camera kept the previous camera's
+view-projection and DLSS history, so the first frame after a cut blurred or
+ghosted across the whole screen. Now: a view whose `historyId` changes starts
+with no previous view-projection or jitter sequence, and `TraceFrame` resets
+DLSS. Because: the frames on either side of a cut share nothing to reproject.
+
+*2026-10-27* — **Post effects read exposure, focus and shutter from the
+`Camera` (#231).** Was: `exposure` (HDR), `focusDistance` and `aperture`
+(Depth of Field) and `shutterStrength` (Motion Blur) were Post-Processing
+entries in Project Settings, one set for every camera. Now: they are `Camera`
+fields, `ResolvePostProcessing` takes the viewing lens, and the effects' params
+and panel sections no longer hold them; `HelloWorld`'s project settings lost
+its `exposure` of 1, the new default. Because: each camera should carry its own
+lens, so cutting to another camera changes focus and exposure with it.
+
+*2026-10-27* — **`Camera` has a viewport gizmo and a pick radius (#231).**
+Was: a camera entity drew nothing in the scene viewport and could only be
+selected from the Hierarchy. Now: a small frustum marks every camera and takes
+clicks within 0.3 m; selected, it draws its near and far planes sized by fov
+and the viewport's aspect, following the entity's world transform. A lens with
+no far plane draws 20 m of open edges. Because: placing a camera needs to show
+what it will see.
+
+*2026-10-27* — **Play draws through the active `Camera` (#231).** Was: the
+first `Camera` the query reached, so a scene with two rendered from an
+arbitrary one, and a scene with none drew nothing. Now: `Camera.active`, kept
+to one by `ActiveCameraSystem`; the lowest-index camera with a warning when
+none is flagged; the origin and a default lens with a warning when there is no
+camera; a Camera entity type in the Create menu, active if it is the scene's
+first. Because: Play needs a defined viewpoint, and the scene should say which.
 
 *2026-10-26* — **`Light`'s pick radius is a fixed 0.3 m; `RayIntersectsSphere`.**
 Was: `LightPickRadius` returned `range` for Point and Spot lights and

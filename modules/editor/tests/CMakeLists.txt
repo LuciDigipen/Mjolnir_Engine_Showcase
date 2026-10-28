@@ -1,4 +1,5 @@
 engine_add_module_tests(editor
+    ActiveCameraEdit.tests.cpp
     Authoring.tests.cpp
     AuthoredEdit.tests.cpp
     ComponentCommands.tests.cpp

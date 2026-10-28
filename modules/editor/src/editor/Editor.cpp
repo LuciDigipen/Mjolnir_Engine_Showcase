@@ -127,14 +127,27 @@ namespace mir
             return true;
         }
 
+        // A segment that passes behind the camera is cut there rather than dropped, so a long
+        // gizmo line still shows when the scene camera stands inside it.
         void DrawWorldLine(ImDrawList *drawList, const glm::mat4 &viewProj, float x0, float y0, float width,
             float height, const glm::vec3 &a, const glm::vec3 &b, ImU32 color, float thickness)
         {
-            ImVec2 sa, sb;
-            if (!ProjectToScreen(viewProj, x0, y0, width, height, a, sa) ||
-                !ProjectToScreen(viewProj, x0, y0, width, height, b, sb))
+            constexpr float kMinW = 0.01f;
+            glm::vec4 clipA = viewProj * glm::vec4(a, 1.0f);
+            glm::vec4 clipB = viewProj * glm::vec4(b, 1.0f);
+            if (clipA.w <= kMinW && clipB.w <= kMinW)
                 return;
-            drawList->AddLine(sa, sb, color, thickness);
+            if (clipA.w <= kMinW)
+                clipA = glm::mix(clipA, clipB, (kMinW - clipA.w) / (clipB.w - clipA.w));
+            else if (clipB.w <= kMinW)
+                clipB = glm::mix(clipB, clipA, (kMinW - clipB.w) / (clipA.w - clipB.w));
+
+            const auto toScreen = [&](const glm::vec4 &clip)
+                {
+                    const glm::vec2 ndc = glm::vec2(clip) / clip.w;
+                    return ImVec2(x0 + (ndc.x * 0.5f + 0.5f) * width, y0 + (ndc.y * 0.5f + 0.5f) * height);
+                };
+            drawList->AddLine(toScreen(clipA), toScreen(clipB), color, thickness);
         }
 
         void DrawWorldCircle(ImDrawList *drawList, const glm::mat4 &viewProj, float x0, float y0, float width,
@@ -172,6 +185,8 @@ namespace mir
                 DrawWorldCircle(mDrawList, mViewProj, mX0, mY0, mWidth, mHeight, center, right, up, radius,
                     static_cast<ImU32>(colorRGBA), segments);
             }
+
+            float Aspect() const override { return mHeight > 0.0f ? mWidth / mHeight : 1.0f; }
 
         private:
             ImDrawList *mDrawList;

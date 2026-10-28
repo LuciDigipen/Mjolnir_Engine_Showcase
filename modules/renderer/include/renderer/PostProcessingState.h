@@ -1,9 +1,10 @@
 /**
  * @file PostProcessingState.h
  * @author Rahul Nair
- * @brief The Post-Processing panel's per-effect entries resolved into the
- *        exact values VulkanRenderer applies for a frame - defaults for a
- *        missing entry, neutral values for a disabled one, AA clamped.
+ * @brief The Post-Processing panel's per-effect entries and the viewing
+ *        Camera's lens resolved into the exact values VulkanRenderer applies
+ *        for a frame - defaults for a missing entry, neutral values for a
+ *        disabled one, AA clamped.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -18,6 +19,7 @@
 #include <renderer/HdrEffect.h>
 #include <renderer/MotionBlurEffect.h>
 #include <renderer/PostProcessingSettings.h>
+#include <renderer/components/Camera.h>
 
 namespace mir
 {
@@ -26,8 +28,10 @@ namespace mir
         // density is 0 while Fog is disabled.
         FogParams fog;
 
-        // exposure 1 and None while HDR is disabled.
+        // None while HDR is disabled.
         HdrParams hdr;
+        // The lens's, or 1 while HDR is disabled.
+        float exposure = 1.0f;
 
         // intensity is 0 while Bloom is disabled - the tonemap pass still adds Bloom's output.
         bool bloomEnabled = false;
@@ -35,10 +39,13 @@ namespace mir
 
         bool depthOfFieldEnabled = false;
         DepthOfFieldParams depthOfField;
+        float focusDistance = 0.0f;
+        float aperture = 0.0f;
 
         // sampleCount is at least 1.
         bool motionBlurEnabled = false;
         MotionBlurParams motionBlur;
+        float shutterStrength = 0.0f;
 
         // mode is Off while Anti-Aliasing is disabled, then clamped by ClampAntiAliasingMode;
         // rtSampleCount is clamped by ClampRtSampleCount.
@@ -48,6 +55,7 @@ namespace mir
         FilmParams film;
     };
 
-    PostProcessingState ResolvePostProcessing(const PostProcessingSettings &settings, bool rayTracingActive,
-        bool dlssAvailable);
+    // @p lens is the Camera the frame is viewed through.
+    PostProcessingState ResolvePostProcessing(const PostProcessingSettings &settings, const Camera &lens,
+        bool rayTracingActive, bool dlssAvailable);
 }

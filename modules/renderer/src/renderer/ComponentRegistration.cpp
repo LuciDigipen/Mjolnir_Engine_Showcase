@@ -15,6 +15,7 @@
 #include "renderer/components/Sky.h"
 #include "renderer/AntiAliasingEffect.h"
 #include "renderer/BloomEffect.h"
+#include "renderer/CameraMath.h"
 #include "renderer/DepthOfFieldEffect.h"
 #include "renderer/FilmEffect.h"
 #include "renderer/FogEffect.h"
@@ -35,6 +36,7 @@
 #include <glm/vec4.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <format>
@@ -171,12 +173,64 @@ namespace mir
                 }
             }
         }
+
+        constexpr float kCameraMarkerDepth = 0.4f;
+        // where a lens with no far plane stops being drawn
+        constexpr float kOpenFarDepth = 20.0f;
+
+        float CameraPickRadius(const void *)
+        {
+            return 0.3f;
+        }
+
+        
+        void DrawCameraGizmo(const void *component, const glm::mat4 &worldMatrix, bool selected,
+            const GizmoCanvas &canvas)
+        {
+            const Camera &camera = *static_cast<const Camera *>(component);
+
+            const glm::vec3 pos = glm::vec3(worldMatrix[3]);
+            const glm::mat3 axes(glm::normalize(glm::vec3(worldMatrix[0])), glm::normalize(glm::vec3(worldMatrix[1])),
+                glm::normalize(glm::vec3(worldMatrix[2])));
+            const float fovY = std::clamp(camera.mFovYDegrees, 1.0f, 179.0f);
+
+            const auto slice = [&](float distance)
+                {
+                    std::array<glm::vec3, 4> corners = FrustumSliceCorners(fovY, canvas.Aspect(), distance);
+                    for (glm::vec3 &corner : corners)
+                        corner = pos + axes * corner;
+                    return corners;
+                };
+
+            const uint32_t color = selected ? 0xFF50DCFFu : 0x8C78C8C8u;
+            const auto drawSlice = [&](const std::array<glm::vec3, 4> &corners)
+                {
+                    for (int i = 0; i < 4; ++i)
+                        canvas.Line(corners[i], corners[(i + 1) % 4], color, 1.5f);
+                };
+
+            const std::array<glm::vec3, 4> marker = slice(kCameraMarkerDepth);
+            drawSlice(marker);
+            for (const glm::vec3 &corner : marker)
+                canvas.Line(pos, corner, color, 1.5f);
+            if (!selected)
+                return;
+
+            const bool closed = camera.HasFarPlane();
+            const std::array<glm::vec3, 4> nearSlice = slice(std::max(camera.mNearZ, 0.0f));
+            const std::array<glm::vec3, 4> farSlice = slice(closed ? camera.mFarZ : kOpenFarDepth);
+            drawSlice(nearSlice);
+            if (closed)
+                drawSlice(farSlice);
+            for (int i = 0; i < 4; ++i)
+                canvas.Line(nearSlice[i], farSlice[i], color, 1.0f);
+        }
     }
 
     void RegisterRendererComponents()
     {
         ComponentRegistry::Instance().Register<MeshRenderer>(kMeshRendererFields);
-        ComponentRegistry::Instance().Register<Camera>(kCameraFields);
+        ComponentRegistry::Instance().Register<Camera>(kCameraFields, &CameraPickRadius, &DrawCameraGizmo);
         ComponentRegistry::Instance().Register<Light>(kLightFields, &LightPickRadius, &DrawLightGizmo);
         ComponentRegistry::Instance().Register<Sky>(kSkyFields);
     }
@@ -194,6 +248,15 @@ namespace mir
                 world.AddComponent<Sky>(entity, Sky{});
                 world.AddComponent<Name>(entity, MakeName(std::format("Sky_Entity{}", entity.mIndex)));
             }, &CanCreateSky);
+
+        EntityPresetRegistry::Instance().Register("Camera", [](World &world, Entity entity)
+            {
+                AddTransform(world, entity);
+                Camera camera{};
+                camera.mActive = !AnyEntityHas(world, [](const World &w, Entity e) { return w.Has<Camera>(e); });
+                world.AddComponent<Camera>(entity, camera);
+                world.AddComponent<Name>(entity, MakeName(std::format("Camera_Entity{}", entity.mIndex)));
+            });
 
         EntityPresetRegistry::Instance().Register("Primitive/Cube", [](World &world, Entity entity)
             {

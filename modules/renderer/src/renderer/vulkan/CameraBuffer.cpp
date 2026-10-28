@@ -241,6 +241,13 @@ namespace mir::vk
         const uint32_t lightCount = WriteViewLights(frame, view, viewIndex);
 
         const bool hasHistory = viewIndex < kMaxViewsPerFrame;
+        // A different camera in this slot is a cut: no velocity or jitter sequence carries over.
+        if (hasHistory && mPreviousHistoryId[viewIndex] != view.historyId)
+        {
+            mHasPreviousViewProj[viewIndex] = false;
+            mJitterIndex[viewIndex] = 0;
+            mPreviousHistoryId[viewIndex] = view.historyId;
+        }
         glm::mat4 prevViewProj = view.viewProj;
         if (hasHistory && mHasPreviousViewProj[viewIndex])
         {

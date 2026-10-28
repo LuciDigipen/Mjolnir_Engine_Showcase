@@ -18,9 +18,9 @@ namespace mir
 {
     inline constexpr std::string_view kMotionBlurEffectName = "MotionBlur";
 
+    // Shutter strength is the viewing Camera's.
     struct MotionBlurParams
     {
-        float shutterStrength = 0.5f;
         int sampleCount = 8;
 
         bool operator==(const MotionBlurParams &) const = default;

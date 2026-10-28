@@ -100,6 +100,17 @@ namespace mir
             return true;
         }
 
+        // A key that moved to the Camera refuses the call rather than being ignored.
+        bool RejectCameraField(const sol::table &t, const char *key, std::string_view binding)
+        {
+            const sol::object obj = t[key];
+            if (!obj.valid())
+                return true;
+            MIR_LOG_ERROR("script: world:{} - '{}' is a Camera field now; "
+                "use world:set(camera, \"Camera\", \"{}\", value)", binding, key, key);
+            return false;
+        }
+
         bool GetOptionalTonemapOperator(const sol::table &t, const char *key, std::string_view binding,
             TonemapOperator &value)
         {
@@ -181,12 +192,10 @@ namespace mir
             HdrParams hdr = ReadHdrParams(state.params);
             bool enabled = state.enabled;
 
-            if (!GetOptionalBool(args, "enabled", "set_hdr", enabled) ||
-                !GetOptionalFloat(args, "exposure", "set_hdr", hdr.exposure) ||
+            if (!RejectCameraField(args, "exposure", "set_hdr") ||
+                !GetOptionalBool(args, "enabled", "set_hdr", enabled) ||
                 !GetOptionalTonemapOperator(args, "tonemapOperator", "set_hdr", hdr.op))
                 return false;
-
-            hdr.exposure = std::max(hdr.exposure, 0.0f);
 
             state.enabled = enabled;
             WriteHdrParams(state.params, hdr);
@@ -206,7 +215,6 @@ namespace mir
 
             sol::table out = lua.create_table();
             out["enabled"] = enabled;
-            out["exposure"] = hdr.exposure;
             out["tonemapOperator"] = std::string(ToString(hdr.op));
             return out;
         }
@@ -266,14 +274,12 @@ namespace mir
             DepthOfFieldParams dof = ReadDepthOfFieldParams(state.params);
             bool enabled = state.enabled;
 
-            if (!GetOptionalBool(args, "enabled", "set_depth_of_field", enabled) ||
-                !GetOptionalFloat(args, "focusDistance", "set_depth_of_field", dof.focusDistance) ||
-                !GetOptionalFloat(args, "aperture", "set_depth_of_field", dof.aperture) ||
+            if (!RejectCameraField(args, "focusDistance", "set_depth_of_field") ||
+                !RejectCameraField(args, "aperture", "set_depth_of_field") ||
+                !GetOptionalBool(args, "enabled", "set_depth_of_field", enabled) ||
                 !GetOptionalFloat(args, "maxBlur", "set_depth_of_field", dof.maxBlur))
                 return false;
 
-            dof.focusDistance = std::max(dof.focusDistance, 0.0f);
-            dof.aperture = std::max(dof.aperture, 0.0f);
             dof.maxBlur = std::max(dof.maxBlur, 0.0f);
 
             state.enabled = enabled;
@@ -295,8 +301,6 @@ namespace mir
 
             sol::table out = lua.create_table();
             out["enabled"] = enabled;
-            out["focusDistance"] = dof.focusDistance;
-            out["aperture"] = dof.aperture;
             out["maxBlur"] = dof.maxBlur;
             return out;
         }
@@ -361,12 +365,11 @@ namespace mir
             MotionBlurParams motionBlur = ReadMotionBlurParams(state.params);
             bool enabled = state.enabled;
 
-            if (!GetOptionalBool(args, "enabled", "set_motion_blur", enabled) ||
-                !GetOptionalFloat(args, "shutterStrength", "set_motion_blur", motionBlur.shutterStrength) ||
+            if (!RejectCameraField(args, "shutterStrength", "set_motion_blur") ||
+                !GetOptionalBool(args, "enabled", "set_motion_blur", enabled) ||
                 !GetOptionalInt(args, "sampleCount", "set_motion_blur", motionBlur.sampleCount))
                 return false;
 
-            motionBlur.shutterStrength = std::max(motionBlur.shutterStrength, 0.0f);
             motionBlur.sampleCount = std::max(motionBlur.sampleCount, 1);
 
             state.enabled = enabled;
@@ -388,7 +391,6 @@ namespace mir
 
             sol::table out = lua.create_table();
             out["enabled"] = enabled;
-            out["shutterStrength"] = motionBlur.shutterStrength;
             out["sampleCount"] = motionBlur.sampleCount;
             return out;
         }

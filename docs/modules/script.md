@@ -133,13 +133,21 @@ The renderer bridge adds `world:mesh_bounds(entity)`: the local-space
 `nil` when there is none yet. `MeshBounds` is derived and never registered, so
 `world:get` cannot reach it.
 
+`world:get_active_camera()` returns the entity whose `Camera` is active, or
+`nil`. `world:set_active_camera(entity)` flags that camera and clears every
+other one at once, so the change shows the same frame; it returns `false` and
+logs an error if the entity has no `Camera`.
+
 ### Post-processing
 
 `world:set_fog/get_fog`, `world:set_hdr/get_hdr`, `world:set_bloom/get_bloom`,
 `world:set_depth_of_field/get_depth_of_field`, `world:set_film/get_film` and
 `world:set_motion_blur/get_motion_blur` reach `PostProcessingSettings`
-- one resource shared by the whole render, not a per-`Camera` component, so
-(like `set_state`) these take no entity. Each `set_*` takes one table; every
+- one resource shared by the whole render, so (like `set_state`) these take no
+entity. Exposure, focus distance, aperture and shutter strength are `Camera`
+fields instead, set with `world:set` on the camera; `set_hdr`,
+`set_depth_of_field` and `set_motion_blur` refuse those keys with an error
+that says so. Each `set_*` takes one table; every
 field is optional and defaults to that effect's *current* live value, so a
 script can tweak one knob without restating the rest. A present-but-wrong-shaped
 field (a string where a number belongs, an unknown `tonemapOperator`) refuses
@@ -150,11 +158,15 @@ uses for component fields. Each `get_*` returns a table of every field, or
 ```lua
 world:set_bloom({ enabled = true, threshold = 1.0, intensity = 0.5, radius = 1.0 })
 world:set_fog({ color = { x = 0.5, y = 0.6, z = 0.7 }, density = 0.015, startDistance = 0, endDistance = 300 })
-world:set_hdr({ exposure = 1.0, tonemapOperator = "aces" })  -- "none" | "reinhard" | "aces"
-world:set_depth_of_field({ enabled = true, focusDistance = 10.0, aperture = 0.1, maxBlur = 16.0 })
+world:set_hdr({ tonemapOperator = "aces" })  -- "none" | "reinhard" | "aces"
+world:set_depth_of_field({ enabled = true, maxBlur = 16.0 })
 world:set_film({ enabled = true, grain = 0.05, contrast = 1.0, saturation = 1.0,
                  vignetteStrength = 0.3, vignetteRadius = 1.0 })
-world:set_motion_blur({ enabled = true, shutterStrength = 0.5, sampleCount = 8 })
+world:set_motion_blur({ enabled = true, sampleCount = 8 })
+
+local camera = world:get_active_camera()
+world:set(camera, "Camera", "exposure", 1.5)
+world:set(camera, "Camera", "focusDistance", 10.0)
 
 local bloom = world:get_bloom()
 if bloom.enabled then
@@ -341,6 +353,16 @@ made the `ScriptRef`.
    flavour underneath.
 
 ## Changed
+
+*2026-10-27* — **Exposure, focus distance, aperture and shutter strength
+left the post-processing bindings (#231).** Was: `set_hdr`/`get_hdr` carried
+`exposure`, `set_depth_of_field`/`get_depth_of_field` `focusDistance` and
+`aperture`, and `set_motion_blur`/`get_motion_blur` `shutterStrength`. Now:
+they are `Camera` fields reached through `world:set`/`world:get`; the `get_*`
+tables no longer have them, and passing one to a `set_*` refuses the call with
+an error naming the Camera field. Because: the post effects read them from the
+active camera, and a key that silently did nothing would hide the move. No
+script in `games/` used them.
 
 *2026-10-25*, **`world:set` takes only the documented forms.** Was: a vector, color or rotation table with a missing or misspelled key took 0 for it (1 for a rotation's `w`), and NaN or infinity went into a number field. Now: every key must be a number, NaN and infinity are refused, a number field keeps to the range it declares, a choice from a list must be in the list, and the refusal is one error that names the field and what was expected, with the field left as it was. A rotation may leave out `w`, which is 1. Because: a typo should fail loudly instead of becoming a zero, and a script should not be able to put a field where the editor could not. No script in `games/` wrote a partial table, so none changed.
 
