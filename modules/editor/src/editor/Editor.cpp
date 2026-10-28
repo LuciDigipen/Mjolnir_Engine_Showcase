@@ -24,6 +24,7 @@
 #include <physics_layers/PhysicsLayers.h>
 #include <editor/Selection.h>
 #include <editor/history/AuthoredEdit.h>
+#include <editor/history/CommandGroup.h>
 #include <editor/history/ComponentCommands.h>
 #include <editor/history/DocumentNodeCommands.h>
 #include <editor/history/EntityCommands.h>
@@ -82,24 +83,63 @@ namespace mir
             return ImGuizmo::TRANSLATE;
         }
 
-        
         template <typename T>
-        std::unique_ptr<ICommand> SetTransformField(World &world, Entity entity, std::string_view fieldName,
-            const T &value, std::string_view verb, IAuthoredEntities *authored)
+        void AddTransformField(std::vector<FieldValue> &values, const ComponentOps &ops, std::string_view fieldName,
+            const T &value)
         {
-            const ComponentOps *ops = ComponentRegistry::Instance().FindBySeq(TypeIdOf<Transform>().seq);
-            const FieldDesc *field = ops != nullptr ? ops->FindField(fieldName) : nullptr;
+            const FieldDesc *field = ops.FindField(fieldName);
             if (field == nullptr)
-                return nullptr;
+                return;
 
             FieldValue fieldValue;
-            fieldValue.mField = static_cast<uint32_t>(field - ops->mFields.data());
+            fieldValue.mField = static_cast<uint32_t>(field - ops.mFields.data());
             static_assert(sizeof(T) <= sizeof(fieldValue.mBytes));
             std::memcpy(fieldValue.mBytes, &value, sizeof(T));
+            values.push_back(fieldValue);
+        }
 
-            const Name *name = world.GetComponent<Name>(entity);
-            return MakeSetFieldsEditCommand(entity, *ops, { fieldValue },
-                std::format("{} {}", verb, name != nullptr ? name->mValue : "Entity"), authored);
+        // The selected entities the gizmo can move, in selection order, so the primary stays last.
+        std::vector<Entity> GizmoSelection(World &world)
+        {
+            std::vector<Entity> entities;
+            if (const Selection *selection = world.TryResource<Selection>())
+            {
+                for (const Entity entity : selection->mSelected)
+                {
+                    if (world.IsAlive(entity) && world.GetComponent<Transform>(entity) != nullptr)
+                        entities.push_back(entity);
+                }
+            }
+            return entities;
+        }
+
+        // The mean of the entities' origins, on the unscaled axes of the last one.
+        std::optional<WorldPose> SelectionPivot(World &world, std::span<const Entity> entities)
+        {
+            const WorldPose primary = ResolveWorld(world, entities.back());
+
+            // summed as offsets from the primary, so far positions keep their precision
+            WorldVec3 sum(0);
+            for (const Entity entity : entities)
+            {
+                const std::optional<WorldOffset> offset =
+                    TryWorldDifference(ResolveWorld(world, entity).position, primary.position);
+                if (!offset)
+                    return std::nullopt;
+                sum += offset->Meters();
+            }
+
+            const std::optional<WorldOffset> mean =
+                WorldOffset::FromMeters(sum / static_cast<WorldReal>(entities.size()));
+            const std::optional<WorldPosition> position =
+                mean ? TryTranslateWorld(primary.position, *mean) : std::nullopt;
+            if (!position)
+                return std::nullopt;
+
+            glm::quat rotation{};
+            glm::vec3 scale{};
+            DecomposeRotationScale(primary.linear, rotation, scale);
+            return WorldPose{ *position, glm::mat3_cast(glm::normalize(rotation)) };
         }
 
         // Radius around the entity's origin that holds its scaled mesh box.
@@ -587,7 +627,9 @@ namespace mir
             return;
 
         const bool modalOpen = ImGui::GetTopMostPopupModal() != nullptr;
-        if (!modalOpen && !ImGui::GetIO().WantTextInput && !mWindow->RawInput().IsDown(MouseButton::Right))
+        // a drag keeps the operation it began with
+        if (!modalOpen && !mGizmoWasUsing && !ImGui::GetIO().WantTextInput &&
+            !mWindow->RawInput().IsDown(MouseButton::Right))
         {
             if (ImGui::IsKeyPressed(ImGuiKey_W, false))
                 mGizmoOperation = GizmoOperation::Translate;
@@ -600,10 +642,9 @@ namespace mir
         if (mSceneViewportRect.extent.width == 0 || mSceneViewportRect.extent.height == 0)
             return;
 
-        const Selection *selection = world.TryResource<Selection>();
-        const Entity entity = selection != nullptr ? selection->Primary() : kNullEntity;
-        const bool hasGizmoTarget =
-            !entity.IsNull() && world.IsAlive(entity) && world.GetComponent<Transform>(entity) != nullptr;
+        const std::vector<Entity> selected = GizmoSelection(world);
+        // a drag keeps its pivot even when everything it moves is gone
+        const bool hasGizmoTarget = mGizmoWasUsing || !selected.empty();
 
         // A Prefab tab keeps the toolbar (and its Save) visible with nothing selected.
         if (!hasGizmoTarget && !prefabDocument)
@@ -658,13 +699,21 @@ namespace mir
         if (!hasGizmoTarget)
             return;
 
+        if (!mGizmoWasUsing)
+        {
+            const std::optional<WorldPose> pivot = SelectionPivot(world, selected);
+            if (!pivot)
+                return;
+            mGizmoPivot = *pivot;
+        }
+
         // ImGuizmo works in the scene viewport's camera-relative space: the
         // camera is the origin, so its float matrices stay small however far
         // the entity is from the Scene origin.
         const WorldPose camera = mCamera.Pose();
         const glm::mat4 view = glm::inverse(glm::mat4(camera.linear));
 
-        const std::optional<glm::mat4> resolved = ResolveWorld(world, entity).TryMatrixRelativeTo(camera.position);
+        const std::optional<glm::mat4> resolved = mGizmoPivot.TryMatrixRelativeTo(camera.position);
         if (!resolved)
             return;
         glm::mat4 gizmoMatrix = *resolved;
@@ -690,50 +739,129 @@ namespace mir
         const bool changed = ImGuizmo::Manipulate(glm::value_ptr(view), glm::value_ptr(proj),
             ToImGuizmoOperation(mGizmoOperation), gizmoMode, glm::value_ptr(gizmoMatrix));
 
-        
+
         if (ImGuizmo::IsUsing() && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
             ImGuizmo::Enable(false);
 
-        
+
         const bool usingGizmo = ImGuizmo::IsUsing();
-        if (mGizmoWasUsing && !usingGizmo)
-            mHistory.EndStep();
-        mGizmoWasUsing = usingGizmo;
+        if (usingGizmo && !mGizmoWasUsing)
+        {
+            mGizmoDragStart = mGizmoPivot;
+            BeginGizmoDrag(world, selected);
+        }
 
-        if (!changed)
-            return;
-
-        // A root composes under the identity at the Scene origin.
-        const Entity parent = ParentOf(world, entity);
-        const WorldPose parentPose = parent.IsNull() ? WorldPose{} : ResolveWorld(world, parent);
-
-        // Each operation writes only its own channel, so rotating or scaling
-        // never sends a far position through the float matrix and back.
-        if (mGizmoOperation == GizmoOperation::Translate)
+        // the release frame can still carry the last change
+        if (changed && (usingGizmo || mGizmoWasUsing))
         {
             const std::optional<WorldOffset> fromCamera =
                 WorldOffset::FromMeters(WorldVec3(glm::vec3(gizmoMatrix[3])));
-            const std::optional<WorldPosition> moved =
+            const std::optional<WorldPosition> position =
                 fromCamera ? TryTranslateWorld(camera.position, *fromCamera) : std::nullopt;
-            const std::optional<ParentLocalTranslation> local =
-                moved ? TryWorldToParentLocal(parentPose, *moved) : std::nullopt;
-            if (local)
-                mHistory.Submit(SetTransformField(world, entity, "position", local->Meters(), "Move",
-                    mAuthoredEntities));
-            return;
+            if (position)
+            {
+                mGizmoPivot = WorldPose{ *position, glm::mat3(gizmoMatrix) };
+                ApplyGizmoDrag(world);
+            }
         }
 
-        if (glm::determinant(parentPose.linear) == 0.0f)
+        if (mGizmoWasUsing && !usingGizmo)
+        {
+            mHistory.EndStep();
+            mGizmoTargets.clear();
+        }
+        mGizmoWasUsing = usingGizmo;
+    }
+
+    void Editor::BeginGizmoDrag(World &world, std::span<const Entity> selected)
+    {
+        mGizmoTargets.clear();
+
+        // a child of another selected entity already moves with it
+        for (const Entity entity : TopmostInHierarchyOrder(world, selected))
+        {
+            // A root composes under the identity at the Scene origin.
+            const Entity parent = ParentOf(world, entity);
+            const WorldPose parentPose = parent.IsNull() ? WorldPose{} : ResolveWorld(world, parent);
+            const std::optional<WorldOffset> fromPivot =
+                TryWorldDifference(ResolveWorld(world, entity).position, mGizmoDragStart.position);
+            const Transform *transform = world.GetComponent<Transform>(entity);
+
+            // a zero-scale parent leaves no local values to write
+            if (transform != nullptr && fromPivot && glm::determinant(parentPose.linear) != 0.0f)
+                mGizmoTargets.push_back(GizmoTarget{ entity, parentPose, *fromPivot, *transform });
+        }
+    }
+
+    void Editor::ApplyGizmoDrag(World &world)
+    {
+        const ComponentOps *ops = ComponentRegistry::Instance().FindBySeq(TypeIdOf<Transform>().seq);
+        const std::optional<WorldOffset> moved = TryWorldDifference(mGizmoPivot.position, mGizmoDragStart.position);
+        if (ops == nullptr || !moved)
             return;
 
-        glm::vec3 scale{};
-        glm::quat rotation{};
-        DecomposeRotationScale(glm::inverse(parentPose.linear) * glm::mat3(gizmoMatrix), rotation, scale);
+        const bool translate = mGizmoOperation == GizmoOperation::Translate;
+        const bool rotate = mGizmoOperation == GizmoOperation::Rotate;
+        const char *verb = translate ? "Move" : rotate ? "Rotate" : "Scale";
 
-        if (mGizmoOperation == GizmoOperation::Rotate)
-            mHistory.Submit(SetTransformField(world, entity, "rotation", rotation, "Rotate", mAuthoredEntities));
+        // The start axes are unit length, so this is the drag's rotation, or its stretch along them.
+        const glm::mat3 change = mGizmoPivot.linear * glm::transpose(mGizmoDragStart.linear);
+        const glm::mat3 rotation = glm::mat3_cast(glm::normalize(glm::quat_cast(change)));
+        const glm::vec3 stretch{ glm::length(mGizmoPivot.linear[0]), glm::length(mGizmoPivot.linear[1]),
+            glm::length(mGizmoPivot.linear[2]) };
+        const WorldMat3 aboutPivot(rotate ? rotation : change);
+
+        std::vector<std::unique_ptr<ICommand>> commands;
+        for (const GizmoTarget &target : mGizmoTargets)
+        {
+            if (!world.IsAlive(target.mEntity) || world.GetComponent<Transform>(target.mEntity) == nullptr)
+                continue;
+
+            // Positions move as offsets in world precision, so no far position
+            // goes through the float matrix and back.
+            std::vector<FieldValue> values;
+            const WorldVec3 fromPivot = target.mFromPivot.Meters();
+            if (translate || fromPivot != WorldVec3(0))
+            {
+                const std::optional<WorldOffset> shift =
+                    translate ? moved : WorldOffset::FromMeters(aboutPivot * fromPivot - fromPivot);
+                const std::optional<ParentLocalTranslation> localShift =
+                    shift ? TryWorldOffsetToParentLocal(WorldMat3(target.mParent.linear), *shift) : std::nullopt;
+                const std::optional<ParentLocalTranslation> position = localShift
+                    ? ParentLocalTranslation::FromMeters(target.mStart.Position() + localShift->Meters())
+                    : std::nullopt;
+                if (!position)
+                    continue;
+                AddTransformField(values, *ops, "position", position->Meters());
+            }
+
+            if (rotate)
+            {
+                // the world rotation, seen on the parent's axes
+                glm::quat localRotation{};
+                glm::vec3 scale{};
+                DecomposeRotationScale(glm::inverse(target.mParent.linear) * rotation * target.mParent.linear,
+                    localRotation, scale);
+                AddTransformField(values, *ops, "rotation", glm::normalize(localRotation * target.mStart.Rotation()));
+            }
+            else if (!translate)
+            {
+                AddTransformField(values, *ops, "scale", target.mStart.Scale() * stretch);
+            }
+
+            const Name *name = world.GetComponent<Name>(target.mEntity);
+            commands.push_back(MakeSetFieldsEditCommand(target.mEntity, *ops, std::move(values),
+                std::format("{} {}", verb, name != nullptr ? name->mValue : "Entity"), mAuthoredEntities));
+        }
+
+        if (commands.empty())
+            return;
+
+        if (mGizmoTargets.size() == 1)
+            mHistory.Submit(std::move(commands.front()));
         else
-            mHistory.Submit(SetTransformField(world, entity, "scale", scale, "Scale", mAuthoredEntities));
+            mHistory.Submit(MakeCommandGroup(std::format("{} {} Entities", verb, mGizmoTargets.size()),
+                std::move(commands)));
     }
 
     void Editor::DrawViewportPrefabDrop(bool documentTab, World &world)
