@@ -48,3 +48,41 @@ TEST_CASE("A full texture table refuses new rows and ignores unknown handles", "
     CHECK_FALSE(table.Contains(TextureHandle{ 99, 1 }));
     CHECK(table.Generation(99) == 0);
 }
+
+TEST_CASE("Texture release skips empty slots and reuses each row only once", "[renderer][material]")
+{
+    TextureTable table(3);
+    const TextureHandle destroyed = table.Add();
+    const TextureHandle remaining = table.Add();
+    REQUIRE(table.Remove(destroyed));
+
+    const TextureHandle empty{ destroyed.mIndex, table.Generation(destroyed.mIndex) };
+    CHECK_FALSE(table.Contains(empty));
+    CHECK_FALSE(table.Remove(empty));
+
+    for (int release = 0; release < 2; ++release)
+    {
+        for (std::size_t index = 0; index < table.Size(); ++index)
+        {
+            const TextureHandle handle{ static_cast<uint32_t>(index), table.Generation(index) };
+            if (table.Contains(handle))
+                CHECK(table.Remove(handle));
+        }
+    }
+    CHECK_FALSE(table.Contains(destroyed));
+    CHECK_FALSE(table.Contains(remaining));
+
+    const TextureHandle first = table.Add();
+    const TextureHandle second = table.Add();
+    const TextureHandle third = table.Add();
+    REQUIRE_FALSE(first.IsNull());
+    REQUIRE_FALSE(second.IsNull());
+    REQUIRE_FALSE(third.IsNull());
+    CHECK(first.mIndex != second.mIndex);
+    CHECK(first.mIndex != third.mIndex);
+    CHECK(second.mIndex != third.mIndex);
+    CHECK(table.Contains(first));
+    CHECK(table.Contains(second));
+    CHECK(table.Contains(third));
+    CHECK(table.Add().IsNull());
+}

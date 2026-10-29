@@ -20,6 +20,7 @@ namespace mir
         {
             const std::size_t index = mFreeIndices.back();
             mFreeIndices.pop_back();
+            mOccupied[index] = true;
             return TextureHandle{ static_cast<uint32_t>(index), mGenerations[index] };
         }
 
@@ -28,6 +29,7 @@ namespace mir
 
         const uint32_t index = static_cast<uint32_t>(mGenerations.size());
         mGenerations.push_back(1);
+        mOccupied.push_back(true);
         return TextureHandle{ index, 1 };
     }
 
@@ -37,6 +39,7 @@ namespace mir
             return false;
 
         ++mGenerations[handle.mIndex];
+        mOccupied[handle.mIndex] = false;
         mFreeIndices.push_back(handle.mIndex);
         return true;
     }
@@ -44,6 +47,7 @@ namespace mir
     bool TextureTable::Contains(TextureHandle handle) const
     {
         return !handle.IsNull() && handle.mIndex < mGenerations.size() &&
+            mOccupied[handle.mIndex] &&
             mGenerations[handle.mIndex] == handle.mGeneration;
     }
 
