@@ -1,6 +1,6 @@
 /**
  * @file BackgroundImage.tests.cpp
- * @author Sumin Park
+ * @author Jackey Cen
  * @brief Tests for editor/BackgroundImage.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation

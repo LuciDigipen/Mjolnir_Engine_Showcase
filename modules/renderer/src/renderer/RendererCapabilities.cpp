@@ -1,6 +1,6 @@
 /**
  * @file RendererCapabilities.cpp
- * @author Sumin Park
+ * @author Jackey Cen
  * @brief Resolves raw device features into optional renderer paths.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation

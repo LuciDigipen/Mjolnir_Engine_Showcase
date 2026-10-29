@@ -1,6 +1,6 @@
 /**
  * @file DescriptorLayoutLimits.tests.cpp
- * @author Sumin Park
+ * @author Jackey Cen
  * @brief Tests for renderer/DescriptorLayoutLimits.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation

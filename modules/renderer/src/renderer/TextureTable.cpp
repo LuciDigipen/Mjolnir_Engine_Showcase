@@ -1,6 +1,6 @@
 /**
  * @file TextureTable.cpp
- * @author Sumin Park
+ * @author Jackey Cen
  * @brief Stable image-table slots behind TextureHandles.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation

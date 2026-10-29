@@ -904,7 +904,7 @@ shaders are kept. `SamplerDesc::maxAnisotropy` is clamped to the device limit
 and folded into the sampler cache key. `RasterPushConstants` and
 `firstInstance` are unchanged. Because: M1 must establish the shared GPU
 contract without migrating materials to PBR or adding asset schemas; see
-[ADR 0001](../adr/0001-shared-material-tables.md).
+ADR 0001 (local ADR).
 
 *2026-10-26* — **`Light`'s pick radius is a fixed 0.3 m; `RayIntersectsSphere`.**
 Was: `LightPickRadius` returned `range` for Point and Spot lights and

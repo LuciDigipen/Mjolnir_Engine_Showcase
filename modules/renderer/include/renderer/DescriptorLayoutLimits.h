@@ -1,6 +1,6 @@
 /**
  * @file DescriptorLayoutLimits.h
- * @author Sumin Park
+ * @author Jackey Cen
  * @brief Whether the shared material layouts fit a device's descriptor limits.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation

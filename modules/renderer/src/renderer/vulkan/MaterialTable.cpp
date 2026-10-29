@@ -1,6 +1,6 @@
 /**
  * @file MaterialTable.cpp
- * @author Sumin Park
+ * @author Jackey Cen
  * @brief Shared records, images and samplers behind set 4 and its descriptor set.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation

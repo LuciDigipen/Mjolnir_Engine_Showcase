@@ -1,6 +1,6 @@
 /**
  * @file MaterialTableLayout.h
- * @author Sumin Park
+ * @author Jackey Cen
  * @brief Row counts and set-4 bindings shared by the material table and its consumers.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation

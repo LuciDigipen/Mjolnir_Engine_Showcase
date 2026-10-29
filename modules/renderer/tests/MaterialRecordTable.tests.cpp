@@ -1,6 +1,6 @@
 /**
  * @file MaterialRecordTable.tests.cpp
- * @author Sumin Park
+ * @author Jackey Cen
  * @brief Tests for renderer/MaterialRecordTable.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
