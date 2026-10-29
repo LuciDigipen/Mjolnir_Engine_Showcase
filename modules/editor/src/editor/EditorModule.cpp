@@ -220,6 +220,16 @@ namespace mir
                 mEditor.ClearHistory();
                 mPrefabBeforePlay = mPrefabWorkspace.ActiveDocument();
                 mPrefabWorkspace.ActivateScene();
+
+                
+                if (mAudio != nullptr && mEnableLayout)
+                    mAudioBeforePlay = mAudio->Live();
+            });
+        mPlayEnd = context.scheduler.AddStage(Stage::PlayEnd, [this](SystemContext &)
+            {
+                if (mAudio != nullptr && mAudioBeforePlay.has_value())
+                    mAudio->SetLive(*mAudioBeforePlay);
+                mAudioBeforePlay.reset();
             });
 
         // the previews' models stage from the candidate too
@@ -262,6 +272,7 @@ namespace mir
         mReloadAbort.Reset();
         mReloadCommit.Reset();
         mReloadPrepare.Reset();
+        mPlayEnd.Reset();
         mPlayBegin.Reset();
         mSceneSaved.Reset();
         mSceneLoad.Reset();

@@ -77,10 +77,11 @@ namespace mir
     }
 
     AudioModule::AudioModule(ModuleContext context, const std::filesystem::path &bankDir,
-        const std::filesystem::path &settingsPath)
+        const std::filesystem::path &projectSettingsPath, const std::filesystem::path &settingsPath)
+        : mProjectSettingsPath(projectSettingsPath), mDefaults(LoadAudioSettings(projectSettingsPath))
     {
         // before Init, which applies the volumes without a ramp
-        const AudioSettings settings = LoadAudioSettings(settingsPath);
+        const AudioSettings settings = LoadAudioSettings(settingsPath, mDefaults);
         ApplyAudioSettings(settings);
 
         audio::Init(bankDir);
@@ -98,6 +99,15 @@ namespace mir
         mSoundtrackHooks =
             context.world.SetComponentHooks<Soundtrack>({ .onRemove = &SoundtrackSystem::OnSoundtrackRemoved });
         mPlayEnd = context.scheduler.AddStage(Stage::PlayEnd, &SoundtrackSystem::OnPlayEnd);
+    }
+
+    bool AudioModule::SaveDefaults(const AudioSettings &defaults)
+    {
+        if (!SaveAudioSettings(mProjectSettingsPath, defaults))
+            return false;
+
+        mDefaults = defaults;
+        return true;
     }
 
     AudioModule::~AudioModule()

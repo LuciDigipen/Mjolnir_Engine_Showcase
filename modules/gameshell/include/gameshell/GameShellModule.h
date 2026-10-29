@@ -37,6 +37,9 @@ namespace mir
         GameShellModule(const GameShellModule &) = delete;
         GameShellModule &operator=(const GameShellModule &) = delete;
 
+        // The pause menu's Audio screen; set once the audio is built, null leaves it out
+        void SetAudioOptions(IAudioOptions *audio) { mShell.SetAudioOptions(audio); }
+
     private:
         // what the player asked of the game, as requests App applies next frame
         void Apply(GameShellAction action);

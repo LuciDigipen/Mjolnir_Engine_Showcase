@@ -51,6 +51,7 @@ namespace mir
     {
         using FieldBuffer = InspectorPanel::FieldBuffer;
         using Clipboard = InspectorPanel::Clipboard;
+        using SoundBankList = InspectorPanel::SoundBankList;
 
         
         struct Edits
@@ -246,7 +247,7 @@ namespace mir
                 : ImGui::ColorEdit3(kValueId, color);
         }
 
-        // Only AssetKind::Model exists today; add a branch per new AssetKind here.
+        // AssetKind::SoundEvent has a widget of its own, as it writes a second field
         bool DrawAssetRefWidget(const FieldDesc &field, void *bytes, const AssetImportView &assets)
         {
             if (field.mAssetKind != AssetKind::Model)
@@ -283,6 +284,99 @@ namespace mir
         }
 
         
+        bool DrawSoundEventWidget(void *bytes, FieldBuffer &bank, SoundBankList &banks)
+        {
+            const char *currentEvent = static_cast<const char *>(bytes);
+            const char *currentBank = reinterpret_cast<const char *>(bank.mBytes);
+
+            std::string preview = currentEvent[0] == '\0' ? "None" : currentEvent;
+            if (currentEvent[0] != '\0' && currentBank[0] != '\0')
+                preview += std::string("  (") + currentBank + ")";
+
+            if (!ImGui::BeginCombo(kValueId, preview.c_str()))
+                return false;
+
+            
+            if (ImGui::IsWindowAppearing())
+            {
+                banks.mBanks = banks.mAudio != nullptr ? banks.mAudio->SoundBanks() : std::vector<EditorSoundBank>{};
+                banks.mTyped.assign(banks.mBanks.size(), {});
+            }
+
+            bool changed = false;
+            const auto pick = [&](std::string_view event, std::string_view bankName)
+            {
+                std::memset(bytes, 0, kFieldStringCapacity);
+                std::memcpy(bytes, event.data(), event.size());
+                std::memset(bank.mBytes, 0, sizeof(bank.mBytes));
+                std::memcpy(bank.mBytes, bankName.data(), bankName.size());
+                changed = true;
+            };
+
+            if (ImGui::Selectable("None", currentEvent[0] == '\0') && currentEvent[0] != '\0')
+                pick({}, {});
+
+            // a value typed earlier, or into an unknown bank, is still shown as the one set
+            const bool currentListed = std::any_of(banks.mBanks.begin(), banks.mBanks.end(),
+                [&](const EditorSoundBank &soundBank)
+                {
+                    return std::find(soundBank.mEvents.begin(), soundBank.mEvents.end(), currentEvent) !=
+                        soundBank.mEvents.end();
+                });
+            if (currentEvent[0] != '\0' && !currentListed)
+            {
+                ImGui::Selectable((std::string(currentEvent) + "  (not listed)").c_str(), true);
+                ImGui::SetItemTooltip("No bank's event list has it; pick another or type one under its bank");
+            }
+
+            if (banks.mBanks.empty())
+                ImGui::TextDisabled("No SoundBanks in this game.");
+            for (size_t index = 0; index < banks.mBanks.size(); ++index)
+            {
+                const EditorSoundBank &soundBank = banks.mBanks[index];
+
+                // the bank flush left, its events indented under it
+                ImGui::Separator();
+                ImGui::TextDisabled("%s", soundBank.mName.c_str());
+                ImGui::Indent();
+                ImGui::PushID(soundBank.mName.c_str());
+
+                // a bank holds its events' IDs only, so without its .json the name has to be typed
+                if (!soundBank.mListed && index < banks.mTyped.size())
+                {
+                    ImGui::TextDisabled("Events unknown: no %s.json beside the bank.", soundBank.mName.c_str());
+                    char *typed = banks.mTyped[index].data();
+                    ImGui::SetNextItemWidth(-FLT_MIN);
+                    if (ImGui::InputTextWithHint("##typed", "Type an event, then Enter", typed, kFieldStringCapacity,
+                            ImGuiInputTextFlags_EnterReturnsTrue) &&
+                        typed[0] != '\0' && soundBank.mName.size() < kFieldStringCapacity)
+                    {
+                        pick(typed, soundBank.mName);
+                        ImGui::CloseCurrentPopup();
+                    }
+                }
+
+                for (const std::string &event : soundBank.mEvents)
+                {
+                    const bool fits =
+                        event.size() < kFieldStringCapacity && soundBank.mName.size() < kFieldStringCapacity;
+                    const bool selected =
+                        event == currentEvent && (currentBank[0] == '\0' || soundBank.mName == currentBank);
+                    if (ImGui::Selectable(event.c_str(), selected, fits ? 0 : ImGuiSelectableFlags_Disabled) &&
+                        !selected)
+                        pick(event, soundBank.mName);
+                    if (!fits)
+                        ImGui::SetItemTooltip("Longer than a field holds (%u characters)", kFieldStringCapacity - 1);
+                }
+                ImGui::PopID();
+                ImGui::Unindent();
+            }
+
+            ImGui::EndCombo();
+            return changed;
+        }
+
+
         void AddResetValues(const ComponentOps &ops, std::span<const std::string_view> names,
             std::vector<FieldValue> &values)
         {
@@ -307,31 +401,43 @@ namespace mir
         }
 
         
-        void DrawAuthoredActions(Edits &edits, const AuthoredKey &key, bool canRevert)
+        
+        void DrawAuthoredActions(Edits &edits, std::span<const AuthoredKey> keys, bool canRevert)
         {
             IAuthoredEntities &authored = *edits.mAuthored;
             if (ImGui::MenuItem("Revert", nullptr, false, canRevert))
-                edits.Submit(MakeRevertAuthoredCommand(authored, key));
+                edits.Submit(MakeRevertAuthoredCommand(authored, keys));
 
-            const std::vector<AuthoredApplyTarget> targets = authored.ApplyTargets(key);
+            const std::vector<AuthoredApplyTarget> targets = authored.ApplyTargets(keys.front());
             if (targets.empty() || !ImGui::BeginMenu("Apply to"))
                 return;
 
             for (std::size_t index = 0; index < targets.size(); ++index)
             {
-                const AuthoredAction apply = authored.Apply(key, index);
+                AuthoredAction apply;
+                for (const AuthoredKey &key : keys)
+                {
+                    apply = authored.Apply(key, index);
+                    if (!apply.mAllowed)
+                        break;
+                }
                 std::string label = targets[index].mLabel;
                 if (targets[index].mOverrides)
                     label += "  " ICON_FA_PEN;
 
                 ImGui::BeginDisabled(!apply.mAllowed);
                 if (ImGui::MenuItem(label.c_str()))
-                    edits.Submit(MakeApplyAuthoredCommand(authored, key, index));
+                    edits.Submit(MakeApplyAuthoredCommand(authored, keys, index));
                 ImGui::EndDisabled();
                 if (!apply.mAllowed)
                     ImGui::SetItemTooltip("%s", apply.mReason.c_str());
             }
             ImGui::EndMenu();
+        }
+
+        void DrawAuthoredActions(Edits &edits, const AuthoredKey &key, bool canRevert)
+        {
+            DrawAuthoredActions(edits, std::span<const AuthoredKey>(&key, 1), canRevert);
         }
 
         void PasteValues(World &world, const Clipboard &clipboard, Entity entity, Edits &edits)
@@ -397,7 +503,8 @@ namespace mir
         }
 
         void DrawComponent(World &world, const ComponentOps &ops, Entity entity, const AssetImportView &assets,
-            std::string_view filter, Clipboard &clipboard, Edits &edits, Entity &selectAfterDraw)
+            SoundBankList &soundBanks, std::string_view filter, Clipboard &clipboard, Edits &edits,
+            Entity &selectAfterDraw)
         {
             if (!ComponentVisible(ops, filter))
                 return;
@@ -433,17 +540,34 @@ namespace mir
                         FieldBuffer buffer{};
                         field.Read(component, buffer.mBytes);
 
-                        std::optional<AuthoredKey> fieldKey;
-                        AuthoredFieldState fieldState = AuthoredFieldState::Inherited;
+                        FieldBuffer bank{};
+                        const FieldDesc *bankField =
+                            field.mAssetKind == AssetKind::SoundEvent ? ops.FindField(field.mBankField) : nullptr;
+                        if (bankField != nullptr)
+                            bankField->Read(component, bank.mBytes);
+
+                        
+                        std::vector<AuthoredKey> fieldKeys;
+                        std::vector<AuthoredKey> overriddenKeys;
                         if (edits.mAuthored != nullptr)
                         {
-                            fieldKey = edits.mAuthored->KeyOf(entity, ops.mType.name, field.mName);
-                            if (fieldKey)
-                                fieldState = edits.mAuthored->FieldState(*fieldKey);
+                            for (const FieldDesc *keyed : { &field, bankField })
+                            {
+                                if (keyed == nullptr)
+                                    continue;
+                                const std::optional<AuthoredKey> key =
+                                    edits.mAuthored->KeyOf(entity, ops.mType.name, keyed->mName);
+                                if (!key)
+                                    break;
+                                fieldKeys.push_back(*key);
+                                if (edits.mAuthored->FieldState(*key) == AuthoredFieldState::Overridden)
+                                    overriddenKeys.push_back(*key);
+                            }
                         }
+                        const bool overridden = !overriddenKeys.empty();
 
                         std::string fieldLabel(field.mName);
-                        if (fieldState == AuthoredFieldState::Overridden)
+                        if (overridden)
                             fieldLabel += "  " ICON_FA_PEN;
 
                         const bool readOnly = field.ReadOnly();
@@ -459,7 +583,9 @@ namespace mir
                             edited = DrawColorWidget(field, buffer.mBytes);
                             break;
                         case FieldWidget::AssetRef:
-                            edited = DrawAssetRefWidget(field, buffer.mBytes, assets);
+                            edited = field.mAssetKind == AssetKind::SoundEvent
+                                ? DrawSoundEventWidget(buffer.mBytes, bank, soundBanks)
+                                : DrawAssetRefWidget(field, buffer.mBytes, assets);
                             break;
                         case FieldWidget::Default:
                             edited = field.mClamped
@@ -470,10 +596,12 @@ namespace mir
                         }
                         ImGui::EndDisabled();
 
-                        if (fieldKey && ImGui::BeginPopupContextItem("##authored-field"))
+                        if (!fieldKeys.empty() && ImGui::BeginPopupContextItem("##authored-field"))
                         {
-                            DrawAuthoredActions(edits, *fieldKey,
-                                fieldState == AuthoredFieldState::Overridden);
+                            DrawAuthoredActions(edits,
+                                overridden ? std::span<const AuthoredKey>(overriddenKeys)
+                                           : std::span<const AuthoredKey>(fieldKeys).first(1),
+                                overridden);
                             ImGui::EndPopup();
                         }
 
@@ -482,6 +610,10 @@ namespace mir
                             std::vector<FieldValue> values{ ToValue(index, buffer) };
                             if (field.mWidget == FieldWidget::AssetRef)
                                 AddResetValues(ops, field.mResetOnChange, values);
+                            // one command for both, so one undo takes back the event and its bank
+                            if (bankField != nullptr)
+                                values.push_back(
+                                    ToValue(static_cast<uint32_t>(bankField - ops.mFields.data()), bank));
                             edits.Submit(MakeFieldEditCommand(world, entity, ops, std::move(values), "",
                                 edits.mAuthored), field.mKind == FieldKind::EntityRef);
                         }
@@ -615,7 +747,7 @@ namespace mir
             if (!ops->Has(world, entity))
                 continue;
 
-            DrawComponent(world, *ops, entity, assets, mFilter, mClipboard, edits, selectAfterDraw);
+            DrawComponent(world, *ops, entity, assets, mSoundBanks, mFilter, mClipboard, edits, selectAfterDraw);
         }
 
         DrawRemovedComponents(entity, edits);

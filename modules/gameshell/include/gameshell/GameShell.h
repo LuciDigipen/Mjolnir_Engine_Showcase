@@ -35,6 +35,11 @@ namespace mir
 
         bool MenuOpen() const { return mMenu.IsOpen(); }
 
+        bool AudioScreenOpen() const { return mMenu.AudioScreenOpen(); }
+
+        // null = the menu has no Audio entry
+        void SetAudioOptions(IAudioOptions *audio) { mMenu.SetAudioOptions(audio); }
+
         float PlaySeconds() const { return mPlaySeconds; }
 
     private:

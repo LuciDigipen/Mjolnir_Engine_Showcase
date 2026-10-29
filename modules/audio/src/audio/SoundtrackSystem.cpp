@@ -68,12 +68,22 @@ namespace mir
         if (track->mBankName[0] != '\0')
             audio::RequestBank(track->mBankName);
 
-        // Pause keeps the music going
+        
         const bool playing = IsPlaying(context.world);
         if (playing && !track->mStarted && track->mEventName[0] != '\0')
+        {
             track->mStarted = audio::PlayMusic(track->mEventName, track->mBankName);
+           
+            track->mAppliedVolume = -1.0f;
+        }
         else if (!playing)
             StopSoundtrack(*track, kCutFadeMs);
+
+        if (track->mStarted && track->mVolume != track->mAppliedVolume)
+        {
+            audio::SetSoundtrackVolume(track->mVolume);
+            track->mAppliedVolume = track->mVolume;
+        }
     }
 
     void SoundtrackSystem::OnPlayEnd(SystemContext &context)

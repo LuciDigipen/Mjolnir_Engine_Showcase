@@ -72,6 +72,34 @@ TEST_CASE("a missing audio settings file gives the defaults", "[audio]")
     CHECK(mir::LoadAudioSettings(dir.path / "settings.json") == AudioSettings{});
 }
 
+TEST_CASE("a missing audio settings file gives the project's defaults", "[audio]")
+{
+    const TempDir dir("project_defaults");
+    const std::filesystem::path project = dir.path / "project_settings.json";
+
+    WriteFile(project, R"({ "input": { "actions": [] } })");
+    CHECK(mir::LoadAudioSettings(project) == AudioSettings{});
+
+    WriteFile(project, R"({ "input": { "actions": [] },
+        "audio": { "music": { "volume": 0.3, "muted": true }, "sfx": { "volume": 0.7 } } })");
+    const AudioSettings defaults = mir::LoadAudioSettings(project);
+    CHECK(defaults == Sample());
+
+    CHECK(mir::LoadAudioSettings(dir.path / "settings.json", defaults) == Sample());
+}
+
+TEST_CASE("a bad audio setting falls back to the project's default", "[audio]")
+{
+    const TempDir dir("bad_value_project_default");
+    const std::filesystem::path path = dir.path / "settings.json";
+
+    WriteFile(path, R"({ "audio": { "music": { "volume": "loud" }, "sfx": { "volume": 0.4 } } })");
+
+    const AudioSettings loaded = mir::LoadAudioSettings(path, Sample());
+    CHECK(loaded.mMusic == Sample().mMusic);
+    CHECK(loaded.mSfx == mir::ChannelSettings{0.4f, false});
+}
+
 TEST_CASE("audio settings saved are the audio settings loaded", "[audio]")
 {
     const TempDir dir("round_trip");

@@ -136,7 +136,8 @@ namespace mir
     #endif
           mCamera(Context()),
     #if MIR_WITH_AUDIO
-          mAudio(Context(), mProject.mSoundBankDir, UserDataDir() / mProject.mName / "settings.json"),
+          mAudio(Context(), mProject.mSoundBankDir, mProject.mProjectSettingsPath,
+              UserDataDir() / mProject.mName / "settings.json"),
     #endif
           mPhysics(Context(), mProject.mProjectSettingsPath, &mJobs),
           mTerrainData(Context()),
@@ -152,6 +153,13 @@ namespace mir
           mGameUIImGui(Context(), mImGui, mWindow, mGameUI),
           mFixedTimestep{ .mStep = mDesc.mFixedDeltaSeconds, .mMaxSteps = mDesc.mMaxFixedSteps }
     {
+    #if MIR_WITH_AUDIO
+        mGameShell.SetAudioOptions(&mAudioOptions);
+    #if MIR_WITH_EDITOR
+        mEditor.SetAudio(&mEditorAudio);
+    #endif
+    #endif
+
         mSplash.screen.SetProgress("Loading scene...", 0.9f);
         LoadProjectScene();
 

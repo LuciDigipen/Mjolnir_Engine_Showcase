@@ -15,10 +15,31 @@
 
 #include <imgui.h>
 
+#include <cmath>
 #include <cstdio>
 
 namespace mir
 {
+    namespace
+    {
+        // the volume as a percent and the mute beside it, true when either changed
+        bool DrawAudioChannel(const char *name, EditorAudioChannel &channel)
+        {
+            ImGui::PushID(name);
+            bool changed = false;
+            int percent = static_cast<int>(std::lround(channel.mVolume * 100.0f));
+            if (ImGui::SliderInt(name, &percent, 0, 100, "%d%%", ImGuiSliderFlags_AlwaysClamp))
+            {
+                channel.mVolume = static_cast<float>(percent) / 100.0f;
+                changed = true;
+            }
+            ImGui::SameLine();
+            changed |= ImGui::Checkbox("Muted", &channel.mMuted);
+            ImGui::PopID();
+            return changed;
+        }
+    }
+
     void ProjectSettingsPanel::DrawRendering(RenderSettings &renderSettings, RenderSettings &draftRenderSettings,
         const std::filesystem::path &savePath)
     {
@@ -109,6 +130,66 @@ namespace mir
             ImGui::SameLine();
             ImGui::TextDisabled("%s", mRenderingStatusMessage.c_str());
         }
+    }
+
+    void ProjectSettingsPanel::DrawAudio(IEditorAudio &audio, bool editing)
+    {
+        if (!mAudioDraftLoaded)
+        {
+            mDraftAudio = audio.Defaults();
+            mAudioDraftLoaded = true;
+        }
+
+        ImGui::SeparatorText("Audio");
+        ImGui::TextWrapped("What a player starts with, until they change it in the pause menu.");
+
+        ImGui::BeginDisabled(!editing);
+        ImGui::PushID("defaults");
+        DrawAudioChannel("Music", mDraftAudio.mMusic);
+        DrawAudioChannel("SFX", mDraftAudio.mSfx);
+        ImGui::PopID();
+
+        if (!mAudioStatus.empty() && mDraftAudio != mAudioStatusSnapshot)
+            mAudioStatus.clear();
+
+        if (ImGui::Button("Save##Audio"))
+        {
+            // and heard from now on, so Play sounds as a new player's game does
+            if (audio.SaveDefaults(mDraftAudio))
+            {
+                audio.SetLive(mDraftAudio);
+                mAudioStatus = "Saved.";
+            }
+            else
+            {
+                mAudioStatus = "Save failed - see log.";
+            }
+            mAudioStatusSnapshot = mDraftAudio;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Revert##Audio"))
+            mDraftAudio = audio.Defaults();
+        ImGui::EndDisabled();
+
+        if (!mAudioStatus.empty())
+        {
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", mAudioStatus.c_str());
+        }
+
+        if (editing)
+            return;
+
+        ImGui::Spacing();
+        ImGui::TextUnformatted("While playing");
+        ImGui::TextWrapped("Heard at once and put back on Stop; the defaults above stay as saved.");
+        EditorAudioLevels live = audio.Live();
+        ImGui::PushID("live");
+        bool changed = DrawAudioChannel("Music", live.mMusic);
+        changed |= DrawAudioChannel("SFX", live.mSfx);
+        ImGui::PopID();
+        if (changed)
+            audio.SetLive(live);
     }
 
     void ProjectSettingsPanel::DrawExternalTools(const std::filesystem::path &savePath)
@@ -275,7 +356,7 @@ namespace mir
     }
 
     void ProjectSettingsPanel::Draw(RenderSettings &renderSettings, const std::filesystem::path &savePath,
-        bool &showInputSettings, PhysicsLayerUpdate *layerUpdate, bool editing)
+        bool &showInputSettings, PhysicsLayerUpdate *layerUpdate, IEditorAudio *audio, bool editing)
     {
         if (!mDraftLoaded)
         {
@@ -290,6 +371,8 @@ namespace mir
 
         DrawRendering(renderSettings, mDraftRenderSettings, savePath);
         DrawPhysicsLayers(savePath, layerUpdate, editing);
+        if (audio != nullptr)
+            DrawAudio(*audio, editing);
         DrawExternalTools(savePath);
     }
 }

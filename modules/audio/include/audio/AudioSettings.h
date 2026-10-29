@@ -28,8 +28,8 @@ namespace mir
         bool operator==(const AudioSettings &) const = default;
     };
 
-    // A missing or unreadable file, or a bad value, falls back to the default and is logged here
-    AudioSettings LoadAudioSettings(const std::filesystem::path &path);
+    // A missing or unreadable file, or a bad value, falls back to defaults and is logged here
+    AudioSettings LoadAudioSettings(const std::filesystem::path &path, const AudioSettings &defaults = {});
 
     // Writes the "audio" section and keeps any other section the file holds. False when it cannot + loggs it
     bool SaveAudioSettings(const std::filesystem::path &path, const AudioSettings &settings);

@@ -8,6 +8,7 @@
  */
 #pragma once
 
+#include <editor/EditorAudio.h>
 #include <editor/IdeSettings.h>
 #include <physics_layers/PhysicsLayers.h>
 #include <renderer/RenderSettings.h>
@@ -20,9 +21,9 @@ namespace mir
     class ProjectSettingsPanel
     {
     public:
-        // layerUpdate: where a saved layer table is left for physics, null when there is none; editing: only in Edit
+
         void Draw(RenderSettings &renderSettings, const std::filesystem::path &savePath, bool &showInputSettings,
-            PhysicsLayerUpdate *layerUpdate, bool editing);
+            PhysicsLayerUpdate *layerUpdate, IEditorAudio *audio, bool editing);
 
         void OnHidden()
         {
@@ -32,11 +33,14 @@ namespace mir
             mRenderingStatusMessage.clear();
             mIdeDraftLoaded = false;
             mIdeStatusMessage.clear();
+            mAudioDraftLoaded = false;
+            mAudioStatus.clear();
         }
 
     private:
         void DrawRendering(RenderSettings &renderSettings, RenderSettings &draftRenderSettings,
             const std::filesystem::path &savePath);
+        void DrawAudio(IEditorAudio &audio, bool editing);
         void DrawExternalTools(const std::filesystem::path &savePath);
         void DrawPhysicsLayers(const std::filesystem::path &savePath, PhysicsLayerUpdate *layerUpdate, bool editing);
         void LoadLayers(const std::filesystem::path &savePath);
@@ -51,6 +55,11 @@ namespace mir
         PhysicsLayerTable mDraftLayers;
         char mLayerNames[kPhysicsLayerCount][64]{};
         std::string mLayersStatus;
+
+        bool mAudioDraftLoaded = false;
+        EditorAudioLevels mDraftAudio;
+        std::string mAudioStatus;
+        EditorAudioLevels mAudioStatusSnapshot;
 
         std::string mIdeStatusMessage;
         IdeSettings mIdeMessageSnapshot;

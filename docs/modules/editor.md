@@ -155,6 +155,7 @@ bool IsDocumentUnsaved(DocumentId document) const;              // the same for 
 void SetDocumentUnsaved(DocumentId document, bool unsaved);
 void SetAuthoringBackend(IAuthoringBackend *backend);           // the module's PrefabAuthoringAdapter
 void SetAuthoredEntities(IAuthoredEntities *authored);          // document edits and instance overrides
+void SetAudio(IEditorAudio *audio);                             // null: no Audio settings, no soundtrack picker
 
 // between ImGuiRuntime::BeginFrame and EndFrame
 EditorActions DrawLayout(bool enableLayout, InputMap &inputMap, RenderSettings &renderSettings,
@@ -187,6 +188,7 @@ EditorCamera &SceneCamera();
 | `ContentBrowserView`, `ContentBrowserEntryView` | `editor/panels/ContentBrowserPanel.h` | The open project's content root as a flat list of files/directories, plus `mLastRenamedFrom`/`mLastRenamedTo` for one tick when a same-tick remove+add looks like a rename |
 | `ContentBrowserAction`, `ContentBrowserActionKind` | `editor/panels/ContentBrowserPanel.h` | `{mKind, mTargetPath, mNewName}`: `CreateFolder`, `Rename`, `Delete`, `OpenInIde` or `OpenPrefab`, for `App` to carry out (see [app.md](app.md)) |
 | `kPrefabContentPayload` | `editor/panels/ContentBrowserPanel.h` | The drag payload a Prefab row carries into the Hierarchy or the scene viewport |
+| `IEditorAudio`, `EditorAudioLevels`, `EditorAudioChannel`, `EditorSoundBank` | `editor/EditorAudio.h` | What the editor reads and changes of the game's audio: the live volumes, the project's defaults and each SoundBank's events. `App` implements it with the audio module and sets it on `EditorModule::SetAudio`, so the editor never links `audio` |
 | `IdeSettings`, `DetectDefaultIde` | `editor/IdeSettings.h` | The `project_settings.json` "ide.path" string (empty: auto-detect VS Code), edited from `ProjectSettingsPanel`'s External Tools section |
 | `EntityAction`, `EntityActionKind` | `editor/panels/HierarchyPanel.h` | `{mKind, mPreset, mTarget, mTargets, mParent, mBefore}`: `Create` (null `mPreset` = New), `Delete`, `Duplicate`, `CopyAsOrdinaryObject`, `Reparent`, `CreatePrefab` or `PlacePrefab`, which `MakeEntityCommand` or `MakeDocumentEntityCommand` turns into a command (see [editor-history.md](editor-history.md)) |
 | `NeighborInHierarchy` | `editor/panels/HierarchyPanel.h` | The entity to select after deleting one: next sibling, else previous, else the parent |
@@ -307,6 +309,35 @@ current value, greyed out via `ImGui::BeginDisabled`. (A 3D transform gizmo
 does exist, drawn over the viewport by `DrawViewportGizmo` via ImGuizmo - it's
 a separate, `Selection`-driven overlay, not part of `InspectorPanel`'s
 field-table drawing described here.)
+
+A `FieldWidget::AssetRef` field with `AssetKind::SoundEvent`, the `Soundtrack`'s
+and the `AudioEmitter`'s `eventName`, is a combo of the game's SoundBanks with
+their events under them, read through `IEditorAudio::SoundBanks()` each time it
+opens, so a bank regenerated while the editor runs shows up. A pick writes the
+event and, into the field `mBankField` names, its bank, as one Set fields
+command, so one undo takes back both; an emitter has no bank field. The
+`Soundtrack`'s bank field is `mHidden` and shows in the combo's preview instead.
+On a Prefab instance the event shows as overridden when either is, and its
+Revert and Apply to take both overridden keys as one command through the span
+overloads of `MakeRevertAuthoredCommand` and `MakeApplyAuthoredCommand`, refused
+whole if either is refused, so an event is never left with another's bank.
+
+A bank holds its events by ID only, so one without Wwise's `<bank>.json` beside
+it, such as `HelloWorld`'s `Test`, is listed with its events unknown and a box
+under it to type an event into; Enter picks it from that bank. Banks with their
+JSON are pick-only. A current event no bank lists, typed earlier or into an
+unknown bank, still shows at the top as "(not listed)".
+
+**Audio in Project Settings.** With `IEditorAudio` set, the panel has an Audio
+section between Physics layers and External Tools. In Edit it edits a draft of
+the project's default music and SFX volume and mute; Save writes the `audio`
+section of `project_settings.json`, makes it what the pause menu's Restore
+defaults goes back to, and applies it, so Play sounds as a new player's game
+does. In Play the defaults are greyed out and a "While playing" group changes
+what is heard at once. `EditorModule` takes the volumes at `PlayBegin` and puts
+them back at `PlayEnd`, so neither that group nor the pause menu's Audio screen
+changes anything for good, and the defaults are never written from them. With
+`--no-editor` the volumes are not put back, as in a game build.
 
 Component edits go to `History` as commands, like entity actions, so each one
 can be undone. They change no `LoadedScene` entry, so `App` has nothing to do
@@ -519,6 +550,15 @@ or the dialog themselves. History needs neither, and its tests are in
    deleted, not everything recursively under a deleted folder.
 
 ## Changed
+
+*2026-10-28* — **Audio: a soundtrack event picker and an Audio section in
+Project Settings (#305).** Was: a `Soundtrack`'s event and bank were typed by
+hand, and the default volumes could only be set by editing
+`project_settings.json`. Now: the event is picked from the SoundBanks' events,
+which sets the bank too, and Project Settings saves the default music and SFX
+volume and mute and changes the live ones in Play, put back on Stop. Because:
+designers set a scene's soundtrack and the project's volumes without editing
+files, and a trial in Play should not leave the volumes changed.
 
 *2026-10-27* — **Switching the active camera is one undo step;
 `MakeCommandGroup` (#231).** Was: the Inspector recorded only the camera it
