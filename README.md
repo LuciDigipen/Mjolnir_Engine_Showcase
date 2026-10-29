@@ -95,6 +95,47 @@ then `F7` to build and `F5` to debug.
 This assumes vcpkg and the Vulkan SDK are already set up. Full setup,
 troubleshooting and the VS Code workflow are in [docs/build.md](docs/build.md).
 
+## Git LFS
+
+The 4K TerrainCheck material sources for the Icelandic sand and rocks scan are
+tracked with Git LFS:
+
+```
+games/TerrainCheck/assets/textures/icelandic_sand_and_rocks/*.jpg
+```
+
+Only that directory is in LFS; every other image in the repository stays a
+regular Git object. The six committed maps are BaseColor, Normal,
+Displacement, Roughness, Specular and AO. Bump, Cavity and Gloss are not used
+and are not included. The six JPEGs are byte-identical copies of the originals;
+nothing was re-encoded, cooked or migrated from history. `tcigfcgn.json` is the
+vendor metadata manifest and stays a normal text file. It describes the full
+source set, so it lists maps beyond the six committed here.
+
+Install the Git LFS client once, then fetch the objects after cloning or
+pulling:
+
+```
+git lfs install
+git lfs pull
+```
+
+A JPEG that opens as small text beginning with `version https://git-lfs` is an
+unresolved pointer. Run `git lfs install`, then `git lfs pull` from the
+repository root, and check the result with `git lfs status` or `git lfs fsck`.
+Do not edit or commit pointer text by hand.
+
+### Source and licensing
+
+The set was obtained as Fab purchased assets. This repository is PRIVATE and
+the textures are for project collaborators only; they are not redistributed as
+standalone files. The Fab EULA applies:
+https://www.fab.com/eula?lang=en.
+
+The organization's Git LFS quota could not be read because the account lacks
+the `admin:org` scope, so available storage and bandwidth are unconfirmed. This
+is not a verified quota pass. No LFS objects have been uploaded.
+
 ## Third-party notices
 
 Dear ImGui is a `third_party/imgui` submodule, MIT licensed, with `LICENSE.txt`
