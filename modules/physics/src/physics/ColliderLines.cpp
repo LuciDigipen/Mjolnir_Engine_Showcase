@@ -21,7 +21,7 @@ namespace mir
         constexpr uint32_t kTriggerColor = PackDebugColor(0.25f, 0.9f, 1.0f, 0.8f);
         constexpr uint32_t kSleepingColor = PackDebugColor(0.55f, 0.55f, 0.55f, 1.0f);
         constexpr uint32_t kDynamicColor = PackDebugColor(0.3f, 1.0f, 0.35f, 1.0f);
-        // static and kinematic: nothing simulates them, they only get in the way
+        // static and kinematic: contacts never push them
         constexpr uint32_t kFixedColor = PackDebugColor(0.35f, 0.6f, 1.0f, 1.0f);
 
         std::optional<WorldPosition> ToWorld(const ColliderView &view, const glm::vec3 &local)
@@ -46,10 +46,10 @@ namespace mir
             float radius, float start, float end, uint32_t segments, uint32_t color, std::vector<DebugLineVertex> &out)
         {
             const auto at = [&](uint32_t i)
-            {
-                const float angle = start + (end - start) * static_cast<float>(i) / static_cast<float>(segments);
-                return center + radius * (std::cos(angle) * u + std::sin(angle) * w);
-            };
+                {
+                    const float angle = start + (end - start) * static_cast<float>(i) / static_cast<float>(segments);
+                    return center + radius * (std::cos(angle) * u + std::sin(angle) * w);
+                };
             for (uint32_t i = 0; i < segments; ++i)
                 Segment(view, at(i), at(i + 1), color, out);
         }
@@ -90,7 +90,7 @@ namespace mir
             Arc(view, top, x, z, r, 0.0f, full, kColliderCircleSegments, color, out);
             Arc(view, bottom, x, z, r, 0.0f, full, kColliderCircleSegments, color, out);
 
-            for (const glm::vec3 &side : { x, -x, z, -z })
+            for (const glm::vec3 &side :{ x, -x, z, -z })
                 Segment(view, top + side * r, bottom + side * r, color, out);
 
             // each cap as two half circles across it
@@ -108,10 +108,10 @@ namespace mir
 
             const auto point = [&](uint32_t x, uint32_t z) -> const glm::vec3 & { return view.mHeightGrid[z * size + x]; };
             const auto edge = [&](const glm::vec3 &a, const glm::vec3 &b)
-            {
-                if (!std::isnan(a.y) && !std::isnan(b.y))
-                    Segment(view, a, b, color, out);
-            };
+                {
+                    if (!std::isnan(a.y) && !std::isnan(b.y))
+                        Segment(view, a, b, color, out);
+                };
 
             for (uint32_t z = 0; z < size; ++z)
             {

@@ -275,13 +275,13 @@ namespace mir::vk
             return;
 
         const VkDevice device = mDevice->Handle();
-        for (VkPipeline *pipeline : { &mWireframeDepth, &mWireframeColor, &mLinesDepth, &mLinesColor })
+        for (VkPipeline *pipeline :{ &mWireframeDepth, &mWireframeColor, &mLinesDepth, &mLinesColor })
         {
             if (*pipeline != VK_NULL_HANDLE)
                 vkDestroyPipeline(device, *pipeline, nullptr);
             *pipeline = VK_NULL_HANDLE;
         }
-        for (VkPipelineLayout *layout : { &mWireframeLayout, &mLinesLayout })
+        for (VkPipelineLayout *layout :{ &mWireframeLayout, &mLinesLayout })
         {
             if (*layout != VK_NULL_HANDLE)
                 vkDestroyPipelineLayout(device, *layout, nullptr);
@@ -297,10 +297,10 @@ namespace mir::vk
 
     bool DebugDraw::Wants(std::span<const RenderView> views) const
     {
-        const bool lines = mLinesDepth != VK_NULL_HANDLE;
+        const bool linesAvailable = mLinesDepth != VK_NULL_HANDLE;
         return std::any_of(views.begin(), views.end(), [&](const RenderView &view)
             {
-                return (WireframeAvailable() && DrawsWireframe(view)) || (lines && !view.debugLines.empty());
+                return (WireframeAvailable() && DrawsWireframe(view)) || (linesAvailable && !view.debugLines.empty());
             });
     }
 
@@ -360,7 +360,7 @@ namespace mir::vk
             return;
 
         const bool withDepth = depth != VK_NULL_HANDLE;
-        const bool lines = mLinesDepth != VK_NULL_HANDLE && UploadLines(frame, views);
+        const bool drawLines = mLinesDepth != VK_NULL_HANDLE && UploadLines(frame, views);
 
         const VkRenderingAttachmentInfo colorAttachment{
             .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -428,7 +428,7 @@ namespace mir::vk
                 }
             }
 
-            if (lines && !view.debugLines.empty())
+            if (drawLines && !view.debugLines.empty())
             {
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, withDepth ? mLinesDepth : mLinesColor);
                 vkCmdPushConstants(cmd, mLinesLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &view.viewProj);

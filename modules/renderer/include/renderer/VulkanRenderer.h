@@ -312,9 +312,9 @@ namespace mir
         void RecordRtFrame(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views);
 
         void RecordCommands(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views);
-        // Called inside the composite pass, after the composite and before ImGui: when a view
-        // has a debug view on, ends that pass, draws the debug lines and begins the ImGui pass again.
-        // sceneDepth is the raster path's depth image, null on the ray-traced path.
+        // Called inside the composite pass, after the composite and before ImGui: when a view has a
+        // debug view on, ends that pass, draws the wireframe and debug lines, and begins the ImGui pass
+        // again. sceneDepth is the raster path's depth image, null on the ray-traced path.
         void RecordDebugViews(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views,
             VkImage sceneDepth, VkImageView sceneDepthView);
         enum class RasterPass { Scene, Opaque, Surface, Transparent };

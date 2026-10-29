@@ -145,15 +145,40 @@ namespace mir
             }
         }
 
+        bool Fits(float size)
+        {
+            return std::isfinite(size) && size > 0.0f;
+        }
+
+        // Every size the shape reads Fits; MakeBaseShape refuses the rest.
+        bool HasSize(const BodyDesc &desc)
+        {
+            switch (desc.mShape)
+            {
+            case PhysicsShape::Sphere:
+                return Fits(desc.mRadius);
+            case PhysicsShape::Capsule:
+                return Fits(desc.mRadius) && Fits(desc.mHalfHeight);
+            default:
+                return Fits(desc.mHalfExtent.x) && Fits(desc.mHalfExtent.y) && Fits(desc.mHalfExtent.z);
+            }
+        }
+
+        // halfHeight counts the caps, Jolt wants the cylinder between them, and a body with no
+        // cylinder at all is a sphere that Jolt's capsule refuses
+        float CylinderHalfHeight(const BodyDesc &desc)
+        {
+            return std::max(desc.mHalfHeight - desc.mRadius, 1.0e-3f);
+        }
+
         // The size-only shape, in its own frame. Null, logged, for a size Jolt cannot build.
         const JPH::Shape *MakeBaseShape(const BodyDesc &desc)
         {
             const char *hint = "a collider needs a size above 0, so this one is empty until it is fixed";
-            const auto fits = [](float size) { return std::isfinite(size) && size > 0.0f; };
 
             if (desc.mShape == PhysicsShape::Sphere)
             {
-                if (!fits(desc.mRadius))
+                if (!Fits(desc.mRadius))
                 {
                     MIR_LOG_ERROR("PhysicsWorld: radius must be positive; {}", hint);
                     return nullptr;
@@ -163,19 +188,16 @@ namespace mir
 
             if (desc.mShape == PhysicsShape::Capsule)
             {
-                if (!fits(desc.mRadius) || !fits(desc.mHalfHeight))
+                if (!Fits(desc.mRadius) || !Fits(desc.mHalfHeight))
                 {
                     MIR_LOG_ERROR("PhysicsWorld: radius and halfHeight must be positive; {}", hint);
                     return nullptr;
                 }
-                // halfHeight counts the caps, Jolt wants the cylinder between them, and a body with no
-                // cylinder at all is a sphere that Jolt's capsule refuses
-                const float cylinder = std::max(desc.mHalfHeight - desc.mRadius, 1.0e-3f);
-                return new JPH::CapsuleShape(cylinder, desc.mRadius);
+                return new JPH::CapsuleShape(CylinderHalfHeight(desc), desc.mRadius);
             }
 
             const glm::vec3 &halfExtent = desc.mHalfExtent;
-            if (!fits(halfExtent.x) || !fits(halfExtent.y) || !fits(halfExtent.z))
+            if (!Fits(halfExtent.x) || !Fits(halfExtent.y) || !Fits(halfExtent.z))
             {
                 MIR_LOG_ERROR("PhysicsWorld: half extent must be positive on every axis; {}", hint);
                 return nullptr;
@@ -275,12 +297,8 @@ namespace mir
 
     std::optional<ColliderView> ColliderViewOf(const BodyDesc &desc)
     {
-        // MakeShape builds an empty shape from these, and logs it at CreateBody; nothing to outline
-        const auto fits = [](float size) { return std::isfinite(size) && size > 0.0f; };
-        const bool sized = desc.mShape == PhysicsShape::Sphere ? fits(desc.mRadius)
-            : desc.mShape == PhysicsShape::Capsule ? fits(desc.mRadius) && fits(desc.mHalfHeight)
-            : fits(desc.mHalfExtent.x) && fits(desc.mHalfExtent.y) && fits(desc.mHalfExtent.z);
-        if (!sized)
+        // MakeShape builds an empty shape from these, and CreateBody logs it; nothing to outline
+        if (!HasSize(desc))
             return std::nullopt;
 
         const std::optional<WorldPosition> center = ShapeCenter(desc.mPosition, desc.mRotation, desc.mOffset);
@@ -294,8 +312,7 @@ namespace mir
             (desc.mShape == PhysicsShape::Capsule ? AxisRotation(desc.mAxis) : kIdentityRotation);
         view.mHalfExtent = desc.mHalfExtent;
         view.mRadius = desc.mRadius;
-        // as MakeBaseShape builds it
-        view.mCylinderHalfHeight = std::max(desc.mHalfHeight - desc.mRadius, 1.0e-3f);
+        view.mCylinderHalfHeight = CylinderHalfHeight(desc);
         view.mMotion = desc.mMotion;
         view.mTrigger = desc.mIsTrigger;
         return view;
@@ -1166,25 +1183,21 @@ namespace mir
             view.mTrigger = body.IsSensor();
             view.mSleeping = !body.IsStatic() && !body.IsActive();
 
-            glm::quat rotation = FromJolt(body.GetRotation());
-            glm::vec3 offset{ 0.0f };
+            // MakeShape wraps the base shape only when the axis or the collider offset moves it
+            view.mPosition = *origin;
+            view.mRotation = FromJolt(body.GetRotation());
             const JPH::Shape *shape = body.GetShape();
             if (shape->GetSubType() == JPH::EShapeSubType::RotatedTranslated)
             {
                 const auto &placed = static_cast<const JPH::RotatedTranslatedShape &>(*shape);
-                offset = FromJolt(placed.GetPosition());
-                shape = placed.GetInnerShape();
-                const std::optional<WorldPosition> center = ShapeCenter(*origin, rotation, offset);
+                const std::optional<WorldPosition> center =
+                    ShapeCenter(*origin, view.mRotation, FromJolt(placed.GetPosition()));
                 if (!center)
                     continue;
                 view.mPosition = *center;
-                rotation = rotation * FromJolt(placed.GetRotation());
+                view.mRotation = view.mRotation * FromJolt(placed.GetRotation());
+                shape = placed.GetInnerShape();
             }
-            else
-            {
-                view.mPosition = *origin;
-            }
-            view.mRotation = rotation;
 
             if (ReadShape(*shape, view, grid))
                 visit(view);

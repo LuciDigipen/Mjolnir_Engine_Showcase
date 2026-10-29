@@ -2,7 +2,8 @@
  * @file DebugView.h
  * @author Rahul Nair
  * @brief How a viewport draws the scene - shaded, wireframe or both - and
- *        whether physics colliders are drawn over it.
+ *        whether physics colliders are drawn over it, plus the camera-relative
+ *        line points the renderer draws them with.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -36,10 +37,5 @@ namespace mir
     {
         ViewportShading shading = ViewportShading::Render;
         bool colliders = false;
-
-        // false: the final render with nothing over it, so the renderer records no debug work
-        bool Active() const { return shading != ViewportShading::Render || colliders; }
-
-        friend bool operator==(const DebugViewSettings &, const DebugViewSettings &) = default;
     };
 }

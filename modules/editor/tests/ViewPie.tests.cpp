@@ -69,16 +69,3 @@ TEST_CASE("Colliders toggles over the current shading", "[editor][view-pie]")
     CHECK_FALSE(view.colliders);
     CHECK_FALSE(ViewPieItemActive(view, ViewPieItem::Colliders));
 }
-
-TEST_CASE("Only the plain final render counts as no debug view", "[editor][view-pie]")
-{
-    DebugViewSettings view;
-    CHECK_FALSE(view.Active());
-
-    view.colliders = true;
-    CHECK(view.Active());
-
-    view.colliders = false;
-    view.shading = ViewportShading::RenderWireframe;
-    CHECK(view.Active());
-}
