@@ -41,7 +41,7 @@ namespace mir::vk
     };
     static_assert(sizeof(RtPushConstants) == 24);
 
-    // Debug wireframe lines: no camera UBO either, the view's viewProj is folded into the model on the CPU.
+    // Debug wireframe lines have no camera UBO; the view's viewProj is folded into the model on the CPU.
     struct DebugWireframePushConstants
     {
         glm::mat4 viewProjModel; // 64

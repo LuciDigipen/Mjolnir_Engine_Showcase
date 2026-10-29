@@ -219,7 +219,7 @@ namespace mir
 
         // Every body's collider as Jolt holds it, at its simulated pose; height fields come thinned to a grid of at
         // most kColliderGridLines per side, whose points live only for the visit. Between steps only. An empty shape
-        // is skipped.
+        // is skipped. visit runs under the body's read lock, so it must not call back into this world.
         void ForEachCollider(const std::function<void(const ColliderView &)> &visit) const;
         static constexpr uint32_t kColliderGridLines = 64;
 

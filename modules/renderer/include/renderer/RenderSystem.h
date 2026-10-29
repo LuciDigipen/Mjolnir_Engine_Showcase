@@ -478,8 +478,8 @@ namespace mir
             }
 
             // Only the main World's physics fills the lines; a preview World has none, so it asks for none.
-            if (DebugLines *own = context.world.TryResource<DebugLines>())
-                own->mCollidersWanted = collidersWanted && &source == &context.world;
+            if (DebugLines *mainLines = context.world.TryResource<DebugLines>())
+                mainLines->mCollidersWanted = collidersWanted && &source == &context.world;
 
             if (warnNoCamera && !mWarnedNoCamera)
             {

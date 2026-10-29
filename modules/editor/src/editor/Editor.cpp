@@ -1543,7 +1543,7 @@ namespace mir
 
     void Editor::DrawDebugViewMenu(const EngineModeState &mode)
     {
-        // view changes are Edit-only; Play keeps rendering what Edit picked
+        // shown in Play, but only Edit changes it, as with the pie
         ImGui::BeginDisabled(mode.mMode != EngineMode::Edit);
         if (ImGui::BeginMenu("Shading"))
         {
@@ -1563,7 +1563,8 @@ namespace mir
     void Editor::UpdateViewPie(const EngineModeState &mode)
     {
         // view changes are Edit-only; Play keeps rendering what Edit picked
-        if (mode.mMode != EngineMode::Edit || ImGui::GetTopMostPopupModal() != nullptr)
+        if (mode.mMode != EngineMode::Edit || ImGui::GetTopMostPopupModal() != nullptr ||
+            mSceneViewportRect.extent.width == 0 || mSceneViewportRect.extent.height == 0)
         {
             mViewPieOpen = false;
             return;
