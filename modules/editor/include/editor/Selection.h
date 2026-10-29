@@ -26,6 +26,10 @@ namespace mir
         // where a shift-click range starts: the last entity clicked without shift
         Entity mAnchor = kNullEntity;
 
+        // set by panels other than the Hierarchy; its next Draw opens this entity's ancestors,
+        // scrolls to its row, then clears it
+        Entity mReveal = kNullEntity;
+
         bool Contains(Entity e) const
         {
             return std::find(mSelected.begin(), mSelected.end(), e) != mSelected.end();

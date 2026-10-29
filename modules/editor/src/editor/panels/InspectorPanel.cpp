@@ -623,7 +623,11 @@ namespace mir
         EndEditIfReleased(history);
         // Keep the inspected entity stable throughout this draw, including later components.
         if (world.IsAlive(selectAfterDraw))
-            ApplyClick(world.Resource<Selection>(), selectAfterDraw, false);
+        {
+            Selection &selection = world.Resource<Selection>();
+            ApplyClick(selection, selectAfterDraw, false);
+            selection.mReveal = selectAfterDraw;
+        }
     }
 
     void InspectorPanel::EndEditIfReleased(History &history)

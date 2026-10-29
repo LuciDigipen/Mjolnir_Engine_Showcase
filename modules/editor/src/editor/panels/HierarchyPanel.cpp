@@ -38,6 +38,14 @@ namespace mir
 {
     namespace
     {
+        bool MatchesRowFilter(const World &world, Entity entity, const char *filter)
+        {
+            const Name *name = world.GetComponent<Name>(entity);
+            return name != nullptr
+                ? widgets::MatchesFilter(name->mValue, filter)
+                : widgets::MatchesFilter("Entity " + std::to_string(entity.mIndex), filter);
+        }
+
         void DrawEntityMenu(Selection &selection, Entity entity, IAuthoredEntities *authored, bool authoredDocument,
             EntityAction &action)
         {
@@ -462,6 +470,15 @@ namespace mir
         const bool dragging = activePayload != nullptr &&
             (activePayload->IsDataType(kEntityPayload) || activePayload->IsDataType(kPrefabContentPayload));
 
+        // another panel selected this entity: reveal it like a dropped row, dropping a search that hides it
+        if (world.IsAlive(selection.mReveal))
+        {
+            mReveal.push_back(selection.mReveal);
+            if (mFilter[0] != '\0' && !MatchesRowFilter(world, selection.mReveal, mFilter))
+                mFilter[0] = '\0';
+        }
+        selection.mReveal = kNullEntity;
+
         // reveal last frame's drop: open every ancestor, scroll to the last moved entity
         std::unordered_set<uint64_t> openRows;
         Entity scrollTo = kNullEntity;
@@ -628,11 +645,7 @@ namespace mir
         mFiltered.clear();
         world.ForEachAliveEntity([&](Entity entity)
             {
-                const Name *name = world.GetComponent<Name>(entity);
-                const bool matches = name != nullptr
-                    ? widgets::MatchesFilter(name->mValue, mFilter)
-                    : widgets::MatchesFilter("Entity " + std::to_string(entity.mIndex), mFilter);
-                if (!matches)
+                if (!MatchesRowFilter(world, entity, mFilter))
                     return;
                 mFiltered.insert(PackEntity(entity));
                 for (Entity ancestor = index.ParentOf(entity); !ancestor.IsNull(); ancestor = index.ParentOf(ancestor))
