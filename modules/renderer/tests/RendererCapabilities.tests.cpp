@@ -1,6 +1,6 @@
 /**
  * @file RendererCapabilities.tests.cpp
- * @author Sumin Park
+ * @author Jackey Cen
  * @brief Tests for renderer/RendererCapabilities.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation

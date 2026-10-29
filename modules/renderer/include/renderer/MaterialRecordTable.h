@@ -1,6 +1,6 @@
 /**
  * @file MaterialRecordTable.h
- * @author Sumin Park
+ * @author Jackey Cen
  * @brief Aligned raw-byte material records with frame-safe snapshots.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation

@@ -1,6 +1,6 @@
 /**
  * @file Material.cpp
- * @author Sumin Park
+ * @author Jackey Cen
  * @brief Effective sampler state and its cache key.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation

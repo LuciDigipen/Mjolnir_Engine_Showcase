@@ -1,6 +1,6 @@
 /**
  * @file TextureTable.tests.cpp
- * @author Sumin Park
+ * @author Jackey Cen
  * @brief Tests for renderer/TextureTable.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation

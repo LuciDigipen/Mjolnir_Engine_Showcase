@@ -1,6 +1,6 @@
 /**
  * @file DescriptorLayoutLimits.cpp
- * @author Sumin Park
+ * @author Jackey Cen
  * @brief Descriptor budgets of the shared raster and RT layouts.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation

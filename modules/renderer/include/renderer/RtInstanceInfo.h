@@ -1,6 +1,6 @@
 /**
  * @file RtInstanceInfo.h
- * @author Sumin Park
+ * @author Jackey Cen
  * @brief CPU mirror of raytrace.slang's per-instance record.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation

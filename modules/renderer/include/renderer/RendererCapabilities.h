@@ -1,6 +1,6 @@
 /**
  * @file RendererCapabilities.h
- * @author Sumin Park
+ * @author Jackey Cen
  * @brief Raw device features resolved into the renderer's optional paths.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
