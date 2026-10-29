@@ -1,7 +1,7 @@
 /**
  * @file AudioBindings.cpp
  * @author Quy Dong Ta
- * @brief The Lua audio surface, scoped to an entity's AudioEmitter.
+ * @brief The Lua audio surface, scoped to an entity's AudioEmitter, and the music bus.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -147,6 +147,93 @@ namespace mir
 
             return audio::SetState(group.c_str(), value.c_str());
         }
+
+
+        bool ToVolume(const sol::object &value, std::string_view binding, float &out)
+        {
+            if (!ToNumber(value, binding, out))
+                return false;
+
+            // written so NaN fails it too
+            if (!(out >= 0.0f && out <= 1.0f))
+            {
+                MIR_LOG_ERROR("script: world:{} needs a number from 0 to 1, got {}", binding, out);
+                return false;
+            }
+            return true;
+        }
+
+        bool ToMuted(const sol::object &value, std::string_view binding, bool &out)
+        {
+            if (value.get_type() != sol::type::boolean)
+            {
+                MIR_LOG_ERROR("script: world:{} needs a boolean", binding);
+                return false;
+            }
+
+            out = value.as<bool>();
+            return true;
+        }
+
+        bool WorldSetMusicVolume(World &, const sol::object &volume)
+        {
+            float value = 0.0f;
+            if (!ToVolume(volume, "set_music_volume", value))
+                return false;
+
+            audio::SetMusicVolume(value);
+            return true;
+        }
+
+        float WorldMusicVolume(World &)
+        {
+            return audio::GetMusicVolume();
+        }
+
+        bool WorldSetMusicMuted(World &, const sol::object &muted)
+        {
+            bool value = false;
+            if (!ToMuted(muted, "set_music_muted", value))
+                return false;
+
+            audio::SetMusicMuted(value);
+            return true;
+        }
+
+        bool WorldMusicMuted(World &)
+        {
+            return audio::IsMusicMuted();
+        }
+
+        bool WorldSetSfxVolume(World &, const sol::object &volume)
+        {
+            float value = 0.0f;
+            if (!ToVolume(volume, "set_sfx_volume", value))
+                return false;
+
+            audio::SetSfxVolume(value);
+            return true;
+        }
+
+        float WorldSfxVolume(World &)
+        {
+            return audio::GetSfxVolume();
+        }
+
+        bool WorldSetSfxMuted(World &, const sol::object &muted)
+        {
+            bool value = false;
+            if (!ToMuted(muted, "set_sfx_muted", value))
+                return false;
+
+            audio::SetSfxMuted(value);
+            return true;
+        }
+
+        bool WorldSfxMuted(World &)
+        {
+            return audio::IsSfxMuted();
+        }
     }
 
     void RegisterAudioBindings(sol::state &lua)
@@ -158,5 +245,13 @@ namespace mir
         worldType.set_function("set_rtpc", &WorldSetRtpc);
         worldType.set_function("set_switch", &WorldSetSwitch);
         worldType.set_function("set_state", &WorldSetState);
+        worldType.set_function("set_music_volume", &WorldSetMusicVolume);
+        worldType.set_function("music_volume", &WorldMusicVolume);
+        worldType.set_function("set_music_muted", &WorldSetMusicMuted);
+        worldType.set_function("music_muted", &WorldMusicMuted);
+        worldType.set_function("set_sfx_volume", &WorldSetSfxVolume);
+        worldType.set_function("sfx_volume", &WorldSfxVolume);
+        worldType.set_function("set_sfx_muted", &WorldSetSfxMuted);
+        worldType.set_function("sfx_muted", &WorldSfxMuted);
     }
 }

@@ -52,5 +52,8 @@ namespace mir
     // while the per-stage values are the worst single stage.
     DescriptorUsage SharedRasterDescriptorUsage();
     DescriptorUsage SharedRtDescriptorUsage();
+    // Ordinary RT plus DDGI's own trace set; the DDGI volume is optional, so a
+    // device that only misses this budget keeps raster and ray tracing.
+    DescriptorUsage SharedRtDdgiDescriptorUsage();
     bool DescriptorLayoutFits(const DescriptorLimits &limits, const DescriptorUsage &usage);
 }

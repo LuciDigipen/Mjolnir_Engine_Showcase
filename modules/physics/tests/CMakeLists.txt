@@ -1,4 +1,5 @@
 engine_add_module_tests(physics
+    ColliderLines.tests.cpp
     CollisionEvents.tests.cpp
     HeightField.tests.cpp
     PhysicsInterpolation.tests.cpp

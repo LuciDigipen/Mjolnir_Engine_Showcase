@@ -220,6 +220,16 @@ namespace mir
                 mEditor.ClearHistory();
                 mPrefabBeforePlay = mPrefabWorkspace.ActiveDocument();
                 mPrefabWorkspace.ActivateScene();
+
+                
+                if (mAudio != nullptr && mEnableLayout)
+                    mAudioBeforePlay = mAudio->Live();
+            });
+        mPlayEnd = context.scheduler.AddStage(Stage::PlayEnd, [this](SystemContext &)
+            {
+                if (mAudio != nullptr && mAudioBeforePlay.has_value())
+                    mAudio->SetLive(*mAudioBeforePlay);
+                mAudioBeforePlay.reset();
             });
 
         // the previews' models stage from the candidate too
@@ -262,6 +272,7 @@ namespace mir
         mReloadAbort.Reset();
         mReloadCommit.Reset();
         mReloadPrepare.Reset();
+        mPlayEnd.Reset();
         mPlayBegin.Reset();
         mSceneSaved.Reset();
         mSceneLoad.Reset();
@@ -278,6 +289,8 @@ namespace mir
         RenderSystem &rendering = mRenderer.Rendering();
         const VkRect2D viewport = mEditor.SceneViewportRect();
         rendering.SetViewportRect(0, mEnableLayout ? viewport : VkRect2D{});
+        // set in Edit only, but drawn in Play too
+        rendering.SetViewportDebugView(0, mEnableLayout ? mEditor.SceneDebugView() : DebugViewSettings{});
 
         // the game UI draws later this frame, into the same scene viewport
         GameUIArea &area = mWorld.Resource<GameUIArea>();

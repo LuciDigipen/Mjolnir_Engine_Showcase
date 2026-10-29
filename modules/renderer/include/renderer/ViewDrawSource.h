@@ -50,6 +50,9 @@ namespace mir
         // viewProj is relative to origin, as BuildViewDrawItems takes it.
         virtual void AppendVolumeDraws(size_t view, WorldPosition origin, const glm::mat4 &viewProj,
                                        std::vector<WorldDrawItem> &out) = 0;
+        // Collect resident geometry once, without culling shadow blockers,
+        // overlapping LOD fallbacks or requesting new payloads.
+        virtual void AppendRayTracingDraws(size_t view, std::vector<WorldDrawItem> &out) = 0;
     };
 
     // World resource; a source stays registered while it lives.

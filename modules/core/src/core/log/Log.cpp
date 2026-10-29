@@ -12,15 +12,20 @@
 #include "core/log/LogHistory.h"
 
 #include <spdlog/spdlog.h>
-#include <spdlog/sinks/base_sink.h>
+#include <spdlog/sinks/dist_sink.h>
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <format>
+#include <functional>
 #include <memory>
 #include <mutex>
+#include <unordered_map>
+#include <vector>
 
 namespace mir
 {
@@ -81,12 +86,86 @@ namespace mir
                 loc.file_name(), static_cast<int>(loc.line()), loc.function_name()};
         }
 
-        class UiHistorySink : public spdlog::sinks::base_sink<std::mutex>
+        // a repeat further apart than this starts over with a full line
+        constexpr std::chrono::seconds kRepeatWindow{ 2 };
+        constexpr std::chrono::seconds kRepeatReportInterval{ 10 };
+
+        struct RepeatKey
         {
+            spdlog::level::level_enum level;
+            std::string message;
+            std::string file;
+            int line;
+
+            bool operator==(const RepeatKey &) const = default;
+        };
+
+        struct RepeatKeyHash
+        {
+            std::size_t operator()(const RepeatKey &key) const
+            {
+                return std::hash<std::string>{}(key.message) ^
+                    (static_cast<std::size_t>(key.line) * 31 + static_cast<std::size_t>(key.level));
+            }
+        };
+
+        struct RepeatRun
+        {
+            uint64_t historyId = 0;
+            uint64_t unreported = 0;
+            spdlog::log_clock::time_point lastSeen;
+            spdlog::log_clock::time_point lastReport;
+        };
+
+
+        class RepeatFilterSink final : public spdlog::sinks::dist_sink<std::mutex>
+        {
+        public:
+            using dist_sink::dist_sink;
+
+            void ReportRepeats()
+            {
+                std::lock_guard lock(mutex_);
+                const auto now = spdlog::log_clock::now();
+                for (auto &[key, run] : mRuns)
+                    Report(key, run, now);
+            }
+
         protected:
             void sink_it_(const spdlog::details::log_msg &msg) override
             {
-                LogHistory::Push(LogEntry{
+                EndQuietRuns(msg.time);
+                if (msg.level < spdlog::level::warn)
+                {
+                    Write(msg);
+                    return;
+                }
+
+                RepeatKey key{ msg.level, std::string(msg.payload.begin(), msg.payload.end()),
+                    msg.source.filename != nullptr ? msg.source.filename : "", msg.source.line };
+                const auto it = mRuns.find(key);
+                if (it == mRuns.end())
+                {
+                    const uint64_t historyId = Write(msg);
+                    mRuns.emplace(std::move(key),
+                        RepeatRun{ .historyId = historyId, .lastSeen = msg.time, .lastReport = msg.time });
+                    return;
+                }
+
+                RepeatRun &run = it->second;
+                run.lastSeen = msg.time;
+                ++run.unreported;
+                // cleared from the Log panel while still repeating, so it shows again
+                if (!LogHistory::AddRepeat(run.historyId))
+                    run.historyId = PushHistory(msg);
+                if (msg.time - run.lastReport >= kRepeatReportInterval)
+                    Report(it->first, run, msg.time);
+            }
+
+        private:
+            static uint64_t PushHistory(const spdlog::details::log_msg &msg)
+            {
+                return LogHistory::Push(LogEntry{
                     .level = FromSpd(msg.level),
                     .message = std::string(msg.payload.begin(), msg.payload.end()),
                     .file = msg.source.filename != nullptr ? msg.source.filename : "",
@@ -95,8 +174,42 @@ namespace mir
                 });
             }
 
-            void flush_() override {}
+            uint64_t Write(const spdlog::details::log_msg &msg)
+            {
+                dist_sink::sink_it_(msg);
+                return PushHistory(msg);
+            }
+
+            void Report(const RepeatKey &key, RepeatRun &run, spdlog::log_clock::time_point now)
+            {
+                if (run.unreported == 0)
+                    return;
+                const std::string text = std::format("{} (repeated {} more {})", key.message, run.unreported,
+                    run.unreported == 1 ? "time" : "times");
+                dist_sink::sink_it_(spdlog::details::log_msg(
+                    spdlog::source_loc{ key.file.c_str(), key.line, "" }, {}, key.level, text));
+                run.unreported = 0;
+                run.lastReport = now;
+            }
+
+            void EndQuietRuns(spdlog::log_clock::time_point now)
+            {
+                for (auto it = mRuns.begin(); it != mRuns.end();)
+                {
+                    if (now - it->second.lastSeen <= kRepeatWindow)
+                    {
+                        ++it;
+                        continue;
+                    }
+                    Report(it->first, it->second, now);
+                    it = mRuns.erase(it);
+                }
+            }
+
+            std::unordered_map<RepeatKey, RepeatRun, RepeatKeyHash> mRuns;
         };
+
+        std::shared_ptr<RepeatFilterSink> s_sink;
     }
 
     void InitLog(const LogConfig &config)
@@ -110,12 +223,11 @@ namespace mir
             s_filePath.string(), config.maxFileBytes, config.maxFiles);
         file->set_level(ToSpd(config.fileLevel));
 
-        auto uiHistory = std::make_shared<UiHistorySink>();
-        uiHistory->set_level(spdlog::level::trace);
+        s_sink = std::make_shared<RepeatFilterSink>(std::vector<spdlog::sink_ptr>{ console, file });
+        s_sink->set_level(spdlog::level::trace);
         LogHistory::SetCapacity(config.uiHistoryCapacity);
 
-        auto logger = std::make_shared<spdlog::logger>(
-            "engine", spdlog::sinks_init_list{console, file, uiHistory});
+        auto logger = std::make_shared<spdlog::logger>("engine", s_sink);
 
         logger->set_level(std::min(ToSpd(config.consoleLevel), ToSpd(config.fileLevel)));
         logger->set_pattern("%^[%T] [%l] %v%$ (%s:%#)");
@@ -139,6 +251,7 @@ namespace mir
     {
         if (s_initialized)
         {
+            s_sink->ReportRepeats();
             spdlog::default_logger_raw()->flush();
         }
     }
@@ -149,6 +262,8 @@ namespace mir
             return;
 
         s_initialized = false;
+        s_sink->ReportRepeats();
+        s_sink.reset();
 
         // flushes and releases the log file
         spdlog::shutdown();

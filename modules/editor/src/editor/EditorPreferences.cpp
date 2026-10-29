@@ -18,11 +18,6 @@
 #include <cmath>
 #include <system_error>
 
-#if defined(_WIN32)
-#include <windows.h>
-#include <shlobj.h>
-#endif
-
 namespace mir
 {
     namespace
@@ -114,20 +109,7 @@ namespace mir
         return WriteJsonFile(path, root);
     }
 
-    std::filesystem::path EditorPreferencesDir()
-    {
-#if defined(_WIN32)
-        PWSTR localAppData = nullptr;
-        if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &localAppData)))
-        {
-            std::filesystem::path dir = std::filesystem::path(localAppData) / "Mjolnir" / "editor";
-            CoTaskMemFree(localAppData);
-            return dir;
-        }
-        CoTaskMemFree(localAppData);
-#endif
-        return ExecutableDir() / "editor";
-    }
+    std::filesystem::path EditorPreferencesDir() { return UserDataDir() / "editor"; }
 
     std::filesystem::path EditorPreferencesPath() { return EditorPreferencesDir() / "editor_preferences.json"; }
 }

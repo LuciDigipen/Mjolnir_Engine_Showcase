@@ -32,12 +32,20 @@ renderer shader applies morph, then skin, then the instance transform;
 
 ## API
 
+Model updates gather inputs on the main thread, evaluate independent instances
+through the optional app-owned job executor, then join and commit before Render.
+Small batches and editor previews evaluate inline. Normal launches use an
+automatic pool of up to four workers; `--workers 0` explicitly evaluates inline.
+See [job ownership and configuration](jobs.md).
+
 | Type or function | Header | Role |
 |---|---|---|
 | `ModelPlayer`, `RegisterModelPlayer`, `kModelPlayerFields` | `animation/ModelPlayer.h` | Serializable per-entity selection and playback state behind validating setters |
 | `ModelSystem` | `animation/ModelSystem.h` | GPU upload, reload swap, playback clock and `ModelDrawItems` per frame |
 | `ModelMorphOverrides` | `animation/ModelPlayer.h` | Transient weights keyed by entity and stable node key |
 | `ModelResources`, `LoadModelResources` | `animation/ModelAnimation.h` | Typed model and validated dependencies |
+| `ModelEvaluationInput`, `ModelEvaluationResult`, `EvaluateModelInstance` | `animation/ModelEvaluation.h` | Immutable evaluation inputs and owned per-instance output, independent of World and renderer |
+| `ModelEvaluationGrain` | `animation/ModelEvaluation.h` | Bounded grain targeting four ranges per participating thread |
 | `SampleAnimationTrack`, `EvaluateModel`, `NodePose` | `animation/ModelAnimation.h` | Track interpolation and a fresh hierarchical pose |
 | `ResolvePoseWorld`, `SkinMatrices`, `VisibleModelNodes` | `animation/ModelAnimation.h` | World transforms, skin palette, and selected glTF scene |
 | `DeformPrimitive`, `BuildDeformationData` | `animation/ModelAnimation.h` | CPU reference and shader buffer encoding |

@@ -39,6 +39,7 @@ namespace mir
     private:
         std::size_t mCapacity = kDefaultCapacity;
         std::vector<uint32_t> mGenerations;
+        std::vector<bool> mOccupied;
         std::vector<std::size_t> mFreeIndices;
     };
 }

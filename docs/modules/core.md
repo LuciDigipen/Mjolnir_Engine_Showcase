@@ -140,6 +140,7 @@ const ComponentOps &health = ComponentRegistry::Instance().RegisterRuntime("Heal
 | `ChildProcess` | `platform/Process.h` | A child process in a job object, so it dies with this one however it ends |
 | `LaunchProcess`, `QuoteCommandLineArgument` | `platform/Process.h` | Start a process and optionally wait for its exit code; Windows argument quoting |
 | `ExecutableDir`, `ExecutablePath` | `fs/Paths.h` | The running executable's directory and full path |
+| `UserDataDir` | `fs/Paths.h` | Per-user files: `%LOCALAPPDATA%/Mjolnir` on Windows, next to the executable elsewhere |
 | `ReadBytes`, `ReadFirstBytes`, `ReadText` | `fs/FileIO.h` | A whole file, its first N bytes, or its text |
 | `ReadByteRange`, `FileSize` | `fs/FileIO.h` | Exactly one byte range of a file without reading the rest; a regular file's size |
 | `WriteBytes`, `WriteText` | `fs/FileIO.h` | Bytes or text to a path |

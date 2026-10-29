@@ -48,7 +48,14 @@ Render         -> TerrainRuntime::Prepare   per viewport: select, SetInterest; t
 `terrain_streaming.local.json` beside the executable layered over it (see
 [terrain.md](terrain.md#streaming-and-cpu-residency-issue-126)). Valid settings
 become the `TerrainStreamingSettings` and `TerrainStreamer` World resources, the
-streamer with a `TerrainWorkerPool` that also builds meshes; the `gpu` section
+streamer with a `TerrainJobExecutor` background lane on the app-owned executor,
+also used for mesh/collision builds and release checks. `io.workerThreads` caps
+terrain's share of the engine workers; `--workers 0` runs inline. The adapter
+lives in `terrain_runtime/TerrainJobExecutor.h`; `terrain` only knows the executor
+interface. Runtime shutdown waits for submitted callbacks before destroying
+collaborators, then releases shared ownership without closing the lane. A retained
+streamer can keep posting work; only the last owner closes the lane.
+The `gpu` section
 configures the renderer's mesh streaming (staging ring, bytes a frame) and a
 `TerrainMeshResidency`. Invalid settings, or missing ones in
 a scene with terrain, are one error, and no terrain loads; a game without

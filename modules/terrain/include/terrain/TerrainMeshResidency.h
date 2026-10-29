@@ -147,6 +147,8 @@ namespace mir
         bool Ready(const TerrainPayloadKey &geometry) const;
         // Null unless Ready; marks the mesh drawn.
         const TerrainResidentMesh *Acquire(const TerrainPayloadKey &geometry, double now);
+        // Null unless Ready; does not extend mesh retention.
+        const TerrainResidentMesh *FindReady(const TerrainPayloadKey &geometry) const;
 
         // Every mesh of a release not in keep, built, building or uploading.
         void RetireReleases(std::span<const TerrainReleaseInfo> keep);

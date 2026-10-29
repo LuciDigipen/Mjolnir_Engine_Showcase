@@ -14,6 +14,7 @@
 #include <nlohmann/json.hpp>
 
 #include <format>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <utility>
@@ -60,6 +61,26 @@ namespace mir
         {
             MIR_LOG_WARN("Editor: {} refused: {}", name, action.mReason);
             return nullptr;
+        }
+
+        // every key's entries in one command, named by the first action, or none when any is refused
+        template <typename ActionOf>
+        std::unique_ptr<ICommand> CombinedCommand(const char *verb, const char *fallbackName,
+            std::span<const AuthoredKey> keys, ActionOf actionOf)
+        {
+            std::string name;
+            std::vector<AuthoredEntry> entries;
+            for (const AuthoredKey &key : keys)
+            {
+                AuthoredAction action = actionOf(key);
+                if (!action.mAllowed)
+                    return RefusedCommand(verb, action);
+                if (name.empty())
+                    name = std::move(action.mName);
+                entries.insert(entries.end(), std::make_move_iterator(action.mEntries.begin()),
+                    std::make_move_iterator(action.mEntries.end()));
+            }
+            return MakeAuthoredCommand(name.empty() ? fallbackName : name, std::move(entries));
         }
     }
 
@@ -125,21 +146,27 @@ namespace mir
 
     std::unique_ptr<ICommand> MakeRevertAuthoredCommand(IAuthoredEntities &authored, const AuthoredKey &key)
     {
-        AuthoredAction action = authored.Revert(key);
-        if (!action.mAllowed)
-            return RefusedCommand("Revert", action);
-        return MakeAuthoredCommand(action.mName.empty() ? "Revert Override" : action.mName,
-            std::move(action.mEntries));
+        return MakeRevertAuthoredCommand(authored, std::span<const AuthoredKey>(&key, 1));
     }
 
     std::unique_ptr<ICommand> MakeApplyAuthoredCommand(IAuthoredEntities &authored, const AuthoredKey &key,
         std::size_t target)
     {
-        AuthoredAction action = authored.Apply(key, target);
-        if (!action.mAllowed)
-            return RefusedCommand("Apply to Prefab", action);
-        return MakeAuthoredCommand(action.mName.empty() ? "Apply to Prefab" : action.mName,
-            std::move(action.mEntries));
+        return MakeApplyAuthoredCommand(authored, std::span<const AuthoredKey>(&key, 1), target);
+    }
+
+    std::unique_ptr<ICommand> MakeRevertAuthoredCommand(IAuthoredEntities &authored,
+        std::span<const AuthoredKey> keys)
+    {
+        return CombinedCommand("Revert", "Revert Override", keys,
+            [&authored](const AuthoredKey &key) { return authored.Revert(key); });
+    }
+
+    std::unique_ptr<ICommand> MakeApplyAuthoredCommand(IAuthoredEntities &authored,
+        std::span<const AuthoredKey> keys, std::size_t target)
+    {
+        return CombinedCommand("Apply to Prefab", "Apply to Prefab", keys,
+            [&authored, target](const AuthoredKey &key) { return authored.Apply(key, target); });
     }
 
     std::unique_ptr<ICommand> MakeCreatePrefabCommand(IAuthoredEntities &authored, Entity entity)

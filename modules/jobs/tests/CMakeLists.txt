@@ -1,0 +1,1 @@
+engine_add_module_tests(jobs BackgroundJobQueue.tests.cpp)

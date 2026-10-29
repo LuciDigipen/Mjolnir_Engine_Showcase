@@ -57,6 +57,12 @@ namespace mir::vk
 
         bool NgxSupported() const { return mNgxSupported; }
 
+        // line polygon mode, for the editor's wireframe view
+        bool FillModeNonSolidSupported() const { return mFillModeNonSolidSupported; }
+
+        // DDGI's trace set fits beside the ordinary RT sets; false keeps only the raster/RT lighting paths.
+        bool DdgiSupported() const { return mDdgiSupported; }
+
         struct MemoryBudget
         {
             uint64_t mUsageBytes = 0;
@@ -107,6 +113,8 @@ namespace mir::vk
         VmaAllocator mAllocator = VK_NULL_HANDLE;
 
         RendererCapabilities mCapabilities;
+        bool mFillModeNonSolidSupported = false;
+        bool mDdgiSupported = false;
         VkPhysicalDeviceRayTracingPipelinePropertiesKHR mRtProperties{};
 
         bool mNgxSupported = false;

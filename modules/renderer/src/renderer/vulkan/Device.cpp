@@ -11,6 +11,7 @@
 
 #include <renderer/DescriptorLayoutLimits.h>
 #include <renderer/DlssConfig.h>
+#include <renderer/RtxgiConfig.h>
 #include <renderer/VulkanRenderer.h>
 
 #include <core/log/Log.h>
@@ -610,6 +611,15 @@ namespace mir::vk
         mCapabilities.sharedMaterialTables = sharedFeatures && rasterFits;
         mCapabilities.rayTracing = support.rayTracing && mCapabilities.sharedMaterialTables && rtFits;
 
+#if MIR_WITH_RTXGI
+        // DDGI's trace pipeline adds its own set on top of the RT scene and camera sets.
+        mDdgiSupported = mCapabilities.rayTracing &&
+            DescriptorLayoutFits(descriptorLimits, SharedRtDdgiDescriptorUsage());
+        if (mCapabilities.rayTracing && !mDdgiSupported)
+            MIR_LOG_WARN("FindPhysicalDevice: DDGI disabled on {}: descriptor limits do not fit the combined RT + DDGI "
+                "trace layout - ordinary ray tracing stays available", props.deviceName);
+#endif
+
         if (mCapabilities.rayTracing)
             MIR_LOG_INFO("Ray tracing: {} supports VK_KHR_acceleration_structure + VK_KHR_ray_tracing_pipeline", props.deviceName);
         else if (!support.rayTracing)
@@ -638,6 +648,10 @@ namespace mir::vk
             MIR_LOG_INFO("Sampler anisotropy: unavailable on {}", props.deviceName);
 
         mMemoryBudgetSupported = HasDeviceExtension(mPhysical, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+
+        VkPhysicalDeviceFeatures coreFeatures{};
+        vkGetPhysicalDeviceFeatures(mPhysical, &coreFeatures);
+        mFillModeNonSolidSupported = coreFeatures.fillModeNonSolid == VK_TRUE;
 
     #if MIR_WITH_DLSS
         mNgxDeviceExtensions.clear();
@@ -759,6 +773,7 @@ namespace mir::vk
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
             .pNext = rtOrCoreChain,
             .features{ .imageCubeArray = VK_TRUE,
+                       .fillModeNonSolid = mFillModeNonSolidSupported ? VK_TRUE : VK_FALSE,
                        .samplerAnisotropy = mCapabilities.samplerAnisotropy ? VK_TRUE : VK_FALSE } };
 
         const VkDeviceCreateInfo deviceInfo{

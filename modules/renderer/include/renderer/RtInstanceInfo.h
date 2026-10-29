@@ -19,8 +19,8 @@
 
 namespace mir
 {
-    // Must match RtInstanceInfo in assets/shaders/raytrace.slang, including its
-    // StructuredBuffer ArrayStride. Scalar padding keeps the layout explicit;
+    // Must match RtInstanceInfo in assets/shaders/RaySceneCommon.slang, including
+    // its StructuredBuffer ArrayStride. Scalar padding keeps the layout explicit;
     // a float3 here would use a wider alignment.
     struct RtInstanceInfo
     {
@@ -51,4 +51,5 @@ namespace mir
     static_assert(offsetof(RtInstanceInfo, alphaCutoff) == 96);
     static_assert(offsetof(RtInstanceInfo, materialRecord) == 92);
     static_assert(offsetof(RtInstanceInfo, prevModel) == 112);
+
 }

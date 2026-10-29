@@ -17,17 +17,17 @@ TEST_CASE("HdrEffect: ReadHdrParams on an empty params object returns defaults",
     const nlohmann::json params = nlohmann::json::object();
     const mir::HdrParams hdr = mir::ReadHdrParams(params);
 
-    CHECK(hdr.exposure == mir::HdrParams{}.exposure);
     CHECK(hdr.op == mir::HdrParams{}.op);
 }
 
-TEST_CASE("HdrEffect: ReadHdrParams falls back per field when some are missing", "[renderer]")
+TEST_CASE("HdrEffect: exposure is the Camera's, not part of the HDR params", "[renderer]")
 {
-    const nlohmann::json params = { { "exposure", 2.5f } };
-    const mir::HdrParams hdr = mir::ReadHdrParams(params);
+    const nlohmann::json params = { { "exposure", 2.5f }, { "tonemapOperator", "aces" } };
+    CHECK(mir::ReadHdrParams(params).op == mir::TonemapOperator::ACES);
 
-    CHECK(hdr.exposure == 2.5f);
-    CHECK(hdr.op == mir::HdrParams{}.op);
+    nlohmann::json written = nlohmann::json::object();
+    mir::WriteHdrParams(written, mir::HdrParams{});
+    CHECK_FALSE(written.contains("exposure"));
 }
 
 TEST_CASE("HdrEffect: ReadHdrParams falls back to Reinhard for an unknown operator name", "[renderer]")
@@ -44,14 +44,11 @@ TEST_CASE("HdrEffect: WriteHdrParams then ReadHdrParams round-trips every operat
     { mir::TonemapOperator::None, mir::TonemapOperator::Reinhard, mir::TonemapOperator::ACES })
     {
         mir::HdrParams saved;
-        saved.exposure = 1.75f;
         saved.op = op;
 
         nlohmann::json params = nlohmann::json::object();
         mir::WriteHdrParams(params, saved);
 
-        const mir::HdrParams loaded = mir::ReadHdrParams(params);
-        CHECK(loaded.exposure == saved.exposure);
-        CHECK(loaded.op == saved.op);
+        CHECK(mir::ReadHdrParams(params).op == saved.op);
     }
 }

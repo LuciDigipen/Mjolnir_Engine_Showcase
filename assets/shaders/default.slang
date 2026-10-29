@@ -2,6 +2,9 @@
 // tables. The generic PBR default is assets/materials/default.slang compiled
 // through SurfaceForward/SurfaceRt.
 #include "ShadowMapCommon.slang"
+#ifdef MIR_SSGI_SURFACE
+#include "RasterSurfaceCommon.slang"
+#endif
 
 struct VSInput
 {
@@ -46,7 +49,11 @@ VSOutput vertexMain(VSInput input)
 }
 
 [shader("fragment")]
+#ifdef MIR_SSGI_SURFACE
+RasterSurfaceOutput fragmentMain(VSOutput input)
+#else
 float4 fragmentMain(VSOutput input) : SV_Target
+#endif
 {
     float3 N = normalize(input.normal);
 
@@ -54,8 +61,15 @@ float4 fragmentMain(VSOutput input) : SV_Target
     visibility.worldPos = input.worldPos;
     visibility.geoN = GeometricNormal(input.worldPos, N);
 
+#ifdef MIR_SSGI_SURFACE
+    float3 diffuse;
+    float3 albedo = kDefaultAlbedo * input.tint;
+    float3 direct = ShadeLitAndDiffuse(visibility, albedo, N, input.worldPos, float3(0), diffuse);
+    return MakeRasterSurface(N, 1, albedo, diffuse, direct);
+#else
     float3 color = ShadeLit(visibility, kDefaultAlbedo * input.tint, N, input.worldPos);
     color = ApplyFog(color, length(cameraPos.xyz - input.worldPos));
 
     return float4(color, 1.0);
+#endif
 }

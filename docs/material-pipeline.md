@@ -145,3 +145,15 @@ instance's `instanceShaderBindingTableRecordOffset` is `2 + 2*i`, so
 catalog registration fails material creation instead of falling back to the
 default shader. Alpha, double-sided and error/unlit/model materials remain on
 the legacy path.
+
+## Global illumination
+
+DDGI keeps a single legacy hit-record pair, so a scene containing any
+surface-material instance (nonzero SBT offset) disables DDGI and falls back to
+the ordinary camera trace. Material-specialized DDGI pipelines are later work.
+
+SSGI replays the legacy multi-target `<material>Surface` variants only. Generic
+surface materials compile the single-target `SurfaceForward` frontend, so an
+opaque generic surface draw keeps the existing raster lighting instead of
+running the SSGI surface pass. Legacy default/model/unlit/error materials and
+their SSGI inputs are unchanged.

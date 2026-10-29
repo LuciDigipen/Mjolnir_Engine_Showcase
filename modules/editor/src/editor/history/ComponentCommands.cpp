@@ -149,7 +149,7 @@ namespace mir
             }
 
            
-            bool TryMerge(const ICommand &next) override
+            bool TryMerge(ICommand &next) override
             {
                 const auto *other = dynamic_cast<const SetFieldsCommand *>(&next);
                 if (other == nullptr || other->mEntity != mEntity || other->mOps != mOps ||

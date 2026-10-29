@@ -23,5 +23,8 @@ namespace mir
 
         virtual void Circle(const glm::vec3 &center, const glm::vec3 &right, const glm::vec3 &up,
             float radius, uint32_t colorRGBA, int segments) const = 0;
+
+        // width / height of the viewport drawn into
+        virtual float Aspect() const = 0;
     };
 }
