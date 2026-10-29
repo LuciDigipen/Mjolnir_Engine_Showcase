@@ -33,7 +33,7 @@ namespace
             return UIBackendTexture{ reinterpret_cast<void *>(static_cast<uintptr_t>(mCreated)),
                                      [](void *) { ++gReleased; } };
         }
-        void Submit(const UIRect &, const UIDrawList &, const UITextures &) override {}
+        void Submit(const UIRect &, float, const UIDrawList &, const UITextures &) override {}
 
         int mCreated = 0;
     };

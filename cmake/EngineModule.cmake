@@ -25,6 +25,7 @@ function(engine_add_module_tests name)
 
     set(target engine_${name}_tests)
     add_executable(${target} ${ARGN})
+    engine_target_utf8(${target})
     target_link_libraries(${target} PRIVATE mir::${name} Catch2::Catch2WithMain)
 
     # One CTest case per Catch2 TEST_CASE, so failures show up individually, not as one blob.

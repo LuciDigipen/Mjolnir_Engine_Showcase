@@ -25,6 +25,7 @@ target_link_libraries(terrain_bake
 
 # The root CMakeLists runs its sync (and package without the editor) on every build.
 add_executable(TerrainTool main.cpp)
+engine_target_utf8(TerrainTool)
 target_link_libraries(TerrainTool PRIVATE terrain_bake)
 
 if(BUILD_TESTING)
@@ -43,6 +44,7 @@ if(BUILD_TESTING)
         tests/TerrainToolCli.tests.cpp
         tests/TerrainValidate.tests.cpp
     )
+    engine_target_utf8(terrain_tool_tests)
     target_link_libraries(terrain_tool_tests PRIVATE terrain_bake mir::renderer nlohmann_json::nlohmann_json Catch2::Catch2WithMain)
     target_compile_definitions(terrain_tool_tests PRIVATE TERRAIN_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
     target_compile_definitions(terrain_tool_tests PRIVATE TERRAIN_TOOL_EXE="$<TARGET_FILE:TerrainTool>")

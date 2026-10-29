@@ -15,12 +15,13 @@
 
 namespace mir
 {
-    void UIState::BeginFrame(const UIRect &area, const UIPointer &pointer, const UINavInput &nav, bool focusVisible)
+    void UIState::BeginFrame(const UIRect &area, const UIPointer &pointer, const UINavInput &nav, bool focusVisible,
+                             float scale)
     {
-        mArea = area;
+        mBounds = UIRect{0.0f, 0.0f, area.width / scale, area.height / scale};
 
-        mPointerX = pointer.mX - area.x;
-        mPointerY = pointer.mY - area.y;
+        mPointerX = (pointer.mX - area.x) / scale;
+        mPointerY = (pointer.mY - area.y) / scale;
 
         mPointerMoved = mHasLastPointer && (pointer.mX != mLastPointerX || pointer.mY != mLastPointerY);
         mLastPointerX = pointer.mX;
@@ -159,7 +160,6 @@ namespace mir
 
     bool UIState::HitTest(const UIRect &rect, const UIRect &clip) const
     {
-        const UIRect root{0.0f, 0.0f, mArea.width, mArea.height};
-        return Contains(Intersect(Intersect(rect, clip), root), mPointerX, mPointerY);
+        return Contains(Intersect(Intersect(rect, clip), mBounds), mPointerX, mPointerY);
     }
 } // namespace mir
