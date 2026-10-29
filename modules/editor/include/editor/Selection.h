@@ -2,8 +2,8 @@
  * @file Selection.h
  * @author Rahul Nair
  * @brief World resource holding the editor's current selection - written
- *        by the Hierarchy panel and viewport picking, read by the
- *        Inspector panel and the transform gizmo.
+ *        by the Hierarchy panel, viewport picking and Inspector EntityRef
+ *        clicks, read by the Inspector panel and the transform gizmo.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *

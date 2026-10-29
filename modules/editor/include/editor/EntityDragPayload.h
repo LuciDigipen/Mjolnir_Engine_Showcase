@@ -1,7 +1,8 @@
 /**
- * @file HierarchyPanel.cpp
+ * @file EntityDragPayload.h
  * @author Rahul Nair
- * @brief Renders the World's entities as a tree - the editor's "Hierarchy" dock panel.
+ * @brief ImGui drag payload for entities dragged from the Hierarchy - started
+ *        by Hierarchy rows, accepted by Hierarchy rows and Inspector EntityRef fields.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *

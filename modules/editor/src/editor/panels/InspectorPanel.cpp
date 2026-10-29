@@ -113,6 +113,7 @@ namespace mir
                 const std::optional<Entity> dropped = active != nullptr
                     ? DecodeEntityDragPayload(*active) : std::nullopt;
                 // Validate before accepting so malformed or dead handles never highlight.
+                // The inspected entity itself is a valid target; it saves by id like any other in-scene ref.
                 if (dropped && world.IsAlive(*dropped))
                 {
                     if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kEntityPayload,
