@@ -57,7 +57,7 @@ order within:
 
 Headers use `#pragma once`.
 
-Don't forget header formats for each file. Check [build.md](build.md#3-setting-name-in-headers-optional)
+Use file headers only for `.h` and `.cpp` files. Check [build.md](build.md#3-setting-name-in-headers-optional)
 ```
 /**
  * @file App.h
@@ -78,10 +78,10 @@ visible.
 
 ## Comments
 
-Keep the block file header shown above on newly created C/C++ and shader files,
-with `@file`, `@author`, `@brief` and the copyright line. Use the
-language's comment syntax for other source files. Keep existing author credits
-when editing an existing file.
+Use the block file header shown above only on newly created `.h` and `.cpp`
+files, with `@file`, `@author`, `@brief` and the copyright line. Do not add file
+headers to shaders, Lua, CMake or other file types. Preserve existing author
+credits when editing older `.h` and `.cpp` files.
 
 Use plain `//` for declaration and inline comments outside the file header.
 Prefer commas to semicolons in comment prose. Never use an em dash in comments.

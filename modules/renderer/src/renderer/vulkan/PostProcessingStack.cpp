@@ -289,7 +289,7 @@ namespace mir::vk
         mDevice->BeginLabel(cmd, "Tonemap Pass", { 1.0f, 1.0f, 0.0f, 1.0f });
 
         // Grain waits for the FXAA pass, so the edge blend can't smear it.
-        mPostProcess.Record(cmd, frame, color, mBloom.OutputView(frame), mBloom.Intensity(), FilmGrain{}, extent);
+        mPostProcess.Record(cmd, frame, color, mBloom.OutputView(frame), mBloomEnabled ? mBloom.Intensity() : 0.0f, FilmGrain{}, extent);
 
         mDevice->EndLabel(cmd);
         vkCmdEndRendering(cmd);
@@ -305,6 +305,6 @@ namespace mir::vk
         if (fxaa)
             mFxaa.Record(cmd, frame, mFxaa.IntermediateView(frame), grain, extent);
         else
-            mPostProcess.Record(cmd, frame, color, mBloom.OutputView(frame), mBloom.Intensity(), grain, extent);
+            mPostProcess.Record(cmd, frame, color, mBloom.OutputView(frame), mBloomEnabled ? mBloom.Intensity() : 0.0f, grain, extent);
     }
 }

@@ -1,100 +1,115 @@
 # particles_gpu
 
-GPU particle datasets, compute simulation, sprite and ribbon rendering behind the renderer FX interface. The renderer owns composition images, frame scheduling, and synchronization.
+GPU particle simulation and sprite/ribbon rendering behind the renderer FX
+interface. Dependencies are renderer (public) and VMA (private). The renderer owns
+composition images, frame scheduling and image transitions.
 
-`mir::particles_gpu` ? depends `mir::renderer` (public), VMA (private) ? API `modules/particles_gpu/include/particles_gpu/` ? maintainer Sumin Park ? reviewed 2026-10-28
+## Ownership and frame flow
 
-## Model
+`ParticlesGpuModule` registers one `IFxSystem`. `particles_runtime` creates immutable
+GPU-emitter and CPU-ribbon snapshots. Simulation clocks, births and ribbon history
+remain in particles, the bridge owns no persistent state.
 
-`ParticlesGpuModule` registers one `IFxSystem` with `VulkanRenderer`. The module composes a dataset, compute dispatcher, and sprite renderer. `particles_runtime` builds stateless per-emitter `ParticleSubmission` records from CPU runtime state and submits the current snapshot. The bridge does not own clocks, fractional births, or persistent emitter identity.
+`RecordSimulation` dispatches simulation once after the existing frame-slot wait.
+`PrepareDraw` runs outside dynamic rendering and prepares independent view-local
+sort/cull results. `RecordDraw` executes inside the renderer's HDR composition pass.
+Additional cameras never dispatch simulation again. Camera cuts and backend changes
+rebuild view data while preserving particles. Scene/play/reload clears discard all
+pending snapshots and render work. Replaced frame snapshots discard unconsumed
+births instead of accumulating a catch-up queue while rendering is skipped.
 
-The renderer calls `RecordSimulation` once after the frame slot wait. It calls `RecordDraw` inside its own HDR composition rendering after opaque effects and before bloom. The public FX interface is the renderer's Vulkan boundary; image ownership and transitions remain in renderer.
+## Simulation resources
 
-## API
+Each GPU emitter owns a first-fit range in a 65,536-record pool, with at most 64
+ranges and 4,096 births per frame. Generation or capacity replacement resets only
+that range. Cooked scripts use the 160-byte input and 16-byte birth ABI, compact
+survivors and generate counts on the graphics+compute queue. No runtime source
+compilation, synchronous particle readback or steady-state idle wait is used.
 
-| Type | Header | Role |
-|---|---|---|
-| `ParticleSubmission`, `ParticleStats` | `particles_gpu/ParticleSubmission.h` | Per-emitter input snapshot and completed counters |
-| `ParticlesGpuModule` | `particles_gpu/ParticlesGpuModule.h` | Register backend, submit snapshots, inspect stats, clear scene |
+All emitters in a system share a world-precision tile origin. Old/new tile deltas
+are computed before narrowing, applied inside normal simulation, and independent
+of view count. GPU survivor positions have a 65,536 m local precision budget.
+Float-world submissions reject unsupported absolute coordinates.
 
-## Rules
+Unused script pipelines and texture uploads retire through their final timeline
+use. Shared sprite/ribbon textures are keyed by asset identity and pixel content.
+RGBA8 images are bounded to 2,048 pixels per side and a 64 MiB resident/upload
+budget. Linear sampling clamps atlas coordinates inside half-texel cell borders.
+Ribbon U coordinates repeat, V coordinates clamp.
 
-Each accepted emitter owns a first-fit range in the shared 65,536-particle record buffer. There are at most 64 active ranges and 4,096 accepted births per frame. Capacity and range exhaustion drop work. Generation or capacity replacement resets only that range.
+## Per-view visibility and ordering
 
-Compute compacts survivors and writes indirect draw counts. Persistent buffers are shared between two frame slots, so same-queue barriers order range reuse and expose compute output to indirect and vertex reads. Per-slot descriptors, inputs, counter readback and completion values follow the renderer's timeline wait. Counter queries expose only completed frames.
+Sprites use GPU sphere/frustum and distance culling followed by deterministic
+bitonic sorting of indices, leaving the simulation pool unchanged. Non-power-of-two
+capacities pad to the next power of two inside twice the reserved range. Alpha
+particles sort farthest first, ties use pool index. Sort none preserves pool order
+while compacting visible indices. Conservative bounds retain particles crossing a
+frustum or distance boundary.
 
-A scene clear discards pending submissions and live ranges. Unregistration waits for prior GPU uses before module resources are destroyed. `particles_gpu` does not belong to `PostProcessingStack` and does not own HDR composition targets.
+Sixteen views match the renderer limit. Two frame slots reserve 32 MiB of sort
+scratch, plus bounded indirect arguments and asynchronous diagnostic readback.
+Worst-case sorting is O(C log-squared C) for padded capacity C per view, acceptance
+profiling and quality policies remain later work. `ParticleGpuStats` reports
+completed visibility counts and the first sorted index for each view.
 
-## State
+CPU ribbon geometry subtracts each view's camera in world precision before
+narrowing. Shared strip corners join adjacent links, missing links and ribbon IDs
+never connect. Duplicate samples emit no triangles, end-on views use finite
+fallbacks. Segments use conservative view bounds and the selected sort order.
+Whole-repeat subtraction preserves texture phase after prefix eviction.
 
-As of 2026-10-28, GPU simulation and radial sprite draws work for raster and RT/RR composition. The backend has two frame slots, a 65,536-record pool, 64 emitter ranges, per-frame birth and range bounds, timeline-completed counters, and resize/unload support. Ribbons have per-segment sorting. It has no sprite sorting, lighting, or particle participation in reflections, shadows, or GI.
+Two mapped buffers reserve about 6 MiB for at most 65,532 ribbon vertices across
+all views per frame. Exhaustion truncates geometry while CPU history keeps aging
+and drifting. Samples beyond 10,000 km on any camera-relative axis omit geometry.
+View/material records add about 1.3 MiB across both slots. Host writes occur only
+after that slot's timeline wait, sort writes are explicitly exposed to indirect,
+vertex and diagnostic transfer reads.
 
-`ParticleGpuCheck` exercises the production module, including two distinct emitter ranges from one system. Renderer raster comparison against the T2 output is pixel-identical. The fixture also checks RT and DLSS/RR modes, scene clear and backend unregistration. RenderDoc inspection records compute dispatch, counter data, draw, and synchronization barriers.
+Sprite emitters and ribbon batches sort together by their CPU-known group proxy,
+emission position for sprites and mean visible vertex distance for ribbons.
+Sorting within a sprite emitter or ribbon is finer than this group order.
+Intersecting groups can still blend incorrectly, there is no global per-element
+interleaving or general OIT.
 
-## Backlog
+## Shading and composition
 
-Later tasks add production renderer properties, sprite sorting, lighting, and RT integration.
+Cooked renderer properties select sprite screen/velocity alignment, camera-plane
+or camera-position facing, alpha/additive blend, sort mode, texture use, soft depth
+distance, sun/ambient lighting, fog and maximum draw distance. Ribbon alignment
+follows the trail tangent, facing selects plane/position behavior. Properties can
+change while existing particles remain alive.
 
-## Cooked dispatch
+The shared material path samples opaque depth using each view rectangle and RT
+jitter. Raster reversed-Z depth reconstructs camera-relative position before a
+metric soft-gap comparison, RT uses ray distance directly. Fragment position is
+interpolated before measuring distance, avoiding corner-distance interpolation
+errors. A zero soft distance selects a hard depth cut.
 
-Each submission includes its cooked script identity and SPIR-V bytes. The dispatcher
-caches one Vulkan compute pipeline per script and dispatches each active emitter
-with its own four-byte index push constant. The input ABI is now 160 bytes, with a separate 16-byte birth record buffer.
-Inactive ranges have their indirect counters cleared. The sprite shader contains
-only drawing, compute shaders arrive through cooked asset dependencies.
+Lit materials use two-sided sun diffuse plus the renderer's ambient color, without
+self-shadowing or volumetric scattering. Scene and FX share the distance-fog
+transmittance helper. Alpha materials approach fog color, additive emission
+attenuates through fog. Derivative-based edge coverage provides spatial smoothing.
 
-Unused pipelines remain alive through their final submitted timeline value. The
-existing frame-slot wait proves a completion lower bound, permitting retirement
-without a new host wait or device-idle operation. Changed stacks use new script
-identities and can coexist with prior pipelines while earlier frames finish.
-The GPU regression fixture cooks its inputs through AssetCooker and exercises
-repeated stack replacement alongside the original lifetime and capacity checks.
+Raster order is opaque geometry, sky, blended meshes, opaque DoF/motion blur, FX,
+bloom, tonemap and optional FXAA. RT order is trace, RR where enabled, opaque
+DoF/motion blur, FX, bloom and tonemap. Disabled bloom contributes zero and its
+uninitialized output is not sampled. FX composition samples depth without writing
+it and keeps the existing single-view RT limit.
 
-## Moving exhaust resources
+Particles receive bloom/tonemap and raster FXAA where requested. They do not
+receive opaque DoF/motion blur, ray-traced MSAA or RR temporal reconstruction and
+do not contribute RR guides or transparent velocity. Existing glass/water draws
+precede the entire FX layer, so front/intersecting glass may incorrectly appear
+behind particles. RT blended-mesh behavior remains the existing renderer's behavior.
+Particles are not yet visible to secondary reflection, shadow or GI rays.
 
-Submissions contain previous/current attachment positions, a shared system tile
-origin, world-relative velocity and wind, seeded birth records, and loaded RGBA8
-texture data. The GPU input remains bounded by 64 emitter slots, 65,536 particles
-and 4,096 births per frame. Tile deltas are computed before narrowing and applied
-inside the update shader, independent of view count. The old 1,024 m emission
-cutoff is gone. The 65,536 m local survivor budget is a precision limit, not a tile
-boundary. Float-world submissions reject unsupported absolute origins.
+## Verification
 
-The sprite renderer uploads textures in RecordSimulation after dispatch, outside
-dynamic rendering. Per-emitter/per-frame descriptors bind the atlas at binding 7.
-Textures are keyed by asset identity and pixel content, replacing an image retains
-its prior allocation until its last submitted use completes. Staging allocations
-retire through the same frame-slot completion bound. Individual images are at
-most 2,048 by 2,048, with a 64 MiB resident/upload budget. A radial sprite remains
-the default when no Flipbook operation is authored.
-
-Diagnostics asynchronously copy counters and one record per emitter, using the
-existing frame-slot timeline wait. First-particle world position, velocity, age,
-size, alpha, frame and sequence allow numerical GPU regression checks without
-synchronous state readback. Tests cover swept initialization, stationary survivors
-across repeated tile changes, one-million-metre translated births, seed replay,
-lifetime curves, flipbook advance and texture replacement while frames are in flight.
-
-## CPU ribbon rendering
-
-The scene bridge snapshots CPU history into `RibbonSubmission` without simulation
-state. `BuildRibbonGeometry` subtracts each view camera in world precision before
-narrowing. Shared strip corners join adjacent links, disconnected ribbon IDs and
-missing links never connect. End-on views use a finite perpendicular fallback,
-duplicate samples emit no triangle. Segments sort back to front per view.
-
-The renderer uploads at most 65,532 vertices across all views in one frame,
-using two mapped storage buffers (about 6 MiB total), protected by the existing
-frame-slot timeline wait. Capacity exhaustion truncates geometry, simulation
-continues. Views farther than 10,000 km from a sample omit it. This avoids float
-geometry overflow and never changes stored history. Camera changes rebuild only
-geometry. No extra queue wait, readback, or device-idle operation is introduced.
-
-Ribbon shaders sample the existing raster reversed-Z or RT ray-distance depth,
-blend premultiplied HDR into the FX target, and inherit the existing placement
-after opaque DoF/motion blur and RR, before bloom/tonemapping. Width falloff and
-a periodic longitudinal pattern use continuous distance-based UVs, subtracting
-whole repeats preserves phase after eviction. Ribbon shading is procedural in
-this step, the emitter texture remains a validated dependency. Textured renderer
-properties, fog, lighting, sprite/ribbon interleaving and soft intersections belong
-to the production rendering task. Ribbons do not participate in RT secondary rays.
+`ParticleGpuCheck <output.png> [raster|rt|dlss]` cooks its inputs through AssetCooker
+and exercises the production API with synchronization validation. It verifies
+opposite orders for two raster cameras, conservative culling, no extra simulation
+or birth replay, scene clear, registration replacement, resize and backend switches.
+Named captures cover a particle-free sky/opaque baseline, hard and soft depth,
+textured overlapping smoke/trails, blended mesh limits, sun/ambient, fog, additive
+facing, split-view depth and opaque post effects. Headless module tests cover
+property validation/cooking and geometry bounds, links, joins and remote cameras.

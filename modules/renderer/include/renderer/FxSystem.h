@@ -9,6 +9,7 @@
 #pragma once
 
 #include <glm/vec2.hpp>
+#include <glm/vec4.hpp>
 #include <volk.h>
 
 #include <cstdint>
@@ -20,6 +21,12 @@ namespace mir
 {
     struct RenderView;
     inline constexpr uint32_t kFxFramesInFlight = 2;
+
+    inline constexpr uint32_t kFxMaxViews = 16;
+    struct FxEnvironment
+    {
+        glm::vec4 sunDirection{}, sunColor{}, ambient{}, fogColor{}, fogRange{};
+    };
 
     // Vulkan access is intentionally exposed only at the FX implementation boundary.
     struct FxDeviceContext
@@ -45,6 +52,7 @@ namespace mir
         bool rayDistance;
         glm::vec2 jitter;
         VkFormat colorFormat;
+        FxEnvironment environment;
     };
 
     class IFxSystem
@@ -54,6 +62,8 @@ namespace mir
         // Outside rendering, after the frame slot's existing timeline wait.
         virtual void RecordSimulation(const FxFrameContext &context) = 0;
         virtual bool HasRenderData() const = 0;
+        // Outside rendering, view-local GPU work must not advance simulation.
+        virtual void PrepareDraw(const FxRenderContext &) {}
         // Inside renderer-owned HDR dynamic rendering, depth is sampled read-only.
         virtual void RecordDraw(const FxRenderContext &context) = 0;
         virtual void ClearScene() = 0;

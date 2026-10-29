@@ -19,7 +19,12 @@
       0.9,
       1,
       0.45
-    ]
+    ],
+    "facing": "position",
+    "lighting": "sunAmbient",
+    "softDistance": 1.0,
+    "maxDistance": 100000,
+    "fog": true
   },
   "spawnModules": [
     {

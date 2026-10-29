@@ -1,7 +1,3 @@
--- @file aircraft.lua
--- @author sumin.park
--- @brief Scripted aircraft attachment path for moving GPU exhaust.
--- @copyright Copyright (c) 2026 DigiPen (USA) Corporation
 local Aircraft = {}
 function Aircraft.NewInstanceData()
     return { seconds = 0 }

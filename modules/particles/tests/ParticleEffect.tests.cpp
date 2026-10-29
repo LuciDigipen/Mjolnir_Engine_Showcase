@@ -419,3 +419,33 @@ TEST_CASE("Particle motion modules validate declared stages targets and numeric 
     cpu.spawnModules = {{"VelocityVariation", {1, 2, 3}}};
     CHECK_FALSE(mir::ValidateParticleEmitterAsset(cpu, error));
 }
+
+TEST_CASE("Particle renderer properties roundtrip through source and cooked emitters", "[particles][rendering]")
+{
+    const auto source=mir::ReadParticleEmitterSource(R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":60,
+        "capacity":128,"texture":"x.png","renderer":{"alignment":"velocity","facing":"position",
+        "blend":"additive","sort":"none","softDistance":1.5,"maxDistance":1200,"lighting":"sunAmbient",
+        "fog":false,"textured":true}})","assets");
+    REQUIRE(source.mEmitter);
+    const auto bytes=mir::BuildParticleEmitterAsset(*source.mEmitter);
+    const auto cooked=mir::ReadParticleEmitterAsset(*mir::ParseAssetBlob(bytes));
+    REQUIRE(cooked.mEmitter);
+    const auto &r=cooked.mEmitter->renderer;
+    CHECK(r.alignment==1);CHECK(r.facing==1);CHECK(r.blend==1);CHECK(r.sort==1);
+    CHECK(r.softDistance==1.5f);CHECK(r.maxDistance==1200);CHECK(r.lit);CHECK_FALSE(r.fog);CHECK(r.textured);
+}
+TEST_CASE("Particle renderer schemas reject invalid choices and nonfinite distances", "[particles][rendering]")
+{
+    for(const auto renderer:{R"({"facing":"bad"})",R"({"alignment":true})",R"({"sort":0})",R"({"blend":"opaque"})",
+        R"({"softDistance":-1})",R"({"maxDistance":0})",R"({"lighting":"pbr"})",R"({"fog":1})",R"({"textured":"yes"})"})
+    {
+        const auto source=std::string(R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":128,"texture":"x.png","renderer":)")+
+            renderer+"}";
+        CHECK_FALSE(mir::ReadParticleEmitterSource(source,"assets").mEmitter);
+    }
+    mir::ParticleEmitterAsset emitter;
+    emitter.texture={1};
+    std::string error;
+    emitter.renderer.softDistance=std::numeric_limits<float>::quiet_NaN();
+    CHECK_FALSE(mir::ValidateParticleEmitterAsset(emitter,error));
+}

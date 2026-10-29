@@ -19,7 +19,8 @@
 namespace mir::gpu
 {
     class ParticleDispatch;
-    class ParticleSpriteRenderer;
+    class ParticleRenderer;
+    class ParticleViewSort;
     class ParticleDataset
     {
     public:
@@ -33,7 +34,8 @@ namespace mir::gpu
         ParticleGpuStats Stats() const { return mStats; }
     private:
         friend class ParticleDispatch;
-        friend class ParticleSpriteRenderer;
+        friend class ParticleRenderer;
+        friend class ParticleViewSort;
         struct Buffer
         {
             VkBuffer handle = VK_NULL_HANDLE;

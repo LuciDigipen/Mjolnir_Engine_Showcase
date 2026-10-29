@@ -37,6 +37,7 @@
 
 namespace mir
 {
+    static_assert(kFxMaxViews == vk::kMaxViewsPerFrame);
     void VulkanRenderer::RecordView(VkCommandBuffer cmd, const RenderView &view, uint32_t viewIndex)
     {
         const VkRect2D rect = vk::ResolveViewRect(view.rect, mSwapchain->Extent());
@@ -54,66 +55,72 @@ namespace mir
         const uint32_t cameraOffset = WriteCameraData(view, viewIndex);
         const VkDescriptorSet cameraSet = mCameraBuffer->Set(mFrameSync->Index());
         const VkDescriptorSet shadowSet = mShadowMaps->Set(mFrameSync->Index());
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
-            1, 1, &cameraSet, 1, &cameraOffset);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
-            3, 1, &shadowSet, 0, nullptr);
-
-        VkPipeline boundPipeline = VK_NULL_HANDLE;
-        VkDescriptorSet boundDescriptorSet = VK_NULL_HANDLE;
-
-        // no mesh/material batching yet, just draw per item
-        for (const DrawItem &item : view.items)
+        auto recordMeshes = [&](bool transparent)
         {
-            const vk::GpuMesh *const mesh = mResources->FindMesh(item.mesh);
-            if (mesh == nullptr)
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
+                1, 1, &cameraSet, 1, &cameraOffset);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
+                3, 1, &shadowSet, 0, nullptr);
+
+            VkPipeline boundPipeline = VK_NULL_HANDLE;
+            VkDescriptorSet boundDescriptorSet = VK_NULL_HANDLE;
+
+            // Preserve the submitted order within each opacity class.
+            for (const DrawItem &item : view.items)
             {
-                if (!item.mesh.IsNull())
-                    ++mSkippedDraws;
-                continue;
+                if (item.transparent != transparent) continue;
+                const vk::GpuMesh *const mesh = mResources->FindMesh(item.mesh);
+                if (mesh == nullptr)
+                {
+                    if (!item.mesh.IsNull())
+                        ++mSkippedDraws;
+                    continue;
+                }
+
+                const vk::GpuMaterial *const material = mMaterialStore->FindOrDefault(item.material);
+                if (material == nullptr)
+                    continue;
+
+                if (material->mModelShader &&
+                    !mModelDescriptors->Bind(cmd, mMaterialStore->PipelineLayout(), mFrameSync->Index(),
+                        item.deformation, material->mParameters))
+                    continue;
+
+                if (material->mPipeline != boundPipeline)
+                {
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, material->mPipeline);
+                    boundPipeline = material->mPipeline;
+                }
+
+                if (material->mDescriptorSet != boundDescriptorSet)
+                {
+                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
+                        0, 1, &material->mDescriptorSet, 0, nullptr);
+                    boundDescriptorSet = material->mDescriptorSet;
+                }
+
+                const VkDeviceSize vertexOffset = 0;
+                vkCmdBindVertexBuffers(cmd, 0, 1, &mesh->mVertexBuffer, &vertexOffset);
+
+                vkCmdBindIndexBuffer(cmd, mesh->mIndexBuffer, 0, VK_INDEX_TYPE_UINT32);
+
+                const vk::RasterPushConstants pushData{
+                    .model = item.model,
+                    .normalCol0 = glm::vec4(item.normalMatrix[0], 0.0f),
+                    .normalCol1 = glm::vec4(item.normalMatrix[1], 0.0f),
+                    .normalCol2 = glm::vec4(item.normalMatrix[2], 0.0f),
+                    .tint = item.tint };
+
+                vkCmdPushConstants(cmd, mMaterialStore->PipelineLayout(), VK_SHADER_STAGE_VERTEX_BIT,
+                    0, sizeof(vk::RasterPushConstants), &pushData);
+
+                vkCmdDrawIndexed(cmd, mesh->mIndexCount, 1, 0, 0, 0);
             }
 
-            const vk::GpuMaterial *const material = mMaterialStore->FindOrDefault(item.material);
-            if (material == nullptr)
-                continue;
+        };
+        recordMeshes(false);
 
-            if (material->mModelShader &&
-                !mModelDescriptors->Bind(cmd, mMaterialStore->PipelineLayout(), mFrameSync->Index(),
-                    item.deformation, material->mParameters))
-                continue;
-
-            if (material->mPipeline != boundPipeline)
-            {
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, material->mPipeline);
-                boundPipeline = material->mPipeline;
-            }
-
-            if (material->mDescriptorSet != boundDescriptorSet)
-            {
-                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
-                    0, 1, &material->mDescriptorSet, 0, nullptr);
-                boundDescriptorSet = material->mDescriptorSet;
-            }
-
-            const VkDeviceSize vertexOffset = 0;
-            vkCmdBindVertexBuffers(cmd, 0, 1, &mesh->mVertexBuffer, &vertexOffset);
-
-            vkCmdBindIndexBuffer(cmd, mesh->mIndexBuffer, 0, VK_INDEX_TYPE_UINT32);
-
-            const vk::RasterPushConstants pushData{
-                .model = item.model,
-                .normalCol0 = glm::vec4(item.normalMatrix[0], 0.0f),
-                .normalCol1 = glm::vec4(item.normalMatrix[1], 0.0f),
-                .normalCol2 = glm::vec4(item.normalMatrix[2], 0.0f),
-                .tint = item.tint };
-
-            vkCmdPushConstants(cmd, mMaterialStore->PipelineLayout(), VK_SHADER_STAGE_VERTEX_BIT,
-                0, sizeof(vk::RasterPushConstants), &pushData);
-
-            vkCmdDrawIndexed(cmd, mesh->mIndexCount, 1, 0, 0, 0);
-        }
-
-        // Sky last, at the far depth 0: the test (GEQUAL, no write) passes only
+        // Sky follows opaque geometry at the far depth 0: the test (GEQUAL, no write) passes only
         // where nothing above wrote depth, i.e. still at the clear value - a
         // fullscreen ray-marched shader paying its cost only on actual
         // background pixels, with early-z doing the rejection.
@@ -124,6 +131,8 @@ namespace mir
                 0, 1, &cameraSet, 1, &cameraOffset);
             vkCmdDraw(cmd, 3, 1, 0, 0);
         }
+        // Bind the material camera/shadow sets again after the sky's incompatible layout.
+        recordMeshes(true);
     }
 
     void VulkanRenderer::RecordCommands(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views)
@@ -209,7 +218,7 @@ namespace mir
 
         colorSource = mFxComposition->Record(*mDevice, mFxSystem,
             {{FxDevice(), cmd, frame, mFrameSync->LastIssuedValue()}, colorSource, mSwapchain->DepthView(frame),
-                drawnViews, extent, false, {}, vk::kHdrColorFormat});
+                drawnViews, extent, false, {}, vk::kHdrColorFormat, mCameraBuffer->Environment()});
         mPostProcessing->RecordBloom(cmd, frame, colorSource, extent);
         const bool fxaaActive = mPostProcessing->PrepareComposite(cmd, frame, colorSource, extent);
 
@@ -309,7 +318,7 @@ namespace mir
             colorSource = mFxComposition->Record(*mDevice, mFxSystem,
                 {{FxDevice(), cmd, frame, mFrameSync->LastIssuedValue()}, colorSource,
                     mRayTracer->View(vk::RtImage::Distance, frame), std::span(&view, 1),
-                    mSwapchain->Extent(), true, jitterPixels, vk::kHdrColorFormat});
+                    mSwapchain->Extent(), true, jitterPixels, vk::kHdrColorFormat, mCameraBuffer->Environment()});
             mPostProcessing->RecordBloom(cmd, frame, colorSource, mSwapchain->Extent());
         }
 

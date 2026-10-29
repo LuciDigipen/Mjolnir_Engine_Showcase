@@ -52,6 +52,7 @@ namespace mir::vk
         if (!mDevice && !Initialize(device, context.extent))
             throw SetupError(ErrorCategory::System, "Initialize FX composition", "fxComposition",
                 "Vulkan composition pipeline or image allocation failed", "Rebuild shaders and check GPU memory and driver logs.");
+        system->PrepareDraw(context);
         const auto frame = context.frame.frame;
         const auto cmd = context.frame.commands;
         const VkDescriptorImageInfo image{mSampler, context.sceneColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};

@@ -26,7 +26,7 @@ namespace mir
     inline constexpr uint32_t kParticleEffectTypeTag = 0x54524150u;
     inline constexpr uint32_t kParticleEffectContentVersion = 2u;
     inline constexpr uint32_t kParticleEmitterTypeTag = 0x54494D45u;
-    inline constexpr uint32_t kParticleEmitterContentVersion = 3u;
+    inline constexpr uint32_t kParticleEmitterContentVersion = 4u;
     inline constexpr uint32_t kParticleScriptTypeTag = 0x52435350u;
     inline constexpr uint32_t kParticleScriptContentVersion = 2u;
     inline constexpr uint32_t kParticleScriptLayoutTypeTag = 0x594C5350u;
@@ -50,6 +50,20 @@ namespace mir
         std::vector<float> parameters;
     };
 
+    // Transport values are mapped explicitly by the scene bridge, no renderer dependency.
+    struct ParticleRendererProperties
+    {
+        uint32_t alignment = 0; // 0 screen, 1 velocity
+        uint32_t facing = 0; // 0 camera plane, 1 camera position
+        uint32_t blend = 0; // 0 alpha, 1 additive
+        uint32_t sort = 0; // 0 back to front, 1 none
+        float softDistance = 0.25f;
+        float maxDistance = 65536.0f;
+        bool lit = false;
+        bool fog = true;
+        bool textured = false;
+    };
+
     struct ParticleEmitterAsset
     {
         float lifetime = 2.0f;
@@ -63,6 +77,7 @@ namespace mir
         float teleportDistance = 100.0f;
         AssetId texture;
         ParticleSimulationTarget simulationTarget = ParticleSimulationTarget::GPU;
+        ParticleRendererProperties renderer;
         float size = 0.15f;
         glm::vec4 color{1.0f, 0.4f, 0.1f, 0.5f};
         glm::vec3 velocity{0.0f, 1.0f, 0.0f};

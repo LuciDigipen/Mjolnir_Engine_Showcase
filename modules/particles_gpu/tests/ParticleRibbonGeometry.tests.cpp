@@ -8,6 +8,8 @@
  */
 #include <particles_gpu/ParticleRibbonGeometry.h>
 
+#include <renderer/CameraMath.h>
+
 #include <catch2/catch_test_macros.hpp>
 
 #include <glm/geometric.hpp>
@@ -67,4 +69,32 @@ TEST_CASE("Remote camera returns to ribbon history independently of current airc
     const auto phase = mir::BuildRibbonGeometry(std::span(&ribbon,1),camera,{1,0,0});
     REQUIRE(phase.size() == far.size());
     CHECK(phase[0].uv == far[0].uv);
+}
+
+TEST_CASE("Particle sphere culling keeps edge crossings and rejects behind-camera or distant bounds", "[particles][rendering]")
+{
+    const auto matrix=mir::MakeViewProjection(glm::mat4(1),mir::Camera{90,0.1f,100},1);
+    CHECK(mir::ParticleSphereVisible({0,0,-4},0.5f,matrix,100));
+    CHECK(mir::ParticleSphereVisible({4.1f,0,-4},0.5f,matrix,100));
+    CHECK_FALSE(mir::ParticleSphereVisible({8,0,-4},0.5f,matrix,100));
+    CHECK_FALSE(mir::ParticleSphereVisible({0,0,4},0.5f,matrix,100));
+    CHECK_FALSE(mir::ParticleSphereVisible({0,0,-120},0.5f,matrix,100));
+    CHECK_FALSE(mir::ParticleSphereVisible({0,0,-4},0.5f,matrix,2));
+    CHECK_FALSE(mir::ParticleSphereVisible({0,0,-4},std::numeric_limits<float>::quiet_NaN(),matrix,100));
+}
+TEST_CASE("Ribbon view culling and sort mode preserve history and can retain link order", "[particles][rendering]")
+{
+    mir::RibbonSubmission ribbon{{Point(0,-4,0),Point(0,-5,1),Point(1,-6,2)}};
+    const auto original=ribbon.points;
+    const auto matrix=mir::MakeViewProjection(glm::mat4(1),mir::Camera{90,0.1f,100},1);
+    auto sorted=mir::BuildRibbonGeometry(std::span(&ribbon,1),{},{1,0,0},65532,&matrix);
+    REQUIRE(sorted.size()==12);
+    CHECK(sorted[0].position.z==-5);
+    ribbon.renderer.sort=1;
+    auto unsorted=mir::BuildRibbonGeometry(std::span(&ribbon,1),{},{1,0,0},65532,&matrix);
+    REQUIRE(unsorted.size()==12);
+    CHECK(unsorted[0].position.z==-4);
+    ribbon.renderer.maxDistance=1;
+    CHECK(mir::BuildRibbonGeometry(std::span(&ribbon,1),{},{1,0,0},65532,&matrix).empty());
+    for(size_t i=0;i<original.size();++i) CHECK(ribbon.points[i].position.Meters()==original[i].position.Meters());
 }

@@ -27,7 +27,13 @@
       0,
       0,
       4
-    ]
+    ],
+    "alignment": "velocity",
+    "facing": "position",
+    "blend": "additive",
+    "softDistance": 0.4,
+    "maxDistance": 4000,
+    "fog": true
   },
   "spawnModules": [
     {

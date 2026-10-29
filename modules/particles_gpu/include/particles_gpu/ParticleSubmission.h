@@ -32,9 +32,18 @@ namespace mir
     };
     static_assert(sizeof(ParticleGpuBirth) == 16);
 
+    struct ParticleRenderProperties
+    {
+        uint32_t alignment = 0, facing = 0, blend = 0, sort = 0;
+        float softDistance = 0.25f, maxDistance = 65536.0f;
+        bool lit = false, fog = true, textured = false;
+    };
+    bool ValidParticleRenderProperties(const ParticleRenderProperties &properties);
+
     // Immutable input, no dependency on the particle module or its handles.
     struct ParticleSubmission
     {
+        ParticleRenderProperties renderer;
         uint64_t scriptKey = 0;
         std::vector<std::byte> scriptCode;
         uint32_t index = 0;
@@ -73,6 +82,10 @@ namespace mir
     struct RibbonSubmission
     {
         std::vector<RibbonPointSubmission> points;
+        ParticleRenderProperties renderer;
+        uint64_t textureKey = 0;
+        uint32_t textureWidth = 0, textureHeight = 0;
+        std::vector<uint8_t> texturePixels;
     };
 
     // Shared with particlePool.slang, offsets are part of the GPU ABI.
@@ -101,6 +114,9 @@ namespace mir
         uint32_t firstSequence = 0;
         uint64_t tileShifts = 0;
         uint64_t completedFrame = 0;
+        uint64_t renderFrame = 0;
+        uint32_t visible[16]{};
+        uint32_t firstSortedParticle[16]{};
         uint32_t alive = 0;
         uint32_t spawned = 0;
         uint32_t dropped = 0;

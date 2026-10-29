@@ -121,19 +121,51 @@ namespace mir
 
         bool ReadRenderer(const Json &value, ParticleEmitterAsset &emitter)
         {
-            if (!KnownFields(value, {"size", "color", "velocity"})) return false;
+            if (!KnownFields(value, {"size", "color", "velocity", "alignment", "facing", "blend", "sort", "softDistance", "maxDistance", "lighting", "fog", "textured"})) return false;
             if (value.contains("size"))
             {
                 if (!value["size"].is_number()) return false;
                 emitter.size = value["size"].get<float>();
             }
+            auto choice = [&](const char *key, const char *zero, const char *one, uint32_t &out)
+            {
+                if (!value.contains(key)) return true;
+                if (value[key] == zero) { out = 0; return true; }
+                if (value[key] == one) { out = 1; return true; }
+                return false;
+            };
+            auto &r = emitter.renderer;
+            if (!choice("alignment", "screen", "velocity", r.alignment) ||
+                !choice("facing", "plane", "position", r.facing) ||
+                !choice("blend", "alpha", "additive", r.blend) ||
+                !choice("sort", "backToFront", "none", r.sort)) return false;
+            for (auto [key, target] : {std::pair{"softDistance", &r.softDistance}, std::pair{"maxDistance", &r.maxDistance}})
+                if (value.contains(key))
+                {
+                    if (!value[key].is_number()) return false;
+                    *target = value[key].get<float>();
+                }
+            for (auto [key, target] : {std::pair{"fog", &r.fog}, std::pair{"textured", &r.textured}})
+                if (value.contains(key))
+                {
+                    if (!value[key].is_boolean()) return false;
+                    *target = value[key].get<bool>();
+                }
+            uint32_t lighting = 0;
+            if (!choice("lighting", "unlit", "sunAmbient", lighting)) return false;
+            r.lit = lighting != 0;
             return (!value.contains("color") || ReadVector(value["color"], emitter.color)) &&
                 (!value.contains("velocity") || ReadVector(value["velocity"], emitter.velocity));
         }
 
         Json WriteRenderer(const ParticleEmitterAsset &emitter)
         {
-            return Json{{"size", emitter.size},
+            const auto &r = emitter.renderer;
+            return Json{{"alignment", r.alignment ? "velocity" : "screen"}, {"facing", r.facing ? "position" : "plane"},
+                {"blend", r.blend ? "additive" : "alpha"}, {"sort", r.sort ? "none" : "backToFront"},
+                {"softDistance", r.softDistance}, {"maxDistance", r.maxDistance},
+                {"lighting", r.lit ? "sunAmbient" : "unlit"}, {"fog", r.fog}, {"textured", r.textured},
+                {"size", emitter.size},
                 {"color", {emitter.color.r, emitter.color.g, emitter.color.b, emitter.color.a}},
                 {"velocity", {emitter.velocity.x, emitter.velocity.y, emitter.velocity.z}}};
         }
@@ -308,7 +340,7 @@ namespace mir
             if (value.contains("inheritVelocity")) emitter.inheritVelocity = value["inheritVelocity"].get<float>();
             if (value.contains("teleportDistance")) emitter.teleportDistance = value["teleportDistance"].get<float>();
             if (value.contains("renderer") && !ReadRenderer(value["renderer"], emitter))
-                return Invalid<ParticleEmitterAssetResult>("invalid particle sprite renderer properties");
+                return Invalid<ParticleEmitterAssetResult>("invalid particle renderer properties");
             if (source)
             {
                 if (!value.contains("texture") || !value["texture"].is_string())
@@ -519,6 +551,14 @@ void computeMain(uint3 id : SV_DispatchThreadID)
 
     bool ValidateParticleEmitterAsset(const ParticleEmitterAsset &emitter, std::string &error)
     {
+        const auto &r = emitter.renderer;
+        if (r.alignment > 1 || r.facing > 1 || r.blend > 1 || r.sort > 1 ||
+            !std::isfinite(r.softDistance) || r.softDistance < 0 || r.softDistance > 1024 ||
+            !std::isfinite(r.maxDistance) || r.maxDistance <= 0 || r.maxDistance > 10000000)
+        {
+            error = "particle renderer choices or finite distance bounds are invalid";
+            return false;
+        }
         if (!std::isfinite(emitter.lifetime) || emitter.lifetime <= 0 || emitter.lifetime > kMaxEffectLifetime)
             error = "particle lifetime must be finite and in (0, 120]";
         else if (!std::isfinite(emitter.spawnRate) || emitter.spawnRate < 0 || emitter.spawnRate > kMaxEffectParticles)

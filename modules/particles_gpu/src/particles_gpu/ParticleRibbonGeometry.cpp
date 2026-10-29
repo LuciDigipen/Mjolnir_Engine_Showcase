@@ -27,8 +27,29 @@ namespace mir
             return a.ribbon == b.ribbon && b.link == a.link + 1;
         }
     }
+    bool ValidParticleRenderProperties(const ParticleRenderProperties &p)
+    {
+        return p.alignment<=1 && p.facing<=1 && p.blend<=1 && p.sort<=1 &&
+            std::isfinite(p.softDistance) && p.softDistance>=0 && p.softDistance<=1024 &&
+            std::isfinite(p.maxDistance) && p.maxDistance>0 && p.maxDistance<=10000000;
+    }
+    bool ParticleSphereVisible(glm::vec3 center,float radius,const glm::mat4 &viewProjection,float maxDistance)
+    {
+        if(!std::isfinite(radius) || radius<0 || !std::isfinite(maxDistance) || maxDistance<=0) return false;
+        for(int axis=0;axis<3;++axis) if(!std::isfinite(center[axis])) return false;
+        const auto clip=viewProjection*glm::vec4(center,1);
+        glm::vec4 margin;
+        for(int row=0;row<4;++row)
+        {
+            if(!std::isfinite(clip[row])) return false;
+            margin[row]=glm::length(glm::vec3(viewProjection[0][row],viewProjection[1][row],viewProjection[2][row]))*radius;
+        }
+        return glm::length(center)<=maxDistance+radius && clip.w+margin.w>0 &&
+            std::abs(clip.x)<=clip.w+margin.x+margin.w && std::abs(clip.y)<=clip.w+margin.y+margin.w &&
+            clip.z>=-margin.z && clip.z<=clip.w+margin.z+margin.w;
+    }
     std::vector<RibbonVertex> BuildRibbonGeometry(std::span<const RibbonSubmission> ribbons,
-        WorldPosition camera, glm::vec3 cameraRight, uint32_t maxVertices)
+        WorldPosition camera, glm::vec3 cameraRight, uint32_t maxVertices, const glm::mat4 *viewProjection)
     {
         struct Segment { RibbonVertex vertices[6]; double distance; };
         std::vector<Segment> segments;
@@ -57,7 +78,11 @@ namespace mir
                 if (i+1 < points.size() && valid[i+1] && Linked(points[i], points[i+1]))
                     tangent += SafeNormal(centers[i+1] - centers[i], {0,0,0});
                 tangent = SafeNormal(tangent, {0,0,1});
-                auto side = glm::cross(tangent, SafeNormal(-centers[i], {0,0,1}));
+                glm::vec3 direction=SafeNormal(-centers[i],{0,0,1});
+                if(viewProjection && ribbon.renderer.facing!=0) direction=SafeNormal(centers[i],direction);
+                if(viewProjection && ribbon.renderer.facing==0)
+                    direction=SafeNormal(glm::vec3((*viewProjection)[0][3],(*viewProjection)[1][3],(*viewProjection)[2][3]),direction);
+                auto side = glm::cross(tangent,direction);
                 // The least parallel axis keeps end-on views and coincident samples finite.
                 if (glm::dot(side, side) < 1e-10f)
                     side = glm::cross(tangent, std::abs(tangent.y) < 0.9f ? glm::vec3(0,1,0) : glm::vec3(1,0,0));
@@ -67,6 +92,9 @@ namespace mir
             {
                 if (!valid[i-1] || !valid[i] || !Linked(points[i-1], points[i]) ||
                     glm::length(centers[i] - centers[i-1]) < 1e-6f) continue;
+                const auto center=(centers[i-1]+centers[i])*0.5f;
+                const float radius=glm::length(centers[i]-centers[i-1])*0.5f+std::max(points[i-1].width,points[i].width);
+                if(viewProjection && !ParticleSphereVisible(center,radius,*viewProjection,ribbon.renderer.maxDistance)) continue;
                 if (segments.size() >= maxVertices / 6) break;
                 const auto &a = points[i-1]; const auto &b = points[i];
                 // Subtract a whole repeat, evicting a prefix never resets texture phase.
@@ -79,7 +107,7 @@ namespace mir
                     {glm::vec4(centers[i] + offsets[i], 1), b.color, {u1, 1,0,0}},
                     {glm::vec4(centers[i] - offsets[i], 1), b.color, {u1,-1,0,0}}};
                 Segment segment{{corners[0],corners[1],corners[2],corners[0],corners[2],corners[3]},
-                    double(glm::length(centers[i-1])) + double(glm::length(centers[i]))};
+                    ribbon.renderer.sort==0 ? double(glm::length(centers[i-1])) + double(glm::length(centers[i])) : -double(segments.size())};
                 segments.push_back(segment);
             }
         }

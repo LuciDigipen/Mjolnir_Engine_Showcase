@@ -1,9 +1,4 @@
-﻿# @file CMakeLists.txt
-# @author sumin.park
-# @brief Builds the CPU particle asset and playback module.
-# @copyright Copyright (c) 2026 DigiPen (USA) Corporation
-
-engine_add_module(particles)
+﻿engine_add_module(particles)
 
 find_package(nlohmann_json CONFIG REQUIRED)
 # Public headers expose core world/coordinate types and asset identities.

@@ -16,6 +16,13 @@
 
 namespace mir
 {
+    namespace
+    {
+        ParticleRenderProperties RenderProperties(const ParticleRendererProperties &r)
+        {
+            return {r.alignment, r.facing, r.blend, r.sort, r.softDistance, r.maxDistance, r.lit, r.fog, r.textured};
+        }
+    }
     std::vector<ParticleSubmission> BuildParticleRenderData(const ParticleRuntime &runtime, bool simulating)
     {
         std::vector<ParticleSubmission> submissions;
@@ -27,6 +34,7 @@ namespace mir
             const auto *system = runtime.Find(emitter.system);
             if (!system) continue;
             ParticleSubmission input;
+            input.renderer = RenderProperties(emitter.definition.renderer);
             input.scriptKey = emitter.definition.script.value;
             input.scriptCode = emitter.definition.scriptCode;
             input.index = emitter.handle.index;
@@ -65,6 +73,11 @@ namespace mir
             if (emitter.handle.IsNull() || emitter.definition.simulationTarget != ParticleSimulationTarget::CPU ||
                 emitter.state == ParticleExecutionState::Complete || emitter.ribbon.points.empty()) continue;
             RibbonSubmission input;
+            input.renderer = RenderProperties(emitter.definition.renderer);
+            input.textureKey = emitter.definition.texture.value;
+            input.textureWidth = emitter.definition.textureWidth;
+            input.textureHeight = emitter.definition.textureHeight;
+            input.texturePixels = emitter.definition.texturePixels;
             input.points.reserve(emitter.ribbon.points.size());
             for (const auto &point : emitter.ribbon.points)
                 input.points.push_back({point.position, point.textureDistance, point.ribbon, point.link, point.width, point.color});

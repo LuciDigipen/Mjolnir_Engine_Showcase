@@ -8,11 +8,10 @@
  */
 #include "particles_gpu/ParticlesGpuModule.h"
 
-#include "ParticleRibbonRenderer.h"
+#include "ParticleRenderer.h"
 
 #include "ParticleDataset.h"
 #include "ParticleDispatch.h"
-#include "ParticleSpriteRenderer.h"
 
 #include <renderer/VulkanRenderer.h>
 
@@ -21,24 +20,23 @@ namespace mir::gpu
     class ParticleFxSystem final : public IFxSystem
     {
     public:
-        void Submit(std::span<const ParticleSubmission> inputs, std::span<const RibbonSubmission> ribbons = {}) { mDataset.Submit(inputs); mRibbons.Submit(ribbons); }
-        ParticleGpuStats Stats() const { return mDataset.Stats(); }
-        void RecordSimulation(const FxFrameContext &context) override { mDispatch.Record(context, mDataset); mSprites.PrepareTextures(context, mDataset); mRibbons.Prepare(context); }
-        bool HasRenderData() const override { return mDataset.Initialized() || mRibbons.HasData(); }
-        void RecordDraw(const FxRenderContext &context) override { mSprites.Record(context, mDataset); mRibbons.Record(context); }
+        void Submit(std::span<const ParticleSubmission> inputs, std::span<const RibbonSubmission> ribbons = {}) { mDataset.Submit(inputs); mRenderer.Submit(ribbons); }
+        ParticleGpuStats Stats() const { auto stats=mDataset.Stats(); mRenderer.Stats(stats); return stats; }
+        void RecordSimulation(const FxFrameContext &context) override { mDispatch.Record(context, mDataset); mRenderer.PrepareTextures(context, mDataset); }
+        bool HasRenderData() const override { return mDataset.Initialized() || mRenderer.HasRibbons(); }
+        void PrepareDraw(const FxRenderContext &context) override { mRenderer.PrepareDraw(context,mDataset); }
+        void RecordDraw(const FxRenderContext &context) override { mRenderer.Record(context, mDataset); }
         void ClearScene() override { Submit({}); }
         void Shutdown() override
         {
-            mRibbons.Shutdown();
-            mSprites.Shutdown();
+            mRenderer.Shutdown();
             mDispatch.Shutdown();
             mDataset.Shutdown();
         }
     private:
-        ParticleRibbonRenderer mRibbons;
+        ParticleRenderer mRenderer;
         ParticleDataset mDataset;
         ParticleDispatch mDispatch;
-        ParticleSpriteRenderer mSprites;
     };
 }
 namespace mir

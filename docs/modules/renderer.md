@@ -1769,3 +1769,18 @@ built from one hardcoded shader. Now: one pipeline per `MaterialDesc`, built at
 creation. A second look (`unlit.slang`) forced a decision about how a draw picks
 its pipeline, and a different fragment shader is a different pipeline in Vulkan
 rather than a parameter on an existing one.
+
+## FX production composition
+
+`IFxSystem::RecordSimulation` runs once after the frame-slot wait. The composition
+pass calls `PrepareDraw` outside dynamic rendering for view-local compute, then
+`RecordDraw` inside its HDR target. FX receives the camera buffer's staged sun,
+ambient and fog environment, without a dependency on particle types.
+
+Raster meshes draw in opaque and transparent phases with sky between them,
+preserving submitted order within each phase. Camera and shadow descriptors rebind
+after the sky pipeline. FX follows opaque DoF/motion blur and RR where enabled,
+then feeds bloom and tonemap. Disabled bloom passes zero intensity and does not
+sample stale bloom pixels. The single-view RT restriction is retained. Current
+particle spatial AA, glass ordering and secondary-ray limits are documented in
+[particles_gpu](particles_gpu.md).

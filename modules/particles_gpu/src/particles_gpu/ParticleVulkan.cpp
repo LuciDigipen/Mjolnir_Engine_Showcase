@@ -65,13 +65,13 @@ namespace mir::gpu
         rect.extent.height = std::min(rect.extent.height, extent.height - uint32_t(rect.offset.y));
         return rect;
     }
-    bool CreateSpritePipeline(VkDevice device, VkPipelineLayout layout, VkFormat format, VkPipeline &pipeline, bool ribbon)
+    bool CreateSpritePipeline(VkDevice device, VkPipelineLayout layout, VkFormat format, VkPipeline &pipeline, bool ribbon, bool additive)
     {
         const auto vert = LoadShader(device, ribbon ? "particlePool.ribbonVertex.spv" : "particlePool.vertexMain.spv");
         const auto frag = LoadShader(device, ribbon ? "particlePool.ribbonFragment.spv" : "particlePool.fragmentMain.spv");
         const VkPipelineColorBlendAttachmentState blend{
             .blendEnable = VK_TRUE, .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
-            .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, .colorBlendOp = VK_BLEND_OP_ADD,
+            .dstColorBlendFactor = additive ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, .colorBlendOp = VK_BLEND_OP_ADD,
             .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE, .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
             .alphaBlendOp = VK_BLEND_OP_ADD, .colorWriteMask = 15};
         const VkPipelineShaderStageCreateInfo stages[]{

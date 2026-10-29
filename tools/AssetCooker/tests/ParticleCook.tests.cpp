@@ -270,6 +270,8 @@ TEST_CASE("Particle cooker compiles moving exhaust modules and shares scripts ac
     second["seed"] = 1234;
     second["inheritVelocity"] = 0.5;
     second["teleportDistance"] = 80;
+    second["renderer"] = {{"blend","additive"},{"lighting","sunAmbient"},{"alignment","velocity"},
+        {"facing","position"},{"softDistance",0.75},{"maxDistance",4000},{"textured",true},{"fog",false}};
     std::ofstream(fixture.source / "second.emitter.json") << second.dump();
     std::ofstream(fixture.source / "exhaust.particle.json") <<
         R"({"version":2,"emitters":["exhaust.emitter.json","second.emitter.json"],"parameters":{"wind":[8,0,-2]}})";
@@ -286,6 +288,14 @@ TEST_CASE("Particle cooker compiles moving exhaust modules and shares scripts ac
     const auto &secondLoaded = system.mEffect->emitterDefinitions[1];
     CHECK(firstLoaded.script == secondLoaded.script);
     CHECK(firstLoaded.scriptCode == secondLoaded.scriptCode);
+    CHECK(secondLoaded.renderer.blend == 1);
+    CHECK(secondLoaded.renderer.lit);
+    CHECK(secondLoaded.renderer.alignment == 1);
+    CHECK(secondLoaded.renderer.facing == 1);
+    CHECK(secondLoaded.renderer.softDistance == 0.75f);
+    CHECK(secondLoaded.renderer.maxDistance == 4000);
+    CHECK(secondLoaded.renderer.textured);
+    CHECK_FALSE(secondLoaded.renderer.fog);
     CHECK(firstLoaded.localOffset == glm::vec3(-1, 0, 0));
     CHECK(secondLoaded.localOffset == glm::vec3(1, 0, 0));
     CHECK(firstLoaded.spawnPerMeter == 12);

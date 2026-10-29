@@ -1,4 +1,4 @@
-add_executable(ParticleGpuCheck main.cpp)
+add_executable(ParticleGpuCheck main.cpp ParticleRenderCheck.cpp)
 find_package(glfw3 CONFIG REQUIRED)
 target_link_libraries(ParticleGpuCheck PRIVATE mir::particles_gpu mir::particles_runtime mir::particles mir::window glfw)
 set_target_properties(ParticleGpuCheck PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")

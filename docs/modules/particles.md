@@ -155,7 +155,7 @@ AssetCooker composes Slang from the registered operations and invokes the config
 `slangc` process, using SPIR-V 1.5 and the `computeMain` entry point. Parameters for
 module operations are compiled constants. Per-frame values use a generated, versioned
 160-byte input layout. Script and layout blobs are typed dependencies of emitter
-content version 3. Equal stacks and operation parameters share one script regardless
+content version 4. Equal stacks and operation parameters share one script regardless
 of per-emitter renderer values, capacity, or spawn rate. Compilation and validation
 must succeed before the new manifest is published. Partial recooks retain other
 roots and remove unreferenced script/layout manifest entries.
@@ -238,3 +238,26 @@ never queued. Runtime stats expose evicted and rejected ribbon points. State tes
 compare constant-wind straight flight within 0.1 mm near the origin and within
 1 cm after a 1,000 km translation, and retain old history after the aircraft moves
 another 1,000 km. Geometry tests independently return a camera to that history.
+
+## Renderer properties
+
+Emitter content version 4 carries the validated `renderer` object through cooking
+and the immutable scene bridge. Renderer choices do not change the cooked simulation
+script identity. Existing size, color and velocity fields remain supported.
+
+| Property | Values/default | Meaning |
+|---|---|---|
+| alignment | screen (default), velocity | Sprite axes, ribbons follow their tangent |
+| facing | plane (default), position | Camera plane or direction toward each point |
+| blend | alpha (default), additive | Premultiplied HDR blending |
+| sort | backToFront (default), none | Per-view element ordering |
+| softDistance | 0.25 m, 0 to 1,024 | Opaque intersection fade, zero selects a hard cut |
+| maxDistance | 65,536 m, greater than zero through 10,000 km | Conservative draw culling, simulation continues |
+| lighting | unlit (default), sunAmbient | Basic two-sided sun diffuse and ambient |
+| fog | true | Existing renderer distance fog |
+| textured | false | Sample the cooked texture, Flipbook samples its atlas regardless |
+
+Sprites and trails share the GPU material path. Per-view geometry/sort buffers
+never change WorldPosition ribbon history or GPU simulation records. See
+[particles_gpu](particles_gpu.md) for depth reconstruction, composition order and
+remaining glass/AA/post-effect limits.

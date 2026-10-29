@@ -9,6 +9,7 @@
 #pragma once
 
 #include <renderer/VulkanRenderer.h>
+#include <renderer/FxSystem.h>
 #include "VulkanConstants.h"
 
 #include <glm/geometric.hpp>
@@ -53,6 +54,11 @@ namespace mir::vk
         uint32_t WriteView(uint32_t frame, const RenderView &view, uint32_t viewIndex, const ViewShadowInfo &shadow,
             bool applyJitter, glm::vec2 *outJitter = nullptr);
 
+        FxEnvironment Environment() const
+        {
+            return {glm::vec4(mLightDirection, 0), glm::vec4(mLightColor, 0), glm::vec4(mAmbientColor, 0),
+                glm::vec4(mFogColor, mFogDensity), {mFogStart, mFogEnd, 0, 0}};
+        }
         VkDescriptorSetLayout SetLayout() const { return mSetLayout; }
         VkDescriptorSet Set(uint32_t frame) const { return mSets[frame]; }
 

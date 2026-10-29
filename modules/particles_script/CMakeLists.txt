@@ -1,8 +1,3 @@
-# @file CMakeLists.txt
-# @author sumin.park
-# @brief Builds the particle playback scripting bridge.
-# @copyright Copyright (c) 2026 DigiPen (USA) Corporation
-
 engine_add_module(particles_script)
 
 # ParticleBindings.h exposes sol::state, other implementation dependencies stay private.

@@ -9,6 +9,8 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#include "ParticleRenderCheck.h"
+
 #include <assets/AssetCache.h>
 #include <assets/AssetManifest.h>
 #include <core/fs/Paths.h>
@@ -387,7 +389,10 @@ int main(int argc, char **argv)
         mir::ParticleRuntime ribbons;
         mir::ParticleEmitterAsset trail;
         trail.simulationTarget = mir::ParticleSimulationTarget::CPU;
-        trail.texture = {1};
+        trail.texture = cookedEmitter.mEmitter->texture;
+        trail.textureWidth = cookedEmitter.mEmitter->textureWidth;
+        trail.textureHeight = cookedEmitter.mEmitter->textureHeight;
+        trail.texturePixels = cookedEmitter.mEmitter->texturePixels;
         trail.spawnRate = 0;
         trail.spawnPerMeter = 12;
         trail.capacity = 128;
@@ -435,6 +440,7 @@ int main(int argc, char **argv)
         particles->Clear();
         for (int f = 0; f < 3; ++f) draw();
         MIR_LOG_INFO("CPU ribbon uploads, split views, remote camera and clear passed");
+        RunParticleRenderCheck(renderer,*particles,*window,*cookedEmitter.mEmitter,output,rt,mode=="dlss");
         renderer.Shutdown();
         Require(std::filesystem::exists(output), "No GPU output capture");
         MIR_LOG_INFO("Particle GPU checks passed, mode={}, validation includes synchronization checks", mode);

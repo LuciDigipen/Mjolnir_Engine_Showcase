@@ -33,7 +33,7 @@ namespace mir::gpu
         }
         for (const auto &input : inputs)
         {
-            if ((!kLargeWorld && (glm::any(glm::greaterThan(glm::abs(input.anchor.Meters()), WorldVec3(65536))) ||
+            if (!ValidParticleRenderProperties(input.renderer) || (!kLargeWorld && (glm::any(glm::greaterThan(glm::abs(input.anchor.Meters()), WorldVec3(65536))) ||
                     (input.explicitTile && glm::any(glm::greaterThan(glm::abs(input.tileOrigin.Meters()), WorldVec3(65536)))))) ||
                 input.scriptKey == 0 || input.scriptCode.size() < 20 || input.scriptCode.size() % 4 != 0 ||
                 input.index >= kGpuParticleInstances || input.generation == 0 ||

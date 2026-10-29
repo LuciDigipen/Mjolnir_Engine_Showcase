@@ -10,6 +10,8 @@
 
 #include "particles_gpu/ParticleSubmission.h"
 
+#include <glm/mat4x4.hpp>
+
 #include <vector>
 
 namespace mir
@@ -22,6 +24,7 @@ namespace mir
         glm::vec4 uv;
     };
     static_assert(sizeof(RibbonVertex) == 48);
+    bool ParticleSphereVisible(glm::vec3 center,float radius,const glm::mat4 &viewProjection,float maxDistance);
     std::vector<RibbonVertex> BuildRibbonGeometry(std::span<const RibbonSubmission> ribbons,
-        WorldPosition camera, glm::vec3 cameraRight, uint32_t maxVertices = kRibbonVerticesPerFrame);
+        WorldPosition camera, glm::vec3 cameraRight, uint32_t maxVertices = kRibbonVerticesPerFrame, const glm::mat4 *viewProjection = nullptr);
 }
