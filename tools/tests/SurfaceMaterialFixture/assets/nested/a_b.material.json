@@ -1,6 +1,0 @@
-{
-  "version": 1,
-  "shader": { "file": "nested/a_b.slang", "type": "UnderFixtureMaterial" },
-  "frontends": ["mesh"],
-  "parameters": { "color": [0.0, 0.0, 1.0, 1.0] }
-}

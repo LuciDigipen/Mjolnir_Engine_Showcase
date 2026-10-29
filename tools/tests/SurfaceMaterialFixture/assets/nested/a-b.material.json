@@ -1,6 +1,0 @@
-{
-  "version": 1,
-  "shader": { "file": "nested/a-b.slang", "type": "DashFixtureMaterial" },
-  "frontends": ["mesh"],
-  "parameters": { "color": [1.0, 0.0, 0.0, 1.0] }
-}

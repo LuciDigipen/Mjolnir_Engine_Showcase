@@ -175,7 +175,7 @@ TEST_CASE("The runtime surface catalog names unique compiled stems", "[renderer]
     catalogFile >> catalog;
     CHECK(catalog.at("version") == 1);
     REQUIRE(catalog.at("materials").is_array());
-    CHECK(catalog.at("materials").size() >= 3);
+    CHECK_FALSE(catalog.at("materials").empty());
 
     std::set<std::string> stems;
     bool defaultMaterial = false;

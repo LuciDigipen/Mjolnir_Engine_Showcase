@@ -119,10 +119,7 @@ the existing brightness convention. AO is ambient-only. RT specular albedo uses
 the rational `EnvBRDFApprox2` directional-albedo fit documented in
 [NVIDIA Streamline RR §4.2.1](https://github.com/NVIDIA-RTX/Streamline/blob/main/docs/ProgrammingGuideDLSS_RR.md#421-specular-albedo-generation),
 evaluated with F0, squared roughness and the view cosine; the normal guide retains
-linear roughness in `w`. `PbrProbe.slang` covers the analytic F0=0 Lambert
-oracle (`0.5 * NdotL`, including multiple angles), back-face zero, finite
-grazing and guide roughness/F0 dependence. The probe is compiled and
-spirv-val checked here; its GPU readback values remain supervisor evidence.
+linear roughness in `w`.
 
 ## Tangent frame
 
@@ -133,8 +130,6 @@ handedness for a mirroring determinant. Raster passes `SV_IsFrontFace`; RT
 starts from `HitKind` and applies a per-instance correction for authored CW,
 mirrored and front-cull settings, so both frontends agree. Materials orient
 their normal from `frontFace` if they need a back-face response.
-`TangentFrameProbe.slang` covers a rotation plus non-uniform scale, a mirror
-and a degenerate tangent for supervisor GPU readback.
 
 ## RT hit groups
 

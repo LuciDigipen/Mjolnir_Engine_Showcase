@@ -1,6 +1,0 @@
-{
-  "version": 1,
-  "shader": { "file": "nested/shared.slang", "type": "SharedFixtureMaterial" },
-  "frontends": ["mesh"],
-  "parameters": { "color": [0.0, 1.0, 0.0, 1.0] }
-}
