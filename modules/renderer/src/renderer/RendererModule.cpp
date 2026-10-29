@@ -42,6 +42,8 @@ namespace mir
         RegisterRendererPostEffects();
 
         context.world.EmplaceResource<ViewDrawSources>();
+        // physics fills it while a view shows colliders
+        context.world.EmplaceResource<DebugLines>();
         context.world.EmplaceResource<RenderSettings>(
             RenderSettings::LoadFile(settings.mProjectSettingsPath).value_or(RenderSettings{}));
         context.world.EmplaceResource<PostProcessingSettings>(

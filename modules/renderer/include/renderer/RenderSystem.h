@@ -13,6 +13,7 @@
 #include "renderer/ViewSubmission.h"
 #include "renderer/VulkanRenderer.h"
 
+#include <core/debug/DebugLines.h>
 #include <core/ecs/Query.h>
 #include <core/ecs/System.h>
 #include <core/ecs/components/Name.h>
@@ -70,6 +71,8 @@ namespace mir
         WorldPose mExternalCameraPose;
         Camera mExternalCamera{};
         bool mUseExternalCamera = false;
+
+        DebugViewSettings mDebugView;
     };
 
     class RenderSystem final : public ISystem
@@ -133,6 +136,13 @@ namespace mir
                 mViewports[id].mExternalCamera = camera;
                 mViewports[id].mUseExternalCamera = true;
             }
+        }
+
+        // The editor sets this on its scene viewport; a game build never does.
+        void SetViewportDebugView(ViewportId id, const DebugViewSettings &debugView)
+        {
+            if (id < mViewports.size())
+                mViewports[id].mDebugView = debugView;
         }
 
         // Each scene load and Play session reports a missing camera once.
@@ -425,7 +435,10 @@ namespace mir
             }
 
             mDrawItemsPerViewport.resize(mViewCameras.size());
+            mDebugLinesPerViewport.resize(mViewCameras.size());
             mRenderViews.clear();
+            const DebugLines *debugLines = source.TryResource<DebugLines>();
+            bool collidersWanted = false;
 
             size_t skippedItems = 0;
 
@@ -452,7 +465,21 @@ namespace mir
                 const auto &viewport = mViewports[view.viewport];
                 mRenderViews.back().historyId = viewport.mUseExternalCamera ? UINT64_MAX :
                     PackEntity(viewport.mCameraEntity.IsNull() ? playCamera.mEntity : viewport.mCameraEntity);
+                mRenderViews.back().debugView = viewport.mDebugView;
+
+                mDebugLinesPerViewport[v].clear();
+                if (viewport.mDebugView.colliders)
+                {
+                    collidersWanted = true;
+                    if (debugLines != nullptr)
+                        BuildViewDebugLines(debugLines->mColliders, view.pose.position, mDebugLinesPerViewport[v]);
+                }
+                mRenderViews.back().debugLines = mDebugLinesPerViewport[v];
             }
+
+            // Only the main World's physics fills the lines; a preview World has none, so it asks for none.
+            if (DebugLines *own = context.world.TryResource<DebugLines>())
+                own->mCollidersWanted = collidersWanted && &source == &context.world;
 
             if (warnNoCamera && !mWarnedNoCamera)
             {
@@ -483,8 +510,18 @@ namespace mir
                 mWarnedSkippedItems = true;
             }
 
+            // Wireframe shows no shading, so it never pays for a trace
+            const bool wireframeOnly = mRenderViews.size() == 1 && mRenderer.WireframeAvailable() &&
+                mRenderViews.front().debugView.shading == ViewportShading::Wireframe;
+            // leaving or entering it swaps paths; temporal effects must not blend across the switch
+            if (wireframeOnly != mWasWireframeOnly)
+            {
+                mRenderer.ResetHistory();
+                mWasWireframeOnly = wireframeOnly;
+            }
+
             const bool traceable = mRenderer.RayTracingActive(renderSettings.rayTracing);
-            if (traceable && mRenderViews.size() == 1)
+            if (traceable && mRenderViews.size() == 1 && !wireframeOnly)
             {
                 mRayTracingItems.clear();
                 if (kRtxgiCompiledIn && renderSettings.ddgi.enabled)
@@ -548,6 +585,7 @@ namespace mir
         std::vector<WorldDrawItem> mPassItems;
         // Parallel to mViewCameras.
         std::vector<std::vector<DrawItem>> mDrawItemsPerViewport;
+        std::vector<std::vector<DebugLinePoint>> mDebugLinesPerViewport;
         std::vector<RenderView> mRenderViews;
         std::vector<WorldDrawItem> mRayTracingWorldItems;
         std::vector<DrawItem> mRayTracingItems;
@@ -559,6 +597,7 @@ namespace mir
         bool mWarnedNoActiveCamera = false;
         bool mWarnedNoRayTracing = false;
         bool mWarnedMultiViewRayTracing = false;
+        bool mWasWireframeOnly = false;
         bool mWarnedSkippedItems = false;
     };
 }

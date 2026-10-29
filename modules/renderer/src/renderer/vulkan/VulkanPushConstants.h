@@ -41,6 +41,13 @@ namespace mir::vk
     };
     static_assert(sizeof(RtPushConstants) == 24);
 
+    // Debug wireframe lines: no camera UBO either, the view's viewProj is folded into the model on the CPU.
+    struct DebugWireframePushConstants
+    {
+        glm::mat4 viewProjModel; // 64
+        glm::vec4 color;         // 16
+    };
+
     // Shadow depth passes have no camera UBO, so the light's viewProj rides along.
     struct ShadowPushConstants
     {

@@ -235,6 +235,10 @@ namespace mir
         };
 
 
+        // screen pixels from the pie's center to its items, and the radius where nothing is picked
+        constexpr float kViewPieRadius = 110.0f;
+        constexpr float kViewPieDeadZone = 24.0f;
+
         ImDrawList *ViewportOverlayDrawList()
         {
             const ImGuiViewport *viewport = ImGui::GetMainViewport();
@@ -733,7 +737,7 @@ namespace mir
         ImGuizmo::BeginFrame();
         ImGuizmo::SetDrawlist(ViewportOverlayDrawList());
         ImGuizmo::SetRect(x, y, width, height);
-        ImGuizmo::Enable(!modalOpen);
+        ImGuizmo::Enable(!modalOpen && !mViewPieOpen);
 
         const ImGuizmo::MODE gizmoMode = mGizmoSpace == GizmoSpace::Local ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
         const bool changed = ImGuizmo::Manipulate(glm::value_ptr(view), glm::value_ptr(proj),
@@ -989,6 +993,10 @@ namespace mir
             return;
 
         if (ImGuizmo::IsOver() || ImGuizmo::IsUsing())
+            return;
+
+        // a click that picks a pie wedge is not a pick in the scene
+        if (mViewPieOpen)
             return;
 
         if (!justPressed)
@@ -1358,6 +1366,7 @@ namespace mir
             DrawSelectionHighlights(mode, activeWorld);
             DrawComponentGizmos(mode, activeWorld);
             DrawViewportGizmo(mode, activeWorld, actions, documentTab);
+            UpdateViewPie(mode);
 
             ImGui::PopStyleColor(pushedColors);
             if (ImGui::BeginMainMenuBar())
@@ -1398,6 +1407,8 @@ namespace mir
                 }
                 if (ImGui::BeginMenu("Debug"))
                 {
+                    DrawDebugViewMenu(mode);
+                    ImGui::Separator();
                     ImGui::MenuItem("Style Editor", nullptr, &mShowStyleEditor);
                     ImGui::MenuItem("Profiler", nullptr, &mShowProfiler);
                     ImGui::EndMenu();
@@ -1528,6 +1539,125 @@ namespace mir
 
         if (ImGui::MenuItem((redo + "###Redo").c_str(), "Ctrl+Y", false, mHistory.CanRedo()))
             mHistory.RequestRedo();
+    }
+
+    void Editor::DrawDebugViewMenu(const EngineModeState &mode)
+    {
+        // view changes are Edit-only; Play keeps rendering what Edit picked
+        ImGui::BeginDisabled(mode.mMode != EngineMode::Edit);
+        if (ImGui::BeginMenu("Shading"))
+        {
+            for (const ViewPieItem item : kViewPieItems)
+            {
+                if (item == ViewPieItem::Colliders)
+                    continue;
+                if (ImGui::MenuItem(ViewPieLabel(item), "Z", ViewPieItemActive(mDebugView, item)))
+                    ApplyViewPieItem(mDebugView, item);
+            }
+            ImGui::EndMenu();
+        }
+        ImGui::MenuItem(ViewPieLabel(ViewPieItem::Colliders), "Z", &mDebugView.colliders);
+        ImGui::EndDisabled();
+    }
+
+    void Editor::UpdateViewPie(const EngineModeState &mode)
+    {
+        // view changes are Edit-only; Play keeps rendering what Edit picked
+        if (mode.mMode != EngineMode::Edit || ImGui::GetTopMostPopupModal() != nullptr)
+        {
+            mViewPieOpen = false;
+            return;
+        }
+
+        const ImGuiIO &io = ImGui::GetIO();
+        const glm::vec2 mouse(io.MousePos.x, io.MousePos.y);
+        if (!mViewPieOpen)
+        {
+            // Ctrl+Z is undo, and a held right button is flying the camera
+            if (io.WantTextInput || io.KeyCtrl || io.KeyAlt || io.KeySuper || WantsCaptureMouse() ||
+                mWindow->RawInput().IsDown(MouseButton::Right) || !ImGui::IsKeyPressed(ImGuiKey_Z, false))
+                return;
+
+            const glm::vec2 min(mSceneViewportRect.offset.x, mSceneViewportRect.offset.y);
+            const glm::vec2 max = min + glm::vec2(mSceneViewportRect.extent.width, mSceneViewportRect.extent.height);
+            if (mouse.x < min.x || mouse.y < min.y || mouse.x >= max.x || mouse.y >= max.y)
+                return;
+
+            mViewPieOpen = true;
+            mViewPieSticky = false;
+            mViewPieCenter = mouse;
+        }
+
+        const std::optional<ViewPieItem> hovered = ViewPieItemAt(mouse - mViewPieCenter, kViewPieDeadZone);
+        bool choose = false;
+        bool close = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+        if (!close && !mViewPieSticky && !ImGui::IsKeyDown(ImGuiKey_Z))
+        {
+            // released over a wedge picks it; released in the dead zone keeps the pie for a click
+            choose = hovered.has_value();
+            close = choose;
+            mViewPieSticky = !choose;
+        }
+        else if (!close && mViewPieSticky && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+        {
+            choose = hovered.has_value();
+            close = true;
+        }
+
+        if (choose)
+            ApplyViewPieItem(mDebugView, *hovered);
+        if (close)
+        {
+            mViewPieOpen = false;
+            return;
+        }
+        DrawViewPie(hovered);
+    }
+
+    void Editor::DrawViewPie(std::optional<ViewPieItem> hovered)
+    {
+        // a window over the viewport, so while the pie is up it takes the mouse from picking and the camera
+        ImGui::SetNextWindowPos(ImVec2(static_cast<float>(mSceneViewportRect.offset.x),
+            static_cast<float>(mSceneViewportRect.offset.y)));
+        ImGui::SetNextWindowSize(ImVec2(static_cast<float>(mSceneViewportRect.extent.width),
+            static_cast<float>(mSceneViewportRect.extent.height)));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::Begin("##ViewPie", nullptr,
+            ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoNav |
+                ImGuiWindowFlags_NoFocusOnAppearing);
+
+        ImDrawList *drawList = ImGui::GetWindowDrawList();
+        const ImGuiStyle &style = ImGui::GetStyle();
+        const ImVec2 center(mViewPieCenter.x, mViewPieCenter.y);
+
+        drawList->AddCircle(center, kViewPieDeadZone, ImGui::GetColorU32(ImGuiCol_Border), 0, 2.0f);
+        if (hovered)
+            drawList->AddLine(center, ImGui::GetMousePos(), ImGui::GetColorU32(ImGuiCol_ButtonHovered), 2.0f);
+
+        for (const ViewPieItem item : kViewPieItems)
+        {
+            const bool active = ViewPieItemActive(mDebugView, item);
+            const std::string label = active ? std::string(ICON_FA_CHECK "  ") + ViewPieLabel(item)
+                                             : std::string(ViewPieLabel(item));
+            const ImVec2 textSize = ImGui::CalcTextSize(label.c_str());
+            const ImVec2 size(textSize.x + style.FramePadding.x * 2.0f, textSize.y + style.FramePadding.y * 2.0f);
+
+            // each box sits past the radius on its own side, centered on its axis
+            const glm::vec2 dir = ViewPieDirection(item);
+            const ImVec2 min(center.x + dir.x * kViewPieRadius + (dir.x - 1.0f) * size.x * 0.5f,
+                center.y + dir.y * kViewPieRadius + (dir.y - 1.0f) * size.y * 0.5f);
+            const ImVec2 max(min.x + size.x, min.y + size.y);
+
+            const ImGuiCol fill = item == hovered ? ImGuiCol_ButtonHovered : active ? ImGuiCol_Button : ImGuiCol_PopupBg;
+            drawList->AddRectFilled(min, max, ImGui::GetColorU32(fill), style.FrameRounding);
+            drawList->AddRect(min, max, ImGui::GetColorU32(ImGuiCol_Border), style.FrameRounding);
+            drawList->AddText(ImVec2(min.x + style.FramePadding.x, min.y + style.FramePadding.y),
+                ImGui::GetColorU32(ImGuiCol_Text), label.c_str());
+        }
+
+        ImGui::End();
+        ImGui::PopStyleVar();
     }
 
     void Editor::UpdateHistoryShortcuts(EditorActions &actions, const EngineModeState &mode)

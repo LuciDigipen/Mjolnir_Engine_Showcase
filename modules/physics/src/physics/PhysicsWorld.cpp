@@ -7,6 +7,7 @@
  *
  */
 #include <physics/PhysicsWorld.h>
+#include <physics/ColliderLines.h>
 
 #include "CollisionLayers.h"
 #include "ContactTracker.h"
@@ -47,6 +48,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <unordered_map>
@@ -196,6 +198,107 @@ namespace mir
                 return base;
             return new JPH::RotatedTranslatedShape(ToJolt(desc.mOffset), ToJolt(rotation), base);
         }
+
+        // Places the shape's center: offset is in the body's own frame.
+        std::optional<WorldPosition> ShapeCenter(WorldPosition body, const glm::quat &rotation, const glm::vec3 &offset)
+        {
+            const std::optional<WorldOffset> moved = WorldOffset::FromMeters(WorldVec3(rotation * offset));
+            return moved ? TryTranslateWorld(body, *moved) : std::nullopt;
+        }
+
+        PhysicsMotion MotionOf(JPH::EMotionType motion)
+        {
+            switch (motion)
+            {
+            case JPH::EMotionType::Dynamic:
+                return PhysicsMotion::Dynamic;
+            case JPH::EMotionType::Kinematic:
+                return PhysicsMotion::Kinematic;
+            default:
+                return PhysicsMotion::Static;
+            }
+        }
+
+        // The base shape's sizes into view; false for a shape that is not drawn (empty, or a kind CreateBody never
+        // makes). grid holds a height field's thinned samples for view to point at.
+        bool ReadShape(const JPH::Shape &shape, ColliderView &view, std::vector<glm::vec3> &grid)
+        {
+            switch (shape.GetSubType())
+            {
+            case JPH::EShapeSubType::Box:
+                view.mShape = PhysicsShape::Box;
+                view.mHalfExtent = FromJolt(static_cast<const JPH::BoxShape &>(shape).GetHalfExtent());
+                return true;
+            case JPH::EShapeSubType::Sphere:
+                view.mShape = PhysicsShape::Sphere;
+                view.mRadius = static_cast<const JPH::SphereShape &>(shape).GetRadius();
+                return true;
+            case JPH::EShapeSubType::Capsule:
+                {
+                    const auto &capsule = static_cast<const JPH::CapsuleShape &>(shape);
+                    view.mShape = PhysicsShape::Capsule;
+                    view.mRadius = capsule.GetRadius();
+                    view.mCylinderHalfHeight = capsule.GetHalfHeightOfCylinder();
+                    return true;
+                }
+            case JPH::EShapeSubType::HeightField:
+                {
+                    const auto &field = static_cast<const JPH::HeightFieldShape &>(shape);
+                    const uint32_t samples = field.GetSampleCount();
+                    if (samples < 2)
+                        return false;
+                    const uint32_t lines = PhysicsWorld::kColliderGridLines;
+                    const uint32_t stride = std::max(1u, (samples - 1 + lines - 1) / lines);
+                    const uint32_t size = (samples - 1) / stride + 1;
+
+                    grid.resize(static_cast<size_t>(size) * size);
+                    for (uint32_t z = 0; z < size; ++z)
+                    {
+                        for (uint32_t x = 0; x < size; ++x)
+                        {
+                            const uint32_t sx = x * stride, sz = z * stride;
+                            grid[static_cast<size_t>(z) * size + x] = field.IsNoCollision(sx, sz)
+                                ? glm::vec3(std::numeric_limits<float>::quiet_NaN())
+                                : FromJolt(field.GetPosition(sx, sz));
+                        }
+                    }
+                    view.mHeightField = true;
+                    view.mHeightGrid = grid;
+                    view.mGridSize = size;
+                    return true;
+                }
+            default:
+                return false;
+            }
+        }
+    }
+
+    std::optional<ColliderView> ColliderViewOf(const BodyDesc &desc)
+    {
+        // MakeShape builds an empty shape from these, and logs it at CreateBody; nothing to outline
+        const auto fits = [](float size) { return std::isfinite(size) && size > 0.0f; };
+        const bool sized = desc.mShape == PhysicsShape::Sphere ? fits(desc.mRadius)
+            : desc.mShape == PhysicsShape::Capsule ? fits(desc.mRadius) && fits(desc.mHalfHeight)
+            : fits(desc.mHalfExtent.x) && fits(desc.mHalfExtent.y) && fits(desc.mHalfExtent.z);
+        if (!sized)
+            return std::nullopt;
+
+        const std::optional<WorldPosition> center = ShapeCenter(desc.mPosition, desc.mRotation, desc.mOffset);
+        if (!center)
+            return std::nullopt;
+
+        ColliderView view;
+        view.mShape = desc.mShape;
+        view.mPosition = *center;
+        view.mRotation = desc.mRotation * desc.mRotationOffset *
+            (desc.mShape == PhysicsShape::Capsule ? AxisRotation(desc.mAxis) : kIdentityRotation);
+        view.mHalfExtent = desc.mHalfExtent;
+        view.mRadius = desc.mRadius;
+        // as MakeBaseShape builds it
+        view.mCylinderHalfHeight = std::max(desc.mHalfHeight - desc.mRadius, 1.0e-3f);
+        view.mMotion = desc.mMotion;
+        view.mTrigger = desc.mIsTrigger;
+        return view;
     }
 
     struct PhysicsWorld::Impl
@@ -1039,6 +1142,53 @@ namespace mir
     std::size_t PhysicsWorld::BodyCount() const
     {
         return mImpl->mSystem.GetNumBodies();
+    }
+
+    void PhysicsWorld::ForEachCollider(const std::function<void(const ColliderView &)> &visit) const
+    {
+        JPH::BodyIDVector ids;
+        mImpl->mSystem.GetBodies(ids);
+
+        std::vector<glm::vec3> grid;
+        for (const JPH::BodyID id : ids)
+        {
+            const JPH::BodyLockRead lock(mImpl->mSystem.GetBodyLockInterface(), id);
+            if (!lock.Succeeded())
+                continue;
+            const JPH::Body &body = lock.GetBody();
+
+            const std::optional<WorldPosition> origin = PositionFromJolt(body.GetPosition());
+            if (!origin)
+                continue;
+
+            ColliderView view;
+            view.mMotion = MotionOf(body.GetMotionType());
+            view.mTrigger = body.IsSensor();
+            view.mSleeping = !body.IsStatic() && !body.IsActive();
+
+            glm::quat rotation = FromJolt(body.GetRotation());
+            glm::vec3 offset{ 0.0f };
+            const JPH::Shape *shape = body.GetShape();
+            if (shape->GetSubType() == JPH::EShapeSubType::RotatedTranslated)
+            {
+                const auto &placed = static_cast<const JPH::RotatedTranslatedShape &>(*shape);
+                offset = FromJolt(placed.GetPosition());
+                shape = placed.GetInnerShape();
+                const std::optional<WorldPosition> center = ShapeCenter(*origin, rotation, offset);
+                if (!center)
+                    continue;
+                view.mPosition = *center;
+                rotation = rotation * FromJolt(placed.GetRotation());
+            }
+            else
+            {
+                view.mPosition = *origin;
+            }
+            view.mRotation = rotation;
+
+            if (ReadShape(*shape, view, grid))
+                visit(view);
+        }
     }
 
     void PhysicsWorld::Step(float dt)

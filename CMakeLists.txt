@@ -210,6 +210,14 @@ engine_add_shaders(MjolnirEngine
     ENTRIES vertexMain:vertex)
 
 engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/debugWireframe.slang
+    ENTRIES vertexMain:vertex fragmentMain:fragment)
+
+engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/debugLines.slang
+    ENTRIES vertexMain:vertex fragmentMain:fragment)
+
+engine_add_shaders(MjolnirEngine
     SOURCE assets/shaders/shadowDistance.slang
     ENTRIES vertexMain:vertex fragmentMain:fragment)
 

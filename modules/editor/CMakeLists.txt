@@ -50,6 +50,7 @@ target_sources(engine_editor PRIVATE
     src/editor/PrefabAuthoringAdapter.cpp
     src/editor/PrefabPlayMarks.cpp
     src/editor/PrefabWorkspace.cpp
+    src/editor/ViewPie.cpp
     src/editor/history/ActiveCameraEdit.cpp
     src/editor/history/AuthoredCommand.cpp
     src/editor/history/AuthoredEdit.cpp

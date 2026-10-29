@@ -278,6 +278,8 @@ namespace mir
         RenderSystem &rendering = mRenderer.Rendering();
         const VkRect2D viewport = mEditor.SceneViewportRect();
         rendering.SetViewportRect(0, mEnableLayout ? viewport : VkRect2D{});
+        // set in Edit only, but drawn in Play too
+        rendering.SetViewportDebugView(0, mEnableLayout ? mEditor.SceneDebugView() : DebugViewSettings{});
 
         // the game UI draws later this frame, into the same scene viewport
         GameUIArea &area = mWorld.Resource<GameUIArea>();

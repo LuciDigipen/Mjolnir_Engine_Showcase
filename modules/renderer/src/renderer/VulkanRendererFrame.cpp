@@ -11,6 +11,7 @@
 #endif
 #include <renderer/VulkanRenderer.h>
 #include "vulkan/CameraBuffer.h"
+#include "vulkan/DebugDraw.h"
 #include "vulkan/Device.h"
 #include "vulkan/FrameCapture.h"
 #include "vulkan/FrameSync.h"
@@ -73,9 +74,13 @@ namespace mir
         VkPipeline boundPipeline = VK_NULL_HANDLE;
         VkDescriptorSet boundDescriptorSet = VK_NULL_HANDLE;
 
+        // Wireframe draws only lines, over the clear color; without line support it stays shaded
+        const bool shaded = view.debugView.shading != ViewportShading::Wireframe || !mDebugDraw->WireframeAvailable();
+        const size_t drawCount = shaded ? view.items.size() : 0;
+
         // no mesh/material batching yet, just draw per item
         // EQUAL replay runs in reverse so the original GREATER winner owns depth ties.
-        for (size_t iteration = 0; iteration < view.items.size(); ++iteration)
+        for (size_t iteration = 0; iteration < drawCount; ++iteration)
         {
             const size_t draw = surfaces ? view.items.size() - 1 - iteration : iteration;
             const DrawItem &item = view.items[draw];
@@ -146,7 +151,7 @@ namespace mir
         // where nothing above wrote depth, i.e. still at the clear value - a
         // fullscreen ray-marched shader paying its cost only on actual
         // background pixels, with early-z doing the rejection.
-        if (mSkyVisible && (pass == RasterPass::Scene || pass == RasterPass::Opaque))
+        if (mSkyVisible && shaded && (pass == RasterPass::Scene || pass == RasterPass::Opaque))
         {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->SkyPipeline());
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->SkyPipelineLayout(),
@@ -288,6 +293,8 @@ namespace mir
 
         mPostProcessing->RecordComposite(cmd, frame, colorSource, fxaaActive, extent);
 
+        RecordDebugViews(cmd, imageIndex, drawnViews, mSwapchain->DepthImage(frame), mSwapchain->DepthView(frame));
+
         mImGuiOverlay->RecordInPass(cmd);
 
         mDevice->EndLabel(cmd);
@@ -296,6 +303,50 @@ namespace mir
         const bool captured = mCapture->Record(cmd, *mSwapchain, imageIndex);
         mSwapchain->RecordPresentTransition(cmd, imageIndex,
             captured ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    }
+
+    void VulkanRenderer::RecordDebugViews(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views,
+        VkImage sceneDepth, VkImageView sceneDepthView)
+    {
+        // nothing on: no extra pass, no barriers
+        if (!mDebugDraw->Wants(views))
+            return;
+
+        const VkImage swapchainImage = mSwapchain->Image(imageIndex);
+        const VkExtent2D extent = mSwapchain->Extent();
+
+        mDevice->EndLabel(cmd);
+        vkCmdEndRendering(cmd);
+
+        vk::ImageBarrier(cmd, swapchainImage, VK_IMAGE_ASPECT_COLOR_BIT,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+        // post-processing left the scene depth for sampling; the lines only test against it
+        if (sceneDepth != VK_NULL_HANDLE)
+        {
+            vk::ImageBarrier(cmd, sceneDepth, VK_IMAGE_ASPECT_DEPTH_BIT,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+                VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT,
+                VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT);
+        }
+
+        mDevice->BeginLabel(cmd, "Debug View Pass", { 0.9f, 0.9f, 0.9f, 1.0f });
+        mDebugDraw->Record(cmd, mFrameSync->Index(), views, mSwapchain->View(imageIndex), extent, sceneDepthView,
+            *mResources);
+        mDevice->EndLabel(cmd);
+
+        vk::ImageBarrier(cmd, swapchainImage, VK_IMAGE_ASPECT_COLOR_BIT,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+
+        // ImGui draws last, over the lines
+        vk::BeginFullscreenPass(cmd, mSwapchain->View(imageIndex), extent, VK_ATTACHMENT_LOAD_OP_LOAD);
+        mDevice->BeginLabel(cmd, "ImGui Pass", { 1.0f, 1.0f, 0.0f, 1.0f });
     }
 
     std::optional<vk::FrameContext> VulkanRenderer::BeginFrame()
@@ -412,6 +463,9 @@ namespace mir
 
             mPostProcessing->RecordComposite(cmd, frame, colorSource, /*fxaa*/ false, mSwapchain->Extent());
         }
+
+        // the trace leaves no raster depth, so its lines all show
+        RecordDebugViews(cmd, imageIndex, views.first(1), VK_NULL_HANDLE, VK_NULL_HANDLE);
 
         mImGuiOverlay->RecordInPass(cmd);
 
