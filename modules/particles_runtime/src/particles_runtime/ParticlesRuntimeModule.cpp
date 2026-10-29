@@ -16,6 +16,7 @@
 #include <renderer/RenderSystem.h>
 
 #include <chrono>
+#include <utility>
 
 namespace mir
 {
@@ -65,7 +66,7 @@ namespace mir
             input.size = emitter.definition.size * system->parameters.sizeScale;
             input.color = emitter.definition.color;
             input.velocity = emitter.emissionVelocity;
-            submissions.push_back(input);
+            submissions.push_back(std::move(input));
         }
         return submissions;
     }
@@ -110,6 +111,7 @@ namespace mir
                 d.completedPoolDrops = stats.dropped;
                 d.deferredTextures = stats.deferredTextures; d.droppedRibbonSegments = stats.droppedRibbonSegments;
                 d.cpuRecordMs = stats.cpuRecordMs; d.simulationGpuMs = stats.simulationGpuMs;
+                d.uploadGpuMs = stats.uploadGpuMs;
                 d.prepareGpuMs = stats.prepareGpuMs; d.drawGpuMs = stats.drawGpuMs;
                 d.gpuTimingAvailable = stats.gpuTimingAvailable;
                 d.cpuSubmitMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();

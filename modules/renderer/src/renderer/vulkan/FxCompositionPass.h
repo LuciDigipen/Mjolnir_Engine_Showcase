@@ -25,6 +25,7 @@ namespace mir::vk
         VkImageView Record(Device &device, IFxSystem *system, const FxRenderContext &context);
         // The renderer completes all image uses before resizing or shutdown.
         bool Resize(VkExtent2D extent);
+        uint64_t MemoryBytes() const;
         void Shutdown();
     private:
         bool Initialize(Device &device, VkExtent2D extent);

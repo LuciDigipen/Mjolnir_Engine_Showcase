@@ -88,6 +88,7 @@ namespace mir
 
         // for automated cases
         bool mNonInteractive = false;
+        bool mHidden = false;
 
         // the game Initialize opens
         GameProject mProject;

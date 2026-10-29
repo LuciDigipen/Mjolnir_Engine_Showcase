@@ -123,7 +123,8 @@ namespace mir
         uint32_t firstSequence = 0;
         uint64_t gpuBytes = 0, gpuHighWaterBytes = 0, snapshotBytes = 0, uploadBytes = 0;
         uint64_t deferredTextures = 0, droppedRibbonSegments = 0;
-        double cpuRecordMs = 0, simulationGpuMs = 0, prepareGpuMs = 0, drawGpuMs = 0;
+        double cpuRecordMs = 0, simulationGpuMs = 0, uploadGpuMs = 0, prepareGpuMs = 0, drawGpuMs = 0;
+        double cpuSimulationRecordMs = 0, cpuTextureRecordMs = 0, cpuPrepareRecordMs = 0, cpuDrawRecordMs = 0;
         bool gpuTimingAvailable = false;
         uint64_t tileShifts = 0;
         uint64_t completedFrame = 0;

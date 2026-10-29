@@ -8,6 +8,7 @@
  */
 #include <particles/ParticleRuntime.h>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <glm/geometric.hpp>
@@ -146,4 +147,17 @@ TEST_CASE("Configured particle birth limits drop work without later catchup", "[
     effect.emitterDefinitions[0].spawnRate=0;
     runtime.Stop(handle); runtime.Advance(1.0f/60);
     CHECK(Emitter(runtime,handle).spawns==0);
+}
+TEST_CASE("Particle CPU appearance preserves curve and gradient keys while draining", "[particles][ribbon]")
+{
+    mir::ParticleRuntime runtime;
+    const auto handle=runtime.Start({2},Effect(true));
+    runtime.Advance(1.0f/60);runtime.Stop(handle);
+    for(int i=0;i<29;++i) runtime.Advance(1.0f/60);
+    const auto &point=Emitter(runtime,handle).ribbon.points.front();
+    CHECK(point.width==Catch::Approx(0.45f));
+    CHECK(point.color.r==Catch::Approx(0.5f));
+    CHECK(point.color.g==Catch::Approx(0.2f));
+    CHECK(point.color.b==Catch::Approx(0.05f));
+    CHECK(point.color.a==Catch::Approx(0.25f));
 }

@@ -27,7 +27,13 @@ namespace mir::gpu
         VkBuffer Indices(uint32_t frame) const { return mNodes[frame].handle; }
         VkBuffer Arguments(uint32_t frame) const { return mArguments[frame].handle; }
         void Stats(ParticleGpuStats &stats) const;
-        uint64_t MemoryBytes() const { return mDevice ? kFxFramesInFlight * (uint64_t(kFxMaxViews) * kGpuParticleCapacity * 16 + kFxMaxViews * kGpuParticleInstances * 32 + kFxMaxViews * 8) : 0; }
+        uint64_t MemoryBytes() const
+        {
+            uint64_t bytes=0;
+            if(mDevice) for(uint32_t f=0;f<kFxFramesInFlight;++f)
+                bytes+=uint64_t(mNodeViews[f])*kGpuParticleCapacity*16+kFxMaxViews*kGpuParticleInstances*32+kFxMaxViews*8;
+            return bytes;
+        }
         void Shutdown();
     private:
         struct Buffer { VkBuffer handle = VK_NULL_HANDLE; VmaAllocation memory = nullptr; void *mapped = nullptr; };
@@ -35,6 +41,8 @@ namespace mir::gpu
         VkDevice mDevice = VK_NULL_HANDLE;
         VmaAllocator mAllocator = nullptr;
         Buffer mNodes[kFxFramesInFlight], mArguments[kFxFramesInFlight], mReadback[kFxFramesInFlight];
+        uint32_t mNodeViews[kFxFramesInFlight]{};
+        uint32_t mReadbackViews[kFxFramesInFlight]{};
         VkDescriptorSetLayout mSetLayout = VK_NULL_HANDLE;
         VkDescriptorPool mPool = VK_NULL_HANDLE;
         VkDescriptorSet mSets[kFxFramesInFlight]{};

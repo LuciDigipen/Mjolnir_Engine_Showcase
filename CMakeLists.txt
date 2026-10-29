@@ -172,6 +172,7 @@ engine_add_shaders(MjolnirEngine
 
 if(BUILD_TESTING)
     add_subdirectory(tools/ParticleGpuCheck)
+    add_subdirectory(tools/FlightEffectsCheck)
 endif()
 
 engine_add_shaders(MjolnirEngine
@@ -342,7 +343,7 @@ target_link_libraries(MjolnirEngine PRIVATE
 if(BUILD_TESTING)
     foreach(game_name IN LISTS game_names)
         add_test(NAME smoke.${game_name}
-            COMMAND MjolnirEngine --non-interactive --game games/${game_name} --frames 120)
+            COMMAND MjolnirEngine --non-interactive --hidden --game games/${game_name} --frames 120)
         set_tests_properties(smoke.${game_name} PROPERTIES
             LABELS smoke
             TIMEOUT 120)
@@ -352,7 +353,7 @@ if(BUILD_TESTING)
     # frees it at shutdown
     if(EXISTS "${CMAKE_SOURCE_DIR}/games/HelloWorld/game.json")
         add_test(NAME smoke.ui-demo
-            COMMAND MjolnirEngine --non-interactive --game games/HelloWorld --ui-demo --frames 120)
+            COMMAND MjolnirEngine --non-interactive --hidden --game games/HelloWorld --ui-demo --frames 120)
         set_tests_properties(smoke.ui-demo PROPERTIES
             LABELS smoke
             TIMEOUT 120)
@@ -362,7 +363,7 @@ if(BUILD_TESTING)
     # HUD over it and its scripts running
     if(EXISTS "${CMAKE_SOURCE_DIR}/games/HelloWorld/game.json")
         add_test(NAME smoke.game-mode
-            COMMAND MjolnirEngine --non-interactive --game games/HelloWorld --no-editor --frames 120)
+            COMMAND MjolnirEngine --non-interactive --hidden --game games/HelloWorld --no-editor --frames 120)
         set_tests_properties(smoke.game-mode PROPERTIES
             LABELS smoke
             TIMEOUT 120)
@@ -370,14 +371,21 @@ if(BUILD_TESTING)
 
     if(EXISTS "${CMAKE_SOURCE_DIR}/games/ParticleFlight/game.json")
         add_test(NAME smoke.ParticleFlight.game-mode
-            COMMAND MjolnirEngine --non-interactive --game games/ParticleFlight --no-editor --frames 240)
+            COMMAND MjolnirEngine --non-interactive --hidden --game games/ParticleFlight --no-editor --frames 240)
         set_tests_properties(smoke.ParticleFlight.game-mode PROPERTIES
+            LABELS smoke RUN_SERIAL TRUE TIMEOUT 120)
+    endif()
+
+    if(EXISTS "${CMAKE_SOURCE_DIR}/games/FlightEffectsCheck/game.json")
+        add_test(NAME smoke.FlightEffectsCheck.game-mode
+            COMMAND MjolnirEngine --non-interactive --hidden --game games/FlightEffectsCheck --no-editor --frames 240)
+        set_tests_properties(smoke.FlightEffectsCheck.game-mode PROPERTIES
             LABELS smoke RUN_SERIAL TRUE TIMEOUT 120)
     endif()
 
     if(EXISTS "${CMAKE_SOURCE_DIR}/games/ParticleCheck/game.json")
         add_test(NAME smoke.ParticleCheck.game-mode
-            COMMAND MjolnirEngine --non-interactive --game games/ParticleCheck --no-editor --frames 180)
+            COMMAND MjolnirEngine --non-interactive --hidden --game games/ParticleCheck --no-editor --frames 180)
         set_tests_properties(smoke.ParticleCheck.game-mode PROPERTIES
             LABELS smoke RUN_SERIAL TRUE TIMEOUT 120)
     endif()
@@ -385,7 +393,7 @@ if(BUILD_TESTING)
     # TerrainCheck from its scene camera, which sees both terrains: per-viewport selection, streaming and tracing
     if(EXISTS "${CMAKE_SOURCE_DIR}/games/TerrainCheck/game.json")
         add_test(NAME smoke.TerrainCheck.game-mode
-            COMMAND MjolnirEngine --non-interactive --game games/TerrainCheck --no-editor --frames 120)
+            COMMAND MjolnirEngine --non-interactive --hidden --game games/TerrainCheck --no-editor --frames 120)
         set_tests_properties(smoke.TerrainCheck.game-mode PROPERTIES
             LABELS smoke
             TIMEOUT 120)
@@ -395,7 +403,7 @@ if(BUILD_TESTING)
     if(EXISTS "${CMAKE_SOURCE_DIR}/games/HelloWorld/game.json"
        AND EXISTS "${CMAKE_SOURCE_DIR}/games/EmptyScene/game.json")
         add_test(NAME smoke.switch
-            COMMAND MjolnirEngine --non-interactive --game games/HelloWorld
+            COMMAND MjolnirEngine --non-interactive --hidden --game games/HelloWorld
                     --switch-to games/EmptyScene --switch-to games/HelloWorld
                     --frames 180)
         set_tests_properties(smoke.switch PROPERTIES

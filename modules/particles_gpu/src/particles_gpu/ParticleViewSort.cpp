@@ -55,8 +55,9 @@ namespace mir::gpu
                     b.handle,b.memory,info));
                 b.mapped=info.pMappedData;
             };
-            make(mNodes[f],kNodesPerView*kFxMaxViews*sizeof(glm::uvec2),
+            make(mNodes[f],kNodesPerView*sizeof(glm::uvec2),
                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_SRC_BIT,false);
+            mNodeViews[f]=1;
             make(mArguments[f],kArgumentsBytes,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT|
                 VK_BUFFER_USAGE_TRANSFER_SRC_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT,false);
             make(mReadback[f],kArgumentsBytes+kFxMaxViews*sizeof(glm::uvec2),VK_BUFFER_USAGE_TRANSFER_DST_BIT,true);
@@ -90,12 +91,30 @@ namespace mir::gpu
         if(!mDevice) Initialize(context.frame,data);
         const auto f=context.frame.frame;
         const auto cmd=context.frame.commands;
+        const auto required=std::max<uint32_t>(1,static_cast<uint32_t>(std::min<size_t>(context.views.size(),kFxMaxViews)));
+        if(required>mNodeViews[f])
+        {
+            // BeginFrame completed this slot, other slots keep their own buffers.
+            Buffer replacement; VmaAllocationInfo info{};
+            RequireSort(CreateParticleBuffer(mAllocator,uint64_t(required)*kNodesPerView*sizeof(glm::uvec2),
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_SRC_BIT,0,
+                replacement.handle,replacement.memory,info));
+            vmaDestroyBuffer(mAllocator,mNodes[f].handle,mNodes[f].memory);
+            mNodes[f]=replacement;mNodeViews[f]=required;
+            const VkDescriptorBufferInfo buffer{replacement.handle,0,VK_WHOLE_SIZE};
+            const VkWriteDescriptorSet write{.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstSet=mSets[f],.dstBinding=9,.descriptorCount=1,
+                .descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.pBufferInfo=&buffer};
+            vkUpdateDescriptorSets(mDevice,1,&write,0,nullptr);
+        }
         if(mSignals[f])
         {
             vmaInvalidateAllocation(mAllocator,mReadback[f].memory,0,VK_WHOLE_SIZE);
             const auto *arguments=static_cast<const VkDrawIndirectCommand *>(mReadback[f].mapped);
             const auto *first=reinterpret_cast<const glm::uvec2 *>(arguments+kFxMaxViews*kGpuParticleInstances);
-            for(uint32_t v=0;v<kFxMaxViews;++v)
+            std::fill(std::begin(mVisible),std::end(mVisible),0);
+            std::fill(std::begin(mFirst),std::end(mFirst),UINT32_MAX);
+            for(uint32_t v=0;v<mReadbackViews[f];++v)
             {
                 mVisible[v]=0;
                 for(uint32_t i=0;i<kGpuParticleInstances;++i) mVisible[v]+=arguments[v*kGpuParticleInstances+i].instanceCount;
@@ -129,15 +148,16 @@ namespace mir::gpu
                 const auto count=std::bit_ceil(slot.input.capacity);
                 Push push{context.views[v].viewProj,glm::vec4(*anchor,0),{slot.start,slot.input.capacity,count,i},
                     {uint32_t(v*kNodesPerView),v*kGpuParticleInstances,0,0},
-                    {slot.input.renderer.maxDistance,float(slot.input.renderer.sort),1,0}};
+                    {slot.input.renderer.maxDistance,float(slot.input.renderer.sort),count<=2048?2.0f:1.0f,0}};
                 auto dispatch=[&]
                 {
                     vkCmdPushConstants(cmd,mLayout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(push),&push);
-                    vkCmdDispatch(cmd,(count+127)/128,1,1);
+                    vkCmdDispatch(cmd,count<=2048?1:(count+127)/128,1,1);
                     MemoryBarrier(cmd,VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,VK_ACCESS_2_SHADER_WRITE_BIT,
                         VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,VK_ACCESS_2_SHADER_READ_BIT|VK_ACCESS_2_SHADER_WRITE_BIT);
                 };
                 dispatch();
+                if(count<=2048) continue;
                 push.limits.z=0;
                 for(uint32_t stage=2;stage<=count;stage*=2)
                     for(uint32_t pass=stage/2;pass;pass/=2)
@@ -148,8 +168,11 @@ namespace mir::gpu
             VK_ACCESS_2_SHADER_WRITE_BIT|VK_ACCESS_2_TRANSFER_WRITE_BIT,
             VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT|VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT|VK_PIPELINE_STAGE_2_TRANSFER_BIT,
             VK_ACCESS_2_SHADER_READ_BIT|VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT|VK_ACCESS_2_TRANSFER_READ_BIT);
-        const VkBufferCopy arguments{0,0,kArgumentsBytes};
-        vkCmdCopyBuffer(cmd,mArguments[f].handle,mReadback[f].handle,1,&arguments);
+        if(viewCount)
+        {
+            const VkBufferCopy arguments{0,0,viewCount*kGpuParticleInstances*sizeof(VkDrawIndirectCommand)};
+            vkCmdCopyBuffer(cmd,mArguments[f].handle,mReadback[f].handle,1,&arguments);
+        }
         if(firstSlot!=UINT32_MAX)
             for(uint32_t v=0;v<viewCount;++v)
             {
@@ -159,6 +182,7 @@ namespace mir::gpu
             }
         MemoryBarrier(cmd,VK_PIPELINE_STAGE_2_TRANSFER_BIT,VK_ACCESS_2_TRANSFER_WRITE_BIT,VK_PIPELINE_STAGE_2_HOST_BIT,VK_ACCESS_2_HOST_READ_BIT);
         mSignals[f]=context.frame.signalValue;
+        mReadbackViews[f]=static_cast<uint32_t>(viewCount);
     }
     void ParticleViewSort::Stats(ParticleGpuStats &stats) const
     {
@@ -176,5 +200,7 @@ namespace mir::gpu
         for(uint32_t f=0;f<kFxFramesInFlight;++f)
             for(auto *b:{&mNodes[f],&mArguments[f],&mReadback[f]}) if(b->handle) vmaDestroyBuffer(mAllocator,b->handle,b->memory);
         mDevice=VK_NULL_HANDLE;
+        std::fill(std::begin(mSignals),std::end(mSignals),0);
+        std::fill(std::begin(mReadbackViews),std::end(mReadbackViews),0);
     }
 }

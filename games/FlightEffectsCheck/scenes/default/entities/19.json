@@ -1,0 +1,50 @@
+{
+  "id": 19,
+  "parent": 18,
+  "components": [
+    {
+      "type": "Name",
+      "fields": {
+        "name": "Aircraft Body"
+      }
+    },
+    {
+      "type": "Transform",
+      "fields": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          0.45,
+          0.3,
+          3
+        ]
+      }
+    },
+    {
+      "type": "WorldTransform",
+      "fields": {}
+    },
+    {
+      "type": "MeshRenderer",
+      "fields": {
+        "meshName": "meshes/block.mesh.json",
+        "tint": [
+          0.6,
+          0.65,
+          0.75,
+          1
+        ],
+        "materialShader": ""
+      }
+    }
+  ]
+}

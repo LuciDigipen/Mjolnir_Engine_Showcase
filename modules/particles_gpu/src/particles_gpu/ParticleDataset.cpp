@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace mir::gpu
 {
@@ -192,7 +193,6 @@ namespace mir::gpu
                     input = {};
                 }
             }
-            slot.input = input;
             Parameters p{};
             if (slot.allocated)
             {
@@ -227,6 +227,7 @@ namespace mir::gpu
                 mReadbackOrigins[frame][i] = slot.anchor;
             }
             parameters[i] = p;
+            slot.input = std::move(input);
         }
         mStats.uploadBytes = sizeof(Parameters) * kGpuParticleInstances + birthCursor * sizeof(ParticleGpuBirth);
         vmaFlushAllocation(device.allocator, mInputs[frame].allocation, 0, VK_WHOLE_SIZE);

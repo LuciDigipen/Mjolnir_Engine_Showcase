@@ -275,8 +275,8 @@ namespace mir
                 d->rejectedGpu,d->droppedGpuBirths,d->completedPoolDrops);
             ImGui::TextWrapped("Deferred textures %llu, dropped segments %llu",d->deferredTextures,d->droppedRibbonSegments);
             ImGui::TextWrapped("CPU simulation %.3f ms, submit %.3f ms, recording %.3f ms",s.cpuMs,d->cpuSubmitMs,d->cpuRecordMs);
-            if (d->gpuTimingAvailable) ImGui::TextWrapped("GPU simulation/uploads %.3f ms, prepare %.3f ms, draw %.3f ms (asynchronous)",
-                d->simulationGpuMs,d->prepareGpuMs,d->drawGpuMs);
+            if (d->gpuTimingAvailable) ImGui::TextWrapped("GPU simulation %.3f ms, texture uploads %.3f ms, prepare %.3f ms, draw %.3f ms (asynchronous)",
+                d->simulationGpuMs,d->uploadGpuMs,d->prepareGpuMs,d->drawGpuMs);
             else ImGui::TextUnformatted("GPU timing unavailable on this queue");
         }
     }

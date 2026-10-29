@@ -18,22 +18,31 @@ namespace mir
 {
     namespace
     {
-        void Appearance(ParticleRibbonPoint &point, const ParticleEmitterAsset &definition, float scale, float age)
+        struct Appearance
         {
-            const float t = std::clamp(age, 0.0f, 1.0f);
-            const auto &width = definition.updateModules[2];
-            point.width = definition.size * scale * (width.name == "RibbonWidthCurve" ?
-                EvaluateParticleCurve(width.parameters[0], width.parameters[1], width.parameters[2], t) :
-                std::lerp(1.0f, width.parameters[0], t));
-            point.color = definition.color;
-            if (definition.updateModules.size() == 5)
+            float mSize,mStart,mMiddle,mEnd;
+            bool mCurve;
+            glm::vec4 mColor,mDelta{0};
+            Appearance(const ParticleEmitterAsset &definition,float scale)
             {
-                const auto &p = definition.updateModules[3].parameters;
-                point.color *= glm::vec4(std::lerp(p[0], p[4], t), std::lerp(p[1], p[5], t),
-                    std::lerp(p[2], p[6], t), std::lerp(p[3], p[7], t));
+                const auto &width=definition.updateModules[2];
+                mCurve=width.name=="RibbonWidthCurve";mSize=definition.size*scale;
+                mStart=mCurve?width.parameters[0]:1;mMiddle=mCurve?width.parameters[1]:1;mEnd=mCurve?width.parameters[2]:width.parameters[0];
+                mColor=definition.color;
+                if(definition.updateModules.size()==5)
+                {
+                    const auto &p=definition.updateModules[3].parameters;
+                    const glm::vec4 first(p[0],p[1],p[2],p[3]),last(p[4],p[5],p[6],p[7]);
+                    mDelta=definition.color*(last-first);mColor*=first;
+                }
             }
-            point.color.a *= 1 - t;
-        }
+            void Apply(ParticleRibbonPoint &point,float age) const
+            {
+                const float t=std::clamp(age,0.0f,1.0f);
+                point.width=mSize*(mCurve?EvaluateParticleCurve(mStart,mMiddle,mEnd,t):std::lerp(mStart,mEnd,t));
+                point.color=mColor+mDelta*t;point.color.a*=1-t;
+            }
+        };
     }
 
     void AdvanceParticleRibbon(ParticleEmitterInstance &emitter, const ParticleUserParameters &parameters,
@@ -43,6 +52,7 @@ namespace mir
         const auto &definition = emitter.definition;
         const double dt = emitter.seconds;
         if (dt <= 0) return;
+        const Appearance appearance(definition,parameters.sizeScale);
         state.time += dt;
         const auto drift = WorldVec3(parameters.wind) * WorldReal(dt);
         for (auto &point : state.points)
@@ -56,7 +66,7 @@ namespace mir
             if (supported) point.position = *moved;
             else { point.birthTime = -definition.lifetime; ++stats.rejectedRibbonPoints; }
             const float age = static_cast<float>((state.time - point.birthTime) / definition.lifetime);
-            Appearance(point, definition, parameters.sizeScale, age);
+            appearance.Apply(point,age);
         }
         std::erase_if(state.points, [&](const auto &point) { return state.time - point.birthTime >= definition.lifetime; });
         if (emitter.state != ParticleExecutionState::Active || parameters.spawnRateScale == 0)
@@ -112,7 +122,7 @@ namespace mir
             point.ribbon = state.ribbon;
             point.link = state.nextLink++;
             const float normalized = static_cast<float>(age / definition.lifetime);
-            Appearance(point, definition, parameters.sizeScale, normalized);
+            appearance.Apply(point,normalized);
             state.points.push_back(point);
             ++emitter.spawns;
         };

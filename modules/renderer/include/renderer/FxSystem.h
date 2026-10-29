@@ -68,6 +68,8 @@ namespace mir
         virtual void PrepareDraw(const FxRenderContext &) {}
         // Inside renderer-owned HDR dynamic rendering, depth is sampled read-only.
         virtual void RecordDraw(const FxRenderContext &context) = 0;
+        // Outside rendering, after the HDR output is transitioned for sampling.
+        virtual void FinishDraw(const FxRenderContext &) {}
         virtual void ClearScene() = 0;
         // Called only after all recorded uses complete, including unregistration.
         virtual void Shutdown() = 0;

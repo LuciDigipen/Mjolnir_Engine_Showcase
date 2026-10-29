@@ -13,6 +13,7 @@ remain in particles, the bridge owns no persistent state.
 `RecordSimulation` dispatches simulation once after the existing frame-slot wait.
 `PrepareDraw` runs outside dynamic rendering and prepares independent view-local
 sort/cull results. `RecordDraw` executes inside the renderer's HDR composition pass.
+`FinishDraw` closes the GPU composition timer after rendering and the output transition.
 Additional cameras never dispatch simulation again. Camera cuts and backend changes
 rebuild view data while preserving particles. Scene/play/reload clears discard all
 pending snapshots and render work. Replaced frame snapshots discard unconsumed
@@ -36,6 +37,9 @@ use. Shared sprite/ribbon textures are keyed by asset identity and pixel content
 RGBA8 images are bounded to 2,048 pixels per side and a 64 MiB resident/upload
 budget. Linear sampling clamps atlas coordinates inside half-texel cell borders.
 Ribbon U coordinates repeat, V coordinates clamp.
+Exact content comparisons reuse the texture's mapped upload buffer until timeline
+retirement. This avoids hashing unchanged pixels each frame, the retained source
+bytes stay inside the resident/upload budget and memory counters.
 
 ## Per-view visibility and ordering
 
@@ -46,10 +50,14 @@ particles sort farthest first, ties use pool index. Sort none preserves pool ord
 while compacting visible indices. Conservative bounds retain particles crossing a
 frustum or distance boundary.
 
-Sixteen views match the renderer limit. Two frame slots reserve 32 MiB of sort
-scratch, plus bounded indirect arguments and asynchronous diagnostic readback.
-Worst-case sorting is O(C log-squared C) for padded capacity C per view, acceptance
-profiling and quality policies remain later work. `ParticleGpuStats` reports
+Sixteen views match the renderer limit. Sort scratch starts at 2 MiB across two
+frame slots and grows per completed slot to its view count, up to 32 MiB retained.
+Replacement allocates before releasing the old buffer, transient growth also holds
+that slot's previous allocation. Indirect arguments and diagnostic readback remain
+bounded. Capacities padded to at most 2,048 use one workgroup and shared-memory
+bitonic sorting, larger capacities retain the global multi-dispatch fallback.
+Worst-case sorting is O(C log-squared C) for padded capacity C per view.
+`ParticleGpuStats` reports
 completed visibility counts and the first sorted index for each view.
 
 CPU ribbon geometry subtracts each view's camera in world precision before
@@ -57,6 +65,9 @@ narrowing. Shared strip corners join adjacent links, missing links and ribbon ID
 never connect. Duplicate samples emit no triangles, end-on views use finite
 fallbacks. Segments use conservative view bounds and the selected sort order.
 Whole-repeat subtraction preserves texture phase after prefix eviction.
+Geometry culls segments before preparing their required join corners, sorts segment
+indices and expands four corners into six output vertices. Descriptor writes are
+batched once per frame, handles are refreshed even when allocator addresses repeat.
 
 Two mapped buffers reserve about 6 MiB for at most 65,532 ribbon vertices across
 all views per frame. Exhaustion truncates geometry while CPU history keeps aging
@@ -119,13 +130,17 @@ Diagnostics expose completed GPU alive counts, tracked buffer/texture bytes and
 high-water marks, copied snapshot bytes, upload bytes and rejected/dropped work.
 Tracked GPU bytes count requested owned buffers, images and staging data, not
 driver allocations, pipelines or total process VRAM. CPU timings cover simulation,
-submission and command recording. Three timestamp scopes measure simulation plus
-texture uploads, view preparation/sorting, and drawing. Completed frame-slot
-queries are read with availability flags, without WAIT, queue idle or synchronous
-particle readback. Unsupported queues report timing unavailable. Values can lag
-the displayed simulation, and are diagnostics rather than T7 performance signoff.
+submission and command recording. Four timestamp scopes measure simulation, texture
+copies, view preparation/sorting, and HDR composition/transparent drawing. After
+the renderer's existing frame-slot wait, completed queries are copied into a mapped
+buffer before query reset. That copy is read on the slot's next reuse, with cache
+invalidation and availability checks. Two frame-slot cycles of latency avoid a host
+query call or extra CPU wait, queue idle or synchronous particle-state readback.
+Unsupported queues report timing unavailable. Query copies use no WAIT flag, their
+source queries already completed. See [acceptance results](../particle-acceptance.md)
+for measured scope, memory accounting and limits.
 
-`ParticleGpuCheck <output.png> [raster|rt|dlss]` cooks its inputs through AssetCooker
+`ParticleGpuCheck <output.png> [raster|rt|dlss] [hidden]` cooks its inputs through AssetCooker
 and exercises the production API with synchronization validation. It verifies
 opposite orders for two raster cameras, conservative culling, no extra simulation
 or birth replay, scene clear, registration replacement, resize and backend switches.

@@ -1,0 +1,50 @@
+{
+  "id": 18,
+  "parent": 0,
+  "components": [
+    {
+      "type": "Name",
+      "fields": {
+        "name": "Aircraft 4"
+      }
+    },
+    {
+      "type": "Transform",
+      "fields": {
+        "position": [
+          -9.0,
+          5,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "type": "WorldTransform",
+      "fields": {}
+    },
+    {
+      "type": "ScriptRef",
+      "fields": {
+        "scriptName": "aircraft"
+      }
+    },
+    {
+      "type": "ParticleSystem",
+      "fields": {
+        "systemName": "particles/aircraft.particle.json",
+        "playOnStart": true
+      }
+    }
+  ]
+}

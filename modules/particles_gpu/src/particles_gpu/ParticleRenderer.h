@@ -59,8 +59,11 @@ namespace mir::gpu
             VkImageView view=VK_NULL_HANDLE;
             VkBuffer staging=VK_NULL_HANDLE;
             VmaAllocation stagingAllocation=nullptr;
-            uint64_t uploaded=0,lastUse=0;
+            uint64_t lastUse=0;
             VkDeviceSize bytes=0;
+            // Retain mapped upload bytes with the image for exact content comparisons.
+            const uint8_t *source=nullptr;
+            uint32_t width=0,height=0;
         };
         void DestroyTexture(Texture &texture);
         void UploadTexture(const FxFrameContext &context,Texture &texture,uint32_t width,uint32_t height,const uint8_t *pixels);

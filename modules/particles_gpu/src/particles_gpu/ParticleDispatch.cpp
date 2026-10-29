@@ -128,10 +128,17 @@ namespace mir::gpu
             mFirst = false;
         }
         else
-            for (uint32_t i = 0; i < kGpuParticleInstances; ++i)
+            for (uint32_t i = 0; i < kGpuParticleInstances;)
+            {
                 if (!data.mSlots[i].allocated)
-                    vkCmdFillBuffer(cmd, data.mCounters.handle, i * sizeof(ParticleDataset::Counters),
-                        sizeof(ParticleDataset::Counters), 0);
+                {
+                    const uint32_t first=i++;
+                    while(i<kGpuParticleInstances && !data.mSlots[i].allocated) ++i;
+                    vkCmdFillBuffer(cmd,data.mCounters.handle,first*sizeof(ParticleDataset::Counters),
+                        (i-first)*sizeof(ParticleDataset::Counters),0);
+                }
+                else ++i;
+            }
         MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
             VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_TRANSFER_BIT,
             VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_TRANSFER_READ_BIT);

@@ -66,12 +66,13 @@ namespace mir::gpu
             TextureFailure("Cannot create particle texture view");
         VmaAllocationInfo upload{};
         if (!CreateParticleBuffer(mAllocator, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
+                VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
                 texture.staging, texture.stagingAllocation, upload))
             TextureFailure("Cannot allocate particle texture upload");
         texture.bytes += bytes;
         mTextureBytes += bytes;
         std::memcpy(upload.pMappedData, pixels, static_cast<size_t>(bytes));
+        texture.source=static_cast<const uint8_t *>(upload.pMappedData);texture.width=width;texture.height=height;
         vmaFlushAllocation(mAllocator, texture.stagingAllocation, 0, VK_WHOLE_SIZE);
         VkImageMemoryBarrier2 barrier{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
             .srcStageMask = VK_PIPELINE_STAGE_2_NONE, .srcAccessMask = VK_ACCESS_2_NONE,
@@ -92,7 +93,6 @@ namespace mir::gpu
         barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         vkCmdPipelineBarrier2(context.commands, &dependency);
-        texture.uploaded = context.signalValue;
         mTextureUploadBytes += bytes;
     }
 
@@ -146,6 +146,18 @@ namespace mir::gpu
                 if(!input.key || !input.width || !input.height || input.width>2048 || input.height>2048 ||
                     input.pixels.size()!=size_t(input.width)*input.height*4)
                     TextureFailure("Malformed particle RGBA8 texture or dimensions beyond 2048");
+                const auto cached=mTextures.find(mSlotTextures[i]);
+                if(cached!=mTextures.end() && cached->first.first==input.key && cached->second.width==input.width &&
+                    cached->second.height==input.height && cached->second.source &&
+                    std::equal(input.pixels.begin(),input.pixels.end(),cached->second.source))
+                {used.insert(cached->first);continue;}
+                bool shared=false;
+                for(uint32_t previous=0;previous<i;++previous)
+                    if(active[previous] && inputs[previous].key==input.key && inputs[previous].width==input.width &&
+                        inputs[previous].height==input.height && inputs[previous].pixels.size()==input.pixels.size() &&
+                        std::equal(input.pixels.begin(),input.pixels.end(),inputs[previous].pixels.begin()))
+                    {key=mSlotTextures[previous];shared=true;break;}
+                if(shared) {mSlotTextures[i]=key;used.insert(key);continue;}
                 uint64_t hash=14695981039346656037ull;
                 for(auto byte:input.pixels) {hash^=byte;hash*=1099511628211ull;}
                 hash^=uint64_t(input.width)<<32|input.height;
@@ -159,12 +171,6 @@ namespace mir::gpu
             auto &texture=it->second;
             if(!used.contains(it->first) && texture.lastUse<=completed)
             { DestroyTexture(texture);it=mTextures.erase(it);continue; }
-            if(texture.staging && texture.uploaded<=completed)
-            {
-                vmaDestroyBuffer(mAllocator,texture.staging,texture.stagingAllocation);
-                texture.staging=VK_NULL_HANDLE;texture.stagingAllocation=nullptr;
-                mTextureBytes-=texture.bytes/2;texture.bytes/=2;
-            }
             ++it;
         }
         auto [white, freshWhite] = mTextures.try_emplace(TextureKey{});
@@ -322,33 +328,36 @@ namespace mir::gpu
         mUploadBytes = mTextureUploadBytes + cursor * sizeof(RibbonVertex) + mDraws.size() * sizeof(ViewData);
         vmaFlushAllocation(mAllocator,mViews[f].memory,0,VK_WHOLE_SIZE);
         if(cursor) vmaFlushAllocation(mAllocator,mVertices[f].memory,0,cursor*sizeof(RibbonVertex));
-        std::set<uint32_t> written;
+        std::array<bool,kGroups> written{};
+        std::array<VkDescriptorImageInfo,kGroups*2> imageInfos{};
+        std::array<VkDescriptorBufferInfo,kGroups*4> bufferInfos{};
+        std::array<VkWriteDescriptorSet,kGroups*6> writes{};
+        uint32_t writeCount=0;
         for(const auto &draw:mDraws)
         {
-            if(!written.insert(draw.slot).second) continue;
+            if(written[draw.slot]) continue;
+            written[draw.slot]=true;
             const auto texture=mTextures.find(mSlotTextures[draw.slot]);
             if(texture==mTextures.end()) TextureFailure("Particle material was not prepared before rendering");
-            const VkDescriptorImageInfo images[]{
-                {mSampler,context.depth,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                {mTextureSampler,texture->second.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+            imageInfos[draw.slot*2]={mSampler,context.depth,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            imageInfos[draw.slot*2+1]={mTextureSampler,texture->second.view,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
             const uint32_t imageBindings[]{1,7};
             for(uint32_t i=0;i<2;++i)
             {
-                const VkWriteDescriptorSet write{.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,.dstSet=mSets[f][draw.slot],
-                    .dstBinding=imageBindings[i],.descriptorCount=1,.descriptorType=VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,.pImageInfo=&images[i]};
-                vkUpdateDescriptorSets(mDevice,1,&write,0,nullptr);
+                writes[writeCount++]={.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,.dstSet=mSets[f][draw.slot],
+                    .dstBinding=imageBindings[i],.descriptorCount=1,.descriptorType=VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,.pImageInfo=&imageInfos[draw.slot*2+i]};
             }
             const VkBuffer buffers[]{data.mParticles.handle,mVertices[f].handle,mSort.Indices(f),mViews[f].handle};
             const uint32_t bindings[]{5,8,9,10};
             for(uint32_t i=0;i<4;++i)
             {
                 if(!buffers[i]) continue;
-                const VkDescriptorBufferInfo buffer{buffers[i],0,VK_WHOLE_SIZE};
-                const VkWriteDescriptorSet write{.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,.dstSet=mSets[f][draw.slot],
-                    .dstBinding=bindings[i],.descriptorCount=1,.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.pBufferInfo=&buffer};
-                vkUpdateDescriptorSets(mDevice,1,&write,0,nullptr);
+                bufferInfos[draw.slot*4+i]={buffers[i],0,VK_WHOLE_SIZE};
+                writes[writeCount++]={.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,.dstSet=mSets[f][draw.slot],
+                    .dstBinding=bindings[i],.descriptorCount=1,.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.pBufferInfo=&bufferInfos[draw.slot*4+i]};
             }
         }
+        if(writeCount) vkUpdateDescriptorSets(mDevice,writeCount,writes.data(),0,nullptr);
     }
     void ParticleRenderer::Record(const FxRenderContext &context,const ParticleDataset &data)
     {

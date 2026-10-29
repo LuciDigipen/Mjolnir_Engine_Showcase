@@ -113,7 +113,7 @@ namespace mir
         uint64_t gpuFrame = 0, gpuBytes = 0, gpuHighWaterBytes = 0, snapshotBytes = 0, uploadBytes = 0;
         uint64_t rejectedGpu = 0, droppedGpuBirths = 0, completedPoolDrops = 0, deferredTextures = 0, droppedRibbonSegments = 0;
         uint32_t gpuAlive = 0;
-        double cpuSubmitMs = 0, cpuRecordMs = 0, simulationGpuMs = 0, prepareGpuMs = 0, drawGpuMs = 0;
+        double cpuSubmitMs = 0, cpuRecordMs = 0, simulationGpuMs = 0, uploadGpuMs = 0, prepareGpuMs = 0, drawGpuMs = 0;
         bool gpuTimingAvailable = false;
     };
 

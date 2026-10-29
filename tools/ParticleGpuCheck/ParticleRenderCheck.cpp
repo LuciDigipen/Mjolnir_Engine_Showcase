@@ -83,10 +83,17 @@ void RunParticleRenderCheck(mir::VulkanRenderer &renderer,mir::ParticlesGpuModul
     particles.Submit(std::span(&input,1));frames();
     auto stats=particles.Stats();
     RequireRender(stats.visible[0]==3 && stats.firstSortedParticle[0]==2,"GPU back-to-front sorting or non-power-of-two padding failed");
+    const auto singleViewBytes=stats.gpuBytes;
+    particles.Clear();frames();input.capacity=4096;++input.generation;
+    particles.Submit(std::span(&input,1));frames();stats=particles.Stats();
+    RequireRender(stats.visible[0]==3 && stats.firstSortedParticle[0]==2,"Large-emitter global sort fallback failed");
+    particles.Clear();frames();input.capacity=5;++input.generation;
+    particles.Submit(std::span(&input,1));frames();
     RequireRender(stats.alive==3,"View preparation changed simulation particle count");
     if(!rt)
     {
         split=true;frames();stats=particles.Stats();
+        RequireRender(stats.gpuBytes>singleViewBytes+1024*1024,"Per-slot sort scratch did not grow for the second view");
         RequireRender(stats.visible[0]==3 && stats.visible[1]==3,"Split-view culling did not retain each camera's visible particles");
         RequireRender(stats.firstSortedParticle[0]==2 && stats.firstSortedParticle[1]==0,"Second camera reused the first camera's particle order");
         RequireRender(stats.alive==3 && stats.spawned==0,"Extra views advanced particle simulation or replayed births");

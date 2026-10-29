@@ -277,6 +277,8 @@ linearly at normalized ages 0, 0.5 and 1. `ColorGradient` and
 GPU ColorGradient supplies alpha in place of the default fade. CPU RibbonFade
 remains last and multiplies gradient alpha. The ribbon stack permits RibbonWidth
 or RibbonWidthCurve and an optional RibbonColorGradient before RibbonFade.
+CPU ribbons prepare the emitter's width/gradient parameters once per tick before
+evaluating sample ages, including while draining after emission stops.
 
 Preview uses a normal cooked system and the production runtime in Edit. Pause
 freezes its simulation, Clear, closing the panel, scene changes and Play discard
@@ -302,3 +304,9 @@ without catch-up. Session limits can be lowered from the panel when no effects
 are alive, games can configure the same ParticleBudgets API. CPU bytes are a
 conservative retained-data reservation including definitions, payloads and bounded
 history/birth buffers, not an allocator-wide measurement.
+
+`games/FlightEffectsCheck` provides a shared scripted route for interactive play
+and test-only hidden profiling. It exercises acceleration, wind, turns, offscreen
+history, stop/drain, large coordinates and eight aircraft. See
+[acceptance results](../particle-acceptance.md) for quality settings, measurements
+and remaining gates.

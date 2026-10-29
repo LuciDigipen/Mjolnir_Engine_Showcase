@@ -57,8 +57,9 @@ int main(int argc, char **argv)
     mir::InstallCrashHandler({});
     try
     {
-        auto window = mir::Window::Create({.mWidth = 640, .mHeight = 360, .mTitle = "Particle GPU check"});
-        window->Show();
+        const bool hidden=argc>3 && std::string_view(argv[3])=="hidden";
+        auto window = mir::Window::Create({.mWidth = 640, .mHeight = 360, .mTitle = "Particle GPU check",.mStartHidden=hidden});
+        if(!hidden) window->Show();
         mir::VulkanRenderer renderer;
         Require(renderer.Initialize({window.get(), "ParticleGpuCheck", true}), "Renderer initialization failed");
         auto particles = std::make_unique<mir::ParticlesGpuModule>(renderer);
@@ -440,6 +441,8 @@ int main(int argc, char **argv)
         particles->Clear();
         for (int f = 0; f < 3; ++f) draw();
         MIR_LOG_INFO("CPU ribbon uploads, split views, remote camera and clear passed");
+        particles.reset();
+        particles=std::make_unique<mir::ParticlesGpuModule>(renderer);
         RunParticleRenderCheck(renderer,*particles,*window,*cookedEmitter.mEmitter,output,rt,mode=="dlss");
         {
             const auto measured = particles->Stats();

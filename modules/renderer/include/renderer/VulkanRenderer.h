@@ -245,6 +245,7 @@ namespace mir
         };
 
         GpuMemoryUsage GetGpuMemoryUsage() const;
+        uint64_t FxCompositionMemoryBytes() const;
 
         constexpr static uint32_t kMaxSpotShadows = 4;
         constexpr static uint32_t kMaxPointShadows = 2;

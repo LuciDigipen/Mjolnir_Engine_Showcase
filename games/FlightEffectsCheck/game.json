@@ -1,0 +1,6 @@
+{
+  "name": "FlightEffectsCheck",
+  "title": "MjolnirEngine - Flight Effects Acceptance",
+  "assetsRoot": "assets",
+  "sceneDir": "scenes/default"
+}

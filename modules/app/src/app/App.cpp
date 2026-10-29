@@ -102,7 +102,7 @@ namespace mir
 
     App::StartupSplash::StartupSplash(const AppDesc &desc)
     {
-        screen.Show({ .mEngineName = desc.mAppName,
+        if (!desc.mHidden) screen.Show({ .mEngineName = desc.mAppName,
                       .mVersion = kEngineVersion,
                       .mCopyright = kEngineCopyright,
                       .mStatus = "Creating window...",
@@ -161,7 +161,7 @@ namespace mir
         // every module is built, so a library that took the crash filter slot has done so
         ReclaimCrashHandler();
 
-        mWindow.Get().Show();
+        if (!mDesc.mHidden) mWindow.Get().Show();
     }
 
     // Systems stop while every module is alive; then members die in reverse, the

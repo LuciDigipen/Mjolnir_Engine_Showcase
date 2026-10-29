@@ -13,6 +13,8 @@
 #include <core/fs/Paths.h>
 #include <core/log/SetupError.h>
 
+#include <vk_mem_alloc.h>
+
 namespace mir::vk
 {
     bool FxCompositionPass::Initialize(Device &device, VkExtent2D extent)
@@ -69,6 +71,7 @@ namespace mir::vk
         system->RecordDraw(context);
         vkCmdEndRendering(cmd);
         ShaderReadOnlyBarrier(cmd, mOutput[frame].image);
+        system->FinishDraw(context);
         device.EndLabel(cmd);
         return mOutput[frame].view;
     }
@@ -82,6 +85,17 @@ namespace mir::vk
                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, "FX HDR composition", image)) return false;
         }
         return true;
+    }
+    uint64_t FxCompositionPass::MemoryBytes() const
+    {
+        uint64_t bytes=0;
+        if(mDevice) for(const auto &image:mOutput) if(image.allocation)
+        {
+            VmaAllocationInfo info{};
+            vmaGetAllocationInfo(mDevice->Allocator(),image.allocation,&info);
+            bytes+=info.size;
+        }
+        return bytes;
     }
     void FxCompositionPass::Shutdown()
     {

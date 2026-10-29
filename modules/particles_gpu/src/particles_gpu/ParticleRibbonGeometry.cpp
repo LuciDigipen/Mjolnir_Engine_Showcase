@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numeric>
 
 namespace mir
 {
@@ -26,6 +27,24 @@ namespace mir
         {
             return a.ribbon == b.ribbon && b.link == a.link + 1;
         }
+        glm::vec4 PlaneLengths(const glm::mat4 &matrix)
+        {
+            glm::vec4 lengths;
+            for(int row=0;row<4;++row)
+                lengths[row]=glm::length(glm::vec3(matrix[0][row],matrix[1][row],matrix[2][row]));
+            return lengths;
+        }
+        bool SphereVisible(glm::vec3 center,float radius,const glm::mat4 &matrix,glm::vec4 lengths,float maxDistance)
+        {
+            if(!std::isfinite(radius) || radius<0 || !std::isfinite(maxDistance) || maxDistance<=0) return false;
+            for(int axis=0;axis<3;++axis) if(!std::isfinite(center[axis])) return false;
+            const auto clip=matrix*glm::vec4(center,1);
+            for(int row=0;row<4;++row) if(!std::isfinite(clip[row])) return false;
+            const auto margin=lengths*radius;
+            return glm::length(center)<=maxDistance+radius && clip.w+margin.w>0 &&
+                std::abs(clip.x)<=clip.w+margin.x+margin.w && std::abs(clip.y)<=clip.w+margin.y+margin.w &&
+                clip.z>=-margin.z && clip.z<=clip.w+margin.z+margin.w;
+        }
     }
     bool ValidParticleRenderProperties(const ParticleRenderProperties &p)
     {
@@ -35,30 +54,23 @@ namespace mir
     }
     bool ParticleSphereVisible(glm::vec3 center,float radius,const glm::mat4 &viewProjection,float maxDistance)
     {
-        if(!std::isfinite(radius) || radius<0 || !std::isfinite(maxDistance) || maxDistance<=0) return false;
-        for(int axis=0;axis<3;++axis) if(!std::isfinite(center[axis])) return false;
-        const auto clip=viewProjection*glm::vec4(center,1);
-        glm::vec4 margin;
-        for(int row=0;row<4;++row)
-        {
-            if(!std::isfinite(clip[row])) return false;
-            margin[row]=glm::length(glm::vec3(viewProjection[0][row],viewProjection[1][row],viewProjection[2][row]))*radius;
-        }
-        return glm::length(center)<=maxDistance+radius && clip.w+margin.w>0 &&
-            std::abs(clip.x)<=clip.w+margin.x+margin.w && std::abs(clip.y)<=clip.w+margin.y+margin.w &&
-            clip.z>=-margin.z && clip.z<=clip.w+margin.z+margin.w;
+        return SphereVisible(center,radius,viewProjection,PlaneLengths(viewProjection),maxDistance);
     }
     std::vector<RibbonVertex> BuildRibbonGeometry(std::span<const RibbonSubmission> ribbons,
         WorldPosition camera, glm::vec3 cameraRight, uint32_t maxVertices, const glm::mat4 *viewProjection, RibbonGeometryStats *stats)
     {
-        struct Segment { RibbonVertex vertices[6]; double distance; };
+        struct Segment { RibbonVertex corners[4]; double distance; };
         std::vector<Segment> segments;
+        size_t pointCount=0;
+        for(const auto &ribbon:ribbons) pointCount+=ribbon.points.size();
+        segments.reserve(std::min<size_t>(pointCount,maxVertices/6));
         const auto fallback = SafeNormal(cameraRight, {1, 0, 0});
+        const auto planeLengths=viewProjection?PlaneLengths(*viewProjection):glm::vec4(0);
         for (const auto &ribbon : ribbons)
         {
             const auto &points = ribbon.points;
             std::vector<glm::vec3> centers(points.size()), offsets(points.size());
-            std::vector<bool> valid(points.size(), false);
+            std::vector<uint8_t> valid(points.size(),0),needed(points.size(),0),selected(points.size(),0);
             for (size_t i = 0; i < points.size(); ++i)
             {
                 const auto relative = TryCameraRelativeFloat(points[i].position, camera);
@@ -69,9 +81,23 @@ namespace mir
                     for (int axis = 0; axis < 3; ++axis) finite &= std::abs((*relative)[axis]) <= 10000000.0f;
                 if (relative && finite) { centers[i] = *relative; valid[i] = true; }
             }
+            size_t admitted=0;
+            for(size_t i=1;i<points.size();++i)
+            {
+                if(!valid[i-1] || !valid[i] || !Linked(points[i-1],points[i]) ||
+                    glm::length(centers[i]-centers[i-1])<1e-6f) continue;
+                const auto center=(centers[i-1]+centers[i])*0.5f;
+                const float radius=glm::length(centers[i]-centers[i-1])*0.5f+std::max(points[i-1].width,points[i].width);
+                if(viewProjection && !SphereVisible(center,radius,*viewProjection,planeLengths,ribbon.renderer.maxDistance))
+                {if(stats) ++stats->culled;continue;}
+                if(segments.size()+admitted>=maxVertices/6)
+                {if(stats) {++stats->dropped;continue;}break;}
+                selected[i]=needed[i-1]=needed[i]=1;++admitted;
+            }
+            if(!admitted) continue;
             for (size_t i = 0; i < points.size(); ++i)
             {
-                if (!valid[i]) continue;
+                if (!needed[i]) continue;
                 glm::vec3 tangent(0);
                 if (i && valid[i-1] && Linked(points[i-1], points[i]))
                     tangent += SafeNormal(centers[i] - centers[i-1], {0,0,0});
@@ -90,12 +116,7 @@ namespace mir
             }
             for (size_t i = 1; i < points.size(); ++i)
             {
-                if (!valid[i-1] || !valid[i] || !Linked(points[i-1], points[i]) ||
-                    glm::length(centers[i] - centers[i-1]) < 1e-6f) continue;
-                const auto center=(centers[i-1]+centers[i])*0.5f;
-                const float radius=glm::length(centers[i]-centers[i-1])*0.5f+std::max(points[i-1].width,points[i].width);
-                if(viewProjection && !ParticleSphereVisible(center,radius,*viewProjection,ribbon.renderer.maxDistance)) { if (stats) ++stats->culled; continue; }
-                if (segments.size() >= maxVertices / 6) { if (stats) { ++stats->dropped; continue; } break; }
+                if(!selected[i]) continue;
                 const auto &a = points[i-1]; const auto &b = points[i];
                 // Subtract a whole repeat, evicting a prefix never resets texture phase.
                 const double base = std::floor(a.textureDistance / 8.0) * 8.0;
@@ -106,16 +127,21 @@ namespace mir
                     {glm::vec4(centers[i-1] + offsets[i-1], 1), a.color, {u0, 1,0,0}},
                     {glm::vec4(centers[i] + offsets[i], 1), b.color, {u1, 1,0,0}},
                     {glm::vec4(centers[i] - offsets[i], 1), b.color, {u1,-1,0,0}}};
-                Segment segment{{corners[0],corners[1],corners[2],corners[0],corners[2],corners[3]},
+                Segment segment{{corners[0],corners[1],corners[2],corners[3]},
                     ribbon.renderer.sort==0 ? double(glm::length(centers[i-1])) + double(glm::length(centers[i])) : -double(segments.size())};
                 segments.push_back(segment);
             }
         }
-        std::stable_sort(segments.begin(), segments.end(), [](const auto &a, const auto &b) { return a.distance > b.distance; });
+        std::vector<size_t> order(segments.size());std::iota(order.begin(),order.end(),0);
+        std::sort(order.begin(),order.end(),[&](size_t a,size_t b)
+        {
+            if(segments[a].distance!=segments[b].distance) return segments[a].distance>segments[b].distance;
+            return a<b;
+        });
         std::vector<RibbonVertex> result;
         result.reserve(segments.size() * 6);
-        for (const auto &segment : segments)
-            result.insert(result.end(), std::begin(segment.vertices), std::end(segment.vertices));
+        for(const auto index:order)
+            for(const auto corner:{0,1,2,0,2,3}) result.push_back(segments[index].corners[corner]);
         return result;
     }
 }

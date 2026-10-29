@@ -4,7 +4,7 @@ target_link_libraries(ParticleGpuCheck PRIVATE mir::particles_gpu mir::particles
 set_target_properties(ParticleGpuCheck PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 add_dependencies(ParticleGpuCheck MjolnirEngine)
 add_test(NAME smoke.particle-gpu
-    COMMAND ParticleGpuCheck "${CMAKE_BINARY_DIR}/particle-gpu-smoke.png")
+    COMMAND ParticleGpuCheck "${CMAKE_BINARY_DIR}/particle-gpu-smoke.png" raster hidden)
 set_tests_properties(smoke.particle-gpu PROPERTIES LABELS smoke RUN_SERIAL TRUE TIMEOUT 180)
 
 # Optional installed capture API, nothing is downloaded or linked into the game.

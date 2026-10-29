@@ -83,6 +83,8 @@ namespace mir
 
     void VulkanRenderer::RequestSwapchainRecreate() { mSwapchain->MarkOutOfDate(); }
 
+    uint64_t VulkanRenderer::FxCompositionMemoryBytes() const { return mFxComposition->MemoryBytes(); }
+
     bool VulkanRenderer::Initialize(const RendererDesc &desc)
     {
         if (desc.window == nullptr)
