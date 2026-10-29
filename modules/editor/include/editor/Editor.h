@@ -16,6 +16,7 @@
 #include <editor/BackgroundImage.h>
 #include <editor/EditorCamera.h>
 #include <editor/EditorPreferences.h>
+#include <editor/ViewPie.h>
 #include <editor/history/History.h>
 #include <editor/panels/AssetImportPanel.h>
 #include <editor/panels/ContentBrowserPanel.h>
@@ -28,6 +29,7 @@
 #include <editor/panels/ProfilerPanel.h>
 #include <editor/panels/ProjectSettingsPanel.h>
 #include <imguiruntime/ImGuiRuntime.h>
+#include <renderer/DebugView.h>
 #include <renderer/PostProcessingSettings.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/VulkanRenderer.h>
@@ -153,6 +155,9 @@ namespace mir
 
         EditorCamera &SceneCamera() { return mCamera; }
 
+        // chosen in Edit only; Play keeps rendering the last choice
+        const DebugViewSettings &SceneDebugView() const { return mDebugView; }
+
         bool IsInitialized() const { return mInitialized; }
 
         bool WantsCaptureKeyboard() const;
@@ -190,6 +195,10 @@ namespace mir
         void FocusSelection(const EngineModeState &mode, World &world);
         void DrawSelectionHighlights(const EngineModeState &mode, World &world);
         void DrawComponentGizmos(const EngineModeState &mode, World &world);
+        // Held Z over the scene viewport opens the view pie; Edit only.
+        void UpdateViewPie(const EngineModeState &mode);
+        void DrawViewPie(std::optional<ViewPieItem> hovered);
+        void DrawDebugViewMenu(const EngineModeState &mode);
         void DrawNewProjectModal(EditorActions &actions, std::span<const ProjectMenuEntry> projects);
         void DrawEditMenu();
         void UpdateHistoryShortcuts(EditorActions &actions, const EngineModeState &mode);
@@ -260,6 +269,13 @@ namespace mir
 
         // last frame's ImGuizmo::IsUsing
         bool mGizmoWasUsing = false;
+
+        DebugViewSettings mDebugView;
+
+        bool mViewPieOpen = false;
+        // Z came up inside the dead zone: the pie stays until a click or Escape
+        bool mViewPieSticky = false;
+        glm::vec2 mViewPieCenter{ 0.0f };
 
         struct GizmoTarget
         {

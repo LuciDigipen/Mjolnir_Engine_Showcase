@@ -11,6 +11,7 @@
 #include <core/ecs/components/WorldTransform.h>
 #include <core/math/WorldCoordinates.h>
 #include <core/platform/Surface.h>
+#include <renderer/DebugView.h>
 #include <renderer/Material.h>
 #include <renderer/Mesh.h>
 #include <renderer/MeshStreaming.h>
@@ -171,6 +172,8 @@ namespace mir
         bool rayTracingSceneComplete = true;
         // Stable camera identity for temporal effects; callers with no ID reset history on camera switches.
         uint64_t historyId = 0;
+        // Editor-only debug drawing for this view; the default is the final render alone.
+        DebugViewSettings debugView;
     };
 
     class VulkanRenderer

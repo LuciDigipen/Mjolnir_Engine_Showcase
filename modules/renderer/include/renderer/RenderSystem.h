@@ -70,6 +70,8 @@ namespace mir
         WorldPose mExternalCameraPose;
         Camera mExternalCamera{};
         bool mUseExternalCamera = false;
+
+        DebugViewSettings mDebugView;
     };
 
     class RenderSystem final : public ISystem
@@ -133,6 +135,13 @@ namespace mir
                 mViewports[id].mExternalCamera = camera;
                 mViewports[id].mUseExternalCamera = true;
             }
+        }
+
+        // The editor sets this on its scene viewport; a game build never does.
+        void SetViewportDebugView(ViewportId id, const DebugViewSettings &debugView)
+        {
+            if (id < mViewports.size())
+                mViewports[id].mDebugView = debugView;
         }
 
         // Each scene load and Play session reports a missing camera once.
@@ -452,6 +461,7 @@ namespace mir
                 const auto &viewport = mViewports[view.viewport];
                 mRenderViews.back().historyId = viewport.mUseExternalCamera ? UINT64_MAX :
                     PackEntity(viewport.mCameraEntity.IsNull() ? playCamera.mEntity : viewport.mCameraEntity);
+                mRenderViews.back().debugView = viewport.mDebugView;
             }
 
             if (warnNoCamera && !mWarnedNoCamera)

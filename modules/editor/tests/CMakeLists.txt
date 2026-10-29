@@ -11,6 +11,7 @@ engine_add_module_tests(editor
     PrefabAuthoringAdapter.tests.cpp
     PrefabPlayMarks.tests.cpp
     PrefabWorkspace.tests.cpp
+    ViewPie.tests.cpp
 )
 
 # editor links scene privately; the tests build scenes for the scene ops and prefab previews
