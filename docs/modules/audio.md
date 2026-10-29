@@ -28,9 +28,17 @@ directory copy next to the executable, and the runtime resolves them from
 
 `game.json`'s `soundBanksRoot` names that directory and defaults to
 `audio/SoundBanks`. It sits outside `assetsRoot`, so `AssetCooker` never walks
-it — and the cooker skips `.bnk` and `.wem` outright, so a bank dropped under a
-cook root by mistake is passed over rather than buried in a blob it cannot be
-loaded from.
+it — and the cooker skips `.bnk` and `.wem` outright, and a `.json` beside a
+`.bnk` of the same name, so a bank dropped under a cook root by mistake is passed
+over rather than buried in a blob it cannot be loaded from.
+
+A bank's events are listed from the metadata Wwise writes beside it. The sound
+engine cannot name what a bank holds, since a bank stores events by ID only, so
+`ListBankEvents` reads `<bank>.json`, which Wwise generates next to `<bank>.bnk`
+when the project's JSON metadata setting is on, as it is by default. It needs no
+sound engine and lists every bank but `Init`; a bank without its JSON, such as
+`HelloWorld`'s `Test`, is listed with no events and `mListed` false. Copy the JSON
+with the bank, as `tools/wwise/build_soundtrack_check.ps1` does.
 
 Today this is a harness, not an audio system. One hardcoded listener and one
 hardcoded emitter exist so that playback can be proven end to end; there is no
@@ -85,6 +93,13 @@ never `project_settings.json`, which is the game's and goes into source control.
 { "audio": { "music": { "volume": 0.3, "muted": true }, "sfx": { "volume": 0.7, "muted": false } } }
 ```
 
+Until that file exists, the game's own defaults apply. `AudioModule` first reads
+an `audio` section of the same shape from `project_settings.json`, keeps it as
+`Defaults()`, and starts from it wherever the per-user file is missing or holds a
+bad value. Without that section the defaults are full volume, unmuted. The
+per-user file is only written once a value changes, so a player who never touches
+a volume keeps getting the project's.
+
 ## API
 
 | Name | Header | Role |
@@ -96,7 +111,9 @@ never `project_settings.json`, which is the game's and goes into source control.
 | `SetMusicVolume`, `SetMusicMuted` | `audio/AudioSystem.h` | The Music bus's volume, linear from 0 to 1, and its mute; kept while audio is down |
 | `SetSfxVolume`, `SetSfxMuted` | `audio/AudioSystem.h` | The same for the SFX bus |
 | `IsIdle` | `audio/AudioSystem.h` | Whether both channels are silent, so Wwise is suspended and posts are refused |
-| `LoadAudioSettings`, `SaveAudioSettings` | `audio/AudioSettings.h` | The per-user file's `audio` section, read with fallbacks and written keeping the other sections |
+| `LoadAudioSettings`, `SaveAudioSettings` | `audio/AudioSettings.h` | A file's `audio` section, per-user or `project_settings.json`, read over the defaults given and written keeping the other sections |
+| `AudioModule::Defaults` | `audio/AudioModule.h` | The `audio` section of `project_settings.json` as read at startup, which a missing per-user file falls back to |
+| `ListBankEvents` | `audio/BankEvents.h` | Each bank in a SoundBank directory, but `Init`, with the event names from the `<bank>.json` beside it |
 | `Soundtrack` | `audio/components/Soundtrack.h` | A scene's music: `eventName`, `bankName`, `fadeOutMs` |
 | `SoundtrackSystem` | `audio/SoundtrackSystem.h` | Requests the bank, starts the music on Play and cuts it on Stop |
 | `Terminate` | `audio/AudioSystem.h` | Reverse-order teardown, safe whether or not `Init` succeeded |

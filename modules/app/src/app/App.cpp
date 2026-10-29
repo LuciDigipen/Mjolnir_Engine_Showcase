@@ -136,7 +136,8 @@ namespace mir
     #endif
           mCamera(Context()),
     #if MIR_WITH_AUDIO
-          mAudio(Context(), mProject.mSoundBankDir, UserDataDir() / mProject.mName / "settings.json"),
+          mAudio(Context(), mProject.mSoundBankDir, mProject.mProjectSettingsPath,
+              UserDataDir() / mProject.mName / "settings.json"),
     #endif
           mPhysics(Context(), mProject.mProjectSettingsPath, &mJobs),
           mTerrainData(Context()),

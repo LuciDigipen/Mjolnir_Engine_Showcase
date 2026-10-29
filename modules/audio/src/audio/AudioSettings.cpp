@@ -91,9 +91,9 @@ namespace mir
         }
     }
 
-    AudioSettings LoadAudioSettings(const std::filesystem::path &path)
+    AudioSettings LoadAudioSettings(const std::filesystem::path &path, const AudioSettings &defaults)
     {
-        AudioSettings settings;
+        AudioSettings settings = defaults;
 
         std::error_code ec;
         if (!std::filesystem::exists(path, ec))

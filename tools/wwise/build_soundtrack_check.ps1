@@ -5,9 +5,9 @@
 .DESCRIPTION
     Synthesizes the placeholder track and SFX loop (PlaceholderTrack.cs), creates a
     blank Wwise project under builds/wwise, authors it with soundtrack_check.lua,
-    generates the Windows banks and copies Init.bnk, Music.bnk, Sfx.bnk and the
-    streamed media into the game. The Wwise project is scratch: this script is its
-    source.
+    generates the Windows banks and copies Init.bnk, Music.bnk, Sfx.bnk, their
+    JSON metadata and the streamed media into the game. The Wwise project is
+    scratch: this script is its source.
 
 .EXAMPLE
     powershell -NoProfile -File tools/wwise/build_soundtrack_check.ps1
@@ -65,6 +65,8 @@ New-Item -ItemType Directory -Path (Join-Path $bankDir 'Media') -Force | Out-Nul
 Get-ChildItem (Join-Path $bankDir 'Media') -Filter *.wem | Remove-Item -Force
 
 Copy-Item (Join-Path $generated 'Init.bnk'), (Join-Path $generated 'Music.bnk'), (Join-Path $generated 'Sfx.bnk') $bankDir
+# the editor lists each bank's events from the JSON metadata Wwise writes beside it
+Copy-Item (Join-Path $generated 'Music.json'), (Join-Path $generated 'Sfx.json') $bankDir
 Copy-Item (Join-Path $generated 'Media\*.wem') (Join-Path $bankDir 'Media')
 
 Get-ChildItem $bankDir -Recurse -File | ForEach-Object {

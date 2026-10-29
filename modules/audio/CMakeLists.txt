@@ -13,6 +13,7 @@ target_sources(engine_audio PRIVATE
     src/audio/AudioEmitterSystem.cpp
     src/audio/AudioListenerSystem.cpp
     src/audio/AudioSettings.cpp
+    src/audio/BankEvents.cpp
     src/audio/AudioSystem.cpp
     src/audio/ComponentRegistration.cpp
     src/audio/SoundtrackSystem.cpp
