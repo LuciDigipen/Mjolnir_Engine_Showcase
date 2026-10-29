@@ -18,6 +18,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <cstdint>
+#include <format>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -75,6 +77,28 @@ namespace mir
                                          { return std::tolower(a) == std::tolower(b); });
             return it != haystack.end();
         }
+
+        std::string CopyText(const LogEntry &entry)
+        {
+            return entry.count > 1 ? std::format("{} (x{})", entry.message, entry.count) : entry.message;
+        }
+
+        void RepeatBadge(uint64_t count, LogLevel level)
+        {
+            const std::string label = std::to_string(count);
+            const float padding = ImGui::GetStyle().FramePadding.x * 0.5f;
+            const float height = ImGui::GetTextLineHeight();
+            const ImVec2 min = ImGui::GetCursorScreenPos();
+            const ImVec2 max(min.x + ImGui::CalcTextSize(label.c_str()).x + padding * 2.0f, min.y + height);
+
+            ImGui::GetWindowDrawList()->AddRectFilled(
+                min, max, ImGui::ColorConvertFloat4ToU32(EditorTheme::Color(LevelStatusColor(level), 0.3f)), height * 0.5f);
+            ImGui::SetCursorScreenPos(ImVec2(min.x + padding, min.y));
+            ImGui::TextUnformatted(label.c_str());
+            if (ImGui::IsMouseHoveringRect(min, max))
+                ImGui::SetTooltip("%s", std::format("Logged {} times", count).c_str());
+            ImGui::SameLine(0.0f, padding + ImGui::GetStyle().ItemSpacing.x);
+        }
     }
 
     void LogPanel::Draw()
@@ -123,7 +147,7 @@ namespace mir
             std::string clip;
             for (std::size_t index : visible)
             {
-                clip += entries[index].message;
+                clip += CopyText(entries[index]);
                 clip += '\n';
             }
             ImGui::SetClipboardText(clip.c_str());
@@ -173,6 +197,9 @@ namespace mir
                         ImGui::ColorConvertFloat4ToU32(EditorTheme::Color(StatusColor::Danger, 0.15f)));
                 }
 
+                if (entry.count > 1)
+                    RepeatBadge(entry.count, entry.level);
+
                 if (entry.level == LogLevel::Info)
                 {
                     ImGui::TextUnformatted(entry.message.c_str());
@@ -197,7 +224,7 @@ namespace mir
             std::string clip;
             for (int row = first; row <= last && row < static_cast<int>(visible.size()); ++row)
             {
-                clip += entries[visible[static_cast<std::size_t>(row)]].message;
+                clip += CopyText(entries[visible[static_cast<std::size_t>(row)]]);
                 clip += '\n';
             }
             ImGui::SetClipboardText(clip.c_str());

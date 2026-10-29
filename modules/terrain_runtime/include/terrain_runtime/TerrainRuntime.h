@@ -9,6 +9,7 @@
 #pragma once
 
 #include <terrain_runtime/TerrainRender.h>
+#include <terrain_runtime/TerrainJobExecutor.h>
 
 #include <project/GameProject.h>
 #include <core/ecs/Entity.h>
@@ -60,7 +61,7 @@ namespace mir
         // Loads the game's streaming settings; when they are valid, emplaces them and a TerrainStreamer, sets up
         // the renderer's mesh streaming and draws terrain per viewport through the World's ViewDrawSources, and
         // guards each fixed step through its PhysicsStepGates.
-        void Bind(World &world, VulkanRenderer &renderer, const GameProject &project);
+        void Bind(World &world, VulkanRenderer &renderer, const GameProject &project, JobExecutor &jobs);
 
         // The one point per frame where finished terrain reads, mesh builds and uploads are installed; call
         // before any system runs.
@@ -85,6 +86,7 @@ namespace mir
         void AppendViewDraws(size_t view, std::vector<WorldDrawItem> &out) override;
         void AppendVolumeDraws(size_t view, WorldPosition origin, const glm::mat4 &viewProj,
                                std::vector<WorldDrawItem> &out) override;
+        void AppendRayTracingDraws(size_t view, std::vector<WorldDrawItem> &out) override;
 
         // Holds the dynamic bodies whose terrain collision is not ready, resumes the rest and tells each which
         // terrain pieces it may touch.
@@ -151,7 +153,7 @@ namespace mir
         std::string NameOf(Entity entity) const;
         // A unit draws once its GPU mesh is usable.
         TerrainUnitReady Ready() const;
-        void AppendDraws(std::span<const TerrainDrawUnit> units, std::vector<WorldDrawItem> &out);
+        void AppendDraws(std::span<const TerrainDrawUnit> units, std::vector<WorldDrawItem> &out, bool retain = true);
         void ReportMeshFailures();
         void LogView(ViewState &state, const ViewCamera &camera);
         void Report(const std::string &message);
@@ -176,7 +178,7 @@ namespace mir
         std::vector<InstanceResources> mResources;
 
         // The streamer's worker pool, which also builds meshes and collision pieces.
-        std::shared_ptr<TerrainWorkerPool> mPool;
+        std::shared_ptr<TerrainJobExecutor> mPool;
         std::unique_ptr<TerrainGpuUploader> mUploader;
         // Null without valid settings or renderer mesh streaming.
         std::unique_ptr<TerrainMeshResidency> mMeshes;

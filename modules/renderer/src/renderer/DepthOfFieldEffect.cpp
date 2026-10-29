@@ -24,10 +24,7 @@ namespace mir
             DepthOfFieldParams dof = ReadDepthOfFieldParams(params);
             bool changed = false;
 
-            changed |= ImGui::DragFloat("Focus Distance", &dof.focusDistance, 0.1f, 0.0f, 1000.0f, "%.2f",
-                ImGuiSliderFlags_AlwaysClamp);
-            changed |= ImGui::DragFloat("Aperture", &dof.aperture, 0.001f, 0.0f, 2.0f, "%.3f",
-                ImGuiSliderFlags_AlwaysClamp);
+            ImGui::TextDisabled("Focus distance and aperture are set on each Camera.");
             changed |= ImGui::DragFloat("Max Blur", &dof.maxBlur, 0.1f, 0.0f, 64.0f, "%.1f",
                 ImGuiSliderFlags_AlwaysClamp);
 
@@ -39,16 +36,12 @@ namespace mir
     DepthOfFieldParams ReadDepthOfFieldParams(const nlohmann::json &params)
     {
         DepthOfFieldParams dof;
-        dof.focusDistance = params.value("focusDistance", dof.focusDistance);
-        dof.aperture = params.value("aperture", dof.aperture);
         dof.maxBlur = params.value("maxBlur", dof.maxBlur);
         return dof;
     }
 
     void WriteDepthOfFieldParams(nlohmann::json &params, const DepthOfFieldParams &dof)
     {
-        params["focusDistance"] = dof.focusDistance;
-        params["aperture"] = dof.aperture;
         params["maxBlur"] = dof.maxBlur;
     }
 

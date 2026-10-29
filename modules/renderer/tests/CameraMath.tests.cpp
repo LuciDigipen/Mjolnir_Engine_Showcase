@@ -384,3 +384,17 @@ TEST_CASE("SnapToShadowTexels moves an anchor only across the light, onto a worl
         CHECK(glm::length(nudgedMoved - glm::dvec3(direction) * 3.0) == Catch::Approx(0.0).margin(1e-6));
     }
 }
+
+TEST_CASE("FrustumSliceCorners sizes the view rectangle by fov and aspect", "[renderer][camera]")
+{
+    // tan(45) = 1, so the half-height equals the distance
+    const std::array<glm::vec3, 4> corners = mir::FrustumSliceCorners(90.0f, 2.0f, 3.0f);
+    const glm::vec3 expected[4] = { { 6.0f, 3.0f, -3.0f }, { -6.0f, 3.0f, -3.0f },
+                                    { -6.0f, -3.0f, -3.0f }, { 6.0f, -3.0f, -3.0f } };
+    for (int i = 0; i < 4; ++i)
+    {
+        CHECK(corners[i].x == Catch::Approx(expected[i].x));
+        CHECK(corners[i].y == Catch::Approx(expected[i].y));
+        CHECK(corners[i].z == Catch::Approx(expected[i].z));
+    }
+}

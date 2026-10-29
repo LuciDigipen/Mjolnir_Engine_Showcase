@@ -11,8 +11,14 @@
 #include <project/GameProject.h>
 #include <animation/AnimationModule.h>
 #include <assets/AssetsModule.h>
+#ifndef MIR_WITH_AUDIO
+#error "MIR_WITH_AUDIO is set by linking mir::app"
+#endif
+#if MIR_WITH_AUDIO
+#include <app/GameAudioOptions.h>
 #include <audio/AudioModule.h>
 #include <audio_script/AudioScriptModule.h>
+#endif
 #include <camera/CameraModule.h>
 #include <core/ecs/CommandBuffer.h>
 #include <core/ecs/CoreModule.h>
@@ -38,6 +44,7 @@
 #include <terrain_script/TerrainScriptModule.h>
 #include <window/Splash.h>
 #include <window/WindowModule.h>
+#include <jobs/JobExecutor.h>
 
 // 1 with the editor, 0 for the game alone
 #ifndef MIR_WITH_EDITOR 
@@ -46,6 +53,9 @@
 
 #if MIR_WITH_EDITOR
 #include <editor/EditorModule.h>
+#endif
+#if MIR_WITH_AUDIO && MIR_WITH_EDITOR
+#include <app/EditorAudioOptions.h>
 #endif
 
 #include <cstdint>
@@ -78,6 +88,8 @@ namespace mir
         // 0: run until the window closes
         uint64_t mMaxFrames = 0;
         std::filesystem::path mCapturePath;
+        // Bounded automatic pool; --workers 0 explicitly selects serial execution.
+        uint32_t mWorkerThreads = static_cast<uint32_t>(JobExecutor::DefaultWorkerCount());
 
         // debug: draw UIDemoScreen, every core widget, as the game UI
         bool mUIDemo = false;
@@ -221,6 +233,7 @@ namespace mir
         AppDesc mDesc;
         GameProject mProject;
         StartupSplash mSplash;
+        JobExecutor mJobs;
 
         // before mWorld, so it is destroyed after it
         CommandBuffer mCommands;
@@ -249,11 +262,21 @@ namespace mir
     #endif
         SplashStep mModulesStep{ mSplash, "Registering components...", 0.75f };
         CameraModule mCamera;
+    #if MIR_WITH_AUDIO
         AudioModule mAudio;
+        // handed to mGameShell, built before it, once both are up
+        GameAudioOptions mAudioOptions{ mAudio };
+    #if MIR_WITH_EDITOR
+        // handed to mEditor the same way
+        EditorAudioOptions mEditorAudio{ mAudio, mProject.mSoundBankDir };
+    #endif
+    #endif
         PhysicsModule mPhysics;
         TerrainModule mTerrainData;
         ScriptModule mScript;
+    #if MIR_WITH_AUDIO
         AudioScriptModule mAudioScript;
+    #endif
         InputScriptModule mInputScript;
         PhysicsScriptModule mPhysicsScript;
         RendererScriptModule mRendererScript;

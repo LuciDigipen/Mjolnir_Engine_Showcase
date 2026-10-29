@@ -11,10 +11,13 @@
 #include <core/ecs/components/WorldTransform.h>
 #include <core/math/WorldCoordinates.h>
 #include <core/platform/Surface.h>
+#include <renderer/DebugView.h>
 #include <renderer/Material.h>
 #include <renderer/Mesh.h>
 #include <renderer/MeshStreaming.h>
 #include <renderer/PostProcessingState.h>
+#include <renderer/RenderSettings.h>
+#include <renderer/RtxgiConfig.h>
 #include <renderer/Texture.h>
 #include <renderer/components/Sky.h>
 
@@ -51,10 +54,14 @@ namespace mir::vk
     class ModelDescriptors;
     class RayTracer;
     class MaterialTable;
+    class RasterSurfaces;
+    class SsgiTrace;
+    class Ddgi;
     class PostProcessingStack;
     class FrameCapture;
     class ImGuiOverlay;
     class MeshUploader;
+    class DebugDraw;
 }
 
 namespace mir
@@ -159,6 +166,19 @@ namespace mir
         float nearZ = 0.1f;
         // farZ 0 = no far plane
         float farZ = 0.0f;
+        // Optional extended GI scene, used while DDGI can update this camera's volume.
+        // Coordinates are relative to this view's camera.
+        // nullopt keeps the ordinary RT path; an empty span is an empty scene.
+        std::optional<std::span<const DrawItem>> rayTracingItems;
+        // False when narrowing the extended scene omitted world draws. The
+        // final camera trace can still run; GI must fall back for this frame.
+        bool rayTracingSceneComplete = true;
+        // Stable camera identity for temporal effects; callers with no ID reset history on camera switches.
+        uint64_t historyId = 0;
+        // Editor-only debug drawing for this view; the default is the final render alone.
+        DebugViewSettings debugView;
+        // Vertex pairs drawn as lines over everything, never hidden by the scene; colliders while debugView asks.
+        std::span<const DebugLinePoint> debugLines;
     };
 
     class VulkanRenderer
@@ -235,6 +255,9 @@ namespace mir
         // the one flag AA mode clamping and the panel must agree with dispatch on.
         bool RayTracingActive(bool requested) const;
 
+        // false: the GPU cannot draw lines, and the Wireframe view shows the shaded scene
+        bool WireframeAvailable() const;
+
         // NGX support and a Ray Reconstruction feature that hasn't failed. Goes false for good
         // after an init/resize/evaluate failure, so Dlss stops being offered or selected.
         bool DlssAvailable() const;
@@ -266,6 +289,8 @@ namespace mir
         // Every Post-Processing effect for the frame, already resolved by ResolvePostProcessing.
         // A disabled Bloom/DepthOfField/MotionBlur skips its GPU chain for the frame.
         void SetPostProcessing(const PostProcessingState &state);
+        void SetGlobalIllumination(const DdgiSettings &settings);
+        void SetScreenSpaceGlobalIllumination(const SsgiSettings &settings) { mSsgiSettings = settings; }
 
         void SetAtmosphere(const Sky &sky);
 
@@ -294,7 +319,14 @@ namespace mir
         void RecordRtFrame(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views);
 
         void RecordCommands(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views);
-        void RecordView(VkCommandBuffer cmd, const RenderView &view, uint32_t viewIndex);
+        // Called inside the composite pass, after the composite and before ImGui: when a view has a
+        // debug view on, ends that pass, draws the wireframe and debug lines, and begins the ImGui pass
+        // again. sceneDepth is the raster path's depth image, null on the ray-traced path.
+        void RecordDebugViews(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views,
+            VkImage sceneDepth, VkImageView sceneDepthView);
+        enum class RasterPass { Scene, Opaque, Surface, Transparent };
+        uint32_t RecordView(VkCommandBuffer cmd, const RenderView &view, uint32_t viewIndex,
+            RasterPass pass = RasterPass::Scene, uint32_t cameraOffset = 0);
         uint32_t WriteCameraData(const RenderView &view, uint32_t viewIndex, bool applyJitter = false,
             glm::vec2 *outJitter = nullptr);
 
@@ -313,12 +345,22 @@ namespace mir
         // Only on a device with descriptor indexing; null keeps the legacy material path.
         std::unique_ptr<vk::MaterialTable> mMaterialTable;
         std::unique_ptr<vk::MaterialStore> mMaterialStore;
+        std::unique_ptr<vk::RasterSurfaces> mRasterSurfaces;
+        std::unique_ptr<vk::SsgiTrace> mSsgiTrace;
+        SsgiSettings mSsgiSettings;
 
         std::unique_ptr<vk::CameraBuffer> mCameraBuffer;
         std::unique_ptr<vk::ShadowMaps> mShadowMaps;
         std::unique_ptr<vk::ModelDescriptors> mModelDescriptors;
         // Initialized only on a device with ray tracing; its Shutdown is a no-op otherwise.
         std::unique_ptr<vk::RayTracer> mRayTracer;
+#if MIR_WITH_RTXGI
+        std::unique_ptr<vk::Ddgi> mDdgi;
+#endif
+        DdgiSettings mDdgiSettings;
+        bool mGiWasShading = false;
+        // views[0]'s camera on the last TraceFrame.
+        uint64_t mTracedHistoryId = 0;
 
         // Every screen-space effect between the scene/trace pass and the swapchain.
         std::unique_ptr<vk::PostProcessingStack> mPostProcessing;
@@ -326,6 +368,8 @@ namespace mir
         std::unique_ptr<vk::FrameCapture> mCapture;
 
         std::unique_ptr<vk::ImGuiOverlay> mImGuiOverlay;
+
+        std::unique_ptr<vk::DebugDraw> mDebugDraw;
 
         std::unique_ptr<vk::MeshUploader> mMeshUploads;
 

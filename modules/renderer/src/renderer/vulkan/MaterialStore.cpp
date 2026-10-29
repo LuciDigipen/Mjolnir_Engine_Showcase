@@ -10,6 +10,7 @@
 #include "Device.h"
 #include "MaterialTable.h"
 #include "ResourceStore.h"
+#include "RasterSurfaces.h"
 #include "Slots.h"
 #include "VulkanUtil.h"
 #include "VulkanConstants.h"
@@ -202,9 +203,9 @@ namespace mir::vk
         return true;
     }
 
-    VkPipeline MaterialStore::CreateGraphicsPipeline(const PipelineState &state, VkFormat colorFormat)
+    VkPipeline MaterialStore::CreateGraphicsPipeline(const PipelineState &state, VkFormat colorFormat, bool surfaces)
     {
-        const std::string shaderName(state.shaderName);
+        const std::string shaderName = std::string(state.shaderName) + (surfaces ? "Surface" : "");
         VkShaderModule vertModule = CreateShaderModule(mDevice->Handle(), ShaderPath(shaderName + ".vertexMain.spv"));
         VkShaderModule fragModule = CreateShaderModule(mDevice->Handle(), ShaderPath(shaderName + ".fragmentMain.spv"));
 
@@ -244,11 +245,12 @@ namespace mir::vk
             .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
             .sampleShadingEnable = VK_FALSE };
 
+        const std::array surfaceBlends{ state.blend, state.blend, state.blend, state.blend };
         const VkPipelineColorBlendStateCreateInfo colorBlend{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
             .logicOpEnable = VK_FALSE,
-            .attachmentCount = 1,
-            .pAttachments = &state.blend };
+            .attachmentCount = surfaces ? kRasterSurfaceCount : 1,
+            .pAttachments = surfaces ? surfaceBlends.data() : &state.blend };
 
         const VkDynamicState dynamicStates[]{
             VK_DYNAMIC_STATE_VIEWPORT,
@@ -259,10 +261,11 @@ namespace mir::vk
             .dynamicStateCount = 2,
             .pDynamicStates = dynamicStates };
 
+        constexpr std::array surfaceFormats{ kRasterSurfaceFormat, kRasterSurfaceFormat, kRasterSurfaceFormat, kRasterSurfaceFormat };
         const VkPipelineRenderingCreateInfo renderingInfo{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-            .colorAttachmentCount = 1,
-            .pColorAttachmentFormats = &colorFormat,
+            .colorAttachmentCount = surfaces ? kRasterSurfaceCount : 1,
+            .pColorAttachmentFormats = surfaces ? surfaceFormats.data() : &colorFormat,
             .depthAttachmentFormat = kDepthFormat };
 
         const VkGraphicsPipelineCreateInfo pipelineInfo{
@@ -299,7 +302,7 @@ namespace mir::vk
         return pipeline;
     }
 
-    VkPipeline MaterialStore::BuildPipeline(const MaterialDesc &desc, VkFormat colorFormat)
+    VkPipeline MaterialStore::BuildPipeline(const MaterialDesc &desc, VkFormat colorFormat, bool surfaces)
     {
         const VkVertexInputBindingDescription vertexBinding{
             .binding = 0,
@@ -350,13 +353,13 @@ namespace mir::vk
             .depthStencil{
                 .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
                 .depthTestEnable = VK_TRUE,
-                .depthWriteEnable = blend ? VK_FALSE : VK_TRUE,
-                .depthCompareOp = VK_COMPARE_OP_GREATER, // reverse-Z: nearer is larger
+                .depthWriteEnable = blend || surfaces ? VK_FALSE : VK_TRUE,
+                .depthCompareOp = surfaces ? VK_COMPARE_OP_EQUAL : VK_COMPARE_OP_GREATER,
                 .depthBoundsTestEnable = VK_FALSE,
                 .stencilTestEnable = VK_FALSE },
             .layout = mPipelineLayout };
 
-        return CreateGraphicsPipeline(state, colorFormat);
+        return CreateGraphicsPipeline(state, colorFormat, surfaces);
     }
 
     bool MaterialStore::CreateSkyPipeline(VkDescriptorSetLayout cameraSetLayout, VkFormat colorFormat)
@@ -469,6 +472,7 @@ namespace mir::vk
         material.mBaseColorSlot = resources.TextureSlot(baseColorHandle);
         material.mSamplerSlot = samplerSlot;
         material.mError = desc.shaderName == "error";
+        material.mDescription = desc;
 
         const auto rollback = [&]
             {
@@ -614,6 +618,8 @@ namespace mir::vk
             vkFreeDescriptorSets(mDevice->Handle(), mDescriptorPool, 1, &material.mDescriptorSet);
         if (material.mPipeline != VK_NULL_HANDLE)
             vkDestroyPipeline(mDevice->Handle(), material.mPipeline, nullptr);
+        if (material.mSurfacePipeline != VK_NULL_HANDLE)
+            vkDestroyPipeline(mDevice->Handle(), material.mSurfacePipeline, nullptr);
     }
 
     bool MaterialStore::DestroyMaterial(MaterialHandle handle)
@@ -723,5 +729,39 @@ namespace mir::vk
         if (fallback == nullptr || fallback->mPipeline == VK_NULL_HANDLE)
             return nullptr;
         return fallback;
+    }
+
+    bool MaterialStore::SupportsSurfaceInputs(MaterialHandle handle) const
+    {
+        const auto *material = FindOrDefault(handle);
+        if (!material) return false;
+        const auto &desc = material->mDescription;
+        return desc.alphaMode == MaterialAlphaMode::Blend || desc.shaderName == "default" ||
+            desc.shaderName == "model" || desc.shaderName == "unlit" || desc.shaderName == "error";
+    }
+
+    VkPipeline MaterialStore::SurfacePipeline(MaterialHandle handle)
+    {
+        const auto *resolved = FindOrDefault(handle);
+        if (!resolved) return VK_NULL_HANDLE;
+        auto &material = mMaterials[size_t(resolved - mMaterials.data())];
+        const auto &desc = material.mDescription;
+        if (desc.alphaMode == MaterialAlphaMode::Blend || !SupportsSurfaceInputs(handle)) return VK_NULL_HANDLE;
+        if (!material.mSurfaceTried)
+        {
+            material.mSurfaceTried = true;
+            material.mSurfacePipeline = BuildPipeline(desc, kRasterSurfaceFormat, true);
+        }
+        return material.mSurfacePipeline;
+    }
+
+    void MaterialStore::ReleaseSurfacePipelines()
+    {
+        for (auto &material : mMaterials)
+        {
+            if (material.mSurfacePipeline) vkDestroyPipeline(mDevice->Handle(), material.mSurfacePipeline, nullptr);
+            material.mSurfacePipeline = VK_NULL_HANDLE;
+            material.mSurfaceTried = false;
+        }
     }
 }

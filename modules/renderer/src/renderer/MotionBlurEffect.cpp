@@ -24,8 +24,7 @@ namespace mir
             MotionBlurParams motionBlur = ReadMotionBlurParams(params);
             bool changed = false;
 
-            changed |= ImGui::DragFloat("Shutter Strength", &motionBlur.shutterStrength, 0.01f, 0.0f, 2.0f, "%.2f",
-                ImGuiSliderFlags_AlwaysClamp);
+            ImGui::TextDisabled("Shutter strength is set on each Camera.");
             changed |= ImGui::DragInt("Sample Count", &motionBlur.sampleCount, 0.1f, 1, 32, "%d",
                 ImGuiSliderFlags_AlwaysClamp);
 
@@ -37,14 +36,12 @@ namespace mir
     MotionBlurParams ReadMotionBlurParams(const nlohmann::json &params)
     {
         MotionBlurParams motionBlur;
-        motionBlur.shutterStrength = params.value("shutterStrength", motionBlur.shutterStrength);
         motionBlur.sampleCount = params.value("sampleCount", motionBlur.sampleCount);
         return motionBlur;
     }
 
     void WriteMotionBlurParams(nlohmann::json &params, const MotionBlurParams &motionBlur)
     {
-        params["shutterStrength"] = motionBlur.shutterStrength;
         params["sampleCount"] = motionBlur.sampleCount;
     }
 

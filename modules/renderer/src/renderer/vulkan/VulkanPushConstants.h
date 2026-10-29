@@ -36,6 +36,16 @@ namespace mir::vk
         glm::uvec2 outputOffset;
         uint32_t aaMode;
         uint32_t sampleCount;
+        float giIntensity; // GI camera pipeline only; zero for the fallback.
+        float giWeight;    // Initialization fade; volume coverage is evaluated in the shader.
+    };
+    static_assert(sizeof(RtPushConstants) == 24);
+
+    // Debug wireframe lines have no camera UBO; the view's viewProj is folded into the model on the CPU.
+    struct DebugWireframePushConstants
+    {
+        glm::mat4 viewProjModel; // 64
+        glm::vec4 color;         // 16
     };
 
     // Shadow depth passes have no camera UBO, so the light's viewProj rides along.

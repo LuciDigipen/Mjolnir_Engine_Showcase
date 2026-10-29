@@ -50,7 +50,7 @@ namespace mir
     // Closes the log file for another process; logging is off until InitLog again
     void ShutdownLog();
 
-    // Error and Critical lines logged so far, including asserts
+    // Error and Critical messages logged so far, including asserts and collapsed repeats
     uint64_t ErrorCount();
 
     namespace detail

@@ -65,6 +65,25 @@ namespace mir
                 .mLayoutDynamicStorageBuffers = 0,
                 .mLayoutStorageImages = vk::kRtSetStorageImages };
         }
+
+        // DDGI's trace pipeline binds its own set beside the RT table and camera sets:
+        // two storage buffers, five storage images, three sampled images and one
+        // sampler, visible to compute, raygen and closest hit (see Ddgi::CreateDescriptors).
+        DescriptorUsage DdgiTraceUsage()
+        {
+            DescriptorUsage usage = RtUsage();
+            usage.mBoundSets += 1;
+            usage.mPerStageSamplers += 1;
+            usage.mPerStageSampledImages += 3;
+            usage.mPerStageStorageBuffers += 2;
+            usage.mPerStageStorageImages += 5;
+            usage.mPerStageResources += 3 + 5 + 2;
+            usage.mLayoutSamplers += 1;
+            usage.mLayoutSampledImages += 3;
+            usage.mLayoutStorageBuffers += 2;
+            usage.mLayoutStorageImages += 5;
+            return usage;
+        }
     }
 
     DescriptorUsage SharedRasterDescriptorUsage()
@@ -75,6 +94,11 @@ namespace mir
     DescriptorUsage SharedRtDescriptorUsage()
     {
         return RtUsage();
+    }
+
+    DescriptorUsage SharedRtDdgiDescriptorUsage()
+    {
+        return DdgiTraceUsage();
     }
 
     bool DescriptorLayoutFits(const DescriptorLimits &limits, const DescriptorUsage &usage)

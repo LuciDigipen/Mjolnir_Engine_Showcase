@@ -24,6 +24,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -60,6 +61,12 @@ namespace mir
         bool mAllowSleeping = true;
     };
 
+    struct ColliderView;
+
+    // The collider CreateBody would build from desc, posed in world space; nullopt where it would build an empty
+    // one. For drawing colliders that have no body yet.
+    std::optional<ColliderView> ColliderViewOf(const BodyDesc &desc);
+
     // What a ray cast may hit. The defaults hit every layer and motion type, skip triggers and exclude nothing.
     struct RayFilter
     {
@@ -88,9 +95,18 @@ namespace mir
         uint32_t mMaxBodyPairs = 1024;
         uint32_t mMaxContactConstraints = 1024;
 
-        uint32_t mWorkerThreads = 0;
+        // -1 selects the bounded engine default; 0 runs on the calling thread.
+        int mWorkerThreads = -1;
 
         int mCollisionSteps = 1;
+    };
+
+    class JobExecutor;
+
+    struct BodyPoseSnapshot
+    {
+        std::optional<WorldPosition> position;
+        glm::quat rotation = kIdentityRotation;
     };
 
     class PhysicsWorld
@@ -129,6 +145,13 @@ namespace mir
         bool IsBodyHeld(BodyHandle body) const;
 
         glm::vec3 Gravity() const;
+        uint32_t WorkerCount() const;
+
+        // Between steps, with body lifetime/mutations paused until return. Reads
+        // independent bodies under Jolt read locks; joins before returning.
+        // Invalid/stale handles produce an empty position; spans must match size.
+        void ReadBodyPoses(std::span<const BodyHandle> bodies, std::span<BodyPoseSnapshot> poses,
+            JobExecutor *jobs = nullptr) const;
 
         // nullopt for an invalid handle, or if the simulation left the body at
         // a non-finite position; there is no default place to report instead.
@@ -193,6 +216,12 @@ namespace mir
         std::size_t HeightFieldsBuilt() const;
 
         std::size_t BodyCount() const;
+
+        // Every body's collider as Jolt holds it, at its simulated pose; height fields come thinned to a grid of at
+        // most kColliderGridLines per side, whose points live only for the visit. Between steps only. An empty shape
+        // is skipped. visit runs under the body's read lock, so it must not call back into this world.
+        void ForEachCollider(const std::function<void(const ColliderView &)> &visit) const;
+        static constexpr uint32_t kColliderGridLines = 64;
 
         // Which layers collide. Between steps only; every body is woken, since a pair that rested may not any more.
         void SetLayerTable(const PhysicsLayerTable &table);

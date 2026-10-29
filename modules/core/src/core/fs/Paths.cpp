@@ -10,6 +10,7 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+#include <shlobj.h>
 #elif defined(__linux__)
 #include <unistd.h>
 #endif
@@ -82,5 +83,20 @@ namespace mir
     std::filesystem::path LogDir()
     {
         return ExecutableDir() / "logs";
+    }
+
+    std::filesystem::path UserDataDir()
+    {
+#if defined(_WIN32)
+        PWSTR localAppData = nullptr;
+        if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &localAppData)))
+        {
+            std::filesystem::path dir = std::filesystem::path(localAppData) / "Mjolnir";
+            CoTaskMemFree(localAppData);
+            return dir;
+        }
+        CoTaskMemFree(localAppData);
+#endif
+        return ExecutableDir();
     }
 }

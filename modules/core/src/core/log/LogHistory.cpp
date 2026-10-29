@@ -19,6 +19,7 @@ namespace mir
         std::mutex gMutex;
         std::deque<LogEntry> gEntries;
         std::size_t gCapacity = 2000;
+        uint64_t gNextId = 0;
     }
 
     void LogHistory::SetCapacity(std::size_t capacity)
@@ -29,14 +30,25 @@ namespace mir
             gEntries.pop_front();
     }
 
-    void LogHistory::Push(LogEntry entry)
+    uint64_t LogHistory::Push(LogEntry entry)
     {
         std::lock_guard lock(gMutex);
+        const uint64_t id = gNextId++;
         if (gCapacity == 0)
-            return;
+            return id;
         if (gEntries.size() >= gCapacity)
             gEntries.pop_front();
         gEntries.push_back(std::move(entry));
+        return id;
+    }
+
+    bool LogHistory::AddRepeat(uint64_t id)
+    {
+        std::lock_guard lock(gMutex);
+        if (id >= gNextId || gNextId - id > gEntries.size())
+            return false;
+        ++gEntries[gEntries.size() - static_cast<std::size_t>(gNextId - id)].count;
+        return true;
     }
 
     std::vector<LogEntry> LogHistory::Snapshot()
