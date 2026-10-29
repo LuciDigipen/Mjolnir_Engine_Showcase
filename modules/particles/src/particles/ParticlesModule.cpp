@@ -33,8 +33,12 @@ namespace mir
             }
             void OnUpdate(SystemContext &context) override
             {
-                if (!IsSimulating(context.world))
+                if (IsEditing(context.world))
+                {
+                    mParticles.Runtime().Advance(context.dt, true);
                     return;
+                }
+                if (!IsSimulating(context.world)) return;
                 mQuery->ForEach([this](Entity owner, ParticleSystem &emitter, const WorldTransform &transform)
                     {
                         mParticles.Synchronize(owner, emitter, transform.Pose());
@@ -52,6 +56,7 @@ namespace mir
         : mParticles(context.world.EmplaceResource<ParticleWorld>(
             context.world, assets.Cache(), std::move(assetIdRoot), capacity))
     {
+        context.world.EmplaceResource<ParticleDiagnostics>();
         RegisterParticleComponents();
         mHooks = context.world.SetComponentHooks<ParticleSystem>({
             .onAdd = [](World &world, Entity owner)

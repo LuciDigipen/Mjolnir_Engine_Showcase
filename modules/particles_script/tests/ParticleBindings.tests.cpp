@@ -81,6 +81,8 @@ TEST_CASE("Particle Lua user overrides update live systems and reject invalid re
         end
         function Controls.OnUpdate(self, world, entity, dt)
             assert(world:particle_system_parameters(entity, 1.5, 2))
+            assert(world:particle_system_wind(entity, 3, 4, -2))
+            assert(not world:particle_system_wind(entity, 0/0, 0, 0))
             assert(not world:particle_system_parameters(entity, 17, 1))
             assert(not world:particle_system_parameters(entity, 1, 0/0))
         end
@@ -96,9 +98,11 @@ TEST_CASE("Particle Lua user overrides update live systems and reject invalid re
     REQUIRE(system);
     CHECK(system->parameters.spawnRateScale == 1.5f);
     CHECK(system->parameters.sizeScale == 2);
+    CHECK(system->parameters.wind == glm::vec3(3,4,-2));
     const auto *component = test.world.GetComponent<mir::ParticleSystem>(owner);
     REQUIRE(component);
     CHECK(component->userParameters.spawnRateScale == 1.5f);
     CHECK(component->userParameters.sizeScale == 2);
+    CHECK(component->userParameters.wind == glm::vec3(3,4,-2));
     host.DestroyInstance(instance);
 }

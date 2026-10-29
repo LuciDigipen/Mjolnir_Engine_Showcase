@@ -441,6 +441,49 @@ int main(int argc, char **argv)
         for (int f = 0; f < 3; ++f) draw();
         MIR_LOG_INFO("CPU ribbon uploads, split views, remote camera and clear passed");
         RunParticleRenderCheck(renderer,*particles,*window,*cookedEmitter.mEmitter,output,rt,mode=="dlss");
+        {
+            const auto measured = particles->Stats();
+            Require(measured.gpuBytes > 0 && measured.gpuHighWaterBytes >= measured.gpuBytes,
+                "GPU owned-byte diagnostics did not account for live buffers");
+            Require(std::isfinite(measured.simulationGpuMs) && std::isfinite(measured.prepareGpuMs) && std::isfinite(measured.drawGpuMs),
+                "Particle timestamp diagnostics returned nonfinite results");
+            if (measured.gpuTimingAvailable)
+                Require(measured.simulationGpuMs + measured.prepareGpuMs + measured.drawGpuMs > 0,
+                    "Supported particle timestamp queries never completed");
+            particles.reset();
+            mir::ParticleGpuBudgets caps;
+            caps.snapshotBytes = 1;
+            particles = std::make_unique<mir::ParticlesGpuModule>(renderer,caps);
+            particles->Submit(std::span(&input,1)); draw();
+            Require(particles->Stats().rejectedSubmissions > 0,"Snapshot byte cap was ignored");
+            particles.reset();
+            caps = {}; caps.birthUploads = 1; caps.textureBytes = 8; caps.ribbonVertices = 6;
+            particles = std::make_unique<mir::ParticlesGpuModule>(renderer,caps);
+            auto capped = input;
+            capped.capacity = 32; capped.spawns = 3; capped.seconds = 0; capped.lifetime = 30;
+            capped.textureKey = 777; capped.textureWidth = capped.textureHeight = 2;
+            capped.texturePixels.assign(16,255);
+            mir::RibbonSubmission strip;
+            for (uint64_t i=0;i<3;++i)
+                strip.points.push_back({*mir::WorldPosition::FromMeters(mir::WorldVec3(double(i)-1,0,-6)),double(i),1,i,0.2f,glm::vec4(1)});
+            particles->Submit(std::span(&capped,1),std::span(&strip,1));
+            for (int f=0;f<5;++f) draw();
+            const auto bounded = particles->Stats();
+            Require(bounded.alive == 1 && bounded.droppedSubmitSpawns == 2,"Birth upload budget failed");
+            Require(bounded.deferredTextures > 0,"Texture memory cap did not defer new images");
+            Require(bounded.droppedRibbonSegments > 0,"Ribbon vertex upload cap was ignored");
+            particles->Clear(); for(int f=0;f<4;++f) draw();
+            Require(particles->Stats().alive == 0,"Capped renderer retained cleared instances");
+            particles.reset();
+            caps = {}; caps.textureUploadBytes = 4;
+            particles = std::make_unique<mir::ParticlesGpuModule>(renderer,caps);
+            capped.spawns = 0;
+            particles->Submit(std::span(&capped,1));
+            for(int f=0;f<4;++f) draw();
+            Require(particles->Stats().deferredTextures > 0,"Texture upload cap did not defer an otherwise resident image");
+            particles->Clear(); for(int f=0;f<3;++f) draw();
+            MIR_LOG_INFO("Particle budgets and asynchronous CPU/GPU/memory diagnostics passed");
+        }
         renderer.Shutdown();
         Require(std::filesystem::exists(output), "No GPU output capture");
         MIR_LOG_INFO("Particle GPU checks passed, mode={}, validation includes synchronization checks", mode);

@@ -241,7 +241,7 @@ another 1,000 km. Geometry tests independently return a camera to that history.
 
 ## Renderer properties
 
-Emitter content version 4 carries the validated `renderer` object through cooking
+Emitter content version 5 carries the validated `renderer` object through cooking
 and the immutable scene bridge. Renderer choices do not change the cooked simulation
 script identity. Existing size, color and velocity fields remain supported.
 
@@ -261,3 +261,44 @@ Sprites and trails share the GPU material path. Per-view geometry/sort buffers
 never change WorldPosition ribbon history or GPU simulation records. See
 [particles_gpu](particles_gpu.md) for depth reconstruction, composition order and
 remaining glass/AA/post-effect limits.
+
+## Authoring and quality
+
+Project > Particles edits system references, user scales and world wind, emitter
+spawn/update stacks, renderer properties and importance/distance quality. Save
+buttons write validated source JSON atomically and queue the normal AssetCooker
+workflow. GPU stack edits compile new scripts, renderer-only edits retain script
+identity. Emitter source remains version 1 and system source version 2, cooked
+emitter content is version 5.
+
+`SizeCurve(start,middle,end)` and `RibbonWidthCurve(start,middle,end)` interpolate
+linearly at normalized ages 0, 0.5 and 1. `ColorGradient` and
+`RibbonColorGradient` take two RGBA endpoints, multiplying the emitter base color.
+GPU ColorGradient supplies alpha in place of the default fade. CPU RibbonFade
+remains last and multiplies gradient alpha. The ribbon stack permits RibbonWidth
+or RibbonWidthCurve and an optional RibbonColorGradient before RibbonFade.
+
+Preview uses a normal cooked system and the production runtime in Edit. Pause
+freezes its simulation, Clear, closing the panel, scene changes and Play discard
+it. Successful asset reload discards old history and restarts an active preview,
+preserving its pause choice. Failed cooking or reload keeps the last good assets.
+During Play, cooking can finish but asset apply waits for Stop. Unsaved source
+drafts stay separate from cooked preview data. Lua controls remain in
+particles_script, including `particle_system_wind(entity,x,y,z)`.
+
+Each emitter's `quality` object has importance (0 to 1), nearDistance,
+farDistance and minSpawnScale (0 to 1). Birth scale multiplies importance and a
+linear distance fade between those distances. The scene bridge samples the latest
+renderer primary-camera position for the next runtime tick, without a camera
+only importance applies.
+Quality reduces new work, existing sprites and offscreen ribbon history continue
+aging and drifting. Resuming trail emission starts a separate link.
+
+Runtime admission reserves at most 64 emitters, 65,536 GPU particles and 65,536
+ribbon points, with a default 64 MiB CPU reservation limit. Instance capacity is
+also bounded at construction. A rejected start preserves existing effects.
+Per-frame birth work defaults to 4,096, excess births are counted and discarded
+without catch-up. Session limits can be lowered from the panel when no effects
+are alive, games can configure the same ParticleBudgets API. CPU bytes are a
+conservative retained-data reservation including definitions, payloads and bounded
+history/birth buffers, not an allocator-wide measurement.

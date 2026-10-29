@@ -559,6 +559,11 @@ namespace mir::vk
         }
 
         vkGetPhysicalDeviceProperties(mPhysical, &mProperties);
+        uint32_t queueCount = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(mPhysical, &queueCount, nullptr);
+        std::vector<VkQueueFamilyProperties> queueProperties(queueCount);
+        vkGetPhysicalDeviceQueueFamilyProperties(mPhysical, &queueCount, queueProperties.data());
+        mTimestampBits = queueProperties[mQueueFamily].timestampValidBits;
         const VkPhysicalDeviceProperties &props = mProperties;
         MIR_LOG_INFO("GPU: {} | {} | Vulkan {}.{}.{} | graphics+compute+present family {}",
             props.deviceName,

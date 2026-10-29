@@ -34,6 +34,8 @@ namespace mir
         VkDevice device = VK_NULL_HANDLE;
         VmaAllocator allocator = nullptr;
         bool debugNames = false;
+        float timestampPeriod = 0;
+        uint32_t timestampBits = 0;
     };
     struct FxFrameContext
     {

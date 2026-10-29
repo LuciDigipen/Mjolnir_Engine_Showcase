@@ -16,6 +16,26 @@
 
 namespace mir
 {
+    namespace
+    {
+        void Appearance(ParticleRibbonPoint &point, const ParticleEmitterAsset &definition, float scale, float age)
+        {
+            const float t = std::clamp(age, 0.0f, 1.0f);
+            const auto &width = definition.updateModules[2];
+            point.width = definition.size * scale * (width.name == "RibbonWidthCurve" ?
+                EvaluateParticleCurve(width.parameters[0], width.parameters[1], width.parameters[2], t) :
+                std::lerp(1.0f, width.parameters[0], t));
+            point.color = definition.color;
+            if (definition.updateModules.size() == 5)
+            {
+                const auto &p = definition.updateModules[3].parameters;
+                point.color *= glm::vec4(std::lerp(p[0], p[4], t), std::lerp(p[1], p[5], t),
+                    std::lerp(p[2], p[6], t), std::lerp(p[3], p[7], t));
+            }
+            point.color.a *= 1 - t;
+        }
+    }
+
     void AdvanceParticleRibbon(ParticleEmitterInstance &emitter, const ParticleUserParameters &parameters,
         uint32_t &budget, ParticleRuntimeStats &stats)
     {
@@ -36,10 +56,7 @@ namespace mir
             if (supported) point.position = *moved;
             else { point.birthTime = -definition.lifetime; ++stats.rejectedRibbonPoints; }
             const float age = static_cast<float>((state.time - point.birthTime) / definition.lifetime);
-            point.width = definition.size * parameters.sizeScale *
-                std::lerp(1.0f, definition.updateModules[2].parameters[0], std::clamp(age, 0.0f, 1.0f));
-            point.color = definition.color;
-            point.color.a *= std::clamp(1.0f - age, 0.0f, 1.0f);
+            Appearance(point, definition, parameters.sizeScale, age);
         }
         std::erase_if(state.points, [&](const auto &point) { return state.time - point.birthTime >= definition.lifetime; });
         if (emitter.state != ParticleExecutionState::Active || parameters.spawnRateScale == 0)
@@ -52,7 +69,7 @@ namespace mir
         const double length = static_cast<double>(glm::length(delta));
         const double spacing = definition.spawnPerMeter * parameters.spawnRateScale > 0 ?
             1.0 / (definition.spawnPerMeter * parameters.spawnRateScale) : 1e30;
-        const double interval = definition.spawnModules[0].parameters[0];
+        const double interval = definition.spawnModules[0].parameters[0] / std::max(0.0001f, parameters.spawnRateScale);
         auto birth = [&](double fraction)
         {
             if (!budget)
@@ -95,10 +112,7 @@ namespace mir
             point.ribbon = state.ribbon;
             point.link = state.nextLink++;
             const float normalized = static_cast<float>(age / definition.lifetime);
-            point.width = definition.size * parameters.sizeScale * std::lerp(1.0f,
-                definition.updateModules[2].parameters[0], normalized);
-            point.color = definition.color;
-            point.color.a *= std::max(0.0f, 1 - normalized);
+            Appearance(point, definition, parameters.sizeScale, normalized);
             state.points.push_back(point);
             ++emitter.spawns;
         };

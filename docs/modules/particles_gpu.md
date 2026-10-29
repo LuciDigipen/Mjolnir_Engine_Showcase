@@ -105,6 +105,26 @@ Particles are not yet visible to secondary reflection, shadow or GI rays.
 
 ## Verification
 
+ParticleGpuBudgets configures immutable admission/upload limits. Defaults are
+64 MiB of copied submission data, 64 MiB of resident and staging texture data,
+16 MiB of new texture uploads per frame, 4,096 uploaded births and 65,532 ribbon
+vertices. Values can be lowered within the compiled ceilings. Snapshot overflow
+rejects whole emitter rows, birth overflow drops excess births, ribbon overflow
+truncates segments. These paths expose counters. Texture uploads that exceed
+either texture cap defer the image and draw with the shared white fallback,
+retrying on later frames. Retired textures remain accounted until their timeline
+completion, so deferred images cannot overrun memory while old work is in flight.
+
+Diagnostics expose completed GPU alive counts, tracked buffer/texture bytes and
+high-water marks, copied snapshot bytes, upload bytes and rejected/dropped work.
+Tracked GPU bytes count requested owned buffers, images and staging data, not
+driver allocations, pipelines or total process VRAM. CPU timings cover simulation,
+submission and command recording. Three timestamp scopes measure simulation plus
+texture uploads, view preparation/sorting, and drawing. Completed frame-slot
+queries are read with availability flags, without WAIT, queue idle or synchronous
+particle readback. Unsupported queues report timing unavailable. Values can lag
+the displayed simulation, and are diagnostics rather than T7 performance signoff.
+
 `ParticleGpuCheck <output.png> [raster|rt|dlss]` cooks its inputs through AssetCooker
 and exercises the production API with synchronization validation. It verifies
 opposite orders for two raster cameras, conservative culling, no extra simulation

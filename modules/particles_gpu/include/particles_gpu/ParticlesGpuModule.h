@@ -22,7 +22,7 @@ namespace mir
     class ParticlesGpuModule
     {
     public:
-        explicit ParticlesGpuModule(VulkanRenderer &renderer);
+        explicit ParticlesGpuModule(VulkanRenderer &renderer, ParticleGpuBudgets budgets = {});
         ~ParticlesGpuModule();
         ParticlesGpuModule(const ParticlesGpuModule &) = delete;
         ParticlesGpuModule &operator=(const ParticlesGpuModule &) = delete;

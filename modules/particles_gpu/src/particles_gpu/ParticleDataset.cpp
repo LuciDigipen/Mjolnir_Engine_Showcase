@@ -24,7 +24,9 @@ namespace mir::gpu
         if (mSubmitted)
             for (const auto &pending : mPending) mStats.droppedSubmitSpawns += pending.spawns;
         mPending = {};
-        uint32_t budget = kGpuParticleSpawnsPerFrame;
+        uint32_t budget = mBudgets.birthUploads;
+        uint64_t bytes = 0;
+        mStats.snapshotBytes = 0;
         if (inputs.size() > kGpuParticleInstances)
         {
             mStats.rejectedSubmissions += inputs.size();
@@ -33,6 +35,9 @@ namespace mir::gpu
         }
         for (const auto &input : inputs)
         {
+            const uint64_t inputBytes = sizeof(ParticleSubmission) + input.scriptCode.size() + input.texturePixels.size() +
+                input.births.size() * sizeof(ParticleGpuBirth);
+            if (inputBytes > mBudgets.snapshotBytes - bytes) { ++mStats.rejectedSubmissions; mStats.droppedSubmitSpawns += input.spawns; continue; }
             if (!ValidParticleRenderProperties(input.renderer) || (!kLargeWorld && (glm::any(glm::greaterThan(glm::abs(input.anchor.Meters()), WorldVec3(65536))) ||
                     (input.explicitTile && glm::any(glm::greaterThan(glm::abs(input.tileOrigin.Meters()), WorldVec3(65536)))))) ||
                 input.scriptKey == 0 || input.scriptCode.size() < 20 || input.scriptCode.size() % 4 != 0 ||
@@ -58,8 +63,11 @@ namespace mir::gpu
                 ++mStats.rejectedSubmissions;
                 continue;
             }
+            bytes += inputBytes;
+            mStats.snapshotBytes = bytes;
             mPending[input.index] = input;
             mPending[input.index].spawns = std::min(input.spawns, budget);
+            if (!mPending[input.index].births.empty()) mPending[input.index].births.resize(mPending[input.index].spawns);
             budget -= mPending[input.index].spawns;
             mStats.droppedSubmitSpawns += input.spawns - mPending[input.index].spawns;
         }
@@ -96,6 +104,9 @@ namespace mir::gpu
                 return false;
         NameBuffer(device, mCounters.handle, "Particle GPU indirect counts");
         NameBuffer(device, mParticles.handle, "Particle persistent pool");
+        mStats.gpuBytes = sizeof(GpuParticle) * kGpuParticleCapacity + sizeof(Counters) * kGpuParticleInstances +
+            kFxFramesInFlight * (sizeof(ParticleGpuBirth) * kGpuParticleSpawnsPerFrame + sizeof(Parameters) * kGpuParticleInstances +
+                (sizeof(Counters) + sizeof(GpuParticle)) * kGpuParticleInstances);
         return true;
     }
 
@@ -217,6 +228,7 @@ namespace mir::gpu
             }
             parameters[i] = p;
         }
+        mStats.uploadBytes = sizeof(Parameters) * kGpuParticleInstances + birthCursor * sizeof(ParticleGpuBirth);
         vmaFlushAllocation(device.allocator, mInputs[frame].allocation, 0, VK_WHOLE_SIZE);
         vmaFlushAllocation(device.allocator, mBirths[frame].allocation, 0, VK_WHOLE_SIZE);
         return true;

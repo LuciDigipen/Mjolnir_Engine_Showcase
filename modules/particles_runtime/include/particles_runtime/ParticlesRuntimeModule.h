@@ -21,12 +21,13 @@ namespace mir
     class ParticlesModule;
     class ParticleRuntime;
     class ParticlesGpuModule;
+    class RenderSystem;
     std::vector<ParticleSubmission> BuildParticleRenderData(const ParticleRuntime &runtime, bool simulating);
     std::vector<RibbonSubmission> BuildRibbonRenderData(const ParticleRuntime &runtime);
     class ParticlesRuntimeModule
     {
     public:
-        ParticlesRuntimeModule(ModuleContext context, ParticlesModule &particles, ParticlesGpuModule &gpu);
+        ParticlesRuntimeModule(ModuleContext context, ParticlesModule &particles, ParticlesGpuModule &gpu, RenderSystem &rendering);
         ParticlesRuntimeModule(const ParticlesRuntimeModule &) = delete;
         ParticlesRuntimeModule &operator=(const ParticlesRuntimeModule &) = delete;
     private:

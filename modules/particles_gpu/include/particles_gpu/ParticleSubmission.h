@@ -23,6 +23,15 @@ namespace mir
     inline constexpr uint32_t kGpuParticleCapacity = 65536;
     inline constexpr uint32_t kGpuParticleSpawnsPerFrame = 4096;
 
+    struct ParticleGpuBudgets
+    {
+        uint64_t snapshotBytes = 64ull * 1024 * 1024;
+        uint64_t textureBytes = 64ull * 1024 * 1024;
+        uint64_t textureUploadBytes = 16ull * 1024 * 1024;
+        uint32_t birthUploads = kGpuParticleSpawnsPerFrame;
+        uint32_t ribbonVertices = 65532;
+    };
+
     struct ParticleGpuBirth
     {
         float fraction = 1;
@@ -112,6 +121,10 @@ namespace mir
         float firstAlpha = 0;
         uint32_t firstFrame = 0;
         uint32_t firstSequence = 0;
+        uint64_t gpuBytes = 0, gpuHighWaterBytes = 0, snapshotBytes = 0, uploadBytes = 0;
+        uint64_t deferredTextures = 0, droppedRibbonSegments = 0;
+        double cpuRecordMs = 0, simulationGpuMs = 0, prepareGpuMs = 0, drawGpuMs = 0;
+        bool gpuTimingAvailable = false;
         uint64_t tileShifts = 0;
         uint64_t completedFrame = 0;
         uint64_t renderFrame = 0;

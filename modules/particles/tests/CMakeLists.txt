@@ -1,4 +1,5 @@
 engine_add_module_tests(particles
+    ParticleAuthoring.tests.cpp
     ParticleEffect.tests.cpp
     ParticleRibbon.tests.cpp
     ParticleRuntime.tests.cpp

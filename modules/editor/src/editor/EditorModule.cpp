@@ -8,6 +8,8 @@
  */
 #include <editor/EditorModule.h>
 
+#include "ParticleEditorPanel.h"
+
 #include <editor/CreateGameProject.h>
 #include <editor/IdeSettings.h>
 
@@ -130,6 +132,7 @@ namespace mir
           mSceneOps(context.world, scene.Scene(), mPrefabWorkspace, mProject.mRootDir)
     {
         mImport.Initialize(mProject);
+        mParticleEditor = std::make_unique<ParticleEditorPanel>(mImport.SourceAssetRoot(),mProject.mAssetIdRoot);
         mContentBrowser.Initialize(mProject);
 
         // The first frames run without assets; the import swaps them in once cooked
@@ -167,6 +170,7 @@ namespace mir
         // after the renderer's: it freed every upload, the previews' too
         mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &)
             {
+                mParticleEditor->OnHidden(mWorld);
                 mPrefabWorkspace.ResetResolve();
             });
 
@@ -205,6 +209,7 @@ namespace mir
         // after PrefabModule's, which committed and froze the prefabs
         mPlayBegin = context.scheduler.AddStage(Stage::PlayBegin, [this](SystemContext &)
             {
+                mParticleEditor->OnHidden(mWorld);
                 PrefabCoordinator &prefabs = mPrefab.Coordinator();
                 if (prefabs.ConsumeSceneMaintenance() && !mEditor.IsSceneUnsaved())
                     mEditor.SetSceneUnsaved(true);
@@ -240,7 +245,7 @@ namespace mir
                 mPrefabWorkspace.DiscardPreparedReload();
             });
 
-        mDrawer = imgui.AddDrawer(DrawerGroup::Tools, [this, &window]
+        mDrawer = imgui.AddDrawer(DrawerGroup::Tools, [this, &window, &assets]
             {
                 if (window.Get().Width() == 0 || window.Get().Height() == 0)
                     return;
@@ -251,6 +256,9 @@ namespace mir
                     mWorld.Resource<EngineModeState>(), mProjectMenu, mProject.mDir,
                     preview != nullptr ? *preview : mWorld, mWorld, MakeEditorDocuments(), mImport.View(),
                     mRenderer.Renderer(), MakeContentBrowserView());
+                if (mEnableLayout)
+                    mParticleEditor->Draw(mEditor.ParticleEditorVisible(),mWorld,assets.Cache(),mImport,mEditor.SceneCamera(),mFrameDt);
+                else mParticleEditor->OnHidden(mWorld);
                 mPrefabWorkspace.CloseMissingDocuments();
                 ApplyActions(actions);
                 FeedViewport();

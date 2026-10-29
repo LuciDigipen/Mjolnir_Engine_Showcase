@@ -54,6 +54,8 @@ namespace mir
         Entity owner = kNullEntity;
         ParticleExecutionState state = ParticleExecutionState::Active;
         bool paused = false;
+        bool preview = false;
+        uint64_t reservedBytes = 0;
         double drainRemaining = 0.0;
         ParticleUserParameters parameters;
         std::vector<ParticleEmitterHandle> emitters;
@@ -95,6 +97,24 @@ namespace mir
         double drainRemaining = 0.0;
         uint32_t spawns = 0;
         float seconds = 0.0f;
+        float qualityScale = 1;
+    };
+
+    struct ParticleBudgets
+    {
+        uint32_t emitters = kMaxParticleEmitterInstances;
+        uint32_t gpuParticles = 65536;
+        uint32_t ribbonPoints = 65536;
+        uint32_t births = kParticleSpawnBudget;
+        uint64_t cpuBytes = 64ull * 1024 * 1024;
+    };
+    struct ParticleDiagnostics
+    {
+        uint64_t gpuFrame = 0, gpuBytes = 0, gpuHighWaterBytes = 0, snapshotBytes = 0, uploadBytes = 0;
+        uint64_t rejectedGpu = 0, droppedGpuBirths = 0, completedPoolDrops = 0, deferredTextures = 0, droppedRibbonSegments = 0;
+        uint32_t gpuAlive = 0;
+        double cpuSubmitMs = 0, cpuRecordMs = 0, simulationGpuMs = 0, prepareGpuMs = 0, drawGpuMs = 0;
+        bool gpuTimingAvailable = false;
     };
 
     struct ParticleRuntimeStats
@@ -105,6 +125,10 @@ namespace mir
         uint64_t droppedBudgetSpawns = 0;
         uint64_t evictedRibbonPoints = 0;
         uint64_t rejectedRibbonPoints = 0;
+        uint64_t rejectedCapacityStarts = 0, rejectedMemoryStarts = 0;
+        uint64_t cpuBytes = 0, cpuHighWaterBytes = 0;
+        uint32_t gpuCapacity = 0, ribbonCapacity = 0, ribbonPoints = 0, qualityReducedEmitters = 0;
+        double cpuMs = 0;
         uint64_t ticks = 0;
         double droppedSeconds = 0.0;
     };
@@ -112,14 +136,14 @@ namespace mir
     class ParticleRuntime
     {
     public:
-        explicit ParticleRuntime(uint32_t capacity = 64);
+        explicit ParticleRuntime(uint32_t capacity = 64, ParticleBudgets budgets = {});
         ParticleRuntime(const ParticleRuntime &) = delete;
         ParticleRuntime &operator=(const ParticleRuntime &) = delete;
         ParticleRuntime(ParticleRuntime &&) = delete;
         ParticleRuntime &operator=(ParticleRuntime &&) = delete;
 
         ParticleHandle Start(AssetId effectId, const ParticleEffect &effect,
-            WorldPose pose = {}, Entity owner = kNullEntity, const ParticleUserParameters *overrides = nullptr);
+            WorldPose pose = {}, Entity owner = kNullEntity, const ParticleUserParameters *overrides = nullptr, bool preview = false);
         const ParticleSystemInstance *Find(ParticleHandle handle) const;
         const ParticleEmitterInstance *FindEmitter(ParticleEmitterHandle handle) const;
         bool Stop(ParticleHandle handle);
@@ -132,7 +156,10 @@ namespace mir
         void Detach(Entity owner);
         void Clear();
         // Fixed 60 Hz, at most four steps, no catch-up queue after a hitch.
-        void Advance(float dt);
+        void Advance(float dt, bool previewsOnly = false);
+        void SetQualityOrigin(std::optional<WorldPosition> origin) { mQualityOrigin = origin; }
+        bool ConfigureBudgets(const ParticleBudgets &budgets);
+        const ParticleBudgets &Budgets() const { return mBudgets; }
         const ParticleRuntimeStats &Stats() const { return mStats; }
         uint32_t Capacity() const { return static_cast<uint32_t>(mSlots.size()); }
         bool HasCapacity() const { return !mFree.empty() && !mEmitterFree.empty(); }
@@ -142,6 +169,7 @@ namespace mir
     private:
         ParticleSystemInstance *Mutable(ParticleHandle handle);
         ParticleEmitterInstance *MutableEmitter(ParticleEmitterHandle handle);
+        void RefreshStats();
         void ReleaseEmitter(ParticleEmitterHandle handle);
         std::vector<ParticleSystemInstance> mSlots;
         std::vector<uint32_t> mGenerations;
@@ -151,5 +179,7 @@ namespace mir
         std::vector<uint32_t> mEmitterFree;
         ParticleRuntimeStats mStats;
         double mRemainder = 0.0;
+        ParticleBudgets mBudgets;
+        std::optional<WorldPosition> mQualityOrigin;
     };
 }

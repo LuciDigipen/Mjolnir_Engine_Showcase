@@ -14,7 +14,9 @@
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 
+#include <initializer_list>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -26,7 +28,7 @@ namespace mir
     inline constexpr uint32_t kParticleEffectTypeTag = 0x54524150u;
     inline constexpr uint32_t kParticleEffectContentVersion = 2u;
     inline constexpr uint32_t kParticleEmitterTypeTag = 0x54494D45u;
-    inline constexpr uint32_t kParticleEmitterContentVersion = 4u;
+    inline constexpr uint32_t kParticleEmitterContentVersion = 5u;
     inline constexpr uint32_t kParticleScriptTypeTag = 0x52435350u;
     inline constexpr uint32_t kParticleScriptContentVersion = 2u;
     inline constexpr uint32_t kParticleScriptLayoutTypeTag = 0x594C5350u;
@@ -64,6 +66,24 @@ namespace mir
         bool textured = false;
     };
 
+    struct ParticleModuleInfo
+    {
+        std::string_view name;
+        bool spawn;
+        ParticleSimulationTarget target;
+        std::initializer_list<std::string_view> parameters;
+    };
+    std::span<const ParticleModuleInfo> ParticleModules();
+    float EvaluateParticleCurve(float start, float middle, float end, float age);
+
+    struct ParticleQuality
+    {
+        float importance = 1;
+        float nearDistance = 1000;
+        float farDistance = 5000;
+        float minSpawnScale = 1;
+    };
+
     struct ParticleEmitterAsset
     {
         float lifetime = 2.0f;
@@ -78,6 +98,7 @@ namespace mir
         AssetId texture;
         ParticleSimulationTarget simulationTarget = ParticleSimulationTarget::GPU;
         ParticleRendererProperties renderer;
+        ParticleQuality quality;
         float size = 0.15f;
         glm::vec4 color{1.0f, 0.4f, 0.1f, 0.5f};
         glm::vec3 velocity{0.0f, 1.0f, 0.0f};
@@ -113,6 +134,8 @@ namespace mir
         std::string mError;
     };
 
+    std::string WriteParticleEmitterSource(const ParticleEmitterAsset &emitter, std::string_view texturePath);
+    std::string WriteParticleEffectSource(const ParticleEffect &effect, std::span<const std::string> emitterPaths);
     bool ValidateParticleUserParameters(const ParticleUserParameters &parameters, std::string &error);
     bool ValidateParticleEmitterAsset(const ParticleEmitterAsset &emitter, std::string &error);
     std::string GenerateParticleScript(const ParticleEmitterAsset &emitter);

@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <stdexcept>
 #include <utility>
 
@@ -50,10 +51,11 @@ namespace mir
         }
     }
 
-    ParticleRuntime::ParticleRuntime(uint32_t capacity)
+    ParticleRuntime::ParticleRuntime(uint32_t capacity, ParticleBudgets budgets)
     {
         if (capacity > 64)
             throw std::invalid_argument("particle system capacity cannot exceed 64");
+        if (!ConfigureBudgets(budgets)) throw std::invalid_argument("invalid particle budgets");
         mSlots.resize(capacity);
         mGenerations.resize(capacity, 1);
         mFree.reserve(capacity);
@@ -67,18 +69,37 @@ namespace mir
     }
 
     ParticleHandle ParticleRuntime::Start(AssetId effectId, const ParticleEffect &effect,
-        WorldPose pose, Entity owner, const ParticleUserParameters *overrides)
+        WorldPose pose, Entity owner, const ParticleUserParameters *overrides, bool preview)
     {
         const auto parameters = overrides ? *overrides : effect.parameters;
         std::string error;
-        if (mFree.empty() || effectId.IsNull() || !ValidateParticleEffect(effect, error) ||
+        if (mFree.empty() || mEmitterFree.size() < effect.emitters.size())
+        { ++mStats.rejectedStarts; ++mStats.rejectedCapacityStarts; return {}; }
+        if (effectId.IsNull() || !ValidateParticleEffect(effect, error) ||
             effect.emitterDefinitions.size() != effect.emitters.size() ||
-            mEmitterFree.size() < effect.emitters.size() ||
             !ValidateParticleUserParameters(parameters, error) || !ValidPose(pose))
         {
             ++mStats.rejectedStarts;
             return {};
         }
+        RefreshStats();
+        uint64_t reservation = sizeof(ParticleSystemInstance) + effect.emitters.size() * (sizeof(AssetId) + sizeof(ParticleEmitterHandle));
+        uint32_t gpu = 0, ribbon = 0;
+        for (const auto &definition : effect.emitterDefinitions)
+        {
+            uint64_t bytes = sizeof(ParticleEmitterAsset) + definition.scriptCode.size() + definition.texturePixels.size();
+            for (const auto *stack : {&definition.spawnModules, &definition.updateModules})
+                for (const auto &module : *stack) bytes += sizeof(ParticleModule) + module.name.size() + 32 + module.parameters.size() * sizeof(float);
+            reservation += bytes * 2 + sizeof(ParticleEmitterInstance);
+            if (definition.simulationTarget == ParticleSimulationTarget::GPU)
+            { gpu += definition.capacity; reservation += mBudgets.births * sizeof(ParticleBirth); }
+            else { ribbon += definition.capacity; reservation += definition.capacity * sizeof(ParticleRibbonPoint); }
+        }
+        if (mStats.activeEmitters + effect.emitters.size() > mBudgets.emitters ||
+            mStats.gpuCapacity + gpu > mBudgets.gpuParticles || mStats.ribbonCapacity + ribbon > mBudgets.ribbonPoints)
+        { ++mStats.rejectedStarts; ++mStats.rejectedCapacityStarts; return {}; }
+        if (reservation > mBudgets.cpuBytes || mStats.cpuBytes > mBudgets.cpuBytes - reservation)
+        { ++mStats.rejectedStarts; ++mStats.rejectedMemoryStarts; return {}; }
         for (const auto &definition : effect.emitterDefinitions)
         {
             WorldPosition attachment;
@@ -91,6 +112,8 @@ namespace mir
         }
         // Complete all allocating work before consuming any system or emitter slots.
         ParticleSystemInstance instance;
+        instance.preview = preview;
+        instance.reservedBytes = reservation;
         instance.effectId = effectId;
         instance.effect = effect;
         instance.pose = pose;
@@ -106,25 +129,60 @@ namespace mir
             const uint32_t emitterIndex = mEmitterFree[mEmitterFree.size() - 1 - i];
             instance.emitters.push_back({emitterIndex, mEmitterGenerations[emitterIndex]});
         }
-        mSlots[index] = std::move(instance);
-        mFree.pop_back();
+        std::vector<ParticleEmitterInstance> prepared;
+        prepared.reserve(effect.emitters.size());
         for (size_t i = 0; i < effect.emitters.size(); ++i)
         {
-            const auto emitterHandle = mSlots[index].emitters[i];
+            const auto emitterHandle = instance.emitters[i];
             ParticleEmitterInstance emitter;
             emitter.handle = emitterHandle;
             emitter.system = handle;
             emitter.emitterId = effect.emitters[i];
             emitter.definition = effect.emitterDefinitions[i];
+            if (emitter.definition.simulationTarget == ParticleSimulationTarget::CPU)
+                emitter.ribbon.points.reserve(emitter.definition.capacity);
+            else emitter.births.reserve(mBudgets.births);
             emitter.pose = pose;
             Attachment(pose, emitter.definition, emitter.attachmentPosition, emitter.emissionVelocity);
             emitter.previousPosition = emitter.spawnStart = emitter.attachmentPosition;
-            mEmitters[emitterHandle.index] = emitter;
+            prepared.push_back(std::move(emitter));
+        }
+        mSlots[index] = std::move(instance);
+        mFree.pop_back();
+        for (auto &emitter : prepared)
+        {
+            mEmitters[emitter.handle.index] = std::move(emitter);
             mEmitterFree.pop_back();
         }
         ++mStats.active;
         mStats.activeEmitters += static_cast<uint32_t>(effect.emitters.size());
+        RefreshStats();
         return handle;
+    }
+
+    bool ParticleRuntime::ConfigureBudgets(const ParticleBudgets &budgets)
+    {
+        if (mStats.active || budgets.emitters == 0 || budgets.emitters > 64 || !budgets.gpuParticles || budgets.gpuParticles > 65536 ||
+            !budgets.ribbonPoints || budgets.ribbonPoints > 65536 || !budgets.births || budgets.births > 4096 ||
+            budgets.cpuBytes < 65536 || budgets.cpuBytes > 64ull * 1024 * 1024) return false;
+        mBudgets = budgets;
+        return true;
+    }
+
+    void ParticleRuntime::RefreshStats()
+    {
+        mStats.gpuCapacity = mStats.ribbonCapacity = mStats.ribbonPoints = 0;
+        mStats.cpuBytes = mSlots.capacity() * sizeof(ParticleSystemInstance) + mEmitters.capacity() * sizeof(ParticleEmitterInstance) +
+            (mGenerations.capacity() + mFree.capacity() + mEmitterGenerations.capacity() + mEmitterFree.capacity()) * sizeof(uint32_t);
+        for (const auto &slot : mSlots) if (!slot.handle.IsNull()) mStats.cpuBytes += slot.reservedBytes;
+        for (const auto &emitter : mEmitters)
+        {
+            if (emitter.handle.IsNull()) continue;
+            if (emitter.definition.simulationTarget == ParticleSimulationTarget::GPU) mStats.gpuCapacity += emitter.definition.capacity;
+            else mStats.ribbonCapacity += emitter.definition.capacity;
+            mStats.ribbonPoints += static_cast<uint32_t>(emitter.ribbon.points.size());
+        }
+        mStats.cpuHighWaterBytes = std::max(mStats.cpuHighWaterBytes, mStats.cpuBytes);
     }
 
     const ParticleSystemInstance *ParticleRuntime::Find(ParticleHandle handle) const
@@ -283,6 +341,7 @@ namespace mir
             ++mGenerations[handle.index];
             mFree.push_back(handle.index);
         }
+        RefreshStats();
         return true;
     }
 
@@ -308,8 +367,10 @@ namespace mir
         mStats = {};
     }
 
-    void ParticleRuntime::Advance(float dt)
+    void ParticleRuntime::Advance(float dt, bool previewsOnly)
     {
+        const auto started = std::chrono::steady_clock::now();
+        mStats.qualityReducedEmitters = 0;
         for (auto &emitter : mEmitters)
         {
             emitter.spawns = 0;
@@ -326,10 +387,10 @@ namespace mir
         mRemainder = std::fmod(total, kStep);
         mStats.droppedSeconds += std::max(0.0, wholeSteps - steps) * kStep;
         mStats.ticks += steps;
-        uint32_t budget = kParticleSpawnBudget;
+        uint32_t budget = mBudgets.births;
         for (auto &instance : mSlots)
         {
-            if (instance.handle.IsNull()) continue;
+            if (instance.handle.IsNull() || (previewsOnly && !instance.preview)) continue;
             if (instance.paused)
             {
                 for (const auto handle : instance.emitters)
@@ -357,6 +418,18 @@ namespace mir
                     emitter->motionSeconds = 0;
                     emitter->resetMotionOnPose = false;
                 }
+                auto parameters = instance.parameters;
+                const auto &q = emitter->definition.quality;
+                float distanceScale = 1;
+                if (mQualityOrigin)
+                {
+                    const double distance = glm::length(emitter->attachmentPosition.Meters() - mQualityOrigin->Meters());
+                    const float t = static_cast<float>(std::clamp((distance - q.nearDistance) / (q.farDistance - q.nearDistance), 0.0, 1.0));
+                    distanceScale = std::lerp(1.0f, q.minSpawnScale, t);
+                }
+                emitter->qualityScale = q.importance * distanceScale;
+                if (emitter->qualityScale < 0.999f) ++mStats.qualityReducedEmitters;
+                parameters.spawnRateScale *= emitter->qualityScale;
                 emitter->seconds = static_cast<float>(steps * kStep);
                 emitter->motionSeconds += dt;
                 if (emitter->state == ParticleExecutionState::Active && steps)
@@ -375,7 +448,7 @@ namespace mir
                     if (emitter->teleported) emitter->distanceRemainder = 0;
                     if (emitter->definition.simulationTarget == ParticleSimulationTarget::CPU)
                     {
-                        AdvanceParticleRibbon(*emitter, instance.parameters, budget, mStats);
+                        AdvanceParticleRibbon(*emitter, parameters, budget, mStats);
                         emitter->previousPosition = emitter->attachmentPosition;
                         emitter->motionSeconds = 0;
                         any = true;
@@ -399,7 +472,7 @@ namespace mir
                     // The initial burst is a single activation event, resuming a drain does not replay it.
                     if (emitter->burstPending)
                     {
-                        const auto count = emitter->definition.burst;
+                        const auto count = static_cast<uint32_t>(emitter->definition.burst * emitter->qualityScale);
                         const auto accepted = std::min(count, budget);
                         for (uint32_t i = 0; i < accepted; ++i)
                             emitter->births.push_back({0, emitter->seconds, 0, 0});
@@ -407,10 +480,10 @@ namespace mir
                         requested += count;
                         emitter->burstPending = false;
                     }
-                    append(steps * kStep * emitter->definition.spawnRate * instance.parameters.spawnRateScale,
+                    append(steps * kStep * emitter->definition.spawnRate * parameters.spawnRateScale,
                         emitter->spawnRemainder);
                     const double sweptDistance = emitter->teleported ? 0 : distance * sweepScale;
-                    append(sweptDistance * emitter->definition.spawnPerMeter * instance.parameters.spawnRateScale,
+                    append(sweptDistance * emitter->definition.spawnPerMeter * parameters.spawnRateScale,
                         emitter->distanceRemainder);
                     std::stable_sort(emitter->births.begin(), emitter->births.end(),
                         [](const auto &a, const auto &b) { return a.fraction < b.fraction; });
@@ -425,7 +498,7 @@ namespace mir
                 else if (emitter->state == ParticleExecutionState::Inactive)
                 {
                     if (emitter->definition.simulationTarget == ParticleSimulationTarget::CPU)
-                        AdvanceParticleRibbon(*emitter, instance.parameters, budget, mStats);
+                        AdvanceParticleRibbon(*emitter, parameters, budget, mStats);
                     emitter->drainRemaining -= steps * kStep;
                     if (emitter->drainRemaining <= 1e-6)
                     {
@@ -440,5 +513,7 @@ namespace mir
             if (!any)
                 Destroy(instance.handle);
         }
+        RefreshStats();
+        mStats.cpuMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
     }
 }

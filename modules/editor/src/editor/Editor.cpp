@@ -1241,6 +1241,7 @@ namespace mir
                     ImGui::MenuItem("Input Settings", nullptr, &mShowInputSettings);
                     ImGui::MenuItem("Post-Processing", nullptr, &mShowPostProcessing);
                     ImGui::MenuItem("Asset Import", nullptr, &mShowAssetImport);
+                    ImGui::MenuItem("Particles", nullptr, &mShowParticles);
                     ImGui::MenuItem("Content Browser", nullptr, &mShowContentBrowser);
                     ImGui::Separator();
                     ImGui::MenuItem("Preferences", nullptr, &mShowPreferences);

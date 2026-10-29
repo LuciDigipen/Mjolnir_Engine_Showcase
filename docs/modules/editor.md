@@ -10,6 +10,18 @@ part of that context's lifetime: no `CreateContext`, no fonts, no backend. See
 
 ## Model
 
+Project > Particles opens the source stack editor for the current game's particle
+assets. It uses particles source readers/writers and the regular AssetImportManager
+cook/apply path, with no particles_gpu dependency. GPU modules, renderer settings,
+curves, gradients and distance quality can be tuned in Edit, then saved and
+recooked. The preview uses the production ParticleWorld API. Its lifetime and
+resource policies are described in [particles](particles.md#authoring-and-quality).
+Draft switches require saving or discarding edits. Resource limits are session
+settings, apply them while no effects are alive. File watcher bookkeeping absorbs
+explicit saves, and successful stale batches retain their pending apply until
+queued cooking finishes. Failed cooking displays a diagnostic and leaves live
+assets available. The editor module remains excluded from game-only builds.
+
 `App` drives `Editor` through several calls a frame and reads state back.
 
 ```cpp

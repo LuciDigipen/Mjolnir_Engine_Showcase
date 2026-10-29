@@ -28,3 +28,17 @@ and sun/ambient lighting. These values live in the emitter JSON renderer objects
 recook assets after changing them. Particle shading follows opaque DoF/motion blur
 and RR and precedes bloom/tonemapping. Glass interleaving and RT secondary rays
 remain outside this composition stage.
+
+Project > Particles provides source stack editing and cooked preview. Choose
+`exhaust.particle.json` or `contrails.particle.json` to tune either system on its
+own, `aircraft.particle.json` combines both pairs for flight. Save system/emitter
++ recook applies through the normal reload path in Edit, no C++ rebuild is needed.
+Preview can move its attachment, pause, resume or clear, Play and scene changes
+clear preview history. A failed cook retains the last working preview assets.
+
+Exhaust uses a three-point size curve and color gradient, contrails use a width
+curve, color gradient and final fade. Their quality settings reduce births with
+distance while old trails keep aging and drifting. The panel shows reservations,
+dropped work and asynchronous GPU timings, and offers session CPU limits while
+no effects are alive. These presets are tuning examples, measured acceptance and
+performance signoff remain separate work.

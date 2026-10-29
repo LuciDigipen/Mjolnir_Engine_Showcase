@@ -62,14 +62,23 @@
       "name": "Integrate"
     },
     {
-      "name": "SizeOverLife",
+      "name": "SizeCurve",
       "parameters": [
-        3
+        1,
+        2,
+        4
       ]
     },
     {
-      "name": "FadeOverLife",
+      "name": "ColorGradient",
       "parameters": [
+        1,
+        1,
+        1,
+        1,
+        0.45,
+        0.55,
+        0.7,
         0
       ]
     },
@@ -81,5 +90,11 @@
         6
       ]
     }
-  ]
+  ],
+  "quality": {
+    "importance": 1,
+    "nearDistance": 500,
+    "farDistance": 2500,
+    "minSpawnScale": 0.1
+  }
 }

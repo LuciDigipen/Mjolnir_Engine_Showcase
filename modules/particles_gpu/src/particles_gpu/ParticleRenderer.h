@@ -27,15 +27,15 @@ namespace mir::gpu
     class ParticleRenderer
     {
     public:
-        ParticleRenderer() = default;
+        explicit ParticleRenderer(ParticleGpuBudgets budgets = {}) : mBudgets(budgets) {}
         ParticleRenderer(const ParticleRenderer &) = delete;
         ParticleRenderer &operator=(const ParticleRenderer &) = delete;
-        void Submit(std::span<const RibbonSubmission> ribbons);
+        void Submit(std::span<const RibbonSubmission> ribbons, uint64_t remainingBytes);
         bool HasRibbons() const { return !mRibbons.empty(); }
         void PrepareTextures(const FxFrameContext &context,const ParticleDataset &data);
         void PrepareDraw(const FxRenderContext &context,const ParticleDataset &data);
         void Record(const FxRenderContext &context,const ParticleDataset &data);
-        void Stats(ParticleGpuStats &stats) const { mSort.Stats(stats); }
+        void Stats(ParticleGpuStats &stats) const;
         void Shutdown();
     private:
         static constexpr uint32_t kGroups = kGpuParticleInstances*2;
@@ -64,6 +64,9 @@ namespace mir::gpu
         };
         void DestroyTexture(Texture &texture);
         void UploadTexture(const FxFrameContext &context,Texture &texture,uint32_t width,uint32_t height,const uint8_t *pixels);
+        ParticleGpuBudgets mBudgets;
+        uint64_t mSnapshotBytes = 0, mRejectedRows = 0, mDeferredTextures = 0, mDroppedSegments = 0;
+        uint64_t mUploadBytes = 0, mTextureUploadBytes = 0;
         ParticleViewSort mSort;
         std::vector<RibbonSubmission> mRibbons;
         std::vector<Draw> mDraws;

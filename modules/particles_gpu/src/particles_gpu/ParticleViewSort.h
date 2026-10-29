@@ -27,6 +27,7 @@ namespace mir::gpu
         VkBuffer Indices(uint32_t frame) const { return mNodes[frame].handle; }
         VkBuffer Arguments(uint32_t frame) const { return mArguments[frame].handle; }
         void Stats(ParticleGpuStats &stats) const;
+        uint64_t MemoryBytes() const { return mDevice ? kFxFramesInFlight * (uint64_t(kFxMaxViews) * kGpuParticleCapacity * 16 + kFxMaxViews * kGpuParticleInstances * 32 + kFxMaxViews * 8) : 0; }
         void Shutdown();
     private:
         struct Buffer { VkBuffer handle = VK_NULL_HANDLE; VmaAllocation memory = nullptr; void *mapped = nullptr; };

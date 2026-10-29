@@ -54,7 +54,8 @@ namespace mir
 
     FxDeviceContext VulkanRenderer::FxDevice() const
     {
-        return {mDevice->Handle(), mDevice->Allocator(), mDevice->ValidationEnabled()};
+        return {mDevice->Handle(), mDevice->Allocator(), mDevice->ValidationEnabled(),
+            mDevice->Properties().limits.timestampPeriod, mDevice->TimestampBits()};
     }
 
     Registration VulkanRenderer::RegisterFxSystem(IFxSystem &system)

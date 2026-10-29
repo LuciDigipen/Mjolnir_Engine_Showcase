@@ -151,6 +151,8 @@ namespace mir
 
         EditorCamera &SceneCamera() { return mCamera; }
 
+        bool &ParticleEditorVisible() { return mShowParticles; }
+
         bool IsInitialized() const { return mInitialized; }
 
         bool WantsCaptureKeyboard() const;
@@ -207,6 +209,7 @@ namespace mir
         bool mShowInputSettings = false;
         bool mShowPostProcessing = false;
         bool mShowAssetImport = false;
+        bool mShowParticles = false;
         bool mShowContentBrowser = false;
         bool mShowPreferences = false;
         bool mShowProfiler = false;

@@ -20,7 +20,8 @@ target_link_libraries(engine_editor
            mir::physics_layers
            # PrefabWorkspace.h and PrefabAuthoringAdapter.h take prefab types
            mir::prefab
-    PRIVATE mir::animation
+    PRIVATE mir::particles
+            mir::animation
             mir::assets
             mir::editortheme
             mir::gameui
@@ -47,6 +48,7 @@ target_sources(engine_editor PRIVATE
     src/editor/EditorPreferences.cpp
     src/editor/EditorWidgets.cpp
     src/editor/EntityBaseline.cpp
+    src/editor/ParticleEditorPanel.cpp
     src/editor/PrefabAuthoringAdapter.cpp
     src/editor/PrefabPlayMarks.cpp
     src/editor/PrefabWorkspace.cpp

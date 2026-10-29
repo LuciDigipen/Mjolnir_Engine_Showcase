@@ -42,13 +42,34 @@
       "name": "RibbonWind"
     },
     {
-      "name": "RibbonWidth",
+      "name": "RibbonWidthCurve",
       "parameters": [
+        1,
+        4,
         12
+      ]
+    },
+    {
+      "name": "RibbonColorGradient",
+      "parameters": [
+        1,
+        1,
+        1,
+        1,
+        0.8,
+        0.9,
+        1,
+        1
       ]
     },
     {
       "name": "RibbonFade"
     }
-  ]
+  ],
+  "quality": {
+    "importance": 1,
+    "nearDistance": 500,
+    "farDistance": 10000,
+    "minSpawnScale": 0.25
+  }
 }

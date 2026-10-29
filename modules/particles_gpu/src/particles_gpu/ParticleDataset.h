@@ -24,7 +24,7 @@ namespace mir::gpu
     class ParticleDataset
     {
     public:
-        ParticleDataset() = default;
+        explicit ParticleDataset(ParticleGpuBudgets budgets = {}) : mBudgets(budgets) {}
         ParticleDataset(const ParticleDataset &) = delete;
         ParticleDataset &operator=(const ParticleDataset &) = delete;
         void Submit(std::span<const ParticleSubmission> inputs);
@@ -85,5 +85,6 @@ namespace mir::gpu
         std::array<WorldPosition, kGpuParticleInstances> mReadbackOrigins[kFxFramesInFlight];
         uint64_t mSignals[kFxFramesInFlight]{};
         ParticleGpuStats mStats;
+        ParticleGpuBudgets mBudgets;
     };
 }

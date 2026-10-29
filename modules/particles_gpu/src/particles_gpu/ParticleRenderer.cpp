@@ -46,7 +46,7 @@ namespace mir::gpu
     {
         const VkDeviceSize bytes = VkDeviceSize(width) * height * 4;
         // Reserve both resident pixels and their in-flight upload until retirement.
-        if (mTextureBytes + bytes * 2 > 64 * 1024 * 1024)
+        if (mTextureBytes + bytes * 2 > mBudgets.textureBytes)
             TextureFailure("Particle texture memory budget exceeded");
         const VkImageCreateInfo image{.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
             .imageType = VK_IMAGE_TYPE_2D, .format = VK_FORMAT_R8G8B8A8_UNORM,
@@ -93,22 +93,28 @@ namespace mir::gpu
         barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         vkCmdPipelineBarrier2(context.commands, &dependency);
         texture.uploaded = context.signalValue;
+        mTextureUploadBytes += bytes;
     }
 
-    void ParticleRenderer::Submit(std::span<const RibbonSubmission> ribbons)
+    void ParticleRenderer::Submit(std::span<const RibbonSubmission> ribbons, uint64_t remainingBytes)
     {
         mRibbons.clear();
+        mSnapshotBytes = 0;
         size_t remaining=kGpuParticleCapacity;
         for(const auto &ribbon:ribbons)
         {
-            if(mRibbons.size()==kGpuParticleInstances || ribbon.points.size()>remaining) break;
-            if(!ValidParticleRenderProperties(ribbon.renderer)) continue;
+            const uint64_t bytes = sizeof(RibbonSubmission) + ribbon.texturePixels.size() + ribbon.points.size() * sizeof(RibbonPointSubmission);
+            if(mRibbons.size()==kGpuParticleInstances || ribbon.points.size()>remaining || bytes > remainingBytes ||
+                !ValidParticleRenderProperties(ribbon.renderer)) { ++mRejectedRows; continue; }
+            remainingBytes -= bytes;
+            mSnapshotBytes += bytes;
             mRibbons.push_back(ribbon);
             remaining-=ribbon.points.size();
         }
     }
     void ParticleRenderer::PrepareTextures(const FxFrameContext &context,const ParticleDataset &data)
     {
+        mTextureUploadBytes = mUploadBytes = 0;
         if(!data.Initialized() && mRibbons.empty()) return;
         mDevice=context.device.device;
         mAllocator=context.device.allocator;
@@ -129,6 +135,7 @@ namespace mir::gpu
             active[i+kGpuParticleInstances]=true;
         }
         std::set<TextureKey> used;
+        used.insert({});
         for(uint32_t i=0;i<kGroups;++i)
         {
             if(!active[i]) continue;
@@ -160,10 +167,25 @@ namespace mir::gpu
             }
             ++it;
         }
+        auto [white, freshWhite] = mTextures.try_emplace(TextureKey{});
+        if (freshWhite)
+        {
+            const uint8_t pixels[]{255,255,255,255};
+            UploadTexture(context, white->second, 1, 1, pixels);
+        }
+        white->second.lastUse = context.signalValue;
         for(uint32_t i=0;i<kGroups;++i)
         {
             if(!active[i]) continue;
             const auto key=mSlotTextures[i];
+            const uint64_t bytes = uint64_t(inputs[i].width) * inputs[i].height * 4;
+            if (!mTextures.contains(key) && (mTextureBytes + bytes * 2 > mBudgets.textureBytes ||
+                bytes > mBudgets.textureUploadBytes - mTextureUploadBytes))
+            {
+                mSlotTextures[i] = {};
+                ++mDeferredTextures;
+                continue;
+            }
             auto [entry,fresh]=mTextures.try_emplace(key);
             if(fresh)
             {
@@ -274,8 +296,10 @@ namespace mir::gpu
                 float distance=0;
                 if(ribbon)
                 {
+                    RibbonGeometryStats geometryStats;
                     const auto vertices=BuildRibbonGeometry(std::span(&mRibbons[r],1),camera.cameraPosition,glm::vec3(base.right),
-                        kRibbonVerticesPerFrame-cursor,&camera.viewProj);
+                        mBudgets.ribbonVertices-cursor,&camera.viewProj,&geometryStats);
+                    mDroppedSegments += geometryStats.dropped;
                     if(vertices.empty()) continue;
                     std::memcpy(static_cast<RibbonVertex *>(mVertices[f].mapped)+cursor,vertices.data(),vertices.size()*sizeof(RibbonVertex));
                     for(const auto &vertex:vertices) distance+=glm::length(glm::vec3(vertex.position))/vertices.size();
@@ -295,6 +319,7 @@ namespace mir::gpu
             }
             std::stable_sort(mDraws.begin()+first,mDraws.end(),[](const Draw &a,const Draw &b){return a.distance>b.distance;});
         }
+        mUploadBytes = mTextureUploadBytes + cursor * sizeof(RibbonVertex) + mDraws.size() * sizeof(ViewData);
         vmaFlushAllocation(mAllocator,mViews[f].memory,0,VK_WHOLE_SIZE);
         if(cursor) vmaFlushAllocation(mAllocator,mVertices[f].memory,0,cursor*sizeof(RibbonVertex));
         std::set<uint32_t> written;
@@ -343,6 +368,18 @@ namespace mir::gpu
             else vkCmdDrawIndirect(cmd,mSort.Arguments(f),(draw.view*kGpuParticleInstances+draw.slot)*sizeof(VkDrawIndirectCommand),1,sizeof(VkDrawIndirectCommand));
         }
     }
+    void ParticleRenderer::Stats(ParticleGpuStats &stats) const
+    {
+        mSort.Stats(stats);
+        stats.gpuBytes += mTextureBytes + mSort.MemoryBytes();
+        if (mLayout) stats.gpuBytes += kFxFramesInFlight * (sizeof(RibbonVertex) * kRibbonVerticesPerFrame + sizeof(ViewData) * kGroups * kFxMaxViews);
+        stats.snapshotBytes += mSnapshotBytes;
+        stats.uploadBytes += mUploadBytes;
+        stats.deferredTextures = mDeferredTextures;
+        stats.droppedRibbonSegments = mDroppedSegments;
+        stats.rejectedSubmissions += mRejectedRows;
+    }
+
     void ParticleRenderer::Shutdown()
     {
         mSort.Shutdown();

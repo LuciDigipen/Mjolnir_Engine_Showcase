@@ -49,7 +49,7 @@ namespace mir
             clip.z>=-margin.z && clip.z<=clip.w+margin.z+margin.w;
     }
     std::vector<RibbonVertex> BuildRibbonGeometry(std::span<const RibbonSubmission> ribbons,
-        WorldPosition camera, glm::vec3 cameraRight, uint32_t maxVertices, const glm::mat4 *viewProjection)
+        WorldPosition camera, glm::vec3 cameraRight, uint32_t maxVertices, const glm::mat4 *viewProjection, RibbonGeometryStats *stats)
     {
         struct Segment { RibbonVertex vertices[6]; double distance; };
         std::vector<Segment> segments;
@@ -94,8 +94,8 @@ namespace mir
                     glm::length(centers[i] - centers[i-1]) < 1e-6f) continue;
                 const auto center=(centers[i-1]+centers[i])*0.5f;
                 const float radius=glm::length(centers[i]-centers[i-1])*0.5f+std::max(points[i-1].width,points[i].width);
-                if(viewProjection && !ParticleSphereVisible(center,radius,*viewProjection,ribbon.renderer.maxDistance)) continue;
-                if (segments.size() >= maxVertices / 6) break;
+                if(viewProjection && !ParticleSphereVisible(center,radius,*viewProjection,ribbon.renderer.maxDistance)) { if (stats) ++stats->culled; continue; }
+                if (segments.size() >= maxVertices / 6) { if (stats) { ++stats->dropped; continue; } break; }
                 const auto &a = points[i-1]; const auto &b = points[i];
                 // Subtract a whole repeat, evicting a prefix never resets texture phase.
                 const double base = std::floor(a.textureDistance / 8.0) * 8.0;

@@ -38,6 +38,9 @@ namespace mir
         ParticleRuntime &Runtime() { return mRuntime; }
         const ParticleRuntime &Runtime() const { return mRuntime; }
 
+        ParticleHandle StartPreview(AssetId id, const WorldPose &pose);
+        void StopPreview();
+        ParticleHandle PreviewHandle() const { return mPreview; }
         void Synchronize(Entity owner, ParticleSystem &emitter, const WorldPose &pose);
         void Clear();
         void Detach(Entity owner);
@@ -52,5 +55,6 @@ namespace mir
         ParticleRuntime mRuntime;
         std::unordered_map<uint64_t, ParticleEffect> mPendingEffects;
         bool mReloadPrepared = false;
+        ParticleHandle mPreview;
     };
 }

@@ -104,6 +104,21 @@ namespace mir
         return true;
     }
 
+    ParticleHandle ParticleWorld::StartPreview(AssetId id, const WorldPose &pose)
+    {
+        auto effect = LoadParticleEffect(mAssets, id);
+        if (!effect.mEffect) return {};
+        StopPreview();
+        mPreview = mRuntime.Start(id, *effect.mEffect, pose, kNullEntity, nullptr, true);
+        return mPreview;
+    }
+
+    void ParticleWorld::StopPreview()
+    {
+        mRuntime.Destroy(mPreview);
+        mPreview = {};
+    }
+
     void ParticleWorld::Synchronize(Entity owner, ParticleSystem &emitter, const WorldPose &pose)
     {
         if (!emitter.initialized)
@@ -175,6 +190,7 @@ namespace mir
 
     void ParticleWorld::Clear()
     {
+        mPreview = {};
         mRuntime.Clear();
         auto &query = mWorld.GetOrCreateQuery<ParticleSystem>();
         query.ForEach([](Entity, ParticleSystem &emitter)
@@ -207,6 +223,7 @@ namespace mir
     {
         if (!mReloadPrepared)
             return;
+        mPreview = {};
         mRuntime.Clear();
         auto &query = mWorld.GetOrCreateQuery<ParticleSystem>();
         query.ForEach([](Entity, ParticleSystem &emitter)
