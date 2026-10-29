@@ -12,7 +12,9 @@
 
 #include <volk.h>
 
+#include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 
 namespace mir
@@ -41,8 +43,16 @@ namespace mir
 
         bool useMips = false;
 
+        // 1 keeps isotropic filtering. Above 1 requests anisotropy up to the device limit.
+        float maxAnisotropy = 1.0f;
+
         constexpr bool operator==(const SamplerDesc &) const = default;
     };
+
+    // The anisotropy the sampler actually requests: 1 without device support.
+    float EffectiveAnisotropy(const SamplerDesc &desc, bool supported, float deviceLimit);
+    // Identifies the effective sampler state, including the clamped anisotropy.
+    uint64_t SamplerCacheKey(const SamplerDesc &desc, bool supported, float deviceLimit);
 
     enum class MaterialAlphaMode : uint32_t
     {
@@ -68,5 +78,10 @@ namespace mir
 
         MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque;
         float alphaCutoff = 0.5f;
+
+        // Raw bytes of this material's record. The layout belongs to the material
+        // type's reflection; the renderer only copies and aligns it.
+        std::span<const std::byte> record;
+        uint32_t recordAlignment = 16;
     };
 }

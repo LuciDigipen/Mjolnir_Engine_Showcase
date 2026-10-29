@@ -13,6 +13,7 @@
 #include <glm/vec2.hpp>
 
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -22,6 +23,8 @@ struct ImGuiContext;
 
 namespace mir
 {
+    struct BackgroundTextureState;
+
     class BackgroundImage
     {
     public:
@@ -47,10 +50,12 @@ namespace mir
 
     private:
         void Retire(ImTextureData *texture);
+        bool EnsureCleanup();
 
         ImTextureData *mTexture = nullptr;
         std::vector<ImTextureData *> mRetired;
         ImGuiContext *mContext = nullptr;
+        std::shared_ptr<BackgroundTextureState> mCleanup;
     };
 
     // Native open-file dialog filtered to images; nullopt if cancelled or unsupported here.

@@ -17,6 +17,8 @@
 #include "vulkan/FrameSync.h"
 #include "vulkan/ImGuiOverlay.h"
 #include "vulkan/MaterialStore.h"
+#include "vulkan/MaterialTable.h"
+#include "vulkan/MaterialTableLayout.h"
 #include "vulkan/MeshUploader.h"
 #include "vulkan/ModelDescriptors.h"
 #include "vulkan/PostProcessingStack.h"
@@ -71,8 +73,16 @@ namespace mir
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
             3, 1, &shadowSet, 0, nullptr);
 
+        if (mMaterialTable != nullptr)
+        {
+            const VkDescriptorSet tableSet = mMaterialTable->Set(mFrameSync->Index());
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
+                vk::kMaterialTableSetIndex, 1, &tableSet, 0, nullptr);
+        }
+
         VkPipeline boundPipeline = VK_NULL_HANDLE;
         VkDescriptorSet boundDescriptorSet = VK_NULL_HANDLE;
+        uint32_t boundRecordRefOffset = UINT32_MAX;
 
         // Wireframe draws only lines, over the clear color; without line support it stays shaded
         const bool shaded = view.debugView.shading != ViewportShading::Wireframe || !mDebugDraw->WireframeAvailable();
@@ -122,11 +132,17 @@ namespace mir
                 boundPipeline = pipeline;
             }
 
-            if (material->mDescriptorSet != boundDescriptorSet)
+            const bool sharedTables = mMaterialTable != nullptr;
+            const uint32_t recordRefOffset = sharedTables
+                ? mMaterialStore->RecordRefDynamicOffset(mFrameSync->Index(), material->mMaterialIndex)
+                : 0;
+            if (material->mDescriptorSet != boundDescriptorSet || recordRefOffset != boundRecordRefOffset)
             {
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
-                    0, 1, &material->mDescriptorSet, 0, nullptr);
+                    0, 1, &material->mDescriptorSet, sharedTables ? 1u : 0u,
+                    sharedTables ? &recordRefOffset : nullptr);
                 boundDescriptorSet = material->mDescriptorSet;
+                boundRecordRefOffset = recordRefOffset;
             }
 
             const VkDeviceSize vertexOffset = 0;
@@ -364,6 +380,13 @@ namespace mir
             mModelDescriptors->ResetFrame(mFrameSync->Index());
             mMeshUploads->Collect(*mResources, *mRayTracer, mFrameSync->CompletedValue());
             mMeshUploads->Record(frame->cmd, frame->signalValue, *mResources, *mRayTracer);
+
+            if (mMaterialTable != nullptr)
+            {
+                mMaterialStore->PublishRecords(mFrameSync->CompletedValue(), frame->signalValue,
+                    mFrameSync->Index());
+                mMaterialTable->Sync(mFrameSync->Index(), *mResources);
+            }
         }
         return frame;
     }

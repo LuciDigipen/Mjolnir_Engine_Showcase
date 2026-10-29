@@ -11,6 +11,7 @@
 #endif
 #include "ModelDescriptors.h"
 #include "Device.h"
+#include "MaterialTableLayout.h"
 #include "VulkanUtil.h"
 
 #include <core/log/Log.h>
@@ -38,7 +39,7 @@ namespace mir::vk
         const VkDescriptorSetLayoutBinding binding{
             .binding = 0,
             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .descriptorCount = 1,
+            .descriptorCount = kModelSetStorageBuffers,
             .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT };
         VkDescriptorSetLayoutCreateInfo info{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
         info.bindingCount = 1;

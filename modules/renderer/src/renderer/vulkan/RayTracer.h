@@ -27,6 +27,7 @@ namespace mir::vk
     class Device;
     class ResourceStore;
     class MaterialStore;
+    class MaterialTable;
     struct GpuMesh;
 
     // Every image the trace writes, one per frame in flight each. Adding one is a row in
@@ -51,8 +52,10 @@ namespace mir::vk
     class RayTracer
     {
     public:
-        // The output images match `extent`; the camera set is borrowed as set 1 of the pipeline layout.
-        bool Initialize(Device &device, VkExtent2D extent, VkDescriptorSetLayout cameraSetLayout);
+        // The output images match `extent`; the camera set is borrowed as set 1 of the pipeline
+        // layout. The shared table supplies set 0's image, sampler and record rows.
+        bool Initialize(Device &device, VkExtent2D extent, VkDescriptorSetLayout cameraSetLayout,
+            MaterialTable &table);
         void Shutdown();
 
         // Recreates the output images at the swapchain's new extent; the caller idles the device first.
@@ -164,6 +167,7 @@ namespace mir::vk
         void DestroyScene();
         bool CreatePipeline(VkDescriptorSetLayout cameraSetLayout);
         void WriteDescriptorSets();
+        void WriteMaterialTableDescriptors(uint32_t frame);
         bool BuildBLAS(const GpuMesh &mesh, uint32_t vertexCount, VkCommandBuffer cmd, MeshBlas &outBlas,
             VkBuffer &outScratchBuffer, VmaAllocation &outScratchAllocation);
         // Aligned to minAccelerationStructureScratchOffsetAlignment.
@@ -173,6 +177,7 @@ namespace mir::vk
             std::optional<std::span<const DrawItem>> fallbackItems);
 
         Device *mDevice = nullptr;
+        MaterialTable *mTable = nullptr;
         VkDeviceSize mScratchAlignment = 1;
 
         VkDescriptorSetLayout mSetLayout = VK_NULL_HANDLE;
@@ -191,8 +196,7 @@ namespace mir::vk
         constexpr static uint32_t kMaxInstances = 16384;
         bool mWarnedInstanceCap = false;
 
-        std::vector<VkDescriptorImageInfo> mTextureInfos;
-        bool mWarnedTextureCap = false;
+        uint64_t mTableVersion[kFramesInFlight]{};
 
         VkExtent2D mExtent{};
 

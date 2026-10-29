@@ -2,6 +2,7 @@ engine_add_module_tests(editor
     ActiveCameraEdit.tests.cpp
     Authoring.tests.cpp
     AuthoredEdit.tests.cpp
+    BackgroundImage.tests.cpp
     ComponentCommands.tests.cpp
     ContentBrowserWatcher.tests.cpp
     DocumentNodeCommands.tests.cpp

@@ -14,6 +14,7 @@
 #include "vulkan/FrameSync.h"
 #include "vulkan/ImGuiOverlay.h"
 #include "vulkan/MaterialStore.h"
+#include "vulkan/MaterialTable.h"
 #include "vulkan/MeshUploader.h"
 #include "vulkan/ModelDescriptors.h"
 #include "vulkan/PostProcessingStack.h"
@@ -37,6 +38,7 @@ namespace mir
         mSwapchain(std::make_unique<vk::Swapchain>()),
         mFrameSync(std::make_unique<vk::FrameSync>()),
         mResources(std::make_unique<vk::ResourceStore>()),
+        mMaterialTable(std::make_unique<vk::MaterialTable>()),
         mMaterialStore(std::make_unique<vk::MaterialStore>()),
         mRasterSurfaces(std::make_unique<vk::RasterSurfaces>()),
         mSsgiTrace(std::make_unique<vk::SsgiTrace>()),
@@ -98,6 +100,16 @@ namespace mir
         if (!mResources->Initialize(*mDevice))
             return false;
 
+        vk::MaterialTable *materialTable = nullptr;
+        if (mDevice->SharedMaterialTablesSupported())
+        {
+            if (!mMaterialTable->Initialize(*mDevice))
+                return false;
+            materialTable = mMaterialTable.get();
+        }
+        else
+            mMaterialTable.reset();
+
         if (!mCameraBuffer->Initialize(*mDevice))
             return false;
 
@@ -107,19 +119,19 @@ namespace mir
         if (!mModelDescriptors->Initialize(*mDevice))
             return false;
 
-        if (!mMaterialStore->Initialize(*mDevice, *mResources, vk::kHdrColorFormat,
+        if (!mMaterialStore->Initialize(*mDevice, *mResources, materialTable, vk::kHdrColorFormat,
             { mCameraBuffer->SetLayout(), mModelDescriptors->SetLayout(), mShadowMaps->SetLayout() }))
             return false;
 
         if (mDevice->RayTracingSupported() &&
-            !mRayTracer->Initialize(*mDevice, mSwapchain->Extent(), mCameraBuffer->SetLayout()))
+            !mRayTracer->Initialize(*mDevice, mSwapchain->Extent(), mCameraBuffer->SetLayout(), *mMaterialTable))
             return false;
 
         mMeshUploads->Initialize(*mDevice);
         mRasterSurfaces->Initialize(*mDevice);
         mSsgiTrace->Initialize(*mDevice, mCameraBuffer->SetLayout());
 #if MIR_WITH_RTXGI
-        if (mDevice->RayTracingSupported())
+        if (mDevice->RayTracingSupported() && mDevice->DdgiSupported())
             mDdgi->Initialize(*mDevice, mRayTracer->SceneLayout(), mCameraBuffer->SetLayout());
 #endif
 
@@ -168,6 +180,8 @@ namespace mir
 #endif
             mMaterialStore->Shutdown();
             mRayTracer->Shutdown();
+            if (mMaterialTable != nullptr)
+                mMaterialTable->Shutdown();
             mResources->Shutdown();
             mCapture->Shutdown();
             mModelDescriptors->Shutdown();
@@ -282,6 +296,17 @@ namespace mir
     MaterialHandle VulkanRenderer::CreateMaterial(const MaterialDesc &desc)
     {
         return mMaterialStore->CreateMaterial(desc, *mResources, vk::kHdrColorFormat);
+    }
+
+    bool VulkanRenderer::UpdateMaterialRecord(MaterialHandle handle, std::span<const std::byte> bytes)
+    {
+        return mMaterialStore->UpdateRecord(handle, bytes);
+    }
+
+    uint32_t VulkanRenderer::MaterialRecordOffset(MaterialHandle handle) const
+    {
+        const vk::GpuMaterial *const material = mMaterialStore->FindMaterial(handle);
+        return material != nullptr ? material->mRecordOffset : kInvalidMaterialRecordOffset;
     }
 
     MaterialHandle VulkanRenderer::ErrorMaterial() const

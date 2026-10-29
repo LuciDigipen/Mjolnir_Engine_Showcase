@@ -11,6 +11,7 @@
 #endif
 #include "CameraBuffer.h"
 #include "Device.h"
+#include "MaterialTableLayout.h"
 #include "VulkanUtil.h"
 
 #include <renderer/CameraMath.h>
@@ -80,11 +81,11 @@ namespace mir::vk
         const std::array<VkDescriptorSetLayoutBinding, 2> bindings{ {
             { .binding = 0,
              .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
-             .descriptorCount = 1,
+             .descriptorCount = kCameraSetUniformBuffers,
              .stageFlags = cameraStages },
             { .binding = 1,
              .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-             .descriptorCount = 1,
+             .descriptorCount = kCameraSetStorageBuffers,
              .stageFlags = lightListStages } } };
 
         const VkDescriptorSetLayoutCreateInfo setLayoutInfo{
@@ -99,8 +100,10 @@ namespace mir::vk
         }
 
         const std::array<VkDescriptorPoolSize, 2> poolSizes{ {
-            { .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, .descriptorCount = kFramesInFlight },
-            { .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = kFramesInFlight } } };
+            { .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
+              .descriptorCount = kFramesInFlight * kCameraSetUniformBuffers },
+            { .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+              .descriptorCount = kFramesInFlight * kCameraSetStorageBuffers } } };
 
         const VkDescriptorPoolCreateInfo poolInfo{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,

@@ -399,6 +399,16 @@ editor has shut down. It saves only if ImGui got as far as loading settings, the
 same guard `DestroyContext` uses, so a failed startup never overwrites the file
 with an empty one.
 
+**Background textures outlive `Editor` and are freed from ImGui's shutdown hook.**
+`Editor::Shutdown` runs before `ImGuiRuntime::Shutdown`, so the renderer backend
+still owns the GPU textures when `BackgroundImage` is destroyed. Its destructor
+therefore hands the active and retired CPU textures to an
+`ImGuiContextHookType_Shutdown` hook with its own payload, rather than freeing
+them early or retaining a dangling `BackgroundImage` pointer. The hook runs after
+the backend destroys the GPU side, unregisters and deletes the CPU textures, and
+logs if real renderer data somehow remains. Never reorder the editor before
+`ImGuiModule` to "fix" this.
+
 **`Editor` is a class rather than free functions**, because it carries state
 across calls — the viewport rect, the Style Editor toggle, the game waiting on
 the confirmation dialog, and whether it is initialised. As free functions those
