@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "target": "cpu",
   "lifetime": 45,
   "spawnRate": 0,
@@ -26,7 +26,7 @@
     "maxDistance": 100000,
     "fog": true
   },
-  "spawnModules": [
+  "spawnBehaviors": [
     {
       "name": "RibbonSpawn",
       "parameters": [
@@ -34,7 +34,7 @@
       ]
     }
   ],
-  "updateModules": [
+  "updateBehaviors": [
     {
       "name": "RibbonAge"
     },

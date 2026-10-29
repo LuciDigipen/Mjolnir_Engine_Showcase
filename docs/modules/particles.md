@@ -141,9 +141,9 @@ owned by one system. `gltf_importer_tests` covers system/emitter asset cooking,
 changed emitter recooks, dependency failure, and preserving manifest entries
 from other roots during particle-only recooks.
 
-## Cooked module stacks
+## Cooked behavior stacks
 
-Emitter source version 1 accepts ordered `spawnModules` and `updateModules` arrays.
+Emitter source version 2 accepts ordered `spawnBehaviors` and `updateBehaviors` arrays.
 Each entry has a `name` and a numeric `parameters` array. The initial GPU registry
 supports spawn `Initialize` (no parameters) and update `Age`, `Integrate` (no
 parameters), and `Acceleration` (three finite floats, metres per second squared).
@@ -153,9 +153,9 @@ Stacks are bounded to 32 entries per stage and execute in authored order.
 
 AssetCooker composes Slang from the registered operations and invokes the configured
 `slangc` process, using SPIR-V 1.5 and the `computeMain` entry point. Parameters for
-module operations are compiled constants. Per-frame values use a generated, versioned
+behavior operations are compiled constants. Per-frame values use a generated, versioned
 160-byte input layout. Script and layout blobs are typed dependencies of emitter
-content version 4. Equal stacks and operation parameters share one script regardless
+content version 6. Equal stacks and operation parameters share one script regardless
 of per-emitter renderer values, capacity, or spawn rate. Compilation and validation
 must succeed before the new manifest is published. Partial recooks retain other
 roots and remove unreferenced script/layout manifest entries.
@@ -201,7 +201,7 @@ claiming large-world precision.
 Additional GPU operations are spawn `VelocityVariation` (three nonnegative velocity
 amplitudes), and update `Drag` (coefficient), `SizeOverLife` (end size multiplier),
 `FadeOverLife` (end alpha), and `Flipbook` (integer columns, integer rows, frames per
-second). Curves interpolate linearly with normalized age, authored module order
+second). Curves interpolate linearly with normalized age, authored behavior order
 is respected. Seeded variation hashes the emitter seed and birth sequence, it
 promises repeatability for the same stream/timing, not cross-GPU bitwise identity.
 Place Age before lifetime curves. Flipbooks sample the cooked texture atlas.
@@ -310,3 +310,17 @@ and test-only hidden profiling. It exercises acceleration, wind, turns, offscree
 history, stop/drain, large coordinates and eight aircraft. See
 [acceptance results](../particle-acceptance.md) for quality settings, measurements
 and remaining gates.
+
+## Changed
+
+*2026-10-29* — **Modules became behaviors.** Was: emitter sources used version 1 with
+`spawnModules` and `updateModules`, and the C++ registry was `ParticleModuleInfo`,
+`ParticleModules()` and `kModules`. Now: emitter source version 2 uses `spawnBehaviors`
+and `updateBehaviors`, the cooked emitter content version is 6, and the registry is
+`ParticleBehaviorInfo`, `ParticleBehaviors()` and `kBehaviors`. Existing assets need
+the key rename and a recook, and cooked hashes change because the keys sit inside the
+blobs. Because: the editor shows each entry as a behavior in an ordered stack.
+
+The stack model follows Unreal Niagara. Each stage is an ordered list, the same
+behavior can appear more than once, and a later entry overrides an earlier one that
+writes the same attribute.

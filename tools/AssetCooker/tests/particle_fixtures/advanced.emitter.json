@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "target": "gpu",
   "lifetime": 3,
   "spawnRate": 60,
@@ -29,7 +29,7 @@
       4
     ]
   },
-  "spawnModules": [
+  "spawnBehaviors": [
     {
       "name": "Initialize"
     },
@@ -42,7 +42,7 @@
       ]
     }
   ],
-  "updateModules": [
+  "updateBehaviors": [
     {
       "name": "Age"
     },

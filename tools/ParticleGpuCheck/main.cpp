@@ -400,8 +400,8 @@ int main(int argc, char **argv)
         trail.lifetime = 4;
         trail.size = 0.12f;
         trail.color = {0.8f,0.9f,1,0.6f};
-        trail.spawnModules = {{"RibbonSpawn", {0.1f}}};
-        trail.updateModules = {{"RibbonAge", {}}, {"RibbonWind", {}}, {"RibbonWidth", {2}}, {"RibbonFade", {}}};
+        trail.spawnBehaviors = {{"RibbonSpawn", {0.1f}}};
+        trail.updateBehaviors = {{"RibbonAge", {}}, {"RibbonWind", {}}, {"RibbonWidth", {2}}, {"RibbonFade", {}}};
         mir::ParticleEffect trailEffect;
         trailEffect.emitters = {{1}};
         trailEffect.emitterDefinitions = {trail};

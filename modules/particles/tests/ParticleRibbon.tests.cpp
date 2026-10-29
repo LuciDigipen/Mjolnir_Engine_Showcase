@@ -25,8 +25,8 @@ namespace
         emitter.lifetime = lifetime;
         emitter.capacity = capacity;
         emitter.texture = {1};
-        emitter.spawnModules = {{"RibbonSpawn", {0.25f}}};
-        emitter.updateModules = {{"RibbonAge", {}}, {"RibbonWind", {}}, {"RibbonWidth", {3}}, {"RibbonFade", {}}};
+        emitter.spawnBehaviors = {{"RibbonSpawn", {0.25f}}};
+        emitter.updateBehaviors = {{"RibbonAge", {}}, {"RibbonWind", {}}, {"RibbonWidth", {3}}, {"RibbonFade", {}}};
         mir::ParticleEffect effect;
         effect.emitters = {{1}};
         effect.emitterDefinitions = {emitter};
@@ -160,10 +160,10 @@ TEST_CASE("CPU ribbon schemas reject incomplete stacks and invalid interval para
     REQUIRE(mir::ValidateParticleEmitterAsset(emitter,error));
     const auto bytes = mir::BuildParticleEmitterAsset(emitter);
     REQUIRE(mir::ReadParticleEmitterAsset(*mir::ParseAssetBlob(bytes)).mEmitter);
-    emitter.spawnModules[0].parameters[0] = 0;
+    emitter.spawnBehaviors[0].parameters[0] = 0;
     CHECK_FALSE(mir::ValidateParticleEmitterAsset(emitter,error));
     emitter = Ribbon().emitterDefinitions[0];
-    emitter.updateModules.erase(emitter.updateModules.begin());
+    emitter.updateBehaviors.erase(emitter.updateBehaviors.begin());
     CHECK_FALSE(mir::ValidateParticleEmitterAsset(emitter,error));
 }
 

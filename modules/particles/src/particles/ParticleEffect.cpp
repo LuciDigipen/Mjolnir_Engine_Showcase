@@ -39,23 +39,23 @@ namespace mir
 
         std::string Number(float value) { return Json(value).dump(); }
 
-        std::string Vector3(const ParticleBehavior &module)
+        std::string Vector3(const ParticleBehavior &behavior)
         {
-            return "float3(" + Number(module.parameters[0]) + ", " + Number(module.parameters[1]) + ", " +
-                Number(module.parameters[2]) + ")";
+            return "float3(" + Number(behavior.parameters[0]) + ", " + Number(behavior.parameters[1]) + ", " +
+                Number(behavior.parameters[2]) + ")";
         }
 
-        std::string Color4(const ParticleBehavior &module, size_t first)
+        std::string Color4(const ParticleBehavior &behavior, size_t first)
         {
-            return "float4(" + Number(module.parameters[first]) + "," + Number(module.parameters[first + 1]) + "," +
-                Number(module.parameters[first + 2]) + "," + Number(module.parameters[first + 3]) + ")";
+            return "float4(" + Number(behavior.parameters[first]) + "," + Number(behavior.parameters[first + 1]) + "," +
+                Number(behavior.parameters[first + 2]) + "," + Number(behavior.parameters[first + 3]) + ")";
         }
 
-        // Parameter shapes shared by several modules.
-        constexpr ParticleModuleParameter Scale(std::string_view name) { return { name, 0, 64, false, 1 }; }
-        constexpr ParticleModuleParameter Alpha(std::string_view name, float defaultValue) { return { name, 0, 1, false, defaultValue }; }
-        constexpr ParticleModuleParameter Unbounded(std::string_view name) { return { name, -kFloatMax, kFloatMax, false, 0 }; }
-        constexpr ParticleModuleParameter Variation(std::string_view name) { return { name, 0, 4096, false, 0 }; }
+        // Parameter shapes shared by several behaviors.
+        constexpr ParticleBehaviorParameter Scale(std::string_view name) { return { name, 0, 64, false, 1 }; }
+        constexpr ParticleBehaviorParameter Alpha(std::string_view name, float defaultValue) { return { name, 0, 1, false, defaultValue }; }
+        constexpr ParticleBehaviorParameter Unbounded(std::string_view name) { return { name, -kFloatMax, kFloatMax, false, 0 }; }
+        constexpr ParticleBehaviorParameter Variation(std::string_view name) { return { name, 0, 4096, false, 0 }; }
 
         void EmitInitialize(ParticleScriptWriter &writer, const ParticleBehavior &)
         {
@@ -67,9 +67,9 @@ namespace mir
 )";
         }
 
-        void EmitVelocityVariation(ParticleScriptWriter &writer, const ParticleBehavior &module)
+        void EmitVelocityVariation(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
         {
-            writer.mSource += "        a.velocityLifetime.xyz += " + Vector3(module) +
+            writer.mSource += "        a.velocityLifetime.xyz += " + Vector3(behavior) +
                 " * float3(SignedNoise(randomSeed), SignedNoise(randomSeed ^ 0x9e3779b9u), SignedNoise(randomSeed ^ 0x85ebca6bu));\n";
         }
 
@@ -83,53 +83,53 @@ namespace mir
             writer.mSource += "    a.positionAge.xyz += a.velocityLifetime.xyz * dt;\n";
         }
 
-        void EmitAcceleration(ParticleScriptWriter &writer, const ParticleBehavior &module)
+        void EmitAcceleration(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
         {
-            writer.mSource += "    a.velocityLifetime.xyz += " + Vector3(module) + " * dt;\n";
+            writer.mSource += "    a.velocityLifetime.xyz += " + Vector3(behavior) + " * dt;\n";
         }
 
-        void EmitDrag(ParticleScriptWriter &writer, const ParticleBehavior &module)
+        void EmitDrag(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
         {
             writer.mSource += "    a.velocityLifetime.xyz += (p.wind.xyz - a.velocityLifetime.xyz) * (1 - exp(-" +
-                Number(module.parameters[0]) + " * dt));\n";
+                Number(behavior.parameters[0]) + " * dt));\n";
         }
 
-        void EmitSizeOverLife(ParticleScriptWriter &writer, const ParticleBehavior &module)
+        void EmitSizeOverLife(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
         {
-            writer.mSource += "    a.sizeRotation.xy = p.time.zz * lerp(1.0, " + Number(module.parameters[0]) +
+            writer.mSource += "    a.sizeRotation.xy = p.time.zz * lerp(1.0, " + Number(behavior.parameters[0]) +
                 ", saturate(a.positionAge.w / a.velocityLifetime.w));\n";
         }
 
-        void EmitFadeOverLife(ParticleScriptWriter &writer, const ParticleBehavior &module)
+        void EmitFadeOverLife(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
         {
-            writer.mSource += "    a.color.a = lerp(p.color.a, " + Number(module.parameters[0]) +
+            writer.mSource += "    a.color.a = lerp(p.color.a, " + Number(behavior.parameters[0]) +
                 ", saturate(a.positionAge.w / a.velocityLifetime.w));\n";
         }
 
-        void EmitSizeCurve(ParticleScriptWriter &writer, const ParticleBehavior &module)
+        void EmitSizeCurve(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
         {
-            writer.mSource += "    a.sizeRotation.xy = p.time.zz * lerp(lerp(" + Number(module.parameters[0]) + ", " +
-                Number(module.parameters[1]) + ", saturate(a.positionAge.w / a.velocityLifetime.w * 2)), " +
-                Number(module.parameters[2]) + ", saturate(a.positionAge.w / a.velocityLifetime.w * 2 - 1));\n";
+            writer.mSource += "    a.sizeRotation.xy = p.time.zz * lerp(lerp(" + Number(behavior.parameters[0]) + ", " +
+                Number(behavior.parameters[1]) + ", saturate(a.positionAge.w / a.velocityLifetime.w * 2)), " +
+                Number(behavior.parameters[2]) + ", saturate(a.positionAge.w / a.velocityLifetime.w * 2 - 1));\n";
         }
 
-        void EmitColorGradient(ParticleScriptWriter &writer, const ParticleBehavior &module)
+        void EmitColorGradient(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
         {
-            writer.mSource += "    a.color = p.color * lerp(" + Color4(module, 0) + "," + Color4(module, 4) +
+            writer.mSource += "    a.color = p.color * lerp(" + Color4(behavior, 0) + "," + Color4(behavior, 4) +
                 ", saturate(a.positionAge.w / a.velocityLifetime.w));\n";
         }
 
-        void EmitFlipbook(ParticleScriptWriter &writer, const ParticleBehavior &module)
+        void EmitFlipbook(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
         {
-            const uint32_t columns = static_cast<uint32_t>(module.parameters[0]);
-            const uint32_t rows = static_cast<uint32_t>(module.parameters[1]);
-            writer.mSource += "    a.sizeRotation.z = fmod(floor(a.positionAge.w * " + Number(module.parameters[2]) + "), " +
+            const uint32_t columns = static_cast<uint32_t>(behavior.parameters[0]);
+            const uint32_t rows = static_cast<uint32_t>(behavior.parameters[1]);
+            writer.mSource += "    a.sizeRotation.z = fmod(floor(a.positionAge.w * " + Number(behavior.parameters[2]) + "), " +
                 std::to_string(columns * rows) + ".0);\n";
             writer.mSource += "    a.sizeRotation.w = asfloat(" + std::to_string(columns | (rows << 16)) + "u);\n";
         }
 
-        // One row per module, so a new module is one row plus its emit function.
-        const ParticleModuleInfo kModules[]{
+        // One row per behavior, so a new behavior is one row plus its emit function.
+        const ParticleBehaviorInfo kBehaviors[]{
             { "SizeCurve", false, ParticleSimulationTarget::GPU,
                 { Scale("start"), Scale("middle"), Scale("end") }, false, EmitSizeCurve },
             { "ColorGradient", false, ParticleSimulationTarget::GPU,
@@ -158,11 +158,11 @@ namespace mir
             { "Flipbook", false, ParticleSimulationTarget::GPU,
                 { { "columns", 1, 64, true, 1 },{ "rows", 1, 64, true, 1 },{ "fps", 0, 240, false, 0 } }, false, EmitFlipbook } };
 
-        const ParticleModuleInfo *FindModule(std::string_view name, bool spawn, ParticleSimulationTarget target)
+        const ParticleBehaviorInfo *FindBehavior(std::string_view name, bool spawn, ParticleSimulationTarget target)
         {
-            const auto found = std::find_if(std::begin(kModules), std::end(kModules),
-                [&](const ParticleModuleInfo &entry) { return entry.name == name && entry.spawn == spawn && entry.target == target; });
-            return found == std::end(kModules) ? nullptr : &*found;
+            const auto found = std::find_if(std::begin(kBehaviors), std::end(kBehaviors),
+                [&](const ParticleBehaviorInfo &entry) { return entry.name == name && entry.spawn == spawn && entry.target == target; });
+            return found == std::end(kBehaviors) ? nullptr : &*found;
         }
 
         template <typename Result>
@@ -282,78 +282,78 @@ namespace mir
                 { "velocity",{ emitter.velocity.x, emitter.velocity.y, emitter.velocity.z } } };
         }
 
-        bool ReadModules(const Json &value, std::vector<ParticleBehavior> &modules)
+        bool ReadBehaviors(const Json &value, std::vector<ParticleBehavior> &behaviors)
         {
             if (!value.is_array() || value.size() > 32) return false;
-            modules.clear();
+            behaviors.clear();
             for (const auto &entry : value)
             {
                 if (!KnownFields(entry, { "name", "parameters" }) || !entry.contains("name") ||
                     !entry["name"].is_string()) return false;
-                ParticleBehavior module{ entry["name"].get<std::string>(),{} };
+                ParticleBehavior behavior{ entry["name"].get<std::string>(),{} };
                 if (entry.contains("parameters"))
                 {
                     if (!entry["parameters"].is_array() || entry["parameters"].size() > 8) return false;
                     for (const auto &parameter : entry["parameters"])
                     {
                         if (!parameter.is_number()) return false;
-                        module.parameters.push_back(parameter.get<float>());
+                        behavior.parameters.push_back(parameter.get<float>());
                     }
                 }
-                modules.push_back(std::move(module));
+                behaviors.push_back(std::move(behavior));
             }
             return true;
         }
 
-        Json WriteModules(const std::vector<ParticleBehavior> &modules)
+        Json WriteBehaviors(const std::vector<ParticleBehavior> &behaviors)
         {
             Json result = Json::array();
-            for (const auto &module : modules)
-                result.push_back(Json{ { "name", module.name },{ "parameters", module.parameters } });
+            for (const auto &behavior : behaviors)
+                result.push_back(Json{ { "name", behavior.name },{ "parameters", behavior.parameters } });
             return result;
         }
 
-        bool ValidateModules(const ParticleEmitterAsset &emitter, std::string &error)
+        bool ValidateBehaviors(const ParticleEmitterAsset &emitter, std::string &error)
         {
             for (bool spawn : {true, false})
             {
-                const auto &modules = spawn ? emitter.spawnModules : emitter.updateModules;
-                if (modules.size() > 32)
+                const auto &behaviors = spawn ? emitter.spawnBehaviors : emitter.updateBehaviors;
+                if (behaviors.size() > 32)
                 {
-                    error = "particle module stack exceeds 32 entries";
+                    error = "particle behavior stack exceeds 32 entries";
                     return false;
                 }
-                for (const auto &module : modules)
+                for (const auto &behavior : behaviors)
                 {
-                    const auto *definition = FindModule(module.name, spawn, emitter.simulationTarget);
+                    const auto *definition = FindBehavior(behavior.name, spawn, emitter.simulationTarget);
                     if (!definition)
                     {
-                        error = "unknown particle module or unsupported stage/target: " + module.name;
+                        error = "unknown particle behavior or unsupported stage/target: " + behavior.name;
                         return false;
                     }
-                    bool valid = module.parameters.size() == definition->parameters.size();
-                    for (size_t i = 0; valid && i < module.parameters.size(); ++i)
+                    bool valid = behavior.parameters.size() == definition->parameters.size();
+                    for (size_t i = 0; valid && i < behavior.parameters.size(); ++i)
                     {
                         const auto &range = definition->parameters.begin()[i];
-                        const float value = module.parameters[i];
+                        const float value = behavior.parameters[i];
                         valid = std::isfinite(value) && value >= range.min && value <= range.max &&
                             (!range.integer || std::floor(value) == value);
                     }
                     if (!valid)
                     {
-                        error = "invalid particle module parameters: " + module.name;
+                        error = "invalid particle behavior parameters: " + behavior.name;
                         return false;
                     }
                 }
             }
             if (emitter.simulationTarget == ParticleSimulationTarget::CPU &&
                 (emitter.capacity > 1024 || emitter.spawnRate != 0 || emitter.burst != 0 ||
-                    emitter.spawnModules.size() != 1 || emitter.spawnModules[0].name != "RibbonSpawn" ||
-                    (emitter.updateModules.size() != 4 && emitter.updateModules.size() != 5) || emitter.updateModules[0].name != "RibbonAge" ||
-                    emitter.updateModules[1].name != "RibbonWind" ||
-                    (emitter.updateModules[2].name != "RibbonWidth" && emitter.updateModules[2].name != "RibbonWidthCurve") ||
-                    emitter.updateModules.back().name != "RibbonFade" ||
-                    (emitter.updateModules.size() == 5 && emitter.updateModules[3].name != "RibbonColorGradient")))
+                    emitter.spawnBehaviors.size() != 1 || emitter.spawnBehaviors[0].name != "RibbonSpawn" ||
+                    (emitter.updateBehaviors.size() != 4 && emitter.updateBehaviors.size() != 5) || emitter.updateBehaviors[0].name != "RibbonAge" ||
+                    emitter.updateBehaviors[1].name != "RibbonWind" ||
+                    (emitter.updateBehaviors[2].name != "RibbonWidth" && emitter.updateBehaviors[2].name != "RibbonWidthCurve") ||
+                    emitter.updateBehaviors.back().name != "RibbonFade" ||
+                    (emitter.updateBehaviors.size() == 5 && emitter.updateBehaviors[3].name != "RibbonColorGradient")))
             {
                 error = "CPU ribbons require capacity <= 1024, zero spawnRate/burst, RibbonSpawn and RibbonAge/Wind/Width/Fade";
                 return false;
@@ -406,10 +406,10 @@ namespace mir
         ParticleEmitterAssetResult ParseEmitter(std::string_view text, bool source, std::string_view assetIdRoot)
         {
             const Json value = Json::parse(text, nullptr, false);
-            if (!KnownFields(value, source ? std::initializer_list<std::string_view>{"version", "target", "lifetime", "spawnRate", "capacity", "texture", "renderer", "spawnModules", "updateModules", "localOffset", "spawnPerMeter", "burst", "seed", "inheritVelocity", "teleportDistance", "quality"} :
-                std::initializer_list<std::string_view>{ "target", "lifetime", "spawnRate", "capacity", "textureId", "renderer", "spawnModules", "updateModules", "scriptId", "scriptLayoutId", "localOffset", "spawnPerMeter", "burst", "seed", "inheritVelocity", "teleportDistance", "quality" }))
+            if (!KnownFields(value, source ? std::initializer_list<std::string_view>{"version", "target", "lifetime", "spawnRate", "capacity", "texture", "renderer", "spawnBehaviors", "updateBehaviors", "localOffset", "spawnPerMeter", "burst", "seed", "inheritVelocity", "teleportDistance", "quality"} :
+                std::initializer_list<std::string_view>{ "target", "lifetime", "spawnRate", "capacity", "textureId", "renderer", "spawnBehaviors", "updateBehaviors", "scriptId", "scriptLayoutId", "localOffset", "spawnPerMeter", "burst", "seed", "inheritVelocity", "teleportDistance", "quality" }))
                 return Invalid<ParticleEmitterAssetResult>("particle emitter must be an object with only the supported fields");
-            if (source && (!value.contains("version") || !value["version"].is_number_integer() || value["version"] != 1))
+            if (source && (!value.contains("version") || !value["version"].is_number_integer() || value["version"] != 2))
                 return Invalid<ParticleEmitterAssetResult>("unsupported particle emitter source version");
             if (!value.contains("target") || !value["target"].is_string() ||
                 (value["target"] != "gpu" && value["target"] != "cpu"))
@@ -424,12 +424,12 @@ namespace mir
             emitter.simulationTarget = value["target"] == "gpu" ? ParticleSimulationTarget::GPU : ParticleSimulationTarget::CPU;
             if (emitter.simulationTarget == ParticleSimulationTarget::CPU)
             {
-                emitter.spawnModules.clear();
-                emitter.updateModules.clear();
+                emitter.spawnBehaviors.clear();
+                emitter.updateBehaviors.clear();
             }
-            if ((value.contains("spawnModules") && !ReadModules(value["spawnModules"], emitter.spawnModules)) ||
-                (value.contains("updateModules") && !ReadModules(value["updateModules"], emitter.updateModules)))
-                return Invalid<ParticleEmitterAssetResult>("invalid ordered particle module stack");
+            if ((value.contains("spawnBehaviors") && !ReadBehaviors(value["spawnBehaviors"], emitter.spawnBehaviors)) ||
+                (value.contains("updateBehaviors") && !ReadBehaviors(value["updateBehaviors"], emitter.updateBehaviors)))
+                return Invalid<ParticleEmitterAssetResult>("invalid ordered particle behavior stack");
             emitter.lifetime = value["lifetime"].get<float>();
             emitter.spawnRate = value["spawnRate"].get<float>();
             emitter.capacity = value["capacity"].get<uint32_t>();
@@ -491,7 +491,7 @@ namespace mir
         }
     }
 
-    std::span<const ParticleModuleInfo> ParticleModules() { return kModules; }
+    std::span<const ParticleBehaviorInfo> ParticleBehaviors() { return kBehaviors; }
 
     float EvaluateParticleCurve(float start, float middle, float end, float age)
     {
@@ -504,7 +504,7 @@ namespace mir
         const auto bytes = BuildParticleEmitterAsset(emitter);
         Json value = Json::parse(AsStringView(*ParseAssetBlob(bytes)));
         for (const auto key :{ "textureId", "scriptId", "scriptLayoutId" }) value.erase(key);
-        value["version"] = 1;
+        value["version"] = 2;
         value["texture"] = texturePath;
         const auto result = ReadParticleEmitterSource(value.dump(), "assets");
         if (!result.mEmitter) throw std::invalid_argument(result.mError);
@@ -601,17 +601,17 @@ float SignedNoise(uint value)
 void UpdateParticle(inout Particle a, Parameters p, float dt)
 {
 )";
-        const auto emitStage = [&](const std::vector<ParticleBehavior> &modules, bool spawn)
+        const auto emitStage = [&](const std::vector<ParticleBehavior> &behaviors, bool spawn)
             {
-                for (const auto &module : modules)
+                for (const auto &behavior : behaviors)
                 {
-                    const auto *definition = FindModule(module.name, spawn, ParticleSimulationTarget::GPU);
+                    const auto *definition = FindBehavior(behavior.name, spawn, ParticleSimulationTarget::GPU);
                     if (!definition || !definition->emit)
-                        throw std::runtime_error("particle module has no GPU emitter: " + module.name);
-                    definition->emit(writer, module);
+                        throw std::runtime_error("particle behavior has no GPU emitter: " + behavior.name);
+                    definition->emit(writer, behavior);
                 }
             };
-        emitStage(emitter.updateModules, false);
+        emitStage(emitter.updateBehaviors, false);
         writer.mSource += R"(
 }
 struct Dispatch { uint emitterIndex; };
@@ -646,11 +646,11 @@ void computeMain(uint3 id : SV_DispatchThreadID)
         uint randomSeed = birth.sequence ^ p.birthRange.z;
         Particle a = (Particle)0;
 )";
-        emitStage(emitter.spawnModules, true);
-        const bool customFade = std::any_of(emitter.updateModules.begin(), emitter.updateModules.end(),
-            [](const ParticleBehavior &module)
+        emitStage(emitter.spawnBehaviors, true);
+        const bool customFade = std::any_of(emitter.updateBehaviors.begin(), emitter.updateBehaviors.end(),
+            [](const ParticleBehavior &behavior)
             {
-                return FindModule(module.name, false, ParticleSimulationTarget::GPU)->replacesFade;
+                return FindBehavior(behavior.name, false, ParticleSimulationTarget::GPU)->replacesFade;
             });
         writer.mSource += "        a.identity = uint4(instance, p.range.z, birth.sequence, " + std::to_string(customFade ? 1 : 0) + "u);\n";
         writer.mSource += R"(
@@ -723,7 +723,7 @@ void computeMain(uint3 id : SV_DispatchThreadID)
                     error = "particle velocity must be finite";
                     return false;
                 }
-            return ValidateModules(emitter, error);
+            return ValidateBehaviors(emitter, error);
         }
         return false;
     }
@@ -808,7 +808,7 @@ void computeMain(uint3 id : SV_DispatchThreadID)
             { "localOffset",{ emitter.localOffset.x, emitter.localOffset.y, emitter.localOffset.z } },
             { "spawnPerMeter", emitter.spawnPerMeter },{ "burst", emitter.burst },{ "seed", emitter.seed },
             { "inheritVelocity", emitter.inheritVelocity },{ "teleportDistance", emitter.teleportDistance },
-            { "spawnModules", WriteModules(emitter.spawnModules) },{ "updateModules", WriteModules(emitter.updateModules) },
+            { "spawnBehaviors", WriteBehaviors(emitter.spawnBehaviors) },{ "updateBehaviors", WriteBehaviors(emitter.updateBehaviors) },
             { "scriptId", emitter.script.value },{ "scriptLayoutId", emitter.scriptLayout.value } }.dump();
         return BuildAssetBlob(kParticleEmitterTypeTag, kParticleEmitterContentVersion, std::as_bytes(std::span(text)));
     }

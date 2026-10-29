@@ -28,7 +28,7 @@ namespace mir
     inline constexpr uint32_t kParticleEffectTypeTag = 0x54524150u;
     inline constexpr uint32_t kParticleEffectContentVersion = 2u;
     inline constexpr uint32_t kParticleEmitterTypeTag = 0x54494D45u;
-    inline constexpr uint32_t kParticleEmitterContentVersion = 5u;
+    inline constexpr uint32_t kParticleEmitterContentVersion = 6u;
     inline constexpr uint32_t kParticleScriptTypeTag = 0x52435350u;
     inline constexpr uint32_t kParticleScriptContentVersion = 2u;
     inline constexpr uint32_t kParticleScriptLayoutTypeTag = 0x594C5350u;
@@ -67,7 +67,7 @@ namespace mir
     };
 
     // Valid values are finite and within [min, max], integer parameters must also be whole numbers.
-    struct ParticleModuleParameter
+    struct ParticleBehaviorParameter
     {
         std::string_view name;
         float min;
@@ -78,18 +78,18 @@ namespace mir
 
     // Defined in ParticleEffect.cpp so no Slang text reaches this header.
     struct ParticleScriptWriter;
-    using ParticleModuleEmit = void (*)(ParticleScriptWriter &, const ParticleBehavior &);
+    using ParticleBehaviorEmit = void (*)(ParticleScriptWriter &, const ParticleBehavior &);
 
-    struct ParticleModuleInfo
+    struct ParticleBehaviorInfo
     {
         std::string_view name;
         bool spawn;
         ParticleSimulationTarget target;
-        std::initializer_list<ParticleModuleParameter> parameters;
-        bool replacesFade; // the module sets alpha itself, so the default age fade is skipped
-        ParticleModuleEmit emit; // appends the module's Slang, null for CPU modules
+        std::initializer_list<ParticleBehaviorParameter> parameters;
+        bool replacesFade; // the behavior sets alpha itself, so the default age fade is skipped
+        ParticleBehaviorEmit emit; // appends the behavior's Slang, null for CPU behaviors
     };
-    std::span<const ParticleModuleInfo> ParticleModules();
+    std::span<const ParticleBehaviorInfo> ParticleBehaviors();
     float EvaluateParticleCurve(float start, float middle, float end, float age);
 
     struct ParticleQuality
@@ -118,8 +118,8 @@ namespace mir
         float size = 0.15f;
         glm::vec4 color{ 1.0f, 0.4f, 0.1f, 0.5f };
         glm::vec3 velocity{ 0.0f, 1.0f, 0.0f };
-        std::vector<ParticleBehavior> spawnModules{ { "Initialize",{} } };
-        std::vector<ParticleBehavior> updateModules{ { "Age",{} },{ "Integrate",{} } };
+        std::vector<ParticleBehavior> spawnBehaviors{ { "Initialize",{} } };
+        std::vector<ParticleBehavior> updateBehaviors{ { "Age",{} },{ "Integrate",{} } };
         AssetId script;
         AssetId scriptLayout;
         // Loaded cooked dependency, no source shader reaches the runtime.

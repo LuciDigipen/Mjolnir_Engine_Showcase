@@ -90,8 +90,8 @@ namespace mir
         for (const auto &definition : effect.emitterDefinitions)
         {
             uint64_t bytes = sizeof(ParticleEmitterAsset) + definition.scriptCode.size() + definition.texturePixels.size();
-            for (const auto *stack :{ &definition.spawnModules, &definition.updateModules })
-                for (const auto &module : *stack) bytes += sizeof(ParticleBehavior) + module.name.size() + 32 + module.parameters.size() * sizeof(float);
+            for (const auto *stack :{ &definition.spawnBehaviors, &definition.updateBehaviors })
+                for (const auto &behavior : *stack) bytes += sizeof(ParticleBehavior) + behavior.name.size() + 32 + behavior.parameters.size() * sizeof(float);
             reservation += bytes * 2 + sizeof(ParticleEmitterInstance);
             if (definition.simulationTarget == ParticleSimulationTarget::GPU)
             {

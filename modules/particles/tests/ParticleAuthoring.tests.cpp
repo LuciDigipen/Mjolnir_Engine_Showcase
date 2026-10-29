@@ -24,8 +24,8 @@ namespace
         if (ribbon)
         {
             emitter.simulationTarget = mir::ParticleSimulationTarget::CPU; emitter.spawnRate = 0; emitter.spawnPerMeter = 1;
-            emitter.spawnModules = {{"RibbonSpawn",{0.25f}}};
-            emitter.updateModules = {{"RibbonAge",{}},{"RibbonWind",{}},{"RibbonWidthCurve",{1,3,5}},
+            emitter.spawnBehaviors = {{"RibbonSpawn",{0.25f}}};
+            emitter.updateBehaviors = {{"RibbonAge",{}},{"RibbonWind",{}},{"RibbonWidthCurve",{1,3,5}},
                 {"RibbonColorGradient",{1,0,0,1,0,1,1,1}},{"RibbonFade",{}}};
         }
         mir::ParticleEffect effect; effect.emitters = {{1}}; effect.emitterDefinitions = {emitter};
@@ -38,19 +38,19 @@ TEST_CASE("Particle authoring source writers preserve curves gradients renderer 
 {
     auto effect = Effect();
     auto emitter = effect.emitterDefinitions[0];
-    emitter.updateModules = {{"Age",{}},{"SizeCurve",{1,3,5}},{"ColorGradient",{1,0.4f,0,1,0.2f,0.3f,1,0}}};
+    emitter.updateBehaviors = {{"Age",{}},{"SizeCurve",{1,3,5}},{"ColorGradient",{1,0.4f,0,1,0.2f,0.3f,1,0}}};
     emitter.quality = {0.7f,10,100,0.25f}; emitter.renderer.lit = true;
     const auto source = mir::WriteParticleEmitterSource(emitter,"textures/smoke.png");
     const auto parsed = mir::ReadParticleEmitterSource(source,"assets");
     REQUIRE(parsed.mEmitter);
-    CHECK(parsed.mEmitter->updateModules[2].parameters.size()==8);
+    CHECK(parsed.mEmitter->updateBehaviors[2].parameters.size()==8);
     CHECK(parsed.mEmitter->quality.minSpawnScale==0.25f);
     CHECK(parsed.mEmitter->renderer.lit);
     const auto blob = mir::BuildParticleEmitterAsset(*parsed.mEmitter);
     const auto cooked = mir::ReadParticleEmitterAsset(*mir::ParseAssetBlob(blob));
     REQUIRE(cooked.mEmitter);
     CHECK(cooked.mEmitter->quality.importance==0.7f);
-    CHECK(cooked.mEmitter->updateModules[1].name=="SizeCurve");
+    CHECK(cooked.mEmitter->updateBehaviors[1].name=="SizeCurve");
     const auto script=mir::GenerateParticleScript(emitter);
     CHECK(script.find("a.color = p.color * lerp(")!=std::string::npos);
     CHECK(script.find("a.identity = uint4(instance, p.range.z, birth.sequence, 1u)")!=std::string::npos);
@@ -58,7 +58,7 @@ TEST_CASE("Particle authoring source writers preserve curves gradients renderer 
     const auto system=mir::ReadParticleEffectSource(mir::WriteParticleEffectSource(effect,paths),"assets");
     REQUIRE(system.mEffect);
     CHECK(system.mEmitterPaths==paths);
-    emitter.updateModules[2].parameters[7]=2;
+    emitter.updateBehaviors[2].parameters[7]=2;
     std::string error;
     CHECK_FALSE(mir::ValidateParticleEmitterAsset(emitter,error));
     CHECK(mir::EvaluateParticleCurve(1,3,5,0.25f)==2);

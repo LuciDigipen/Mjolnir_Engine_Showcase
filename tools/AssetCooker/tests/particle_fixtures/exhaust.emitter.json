@@ -1,17 +1,17 @@
 {
-    "version": 1,
+    "version": 2,
     "target": "gpu",
     "lifetime": 2,
     "spawnRate": 60,
     "capacity": 256,
     "texture": "checker.png",
-    "spawnModules": [
+    "spawnBehaviors": [
         {
             "name": "Initialize",
             "parameters": []
         }
     ],
-    "updateModules": [
+    "updateBehaviors": [
         {
             "name": "Age",
             "parameters": []

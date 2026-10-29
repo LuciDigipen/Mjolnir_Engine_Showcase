@@ -134,7 +134,7 @@ TEST_CASE("Particle emitter changes recook the dependent system graph", "[partic
     CHECK(result.value("assetsChanged", false));
     const auto oldManifest = mir::ReadBytes(fixture.out / mir::kAssetManifestFileName);
     std::ofstream(fixture.source / "exhaust.emitter.json") <<
-        R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":120,"capacity":256,"texture":"checker.png",
+        R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":120,"capacity":256,"texture":"checker.png",
             "renderer":{"size":0.2,"color":[1,0,0,0.25],"velocity":[0,2,0]}})";
     REQUIRE(fixture.Cook(fixture.source / "exhaust.emitter.json", resultPath) == 0);
     result = readResult();
@@ -181,7 +181,7 @@ TEST_CASE("Particle-only recook retains assets from other source roots", "[parti
     REQUIRE(manifest->Find(retained));
 
     std::ofstream(fixture.source / "exhaust.emitter.json") <<
-        R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":120,"capacity":256,"texture":"checker.png"})";
+        R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":120,"capacity":256,"texture":"checker.png"})";
     REQUIRE(args(true) == 0);
     manifest = mir::AssetManifest::LoadFile(fixture.out / mir::kAssetManifestFileName);
     REQUIRE(manifest);
@@ -226,7 +226,7 @@ TEST_CASE("Particle stacks share scripts and changed stacks replace dependencies
     CHECK(reverted->Count() == 6);
 }
 
-TEST_CASE("Invalid particle module stacks retain the previous manifest", "[particles][cooker]")
+TEST_CASE("Invalid particle behavior stacks retain the previous manifest", "[particles][cooker]")
 {
     CookFixture fixture;
     REQUIRE(fixture.Cook() == 0);
@@ -234,13 +234,13 @@ TEST_CASE("Invalid particle module stacks retain the previous manifest", "[parti
     std::ifstream input(fixture.source / "exhaust.emitter.json");
     const auto source = nlohmann::json::parse(input);
     input.close();
-    for (const auto &modules : {
+    for (const auto &behaviors : {
         nlohmann::json::parse(R"([{"name":"Unknown"}])"),
         nlohmann::json::parse(R"([{"name":"Initialize"}])"),
         nlohmann::json::parse(R"([{"name":"Acceleration","parameters":[1,2]}])")})
     {
         auto changed = source;
-        changed["updateModules"] = modules;
+        changed["updateBehaviors"] = behaviors;
         std::ofstream(fixture.source / "exhaust.emitter.json") << changed.dump();
         CHECK(fixture.Cook(fixture.source / "exhaust.emitter.json") != 0);
         CHECK(mir::ReadBytes(fixture.out / mir::kAssetManifestFileName) == previous);
@@ -252,14 +252,14 @@ TEST_CASE("Invalid particle module stacks retain the previous manifest", "[parti
     CHECK(mir::ReadBytes(fixture.out / mir::kAssetManifestFileName) == previous);
 }
 
-TEST_CASE("Particle cooker compiles moving exhaust modules and shares scripts across motion inputs", "[particles][cooker]")
+TEST_CASE("Particle cooker compiles moving exhaust behaviors and shares scripts across motion inputs", "[particles][cooker]")
 {
     CookFixture fixture;
-    const auto emitter = nlohmann::json::parse(R"({"version":1,"target":"gpu","lifetime":3,"spawnRate":90,"capacity":512,
+    const auto emitter = nlohmann::json::parse(R"({"version":2,"target":"gpu","lifetime":3,"spawnRate":90,"capacity":512,
         "texture":"checker.png","localOffset":[-1,0,0],"spawnPerMeter":12,"burst":8,"seed":99,
         "inheritVelocity":0.8,"teleportDistance":150,
-        "spawnModules":[{"name":"Initialize"},{"name":"VelocityVariation","parameters":[0.2,0.3,0.4]}],
-        "updateModules":[{"name":"Age"},{"name":"Drag","parameters":[0.4]},{"name":"Integrate"},
+        "spawnBehaviors":[{"name":"Initialize"},{"name":"VelocityVariation","parameters":[0.2,0.3,0.4]}],
+        "updateBehaviors":[{"name":"Age"},{"name":"Drag","parameters":[0.4]},{"name":"Integrate"},
             {"name":"SizeOverLife","parameters":[2]},{"name":"FadeOverLife","parameters":[0]},
             {"name":"Flipbook","parameters":[2,2,12]}]})");
     std::ofstream(fixture.source / "exhaust.emitter.json") << emitter.dump();
@@ -320,10 +320,10 @@ TEST_CASE("CPU ribbon stacks cook and load without GPU script dependencies", "[p
 {
     CookFixture fixture;
     std::ofstream(fixture.source / "exhaust.emitter.json") << R"({
-        "version":1,"target":"cpu","lifetime":30,"spawnRate":0,"spawnPerMeter":0.5,
+        "version":2,"target":"cpu","lifetime":30,"spawnRate":0,"spawnPerMeter":0.5,
         "capacity":512,"texture":"checker.png",
-        "spawnModules":[{"name":"RibbonSpawn","parameters":[0.25]}],
-        "updateModules":[{"name":"RibbonAge"},{"name":"RibbonWind"},
+        "spawnBehaviors":[{"name":"RibbonSpawn","parameters":[0.25]}],
+        "updateBehaviors":[{"name":"RibbonAge"},{"name":"RibbonWind"},
             {"name":"RibbonWidth","parameters":[8]},{"name":"RibbonFade"}]})";
     REQUIRE(fixture.Cook() == 0);
     auto manifest = mir::AssetManifest::LoadFile(fixture.out / mir::kAssetManifestFileName);
@@ -336,5 +336,5 @@ TEST_CASE("CPU ribbon stacks cook and load without GPU script dependencies", "[p
     CHECK(emitter.simulationTarget == mir::ParticleSimulationTarget::CPU);
     CHECK(emitter.script.IsNull());
     CHECK(emitter.scriptCode.empty());
-    CHECK(emitter.updateModules[2].parameters[0] == 8);
+    CHECK(emitter.updateBehaviors[2].parameters[0] == 8);
 }

@@ -101,38 +101,38 @@ namespace mir
     void ParticleEditorPanel::DrawStack(bool spawn)
     {
         auto &definition = *mEmitter;
-        auto &stack = spawn ? definition.spawnModules : definition.updateModules;
+        auto &stack = spawn ? definition.spawnBehaviors : definition.updateBehaviors;
         ImGui::PushID(spawn ? "spawn" : "update");
         ImGui::TextUnformatted(spawn ? "Spawn stack" : "Update stack");
         for (size_t i = 0; i < stack.size(); ++i)
         {
             ImGui::PushID(static_cast<int>(i));
-            auto &module = stack[i];
-            const auto infos = ParticleModules();
+            auto &behavior = stack[i];
+            const auto infos = ParticleBehaviors();
             const auto info = std::find_if(infos.begin(), infos.end(), [&](const auto &entry)
                 {
-                    return entry.name == module.name && entry.spawn == spawn && entry.target == definition.simulationTarget;
+                    return entry.name == behavior.name && entry.spawn == spawn && entry.target == definition.simulationTarget;
                 });
-            const bool expanded = ImGui::TreeNodeEx(module.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
+            const bool expanded = ImGui::TreeNodeEx(behavior.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
             if (expanded)
             {
-                if (module.name == "ColorGradient" || module.name == "RibbonColorGradient")
+                if (behavior.name == "ColorGradient" || behavior.name == "RibbonColorGradient")
                 {
-                    mDirtyEmitter |= ImGui::ColorEdit4("Start color", module.parameters.data(), ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_Float);
-                    mDirtyEmitter |= ImGui::ColorEdit4("End color", module.parameters.data()+4, ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_Float);
+                    mDirtyEmitter |= ImGui::ColorEdit4("Start color", behavior.parameters.data(), ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_Float);
+                    mDirtyEmitter |= ImGui::ColorEdit4("End color", behavior.parameters.data()+4, ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_Float);
                 }
                 else
                 {
-                    for (size_t p = 0; p < module.parameters.size(); ++p)
+                    for (size_t p = 0; p < behavior.parameters.size(); ++p)
                     {
                         const std::string label = info != infos.end() && p < info->parameters.size() ?
                             std::string(info->parameters.begin()[p].name) : "Parameter " + std::to_string(p);
-                        mDirtyEmitter |= ImGui::DragFloat(label.c_str(), &module.parameters[p], 0.02f);
+                        mDirtyEmitter |= ImGui::DragFloat(label.c_str(), &behavior.parameters[p], 0.02f);
                     }
-                    if (module.name == "SizeCurve" || module.name == "RibbonWidthCurve")
+                    if (behavior.name == "SizeCurve" || behavior.name == "RibbonWidthCurve")
                     {
                         float samples[64];
-                        for (int p = 0; p < 64; ++p) samples[p] = EvaluateParticleCurve(module.parameters[0], module.parameters[1], module.parameters[2], p/63.0f);
+                        for (int p = 0; p < 64; ++p) samples[p] = EvaluateParticleCurve(behavior.parameters[0], behavior.parameters[1], behavior.parameters[2], p/63.0f);
                         ImGui::PlotLines("Normalized life", samples, 64, 0, nullptr, 0, *std::max_element(samples, samples+64)+0.1f, ImVec2(0, 65));
                     }
                 }
@@ -150,14 +150,14 @@ namespace mir
             }
             ImGui::PopID();
         }
-        if (definition.simulationTarget == ParticleSimulationTarget::GPU && stack.size() < 32 && ImGui::BeginCombo("Add module", "Select operation"))
+        if (definition.simulationTarget == ParticleSimulationTarget::GPU && stack.size() < 32 && ImGui::BeginCombo("Add behavior", "Select operation"))
         {
-            for (const auto &info : ParticleModules())
+            for (const auto &info : ParticleBehaviors())
                 if (info.target == definition.simulationTarget && info.spawn == spawn && ImGui::Selectable(std::string(info.name).c_str()))
                 {
-                    ParticleBehavior module{ std::string(info.name),{} };
-                    for (const auto &parameter : info.parameters) module.parameters.push_back(parameter.defaultValue);
-                    stack.push_back(std::move(module)); mDirtyEmitter = true;
+                    ParticleBehavior behavior{ std::string(info.name),{} };
+                    for (const auto &parameter : info.parameters) behavior.parameters.push_back(parameter.defaultValue);
+                    stack.push_back(std::move(behavior)); mDirtyEmitter = true;
                 }
             ImGui::EndCombo();
         }
@@ -193,16 +193,16 @@ namespace mir
         mDirtyEmitter |= ImGui::ColorEdit4("Base color", &e.color.x, ImGuiColorEditFlags_HDR|ImGuiColorEditFlags_Float);
         if (e.simulationTarget == ParticleSimulationTarget::CPU)
         {
-            bool curve = e.updateModules[2].name == "RibbonWidthCurve";
+            bool curve = e.updateBehaviors[2].name == "RibbonWidthCurve";
             if (ImGui::Checkbox("Width curve", &curve))
             {
-                e.updateModules[2] = curve ? ParticleBehavior{ "RibbonWidthCurve",{ 1,2,4 } } : ParticleBehavior{ "RibbonWidth",{ 4 } };mDirtyEmitter = true;
+                e.updateBehaviors[2] = curve ? ParticleBehavior{ "RibbonWidthCurve",{ 1,2,4 } } : ParticleBehavior{ "RibbonWidth",{ 4 } };mDirtyEmitter = true;
             }
-            bool gradient = e.updateModules.size()==5;
+            bool gradient = e.updateBehaviors.size()==5;
             if (ImGui::Checkbox("Color gradient", &gradient))
             {
-                if (gradient) e.updateModules.insert(e.updateModules.end()-1, { "RibbonColorGradient",{ 1,1,1,1,1,1,1,1 } });
-                else e.updateModules.erase(e.updateModules.begin()+3);
+                if (gradient) e.updateBehaviors.insert(e.updateBehaviors.end()-1, { "RibbonColorGradient",{ 1,1,1,1,1,1,1,1 } });
+                else e.updateBehaviors.erase(e.updateBehaviors.begin()+3);
                 mDirtyEmitter = true;
             }
         }

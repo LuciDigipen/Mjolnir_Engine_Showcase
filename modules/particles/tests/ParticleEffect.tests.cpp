@@ -42,7 +42,7 @@ TEST_CASE("Particle system source cooks emitter references and user parameter de
 TEST_CASE("Particle emitter source cooks renderer properties and a typed texture reference", "[particles]")
 {
     const auto source = mir::ReadParticleEmitterSource(
-        R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"textures/white.png",
+        R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"textures/white.png",
             "renderer":{"size":0.25,"color":[1,0.5,0.25,0.5],"velocity":[0,2,0]}})", "assets");
     REQUIRE(source.mEmitter);
     CHECK(source.mEmitter->texture == mir::test::ParticleTestAssets::TextureId());
@@ -91,22 +91,22 @@ TEST_CASE("Particle emitter source rejects unsafe paths invalid targets and malf
 {
     for (const std::string_view source : {
         "[]", "{bad", "{}",
-            R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"textures/white.png"})",
-            R"({"version":1,"target":"other","lifetime":2,"spawnRate":60,"capacity":256,"texture":"textures/white.png"})",
-            R"({"version":1,"target":"gpu","lifetime":-1,"spawnRate":60,"capacity":256,"texture":"textures/white.png"})",
-            R"({"version":1,"target":"gpu","lifetime":121,"spawnRate":60,"capacity":256,"texture":"textures/white.png"})",
-            R"({"version":1,"target":"gpu","lifetime":1e100,"spawnRate":60,"capacity":256,"texture":"textures/white.png"})",
-            R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":-1,"capacity":256,"texture":"textures/white.png"})",
-            R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":1.5,"texture":"textures/white.png"})",
-            R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":65537,"texture":"textures/white.png"})",
-            R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"../outside.png"})",
-            R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"C:/outside.png"})",
-            R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","typo":1})",
-            R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","renderer":{"size":0}})",
-            R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","renderer":{"color":[1,1,1,2]}})",
-            R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","renderer":{"velocity":[0,1]}})",
-            R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","renderer":{"velocity":[0,1e100,0]}})",
-            R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","renderer":{"typo":1}})"})
+            R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"textures/white.png"})",
+            R"({"version":2,"target":"other","lifetime":2,"spawnRate":60,"capacity":256,"texture":"textures/white.png"})",
+            R"({"version":2,"target":"gpu","lifetime":-1,"spawnRate":60,"capacity":256,"texture":"textures/white.png"})",
+            R"({"version":2,"target":"gpu","lifetime":121,"spawnRate":60,"capacity":256,"texture":"textures/white.png"})",
+            R"({"version":2,"target":"gpu","lifetime":1e100,"spawnRate":60,"capacity":256,"texture":"textures/white.png"})",
+            R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":-1,"capacity":256,"texture":"textures/white.png"})",
+            R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":1.5,"texture":"textures/white.png"})",
+            R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":65537,"texture":"textures/white.png"})",
+            R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"../outside.png"})",
+            R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"C:/outside.png"})",
+            R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","typo":1})",
+            R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","renderer":{"size":0}})",
+            R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","renderer":{"color":[1,1,1,2]}})",
+            R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","renderer":{"velocity":[0,1]}})",
+            R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","renderer":{"velocity":[0,1e100,0]}})",
+            R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","renderer":{"typo":1}})"})
     {
         const auto result = mir::ReadParticleEmitterSource(source, "assets");
         CHECK_FALSE(result.mEmitter);
@@ -198,21 +198,21 @@ TEST_CASE("Particle loading resolves typed emitter and texture dependencies atom
     }
 }
 
-TEST_CASE("Particle module stacks reject unknown modules unsupported stages targets and parameters", "[particles]")
+TEST_CASE("Particle behavior stacks reject unknown behaviors unsupported stages targets and parameters", "[particles]")
 {
     for (const std::string_view fields : {
-        R"("spawnModules":[{"name":"Unknown"}])",
-            R"("spawnModules":[{"name":"Integrate"}])",
-            R"("updateModules":[{"name":"Initialize"}])",
-            R"("updateModules":[{"name":"Age","parameters":[1]}])",
-            R"("updateModules":[{"name":"Acceleration","parameters":[1,2]}])",
-            R"("updateModules":[{"name":"Acceleration","parameters":[1,2,1e100]}])",
-            R"("updateModules":[{"name":"Acceleration","parameters":[1,"2",3]}])",
-            R"("updateModules":[{"name":"Age","typo":0}])",
-            R"("updateModules":[{"parameters":[]}])",
-            R"("updateModules":{})"})
+        R"("spawnBehaviors":[{"name":"Unknown"}])",
+            R"("spawnBehaviors":[{"name":"Integrate"}])",
+            R"("updateBehaviors":[{"name":"Initialize"}])",
+            R"("updateBehaviors":[{"name":"Age","parameters":[1]}])",
+            R"("updateBehaviors":[{"name":"Acceleration","parameters":[1,2]}])",
+            R"("updateBehaviors":[{"name":"Acceleration","parameters":[1,2,1e100]}])",
+            R"("updateBehaviors":[{"name":"Acceleration","parameters":[1,"2",3]}])",
+            R"("updateBehaviors":[{"name":"Age","typo":0}])",
+            R"("updateBehaviors":[{"parameters":[]}])",
+            R"("updateBehaviors":{})"})
     {
-        const auto text = std::string(R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png",)") +
+        const auto text = std::string(R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png",)") +
             std::string(fields) + "}";
         const auto result = mir::ReadParticleEmitterSource(text, "assets");
         INFO(text);
@@ -220,30 +220,30 @@ TEST_CASE("Particle module stacks reject unknown modules unsupported stages targ
         CHECK_FALSE(result.mError.empty());
     }
     const auto cpu = mir::ReadParticleEmitterSource(
-        R"({"version":1,"target":"cpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","updateModules":[{"name":"Age"}]})", "assets");
+        R"({"version":2,"target":"cpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","updateBehaviors":[{"name":"Age"}]})", "assets");
     CHECK_FALSE(cpu.mEmitter);
     mir::ParticleEmitterAsset emitter;
     emitter.texture = mir::MakeAssetId("assets/x.png");
-    emitter.updateModules = { { "Acceleration",{ 0, std::numeric_limits<float>::infinity(), 0 } } };
+    emitter.updateBehaviors = { { "Acceleration",{ 0, std::numeric_limits<float>::infinity(), 0 } } };
     std::string error;
     CHECK_FALSE(mir::ValidateParticleEmitterAsset(emitter, error));
 }
 
-TEST_CASE("Particle module stack order survives cooking and determines generated execution order", "[particles]")
+TEST_CASE("Particle behavior stack order survives cooking and determines generated execution order", "[particles]")
 {
     const auto parsed = mir::ReadParticleEmitterSource(
-        R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png",
-            "spawnModules":[{"name":"Initialize"}],
-            "updateModules":[{"name":"Acceleration","parameters":[0,-9.8,0]},{"name":"Integrate"},{"name":"Age"}]})", "assets");
+        R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png",
+            "spawnBehaviors":[{"name":"Initialize"}],
+            "updateBehaviors":[{"name":"Acceleration","parameters":[0,-9.8,0]},{"name":"Integrate"},{"name":"Age"}]})", "assets");
     REQUIRE(parsed.mEmitter);
     const auto bytes = mir::BuildParticleEmitterAsset(*parsed.mEmitter);
     const auto cooked = mir::ReadParticleEmitterAsset(*mir::ParseAssetBlob(bytes));
     REQUIRE(cooked.mEmitter);
-    REQUIRE(cooked.mEmitter->updateModules.size() == 3);
-    CHECK(cooked.mEmitter->updateModules[0].name == "Acceleration");
-    CHECK(cooked.mEmitter->updateModules[0].parameters == (std::vector<float>{0, -9.8f, 0}));
-    CHECK(cooked.mEmitter->updateModules[1].name == "Integrate");
-    CHECK(cooked.mEmitter->updateModules[2].name == "Age");
+    REQUIRE(cooked.mEmitter->updateBehaviors.size() == 3);
+    CHECK(cooked.mEmitter->updateBehaviors[0].name == "Acceleration");
+    CHECK(cooked.mEmitter->updateBehaviors[0].parameters == (std::vector<float>{0, -9.8f, 0}));
+    CHECK(cooked.mEmitter->updateBehaviors[1].name == "Integrate");
+    CHECK(cooked.mEmitter->updateBehaviors[2].name == "Age");
     const auto source = mir::GenerateParticleScript(*cooked.mEmitter);
     const auto acceleration = source.find("a.velocityLifetime.xyz +=");
     const auto integrate = source.find("a.positionAge.xyz +=");
@@ -254,7 +254,7 @@ TEST_CASE("Particle module stack order survives cooking and determines generated
     CHECK(acceleration < integrate);
     CHECK(integrate < age);
     auto reversed = *cooked.mEmitter;
-    std::swap(reversed.updateModules[0], reversed.updateModules[2]);
+    std::swap(reversed.updateBehaviors[0], reversed.updateBehaviors[2]);
     const auto changed = mir::GenerateParticleScript(reversed);
     CHECK(changed != source);
     CHECK(changed.find("a.positionAge.w +=") < changed.find("a.velocityLifetime.xyz +="));
@@ -273,7 +273,7 @@ TEST_CASE("Identical particle stacks share generated code independently of emitt
     second.color = { 0.5f, 0.5f, 0.5f, 0.5f };
     second.velocity = { 1, 2, 3 };
     CHECK(mir::GenerateParticleScript(first) == mir::GenerateParticleScript(second));
-    second.updateModules.push_back({ "Acceleration",{ 0, -1, 0 } });
+    second.updateBehaviors.push_back({ "Acceleration",{ 0, -1, 0 } });
     CHECK(mir::GenerateParticleScript(first) != mir::GenerateParticleScript(second));
 }
 
@@ -306,7 +306,7 @@ TEST_CASE("Particle blob readers reject malformed type version and asset framing
 TEST_CASE("Particle motion inputs and wind survive source and cooked roundtrips", "[particles]")
 {
     const auto source = mir::ReadParticleEmitterSource(
-        R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":30,"capacity":256,"texture":"x.png",
+        R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":30,"capacity":256,"texture":"x.png",
             "localOffset":[-2,0.5,1],"spawnPerMeter":8.5,"burst":12,"seed":4294967295,
             "inheritVelocity":0.75,"teleportDistance":150})", "assets");
     REQUIRE(source.mEmitter);
@@ -350,7 +350,7 @@ TEST_CASE("Particle motion sources reject malformed values before cooking", "[pa
             R"("inheritVelocity":-1)", R"("inheritVelocity":17)", R"("inheritVelocity":1e100)",
             R"("teleportDistance":0)", R"("teleportDistance":65537)", R"("teleportDistance":null)"})
     {
-        const auto text = std::string(R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png",)") +
+        const auto text = std::string(R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png",)") +
             std::string(fields) + "}";
         INFO(text);
         const auto result = mir::ReadParticleEmitterSource(text, "assets");
@@ -366,12 +366,12 @@ TEST_CASE("Particle motion sources reject malformed values before cooking", "[pa
     }
 }
 
-TEST_CASE("Particle motion modules validate declared stages targets and numeric bounds", "[particles]")
+TEST_CASE("Particle motion behaviors validate declared stages targets and numeric bounds", "[particles]")
 {
     mir::ParticleEmitterAsset valid;
     valid.texture = mir::MakeAssetId("assets/x.png");
-    valid.spawnModules = { { "Initialize",{} },{ "VelocityVariation",{ 1, 2, 3 } } };
-    valid.updateModules = { { "Age",{} },{ "Drag",{ 2 } },{ "Integrate",{} },
+    valid.spawnBehaviors = { { "Initialize",{} },{ "VelocityVariation",{ 1, 2, 3 } } };
+    valid.updateBehaviors = { { "Age",{} },{ "Drag",{ 2 } },{ "Integrate",{} },
         { "SizeOverLife",{ 3 } },{ "FadeOverLife",{ 0 } },{ "Flipbook",{ 4, 2, 24 } } };
     std::string error;
     REQUIRE(mir::ValidateParticleEmitterAsset(valid, error));
@@ -384,7 +384,7 @@ TEST_CASE("Particle motion modules validate declared stages targets and numeric 
     CHECK(source.find("UpdateParticle(a, p, birth.age)") != std::string::npos);
     CHECK(source.find("a.positionAge.xyz += p.tileDelta.xyz") != std::string::npos);
 
-    for (const mir::ParticleBehavior &module : std::vector<mir::ParticleBehavior>{
+    for (const mir::ParticleBehavior &behavior : std::vector<mir::ParticleBehavior>{
         { "Drag",{ -1 } },{ "Drag",{ 10001 } },{ "Drag",{} },
         { "SizeOverLife",{ -1 } },{ "SizeOverLife",{ 65 } },{ "FadeOverLife",{ -0.1f } },{ "FadeOverLife",{ 1.1f } },
         { "Flipbook",{ 0, 1, 24 } },{ "Flipbook",{ 1.5f, 2, 24 } },{ "Flipbook",{ 1, 65, 24 } },
@@ -392,38 +392,38 @@ TEST_CASE("Particle motion modules validate declared stages targets and numeric 
         { "VelocityVariation",{ 1, 2, 3 } } })
     {
         auto changed = valid;
-        changed.updateModules = { module };
-        INFO(module.name);
+        changed.updateBehaviors = { behavior };
+        INFO(behavior.name);
         CHECK_FALSE(mir::ValidateParticleEmitterAsset(changed, error));
     }
-    for (const mir::ParticleBehavior &module : std::vector<mir::ParticleBehavior>{
+    for (const mir::ParticleBehavior &behavior : std::vector<mir::ParticleBehavior>{
         { "VelocityVariation",{ -1, 0, 0 } },{ "VelocityVariation",{ 0, 4097, 0 } },
         { "VelocityVariation",{ 0, 1 } },{ "VelocityVariation",{ 0, 1, std::numeric_limits<float>::infinity() } },
         { "Drag",{ 1 } },{ "SizeOverLife",{ 2 } },{ "FadeOverLife",{ 0 } },{ "Flipbook",{ 1, 1, 24 } } })
     {
         auto changed = valid;
-        changed.spawnModules = { module };
-        INFO(module.name);
+        changed.spawnBehaviors = { behavior };
+        INFO(behavior.name);
         CHECK_FALSE(mir::ValidateParticleEmitterAsset(changed, error));
     }
-    for (const auto &module : valid.updateModules)
+    for (const auto &behavior : valid.updateBehaviors)
     {
         auto cpu = valid;
         cpu.simulationTarget = mir::ParticleSimulationTarget::CPU;
-        cpu.spawnModules.clear();
-        cpu.updateModules = { module };
+        cpu.spawnBehaviors.clear();
+        cpu.updateBehaviors = { behavior };
         CHECK_FALSE(mir::ValidateParticleEmitterAsset(cpu, error));
     }
     auto cpu = valid;
     cpu.simulationTarget = mir::ParticleSimulationTarget::CPU;
-    cpu.updateModules.clear();
-    cpu.spawnModules = { { "VelocityVariation",{ 1, 2, 3 } } };
+    cpu.updateBehaviors.clear();
+    cpu.spawnBehaviors = { { "VelocityVariation",{ 1, 2, 3 } } };
     CHECK_FALSE(mir::ValidateParticleEmitterAsset(cpu, error));
 }
 
 TEST_CASE("Particle renderer properties roundtrip through source and cooked emitters", "[particles][rendering]")
 {
-    const auto source = mir::ReadParticleEmitterSource(R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":60,
+    const auto source = mir::ReadParticleEmitterSource(R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,
         "capacity":128,"texture":"x.png","renderer":{"alignment":"velocity","facing":"position",
         "blend":"additive","sort":"none","softDistance":1.5,"maxDistance":1200,"lighting":"sunAmbient",
         "fog":false,"textured":true}})", "assets");
@@ -440,7 +440,7 @@ TEST_CASE("Particle renderer schemas reject invalid choices and nonfinite distan
     for (const auto renderer:{ R"({"facing":"bad"})",R"({"alignment":true})",R"({"sort":0})",R"({"blend":"opaque"})",
         R"({"softDistance":-1})",R"({"maxDistance":0})",R"({"lighting":"pbr"})",R"({"fog":1})",R"({"textured":"yes"})" })
     {
-        const auto source = std::string(R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":128,"texture":"x.png","renderer":)")+
+        const auto source = std::string(R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":128,"texture":"x.png","renderer":)")+
             renderer+"}";
         CHECK_FALSE(mir::ReadParticleEmitterSource(source, "assets").mEmitter);
     }
@@ -453,34 +453,34 @@ TEST_CASE("Particle renderer schemas reject invalid choices and nonfinite distan
 
 namespace
 {
-    mir::ParticleEmitterAsset EmitterWith(const mir::ParticleModuleInfo &info, std::vector<float> values)
+    mir::ParticleEmitterAsset EmitterWith(const mir::ParticleBehaviorInfo &info, std::vector<float> values)
     {
         mir::ParticleEmitterAsset emitter;
         emitter.texture = mir::MakeAssetId("assets/x.png");
         emitter.simulationTarget = info.target;
-        const mir::ParticleBehavior module{ std::string(info.name), std::move(values) };
+        const mir::ParticleBehavior behavior{ std::string(info.name), std::move(values) };
         if (info.target == mir::ParticleSimulationTarget::GPU)
         {
-            (info.spawn ? emitter.spawnModules : emitter.updateModules) = { module };
+            (info.spawn ? emitter.spawnBehaviors : emitter.updateBehaviors) = { behavior };
             return emitter;
         }
-        // CPU modules are only legal inside the ribbon stack, so swap the module under test into it.
+        // CPU behaviors are only legal inside the ribbon stack, so swap the behavior under test into it.
         emitter.spawnRate = 0;
-        emitter.spawnModules = { { "RibbonSpawn",{ 0.25f } } };
-        emitter.updateModules = { { "RibbonAge",{} },{ "RibbonWind",{} },{ "RibbonWidth",{ 1 } },{ "RibbonFade",{} } };
-        if (module.name == "RibbonSpawn") emitter.spawnModules[0] = module;
-        else if (module.name == "RibbonAge") emitter.updateModules[0] = module;
-        else if (module.name == "RibbonWind") emitter.updateModules[1] = module;
-        else if (module.name == "RibbonWidth" || module.name == "RibbonWidthCurve") emitter.updateModules[2] = module;
-        else if (module.name == "RibbonColorGradient") emitter.updateModules.insert(emitter.updateModules.begin() + 3, module);
-        else emitter.updateModules[3] = module;
+        emitter.spawnBehaviors = { { "RibbonSpawn",{ 0.25f } } };
+        emitter.updateBehaviors = { { "RibbonAge",{} },{ "RibbonWind",{} },{ "RibbonWidth",{ 1 } },{ "RibbonFade",{} } };
+        if (behavior.name == "RibbonSpawn") emitter.spawnBehaviors[0] = behavior;
+        else if (behavior.name == "RibbonAge") emitter.updateBehaviors[0] = behavior;
+        else if (behavior.name == "RibbonWind") emitter.updateBehaviors[1] = behavior;
+        else if (behavior.name == "RibbonWidth" || behavior.name == "RibbonWidthCurve") emitter.updateBehaviors[2] = behavior;
+        else if (behavior.name == "RibbonColorGradient") emitter.updateBehaviors.insert(emitter.updateBehaviors.begin() + 3, behavior);
+        else emitter.updateBehaviors[3] = behavior;
         return emitter;
     }
 }
 
-TEST_CASE("Every registered particle module accepts its defaults and enforces its declared parameter ranges", "[particles]")
+TEST_CASE("Every registered particle behavior accepts its defaults and enforces its declared parameter ranges", "[particles]")
 {
-    for (const auto &info : mir::ParticleModules())
+    for (const auto &info : mir::ParticleBehaviors())
     {
         INFO(info.name);
         std::vector<float> defaults;

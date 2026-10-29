@@ -25,13 +25,13 @@ namespace mir
             glm::vec4 mColor,mDelta{0};
             Appearance(const ParticleEmitterAsset &definition,float scale)
             {
-                const auto &width=definition.updateModules[2];
+                const auto &width=definition.updateBehaviors[2];
                 mCurve=width.name=="RibbonWidthCurve";mSize=definition.size*scale;
                 mStart=mCurve?width.parameters[0]:1;mMiddle=mCurve?width.parameters[1]:1;mEnd=mCurve?width.parameters[2]:width.parameters[0];
                 mColor=definition.color;
-                if(definition.updateModules.size()==5)
+                if(definition.updateBehaviors.size()==5)
                 {
-                    const auto &p=definition.updateModules[3].parameters;
+                    const auto &p=definition.updateBehaviors[3].parameters;
                     const glm::vec4 first(p[0],p[1],p[2],p[3]),last(p[4],p[5],p[6],p[7]);
                     mDelta=definition.color*(last-first);mColor*=first;
                 }
@@ -79,7 +79,7 @@ namespace mir
         const double length = static_cast<double>(glm::length(delta));
         const double spacing = definition.spawnPerMeter * parameters.spawnRateScale > 0 ?
             1.0 / (definition.spawnPerMeter * parameters.spawnRateScale) : 1e30;
-        const double interval = definition.spawnModules[0].parameters[0] / std::max(0.0001f, parameters.spawnRateScale);
+        const double interval = definition.spawnBehaviors[0].parameters[0] / std::max(0.0001f, parameters.spawnRateScale);
         auto birth = [&](double fraction)
         {
             if (!budget)

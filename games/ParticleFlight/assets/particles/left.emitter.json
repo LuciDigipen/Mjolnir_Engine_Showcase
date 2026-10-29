@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "target": "gpu",
   "lifetime": 3,
   "spawnRate": 60,
@@ -35,7 +35,7 @@
     "maxDistance": 4000,
     "fog": true
   },
-  "spawnModules": [
+  "spawnBehaviors": [
     {
       "name": "Initialize"
     },
@@ -48,7 +48,7 @@
       ]
     }
   ],
-  "updateModules": [
+  "updateBehaviors": [
     {
       "name": "Age"
     },
