@@ -324,6 +324,29 @@ TEST_CASE("SaveScene then LoadScene round-trips an EntityRef field", "[scene]")
     CHECK(resolved == loadedTarget);
 }
 
+TEST_CASE("SaveScene then LoadScene round-trips an EntityRef to its own entity", "[scene]")
+{
+    mir::RegisterCoreComponents();
+    const ComponentOps &sceneRefOps = SceneRefOps();
+
+    World world;
+    LoadedScene scene = NewScene("test");
+    Entity referrer = CreateSceneEntity(world, scene);
+    sceneRefOps.AddDefault(world, referrer);
+    sceneRefOps.FindField("target")->Write(sceneRefOps.GetComponent(world, referrer), &referrer);
+
+    TempSceneDir dir("entity_ref_self");
+    REQUIRE(mir::SaveScene(world, dir.mPath, scene));
+
+    World loadedWorld;
+    LoadedScene loaded = mir::LoadScene(loadedWorld, dir.mPath);
+    Entity loadedReferrer = loaded.mEntities.at(1);
+
+    Entity resolved{};
+    sceneRefOps.FindField("target")->Read(sceneRefOps.GetComponent(loadedWorld, loadedReferrer), &resolved);
+    CHECK(resolved == loadedReferrer);
+}
+
 TEST_CASE("SaveScene writes an unset EntityRef as kNullStableId, and it loads back null", "[scene]")
 {
     mir::RegisterCoreComponents();

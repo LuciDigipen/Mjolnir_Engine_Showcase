@@ -113,6 +113,7 @@ namespace mir
                 const std::optional<Entity> dropped = active != nullptr
                     ? DecodeEntityDragPayload(*active) : std::nullopt;
                 // Validate before accepting so malformed or dead handles never highlight.
+                // The inspected entity itself is a valid target; it saves by id like any other in-scene ref.
                 if (dropped && world.IsAlive(*dropped))
                 {
                     if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kEntityPayload,
@@ -623,7 +624,11 @@ namespace mir
         EndEditIfReleased(history);
         // Keep the inspected entity stable throughout this draw, including later components.
         if (world.IsAlive(selectAfterDraw))
-            ApplyClick(world.Resource<Selection>(), selectAfterDraw, false);
+        {
+            Selection &selection = world.Resource<Selection>();
+            ApplyClick(selection, selectAfterDraw, false);
+            selection.mReveal = selectAfterDraw;
+        }
     }
 
     void InspectorPanel::EndEditIfReleased(History &history)
