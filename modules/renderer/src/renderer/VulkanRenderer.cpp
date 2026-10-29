@@ -8,6 +8,7 @@
  */
 #include <renderer/VulkanRenderer.h>
 #include "vulkan/CameraBuffer.h"
+#include "vulkan/DebugDraw.h"
 #include "vulkan/Device.h"
 #include "vulkan/FrameCapture.h"
 #include "vulkan/FrameSync.h"
@@ -49,6 +50,7 @@ namespace mir
         mPostProcessing(std::make_unique<vk::PostProcessingStack>()),
         mCapture(std::make_unique<vk::FrameCapture>()),
         mImGuiOverlay(std::make_unique<vk::ImGuiOverlay>()),
+        mDebugDraw(std::make_unique<vk::DebugDraw>()),
         mMeshUploads(std::make_unique<vk::MeshUploader>())
     {}
     VulkanRenderer::~VulkanRenderer() = default;
@@ -56,6 +58,8 @@ namespace mir
     bool VulkanRenderer::RayTracingSupported() const { return mDevice->RayTracingSupported(); }
 
     bool VulkanRenderer::RayTracingActive(bool requested) const { return requested && RayTracingSupported(); }
+
+    bool VulkanRenderer::WireframeAvailable() const { return mDebugDraw->Available(); }
 
     bool VulkanRenderer::DlssAvailable() const { return mPostProcessing->DlssAvailable(); }
 
@@ -119,8 +123,11 @@ namespace mir
             mDdgi->Initialize(*mDevice, mRayTracer->SceneLayout(), mCameraBuffer->SetLayout());
 #endif
 
-        return mPostProcessing->Initialize(*mDevice, mSwapchain->Format(), mSwapchain->Extent(),
-            mCameraBuffer->SetLayout());
+        if (!mPostProcessing->Initialize(*mDevice, mSwapchain->Format(), mSwapchain->Extent(),
+            mCameraBuffer->SetLayout()))
+            return false;
+
+        return mDebugDraw->Initialize(*mDevice, mSwapchain->Format());
     }
 
     bool VulkanRenderer::RecreateSwapchain()
@@ -152,6 +159,7 @@ namespace mir
 
             mMeshUploads->Shutdown(*mRayTracer);
 
+            mDebugDraw->Shutdown();
             mPostProcessing->Shutdown();
             mRasterSurfaces->Shutdown();
             mSsgiTrace->Shutdown();

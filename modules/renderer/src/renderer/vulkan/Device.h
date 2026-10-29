@@ -50,6 +50,9 @@ namespace mir::vk
 
         bool NgxSupported() const { return mNgxSupported; }
 
+        // line polygon mode, for the editor's wireframe view
+        bool FillModeNonSolidSupported() const { return mFillModeNonSolidSupported; }
+
         struct MemoryBudget
         {
             uint64_t mUsageBytes = 0;
@@ -100,6 +103,7 @@ namespace mir::vk
         VmaAllocator mAllocator = VK_NULL_HANDLE;
 
         bool mRayTracingSupported = false;
+        bool mFillModeNonSolidSupported = false;
         VkPhysicalDeviceRayTracingPipelinePropertiesKHR mRtProperties{};
 
         bool mNgxSupported = false;

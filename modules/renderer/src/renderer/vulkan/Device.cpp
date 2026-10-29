@@ -576,6 +576,10 @@ namespace mir::vk
 
         mMemoryBudgetSupported = HasDeviceExtension(mPhysical, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
 
+        VkPhysicalDeviceFeatures coreFeatures{};
+        vkGetPhysicalDeviceFeatures(mPhysical, &coreFeatures);
+        mFillModeNonSolidSupported = coreFeatures.fillModeNonSolid == VK_TRUE;
+
     #if MIR_WITH_DLSS
         mNgxDeviceExtensions.clear();
         mNgxSupported = mRayTracingSupported && mNgxInstanceExtensionsSupported &&
@@ -695,7 +699,8 @@ namespace mir::vk
         VkPhysicalDeviceFeatures2 features{
             .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
             .pNext = rtOrCoreChain,
-            .features{ .imageCubeArray = VK_TRUE } };
+            .features{ .imageCubeArray = VK_TRUE,
+                       .fillModeNonSolid = mFillModeNonSolidSupported ? VK_TRUE : VK_FALSE } };
 
         const VkDeviceCreateInfo deviceInfo{
             .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,

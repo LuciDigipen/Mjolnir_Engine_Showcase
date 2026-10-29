@@ -71,6 +71,7 @@ target_sources(engine_renderer PRIVATE
     src/renderer/VulkanRendererFrame.cpp
     src/renderer/vulkan/Bloom.cpp
     src/renderer/vulkan/CameraBuffer.cpp
+    src/renderer/vulkan/DebugDraw.cpp
     src/renderer/vulkan/DepthOfField.cpp
     src/renderer/vulkan/Device.cpp
     src/renderer/vulkan/FrameCapture.cpp

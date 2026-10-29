@@ -59,6 +59,7 @@ namespace mir::vk
     class FrameCapture;
     class ImGuiOverlay;
     class MeshUploader;
+    class DebugDraw;
 }
 
 namespace mir
@@ -245,6 +246,9 @@ namespace mir
         // the one flag AA mode clamping and the panel must agree with dispatch on.
         bool RayTracingActive(bool requested) const;
 
+        // false: the GPU cannot draw lines, and the Wireframe view shows the shaded scene
+        bool WireframeAvailable() const;
+
         // NGX support and a Ray Reconstruction feature that hasn't failed. Goes false for good
         // after an init/resize/evaluate failure, so Dlss stops being offered or selected.
         bool DlssAvailable() const;
@@ -306,6 +310,11 @@ namespace mir
         void RecordRtFrame(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views);
 
         void RecordCommands(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views);
+        // Called inside the composite pass, after the composite and before ImGui: when a view
+        // has a debug view on, ends that pass, draws the debug lines and begins the ImGui pass again.
+        // sceneDepth is the raster path's depth image, null on the ray-traced path.
+        void RecordDebugViews(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views,
+            VkImage sceneDepth, VkImageView sceneDepthView);
         enum class RasterPass { Scene, Opaque, Surface, Transparent };
         uint32_t RecordView(VkCommandBuffer cmd, const RenderView &view, uint32_t viewIndex,
             RasterPass pass = RasterPass::Scene, uint32_t cameraOffset = 0);
@@ -348,6 +357,8 @@ namespace mir
         std::unique_ptr<vk::FrameCapture> mCapture;
 
         std::unique_ptr<vk::ImGuiOverlay> mImGuiOverlay;
+
+        std::unique_ptr<vk::DebugDraw> mDebugDraw;
 
         std::unique_ptr<vk::MeshUploader> mMeshUploads;
 

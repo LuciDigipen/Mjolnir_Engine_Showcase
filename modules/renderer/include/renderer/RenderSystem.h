@@ -493,8 +493,18 @@ namespace mir
                 mWarnedSkippedItems = true;
             }
 
+            // Wireframe shows no shading, so it never pays for a trace
+            const bool wireframeOnly = mRenderViews.size() == 1 && mRenderer.WireframeAvailable() &&
+                mRenderViews.front().debugView.shading == ViewportShading::Wireframe;
+            // leaving or entering it swaps paths; temporal effects must not blend across the switch
+            if (wireframeOnly != mWasWireframeOnly)
+            {
+                mRenderer.ResetHistory();
+                mWasWireframeOnly = wireframeOnly;
+            }
+
             const bool traceable = mRenderer.RayTracingActive(renderSettings.rayTracing);
-            if (traceable && mRenderViews.size() == 1)
+            if (traceable && mRenderViews.size() == 1 && !wireframeOnly)
             {
                 mRayTracingItems.clear();
                 if (kRtxgiCompiledIn && renderSettings.ddgi.enabled)
@@ -569,6 +579,7 @@ namespace mir
         bool mWarnedNoActiveCamera = false;
         bool mWarnedNoRayTracing = false;
         bool mWarnedMultiViewRayTracing = false;
+        bool mWasWireframeOnly = false;
         bool mWarnedSkippedItems = false;
     };
 }
