@@ -400,31 +400,43 @@ namespace mir
         }
 
         
-        void DrawAuthoredActions(Edits &edits, const AuthoredKey &key, bool canRevert)
+        
+        void DrawAuthoredActions(Edits &edits, std::span<const AuthoredKey> keys, bool canRevert)
         {
             IAuthoredEntities &authored = *edits.mAuthored;
             if (ImGui::MenuItem("Revert", nullptr, false, canRevert))
-                edits.Submit(MakeRevertAuthoredCommand(authored, key));
+                edits.Submit(MakeRevertAuthoredCommand(authored, keys));
 
-            const std::vector<AuthoredApplyTarget> targets = authored.ApplyTargets(key);
+            const std::vector<AuthoredApplyTarget> targets = authored.ApplyTargets(keys.front());
             if (targets.empty() || !ImGui::BeginMenu("Apply to"))
                 return;
 
             for (std::size_t index = 0; index < targets.size(); ++index)
             {
-                const AuthoredAction apply = authored.Apply(key, index);
+                AuthoredAction apply;
+                for (const AuthoredKey &key : keys)
+                {
+                    apply = authored.Apply(key, index);
+                    if (!apply.mAllowed)
+                        break;
+                }
                 std::string label = targets[index].mLabel;
                 if (targets[index].mOverrides)
                     label += "  " ICON_FA_PEN;
 
                 ImGui::BeginDisabled(!apply.mAllowed);
                 if (ImGui::MenuItem(label.c_str()))
-                    edits.Submit(MakeApplyAuthoredCommand(authored, key, index));
+                    edits.Submit(MakeApplyAuthoredCommand(authored, keys, index));
                 ImGui::EndDisabled();
                 if (!apply.mAllowed)
                     ImGui::SetItemTooltip("%s", apply.mReason.c_str());
             }
             ImGui::EndMenu();
+        }
+
+        void DrawAuthoredActions(Edits &edits, const AuthoredKey &key, bool canRevert)
+        {
+            DrawAuthoredActions(edits, std::span<const AuthoredKey>(&key, 1), canRevert);
         }
 
         void PasteValues(World &world, const Clipboard &clipboard, Entity entity, Edits &edits)
@@ -533,17 +545,28 @@ namespace mir
                         if (bankField != nullptr)
                             bankField->Read(component, bank.mBytes);
 
-                        std::optional<AuthoredKey> fieldKey;
-                        AuthoredFieldState fieldState = AuthoredFieldState::Inherited;
+                        
+                        std::vector<AuthoredKey> fieldKeys;
+                        std::vector<AuthoredKey> overriddenKeys;
                         if (edits.mAuthored != nullptr)
                         {
-                            fieldKey = edits.mAuthored->KeyOf(entity, ops.mType.name, field.mName);
-                            if (fieldKey)
-                                fieldState = edits.mAuthored->FieldState(*fieldKey);
+                            for (const FieldDesc *keyed : { &field, bankField })
+                            {
+                                if (keyed == nullptr)
+                                    continue;
+                                const std::optional<AuthoredKey> key =
+                                    edits.mAuthored->KeyOf(entity, ops.mType.name, keyed->mName);
+                                if (!key)
+                                    break;
+                                fieldKeys.push_back(*key);
+                                if (edits.mAuthored->FieldState(*key) == AuthoredFieldState::Overridden)
+                                    overriddenKeys.push_back(*key);
+                            }
                         }
+                        const bool overridden = !overriddenKeys.empty();
 
                         std::string fieldLabel(field.mName);
-                        if (fieldState == AuthoredFieldState::Overridden)
+                        if (overridden)
                             fieldLabel += "  " ICON_FA_PEN;
 
                         const bool readOnly = field.ReadOnly();
@@ -572,10 +595,12 @@ namespace mir
                         }
                         ImGui::EndDisabled();
 
-                        if (fieldKey && ImGui::BeginPopupContextItem("##authored-field"))
+                        if (!fieldKeys.empty() && ImGui::BeginPopupContextItem("##authored-field"))
                         {
-                            DrawAuthoredActions(edits, *fieldKey,
-                                fieldState == AuthoredFieldState::Overridden);
+                            DrawAuthoredActions(edits,
+                                overridden ? std::span<const AuthoredKey>(overriddenKeys)
+                                           : std::span<const AuthoredKey>(fieldKeys).first(1),
+                                overridden);
                             ImGui::EndPopup();
                         }
 

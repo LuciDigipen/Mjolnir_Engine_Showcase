@@ -317,6 +317,10 @@ opens, so a bank regenerated while the editor runs shows up. A pick writes the
 event and, into the field `mBankField` names, its bank, as one Set fields
 command, so one undo takes back both; an emitter has no bank field. The
 `Soundtrack`'s bank field is `mHidden` and shows in the combo's preview instead.
+On a Prefab instance the event shows as overridden when either is, and its
+Revert and Apply to take both overridden keys as one command through the span
+overloads of `MakeRevertAuthoredCommand` and `MakeApplyAuthoredCommand`, refused
+whole if either is refused, so an event is never left with another's bank.
 
 A bank holds its events by ID only, so one without Wwise's `<bank>.json` beside
 it, such as `HelloWorld`'s `Test`, is listed with its events unknown and a box

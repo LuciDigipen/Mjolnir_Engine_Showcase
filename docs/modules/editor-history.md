@@ -109,7 +109,9 @@ Set fields is every field edit: one field from an Inspector widget, the one
 `Transform` channel a gizmo operation moves, the picked asset plus the fields its
 `mResetOnChange` clears, a picked sound event plus its `mBankField`, or every
 field Paste Values writes. Paste onto an entity
-that lacks the component is Add component with the copied values.
+that lacks the component is Add component with the copied values. Revert and
+Apply to Prefab take a span of keys as well, so that event and bank go back or
+across together, as one authored command, or not at all.
 
 `SubtreeRecord` is the remove and restore that Create, Delete and Duplicate
 share. Remove captures the subtree through `ISceneOps::Capture`, gives each
