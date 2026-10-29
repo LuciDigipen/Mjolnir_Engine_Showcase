@@ -175,6 +175,13 @@ namespace mir
         void SetAuthoringBackend(IAuthoringBackend *backend) { mHistory.SetAuthoringBackend(backend); }
         void SetAuthoredEntities(IAuthoredEntities *authored) { mAuthoredEntities = authored; }
 
+        // null = no Audio settings and no soundtrack picker
+        void SetAudio(IEditorAudio *audio)
+        {
+            mAudio = audio;
+            mInspectorPanel.SetAudio(audio);
+        }
+
     private:
         void DrawTitleBar();
         void DrawOpenProjectMenu(std::span<const ProjectMenuEntry> projects, std::string_view currentProject);
@@ -241,6 +248,7 @@ namespace mir
         History mHistory;
         ISceneOps *mSceneOps = nullptr;
         IAuthoredEntities *mAuthoredEntities = nullptr;
+        IEditorAudio *mAudio = nullptr;
 
         std::filesystem::path mPreferencesPath;
         EditorPreferences mPreferences;

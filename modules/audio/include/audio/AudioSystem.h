@@ -99,6 +99,12 @@ namespace mir::audio
 
     bool IsSfxMuted();
 
+    // One emitter's own volume, 0 to 1 on the same curve, on top of its channel's
+    void SetObjectVolume(uint64_t gameObject, float volume);
+
+    // The same for the soundtrack, which plays on a game object of its own
+    void SetSoundtrackVolume(float volume);
+
     // True while music and SFX are both muted or at 0. Wwise is suspended then,
     // and posts are refused rather than queued to start on unmute
     bool IsIdle();

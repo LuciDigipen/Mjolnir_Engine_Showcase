@@ -155,6 +155,9 @@ namespace mir
     {
     #if MIR_WITH_AUDIO
         mGameShell.SetAudioOptions(&mAudioOptions);
+    #if MIR_WITH_EDITOR
+        mEditor.SetAudio(&mEditorAudio);
+    #endif
     #endif
 
         mSplash.screen.SetProgress("Loading scene...", 0.9f);

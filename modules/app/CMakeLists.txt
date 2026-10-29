@@ -52,4 +52,7 @@ target_compile_definitions(engine_app PUBLIC MIR_WITH_AUDIO=$<BOOL:${MIR_WITH_AU
 if(MIR_WITH_AUDIO)
     target_link_libraries(engine_app PUBLIC mir::audio mir::audio_script)
     target_sources(engine_app PRIVATE src/app/GameAudioOptions.cpp)
+    if(MJOLNIR_WITH_EDITOR)
+        target_sources(engine_app PRIVATE src/app/EditorAudioOptions.cpp)
+    endif()
 endif()

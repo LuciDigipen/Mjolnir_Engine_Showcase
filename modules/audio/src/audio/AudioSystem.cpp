@@ -762,6 +762,34 @@ namespace mir::audio {
         return g_sfxChannel.mMuted;
     }
 
+    namespace
+    {
+        
+        void ApplyObjectVolume(AkGameObjectID object, float volume)
+        {
+            const float clamped = std::clamp(volume, 0.0f, 1.0f);
+            Check(AK::SoundEngine::SetGameObjectOutputBusVolume(object, AK_INVALID_GAME_OBJECT,
+                      clamped * clamped * clamped),
+                "SetGameObjectOutputBusVolume");
+        }
+    }
+
+    void SetObjectVolume(uint64_t gameObject, float volume)
+    {
+        if (!g_Initialized || gameObject == 0 || std::isnan(volume))
+            return;
+
+        ApplyObjectVolume(static_cast<AkGameObjectID>(gameObject), volume);
+    }
+
+    void SetSoundtrackVolume(float volume)
+    {
+        if (!g_Initialized || std::isnan(volume))
+            return;
+
+        ApplyObjectVolume(kMusicObject, volume);
+    }
+
     bool IsIdle()
     {
         return EverythingSilent();

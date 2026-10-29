@@ -29,10 +29,14 @@ namespace mir
         AudioModule(const AudioModule &) = delete;
         AudioModule &operator=(const AudioModule &) = delete;
 
-        // The "audio" section of project_settings.json, as read at startup
+        // The "audio" section of project_settings.json, as read at startup or last saved
         const AudioSettings &Defaults() const { return mDefaults; }
 
+        // Writes the "audio" section of project_settings.json and keeps it as Defaults(); false when it cannot
+        bool SaveDefaults(const AudioSettings &defaults);
+
     private:
+        std::filesystem::path mProjectSettingsPath;
         AudioSettings mDefaults;
 
         // Wwise is process state, not a member, so the destructor drops this before Terminate

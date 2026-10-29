@@ -107,7 +107,8 @@ and `AuthoredCommand.cpp`. Callers only ever hold a `unique_ptr<ICommand>`, and
 
 Set fields is every field edit: one field from an Inspector widget, the one
 `Transform` channel a gizmo operation moves, the picked asset plus the fields its
-`mResetOnChange` clears, or every field Paste Values writes. Paste onto an entity
+`mResetOnChange` clears, a picked sound event plus its `mBankField`, or every
+field Paste Values writes. Paste onto an entity
 that lacks the component is Add component with the copied values.
 
 `SubtreeRecord` is the remove and restore that Create, Delete and Duplicate

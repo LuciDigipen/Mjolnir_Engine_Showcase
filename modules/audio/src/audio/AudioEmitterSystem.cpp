@@ -59,6 +59,14 @@ namespace mir
                         return;
 
                     emitter.mWorldVersion = 0;
+                    emitter.mAppliedVolume = -1.0f;
+                }
+
+                // in Edit and Pause too, so a sound follows the Inspector as it plays
+                if (emitter.mVolume != emitter.mAppliedVolume)
+                {
+                    audio::SetObjectVolume(emitter.mGameObject, emitter.mVolume);
+                    emitter.mAppliedVolume = emitter.mVolume;
                 }
 
                 if (worldTransform.Version() != emitter.mWorldVersion)

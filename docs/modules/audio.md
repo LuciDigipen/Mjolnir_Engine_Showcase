@@ -68,8 +68,12 @@ game object of its own. The authoring project routes the music to a `Music` bus,
 and the volume and mute reach it through one game parameter.
 
 ```json
-{ "type": "Soundtrack", "fields": { "eventName": "Play_Soundtrack", "bankName": "Music", "fadeOutMs": 1000 } }
+{ "type": "Soundtrack", "fields": { "eventName": "Play_Soundtrack", "bankName": "Music", "volume": 1.0, "fadeOutMs": 1000 } }
 ```
+
+In the editor's Inspector, `eventName` is picked from the events `ListBankEvents`
+finds, and the pick sets `bankName`, which is hidden there (see
+[editor.md](editor.md)).
 
 The soundtrack's media is streamed. A track marked Stream in Wwise is written
 next to the banks as `Media/<id>.wem` rather than into its bank, and the
@@ -83,6 +87,16 @@ authoring project maps onto its own bus, so neither moves the other. When both
 are silent, muted or at 0, the engine waits out the ramp and suspends Wwise, so
 its audio thread stops mixing. Unmuting either wakes it, and what was playing
 carries on from where it stopped.
+
+Each `AudioEmitter` and the `Soundtrack` also have a `volume` of their own, 0 to
+1 and full by default, saved with the scene and set from the Inspector or
+`world:set`. It is on the same curve as the channels and multiplies with its
+channel's, so an emitter at 0.5 under SFX at 0.8 sounds as one at 0.4. It needs
+nothing in the authoring project: `SetObjectVolume` and `SetSoundtrackVolume` set
+Wwise's output bus volume on the emitter's or the music's game object, whatever
+bus its sounds route to. `AudioEmitterSystem` applies a change in Edit and Pause
+too, so a sound follows the Inspector while it plays; `SoundtrackSystem` applies
+it from the moment the music starts.
 
 The values outlive the run. `AudioModule` reads them from
 `%LOCALAPPDATA%/Mjolnir/<game>/settings.json` before Wwise starts, and writes them
@@ -110,8 +124,10 @@ a volume keeps getting the project's.
 | `PlayMusic`, `StopMusic`, `IsMusicPlaying` | `audio/AudioSystem.h` | The one soundtrack: posted once its bank has loaded, stopped with a fade |
 | `SetMusicVolume`, `SetMusicMuted` | `audio/AudioSystem.h` | The Music bus's volume, linear from 0 to 1, and its mute; kept while audio is down |
 | `SetSfxVolume`, `SetSfxMuted` | `audio/AudioSystem.h` | The same for the SFX bus |
+| `SetObjectVolume`, `SetSoundtrackVolume` | `audio/AudioSystem.h` | One emitter's or the soundtrack's own volume, 0 to 1 on the channels' curve, on top of its channel's |
 | `IsIdle` | `audio/AudioSystem.h` | Whether both channels are silent, so Wwise is suspended and posts are refused |
 | `LoadAudioSettings`, `SaveAudioSettings` | `audio/AudioSettings.h` | A file's `audio` section, per-user or `project_settings.json`, read over the defaults given and written keeping the other sections |
+| `AudioModule::SaveDefaults` | `audio/AudioModule.h` | Writes the `audio` section of `project_settings.json`, keeping its other sections, and makes it `Defaults()`; the editor's Project Settings saves through it |
 | `AudioModule::Defaults` | `audio/AudioModule.h` | The `audio` section of `project_settings.json` as read at startup, which a missing per-user file falls back to |
 | `ListBankEvents` | `audio/BankEvents.h` | Each bank in a SoundBank directory, but `Init`, with the event names from the `<bank>.json` beside it |
 | `Soundtrack` | `audio/components/Soundtrack.h` | A scene's music: `eventName`, `bankName`, `fadeOutMs` |
