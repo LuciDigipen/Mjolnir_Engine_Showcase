@@ -64,6 +64,22 @@ namespace mir
             source->AppendRayTracingDraws(view, out);
     }
 
+    void BuildViewDebugLines(std::span<const DebugLineVertex> lines, WorldPosition viewportCamera,
+                             std::vector<DebugLinePoint> &out)
+    {
+        out.clear();
+        out.reserve(lines.size());
+        for (size_t i = 0; i + 1 < lines.size(); i += 2)
+        {
+            const std::optional<glm::vec3> from = TryCameraRelativeFloat(lines[i].position, viewportCamera);
+            const std::optional<glm::vec3> to = TryCameraRelativeFloat(lines[i + 1].position, viewportCamera);
+            if (!from || !to)
+                continue;
+            out.push_back({ *from, lines[i].color });
+            out.push_back({ *to, lines[i + 1].color });
+        }
+    }
+
     size_t BuildViewDrawItems(std::span<const WorldDrawItem> items, WorldPosition viewportCamera,
         const glm::mat4 &viewProj, std::vector<DrawItem> &out)
     {

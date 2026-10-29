@@ -75,7 +75,7 @@ namespace mir
         VkDescriptorSet boundDescriptorSet = VK_NULL_HANDLE;
 
         // Wireframe draws only lines, over the clear color; without line support it stays shaded
-        const bool shaded = view.debugView.shading != ViewportShading::Wireframe || !mDebugDraw->Available();
+        const bool shaded = view.debugView.shading != ViewportShading::Wireframe || !mDebugDraw->WireframeAvailable();
         const size_t drawCount = shaded ? view.items.size() : 0;
 
         // no mesh/material batching yet, just draw per item
@@ -334,7 +334,8 @@ namespace mir
         }
 
         mDevice->BeginLabel(cmd, "Debug View Pass", { 0.9f, 0.9f, 0.9f, 1.0f });
-        mDebugDraw->Record(cmd, views, mSwapchain->View(imageIndex), extent, sceneDepthView, *mResources);
+        mDebugDraw->Record(cmd, mFrameSync->Index(), views, mSwapchain->View(imageIndex), extent, sceneDepthView,
+            *mResources);
         mDevice->EndLabel(cmd);
 
         vk::ImageBarrier(cmd, swapchainImage, VK_IMAGE_ASPECT_COLOR_BIT,

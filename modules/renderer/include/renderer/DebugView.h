@@ -9,10 +9,21 @@
  */
 #pragma once
 
+#include <glm/vec3.hpp>
+
 #include <cstdint>
 
 namespace mir
 {
+    // A debug line's end, relative to its view's camera.
+    struct DebugLinePoint
+    {
+        glm::vec3 position{ 0.0f };
+        // RGBA8, R in the low byte
+        uint32_t color = 0xFFFFFFFFu;
+    };
+    static_assert(sizeof(DebugLinePoint) == 16);
+
     enum class ViewportShading : uint8_t
     {
         Render,

@@ -59,7 +59,7 @@ namespace mir
 
     bool VulkanRenderer::RayTracingActive(bool requested) const { return requested && RayTracingSupported(); }
 
-    bool VulkanRenderer::WireframeAvailable() const { return mDebugDraw->Available(); }
+    bool VulkanRenderer::WireframeAvailable() const { return mDebugDraw->WireframeAvailable(); }
 
     bool VulkanRenderer::DlssAvailable() const { return mPostProcessing->DlssAvailable(); }
 

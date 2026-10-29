@@ -13,6 +13,7 @@
 #include "renderer/ViewSubmission.h"
 #include "renderer/VulkanRenderer.h"
 
+#include <core/debug/DebugLines.h>
 #include <core/ecs/Query.h>
 #include <core/ecs/System.h>
 #include <core/ecs/components/Name.h>
@@ -434,7 +435,10 @@ namespace mir
             }
 
             mDrawItemsPerViewport.resize(mViewCameras.size());
+            mDebugLinesPerViewport.resize(mViewCameras.size());
             mRenderViews.clear();
+            const DebugLines *debugLines = source.TryResource<DebugLines>();
+            bool collidersWanted = false;
 
             size_t skippedItems = 0;
 
@@ -462,7 +466,20 @@ namespace mir
                 mRenderViews.back().historyId = viewport.mUseExternalCamera ? UINT64_MAX :
                     PackEntity(viewport.mCameraEntity.IsNull() ? playCamera.mEntity : viewport.mCameraEntity);
                 mRenderViews.back().debugView = viewport.mDebugView;
+
+                mDebugLinesPerViewport[v].clear();
+                if (viewport.mDebugView.colliders)
+                {
+                    collidersWanted = true;
+                    if (debugLines != nullptr)
+                        BuildViewDebugLines(debugLines->mColliders, view.pose.position, mDebugLinesPerViewport[v]);
+                }
+                mRenderViews.back().debugLines = mDebugLinesPerViewport[v];
             }
+
+            // Only the main World's physics fills the lines; a preview World has none, so it asks for none.
+            if (DebugLines *own = context.world.TryResource<DebugLines>())
+                own->mCollidersWanted = collidersWanted && &source == &context.world;
 
             if (warnNoCamera && !mWarnedNoCamera)
             {
@@ -568,6 +585,7 @@ namespace mir
         std::vector<WorldDrawItem> mPassItems;
         // Parallel to mViewCameras.
         std::vector<std::vector<DrawItem>> mDrawItemsPerViewport;
+        std::vector<std::vector<DebugLinePoint>> mDebugLinesPerViewport;
         std::vector<RenderView> mRenderViews;
         std::vector<WorldDrawItem> mRayTracingWorldItems;
         std::vector<DrawItem> mRayTracingItems;

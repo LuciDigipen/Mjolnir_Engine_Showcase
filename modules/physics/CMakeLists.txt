@@ -26,6 +26,8 @@ target_link_libraries(engine_physics PRIVATE Jolt::Jolt mir::jobs)
 
 target_sources(engine_physics PRIVATE
     src/physics/PhysicsModule.cpp
+    src/physics/ColliderDebugSystem.cpp
+    src/physics/ColliderLines.cpp
     src/physics/CollisionEventSystem.cpp
     src/physics/ComponentRegistration.cpp
     src/physics/ContactTracker.cpp

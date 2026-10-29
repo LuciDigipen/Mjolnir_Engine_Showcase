@@ -26,9 +26,6 @@ namespace mir
     {
         using detail::BodyPose;
 
-        // The shape follows the world scale: a box per axis, a sphere by the largest axis, a capsule by the
-        // axis it stands along for its height and the larger of the other two for its radius. The collider
-        // offset scales with it; a rotated non-uniform parent is as close as the decomposition gets.
         // The decomposed scale of a rotating parent wobbles in the last digits, which is not a change.
         bool SameScale(const glm::vec3 &a, const glm::vec3 &b)
         {
@@ -53,31 +50,15 @@ namespace mir
 
         BodyDesc BodyDescFor(const RigidBody &rigidBody, const BodyPose &pose, Entity entity)
         {
-            const glm::vec3 scale = glm::abs(pose.scale);
-            // the enum can hold any int a field write puts in it
-            const int axis = std::clamp(static_cast<int>(rigidBody.axis), 0, 2);
-            const float along = scale[axis];
-            const float across = std::max(scale[(axis + 1) % 3], scale[(axis + 2) % 3]);
-            const bool capsule = rigidBody.shape == PhysicsShape::Capsule;
-
-            return { .mMotion = rigidBody.motion,
-                    .mShape = rigidBody.shape,
-                    .mPosition = pose.position,
-                    .mRotation = pose.rotation,
-                    .mHalfExtent = rigidBody.halfExtent * scale,
-                    .mRadius = rigidBody.radius * (capsule ? across : std::max({ scale.x, scale.y, scale.z })),
-                    .mHalfHeight = rigidBody.halfHeight * along,
-                    .mAxis = rigidBody.axis,
-                    .mOffset = rigidBody.offset * pose.scale,
-                    .mRotationOffset = rigidBody.rotationOffset,
-                    .mLayer = LayerOf(rigidBody, entity),
-                    .mIsTrigger = rigidBody.isTrigger,
-                    .mDetectStay = rigidBody.detectStay,
-                    .mMass = rigidBody.mass,
-                    .mGravityFactor = rigidBody.gravityFactor,
-                    .mFriction = rigidBody.friction,
-                    .mRestitution = rigidBody.restitution,
-                    .mAllowSleeping = rigidBody.allowSleeping };
+            BodyDesc desc = detail::ShapeDescOf(rigidBody, pose);
+            desc.mLayer = LayerOf(rigidBody, entity);
+            desc.mDetectStay = rigidBody.detectStay;
+            desc.mMass = rigidBody.mass;
+            desc.mGravityFactor = rigidBody.gravityFactor;
+            desc.mFriction = rigidBody.friction;
+            desc.mRestitution = rigidBody.restitution;
+            desc.mAllowSleeping = rigidBody.allowSleeping;
+            return desc;
         }
 
         // The one place a body is built: the add hook, the PlayBegin pass and the first-step fallback share it.

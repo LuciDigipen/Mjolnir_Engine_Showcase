@@ -518,3 +518,24 @@ TEST_CASE("A translation grid only applies within float's exact range", "[render
     CHECK(inside == float(std::round(2047.3 / kGrid) * kGrid));
     CHECK(view[1].model[3].x == float(5000.3));
 }
+
+TEST_CASE("Debug lines narrow against the viewport camera and stay pairs", "[renderer][debug-view]")
+{
+    const glm::dvec3 camera{ 1000.0, 50.0, -2000.0 };
+    std::vector<mir::DebugLineVertex> world{
+        { At(camera + glm::dvec3(1.0, 0.0, 0.0)), 0x11u },
+        { At(camera + glm::dvec3(0.0, 2.0, 0.0)), 0x22u } };
+
+    std::vector<mir::DebugLinePoint> view;
+    mir::BuildViewDebugLines(world, At(camera), view);
+    REQUIRE(view.size() == 2);
+    CHECK(view[0].position == glm::vec3(1.0f, 0.0f, 0.0f));
+    CHECK(view[1].position == glm::vec3(0.0f, 2.0f, 0.0f));
+    CHECK(view[0].color == 0x11u);
+    CHECK(view[1].color == 0x22u);
+
+    // an odd trailing vertex has no partner, so it is not a segment
+    world.push_back({ At(camera), 0x33u });
+    mir::BuildViewDebugLines(world, At(camera), view);
+    CHECK(view.size() == 2);
+}

@@ -13,6 +13,7 @@
 #include "renderer/VulkanRenderer.h"
 #include "renderer/components/Camera.h"
 
+#include <core/debug/DebugLines.h>
 #include <core/ecs/components/WorldTransform.h>
 #include <core/math/WorldCoordinates.h>
 
@@ -31,6 +32,11 @@ namespace mir
     // Narrows world positions to float; returns how many draws did not fit.
     size_t BuildViewDrawItems(std::span<const WorldDrawItem> items, WorldPosition viewportCamera,
                               const glm::mat4 &viewProj, std::vector<DrawItem> &out);
+
+    // Narrows world-space line vertex pairs against one viewport's camera. A pair with an end too far for float
+    // is dropped whole, so the output stays pairs.
+    void BuildViewDebugLines(std::span<const DebugLineVertex> lines, WorldPosition viewportCamera,
+                             std::vector<DebugLinePoint> &out);
 
     struct GiTraceVolume
     {

@@ -175,6 +175,8 @@ namespace mir
         uint64_t historyId = 0;
         // Editor-only debug drawing for this view; the default is the final render alone.
         DebugViewSettings debugView;
+        // Vertex pairs drawn as lines over everything, never hidden by the scene; colliders while debugView asks.
+        std::span<const DebugLinePoint> debugLines;
     };
 
     class VulkanRenderer

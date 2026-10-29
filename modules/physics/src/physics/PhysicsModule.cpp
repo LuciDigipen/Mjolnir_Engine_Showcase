@@ -8,6 +8,7 @@
  */
 #include <physics/PhysicsModule.h>
 
+#include <physics/ColliderDebugSystem.h>
 #include <physics/CollisionEventSystem.h>
 #include <physics/CollisionEvents.h>
 #include <physics/ComponentRegistration.h>
@@ -41,6 +42,8 @@ namespace mir
         context.scheduler.AddSystem<PhysicsInterpolationSystem>(SystemPhase::PostUpdate,
             SystemOrder{SystemOrder::kNormal});
         context.scheduler.AddSystem<CollisionEventSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kNormal});
+        // after every fixed step and Propagate, so the outlines are this frame's poses
+        context.scheduler.AddSystem<ColliderDebugSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kNormal});
 
         mHooks = context.world.SetComponentHooks<RigidBody>(
             { .onAdd = &PhysicsSystem::OnRigidBodyAdded, .onRemove = &PhysicsSystem::OnRigidBodyRemoved });
