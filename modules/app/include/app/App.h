@@ -15,6 +15,7 @@
 #error "MIR_WITH_AUDIO is set by linking mir::app"
 #endif
 #if MIR_WITH_AUDIO
+#include <app/GameAudioOptions.h>
 #include <audio/AudioModule.h>
 #include <audio_script/AudioScriptModule.h>
 #endif
@@ -260,6 +261,8 @@ namespace mir
         CameraModule mCamera;
     #if MIR_WITH_AUDIO
         AudioModule mAudio;
+        // handed to mGameShell, built before it, once both are up
+        GameAudioOptions mAudioOptions{ mAudio };
     #endif
         PhysicsModule mPhysics;
         TerrainModule mTerrainData;

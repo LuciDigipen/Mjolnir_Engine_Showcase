@@ -153,6 +153,10 @@ namespace mir
           mGameUIImGui(Context(), mImGui, mWindow, mGameUI),
           mFixedTimestep{ .mStep = mDesc.mFixedDeltaSeconds, .mMaxSteps = mDesc.mMaxFixedSteps }
     {
+    #if MIR_WITH_AUDIO
+        mGameShell.SetAudioOptions(&mAudioOptions);
+    #endif
+
         mSplash.screen.SetProgress("Loading scene...", 0.9f);
         LoadProjectScene();
 
