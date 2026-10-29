@@ -43,10 +43,10 @@ namespace mir
     {
         float spawnRateScale = 1.0f;
         float sizeScale = 1.0f;
-        glm::vec3 wind{0.0f};
+        glm::vec3 wind{ 0.0f };
     };
 
-    struct ParticleModule
+    struct ParticleBehavior
     {
         std::string name;
         std::vector<float> parameters;
@@ -66,12 +66,28 @@ namespace mir
         bool textured = false;
     };
 
+    // Valid values are finite and within [min, max], integer parameters must also be whole numbers.
+    struct ParticleModuleParameter
+    {
+        std::string_view name;
+        float min;
+        float max;
+        bool integer;
+        float defaultValue;
+    };
+
+    // Defined in ParticleEffect.cpp so no Slang text reaches this header.
+    struct ParticleScriptWriter;
+    using ParticleModuleEmit = void (*)(ParticleScriptWriter &, const ParticleBehavior &);
+
     struct ParticleModuleInfo
     {
         std::string_view name;
         bool spawn;
         ParticleSimulationTarget target;
-        std::initializer_list<std::string_view> parameters;
+        std::initializer_list<ParticleModuleParameter> parameters;
+        bool replacesFade; // the module sets alpha itself, so the default age fade is skipped
+        ParticleModuleEmit emit; // appends the module's Slang, null for CPU modules
     };
     std::span<const ParticleModuleInfo> ParticleModules();
     float EvaluateParticleCurve(float start, float middle, float end, float age);
@@ -89,7 +105,7 @@ namespace mir
         float lifetime = 2.0f;
         float spawnRate = 60.0f;
         uint32_t capacity = 256;
-        glm::vec3 localOffset{0.0f};
+        glm::vec3 localOffset{ 0.0f };
         float spawnPerMeter = 0.0f;
         uint32_t burst = 0;
         uint32_t seed = 1;
@@ -100,10 +116,10 @@ namespace mir
         ParticleRendererProperties renderer;
         ParticleQuality quality;
         float size = 0.15f;
-        glm::vec4 color{1.0f, 0.4f, 0.1f, 0.5f};
-        glm::vec3 velocity{0.0f, 1.0f, 0.0f};
-        std::vector<ParticleModule> spawnModules{{"Initialize", {}}};
-        std::vector<ParticleModule> updateModules{{"Age", {}}, {"Integrate", {}}};
+        glm::vec4 color{ 1.0f, 0.4f, 0.1f, 0.5f };
+        glm::vec3 velocity{ 0.0f, 1.0f, 0.0f };
+        std::vector<ParticleBehavior> spawnModules{ { "Initialize",{} } };
+        std::vector<ParticleBehavior> updateModules{ { "Age",{} },{ "Integrate",{} } };
         AssetId script;
         AssetId scriptLayout;
         // Loaded cooked dependency, no source shader reaches the runtime.

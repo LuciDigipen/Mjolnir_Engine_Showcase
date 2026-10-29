@@ -74,7 +74,9 @@ namespace mir
         const auto parameters = overrides ? *overrides : effect.parameters;
         std::string error;
         if (mFree.empty() || mEmitterFree.size() < effect.emitters.size())
-        { ++mStats.rejectedStarts; ++mStats.rejectedCapacityStarts; return {}; }
+        {
+            ++mStats.rejectedStarts; ++mStats.rejectedCapacityStarts; return {};
+        }
         if (effectId.IsNull() || !ValidateParticleEffect(effect, error) ||
             effect.emitterDefinitions.size() != effect.emitters.size() ||
             !ValidateParticleUserParameters(parameters, error) || !ValidPose(pose))
@@ -88,18 +90,24 @@ namespace mir
         for (const auto &definition : effect.emitterDefinitions)
         {
             uint64_t bytes = sizeof(ParticleEmitterAsset) + definition.scriptCode.size() + definition.texturePixels.size();
-            for (const auto *stack : {&definition.spawnModules, &definition.updateModules})
-                for (const auto &module : *stack) bytes += sizeof(ParticleModule) + module.name.size() + 32 + module.parameters.size() * sizeof(float);
+            for (const auto *stack :{ &definition.spawnModules, &definition.updateModules })
+                for (const auto &module : *stack) bytes += sizeof(ParticleBehavior) + module.name.size() + 32 + module.parameters.size() * sizeof(float);
             reservation += bytes * 2 + sizeof(ParticleEmitterInstance);
             if (definition.simulationTarget == ParticleSimulationTarget::GPU)
-            { gpu += definition.capacity; reservation += mBudgets.births * sizeof(ParticleBirth); }
+            {
+                gpu += definition.capacity; reservation += mBudgets.births * sizeof(ParticleBirth);
+            }
             else { ribbon += definition.capacity; reservation += definition.capacity * sizeof(ParticleRibbonPoint); }
         }
         if (mStats.activeEmitters + effect.emitters.size() > mBudgets.emitters ||
             mStats.gpuCapacity + gpu > mBudgets.gpuParticles || mStats.ribbonCapacity + ribbon > mBudgets.ribbonPoints)
-        { ++mStats.rejectedStarts; ++mStats.rejectedCapacityStarts; return {}; }
+        {
+            ++mStats.rejectedStarts; ++mStats.rejectedCapacityStarts; return {};
+        }
         if (reservation > mBudgets.cpuBytes || mStats.cpuBytes > mBudgets.cpuBytes - reservation)
-        { ++mStats.rejectedStarts; ++mStats.rejectedMemoryStarts; return {}; }
+        {
+            ++mStats.rejectedStarts; ++mStats.rejectedMemoryStarts; return {};
+        }
         for (const auto &definition : effect.emitterDefinitions)
         {
             WorldPosition attachment;
@@ -122,12 +130,12 @@ namespace mir
         instance.parameters = parameters;
         instance.emitters.reserve(effect.emitters.size());
         const uint32_t index = mFree.back();
-        const ParticleHandle handle{index, mGenerations[index]};
+        const ParticleHandle handle{ index, mGenerations[index] };
         instance.handle = handle;
         for (size_t i = 0; i < effect.emitters.size(); ++i)
         {
             const uint32_t emitterIndex = mEmitterFree[mEmitterFree.size() - 1 - i];
-            instance.emitters.push_back({emitterIndex, mEmitterGenerations[emitterIndex]});
+            instance.emitters.push_back({ emitterIndex, mEmitterGenerations[emitterIndex] });
         }
         std::vector<ParticleEmitterInstance> prepared;
         prepared.reserve(effect.emitters.size());
@@ -456,26 +464,26 @@ namespace mir
                     }
                     uint64_t requested = 0;
                     auto append = [&](double amount, double &remainder)
-                    {
-                        const double oldRemainder = remainder;
-                        const double count = std::floor(oldRemainder + amount + 1e-9);
-                        remainder = std::max(0.0, oldRemainder + amount - count);
-                        const auto accepted = static_cast<uint32_t>(std::min(count, double(budget)));
-                        for (uint32_t i = 0; i < accepted; ++i)
                         {
-                            const auto fraction = static_cast<float>(std::clamp((1.0 - oldRemainder + i) / amount, 0.0, 1.0));
-                            emitter->births.push_back({fraction, (1.0f - fraction) * emitter->seconds, 0, 0});
-                        }
-                        budget -= accepted;
-                        requested += static_cast<uint64_t>(count);
-                    };
-                    // The initial burst is a single activation event, resuming a drain does not replay it.
+                            const double oldRemainder = remainder;
+                            const double count = std::floor(oldRemainder + amount + 1e-9);
+                            remainder = std::max(0.0, oldRemainder + amount - count);
+                            const auto accepted = static_cast<uint32_t>(std::min(count, double(budget)));
+                            for (uint32_t i = 0; i < accepted; ++i)
+                            {
+                                const auto fraction = static_cast<float>(std::clamp((1.0 - oldRemainder + i) / amount, 0.0, 1.0));
+                                emitter->births.push_back({ fraction, (1.0f - fraction) * emitter->seconds, 0, 0 });
+                            }
+                            budget -= accepted;
+                            requested += static_cast<uint64_t>(count);
+                        };
+                        // The initial burst is a single activation event, resuming a drain does not replay it.
                     if (emitter->burstPending)
                     {
                         const auto count = static_cast<uint32_t>(emitter->definition.burst * emitter->qualityScale);
                         const auto accepted = std::min(count, budget);
                         for (uint32_t i = 0; i < accepted; ++i)
-                            emitter->births.push_back({0, emitter->seconds, 0, 0});
+                            emitter->births.push_back({ 0, emitter->seconds, 0, 0 });
                         budget -= accepted;
                         requested += count;
                         emitter->burstPending = false;
