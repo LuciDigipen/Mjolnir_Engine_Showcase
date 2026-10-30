@@ -167,7 +167,7 @@ TEST_CASE("The shader manifest covers legacy and namespaced surface outputs", "[
     CHECK(surfaceDefault);
 }
 
-TEST_CASE("The runtime surface catalog names unique compiled stems", "[renderer][material][manifest]")
+TEST_CASE("The runtime surface catalog names unique assets and valid shared shader outputs", "[renderer][material][manifest]")
 {
     std::ifstream catalogFile(MIR_SURFACE_CATALOG);
     REQUIRE(catalogFile);
@@ -177,12 +177,27 @@ TEST_CASE("The runtime surface catalog names unique compiled stems", "[renderer]
     REQUIRE(catalog.at("materials").is_array());
     CHECK_FALSE(catalog.at("materials").empty());
 
-    std::set<std::string> stems;
+    const std::filesystem::path shaderDir = std::filesystem::path(MIR_SURFACE_CATALOG).parent_path();
+    std::ifstream manifestFile(MIR_SHADER_MANIFEST);
+    REQUIRE(manifestFile);
+    nlohmann::json manifest;
+    manifestFile >> manifest;
+    std::set<std::filesystem::path> compiledOutputs;
+    for (const nlohmann::json &output : manifest.at("outputs"))
+        compiledOutputs.insert(std::filesystem::path(output.at("output").get<std::string>()).lexically_normal());
+
+    std::set<std::string> assets;
     bool defaultMaterial = false;
     for (const nlohmann::json &material : catalog.at("materials"))
     {
         const std::string stem = material.at("stem").get<std::string>();
-        CHECK(stems.insert(stem).second);
+        CHECK(assets.insert(material.at("asset").get<std::string>()).second);
+        for (const char *entry : { "vertexMain", "fragmentMain", "closestHitSurface", "layout" })
+        {
+            const auto outputPath = shaderDir / (stem + "." + entry + ".spv");
+            INFO(outputPath.string());
+            CHECK(compiledOutputs.contains(outputPath.lexically_normal()));
+        }
         CHECK(material.at("frontend") == "mesh");
         CHECK(material.at("parameters").is_object());
         CHECK(material.at("reflection").get<std::string>().find('/') == std::string::npos);
@@ -191,7 +206,6 @@ TEST_CASE("The runtime surface catalog names unique compiled stems", "[renderer]
     }
     CHECK(defaultMaterial);
 
-    const std::filesystem::path shaderDir = std::filesystem::path(MIR_SURFACE_CATALOG).parent_path();
     for (const nlohmann::json &material : catalog.at("materials"))
     {
         std::ifstream reflectionFile(shaderDir / material.at("reflection").get<std::string>());

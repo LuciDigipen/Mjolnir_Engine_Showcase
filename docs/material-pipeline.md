@@ -84,8 +84,10 @@ Every output writes a reflection JSON and a depfile; the depfile is handed to
 CMake as the command's `DEPFILE`, and the same argument array is written to
 `shaders/shader_manifest.json`. `shaders/surface_materials.json` records each
 asset's stem, type, frontend, normalized asset/shader paths, authored parameters
-and reflection filename. Both files are copied next to the executable. The
-runtime reads that catalog and the reflection JSON to pack records; it never
+and reflection filename. A dependency of the executable synchronizes both files
+next to it on every build with `copy_if_different`, including builds that only
+change material parameters and do not relink the executable. The runtime reads
+that catalog and the reflection JSON to pack records; it never
 runs slangc and never reads the source checkout. Debug builds use `-g -O0`,
 other configurations use `-O3` in both the command and the manifest.
 

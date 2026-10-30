@@ -171,13 +171,20 @@ function(engine_write_shader_manifest target)
         "{\n  \"version\": 1,\n  \"materials\": [\n    ${catalog_json}\n  ]\n}\n")
     file(WRITE "${catalog}" "${catalog_file}")
 
-    add_custom_command(TARGET ${target} POST_BUILD
+    # Parameter-only material edits regenerate the catalog without relinking.
+    # Sync on every target build; copy_if_different preserves unchanged files.
+    set(metadata_target "${target}_sync_shader_metadata")
+    add_custom_target(${metadata_target}
+        COMMAND "${CMAKE_COMMAND}" -E make_directory
+                "$<TARGET_FILE_DIR:${target}>/shaders"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${manifest}" "$<TARGET_FILE_DIR:${target}>/shaders/shader_manifest.json"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${catalog}" "$<TARGET_FILE_DIR:${target}>/shaders/surface_materials.json"
-        COMMENT "Copying shader manifest and surface material catalog next to ${target}"
+        DEPENDS "${manifest}" "${catalog}"
+        COMMENT "Syncing shader manifest and surface material catalog next to ${target}"
         VERBATIM)
+    add_dependencies(${target} ${metadata_target})
 endfunction()
 
 # Recursively collects the files a Slang source #include"s
