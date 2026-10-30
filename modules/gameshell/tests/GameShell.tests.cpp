@@ -152,16 +152,15 @@ namespace
         {
             const std::optional<UIRect> drawn = TextAt(text);
             REQUIRE(drawn.has_value());
-            mWindow.mRaw.mouseX = mArea.x + drawn->x + 4.0;
-            mWindow.mRaw.mouseY = mArea.y + drawn->y + 4.0;
+            MoveTo(drawn->x + 4.0f, drawn->y + 4.0f);
             Frame();
         }
 
-        // in the area's own coordinates, as drawn text gives them
+        // in UI units, as drawn text gives them
         void MoveTo(float x, float y)
         {
-            mWindow.mRaw.mouseX = mArea.x + x;
-            mWindow.mRaw.mouseY = mArea.y + y;
+            mWindow.mRaw.mouseX = mArea.x + x * mUI.Scale();
+            mWindow.mRaw.mouseY = mArea.y + y * mUI.Scale();
         }
 
         // pushed for a frame and let go the next
@@ -179,6 +178,20 @@ namespace
             for (const UIDrawCommand &command : mUI.DrawList().Commands())
                 if (command.mKind == UIDrawCommandKind::Text && mUI.DrawList().TextOf(command) == text)
                     return command.mRect;
+            return std::nullopt;
+        }
+
+        // the rect a widget drew under its text: a button's face
+        std::optional<UIRect> FaceUnder(std::string_view text)
+        {
+            std::optional<UIRect> face;
+            for (const UIDrawCommand &command : mUI.DrawList().Commands())
+            {
+                if (command.mKind == UIDrawCommandKind::Rect)
+                    face = command.mRect;
+                else if (command.mKind == UIDrawCommandKind::Text && mUI.DrawList().TextOf(command) == text)
+                    return face;
+            }
             return std::nullopt;
         }
 
@@ -397,6 +410,41 @@ TEST_CASE("The menu and HUD draw inside the editor's viewport and fullscreen, at
             CHECK(title->x < safe.x + safe.width * 0.5f);
         }
     }
+}
+
+TEST_CASE("A viewport too short for the menu scales it down whole, text and all, and the mouse still lands",
+          "[gameshell]")
+{
+    // the editor's viewport with the console docked tall under it
+    constexpr UIRect kShort{300, 80, 1280, 240};
+    Fixture f(kShort);
+    TestAudioOptions audio;
+    f.Shell().SetAudioOptions(&audio);
+    f.Frame();
+    f.Tap(Key::Escape);
+    REQUIRE(f.Shell().MenuOpen());
+    CHECK(f.UI().Scale() == Catch::Approx(0.5f));
+
+    // no button is squeezed out from under its text
+    const float textHeight = f.UI().Style().mTextHeight;
+    for (const std::string_view text : {"Resume", "Restart", "Audio", "Quit"})
+    {
+        INFO(text);
+        const std::optional<UIRect> label = f.TextAt(text);
+        const std::optional<UIRect> face = f.FaceUnder(text);
+        REQUIRE(label.has_value());
+        REQUIRE(face.has_value());
+        CHECK(face->height == Catch::Approx(40.0f));
+        CHECK(label->y >= face->y);
+        CHECK(label->y + textHeight <= face->Bottom());
+    }
+
+    const std::optional<UIRect> prompt = f.TextAt("Select");
+    REQUIRE(prompt.has_value());
+    CHECK(prompt->y + textHeight <= f.UI().Bounds().Bottom());
+
+    f.PointAt("Quit");
+    CHECK(f.Click() == GameShellAction::Quit);
 }
 
 TEST_CASE("The HUD's clock counts play, stops in the menu and starts again on Restart and on a new Play",

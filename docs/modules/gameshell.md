@@ -109,7 +109,9 @@ works in the editor's scene viewport, in Play, and in a game build, which with
 (the mouse in an offset area, as in the editor's viewport), game input held
 while it is open without the capture flags, the stick and confirm not reaching
 the HUD in play, nothing drawn outside Play and Stop closing the menu, both
-screens inside the viewport and fullscreen at any safe area, and the clock. The
+screens inside the viewport and fullscreen at any safe area, a viewport too short
+for the menu scaling it down whole with every button still under its text and
+clickable, and the clock. The
 Audio screen is covered the same way against a stand-in `IAudioOptions`: no entry
 without one, each device alone opening it on its first control, stepping and
 dragging the sliders, ten steps from full to silent, the mutes, Restore

@@ -95,6 +95,7 @@ add_subdirectory(tools/TerrainTool)
 
 add_executable(MjolnirEngine WIN32)
 target_sources(MjolnirEngine PRIVATE main.cpp)
+engine_target_utf8(MjolnirEngine)
 
 foreach(surface_shader default model unlit error)
     engine_add_shaders(MjolnirEngine

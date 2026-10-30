@@ -13,20 +13,37 @@
 #include <core/log/Assert.h>
 #include <input/PromptLabel.h>
 
+#include <algorithm>
+
 namespace mir
 {
+    namespace
+    {
+        float FitScale(const UIRect &area, float designWidth, float designHeight)
+        {
+            float scale = 1.0f;
+            if (designWidth > 0.0f && area.width > 0.0f)
+                scale = std::min(scale, area.width / designWidth);
+            if (designHeight > 0.0f && area.height > 0.0f)
+                scale = std::min(scale, area.height / designHeight);
+            return scale;
+        }
+    } // namespace
+
     void UIContext::BeginFrame(const UIRect &area, InputState &input, const InputMap &map, const UIPointer &pointer)
     {
         MIR_ASSERT(!mInFrame, "UIContext::BeginFrame twice without EndFrame");
 
         mArea = area;
+        mScale = FitScale(area, mDesignWidth, mDesignHeight);
         mInput = &input;
         mInputMap = &map;
         mNav = ReadNavInput(input);
-        mDrawList.Reset(area.width, area.height);
+        const UIRect bounds = Bounds();
+        mDrawList.Reset(bounds.width, bounds.height);
 
         const bool focusVisible = input.ActiveDevice() != DeviceKind::Mouse;
-        mState.BeginFrame(area, pointer, mNav, focusVisible);
+        mState.BeginFrame(area, pointer, mNav, focusVisible, mScale);
         mInFrame = true;
     }
 
@@ -37,7 +54,7 @@ namespace mir
                    mDrawList.ClipDepth());
 
         if (mInFrame && !mArea.IsEmpty() && mBackend != nullptr)
-            mBackend->Submit(mArea, mDrawList, mTextures);
+            mBackend->Submit(mArea, mScale, mDrawList, mTextures);
 
         if (mInFrame)
         {
