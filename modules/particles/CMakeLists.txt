@@ -9,6 +9,7 @@ target_sources(engine_particles PRIVATE
     src/particles/ParticleEffect.cpp
     src/particles/ParticleRibbon.cpp
     src/particles/ParticleRuntime.cpp
+    src/particles/ParticleStackEdit.cpp
     src/particles/ParticlesModule.cpp
     src/particles/ParticleWorld.cpp
 )

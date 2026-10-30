@@ -80,6 +80,10 @@ namespace mir
     struct ParticleScriptWriter;
     using ParticleBehaviorEmit = void (*)(ParticleScriptWriter &, const ParticleBehavior &);
 
+    // Defined in ParticleRibbonBehaviors.h, a CPU behavior assigns the attributes it owns.
+    struct ParticleRibbonLook;
+    using ParticleBehaviorResolve = void (*)(ParticleRibbonLook &, const ParticleBehavior &);
+
     struct ParticleBehaviorInfo
     {
         std::string_view name;
@@ -88,6 +92,8 @@ namespace mir
         std::initializer_list<ParticleBehaviorParameter> parameters;
         bool replacesFade; // the behavior sets alpha itself, so the default age fade is skipped
         ParticleBehaviorEmit emit; // appends the behavior's Slang, null for CPU behaviors
+        ParticleBehaviorResolve resolve = nullptr; // CPU behaviors only, null for GPU behaviors
+        bool required = false; // a stack for this target must contain the behavior at least once
     };
     std::span<const ParticleBehaviorInfo> ParticleBehaviors();
     float EvaluateParticleCurve(float start, float middle, float end, float age);

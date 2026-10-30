@@ -8,6 +8,8 @@
  */
 #pragma once
 
+#include "particles/ParticleEffect.h"
+
 #include <core/math/WorldCoordinates.h>
 
 #include <glm/vec4.hpp>
@@ -33,6 +35,8 @@ namespace mir
     struct ParticleRibbonState
     {
         std::vector<ParticleRibbonPoint> points;
+        // One resolver per behavior in spawnBehaviors then updateBehaviors, looked up on the first tick.
+        std::vector<ParticleBehaviorResolve> resolvers;
         double time = 0;
         double sinceBirth = 0;
         double distance = 0;

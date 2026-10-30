@@ -1,75 +1,77 @@
 {
-  "version": 2,
-  "target": "cpu",
-  "lifetime": 45,
-  "spawnRate": 0,
-  "spawnPerMeter": 0.5,
-  "teleportDistance": 150,
+  "burst": 0,
   "capacity": 1024,
-  "texture": "textures/exhaust.png",
+  "inheritVelocity": 0.0,
+  "lifetime": 45.0,
   "localOffset": [
     -2.5,
-    0,
+    0.0,
     1.5
   ],
+  "quality": {
+    "farDistance": 10000.0,
+    "importance": 1.0,
+    "minSpawnScale": 0.25,
+    "nearDistance": 500.0
+  },
   "renderer": {
-    "size": 0.2,
+    "alignment": "screen",
+    "blend": "alpha",
     "color": [
-      0.85,
-      0.9,
-      1,
-      0.45
+      0.8500000238418579,
+      0.8999999761581421,
+      1.0,
+      0.44999998807907104
     ],
     "facing": "position",
+    "fog": true,
     "lighting": "sunAmbient",
+    "maxDistance": 100000.0,
+    "size": 0.20000000298023224,
     "softDistance": 1.0,
-    "maxDistance": 100000,
-    "fog": true
+    "sort": "backToFront",
+    "textured": false,
+    "velocity": [
+      0.0,
+      1.0,
+      0.0
+    ]
   },
+  "seed": 1,
   "spawnBehaviors": [
     {
       "name": "RibbonSpawn",
       "parameters": [
-        0.25
+        1.7300000190734863
       ]
     }
   ],
+  "spawnPerMeter": 0.5,
+  "spawnRate": 0.0,
+  "target": "cpu",
+  "teleportDistance": 150.0,
+  "texture": "textures/exhaust.png",
   "updateBehaviors": [
     {
-      "name": "RibbonAge"
+      "name": "RibbonAge",
+      "parameters": []
     },
     {
-      "name": "RibbonWind"
+      "name": "RibbonWind",
+      "parameters": []
     },
     {
       "name": "RibbonWidthCurve",
       "parameters": [
-        1,
-        4,
-        12
+        1.0,
+        1.0,
+        1.0
       ]
     },
     {
-      "name": "RibbonColorGradient",
-      "parameters": [
-        1,
-        1,
-        1,
-        1,
-        0.8,
-        0.9,
-        1,
-        1
-      ]
-    },
-    {
-      "name": "RibbonFade"
+      "name": "RibbonFade",
+      "parameters": []
     }
   ],
-  "quality": {
-    "importance": 1,
-    "nearDistance": 500,
-    "farDistance": 10000,
-    "minSpawnScale": 0.25
-  }
+  "version": 2
 }

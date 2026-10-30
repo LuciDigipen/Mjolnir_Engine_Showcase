@@ -8,6 +8,7 @@
  */
 #include <particles/ParticleRuntime.h>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <glm/geometric.hpp>
@@ -16,7 +17,8 @@
 
 namespace
 {
-    mir::ParticleEffect Ribbon(float lifetime = 4, uint32_t capacity = 256)
+    const std::vector<mir::ParticleBehavior> kDefaultUpdate{{"RibbonAge", {}}, {"RibbonWind", {}}, {"RibbonWidth", {3}}, {"RibbonFade", {}}};
+    mir::ParticleEffect Ribbon(float lifetime = 4, uint32_t capacity = 256, std::vector<mir::ParticleBehavior> update = kDefaultUpdate)
     {
         mir::ParticleEmitterAsset emitter;
         emitter.simulationTarget = mir::ParticleSimulationTarget::CPU;
@@ -26,7 +28,7 @@ namespace
         emitter.capacity = capacity;
         emitter.texture = {1};
         emitter.spawnBehaviors = {{"RibbonSpawn", {0.25f}}};
-        emitter.updateBehaviors = {{"RibbonAge", {}}, {"RibbonWind", {}}, {"RibbonWidth", {3}}, {"RibbonFade", {}}};
+        emitter.updateBehaviors = std::move(update);
         mir::ParticleEffect effect;
         effect.emitters = {{1}};
         effect.emitterDefinitions = {emitter};
@@ -181,4 +183,118 @@ TEST_CASE("CPU ribbons share the bounded birth budget and never replay overflow"
     CHECK(runtime.Stats().droppedBudgetSpawns > 600000);
     runtime.Advance(1.0f/60);
     CHECK(Emitter(runtime,h).spawns == 1);
+}
+
+TEST_CASE("CPU ribbon appearance for every accepted stack shape is unchanged", "[particles][ribbon]")
+{
+    struct Expected { float width; glm::vec4 color; };
+    struct Shape { std::vector<mir::ParticleBehavior> update; Expected oldest, middle, newest; };
+    const std::vector<float> gradient{1, 0.5f, 0.25f, 1, 0.5f, 1, 1, 0.5f};
+    const std::vector<Shape> shapes{
+        { {{"RibbonAge", {}}, {"RibbonWind", {}}, {"RibbonWidth", {3}}, {"RibbonFade", {}}},
+            {0.225f, {1, 0.4f, 0.1f, 0.375f}}, {0.1875f, {1, 0.4f, 0.1f, 0.4375f}}, {0.15f, {1, 0.4f, 0.1f, 0.5f}} },
+        { {{"RibbonAge", {}}, {"RibbonWind", {}}, {"RibbonWidthCurve", {0.5f, 2, 1}}, {"RibbonFade", {}}},
+            {0.1875f, {1, 0.4f, 0.1f, 0.375f}}, {0.13125f, {1, 0.4f, 0.1f, 0.4375f}}, {0.075f, {1, 0.4f, 0.1f, 0.5f}} },
+        { {{"RibbonAge", {}}, {"RibbonWind", {}}, {"RibbonWidth", {3}}, {"RibbonColorGradient", gradient}, {"RibbonFade", {}}},
+            {0.225f, {0.875f, 0.25f, 0.04375f, 0.328125f}}, {0.1875f, {0.9375f, 0.225f, 0.034375f, 0.41015625f}},
+            {0.15f, {1, 0.2f, 0.025f, 0.5f}} },
+        { {{"RibbonAge", {}}, {"RibbonWind", {}}, {"RibbonWidthCurve", {0.5f, 2, 1}}, {"RibbonColorGradient", gradient}, {"RibbonFade", {}}},
+            {0.1875f, {0.875f, 0.25f, 0.04375f, 0.328125f}}, {0.13125f, {0.9375f, 0.225f, 0.034375f, 0.41015625f}},
+            {0.075f, {1, 0.2f, 0.025f, 0.5f}} } };
+    for (const auto &shape : shapes)
+    {
+        mir::ParticleRuntime runtime;
+        const auto h = runtime.Start({2}, Ribbon(4, 256, shape.update));
+        for (int i = 1; i <= 60; ++i)
+        {
+            REQUIRE(runtime.SetPose(h, Pose(i / 6.0)));
+            runtime.Advance(1.0f / 60);
+        }
+        const auto &points = Emitter(runtime, h).ribbon.points;
+        REQUIRE(points.size() == 21);
+        const Expected *expected[]{ &shape.oldest, &shape.middle, &shape.newest };
+        const size_t indices[]{ 0, 10, 20 };
+        for (int k = 0; k < 3; ++k)
+        {
+            const auto &point = points[indices[k]];
+            CHECK(point.width == Catch::Approx(expected[k]->width).margin(1e-6));
+            for (int c = 0; c < 4; ++c) CHECK(point.color[c] == Catch::Approx(expected[k]->color[c]).margin(1e-6));
+        }
+    }
+}
+
+namespace
+{
+    std::vector<mir::ParticleRibbonPoint> Fly(std::vector<mir::ParticleBehavior> update)
+    {
+        mir::ParticleRuntime runtime;
+        const auto h = runtime.Start({2}, Ribbon(4, 256, std::move(update)));
+        REQUIRE_FALSE(h.IsNull());
+        for (int i = 1; i <= 60; ++i)
+        {
+            REQUIRE(runtime.SetPose(h, Pose(i / 6.0)));
+            runtime.Advance(1.0f / 60);
+        }
+        return Emitter(runtime, h).ribbon.points;
+    }
+    const mir::ParticleBehavior kAge{"RibbonAge", {}}, kWind{"RibbonWind", {}}, kFade{"RibbonFade", {}};
+    const std::vector<float> kGradient{1, 0.5f, 0.25f, 1, 0.5f, 1, 1, 0.5f};
+}
+TEST_CASE("Optional CPU ribbon behaviors fall back to the emitter values when omitted", "[particles][ribbon]")
+{
+    const auto noWind = Fly({kAge, {"RibbonWidth", {3}}, kFade});
+    const auto noFade = Fly({kAge, kWind, {"RibbonWidth", {3}}});
+    const auto noWidth = Fly({kAge, kWind, kFade});
+    REQUIRE(noWind.size() == 21);
+    REQUIRE(noFade.size() == 21);
+    REQUIRE(noWidth.size() == 21);
+    for (const auto &point : noWind) CHECK(std::abs(point.position.Meters().y) < 0.0001);
+    for (const auto &point : noFade) CHECK(point.color.a == Catch::Approx(0.5f));
+    for (const auto &point : noWidth) CHECK(point.width == Catch::Approx(0.15f));
+}
+TEST_CASE("CPU ribbon behaviors assign, so a later duplicate overrides an earlier one", "[particles][ribbon]")
+{
+    const auto doubled = Fly({kAge, kWind, {"RibbonWidth", {3}}, {"RibbonWidth", {1}}, kFade});
+    for (const auto &point : doubled) CHECK(point.width == Catch::Approx(0.15f));
+    const auto curveAfter = Fly({kAge, kWind, {"RibbonWidth", {3}}, {"RibbonWidthCurve", {0.5f, 2, 1}}, kFade});
+    CHECK(curveAfter.front().width == Catch::Approx(0.1875f).margin(1e-6));
+    const auto twiceFaded = Fly({kAge, kWind, kFade, kFade});
+    const auto once = Fly({kAge, kWind, kFade});
+    for (size_t i = 0; i < once.size(); ++i) CHECK(twiceFaded[i].color.a == Catch::Approx(once[i].color.a));
+    const auto fadeBefore = Fly({kAge, kWind, kFade, {"RibbonColorGradient", kGradient}});
+    const auto fadeAfter = Fly({kAge, kWind, {"RibbonColorGradient", kGradient}, kFade});
+    CHECK(fadeBefore.front().color.a == Catch::Approx(0.4375f));
+    CHECK(fadeAfter.front().color.a == Catch::Approx(0.328125f));
+}
+TEST_CASE("CPU ribbon behaviors that own different attributes can be reordered", "[particles][ribbon]")
+{
+    const auto canonical = Fly({kAge, kWind, {"RibbonWidth", {3}}, kFade});
+    const auto shuffled = Fly({kFade, {"RibbonWidth", {3}}, kWind, kAge});
+    REQUIRE(canonical.size() == shuffled.size());
+    for (size_t i = 0; i < canonical.size(); ++i)
+    {
+        CHECK(shuffled[i].width == Catch::Approx(canonical[i].width));
+        CHECK(shuffled[i].color.a == Catch::Approx(canonical[i].color.a));
+        CHECK(shuffled[i].position.Meters().y == Catch::Approx(canonical[i].position.Meters().y));
+    }
+}
+TEST_CASE("CPU ribbon stacks require spawn and age but accept duplicates up to the limit", "[particles][ribbon]")
+{
+    std::string error;
+    auto emitter = Ribbon().emitterDefinitions[0];
+    emitter.spawnBehaviors.clear();
+    CHECK_FALSE(mir::ValidateParticleEmitterAsset(emitter, error));
+    CHECK(error.find("RibbonSpawn") != std::string::npos);
+    emitter = Ribbon().emitterDefinitions[0];
+    emitter.updateBehaviors = {kWind, kFade};
+    CHECK_FALSE(mir::ValidateParticleEmitterAsset(emitter, error));
+    CHECK(error.find("RibbonAge") != std::string::npos);
+    emitter.updateBehaviors = {kAge};
+    CHECK(mir::ValidateParticleEmitterAsset(emitter, error));
+    emitter.updateBehaviors.assign(32, kAge);
+    CHECK(mir::ValidateParticleEmitterAsset(emitter, error));
+    emitter.updateBehaviors.push_back(kAge);
+    CHECK_FALSE(mir::ValidateParticleEmitterAsset(emitter, error));
+    emitter.updateBehaviors = {kAge, {"Integrate", {}}};
+    CHECK_FALSE(mir::ValidateParticleEmitterAsset(emitter, error));
 }

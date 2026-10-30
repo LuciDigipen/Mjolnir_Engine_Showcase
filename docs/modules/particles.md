@@ -214,16 +214,26 @@ three-emitter comparison scene. Two CPU ribbon emitters provide persistent contr
 
 ## CPU ribbon emitters
 
-CPU emitters execute `RibbonSpawn(maxInterval)` followed by `RibbonAge`,
-`RibbonWind`, `RibbonWidth(endScale)`, and `RibbonFade`, in that order. This focused
-stack has no GPU script dependency. Set `spawnRate` and `burst` to zero, use
+CPU emitters use the same ordered stacks as GPU emitters, and the CPU registry is
+`RibbonSpawn(maxInterval)` for the spawn stage plus `RibbonAge`, `RibbonWind`,
+`RibbonWidth(endScale)`, `RibbonWidthCurve(start, middle, end)`, `RibbonColorGradient`
+and `RibbonFade` for the update stage. `RibbonSpawn` and `RibbonAge` are required,
+everything else is optional and any behavior may appear more than once. Behaviors
+assign the attributes they own, so the last width behavior sets the width, the last
+`RibbonSpawn` sets the interval, and `RibbonColorGradient` assigns the whole color and
+drops an earlier `RibbonFade`. `RibbonFade` scales the current alpha by the remaining
+life. Without a width behavior the width is the emitter size, without a gradient the
+color is the emitter color, without `RibbonFade` alpha stays constant and without
+`RibbonWind` samples do not drift. The stack is resolved once per tick, so the cost
+does not grow per sample. This focused stack has no GPU script dependency.
+Set `spawnRate` and `burst` to zero, use
 `spawnPerMeter` for distance spacing. A point is emitted at whichever comes first,
 distance spacing or maximum interval (1/60 to 10 seconds). Zero spawnRateScale
 stops emission and breaks the ribbon while existing samples continue simulating.
 
 Each sample stores a WorldPosition, simulation birth time, ribbon ID, monotonic
 link order and accumulated texture distance. World-space wind advects samples,
-width interpolates to endScale, alpha fades linearly to zero. The model prescribes
+width follows the width behavior, alpha fades linearly to zero when `RibbonFade` is present. The model prescribes
 wind and does not simulate wake or fluid dynamics. Float-world samples that drift
 beyond the supported absolute range retire with a rejection counter.
 
@@ -312,6 +322,14 @@ history, stop/drain, large coordinates and eight aircraft. See
 and remaining gates.
 
 ## Changed
+
+*2026-10-29* — **CPU ribbon stacks are editable.** Was: the validator accepted one fixed
+shape, `RibbonSpawn` then `RibbonAge`, `RibbonWind`, a width, an optional gradient and
+`RibbonFade`, and the runtime read slots by position, so the editor offered two
+checkboxes. Now: any ordered list containing `RibbonSpawn` and `RibbonAge` is valid,
+duplicates are allowed, later behaviors override earlier ones, and the editor uses the
+same stack UI as GPU emitters. Existing assets are unchanged. Because: stack-editable
+emitters in the editor.
 
 *2026-10-29* — **Modules became behaviors.** Was: emitter sources used version 1 with
 `spawnModules` and `updateModules`, and the C++ registry was `ParticleModuleInfo`,

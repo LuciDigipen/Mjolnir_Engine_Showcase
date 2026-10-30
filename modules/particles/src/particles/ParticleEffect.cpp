@@ -7,6 +7,7 @@
  *
  */
 #include "particles/ParticleEffect.h"
+#include "ParticleRibbonBehaviors.h"
 
 #include <assets/AssetCache.h>
 #include <assets/AssetPath.h>
@@ -136,15 +137,16 @@ namespace mir
                 { Scale("r0"), Scale("g0"), Scale("b0"), Alpha("a0", 1), Scale("r1"), Scale("g1"), Scale("b1"), Alpha("a1", 0) },
                 true, EmitColorGradient },
             { "RibbonWidthCurve", false, ParticleSimulationTarget::CPU,
-                { Scale("start"), Scale("middle"), Scale("end") }, false, nullptr },
+                { Scale("start"), Scale("middle"), Scale("end") }, false, nullptr, ResolveRibbonWidthCurve },
             { "RibbonColorGradient", false, ParticleSimulationTarget::CPU,
                 { Scale("r0"), Scale("g0"), Scale("b0"), Alpha("a0", 1), Scale("r1"), Scale("g1"), Scale("b1"), Alpha("a1", 0) },
-                false, nullptr },
-            { "RibbonSpawn", true, ParticleSimulationTarget::CPU,{ { "maxInterval", 1.0f / 60, 10, false, 0.25f } }, false, nullptr },
-            { "RibbonAge", false, ParticleSimulationTarget::CPU,{}, false, nullptr },
-            { "RibbonWind", false, ParticleSimulationTarget::CPU,{}, false, nullptr },
-            { "RibbonWidth", false, ParticleSimulationTarget::CPU,{ Scale("endScale") }, false, nullptr },
-            { "RibbonFade", false, ParticleSimulationTarget::CPU,{}, false, nullptr },
+                false, nullptr, ResolveRibbonColorGradient },
+            { "RibbonSpawn", true, ParticleSimulationTarget::CPU,{ { "maxInterval", 1.0f / 60, 10, false, 0.25f } }, false, nullptr,
+                ResolveRibbonSpawn, true },
+            { "RibbonAge", false, ParticleSimulationTarget::CPU,{}, false, nullptr, ResolveRibbonAge, true },
+            { "RibbonWind", false, ParticleSimulationTarget::CPU,{}, false, nullptr, ResolveRibbonWind },
+            { "RibbonWidth", false, ParticleSimulationTarget::CPU,{ Scale("endScale") }, false, nullptr, ResolveRibbonWidth },
+            { "RibbonFade", false, ParticleSimulationTarget::CPU,{}, false, nullptr, ResolveRibbonFade },
             { "Initialize", true, ParticleSimulationTarget::GPU,{}, false, EmitInitialize },
             { "VelocityVariation", true, ParticleSimulationTarget::GPU,
                 { Variation("x"), Variation("y"), Variation("z") }, false, EmitVelocityVariation },
@@ -347,16 +349,20 @@ namespace mir
                 }
             }
             if (emitter.simulationTarget == ParticleSimulationTarget::CPU &&
-                (emitter.capacity > 1024 || emitter.spawnRate != 0 || emitter.burst != 0 ||
-                    emitter.spawnBehaviors.size() != 1 || emitter.spawnBehaviors[0].name != "RibbonSpawn" ||
-                    (emitter.updateBehaviors.size() != 4 && emitter.updateBehaviors.size() != 5) || emitter.updateBehaviors[0].name != "RibbonAge" ||
-                    emitter.updateBehaviors[1].name != "RibbonWind" ||
-                    (emitter.updateBehaviors[2].name != "RibbonWidth" && emitter.updateBehaviors[2].name != "RibbonWidthCurve") ||
-                    emitter.updateBehaviors.back().name != "RibbonFade" ||
-                    (emitter.updateBehaviors.size() == 5 && emitter.updateBehaviors[3].name != "RibbonColorGradient")))
+                (emitter.capacity > 1024 || emitter.spawnRate != 0 || emitter.burst != 0))
             {
-                error = "CPU ribbons require capacity <= 1024, zero spawnRate/burst, RibbonSpawn and RibbonAge/Wind/Width/Fade";
+                error = "CPU ribbons require capacity <= 1024 and zero spawnRate/burst";
                 return false;
+            }
+            for (const auto &entry : kBehaviors)
+            {
+                const auto &stack = entry.spawn ? emitter.spawnBehaviors : emitter.updateBehaviors;
+                if (entry.required && entry.target == emitter.simulationTarget &&
+                    std::none_of(stack.begin(), stack.end(), [&](const ParticleBehavior &behavior) { return behavior.name == entry.name; }))
+                {
+                    error = "particle emitter requires behavior: " + std::string(entry.name);
+                    return false;
+                }
             }
             error.clear();
             return true;

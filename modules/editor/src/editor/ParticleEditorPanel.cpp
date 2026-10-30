@@ -15,6 +15,7 @@
 #include <assets/AssetCache.h>
 #include <core/ecs/EngineMode.h>
 #include <core/fs/FileIO.h>
+#include <particles/ParticleStackEdit.h>
 #include <particles/ParticleWorld.h>
 
 #include <imgui.h>
@@ -104,6 +105,7 @@ namespace mir
         auto &stack = spawn ? definition.spawnBehaviors : definition.updateBehaviors;
         ImGui::PushID(spawn ? "spawn" : "update");
         ImGui::TextUnformatted(spawn ? "Spawn stack" : "Update stack");
+        ImGui::TextDisabled("Runs top to bottom, a later behavior overrides what an earlier one set.");
         for (size_t i = 0; i < stack.size(); ++i)
         {
             ImGui::PushID(static_cast<int>(i));
@@ -138,27 +140,22 @@ namespace mir
                 }
                 ImGui::TreePop();
             }
-            if (definition.simulationTarget == ParticleSimulationTarget::GPU)
             {
                 bool changed = false;
-                if (i && ImGui::SmallButton("Up")) { std::swap(stack[i], stack[i-1]); changed = true; }
+                if (i && ImGui::SmallButton("Up")) changed = MoveParticleBehavior(definition, spawn, i, -1);
                 ImGui::SameLine();
-                if (i+1 < stack.size() && ImGui::SmallButton("Down")) { std::swap(stack[i], stack[i+1]); changed = true; }
+                if (i+1 < stack.size() && ImGui::SmallButton("Down")) changed = MoveParticleBehavior(definition, spawn, i, 1);
                 ImGui::SameLine();
-                if (ImGui::SmallButton("Remove")) { stack.erase(stack.begin()+i); changed = true; }
+                if (CanRemoveParticleBehavior(definition, spawn, i) && ImGui::SmallButton("Remove")) changed = RemoveParticleBehavior(definition, spawn, i);
                 if (changed) { mDirtyEmitter = true; ImGui::PopID(); break; }
             }
             ImGui::PopID();
         }
-        if (definition.simulationTarget == ParticleSimulationTarget::GPU && stack.size() < 32 && ImGui::BeginCombo("Add behavior", "Select operation"))
+        if (stack.size() < 32 && ImGui::BeginCombo("Add behavior", "Select behavior"))
         {
             for (const auto &info : ParticleBehaviors())
                 if (info.target == definition.simulationTarget && info.spawn == spawn && ImGui::Selectable(std::string(info.name).c_str()))
-                {
-                    ParticleBehavior behavior{ std::string(info.name),{} };
-                    for (const auto &parameter : info.parameters) behavior.parameters.push_back(parameter.defaultValue);
-                    stack.push_back(std::move(behavior)); mDirtyEmitter = true;
-                }
+                    mDirtyEmitter |= AddParticleBehavior(definition, spawn, info.name);
             ImGui::EndCombo();
         }
         ImGui::PopID();
@@ -191,21 +188,6 @@ namespace mir
         mDirtyEmitter |= ImGui::InputScalar("Seed", ImGuiDataType_U32, &e.seed);
         mDirtyEmitter |= ImGui::DragFloat("Size", &e.size, 0.01f, 0.001f, 64);
         mDirtyEmitter |= ImGui::ColorEdit4("Base color", &e.color.x, ImGuiColorEditFlags_HDR|ImGuiColorEditFlags_Float);
-        if (e.simulationTarget == ParticleSimulationTarget::CPU)
-        {
-            bool curve = e.updateBehaviors[2].name == "RibbonWidthCurve";
-            if (ImGui::Checkbox("Width curve", &curve))
-            {
-                e.updateBehaviors[2] = curve ? ParticleBehavior{ "RibbonWidthCurve",{ 1,2,4 } } : ParticleBehavior{ "RibbonWidth",{ 4 } };mDirtyEmitter = true;
-            }
-            bool gradient = e.updateBehaviors.size()==5;
-            if (ImGui::Checkbox("Color gradient", &gradient))
-            {
-                if (gradient) e.updateBehaviors.insert(e.updateBehaviors.end()-1, { "RibbonColorGradient",{ 1,1,1,1,1,1,1,1 } });
-                else e.updateBehaviors.erase(e.updateBehaviors.begin()+3);
-                mDirtyEmitter = true;
-            }
-        }
         DrawStack(true); DrawStack(false);
         if (ImGui::CollapsingHeader("Renderer", ImGuiTreeNodeFlags_DefaultOpen))
         {

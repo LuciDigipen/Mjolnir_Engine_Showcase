@@ -1,10 +1,15 @@
 {
-  "version": 2,
   "emitters": [
     "particles/arc.emitter.json"
   ],
   "parameters": {
-    "spawnRateScale": 1,
-    "sizeScale": 1
-  }
+    "sizeScale": 0.0,
+    "spawnRateScale": 1.0,
+    "wind": [
+      1.0,
+      2.0,
+      3.0
+    ]
+  },
+  "version": 2
 }
