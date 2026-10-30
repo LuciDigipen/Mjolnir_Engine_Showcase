@@ -149,10 +149,11 @@ namespace mir
         const std::optional<GameProject> &ProjectToOpen() const { return mProjectToOpen; }
 
         // Discards the scene's entities and replaces it with an empty one. incomplete: it
-        // stands in for a scene that could not be read
+        // stands in for a scene that could not be read, and stays untitled until saved
         void NewScene(std::string name = "untitled", bool incomplete = false);
 
-        // Writes Scene() to the game's scene directory. False on I/O failure
+        // Writes Scene() to the game's scene directory, asking first for an untitled scene.
+        // False on I/O failure or when the user declines
         bool SaveScene();
 
         // Replaces Scene() with the game's saved scene and resolves it. False without a
@@ -215,6 +216,9 @@ namespace mir
 
         // Asks what to do with a scene ProbeScene found broken; Refuse when nobody can answer
         SceneLoadChoice ChooseSceneLoad(const SceneProbe &probe, bool atStartup) const;
+
+        // Asks whether an untitled scene may replace the broken one in the scene directory
+        bool ConfirmBindUntitledScene() const;
 
         // Unload and load, with no checks; incomplete when entity files are missing
         void ReplaceSceneFromDisk(bool incomplete);
