@@ -13,6 +13,8 @@
 
 #include <core/ecs/EntityPresetRegistry.h>
 #include <scene/SceneInstancePatch.h>
+#include <particles/ComponentRegistration.h>
+#include <particles/components/ParticleSystem.h>
 
 namespace
 {
@@ -87,6 +89,26 @@ namespace
         mir::ForEachChild(world, parent, [&](Entity child) { children.push_back(child); });
         return children;
     }
+}
+
+TEST_CASE("Placing a particle system creates an undoable scene entity", "[editor][particles]")
+{
+    Editing e;
+    mir::RegisterParticleComponents();
+    e.Run(mir::MakePlaceParticleSystemCommand("assets/effects/exhaust.particle.json",
+        kNullEntity, mir::WorldVec3(2, 3, 4)));
+    REQUIRE(e.mScene.mEntities.size() == 1);
+    const Entity placed = e.mScene.mEntities.begin()->second;
+    const auto *component = e.mWorld.GetComponent<mir::ParticleSystem>(placed);
+    REQUIRE(component != nullptr);
+    CHECK(std::string(component->systemName) == "effects/exhaust.particle.json");
+    REQUIRE(e.mWorld.GetComponent<Transform>(placed) != nullptr);
+    CHECK(e.mWorld.GetComponent<Transform>(placed)->Position() == mir::WorldVec3(2, 3, 4));
+    e.Undo();
+    CHECK(e.mScene.mEntities.empty());
+    e.Redo();
+    REQUIRE(e.mScene.mEntities.size() == 1);
+    CHECK(e.mWorld.GetComponent<mir::ParticleSystem>(e.mScene.mEntities.begin()->second) != nullptr);
 }
 
 TEST_CASE("Delete, undo and redo round-trip the scene files", "[editor][history]")

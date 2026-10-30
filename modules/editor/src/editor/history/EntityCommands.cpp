@@ -21,7 +21,9 @@
 #include <core/ecs/components/Name.h>
 #include <core/ecs/components/Transform.h>
 #include <core/log/Log.h>
+#include <particles/components/ParticleSystem.h>
 
+#include <cstdio>
 #include <filesystem>
 #include <format>
 #include <optional>
@@ -151,6 +153,45 @@ namespace mir
             }
 
             const EntityPresetDesc *mPreset;
+        };
+
+        class PlaceParticleSystemCommand final : public MakeEntityCommandBase
+        {
+        public:
+            PlaceParticleSystemCommand(std::string contentPath, Entity parent, const WorldVec3 &position)
+                : mContentPath(std::move(contentPath)), mParent(parent), mPosition(position)
+            {
+                mName = "Place Particle System";
+            }
+
+        private:
+            Entity Make(CommandContext &context) override
+            {
+                if (!mContentPath.starts_with("assets/") || !mContentPath.ends_with(".particle.json"))
+                    return kNullEntity;
+                const std::string assetPath = mContentPath.substr(7);
+                if (assetPath.size() >= kFieldStringCapacity) return kNullEntity;
+                const Entity entity = context.mScene.CreateEntity();
+                if (entity.IsNull()) return entity;
+                World &world = context.mWorld;
+                AddMissingBaseline(world, entity);
+                auto *transform = world.GetComponent<Transform>(entity);
+                if (!transform || !transform->SetPosition(mPosition) ||
+                    (!mParent.IsNull() && !SetParent(world, entity, mParent, kNullEntity, false)))
+                {
+                    context.mScene.Destroy(entity);
+                    return kNullEntity;
+                }
+                ParticleSystem component;
+                std::snprintf(component.systemName, sizeof(component.systemName), "%s", assetPath.c_str());
+                world.AddComponent<ParticleSystem>(entity, component);
+                *world.GetComponent<mir::Name>(entity) = MakeName(std::filesystem::path(assetPath).stem().string());
+                return entity;
+            }
+
+            std::string mContentPath;
+            Entity mParent;
+            WorldVec3 mPosition;
         };
 
         class DuplicateCommand final : public MakeEntityCommandBase
@@ -478,6 +519,12 @@ namespace mir
         const WorldVec3 &position)
     {
         return std::make_unique<PlacePrefabCommand>(std::move(contentPath), parent, position);
+    }
+
+    std::unique_ptr<ICommand> MakePlaceParticleSystemCommand(std::string contentPath, Entity parent,
+        const WorldVec3 &position)
+    {
+        return std::make_unique<PlaceParticleSystemCommand>(std::move(contentPath), parent, position);
     }
 
     std::unique_ptr<ICommand> MakeEntityCommand(const EntityAction &action)

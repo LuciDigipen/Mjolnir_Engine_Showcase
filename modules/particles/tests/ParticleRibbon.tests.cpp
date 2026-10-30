@@ -21,6 +21,7 @@ namespace
     mir::ParticleEffect Ribbon(float lifetime = 4, uint32_t capacity = 256, std::vector<mir::ParticleBehavior> update = kDefaultUpdate)
     {
         mir::ParticleEmitterAsset emitter;
+        emitter.sourceVersion = 2; // characterize the original ordered ribbon behavior
         emitter.simulationTarget = mir::ParticleSimulationTarget::CPU;
         emitter.spawnRate = 0;
         emitter.spawnPerMeter = 2;
@@ -297,4 +298,21 @@ TEST_CASE("CPU ribbon stacks require spawn and age but accept duplicates up to t
     CHECK_FALSE(mir::ValidateParticleEmitterAsset(emitter, error));
     emitter.updateBehaviors = {kAge, {"Integrate", {}}};
     CHECK_FALSE(mir::ValidateParticleEmitterAsset(emitter, error));
+}
+
+TEST_CASE("New ribbon authoring combines gradient alpha with fade regardless of stored order", "[particles][ribbon][authoring]")
+{
+    auto effect = Ribbon(4, 256, {kFade, {"RibbonColorGradient", kGradient}, kAge});
+    effect.emitterDefinitions[0].sourceVersion = 3;
+    mir::ParticleRuntime runtime;
+    const auto handle = runtime.Start({2}, effect);
+    REQUIRE_FALSE(handle.IsNull());
+    for (int i = 1; i <= 60; ++i)
+    {
+        REQUIRE(runtime.SetPose(handle, Pose(i / 6.0)));
+        runtime.Advance(1.0f / 60);
+    }
+    const auto &points = Emitter(runtime, handle).ribbon.points;
+    REQUIRE(points.size() == 21);
+    CHECK(points.front().color.a == Catch::Approx(0.328125f).margin(1e-6));
 }

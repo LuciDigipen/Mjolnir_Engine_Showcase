@@ -108,8 +108,10 @@ namespace mir
         {
             ++mStats.rejectedStarts; ++mStats.rejectedMemoryStarts; return {};
         }
-        for (const auto &definition : effect.emitterDefinitions)
+        for (size_t i = 0; i < effect.emitterDefinitions.size(); ++i)
         {
+            auto definition = effect.emitterDefinitions[i];
+            if (!effect.placementOffsets.empty()) definition.localOffset += effect.placementOffsets[i];
             WorldPosition attachment;
             glm::vec3 velocity;
             if (!Attachment(pose, definition, attachment, velocity))
@@ -147,6 +149,7 @@ namespace mir
             emitter.system = handle;
             emitter.emitterId = effect.emitters[i];
             emitter.definition = effect.emitterDefinitions[i];
+            if (!effect.placementOffsets.empty()) emitter.definition.localOffset += effect.placementOffsets[i];
             if (emitter.definition.simulationTarget == ParticleSimulationTarget::CPU)
                 emitter.ribbon.points.reserve(emitter.definition.capacity);
             else emitter.births.reserve(mBudgets.births);

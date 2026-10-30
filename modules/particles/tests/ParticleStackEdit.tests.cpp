@@ -22,6 +22,7 @@ namespace
     mir::ParticleEmitterAsset RibbonEmitter()
     {
         mir::ParticleEmitterAsset emitter;
+        emitter.sourceVersion = 2; // preserve the original stack-editing characterization
         emitter.simulationTarget = mir::ParticleSimulationTarget::CPU;
         emitter.spawnRate = 0;
         emitter.spawnPerMeter = 2;
@@ -136,4 +137,38 @@ TEST_CASE("Stack edits reject unknown names, wrong-stage names, a full stack and
     CHECK_FALSE(mir::MoveParticleBehavior(emitter, false, 0, -1));
     CHECK_FALSE(mir::MoveParticleBehavior(emitter, false, 31, 1));
     CHECK_FALSE(mir::MoveParticleBehavior(emitter, false, 99, 1));
+}
+
+TEST_CASE("New authoring keeps one behavior per kind and remembers inactive size mode", "[particles][stackedit][authoring]")
+{
+    auto emitter = RibbonEmitter();
+    emitter.sourceVersion = 3;
+    CHECK_FALSE(mir::AddParticleBehavior(emitter, false, "RibbonWidthCurve"));
+    REQUIRE(mir::AddParticleBehavior(emitter, false, "RibbonWidth"));
+    CHECK_FALSE(emitter.updateBehaviors[2].enabled);
+    CHECK(emitter.updateBehaviors.back().enabled);
+    CHECK_FALSE(mir::MoveParticleBehavior(emitter, false, 2, 1));
+    CHECK_FALSE(mir::RemoveParticleBehavior(emitter, true, 0));
+    REQUIRE(mir::SetParticleBehaviorEnabled(emitter, false, 2, true));
+    CHECK(emitter.updateBehaviors[2].enabled);
+    CHECK_FALSE(emitter.updateBehaviors.back().enabled);
+    CHECK(emitter.updateBehaviors[2].parameters == std::vector<float>{23.0f, 5.08f, 15.3f});
+    std::string error;
+    CHECK(mir::ValidateParticleEmitterAsset(emitter, error));
+}
+
+TEST_CASE("Legacy emitter upgrade refuses duplicates and preserves its original on failure", "[particles][stackedit][authoring]")
+{
+    auto emitter = RibbonEmitter();
+    emitter.updateBehaviors.push_back({"RibbonAge", {}});
+    const auto original = emitter.updateBehaviors;
+    std::string message;
+    CHECK_FALSE(mir::UpgradeParticleEmitter(emitter, message));
+    CHECK(emitter.sourceVersion == 2);
+    CHECK(emitter.updateBehaviors.size() == original.size());
+    CHECK(message.find("duplicate") != std::string::npos);
+    emitter.updateBehaviors.pop_back();
+    REQUIRE(mir::UpgradeParticleEmitter(emitter, message));
+    CHECK(emitter.sourceVersion == 3);
+    CHECK(message.empty());
 }

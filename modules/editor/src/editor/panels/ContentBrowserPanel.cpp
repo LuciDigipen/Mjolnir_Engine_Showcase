@@ -212,6 +212,12 @@ namespace mir
             mCreatingFolder = true;
             mNewFolderBuffer[0] = '\0';
         }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("New Particle System"))
+        {
+            action.mKind = ContentBrowserActionKind::NewParticleSystem;
+            action.mTargetPath = mCurrentFolder;
+        }
 
         if (mCreatingFolder)
         {
@@ -288,10 +294,23 @@ namespace mir
                         ImGui::TextUnformatted(entry.mName.c_str());
                         ImGui::EndDragDropSource();
                     }
+                    if (entry.mKind == ContentBrowserEntryKind::File && entry.mName.ends_with(".particle.json") &&
+                        ImGui::BeginDragDropSource())
+                    {
+                        ImGui::SetDragDropPayload(kParticleContentPayload, entry.mRelativePath.data(),
+                            entry.mRelativePath.size());
+                        ImGui::TextUnformatted(entry.mName.c_str());
+                        ImGui::EndDragDropSource();
+                    }
                     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
                     {
                         if (entry.mKind == ContentBrowserEntryKind::Directory)
                             mCurrentFolder = entry.mRelativePath;
+                        else if (entry.mName.ends_with(".particle.json"))
+                        {
+                            action.mKind = ContentBrowserActionKind::OpenParticleSystem;
+                            action.mTargetPath = entry.mRelativePath;
+                        }
                         else if (IsPrefabFile(entry.mName))
                         {
                             action.mKind = ContentBrowserActionKind::OpenPrefab;

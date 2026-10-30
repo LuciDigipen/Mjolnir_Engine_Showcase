@@ -1,7 +1,7 @@
 /**
  * @file ParticleEditorPanel.cpp
  * @author sumin.park
- * @brief Edits source stacks and previews cooked systems through the production runtime.
+ * @brief Edits particle assets and previews cooked systems through the production runtime.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -14,16 +14,21 @@
 #include <assets/AssetPath.h>
 #include <assets/AssetCache.h>
 #include <core/ecs/EngineMode.h>
+#include <core/ecs/TransformHierarchy.h>
 #include <core/fs/FileIO.h>
+#include <editor/Selection.h>
 #include <particles/ParticleStackEdit.h>
 #include <particles/ParticleWorld.h>
 
 #include <imgui.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <stdexcept>
+#include <utility>
+#include <unordered_set>
 
 namespace mir
 {
@@ -44,11 +49,63 @@ namespace mir
             value = static_cast<uint32_t>(index);
             return true;
         }
+        ParticleEmitterAsset EmitterTemplate(int type, AssetId texture)
+        {
+            ParticleEmitterAsset emitter;
+            emitter.texture = texture;
+            if (type == 2 || type == 4)
+            {
+                emitter.simulationTarget = ParticleSimulationTarget::CPU;
+                emitter.spawnRate = 0;
+                emitter.spawnPerMeter = 2;
+                emitter.spawnBehaviors = {{"RibbonSpawn", {0.25f}}};
+                emitter.updateBehaviors = {{"RibbonAge", {}}, {"RibbonWind", {}},
+                    {"RibbonWidthCurve", {1, 1, 0}}, {"RibbonFade", {}}};
+                if (type == 4)
+                {
+                    emitter.spawnPerMeter = 1;
+                    emitter.lifetime = 3;
+                    emitter.size = 0.35f;
+                    emitter.color = {0.7f, 0.8f, 1.0f, 0.65f};
+                }
+            }
+            else if (type == 3)
+            {
+                emitter.spawnRate = 90;
+                emitter.lifetime = 0.65f;
+                emitter.size = 0.12f;
+                emitter.velocity = {0, 0, -3};
+                emitter.updateBehaviors.push_back({"FadeOverLife", {0}});
+            }
+            else if (type == 0) emitter.spawnRate = 0;
+            return emitter;
+        }
     }
 
     ParticleEditorPanel::ParticleEditorPanel(std::filesystem::path sourceRoot, std::string idRoot)
         : mSourceRoot(std::move(sourceRoot)), mIdRoot(std::move(idRoot))
     {}
+
+    bool ParticleEditorPanel::OpenSystem(const std::string &path, World &world)
+    {
+        if (mDirtySystem || mDirtyEmitter)
+        {
+            mError = "Save or discard particle drafts before opening another system.";
+            return false;
+        }
+        try
+        {
+            OnHidden(world);
+            LoadSystem(path);
+            return true;
+        }
+        catch (const std::exception &error) { mError = error.what(); return false; }
+    }
+
+    void ParticleEditorPanel::PrepareNewSystem(const std::string &folder)
+    {
+        mNewSystemPath = folder.empty() ? "particles/new.particle.json" : folder + "/new.particle.json";
+    }
 
     std::filesystem::path ParticleEditorPanel::SourceFile(std::string_view relative) const
     {
@@ -65,15 +122,41 @@ namespace mir
     void ParticleEditorPanel::Scan()
     {
         mSystems.clear();
+        mEmitters.clear();
+        mTextures.clear();
         std::error_code error;
         for (std::filesystem::recursive_directory_iterator it(mSourceRoot, std::filesystem::directory_options::skip_permission_denied, error), end;
             !error && it != end; it.increment(error))
         {
             if (it->is_regular_file() && it->path().filename().string().ends_with(".particle.json"))
                 mSystems.push_back(std::filesystem::relative(it->path(), mSourceRoot).generic_string());
-            if (mSystems.size() == 4096) break;
+            if (it->is_regular_file() && it->path().filename().string().ends_with(".emitter.json"))
+                mEmitters.push_back(std::filesystem::relative(it->path(), mSourceRoot).generic_string());
+            if (it->is_regular_file())
+            {
+                const auto extension = it->path().extension().string();
+                if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".tga")
+                    mTextures.push_back(std::filesystem::relative(it->path(), mSourceRoot).generic_string());
+            }
+            if (mSystems.size() == 4096 || mEmitters.size() == 4096) break;
         }
         std::sort(mSystems.begin(), mSystems.end());
+        std::sort(mEmitters.begin(), mEmitters.end());
+        std::sort(mTextures.begin(), mTextures.end());
+        mEmitterUsage.clear();
+        for (const auto &path : mSystems)
+            try
+            {
+                if (const auto source = ReadText(SourceFile(path)))
+                {
+                    const auto parsed = ReadParticleEffectSource(*source, mIdRoot);
+                    if (!parsed.mEffect) continue;
+                    std::unordered_set<std::string> seen;
+                    for (const auto &reference : parsed.mEmitterPaths)
+                        if (seen.insert(reference).second) ++mEmitterUsage[reference];
+                }
+            }
+            catch (const std::exception &) { continue; }
         mScanned = true;
     }
 
@@ -83,9 +166,20 @@ namespace mir
         if (!text) throw std::runtime_error("cannot read particle system source");
         auto result = ReadParticleEffectSource(*text, mIdRoot);
         if (!result.mEffect) throw std::invalid_argument(result.mError);
+        if (result.mEmitterPaths.empty()) throw std::invalid_argument("particle system has no emitter placements");
+        const auto emitterText = ReadText(SourceFile(result.mEmitterPaths.front()));
+        if (!emitterText) throw std::runtime_error("cannot read the first emitter source");
+        auto emitter = ReadParticleEmitterSource(*emitterText, mIdRoot);
+        if (!emitter.mEmitter) throw std::invalid_argument(emitter.mError);
         mSystem = *result.mEffect; mReferences = result.mEmitterPaths; mSystemPath = path;
-        mDirtySystem = false; mEmitter.reset(); mSelected = 0;
-        LoadEmitter(0);
+        mDirtySystem = false; mSelected = 0;
+        mEmitter = std::move(*emitter.mEmitter);
+        mEmitterPath = mReferences.front();
+        mTexturePath = std::move(emitter.mTexturePath);
+        mDirtyEmitter = false; mError.clear();
+        mSavedEmitterSources[mEmitterPath] = WriteParticleEmitterSource(*mEmitter, mTexturePath);
+        mSavedSystemSource = WriteParticleEffectSource(mSystem, mReferences);
+        mUndoDrafts.clear(); mRedoDrafts.clear(); mGestureStart.reset();
     }
 
     void ParticleEditorPanel::LoadEmitter(size_t index)
@@ -97,6 +191,202 @@ namespace mir
         if (!result.mEmitter) throw std::invalid_argument(result.mError);
         mEmitter = *result.mEmitter; mTexturePath = result.mTexturePath;
         mSelected = index; mEmitterPath = mReferences[index]; mDirtyEmitter = false; mError.clear();
+        mSavedEmitterSources[mEmitterPath] = WriteParticleEmitterSource(*mEmitter, mTexturePath);
+    }
+
+    ParticleEditorPanel::DraftSnapshot ParticleEditorPanel::CaptureDraft() const
+    {
+        DraftSnapshot draft;
+        draft.system = mSystem;
+        draft.references = mReferences;
+        draft.emitter = mEmitter;
+        draft.systemPath = mSystemPath;
+        draft.emitterPath = mEmitterPath;
+        draft.texturePath = mTexturePath;
+        draft.selected = mSelected;
+        if (!mSystemPath.empty()) draft.systemSource = WriteParticleEffectSource(mSystem, mReferences);
+        if (mEmitter) draft.emitterSource = WriteParticleEmitterSource(*mEmitter, mTexturePath);
+        return draft;
+    }
+
+    void ParticleEditorPanel::RestoreDraft(const DraftSnapshot &draft)
+    {
+        mSystem = draft.system;
+        mReferences = draft.references;
+        mEmitter = draft.emitter;
+        mSystemPath = draft.systemPath;
+        mEmitterPath = draft.emitterPath;
+        mTexturePath = draft.texturePath;
+        mSelected = draft.selected;
+        mDirtySystem = draft.systemSource != mSavedSystemSource;
+        const auto saved = mSavedEmitterSources.find(mEmitterPath);
+        mDirtyEmitter = mEmitter && (saved == mSavedEmitterSources.end() ||
+            draft.emitterSource != saved->second);
+    }
+
+    void ParticleEditorPanel::CommitDraftGesture()
+    {
+        if (!mGestureStart) return;
+        const auto after = CaptureDraft();
+        if (mGestureStart->systemSource != after.systemSource ||
+            mGestureStart->emitterSource != after.emitterSource)
+        {
+            if (mUndoDrafts.size() == 128) mUndoDrafts.erase(mUndoDrafts.begin());
+            mUndoDrafts.push_back(std::move(*mGestureStart));
+            mRedoDrafts.clear();
+        }
+        mGestureStart.reset();
+    }
+
+    void ParticleEditorPanel::UndoDraft()
+    {
+        CommitDraftGesture();
+        if (mUndoDrafts.empty()) return;
+        mRedoDrafts.push_back(CaptureDraft());
+        const auto previous = std::move(mUndoDrafts.back());
+        mUndoDrafts.pop_back();
+        RestoreDraft(previous);
+        mHistoryApplied = true;
+    }
+
+    void ParticleEditorPanel::RedoDraft()
+    {
+        if (mRedoDrafts.empty()) return;
+        mUndoDrafts.push_back(CaptureDraft());
+        const auto next = std::move(mRedoDrafts.back());
+        mRedoDrafts.pop_back();
+        RestoreDraft(next);
+        mHistoryApplied = true;
+    }
+
+    std::string ParticleEditorPanel::EnsureDefaultTexture(AssetImportManager &imports)
+    {
+        constexpr std::string_view relative = "particles/white.png";
+        const auto path = SourceFile(relative);
+        if (!std::filesystem::exists(path))
+        {
+            constexpr std::array<uint8_t, 70> white{
+                0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0x00,0x00,0x00,0x0d,0x49,0x48,0x44,0x52,
+                0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x01,0x08,0x06,0x00,0x00,0x00,0x1f,0x15,0xc4,0x89,
+                0x00,0x00,0x00,0x0d,0x49,0x44,0x41,0x54,0x78,0x9c,0x63,0xf8,0xff,0xff,0xff,0x7f,0x00,
+                0x09,0xfb,0x03,0xfd,0x2a,0x86,0xe3,0x8a,0x00,0x00,0x00,0x00,0x49,0x45,0x4e,0x44,0xae,
+                0x42,0x60,0x82 };
+            std::filesystem::create_directories(path.parent_path());
+            if (!WriteBytesAtomic(path, std::as_bytes(std::span(white))))
+                throw std::runtime_error("could not create the default particle texture");
+            imports.QueueChanged(path);
+        }
+        return std::string(relative);
+    }
+
+    void ParticleEditorPanel::AttachEmitter(const std::string &path)
+    {
+        if (mReferences.size() >= kMaxSystemEmitters || !std::filesystem::is_regular_file(SourceFile(path)))
+            throw std::invalid_argument("choose an existing emitter asset, maximum eight placements");
+        auto draft = mSystem;
+        draft.sourceVersion = 3;
+        if (draft.placementIds.empty())
+            for (size_t i = 0; i < draft.emitters.size(); ++i) draft.placementIds.push_back(static_cast<uint32_t>(i + 1));
+        if (draft.placementOffsets.empty()) draft.placementOffsets.resize(draft.emitters.size());
+        const uint32_t last = *std::max_element(draft.placementIds.begin(), draft.placementIds.end());
+        if (last == UINT32_MAX) throw std::runtime_error("particle placement IDs are exhausted");
+        const uint32_t id = last + 1;
+        draft.emitters.push_back(MakeAssetId(MakeLogicalAssetPath(mIdRoot, path).path));
+        draft.placementIds.push_back(id);
+        draft.placementOffsets.emplace_back(0.0f);
+        std::string error;
+        if (!ValidateParticleEffect(draft, error)) throw std::invalid_argument(error);
+        mSystem = std::move(draft);
+        mReferences.push_back(path);
+        mDirtySystem = true;
+    }
+
+    void ParticleEditorPanel::CreateEmitter(AssetImportManager &imports)
+    {
+        if (mSystemPath.empty()) throw std::runtime_error("open a particle system before creating an emitter");
+        if (!mNewEmitterPath.ends_with(".emitter.json") || std::filesystem::exists(SourceFile(mNewEmitterPath)))
+            throw std::invalid_argument("choose an unused .emitter.json path");
+        const std::string texture = EnsureDefaultTexture(imports);
+        const auto emitter = EmitterTemplate(mNewEmitterTarget, MakeAssetId(MakeLogicalAssetPath(mIdRoot, texture).path));
+        const auto source = WriteParticleEmitterSource(emitter, texture);
+        const auto path = SourceFile(mNewEmitterPath);
+        std::filesystem::create_directories(path.parent_path());
+        if (!WriteTextAtomic(path, source)) throw std::runtime_error("could not create emitter source");
+        try { AttachEmitter(mNewEmitterPath); }
+        catch (...) { std::error_code ignored; std::filesystem::remove(path, ignored); throw; }
+        imports.QueueChanged(path);
+        Scan();
+        LoadEmitter(mReferences.size() - 1);
+    }
+
+    void ParticleEditorPanel::CreateSystem(AssetImportManager &imports)
+    {
+        if (mNewSystemPath.size() >= kFieldStringCapacity)
+            throw std::invalid_argument("system path is too long for a scene ParticleSystem component");
+        if (!mNewSystemPath.ends_with(".particle.json") || std::filesystem::exists(SourceFile(mNewSystemPath)))
+            throw std::invalid_argument("choose an unused .particle.json path");
+        const auto emitterPath = mNewSystemPath.substr(0, mNewSystemPath.size() - std::string(".particle.json").size()) +
+            ".emitter.json";
+        if (std::filesystem::exists(SourceFile(emitterPath)))
+            throw std::invalid_argument("the matching emitter asset already exists");
+        const std::string texture = EnsureDefaultTexture(imports);
+        const auto emitter = EmitterTemplate(mNewEmitterTarget, MakeAssetId(MakeLogicalAssetPath(mIdRoot, texture).path));
+        ParticleEffect effect;
+        effect.emitters = {MakeAssetId(MakeLogicalAssetPath(mIdRoot, emitterPath).path)};
+        effect.placementIds = {1};
+        effect.placementOffsets = {{0, 0, 0}};
+        const std::vector<std::string> paths{emitterPath};
+        const auto emitterSource = WriteParticleEmitterSource(emitter, texture);
+        const auto systemSource = WriteParticleEffectSource(effect, paths);
+        const auto emitterFile = SourceFile(emitterPath), systemFile = SourceFile(mNewSystemPath);
+        std::filesystem::create_directories(systemFile.parent_path());
+        if (!WriteTextAtomic(emitterFile, emitterSource)) throw std::runtime_error("could not create emitter source");
+        if (!WriteTextAtomic(systemFile, systemSource))
+        {
+            std::error_code ignored;
+            std::filesystem::remove(emitterFile, ignored);
+            throw std::runtime_error("could not create particle system source");
+        }
+        imports.QueueChanged(emitterFile);
+        imports.QueueChanged(systemFile);
+        Scan();
+        LoadSystem(mNewSystemPath);
+    }
+
+    void ParticleEditorPanel::SaveSystem(AssetImportManager &imports)
+    {
+        mSystem.emitters.clear();
+        for (const auto &path : mReferences)
+        {
+            if (!std::filesystem::is_regular_file(SourceFile(path)))
+                throw std::invalid_argument("system references a missing emitter: " + path);
+            mSystem.emitters.push_back(MakeAssetId(MakeLogicalAssetPath(mIdRoot, path).path));
+        }
+        std::string error;
+        if (!ValidateParticleEffect(mSystem, error)) throw std::invalid_argument(error);
+        const auto source = WriteParticleEffectSource(mSystem, mReferences);
+        const auto path = SourceFile(mSystemPath);
+        if (!WriteTextAtomic(path, source)) throw std::runtime_error("could not save system source");
+        imports.QueueChanged(path);
+        mSavedSystemSource = source;
+        mDirtySystem = false;
+        mError.clear();
+    }
+
+    void ParticleEditorPanel::SaveEmitter(AssetImportManager &imports)
+    {
+        if (!std::filesystem::is_regular_file(SourceFile(mTexturePath)))
+            throw std::invalid_argument("choose an existing texture asset");
+        mEmitter->texture = MakeAssetId(MakeLogicalAssetPath(mIdRoot, mTexturePath).path);
+        std::string error;
+        if (!ValidateParticleEmitterAsset(*mEmitter, error)) throw std::invalid_argument(error);
+        const auto source = WriteParticleEmitterSource(*mEmitter, mTexturePath);
+        const auto path = SourceFile(mEmitterPath);
+        if (!WriteTextAtomic(path, source)) throw std::runtime_error("could not save emitter source");
+        imports.QueueChanged(path);
+        mSavedEmitterSources[mEmitterPath] = source;
+        mDirtyEmitter = false;
+        mError.clear();
     }
 
     void ParticleEditorPanel::DrawStack(bool spawn)
@@ -161,13 +451,150 @@ namespace mir
         ImGui::PopID();
     }
 
+    void ParticleEditorPanel::DrawBehaviorControls(ParticleBehavior &behavior, const ParticleBehaviorInfo &info)
+    {
+        if (info.widget == ParticleBehaviorWidget::Gradient)
+        {
+            mDirtyEmitter |= ImGui::ColorEdit4("Start color", behavior.parameters.data(),
+                ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_Float);
+            mDirtyEmitter |= ImGui::ColorEdit4("End color", behavior.parameters.data() + 4,
+                ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_Float);
+            ImGui::Dummy(ImVec2(ImGui::GetContentRegionAvail().x, 16));
+            const ImU32 start = ImGui::ColorConvertFloat4ToU32(ImVec4(behavior.parameters[0],
+                behavior.parameters[1], behavior.parameters[2], behavior.parameters[3]));
+            const ImU32 end = ImGui::ColorConvertFloat4ToU32(ImVec4(behavior.parameters[4],
+                behavior.parameters[5], behavior.parameters[6], behavior.parameters[7]));
+            ImGui::GetWindowDrawList()->AddRectFilledMultiColor(ImGui::GetItemRectMin(),
+                ImGui::GetItemRectMax(), start, end, end, start);
+            return;
+        }
+        for (size_t p = 0; p < behavior.parameters.size(); ++p)
+        {
+            const auto &parameter = info.parameters.begin()[p];
+            const std::string label(parameter.name);
+            if (parameter.integer)
+            {
+                int value = static_cast<int>(behavior.parameters[p]);
+                if (ImGui::DragInt(label.c_str(), &value, 1, static_cast<int>(parameter.min),
+                    static_cast<int>(parameter.max), "%d", ImGuiSliderFlags_AlwaysClamp))
+                {
+                    behavior.parameters[p] = static_cast<float>(value);
+                    mDirtyEmitter = true;
+                }
+            }
+            else mDirtyEmitter |= ImGui::DragFloat(label.c_str(), &behavior.parameters[p], 0.02f,
+                parameter.min, parameter.max, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        }
+        if (info.widget == ParticleBehaviorWidget::Curve)
+        {
+            float samples[64];
+            for (int i = 0; i < 64; ++i)
+                samples[i] = EvaluateParticleCurve(behavior.parameters[0], behavior.parameters[1],
+                    behavior.parameters[2], i / 63.0f);
+            ImGui::PlotLines("Normalized life", samples, 64, 0, nullptr, 0,
+                *std::max_element(samples, samples + 64) + 0.1f, ImVec2(0, 65));
+        }
+    }
+
+    void ParticleEditorPanel::DrawBehaviors()
+    {
+        auto &emitter = *mEmitter;
+        const auto infos = ParticleBehaviors();
+        const auto find = [&](const ParticleBehaviorInfo &info) -> std::pair<std::vector<ParticleBehavior> &, size_t>
+        {
+            auto &stack = info.spawn ? emitter.spawnBehaviors : emitter.updateBehaviors;
+            const auto found = std::find_if(stack.begin(), stack.end(), [&](const ParticleBehavior &behavior)
+                { return behavior.name == info.name; });
+            return {stack, static_cast<size_t>(found - stack.begin())};
+        };
+        for (const char *section : { "Emission", "Simulation", "Motion", "Appearance" })
+        {
+            if (!ImGui::CollapsingHeader(section, ImGuiTreeNodeFlags_DefaultOpen)) continue;
+            for (const auto &info : infos)
+            {
+                if (info.target != emitter.simulationTarget || info.section != section) continue;
+                ImGui::PushID(info.name.data());
+                if (!info.group.empty())
+                {
+                    const auto prior = std::find_if(infos.begin(), infos.end(), [&](const ParticleBehaviorInfo &entry)
+                        { return entry.target == info.target && entry.group == info.group; });
+                    if (&*prior != &info) { ImGui::PopID(); continue; }
+                    const ParticleBehaviorInfo *selected = nullptr;
+                    for (const auto &choice : infos)
+                        if (choice.target == info.target && choice.group == info.group)
+                        {
+                            const auto [stack, index] = find(choice);
+                            if (index < stack.size() && stack[index].enabled) selected = &choice;
+                        }
+                    const std::string selectedLabel = selected ?
+                        std::string(selected->label.empty() ? selected->name : selected->label) : "Off";
+                    if (ImGui::BeginCombo(std::string(info.group).c_str(), selectedLabel.c_str()))
+                    {
+                        if (ImGui::Selectable("Off", !selected) && selected)
+                        {
+                            auto [stack, index] = find(*selected);
+                            mDirtyEmitter |= SetParticleBehaviorEnabled(emitter, selected->spawn, index, false);
+                        }
+                        for (const auto &choice : infos)
+                            if (choice.target == info.target && choice.group == info.group)
+                            {
+                                const std::string label(choice.label.empty() ? choice.name : choice.label);
+                                if (ImGui::Selectable(label.c_str(), selected == &choice))
+                                {
+                                    auto [stack, index] = find(choice);
+                                    mDirtyEmitter |= index < stack.size() ?
+                                        SetParticleBehaviorEnabled(emitter, choice.spawn, index, true) :
+                                        AddParticleBehavior(emitter, choice.spawn, choice.name);
+                                }
+                            }
+                        ImGui::EndCombo();
+                    }
+                    if (selected)
+                    {
+                        auto [stack, index] = find(*selected);
+                        if (index < stack.size() && stack[index].enabled) DrawBehaviorControls(stack[index], *selected);
+                    }
+                }
+                else
+                {
+                    auto [stack, index] = find(info);
+                    const std::string label(info.label.empty() ? info.name : info.label);
+                    if (info.required) ImGui::TextDisabled("%s (required)", label.c_str());
+                    else
+                    {
+                        bool enabled = index < stack.size() && stack[index].enabled;
+                        if (ImGui::Checkbox(label.c_str(), &enabled))
+                            mDirtyEmitter |= index < stack.size() ?
+                                SetParticleBehaviorEnabled(emitter, info.spawn, index, enabled) :
+                                AddParticleBehavior(emitter, info.spawn, info.name);
+                    }
+                    auto [current, currentIndex] = find(info);
+                    if (currentIndex < current.size() && current[currentIndex].enabled)
+                        DrawBehaviorControls(current[currentIndex], info);
+                }
+                ImGui::PopID();
+            }
+        }
+    }
+
     void ParticleEditorPanel::DrawEmitter()
     {
         if (!mEmitter) return;
         auto &e = *mEmitter;
         ImGui::Separator(); ImGui::Text("Emitter: %s%s", mEmitterPath.c_str(), mDirtyEmitter ? " *" : "");
+        if (const auto found = mEmitterUsage.find(mEmitterPath); found != mEmitterUsage.end() && found->second > 1)
+            ImGui::TextDisabled("Shared by %zu systems. Changes to this asset affect all of them.", found->second);
         ImGui::TextUnformatted(e.simulationTarget == ParticleSimulationTarget::GPU ? "GPU sprite emitter" : "CPU ribbon emitter");
-        mDirtyEmitter |= Text("Texture", mTexturePath);
+        if (ImGui::BeginCombo("Texture", mTexturePath.empty() ? "Select texture" : mTexturePath.c_str()))
+        {
+            for (const auto &path : mTextures)
+                if (ImGui::Selectable(path.c_str(), path == mTexturePath))
+                {
+                    mTexturePath = path;
+                    mDirtyEmitter = true;
+                }
+            ImGui::EndCombo();
+        }
         mDirtyEmitter |= ImGui::DragFloat("Lifetime", &e.lifetime, 0.05f, 0.01f, 120, "%.2f s", ImGuiSliderFlags_AlwaysClamp);
         int capacity = static_cast<int>(e.capacity);
         if (ImGui::DragInt("Capacity", &capacity, 1, 1, e.simulationTarget == ParticleSimulationTarget::CPU ? 1024 : 65536, "%d", ImGuiSliderFlags_AlwaysClamp))
@@ -188,7 +615,26 @@ namespace mir
         mDirtyEmitter |= ImGui::InputScalar("Seed", ImGuiDataType_U32, &e.seed);
         mDirtyEmitter |= ImGui::DragFloat("Size", &e.size, 0.01f, 0.001f, 64);
         mDirtyEmitter |= ImGui::ColorEdit4("Base color", &e.color.x, ImGuiColorEditFlags_HDR|ImGuiColorEditFlags_Float);
-        DrawStack(true); DrawStack(false);
+        if (e.sourceVersion == 2)
+        {
+            ImGui::TextWrapped("Legacy ordered emitter. Upgrade to edit one behavior per setting. "
+                "The fixed order or opacity blend may change its appearance.");
+            if (ImGui::Button("Upgrade to simple behavior editor"))
+            {
+                std::string message;
+                if (UpgradeParticleEmitter(e, message))
+                {
+                    mDirtyEmitter = true;
+                    mError = message;
+                }
+                else mError = message;
+            }
+            if (e.sourceVersion == 2 && ImGui::CollapsingHeader("Legacy ordered stack"))
+            {
+                DrawStack(true); DrawStack(false);
+            }
+        }
+        if (e.sourceVersion >= 3) DrawBehaviors();
         if (ImGui::CollapsingHeader("Renderer", ImGuiTreeNodeFlags_DefaultOpen))
         {
             auto &r = e.renderer;
@@ -217,6 +663,7 @@ namespace mir
     {
         if (auto *particles = world.TryResource<ParticleWorld>(); particles && mPreviewing) particles->StopPreview();
         mPreviewing = false;
+        mPreviewEntity = kNullEntity;
     }
 
     void ParticleEditorPanel::DrawDiagnostics(World &world)
@@ -266,12 +713,45 @@ namespace mir
     void ParticleEditorPanel::Draw(bool &open, World &world, AssetCache &, AssetImportManager &imports,
         const EditorCamera &camera, float dt)
     {
+        if (!open && (mDirtySystem || mDirtyEmitter))
+        {
+            open = true;
+            mCloseRequested = true;
+        }
         if (!open) { OnHidden(world);return; }
-        ImGui::SetNextWindowSize(ImVec2(580, std::min(750.0f, ImGui::GetMainViewport()->WorkSize.y-80)), ImGuiCond_FirstUseEver);
-        if (!ImGui::Begin("Particles", &open)) { ImGui::End();return; }
+        ImGui::SetNextWindowSize(ImVec2(1050, std::min(800.0f, ImGui::GetMainViewport()->WorkSize.y-80)), ImGuiCond_FirstUseEver);
+        if (!ImGui::Begin("Particle Editor", &open)) { ImGui::End();return; }
+        mHistoryApplied = false;
+        const DraftSnapshot before = CaptureDraft();
         try
         {
+            if (mPendingHistoryAction < 0) UndoDraft();
+            else if (mPendingHistoryAction > 0) RedoDraft();
+            mPendingHistoryAction = 0;
+            ImGui::BeginDisabled(mUndoDrafts.empty() && !mGestureStart);
+            if (ImGui::Button("Undo")) UndoDraft();
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(mRedoDrafts.empty());
+            if (ImGui::Button("Redo")) RedoDraft();
+            ImGui::EndDisabled();
+            const ImGuiIO &io = ImGui::GetIO();
+            if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && io.KeyCtrl &&
+                !io.WantTextInput)
+            {
+                if (ImGui::IsKeyPressed(ImGuiKey_Z)) UndoDraft();
+                else if (ImGui::IsKeyPressed(ImGuiKey_Y)) RedoDraft();
+            }
+            ImGui::SameLine();
             if (!mScanned || ImGui::Button("Refresh systems")) Scan();
+            Text("New system path", mNewSystemPath);
+            ImGui::Combo("Template", &mNewEmitterTarget, "Blank\0Sprite\0Ribbon\0Exhaust\0Contrail\0");
+            if (ImGui::Button("Create particle system"))
+            {
+                if (mDirtySystem || mDirtyEmitter) throw std::runtime_error("save or discard drafts before creating a system");
+                OnHidden(world);
+                CreateSystem(imports);
+            }
             if ((mDirtySystem || mDirtyEmitter) && ImGui::Button("Discard drafts and reload")) LoadSystem(mSystemPath);
             std::string requestedSystem;
             ImGui::BeginDisabled(mDirtySystem || mDirtyEmitter);
@@ -292,6 +772,17 @@ namespace mir
                 mPreviewAnchor = camera.Pose();
                 mPreviewAnchor.linear = WorldMat3(1);
                 mPreviewAnchor.position = *WorldPosition::FromMeters(camera.Position().Meters()+WorldVec3(camera.Forward())*WorldReal(6));
+                if (const auto *selection = world.TryResource<Selection>();
+                    selection != nullptr && selection->mSelected.size() == 1)
+                {
+                    const Entity entity = selection->mSelected.front();
+                    if (const auto *component = world.GetComponent<ParticleSystem>(entity);
+                        component != nullptr && mSystemPath == component->systemName)
+                    {
+                        mPreviewEntity = entity;
+                        mPreviewAnchor = ResolveWorld(world, entity);
+                    }
+                }
             }
             ImGui::SameLine();
             if (ImGui::Button(mPreviewPaused ? "Resume preview" : "Pause preview"))
@@ -314,55 +805,130 @@ namespace mir
                 {
                     mPreviewTime += std::min(dt, 0.067f);
                     auto pose = mPreviewAnchor;
-                    if (mMovePreview) pose.position = *WorldPosition::FromMeters(pose.position.Meters()+WorldVec3(std::sin(mPreviewTime)*2, 0, 0));
+                    if (!mPreviewEntity.IsNull() && world.IsAlive(mPreviewEntity))
+                        pose = ResolveWorld(world, mPreviewEntity);
+                    else if (mMovePreview)
+                        pose.position = *WorldPosition::FromMeters(pose.position.Meters()+WorldVec3(std::sin(mPreviewTime)*2, 0, 0));
                     particles->Runtime().SetPose(particles->PreviewHandle(), pose);
                 }
             }
-            ImGui::TextWrapped("Preview uses cooked assets. Save and recook applies in Edit, Play waits until Stop. Scene and Play changes clear preview.");
-            ImGui::Separator(); DrawDiagnostics(world);
+            ImGui::TextWrapped("Preview uses cooked assets%s. Save and recook applies in Edit, Play waits until Stop.",
+                mPreviewEntity.IsNull() ? "" : " at the selected entity");
+            if (ImGui::CollapsingHeader("Profiling and limits")) DrawDiagnostics(world);
             if (!mSystemPath.empty())
             {
-                ImGui::Separator(); ImGui::Text("System asset%s", mDirtySystem ? " *" : "");
+                ImGui::Separator();
+                if (ImGui::CollapsingHeader("Effect settings", ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                ImGui::TextWrapped("Shared settings for every place this effect is used in a scene.%s", mDirtySystem ? " Unsaved." : "");
                 mDirtySystem |= ImGui::DragFloat("System birth scale", &mSystem.parameters.spawnRateScale, 0.05f, 0, 16);
                 mDirtySystem |= ImGui::DragFloat("System size scale", &mSystem.parameters.sizeScale, 0.05f, 0, 16);
                 mDirtySystem |= ImGui::DragFloat3("World wind", &mSystem.parameters.wind.x, 0.05f);
+                }
+                if (mSystem.sourceVersion == 2)
+                {
+                    ImGui::TextWrapped("This older effect plays as saved. Upgrade to add another position for the same emitter.");
+                    if (ImGui::Button("Upgrade effect"))
+                    {
+                        mSystem.sourceVersion = 3;
+                        mDirtySystem = true;
+                    }
+                }
                 std::optional<size_t> requestedEmitter;
+                std::optional<size_t> detachPlacement;
+                std::optional<std::pair<size_t, size_t>> movePlacement;
+                std::optional<size_t> duplicatePlacement;
+                ImGui::Separator();
+                ImGui::TextUnformatted("Emitters in this effect");
+                ImGui::TextWrapped("Each entry creates particles at a local position. Reuse an emitter to make another nozzle.");
                 for (size_t i = 0;i<mReferences.size();++i)
                 {
                     ImGui::PushID(static_cast<int>(i));
-                    mDirtySystem |= Text("Emitter reference", mReferences[i]);
-                    ImGui::SameLine(); ImGui::BeginDisabled(mDirtyEmitter);
-                    if (ImGui::SmallButton("Edit")) requestedEmitter = i;
-                    ImGui::EndDisabled();
+                    if (mSystem.sourceVersion == 2)
+                        ImGui::TextWrapped("%s", mReferences[i].c_str());
+                    else
+                    {
+                        if (ImGui::Selectable(mReferences[i].c_str(), mSelected == i)) requestedEmitter = i;
+                        if (mSelected == i)
+                        {
+                            ImGui::TextUnformatted("Position relative to the effect's scene entity");
+                            mDirtySystem |= ImGui::DragFloat3("##Local origin", &mSystem.placementOffsets[i].x, 0.05f,
+                                -4096, 4096, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+                            if (mReferences.size() < kMaxSystemEmitters && ImGui::SmallButton("Add another at +1 X"))
+                                duplicatePlacement = i;
+                            if (mReferences.size() > 1)
+                            {
+                                ImGui::SameLine();
+                                if (ImGui::SmallButton("Remove from effect")) detachPlacement = i;
+                            }
+                            if (i && ImGui::SmallButton("Move up")) movePlacement = {{i, i - 1}};
+                            if (i + 1 < mReferences.size())
+                            {
+                                ImGui::SameLine();
+                                if (ImGui::SmallButton("Move down")) movePlacement = {{i, i + 1}};
+                            }
+                        }
+                    }
                     ImGui::PopID();
                 }
-                if (requestedEmitter) LoadEmitter(*requestedEmitter);
-                if (mReferences.size()<8 && ImGui::Button("Add emitter reference"))
+                if (movePlacement)
                 {
-                    mReferences.push_back("particles/new.emitter.json");mDirtySystem = true;
+                    const auto [a, b] = *movePlacement;
+                    std::swap(mReferences[a], mReferences[b]);
+                    std::swap(mSystem.emitters[a], mSystem.emitters[b]);
+                    std::swap(mSystem.placementIds[a], mSystem.placementIds[b]);
+                    std::swap(mSystem.placementOffsets[a], mSystem.placementOffsets[b]);
+                    if (mSelected == a) mSelected = b;
+                    else if (mSelected == b) mSelected = a;
+                    mDirtySystem = true;
                 }
-                ImGui::SameLine(); if (mReferences.size()>1 && ImGui::Button("Remove last reference"))
+                else if (duplicatePlacement)
                 {
-                    mReferences.pop_back();mDirtySystem = true;
+                    const auto i = *duplicatePlacement;
+                    const auto offset = mSystem.placementOffsets[i];
+                    AttachEmitter(mReferences[i]);
+                    mSystem.placementOffsets.back() = offset + glm::vec3(1.0f, 0.0f, 0.0f);
                 }
-                if (ImGui::Button("Save system + recook"))
+                else if (detachPlacement)
                 {
-                    mSystem.emitters.clear();
-                    for (const auto &path:mReferences) mSystem.emitters.push_back(MakeAssetId(MakeLogicalAssetPath(mIdRoot, path).path));
-                    const auto source = WriteParticleEffectSource(mSystem, mReferences);
-                    const auto path = SourceFile(mSystemPath);
-                    if (!WriteTextAtomic(path, source)) throw std::runtime_error("could not save system source");
-                    imports.QueueChanged(path);mDirtySystem = false;mError.clear();
+                    const auto i = *detachPlacement;
+                    mReferences.erase(mReferences.begin() + i);
+                    mSystem.emitters.erase(mSystem.emitters.begin() + i);
+                    mSystem.placementIds.erase(mSystem.placementIds.begin() + i);
+                    mSystem.placementOffsets.erase(mSystem.placementOffsets.begin() + i);
+                    mDirtySystem = true;
+                    if (i == mSelected) { mEmitter.reset(); mEmitterPath.clear(); }
                 }
+                else if (requestedEmitter && *requestedEmitter != mSelected)
+                {
+                    if (mDirtyEmitter) mError = "Save the current emitter before selecting another one.";
+                    else { CommitDraftGesture(); LoadEmitter(*requestedEmitter); }
+                }
+                if (mSystem.sourceVersion >= 3)
+                {
+                    ImGui::BeginDisabled(mReferences.size() >= kMaxSystemEmitters);
+                    ImGui::TextUnformatted("Add an existing emitter");
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::BeginCombo("##Use existing emitter", "Choose emitter asset"))
+                    {
+                        for (const auto &path : mEmitters)
+                            if (ImGui::Selectable(path.c_str())) AttachEmitter(path);
+                        ImGui::EndCombo();
+                    }
+                    if (ImGui::TreeNode("Create a new emitter"))
+                    {
+                        Text("Asset path", mNewEmitterPath);
+                        if (ImGui::Button("Create and add")) CreateEmitter(imports);
+                        ImGui::TreePop();
+                    }
+                    ImGui::EndDisabled();
+                }
+                if (ImGui::Button("Save effect"))
+                    SaveSystem(imports);
             }
             DrawEmitter();
-            if (mEmitter && ImGui::Button("Save emitter + recook"))
-            {
-                const auto source = WriteParticleEmitterSource(*mEmitter, mTexturePath);
-                const auto path = SourceFile(mEmitterPath);
-                if (!WriteTextAtomic(path, source)) throw std::runtime_error("could not save emitter source");
-                imports.QueueChanged(path);mDirtyEmitter = false;mError.clear();
-            }
+            if (mEmitter && ImGui::Button("Save emitter"))
+                SaveEmitter(imports);
             if (mEmitter)
             {
                 std::string error;
@@ -371,6 +937,64 @@ namespace mir
         }
         catch (const std::bad_alloc &) { throw; }
         catch (const std::exception &error) { mError = error.what(); }
+        if (!mHistoryApplied && before.systemPath == mSystemPath && before.emitterPath == mEmitterPath)
+        {
+            const DraftSnapshot after = CaptureDraft();
+            if (before.systemSource != after.systemSource || before.emitterSource != after.emitterSource)
+                if (!mGestureStart) mGestureStart = before;
+            if (mGestureStart && !ImGui::IsAnyItemActive()) CommitDraftGesture();
+        }
+        if (!mSystemPath.empty()) mDirtySystem = CaptureDraft().systemSource != mSavedSystemSource;
+        if (mEmitter)
+        {
+            const auto saved = mSavedEmitterSources.find(mEmitterPath);
+            mDirtyEmitter = saved == mSavedEmitterSources.end() ||
+                CaptureDraft().emitterSource != saved->second;
+        }
+        if (!open && (mDirtySystem || mDirtyEmitter))
+        {
+            open = true;
+            mCloseRequested = true;
+        }
+        if (mCloseRequested) ImGui::OpenPopup("Unsaved particle edits");
+        if (ImGui::BeginPopupModal("Unsaved particle edits", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::TextUnformatted("Save changes to the particle system and emitter before closing?");
+            if (ImGui::Button("Save and close"))
+            {
+                try
+                {
+                    CommitDraftGesture();
+                    if (mDirtyEmitter) SaveEmitter(imports);
+                    if (mDirtySystem) SaveSystem(imports);
+                    mCloseRequested = false;
+                    open = false;
+                    ImGui::CloseCurrentPopup();
+                }
+                catch (const std::exception &error) { mError = error.what(); }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Discard and close"))
+            {
+                mError.clear();
+                if (!mSystemPath.empty())
+                    try { LoadSystem(mSystemPath); }
+                    catch (const std::exception &error) { mError = error.what(); }
+                if (mError.empty())
+                {
+                    mCloseRequested = false;
+                    open = false;
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel"))
+            {
+                mCloseRequested = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
         if (!mError.empty()) ImGui::TextWrapped("%s", mError.c_str());
         if (!imports.View().mLastError.empty()) ImGui::TextWrapped("Cook/reload: %s", imports.View().mLastError.c_str());
         if (imports.View().mProcessRunning) ImGui::TextUnformatted("Cooking source assets...");

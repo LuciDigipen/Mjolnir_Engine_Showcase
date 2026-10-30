@@ -256,9 +256,20 @@ namespace mir
                     mWorld.Resource<EngineModeState>(), mProjectMenu, mProject.mDir,
                     preview != nullptr ? *preview : mWorld, mWorld, MakeEditorDocuments(), mImport.View(),
                     mRenderer.Renderer(), MakeContentBrowserView());
+                if (const std::string particlePath = mEditor.TakeParticleOpenRequest();
+                    !particlePath.empty() && IsEditing(mWorld))
+                {
+                    mParticleEditor->OpenSystem(particlePath, mWorld);
+                    mEditor.ParticleEditorVisible() = true;
+                }
+                const int particleHistoryRequest = mEditor.TakeParticleHistoryRequest();
+                if (particleHistoryRequest < 0) mParticleEditor->RequestUndoDraft();
+                else if (particleHistoryRequest > 0) mParticleEditor->RequestRedoDraft();
                 if (mEnableLayout)
                     mParticleEditor->Draw(mEditor.ParticleEditorVisible(),mWorld,assets.Cache(),mImport,mEditor.SceneCamera(),mFrameDt);
                 else mParticleEditor->OnHidden(mWorld);
+                mEditor.SetParticleHistoryAvailability(mParticleEditor->CanUndoDraft(),
+                    mParticleEditor->CanRedoDraft());
                 mPrefabWorkspace.CloseMissingDocuments();
                 ApplyActions(actions);
                 FeedViewport();
@@ -353,6 +364,23 @@ namespace mir
         if (actions.mContentBrowser.mKind == ContentBrowserActionKind::OpenInIde)
         {
             OpenInExternalIde(actions.mContentBrowser.mTargetPath);
+        }
+        else if (actions.mContentBrowser.mKind == ContentBrowserActionKind::NewParticleSystem)
+        {
+            const auto &folder = actions.mContentBrowser.mTargetPath;
+            const std::string assetFolder = folder == "assets" ? "" :
+                (folder.starts_with("assets/") ? folder.substr(7) : "particles");
+            mParticleEditor->PrepareNewSystem(assetFolder);
+            mEditor.ParticleEditorVisible() = true;
+        }
+        else if (actions.mContentBrowser.mKind == ContentBrowserActionKind::OpenParticleSystem)
+        {
+            const auto &path = actions.mContentBrowser.mTargetPath;
+            if (IsEditing(mWorld) && path.starts_with("assets/"))
+            {
+                mParticleEditor->OpenSystem(path.substr(7), mWorld);
+                mEditor.ParticleEditorVisible() = true;
+            }
         }
         else if (actions.mContentBrowser.mKind == ContentBrowserActionKind::OpenPrefab)
         {

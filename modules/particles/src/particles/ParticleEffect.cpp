@@ -30,6 +30,8 @@ namespace mir
     struct ParticleScriptWriter
     {
         std::string mSource;
+        bool mCanonical = false;
+        bool mHasGradient = false;
     };
 
     namespace
@@ -103,6 +105,13 @@ namespace mir
 
         void EmitFadeOverLife(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
         {
+            if (writer.mCanonical)
+            {
+                writer.mSource += writer.mHasGradient ? "    a.color.a *= " : "    a.color.a = p.color.a * ";
+                writer.mSource += "lerp(1.0, " + Number(behavior.parameters[0]) +
+                    ", saturate(a.positionAge.w / a.velocityLifetime.w));\n";
+                return;
+            }
             writer.mSource += "    a.color.a = lerp(p.color.a, " + Number(behavior.parameters[0]) +
                 ", saturate(a.positionAge.w / a.velocityLifetime.w));\n";
         }
@@ -132,33 +141,41 @@ namespace mir
         // One row per behavior, so a new behavior is one row plus its emit function.
         const ParticleBehaviorInfo kBehaviors[]{
             { "SizeCurve", false, ParticleSimulationTarget::GPU,
-                { Scale("start"), Scale("middle"), Scale("end") }, false, EmitSizeCurve },
+                { Scale("start"), Scale("middle"), Scale("end") }, false, EmitSizeCurve, nullptr, false, 40,
+                "Size over lifetime", "Appearance", "Curve", ParticleBehaviorWidget::Curve },
             { "ColorGradient", false, ParticleSimulationTarget::GPU,
                 { Scale("r0"), Scale("g0"), Scale("b0"), Alpha("a0", 1), Scale("r1"), Scale("g1"), Scale("b1"), Alpha("a1", 0) },
-                true, EmitColorGradient },
+                true, EmitColorGradient, nullptr, false, 50, {}, "Appearance", "Color over lifetime", ParticleBehaviorWidget::Gradient },
             { "RibbonWidthCurve", false, ParticleSimulationTarget::CPU,
-                { Scale("start"), Scale("middle"), Scale("end") }, false, nullptr, ResolveRibbonWidthCurve },
+                { Scale("start"), Scale("middle"), Scale("end") }, false, nullptr, ResolveRibbonWidthCurve, false, 20,
+                "Width over lifetime", "Appearance", "Curve", ParticleBehaviorWidget::Curve },
             { "RibbonColorGradient", false, ParticleSimulationTarget::CPU,
                 { Scale("r0"), Scale("g0"), Scale("b0"), Alpha("a0", 1), Scale("r1"), Scale("g1"), Scale("b1"), Alpha("a1", 0) },
-                false, nullptr, ResolveRibbonColorGradient },
+                false, nullptr, ResolveRibbonColorGradient, false, 30, {}, "Appearance", "Color over lifetime", ParticleBehaviorWidget::Gradient },
             { "RibbonSpawn", true, ParticleSimulationTarget::CPU,{ { "maxInterval", 1.0f / 60, 10, false, 0.25f } }, false, nullptr,
-                ResolveRibbonSpawn, true },
-            { "RibbonAge", false, ParticleSimulationTarget::CPU,{}, false, nullptr, ResolveRibbonAge, true },
-            { "RibbonWind", false, ParticleSimulationTarget::CPU,{}, false, nullptr, ResolveRibbonWind },
-            { "RibbonWidth", false, ParticleSimulationTarget::CPU,{ Scale("endScale") }, false, nullptr, ResolveRibbonWidth },
-            { "RibbonFade", false, ParticleSimulationTarget::CPU,{}, false, nullptr, ResolveRibbonFade },
-            { "Initialize", true, ParticleSimulationTarget::GPU,{}, false, EmitInitialize },
+                ResolveRibbonSpawn, true, 0, {}, "Emission" },
+            { "RibbonAge", false, ParticleSimulationTarget::CPU,{}, false, nullptr, ResolveRibbonAge, true, 0, {}, "Simulation" },
+            { "RibbonWind", false, ParticleSimulationTarget::CPU,{}, false, nullptr, ResolveRibbonWind, false, 10, {}, "Motion", "Wind drift" },
+            { "RibbonWidth", false, ParticleSimulationTarget::CPU,{ Scale("endScale") }, false, nullptr, ResolveRibbonWidth,
+                false, 20, "Width over lifetime", "Appearance", "Linear" },
+            { "RibbonFade", false, ParticleSimulationTarget::CPU,{}, false, nullptr, ResolveRibbonFade, false, 40,
+                {}, "Appearance", "Fade over lifetime" },
+            { "Initialize", true, ParticleSimulationTarget::GPU,{}, false, EmitInitialize, nullptr, true, 0, {}, "Simulation" },
             { "VelocityVariation", true, ParticleSimulationTarget::GPU,
-                { Variation("x"), Variation("y"), Variation("z") }, false, EmitVelocityVariation },
-            { "Age", false, ParticleSimulationTarget::GPU,{}, false, EmitAge },
-            { "Integrate", false, ParticleSimulationTarget::GPU,{}, false, EmitIntegrate },
+                { Variation("x"), Variation("y"), Variation("z") }, false, EmitVelocityVariation, nullptr, false, 10, {}, "Motion" },
+            { "Age", false, ParticleSimulationTarget::GPU,{}, false, EmitAge, nullptr, true, 0, {}, "Simulation" },
+            { "Integrate", false, ParticleSimulationTarget::GPU,{}, false, EmitIntegrate, nullptr, true, 30, {}, "Simulation" },
             { "Acceleration", false, ParticleSimulationTarget::GPU,
-                { Unbounded("x"), Unbounded("y"), Unbounded("z") }, false, EmitAcceleration },
-            { "Drag", false, ParticleSimulationTarget::GPU,{ { "coefficient", 0, 10000, false, 0 } }, false, EmitDrag },
-            { "SizeOverLife", false, ParticleSimulationTarget::GPU,{ Scale("endScale") }, false, EmitSizeOverLife },
-            { "FadeOverLife", false, ParticleSimulationTarget::GPU,{ Alpha("endAlpha", 0) }, true, EmitFadeOverLife },
+                { Unbounded("x"), Unbounded("y"), Unbounded("z") }, false, EmitAcceleration, nullptr, false, 10, {}, "Motion" },
+            { "Drag", false, ParticleSimulationTarget::GPU,{ { "coefficient", 0, 10000, false, 0 } }, false, EmitDrag,
+                nullptr, false, 20, {}, "Motion" },
+            { "SizeOverLife", false, ParticleSimulationTarget::GPU,{ Scale("endScale") }, false, EmitSizeOverLife,
+                nullptr, false, 40, "Size over lifetime", "Appearance", "Linear" },
+            { "FadeOverLife", false, ParticleSimulationTarget::GPU,{ Alpha("endAlpha", 0) }, true, EmitFadeOverLife,
+                nullptr, false, 60, {}, "Appearance", "Opacity over lifetime" },
             { "Flipbook", false, ParticleSimulationTarget::GPU,
-                { { "columns", 1, 64, true, 1 },{ "rows", 1, 64, true, 1 },{ "fps", 0, 240, false, 0 } }, false, EmitFlipbook } };
+                { { "columns", 1, 64, true, 1 },{ "rows", 1, 64, true, 1 },{ "fps", 0, 240, false, 0 } }, false, EmitFlipbook,
+                nullptr, false, 70, {}, "Appearance" } };
 
         const ParticleBehaviorInfo *FindBehavior(std::string_view name, bool spawn, ParticleSimulationTarget target)
         {
@@ -284,15 +301,21 @@ namespace mir
                 { "velocity",{ emitter.velocity.x, emitter.velocity.y, emitter.velocity.z } } };
         }
 
-        bool ReadBehaviors(const Json &value, std::vector<ParticleBehavior> &behaviors)
+        bool ReadBehaviors(const Json &value, std::vector<ParticleBehavior> &behaviors, bool allowEnabled)
         {
             if (!value.is_array() || value.size() > 32) return false;
             behaviors.clear();
             for (const auto &entry : value)
             {
-                if (!KnownFields(entry, { "name", "parameters" }) || !entry.contains("name") ||
+                if (!KnownFields(entry, allowEnabled ? std::initializer_list<std::string_view>{ "name", "parameters", "enabled" } :
+                    std::initializer_list<std::string_view>{ "name", "parameters" }) || !entry.contains("name") ||
                     !entry["name"].is_string()) return false;
                 ParticleBehavior behavior{ entry["name"].get<std::string>(),{} };
+                if (entry.contains("enabled"))
+                {
+                    if (!allowEnabled || !entry["enabled"].is_boolean()) return false;
+                    behavior.enabled = entry["enabled"].get<bool>();
+                }
                 if (entry.contains("parameters"))
                 {
                     if (!entry["parameters"].is_array() || entry["parameters"].size() > 8) return false;
@@ -307,16 +330,32 @@ namespace mir
             return true;
         }
 
-        Json WriteBehaviors(const std::vector<ParticleBehavior> &behaviors)
+        Json WriteBehaviors(const ParticleEmitterAsset &emitter, bool spawn, bool source)
         {
             Json result = Json::array();
-            for (const auto &behavior : behaviors)
-                result.push_back(Json{ { "name", behavior.name },{ "parameters", behavior.parameters } });
+            if (source)
+            {
+                const auto &behaviors = spawn ? emitter.spawnBehaviors : emitter.updateBehaviors;
+                for (const auto &behavior : behaviors)
+                {
+                    Json entry{ { "name", behavior.name },{ "parameters", behavior.parameters } };
+                    if (emitter.sourceVersion >= 3) entry["enabled"] = behavior.enabled;
+                    result.push_back(std::move(entry));
+                }
+            }
+            else
+                for (const auto *behavior : ActiveParticleBehaviors(emitter, spawn))
+                    result.push_back(Json{ { "name", behavior->name },{ "parameters", behavior->parameters } });
             return result;
         }
 
         bool ValidateBehaviors(const ParticleEmitterAsset &emitter, std::string &error)
         {
+            if (emitter.sourceVersion != 2 && emitter.sourceVersion != 3)
+            {
+                error = "unsupported particle emitter behavior version";
+                return false;
+            }
             for (bool spawn : {true, false})
             {
                 const auto &behaviors = spawn ? emitter.spawnBehaviors : emitter.updateBehaviors;
@@ -332,6 +371,36 @@ namespace mir
                     {
                         error = "unknown particle behavior or unsupported stage/target: " + behavior.name;
                         return false;
+                    }
+                    if (emitter.sourceVersion == 2 && !behavior.enabled)
+                    {
+                        error = "legacy particle behaviors cannot be disabled";
+                        return false;
+                    }
+                    if (emitter.sourceVersion >= 3)
+                    {
+                        const auto earlier = std::span(behaviors).first(&behavior - behaviors.data());
+                        if (std::any_of(earlier.begin(), earlier.end(), [&](const ParticleBehavior &entry)
+                            { return entry.name == behavior.name; }))
+                        {
+                            error = "duplicate particle behavior: " + behavior.name;
+                            return false;
+                        }
+                        if (behavior.enabled && !definition->group.empty() &&
+                            std::any_of(earlier.begin(), earlier.end(), [&](const ParticleBehavior &entry)
+                            {
+                                const auto *prior = FindBehavior(entry.name, spawn, emitter.simulationTarget);
+                                return entry.enabled && prior && prior->group == definition->group;
+                            }))
+                        {
+                            error = "particle behavior modes conflict: " + behavior.name;
+                            return false;
+                        }
+                        if (definition->required && !behavior.enabled)
+                        {
+                            error = "required particle behavior cannot be disabled: " + behavior.name;
+                            return false;
+                        }
                     }
                     bool valid = behavior.parameters.size() == definition->parameters.size();
                     for (size_t i = 0; valid && i < behavior.parameters.size(); ++i)
@@ -358,7 +427,9 @@ namespace mir
             {
                 const auto &stack = entry.spawn ? emitter.spawnBehaviors : emitter.updateBehaviors;
                 if (entry.required && entry.target == emitter.simulationTarget &&
-                    std::none_of(stack.begin(), stack.end(), [&](const ParticleBehavior &behavior) { return behavior.name == entry.name; }))
+                    (emitter.sourceVersion >= 3 || entry.target == ParticleSimulationTarget::CPU) &&
+                    std::none_of(stack.begin(), stack.end(), [&](const ParticleBehavior &behavior)
+                        { return behavior.name == entry.name && behavior.enabled; }))
                 {
                     error = "particle emitter requires behavior: " + std::string(entry.name);
                     return false;
@@ -371,25 +442,48 @@ namespace mir
         ParticleEffectResult ParseSystem(std::string_view text, bool source, std::string_view assetIdRoot)
         {
             const Json value = Json::parse(text, nullptr, false);
-            if (!KnownFields(value, source ? std::initializer_list<std::string_view>{"version", "emitters", "parameters"} :
-                std::initializer_list<std::string_view>{ "emitterIds", "parameters" }))
+            if (!KnownFields(value, source ? std::initializer_list<std::string_view>{ "version", "emitters", "placements", "parameters" } :
+                std::initializer_list<std::string_view>{ "emitterIds", "placementIds", "placementOffsets", "schemaVersion", "parameters" }))
                 return Invalid<ParticleEffectResult>("particle system must be an object with only the supported fields");
-            if (source && (!value.contains("version") || !value["version"].is_number_integer() || value["version"] != 2))
+            if (source && (!value.contains("version") || !value["version"].is_number_integer() ||
+                (value["version"] != 2 && value["version"] != 3)))
                 return Invalid<ParticleEffectResult>("unsupported particle system source version");
-            const auto key = source ? "emitters" : "emitterIds";
+            if (!source && value.contains("schemaVersion") && !value["schemaVersion"].is_number_unsigned())
+                return Invalid<ParticleEffectResult>("invalid cooked particle system version");
+            const uint32_t version = source ? value["version"].get<uint32_t>() :
+                (value.contains("schemaVersion") && value["schemaVersion"].is_number_unsigned() ?
+                    value["schemaVersion"].get<uint32_t>() : 2);
+            if (version != 2 && version != 3)
+                return Invalid<ParticleEffectResult>("unsupported cooked particle system version");
+            const auto key = source ? (version == 3 ? "placements" : "emitters") : "emitterIds";
             if (!value.contains(key) || !value[key].is_array() || value[key].empty() || value[key].size() > kMaxSystemEmitters)
                 return Invalid<ParticleEffectResult>("particle system requires 1 to 8 emitter references");
             ParticleEffectResult result;
             ParticleEffect effect;
+            effect.sourceVersion = version;
             if (value.contains("parameters") && !ReadParameters(value["parameters"], effect.parameters, result.mError))
                 return result;
-            for (const auto &reference : value[key])
+            for (const auto &item : value[key])
             {
+                const Json *reference = &item;
+                if (source && version == 3)
+                {
+                    if (!KnownFields(item, { "id", "emitter", "offset" }) || !item.contains("id") ||
+                        !item["id"].is_number_unsigned() || item["id"] > UINT32_MAX ||
+                        !item.contains("emitter") || !item.contains("offset"))
+                        return Invalid<ParticleEffectResult>("particle placement requires id, emitter and offset");
+                    effect.placementIds.push_back(item["id"].get<uint32_t>());
+                    glm::vec3 offset;
+                    if (!ReadVector(item["offset"], offset))
+                        return Invalid<ParticleEffectResult>("invalid particle placement offset");
+                    effect.placementOffsets.push_back(offset);
+                    reference = &item["emitter"];
+                }
                 if (source)
                 {
-                    if (!reference.is_string())
+                    if (!reference->is_string())
                         return Invalid<ParticleEffectResult>("particle emitter reference must be a path string");
-                    const auto &path = reference.get_ref<const std::string &>();
+                    const auto &path = reference->get_ref<const std::string &>();
                     const auto relative = NormalizeAssetPath(path);
                     const auto logical = MakeLogicalAssetPath(assetIdRoot, path);
                     if (!relative.Ok() || !logical.Ok() || !relative.path.ends_with(".emitter.json"))
@@ -399,9 +493,35 @@ namespace mir
                 }
                 else
                 {
-                    if (!reference.is_number_unsigned())
+                    if (!reference->is_number_unsigned())
                         return Invalid<ParticleEffectResult>("cooked particle emitter reference must be an unsigned asset ID");
-                    effect.emitters.push_back(AssetId{ reference.get<uint64_t>() });
+                    effect.emitters.push_back(AssetId{ reference->get<uint64_t>() });
+                }
+            }
+            if (!source && version == 3)
+            {
+                if (!value.contains("placementIds") || !value["placementIds"].is_array() ||
+                    !value.contains("placementOffsets") || !value["placementOffsets"].is_array() ||
+                    value["placementIds"].size() != effect.emitters.size() ||
+                    value["placementOffsets"].size() != effect.emitters.size())
+                    return Invalid<ParticleEffectResult>("cooked particle placements do not match emitter references");
+                for (size_t i = 0; i < effect.emitters.size(); ++i)
+                {
+                    if (!value["placementIds"][i].is_number_unsigned() || value["placementIds"][i] > UINT32_MAX)
+                        return Invalid<ParticleEffectResult>("invalid cooked particle placement ID");
+                    effect.placementIds.push_back(value["placementIds"][i].get<uint32_t>());
+                    glm::vec3 offset;
+                    if (!ReadVector(value["placementOffsets"][i], offset))
+                        return Invalid<ParticleEffectResult>("invalid cooked particle placement offset");
+                    effect.placementOffsets.push_back(offset);
+                }
+            }
+            if (version == 2)
+            {
+                for (size_t i = 0; i < effect.emitters.size(); ++i)
+                {
+                    effect.placementIds.push_back(static_cast<uint32_t>(i + 1));
+                    effect.placementOffsets.push_back(glm::vec3(0));
                 }
             }
             if (!ValidateParticleEffect(effect, result.mError)) return result;
@@ -413,9 +533,10 @@ namespace mir
         {
             const Json value = Json::parse(text, nullptr, false);
             if (!KnownFields(value, source ? std::initializer_list<std::string_view>{"version", "target", "lifetime", "spawnRate", "capacity", "texture", "renderer", "spawnBehaviors", "updateBehaviors", "localOffset", "spawnPerMeter", "burst", "seed", "inheritVelocity", "teleportDistance", "quality"} :
-                std::initializer_list<std::string_view>{ "target", "lifetime", "spawnRate", "capacity", "textureId", "renderer", "spawnBehaviors", "updateBehaviors", "scriptId", "scriptLayoutId", "localOffset", "spawnPerMeter", "burst", "seed", "inheritVelocity", "teleportDistance", "quality" }))
+                std::initializer_list<std::string_view>{ "target", "lifetime", "spawnRate", "capacity", "textureId", "renderer", "spawnBehaviors", "updateBehaviors", "scriptId", "scriptLayoutId", "localOffset", "spawnPerMeter", "burst", "seed", "inheritVelocity", "teleportDistance", "quality", "schemaVersion" }))
                 return Invalid<ParticleEmitterAssetResult>("particle emitter must be an object with only the supported fields");
-            if (source && (!value.contains("version") || !value["version"].is_number_integer() || value["version"] != 2))
+            if (source && (!value.contains("version") || !value["version"].is_number_integer() ||
+                (value["version"] != 2 && value["version"] != 3)))
                 return Invalid<ParticleEmitterAssetResult>("unsupported particle emitter source version");
             if (!value.contains("target") || !value["target"].is_string() ||
                 (value["target"] != "gpu" && value["target"] != "cpu"))
@@ -427,14 +548,25 @@ namespace mir
                 return Invalid<ParticleEmitterAssetResult>("invalid or missing lifetime, spawnRate or capacity");
             ParticleEmitterAssetResult result;
             ParticleEmitterAsset emitter;
+            if (source) emitter.sourceVersion = value["version"].get<uint32_t>();
+            else if (value.contains("schemaVersion"))
+            {
+                if (!value["schemaVersion"].is_number_integer() ||
+                    (value["schemaVersion"] != 2 && value["schemaVersion"] != 3))
+                    return Invalid<ParticleEmitterAssetResult>("unsupported cooked emitter behavior version");
+                emitter.sourceVersion = value["schemaVersion"].get<uint32_t>();
+            }
+            else emitter.sourceVersion = 2;
             emitter.simulationTarget = value["target"] == "gpu" ? ParticleSimulationTarget::GPU : ParticleSimulationTarget::CPU;
             if (emitter.simulationTarget == ParticleSimulationTarget::CPU)
             {
                 emitter.spawnBehaviors.clear();
                 emitter.updateBehaviors.clear();
             }
-            if ((value.contains("spawnBehaviors") && !ReadBehaviors(value["spawnBehaviors"], emitter.spawnBehaviors)) ||
-                (value.contains("updateBehaviors") && !ReadBehaviors(value["updateBehaviors"], emitter.updateBehaviors)))
+            if ((value.contains("spawnBehaviors") && !ReadBehaviors(value["spawnBehaviors"], emitter.spawnBehaviors,
+                    source && emitter.sourceVersion >= 3)) ||
+                (value.contains("updateBehaviors") && !ReadBehaviors(value["updateBehaviors"], emitter.updateBehaviors,
+                    source && emitter.sourceVersion >= 3)))
                 return Invalid<ParticleEmitterAssetResult>("invalid ordered particle behavior stack");
             emitter.lifetime = value["lifetime"].get<float>();
             emitter.spawnRate = value["spawnRate"].get<float>();
@@ -499,6 +631,22 @@ namespace mir
 
     std::span<const ParticleBehaviorInfo> ParticleBehaviors() { return kBehaviors; }
 
+    std::vector<const ParticleBehavior *> ActiveParticleBehaviors(const ParticleEmitterAsset &emitter, bool spawn)
+    {
+        std::vector<const ParticleBehavior *> active;
+        const auto &behaviors = spawn ? emitter.spawnBehaviors : emitter.updateBehaviors;
+        for (const auto &behavior : behaviors)
+            if (behavior.enabled) active.push_back(&behavior);
+        if (emitter.sourceVersion >= 3)
+            std::stable_sort(active.begin(), active.end(), [&](const ParticleBehavior *left, const ParticleBehavior *right)
+            {
+                const auto *a = FindBehavior(left->name, spawn, emitter.simulationTarget);
+                const auto *b = FindBehavior(right->name, spawn, emitter.simulationTarget);
+                return a && b && a->order < b->order;
+            });
+        return active;
+    }
+
     float EvaluateParticleCurve(float start, float middle, float end, float age)
     {
         const float t = std::clamp(age, 0.0f, 1.0f);
@@ -509,9 +657,11 @@ namespace mir
     {
         const auto bytes = BuildParticleEmitterAsset(emitter);
         Json value = Json::parse(AsStringView(*ParseAssetBlob(bytes)));
-        for (const auto key :{ "textureId", "scriptId", "scriptLayoutId" }) value.erase(key);
-        value["version"] = 2;
+        for (const auto key :{ "textureId", "scriptId", "scriptLayoutId", "schemaVersion" }) value.erase(key);
+        value["version"] = emitter.sourceVersion;
         value["texture"] = texturePath;
+        value["spawnBehaviors"] = WriteBehaviors(emitter, true, true);
+        value["updateBehaviors"] = WriteBehaviors(emitter, false, true);
         const auto result = ReadParticleEmitterSource(value.dump(), "assets");
         if (!result.mEmitter) throw std::invalid_argument(result.mError);
         return value.dump(2) + "\n";
@@ -520,7 +670,20 @@ namespace mir
     std::string WriteParticleEffectSource(const ParticleEffect &effect, std::span<const std::string> paths)
     {
         if (paths.size() != effect.emitters.size()) throw std::invalid_argument("emitter paths must match system references");
-        Json value{ { "version", 2 },{ "emitters", paths },{ "parameters", WriteParameters(effect.parameters) } };
+        Json value{ { "version", effect.sourceVersion },{ "parameters", WriteParameters(effect.parameters) } };
+        if (effect.sourceVersion == 2) value["emitters"] = paths;
+        else
+        {
+            Json placements = Json::array();
+            for (size_t i = 0; i < paths.size(); ++i)
+            {
+                const uint32_t id = effect.placementIds.empty() ? static_cast<uint32_t>(i + 1) : effect.placementIds.at(i);
+                const glm::vec3 offset = effect.placementOffsets.empty() ? glm::vec3(0) : effect.placementOffsets.at(i);
+                placements.push_back(Json{ { "id", id },{ "emitter", paths[i] },
+                    { "offset",{ offset.x, offset.y, offset.z } } });
+            }
+            value["placements"] = std::move(placements);
+        }
         const auto result = ReadParticleEffectSource(value.dump(), "assets");
         if (!result.mEffect) throw std::invalid_argument(result.mError);
         return value.dump(2) + "\n";
@@ -556,6 +719,9 @@ namespace mir
         if (emitter.simulationTarget != ParticleSimulationTarget::GPU)
             throw std::runtime_error("CPU particle emitters have no GPU script");
         ParticleScriptWriter writer;
+        writer.mCanonical = emitter.sourceVersion >= 3;
+        writer.mHasGradient = std::any_of(emitter.updateBehaviors.begin(), emitter.updateBehaviors.end(),
+            [](const ParticleBehavior &behavior) { return behavior.enabled && behavior.name == "ColorGradient"; });
         writer.mSource = R"(
 struct Particle
 {
@@ -607,17 +773,17 @@ float SignedNoise(uint value)
 void UpdateParticle(inout Particle a, Parameters p, float dt)
 {
 )";
-        const auto emitStage = [&](const std::vector<ParticleBehavior> &behaviors, bool spawn)
+        const auto emitStage = [&](bool spawn)
             {
-                for (const auto &behavior : behaviors)
+                for (const auto *behavior : ActiveParticleBehaviors(emitter, spawn))
                 {
-                    const auto *definition = FindBehavior(behavior.name, spawn, ParticleSimulationTarget::GPU);
+                    const auto *definition = FindBehavior(behavior->name, spawn, ParticleSimulationTarget::GPU);
                     if (!definition || !definition->emit)
-                        throw std::runtime_error("particle behavior has no GPU emitter: " + behavior.name);
-                    definition->emit(writer, behavior);
+                        throw std::runtime_error("particle behavior has no GPU emitter: " + behavior->name);
+                    definition->emit(writer, *behavior);
                 }
             };
-        emitStage(emitter.updateBehaviors, false);
+        emitStage(false);
         writer.mSource += R"(
 }
 struct Dispatch { uint emitterIndex; };
@@ -652,11 +818,11 @@ void computeMain(uint3 id : SV_DispatchThreadID)
         uint randomSeed = birth.sequence ^ p.birthRange.z;
         Particle a = (Particle)0;
 )";
-        emitStage(emitter.spawnBehaviors, true);
+        emitStage(true);
         const bool customFade = std::any_of(emitter.updateBehaviors.begin(), emitter.updateBehaviors.end(),
             [](const ParticleBehavior &behavior)
             {
-                return FindBehavior(behavior.name, false, ParticleSimulationTarget::GPU)->replacesFade;
+                return behavior.enabled && FindBehavior(behavior.name, false, ParticleSimulationTarget::GPU)->replacesFade;
             });
         writer.mSource += "        a.identity = uint4(instance, p.range.z, birth.sequence, " + std::to_string(customFade ? 1 : 0) + "u);\n";
         writer.mSource += R"(
@@ -737,17 +903,42 @@ void computeMain(uint3 id : SV_DispatchThreadID)
     bool ValidateParticleEffect(const ParticleEffect &effect, std::string &error)
     {
         if (!ValidateParticleUserParameters(effect.parameters, error)) return false;
+        if (effect.sourceVersion != 2 && effect.sourceVersion != 3)
+        {
+            error = "unsupported particle system source version";
+            return false;
+        }
         if (effect.emitters.empty() || effect.emitters.size() > kMaxSystemEmitters)
         {
             error = "particle system requires 1 to 8 emitter references";
             return false;
         }
+        if ((!effect.placementIds.empty() && effect.placementIds.size() != effect.emitters.size()) ||
+            (!effect.placementOffsets.empty() && effect.placementOffsets.size() != effect.emitters.size()))
+        {
+            error = "particle placements must match emitter references";
+            return false;
+        }
         for (size_t i = 0; i < effect.emitters.size(); ++i)
-            if (effect.emitters[i].IsNull() || std::find(effect.emitters.begin(), effect.emitters.begin() + i,
-                effect.emitters[i]) != effect.emitters.begin() + i)
+            if (effect.emitters[i].IsNull() || (effect.sourceVersion == 2 &&
+                std::find(effect.emitters.begin(), effect.emitters.begin() + i, effect.emitters[i]) != effect.emitters.begin() + i))
             {
-                error = "particle system emitter references must be nonnull and unique";
+                error = "particle system emitter references must be nonnull, legacy references must be unique";
                 return false;
+            }
+        if (effect.sourceVersion == 3)
+            for (size_t i = 0; i < effect.emitters.size(); ++i)
+            {
+                const uint32_t id = effect.placementIds.empty() ? static_cast<uint32_t>(i + 1) : effect.placementIds[i];
+                const glm::vec3 offset = effect.placementOffsets.empty() ? glm::vec3(0) : effect.placementOffsets[i];
+                if (!id || (!effect.placementIds.empty() &&
+                    std::find(effect.placementIds.begin(), effect.placementIds.begin() + i, id) != effect.placementIds.begin() + i) ||
+                    !std::isfinite(offset.x) || !std::isfinite(offset.y) || !std::isfinite(offset.z) ||
+                    glm::any(glm::greaterThan(glm::abs(offset), glm::vec3(4096))))
+                {
+                    error = "particle placement IDs must be unique and offsets must be finite within 4096 metres";
+                    return false;
+                }
             }
         if (!effect.emitterDefinitions.empty() && effect.emitterDefinitions.size() != effect.emitters.size())
         {
@@ -771,13 +962,28 @@ void computeMain(uint3 id : SV_DispatchThreadID)
         if (!ValidateParticleEffect(effect, error)) throw std::runtime_error(error);
         Json ids = Json::array();
         for (auto id : effect.emitters) ids.push_back(id.value);
-        const auto text = Json{ { "emitterIds", ids },{ "parameters", WriteParameters(effect.parameters) } }.dump();
+        Json value{ { "emitterIds", ids },{ "parameters", WriteParameters(effect.parameters) },
+            { "schemaVersion", effect.sourceVersion } };
+        if (effect.sourceVersion == 3)
+        {
+            Json placementIds = Json::array(), offsets = Json::array();
+            for (size_t i = 0; i < effect.emitters.size(); ++i)
+            {
+                placementIds.push_back(effect.placementIds.empty() ? static_cast<uint32_t>(i + 1) : effect.placementIds[i]);
+                const auto offset = effect.placementOffsets.empty() ? glm::vec3(0) : effect.placementOffsets[i];
+                offsets.push_back(Json::array({ offset.x, offset.y, offset.z }));
+            }
+            value["placementIds"] = std::move(placementIds);
+            value["placementOffsets"] = std::move(offsets);
+        }
+        const auto text = value.dump();
         return BuildAssetBlob(kParticleEffectTypeTag, kParticleEffectContentVersion, std::as_bytes(std::span(text)));
     }
 
     ParticleEffectResult ReadParticleEffectAsset(const AssetBlobView &blob)
     {
-        if (blob.header.typeTag != kParticleEffectTypeTag || blob.header.contentVersion != kParticleEffectContentVersion)
+        if (blob.header.typeTag != kParticleEffectTypeTag ||
+            (blob.header.contentVersion != 2 && blob.header.contentVersion != kParticleEffectContentVersion))
             return Invalid<ParticleEffectResult>("unsupported particle system type or content version");
         return ParseSystem(AsStringView(blob), false, {});
     }
@@ -814,14 +1020,16 @@ void computeMain(uint3 id : SV_DispatchThreadID)
             { "localOffset",{ emitter.localOffset.x, emitter.localOffset.y, emitter.localOffset.z } },
             { "spawnPerMeter", emitter.spawnPerMeter },{ "burst", emitter.burst },{ "seed", emitter.seed },
             { "inheritVelocity", emitter.inheritVelocity },{ "teleportDistance", emitter.teleportDistance },
-            { "spawnBehaviors", WriteBehaviors(emitter.spawnBehaviors) },{ "updateBehaviors", WriteBehaviors(emitter.updateBehaviors) },
+            { "spawnBehaviors", WriteBehaviors(emitter, true, false) },{ "updateBehaviors", WriteBehaviors(emitter, false, false) },
+            { "schemaVersion", emitter.sourceVersion },
             { "scriptId", emitter.script.value },{ "scriptLayoutId", emitter.scriptLayout.value } }.dump();
         return BuildAssetBlob(kParticleEmitterTypeTag, kParticleEmitterContentVersion, std::as_bytes(std::span(text)));
     }
 
     ParticleEmitterAssetResult ReadParticleEmitterAsset(const AssetBlobView &blob)
     {
-        if (blob.header.typeTag != kParticleEmitterTypeTag || blob.header.contentVersion != kParticleEmitterContentVersion)
+        if (blob.header.typeTag != kParticleEmitterTypeTag ||
+            (blob.header.contentVersion != 6 && blob.header.contentVersion != kParticleEmitterContentVersion))
             return Invalid<ParticleEmitterAssetResult>("unsupported particle emitter type or content version");
         return ParseEmitter(AsStringView(blob), false, {});
     }

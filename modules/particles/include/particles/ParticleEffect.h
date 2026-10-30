@@ -26,9 +26,9 @@ namespace mir
     class AssetCache;
 
     inline constexpr uint32_t kParticleEffectTypeTag = 0x54524150u;
-    inline constexpr uint32_t kParticleEffectContentVersion = 2u;
+    inline constexpr uint32_t kParticleEffectContentVersion = 3u;
     inline constexpr uint32_t kParticleEmitterTypeTag = 0x54494D45u;
-    inline constexpr uint32_t kParticleEmitterContentVersion = 6u;
+    inline constexpr uint32_t kParticleEmitterContentVersion = 7u;
     inline constexpr uint32_t kParticleScriptTypeTag = 0x52435350u;
     inline constexpr uint32_t kParticleScriptContentVersion = 2u;
     inline constexpr uint32_t kParticleScriptLayoutTypeTag = 0x594C5350u;
@@ -50,6 +50,7 @@ namespace mir
     {
         std::string name;
         std::vector<float> parameters;
+        bool enabled = true;
     };
 
     // Transport values are mapped explicitly by the scene bridge, no renderer dependency.
@@ -84,6 +85,8 @@ namespace mir
     struct ParticleRibbonLook;
     using ParticleBehaviorResolve = void (*)(ParticleRibbonLook &, const ParticleBehavior &);
 
+    enum class ParticleBehaviorWidget { Parameters, Curve, Gradient };
+
     struct ParticleBehaviorInfo
     {
         std::string_view name;
@@ -94,8 +97,15 @@ namespace mir
         ParticleBehaviorEmit emit; // appends the behavior's Slang, null for CPU behaviors
         ParticleBehaviorResolve resolve = nullptr; // CPU behaviors only, null for GPU behaviors
         bool required = false; // a stack for this target must contain the behavior at least once
+        uint8_t order = 0; // fixed execution order in new authored emitters
+        std::string_view group; // mutually exclusive author-facing modes
+        std::string_view section; // editor category
+        std::string_view label; // friendly editor name, falls back to name
+        ParticleBehaviorWidget widget = ParticleBehaviorWidget::Parameters;
     };
+    struct ParticleEmitterAsset;
     std::span<const ParticleBehaviorInfo> ParticleBehaviors();
+    std::vector<const ParticleBehavior *> ActiveParticleBehaviors(const ParticleEmitterAsset &emitter, bool spawn);
     float EvaluateParticleCurve(float start, float middle, float end, float age);
 
     struct ParticleQuality
@@ -126,6 +136,7 @@ namespace mir
         glm::vec3 velocity{ 0.0f, 1.0f, 0.0f };
         std::vector<ParticleBehavior> spawnBehaviors{ { "Initialize",{} } };
         std::vector<ParticleBehavior> updateBehaviors{ { "Age",{} },{ "Integrate",{} } };
+        uint32_t sourceVersion = 3; // version 2 keeps its authored order and duplicate semantics
         AssetId script;
         AssetId scriptLayout;
         // Loaded cooked dependency, no source shader reaches the runtime.
@@ -137,6 +148,9 @@ namespace mir
     struct ParticleEffect
     {
         std::vector<AssetId> emitters;
+        std::vector<uint32_t> placementIds;
+        std::vector<glm::vec3> placementOffsets;
+        uint32_t sourceVersion = 3;
         ParticleUserParameters parameters;
         // Loaded dependencies, omitted from the system blob itself.
         std::vector<ParticleEmitterAsset> emitterDefinitions;

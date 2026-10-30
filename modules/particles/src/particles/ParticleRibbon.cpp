@@ -49,13 +49,15 @@ namespace mir
     {
         ParticleRibbonLook ResolveLook(ParticleRibbonState &state, const ParticleEmitterAsset &definition, float scale)
         {
+            const auto spawn = ActiveParticleBehaviors(definition, true);
+            const auto update = ActiveParticleBehaviors(definition, false);
             if (state.resolvers.empty())
             {
-                for (const auto *stack : { &definition.spawnBehaviors, &definition.updateBehaviors })
-                    for (const auto &behavior : *stack)
+                for (const auto *stack : { &spawn, &update })
+                    for (const auto *behavior : *stack)
                     {
                         const auto found = std::find_if(ParticleBehaviors().begin(), ParticleBehaviors().end(),
-                            [&](const ParticleBehaviorInfo &entry) { return entry.name == behavior.name; });
+                            [&](const ParticleBehaviorInfo &entry) { return entry.name == behavior->name; });
                         state.resolvers.push_back(found->resolve);
                     }
             }
@@ -63,9 +65,9 @@ namespace mir
             look.size = definition.size * scale;
             look.base = look.color = definition.color;
             size_t next = 0;
-            for (const auto *stack : { &definition.spawnBehaviors, &definition.updateBehaviors })
-                for (const auto &behavior : *stack)
-                    state.resolvers[next++](look, behavior);
+            for (const auto *stack : { &spawn, &update })
+                for (const auto *behavior : *stack)
+                    state.resolvers[next++](look, *behavior);
             return look;
         }
 

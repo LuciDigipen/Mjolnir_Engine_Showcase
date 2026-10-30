@@ -10,6 +10,7 @@
 
 #include <assets/AssetCache.h>
 #include <particles/ParticleEffect.h>
+#include <particles/ParticleRuntime.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -456,6 +457,7 @@ namespace
     mir::ParticleEmitterAsset EmitterWith(const mir::ParticleBehaviorInfo &info, std::vector<float> values)
     {
         mir::ParticleEmitterAsset emitter;
+        emitter.sourceVersion = 2; // registry ranges are independent of the new required core behaviors
         emitter.texture = mir::MakeAssetId("assets/x.png");
         emitter.simulationTarget = info.target;
         const mir::ParticleBehavior behavior{ std::string(info.name), std::move(values) };
@@ -509,4 +511,98 @@ TEST_CASE("Every registered particle behavior accepts its defaults and enforces 
         }
         CHECK_FALSE(mir::ValidateParticleEmitterAsset(EmitterWith(info, std::vector<float>(defaults.size() + 1, 0.5f)), error));
     }
+}
+
+TEST_CASE("New particle authoring keeps disabled values and cooks one fixed behavior order", "[particles][authoring]")
+{
+    mir::ParticleEmitterAsset emitter;
+    emitter.texture = mir::MakeAssetId("assets/x.png");
+    emitter.updateBehaviors = {{"FadeOverLife", {0}, false}, {"Integrate", {}},
+        {"ColorGradient", {1, 0, 0, 1, 0, 0, 1, 0.5f}}, {"Age", {}}, {"Acceleration", {0, 1, 0}}};
+    const auto source = mir::WriteParticleEmitterSource(emitter, "x.png");
+    CHECK(source.find("\"version\": 3") != std::string::npos);
+    const auto read = mir::ReadParticleEmitterSource(source, "assets");
+    REQUIRE(read.mEmitter);
+    REQUIRE(read.mEmitter->updateBehaviors.size() == 5);
+    CHECK_FALSE(read.mEmitter->updateBehaviors[0].enabled);
+    CHECK(read.mEmitter->updateBehaviors[0].parameters == std::vector<float>{0});
+    const auto cooked = mir::ReadParticleEmitterAsset(*mir::ParseAssetBlob(mir::BuildParticleEmitterAsset(*read.mEmitter)));
+    REQUIRE(cooked.mEmitter);
+    REQUIRE(cooked.mEmitter->updateBehaviors.size() == 4);
+    CHECK(cooked.mEmitter->sourceVersion == 3);
+    CHECK(cooked.mEmitter->updateBehaviors[0].name == "Age");
+    CHECK(cooked.mEmitter->updateBehaviors[1].name == "Acceleration");
+    CHECK(cooked.mEmitter->updateBehaviors[2].name == "Integrate");
+    CHECK(cooked.mEmitter->updateBehaviors[3].name == "ColorGradient");
+    const auto script = mir::GenerateParticleScript(*read.mEmitter);
+    CHECK(script.find("a.positionAge.w +=") < script.find("a.velocityLifetime.xyz +="));
+    CHECK(script.find("a.velocityLifetime.xyz +=") < script.find("a.positionAge.xyz +="));
+    CHECK(script.find("a.color.a *=") == std::string::npos);
+    emitter.updateBehaviors[0].enabled = true;
+    const auto combined = mir::GenerateParticleScript(emitter);
+    CHECK(combined.find("a.color = p.color * lerp(") < combined.find("a.color.a *= lerp(1.0"));
+    emitter.updateBehaviors[2].enabled = false;
+    const auto opacityOnly = mir::GenerateParticleScript(emitter);
+    CHECK(opacityOnly.find("a.color.a = p.color.a * lerp(1.0") != std::string::npos);
+}
+
+TEST_CASE("New particle authoring rejects duplicate or conflicting modes without changing legacy stacks", "[particles][authoring]")
+{
+    mir::ParticleEmitterAsset emitter;
+    emitter.texture = mir::MakeAssetId("assets/x.png");
+    std::string error;
+    emitter.updateBehaviors.push_back({"Age", {}});
+    CHECK_FALSE(mir::ValidateParticleEmitterAsset(emitter, error));
+    CHECK(error.find("duplicate") != std::string::npos);
+    emitter.sourceVersion = 2;
+    CHECK(mir::ValidateParticleEmitterAsset(emitter, error));
+    emitter.sourceVersion = 3;
+    emitter.updateBehaviors.pop_back();
+    emitter.updateBehaviors.push_back({"SizeOverLife", {1}});
+    emitter.updateBehaviors.push_back({"SizeCurve", {1, 2, 1}});
+    CHECK_FALSE(mir::ValidateParticleEmitterAsset(emitter, error));
+    CHECK(error.find("conflict") != std::string::npos);
+    emitter.updateBehaviors.back().enabled = false;
+    CHECK(mir::ValidateParticleEmitterAsset(emitter, error));
+}
+
+TEST_CASE("Two placements reuse one emitter asset at distinct world origins", "[particles][placement]")
+{
+    mir::ParticleEmitterAsset emitter;
+    emitter.texture = mir::MakeAssetId("assets/x.png");
+    emitter.localOffset = {0, 1, 0};
+    mir::ParticleEffect effect;
+    effect.emitters = {{1}, {1}};
+    effect.placementIds = {10, 20};
+    effect.placementOffsets = {{-2, 0, 0}, {2, 0, 0}};
+    effect.emitterDefinitions = {emitter, emitter};
+    const std::vector<std::string> paths{"x.emitter.json", "x.emitter.json"};
+    const auto source = mir::WriteParticleEffectSource(effect, paths);
+    const auto parsed = mir::ReadParticleEffectSource(source, "assets");
+    REQUIRE(parsed.mEffect);
+    CHECK(parsed.mEmitterPaths == paths);
+    const auto cooked = mir::ReadParticleEffectAsset(*mir::ParseAssetBlob(mir::BuildParticleEffectAsset(*parsed.mEffect)));
+    REQUIRE(cooked.mEffect);
+    CHECK(cooked.mEffect->placementIds == std::vector<uint32_t>{10, 20});
+    CHECK(cooked.mEffect->placementOffsets == effect.placementOffsets);
+    mir::ParticleRuntime runtime;
+    mir::WorldPose pose;
+    pose.position = *mir::WorldPosition::FromMeters(mir::WorldVec3(100, 0, 0));
+    const auto handle = runtime.Start({2}, effect, pose);
+    REQUIRE_FALSE(handle.IsNull());
+    const auto *instance = runtime.Find(handle);
+    REQUIRE(instance);
+    REQUIRE(instance->emitters.size() == 2);
+    const auto *left = runtime.FindEmitter(instance->emitters[0]);
+    const auto *right = runtime.FindEmitter(instance->emitters[1]);
+    REQUIRE(left);
+    REQUIRE(right);
+    CHECK(left->attachmentPosition.Meters().x == 98);
+    CHECK(right->attachmentPosition.Meters().x == 102);
+    CHECK(left->attachmentPosition.Meters().y == 1);
+    CHECK(right->attachmentPosition.Meters().y == 1);
+    auto legacy = effect;
+    legacy.sourceVersion = 2;
+    std::string error;
+    CHECK_FALSE(mir::ValidateParticleEffect(legacy, error));
 }

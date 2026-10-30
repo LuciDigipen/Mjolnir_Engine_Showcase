@@ -38,6 +38,7 @@ TEST_CASE("Particle authoring source writers preserve curves gradients renderer 
 {
     auto effect = Effect();
     auto emitter = effect.emitterDefinitions[0];
+    emitter.sourceVersion = 2;
     emitter.updateBehaviors = {{"Age",{}},{"SizeCurve",{1,3,5}},{"ColorGradient",{1,0.4f,0,1,0.2f,0.3f,1,0}}};
     emitter.quality = {0.7f,10,100,0.25f}; emitter.renderer.lit = true;
     const auto source = mir::WriteParticleEmitterSource(emitter,"textures/smoke.png");

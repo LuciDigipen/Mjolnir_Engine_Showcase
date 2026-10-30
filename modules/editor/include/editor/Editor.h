@@ -35,6 +35,7 @@
 #include <map>
 #include <span>
 #include <string>
+#include <utility>
 #include <string_view>
 #include <vector>
 
@@ -152,6 +153,13 @@ namespace mir
         EditorCamera &SceneCamera() { return mCamera; }
 
         bool &ParticleEditorVisible() { return mShowParticles; }
+        std::string TakeParticleOpenRequest() { return std::exchange(mParticleOpenRequest, {}); }
+        int TakeParticleHistoryRequest() { return std::exchange(mParticleHistoryRequest, 0); }
+        void SetParticleHistoryAvailability(bool undo, bool redo)
+        {
+            mParticleCanUndo = undo;
+            mParticleCanRedo = redo;
+        }
 
         bool IsInitialized() const { return mInitialized; }
 
@@ -210,6 +218,9 @@ namespace mir
         bool mShowPostProcessing = false;
         bool mShowAssetImport = false;
         bool mShowParticles = false;
+        std::string mParticleOpenRequest;
+        int mParticleHistoryRequest = 0;
+        bool mParticleHistoryFocused = false, mParticleCanUndo = false, mParticleCanRedo = false;
         bool mShowContentBrowser = false;
         bool mShowPreferences = false;
         bool mShowProfiler = false;

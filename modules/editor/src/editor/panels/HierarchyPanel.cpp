@@ -250,6 +250,15 @@ namespace mir
             context.dropDelivered = true;
         }
 
+        void DeliverParticleDrop(DrawContext &context, const ImGuiPayload &payload, Entity target)
+        {
+            context.action.mKind = target.IsNull() ? EntityActionKind::PlaceParticleSystem :
+                EntityActionKind::AttachParticleSystem;
+            context.action.mTarget = target;
+            context.action.mPrefabPath.assign(static_cast<const char *>(payload.Data), payload.DataSize);
+            context.dropDelivered = true;
+        }
+
         // Before, child or after, split 25 / 50 / 25 over the row and half the gap on each side
         void DropTargetForRow(DrawContext &context, Entity entity, bool collapsed)
         {
@@ -260,6 +269,21 @@ namespace mir
             // ImGui never lets the drag source be its own target, so the row needs a separate id
             if (!ImGui::BeginDragDropTargetCustom(rect, ImGui::GetIDWithSeed("##RowDrop", nullptr, ImGui::GetItemID())))
                 return;
+
+            if (!context.authoredDocument)
+            {
+                const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kParticleContentPayload,
+                    ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect);
+                if (payload != nullptr)
+                {
+                    context.hoveredRow = entity;
+                    context.preview = { DropKind::PlaceChild, ImRect(itemMin, itemMax), entity };
+                    if (payload->IsDelivery())
+                        DeliverParticleDrop(context, *payload, entity);
+                    ImGui::EndDragDropTarget();
+                    return;
+                }
+            }
 
             if (const ImGuiPayload *active = ImGui::GetDragDropPayload();
                 active != nullptr && active->IsDataType(kPrefabContentPayload))
@@ -328,6 +352,20 @@ namespace mir
             ImGuiWindow *window = ImGui::GetCurrentWindow();
             if (!ImGui::BeginDragDropTargetCustom(window->InnerRect, window->GetID("##HierarchyRootDrop")))
                 return;
+
+            if (!context.authoredDocument)
+            {
+                const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kParticleContentPayload,
+                    ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect);
+                if (payload != nullptr)
+                {
+                    context.preview = { DropKind::PlaceRoot, window->InnerRect, kNullEntity };
+                    if (payload->IsDelivery())
+                        DeliverParticleDrop(context, *payload, kNullEntity);
+                    ImGui::EndDragDropTarget();
+                    return;
+                }
+            }
 
             if (const ImGuiPayload *active = ImGui::GetDragDropPayload();
                 active != nullptr && active->IsDataType(kPrefabContentPayload))

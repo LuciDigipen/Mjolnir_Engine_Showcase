@@ -32,6 +32,7 @@
 #include <renderer/ViewSubmission.h>
 #include <renderer/components/MeshBounds.h>
 #include <renderer/components/MeshRenderer.h>
+#include <particles/components/ParticleSystem.h>
 
 #include <IconsFontAwesome6.h>
 #include <imgui.h>
@@ -700,8 +701,11 @@ namespace mir
     void Editor::DrawViewportPrefabDrop(bool documentTab, World &world)
     {
         const ImGuiPayload *active = ImGui::GetDragDropPayload();
-        if (active == nullptr || !active->IsDataType(kPrefabContentPayload))
+        if (active == nullptr || (!active->IsDataType(kPrefabContentPayload) &&
+            !active->IsDataType(kParticleContentPayload)))
             return;
+        const bool particle = active->IsDataType(kParticleContentPayload);
+        if (particle && documentTab) return;
         if (mSceneViewportRect.extent.width == 0 || mSceneViewportRect.extent.height == 0)
             return;
 
@@ -722,7 +726,7 @@ namespace mir
         {
             if (ImGui::BeginDragDropTargetCustom(ImRect(min, max), ImGui::GetID("##PrefabDrop")))
             {
-                const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kPrefabContentPayload,
+                const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(particle ? kParticleContentPayload : kPrefabContentPayload,
                     ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect);
                 if (payload != nullptr)
                 {
@@ -760,10 +764,11 @@ namespace mir
                                     payload->DataSize);
                                 if (!documentTab)
                                 {
-                                    mHistory.Submit(MakePlacePrefabCommand(contentPath, kNullEntity,
-                                        point->Meters()));
+                                    mHistory.Submit(particle ?
+                                        MakePlaceParticleSystemCommand(contentPath, kNullEntity, point->Meters()) :
+                                        MakePlacePrefabCommand(contentPath, kNullEntity, point->Meters()));
                                 }
-                                else if (mAuthoredEntities != nullptr)
+                                else if (!particle && mAuthoredEntities != nullptr)
                                 {
                                     const std::span<const Entity> roots = world.HierarchyIndex().Roots();
                                     const Entity root = roots.empty() ? kNullEntity : roots.front();
@@ -1156,6 +1161,34 @@ namespace mir
                 {
                     mHistory.Submit(MakeDocumentEntityCommand(entityAction, *mAuthoredEntities, activeWorld));
                 }
+                else if (entityAction.mKind == EntityActionKind::PlaceParticleSystem)
+                {
+                    if (mode.mMode == EngineMode::Edit)
+                        mHistory.Submit(MakePlaceParticleSystemCommand(entityAction.mPrefabPath,
+                            kNullEntity, WorldVec3(0)));
+                }
+                else if (entityAction.mKind == EntityActionKind::AttachParticleSystem &&
+                    mode.mMode == EngineMode::Edit &&
+                    entityAction.mPrefabPath.starts_with("assets/") &&
+                    entityAction.mPrefabPath.ends_with(".particle.json"))
+                {
+                    const std::string path = entityAction.mPrefabPath.substr(7);
+                    if (path.size() < kFieldStringCapacity)
+                    {
+                        const ComponentOps *ops = ComponentRegistry::Instance().FindBySeq(TypeIdOf<ParticleSystem>().seq);
+                        if (ops != nullptr)
+                        {
+                            FieldValue value;
+                            std::memcpy(value.mBytes, path.c_str(), path.size() + 1);
+                            if (ops->Has(activeWorld, entityAction.mTarget))
+                                mHistory.Submit(MakeSetFieldsCommand(entityAction.mTarget, *ops,
+                                    { value }, "Assign Particle System"));
+                            else
+                                mHistory.Submit(MakeAddComponentCommand(entityAction.mTarget, *ops,
+                                    { value }));
+                        }
+                    }
+                }
                 else if (documentTab || entityAction.mKind != EntityActionKind::PlacePrefab ||
                     mode.mMode == EngineMode::Edit)
                 {
@@ -1165,7 +1198,18 @@ namespace mir
             ImGui::End();
 
             if (ImGui::Begin("Inspector"))
+            {
                 mInspectorPanel.Draw(activeWorld, assetImport, mHistory, mAuthoredEntities);
+                if (!documentTab && mode.mMode == EngineMode::Edit)
+                {
+                    const auto &selection = activeWorld.Resource<Selection>().mSelected;
+                    if (selection.size() == 1)
+                        if (const auto *particle = activeWorld.GetComponent<ParticleSystem>(selection.front());
+                            particle != nullptr && particle->systemName[0] != '\0' &&
+                            ImGui::Button("Open Particle Editor"))
+                            mParticleOpenRequest = particle->systemName;
+                }
+            }
             ImGui::End();
 
             if (ImGui::Begin("Output"))
@@ -1368,6 +1412,14 @@ namespace mir
 
     void Editor::DrawEditMenu()
     {
+        if (mParticleHistoryFocused)
+        {
+            if (ImGui::MenuItem("Undo Particle Edit", "Ctrl+Z", false, mParticleCanUndo))
+                mParticleHistoryRequest = -1;
+            if (ImGui::MenuItem("Redo Particle Edit", "Ctrl+Y", false, mParticleCanRedo))
+                mParticleHistoryRequest = 1;
+            return;
+        }
 
         //keeps the item's id while the step name in its label changes
         const std::string undo = mHistory.CanUndo() ? "Undo " + mHistory.UndoName() : std::string("Undo");
@@ -1383,6 +1435,12 @@ namespace mir
 
     void Editor::UpdateHistoryShortcuts(EditorActions &actions, const EngineModeState &mode)
     {
+        const ImGuiWindow *particleWindow = ImGui::FindWindowByName("Particle Editor");
+        const ImGuiWindow *focusedWindow = ImGui::GetCurrentContext()->NavWindow;
+        mParticleHistoryFocused = particleWindow != nullptr && focusedWindow != nullptr &&
+            focusedWindow->RootWindow == particleWindow->RootWindow;
+        if (mParticleHistoryFocused)
+            return;
         const ImGuiIO &io = ImGui::GetIO();
         if (io.WantTextInput || !io.KeyCtrl)
             return;
