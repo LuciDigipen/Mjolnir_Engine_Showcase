@@ -66,8 +66,9 @@ configure time for the engine and every game. A new material needs no wrapper
 source and no CMake edit. The compile key is the normalized shader source path
 plus type plus frontend; the output stem is
 `<namespace>_<sanitized type>_<FNV-1a 32>` (`default` or the game directory for
-the namespace). Two assets sharing a shader compile once while keeping separate
-catalog records; two same-named types from different sources get different
+the namespace). Assets sharing a source/type/frontend reuse the first compiled
+stem, including across engine/game namespaces, while keeping separate catalog
+records. Two same-named types from different sources get different
 stems. Terrain-only declarations defer without suppressing a later mesh one.
 
 For the default type the outputs are:

@@ -40,6 +40,7 @@ set_property(GLOBAL PROPERTY MIR_SHADER_MANIFEST_OUTPUTS "")
 set_property(GLOBAL PROPERTY MIR_SHADER_MANIFEST_TEMPLATES "")
 set_property(GLOBAL PROPERTY MIR_SURFACE_CATALOG_ENTRIES "")
 set_property(GLOBAL PROPERTY MIR_SURFACE_COMPILED_KEYS "")
+set_property(GLOBAL PROPERTY MIR_SURFACE_COMPILED_STEMS "")
 
 function(_mir_json_escape out_var value)
     string(REPLACE "\\" "\\\\" escaped "${value}")
@@ -350,8 +351,8 @@ endfunction()
 #     ROOT <repo-relative assets root>
 #     APPROVED_ROOTS <root> [...])
 #
-# Discovers <ROOT>/materials/*.material.json, deduplicates by
-# "<namespace>_<type>", and compiles the mesh raster, RT, vertex and layout
+# Discovers <ROOT>/materials/*.material.json, deduplicates by source/type/frontend,
+# and compiles the mesh raster, RT, vertex and layout
 # outputs through the fixed frontend sources. A new material only needs the
 # JSON and its type; no wrapper source or CMake edit.
 function(engine_add_surface_materials target)
@@ -375,6 +376,7 @@ function(engine_add_surface_materials target)
     set(surface_outputs "")
     set(surface_reflections "")
     get_property(compiled_keys GLOBAL PROPERTY MIR_SURFACE_COMPILED_KEYS)
+    get_property(compiled_stems GLOBAL PROPERTY MIR_SURFACE_COMPILED_STEMS)
 
     foreach(material IN LISTS material_files)
         file(READ "${material}" material_json)
@@ -459,6 +461,10 @@ function(engine_add_surface_materials target)
         endif()
 
         _mir_surface_identity(stem key "${ARG_NAMESPACE}" "${shader_type}" "${shader_rel}" mesh)
+        list(FIND compiled_keys "${key}" compiled_index)
+        if(NOT compiled_index EQUAL -1)
+            list(GET compiled_stems ${compiled_index} stem)
+        endif()
         set(reflection "${gen_dir}/${stem}.layout.spv.reflection.json")
         get_filename_component(reflection_name "${reflection}" NAME)
 
@@ -478,7 +484,9 @@ function(engine_add_surface_materials target)
             continue()
         endif()
         set_property(GLOBAL APPEND PROPERTY MIR_SURFACE_COMPILED_KEYS "${key}")
+        set_property(GLOBAL APPEND PROPERTY MIR_SURFACE_COMPILED_STEMS "${stem}")
         list(APPEND compiled_keys "${key}")
+        list(APPEND compiled_stems "${stem}")
 
         _mir_register_mesh_frontend_template()
 
