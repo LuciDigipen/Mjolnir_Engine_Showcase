@@ -1,4 +1,6 @@
-// Default material shader: a flat grey, non-metallic Blinn-Phong material
+// Legacy default material, kept for devices without the shared material
+// tables. The generic PBR default is assets/materials/default.slang compiled
+// through SurfaceForward/SurfaceRt.
 #include "ShadowMapCommon.slang"
 #ifdef MIR_SSGI_SURFACE
 #include "RasterSurfaceCommon.slang"

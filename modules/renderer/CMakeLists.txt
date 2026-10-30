@@ -61,6 +61,9 @@ target_sources(engine_renderer PRIVATE
     src/renderer/HdrEffect.cpp
     src/renderer/Material.cpp
     src/renderer/MaterialRecordTable.cpp
+    src/renderer/MaterialReflection.cpp
+    src/renderer/MaterialResolution.cpp
+    src/renderer/SurfaceMaterialCatalog.cpp
     src/renderer/MotionBlurEffect.cpp
     src/renderer/PostEffectRegistry.cpp
     src/renderer/PostProcessingSettings.cpp

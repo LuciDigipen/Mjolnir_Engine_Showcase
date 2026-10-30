@@ -83,5 +83,12 @@ namespace mir
         // type's reflection; the renderer only copies and aligns it.
         std::span<const std::byte> record;
         uint32_t recordAlignment = 16;
+
+        // True for a SurfaceForward/SurfaceRt material: it reads the record
+        // through the shared table and gets its own RT hit group.
+        bool surfaceMaterial = false;
+        // Normalized repo-relative .material.json path; empty selects the first
+        // registration with shaderName.
+        std::string surfaceAsset;
     };
 }

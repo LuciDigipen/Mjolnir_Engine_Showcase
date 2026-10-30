@@ -22,6 +22,9 @@ struct RtInstanceInfo
     float pad1;
     float pad2;
     float4x4 prevModel; // camera-relative to THIS frame's camera - see DrawItem::previousModel
+    float4 modelCol0;   // model linear transform, for tangents under non-uniform scale
+    float4 modelCol1;
+    float4 modelCol2;
 };
 
 [[vk::binding(2, 0)]]
@@ -33,6 +36,7 @@ static const uint kInstanceTextured = 2u; // the model shader: base color = text
 static const uint kInstanceError = 4u;
 static const uint kInstanceAlphaTest = 8u;
 static const uint kInstanceDoubleSided = 16u;
+static const uint kInstanceRasterFacingCorrection = 32u;
 static const uint kMaxMaterialImages = 1024;
 static const uint kMaxMaterialSamplers = 256;
 
@@ -159,4 +163,3 @@ float3 FaceNormal(RtInstanceInfo info, float3 op0, float3 op1, float3 op2)
         normalize(info.normalCol0.xyz * n.x + info.normalCol1.xyz * n.y + info.normalCol2.xyz * n.z);
     return dot(worldNormal, WorldRayDirection()) > 0.0 ? -worldNormal : worldNormal;
 }
-

@@ -75,7 +75,7 @@ namespace mir::vk
         DdgiSettings mSettings;
         std::optional<DdgiSettings> mFailed;
         ProbeUpdateSchedule mSchedule;
-        bool mReset = true, mInitializedImages = false;
+        bool mReset = true, mInitializedImages = false, mIncompatible = false;
         uint64_t mImageBytes = 0;
 
         std::optional<RayTracer::GiShading> Shading(uint32_t frame) const
@@ -350,6 +350,7 @@ namespace mir::vk
     void Ddgi::Initialize(Device &device, VkDescriptorSetLayout sceneLayout, VkDescriptorSetLayout cameraLayout)
     {
         mImpl->mDevice = &device; mImpl->mSceneLayout = sceneLayout; mImpl->mCameraLayout = cameraLayout;
+        mImpl->mIncompatible = false;
     }
 
     void Ddgi::Configure(const DdgiSettings &settings, bool active)
@@ -390,6 +391,25 @@ namespace mir::vk
     {
         auto &state = *mImpl;
         if (!CanUpdate(camera)) { state.mReset = true; return std::nullopt; }
+        // The probe and camera GI pipelines fix one legacy hit pair; a scene
+        // with per-material offsets must stay on the base camera trace.
+        if (!scene.giCompatible)
+        {
+            if (!state.mIncompatible)
+            {
+                MIR_LOG_WARN("DDGI disabled for scenes with per-material RT hit groups; "
+                    "falling back to the base camera trace");
+            }
+            state.mIncompatible = true;
+            state.mReset = true;
+            return std::nullopt;
+        }
+        if (state.mIncompatible)
+        {
+            state.mIncompatible = false;
+            state.mReset = true;
+            MIR_LOG_INFO("DDGI re-enabled for a fixed-SBT scene");
+        }
         const bool update = complete && !scene.truncated;
         if (!update)
         {

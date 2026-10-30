@@ -19,8 +19,8 @@
 
 namespace mir
 {
-    // Must match RtInstanceInfo in assets/shaders/raytrace.slang, including its
-    // StructuredBuffer ArrayStride. Scalar padding keeps the layout explicit;
+    // Must match RtInstanceInfo in assets/shaders/RaySceneCommon.slang, including
+    // its StructuredBuffer ArrayStride. Scalar padding keeps the layout explicit;
     // a float3 here would use a wider alignment.
     struct RtInstanceInfo
     {
@@ -39,11 +39,17 @@ namespace mir
         float pad1;
         float pad2;
         glm::mat4 prevModel;
+        // Model linear transform for tangent conversion; the normal matrix is
+        // inverse-transpose and cannot recover non-uniform scale.
+        glm::vec4 modelCol0;
+        glm::vec4 modelCol1;
+        glm::vec4 modelCol2;
     };
 
     static_assert(std::is_standard_layout_v<RtInstanceInfo>);
-    static_assert(sizeof(RtInstanceInfo) == 176);
+    static_assert(sizeof(RtInstanceInfo) == 224);
     static_assert(offsetof(RtInstanceInfo, alphaCutoff) == 96);
     static_assert(offsetof(RtInstanceInfo, materialRecord) == 92);
     static_assert(offsetof(RtInstanceInfo, prevModel) == 112);
+
 }

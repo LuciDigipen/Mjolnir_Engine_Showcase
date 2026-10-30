@@ -10,6 +10,7 @@
 
 #include <renderer/Material.h>
 #include <renderer/MaterialRecordTable.h>
+#include <renderer/SurfaceMaterialCatalog.h>
 
 #include "VulkanConstants.h"
 
@@ -39,6 +40,8 @@ namespace mir::vk
         // shader through set 2, since the push constant range is full.
         glm::vec4 mParameters{};
         bool mModelShader = false;
+        bool mSurfaceMaterial = false;
+        uint32_t mRayTracingSbtOffset = 0;
         uint32_t mGeneration = 0;
         bool mUnlit = false;
         VkCullModeFlags mCullMode = VK_CULL_MODE_BACK_BIT;
@@ -53,6 +56,8 @@ namespace mir::vk
         MaterialRecordId mRecordId;
         uint32_t mRecordOffset = kInvalidMaterialRecordOffset;
         uint32_t mMaterialIndex = 0;
+        // Backing bytes for a record packed from the catalog at creation.
+        std::vector<std::byte> mRecordBytes;
 
         MaterialDesc mDescription;
         VkPipeline mSurfacePipeline = VK_NULL_HANDLE;
@@ -80,7 +85,7 @@ namespace mir::vk
             const std::array<VkDescriptorSetLayout, 3> &sharedLayouts);
         void Shutdown();
 
-        MaterialHandle CreateMaterial(const MaterialDesc &desc, ResourceStore &resources, VkFormat colorFormat);
+        MaterialHandle CreateMaterial(MaterialDesc desc, ResourceStore &resources, VkFormat colorFormat);
         // False when the handle is null, stale, the default or the error material.
         bool DestroyMaterial(MaterialHandle handle);
         // Raw record bytes for this material; published at the next frame.
@@ -101,6 +106,7 @@ namespace mir::vk
 
         MaterialHandle DefaultMaterial() const { return mDefaultMaterial; }
         MaterialHandle ErrorMaterial() const { return mErrorMaterial; }
+        const SurfaceMaterialCatalog &SurfaceMaterials() const { return mSurfaceMaterials; }
         VkPipelineLayout PipelineLayout() const { return mPipelineLayout; }
 
         VkPipeline SkyPipeline() const { return mSkyPipeline; }
@@ -134,6 +140,7 @@ namespace mir::vk
 
         Device *mDevice = nullptr;
         MaterialTable *mTable = nullptr;
+        SurfaceMaterialCatalog mSurfaceMaterials;
 
         VkPipelineLayout mPipelineLayout = VK_NULL_HANDLE;
 

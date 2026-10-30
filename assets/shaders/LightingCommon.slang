@@ -1,5 +1,8 @@
 // Lighting shared by both pipelines; only shadow visibility differs.
 
+#ifndef MIR_LIGHTING_COMMON
+#define MIR_LIGHTING_COMMON
+
 // CameraData's layout must match the CameraData struct in CameraBuffer.cpp exactly.
 [[vk::binding(0, 1)]]
 cbuffer CameraData
@@ -112,3 +115,5 @@ float3 ApplyFog(float3 color, float dist)
     const float fogFactor = clamp(1.0 - exp(-fogColor.a * (clampedDist - fogRange.x)), 0.0, 1.0);
     return lerp(color, fogColor.rgb, fogFactor);
 }
+
+#endif

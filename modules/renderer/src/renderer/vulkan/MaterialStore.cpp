@@ -16,6 +16,8 @@
 #include "VulkanConstants.h"
 #include "VulkanPushConstants.h"
 
+#include <renderer/MaterialResolution.h>
+
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
 
@@ -26,6 +28,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -42,6 +45,15 @@ namespace mir::vk
     {
         mDevice = &device;
         mTable = table;
+
+        std::string catalogError;
+        const auto catalog = LoadSurfaceMaterialCatalog(&catalogError);
+        if (!catalog)
+        {
+            MIR_LOG_CRITICAL("MaterialStore: {}", catalogError);
+            return false;
+        }
+        mSurfaceMaterials = *catalog;
 
         const uint64_t alignment = std::max<uint64_t>(
             mDevice->Properties().limits.minUniformBufferOffsetAlignment, 1);
@@ -173,7 +185,7 @@ namespace mir::vk
         }
 
         const VkPushConstantRange pushConstantRange{
-            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+            .stageFlags = kRasterPushConstantStages,
             .offset = 0,
             .size = sizeof(RasterPushConstants) };
 
@@ -328,7 +340,9 @@ namespace mir::vk
                 // them for the others is legal but makes the validation layer
                 // complain about attributes no shader consumes.
                 .vertexAttributeDescriptionCount =
-                    desc.shaderName == kModelShaderName ? static_cast<uint32_t>(vertexAttributes.size()) : 3u,
+                    desc.shaderName == kModelShaderName || desc.surfaceMaterial
+                    ? static_cast<uint32_t>(vertexAttributes.size())
+                    : 3u,
                 .pVertexAttributeDescriptions = vertexAttributes.data() },
             .topology = desc.topology,
             .rasterizer{
@@ -411,8 +425,17 @@ namespace mir::vk
         return true;
     }
 
-    MaterialHandle MaterialStore::CreateMaterial(const MaterialDesc &desc, ResourceStore &resources, VkFormat colorFormat)
+    MaterialHandle MaterialStore::CreateMaterial(MaterialDesc desc, ResourceStore &resources, VkFormat colorFormat)
     {
+        std::string resolutionError;
+        const auto resolved = ResolveMaterialDesc(desc, mSurfaceMaterials, mTable != nullptr, &resolutionError);
+        if (!resolved)
+        {
+            MIR_LOG_ERROR("CreateMaterial: {}", resolutionError);
+            return kNullMaterial;
+        }
+        desc = *resolved;
+
         const VkPipeline pipeline = BuildPipeline(desc, colorFormat);
         if (pipeline == VK_NULL_HANDLE)
             return kNullMaterial;
@@ -464,6 +487,7 @@ namespace mir::vk
         material.mParameters = glm::vec4{ static_cast<float>(desc.alphaMode), desc.alphaCutoff,
             desc.cullMode == VK_CULL_MODE_NONE ? 1.0f : 0.0f, 0.0f };
         material.mModelShader = desc.shaderName == kModelShaderName;
+        material.mSurfaceMaterial = desc.surfaceMaterial;
         material.mUnlit = desc.shaderName == "unlit";
         material.mCullMode = desc.cullMode;
         material.mFrontFace = desc.frontFace;
@@ -483,10 +507,54 @@ namespace mir::vk
                 vkDestroyPipeline(mDevice->Handle(), pipeline, nullptr);
             };
 
+        std::span<const std::byte> record = desc.record;
+        if (desc.surfaceMaterial)
+        {
+            if (mTable == nullptr)
+            {
+                MIR_LOG_ERROR("CreateMaterial: surface materials require the shared material tables");
+                rollback();
+                return kNullMaterial;
+            }
+
+            const SurfaceMaterialRegistration *const registration =
+                mSurfaceMaterials.Find(desc.shaderName, desc.surfaceAsset);
+            if (registration == nullptr)
+            {
+                MIR_LOG_CRITICAL("CreateMaterial: no surface material registration for '{}'",
+                    desc.surfaceAsset.empty() ? desc.shaderName : desc.surfaceAsset);
+                rollback();
+                return kNullMaterial;
+            }
+
+            const uint32_t index = mSurfaceMaterials.IndexOf(registration);
+            if (index == UINT32_MAX)
+            {
+                MIR_LOG_CRITICAL("CreateMaterial: surface material registration is stale");
+                rollback();
+                return kNullMaterial;
+            }
+            material.mRayTracingSbtOffset = SurfaceMaterialCatalog::HitGroupRecordOffset(index);
+
+            if (record.empty())
+            {
+                std::string packError;
+                const auto packed = PackSurfaceMaterialRecord(*registration, &packError);
+                if (!packed)
+                {
+                    MIR_LOG_CRITICAL("CreateMaterial: {}", packError);
+                    rollback();
+                    return kNullMaterial;
+                }
+                material.mRecordBytes = *packed;
+                record = material.mRecordBytes;
+            }
+        }
+
         VkDescriptorBufferInfo recordRefInfo{};
         if (mTable != nullptr)
         {
-            material.mRecordId = mTable->CreateRecord(desc.record, desc.recordAlignment);
+            material.mRecordId = mTable->CreateRecord(record, desc.recordAlignment);
             if (material.mRecordId.IsNull())
             {
                 MIR_LOG_CRITICAL("CreateMaterial: material record table is full");
@@ -736,6 +804,9 @@ namespace mir::vk
         const auto *material = FindOrDefault(handle);
         if (!material) return false;
         const auto &desc = material->mDescription;
+        // Generic surface materials only compile the single-target SurfaceForward
+        // frontend; there is no <stem>Surface multi-target variant for SSGI.
+        if (desc.surfaceMaterial) return false;
         return desc.alphaMode == MaterialAlphaMode::Blend || desc.shaderName == "default" ||
             desc.shaderName == "model" || desc.shaderName == "unlit" || desc.shaderName == "error";
     }
