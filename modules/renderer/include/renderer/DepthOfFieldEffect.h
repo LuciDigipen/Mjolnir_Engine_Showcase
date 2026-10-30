@@ -18,10 +18,9 @@ namespace mir
 {
     inline constexpr std::string_view kDepthOfFieldEffectName = "DepthOfField";
 
+    // Focus distance and aperture are the viewing Camera's.
     struct DepthOfFieldParams
     {
-        float focusDistance = 10.0f;
-        float aperture = 0.1f;
         float maxBlur = 16.0f;
 
         bool operator==(const DepthOfFieldParams &) const = default;

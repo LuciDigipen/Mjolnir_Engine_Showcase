@@ -1134,7 +1134,7 @@ TEST_CASE("A size of zero gives an empty collider, says so, and a fix swaps the 
     {
         std::size_t count = 0;
         for (const mir::LogEntry &entry : mir::LogHistory::Snapshot())
-            count += entry.message.find("must be positive") != std::string::npos ? 1 : 0;
+            count += entry.message.find("must be positive") != std::string::npos ? entry.count : 0;
         return count;
     };
 

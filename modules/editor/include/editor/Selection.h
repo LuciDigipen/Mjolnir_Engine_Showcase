@@ -2,8 +2,8 @@
  * @file Selection.h
  * @author Rahul Nair
  * @brief World resource holding the editor's current selection - written
- *        by the Hierarchy panel and viewport picking, read by the
- *        Inspector panel and the transform gizmo.
+ *        by the Hierarchy panel, viewport picking and Inspector EntityRef
+ *        clicks, read by the Inspector panel and the transform gizmo.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -25,6 +25,10 @@ namespace mir
 
         // where a shift-click range starts: the last entity clicked without shift
         Entity mAnchor = kNullEntity;
+
+        // set by panels other than the Hierarchy; its next Draw opens this entity's ancestors,
+        // scrolls to its row, then clears it
+        Entity mReveal = kNullEntity;
 
         bool Contains(Entity e) const
         {

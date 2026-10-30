@@ -33,8 +33,14 @@ namespace mir
 
         ImU32 ToImColor(UIColor color) { return ImGui::ColorConvertFloat4ToU32(ImVec4(color.r, color.g, color.b, color.a)); }
 
-        ImVec2 Min(const UIRect &rect, const UIRect &area) { return ImVec2(area.x + rect.x, area.y + rect.y); }
-        ImVec2 Max(const UIRect &rect, const UIRect &area) { return ImVec2(area.x + rect.Right(), area.y + rect.Bottom()); }
+        ImVec2 Min(const UIRect &rect, const UIRect &area, float scale)
+        {
+            return ImVec2(area.x + rect.x * scale, area.y + rect.y * scale);
+        }
+        ImVec2 Max(const UIRect &rect, const UIRect &area, float scale)
+        {
+            return ImVec2(area.x + rect.Right() * scale, area.y + rect.Bottom() * scale);
+        }
 
         // once ImGui has shut down its renderer backend freed the GPU side, so only
         // the memory is left; while it runs, only a copy never uploaded can go
@@ -84,19 +90,19 @@ namespace mir
         return UIBackendTexture{ texture, &Release };
     }
 
-    void ImGuiUIBackend::Submit(const UIRect &area, const UIDrawList &list, const UITextures &textures)
+    void ImGuiUIBackend::Submit(const UIRect &area, float scale, const UIDrawList &list, const UITextures &textures)
     {
         ImDrawList *drawList = ImGui::GetBackgroundDrawList();
 
         for (const UIDrawCommand &command : list.Commands())
         {
-            drawList->PushClipRect(Min(command.mClip, area), Max(command.mClip, area), false);
+            drawList->PushClipRect(Min(command.mClip, area, scale), Max(command.mClip, area, scale), false);
 
             switch (command.mKind)
             {
             case UIDrawCommandKind::Rect:
-                drawList->AddRectFilled(Min(command.mRect, area), Max(command.mRect, area), ToImColor(command.mColor),
-                                        command.mRounding);
+                drawList->AddRectFilled(Min(command.mRect, area, scale), Max(command.mRect, area, scale),
+                                        ToImColor(command.mColor), command.mRounding * scale);
                 break;
 
             case UIDrawCommandKind::Texture:
@@ -105,23 +111,24 @@ namespace mir
                 if (texture == nullptr)
                 {
                     // a null texture, or one from another UIContext
-                    drawList->AddRectFilled(Min(command.mRect, area), Max(command.mRect, area),
+                    drawList->AddRectFilled(Min(command.mRect, area, scale), Max(command.mRect, area, scale),
                                             ToImColor(command.mColor));
                     break;
                 }
 
                 const UIRect &uv = command.mUV;
-                drawList->AddImage(texture->mData.GetTexRef(), Min(command.mRect, area), Max(command.mRect, area),
-                                   ImVec2(uv.x, uv.y), ImVec2(uv.Right(), uv.Bottom()), ToImColor(command.mColor));
+                drawList->AddImage(texture->mData.GetTexRef(), Min(command.mRect, area, scale),
+                                   Max(command.mRect, area, scale), ImVec2(uv.x, uv.y), ImVec2(uv.Right(), uv.Bottom()),
+                                   ToImColor(command.mColor));
                 break;
             }
 
             case UIDrawCommandKind::Text:
             {
                 const std::string_view text = list.TextOf(command);
-                const float fontSize = command.mFontSize > 0.0f ? command.mFontSize : ImGui::GetFontSize();
-                drawList->AddText(ImGui::GetFont(), fontSize, Min(command.mRect, area), ToImColor(command.mColor),
-                                  text.data(), text.data() + text.size());
+                const float fontSize = (command.mFontSize > 0.0f ? command.mFontSize : ImGui::GetFontSize()) * scale;
+                drawList->AddText(ImGui::GetFont(), fontSize, Min(command.mRect, area, scale),
+                                  ToImColor(command.mColor), text.data(), text.data() + text.size());
                 break;
             }
             }

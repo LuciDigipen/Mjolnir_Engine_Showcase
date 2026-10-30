@@ -113,6 +113,7 @@ namespace mir
         : mDesc(Prepared(desc)),
           mProject(mDesc.mProject),
           mSplash(mDesc),
+          mJobs(mDesc.mWorkerThreads),
           mCore(Context(), mCommands),
           mAssets(CookedAssetsDir()),
           mScene(Context(), mProject.mSceneDir),
@@ -127,26 +128,38 @@ namespace mir
                                       .mProjectSettingsPath = mProject.mProjectSettingsPath,
                                       .mAssetIdRoot = mProject.mAssetIdRoot }),
           mInput(Context(), mWindow.Get(), mProject.mProjectSettingsPath),
-          mAnimation(Context(), mRenderer.Renderer(), mAssets, mProject.mAssetIdRoot),
+          mAnimation(Context(), mRenderer.Renderer(), mAssets, mProject.mAssetIdRoot, &mJobs),
           mImGui(Context(), mWindow, mRenderer),
     #if MIR_WITH_EDITOR
-          mEditor(Context(), mImGui, mWindow, mRenderer, mScene, mPrefab, mAssets, mProject,
-              mDesc.mEnableEditorLayout),
+        mEditor(Context(), mImGui, mWindow, mRenderer, mScene, mPrefab, mAssets, mProject,
+            mDesc.mEnableEditorLayout),
     #endif
           mCamera(Context()),
-          mAudio(Context(), mProject.mSoundBankDir),
-          mPhysics(Context(), mProject.mProjectSettingsPath),
+    #if MIR_WITH_AUDIO
+          mAudio(Context(), mProject.mSoundBankDir, mProject.mProjectSettingsPath,
+              UserDataDir() / mProject.mName / "settings.json"),
+    #endif
+          mPhysics(Context(), mProject.mProjectSettingsPath, &mJobs),
           mTerrainData(Context()),
           mScript(Context(), mAssets, mProject.mAssetIdRoot),
+    #if MIR_WITH_AUDIO
           mAudioScript(mScript),
+    #endif
           mInputScript(mScript),
           mPhysicsScript(mScript),
           mRendererScript(mScript),
           mTerrainScript(mScript),
-          mTerrain(Context(), mRenderer, mProject),
+          mTerrain(Context(), mRenderer, mProject, mJobs),
           mGameUIImGui(Context(), mImGui, mWindow, mGameUI),
           mFixedTimestep{ .mStep = mDesc.mFixedDeltaSeconds, .mMaxSteps = mDesc.mMaxFixedSteps }
     {
+    #if MIR_WITH_AUDIO
+        mGameShell.SetAudioOptions(&mAudioOptions);
+    #if MIR_WITH_EDITOR
+        mEditor.SetAudio(&mEditorAudio);
+    #endif
+    #endif
+
         mSplash.screen.SetProgress("Loading scene...", 0.9f);
         LoadProjectScene();
 
@@ -277,14 +290,14 @@ namespace mir
                 ").\n\nStart with an empty scene? Saving it will overwrite the broken file; restore it from git "
                 "first if you need it.\n\n" + refuse;
             return AskYesNo("Scene file is corrupt", message, mDesc.mNonInteractive) ? SceneLoadChoice::StartEmpty
-                                                                                     : SceneLoadChoice::Refuse;
+                : SceneLoadChoice::Refuse;
         }
 
         const std::string message = std::to_string(MissingFileCount(probe)) + " file(s) listed in " + manifest +
             " are missing or unreadable (" + MissingFileList(probe) + ").\n\nOpen the scene without them? Saving it will drop them for good; restore them from git first "
             "if you need them.\n\n" + refuse;
         return AskYesNo("Scene has missing entities", message, mDesc.mNonInteractive) ? SceneLoadChoice::Load
-                                                                                        : SceneLoadChoice::Refuse;
+            : SceneLoadChoice::Refuse;
     }
 
     void App::PlayScene()

@@ -82,9 +82,10 @@ namespace mir
 
         //focusVisible: whether this frame draws the focus highlight. The frame it
         //comes back on, UINavigate and UIConfirm only bring it back, unless
-        //nothing is focused, when UINavigate still lands on the first widget
+        //nothing is focused, when UINavigate still lands on the first widget.
+        //scale: area pixels per UI unit, as UIContext::Scale
         void BeginFrame(const UIRect &area, const UIPointer &pointer, const UINavInput &nav = {},
-                        bool focusVisible = true);
+                        bool focusVisible = true, float scale = 1.0f);
 
 
         void EndFrame();
@@ -120,7 +121,8 @@ namespace mir
 
         bool IsFocusable(UIId id) const;
 
-        UIRect mArea;
+        //the area in UI units, at the origin, like the pointer
+        UIRect mBounds;
         float mPointerX = 0.0f;
         float mPointerY = 0.0f;
         bool mDown = false;

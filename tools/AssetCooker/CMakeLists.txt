@@ -6,11 +6,13 @@ add_library(gltf_importer STATIC GltfImporter.cpp ImageImporter.cpp MaterialCook
 target_include_directories(gltf_importer PRIVATE ${Stb_INCLUDE_DIR})
 target_link_libraries(gltf_importer PUBLIC mir::assets PRIVATE fastgltf::fastgltf nlohmann_json::nlohmann_json)
 target_sources(AssetCooker PRIVATE main.cpp)
+engine_target_utf8(AssetCooker)
 # terrain: only for IsTerrainFileExcludedFromCook.
 target_link_libraries(AssetCooker PRIVATE gltf_importer mir::assets mir::core mir::terrain mir::prefab nlohmann_json::nlohmann_json)
 if(BUILD_TESTING)
     add_executable(gltf_importer_tests tests/GltfImporter.tests.cpp tests/PrefabCook.tests.cpp tests/MaterialCooker.tests.cpp)
     target_include_directories(gltf_importer_tests PRIVATE ${Stb_INCLUDE_DIR})
+    engine_target_utf8(gltf_importer_tests)
     target_link_libraries(gltf_importer_tests PRIVATE gltf_importer mir::animation mir::prefab nlohmann_json::nlohmann_json Catch2::Catch2WithMain)
     target_compile_definitions(gltf_importer_tests PRIVATE GLTF_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
     target_compile_definitions(gltf_importer_tests PRIVATE GLTF_COOKER_EXE="$<TARGET_FILE:AssetCooker>")

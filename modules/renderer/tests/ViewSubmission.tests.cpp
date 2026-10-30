@@ -7,6 +7,9 @@
  *
  */
 #include <renderer/ViewSubmission.h>
+#include "../src/renderer/vulkan/Ddgi.h"
+#include "../src/renderer/vulkan/RasterSurfaces.h"
+#include "../src/renderer/vulkan/SsgiTrace.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -15,6 +18,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <vector>
 
@@ -60,6 +64,254 @@ namespace
     }
 
     const mir::Camera kLens{60.0f, 0.1f, 100.0f};
+}
+
+TEST_CASE("SSGI tracing bounds odd resolutions, view isolation and total GPU storage", "[renderer][ssgi]")
+{
+    using mir::vk::SsgiTrace;
+    CHECK(SsgiTrace::MipCount({ 0, 0 }) == 0);
+    CHECK(SsgiTrace::MipCount({ 1, 1 }) == 1);
+    CHECK(SsgiTrace::MipCount({ 641, 359 }) == 10);
+    CHECK(SsgiTrace::TraceExtent({ 641, 359 }, true).width == 321);
+    CHECK(SsgiTrace::TraceExtent({ 641, 359 }, true).height == 180);
+    CHECK(SsgiTrace::TraceExtent({ 641, 359 }, false).width == 641);
+    VkPhysicalDeviceLimits limits{};
+    limits.maxImageDimension2D = 16384;
+    limits.maxPushConstantsSize = 128;
+    limits.maxComputeWorkGroupInvocations = 128;
+    limits.maxComputeWorkGroupSize[0] = limits.maxComputeWorkGroupSize[1] = 128;
+    limits.maxComputeWorkGroupCount[0] = limits.maxComputeWorkGroupCount[1] = 65535;
+    limits.maxPerStageDescriptorSampledImages = 16;
+    limits.maxPerStageDescriptorStorageImages = 4;
+    std::vector<VkRect2D> rects{ { {}, { 1920, 1080 } } };
+    const auto fits = [&](bool half = true) { return SsgiTrace::FitsBudget(rects, half, limits); };
+    CHECK(fits());
+    CHECK(fits(false));
+    rects[0].extent = { 3840, 2160 };
+    CHECK_FALSE(fits());
+    CHECK_FALSE(fits(false));
+    rects[0].extent = { 2560, 1440 };
+    CHECK(fits());
+    CHECK_FALSE(fits(false));
+    rects[0].extent = { 2000, 1200 };
+    CHECK(fits(false)); // Full-resolution filtering does not allocate an upsampling scratch image.
+    rects = { { {}, { 640, 360 } }, { { 640, 0 }, { 640, 360 } } };
+    CHECK(fits());
+    rects[1].offset.x = 639;
+    CHECK_FALSE(fits());
+    rects[1].offset = { 0, 360 };
+    CHECK(fits());
+    rects[1].offset.y = 359;
+    CHECK_FALSE(fits());
+    rects.resize(1);
+    SECTION("zero dimensions") { rects[0].extent.width = 0; CHECK_FALSE(fits()); }
+    SECTION("workgroup limit") { limits.maxComputeWorkGroupCount[0] = 79; CHECK_FALSE(fits()); }
+    SECTION("storage binding limit") { limits.maxPerStageDescriptorStorageImages = 1; CHECK_FALSE(fits()); }
+    SECTION("sampled binding limit") { limits.maxPerStageDescriptorSampledImages = 4; CHECK_FALSE(fits()); }
+    SECTION("filter push constant limit") { limits.maxPushConstantsSize = 119; CHECK_FALSE(fits()); }
+    SECTION("empty views") { rects.clear(); CHECK_FALSE(fits()); }
+    SECTION("filter budget is shared across views")
+    {
+        rects = { { {}, { 1280, 1080 } }, { { 1280, 0 }, { 1280, 1080 } } };
+        CHECK(fits(false));
+        rects.push_back({ { 2560, 0 }, { 1280, 1080 } });
+        CHECK_FALSE(fits(false));
+    }
+    SECTION("too many views") { rects.resize(17); CHECK_FALSE(fits()); }
+    SECTION("large products cannot wrap the budget")
+    {
+        limits.maxImageDimension2D = limits.maxComputeWorkGroupCount[0] = limits.maxComputeWorkGroupCount[1] = UINT32_MAX;
+        rects[0].extent = { UINT32_MAX, UINT32_MAX };
+        CHECK_FALSE(fits());
+    }
+}
+
+TEST_CASE("SSGI history rejects cuts and projection changes while retaining camera-relative motion", "[renderer][ssgi]")
+{
+    using mir::vk::SsgiTrace;
+    const auto position = At(kEdgeA);
+    const auto matrix = mir::MakeCameraRelativeViewProjection(WorldPose{ position }, kLens, 1.5f);
+    const auto compatible = [&](const glm::mat4 &next, WorldPosition camera = At(kEdgeA))
+        { return SsgiTrace::HistoryCompatible(matrix, position, next, camera, 10); };
+    CHECK(compatible(matrix));
+    CHECK(compatible(matrix, At(kEdgeA + glm::dvec3(0.1, 0, 0))));
+    CHECK_FALSE(compatible(matrix, At(kEdgeA + glm::dvec3(20, 0, 0))));
+    auto turn = glm::mat3_cast(glm::angleAxis(glm::radians(3.0f), glm::vec3(0, 1, 0)));
+    CHECK(compatible(mir::MakeCameraRelativeViewProjection(WorldPose{ position, turn }, kLens, 1.5f)));
+    turn = glm::mat3_cast(glm::angleAxis(glm::radians(90.0f), glm::vec3(0, 1, 0)));
+    CHECK_FALSE(compatible(mir::MakeCameraRelativeViewProjection(WorldPose{ position, turn }, kLens, 1.5f)));
+    CHECK_FALSE(compatible(mir::MakeCameraRelativeViewProjection(WorldPose{ position }, mir::Camera{ 70, 0.1f, 100 }, 1.5f)));
+    CHECK_FALSE(compatible(mir::MakeCameraRelativeViewProjection(WorldPose{ position }, kLens, 2.0f)));
+    CHECK_FALSE(compatible(mir::MakeCameraRelativeViewProjection(WorldPose{ position }, mir::Camera{ 60, 0.2f, 100 }, 1.5f)));
+    CHECK_FALSE(compatible(glm::mat4(1)));
+    CHECK_FALSE(compatible(glm::mat4(0)));
+    auto invalid = matrix; invalid[0][0] = std::numeric_limits<float>::quiet_NaN();
+    CHECK_FALSE(compatible(invalid));
+}
+
+TEST_CASE("Raster surface inputs respect attachment limits and the allocation budget", "[renderer][ssgi]")
+{
+    VkPhysicalDeviceLimits limits{};
+    limits.maxFramebufferWidth = limits.maxFramebufferHeight = limits.maxImageDimension2D = 16384;
+    limits.maxColorAttachments = limits.maxFragmentOutputAttachments = 4;
+    limits.maxFragmentCombinedOutputResources = 7;
+    const auto fits = [&](uint32_t width, uint32_t height)
+        { return mir::vk::RasterSurfaces::FitsBudget({ width, height }, limits); };
+    CHECK(fits(1920, 1080));
+    CHECK(fits(2560, 1440));
+    CHECK_FALSE(fits(3840, 2160));
+    CHECK_FALSE(fits(0, 1080));
+    CHECK_FALSE(fits(1920, 0));
+    SECTION("color attachment limit") { limits.maxColorAttachments = 3; CHECK_FALSE(fits(640, 360)); }
+    SECTION("fragment output limit") { limits.maxFragmentOutputAttachments = 3; CHECK_FALSE(fits(640, 360)); }
+    SECTION("combined resource limit") { limits.maxFragmentCombinedOutputResources = 6; CHECK_FALSE(fits(640, 360)); }
+    SECTION("framebuffer limit") { limits.maxFramebufferWidth = 639; CHECK_FALSE(fits(640, 360)); }
+    SECTION("image limit") { limits.maxImageDimension2D = 639; CHECK_FALSE(fits(640, 360)); }
+    SECTION("large dimensions cannot overflow the byte budget")
+    {
+        limits.maxFramebufferWidth = limits.maxFramebufferHeight = limits.maxImageDimension2D =
+            std::numeric_limits<uint32_t>::max();
+        CHECK_FALSE(fits(limits.maxFramebufferWidth, limits.maxFramebufferHeight));
+    }
+}
+
+TEST_CASE("Probe batches cover the volume before enabling history and respect update budgets", "[renderer][ddgi]")
+{
+    for (uint32_t total : { 8u, 24u, 64u, 512u })
+        for (uint32_t count : { 1u, 7u, total })
+        {
+            mir::vk::ProbeUpdateSchedule schedule;
+            std::vector<bool> seen(total, false);
+            for (uint32_t frame = 0; frame < (total + count - 1) / count; ++frame)
+            {
+                const auto batch = schedule.Batch(total, count);
+                CHECK(batch[3] == 0);
+                CHECK(schedule.SamplingWeight() == 0.0f);
+                std::vector<bool> thisFrame(total, false);
+                for (uint32_t dispatch = 0; dispatch < batch[1]; ++dispatch)
+                {
+                    const uint32_t index = (batch[0] + dispatch) % batch[2];
+                    CHECK_FALSE(thisFrame[index]);
+                    thisFrame[index] = seen[index] = true;
+                }
+                CHECK(std::count(thisFrame.begin(), thisFrame.end(), true) == count);
+                schedule.Advance(total, count);
+            }
+            CHECK(std::all_of(seen.begin(), seen.end(), [](bool value) { return value; }));
+            CHECK(schedule.Batch(total, count)[3] == 1);
+            float previous = schedule.SamplingWeight();
+            CHECK(previous > 0.0f);
+            for (int frame = 0; frame < 8; ++frame)
+            {
+                schedule.Advance(total, count);
+                CHECK(schedule.SamplingWeight() >= previous);
+                CHECK(schedule.SamplingWeight() <= 1.0f);
+                previous = schedule.SamplingWeight();
+            }
+            CHECK(schedule.SamplingWeight() == 1.0f);
+            schedule.Reset();
+            CHECK(schedule.Batch(total, count)[0] == 0);
+            CHECK(schedule.Batch(total, count)[3] == 0);
+            CHECK(schedule.SamplingWeight() == 0.0f);
+        }
+}
+
+TEST_CASE("Probe history survives intermittent incomplete scenes and expires after prolonged gaps", "[renderer][ddgi]")
+{
+    mir::vk::ProbeUpdateSchedule schedule;
+    schedule.Advance(64, 8);
+    const auto partial = schedule.Batch(64, 8);
+    schedule.SkipUpdate();
+    CHECK(schedule.Batch(64, 8) == partial);
+    CHECK_FALSE(schedule.Expired());
+    CHECK(schedule.SamplingWeight() == 0.0f);
+    for (int i = 0; i < 16; ++i) schedule.Advance(64, 8);
+    REQUIRE(schedule.SamplingWeight() == 1.0f);
+    for (int i = 0; i < 200; ++i)
+    {
+        const auto batch = schedule.Batch(64, 8);
+        schedule.SkipUpdate();
+        CHECK(schedule.Batch(64, 8) == batch);
+        CHECK(schedule.SamplingWeight() == 1.0f);
+        CHECK_FALSE(schedule.Expired());
+        schedule.Advance(64, 8);
+    }
+    for (int i = 0; i < 8; ++i) schedule.SkipUpdate();
+    CHECK(schedule.SamplingWeight() == 1.0f);
+    float previous = 1.0f;
+    for (int i = 0; i < 12; ++i)
+    {
+        schedule.SkipUpdate();
+        CHECK(schedule.SamplingWeight() < previous);
+        previous = schedule.SamplingWeight();
+    }
+    CHECK(previous > 0);
+    for (int i = 0; i < 4; ++i)
+    {
+        schedule.Advance(64, 8);
+        CHECK(schedule.SamplingWeight() > previous);
+        previous = schedule.SamplingWeight();
+    }
+    for (int i = 0; i < 100; ++i) schedule.SkipUpdate();
+    CHECK(schedule.Expired());
+    CHECK(schedule.SamplingWeight() == 0.0f);
+    schedule.Reset();
+    CHECK_FALSE(schedule.Expired());
+    CHECK(schedule.Batch(64, 8) == std::array<uint32_t, 4>{0, 8, 64, 0});
+    CHECK(schedule.SamplingWeight() == 0.0f);
+}
+
+TEST_CASE("GI visibility reach is independent of probe density and placement", "[renderer][ddgi]")
+{
+    mir::DdgiSettings settings;
+    settings.origin = { kEdgeA.x, kEdgeA.y, kEdgeA.z };
+    const auto volume = mir::MakeGiTraceVolume(settings);
+    REQUIRE(volume);
+    CHECK(volume->origin.Meters() == At(kEdgeA).Meters());
+    REQUIRE(std::isfinite(volume->maxRayDistance));
+    // A small probe grid in a larger room must still see its ceiling and walls.
+    settings.probeCounts = { 2, 2, 2 };
+    settings.probesPerFrame = 8;
+    settings.probeSpacing = 1.0f;
+    settings.origin = { 0.0, 0.0, 0.0 };
+    const auto near = mir::MakeGiTraceVolume(settings);
+    REQUIRE(near);
+    CHECK(near->maxRayDistance == volume->maxRayDistance);
+    CHECK(near->maxRayDistance > 10000.0f);
+    settings.probeSpacing = 0.0f;
+    CHECK_FALSE(mir::MakeGiTraceVolume(settings));
+}
+
+TEST_CASE("RT submission collects resident shadow blockers once and keeps off-camera world draws", "[renderer][ddgi]")
+{
+    struct Source : mir::IViewDrawSource
+    {
+        int calls = 0;
+        void Prepare(std::span<const mir::ViewCamera>) override {}
+        void AppendViewDraws(size_t, std::vector<WorldDrawItem> &) override { FAIL("Expected resident collection"); }
+        void AppendVolumeDraws(size_t, WorldPosition, const glm::mat4 &, std::vector<WorldDrawItem> &) override
+            { FAIL("Expected resident collection"); }
+        void AppendRayTracingDraws(size_t view, std::vector<WorldDrawItem> &out) override
+        {
+            CHECK(view == 0);
+            ++calls;
+            out.push_back(ItemAt(kEdgeA + glm::dvec3(0, 0, 5000)));
+        }
+    } source;
+    mir::IViewDrawSource *sources[]{ &source };
+    mir::ViewCamera camera{ 0, WorldPose{ At(kEdgeA) }, kLens, { 800, 600 },
+        mir::MakeCameraRelativeViewProjection(WorldPose{ At(kEdgeA) }, kLens, 4.0f / 3.0f) };
+    const std::vector<WorldDrawItem> world{ ItemAt(kEdgeA + glm::dvec3(0, 0, -5)),
+        ItemAt(kEdgeA + glm::dvec3(0, 0, 20)) };
+    std::vector<WorldDrawItem> collected;
+    mir::CollectRayTracingWorldDraws(world, sources, 0, collected);
+    CHECK(source.calls == 1);
+    REQUIRE(collected.size() == 3);
+    std::vector<DrawItem> relative;
+    CHECK(mir::BuildViewDrawItems(collected, camera.pose.position, glm::mat4(1.0f), relative) == 0);
+    REQUIRE(relative.size() == 3);
+    CHECK(Translation(relative[1]).z == 20.0);
+    CHECK(Translation(relative[2]).z == 5000.0);
 }
 
 TEST_CASE("A far draw keeps a millimeter offset from its viewport camera", "[renderer][lwc]")
@@ -265,4 +517,25 @@ TEST_CASE("A translation grid only applies within float's exact range", "[render
     const float inside = view[0].model[3].x;
     CHECK(inside == float(std::round(2047.3 / kGrid) * kGrid));
     CHECK(view[1].model[3].x == float(5000.3));
+}
+
+TEST_CASE("Debug lines narrow against the viewport camera and stay pairs", "[renderer][debug-view]")
+{
+    const glm::dvec3 camera{ 1000.0, 50.0, -2000.0 };
+    std::vector<mir::DebugLineVertex> world{
+        { At(camera + glm::dvec3(1.0, 0.0, 0.0)), 0x11u },
+        { At(camera + glm::dvec3(0.0, 2.0, 0.0)), 0x22u } };
+
+    std::vector<mir::DebugLinePoint> view;
+    mir::BuildViewDebugLines(world, At(camera), view);
+    REQUIRE(view.size() == 2);
+    CHECK(view[0].position == glm::vec3(1.0f, 0.0f, 0.0f));
+    CHECK(view[1].position == glm::vec3(0.0f, 2.0f, 0.0f));
+    CHECK(view[0].color == 0x11u);
+    CHECK(view[1].color == 0x22u);
+
+    // an odd trailing vertex has no partner, so it is not a segment
+    world.push_back({ At(camera), 0x33u });
+    mir::BuildViewDebugLines(world, At(camera), view);
+    CHECK(view.size() == 2);
 }

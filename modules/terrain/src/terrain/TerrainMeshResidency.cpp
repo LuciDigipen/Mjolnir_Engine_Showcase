@@ -563,6 +563,13 @@ namespace mir
         return &found->second.mesh;
     }
 
+    const TerrainResidentMesh *TerrainMeshResidency::FindReady(const TerrainPayloadKey &geometry) const
+    {
+        const auto found = mImpl->entries.find(geometry);
+        return found != mImpl->entries.end() && found->second.state == TerrainMeshState::Ready
+            ? &found->second.mesh : nullptr;
+    }
+
     void TerrainMeshResidency::RetireReleases(std::span<const TerrainReleaseInfo> keep)
     {
         Impl &impl = *mImpl;

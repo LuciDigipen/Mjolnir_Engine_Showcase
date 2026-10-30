@@ -46,6 +46,10 @@ namespace mir
 
         const bool sessionOver = !IsPlaying(context.world);
 
+        // an event posted before its bank has loaded fails, and its bank is not known here
+        // while idle posts are refused, so starts wait for the sound to come back
+        const bool holdPosts = audio::AreBanksLoading() || audio::IsIdle();
+
         mQuery->ForEach([&](Entity, const WorldTransform &worldTransform, AudioEmitter &emitter)
             {
                 if (emitter.mGameObject == 0)
@@ -55,6 +59,14 @@ namespace mir
                         return;
 
                     emitter.mWorldVersion = 0;
+                    emitter.mAppliedVolume = -1.0f;
+                }
+
+                // in Edit and Pause too, so a sound follows the Inspector as it plays
+                if (emitter.mVolume != emitter.mAppliedVolume)
+                {
+                    audio::SetObjectVolume(emitter.mGameObject, emitter.mVolume);
+                    emitter.mAppliedVolume = emitter.mVolume;
                 }
 
                 if (worldTransform.Version() != emitter.mWorldVersion)
@@ -79,9 +91,9 @@ namespace mir
                     if (emitter.mPlayingId != 0 && !audio::IsVoicePlaying(emitter.mPlayingId))
                         emitter.mPlayingId = 0;
 
-                    // mLoop reposts whatever this emitter started, once it ends
-                    const bool start = emitter.mPlayOnStart && !emitter.mStarted;
-                    const bool repost = emitter.mLoop && emitter.mStarted && emitter.mPlayingId == 0;
+                    
+                    const bool start = emitter.mPlayOnStart && !emitter.mStarted && !holdPosts;
+                    const bool repost = emitter.mLoop && emitter.mStarted && emitter.mPlayingId == 0 && !holdPosts;
 
                     if (start || repost)
                     {

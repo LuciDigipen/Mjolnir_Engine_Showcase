@@ -3,6 +3,7 @@ engine_add_module_tests(core_base
     FileIO.tests.cpp
     Process.tests.cpp
     LogHistory.tests.cpp
+    LogRepeats.tests.cpp
     SetupError.tests.cpp
     WorldCoordinates.tests.cpp
     RegistrationList.tests.cpp
@@ -11,6 +12,7 @@ engine_add_module_tests(core_base
 # each crash runs in a child process, so the test run survives it
 if(WIN32 AND BUILD_TESTING)
     add_executable(engine_core_crash_probe CrashProbe.cpp)
+    engine_target_utf8(engine_core_crash_probe)
     target_link_libraries(engine_core_crash_probe PRIVATE mir::core_base)
     target_sources(engine_core_base_tests PRIVATE CrashHandler.tests.cpp)
     add_dependencies(engine_core_base_tests engine_core_crash_probe)

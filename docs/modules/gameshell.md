@@ -28,9 +28,25 @@ while the menu is open and starts from zero on Restart and on each Play.
 **The pause menu** opens on `UIPause` (Escape, Start) or the HUD's button, and
 closes on `UIPause`, `UICancel` (Escape, B, the right mouse button) or Resume.
 It dims the whole area, centres a panel in the safe area, and puts focus on
-Resume. Resume, Restart and Quit are a column linked up and down with wrap,
-with Select and Back prompts under them. Quit leaves Play in the editor and
+Resume. Resume, Restart, Audio and Quit are a column linked up and down with
+wrap, with Select and Back prompts under them. Quit leaves Play in the editor and
 closes the window in a game build.
+
+**The Audio screen** replaces the menu's panel when Audio is chosen, with focus
+on its first control: the music volume slider, a Mute music toggle, the SFX
+slider, Mute SFX, Restore defaults and Back, again a wrapping column. A slider
+steps by a tenth on left and right, or follows the mouse while held, and each
+change goes to the audio at once, so the player hears it while adjusting.
+`UICancel` and Back go back a step to the menu, onto Audio; `UIPause` alone
+(Start) resumes from either screen. Escape is both, so it backs out a step at a
+time. The menu always opens on its main screen.
+
+The screen reads and writes through `IAudioOptions`, never the audio module:
+`gameshell` builds without Wwise, and with no options set there is no Audio
+entry. `App` sets them with `GameShellModule::SetAudioOptions` once both are
+built, through `GameAudioOptions`, which calls the public audio API and restores
+`AudioModule::Defaults()`. The audio module writes every change to the per-user
+settings file itself, so the screen never saves.
 
 While it is open it calls `UIContext::HoldInput()`, so gameplay reads every
 action at rest through `InputState::ForGame`. The menu also asks `App` to
@@ -40,11 +56,11 @@ an inventory say, from leaking input to the game.
 
 Each device does the whole round trip alone:
 
-| | Open | Navigate | Close |
-|---|---|---|---|
-| Gamepad | Start | D-pad, left stick | B, Start, or A on Resume |
-| Keyboard | Escape | Arrow keys | Escape, or Enter on Resume |
-| Mouse | Click the HUD's Pause | Hover | Click Resume, or the right button |
+| | Open | Navigate | Adjust a slider | Close |
+|---|---|---|---|---|
+| Gamepad | Start | D-pad, left stick | Left and right on either | B a step back, Start, or A on Resume |
+| Keyboard | Escape | Arrow keys | Left and right arrows | Escape a step back, or Enter on Resume |
+| Mouse | Click the HUD's Pause | Hover | Drag | The right button a step back, or click Resume |
 
 ### The module
 
@@ -58,7 +74,9 @@ and Quit as Stop in the editor or Quit in a game build.
 | Type | Header | Role |
 |---|---|---|
 | `GameShell`, `GameShellAction` | `gameshell/GameShell.h` | The HUD and the menu together, the play clock, and what the player asked this frame |
-| `PauseMenu`, `PauseMenuAction` | `gameshell/PauseMenu.h` | Opens, closes, holds the input; `Open` for a button elsewhere |
+| `PauseMenu`, `PauseMenuAction` | `gameshell/PauseMenu.h` | Opens, closes, holds the input, and the Audio screen; `Open` for a button elsewhere |
+| `IAudioOptions`, `AudioChannel` | `gameshell/AudioOptions.h` | What the Audio screen reads and changes: each channel's volume and mute, and Restore defaults |
+| `GameShellModule::SetAudioOptions` | `gameshell/GameShellModule.h` | Gives the menu its Audio entry; null leaves it out |
 | `GameHud` | `gameshell/GameHud.h` | The clock and the pointer-only Pause button; true on the frame it is clicked |
 
 `src/gameshell/ShellPrompts.h` draws a prompt, a key cap or pad pill with the
@@ -91,7 +109,13 @@ works in the editor's scene viewport, in Play, and in a game build, which with
 (the mouse in an offset area, as in the editor's viewport), game input held
 while it is open without the capture flags, the stick and confirm not reaching
 the HUD in play, nothing drawn outside Play and Stop closing the menu, both
-screens inside the viewport and fullscreen at any safe area, and the clock.
+screens inside the viewport and fullscreen at any safe area, a viewport too short
+for the menu scaling it down whole with every button still under its text and
+clickable, and the clock. The
+Audio screen is covered the same way against a stand-in `IAudioOptions`: no entry
+without one, each device alone opening it on its first control, stepping and
+dragging the sliders, ten steps from full to silent, the mutes, Restore
+defaults, and backing out a step at a time.
 `smoke.game-mode` runs a game build for 120 frames on the GPU. Whether it looks
 right is checked by running a game: Play in the editor, or `--no-editor`.
 
@@ -100,8 +124,8 @@ right is checked by running a game: Play in the editor, or `--no-editor`.
 1. **Content from the game.** The shell is the engine's. A game will want its
    own HUD and its own options in the menu, through Lua or data, which is
    `gameui`'s content backlog item.
-2. **Settings.** No options screen: volume, bindings and the safe-area inset
-   would live behind a fourth button.
+2. **Settings.** Audio is the one options screen. Bindings and the safe-area
+   inset would join it.
 3. **Confirm before Quit.** Quit and Restart act at once; a game with progress
    to lose wants a yes or no first, which wants a modal over the menu and
    `gameui`'s focus scopes.
@@ -110,6 +134,10 @@ right is checked by running a game: Play in the editor, or `--no-editor`.
    before it opens. A game that binds those keys for itself sees them once.
 
 ## Changed
+
+*2026-10-28* — **The Audio screen.** Was: the menu had Resume, Restart and Quit
+only. Now: an Audio entry opens music and SFX volume and mute, Restore defaults
+and Back. Because: players change volume and mute from inside the game (#305).
 
 *2026-10-24* — **`GameShellModule`.** Was: `App` drew the shell or the demo and
 carried out each action. Now: the module registers the screen and pushes

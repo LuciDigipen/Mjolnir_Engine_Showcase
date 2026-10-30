@@ -11,6 +11,7 @@
 #include <renderer/Material.h>
 #include <renderer/Mesh.h>
 #include <renderer/Texture.h>
+#include <renderer/TextureTable.h>
 
 #include <volk.h>
 
@@ -96,13 +97,23 @@ namespace mir::vk
         std::size_t ReleaseTextures();
         const GpuTexture *FindTexture(TextureHandle handle) const;
 
+        // The shared image-table row a handle names; the default white row for a stale handle.
+        uint32_t TextureSlot(TextureHandle handle) const;
+        VkImageView ImageViewAt(uint32_t slot) const;
+        uint64_t TextureTableVersion() const { return mTextureTableVersion; }
+
         TextureHandle DefaultWhiteTexture() const { return mDefaultWhiteTexture; }
         TextureHandle DefaultNormalTexture() const { return mDefaultNormalTexture; }
         TextureHandle ErrorTexture() const { return mErrorTexture; }
 
-        // One VkSampler per distinct SamplerDesc, shared by every material that
-        // asks for it; VK_NULL_HANDLE on failure.
-        VkSampler AcquireSampler(const SamplerDesc &desc);
+        // One VkSampler per distinct effective SamplerDesc, shared by every
+        // material that asks for it; VK_NULL_HANDLE on failure. outSlot receives
+        // the sampler table row.
+        VkSampler AcquireSampler(const SamplerDesc &desc, uint32_t *outSlot = nullptr);
+        VkSampler SamplerAt(uint32_t slot) const;
+        uint32_t SamplerSlotCount() const { return static_cast<uint32_t>(mSamplerTable.size()); }
+        VkSampler DefaultSampler() const { return mDefaultSampler; }
+        uint64_t SamplerTableVersion() const { return mSamplerTableVersion; }
 
     private:
         bool CreateDefaultTextures();
@@ -116,12 +127,18 @@ namespace mir::vk
         std::vector<uint32_t> mFreeMeshIndices;
         uint32_t mHighestMeshGeneration = 0;
 
+        TextureTable mTextureTable;
         std::vector<GpuTexture> mTextures;
         TextureHandle mDefaultWhiteTexture;
         TextureHandle mDefaultNormalTexture;
         TextureHandle mErrorTexture;
+        uint64_t mTextureTableVersion = 0;
 
-        // Keyed by a packed SamplerDesc. The store owns them all; a material only borrows one.
-        std::unordered_map<uint64_t, VkSampler> mSamplers;
+        // Row order is the sampler table's stable identity. The lookup maps the
+        // effective sampler state to that row.
+        std::vector<VkSampler> mSamplerTable;
+        std::unordered_map<uint64_t, uint32_t> mSamplerLookup;
+        VkSampler mDefaultSampler = VK_NULL_HANDLE;
+        uint64_t mSamplerTableVersion = 0;
     };
 }

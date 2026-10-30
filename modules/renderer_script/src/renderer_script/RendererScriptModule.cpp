@@ -8,6 +8,7 @@
  */
 #include <renderer_script/RendererScriptModule.h>
 
+#include <renderer_script/CameraBindings.h>
 #include <renderer_script/MeshBindings.h>
 #include <renderer_script/PostProcessingBindings.h>
 
@@ -18,7 +19,8 @@ namespace mir
 {
     RendererScriptModule::RendererScriptModule(ScriptModule &scripts)
         : mBindings(AddBindings(scripts.Host(), &RegisterPostProcessingBindings)),
-          mMeshBindings(AddBindings(scripts.Host(), &RegisterMeshBindings))
+          mMeshBindings(AddBindings(scripts.Host(), &RegisterMeshBindings)),
+          mCameraBindings(AddBindings(scripts.Host(), &RegisterCameraBindings))
     {
     }
 }

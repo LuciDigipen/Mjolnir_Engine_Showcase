@@ -7,6 +7,7 @@
  *
  */
 #include <physics/PhysicsWorld.h>
+#include <physics/ColliderLines.h>
 
 #include "CollisionLayers.h"
 #include "ContactTracker.h"
@@ -15,7 +16,9 @@
 #include "JoltRuntime.h"
 
 #include <core/log/Log.h>
+#include <core/log/Assert.h>
 #include <core/platform/CrashHandler.h>
+#include <jobs/JobExecutor.h>
 
 #include <Jolt/Jolt.h>
 
@@ -45,7 +48,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <optional>
+#include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
 #include <type_traits>
@@ -140,15 +145,40 @@ namespace mir
             }
         }
 
+        bool Fits(float size)
+        {
+            return std::isfinite(size) && size > 0.0f;
+        }
+
+        // Every size the shape reads Fits; MakeBaseShape refuses the rest.
+        bool HasSize(const BodyDesc &desc)
+        {
+            switch (desc.mShape)
+            {
+            case PhysicsShape::Sphere:
+                return Fits(desc.mRadius);
+            case PhysicsShape::Capsule:
+                return Fits(desc.mRadius) && Fits(desc.mHalfHeight);
+            default:
+                return Fits(desc.mHalfExtent.x) && Fits(desc.mHalfExtent.y) && Fits(desc.mHalfExtent.z);
+            }
+        }
+
+        // halfHeight counts the caps, Jolt wants the cylinder between them, and a body with no
+        // cylinder at all is a sphere that Jolt's capsule refuses
+        float CylinderHalfHeight(const BodyDesc &desc)
+        {
+            return std::max(desc.mHalfHeight - desc.mRadius, 1.0e-3f);
+        }
+
         // The size-only shape, in its own frame. Null, logged, for a size Jolt cannot build.
         const JPH::Shape *MakeBaseShape(const BodyDesc &desc)
         {
             const char *hint = "a collider needs a size above 0, so this one is empty until it is fixed";
-            const auto fits = [](float size) { return std::isfinite(size) && size > 0.0f; };
 
             if (desc.mShape == PhysicsShape::Sphere)
             {
-                if (!fits(desc.mRadius))
+                if (!Fits(desc.mRadius))
                 {
                     MIR_LOG_ERROR("PhysicsWorld: radius must be positive; {}", hint);
                     return nullptr;
@@ -158,19 +188,16 @@ namespace mir
 
             if (desc.mShape == PhysicsShape::Capsule)
             {
-                if (!fits(desc.mRadius) || !fits(desc.mHalfHeight))
+                if (!Fits(desc.mRadius) || !Fits(desc.mHalfHeight))
                 {
                     MIR_LOG_ERROR("PhysicsWorld: radius and halfHeight must be positive; {}", hint);
                     return nullptr;
                 }
-                // halfHeight counts the caps, Jolt wants the cylinder between them, and a body with no
-                // cylinder at all is a sphere that Jolt's capsule refuses
-                const float cylinder = std::max(desc.mHalfHeight - desc.mRadius, 1.0e-3f);
-                return new JPH::CapsuleShape(cylinder, desc.mRadius);
+                return new JPH::CapsuleShape(CylinderHalfHeight(desc), desc.mRadius);
             }
 
             const glm::vec3 &halfExtent = desc.mHalfExtent;
-            if (!fits(halfExtent.x) || !fits(halfExtent.y) || !fits(halfExtent.z))
+            if (!Fits(halfExtent.x) || !Fits(halfExtent.y) || !Fits(halfExtent.z))
             {
                 MIR_LOG_ERROR("PhysicsWorld: half extent must be positive on every axis; {}", hint);
                 return nullptr;
@@ -193,6 +220,102 @@ namespace mir
                 return base;
             return new JPH::RotatedTranslatedShape(ToJolt(desc.mOffset), ToJolt(rotation), base);
         }
+
+        // Places the shape's center: offset is in the body's own frame.
+        std::optional<WorldPosition> ShapeCenter(WorldPosition body, const glm::quat &rotation, const glm::vec3 &offset)
+        {
+            const std::optional<WorldOffset> moved = WorldOffset::FromMeters(WorldVec3(rotation * offset));
+            return moved ? TryTranslateWorld(body, *moved) : std::nullopt;
+        }
+
+        PhysicsMotion MotionOf(JPH::EMotionType motion)
+        {
+            switch (motion)
+            {
+            case JPH::EMotionType::Dynamic:
+                return PhysicsMotion::Dynamic;
+            case JPH::EMotionType::Kinematic:
+                return PhysicsMotion::Kinematic;
+            default:
+                return PhysicsMotion::Static;
+            }
+        }
+
+        // The base shape's sizes into view; false for a shape that is not drawn (empty, or a kind CreateBody never
+        // makes). grid holds a height field's thinned samples for view to point at.
+        bool ReadShape(const JPH::Shape &shape, ColliderView &view, std::vector<glm::vec3> &grid)
+        {
+            switch (shape.GetSubType())
+            {
+            case JPH::EShapeSubType::Box:
+                view.mShape = PhysicsShape::Box;
+                view.mHalfExtent = FromJolt(static_cast<const JPH::BoxShape &>(shape).GetHalfExtent());
+                return true;
+            case JPH::EShapeSubType::Sphere:
+                view.mShape = PhysicsShape::Sphere;
+                view.mRadius = static_cast<const JPH::SphereShape &>(shape).GetRadius();
+                return true;
+            case JPH::EShapeSubType::Capsule:
+                {
+                    const auto &capsule = static_cast<const JPH::CapsuleShape &>(shape);
+                    view.mShape = PhysicsShape::Capsule;
+                    view.mRadius = capsule.GetRadius();
+                    view.mCylinderHalfHeight = capsule.GetHalfHeightOfCylinder();
+                    return true;
+                }
+            case JPH::EShapeSubType::HeightField:
+                {
+                    const auto &field = static_cast<const JPH::HeightFieldShape &>(shape);
+                    const uint32_t samples = field.GetSampleCount();
+                    if (samples < 2)
+                        return false;
+                    const uint32_t lines = PhysicsWorld::kColliderGridLines;
+                    const uint32_t stride = std::max(1u, (samples - 1 + lines - 1) / lines);
+                    const uint32_t size = (samples - 1) / stride + 1;
+
+                    grid.resize(static_cast<size_t>(size) * size);
+                    for (uint32_t z = 0; z < size; ++z)
+                    {
+                        for (uint32_t x = 0; x < size; ++x)
+                        {
+                            const uint32_t sx = x * stride, sz = z * stride;
+                            grid[static_cast<size_t>(z) * size + x] = field.IsNoCollision(sx, sz)
+                                ? glm::vec3(std::numeric_limits<float>::quiet_NaN())
+                                : FromJolt(field.GetPosition(sx, sz));
+                        }
+                    }
+                    view.mHeightField = true;
+                    view.mHeightGrid = grid;
+                    view.mGridSize = size;
+                    return true;
+                }
+            default:
+                return false;
+            }
+        }
+    }
+
+    std::optional<ColliderView> ColliderViewOf(const BodyDesc &desc)
+    {
+        // MakeShape builds an empty shape from these, and CreateBody logs it; nothing to outline
+        if (!HasSize(desc))
+            return std::nullopt;
+
+        const std::optional<WorldPosition> center = ShapeCenter(desc.mPosition, desc.mRotation, desc.mOffset);
+        if (!center)
+            return std::nullopt;
+
+        ColliderView view;
+        view.mShape = desc.mShape;
+        view.mPosition = *center;
+        view.mRotation = desc.mRotation * desc.mRotationOffset *
+            (desc.mShape == PhysicsShape::Capsule ? AxisRotation(desc.mAxis) : kIdentityRotation);
+        view.mHalfExtent = desc.mHalfExtent;
+        view.mRadius = desc.mRadius;
+        view.mCylinderHalfHeight = CylinderHalfHeight(desc);
+        view.mMotion = desc.mMotion;
+        view.mTrigger = desc.mIsTrigger;
+        return view;
     }
 
     struct PhysicsWorld::Impl
@@ -204,7 +327,7 @@ namespace mir
             // through the crash handler's terminate route, not the abort fallback
             mJobSystem.SetThreadInitFunction([](int) { ArmCrashHandler(); });
             mJobSystem.Init(static_cast<JPH::uint>(JPH::cMaxPhysicsJobs), static_cast<JPH::uint>(JPH::cMaxPhysicsBarriers),
-                desc.mWorkerThreads > 0 ? static_cast<int>(desc.mWorkerThreads) : -1);
+                desc.mWorkerThreads >= 0 ? desc.mWorkerThreads : static_cast<int>(JobExecutor::DefaultWorkerCount()));
 
             mSystem.Init(desc.mMaxBodies,
                          0, // body mutexes: 0 lets Jolt pick a default
@@ -556,6 +679,36 @@ namespace mir
     glm::vec3 PhysicsWorld::Gravity() const
     {
         return FromJolt(mImpl->mSystem.GetGravity());
+    }
+
+    uint32_t PhysicsWorld::WorkerCount() const
+    {
+        return static_cast<uint32_t>(mImpl->mJobSystem.GetMaxConcurrency() - 1);
+    }
+
+    void PhysicsWorld::ReadBodyPoses(std::span<const BodyHandle> bodies, std::span<BodyPoseSnapshot> poses,
+        JobExecutor *jobs) const
+    {
+        if (bodies.size() != poses.size()) throw std::invalid_argument("physics body/pose span sizes differ");
+        MIR_ASSERT(!mStepping, "PhysicsWorld: readback must run after the physics step has joined");
+        const auto read = [&](size_t begin, size_t end)
+        {
+            for (size_t i = begin; i < end; ++i)
+            {
+                poses[i] = {};
+                if (!bodies[i].IsValid()) continue;
+                const JPH::BodyLockRead lock(mImpl->mSystem.GetBodyLockInterface(), ToBodyId(bodies[i]));
+                if (!lock.SucceededAndIsInBroadPhase()) continue;
+                const auto &body = lock.GetBody();
+                poses[i].position = PositionFromJolt(body.GetPosition());
+                poses[i].rotation = FromJolt(body.GetRotation());
+            }
+        };
+        // Avoid dispatch for small worlds. Each range holds only one read lock at a time.
+        if (jobs && jobs->WorkerCount() > 0 && bodies.size() >= 128)
+            jobs->ParallelFor(bodies.size(), 16, read);
+        else
+            read(0, bodies.size());
     }
 
     std::optional<WorldPosition> PhysicsWorld::BodyPosition(BodyHandle body) const
@@ -1006,6 +1159,49 @@ namespace mir
     std::size_t PhysicsWorld::BodyCount() const
     {
         return mImpl->mSystem.GetNumBodies();
+    }
+
+    void PhysicsWorld::ForEachCollider(const std::function<void(const ColliderView &)> &visit) const
+    {
+        JPH::BodyIDVector ids;
+        mImpl->mSystem.GetBodies(ids);
+
+        std::vector<glm::vec3> grid;
+        for (const JPH::BodyID id : ids)
+        {
+            const JPH::BodyLockRead lock(mImpl->mSystem.GetBodyLockInterface(), id);
+            if (!lock.Succeeded())
+                continue;
+            const JPH::Body &body = lock.GetBody();
+
+            const std::optional<WorldPosition> origin = PositionFromJolt(body.GetPosition());
+            if (!origin)
+                continue;
+
+            ColliderView view;
+            view.mMotion = MotionOf(body.GetMotionType());
+            view.mTrigger = body.IsSensor();
+            view.mSleeping = !body.IsStatic() && !body.IsActive();
+
+            // MakeShape wraps the base shape only when the axis or the collider offset moves it
+            view.mPosition = *origin;
+            view.mRotation = FromJolt(body.GetRotation());
+            const JPH::Shape *shape = body.GetShape();
+            if (shape->GetSubType() == JPH::EShapeSubType::RotatedTranslated)
+            {
+                const auto &placed = static_cast<const JPH::RotatedTranslatedShape &>(*shape);
+                const std::optional<WorldPosition> center =
+                    ShapeCenter(*origin, view.mRotation, FromJolt(placed.GetPosition()));
+                if (!center)
+                    continue;
+                view.mPosition = *center;
+                view.mRotation = view.mRotation * FromJolt(placed.GetRotation());
+                shape = placed.GetInnerShape();
+            }
+
+            if (ReadShape(*shape, view, grid))
+                visit(view);
+        }
     }
 
     void PhysicsWorld::Step(float dt)

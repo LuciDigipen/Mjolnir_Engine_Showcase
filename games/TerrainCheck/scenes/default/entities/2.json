@@ -27,6 +27,7 @@
     },
     {
       "fields": {
+        "active": true,
         "farZ": 0.0,
         "fovYDegrees": 60.0,
         "nearZ": 0.1

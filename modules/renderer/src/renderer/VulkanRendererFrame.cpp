@@ -11,15 +11,23 @@
 #endif
 #include <renderer/VulkanRenderer.h>
 #include "vulkan/CameraBuffer.h"
+#include "vulkan/DebugDraw.h"
 #include "vulkan/Device.h"
 #include "vulkan/FrameCapture.h"
 #include "vulkan/FrameSync.h"
 #include "vulkan/ImGuiOverlay.h"
 #include "vulkan/MaterialStore.h"
+#include "vulkan/MaterialTable.h"
+#include "vulkan/MaterialTableLayout.h"
 #include "vulkan/MeshUploader.h"
 #include "vulkan/ModelDescriptors.h"
 #include "vulkan/PostProcessingStack.h"
 #include "vulkan/RayTracer.h"
+#include "vulkan/RasterSurfaces.h"
+#include "vulkan/SsgiTrace.h"
+#if MIR_WITH_RTXGI
+#include "vulkan/Ddgi.h"
+#endif
 #include "vulkan/ResourceStore.h"
 #include "vulkan/ShadowMaps.h"
 #include "vulkan/Swapchain.h"
@@ -36,8 +44,10 @@
 
 namespace mir
 {
-    void VulkanRenderer::RecordView(VkCommandBuffer cmd, const RenderView &view, uint32_t viewIndex)
+    uint32_t VulkanRenderer::RecordView(VkCommandBuffer cmd, const RenderView &view, uint32_t viewIndex,
+        RasterPass pass, uint32_t cameraOffset)
     {
+        const bool surfaces = pass == RasterPass::Surface;
         const VkRect2D rect = vk::ResolveViewRect(view.rect, mSwapchain->Extent());
 
         const VkViewport viewport{
@@ -50,7 +60,12 @@ namespace mir
         vkCmdSetViewport(cmd, 0, 1, &viewport);
         vkCmdSetScissor(cmd, 0, 1, &rect);
 
-        const uint32_t cameraOffset = WriteCameraData(view, viewIndex);
+        auto &modelSets = mRasterSurfaces->ModelSets(viewIndex);
+        if (pass == RasterPass::Scene || pass == RasterPass::Opaque)
+        {
+            cameraOffset = WriteCameraData(view, viewIndex);
+            if (mRasterSurfaces->Active()) modelSets.assign(view.items.size(), VK_NULL_HANDLE);
+        }
         const VkDescriptorSet cameraSet = mCameraBuffer->Set(mFrameSync->Index());
         const VkDescriptorSet shadowSet = mShadowMaps->Set(mFrameSync->Index());
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
@@ -58,40 +73,76 @@ namespace mir
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
             3, 1, &shadowSet, 0, nullptr);
 
+        if (mMaterialTable != nullptr)
+        {
+            const VkDescriptorSet tableSet = mMaterialTable->Set(mFrameSync->Index());
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
+                vk::kMaterialTableSetIndex, 1, &tableSet, 0, nullptr);
+        }
+
         VkPipeline boundPipeline = VK_NULL_HANDLE;
         VkDescriptorSet boundDescriptorSet = VK_NULL_HANDLE;
+        uint32_t boundRecordRefOffset = UINT32_MAX;
+
+        // Wireframe draws only lines, over the clear color; without line support it stays shaded
+        const bool shaded = view.debugView.shading != ViewportShading::Wireframe || !mDebugDraw->WireframeAvailable();
+        const size_t drawCount = shaded ? view.items.size() : 0;
 
         // no mesh/material batching yet, just draw per item
-        for (const DrawItem &item : view.items)
+        // EQUAL replay runs in reverse so the original GREATER winner owns depth ties.
+        for (size_t iteration = 0; iteration < drawCount; ++iteration)
         {
+            const size_t draw = surfaces ? view.items.size() - 1 - iteration : iteration;
+            const DrawItem &item = view.items[draw];
+            const vk::GpuMaterial *const material = mMaterialStore->FindOrDefault(item.material);
+            if (material == nullptr) continue;
+            const bool transparent = item.transparent || material->mDescription.alphaMode == MaterialAlphaMode::Blend;
+            if ((pass == RasterPass::Opaque || surfaces) && transparent) continue;
+            if (pass == RasterPass::Transparent && !transparent) continue;
             const vk::GpuMesh *const mesh = mResources->FindMesh(item.mesh);
             if (mesh == nullptr)
             {
-                if (!item.mesh.IsNull())
+                if (!surfaces && !item.mesh.IsNull())
                     ++mSkippedDraws;
                 continue;
             }
 
-            const vk::GpuMaterial *const material = mMaterialStore->FindOrDefault(item.material);
-            if (material == nullptr)
-                continue;
-
-            if (material->mModelShader &&
-                !mModelDescriptors->Bind(cmd, mMaterialStore->PipelineLayout(), mFrameSync->Index(),
-                    item.deformation, material->mParameters))
-                continue;
-
-            if (material->mPipeline != boundPipeline)
+            const VkPipeline pipeline = surfaces ? mMaterialStore->SurfacePipeline(item.material) : material->mPipeline;
+            if (!pipeline) continue;
+            if (material->mModelShader)
             {
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, material->mPipeline);
-                boundPipeline = material->mPipeline;
+                if (surfaces)
+                {
+                    if (!modelSets[draw]) continue;
+                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
+                        2, 1, &modelSets[draw], 0, nullptr);
+                }
+                else
+                {
+                    const VkDescriptorSet set = mModelDescriptors->Bind(cmd, mMaterialStore->PipelineLayout(),
+                        mFrameSync->Index(), item.deformation, material->mParameters);
+                    if (!set) continue;
+                    if (mRasterSurfaces->Active()) modelSets[draw] = set;
+                }
             }
 
-            if (material->mDescriptorSet != boundDescriptorSet)
+            if (pipeline != boundPipeline)
+            {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+                boundPipeline = pipeline;
+            }
+
+            const bool sharedTables = mMaterialTable != nullptr;
+            const uint32_t recordRefOffset = sharedTables
+                ? mMaterialStore->RecordRefDynamicOffset(mFrameSync->Index(), material->mMaterialIndex)
+                : 0;
+            if (material->mDescriptorSet != boundDescriptorSet || recordRefOffset != boundRecordRefOffset)
             {
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
-                    0, 1, &material->mDescriptorSet, 0, nullptr);
+                    0, 1, &material->mDescriptorSet, sharedTables ? 1u : 0u,
+                    sharedTables ? &recordRefOffset : nullptr);
                 boundDescriptorSet = material->mDescriptorSet;
+                boundRecordRefOffset = recordRefOffset;
             }
 
             const VkDeviceSize vertexOffset = 0;
@@ -106,7 +157,7 @@ namespace mir
                 .normalCol2 = glm::vec4(item.normalMatrix[2], 0.0f),
                 .tint = item.tint };
 
-            vkCmdPushConstants(cmd, mMaterialStore->PipelineLayout(), VK_SHADER_STAGE_VERTEX_BIT,
+            vkCmdPushConstants(cmd, mMaterialStore->PipelineLayout(), vk::kRasterPushConstantStages,
                 0, sizeof(vk::RasterPushConstants), &pushData);
 
             vkCmdDrawIndexed(cmd, mesh->mIndexCount, 1, 0, 0, 0);
@@ -116,13 +167,14 @@ namespace mir
         // where nothing above wrote depth, i.e. still at the clear value - a
         // fullscreen ray-marched shader paying its cost only on actual
         // background pixels, with early-z doing the rejection.
-        if (mSkyVisible)
+        if (mSkyVisible && shaded && (pass == RasterPass::Scene || pass == RasterPass::Opaque))
         {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->SkyPipeline());
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->SkyPipelineLayout(),
                 0, 1, &cameraSet, 1, &cameraOffset);
             vkCmdDraw(cmd, 3, 1, 0, 0);
         }
+        return cameraOffset;
     }
 
     void VulkanRenderer::RecordCommands(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views)
@@ -179,11 +231,51 @@ namespace mir
         }
 
         const size_t viewCount = std::min<size_t>(views.size(), vk::kMaxViewsPerFrame);
+        const bool ssgi = mSsgiTrace->Active();
+        std::array<uint32_t, vk::kMaxViewsPerFrame> cameraOffsets{};
         for (size_t i = 0; i < viewCount; ++i)
-            RecordView(cmd, views[i], static_cast<uint32_t>(i));
+            cameraOffsets[i] = RecordView(cmd, views[i], static_cast<uint32_t>(i), ssgi ? RasterPass::Opaque : RasterPass::Scene);
 
         mDevice->EndLabel(cmd);
         vkCmdEndRendering(cmd);
+
+        if (mRasterSurfaces->Active())
+        {
+            mDevice->BeginLabel(cmd, "Raster Surface Pass", { 0.5f, 0.8f, 0.3f, 1.0f });
+            mRasterSurfaces->Begin(cmd, frame, mSwapchain->DepthImage(frame), mSwapchain->DepthView(frame));
+            for (size_t i = viewCount; i-- > 0;)
+                RecordView(cmd, views[i], uint32_t(i), RasterPass::Surface, cameraOffsets[i]);
+            mRasterSurfaces->End(cmd, frame, mSwapchain->DepthImage(frame));
+            mDevice->EndLabel(cmd);
+            mDevice->BeginLabel(cmd, "SSGI Trace", { 0.3f, 0.8f, 0.5f, 1.0f });
+            mSsgiTrace->Record(cmd, frame, mSwapchain->DepthImage(frame), mSwapchain->DepthView(frame),
+                *mRasterSurfaces, mCameraBuffer->Set(frame), std::span(cameraOffsets).first(viewCount), mSsgiSettings);
+            mDevice->EndLabel(cmd);
+        }
+
+        if (ssgi)
+        {
+            mDevice->BeginLabel(cmd, "SSGI Composition", { 0.3f, 0.8f, 0.5f, 1.0f });
+            mSsgiTrace->Compose(cmd, frame, mSwapchain->HdrColorImage(frame), mSwapchain->HdrColorView(frame), extent,
+                mSwapchain->DepthImage(frame), mSwapchain->DepthView(frame), *mRasterSurfaces,
+                mCameraBuffer->Set(frame), std::span(cameraOffsets).first(viewCount), mSsgiSettings);
+            mDevice->EndLabel(cmd);
+            vk::ImageBarrier(cmd, mSwapchain->HdrColorImage(frame), VK_IMAGE_ASPECT_COLOR_BIT,
+                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+            auto colorLoad = hdrColorAttachment; colorLoad.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            auto depthLoad = depthAttachment; depthLoad.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            auto transparentInfo = renderingInfo;
+            transparentInfo.pColorAttachments = &colorLoad; transparentInfo.pDepthAttachment = &depthLoad;
+            vkCmdBeginRendering(cmd, &transparentInfo);
+            mDevice->BeginLabel(cmd, "Transparent Pass", { 0.5f, 0.5f, 0.8f, 1.0f });
+            for (size_t i = 0; i < viewCount; ++i)
+                RecordView(cmd, views[i], uint32_t(i), RasterPass::Transparent, cameraOffsets[i]);
+            mDevice->EndLabel(cmd);
+            vkCmdEndRendering(cmd);
+        }
 
         vk::ImageBarrier(cmd, mSwapchain->HdrColorImage(frame), VK_IMAGE_ASPECT_COLOR_BIT,
             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
@@ -191,10 +283,6 @@ namespace mir
             VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
 
         const std::span<const RenderView> drawnViews = views.subspan(0, viewCount);
-        std::array<uint32_t, vk::kMaxViewsPerFrame> velocityCameraOffsets{};
-        if (mPostProcessing->NeedsVelocity())
-            for (size_t i = 0; i < viewCount; ++i)
-                velocityCameraOffsets[i] = WriteCameraData(views[i], static_cast<uint32_t>(i));
 
         const VkImageView colorSource = mPostProcessing->RecordRaster(cmd, frame, {
             .sceneColor = mSwapchain->HdrColorView(frame),
@@ -202,7 +290,7 @@ namespace mir
             .depthView = mSwapchain->DepthView(frame),
             .views = drawnViews,
             .cameraSet = mCameraBuffer->Set(frame),
-            .cameraOffsets = std::span(velocityCameraOffsets).first(viewCount),
+            .cameraOffsets = std::span(cameraOffsets).first(viewCount),
             .resources = mResources.get(),
             .extent = extent });
 
@@ -221,6 +309,8 @@ namespace mir
 
         mPostProcessing->RecordComposite(cmd, frame, colorSource, fxaaActive, extent);
 
+        RecordDebugViews(cmd, imageIndex, drawnViews, mSwapchain->DepthImage(frame), mSwapchain->DepthView(frame));
+
         mImGuiOverlay->RecordInPass(cmd);
 
         mDevice->EndLabel(cmd);
@@ -229,6 +319,50 @@ namespace mir
         const bool captured = mCapture->Record(cmd, *mSwapchain, imageIndex);
         mSwapchain->RecordPresentTransition(cmd, imageIndex,
             captured ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    }
+
+    void VulkanRenderer::RecordDebugViews(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views,
+        VkImage sceneDepth, VkImageView sceneDepthView)
+    {
+        // nothing on: no extra pass, no barriers
+        if (!mDebugDraw->Wants(views))
+            return;
+
+        const VkImage swapchainImage = mSwapchain->Image(imageIndex);
+        const VkExtent2D extent = mSwapchain->Extent();
+
+        mDevice->EndLabel(cmd);
+        vkCmdEndRendering(cmd);
+
+        vk::ImageBarrier(cmd, swapchainImage, VK_IMAGE_ASPECT_COLOR_BIT,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+        // post-processing left the scene depth for sampling; the lines only test against it
+        if (sceneDepth != VK_NULL_HANDLE)
+        {
+            vk::ImageBarrier(cmd, sceneDepth, VK_IMAGE_ASPECT_DEPTH_BIT,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+                VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT,
+                VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT);
+        }
+
+        mDevice->BeginLabel(cmd, "Debug View Pass", { 0.9f, 0.9f, 0.9f, 1.0f });
+        mDebugDraw->Record(cmd, mFrameSync->Index(), views, mSwapchain->View(imageIndex), extent, sceneDepthView,
+            *mResources);
+        mDevice->EndLabel(cmd);
+
+        vk::ImageBarrier(cmd, swapchainImage, VK_IMAGE_ASPECT_COLOR_BIT,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+
+        // ImGui draws last, over the lines
+        vk::BeginFullscreenPass(cmd, mSwapchain->View(imageIndex), extent, VK_ATTACHMENT_LOAD_OP_LOAD);
+        mDevice->BeginLabel(cmd, "ImGui Pass", { 1.0f, 1.0f, 0.0f, 1.0f });
     }
 
     std::optional<vk::FrameContext> VulkanRenderer::BeginFrame()
@@ -246,16 +380,36 @@ namespace mir
             mModelDescriptors->ResetFrame(mFrameSync->Index());
             mMeshUploads->Collect(*mResources, *mRayTracer, mFrameSync->CompletedValue());
             mMeshUploads->Record(frame->cmd, frame->signalValue, *mResources, *mRayTracer);
+
+            if (mMaterialTable != nullptr)
+            {
+                mMaterialStore->PublishRecords(mFrameSync->CompletedValue(), frame->signalValue,
+                    mFrameSync->Index());
+                mMaterialTable->Sync(mFrameSync->Index(), *mResources);
+            }
         }
         return frame;
     }
 
     void VulkanRenderer::DrawFrame(std::span<const RenderView> views)
     {
+        const bool hadSurfaces = mRasterSurfaces->Active();
+        bool captureSurfaces = mSsgiSettings.enabled && mSsgiSettings.ValidationError() == nullptr && mSsgiSettings.intensity > 0;
+        if (captureSurfaces)
+            for (const auto &view : views)
+                for (const auto &item : view.items)
+                    if (!item.transparent && !mMaterialStore->SupportsSurfaceInputs(item.material)) captureSurfaces = false;
+        mRasterSurfaces->Configure(captureSurfaces, mSwapchain->Extent());
+        if (hadSurfaces && !mRasterSurfaces->Active()) mMaterialStore->ReleaseSurfacePipelines();
+#if MIR_WITH_RTXGI
+        mDdgi->Configure(mDdgiSettings, false);
+#endif
+        mGiWasShading = false;
         const std::optional<vk::FrameContext> frame = BeginFrame();
         if (!frame)
             return;
 
+        mSsgiTrace->Configure(mRasterSurfaces->Active(), mSwapchain->Extent(), views, mSsgiSettings.halfResolution);
         mShadowMaps->RecordPasses(frame->cmd, mFrameSync->Index(), *mResources);
         RecordCommands(frame->cmd, frame->imageIndex, views);
         const bool submitted = mFrameSync->End(*mSwapchain, *frame);
@@ -275,9 +429,29 @@ namespace mir
         glm::vec2 jitterPixels{ 0.0f };
         const uint32_t cameraOffset = WriteCameraData(view, 0, applyJitter, &jitterPixels);
 
+        mDevice->BeginLabel(cmd, "RT Scene Preparation", { 0.0f, 0.7f, 1.0f, 1.0f });
+        bool extended = false;
+#if MIR_WITH_RTXGI
+        extended = mDdgi->CanUpdate(view.cameraPosition) && view.rayTracingItems.has_value() && view.rayTracingSceneComplete;
+#endif
+        [[maybe_unused]] const auto scene = mRayTracer->PrepareScene(cmd, frame,
+            extended ? *view.rayTracingItems : view.items, *mResources, *mMaterialStore,
+            extended ? std::optional(view.items) : std::nullopt);
+        mDevice->EndLabel(cmd);
+
+        std::optional<vk::RayTracer::GiShading> gi;
+#if MIR_WITH_RTXGI
+        gi = mDdgi->Record(cmd, frame, view.cameraPosition, mCameraBuffer->Set(frame), cameraOffset,
+            scene, view.rayTracingSceneComplete);
+#endif
+        if (gi.has_value() != mGiWasShading)
+        {
+            mPostProcessing->ResetHistory();
+            mGiWasShading = gi.has_value();
+        }
         mDevice->BeginLabel(cmd, "Ray Trace Pass", { 0.0f, 1.0f, 1.0f, 1.0f });
-        mRayTracer->Record(cmd, frame, view.items, rect, mCameraBuffer->Set(frame),
-            cameraOffset, *mResources, *mMaterialStore, effectiveAaMode, mPostProcessing->RtSampleCount());
+        mRayTracer->RecordTrace(cmd, frame, rect, mCameraBuffer->Set(frame),
+            cameraOffset, effectiveAaMode, mPostProcessing->RtSampleCount(), gi ? &*gi : nullptr);
         mDevice->EndLabel(cmd);
 
         const bool hasRect = rect.extent.width > 0 && rect.extent.height > 0;
@@ -313,6 +487,9 @@ namespace mir
             mPostProcessing->RecordComposite(cmd, frame, colorSource, /*fxaa*/ false, mSwapchain->Extent());
         }
 
+        // the trace leaves no raster depth, so its lines all show
+        RecordDebugViews(cmd, imageIndex, views.first(1), VK_NULL_HANDLE, VK_NULL_HANDLE);
+
         mImGuiOverlay->RecordInPass(cmd);
 
         mDevice->EndLabel(cmd);
@@ -325,6 +502,10 @@ namespace mir
 
     void VulkanRenderer::TraceFrame(std::span<const RenderView> views)
     {
+        const bool hadSurfaces = mRasterSurfaces->Active();
+        mRasterSurfaces->Configure(false, mSwapchain->Extent());
+        mSsgiTrace->Configure(false, mSwapchain->Extent(), {}, mSsgiSettings.halfResolution);
+        if (hadSurfaces) mMaterialStore->ReleaseSurfacePipelines();
         if (!mDevice->RayTracingSupported())
         {
             MIR_LOG_ERROR("TraceFrame: called without ray tracing support; ignored");
@@ -333,6 +514,17 @@ namespace mir
 
         if (views.empty())
             return;
+
+        // different camera starts it over.
+        if (views[0].historyId != mTracedHistoryId)
+        {
+            mPostProcessing->ResetHistory();
+            mTracedHistoryId = views[0].historyId;
+        }
+
+#if MIR_WITH_RTXGI
+        mDdgi->Configure(mDdgiSettings, views[0].rayTracingItems.has_value());
+#endif
 
         const std::optional<vk::FrameContext> frame = BeginFrame();
         if (!frame)

@@ -7,6 +7,7 @@
  *
  */
 #include <editor/Selection.h>
+#include <editor/history/CommandGroup.h>
 #include <editor/history/History.h>
 #include <editor/history/SceneOps.h>
 
@@ -14,8 +15,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <initializer_list>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -117,7 +120,7 @@ namespace
         std::string Name() const override { return "Drag " + std::to_string(mKey); }
         void CollectIds(std::vector<HistoryId> &) const override {}
 
-        bool TryMerge(const mir::ICommand &next) override
+        bool TryMerge(mir::ICommand &next) override
         {
             const auto *other = dynamic_cast<const DragValue *>(&next);
             if (other == nullptr || other->mKey != mKey)
@@ -132,6 +135,67 @@ namespace
         int mAfter;
         bool mDone = false;
     };
+
+    struct Slots
+    {
+        int mValues[2]{};
+    };
+
+    // a DragValue on one of several slots, as each entity is in a gizmo drag over several
+    class DragSlot final : public mir::ICommand
+    {
+    public:
+        DragSlot(int slot, int value, bool refuse = false) : mSlot(slot), mAfter(value), mRefuse(refuse) {}
+
+        bool Do(CommandContext &context) override
+        {
+            if (mRefuse)
+                return false;
+
+            int &value = context.mWorld.Resource<Slots>().mValues[mSlot];
+            if (!mDone)
+            {
+                mBefore = value;
+                mDone = true;
+            }
+            value = mAfter;
+            return true;
+        }
+
+        bool Undo(CommandContext &context) override
+        {
+            context.mWorld.Resource<Slots>().mValues[mSlot] = mBefore;
+            return true;
+        }
+
+        std::size_t Size() const override { return 16; }
+        std::string Name() const override { return "Drag slot " + std::to_string(mSlot); }
+        void CollectIds(std::vector<HistoryId> &) const override {}
+
+        bool TryMerge(mir::ICommand &next) override
+        {
+            const auto *other = dynamic_cast<const DragSlot *>(&next);
+            if (other == nullptr || other->mSlot != mSlot)
+                return false;
+            mAfter = other->mAfter;
+            return true;
+        }
+
+    private:
+        int mSlot;
+        int mBefore = 0;
+        int mAfter;
+        bool mRefuse;
+        bool mDone = false;
+    };
+
+    std::unique_ptr<mir::ICommand> SlotGroup(const char *name, std::initializer_list<std::pair<int, int>> slots)
+    {
+        std::vector<std::unique_ptr<mir::ICommand>> commands;
+        for (const auto &[slot, value] : slots)
+            commands.push_back(std::make_unique<DragSlot>(slot, value));
+        return mir::MakeCommandGroup(name, std::move(commands));
+    }
 
     class NoSceneOps final : public mir::ISceneOps
     {
@@ -154,7 +218,14 @@ namespace
         explicit Fixture(std::size_t budget = mir::kHistoryBudget) : mHistory(budget)
         {
             mWorld.EmplaceResource<Value>();
+            mWorld.EmplaceResource<Slots>();
             mWorld.EmplaceResource<Selection>();
+        }
+
+        void Run(std::unique_ptr<mir::ICommand> command)
+        {
+            mHistory.Submit(std::move(command));
+            Flush();
         }
 
         void Set(int value, Entity select = kNullEntity)
@@ -190,6 +261,7 @@ namespace
 
         void Flush() { mHistory.Flush(mWorld, mScene); }
         int Current() { return mWorld.Resource<Value>().mValue; }
+        int Slot(int slot) { return mWorld.Resource<Slots>().mValues[slot]; }
         std::vector<Entity> &Selected() { return mWorld.Resource<Selection>().mSelected; }
     };
 }
@@ -478,6 +550,63 @@ TEST_CASE("A drag on another field starts a new step", "[editor][history]")
     f.Drag(2, 6);
 
     CHECK(f.mHistory.StepCount() == 2);
+}
+
+TEST_CASE("A group drag folds into one step over everything it moved", "[editor][history][group]")
+{
+    Fixture f;
+    f.Run(SlotGroup("Move", { { 0, 1 }, { 1, 1 } }));
+    f.Run(SlotGroup("Move", { { 0, 2 }, { 1, 2 } }));
+    f.Release();
+
+    CHECK(f.mHistory.StepCount() == 1);
+    CHECK(f.mHistory.UndoName() == "Move");
+
+    f.Undo();
+    CHECK(f.Slot(0) == 0);
+    CHECK(f.Slot(1) == 0);
+
+    f.Redo();
+    CHECK(f.Slot(0) == 2);
+    CHECK(f.Slot(1) == 2);
+}
+
+TEST_CASE("A group drag stays one step when a frame adds a command or skips one", "[editor][history][group]")
+{
+    Fixture f;
+    f.Run(SlotGroup("Move", { { 0, 1 } }));
+    f.Run(SlotGroup("Move", { { 0, 2 }, { 1, 5 } }));
+
+    std::vector<std::unique_ptr<mir::ICommand>> skipped;
+    skipped.push_back(std::make_unique<DragSlot>(0, 3));
+    skipped.push_back(std::make_unique<DragSlot>(1, 9, true));
+    f.Run(mir::MakeCommandGroup("Move", std::move(skipped)));
+    f.Release();
+
+    CHECK(f.mHistory.StepCount() == 1);
+    CHECK(f.Slot(0) == 3);
+    CHECK(f.Slot(1) == 5);
+
+    f.Undo();
+    CHECK(f.Slot(0) == 0);
+    CHECK(f.Slot(1) == 0);
+
+    f.Redo();
+    CHECK(f.Slot(0) == 3);
+    CHECK(f.Slot(1) == 5);
+}
+
+TEST_CASE("Groups of another name, or after a release, are new steps", "[editor][history][group]")
+{
+    Fixture f;
+    f.Run(SlotGroup("Move", { { 0, 1 } }));
+    f.Run(SlotGroup("Rotate", { { 0, 2 } }));
+    f.Release();
+    f.Run(SlotGroup("Rotate", { { 0, 3 } }));
+
+    CHECK(f.mHistory.StepCount() == 3);
+    f.Undo();
+    CHECK(f.Slot(0) == 2);
 }
 
 TEST_CASE("Undo and redo close the open step", "[editor][history]")

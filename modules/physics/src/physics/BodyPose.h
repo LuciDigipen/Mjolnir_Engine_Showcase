@@ -8,6 +8,7 @@
  */
 #pragma once
 
+#include <physics/PhysicsWorld.h>
 #include <physics/components/RigidBody.h>
 
 #include <core/ecs/Query.h>
@@ -43,6 +44,32 @@ namespace mir::detail
         const float length = glm::length(out.rotation);
         out.rotation = length > 0.0f && std::isfinite(length) ? out.rotation / length : kIdentityRotation;
         return out;
+    }
+
+    // The motion, shape and pose fields of the body built for rigidBody at pose; the rest stay default.
+    // The shape follows the world scale: a box per axis, a sphere by the largest axis, a capsule by the
+    // axis it stands along for its height and the larger of the other two for its radius. The collider
+    // offset scales with it; a rotated non-uniform parent is as close as the decomposition gets.
+    inline BodyDesc ShapeDescOf(const RigidBody &rigidBody, const BodyPose &pose)
+    {
+        const glm::vec3 scale = glm::abs(pose.scale);
+        // the enum can hold any int a field write puts in it
+        const int axis = std::clamp(static_cast<int>(rigidBody.axis), 0, 2);
+        const float along = scale[axis];
+        const float across = std::max(scale[(axis + 1) % 3], scale[(axis + 2) % 3]);
+        const bool capsule = rigidBody.shape == PhysicsShape::Capsule;
+
+        return { .mMotion = rigidBody.motion,
+                .mShape = rigidBody.shape,
+                .mPosition = pose.position,
+                .mRotation = pose.rotation,
+                .mHalfExtent = rigidBody.halfExtent * scale,
+                .mRadius = rigidBody.radius * (capsule ? across : std::max({ scale.x, scale.y, scale.z })),
+                .mHalfHeight = rigidBody.halfHeight * along,
+                .mAxis = rigidBody.axis,
+                .mOffset = rigidBody.offset * pose.scale,
+                .mRotationOffset = rigidBody.rotationOffset,
+                .mIsTrigger = rigidBody.isTrigger };
     }
 
     // The entities of the query whose body moves, every parent before its children. A child's local pose is worked

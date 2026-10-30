@@ -8,6 +8,7 @@
  */
 #include "ShadowMaps.h"
 #include "Device.h"
+#include "MaterialTableLayout.h"
 #include "ResourceStore.h"
 #include "VulkanUtil.h"
 #include "VulkanPushConstants.h"
@@ -321,7 +322,7 @@ namespace mir::vk
             { .binding = 1, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
              .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT },
             { .binding = 2, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-             .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT },
+             .descriptorCount = kShadowSetStorageBuffers, .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT },
             { .binding = 3, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
              .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT } } };
 
@@ -337,8 +338,10 @@ namespace mir::vk
         }
 
         const std::array<VkDescriptorPoolSize, 2> poolSizes{ {
-            { .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = kFramesInFlight * 3 },
-            { .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = kFramesInFlight } } };
+            { .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+              .descriptorCount = kFramesInFlight * kShadowSetCombinedImages },
+            { .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+              .descriptorCount = kFramesInFlight * kShadowSetStorageBuffers } } };
 
         const VkDescriptorPoolCreateInfo poolInfo{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,

@@ -61,8 +61,19 @@ namespace mir
 
         const UIRect &Area() const { return mArea; }
 
+        //area pixels per UI unit. An area smaller than the design size draws the
+        //whole UI smaller to fit, text and all; a larger one never scales it up
+        float Scale() const { return mScale; }
 
-        UIRect Bounds() const { return UIRect{0.0f, 0.0f, mArea.width, mArea.height}; }
+        //0 leaves that axis unscaled; from the next BeginFrame
+        void SetDesignSize(float width, float height)
+        {
+            mDesignWidth = width;
+            mDesignHeight = height;
+        }
+
+        //the area in UI units, which screens lay out, draw and hit-test in
+        UIRect Bounds() const { return UIRect{0.0f, 0.0f, mArea.width / mScale, mArea.height / mScale}; }
 
         UIRect SafeArea() const { return Inset(Bounds(), mSafeAreaInsets); }
         void SetSafeAreaInsets(const UIEdges &insets) { mSafeAreaInsets = insets; }
@@ -107,6 +118,10 @@ namespace mir
         UIDrawList mDrawList;
         UIState mState;
         UIRect mArea;
+        float mScale = 1.0f;
+        //every screen the engine ships fits 640 x 480 at its own size
+        float mDesignWidth = 640.0f;
+        float mDesignHeight = 480.0f;
         UIEdges mSafeAreaInsets;
         InputState *mInput = nullptr;
         const InputMap *mInputMap = nullptr;

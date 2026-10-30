@@ -10,6 +10,22 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <string>
+
+// fails on Windows when the executable is missing engine_target_utf8
+TEST_CASE("A path narrows to UTF-8 and back, whatever the system code page", "[paths]")
+{
+    // CJK and Latin-1 letters: no ANSI code page holds both
+    const std::filesystem::path path(u8"地形-ü");
+    const std::u8string utf8 = path.u8string();
+    const std::string expected(utf8.begin(), utf8.end());
+
+    std::string narrow;
+    REQUIRE_NOTHROW(narrow = path.string());
+    CHECK(narrow == expected);
+    CHECK(std::filesystem::path(narrow) == path);
+}
+
 TEST_CASE("ExecutableDir points at a real directory", "[paths]")
 {
     REQUIRE(std::filesystem::exists(mir::ExecutableDir()));

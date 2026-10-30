@@ -23,6 +23,8 @@ subsystem holds a pointer to the facade or to another subsystem.
 | `FrameSync` | command pools and buffers, image-acquired semaphores, the frame timeline with `kFramesInFlight = 2` |
 | `ResourceStore` | meshes, textures, samplers and the three built-in textures (white, flat normal, error magenta), behind slot/generation handles |
 | `MaterialStore` | materials and their pipelines, set 0, the pipeline layout every material shares, the sky pipeline |
+| `MaterialTable` | set 4 on a descriptor-indexing device: the raw material-record buffer, the stable image rows and the distinct sampler rows, one descriptor set per frame |
+| `MaterialReflection` | parses a material type's typed-witness reflection into field offsets and packs `.material.json` parameters into the shared record bytes; also namespaces shader output stems |
 | `CameraBuffer` | set 1: per-view camera data and light list, plus the directional light, ambient, fog and atmosphere |
 | `ModelDescriptors` | set 2: per-draw model data, reset each frame |
 | `ShadowMaps` | set 3: Sun, spot and point shadow maps, their pipelines and casters |
@@ -53,16 +55,17 @@ completed frames Ready, frees retired objects whose last frame completed, and
 records this frame's mesh copies and BLAS builds. `DrawFrame` records the shadow passes, then each
 view, then the ImGui overlay and any capture, and `FrameSync::End` submits and
 presents. `TraceFrame` goes through the same `BeginFrame` and `End`, with
-`RayTracer::Record` and a blit to the swapchain image in between.
+`RayTracer::PrepareScene`, `RecordTrace` and the existing post-processing/composite
+in between.
 
 `RenderSystem` is the only thing connecting the ECS to it. It is an `ISystem` in
 `SystemPhase::Render` holding a `VulkanRenderer&`, and it owns a list of
-`Viewport`s. Viewport 0 always exists(whole window, first `Camera` found),
+`Viewport`s. Viewport 0 always exists(whole window, the active `Camera`),
 and can add more with `AddViewPort`.
 
 Each frame, for every viewport, `RenderSystem` resolves a camera (a specific
 World `Entity` via `SetViewportCamera`, an externally-owned one via
-`SetExternalCamera`, or that same first-match `Camera` as a fallback), builds
+`SetExternalCamera`, or the World's active `Camera` as a fallback), builds
 one view-projection matrix scaled to that viewport's own rect, builds one
 `DrawItem` per `(WorldTransform, MeshRenderer)` pair, and packages the result as
 a `RenderView`. All of a frame's `RenderView`s go to `VulkanRenderer::DrawFrame`
@@ -149,6 +152,8 @@ TextureHandle CreateTexture(const TextureDesc &desc);
 TextureHandle ErrorTexture() const;          // 1x1 magenta, for a caller whose texture failed to load
 MaterialHandle CreateMaterial(const MaterialDesc &desc);
 bool DestroyMaterial(MaterialHandle handle); // same contract; always false on the default and error materials
+bool UpdateMaterialRecord(MaterialHandle handle, std::span<const std::byte> bytes); // published next frame
+uint32_t MaterialRecordOffset(MaterialHandle handle) const; // kInvalidMaterialRecordOffset without shared tables
 MaterialHandle ErrorMaterial() const;        // solid magenta, for a caller whose CreateMaterial failed
 void ReleaseSceneResources();                // every mesh, material and texture but the built-ins
 void ResetHistory();                         // the next frame accumulates fresh: a cut
@@ -195,21 +200,50 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `StagingRing`, `MeshUploadQueue`, `FrameRetireList` | `renderer/MeshStreaming.h` | the CPU bookkeeping behind them, tested without a device: ring space by frame, admission under the frame budget, objects kept until their last frame completes |
 | `ViewDrawSources`, `IViewDrawSource`, `ViewCamera` | `renderer/ViewDrawSource.h` | World resource of producers whose draws depend on the viewport (app's terrain): `Prepare` with every viewport's camera, then `AppendViewDraws` per view and `AppendVolumeDraws` per shadow volume at a view's detail |
 | `TextureDesc`, `TextureMipView`, `TextureHandle` | `renderer/Texture.h` | `{width, height, pixels, srgb, generateMips, mips}`, tightly-packed RGBA8; supplied `mips` must form the complete chain and are uploaded unchanged; `kNullTexture` falls back to a default in `CreateMaterial` |
-| `MaterialDesc`, `MaterialHandle` | `renderer/Material.h` | `{shaderName, cullMode, polygonMode, baseColorTexture, normalTexture}`; `kNullMaterial` means the default |
+| `MaterialDesc`, `MaterialHandle` | `renderer/Material.h` | `{shaderName, cullMode, polygonMode, baseColorTexture, normalTexture, sampler, alphaMode, alphaCutoff, record, recordAlignment}`; `kNullMaterial` means the default. `SamplerDesc` carries the optional `maxAnisotropy` |
+| `MaterialRecordId`, `MaterialRecordTable`, `MaterialRecordRef` | `renderer/MaterialRecordTable.h` | Aligned raw-byte records: create/update/release, a frame-safe published copy and the set-0 reference |
+| `RtInstanceInfo` | `renderer/RtInstanceInfo.h` | CPU mirror of `RaySceneCommon.slang`'s per-instance struct; scalar padding keeps the offsets and ArrayStride identical |
+| `TextureTable` | `renderer/TextureTable.h` | Stable global image rows; a freed row comes back with a new generation |
+| `RendererCapabilities`, `RendererFeatureSupport` | `renderer/RendererCapabilities.h` | Raw descriptor-indexing, ray-tracing and anisotropy bits resolved into the optional paths |
+| `DescriptorLimits`, `DescriptorUsage`, `DescriptorLayoutFits` | `renderer/DescriptorLayoutLimits.h` | Physical descriptor limits against the exact shared raster/RT layout budgets |
 | `DrawItem` | `renderer/Renderer.h` | `{mesh, model, normalMatrix, tint, material}` — `model` is the world transform, not premultiplied by any camera |
 | `RenderView` | `renderer/VulkanRenderer.h` | `{rect, items, viewProj, cameraPos}` — one camera's `DrawItem`s, clipped to a screen rect; `cameraPos` only the sky pass reads |
 | `Viewport`, `ViewportId` | `renderer/RenderSystem.h` | `RenderSystem`'s per-viewport state: rect plus a World `Entity`, an external camera, or neither (fallback) |
-| `MeshRenderer`, `Camera` | `renderer/components/` | Handles, and `fovY`/`near`/`far` (`far` 0 = no far plane), declared here rather than in `core` |
+| `MeshRenderer`, `Camera` | `renderer/components/` | Handles, and `active`/`fovY`/`near`/`far` (`far` 0 = no far plane) plus the lens values post effects read (`exposure`, `focusDistance`, `aperture`, `shutterStrength`), declared here rather than in `core` |
+| `FindActiveCamera`, `SetActiveCamera`, `ResolvePlayCamera`, `ActiveCameraSystem` | `renderer/ActiveCamera.h` | The flagged `Camera`; flag one and clear the rest; the camera Play draws through (flagged, else lowest index); the `SystemPhase::Render` system, before `RenderSystem`, that keeps one flagged |
 | `MeshBounds` | `renderer/components/MeshBounds.h` | `{mLocalMin, mLocalMax}`, a mesh's own local-space AABB; attached and kept current by `app`'s `MeshResolveSystem` (see [app.md](app.md)), read by the editor's viewport click-picking (see [editor.md](editor.md)) — not used for rendering at all |
+| `FrustumSliceCorners` | `renderer/CameraMath.h` | A lens's view rectangle at a distance, in camera space; the `Camera` gizmo draws its near and far planes from it |
 | `Ray`, `RayIntersectsAABB`, `WorldRay`, `MakeCameraRay`, `RayIntersectsBox`, `RayIntersectsSphere` | `renderer/CameraMath.h` | `WorldRay` is a camera ray with a double `WorldPosition` origin and a float direction; `RayIntersectsBox` places a `WorldPose` box relative to that origin in double, then runs the local ray/AABB slab test; `RayIntersectsSphere` returns where a unit-direction ray enters a sphere, 0 if it starts inside — the same file `MakeViewProjection` lives in, so both stay in the same Vulkan-convention math |
 | `RenderSystem` | `renderer/RenderSystem.h` | The ECS-to-renderer bridge, `SystemPhase::Render` |
 | `Shapes.h` | `renderer/Shapes.h` | `MakeCube()` and friends — plain vectors, no Vulkan |
 | `AntiAliasingMode`, `AntiAliasingParams`, `ClampAntiAliasingMode`, `ClampRtSampleCount` | `renderer/AntiAliasingEffect.h` | Off/Fxaa/Msaa/Dlss and `rtSampleCount`; the Post-Processing entry's json shape; the mode and sample-count enforcement `ResolvePostProcessing` applies every frame - see Rules |
-| `PostProcessingState`, `ResolvePostProcessing` | `renderer/PostProcessingState.h` | `PostProcessingSettings` resolved into the exact values `SetPostProcessing` applies: defaults for a missing entry, neutral values for a disabled one (fog density 0, exposure 1/None, bloom intensity 0, neutral film), motion blur's sample count at least 1, AA clamped. Pure, so it is unit-tested without a device |
+| `PostProcessingState`, `ResolvePostProcessing` | `renderer/PostProcessingState.h` | `PostProcessingSettings` and the viewing `Camera`'s lens resolved into the exact values `SetPostProcessing` applies: defaults for a missing entry, neutral values for a disabled one (fog density 0, exposure 1/None, bloom intensity 0, neutral film), negative lens values 0, motion blur's sample count at least 1, AA clamped. Pure, so it is unit-tested without a device |
 | `DlssConfig.h` | `renderer/DlssConfig.h` (generated) | `MIR_WITH_DLSS`/`kDlssCompiledIn` and the NGX project id |
-| `RenderSettings` | `renderer/RenderSettings.h` | Project Settings' `"rendering"` section (`rayTracing: bool`, `fog: bool`); `LoadFile`/`SaveFile`, a World resource `RendererModule` loads |
+| `RenderSettings` | `renderer/RenderSettings.h` | Project Settings' `"rendering"` section (`rayTracing` and `ddgi`); `LoadFile`/`SaveFile`, a World resource `RendererModule` loads |
 
 ## Rules
+
+**Surface materials.** `SurfaceCommon.slang` defines `SurfaceInput`,
+`SurfaceOutput`, `IMaterial`, `MaterialContext` and `MeshFrontend`;
+`SurfaceForward.slang` and `SurfaceRt.slang` are the fixed pass entries, and a
+material type is specialized into them by CMake. Materials never declare
+bindings. The default material is `assets/materials/default.slang` and reads its
+record through the shared tables; `ResolveMaterialDesc` maps the public
+`shaderName == "default"` request to that registration, while a device without
+shared tables keeps the legacy `default.slang` Blinn-Phong pair. `TangentFrame.slang`
+is shared by raster and RT (explicit model columns, orthogonalization, mirror
+handedness). RT `frontFace` is `HitKind` plus a per-instance correction for the
+authored frontFace/mirror/flip flags. Direct PBR applies `NdotL` once and the
+specular guide uses `F0/roughness²/NoV`; RT uses SBT hit group 2 for surface
+materials, while groups 0 and 1 stay on `raytrace.slang`'s legacy paths.
+`shaders/shader_manifest.json` is the single source of the compile commands,
+reflections and depfiles for both the build and the future reload path; the
+build-generated `shaders/surface_materials.json` is the runtime registration
+catalog. Records are packed from each entry's authored parameters and typed
+reflection, never from a C++ field mirror. RT allocates a primary/shadow SBT
+record pair per catalog entry; a surface instance's even base offset is
+`2 + 2*i`, so primary and shadow rays both stay in bounds. See
+`docs/material-pipeline.md` and ADR 0003.
 
 **Vulkan 1.4 with `dynamicRendering`, `synchronization2`, `timelineSemaphore` and
 `shaderDrawParameters`.** A device missing any of them is rejected during
@@ -224,7 +258,7 @@ device for the 3 extensions (the two above plus their
 `VK_KHR_deferred_host_operations` dependency), the two feature bits and
 `descriptorBindingPartiallyBound` (the Dlss guide bindings need it - see the
 anti-aliasing rules) and `shaderSampledImageArrayNonUniformIndexing` (the
-per-instance index into `gTextures`),
+per-instance image and sampler row indices, shared with the raster tables),
 storing the result in `mRayTracingSupported` and logging either way - a GPU
 lacking them stays fully usable for raster, same floor as today.
 `CreateLogicalDevice` only requests the 3 extensions and splices
@@ -394,7 +428,7 @@ viewport rect's size, and rebuilt only when that size changes - a swapchain
 resize only recreates the output images. `RayTracer`'s guide bindings (5-8,
 the `kRtImages` rows marked `guide`) are `PARTIALLY_BOUND`, so the descriptor
 set stays valid with them unwritten;
-the shader only touches them on its Dlss branches, and `RayTracer::Record`
+the shader only touches them on its Dlss branches, and `RayTracer::RecordTrace`
 downgrades a Dlss trace to Msaa if the guides are missing. That flag is why
 ray tracing support now also requires `descriptorBindingPartiallyBound`.
 
@@ -520,6 +554,160 @@ The key is read with `find` rather than nlohmann's `value`. `value` hands back
 the raw node when the key exists, and reading `"rayTracing"` out of a
 `"rendering"` that is `null` or a number throws `type_error 306`, which nothing
 on the startup path catches.
+
+`rendering.ssgi` stores raster SSGI settings, edited under Project Settings >
+Rendering > Screen Space Global Illumination. Settings are saved independently
+of ray tracing and RTXGI availability. Invalid SSGI blocks load as disabled
+defaults without affecting DDGI or ray tracing; invalid drafts cannot be saved.
+
+| Field | Default | Meaning / limits |
+|---|---|---|
+| `enabled` | `false` | Requested raster SSGI toggle |
+| `quality` | `"medium"` | `"low"`: 1 ray/16 steps; `"medium"`: 2/32; `"high"`: 4/64 per traced pixel |
+| `maxTraceDistance` | `10` | 0.01–10,000 meters |
+| `thickness` | `0.1` | 0.001–10 meters, no greater than trace distance |
+| `intensity` | `1` | Multiplier, 0–10 |
+| `halfResolution` | `true` | Trace at half width and height |
+
+Enable SSGI here and Save, with Ray Tracing disabled. Start with Medium, half
+resolution, and intensity 1. High resolves more rays at greater GPU cost; Low
+leaves more lighting to ambient fallback. Full resolution improves small details
+at greater time and memory cost. Match trace distance to the scene's local
+geometry; increase thickness cautiously to close missed intersections, since
+large values can leak light through thin surfaces.
+
+SSGI supplies one diffuse bounce from visible raster surfaces. It cannot recover
+off-screen/hidden geometry or sky lighting, and thin geometry, screen edges,
+fast motion and disocclusions can produce noise or flicker. It supports perspective
+cameras and non-overlapping viewports; other projections produce no GI estimate.
+Allocation/format limits and missing shaders retain ordinary raster lighting.
+
+When SSGI is requested in raster mode, `vk::RasterSurfaces` captures four
+per-frame RGBA16F inputs: camera-relative world normals/material kind, diffuse
+albedo, unfogged diffuse radiance, and direct lighting including specular.
+Ambient is excluded from the lighting inputs. Lit surfaces receive kind 1;
+unlit surfaces use kind 2 and supply their color as radiance; error surfaces
+use kind 3 and supply no bounce radiance. Cleared/unsupported pixels use kind 0.
+Transparent draws and sky are excluded.
+
+The depth-equal pass shares material vertex processing, alpha tests and model
+descriptor sets with the scene pass. Camera data is written once per view and
+reused by surface capture and motion blur. Images are allocated only while
+requested, capped at 256 MiB across frame slots, and released on disable, RT
+switch or scene unload. Unsupported opaque shaders, formats/limits or missing optional shaders
+retain existing raster rendering.
+
+`vk::SsgiTrace` builds a conservative reversed-Z depth pyramid per viewport,
+then traces cosine-weighted hemisphere rays against visible depth. It writes
+raw irradiance (RGB) and resolved confidence (alpha), keeping dark hits distinct
+from missing screen-space information. Quality bounds ray and traversal counts;
+full/half resolution changes the output size. Trace resources have a separate
+256 MiB cap across frame slots. Overlapping viewports fall back because the
+surface inputs share scene depth.
+
+Temporal accumulation reprojects using camera-relative positions and checks the
+previous depth and normal before reusing irradiance/confidence. Neighborhood
+clamping limits stale lighting. A bilateral spatial pass and depth/normal-aware
+resolve produce a full-resolution estimate per viewport. Full-resolution tracing
+uses one spatial pass without upsampling scratch storage. History resets on
+layout/resolution changes, camera identity or projection changes, large camera
+cuts, trace-setting changes, and `ResetHistory()`. Direct `RenderView` callers
+should supply a stable `historyId` or reset history when switching cameras.
+A `historyId` change is a camera cut for the other temporal state too:
+`CameraBuffer` drops that view slot's previous view-projection and jitter
+sequence, so motion blur sees no camera motion, and `TraceFrame` resets DLSS.
+Filtering has a separate 256 MiB allocation cap across frame slots; unsupported
+layouts retain existing lighting.
+
+Composition preserves direct lighting/specular and replaces ambient in proportion
+to resolved confidence, adding albedo times irradiance / pi. Fog applies to the
+combined lighting once, followed by transparent draws and post-processing. Unlit,
+error and background pixels retain their original shading. Intensity below one
+blends from ambient toward SSGI; above one boosts indirect light. Zero intensity
+uses the ordinary raster path and releases SSGI resources.
+
+`rendering.ddgi` persists one axis-aligned, world-anchored diffuse GI volume.
+Project Settings > Rendering > Diffuse Global Illumination edits a draft and
+applies it only after Save succeeds. Settings are retained independently of
+the RTXGI build option and the ray tracing checkbox. Enabled RTXGI builds update
+probe lighting and sample it during final RT shading.
+
+| Field | Default | Meaning / limits |
+|---|---|---|
+| `enabled` | `false` | Requested GI toggle; runtime availability is separate |
+| `origin` | `[0,0,0]` | Grid center in double-precision world meters, all finite |
+| `probeCounts` | `[8,8,8]` | 2–128 probes per axis, at most 32,768 total |
+| `probeSpacing` | `2` | Uniform spacing, 0.01–10,000 meters |
+| `raysPerProbe` | `128` | 64, 128, 256, 512 or 1024 |
+| `probesPerFrame` | `512` | 1–total probes, at most 1,048,576 rays per frame |
+| `intensity` | `1` | Finite multiplier, 0–10 |
+
+Volumes must fit a conservative 256 MiB memory allowance; allocation also
+checks device limits. The editor shows estimated memory and ray work and
+rejects invalid drafts. Malformed or over-budget GI blocks load as disabled
+defaults without discarding other rendering settings.
+
+**Scene submission and pass order.**
+
+For a single RT viewport, `RenderSystem` supplies a camera-relative extended
+scene through `RenderView::rayTracingItems`. The renderer uses it only while
+DDGI can update the volume for this camera; otherwise primary and shadow rays use the
+ordinary camera scene. Ordinary meshes remain included
+conservatively. Draw sources include resident geometry outside the camera and
+probe grid so primary and shadow rays can find distant blockers. Terrain does
+not request additional streaming, renew mesh retention, or overlap coarse/fine fallback meshes.
+Probe ray distance uses the SDK default independently of grid size. World
+positions are subtracted before narrowing to floats.
+
+`RayTracer::PrepareScene` builds the frame-slot TLAS, updates material
+descriptors and inserts the build-to-ray-read barrier. Its borrowed handles
+remain valid until that slot is prepared again. If the extended scene exceeds
+instance/texture capacity, it is replaced by the ordinary camera submission
+before recording a TLAS build. Overflow or omitted world draws skip probe updates
+without discarding cached history. Eight missed updates retain its weight;
+further misses fade it over 24 updates, while successful updates recover weight
+gradually. Expired history restarts on the next complete scene.
+
+The facade records these passes on the graphics queue:
+
+1. Mesh uploads/BLAS and scene TLAS.
+2. Optional probe clear and relocation/classification reset.
+3. Probe tracing, irradiance and distance blending, relocation, classification.
+4. Final camera tracing and existing post-processing.
+
+Probe tracing reuses the scene's materials, alpha tests and shadow visibility.
+It evaluates diffuse direct light and prior-frame irradiance. Circular batches
+honor `probesPerFrame`; only traced probes are blended. Inactive probes still
+trace fixed rays so classification can reactivate them.
+
+**Resources, history and shading.**
+
+`vk::Ddgi` owns the SDK volume, five RGBA32F array images (rays, irradiance,
+distance, state, variability), per-frame constants/descriptors, six compute
+pipelines, and separate probe/camera RT pipelines and SBTs. The SDK supplies
+packing, indexing, ray rotation and update kernels; adaptive variability is
+disabled. Atlases remain in GENERAL layout, with barriers between passes and
+across frames. Constants are written after the frame-slot wait.
+
+Configuration runs before `BeginFrame`; replacing or freeing resources waits
+for the device. Allocation/pipeline failures release partial resources and
+retain ambient fallback. Failed settings are retried only after a settings
+change. Scene unload and raster rendering release the volume; history resets
+invalidate it. Camera motion rebases the volume without clearing history, and
+swapchain resize preserves it.
+
+Initial sweeps disable hysteresis and recursive lighting until all probes are
+visited, then fade into GI over eight updates. Final shading uses geometric
+normals and SDK surface bias, applying albedo times irradiance / pi and the
+intensity setting. GI replaces ambient within coverage. Outside coverage or
+while unavailable, ambient remains. Direct lighting, shadows, unlit materials,
+fog, DLSS guides and raster lighting retain their existing behavior.
+
+`Ddgi::Record` lends the camera pipeline, descriptors and SBT for the final
+trace only when data is ready. Transitions into/out of GI and settings changes
+reset post-processing history. The implementation supports one axis-aligned
+volume and one RT viewport; coarse spacing and thin walls can cause light
+leakage, and partial updates/hysteresis delay lighting changes.
 
 **`volk` is compiled from source in this module**, so the platform defines are
 ours. VMA is configured with `VMA_STATIC_VULKAN_FUNCTIONS=0` and
@@ -682,6 +870,57 @@ with the renderer.** `ImGui_ImplVulkan_Init` needs the app's context, and
 `imguiruntime` calls `InitImGuiVulkanBackend`/`ShutdownImGuiVulkanBackend`, and
 the renderer's own `Initialize`/`Shutdown` never touch the overlay.
 
+**Shared material tables are a raster feature that ray tracing also uses, not an
+RT privilege.** `descriptorIndexing`, `descriptorBindingPartiallyBound` and
+`shaderSampledImageArrayNonUniformIndexing` are detected separately from the RT
+extensions; a capable device enables them whether or not it traces, and a device
+without them keeps the legacy material path and logs one warning. `MaterialTable`
+is only constructed when they are present, so no shared-table layout or shader is
+built on an unsupported device. The table set is set 4: binding 0 is the raw
+record buffer, binding 1 the image rows and binding 2 the sampler rows. Set 0
+keeps its legacy base-color/normal bindings and adds binding 2, a dynamic UBO
+whose frame slice contains one `MaterialRecordRef` row per material, with the row
+stride aligned to `minUniformBufferOffsetAlignment`. `BeginFrame` refreshes only
+the current frame slot after its wait, so an offset change never rewrites a row
+an in-flight frame may still read. `RasterPushConstants`
+stays 128 bytes, and instance data never uses `firstInstance`. The RT set 0 sees
+the same image and sampler rows at bindings 9 and 10 and the record buffer at 11;
+`RtInstanceInfo` carries the same record offset, plus separate image and sampler
+row indices.
+
+**Feature bits are not enough: the shared layouts must fit the device's descriptor
+limits.** `DescriptorLayoutLimits` derives worst-case per-stage counts and
+pipeline-wide totals from the same constants the layouts use, including the legacy
+material, camera, model and shadow bindings. The `maxDescriptorSet*` limits are
+totals over every set in a pipeline layout, not a worst single set. Raster needs
+five sets; its fragment stage also carries the color attachment, while
+`maxPerStageResources` excludes separate samplers and acceleration structures but
+counts combined/sampled images and non-sampler resources. RT adds its storage
+buffers and camera light buffer to the pipeline storage-buffer total. DDGI's
+optional trace set is checked on top of the RT budget (its own two storage
+buffers, five storage images, three sampled images and one sampler); a device
+that misses only that budget keeps raster and ordinary ray tracing, with DDGI
+left uninitialized. If raster
+does not fit, the legacy material path stays and shared tables are not constructed;
+if RT does not fit, RT is disabled while a fitting raster shared table remains
+available.
+
+**A material record is opaque bytes.** `MaterialRecordTable` owns the alignment,
+capacity and lifetime; M2 owns the reflected field layout. Free spans are split
+around the requested base alignment, so a record is aligned whether it starts a
+fresh span or follows a smaller-alignment neighbour. An update is staged in CPU
+memory and published after `BeginFrame`'s wait, into a copy no in-flight frame can
+still read, so a scene edit cannot rewrite bytes a previous frame is tracing. The
+table has a fixed capacity and reports failure instead of growing; records return
+to the allocator only after the frames that published them complete. GPU uploads
+consume the table's fresh write list exactly once, so creating a material later
+cannot replay a range an in-flight frame already reads.
+
+**Anisotropy is part of the sampler cache key.** A request above 1 becomes 1
+without device support and otherwise clamps to `limits.maxSamplerAnisotropy`;
+the effective value is what `SamplerCacheKey` hashes, so two requests that clamp
+to the same state share one sampler and different effective states do not.
+
 **Subsystems initialize in dependency order, and `Device` shuts down last.**
 `MaterialStore` and the sky pipeline borrow set layouts from `CameraBuffer`,
 `ModelDescriptors` and `ShadowMaps`, so those three initialize first, and the
@@ -690,13 +929,36 @@ it destroys the allocator, so every other subsystem has to be gone by then for
 that count to report leaks.
 
 **A viewport's camera resolves in this order: external, then a specific
-`Entity`, then the first `Camera` found.** `SetExternalCamera` is for a camera
+`Entity`, then the active `Camera`.** `SetExternalCamera` is for a camera
 the World doesn't own, such as the editor's free-fly camera — its transform is
 a raw `glm::mat4`, not a `WorldTransform`, because `WorldTransform`'s matrix is
 resolver-only and unconstructable outside the ECS hierarchy resolve.
 `SetViewportCamera(id, kNullEntity)` clears both and falls back to the
-first-match `Camera`, which is how a viewport hands itself back to whatever the
+active `Camera`, which is how a viewport hands itself back to whatever the
 World considers its default camera.
+
+**One `Camera` is active, and `ActiveCameraSystem` keeps it that way in Edit and
+Play.** It remembers each camera's flag from last frame: a camera flagged since
+then wins and the others are cleared; a camera that arrives already flagged (a
+duplicate, a paste, a prefab) is cleared if another is active. The Inspector,
+`world:set` and `world:set_active_camera` all go through it, so a change made
+before the Render phase shows that frame. The Inspector clears the other
+cameras itself in the same undo step (`MakeFieldEditCommand`, see
+[editor.md](editor.md)), so undo brings the previous camera back. With none
+flagged, Play draws through the lowest-index `Camera`; with no `Camera` at all,
+from the origin with a default lens. Each warns once per scene load and Play
+session.
+
+**Exposure, focus distance, aperture and shutter strength come from viewport
+0's `Camera`.** `RenderSystem` resolves the viewports first and hands that lens
+to `ResolvePostProcessing`, so in Play the active `Camera` drives HDR, Depth of
+Field and Motion Blur, and switching cameras switches them the same frame. In
+Edit it is the editor camera's lens: exposure 1 and aperture and shutter 0, so
+the scene view has no depth of field or motion blur and does not preview a
+camera's exposure. The
+Post-Processing panel still turns each effect on and holds its look settings
+(tonemap operator, max blur, sample count); other viewports share viewport 0's
+values, since post-processing runs once per frame.
 
 **RenderDoc object naming is applied under validation**, and shaders are built
 `-g -O0` unconditionally, so a capture shows Slang source.
@@ -790,6 +1052,81 @@ Everything that needs a device is verified by the smoke tests and
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-10-27* — **A camera cut resets motion blur's and DLSS's history
+(#231).** Was: switching the active camera kept the previous camera's
+view-projection and DLSS history, so the first frame after a cut blurred or
+ghosted across the whole screen. Now: a view whose `historyId` changes starts
+with no previous view-projection or jitter sequence, and `TraceFrame` resets
+DLSS. Because: the frames on either side of a cut share nothing to reproject.
+
+*2026-10-27* — **Post effects read exposure, focus and shutter from the
+`Camera` (#231).** Was: `exposure` (HDR), `focusDistance` and `aperture`
+(Depth of Field) and `shutterStrength` (Motion Blur) were Post-Processing
+entries in Project Settings, one set for every camera. Now: they are `Camera`
+fields, `ResolvePostProcessing` takes the viewing lens, and the effects' params
+and panel sections no longer hold them; `HelloWorld`'s project settings lost
+its `exposure` of 1, the new default. Because: each camera should carry its own
+lens, so cutting to another camera changes focus and exposure with it.
+
+*2026-10-27* — **`Camera` has a viewport gizmo and a pick radius (#231).**
+Was: a camera entity drew nothing in the scene viewport and could only be
+selected from the Hierarchy. Now: a small frustum marks every camera and takes
+clicks within 0.3 m; selected, it draws its near and far planes sized by fov
+and the viewport's aspect, following the entity's world transform. A lens with
+no far plane draws 20 m of open edges. Because: placing a camera needs to show
+what it will see.
+
+*2026-10-27* — **Play draws through the active `Camera` (#231).** Was: the
+first `Camera` the query reached, so a scene with two rendered from an
+arbitrary one, and a scene with none drew nothing. Now: `Camera.active`, kept
+to one by `ActiveCameraSystem`; the lowest-index camera with a warning when
+none is flagged; the origin and a default lens with a warning when there is no
+camera; a Camera entity type in the Create menu, active if it is the scene's
+first. Because: Play needs a defined viewpoint, and the scene should say which.
+
+*2026-10-26* — **Shared layouts respect descriptor limits.** Was: capability
+checks only looked at descriptor-indexing feature bits, so a legal device with
+lower per-stage, pipeline-wide set or bound-set limits could fail when the fixed
+shared tables were created. Now: `DescriptorLayoutLimits` computes the exact
+worst-case raster and RT per-stage counts and pipeline-layout totals from the same
+layout constants, including legacy material, camera, model and shadow bindings,
+fragment color attachment and separate samplers in `maxPerStageResources`. Device selection keeps legacy raster when the raster
+budget does not fit, disables RT when its budget does not fit, and logs which
+reason applied. `DescriptorLayoutLimits.tests.cpp` covers the exact boundary and
+one-below limits. Because: feature support alone does not make a descriptor layout
+legal.
+
+*2026-10-26* — **RT instance layout matches Slang.** Was: the CPU
+`RtInstanceInfo` used `float pad[3]` after `alphaCutoff`, while Slang's `float3`
+aligned to 16, so `prevModel` sat at 128 in the shader and the runtime array
+stride was 192 instead of the CPU's 176. Every instance after the first then read
+the wrong vertex/index addresses. Now: `renderer/RtInstanceInfo.h` owns the CPU
+struct with scalar padding and static offset/size assertions, `raytrace.slang`
+uses three scalar pads, and `RtInstanceLayout.tests.cpp` runs slangc against the
+actual shader, compares reflection field offsets/sizes with `offsetof` and reads
+the SPIR-V ArrayStride. Because: the previous tests only asserted C++ against
+itself, so a CPU/Slang ABI split could not fail.
+
+*2026-10-26* — **Shared raster/RT material tables (#330).** Was: RT remapped
+each frame's distinct (image view, sampler) pairs into a per-frame combined
+`gTextures` array, while raster materials each owned their two combined
+samplers; descriptor indexing was only requested when ray tracing was
+supported, and `MaterialDesc` had no room for a reflected parameter record.
+Now: `TextureTable` keeps a `TextureHandle`'s index as its stable global image
+row and advances the generation on release, `MaterialTable` owns set 4 (raw
+record buffer, image rows, distinct sampler rows) and a three-copy,
+frame-safe record publication, and both raster and RT read the same rows.
+`MaterialStore` adds set-0 dynamic record-reference rows, one frame slice at a
+time; `RtInstanceInfo` carries
+the same offset with separate image and sampler indices, so one image can use
+different glTF sampler configurations. Descriptor indexing is requested for
+capable raster-only devices; without it the legacy pipeline/set layout and
+shaders are kept. `SamplerDesc::maxAnisotropy` is clamped to the device limit
+and folded into the sampler cache key. `RasterPushConstants` and
+`firstInstance` are unchanged. Because: M1 must establish the shared GPU
+contract without migrating materials to PBR or adding asset schemas; see
+ADR 0001 (local ADR).
 
 *2026-10-26* — **`Light`'s pick radius is a fixed 0.3 m; `RayIntersectsSphere`.**
 Was: `LightPickRadius` returned `range` for Point and Spot lights and

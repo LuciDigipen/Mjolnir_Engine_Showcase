@@ -62,6 +62,27 @@ TEST_CASE("LogHistory::Clear empties the buffer", "[log]")
     REQUIRE(mir::LogHistory::Snapshot().empty());
 }
 
+TEST_CASE("LogHistory::AddRepeat counts onto the entry it names until that entry is gone", "[log]")
+{
+    mir::LogHistory::SetCapacity(2);
+    mir::LogHistory::Clear();
+
+    const uint64_t first = mir::LogHistory::Push(MakeEntry("a"));
+    CHECK(mir::LogHistory::AddRepeat(first));
+    CHECK(mir::LogHistory::AddRepeat(first));
+    CHECK(mir::LogHistory::Snapshot()[0].count == 3);
+
+    mir::LogHistory::Push(MakeEntry("b"));
+    const uint64_t last = mir::LogHistory::Push(MakeEntry("c"));
+    CHECK_FALSE(mir::LogHistory::AddRepeat(first));
+    CHECK(mir::LogHistory::AddRepeat(last));
+    CHECK(mir::LogHistory::Snapshot()[1].count == 2);
+
+    mir::LogHistory::Clear();
+    CHECK_FALSE(mir::LogHistory::AddRepeat(last));
+    CHECK_FALSE(mir::LogHistory::AddRepeat(last + 1));
+}
+
 TEST_CASE("LogHistory::SetCapacity trims existing entries", "[log]")
 {
     mir::LogHistory::SetCapacity(10);

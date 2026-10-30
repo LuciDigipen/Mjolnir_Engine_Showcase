@@ -8,6 +8,7 @@
  */
 #pragma once
 
+#include <volk.h>
 #include <glm/mat4x4.hpp>
 #include <glm/vec2.hpp>
 #include <glm/vec4.hpp>
@@ -16,6 +17,9 @@
 
 namespace mir::vk
 {
+    inline constexpr VkShaderStageFlags kRasterPushConstantStages =
+        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+
     // normalCols = Normal matrix
     // vulkan's guaranteed minimum constant size = 128
     // vulkan pads every column to 16 anyways
@@ -36,6 +40,16 @@ namespace mir::vk
         glm::uvec2 outputOffset;
         uint32_t aaMode;
         uint32_t sampleCount;
+        float giIntensity; // GI camera pipeline only; zero for the fallback.
+        float giWeight;    // Initialization fade; volume coverage is evaluated in the shader.
+    };
+    static_assert(sizeof(RtPushConstants) == 24);
+
+    // Debug wireframe lines have no camera UBO; the view's viewProj is folded into the model on the CPU.
+    struct DebugWireframePushConstants
+    {
+        glm::mat4 viewProjModel; // 64
+        glm::vec4 color;         // 16
     };
 
     // Shadow depth passes have no camera UBO, so the light's viewProj rides along.

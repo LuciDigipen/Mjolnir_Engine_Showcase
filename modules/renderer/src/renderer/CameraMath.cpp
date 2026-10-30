@@ -127,6 +127,14 @@ namespace mir
         return WorldRay{ camera.position, glm::normalize(nearPoint) };
     }
 
+    std::array<glm::vec3, 4> FrustumSliceCorners(float fovYDegrees, float aspectRatio, float distance)
+    {
+        const float halfHeight = distance * std::tan(glm::radians(fovYDegrees) * 0.5f);
+        const float halfWidth = halfHeight * aspectRatio;
+        return { glm::vec3(halfWidth, halfHeight, -distance), glm::vec3(-halfWidth, halfHeight, -distance),
+                 glm::vec3(-halfWidth, -halfHeight, -distance), glm::vec3(halfWidth, -halfHeight, -distance) };
+    }
+
     namespace
     {
         struct OrthographicBasis

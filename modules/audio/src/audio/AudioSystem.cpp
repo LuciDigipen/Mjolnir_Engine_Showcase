@@ -14,6 +14,9 @@
 #include <AK/SoundEngine/Common/AkStreamMgrModule.h>
 #include <AK/SoundEngine/Common/AkSoundEngine.h>
 
+// registers the codec; without it a Vorbis source plays silence and logs nothing
+#include <AK/Plugin/AkVorbisDecoderFactory.h>
+
 #include "AkDefaultIOHookDeferred.h"
 
 #ifndef AK_OPTIMIZED
@@ -23,14 +26,19 @@
 #include "core/log/Log.h"
 #include "core/log/SetupError.h"
 #include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstddef>
 #include <exception>
 #include <filesystem>
 #include <glm/geometric.hpp>
 #include <mutex>
 #include <new>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <type_traits>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -43,6 +51,15 @@ namespace mir::audio {
 
         constexpr AkGameObjectID kGlobalObject = 1;
         constexpr AkGameObjectID kListener = 2;
+        constexpr AkGameObjectID kMusicObject = 3;
+
+        // the authored curves make the bottom of the range silence, so any volume above 0 stops short of it
+        constexpr float kSilentDb = -96.0f;
+        constexpr float kQuietestDb = -95.0f;
+        // cubic in amplitude, so equal steps sound about equal: 0.5 is -18 dB, 0.1 is -60 dB
+        constexpr float kVolumeCurveDb = 60.0f;
+        constexpr AkTimeMs kVolumeRampMs = 100; // a jump in gain clicks
+        constexpr int kMusicReplaceFadeMs = 10;
 
         const std::filesystem::path kInitBank = "Init.bnk";
 
@@ -162,6 +179,236 @@ namespace mir::audio {
                 });
             return banks;
         }
+
+        struct Bank
+        {
+            std::string mName; // as first asked for, for the log
+            BankState mState = BankState::Unknown;
+        };
+
+        struct BankResult
+        {
+            AkBankID mId;
+            AKRESULT mResult;
+        };
+
+        std::filesystem::path g_bankDir;
+        // by bank ID: Wwise hashes a name lowercased, so "Music" and "music" are one bank
+        std::unordered_map<AkBankID, Bank> g_banks;
+        std::size_t g_banksLoading = 0;
+
+        std::mutex g_bankMutex;
+        std::vector<BankResult> g_bankResults;
+        std::vector<BankResult> g_bankScratch;
+
+        // Called on Wwise's bank thread: nothing may escape into it
+        void OnBankLoaded(AkUInt32 bankId, const void *, AKRESULT result, void *) noexcept
+        {
+            try
+            {
+                std::lock_guard<std::mutex> lock(g_bankMutex);
+                g_bankResults.push_back({bankId, result});
+            }
+            catch (const std::bad_alloc &)
+            {
+                std::terminate();
+            }
+            catch (...)
+            {
+               
+            }
+        }
+
+        std::string BankName(std::string_view name)
+        {
+            constexpr std::string_view kExtension = ".bnk";
+            if (name.size() > kExtension.size() && name.ends_with(kExtension))
+                name.remove_suffix(kExtension.size());
+            return std::string(name);
+        }
+
+        Bank &FindBank(const std::string &name)
+        {
+            return g_banks[AK::SoundEngine::GetIDFromString(name.c_str())];
+        }
+
+        BankState QueueBank(const std::string &name)
+        {
+            Bank &bank = FindBank(name);
+            if (bank.mState != BankState::Unknown)
+                return bank.mState;
+
+            bank.mName = name;
+
+            static_assert(std::is_nothrow_invocable_v<decltype(&OnBankLoaded), AkUInt32, const void *, AKRESULT,
+                              void *>, "C callbacks and thread entry points must be noexcept (conventions.md)");
+            const std::string file = name + ".bnk";
+            AkBankID bankId = AK_INVALID_BANK_ID;
+            if (const AKRESULT result = AK::SoundEngine::LoadBank(file.c_str(), &OnBankLoaded, nullptr, bankId);
+                result != AK_Success)
+            {
+                MIR_LOG_ERROR("SoundBank '{}' could not be queued for loading ({})", name, ResultText(result));
+                bank.mState = BankState::Failed;
+                return bank.mState;
+            }
+
+            bank.mState = BankState::Loading;
+            ++g_banksLoading;
+            return bank.mState;
+        }
+
+        void ApplyBankResults()
+        {
+            {
+                std::lock_guard<std::mutex> lock(g_bankMutex);
+                g_bankScratch.swap(g_bankResults);
+            }
+
+            for (const BankResult &done : g_bankScratch)
+            {
+                const auto found = g_banks.find(done.mId);
+                if (found == g_banks.end() || found->second.mState != BankState::Loading)
+                    continue;
+
+                Bank &bank = found->second;
+                --g_banksLoading;
+
+                // already in means loaded by someone else, which is still loaded
+                if (done.mResult == AK_Success || done.mResult == AK_BankAlreadyLoaded)
+                {
+                    bank.mState = BankState::Loaded;
+                    MIR_LOG_INFO("SoundBank '{}' loaded", bank.mName);
+                }
+                else
+                {
+                    bank.mState = BankState::Failed;
+                    MIR_LOG_ERROR("SoundBank '{}' failed to load ({}), so its events will not play. Regenerate the "
+                                  "SoundBanks with the Wwise version the engine links, then copy them into '{}'",
+                        bank.mName, ResultText(done.mResult), g_bankDir.string());
+                }
+            }
+
+            g_bankScratch.clear();
+        }
+
+        struct Music
+        {
+            std::string mEvent;
+            std::string mBank;
+            AkPlayingID mPlayingId = AK_INVALID_PLAYING_ID;
+            bool mWaiting = false;
+        };
+
+        Music g_music;
+
+        struct Channel
+        {
+            const char *mParameter;
+            float mVolume = 1.0f;
+            bool mMuted = false;
+
+            bool Silent() const { return mMuted || mVolume <= 0.0f; }
+        };
+
+        Channel g_musicChannel{"Music_Volume"};
+        Channel g_sfxChannel{"SFX_Volume"};
+
+        void ApplyVolume(const Channel &channel, AkTimeMs rampMs)
+        {
+            if (!g_Initialized)
+                return;
+
+            const float decibels =
+                channel.Silent() ? kSilentDb : (std::max)(kQuietestDb, kVolumeCurveDb * std::log10(channel.mVolume));
+
+            Check(AK::SoundEngine::SetRTPCValue(channel.mParameter, decibels, AK_INVALID_GAME_OBJECT, rampMs),
+                "SetRTPCValue");
+        }
+
+        bool EverythingSilent()
+        {
+            return g_musicChannel.Silent() && g_sfxChannel.Silent();
+        }
+
+        using Clock = std::chrono::steady_clock;
+
+        // Suspended, Wwise mixes nothing, so its audio thread idles
+        bool g_suspended = false;
+        bool g_suspendPending = false;
+        constexpr std::chrono::milliseconds kSuspendedRenderInterval{100};
+        Clock::time_point g_lastSuspendedRender;
+        Clock::time_point g_silentSince;
+        AkUInt32 g_suspendedAtTick = 0;
+
+        void WakeUp()
+        {
+            g_suspendPending = false;
+            if (!g_suspended)
+                return;
+
+            const double seconds = std::chrono::duration<double>(Clock::now() - g_silentSince).count();
+            const AkUInt32 buffers = AK::SoundEngine::GetBufferTick() - g_suspendedAtTick;
+            Check(AK::SoundEngine::WakeupFromSuspend(), "WakeupFromSuspend");
+            g_suspended = false;
+            MIR_LOG_INFO("wwise awake after {:.1f} s silent, {} audio buffer(s) rendered meanwhile", seconds, buffers);
+        }
+
+        
+        void OnChannelChanged()
+        {
+            if (!g_Initialized)
+                return;
+
+            if (!EverythingSilent())
+                WakeUp();
+            else if (!g_suspended && !g_suspendPending)
+            {
+                g_suspendPending = true;
+                g_silentSince = Clock::now();
+            }
+        }
+
+        // after the ramp down has finished, so the suspend cuts nothing audible
+        void SuspendOnceSilent()
+        {
+            if (!g_suspendPending || Clock::now() - g_silentSince < std::chrono::milliseconds(kVolumeRampMs))
+                return;
+
+            g_suspendPending = false;
+            g_suspendedAtTick = AK::SoundEngine::GetBufferTick();
+            if (Check(AK::SoundEngine::Suspend(false, true), "Suspend"))
+            {
+                g_suspended = true;
+                MIR_LOG_INFO("wwise suspended: music and SFX are both silent");
+            }
+        }
+
+        void StartWaitingMusic()
+        {
+        
+            if (!g_music.mWaiting || EverythingSilent())
+                return;
+
+            // with no bank named, the event may be in any of them
+            BankState state = g_banksLoading > 0 ? BankState::Loading : BankState::Loaded;
+            if (!g_music.mBank.empty())
+                state = FindBank(g_music.mBank).mState;
+
+            if (state == BankState::Loading)
+                return;
+
+            g_music.mWaiting = false;
+            if (state == BankState::Failed)
+            {
+                MIR_LOG_WARN("soundtrack '{}' will not play: its SoundBank '{}' failed to load", g_music.mEvent,
+                    g_music.mBank);
+                return;
+            }
+
+            g_music.mPlayingId = PostEventOn(g_music.mEvent.c_str(), kMusicObject);
+            if (g_music.mPlayingId != AK_INVALID_PLAYING_ID)
+                MIR_LOG_INFO("soundtrack '{}' playing", g_music.mEvent);
+        }
     }
 
     void Init(const std::filesystem::path &bankDir)
@@ -229,23 +476,39 @@ namespace mir::audio {
 #endif
 
         g_lowLevelIO.SetBasePath(bankDir.c_str());
-        for (const std::filesystem::path &bank : banks)
+        g_bankDir = bankDir;
+
+        // Init.bnk is the bus layout every other bank resolves against, so it alone loads before Init returns
+        if (!banks.empty())
         {
-            AkBankID bankID;
-            if (const AKRESULT result = AK::SoundEngine::LoadBank(bank.string().c_str(), bankID); result != AK_Success)
+            Bank &init = FindBank(BankName(kInitBank.string()));
+            init.mName = BankName(kInitBank.string());
+            AkBankID initId = AK_INVALID_BANK_ID;
+            if (const AKRESULT result = AK::SoundEngine::LoadBank(kInitBank.string().c_str(), initId);
+                result != AK_Success)
             {
-                Fail(ErrorCategory::ProjectData, "SoundBank " + bank.string() + " failed to load", bankDir / bank,
-                    ResultText(result),
+                Fail(ErrorCategory::ProjectData, "SoundBank " + kInitBank.string() + " failed to load",
+                    bankDir / kInitBank, ResultText(result),
                     "Regenerate the SoundBanks with the Wwise version the engine links, then copy them into " +
                         bankDir.string() + ".");
             }
+            init.mState = BankState::Loaded;
         }
 
         AK::SoundEngine::RegisterGameObj(kListener, "Listener");
         AK::SoundEngine::SetDefaultListeners(&kListener, 1);
         AK::SoundEngine::RegisterGameObj(kGlobalObject, "Global");
+        AK::SoundEngine::RegisterGameObj(kMusicObject, "Music");
         g_Initialized = true;
-        MIR_LOG_INFO("wwise initialized, {} SoundBank(s) from '{}'", banks.size(), bankDir.string());
+
+        for (std::size_t i = 1; i < banks.size(); ++i)
+            QueueBank(BankName(banks[i].string()));
+
+        ApplyVolume(g_musicChannel, 0);
+        ApplyVolume(g_sfxChannel, 0);
+        OnChannelChanged();
+        MIR_LOG_INFO("wwise initialized, {} SoundBank(s) in '{}', {} still loading", banks.size(), bankDir.string(),
+            g_banksLoading);
     }
 
 
@@ -254,7 +517,18 @@ namespace mir::audio {
         if (!g_Initialized)
             return;
 
-        AK::SoundEngine::RenderAudio();
+        // before RenderAudio, so a soundtrack whose bank just loaded is posted this frame
+        ApplyBankResults();
+        StartWaitingMusic();
+        SuspendOnceSilent();
+
+        
+        const Clock::time_point now = Clock::now();
+        if (!g_suspended || now - g_lastSuspendedRender >= kSuspendedRenderInterval)
+        {
+            AK::SoundEngine::RenderAudio();
+            g_lastSuspendedRender = now;
+        }
 
         {
             std::lock_guard<std::mutex> lock(g_endedMutex);
@@ -315,7 +589,8 @@ namespace mir::audio {
 
     uint32_t PostEventOn(const char* eventName, uint64_t gameObject)
     {
-        if (!g_Initialized)
+        // a post while silent would start the moment a channel comes back, however stale
+        if (!g_Initialized || EverythingSilent())
             return 0;
 
         static_assert(std::is_nothrow_invocable_v<decltype(&OnEventEnded), AkCallbackType, AkEventCallbackInfo *,
@@ -325,7 +600,11 @@ namespace mir::audio {
 
         if (playingId == AK_INVALID_PLAYING_ID)
         {
-            MIR_LOG_ERROR("wwise postevent ({}) on object {} failed", eventName, gameObject);
+            if (g_banksLoading > 0)
+                MIR_LOG_WARN("wwise postevent ({}) on object {} failed while {} SoundBank(s) are still loading; "
+                             "post it once its bank has loaded", eventName, gameObject, g_banksLoading);
+            else
+                MIR_LOG_ERROR("wwise postevent ({}) on object {} failed", eventName, gameObject);
             return 0;
         }
 
@@ -378,6 +657,144 @@ namespace mir::audio {
         return Check(AK::SoundEngine::SetState(stateGroup, state), "SetState");
     }
 
+    BankState RequestBank(const char *bankName)
+    {
+        if (!g_Initialized || bankName == nullptr || bankName[0] == '\0')
+            return BankState::Unknown;
+
+        return QueueBank(BankName(bankName));
+    }
+
+    bool AreBanksLoading()
+    {
+        return g_banksLoading > 0;
+    }
+
+    bool PlayMusic(const char *eventName, const char *bankName)
+    {
+        if (!g_Initialized || eventName == nullptr || eventName[0] == '\0')
+            return false;
+
+        StopMusic(kMusicReplaceFadeMs);
+
+        g_music.mEvent = eventName;
+        g_music.mBank = bankName != nullptr ? BankName(bankName) : std::string();
+        g_music.mWaiting = true;
+        if (!g_music.mBank.empty())
+            QueueBank(g_music.mBank);
+
+        StartWaitingMusic();
+        return true;
+    }
+
+    void StopMusic(int fadeMs)
+    {
+        g_music.mWaiting = false;
+        if (g_music.mPlayingId == AK_INVALID_PLAYING_ID)
+            return;
+
+        StopPlaying(g_music.mPlayingId, fadeMs);
+        g_music.mPlayingId = AK_INVALID_PLAYING_ID;
+    }
+
+    bool IsMusicPlaying()
+    {
+        return g_music.mWaiting || IsVoicePlaying(g_music.mPlayingId);
+    }
+
+    namespace
+    {
+        void SetChannelVolume(Channel &channel, float volume)
+        {
+            if (std::isnan(volume))
+                return;
+
+            channel.mVolume = std::clamp(volume, 0.0f, 1.0f);
+            OnChannelChanged();
+            ApplyVolume(channel, kVolumeRampMs);
+        }
+
+        void SetChannelMuted(Channel &channel, bool muted)
+        {
+            channel.mMuted = muted;
+            OnChannelChanged();
+            ApplyVolume(channel, kVolumeRampMs);
+        }
+    }
+
+    void SetMusicVolume(float volume)
+    {
+        SetChannelVolume(g_musicChannel, volume);
+    }
+
+    float GetMusicVolume()
+    {
+        return g_musicChannel.mVolume;
+    }
+
+    void SetMusicMuted(bool muted)
+    {
+        SetChannelMuted(g_musicChannel, muted);
+    }
+
+    bool IsMusicMuted()
+    {
+        return g_musicChannel.mMuted;
+    }
+
+    void SetSfxVolume(float volume)
+    {
+        SetChannelVolume(g_sfxChannel, volume);
+    }
+
+    float GetSfxVolume()
+    {
+        return g_sfxChannel.mVolume;
+    }
+
+    void SetSfxMuted(bool muted)
+    {
+        SetChannelMuted(g_sfxChannel, muted);
+    }
+
+    bool IsSfxMuted()
+    {
+        return g_sfxChannel.mMuted;
+    }
+
+    namespace
+    {
+        
+        void ApplyObjectVolume(AkGameObjectID object, float volume)
+        {
+            const float clamped = std::clamp(volume, 0.0f, 1.0f);
+            Check(AK::SoundEngine::SetGameObjectOutputBusVolume(object, AK_INVALID_GAME_OBJECT,
+                      clamped * clamped * clamped),
+                "SetGameObjectOutputBusVolume");
+        }
+    }
+
+    void SetObjectVolume(uint64_t gameObject, float volume)
+    {
+        if (!g_Initialized || gameObject == 0 || std::isnan(volume))
+            return;
+
+        ApplyObjectVolume(static_cast<AkGameObjectID>(gameObject), volume);
+    }
+
+    void SetSoundtrackVolume(float volume)
+    {
+        if (!g_Initialized || std::isnan(volume))
+            return;
+
+        ApplyObjectVolume(kMusicObject, volume);
+    }
+
+    bool IsIdle()
+    {
+        return EverythingSilent();
+    }
+
     void Terminate()
     {
         if (AK::SoundEngine::IsInitialized()) 
@@ -407,6 +824,17 @@ namespace mir::audio {
             std::lock_guard<std::mutex> lock(g_endedMutex);
             g_endedPlayingIds.clear();
         }
+
+        
+        g_banks.clear();
+        g_banksLoading = 0;
+        {
+            std::lock_guard<std::mutex> lock(g_bankMutex);
+            g_bankResults.clear();
+        }
+        g_music = Music{};
+        g_suspended = false;
+        g_suspendPending = false;
 
         g_Initialized = false;
     }

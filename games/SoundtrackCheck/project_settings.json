@@ -1,0 +1,66 @@
+{
+  "input": {
+    "actions": [
+      {
+        "bindings": [
+          {
+            "device": "Keyboard",
+            "key": "M"
+          }
+        ],
+        "name": "MusicMute",
+        "type": "Button"
+      },
+      {
+        "bindings": [
+          {
+            "device": "Keyboard",
+            "key": "Up"
+          }
+        ],
+        "name": "MusicVolumeUp",
+        "type": "Button"
+      },
+      {
+        "bindings": [
+          {
+            "device": "Keyboard",
+            "key": "Down"
+          }
+        ],
+        "name": "MusicVolumeDown",
+        "type": "Button"
+      },
+      {
+        "bindings": [
+          {
+            "device": "Keyboard",
+            "key": "N"
+          }
+        ],
+        "name": "SfxMute",
+        "type": "Button"
+      },
+      {
+        "bindings": [
+          {
+            "device": "Keyboard",
+            "key": "Right"
+          }
+        ],
+        "name": "SfxVolumeUp",
+        "type": "Button"
+      },
+      {
+        "bindings": [
+          {
+            "device": "Keyboard",
+            "key": "Left"
+          }
+        ],
+        "name": "SfxVolumeDown",
+        "type": "Button"
+      }
+    ]
+  }
+}
