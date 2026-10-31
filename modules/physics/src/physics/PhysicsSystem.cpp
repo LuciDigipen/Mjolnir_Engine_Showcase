@@ -299,9 +299,6 @@ namespace mir
         if (rigidBody == nullptr)
             return;
 
-        // First, before any early return: a copy must not keep the original's handle.
-        rigidBody->runtime = {};
-
         PhysicsWorld *physics = world.TryResource<PhysicsWorld>();
         Transform *transform = world.GetComponent<Transform>(entity);
         if (physics == nullptr || !physics->IsSimulationLive() || transform == nullptr)

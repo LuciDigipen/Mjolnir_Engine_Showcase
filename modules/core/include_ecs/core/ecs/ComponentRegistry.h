@@ -48,6 +48,7 @@ namespace mir
         void (*mDeferRemove)(const ComponentOps &, CommandBuffer &, Entity) = nullptr;
 
         std::span<const FieldDesc> mFields;
+        std::span<const TransientField> mTransient;
 
         // byes for new component
         std::span<const std::byte> mDefaultValue;
@@ -106,6 +107,7 @@ namespace mir
         // Registers a C++ component. Idempotent
         template <typename T>
         const ComponentOps &Register(std::span<const FieldDesc> fields = {},
+            std::span<const TransientField> transient = {},
             float (*pickRadius)(const void *) = nullptr,
             void (*drawGizmo)(const void *, const glm::mat4 &, bool, const GizmoCanvas &) = nullptr)
         {
@@ -120,6 +122,7 @@ namespace mir
             ops.mAlign = kIsTagComponent<T> ? 0 : alignof(T);
             ops.mRuntime = false;
             ops.mFields = fields;
+            ops.mTransient = transient;
             ops.mPickRadius = pickRadius;
             ops.mDrawGizmo = drawGizmo;
 

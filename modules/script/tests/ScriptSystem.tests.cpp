@@ -57,13 +57,17 @@ namespace
         int32_t mNextInstance = 0;
     };
 
-    ScriptRef MakeRef(int32_t instanceRef)
+    // the instance is attached after the add, the way the resolver does it
+    Entity Scripted(World &world, int32_t instanceRef)
     {
         ScriptRef ref;
-        ref.instanceRef = instanceRef;
-        ref.started = true;
         std::strncpy(ref.scriptName, "spin", sizeof(ref.scriptName) - 1);
-        return ref;
+
+        const Entity entity = world.CreateEntity();
+        ScriptRef &added = world.AddComponent<ScriptRef>(entity, ref);
+        added.instanceRef = instanceRef;
+        added.started = true;
+        return entity;
     }
 }
 
@@ -81,8 +85,7 @@ TEST_CASE("BeforeRemove releases a script binding that a commit removes", "[scri
     SystemContext context{ world, commands };
     system.OnStart(context);
 
-    const Entity entity = world.CreateEntity();
-    world.AddComponent<ScriptRef>(entity, MakeRef(7));
+    const Entity entity = Scripted(world, 7);
 
     EntityChangeSet changes;
     changes.mRemovedComponents.push_back(EntityComponentRef{ entity, TypeIdOf<ScriptRef>() });
@@ -111,8 +114,7 @@ TEST_CASE("BeforeRemove releases only a changed script name", "[script][changes]
     SystemContext context{ world, commands };
     system.OnStart(context);
 
-    const Entity entity = world.CreateEntity();
-    world.AddComponent<ScriptRef>(entity, MakeRef(8));
+    const Entity entity = Scripted(world, 8);
     EntityChangeListeners &listeners = world.Resource<EntityChangeListeners>();
 
     EntityChangeSet unrelated;
@@ -143,8 +145,7 @@ TEST_CASE("OnStop unsubscribes from entity changes", "[script][changes]")
     SystemContext context{ world, commands };
     system.OnStart(context);
 
-    const Entity entity = world.CreateEntity();
-    world.AddComponent<ScriptRef>(entity, MakeRef(9));
+    const Entity entity = Scripted(world, 9);
 
     system.OnStop(context);
 

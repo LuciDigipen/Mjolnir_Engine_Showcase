@@ -230,8 +230,8 @@ namespace mir
     void RegisterRendererComponents()
     {
         ComponentRegistry::Instance().Register<MeshRenderer>(kMeshRendererFields);
-        ComponentRegistry::Instance().Register<Camera>(kCameraFields, &CameraPickRadius, &DrawCameraGizmo);
-        ComponentRegistry::Instance().Register<Light>(kLightFields, &LightPickRadius, &DrawLightGizmo);
+        ComponentRegistry::Instance().Register<Camera>(kCameraFields, {}, &CameraPickRadius, &DrawCameraGizmo);
+        ComponentRegistry::Instance().Register<Light>(kLightFields, {}, &LightPickRadius, &DrawLightGizmo);
         ComponentRegistry::Instance().Register<Sky>(kSkyFields);
     }
 
