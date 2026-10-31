@@ -8,6 +8,7 @@
  */
 #pragma once
 #include "renderer/ActiveCamera.h"
+#include "renderer/CameraCut.h"
 #include "renderer/CameraMath.h"
 #include "renderer/ViewDrawSource.h"
 #include "renderer/ViewSubmission.h"
@@ -463,8 +464,9 @@ namespace mir
                                                   view.pose.position, view.lens.mNearZ,
                                                   view.lens.HasFarPlane() ? view.lens.mFarZ : 0.0f });
                 const auto &viewport = mViewports[view.viewport];
-                mRenderViews.back().historyId = viewport.mUseExternalCamera ? UINT64_MAX :
-                    PackEntity(viewport.mCameraEntity.IsNull() ? playCamera.mEntity : viewport.mCameraEntity);
+                const Entity viewCamera = viewport.mCameraEntity.IsNull() ? playCamera.mEntity : viewport.mCameraEntity;
+                mRenderViews.back().historyId = viewport.mUseExternalCamera ? UINT64_MAX : PackEntity(viewCamera);
+                mRenderViews.back().cut = !viewport.mUseExternalCamera && IsCameraCut(source, viewCamera);
                 mRenderViews.back().debugView = viewport.mDebugView;
 
                 mDebugLinesPerViewport[v].clear();
@@ -476,6 +478,8 @@ namespace mir
                 }
                 mRenderViews.back().debugLines = mDebugLinesPerViewport[v];
             }
+            // after every view, since two viewports can show the same camera
+            ClearCameraCuts(source);
 
             // Only the main World's physics fills the lines; a preview World has none, so it asks for none.
             if (DebugLines *mainLines = context.world.TryResource<DebugLines>())

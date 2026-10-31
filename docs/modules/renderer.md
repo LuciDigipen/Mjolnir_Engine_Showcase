@@ -211,6 +211,7 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `Viewport`, `ViewportId` | `renderer/RenderSystem.h` | `RenderSystem`'s per-viewport state: rect plus a World `Entity`, an external camera, or neither (fallback) |
 | `MeshRenderer`, `Camera` | `renderer/components/` | Handles, and `active`/`fovY`/`near`/`far` (`far` 0 = no far plane) plus the lens values post effects read (`exposure`, `focusDistance`, `aperture`, `shutterStrength`), declared here rather than in `core` |
 | `FindActiveCamera`, `SetActiveCamera`, `ResolvePlayCamera`, `ActiveCameraSystem` | `renderer/ActiveCamera.h` | The flagged `Camera`; flag one and clear the rest; the camera Play draws through (flagged, else lowest index); the `SystemPhase::Render` system, before `RenderSystem`, that keeps one flagged |
+| `CameraCuts`, `CutCamera`, `IsCameraCut`, `ClearCameraCuts` | `renderer/CameraCut.h` | The World resource of cameras cut since the last frame (made by the first `CutCamera`); mark one (false without a `Camera`); ask; `RenderSystem` clears them after the views - see Rules |
 | `MeshBounds` | `renderer/components/MeshBounds.h` | `{mLocalMin, mLocalMax}`, a mesh's own local-space AABB; attached and kept current by `app`'s `MeshResolveSystem` (see [app.md](app.md)), read by the editor's viewport click-picking (see [editor.md](editor.md)) — not used for rendering at all |
 | `FrustumSliceCorners` | `renderer/CameraMath.h` | A lens's view rectangle at a distance, in camera space; the `Camera` gizmo draws its near and far planes from it |
 | `Ray`, `RayIntersectsAABB`, `WorldRay`, `MakeCameraRay`, `RayIntersectsBox`, `RayIntersectsSphere` | `renderer/CameraMath.h` | `WorldRay` is a camera ray with a double `WorldPosition` origin and a float direction; `RayIntersectsBox` places a `WorldPose` box relative to that origin in double, then runs the local ray/AABB slab test; `RayIntersectsSphere` returns where a unit-direction ray enters a sphere, 0 if it starts inside — the same file `MakeViewProjection` lives in, so both stay in the same Vulkan-convention math |
@@ -616,6 +617,9 @@ should supply a stable `historyId` or reset history when switching cameras.
 A `historyId` change is a camera cut for the other temporal state too:
 `CameraBuffer` drops that view slot's previous view-projection and jitter
 sequence, so motion blur sees no camera motion, and `TraceFrame` resets DLSS.
+A view with `cut` set is the same cut without a camera change: the camera
+jumped. DDGI keeps its probes through either, since they light the world, not
+the view.
 Filtering has a separate 256 MiB allocation cap across frame slots; unsupported
 layouts retain existing lighting.
 
@@ -943,6 +947,16 @@ flagged, Play draws through the lowest-index `Camera`; with no `Camera` at all,
 from the origin with a default lens. Each warns once per scene load and Play
 session.
 
+**Whoever causes a camera cut signals it; `RenderSystem` does not guess one
+from camera motion.** Switching the camera a view draws through changes its `historyId`,
+which is already a cut. A camera that jumps without changing (a teleport, a
+respawn) is cut with `CutCamera(world, camera)` or `world:cut_camera(camera)`.
+`RenderSystem` sets `cut` on every view drawing through that camera the next
+frame, then clears every cut, so each one resets history once; a cut on a
+camera no view shows is dropped. Scene load and Play begin are the same signal
+at the transition level: `RendererModule` calls `ResetHistory` from those
+stages.
+
 **Exposure, focus distance, aperture and shutter strength come from viewport
 0's `Camera`.** `RenderSystem` resolves the viewports first and hands that lens
 to `ResolvePostProcessing`, so in Play the active `Camera` drives HDR, Depth of
@@ -1046,6 +1060,17 @@ Everything that needs a device is verified by the smoke tests and
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-10-30* — **A camera that jumps says so, and its next frame keeps no
+history (#298).** Was: only a camera switch (a `historyId` change), a scene
+load and Play begin reset temporal history, so the first frame after a camera
+teleport blended in the frames before it: DLSS ghosted and motion blur smeared.
+Now:
+`CutCamera` / `world:cut_camera` mark a cut, `RenderSystem` sets
+`RenderView::cut` on the views drawing through that camera for one frame, and
+the renderer treats it as a `historyId` change. Because: only the code that
+moves the camera knows a jump from fast motion; a view-matrix threshold would
+miss small jumps and cut fast turns.
 
 *2026-10-27* — **A camera cut resets motion blur's and DLSS's history
 (#231).** Was: switching the active camera kept the previous camera's

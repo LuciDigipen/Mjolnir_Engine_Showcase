@@ -136,7 +136,10 @@ The renderer bridge adds `world:mesh_bounds(entity)`: the local-space
 `world:get_active_camera()` returns the entity whose `Camera` is active, or
 `nil`. `world:set_active_camera(entity)` flags that camera and clears every
 other one at once, so the change shows the same frame; it returns `false` and
-logs an error if the entity has no `Camera`.
+logs an error if the entity has no `Camera`. `world:cut_camera(entity)` tells
+the renderer that camera jumped (call it after teleporting the camera or its
+rig), so its next frame blends nothing from the frames before; it returns
+`false` and logs an error the same way. Switching cameras needs no cut.
 
 ### Post-processing
 
