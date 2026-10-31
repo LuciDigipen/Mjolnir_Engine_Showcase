@@ -33,7 +33,9 @@ entity generation live in `InstanceResources`, separate from release, height
 query, collider and geometry cache. A material-only Edit updates that side only;
 an entity generation replacement at the same accepted placement keeps the
 release. Empty, invalid or unsupported bindings draw the diagnostic material and
-log once.
+log once. The same consumer callback also checks the macro period against the
+shared validation period and the macro/parallax numeric bounds before a candidate
+material is published; terrain geometry and collision do not read them.
 
 ## Tests
 

@@ -1,8 +1,7 @@
 # Surface material pipeline
 
-*State as of 2026-10-31.* Shared GPU tables, reflected surface materials,
-default PBR lighting, versioned packed textures and the terrain frontend/runtime
-binding are implemented. POM and macro variation are later work.
+*State as of 2026-10-31.* Shared surface materials and terrain rendering include
+periodic macro variation and distance-faded parallax occlusion.
 
 ## Source contract
 
@@ -242,3 +241,29 @@ A cook reload stages a complete candidate material generation before the active
 one is touched. Abort disposes only the candidate; commit swaps it and retires
 the previous material and texture batch. See
 ADR 0004 (local ADR).
+
+## Macro variation and parallax
+
+A terrain material may add a reflected `TextureRef macro` plus
+`macroPeriodMeters`, `macroStrength`, `macroHueShiftDegrees` and
+`macroRoughnessContrast`. The macro texture is generated once by the renderer:
+it is deterministic, tileable, low-frequency and shared by every material.
+`uv0 / macroPeriodMeters` drives the extra sample; the period follows the same
+strict packed-float divisibility rule as `tileSizeMeters`, and an authored zero
+strength reproduces the ADR 0004 shading exactly.
+
+Reflected `parallaxEnabled`, `parallaxRtEnabled`, `parallaxHeightMeters`,
+`parallaxReference`, `parallaxDistanceMeters`, `parallaxSteps`,
+`parallaxFadeStartMeters` and `parallaxFadeEndMeters` drive a shared
+`SurfaceParallaxUv` intersection before the surface is sampled. It searches the
+signed height range around the reference from high to low, so constant heights
+above and below it produce opposite signed offsets independently of the step
+count and a multicrossing profile takes the visible/frontmost crossing; the
+fade scales that offset continuously and the distance bound clamps it. It uses the
+original raster UV derivatives with `SampleGrad` and explicit `SampleLevel` in
+ray tracing; RT parallax is off unless `parallaxRtEnabled` is true. The height
+uses the stored displacement offset by the reference, not a renormalized range.
+`SurfaceMacroContext` rescales raster gradients and RT footprint to the macro
+period for the extra macro sample. Bounds are consumer-validated before the
+material is published. See
+ADR 0005 (local ADR).

@@ -56,6 +56,31 @@ namespace mir
             return double(bytes) / (1024.0 * 1024.0);
         }
 
+        bool ValidateSurfaceMaterialParameters(const SurfaceMaterialBinding &binding, std::string &error)
+        {
+            if (binding.tilePeriodMeters && !TerrainMaterialTilePeriodSupported(*binding.tilePeriodMeters))
+            {
+                error = std::format("tileSizeMeters {} is not a supported divisor of the terrain UV period",
+                                    *binding.tilePeriodMeters);
+                return false;
+            }
+            if (binding.macro)
+            {
+                if (!ValidateSurfaceMaterialMacroParameters(*binding.macro, &error))
+                    return false;
+                if (binding.macro->periodMeters &&
+                    !TerrainMaterialTilePeriodSupported(*binding.macro->periodMeters))
+                {
+                    error = std::format("macroPeriodMeters {} is not a supported divisor of the terrain UV period",
+                                        *binding.macro->periodMeters);
+                    return false;
+                }
+            }
+            if (binding.parallax && !ValidateSurfaceMaterialParallaxParameters(*binding.parallax, &error))
+                return false;
+            return true;
+        }
+
         uint64_t ReleaseFootprint(const TerrainIndex &index)
         {
             uint64_t bytes = 0;
@@ -186,13 +211,7 @@ namespace mir
         mSurfaceMaterials = &materials;
         mSurfaceMaterials->SetMaterialValidator([](const SurfaceMaterialBinding &binding, std::string &error)
             {
-                if (binding.tilePeriodMeters && !TerrainMaterialTilePeriodSupported(*binding.tilePeriodMeters))
-                {
-                    error = std::format("tileSizeMeters {} is not a supported divisor of the terrain UV period",
-                                        *binding.tilePeriodMeters);
-                    return false;
-                }
-                return true;
+                return ValidateSurfaceMaterialParameters(binding, error);
             });
         mAssetIdRoot = project.mAssetIdRoot;
         mReleasesRoot = TerrainReleasesRoot(project.mRootDir);
@@ -617,11 +636,11 @@ namespace mir
                                instance.materialPath, error));
             return;
         }
-        if (binding->tilePeriodMeters && !TerrainMaterialTilePeriodSupported(*binding->tilePeriodMeters))
+        std::string parameterError;
+        if (!ValidateSurfaceMaterialParameters(*binding, parameterError))
         {
-            Report(std::format("Terrain instance material '{}': tileSizeMeters {} is not a positive period that "
-                               "divides the terrain UV period; keeping the diagnostic material",
-                               instance.materialPath, *binding->tilePeriodMeters));
+            Report(std::format("Terrain instance material '{}': {}; keeping the diagnostic material",
+                               instance.materialPath, parameterError));
             return;
         }
         instance.material = binding->material;

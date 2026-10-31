@@ -22,6 +22,8 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <format>
 #include <iterator>
@@ -62,10 +64,99 @@ namespace mir
                 return asset.normalTexture;
             case SurfaceTextureRole::Surface:
                 return asset.surfaceTexture;
+            case SurfaceTextureRole::Macro:
+                return {};
             case SurfaceTextureRole::Count:
                 break;
             }
             return {};
+        }
+
+        const MaterialFieldLayout *FindField(const MaterialLayout &layout, std::string_view name,
+            MaterialFieldKind kind, uint32_t size)
+        {
+            for (const MaterialFieldLayout &field : layout.fields)
+                if (field.name == name && field.kind == kind && field.size == size)
+                    return &field;
+            return nullptr;
+        }
+
+        template <typename T>
+        bool ReadField(const MaterialLayout &layout, std::span<const std::byte> record, std::string_view name,
+            MaterialFieldKind kind, T &out)
+        {
+            const MaterialFieldLayout *const field = FindField(layout, name, kind, sizeof(T));
+            if (field == nullptr || field->offset > record.size() || field->size > record.size() - field->offset)
+                return false;
+            std::memcpy(&out, record.data() + field->offset, sizeof(T));
+            return true;
+        }
+
+        bool HasField(const MaterialLayout &layout, std::string_view name)
+        {
+            for (const MaterialFieldLayout &field : layout.fields)
+                if (field.name == name)
+                    return true;
+            return false;
+        }
+
+        bool ReadFloat(const MaterialLayout &layout, std::span<const std::byte> record, std::string_view name,
+            double &out)
+        {
+            float packed = 0.0f;
+            if (!ReadField(layout, record, name, MaterialFieldKind::Float, packed))
+                return false;
+            out = static_cast<double>(packed);
+            return true;
+        }
+
+        void SetParameterError(std::string *error, std::string message)
+        {
+            if (error != nullptr)
+                *error = std::move(message);
+        }
+
+        bool FiniteInRange(double value, double minimum, double maximum)
+        {
+            return std::isfinite(value) && value >= minimum && value <= maximum;
+        }
+
+        uint32_t HashLattice(int32_t x, int32_t y, uint32_t seed)
+        {
+            uint32_t hash = static_cast<uint32_t>(x) * 0x8da6b343u ^ static_cast<uint32_t>(y) * 0xd8163841u ^
+                seed * 0xcb1ab31fu;
+            hash ^= hash >> 16;
+            hash *= 0x7feb352du;
+            hash ^= hash >> 15;
+            hash *= 0x846ca68bu;
+            hash ^= hash >> 16;
+            return hash;
+        }
+
+        float LatticeValue(int32_t x, int32_t y, uint32_t seed, int32_t period)
+        {
+            const int32_t wrappedX = ((x % period) + period) % period;
+            const int32_t wrappedY = ((y % period) + period) % period;
+            return static_cast<float>(HashLattice(wrappedX, wrappedY, seed) & 0xffffffu) / 16777215.0f;
+        }
+
+        float PeriodicValueNoise(float u, float v, int32_t period, uint32_t seed)
+        {
+            const float scaledU = u * static_cast<float>(period);
+            const float scaledV = v * static_cast<float>(period);
+            const int32_t x0 = static_cast<int32_t>(std::floor(scaledU));
+            const int32_t y0 = static_cast<int32_t>(std::floor(scaledV));
+            const float fx = scaledU - static_cast<float>(x0);
+            const float fy = scaledV - static_cast<float>(y0);
+            const float sx = fx * fx * (3.0f - 2.0f * fx);
+            const float sy = fy * fy * (3.0f - 2.0f * fy);
+            const float a = LatticeValue(x0, y0, seed, period);
+            const float b = LatticeValue(x0 + 1, y0, seed, period);
+            const float c = LatticeValue(x0, y0 + 1, seed, period);
+            const float d = LatticeValue(x0 + 1, y0 + 1, seed, period);
+            const float top = a + (b - a) * sx;
+            const float bottom = c + (d - c) * sx;
+            return top + (bottom - top) * sy;
         }
     }
 
@@ -78,6 +169,8 @@ namespace mir
             return SurfaceTextureRole::Normal;
         if (name == "surface" || name == "surfacetexture")
             return SurfaceTextureRole::Surface;
+        if (name == "macro" || name == "macrotexture")
+            return SurfaceTextureRole::Macro;
         return std::nullopt;
     }
 
@@ -94,6 +187,139 @@ namespace mir
             return static_cast<double>(packed);
         }
         return std::nullopt;
+    }
+
+    std::optional<SurfaceMaterialMacroParameters> SurfaceMaterialMacroParametersFromRecord(
+        const MaterialLayout &layout, std::span<const std::byte> record)
+    {
+        if (!HasField(layout, "macroPeriodMeters") && !HasField(layout, "macroStrength"))
+            return std::nullopt;
+
+        SurfaceMaterialMacroParameters parameters;
+        float period = 0.0f;
+        if (ReadField(layout, record, "macroPeriodMeters", MaterialFieldKind::Float, period))
+            parameters.periodMeters = static_cast<double>(period);
+        ReadFloat(layout, record, "macroStrength", parameters.strength);
+        ReadFloat(layout, record, "macroHueShiftDegrees", parameters.hueShiftDegrees);
+        ReadFloat(layout, record, "macroRoughnessContrast", parameters.roughnessContrast);
+        return parameters;
+    }
+
+    std::optional<SurfaceMaterialParallaxParameters> SurfaceMaterialParallaxParametersFromRecord(
+        const MaterialLayout &layout, std::span<const std::byte> record)
+    {
+        if (!HasField(layout, "parallaxHeightMeters") && !HasField(layout, "parallaxEnabled"))
+            return std::nullopt;
+
+        SurfaceMaterialParallaxParameters parameters;
+        uint32_t enabled = 0;
+        if (ReadField(layout, record, "parallaxEnabled", MaterialFieldKind::Bool, enabled))
+            parameters.enabled = enabled != 0;
+        uint32_t rayTraced = 0;
+        if (ReadField(layout, record, "parallaxRtEnabled", MaterialFieldKind::Bool, rayTraced))
+            parameters.rayTracedEnabled = rayTraced != 0;
+        ReadFloat(layout, record, "parallaxHeightMeters", parameters.heightMeters);
+        ReadFloat(layout, record, "parallaxReference", parameters.reference);
+        ReadFloat(layout, record, "parallaxDistanceMeters", parameters.maxDistanceMeters);
+        ReadField(layout, record, "parallaxSteps", MaterialFieldKind::Uint, parameters.steps);
+        ReadFloat(layout, record, "parallaxFadeStartMeters", parameters.fadeStartMeters);
+        ReadFloat(layout, record, "parallaxFadeEndMeters", parameters.fadeEndMeters);
+        return parameters;
+    }
+
+    bool ValidateSurfaceMaterialMacroParameters(const SurfaceMaterialMacroParameters &parameters, std::string *error)
+    {
+        if (parameters.periodMeters)
+        {
+            const double period = *parameters.periodMeters;
+            if (!std::isfinite(period) || !(period > 0.0))
+            {
+                SetParameterError(error, "macroPeriodMeters must be a positive finite period");
+                return false;
+            }
+        }
+        if (!FiniteInRange(parameters.strength, 0.0, 1.0))
+        {
+            SetParameterError(error, "macroStrength must be within [0, 1]");
+            return false;
+        }
+        if (!FiniteInRange(parameters.hueShiftDegrees, -180.0, 180.0))
+        {
+            SetParameterError(error, "macroHueShiftDegrees must be within [-180, 180]");
+            return false;
+        }
+        if (!FiniteInRange(parameters.roughnessContrast, 0.0, 2.0))
+        {
+            SetParameterError(error, "macroRoughnessContrast must be within [0, 2]");
+            return false;
+        }
+        return true;
+    }
+
+    bool ValidateSurfaceMaterialParallaxParameters(const SurfaceMaterialParallaxParameters &parameters,
+        std::string *error)
+    {
+        if (!FiniteInRange(parameters.heightMeters, 0.0, 0.5))
+        {
+            SetParameterError(error, "parallaxHeightMeters must be within [0, 0.5]");
+            return false;
+        }
+        if (!FiniteInRange(parameters.reference, 0.0, 1.0))
+        {
+            SetParameterError(error, "parallaxReference must be within [0, 1]");
+            return false;
+        }
+        if (!FiniteInRange(parameters.maxDistanceMeters, 0.0, 0.5))
+        {
+            SetParameterError(error, "parallaxDistanceMeters must be within [0, 0.5]");
+            return false;
+        }
+        if (parameters.steps > 128)
+        {
+            SetParameterError(error, "parallaxSteps must be at most 128");
+            return false;
+        }
+        if (!FiniteInRange(parameters.fadeStartMeters, 0.0, 1.0e6) ||
+            !FiniteInRange(parameters.fadeEndMeters, 0.0, 1.0e6) ||
+            parameters.fadeEndMeters < parameters.fadeStartMeters)
+        {
+            SetParameterError(error, "parallax fade distances must be finite and ordered");
+            return false;
+        }
+        if (parameters.enabled && !(parameters.heightMeters > 0.0))
+        {
+            SetParameterError(error, "parallaxHeightMeters must be positive while parallax is enabled");
+            return false;
+        }
+        return true;
+    }
+
+    void BuildSurfaceMacroTexture(uint32_t size, std::vector<std::byte> &rgba)
+    {
+        const uint32_t resolution = std::max(size, 4u);
+        rgba.assign(static_cast<size_t>(resolution) * resolution * 4, std::byte{255});
+        constexpr int32_t kFinePeriod = 32;
+        constexpr int32_t kCoarsePeriod = 8;
+        for (uint32_t y = 0; y < resolution; ++y)
+        {
+            const float v = (static_cast<float>(y) + 0.5f) / static_cast<float>(resolution);
+            for (uint32_t x = 0; x < resolution; ++x)
+            {
+                const float u = (static_cast<float>(x) + 0.5f) / static_cast<float>(resolution);
+                const float coarse = PeriodicValueNoise(u, v, kCoarsePeriod, 0x51ed270bu);
+                const float fine = PeriodicValueNoise(u, v, kFinePeriod, 0x9e3779b9u);
+                const float variation = std::clamp(0.72f * coarse + 0.28f * fine, 0.0f, 1.0f);
+                const float hue = std::clamp(PeriodicValueNoise(u, v, kCoarsePeriod, 0x2545f491u), 0.0f, 1.0f);
+                const float roughness = std::clamp(PeriodicValueNoise(u, v, kFinePeriod, 0x6a09e667u), 0.0f, 1.0f);
+                auto &pixel = rgba[(static_cast<size_t>(y) * resolution + x) * 4];
+                pixel = static_cast<std::byte>(variation * 255.0f + 0.5f);
+                rgba[(static_cast<size_t>(y) * resolution + x) * 4 + 1] =
+                    static_cast<std::byte>(hue * 255.0f + 0.5f);
+                rgba[(static_cast<size_t>(y) * resolution + x) * 4 + 2] =
+                    static_cast<std::byte>(roughness * 255.0f + 0.5f);
+                rgba[(static_cast<size_t>(y) * resolution + x) * 4 + 3] = std::byte{255};
+            }
+        }
     }
 
     void SurfaceMaterialLibrary::TakeResources(std::vector<MaterialHandle> &materials,
@@ -272,6 +498,18 @@ namespace mir
             cached = mRenderer->CreateTexture(
                 TextureDesc{.width = 1, .height = 1, .pixels = std::as_bytes(std::span(flatSurface)), .srgb = false});
             break;
+        case SurfaceTextureRole::Macro:
+        {
+            constexpr uint32_t kMacroSize = 256;
+            std::vector<std::byte> pixels;
+            BuildSurfaceMacroTexture(kMacroSize, pixels);
+            cached = mRenderer->CreateTexture(TextureDesc{.width = kMacroSize,
+                                                          .height = kMacroSize,
+                                                          .pixels = std::as_bytes(std::span(pixels)),
+                                                          .srgb = false,
+                                                          .generateMips = true});
+            break;
+        }
         case SurfaceTextureRole::Count:
             break;
         }
@@ -403,6 +641,8 @@ namespace mir
             return kNullMaterial;
 
         binding.tilePeriodMeters = SurfaceMaterialTilePeriodFromRecord(*layout, *record);
+        binding.macro = SurfaceMaterialMacroParametersFromRecord(*layout, *record);
+        binding.parallax = SurfaceMaterialParallaxParametersFromRecord(*layout, *record);
         if (mValidator && !mValidator(binding, error))
             return kNullMaterial;
 
