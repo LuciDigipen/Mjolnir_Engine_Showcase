@@ -13,6 +13,8 @@
 #include "Image2D.h"
 #include "Device.h"
 
+#include <renderer/CameraMath.h>
+
 #include <core/fs/FileIO.h>
 #include <core/log/Log.h>
 
@@ -88,17 +90,13 @@ namespace mir::vk
 
     VkRect2D ResolveViewRect(const VkRect2D &requested, VkExtent2D swapchainExtent)
     {
-        VkRect2D rect = (requested.extent.width > 0 && requested.extent.height > 0)
-            ? requested
-            : VkRect2D{ .offset{ 0, 0 }, .extent = swapchainExtent };
-
-        rect.offset.x = std::clamp(rect.offset.x, 0, static_cast<int32_t>(swapchainExtent.width));
-        rect.offset.y = std::clamp(rect.offset.y, 0, static_cast<int32_t>(swapchainExtent.height));
-        rect.extent.width = std::min(rect.extent.width,
-            swapchainExtent.width - static_cast<uint32_t>(rect.offset.x));
-        rect.extent.height = std::min(rect.extent.height,
-            swapchainExtent.height - static_cast<uint32_t>(rect.offset.y));
-        return rect;
+        glm::ivec2 offset;
+        const glm::uvec2 extent = ResolveRenderExtent({requested.offset.x, requested.offset.y},
+            {requested.extent.width, requested.extent.height},
+            {swapchainExtent.width, swapchainExtent.height}, &offset);
+        return VkRect2D{
+            .offset{ .x = offset.x, .y = offset.y },
+            .extent{ .width = extent.x, .height = extent.y } };
     }
 
     glm::vec2 InvExtent(VkExtent2D extent)

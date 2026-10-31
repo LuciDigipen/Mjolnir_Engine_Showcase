@@ -1,9 +1,8 @@
 # Surface material pipeline
 
-*State as of 2026-10-30.* M2 (#331) defines the surface framework, the default
-PBR material, shader discovery and the shader manifest. M3 (#332) adds typed
-material assets, packed texture cooking and versioned mip chains. The terrain
-frontend and runtime binding of the packed surface textures remain later work.
+*State as of 2026-10-31.* Shared GPU tables, reflected surface materials,
+default PBR lighting, versioned packed textures and the terrain frontend/runtime
+binding are implemented. POM and macro variation are later work.
 
 ## Source contract
 
@@ -32,8 +31,8 @@ A surface material is one UTF-8 JSON object. Unknown root keys are preserved in
 - `shader.file` resolves from the owning assets root, then another approved
   engine/game assets root. It may not be absolute or climb out. `shader.type`
   is the Slang type passed to `-specialize`.
-- `frontends` is a non-empty subset of `mesh` and `terrain`. M2 compiles mesh
-  outputs; a terrain-only material is valid but waits for the terrain frontend.
+- `frontends` is a non-empty subset of `mesh` and `terrain`. Each declared
+  frontend compiles its own raster, RT and reflected-layout registration.
 - `parameters` is keyed by the reflected field name. Packing rejects a missing
   field, an extra shape or an unsupported type.
 - `textures` is optional. When present, only the six roles above are accepted;
@@ -47,9 +46,9 @@ A surface material is one UTF-8 JSON object. Unknown root keys are preserved in
 The typed `SurfaceMaterialAsset` (tag `0x4d525355`, content version 1) is distinct
 from the legacy glTF `MaterialAsset`. It stores the source contract and packed
 texture asset ids in `albedoTexture`, `normalTexture` and `surfaceTexture`.
-Those ids describe cooked outputs; resolving them into reflected `TextureRef`
-fields and the terrain material is later integration work. The cooker preserves
-parameter JSON without interpreting reflected fields.
+The runtime material library resolves those ids into reflected `TextureRef`
+fields before creating the GPU material. The cooker preserves parameter JSON
+without interpreting reflected fields.
 
 ## Packing
 
@@ -132,7 +131,7 @@ plus type plus frontend; the output stem is
 the namespace). Assets sharing a source/type/frontend reuse the first compiled
 stem, including across engine/game namespaces, while keeping separate catalog
 records. Two same-named types from different sources get different
-stems. Terrain-only declarations defer without suppressing a later mesh one.
+stems. Mesh and terrain registrations use separate frontend identities.
 
 For the default type the outputs are:
 
@@ -218,3 +217,28 @@ surface materials compile the single-target `SurfaceForward` frontend, so an
 opaque generic surface draw keeps the existing raster lighting instead of
 running the SSGI surface pass. Legacy default/model/unlit/error materials and
 their SSGI inputs are unchanged.
+
+## Terrain
+
+A terrain material declares the `terrain` frontend. CMake compiles the same
+material type through `SurfaceTerrainForward.slang` and `SurfaceTerrainRt.slang`
+and keeps a separate registration for each frontend. Runtime terrain materials
+are owned by the renderer's `SurfaceMaterialLibrary`, which loads the cooked
+`SurfaceMaterialAsset`, resolves the catalog entry by asset and frontend, injects
+packed texture rows into the reflected `TextureRef` fields using the exact names
+`albedo`/`normal`/`surface` or their `Texture` aliases, packs the record and
+creates the shared-table material. The terrain binding is a named layer list
+containing only one base layer with weight one.
+
+Terrain UVs are terrain-local meters. The mesh uploader reduces the mesh origin
+once modulo the shared validation period and then adds each vertex locally, so a
+triangle keeps its slope across the period. A material divides by its own
+`tileSizeMeters`; its packed float value must divide the validation period
+within the checked double arithmetic tolerance. The terrain material's `normalYUp` field flips the OpenGL
+normal-map green channel. Region draw units use the coarse triangle's macro
+normal and UV density, which is the documented Region normal limitation.
+
+A cook reload stages a complete candidate material generation before the active
+one is touched. Abort disposes only the candidate; commit swaps it and retires
+the previous material and texture batch. See
+ADR 0004 (local ADR).

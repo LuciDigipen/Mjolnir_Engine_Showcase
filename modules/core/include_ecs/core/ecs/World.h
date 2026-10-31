@@ -49,6 +49,9 @@ namespace mir
         std::function<void(World &world, Entity entity)> onRemove;
     };
 
+    // defined in ComponentRegistry.cpp, which owns the transient fields each registration declares
+    void ResetTransientFields(TypeId type, void *component);
+
     // entity position of entity's archetype
     inline constexpr uint16_t kNoRemovingBit = 0xFFFF;
 
@@ -510,6 +513,7 @@ namespace mir
 
                 slot = column->GetComponent(row);
                 std::memcpy(slot, value, size);
+                ResetTransientFields(type, slot);
             }
 
             RemoveRow(*from.archetype, from.row);

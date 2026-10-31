@@ -2,6 +2,7 @@ engine_add_module_tests(renderer
     ActiveCamera.tests.cpp
     AntiAliasingEffect.tests.cpp
     BloomEffect.tests.cpp
+    CameraCut.tests.cpp
     CameraGizmo.tests.cpp
     CameraMath.tests.cpp
     DepthOfFieldEffect.tests.cpp
@@ -12,6 +13,7 @@ engine_add_module_tests(renderer
     MaterialReflection.tests.cpp
     MaterialResolution.tests.cpp
     SurfaceMaterialCatalog.tests.cpp
+    SurfaceMaterialLibrary.tests.cpp
     SurfaceMaterialLayout.tests.cpp
     MeshStreaming.tests.cpp
     FogEffect.tests.cpp

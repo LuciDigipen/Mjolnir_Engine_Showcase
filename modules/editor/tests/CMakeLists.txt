@@ -6,6 +6,7 @@ engine_add_module_tests(editor
     ComponentCommands.tests.cpp
     ContentBrowserWatcher.tests.cpp
     DocumentNodeCommands.tests.cpp
+    EditorCamera.tests.cpp
     EntityCommands.tests.cpp
     EntityDragPayload.tests.cpp
     History.tests.cpp

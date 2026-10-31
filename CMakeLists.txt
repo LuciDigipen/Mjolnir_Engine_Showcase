@@ -357,8 +357,15 @@ engine_write_shader_manifest(MjolnirEngine)
 
 # The reflection/manifest tests read the generated files, so a test build must
 # produce the same shader outputs as a game build.
-if(TARGET engine_renderer_tests AND TARGET MjolnirEngine_surface_shaders_default)
-    add_dependencies(engine_renderer_tests MjolnirEngine_surface_shaders_default)
+if(TARGET engine_renderer_tests)
+    if(TARGET MjolnirEngine_surface_shaders_default)
+        add_dependencies(engine_renderer_tests MjolnirEngine_surface_shaders_default)
+    endif()
+    foreach(game_name IN LISTS game_names)
+        if(TARGET MjolnirEngine_surface_shaders_${game_name})
+            add_dependencies(engine_renderer_tests MjolnirEngine_surface_shaders_${game_name})
+        endif()
+    endforeach()
 endif()
 
 engine_cook_assets(MjolnirEngine

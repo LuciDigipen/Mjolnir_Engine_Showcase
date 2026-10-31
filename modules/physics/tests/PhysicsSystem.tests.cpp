@@ -11,6 +11,7 @@
 #include <core/log/Log.h>
 #include <core/log/LogHistory.h>
 #include <physics/CollisionEvents.h>
+#include <physics/ComponentRegistration.h>
 #include <physics/PhysicsStepGate.h>
 #include <physics/PhysicsWorld.h>
 #include <physics/components/RigidBody.h>
@@ -49,6 +50,7 @@ namespace
 
         explicit PhysicsFixture(mir::EngineMode mode = mir::EngineMode::Play)
         {
+            mir::RegisterPhysicsComponents();
             world.EmplaceResource<mir::PhysicsWorld>();
             hooks = world.SetComponentHooks<mir::RigidBody>(
                 { .onAdd = &mir::PhysicsSystem::OnRigidBodyAdded, .onRemove = &mir::PhysicsSystem::OnRigidBodyRemoved });

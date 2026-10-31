@@ -160,7 +160,9 @@ void ReleaseSceneResources();                // every mesh, material and texture
 void ResetHistory();                         // the next frame accumulates fresh: a cut
 
 // Asynchronous meshes (#127): no call waits on the GPU
-bool ConfigureMeshStreaming(const MeshStreamingDesc &desc);  // staging ring and per-frame bytes, from the caller's data
+bool RequestStagingBytes(uint64_t bytes);                    // grows the ring if idle; false keeps the current ring
+bool SetUploadFrameBudget(uint64_t bytes);                   // per-frame bytes, from the next frame; false for zero
+uint64_t UploadFrameBudget() const;                          // the budget now, shared by every consumer
 MeshHandle QueueMesh(std::vector<Vertex> vertices, std::vector<uint32_t> indices, const MeshUploadOptions &options);
 MeshUploadState MeshState(MeshHandle handle) const;          // Stale, Pending, Uploading, Ready or Failed
 bool RetireMesh(MeshHandle handle);                          // stale at once, freed after its last frame
@@ -197,7 +199,7 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | Type | Header | Role |
 |---|---|---|
 | `Vertex`, `MeshHandle` | `renderer/Mesh.h` | `{pos, color, normal}`; a `{index, generation}` handle |
-| `MeshStreamingDesc`, `MeshUploadOptions`, `MeshUploadState`, `MeshStreamingStats` | `renderer/MeshStreaming.h` | the staging ring and per-frame byte budget; whether a queued mesh gets a BLAS; where a queued mesh is; the counters (bytes queued, uploading and retiring, idle waits, skipped draws, highest generation) |
+| `MeshStreamingDesc`, `MeshUploadOptions`, `MeshUploadState`, `MeshStreamingStats` | `renderer/MeshStreaming.h` | the staging ring and per-frame byte budget, and their defaults (32 MiB, 4 MiB); whether a queued mesh gets a BLAS; where a queued mesh is; the counters (bytes queued, uploading and retiring, idle waits, skipped draws, highest generation) |
 | `StagingRing`, `MeshUploadQueue`, `FrameRetireList` | `renderer/MeshStreaming.h` | the CPU bookkeeping behind them, tested without a device: ring space by frame, admission under the frame budget, objects kept until their last frame completes |
 | `ViewDrawSources`, `IViewDrawSource`, `ViewCamera` | `renderer/ViewDrawSource.h` | World resource of producers whose draws depend on the viewport (app's terrain): `Prepare` with every viewport's camera, then `AppendViewDraws` per view and `AppendVolumeDraws` per shadow volume at a view's detail |
 | `TextureDesc`, `TextureMipView`, `TextureHandle` | `renderer/Texture.h` | `{width, height, pixels, srgb, generateMips, mips}`, tightly-packed RGBA8; supplied `mips` must form the complete chain and are uploaded unchanged; `kNullTexture` falls back to a default in `CreateMaterial` |
@@ -212,6 +214,7 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `Viewport`, `ViewportId` | `renderer/RenderSystem.h` | `RenderSystem`'s per-viewport state: rect plus a World `Entity`, an external camera, or neither (fallback) |
 | `MeshRenderer`, `Camera` | `renderer/components/` | Handles, and `active`/`fovY`/`near`/`far` (`far` 0 = no far plane) plus the lens values post effects read (`exposure`, `focusDistance`, `aperture`, `shutterStrength`), declared here rather than in `core` |
 | `FindActiveCamera`, `SetActiveCamera`, `ResolvePlayCamera`, `ActiveCameraSystem` | `renderer/ActiveCamera.h` | The flagged `Camera`; flag one and clear the rest; the camera Play draws through (flagged, else lowest index); the `SystemPhase::Render` system, before `RenderSystem`, that keeps one flagged |
+| `CameraCuts`, `CutCamera`, `IsCameraCut`, `ClearCameraCuts` | `renderer/CameraCut.h` | The World resource of cameras cut since the last frame (made by the first `CutCamera`); mark one (false without a `Camera`); ask; `RenderSystem` clears them after the views - see Rules |
 | `MeshBounds` | `renderer/components/MeshBounds.h` | `{mLocalMin, mLocalMax}`, a mesh's own local-space AABB; attached and kept current by `app`'s `MeshResolveSystem` (see [app.md](app.md)), read by the editor's viewport click-picking (see [editor.md](editor.md)) — not used for rendering at all |
 | `FrustumSliceCorners` | `renderer/CameraMath.h` | A lens's view rectangle at a distance, in camera space; the `Camera` gizmo draws its near and far planes from it |
 | `Ray`, `RayIntersectsAABB`, `WorldRay`, `MakeCameraRay`, `RayIntersectsBox`, `RayIntersectsSphere` | `renderer/CameraMath.h` | `WorldRay` is a camera ray with a double `WorldPosition` origin and a float direction; `RayIntersectsBox` places a `WorldPose` box relative to that origin in double, then runs the local ray/AABB slab test; `RayIntersectsSphere` returns where a unit-direction ray enters a sphere, 0 if it starts inside — the same file `MakeViewProjection` lives in, so both stay in the same Vulkan-convention math |
@@ -220,7 +223,7 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `AntiAliasingMode`, `AntiAliasingParams`, `ClampAntiAliasingMode`, `ClampRtSampleCount` | `renderer/AntiAliasingEffect.h` | Off/Fxaa/Msaa/Dlss and `rtSampleCount`; the Post-Processing entry's json shape; the mode and sample-count enforcement `ResolvePostProcessing` applies every frame - see Rules |
 | `PostProcessingState`, `ResolvePostProcessing` | `renderer/PostProcessingState.h` | `PostProcessingSettings` and the viewing `Camera`'s lens resolved into the exact values `SetPostProcessing` applies: defaults for a missing entry, neutral values for a disabled one (fog density 0, exposure 1/None, bloom intensity 0, neutral film), negative lens values 0, motion blur's sample count at least 1, AA clamped. Pure, so it is unit-tested without a device |
 | `DlssConfig.h` | `renderer/DlssConfig.h` (generated) | `MIR_WITH_DLSS`/`kDlssCompiledIn` and the NGX project id |
-| `RenderSettings` | `renderer/RenderSettings.h` | Project Settings' `"rendering"` section (`rayTracing` and `ddgi`); `LoadFile`/`SaveFile`, a World resource `RendererModule` loads |
+| `RenderSettings` | `renderer/RenderSettings.h` | Project Settings' `"rendering"` section (`rayTracing`, `uploadMiBPerFrame` and `ddgi`); `LoadFile`/`SaveFile`, a World resource `RendererModule` loads |
 
 ## Rules
 
@@ -243,8 +246,12 @@ build-generated `shaders/surface_materials.json` is the runtime registration
 catalog. Records are packed from each entry's authored parameters and typed
 reflection, never from a C++ field mirror. RT allocates a primary/shadow SBT
 record pair per catalog entry; a surface instance's even base offset is
-`2 + 2*i`, so primary and shadow rays both stay in bounds. See
-`docs/material-pipeline.md` and ADR 0003.
+`2 + 2*i`, so primary and shadow rays both stay in bounds. Terrain registrations
+are compiled through `SurfaceTerrainForward.slang` and `SurfaceTerrainRt.slang`;
+`SurfaceMaterialLibrary` stages a complete candidate generation in
+`ReloadPrepare`, swaps it in `ReloadCommit`, and retires the old
+materials/textures through `ReleaseModelResources`. See
+`docs/material-pipeline.md`, ADR 0003 and ADR 0004.
 
 **Vulkan 1.4 with `dynamicRendering`, `synchronization2`, `timelineSemaphore` and
 `shaderDrawParameters`.** A device missing any of them is rejected during
@@ -323,6 +330,24 @@ queued, uploading and retiring bytes, and every `vkDeviceWaitIdle` and
 `vkQueueWaitIdle`, which all go through `Device::WaitIdle` and
 `WaitQueueIdle`. `CreateMesh` and `DestroyMesh` keep their synchronous
 behaviour, BLAS included.
+
+**The renderer owns the ring and the budget.** `Initialize` creates a 32 MiB
+ring and a 4 MiB frame budget (`kDefaultStagingBytes`, `kDefaultFrameBytes`) and
+fails if the ring cannot be allocated, so `QueueMesh` needs no setup.
+`RequestStagingBytes` grows the ring, and only while nothing is queued or in
+flight: it is a no-op when the ring is already big enough, and when it cannot
+grow it logs and the caller carries on with the current ring, so its uploads
+only take more frames. The new ring is allocated before the old one is
+released, so a failed allocation loses nothing. `SetUploadFrameBudget` changes
+only the per-frame bytes, from the next frame's admission and also while uploads
+are queued, and refuses zero. Every consumer shares that one budget. A game sets
+the value it plays with as `rendering.uploadMiBPerFrame` in
+`project_settings.json`, which `RendererModule` applies at startup and which
+terrain follows through `TerrainMeshUploader::FrameBudgetBytes`. A loading
+gate may raise the budget while no frames are visible and must set this value
+back afterwards. Tune it by flying a scene and watching
+`MeshStreamingStats::pendingBytes` stay near zero while `maxFrameBytes` stays
+under what a frame can absorb.
 
 **Terrain tiles are traced like any other mesh.** Each drawn unit (a tile at
 a LOD or a Region) gets its own BLAS and one TLAS instance per frame, so the
@@ -620,6 +645,10 @@ should supply a stable `historyId` or reset history when switching cameras.
 A `historyId` change is a camera cut for the other temporal state too:
 `CameraBuffer` drops that view slot's previous view-projection and jitter
 sequence, so motion blur sees no camera motion, and `TraceFrame` resets DLSS.
+A view with `cut` set is the same cut without a camera change: the camera
+jumped. Its draws are built with no previous pose too, so an object that moved
+with the camera (a player teleported along with it) gets no velocity either.
+DDGI keeps its probes through either, since they light the world, not the view.
 Filtering has a separate 256 MiB allocation cap across frame slots; unsupported
 layouts retain existing lighting.
 
@@ -953,6 +982,19 @@ flagged, Play draws through the lowest-index `Camera`; with no `Camera` at all,
 from the origin with a default lens. Each warns once per scene load and Play
 session.
 
+**Whoever causes a camera cut signals it; `RenderSystem` does not guess one
+from camera motion.** Switching the camera a view draws through changes its `historyId`,
+which is already a cut. A camera that jumps without changing (a teleport, a
+respawn) is cut with `CutCamera(world, camera)` or `world:cut_camera(camera)`;
+an external camera, which no entity names, with `RenderSystem::CutViewport(id)`
+(the editor camera's `FocusOn`, `SetPosition` and document switches, see
+[editor.md](editor.md)). `RenderSystem` sets `cut` on every view drawing
+through that camera or viewport the next frame, builds those views' draws with
+no previous pose, then clears every cut, so each one resets history once; a
+cut on a camera no view shows is dropped. Scene load and Play begin are the same signal
+at the transition level: `RendererModule` calls `ResetHistory` from those
+stages.
+
 **Exposure, focus distance, aperture and shutter strength come from viewport
 0's `Camera`.** `RenderSystem` resolves the viewports first and hands that lens
 to `ResolvePostProcessing`, so in Play the active `Camera` drives HDR, Depth of
@@ -1056,6 +1098,31 @@ Everything that needs a device is verified by the smoke tests and
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-10-31* — **The renderer owns the upload staging ring and budget (#359).**
+Was: terrain was the only user and configured the ring and the per-frame budget
+itself with `ConfigureMeshStreaming`, which refused once anything was queued, so
+scene meshes queueing first left terrain with no ring and no terrain drawn. Now:
+`Initialize` creates a 32 MiB ring and a 4 MiB budget, consumers call
+`RequestStagingBytes` to ask for more, and `SetUploadFrameBudget` changes the
+budget at runtime without touching the ring. `ConfigureMeshStreaming` is gone.
+The play-time budget is the game's `rendering.uploadMiBPerFrame`, read into
+`RenderSettings`. Because: every async asset path goes through this ring, so one
+consumer must not decide its size, and a flight game streaming a very large
+terrain needs the number in its own settings.
+
+*2026-10-30* — **A camera that jumps says so, and its next frame keeps no
+history (#298).** Was: only a camera switch (a `historyId` change), a scene
+load and Play begin reset temporal history, so the first frame after a camera
+teleport blended in the frames before it: DLSS ghosted and motion blur smeared.
+Now:
+`CutCamera` / `world:cut_camera` mark a cut, and `CutViewport` does for an
+external camera, which the editor camera calls when it jumps. `RenderSystem`
+sets `RenderView::cut` on the views drawing through that camera for one frame,
+builds their draws with no previous pose, and the renderer treats it as a
+`historyId` change. Because: only the code that
+moves the camera knows a jump from fast motion; a view-matrix threshold would
+miss small jumps and cut fast turns.
 
 *2026-10-27* — **A camera cut resets motion blur's and DLSS's history
 (#231).** Was: switching the active camera kept the previous camera's

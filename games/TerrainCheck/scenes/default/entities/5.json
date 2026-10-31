@@ -27,7 +27,8 @@
     },
     {
       "fields": {
-        "recipePath": "terrain/streamed-16x16.terrain.json"
+        "recipePath": "terrain/streamed-16x16.terrain.json",
+        "materialPath": "materials/icelandicSand.material.json"
       },
       "type": "TerrainInstance"
     },

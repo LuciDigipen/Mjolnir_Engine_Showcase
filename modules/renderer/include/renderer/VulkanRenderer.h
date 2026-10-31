@@ -69,6 +69,8 @@ namespace mir::vk
 
 namespace mir
 {
+    struct SurfaceMaterialCatalog;
+
     struct RendererDesc
     {
         const ISurfaceProvider *window;
@@ -178,10 +180,14 @@ namespace mir
         bool rayTracingSceneComplete = true;
         // Stable camera identity for temporal effects; callers with no ID reset history on camera switches.
         uint64_t historyId = 0;
+        // The camera jumped, this view keeps no history
+        bool cut = false;
         // Editor-only debug drawing for this view; the default is the final render alone.
         DebugViewSettings debugView;
         // Vertex pairs drawn as lines over everything, never hidden by the scene; colliders while debugView asks.
         std::span<const DebugLinePoint> debugLines;
+        // The lens FOV that produced viewProj, for rotation-invariant ray-cone math.
+        float fovYDegrees = 0.0f;
     };
 
     class VulkanRenderer
@@ -217,6 +223,10 @@ namespace mir
 
         MaterialHandle ErrorMaterial() const;
 
+        // Stable shared-table rows for a material record's TextureRef fields.
+        uint32_t MaterialSamplerRow(const SamplerDesc &desc);
+        const SurfaceMaterialCatalog &SurfaceMaterials() const;
+
         void CaptureNextFrame(const std::filesystem::path &path);
 
         void ReleaseSceneResources();
@@ -236,8 +246,13 @@ namespace mir
         // Asynchronous meshes (renderer/MeshStreaming.h), none of which waits on the GPU: a queued mesh is copied
         // through the persistent staging ring at the start of a frame, within the per-frame byte budget, and is
         // Ready once that frame completes; a retired one is freed once every frame that may use it completes.
-        // CreateMesh and DestroyMesh stay synchronous. Configure once before queueing.
-        bool ConfigureMeshStreaming(const MeshStreamingDesc &desc);
+        // CreateMesh and DestroyMesh stay synchronous.
+        //
+        // Grows the staging ring to at least this size, true if it is that big afterwards.
+        bool RequestStagingBytes(uint64_t bytes);
+        // The GPU bytes one frame may write, shared by every consumer.
+        bool SetUploadFrameBudget(uint64_t bytes);
+        uint64_t UploadFrameBudget() const;
         MeshHandle QueueMesh(std::vector<Vertex> vertices, std::vector<uint32_t> indices,
             const MeshUploadOptions &options);
         MeshUploadState MeshState(MeshHandle handle) const;

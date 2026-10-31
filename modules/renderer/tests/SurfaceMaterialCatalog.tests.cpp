@@ -32,6 +32,11 @@ namespace
               "asset": "games/one/assets/materials/b.material.json",
               "shader": "games/one/assets/materials/a.slang",
               "parameters": { "value": 2.0 },
+              "reflection": "unit_surface.reflection.json" },
+            { "stem": "game_Type_2", "type": "Type", "frontend": "terrain",
+              "asset": "games/one/assets/materials/terrain.material.json",
+              "shader": "games/one/assets/materials/a.slang",
+              "parameters": { "value": 3.0 },
               "reflection": "unit_surface.reflection.json" }
         ]
     })";
@@ -81,9 +86,13 @@ TEST_CASE("Surface catalog keeps per-asset records while sharing a stem", "[rend
     const auto catalog = LoadSurfaceMaterialCatalog(&error);
     INFO(error);
     REQUIRE(catalog.has_value());
-    REQUIRE(catalog->materials.size() == 2);
+    REQUIRE(catalog->materials.size() == 3);
     CHECK(catalog->materials[0].stem == catalog->materials[1].stem);
     CHECK(catalog->materials[0].asset != catalog->materials[1].asset);
+    CHECK(catalog->materials[2].frontend == "terrain");
+    CHECK(catalog->FindByAsset("games/one/assets/materials/terrain.material.json", "terrain") ==
+          &catalog->materials[2]);
+    CHECK(catalog->FindByAsset("games/one/assets/materials/terrain.material.json", "mesh") == nullptr);
 
     const auto *first = catalog->Find("game_Type_1", "games/one/assets/materials/a.material.json");
     const auto *second = catalog->Find("game_Type_1", "games/one/assets/materials/b.material.json");

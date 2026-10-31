@@ -24,7 +24,6 @@
   },
   "gpu": {
     "budgetMiB": 128,
-    "uploadMiBPerFrame": 4,
     "stagingMiB": 16,
     "meshRetainSeconds": 4.0
   },

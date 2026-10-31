@@ -324,8 +324,10 @@ namespace mir
         if (editorView)
         {
             mEditor.UpdateCamera(mFrameDt);
-            const EditorCamera &camera = mEditor.SceneCamera();
+            EditorCamera &camera = mEditor.SceneCamera();
             rendering.SetExternalCamera(0, camera.Pose(), camera.mLens);
+            if (camera.TakeCut())
+                rendering.CutViewport(0);
         }
         else
         {

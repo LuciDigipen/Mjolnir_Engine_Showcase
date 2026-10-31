@@ -31,7 +31,7 @@ namespace mir
 
     // Narrows world positions to float; returns how many draws did not fit.
     size_t BuildViewDrawItems(std::span<const WorldDrawItem> items, WorldPosition viewportCamera,
-                              const glm::mat4 &viewProj, std::vector<DrawItem> &out);
+                              const glm::mat4 &viewProj, std::vector<DrawItem> &out, bool cut = false);
 
     // Narrows world-space line vertex pairs against one viewport's camera. A pair with an end too far for float
     // is dropped whole, so the output stays pairs.

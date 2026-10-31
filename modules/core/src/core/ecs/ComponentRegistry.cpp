@@ -112,6 +112,13 @@ namespace mir
 
     const ComponentOps &ComponentRegistry::InsertNative(const ComponentOps &ops, const void *defaultValue)
     {
+        for (const TransientField &field : ops.mTransient)
+        {
+            MIR_CHECK(field.mSize != 0 && field.mOffset + field.mSize <= ops.mSize,
+                      "ComponentRegistry: \"{}\" declares a transient field at {}+{} outside its {} bytes",
+                      ops.mType.name, field.mOffset, field.mSize, ops.mSize);
+        }
+
         if (ComponentOps *existing = FindComponentOps(ops.mType.hash, ops.mType.name))
         {
             MIR_CHECK(!existing->mRuntime,
@@ -134,6 +141,17 @@ namespace mir
             {
                 MIR_CHECK(ops.mFields.empty() || ops.mFields.data() == existing->mFields.data(),
                           "ComponentRegistry: \"{}\" registered twice with different field tables",
+                          ops.mType.name);
+            }
+
+            if (existing->mTransient.empty())
+            {
+                existing->mTransient = ops.mTransient;
+            }
+            else
+            {
+                MIR_CHECK(ops.mTransient.empty() || ops.mTransient.data() == existing->mTransient.data(),
+                          "ComponentRegistry: \"{}\" registered twice with different transient fields",
                           ops.mType.name);
             }
 
@@ -264,6 +282,19 @@ namespace mir
     {
         const auto it = mBySeq.find(seq);
         return it == mBySeq.end() ? nullptr : it->second;
+    }
+
+    void ResetTransientFields(TypeId type, void *component)
+    {
+        const ComponentOps *ops = ComponentRegistry::Instance().FindBySeq(type.seq);
+        if (ops == nullptr)
+            return;
+
+        for (const TransientField &field : ops->mTransient)
+        {
+            std::memcpy(static_cast<std::byte *>(component) + field.mOffset, ops->mDefaultValue.data() + field.mOffset,
+                        field.mSize);
+        }
     }
 
     void RegisterCoreComponents()

@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <format>
 #include <optional>
@@ -52,6 +53,7 @@ namespace mir::vk
             glm::mat4 prevViewProj;         // last frame's viewProj for this view slot; this frame's own when there was none
             glm::mat4 sunShadowViewProj;
             glm::vec4 jitterAndPad; // xy = this frame's sub-pixel jitter in pixels, ray tracing + Dlss only
+            glm::vec4 rayCone;      // x = one pixel's angular size at this view's projection
         };
 
         // Must match GpuLight in assets/shaders/LightingCommon.slang.
@@ -233,7 +235,7 @@ namespace mir::vk
     }
 
     uint32_t CameraBuffer::WriteView(uint32_t frame, const RenderView &view, uint32_t viewIndex,
-        const ViewShadowInfo &shadow, bool applyJitter, glm::vec2 *outJitter)
+        const ViewShadowInfo &shadow, VkExtent2D viewExtent, bool applyJitter, glm::vec2 *outJitter)
     {
         // The atmosphere needs the camera's altitude over its planet, where
         // float's 1/64 m at the map edge is invisible; no geometry reads it.
@@ -245,7 +247,7 @@ namespace mir::vk
 
         const bool hasHistory = viewIndex < kMaxViewsPerFrame;
         // A different camera in this slot is a cut: no velocity or jitter sequence carries over.
-        if (hasHistory && mPreviousHistoryId[viewIndex] != view.historyId)
+        if (hasHistory && (view.cut || mPreviousHistoryId[viewIndex] != view.historyId))
         {
             mHasPreviousViewProj[viewIndex] = false;
             mJitterIndex[viewIndex] = 0;
@@ -294,7 +296,9 @@ namespace mir::vk
                 shadow.hasSunShadow ? 1.0f : 0.0f, static_cast<float>(shadow.spotShadowBase)),
             .prevViewProj = prevViewProj,
             .sunShadowViewProj = shadow.sunShadowViewProj,
-            .jitterAndPad = glm::vec4(jitter, 0.0f, 0.0f) };
+            .jitterAndPad = glm::vec4(jitter, 0.0f, 0.0f),
+            .rayCone = glm::vec4(CameraPixelAngularSize(view.fovYDegrees,
+                {viewExtent.width, viewExtent.height}), 0.0f, 0.0f, 0.0f) };
         const VkDeviceSize offset = static_cast<VkDeviceSize>(viewIndex) * mCameraAlignedSize;
 
         std::byte *const dst = mCameraMapped[frame] + offset;

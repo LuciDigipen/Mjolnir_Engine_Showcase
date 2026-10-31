@@ -89,9 +89,7 @@ namespace mir
         {
             // Meshes building, uploading, held, and retired but not freed yet.
             uint64_t budgetBytes = 0;
-            // Mesh bytes the renderer may upload in one frame, BLAS builds included.
-            uint64_t uploadBytesPerFrame = 0;
-            // The renderer's persistent staging ring.
+            // The least the renderer's staging ring should hold.
             uint64_t stagingBytes = 0;
             // A mesh outlives its last want or draw by this much.
             double meshRetainSeconds = std::numeric_limits<double>::quiet_NaN();

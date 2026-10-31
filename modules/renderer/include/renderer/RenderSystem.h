@@ -8,6 +8,7 @@
  */
 #pragma once
 #include "renderer/ActiveCamera.h"
+#include "renderer/CameraCut.h"
 #include "renderer/CameraMath.h"
 #include "renderer/ViewDrawSource.h"
 #include "renderer/ViewSubmission.h"
@@ -73,6 +74,8 @@ namespace mir
         bool mUseExternalCamera = false;
 
         DebugViewSettings mDebugView;
+
+        bool mCut = false;
     };
 
     class RenderSystem final : public ISystem
@@ -136,6 +139,13 @@ namespace mir
                 mViewports[id].mExternalCamera = camera;
                 mViewports[id].mUseExternalCamera = true;
             }
+        }
+
+        
+        void CutViewport(ViewportId id)
+        {
+            if (id < mViewports.size())
+                mViewports[id].mCut = true;
         }
 
         // The editor sets this on its scene viewport; a game build never does.
@@ -445,6 +455,9 @@ namespace mir
             for (size_t v = 0; v < mViewCameras.size(); ++v)
             {
                 const ViewCamera &view = mViewCameras[v];
+                const auto &viewport = mViewports[view.viewport];
+                const Entity viewCamera = viewport.mCameraEntity.IsNull() ? playCamera.mEntity : viewport.mCameraEntity;
+                const bool cut = viewport.mCut || (!viewport.mUseExternalCamera && IsCameraCut(source, viewCamera));
                 std::span<const WorldDrawItem> worldItems = mDrawItems;
                 if (viewSources && !viewSources->sources.empty())
                 {
@@ -457,14 +470,14 @@ namespace mir
                 // Each viewport narrows against its own camera, so the same
                 // world item gets a different model matrix per view.
                 std::vector<DrawItem> &items = mDrawItemsPerViewport[v];
-                skippedItems += BuildViewDrawItems(worldItems, view.pose.position, view.viewProj, items);
+                skippedItems += BuildViewDrawItems(worldItems, view.pose.position, view.viewProj, items, cut);
 
-                mRenderViews.push_back(RenderView{ mViewports[view.viewport].mRect, items, view.viewProj,
+                mRenderViews.push_back(RenderView{ viewport.mRect, items, view.viewProj,
                                                   view.pose.position, view.lens.mNearZ,
                                                   view.lens.HasFarPlane() ? view.lens.mFarZ : 0.0f });
-                const auto &viewport = mViewports[view.viewport];
-                mRenderViews.back().historyId = viewport.mUseExternalCamera ? UINT64_MAX :
-                    PackEntity(viewport.mCameraEntity.IsNull() ? playCamera.mEntity : viewport.mCameraEntity);
+                mRenderViews.back().fovYDegrees = view.lens.mFovYDegrees;
+                mRenderViews.back().historyId = viewport.mUseExternalCamera ? UINT64_MAX : PackEntity(viewCamera);
+                mRenderViews.back().cut = cut;
                 mRenderViews.back().debugView = viewport.mDebugView;
 
                 mDebugLinesPerViewport[v].clear();
@@ -476,6 +489,10 @@ namespace mir
                 }
                 mRenderViews.back().debugLines = mDebugLinesPerViewport[v];
             }
+            // after every view, since two viewports can show the same camera
+            ClearCameraCuts(source);
+            for (Viewport &viewport : mViewports)
+                viewport.mCut = false;
 
             // Only the main World's physics fills the lines; a preview World has none, so it asks for none.
             if (DebugLines *mainLines = context.world.TryResource<DebugLines>())
@@ -535,7 +552,7 @@ namespace mir
                         // transparent groups; no camera-depth sorting for the TLAS.
                         mRenderViews.front().rayTracingSceneComplete =
                             BuildViewDrawItems(mRayTracingWorldItems, mRenderViews.front().cameraPosition,
-                                glm::mat4(1.0f), mRayTracingItems) == 0;
+                                glm::mat4(1.0f), mRayTracingItems, mRenderViews.front().cut) == 0;
                         mRenderViews.front().rayTracingItems = mRayTracingItems;
                     }
                 mRenderer.TraceFrame(mRenderViews);

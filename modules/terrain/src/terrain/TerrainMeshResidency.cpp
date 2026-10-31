@@ -464,6 +464,7 @@ namespace mir
             return std::tie(b.want->demand, a.want->rank) < std::tie(a.want->demand, b.want->rank);
         });
 
+        const uint64_t frameBudget = impl.uploader.FrameBudgetBytes();
         uint64_t building = 0;
         for (const auto &[key, entry] : impl.entries)
             if (entry.state == TerrainMeshState::Building || entry.state == TerrainMeshState::Built)
@@ -476,7 +477,7 @@ namespace mir
             if (!record)
                 continue;
             const uint64_t bytes = impl.uploader.Footprint(record->vertexCount, record->indexCount);
-            if (building > 0 && building + bytes > impl.settings.uploadBytesPerFrame)
+            if (building > 0 && building + bytes > frameBudget)
                 break;
             if (impl.held + bytes > impl.settings.budgetBytes)
                 impl.MakeRoom(candidate.want->demand, bytes);
@@ -522,7 +523,7 @@ namespace mir
         std::sort(built.begin(), built.end(), [](const auto &a, const auto &b) { return a.first < b.first; });
         for (const auto &[order, key] : built)
         {
-            if (impl.uploader.QueuedBytes() >= impl.settings.uploadBytesPerFrame)
+            if (impl.uploader.QueuedBytes() >= frameBudget)
                 break;
             Impl::Entry &entry = impl.entries.at(key);
             const TerrainLocalPosition origin = entry.built->origin;

@@ -55,14 +55,21 @@ namespace
         return std::move(*result.value);
     }
 
-    TerrainStreamingSettings::Gpu GpuSettings(uint64_t budget, uint64_t perFrame, double retain = 1.0)
+    // The settings plus the frame budget the fake uploader reports.
+    struct GpuCase
     {
         TerrainStreamingSettings::Gpu gpu;
-        gpu.budgetBytes = budget;
-        gpu.uploadBytesPerFrame = perFrame;
-        gpu.stagingBytes = perFrame;
-        gpu.meshRetainSeconds = retain;
-        return gpu;
+        uint64_t frameBudget = 0;
+    };
+
+    GpuCase GpuSettings(uint64_t budget, uint64_t perFrame, double retain = 1.0)
+    {
+        GpuCase c;
+        c.gpu.budgetBytes = budget;
+        c.gpu.stagingBytes = perFrame;
+        c.gpu.meshRetainSeconds = retain;
+        c.frameBudget = perFrame;
+        return c;
     }
 
     struct Release
@@ -131,7 +138,10 @@ namespace
         TerrainMeshResidency residency;
         double now = 0.0;
 
-        explicit Harness(const TerrainStreamingSettings::Gpu &gpu) : residency(gpu, builds, uploader) {}
+        explicit Harness(const GpuCase &c) : residency(c.gpu, builds, uploader)
+        {
+            uploader.frameBudget = c.frameBudget;
+        }
 
         void Request(std::span<const TerrainSelectionInstance> instances, std::vector<TerrainPayloadWant> wants,
                      const TerrainStreamer &streamer)
@@ -250,6 +260,33 @@ TEST_CASE("Built meshes go to the uploader only while a frame's upload has room"
     h.uploader.Frame();
     h.Request({&a.instance, 1}, wants, payloads.streamer);
     CHECK(h.uploader.meshes.size() == 2);
+}
+
+TEST_CASE("A frame budget change between requests changes how many builds start", "[terrain][gpu]")
+{
+    const Release a(0x127, {0.0, 0.0, 0.0});
+    const Payloads payloads{&a};
+    const FakeUploader sizes;
+    const uint64_t tileBytes = a.Bytes(a.Tile({0, 0}), sizes);
+    Harness h(GpuSettings(uint64_t(1) << 30, tileBytes));
+
+    std::vector<TerrainPayloadWant> wants;
+    for (int32_t x = 0; x < 4; ++x)
+        wants.push_back({a.Tile({x, 0}), Demand::Visible, float(x)});
+    const auto building = [&]
+    {
+        int count = 0;
+        for (const TerrainPayloadWant &want : wants)
+            count += h.residency.State(want.key) == TerrainMeshState::Building;
+        return count;
+    };
+
+    h.Request({&a.instance, 1}, wants, payloads.streamer);
+    CHECK(building() == 1);
+
+    h.uploader.frameBudget = 4 * tileBytes;
+    h.Request({&a.instance, 1}, wants, payloads.streamer);
+    CHECK(building() == 4);
 }
 
 TEST_CASE("A Visible mesh makes room by retiring unwanted, then Prefetch meshes, never a Visible one", "[terrain][gpu]")

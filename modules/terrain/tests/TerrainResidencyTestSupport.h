@@ -57,6 +57,11 @@ namespace mir::test
             return bytes;
         }
 
+        uint64_t FrameBudgetBytes() const override
+        {
+            return frameBudget;
+        }
+
         TerrainGpuMeshId Upload(TerrainMeshData &&data) override
         {
             uploadOrder.push_back(data.geometry);
@@ -124,6 +129,8 @@ namespace mir::test
         std::vector<TerrainPayloadKey> retired;
         uint64_t retiring = 0;
         bool refuse = false;
+        // The renderer default.
+        uint64_t frameBudget = uint64_t(4) * 1024 * 1024;
         TerrainGpuMeshId nextId = 1;
     };
 
