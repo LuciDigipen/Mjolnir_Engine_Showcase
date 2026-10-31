@@ -250,8 +250,14 @@ record pair per catalog entry; a surface instance's even base offset is
 are compiled through `SurfaceTerrainForward.slang` and `SurfaceTerrainRt.slang`;
 `SurfaceMaterialLibrary` stages a complete candidate generation in
 `ReloadPrepare`, swaps it in `ReloadCommit`, and retires the old
-materials/textures through `ReleaseModelResources`. See
-`docs/material-pipeline.md`, ADR 0003 and ADR 0004.
+materials/textures through `ReleaseModelResources`. Its
+`CurrentSchema` re-reads the registration reflection independently of any
+watcher. `PreviewParameters` stages a schema replacement as a candidate,
+overlays dirty numeric values on the accepted parameters, runs the consumer and
+record validators, updates the candidate record through `UpdateMaterialRecord`,
+and only then publishes it and bumps generation; a failure destroys the
+candidate and keeps the previous material, record and preview. Numeric edits
+create no pipeline. See `docs/material-pipeline.md`.
 
 **Vulkan 1.4 with `dynamicRendering`, `synchronization2`, `timelineSemaphore` and
 `shaderDrawParameters`.** A device missing any of them is rejected during

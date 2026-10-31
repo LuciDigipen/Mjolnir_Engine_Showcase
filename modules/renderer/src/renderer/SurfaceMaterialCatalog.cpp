@@ -161,7 +161,7 @@ namespace mir
         }
     }
 
-    std::optional<std::vector<std::byte>> PackSurfaceMaterialRecord(
+    std::optional<SurfaceMaterialSchema> LoadSurfaceMaterialSchema(
         const SurfaceMaterialRegistration &registration, std::string *error)
     {
         const std::filesystem::path reflectionPath = ShaderPath(registration.reflectionFile);
@@ -175,6 +175,19 @@ namespace mir
         const auto layout = ParseMaterialLayout(reflection, error);
         if (!layout)
             return std::nullopt;
-        return PackMaterialRecord(*layout, registration.parametersJson, error);
+
+        SurfaceMaterialSchema schema;
+        schema.layout = *layout;
+        schema.revision = MaterialLayoutRevision(*layout);
+        return schema;
+    }
+
+    std::optional<std::vector<std::byte>> PackSurfaceMaterialRecord(
+        const SurfaceMaterialRegistration &registration, std::string *error)
+    {
+        const std::optional<SurfaceMaterialSchema> schema = LoadSurfaceMaterialSchema(registration, error);
+        if (!schema)
+            return std::nullopt;
+        return PackMaterialRecord(schema->layout, registration.parametersJson, error);
     }
 }

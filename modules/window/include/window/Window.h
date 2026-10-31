@@ -62,6 +62,8 @@ namespace mir
         virtual void ToggleMaximize() {}
         virtual bool IsMaximized() const { return false; }
         virtual void RequestClose() {}
+        // Cancels a close already requested by the OS, so the app can ask first.
+        virtual void CancelClose() {}
 
         virtual void ToggleFullscreen() {}
         virtual bool IsFullscreen() const { return false; }

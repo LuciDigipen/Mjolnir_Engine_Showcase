@@ -18,6 +18,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
 namespace mir
@@ -47,6 +48,18 @@ namespace mir
         void MarkApplyFailed(std::string diagnostic);
         void Reject(const std::string &model, std::string diagnostic);
 
+        // The project's source asset root; logical assets live under it.
+        const std::filesystem::path &SourceAssetRoot() const { return mSourceAssetRoot; }
+        // Queues one authored .material.json for a finite cook batch and returns
+        // the request identity the apply ack must match.
+        uint64_t ReimportMaterial(std::string_view logicalPath);
+        // The last request identity whose cook output the runtime actually
+        // accepted. A finished cook that is still waiting for the renderer is
+        // not acknowledged.
+        std::optional<uint64_t> MaterialCookRevision(std::string_view logicalPath) const;
+        std::optional<uint64_t> MaterialCookFailureRevision(std::string_view logicalPath) const;
+        uint64_t ApplySequence() const { return mApplySequence; }
+
     private:
         struct Batch
         {
@@ -54,6 +67,7 @@ namespace mir
             std::set<std::filesystem::path> changed;
             std::set<std::string> removals;
             std::map<std::string, std::filesystem::path> moves;
+            std::map<std::string, uint64_t> materialSequences;
             bool force = false;
             // no --model arguments: AssetCooker cooks everything and writes a fresh manifest
             bool fullCook = false;
@@ -88,6 +102,11 @@ namespace mir
         AssetImportView mView;
         std::unordered_map<std::string, AssetImportStatus> mStatus;
         std::unordered_map<std::string, std::string> mDiagnostics;
+        uint64_t mMaterialRequestSequence = 0;
+        std::unordered_map<std::string, uint64_t> mMaterialCookRevision;
+        std::unordered_map<std::string, uint64_t> mMaterialFailureRevision;
+        std::unordered_map<std::string, uint64_t> mPendingApplyRevision;
+        uint64_t mApplySequence = 0;
         std::map<std::filesystem::path, WatchedFile> mWatched;
         std::chrono::steady_clock::time_point mLastWatchPoll{};
         std::optional<uint64_t> mImportCacheSignature;

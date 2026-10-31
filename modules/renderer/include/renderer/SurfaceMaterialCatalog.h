@@ -8,6 +8,8 @@
  */
 #pragma once
 
+#include <renderer/MaterialReflection.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -49,6 +51,19 @@ namespace mir
     // Reads shaders/surface_materials.json beside the executable. Missing or
     // malformed registrations are an explicit error, never a default fallback.
     std::optional<SurfaceMaterialCatalog> LoadSurfaceMaterialCatalog(std::string *error = nullptr);
+
+    // The layout a registration currently compiles to, and a revision that
+    // changes on any field name, kind, offset, size or record-size change.
+    struct SurfaceMaterialSchema
+    {
+        MaterialLayout layout;
+        std::string revision;
+    };
+
+    // Re-reads the registration's reflection file. This is the schema refresh
+    // an editor can call without waiting for a watcher.
+    std::optional<SurfaceMaterialSchema> LoadSurfaceMaterialSchema(const SurfaceMaterialRegistration &registration,
+        std::string *error = nullptr);
 
     // Parses the registration's reflection witness and packs parameters from
     // the authored JSON. This is the only production record initializer.
