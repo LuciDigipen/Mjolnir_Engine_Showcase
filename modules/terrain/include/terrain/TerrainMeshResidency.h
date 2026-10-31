@@ -56,6 +56,8 @@ namespace mir
         virtual uint64_t Footprint(uint32_t vertices, uint32_t indices) const = 0;
         // Handed over and not recorded for upload yet.
         virtual uint64_t QueuedBytes() const = 0;
+        // GPU bytes the renderer takes in one frame.
+        virtual uint64_t FrameBudgetBytes() const = 0;
         // Zero when the mesh cannot be queued.
         virtual TerrainGpuMeshId Upload(TerrainMeshData &&mesh) = 0;
         virtual TerrainGpuMeshState State(TerrainGpuMeshId mesh) const = 0;

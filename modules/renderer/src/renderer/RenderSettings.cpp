@@ -14,6 +14,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <type_traits>
@@ -130,6 +131,17 @@ namespace mir
         return nullptr;
     }
 
+    bool RenderSettings::ValidUploadMiBPerFrame(double mib)
+    {
+        return std::isfinite(mib) && mib > 0.0 && mib <= kMaxUploadMiBPerFrame;
+    }
+
+    uint64_t RenderSettings::UploadFrameBytes() const
+    {
+        // Never zero.
+        return std::max<uint64_t>(1, uint64_t(uploadMiBPerFrame * 1024.0 * 1024.0));
+    }
+
     std::optional<RenderSettings> RenderSettings::LoadFile(const std::filesystem::path &path)
     {
         const std::optional<json> root = ReadJsonFile(path);
@@ -148,6 +160,11 @@ namespace mir
         const auto rt = renderingIt->find("rayTracing");
         if (rt != renderingIt->end() && rt->is_boolean())
             settings.rayTracing = rt->get<bool>();
+
+        // An invalid value keeps the default.
+        double uploadMiB = settings.uploadMiBPerFrame;
+        if (ReadNumber(*renderingIt, "uploadMiBPerFrame", uploadMiB) && ValidUploadMiBPerFrame(uploadMiB))
+            settings.uploadMiBPerFrame = uploadMiB;
 
         const auto gi = renderingIt->find("ddgi");
         if (gi != renderingIt->end() && gi->is_object())
@@ -208,11 +225,13 @@ namespace mir
 
     bool RenderSettings::SaveFile(const std::filesystem::path &path) const
     {
-        if (ddgi.ValidationError() != nullptr || ssgi.ValidationError() != nullptr)
+        if (ddgi.ValidationError() != nullptr || ssgi.ValidationError() != nullptr ||
+            !ValidUploadMiBPerFrame(uploadMiBPerFrame))
             return false;
         return UpdateJsonFile(path, [this](json &root)
             {
                 root["rendering"] = json{ { "rayTracing", rayTracing },
+                    { "uploadMiBPerFrame", uploadMiBPerFrame },
                     { "ddgi", {
                         { "enabled", ddgi.enabled }, { "origin", ddgi.origin },
                         { "probeCounts", ddgi.probeCounts }, { "probeSpacing", ddgi.probeSpacing },

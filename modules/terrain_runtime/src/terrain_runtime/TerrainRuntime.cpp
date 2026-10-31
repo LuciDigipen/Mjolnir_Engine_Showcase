@@ -238,16 +238,17 @@ namespace mir
                      MiB(collision.budgetBytes), collision.retainSeconds, collision.bodyToleranceMeters);
 
         const TerrainStreamingSettings::Gpu &gpu = settings.gpu;
-        if (!renderer.ConfigureMeshStreaming({.stagingBytes = gpu.stagingBytes, .frameBytes = gpu.uploadBytesPerFrame}))
-        {
-            MIR_LOG_ERROR("Terrain meshes cannot stream to the GPU, so no terrain is drawn");
-            return;
-        }
+        // A smaller ring only slows uploads, so terrain carries on.
+        if (!renderer.RequestStagingBytes(gpu.stagingBytes))
+            MIR_LOG_WARN("Terrain asked for a {:.1f} MiB staging ring and the renderer kept its current one, so its "
+                         "meshes upload over more frames",
+                         MiB(gpu.stagingBytes));
         mUploader = std::make_unique<TerrainGpuUploader>(renderer);
         mMeshes = std::make_unique<TerrainMeshResidency>(gpu, mPool, *mUploader);
         MIR_LOG_INFO("Terrain GPU meshes: {:.0f} MiB budget, {:.1f} MiB uploaded a frame through a {:.1f} MiB staging "
                      "ring, kept {} s after their last want or draw",
-                     MiB(gpu.budgetBytes), MiB(gpu.uploadBytesPerFrame), MiB(gpu.stagingBytes), gpu.meshRetainSeconds);
+                     MiB(gpu.budgetBytes), MiB(renderer.UploadFrameBudget()),
+                     MiB(renderer.MeshStreaming().desc.stagingBytes), gpu.meshRetainSeconds);
     }
 
     TerrainStreamer *TerrainRuntime::Streamer() const

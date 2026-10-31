@@ -44,8 +44,11 @@ namespace mir
         context.world.EmplaceResource<ViewDrawSources>();
         // physics fills it while a view shows colliders
         context.world.EmplaceResource<DebugLines>();
-        context.world.EmplaceResource<RenderSettings>(
-            RenderSettings::LoadFile(settings.mProjectSettingsPath).value_or(RenderSettings{}));
+        const RenderSettings renderSettings =
+            RenderSettings::LoadFile(settings.mProjectSettingsPath).value_or(RenderSettings{});
+        context.world.EmplaceResource<RenderSettings>(renderSettings);
+        // The game's play-time upload budget.
+        mRenderer.SetUploadFrameBudget(renderSettings.UploadFrameBytes());
         context.world.EmplaceResource<PostProcessingSettings>(
             PostProcessingSettings::LoadFile(settings.mProjectSettingsPath).value_or(PostProcessingSettings{}));
 

@@ -75,8 +75,6 @@ namespace mir
             const TerrainStreamingSettings::Gpu &g = s.gpu;
             if (g.budgetBytes == 0)
                 emit("gpu", "budgetMiB", "must be positive");
-            if (g.uploadBytesPerFrame == 0)
-                emit("gpu", "uploadMiBPerFrame", "must be positive");
             if (g.stagingBytes == 0)
                 emit("gpu", "stagingMiB", "must be positive");
             if (!NonNegative(g.meshRetainSeconds))
@@ -386,10 +384,9 @@ namespace mir
                 v.prefetchBudgetBytes = static_cast<uint64_t>(std::llround(bytes));
         }
 
-        const json *gpu = reader.Section("gpu", {"budgetMiB", "uploadMiBPerFrame", "stagingMiB", "meshRetainSeconds"});
+        const json *gpu = reader.Section("gpu", {"budgetMiB", "stagingMiB", "meshRetainSeconds"});
         TerrainStreamingSettings::Gpu &g = s.gpu;
         g.budgetBytes = bytesOf(gpu, "gpu", "budgetMiB");
-        g.uploadBytesPerFrame = bytesOf(gpu, "gpu", "uploadMiBPerFrame");
         g.stagingBytes = bytesOf(gpu, "gpu", "stagingMiB");
         g.meshRetainSeconds = reader.Number(gpu, "gpu", "meshRetainSeconds").value_or(g.meshRetainSeconds);
 

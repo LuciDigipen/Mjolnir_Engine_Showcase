@@ -110,6 +110,11 @@ namespace mir
         return done;
     }
 
+    void MeshUploadQueue::SetFrameBytes(uint64_t frameBytes)
+    {
+        mDesc.frameBytes = frameBytes;
+    }
+
     void MeshUploadQueue::Clear()
     {
         mPending.clear();
