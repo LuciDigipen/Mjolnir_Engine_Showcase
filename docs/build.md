@@ -256,6 +256,21 @@ ctest --test-dir builds/windows-msvc-debug -R "archetype" --output-on-failure
 `engine_<module>_tests`. `-R` then filters by Catch2 test case name, and takes a
 regex, so `-R "archetype"` runs every case with that word in its name.
 
+### Equal system orders
+
+Each test executable also runs whole as `<target>.ties-reverse` and
+`<target>.ties-shuffle`, with `MIR_SYSTEM_TIES` reordering systems that share a
+`SystemOrder` (see [core.md](modules/core.md)). A suite that never runs a
+scheduler passes `NO_SYSTEM_TIES` to `engine_add_module_tests` and skips them, as
+`core_base` and `terrain` do. They run one at a time and carry the label
+`system-ties`, so `-L system-ties` runs only them and `-LE system-ties` skips
+them. A shuffled run prints its seed; to repeat it:
+
+```powershell
+$env:MIR_SYSTEM_TIES = "shuffle:<seed>"
+builds/windows-msvc-debug/engine_<module>_tests.exe
+```
+
 In the Testing panel the same thing is a click on one case or one file.
 
 ### Smoke tests

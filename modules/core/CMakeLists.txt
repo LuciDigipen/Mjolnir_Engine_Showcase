@@ -47,6 +47,7 @@ target_sources(engine_core PRIVATE
     src/core/ecs/EntityPresetRegistry.cpp
     src/core/ecs/RuntimeQuery.cpp
     src/core/ecs/DeferredAccess.cpp
+    src/core/ecs/SystemScheduler.cpp
     src/core/ecs/CoreModule.cpp)
 
 # PUBLIC: ECS headers include log, math and fs headers

@@ -129,6 +129,7 @@ const ComponentOps &health = ComponentRegistry::Instance().RegisterRuntime("Heal
 | `ComponentRegistry`, `FieldDesc` | `ecs/ComponentRegistry.h`, `ecs/ComponentFields.h` | Name to erased ops; one named, typed value |
 | `CommandBuffer` | `ecs/CommandBuffer.h` | Deferred structural changes |
 | `ISystem`, `SystemScheduler` | `ecs/System.h`, `ecs/SystemScheduler.h` | Per-frame work, and running it by phase; stage and frame-slot lists |
+| `SystemTies`, `SystemTiesFromEnvironment` | `ecs/SystemScheduler.h` | How equal orders are arranged: registration order, or reversed or shuffled for tests; read from `MIR_SYSTEM_TIES` |
 | `Stage`, `FrameSlot` | `ecs/System.h` | The transitions App runs, and the host work slots of a frame |
 | `Registration` | `Registration.h` (base) | Move-only token that undoes a registration when it dies |
 | `RegistrationList<F>` | `RegistrationList.h` (base) | Functions run in registration order, each added through a token: stages, frame slots, drawers, Lua bindings, screens |
@@ -344,6 +345,34 @@ an order from 0 to 100, with the borders `kEarly` (10), `kNormal` (50) and `kLat
 order. Equal orders are unspecified, so a system that needs another first takes a
 different order.
 
+`MIR_SYSTEM_TIES` checks that nothing relies on a tie. `reverse` runs every set
+of equal orders in reverse registration order and `shuffle` in a seeded random
+one, whose seed the first scheduler logs; `shuffle:<seed>` repeats it. A test
+executable has no log, so there the line goes to stderr. Every test executable
+runs whole under both, as `<target>.ties-reverse` and `<target>.ties-shuffle`,
+except the suites that never run a scheduler and say `NO_SYSTEM_TIES`
+(`core_base`, `terrain`). In Debug, `Start` logs each phase's resolved order, one
+line per phase.
+
+These are the constraints the orders carry:
+
+| Phase | Earlier | Later | Why |
+|---|---|---|---|
+| `PreUpdate` | `PrefabSystem` (`kEarly - 5`) | `ScriptResolveSystem`, `ScriptSystem` | It commits at the Edit safe point, so a `ScriptRef` a publish adds resolves and runs the same frame |
+| `PreUpdate` | `InputSystem` (`kEarly`) | `ScriptSystem` (`kNormal`) | Scripts read this frame's `InputState` |
+| `PreUpdate` | `ScriptResolveSystem` (`kEarly`) | `ScriptSystem` (`kNormal`) | A `ScriptRef` made last frame runs this frame |
+| `FixedUpdate` | `ScriptFixedSystem` (`kEarly`) | `PhysicsSystem` (`kNormal`) | What `OnFixedUpdate` sets acts on the same step |
+| `LateUpdate` | `CameraControllerSystem` (`kEarly`) | `AudioListenerSystem`, `AudioEmitterSystem` (`kNormal`) | It moves the camera after `Propagate` and refreshes its `WorldTransform`, which a listener on the camera reads |
+| `LateUpdate` | `AudioEmitterSystem`, `AudioListenerSystem`, `SoundtrackSystem` (`kNormal`) | `AudioRenderSystem` (`kLate`) | The render sends Wwise this frame's positions |
+| `LateUpdate` | `ParticleUpdateSystem` (70) | `ParticleSubmitSystem` (80) | Submit uploads what the update simulated this frame |
+| `Render` | `ActiveCameraSystem` (`kEarly`) | `RenderSystem` (`kNormal`) | The frame renders through the camera picked this frame |
+| `PostUpdate`, in a prefab preview's own scheduler | `TransformPropagateSystem` (`kEarly`) | `ModelSystem` (`kNormal`) | `ModelSystem` reads the preview's `WorldTransform` |
+
+`physics_script`'s `SystemOrder.tests.cpp` pins the `InputSystem`,
+`ScriptResolveSystem` and `ScriptFixedSystem` rows by building the input, script
+and physics modules. No test target links the modules of the other rows
+together, or they need Vulkan or Wwise to build.
+
 **A registration list changes only between runs.** Every `RegistrationList`
 (stages, frame slots, ImGui drawers, Lua bindings, game UI screens) asserts on
 an add or a removal while it runs, because either could move the running
@@ -471,6 +500,15 @@ layout changes.
    `World::AddComponent` directly, rather than it being convention.
 
 ## Changed
+
+*2026-10-31* — **Equal orders can be reversed or shuffled (#310).** Was: equal
+orders ran in registration order, and nothing checked that no system relied on
+it. One did: `AudioListenerSystem` read a controlled camera's pose after
+`CameraControllerSystem` moved it only because `CameraModule` is built before
+`AudioModule`. Now: `MIR_SYSTEM_TIES` reverses or shuffles ties, every suite runs
+under both, Debug logs each phase's order at `Start`, the Rules list the real
+constraints, and `CameraControllerSystem` runs at `kEarly`. Because: a constraint
+nobody wrote down breaks the first time module order changes.
 
 *2026-10-31* — **`EntityChangeListeners` is `ComponentFieldListeners`.** Was:
 one payload of removed and added entities and components plus changed fields,

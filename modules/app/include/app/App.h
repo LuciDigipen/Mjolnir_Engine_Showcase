@@ -237,8 +237,8 @@ namespace mir
     #endif
 
         // Startup order, which is dependency order: a module after every module it uses,
-        // a bridge after script and its library. C++ destroys them in reverse. Within a
-        // phase, systems run in this order too
+        // a bridge after script and its library. C++ destroys them in reverse. Systems with
+        // equal orders in a phase run in this order too, but nothing may rely on it
         AppDesc mDesc;
         GameProject mProject;
         StartupSplash mSplash;

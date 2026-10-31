@@ -18,6 +18,7 @@ namespace mir
     CameraModule::CameraModule(ModuleContext context)
     {
         RegisterCameraComponents();
-        context.scheduler.AddSystem<CameraControllerSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kNormal});
+        // moves the camera after Propagate, so before the LateUpdate WorldTransform readers
+        context.scheduler.AddSystem<CameraControllerSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kEarly});
     }
 }

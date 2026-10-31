@@ -1,4 +1,4 @@
-engine_add_module_tests(terrain
+engine_add_module_tests(terrain NO_SYSTEM_TIES
     TerrainAreaSamples.tests.cpp
     TerrainAssetPath.tests.cpp
     TerrainCollider.tests.cpp

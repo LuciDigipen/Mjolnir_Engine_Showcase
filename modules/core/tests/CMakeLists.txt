@@ -1,4 +1,4 @@
-engine_add_module_tests(core_base
+engine_add_module_tests(core_base NO_SYSTEM_TIES
     Paths.tests.cpp
     FileIO.tests.cpp
     Process.tests.cpp

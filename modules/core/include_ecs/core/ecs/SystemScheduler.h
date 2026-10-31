@@ -11,6 +11,7 @@
 #include "CommandBuffer.h"
 #include "core/RegistrationList.h"
 #include "System.h"
+#include "TypeId.h"
 #include "World.h"
 #include "core/log/Assert.h"
 
@@ -19,6 +20,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -30,10 +32,29 @@ namespace mir
     // a stage or frame-slot function
     using StageFunction = std::function<void(SystemContext &)>;
 
+    // How systems with the same order in one phase are arranged. Reverse and Shuffle
+    // are test modes, to catch a system that relies on a tie
+    struct SystemTies
+    {
+        enum Mode : uint8_t
+        {
+            Registration,
+            Reverse,
+            Shuffle,
+        };
+
+        Mode mode = Registration;
+        uint32_t seed = 0;
+    };
+
+    // MIR_SYSTEM_TIES=reverse, shuffle or shuffle:<seed>, read once. A shuffle logs its seed
+    SystemTies SystemTiesFromEnvironment();
+
     class SystemScheduler
     {
     public:
-        SystemScheduler() = default;
+        SystemScheduler() : SystemScheduler(SystemTiesFromEnvironment()) {}
+        explicit SystemScheduler(SystemTies ties) : mTies(ties), mShuffleState(ties.seed) {}
 
         SystemScheduler(const SystemScheduler &) = delete;
         SystemScheduler &operator=(const SystemScheduler &) = delete;
@@ -55,11 +76,13 @@ namespace mir
             auto system = std::make_unique<S>(std::forward<Args>(args)...);
             S &ref = *system;
 
-            // after the last entry that is not later, so equal orders stay in registration order
+            // somewhere among the entries of the same order, as the tie mode picks
             std::vector<Entry> &entries = mPhases[Index(phase)];
-            const auto position = std::upper_bound(entries.begin(), entries.end(), order.mValue,
+            const auto first = std::lower_bound(entries.begin(), entries.end(), order.mValue,
+                [](const Entry &entry, int value) { return entry.order < value; });
+            const auto last = std::upper_bound(first, entries.end(), order.mValue,
                 [](int value, const Entry &entry) { return value < entry.order; });
-            entries.insert(position, Entry{ order.mValue, std::move(system) });
+            entries.insert(first + TieSlot(last - first), Entry{ order.mValue, TrimTypeName<S>(), std::move(system) });
             return ref;
         }
 
@@ -67,6 +90,7 @@ namespace mir
         {
             MIR_ASSERT(!mStarted, "SystemScheduler::Start: already started");
             mStarted = true;
+            LogOrder();
 
             for (std::size_t phase = 0; phase < kPhaseCount; ++phase)
             {
@@ -171,10 +195,25 @@ namespace mir
             return total;
         }
 
+        // type names without namespaces, in run order
+        std::vector<std::string_view> SystemNames(SystemPhase phase) const
+        {
+            std::vector<std::string_view> names;
+            for (const Entry &entry : mPhases[Index(phase)])
+                names.push_back(entry.name);
+            return names;
+        }
+
     private:
         static constexpr std::size_t kPhaseCount = static_cast<std::size_t>(SystemPhase::kCount);
 
         static constexpr std::size_t Index(SystemPhase phase) { return static_cast<std::size_t>(phase); }
+
+        // where a new system goes among the ties already registered, 0 to ties
+        std::ptrdiff_t TieSlot(std::ptrdiff_t ties);
+
+        // Debug only
+        void LogOrder() const;
 
         // one pass over a phase, then flush
         void RunPhase(std::size_t phase, SystemContext &context)
@@ -191,6 +230,7 @@ namespace mir
         struct Entry
         {
             int order;
+            std::string_view name;
             std::unique_ptr<ISystem> system;
         };
 
@@ -198,6 +238,8 @@ namespace mir
         std::vector<Entry> mPhases[kPhaseCount];
         RegistrationList<StageFunction> mStages[kStageCount];
         RegistrationList<StageFunction> mFrameSlots[kFrameSlotCount];
+        SystemTies mTies;
+        uint64_t mShuffleState;
         bool mStarted = false;
     };
 }
