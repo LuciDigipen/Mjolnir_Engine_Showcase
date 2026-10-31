@@ -55,14 +55,21 @@ namespace
         return std::move(*result.value);
     }
 
-    TerrainStreamingSettings::Gpu GpuSettings(uint64_t budget, uint64_t perFrame, double retain = 1.0)
+    // The settings plus the frame budget the fake uploader reports.
+    struct GpuCase
     {
         TerrainStreamingSettings::Gpu gpu;
-        gpu.budgetBytes = budget;
-        gpu.uploadBytesPerFrame = perFrame;
-        gpu.stagingBytes = perFrame;
-        gpu.meshRetainSeconds = retain;
-        return gpu;
+        uint64_t frameBudget = 0;
+    };
+
+    GpuCase GpuSettings(uint64_t budget, uint64_t perFrame, double retain = 1.0)
+    {
+        GpuCase c;
+        c.gpu.budgetBytes = budget;
+        c.gpu.stagingBytes = perFrame;
+        c.gpu.meshRetainSeconds = retain;
+        c.frameBudget = perFrame;
+        return c;
     }
 
     struct Release
@@ -131,7 +138,10 @@ namespace
         TerrainMeshResidency residency;
         double now = 0.0;
 
-        explicit Harness(const TerrainStreamingSettings::Gpu &gpu) : residency(gpu, builds, uploader) {}
+        explicit Harness(const GpuCase &c) : residency(c.gpu, builds, uploader)
+        {
+            uploader.frameBudget = c.frameBudget;
+        }
 
         void Request(std::span<const TerrainSelectionInstance> instances, std::vector<TerrainPayloadWant> wants,
                      const TerrainStreamer &streamer)

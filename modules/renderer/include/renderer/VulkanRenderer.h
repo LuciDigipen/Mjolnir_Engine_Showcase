@@ -236,8 +236,13 @@ namespace mir
         // Asynchronous meshes (renderer/MeshStreaming.h), none of which waits on the GPU: a queued mesh is copied
         // through the persistent staging ring at the start of a frame, within the per-frame byte budget, and is
         // Ready once that frame completes; a retired one is freed once every frame that may use it completes.
-        // CreateMesh and DestroyMesh stay synchronous. Configure once before queueing.
-        bool ConfigureMeshStreaming(const MeshStreamingDesc &desc);
+        // CreateMesh and DestroyMesh stay synchronous.
+        //
+        // Grows the staging ring to at least this size, true if it is that big afterwards.
+        bool RequestStagingBytes(uint64_t bytes);
+        // The GPU bytes one frame may write, shared by every consumer.
+        bool SetUploadFrameBudget(uint64_t bytes);
+        uint64_t UploadFrameBudget() const;
         MeshHandle QueueMesh(std::vector<Vertex> vertices, std::vector<uint32_t> indices,
             const MeshUploadOptions &options);
         MeshUploadState MeshState(MeshHandle handle) const;

@@ -19,7 +19,10 @@
 
 namespace mir
 {
-    // Both required; the caller sets them from its own data.
+    // Defaults the renderer starts with.
+    inline constexpr uint64_t kDefaultStagingBytes = uint64_t(32) * 1024 * 1024;
+    inline constexpr uint64_t kDefaultFrameBytes = uint64_t(4) * 1024 * 1024;
+
     struct MeshStreamingDesc
     {
         // The persistent staging ring every queued mesh is copied through.
@@ -145,6 +148,8 @@ namespace mir
         std::vector<Admitted> Admit(uint64_t frame);
         // Meshes admitted for frames at or below completed, oldest first; their staging space comes back.
         std::vector<MeshHandle> Complete(uint64_t completed);
+        // Changes the per-frame budget from the next Admit.
+        void SetFrameBytes(uint64_t frameBytes);
         // Everything queued or in flight is forgotten.
         void Clear();
 

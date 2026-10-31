@@ -160,7 +160,9 @@ void ReleaseSceneResources();                // every mesh, material and texture
 void ResetHistory();                         // the next frame accumulates fresh: a cut
 
 // Asynchronous meshes (#127): no call waits on the GPU
-bool ConfigureMeshStreaming(const MeshStreamingDesc &desc);  // staging ring and per-frame bytes, from the caller's data
+bool RequestStagingBytes(uint64_t bytes);                    // grows the ring if idle; false keeps the current ring
+bool SetUploadFrameBudget(uint64_t bytes);                   // per-frame bytes, from the next frame; false for zero
+uint64_t UploadFrameBudget() const;                          // the budget now, shared by every consumer
 MeshHandle QueueMesh(std::vector<Vertex> vertices, std::vector<uint32_t> indices, const MeshUploadOptions &options);
 MeshUploadState MeshState(MeshHandle handle) const;          // Stale, Pending, Uploading, Ready or Failed
 bool RetireMesh(MeshHandle handle);                          // stale at once, freed after its last frame
@@ -197,7 +199,7 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | Type | Header | Role |
 |---|---|---|
 | `Vertex`, `MeshHandle` | `renderer/Mesh.h` | `{pos, color, normal}`; a `{index, generation}` handle |
-| `MeshStreamingDesc`, `MeshUploadOptions`, `MeshUploadState`, `MeshStreamingStats` | `renderer/MeshStreaming.h` | the staging ring and per-frame byte budget; whether a queued mesh gets a BLAS; where a queued mesh is; the counters (bytes queued, uploading and retiring, idle waits, skipped draws, highest generation) |
+| `MeshStreamingDesc`, `MeshUploadOptions`, `MeshUploadState`, `MeshStreamingStats` | `renderer/MeshStreaming.h` | the staging ring and per-frame byte budget, and their defaults (32 MiB, 4 MiB); whether a queued mesh gets a BLAS; where a queued mesh is; the counters (bytes queued, uploading and retiring, idle waits, skipped draws, highest generation) |
 | `StagingRing`, `MeshUploadQueue`, `FrameRetireList` | `renderer/MeshStreaming.h` | the CPU bookkeeping behind them, tested without a device: ring space by frame, admission under the frame budget, objects kept until their last frame completes |
 | `ViewDrawSources`, `IViewDrawSource`, `ViewCamera` | `renderer/ViewDrawSource.h` | World resource of producers whose draws depend on the viewport (app's terrain): `Prepare` with every viewport's camera, then `AppendViewDraws` per view and `AppendVolumeDraws` per shadow volume at a view's detail |
 | `TextureDesc`, `TextureMipView`, `TextureHandle` | `renderer/Texture.h` | `{width, height, pixels, srgb, generateMips, mips}`, tightly-packed RGBA8; supplied `mips` must form the complete chain and are uploaded unchanged; `kNullTexture` falls back to a default in `CreateMaterial` |
@@ -220,7 +222,7 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `AntiAliasingMode`, `AntiAliasingParams`, `ClampAntiAliasingMode`, `ClampRtSampleCount` | `renderer/AntiAliasingEffect.h` | Off/Fxaa/Msaa/Dlss and `rtSampleCount`; the Post-Processing entry's json shape; the mode and sample-count enforcement `ResolvePostProcessing` applies every frame - see Rules |
 | `PostProcessingState`, `ResolvePostProcessing` | `renderer/PostProcessingState.h` | `PostProcessingSettings` and the viewing `Camera`'s lens resolved into the exact values `SetPostProcessing` applies: defaults for a missing entry, neutral values for a disabled one (fog density 0, exposure 1/None, bloom intensity 0, neutral film), negative lens values 0, motion blur's sample count at least 1, AA clamped. Pure, so it is unit-tested without a device |
 | `DlssConfig.h` | `renderer/DlssConfig.h` (generated) | `MIR_WITH_DLSS`/`kDlssCompiledIn` and the NGX project id |
-| `RenderSettings` | `renderer/RenderSettings.h` | Project Settings' `"rendering"` section (`rayTracing` and `ddgi`); `LoadFile`/`SaveFile`, a World resource `RendererModule` loads |
+| `RenderSettings` | `renderer/RenderSettings.h` | Project Settings' `"rendering"` section (`rayTracing`, `uploadMiBPerFrame` and `ddgi`); `LoadFile`/`SaveFile`, a World resource `RendererModule` loads |
 
 ## Rules
 
@@ -323,6 +325,24 @@ queued, uploading and retiring bytes, and every `vkDeviceWaitIdle` and
 `vkQueueWaitIdle`, which all go through `Device::WaitIdle` and
 `WaitQueueIdle`. `CreateMesh` and `DestroyMesh` keep their synchronous
 behaviour, BLAS included.
+
+**The renderer owns the ring and the budget.** `Initialize` creates a 32 MiB
+ring and a 4 MiB frame budget (`kDefaultStagingBytes`, `kDefaultFrameBytes`) and
+fails if the ring cannot be allocated, so `QueueMesh` needs no setup.
+`RequestStagingBytes` grows the ring, and only while nothing is queued or in
+flight: it is a no-op when the ring is already big enough, and when it cannot
+grow it logs and the caller carries on with the current ring, so its uploads
+only take more frames. The new ring is allocated before the old one is
+released, so a failed allocation loses nothing. `SetUploadFrameBudget` changes
+only the per-frame bytes, from the next frame's admission and also while uploads
+are queued, and refuses zero. Every consumer shares that one budget. A game sets
+the value it plays with as `rendering.uploadMiBPerFrame` in
+`project_settings.json`, which `RendererModule` applies at startup and which
+terrain follows through `TerrainMeshUploader::FrameBudgetBytes`. A loading
+gate may raise the budget while no frames are visible and must set this value
+back afterwards. Tune it by flying a scene and watching
+`MeshStreamingStats::pendingBytes` stay near zero while `maxFrameBytes` stays
+under what a frame can absorb.
 
 **Terrain tiles are traced like any other mesh.** Each drawn unit (a tile at
 a LOD or a Region) gets its own BLAS and one TLAS instance per frame, so the
@@ -1056,6 +1076,18 @@ Everything that needs a device is verified by the smoke tests and
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-10-31* — **The renderer owns the upload staging ring and budget (#359).**
+Was: terrain was the only user and configured the ring and the per-frame budget
+itself with `ConfigureMeshStreaming`, which refused once anything was queued, so
+scene meshes queueing first left terrain with no ring and no terrain drawn. Now:
+`Initialize` creates a 32 MiB ring and a 4 MiB budget, consumers call
+`RequestStagingBytes` to ask for more, and `SetUploadFrameBudget` changes the
+budget at runtime without touching the ring. `ConfigureMeshStreaming` is gone.
+The play-time budget is the game's `rendering.uploadMiBPerFrame`, read into
+`RenderSettings`. Because: every async asset path goes through this ring, so one
+consumer must not decide its size, and a flight game streaming a very large
+terrain needs the number in its own settings.
 
 *2026-10-27* — **A camera cut resets motion blur's and DLSS's history
 (#231).** Was: switching the active camera kept the previous camera's

@@ -58,11 +58,19 @@ namespace mir
 
     struct RenderSettings
     {
+        static constexpr double kDefaultUploadMiBPerFrame = 4.0;
+        static constexpr double kMaxUploadMiBPerFrame = 1024.0;
+
         bool rayTracing = false;
+        // Streamed mesh bytes the renderer uploads per frame.
+        double uploadMiBPerFrame = kDefaultUploadMiBPerFrame;
         DdgiSettings ddgi;
         SsgiSettings ssgi;
 
         bool operator==(const RenderSettings &) const = default;
+
+        static bool ValidUploadMiBPerFrame(double mib);
+        uint64_t UploadFrameBytes() const;
 
         // nullopt if the file is missing or unreadable; a file with no
         // "rendering" section loads as defaults.

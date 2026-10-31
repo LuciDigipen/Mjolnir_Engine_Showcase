@@ -154,7 +154,8 @@ namespace mir
                 mMaterialStore->SurfaceMaterials().materials))
             return false;
 
-        mMeshUploads->Initialize(*mDevice);
+        if (!mMeshUploads->Initialize(*mDevice))
+            return false;
         mRasterSurfaces->Initialize(*mDevice);
         mSsgiTrace->Initialize(*mDevice, mCameraBuffer->SetLayout());
 #if MIR_WITH_RTXGI
@@ -261,9 +262,19 @@ namespace mir
         return true;
     }
 
-    bool VulkanRenderer::ConfigureMeshStreaming(const MeshStreamingDesc &desc)
+    bool VulkanRenderer::RequestStagingBytes(uint64_t bytes)
     {
-        return mDevice->Handle() != VK_NULL_HANDLE && mMeshUploads->Configure(desc);
+        return mMeshUploads->RequestStagingBytes(bytes);
+    }
+
+    bool VulkanRenderer::SetUploadFrameBudget(uint64_t bytes)
+    {
+        return mMeshUploads->SetFrameBytes(bytes);
+    }
+
+    uint64_t VulkanRenderer::UploadFrameBudget() const
+    {
+        return mMeshUploads->FrameBytes();
     }
 
     MeshHandle VulkanRenderer::QueueMesh(std::vector<Vertex> vertices, std::vector<uint32_t> indices,

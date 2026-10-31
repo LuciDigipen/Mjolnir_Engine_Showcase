@@ -120,6 +120,56 @@ TEST_CASE("SaveFile preserves a sibling 'input' section instead of clobbering it
     REQUIRE(contents.find("\"rayTracing\": true") != std::string::npos);
 }
 
+TEST_CASE("The upload budget defaults to 4 MiB and reads from the rendering section", "[renderer][upload]")
+{
+    TempSettingsFile file{ "upload_budget.json" };
+    file.Write(R"({"rendering":{"rayTracing":true}})");
+    auto loaded = mir::RenderSettings::LoadFile(file.mPath);
+    REQUIRE(loaded);
+    CHECK(loaded->uploadMiBPerFrame == mir::RenderSettings::kDefaultUploadMiBPerFrame);
+    CHECK(loaded->UploadFrameBytes() == uint64_t(4) * 1024 * 1024);
+
+    file.Write(R"({"rendering":{"uploadMiBPerFrame":12.5}})");
+    loaded = mir::RenderSettings::LoadFile(file.mPath);
+    REQUIRE(loaded);
+    CHECK(loaded->uploadMiBPerFrame == 12.5);
+    CHECK(loaded->UploadFrameBytes() == uint64_t(12.5 * 1024 * 1024));
+}
+
+TEST_CASE("An unusable upload budget keeps the default and leaves the other settings", "[renderer][upload]")
+{
+    TempSettingsFile file{ "upload_budget_bad.json" };
+    for (const char *value : { "0", "-1", "\"8\"", "null", "2000" })
+    {
+        file.Write(std::string(R"({"rendering":{"rayTracing":true,"uploadMiBPerFrame":)") + value + "}}");
+        const auto loaded = mir::RenderSettings::LoadFile(file.mPath);
+        REQUIRE(loaded);
+        CHECK(loaded->rayTracing);
+        CHECK(loaded->uploadMiBPerFrame == mir::RenderSettings::kDefaultUploadMiBPerFrame);
+    }
+}
+
+TEST_CASE("The upload budget round trips and an invalid one is never saved", "[renderer][upload]")
+{
+    TempSettingsFile file{ "upload_budget_save.json" };
+    mir::RenderSettings saved;
+    saved.uploadMiBPerFrame = 16.0;
+    REQUIRE(saved.SaveFile(file.mPath));
+    const auto loaded = mir::RenderSettings::LoadFile(file.mPath);
+    REQUIRE(loaded);
+    CHECK(*loaded == saved);
+
+    const std::string before = file.Read();
+    saved.uploadMiBPerFrame = 0.0;
+    CHECK_FALSE(saved.SaveFile(file.mPath));
+    CHECK(file.Read() == before);
+
+    CHECK(mir::RenderSettings::ValidUploadMiBPerFrame(0.5));
+    CHECK(mir::RenderSettings::ValidUploadMiBPerFrame(mir::RenderSettings::kMaxUploadMiBPerFrame));
+    CHECK_FALSE(mir::RenderSettings::ValidUploadMiBPerFrame(0.0));
+    CHECK_FALSE(mir::RenderSettings::ValidUploadMiBPerFrame(std::numeric_limits<double>::quiet_NaN()));
+}
+
 TEST_CASE("Legacy rendering settings default to disabled GI", "[renderer][ddgi]")
 {
     TempSettingsFile file{ "gi_legacy.json" };

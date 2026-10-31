@@ -33,15 +33,19 @@ namespace mir::vk
     class MeshUploader
     {
       public:
-        void Initialize(Device &device)
-        {
-            mDevice = &device;
-        }
-        // Creates the staging ring; a later, different desc needs nothing queued or in flight.
-        bool Configure(const MeshStreamingDesc &desc);
+        // Creates the staging ring at its default size.
+        bool Initialize(Device &device);
         bool Configured() const
         {
             return mStaging != VK_NULL_HANDLE;
+        }
+        // Grows the ring to at least this size, true if it is that big afterwards.
+        bool RequestStagingBytes(uint64_t bytes);
+        // Changes the per-frame byte budget.
+        bool SetFrameBytes(uint64_t frameBytes);
+        uint64_t FrameBytes() const
+        {
+            return mQueue.Desc().frameBytes;
         }
         // With the device idle.
         void Shutdown(RayTracer &rayTracer);
@@ -78,6 +82,8 @@ namespace mir::vk
             std::vector<std::pair<VkBuffer, VmaAllocation>> buffers;
         };
 
+        // Replaces the ring when nothing is queued or in flight.
+        bool Configure(const MeshStreamingDesc &desc);
         void Free(RayTracer &rayTracer, Garbage &garbage);
         void DestroyStaging();
 

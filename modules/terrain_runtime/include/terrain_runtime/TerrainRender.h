@@ -53,6 +53,7 @@ namespace mir
 
       uint64_t Footprint(uint32_t vertices, uint32_t indices) const override;
       uint64_t QueuedBytes() const override;
+      uint64_t FrameBudgetBytes() const override;
       TerrainGpuMeshId Upload(TerrainMeshData &&mesh) override;
       TerrainGpuMeshState State(TerrainGpuMeshId mesh) const override;
       void Retire(TerrainGpuMeshId mesh) override;

@@ -23,33 +23,72 @@
 
 namespace mir::vk
 {
+    bool MeshUploader::Initialize(Device &device)
+    {
+        mDevice = &device;
+        return Configure({.stagingBytes = kDefaultStagingBytes, .frameBytes = kDefaultFrameBytes});
+    }
+
+    bool MeshUploader::RequestStagingBytes(uint64_t bytes)
+    {
+        if (!Configured())
+        {
+            MIR_LOG_ERROR("RequestStagingBytes: mesh streaming is not initialized");
+            return false;
+        }
+        constexpr uint64_t kAlign = MeshUploadQueue::kStagingAlignment;
+        const MeshStreamingDesc &current = mQueue.Desc();
+        if (bytes > UINT64_MAX - (kAlign - 1))
+        {
+            MIR_LOG_ERROR("RequestStagingBytes: {} bytes is more than a staging ring can hold", bytes);
+            return false;
+        }
+        const uint64_t wanted = (bytes + kAlign - 1) / kAlign * kAlign;
+        if (wanted <= current.stagingBytes)
+            return true;
+        return Configure({.stagingBytes = wanted, .frameBytes = current.frameBytes});
+    }
+
+    bool MeshUploader::SetFrameBytes(uint64_t frameBytes)
+    {
+        if (frameBytes == 0)
+        {
+            MIR_LOG_ERROR("SetUploadFrameBudget: a budget of zero bytes would admit nothing, nothing changed");
+            return false;
+        }
+        mQueue.SetFrameBytes(frameBytes);
+        return true;
+    }
+
     bool MeshUploader::Configure(const MeshStreamingDesc &desc)
     {
         if (desc.stagingBytes < MeshUploadQueue::kStagingAlignment || desc.frameBytes == 0)
         {
-            MIR_LOG_ERROR("ConfigureMeshStreaming: {} staging bytes and {} bytes a frame are too few",
-                          desc.stagingBytes, desc.frameBytes);
+            MIR_LOG_ERROR("Mesh streaming: {} staging bytes and {} bytes a frame are too few", desc.stagingBytes,
+                          desc.frameBytes);
             return false;
         }
-        if (Configured() && desc == mQueue.Desc())
-            return true;
         if (mQueue.Pending() > 0 || mQueue.Uploading() > 0)
         {
-            MIR_LOG_ERROR("ConfigureMeshStreaming: uploads are queued or in flight; nothing changed");
+            MIR_LOG_ERROR("Mesh streaming: uploads are queued or in flight, so the staging ring stays {} bytes",
+                          mQueue.Desc().stagingBytes);
             return false;
         }
 
-        DestroyStaging();
+        // The old ring is kept until the new one exists.
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VmaAllocation allocation = VK_NULL_HANDLE;
         VmaAllocationInfo info{};
         if (!CreateBuffer(mDevice->Allocator(), desc.stagingBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                           VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
-                          mStaging, mStagingAllocation, &info))
+                          buffer, allocation, &info))
         {
-            MIR_LOG_CRITICAL("ConfigureMeshStreaming: staging ring allocation failed");
-            mStaging = VK_NULL_HANDLE;
-            mStagingAllocation = VK_NULL_HANDLE;
+            MIR_LOG_ERROR("Mesh streaming: the {} byte staging ring could not be allocated", desc.stagingBytes);
             return false;
         }
+        DestroyStaging();
+        mStaging = buffer;
+        mStagingAllocation = allocation;
         mStagingMapped = static_cast<std::byte *>(info.pMappedData);
         mDevice->NameObject(VK_OBJECT_TYPE_BUFFER, reinterpret_cast<uint64_t>(mStaging), "Mesh staging ring");
         mQueue = MeshUploadQueue(desc);
