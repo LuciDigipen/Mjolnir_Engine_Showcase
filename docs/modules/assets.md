@@ -43,7 +43,10 @@ if (AssetCache *cache = app.Assets())
 | `AssetBlobView` | `assets/AssetBlob.h` | Header plus a span over the payload; `AsStringView` for text |
 | `AssetManifest` | `assets/AssetManifest.h` | id to type tag, content version, cooked file, logical path and direct dependencies, over a shared path table and edge table. `FindByPath`, `Dependencies`, `Closure` |
 | `AssetCache` | `assets/AssetCache.h` | `Load`, `Get`, `Invalidate`, `ResolvedPath` |
-| `AssetsModule` | `assets/AssetsModule.h` | The manifest and cache, loaded at startup, and the reload candidate |
+| `AssetsModule` | `assets/AssetsModule.h` | The manifest and cache, loaded at startup, and the reload candidate. `ReloadEpoch` counts committed reloads |
+| `AsyncAssetService`, `AssetRequest`, `AssetLoadState` | `assets/AsyncAssetService.h` | Reads and decodes assets on a background lane, `Request`, `State`, `Acquire`, `DrainCompletions`, `CancelAll`, `Idle` |
+| `AssetDecoder`, `AssetDependencies` | `assets/AssetDecoder.h` | A decode function with the type tags of the dependencies it reads, and the lookup it gets over the blobs already read |
+| `AssetSettings` | `assets/AssetSettings.h` | The `assets` section of `project_settings.json`, `loadThreads` |
 | `TextureAsset`, `TextureMip`, `SurfaceMaterialAsset` | `assets/ModelAsset.h` | Typed texture v2 (format, color space, level 0 and higher mip descriptors) and the generic `.material.json` surface material, distinct from the glTF `MaterialAsset` |
 | `ResolveAssetIdRoot` | `assets/AssetIdRoot.h` | Fills a `GameProject`'s asset id root; fails setup on an unusable `assetsRoot` |
 
@@ -52,6 +55,21 @@ manifest, a corrupt one fails setup. `Cache()` is the same object for the
 module's life, so a holder keeps its pointer across a reload. A reload is
 `BeginReload` (a manifest it cannot parse throws), then holders prepare from
 `Candidate()`, then `CommitReload` swaps it in or `AbortReload` drops it.
+
+`AsyncAssetService` reads, parses and decodes assets on a background lane of the
+app's `JobExecutor` and hands the results to the main thread. `Request` takes an
+id and an `AssetDecoder<T>`, a decode function plus the type tags of the
+dependencies it reads. The manifest is read on the main thread when a request is
+made, the root and the dependencies of those types are copied into one job, and
+the worker reads each file, checks its header against its manifest entry and
+calls the decoder. A result is a `shared_ptr<const T>`, so a holder keeps its
+data past `CancelAll`. `DrainCompletions` runs once a frame before the systems
+update, and it is the only place a request changes state. The cache stays as it
+was, and nothing moves onto the service until a consumer asks for it.
+
+`assets.loadThreads` in `project_settings.json` is how many loads run at once,
+2 by default and 1 to 32. A value outside that range keeps the default and logs
+a warning, and the job queue lowers it to the executor's worker count.
 
 ## Rules
 
@@ -90,6 +108,27 @@ holds it, so a walk over the graph never meets a missing target.
 nothing refers to by name, such as a glTF's meshes, have an empty one, and an
 empty name matches nothing.
 
+**The service is main thread only, and a worker touches nothing shared.** A job
+holds copied paths, type tags and versions, so it never reads the manifest or
+the cache, and a reload cannot free anything it uses. A decoder runs on a worker,
+so it must not touch shared state.
+
+**Two requests for one asset and decoder share one load.** The key is the id and
+the descriptor's address, so a descriptor has static storage, and the same
+asset under another decoder is a separate load.
+
+**The service remembers a failed load too.** It logs the failure once at the
+drain, and asking again returns the same failed handle without reading anything,
+until `CancelAll` or a reload.
+
+**`CancelAll` and a committed reload make every earlier handle `Stale`.** The
+service sees a reload through `ReloadEpoch` at its next drain or request. Loads
+that have not started are dropped, running ones finish and their results are
+discarded.
+
+**With no workers a load runs inside `Request`.** Its result still waits for the
+next drain, so a state changes at the same point in both modes.
+
 **A failed load is remembered.** The cache does not re-check the disk every frame
 for something that was not there.
 
@@ -125,7 +164,7 @@ including a validated typed texture dependency. Other files without a dedicated
 importer cook as raw passthrough blobs.
 
 Tests in `modules/assets/tests/`: `AssetBlob`, `AssetCache`, `AssetManifest`,
-`AssetPath`, `ModelAsset`. The cooker side of path identity is checked in
+`AssetPath`, `AssetSettings`, `AsyncAssetService`, `ModelAsset`. The cooker side of path identity is checked in
 `tools/AssetCooker/tests/GltfImporter.tests.cpp` ("Cooker ids match the engine's
 logical paths for any root spelling").
 
@@ -143,6 +182,15 @@ logical paths for any root spelling").
    at the cost of a file per asset and a registry to keep in sync.
 
 ## Changed
+
+*2026-10-31* — **`AsyncAssetService`.** Was: `AssetCache::Load` read, parsed and
+decoded on the calling thread, so a scene that opened blocked until every asset
+it named was in memory, and the cache was not safe to hand to a worker. Now: the
+service does that work on a background lane from copied manifest data and
+publishes results at a drain, `LoadModelResources` has a form over blobs already
+read, and the lane size is the `assets.loadThreads` setting. Because loading had
+to stop blocking the frame without making the cache thread safe. The cache and
+its callers are unchanged.
 
 *2026-10-31* — **Manifest v2: logical paths and dependency edges.** Was: an entry
 held an id, a type tag, a content version and the cooked file name, and the

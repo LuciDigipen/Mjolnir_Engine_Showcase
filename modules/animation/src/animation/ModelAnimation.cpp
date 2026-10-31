@@ -16,11 +16,21 @@
 
 namespace mir
 {
-    bool LoadModelResources(AssetCache &cache, AssetId id, ModelResources &result, std::string &error)
+    bool DecodeModelResources(const AssetBlobView &root, const AssetDependencies &dependencies, ModelResources &result,
+                              std::string &error)
     {
         ModelResources data;
-        auto read = [&](AssetId key, auto &out) { return LoadTypedAsset(cache, key, out, error); };
-        if (!read(id, data.model))
+        auto read = [&](AssetId key, auto &out)
+        {
+            const AssetBlobView *blob = dependencies.Find(key);
+            if (blob == nullptr)
+            {
+                error = "no cooked blob";
+                return false;
+            }
+            return ReadTypedAsset(*blob, out, error);
+        };
+        if (!ReadTypedAsset(root, data.model, error))
             return false;
         for (const auto &node : data.model.nodes)
             if (!node.mesh.IsNull() && !data.meshes.contains(node.mesh.value))
@@ -93,6 +103,23 @@ namespace mir
         }
         result = std::move(data);
         return true;
+    }
+    bool LoadModelResources(AssetCache &cache, AssetId id, ModelResources &result, std::string &error)
+    {
+        const AssetBlobView *root = cache.Load(id);
+        if (root == nullptr)
+        {
+            error = "no cooked blob";
+            return false;
+        }
+        const AssetDependencies dependencies([&cache](AssetId key) { return cache.Load(key); });
+        return DecodeModelResources(*root, dependencies, result, error);
+    }
+    const AssetDecoder<ModelResources> &ModelResourcesDecoder()
+    {
+        static constexpr uint32_t kTags[]{ kMeshAssetTypeTag, kSkeletonAssetTypeTag, kAnimationAssetTypeTag };
+        static constexpr AssetDecoder<ModelResources> kDecoder{ DecodeModelResources, kTags };
+        return kDecoder;
     }
     std::vector<float> SampleAnimationTrack(const AnimationTrack &t, float time)
     {

@@ -70,11 +70,11 @@ namespace mir
         static std::optional<AssetManifest> LoadFile(const std::filesystem::path &path);
 
         const AssetManifestEntry *Find(AssetId id) const;
-        // Null when no entry has this logical path
+        // The entry with this logical path, or null
         const AssetManifestEntry *FindByPath(std::string_view logicalPath) const;
         std::string_view PathOf(const AssetManifestEntry &entry) const;
         std::string_view LogicalPathOf(const AssetManifestEntry &entry) const;
-        // Every target is an entry of this manifest
+        // The assets this entry depends on directly, each one an entry of this manifest
         std::span<const AssetId> Dependencies(const AssetManifestEntry &entry) const;
 
         // Root first, then what it reaches, each asset once. With tags, only entries

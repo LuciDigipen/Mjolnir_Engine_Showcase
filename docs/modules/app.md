@@ -23,7 +23,7 @@ it belongs.
 mDesc, mProject          the checks before anything is built: game directories, project_settings.json
 mSplash                  shown until main closes it
 mCommands, mWorld, mScheduler
-CoreModule, AssetsModule, ParticlesModule, SceneModule, PrefabModule
+CoreModule, AssetsModule, AsyncAssetService (only when a manifest exists), ParticlesModule, SceneModule, PrefabModule
 GameUIModule, GameShellModule    before ImGui, whose shutdown frees their textures' GPU side
 WindowModule, RendererModule, ParticlesGpuModule, InputModule, AnimationModule, ImGuiModule, EditorModule (editor builds)
 CameraModule, AudioModule, PhysicsModule, TerrainModule
@@ -41,6 +41,7 @@ while not ShouldClose:
     PollEvents                         close flag and size refresh here
     dt = min(elapsed, mMaxDeltaSeconds)
     ApplyRequests                      last frame's transitions, and a game to switch to
+    AsyncAssetService::DrainCompletions  background asset loads that finished become visible
     RunFrameSlot(FrameBegin)           script reload poll, terrain installs and Edit refresh, import and content browser polls
     ImGuiModule::RunUI                 Tools drawers (the editor), then Game drawers (the game UI)
     fixedSteps = FixedTimestep::Advance(dt)  every mode; FixedUpdate systems check IsSimulating
@@ -140,8 +141,10 @@ It also declares `ClearErrorReport`, `ErrorReportPath`, `CrashDumpPath` and
 `mAppName` stays caller-set even though each game has its own title — it is the
 Vulkan instance name, engine-level, and nothing user-facing ever sees it.
 
-Accessors: `GetWorld()`, `Systems()`, `Splash()`, `Assets()`, `Scene()`,
-`Project()` and `ProjectToOpen()`. `Renderer()` is marked a temporary seam,
+Accessors: `GetWorld()`, `Systems()`, `Splash()`, `Assets()`, `AssetService()`,
+`Scene()`, `Project()` and `ProjectToOpen()`. `AssetService()` is null when there
+was no manifest at startup, and it stays null for the session even if an import
+cooks the first assets. `Renderer()` is marked a temporary seam,
 because `Renderer.h` is still an empty abstraction placeholder.
 
 `ToggleFullscreen()` switches the window between windowed and fullscreen and
@@ -268,6 +271,13 @@ through `mSwitchProjectTo`. All of them fail on a crash or a logged error.
    cheap for a large scene.
 
 ## Changed
+
+*2026-10-31* — **`App` owns an `AsyncAssetService`.** Was: assets loaded only
+through the cache on the calling thread. Now: the service is built right after
+`AssetsModule` and before the modules that will use it, sized by
+`assets.loadThreads`, and drained once a frame after `ApplyRequests`. It is
+destroyed before the job executor and the assets by member order. Because a
+request for an asset has to run on the executor `App` already owns.
 
 *2026-10-30* — **An empty scene over a corrupt `scene.json` is untitled (#291).**
 Was: the empty scene stayed bound to the game's scene directory, so the next

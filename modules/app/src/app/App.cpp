@@ -11,6 +11,7 @@
 
 #include "Prompt.h"
 #include <assets/AssetIdRoot.h>
+#include <assets/AssetSettings.h>
 #include <core/EngineVersion.h>
 #include <core/ecs/EngineMode.h>
 #include <core/ecs/Requests.h>
@@ -53,6 +54,15 @@ namespace mir
             append("entities", probe.mMissingEntities);
             append("instances", probe.mMissingInstances);
             return files;
+        }
+
+        std::unique_ptr<AsyncAssetService> MakeAssetService(
+            AssetsModule &assets, JobExecutor &jobs, const std::filesystem::path &projectSettingsPath)
+        {
+            if (!assets.HadManifest())
+                return nullptr;
+            return std::make_unique<AsyncAssetService>(
+                assets, jobs, AssetSettings::LoadFile(projectSettingsPath).loadThreads);
         }
 
         std::filesystem::path PrefabSourceDir(const GameProject &project)
@@ -116,6 +126,7 @@ namespace mir
           mJobs(mDesc.mWorkerThreads),
           mCore(Context(), mCommands),
           mAssets(CookedAssetsDir()),
+          mAssetService(MakeAssetService(mAssets, mJobs, mProject.mProjectSettingsPath)),
           mParticles(Context(), mAssets, mProject.mAssetIdRoot),
           mScene(Context(), mProject.mSceneDir),
           mPrefab(Context(), mScene, PrefabSourceDir(mProject), kHasEditor ? nullptr : &mAssets),
@@ -511,6 +522,8 @@ namespace mir
 
             // nothing is drawn or running yet, so a transition frees nothing in use
             ApplyRequests();
+            if (mAssetService)
+                mAssetService->DrainCompletions();
 
             SystemContext frameContext = MakeContext(dt);
             mScheduler.RunFrameSlot(FrameSlot::FrameBegin, frameContext);

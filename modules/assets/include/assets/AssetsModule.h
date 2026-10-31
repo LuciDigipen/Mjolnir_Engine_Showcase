@@ -11,6 +11,7 @@
 #include <assets/AssetCache.h>
 #include <assets/AssetManifest.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -41,9 +42,13 @@ namespace mir
         void CommitReload();
         void AbortReload();
 
+        // Number of reloads committed so far, so a holder can tell its data is from an older cook
+        uint32_t ReloadEpoch() const { return mReloadEpoch; }
+
     private:
         std::filesystem::path mCookedDir;
         bool mHadManifest = false;
+        uint32_t mReloadEpoch = 0;
 
         // the caches hold a raw pointer to their manifest: manifest first, so it dies last,
         // and on the heap, so the address survives the swap

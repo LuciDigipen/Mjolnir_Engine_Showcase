@@ -11,8 +11,11 @@ does not own the renderer, the ECS update loop, or import of source glTF files.
 `AssetCooker` turns a glTF package into a Model plus typed Mesh, Skeleton,
 AnimationClip, Material, and Texture assets. `LoadModelResources` resolves the
 Model's mesh, skeleton, and clip dependencies through `AssetCache`, then checks
-their cross-references before a model can be evaluated. The source format is
-never parsed here.
+their cross-references before a model can be evaluated. `DecodeModelResources`
+does the same over blobs already read, and `ModelResourcesDecoder` names the
+mesh, skeleton and clip types it needs, so a background load reads those and
+leaves materials and textures to their own requests. The source format is never
+parsed here.
 
 `ModelPlayer` is the ECS component for one instance. It stores the model and
 animation references, clip and scene selection, and the playback clock. The
@@ -43,7 +46,7 @@ See [job ownership and configuration](jobs.md).
 | `ModelPlayer`, `RegisterModelPlayer`, `kModelPlayerFields` | `animation/ModelPlayer.h` | Serializable per-entity selection and playback state behind validating setters |
 | `ModelSystem` | `animation/ModelSystem.h` | GPU upload, reload swap, playback clock and `ModelDrawItems` per frame |
 | `ModelMorphOverrides` | `animation/ModelPlayer.h` | Transient weights keyed by entity and stable node key |
-| `ModelResources`, `LoadModelResources` | `animation/ModelAnimation.h` | Typed model and validated dependencies |
+| `ModelResources`, `LoadModelResources`, `DecodeModelResources`, `ModelResourcesDecoder` | `animation/ModelAnimation.h` | Typed model and validated dependencies, from the cache or from blobs already read |
 | `ModelEvaluationInput`, `ModelEvaluationResult`, `EvaluateModelInstance` | `animation/ModelEvaluation.h` | Immutable evaluation inputs and owned per-instance output, independent of World and renderer |
 | `ModelEvaluationGrain` | `animation/ModelEvaluation.h` | Bounded grain targeting four ranges per participating thread |
 | `SampleAnimationTrack`, `EvaluateModel`, `NodePose` | `animation/ModelAnimation.h` | Track interpolation and a fresh hierarchical pose |
