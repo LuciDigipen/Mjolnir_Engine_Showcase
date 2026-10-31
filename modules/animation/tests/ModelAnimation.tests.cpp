@@ -145,7 +145,11 @@ TEST_CASE("Model seek loop and hierarchy evaluation are deterministic", "[animat
 }
 TEST_CASE("Typed assets reject truncation oversized arrays trailing bytes and cyclic nodes", "[assets][animation]")
 {
-    TextureAsset t{1, 1, {255, 0, 0, 255}};
+    TextureAsset t;
+    t.width = t.height = 1;
+    t.format = TextureFormat::Rgba8Srgb;
+    t.colorSpace = TextureColorSpace::Srgb;
+    t.rgba = {255, 0, 0, 255};
     auto bytes = BuildTypedAsset(t);
     auto view = ParseAssetBlob(bytes);
     REQUIRE(view);

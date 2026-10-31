@@ -9,9 +9,9 @@
 #include "prefab/PrefabCoordinator.h"
 
 #include "assets/AssetCache.h"
+#include "core/ecs/ComponentFieldChanges.h"
 #include "core/ecs/ComponentFields.h"
 #include "core/ecs/ComponentRegistry.h"
-#include "core/ecs/EntityChanges.h"
 #include "core/ecs/EngineMode.h"
 #include "core/ecs/TransformHierarchy.h"
 #include "core/ecs/World.h"
@@ -153,10 +153,10 @@ namespace mir
                 { return node.mKind == PrefabNodeKind::Prefab && node.mPrefab == id; });
         }
 
-        void RecordFieldChange(EntityChangeSet &changes, Entity entity, const ComponentOps &ops,
+        void RecordFieldChange(std::vector<ComponentFieldChange> &changes, Entity entity, const ComponentOps &ops,
             std::string_view field)
         {
-            for (EntityComponentChange &change : changes.mChangedComponents)
+            for (ComponentFieldChange &change : changes)
             {
                 if (change.mEntity != entity || !(change.mType == ops.mType))
                     continue;
@@ -169,38 +169,11 @@ namespace mir
                 return;
             }
 
-            EntityComponentChange change;
+            ComponentFieldChange change;
             change.mEntity = entity;
             change.mType = ops.mType;
             change.mFields.emplace_back(field);
-            changes.mChangedComponents.push_back(std::move(change));
-        }
-
-        void RecordRemovedComponent(EntityChangeSet &changes, Entity entity, const ComponentOps &ops)
-        {
-            const EntityComponentRef entry{ entity, ops.mType };
-            if (std::find(changes.mRemovedComponents.begin(), changes.mRemovedComponents.end(), entry) ==
-                changes.mRemovedComponents.end())
-            {
-                changes.mRemovedComponents.push_back(entry);
-            }
-        }
-
-        void RecordAddedComponent(EntityChangeSet &changes, Entity entity, const ComponentOps &ops)
-        {
-            const EntityComponentRef entry{ entity, ops.mType };
-            if (std::find(changes.mAddedComponents.begin(), changes.mAddedComponents.end(), entry) ==
-                changes.mAddedComponents.end())
-            {
-                changes.mAddedComponents.push_back(entry);
-            }
-        }
-
-        bool HasChanges(const EntityChangeSet &changes)
-        {
-            return !changes.mRemovedEntities.empty() || !changes.mRemovedComponents.empty() ||
-                !changes.mChangedComponents.empty() || !changes.mAddedEntities.empty() ||
-                !changes.mAddedComponents.empty();
+            changes.push_back(std::move(change));
         }
 
         struct ComponentOp
@@ -249,11 +222,11 @@ namespace mir
 
             std::vector<StableId> mRemovedMemberIds;
             std::vector<Entity> mRemovedRoots;
-            std::vector<Entity> mRemovedEntities;
         };
 
-        void PlanEntityRefWrite(InstancePlan &plan, EntityChangeSet &changes, Entity entity, StableId owner,
-            std::size_t newNode, std::size_t newComponent, std::size_t fieldIndex, bool recordField = true)
+        void PlanEntityRefWrite(InstancePlan &plan, std::vector<ComponentFieldChange> &changes, Entity entity,
+            StableId owner, std::size_t newNode, std::size_t newComponent, std::size_t fieldIndex,
+            bool recordField = true)
         {
             const CompiledPrefabNode &node = plan.mNew->Nodes()[newNode];
             const CompiledPrefabComponent &component = node.mComponents[newComponent];
@@ -278,7 +251,8 @@ namespace mir
 
         InstancePlan BuildPlan(World &world, LoadedScene &scene, StableId root, ScenePrefabInstance &instance,
             const std::shared_ptr<const CompiledPrefab> &oldPrefab,
-            const std::shared_ptr<const CompiledPrefab> &newPrefab, bool mainScene, EntityChangeSet &beforeChanges)
+            const std::shared_ptr<const CompiledPrefab> &newPrefab, bool mainScene,
+            std::vector<ComponentFieldChange> &changes)
         {
             InstancePlan plan;
             plan.mRoot = root;
@@ -306,14 +280,7 @@ namespace mir
                     plan.mRemovedMemberIds.push_back(member);
                     const auto entityIt = scene.mEntities.find(member);
                     if (entityIt != scene.mEntities.end() && world.IsAlive(entityIt->second))
-                    {
                         plan.mRemovedRoots.push_back(entityIt->second);
-                        plan.mRemovedEntities.push_back(entityIt->second);
-                        ForEachDescendant(world, entityIt->second, [&](Entity descendant)
-                            {
-                                plan.mRemovedEntities.push_back(descendant);
-                            });
-                    }
                     continue;
                 }
 
@@ -336,10 +303,7 @@ namespace mir
                         if (IsPlacementTransform(mainScene, newNode, ops.mType.name))
                             continue;
                         if (ops.Has(world, entity) && FindAddedComponent(instance, address, ops.mType.name) == nullptr)
-                        {
                             plan.mComponentRemovals.push_back(ComponentOp{ entity, &ops });
-                            RecordRemovedComponent(beforeChanges, entity, ops);
-                        }
                         continue;
                     }
 
@@ -354,11 +318,10 @@ namespace mir
                         if (IsPlacementTransform(mainScene, newNode, ops.mType.name))
                             continue;
                         plan.mComponentAdditions.push_back(ComponentAddition{ entity, newIndex, newComponent });
-                        RecordAddedComponent(beforeChanges, entity, ops);
                         for (std::size_t fieldIndex = 0; fieldIndex < ops.mFields.size(); ++fieldIndex)
                         {
                             if (ops.mFields[fieldIndex].mKind == FieldKind::EntityRef)
-                                PlanEntityRefWrite(plan, beforeChanges, entity, owner, newIndex, newComponent, fieldIndex, false);
+                                PlanEntityRefWrite(plan, changes, entity, owner, newIndex, newComponent, fieldIndex, false);
                         }
                         continue;
                     }
@@ -399,7 +362,7 @@ namespace mir
                                 write.mTargetNode = *targetNode;
                             }
                             plan.mFieldWrites.push_back(std::move(write));
-                            RecordFieldChange(beforeChanges, entity, ops, field.mName);
+                            RecordFieldChange(changes, entity, ops, field.mName);
                             continue;
                         }
 
@@ -416,7 +379,7 @@ namespace mir
                         write.mField = &field;
                         write.mValue = newValue;
                         plan.mFieldWrites.push_back(std::move(write));
-                        RecordFieldChange(beforeChanges, entity, ops, field.mName);
+                        RecordFieldChange(changes, entity, ops, field.mName);
                     }
                 }
 
@@ -437,11 +400,10 @@ namespace mir
                         continue;
 
                     plan.mComponentAdditions.push_back(ComponentAddition{ entity, newIndex, newComponent });
-                    RecordAddedComponent(beforeChanges, entity, ops);
                     for (std::size_t fieldIndex = 0; fieldIndex < ops.mFields.size(); ++fieldIndex)
                     {
                         if (ops.mFields[fieldIndex].mKind == FieldKind::EntityRef)
-                            PlanEntityRefWrite(plan, beforeChanges, entity, owner, newIndex, newComponent, fieldIndex, false);
+                            PlanEntityRefWrite(plan, changes, entity, owner, newIndex, newComponent, fieldIndex, false);
                     }
                 }
             }
@@ -509,7 +471,7 @@ namespace mir
             }
         }
 
-        void ApplyPlan(World &world, LoadedScene &scene, InstancePlan &plan, EntityChangeSet &afterChanges)
+        void ApplyPlan(World &world, LoadedScene &scene, InstancePlan &plan)
         {
             ScenePrefabInstance &instance = *plan.mInstance;
             const std::span<const CompiledPrefabNode> newNodes = plan.mNew->Nodes();
@@ -558,11 +520,7 @@ namespace mir
                 scene.mDirty = true;
 
                 for (const CompiledPrefabComponent &component : node.mComponents)
-                {
                     component.mOps->AddCopy(world, entity, component.mBytes.data());
-                    afterChanges.mAddedComponents.push_back(EntityComponentRef{ entity, component.mOps->mType });
-                }
-                afterChanges.mAddedEntities.push_back(entity);
             }
 
             for (std::size_t newNodeIndex : plan.mAddedNodes)
@@ -933,7 +891,7 @@ namespace mir
     void PrefabCoordinator::CommitScene(World &world, LoadedScene &scene, PublishedTable &published,
         bool mainScene)
     {
-        EntityChangeSet beforeChanges;
+        std::vector<ComponentFieldChange> changes;
         std::vector<InstancePlan> plans;
 
         for (auto &[root, instance] : scene.mInstances)
@@ -951,7 +909,7 @@ namespace mir
                 continue;
 
             plans.push_back(BuildPlan(world, scene, root, instance, entry->second.mTemplate, current, mainScene,
-                beforeChanges));
+                changes));
         }
 
         if (plans.empty())
@@ -959,16 +917,6 @@ namespace mir
 
         if (mainScene)
             mPublishedChanges = true;
-
-        std::set<uint64_t> removedEntityKeys;
-        for (const InstancePlan &plan : plans)
-        {
-            for (Entity entity : plan.mRemovedEntities)
-            {
-                if (removedEntityKeys.insert(PackEntity(entity)).second)
-                    beforeChanges.mRemovedEntities.push_back(entity);
-            }
-        }
 
         std::set<StableId> removedIds;
         for (const InstancePlan &plan : plans)
@@ -984,27 +932,27 @@ namespace mir
             for (const ClearedSceneEntityRef &entry : cleared)
             {
                 if (const ComponentOps *ops = ComponentRegistry::Instance().Find(entry.mType.name))
-                    RecordFieldChange(beforeChanges, entry.mEntity, *ops, entry.mField);
+                    RecordFieldChange(changes, entry.mEntity, *ops, entry.mField);
             }
         }
 
-        EntityChangeListeners *listeners = world.TryResource<EntityChangeListeners>();
-        if (listeners != nullptr && HasChanges(beforeChanges))
-            listeners->NotifyBeforeRemove(world, beforeChanges);
+        // adds, removes and destroys reach owners through the component hooks
+        ComponentFieldListeners *listeners = world.TryResource<ComponentFieldListeners>();
+        if (listeners != nullptr && !changes.empty())
+            listeners->NotifyBeforeChange(world, changes);
 
-        EntityChangeSet afterChanges = beforeChanges;
         for (InstancePlan &plan : plans)
         {
             maintained |= !plan.mRemovedMemberIds.empty() || !plan.mAddedNodes.empty();
-            ApplyPlan(world, scene, plan, afterChanges);
+            ApplyPlan(world, scene, plan);
             published[plan.mRoot] = PublishedInstance{ plan.mNew->Id(), plan.mNew->Revision(), plan.mNew };
         }
 
         if (maintained && mainScene)
             mSceneMaintenance = true;
 
-        if (listeners != nullptr && HasChanges(afterChanges))
-            listeners->NotifyAfterChange(world, afterChanges);
+        if (listeners != nullptr && !changes.empty())
+            listeners->NotifyAfterChange(world, changes);
     }
 
     std::vector<PrefabId> PrefabCoordinator::ConsumeExternalChanges()

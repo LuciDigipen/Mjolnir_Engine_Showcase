@@ -65,6 +65,11 @@ An `AssetId` is a hash of the source path relative to the repository root, so th
 same file gets the same id on every machine, and any code can compute an id from
 a path.
 
+A generic surface material is a versioned `.material.json` that cooks to a
+`SurfaceMaterialAsset` plus three packed 2K textures and their complete mip
+chains. The schema, color rules and incremental cook are in
+[material-pipeline.md](material-pipeline.md).
+
 **Setup failures are fatal, and they tell the reader the fix.**
 
 Any module constructor that fails throws a `SetupError` naming the fix. `main`
@@ -88,24 +93,29 @@ each library links in the engine, besides `core`; `app` links everything.
 | Library | Kind | Links |
 |---|---|---|
 | `core_base` | base | third-party only |
+| `jobs` | module, worker service | `core_base` |
 | `serial` | plain | `core_base` |
 | `project` | plain | `core_base`, `serial` |
 | `editortheme` | plain | `imgui` only |
 | `physics_layers` | plain | `core_base`, `serial` |
 | `core` | module | `core_base` |
 | `assets` | module | `project` |
+| `particles` | module | `assets` |
 | `scene` | module | `serial` |
 | `prefab` | module | `assets`, `scene`, `serial` |
-| `window`, `audio` | module | none |
-| `physics` | module | `physics_layers` |
+| `window` | module | none |
+| `audio` | module | `serial` |
+| `physics` | module | `physics_layers`, `jobs` |
 | `input` | module | `window`, `serial` |
 | `camera` | module | `input` |
 | `renderer` | module | `assets`, `serial` |
-| `animation` | module | `assets`, `renderer` |
-| `terrain` | module | `assets`, `serial` |
-| `terrain_runtime` | module, bridge | `terrain`, `renderer`, `physics`, `project` |
+| `particles_gpu` | module | `renderer` |
+| `animation` | module | `assets`, `renderer`, `jobs` |
+| `terrain` | module | `assets`, `serial`, `jobs` |
+| `particles_runtime` | module, bridge | `particles`, `particles_gpu` |
+| `terrain_runtime` | module, bridge | `terrain`, `renderer`, `physics`, `project`, `jobs` |
 | `script` | module | `assets` |
-| `audio_script`, `input_script`, `physics_script`, `renderer_script`, `terrain_script` | module, bridge | `script` and its library |
+| `audio_script`, `input_script`, `physics_script`, `renderer_script`, `terrain_script`, `particles_script` | module, bridge | `script` and its library |
 | `imguiruntime` | module | `window`, `renderer`, `input` |
 | `gameui` | module | `assets`, `input` |
 | `gameui_imgui` | module, bridge | `gameui`, `imguiruntime`, `window` |
@@ -115,7 +125,7 @@ each library links in the engine, besides `core`; `app` links everything.
 A cross-library piece moves into a library only when that adds no cycle, no new
 third-party code to the library's link closure, and no new runtime setup to its
 tests. Otherwise it is a bridge library. `terrain_runtime` is one, so `terrain`
-and `TerrainTool` need neither Vulkan nor Jolt. The five `*_script` bridges are
+and `TerrainTool` need neither Vulkan nor Jolt. The six `*_script` bridges are
 the others, so no library but `script` and its bridges sees Lua.
 
 `gameui` names no graphics API. The `gameui_imgui` bridge puts its draw list in
@@ -126,17 +136,19 @@ would.
 | Module | Owns | Document |
 |---|---|---|
 | `core` | `core_base`: logging, paths, math, platform, crash handler. `core`: the ECS, stages, frame slots, requests | [core.md](modules/core.md) |
+| `jobs` | App-owned worker pool, joined ranges and consumer-owned background queues | [jobs.md](modules/jobs.md) |
 | `project` | `game.json` and `project_settings.json` as plain data | [project.md](modules/project.md) |
 | `window` | An OS window and its event pump | [window.md](modules/window.md) |
 | `renderer` | The whole Vulkan path, and render-facing components | [renderer.md](modules/renderer.md) |
 | `assets` | Cooked blobs, manifest, cache | [assets.md](modules/assets.md) |
+| `particles` | Cooked effect definitions, emitter handles and CPU playback lifecycle | [particles.md](modules/particles.md) |
 | `animation` | Model pose sampling and per-instance playback data | [animation.md](modules/animation.md) |
 | `scene` | Scene save and load, the scene the World holds, the Play snapshot | [scene.md](modules/scene.md) |
 | `prefab` | Prefab source/cooked resources, compiled templates and scene instances | [prefab.md](modules/prefab.md) |
 | `serial` | JSON documents on disk | [serial.md](modules/serial.md) |
 | `script` | Lua embedding, ECS bindings, the script resolver | [script.md](modules/script.md) |
 | `physics` | Jolt world, `RigidBody`, the step, layers, events | [physics.md](modules/physics.md) |
-| `*_script` | Five bridges adding one library's Lua bindings each | [script-bridges.md](modules/script-bridges.md) |
+| `*_script` | Six bridges adding one library's Lua bindings each | [script-bridges.md](modules/script-bridges.md) |
 | `terrain_runtime` | Terrain streaming, drawing and collision at runtime | [terrain_runtime.md](modules/terrain_runtime.md) |
 | `audio` | Wwise lifetime and the per-frame pump | [audio.md](modules/audio.md) |
 | `camera` | Gameplay camera control: follow a target, or free-fly from input | [camera.md](modules/camera.md) |
@@ -290,6 +302,34 @@ view, and app's terrain answers per view with its own level of detail (#125).
 Meshes queued with `QueueMesh` are copied at the start of the next recorded
 frame within a per-frame byte budget and become drawable once that frame has
 completed; retired ones are freed after their last frame, with no wait (#127).
+
+### Worker execution
+
+`App` owns `JobExecutor` before the World and modules, so it outlives every
+consumer. The `jobs` module contains `JobExecutor` (worker pool and joined range
+dispatch) and `BackgroundJobQueue` (consumer lifetime and concurrency control).
+Neither depends on World, renderer, physics or terrain. Normal launches choose
+up to four workers; `--workers N` overrides the count and zero runs inline.
+
+- Animation gathers copied instance state on main, evaluates disjoint results
+  on workers, joins, and commits draw data and pose history on main before Render.
+- Jolt keeps its own simulation pool, configured with the same worker count.
+  After the step joins, physics reads independent body poses through the engine
+  pool, then commits transforms on main in parent-first order.
+- Terrain adapts its existing executor interface to a `BackgroundJobQueue` on
+  the engine pool. Reads, decoding, mesh/collision builds and release checks
+  complete in the background; existing install points consume results on main.
+
+Ready frame ranges take priority over queued background callbacks. Completion
+counts ranges rather than idle workers, so unrelated IO does not extend a
+completed frame join. Running IO is not preempted. Terrain's runtime closes its
+lane before its collaborators die, cancelling unstarted callbacks and waiting
+for running callbacks and outstanding submissions. Entity queries, structural
+changes, renderer access and lifecycle transitions remain on main.
+
+API contracts and source ownership are in [jobs](modules/jobs.md),
+[animation](modules/animation.md), [physics](modules/physics.md) and
+[terrain runtime](modules/terrain_runtime.md).
 
 ### A transition
 

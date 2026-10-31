@@ -11,6 +11,7 @@
 #include <core/log/Log.h>
 #include <core/log/LogHistory.h>
 #include <physics/CollisionEvents.h>
+#include <physics/ComponentRegistration.h>
 #include <physics/PhysicsStepGate.h>
 #include <physics/PhysicsWorld.h>
 #include <physics/components/RigidBody.h>
@@ -49,6 +50,7 @@ namespace
 
         explicit PhysicsFixture(mir::EngineMode mode = mir::EngineMode::Play)
         {
+            mir::RegisterPhysicsComponents();
             world.EmplaceResource<mir::PhysicsWorld>();
             hooks = world.SetComponentHooks<mir::RigidBody>(
                 { .onAdd = &mir::PhysicsSystem::OnRigidBodyAdded, .onRemove = &mir::PhysicsSystem::OnRigidBodyRemoved });
@@ -626,8 +628,8 @@ TEST_CASE("Mass, gravity factor, friction, restitution and sleeping reach the bo
         const mir::Entity a = fixture.Add(glm::vec3(-5.0f, 3.0f, 0.0f), bouncy);
         const mir::Entity b = fixture.Add(glm::vec3(5.0f, 3.0f, 0.0f), dead);
 
-        double highestBouncy = 0.0;
-        double highestDead = 0.0;
+        mir::WorldReal highestBouncy = 0.0;
+        mir::WorldReal highestDead = 0.0;
         for (int i = 0; i < 120; ++i)
         {
             fixture.Run(1);
@@ -844,7 +846,7 @@ TEST_CASE("Editing the body properties during Play reaches the body", "[physics]
         fixture.Add(glm::vec3(0.0f), kStaticBox);
         const mir::Entity ball = fixture.Add(glm::vec3(0.0f, 3.0f, 0.0f), kDynamicSphere);
         BodyComponent(fixture, ball).restitution = 0.9f;
-        double highest = 0.0;
+        mir::WorldReal highest = 0.0;
         for (int i = 0; i < 120; ++i)
         {
             fixture.Run(1);
@@ -1134,7 +1136,7 @@ TEST_CASE("A size of zero gives an empty collider, says so, and a fix swaps the 
     {
         std::size_t count = 0;
         for (const mir::LogEntry &entry : mir::LogHistory::Snapshot())
-            count += entry.message.find("must be positive") != std::string::npos ? 1 : 0;
+            count += entry.message.find("must be positive") != std::string::npos ? entry.count : 0;
         return count;
     };
 

@@ -11,8 +11,8 @@
 #include <script/ScriptSystem.h>
 
 #include <core/ecs/CommandBuffer.h>
+#include <core/ecs/ComponentFieldChanges.h>
 #include <core/ecs/ComponentRegistry.h>
-#include <core/ecs/EntityChanges.h>
 #include <core/ecs/World.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -24,11 +24,9 @@
 namespace
 {
     using mir::CommandBuffer;
+    using mir::ComponentFieldChange;
+    using mir::ComponentFieldListeners;
     using mir::Entity;
-    using mir::EntityChangeListeners;
-    using mir::EntityChangeSet;
-    using mir::EntityComponentChange;
-    using mir::EntityComponentRef;
     using mir::IScriptHost;
     using mir::ScriptRef;
     using mir::ScriptSystem;
@@ -57,38 +55,44 @@ namespace
         int32_t mNextInstance = 0;
     };
 
-    ScriptRef MakeRef(int32_t instanceRef)
+    // the instance is attached after the add, the way the resolver does it
+    Entity Scripted(World &world, int32_t instanceRef)
     {
         ScriptRef ref;
-        ref.instanceRef = instanceRef;
-        ref.started = true;
         std::strncpy(ref.scriptName, "spin", sizeof(ref.scriptName) - 1);
-        return ref;
+
+        const Entity entity = world.CreateEntity();
+        ScriptRef &added = world.AddComponent<ScriptRef>(entity, ref);
+        added.instanceRef = instanceRef;
+        added.started = true;
+        return entity;
     }
 }
 
-TEST_CASE("BeforeRemove releases a script binding that a commit removes", "[script][changes]")
+TEST_CASE("BeforeChange releases only a changed script name", "[script][changes]")
 {
     mir::RegisterCoreComponents();
     mir::RegisterScriptComponents();
 
     World world;
     CommandBuffer commands;
-    world.EmplaceResource<EntityChangeListeners>();
+    world.EmplaceResource<ComponentFieldListeners>();
     FakeHost host;
     ScriptSystem system(host);
 
     SystemContext context{ world, commands };
     system.OnStart(context);
 
-    const Entity entity = world.CreateEntity();
-    world.AddComponent<ScriptRef>(entity, MakeRef(7));
+    const Entity entity = Scripted(world, 8);
+    ComponentFieldListeners &listeners = world.Resource<ComponentFieldListeners>();
 
-    EntityChangeSet changes;
-    changes.mRemovedComponents.push_back(EntityComponentRef{ entity, TypeIdOf<ScriptRef>() });
-    world.Resource<EntityChangeListeners>().NotifyBeforeRemove(world, changes);
+    const std::vector<ComponentFieldChange> unrelated{ { entity, TypeIdOf<ScriptRef>(), { "speed" } } };
+    listeners.NotifyBeforeChange(world, unrelated);
+    CHECK(host.mDestroyed.empty());
 
-    REQUIRE(host.mDestroyed == std::vector<int32_t>{ 7 });
+    const std::vector<ComponentFieldChange> named{ { entity, TypeIdOf<ScriptRef>(), { "scriptName" } } };
+    listeners.NotifyBeforeChange(world, named);
+    REQUIRE(host.mDestroyed == std::vector<int32_t>{ 8 });
     const ScriptRef *ref = world.GetComponent<ScriptRef>(entity);
     REQUIRE(ref != nullptr);
     CHECK(ref->instanceRef == -1);
@@ -97,60 +101,26 @@ TEST_CASE("BeforeRemove releases a script binding that a commit removes", "[scri
     system.OnStop(context);
 }
 
-TEST_CASE("BeforeRemove releases only a changed script name", "[script][changes]")
+TEST_CASE("OnStop unsubscribes from field changes", "[script][changes]")
 {
     mir::RegisterCoreComponents();
     mir::RegisterScriptComponents();
 
     World world;
     CommandBuffer commands;
-    world.EmplaceResource<EntityChangeListeners>();
+    world.EmplaceResource<ComponentFieldListeners>();
     FakeHost host;
     ScriptSystem system(host);
 
     SystemContext context{ world, commands };
     system.OnStart(context);
 
-    const Entity entity = world.CreateEntity();
-    world.AddComponent<ScriptRef>(entity, MakeRef(8));
-    EntityChangeListeners &listeners = world.Resource<EntityChangeListeners>();
-
-    EntityChangeSet unrelated;
-    unrelated.mChangedComponents.push_back(EntityComponentChange{ entity, TypeIdOf<ScriptRef>(), { "speed" } });
-    listeners.NotifyBeforeRemove(world, unrelated);
-    CHECK(host.mDestroyed.empty());
-
-    EntityChangeSet named;
-    named.mChangedComponents.push_back(EntityComponentChange{ entity, TypeIdOf<ScriptRef>(), { "scriptName" } });
-    listeners.NotifyBeforeRemove(world, named);
-    REQUIRE(host.mDestroyed == std::vector<int32_t>{ 8 });
-    CHECK(world.GetComponent<ScriptRef>(entity)->instanceRef == -1);
-
-    system.OnStop(context);
-}
-
-TEST_CASE("OnStop unsubscribes from entity changes", "[script][changes]")
-{
-    mir::RegisterCoreComponents();
-    mir::RegisterScriptComponents();
-
-    World world;
-    CommandBuffer commands;
-    world.EmplaceResource<EntityChangeListeners>();
-    FakeHost host;
-    ScriptSystem system(host);
-
-    SystemContext context{ world, commands };
-    system.OnStart(context);
-
-    const Entity entity = world.CreateEntity();
-    world.AddComponent<ScriptRef>(entity, MakeRef(9));
+    const Entity entity = Scripted(world, 9);
 
     system.OnStop(context);
 
-    EntityChangeSet changes;
-    changes.mRemovedEntities.push_back(entity);
-    world.Resource<EntityChangeListeners>().NotifyBeforeRemove(world, changes);
+    const std::vector<ComponentFieldChange> changes{ { entity, TypeIdOf<ScriptRef>(), { "scriptName" } } };
+    world.Resource<ComponentFieldListeners>().NotifyBeforeChange(world, changes);
     CHECK(host.mDestroyed.empty());
     CHECK(world.GetComponent<ScriptRef>(entity)->instanceRef == 9);
 }

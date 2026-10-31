@@ -18,7 +18,9 @@
 #include <glm/mat4x4.hpp>
 #include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
+#include <glm/vec4.hpp>
 
+#include <array>
 #include <cstdint>
 #include <optional>
 
@@ -34,6 +36,15 @@ namespace mir
     // Subtract origins in world precision before narrowing to renderer floats.
     std::optional<glm::mat4> RebaseViewProjection(const glm::mat4 &viewProj,
         WorldPosition oldOrigin, WorldPosition newOrigin);
+
+    // Empty requested extents mean the whole swapchain; otherwise the offset is
+    // clamped and the extent clipped to it. The Vulkan rect resolver delegates here.
+    glm::uvec2 ResolveRenderExtent(glm::ivec2 requestedOffset, glm::uvec2 requestedExtent,
+        glm::uvec2 swapchainExtent, glm::ivec2 *resolvedOffset = nullptr);
+
+    // One pixel's angular width at the view's centre, from its lens FOV and
+    // viewport. Rotation-invariant and bounded for invalid input.
+    float CameraPixelAngularSize(float fovYDegrees, glm::uvec2 extent);
 
     // A ray in a bounded float space, such as a mesh's local space.
     struct Ray
@@ -54,6 +65,10 @@ namespace mir
 
     // The ray through `ndc` of the viewport that `camera` and `lens` draw.
     WorldRay MakeCameraRay(const WorldPose &camera, const Camera &lens, float aspectRatio, glm::vec2 ndc);
+
+    // The view rectangle `distance` meters ahead in camera space (looking down -Z):
+    // top-right, top-left, bottom-left, bottom-right.
+    std::array<glm::vec3, 4> FrustumSliceCorners(float fovYDegrees, float aspectRatio, float distance);
 
     // A fixed-size, non-cascaded shadow frustum
     glm::mat4 MakeOrthographicViewProjection(const glm::vec3 &direction, float halfExtent, float nearZ);

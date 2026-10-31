@@ -110,7 +110,7 @@ namespace mir
             }
 
             
-            bool TryMerge(const ICommand &next) override
+            bool TryMerge(ICommand &next) override
             {
                 const auto *other = dynamic_cast<const AuthoredCommand *>(&next);
                 if (other == nullptr || !mMaintenance.empty() || !other->mMaintenance.empty() ||

@@ -15,6 +15,8 @@
 
 #include <glm/vec3.hpp>
 
+#include <utility>
+
 namespace mir
 {
 
@@ -29,13 +31,15 @@ namespace mir
 
         float mLookSensitivity = 0.15f;
 
-        // No far plane: the scene view is never clipped by distance.
-        Camera mLens{ .mFarZ = 0.0f };
+        // No far plane: the scene view is never clipped by distance. Aperture and
+        // shutter 0 keep depth of field and motion blur out of the scene view.
+        Camera mLens{ .mFarZ = 0.0f, .mAperture = 0.0f, .mShutterStrength = 0.0f };
 
         void Update(const RawInputSnapshot &input, bool lookHeld, float dt);
 
         WorldPosition Position() const { return mPosition; }
-        void SetPosition(WorldPosition position) { mPosition = position; }
+        
+        void SetPosition(WorldPosition position) { mPosition = position; mCut = true; }
 
         // Refuses a move that would leave the finite world.
         bool Translate(const WorldVec3 &meters);
@@ -43,6 +47,10 @@ namespace mir
         // Backs away from `target` along the current view direction until a
         // sphere of `radius` meters around it fits the view.
         bool FocusOn(WorldPosition target, float radius);
+
+        // The pose jumped since the renderer last took it; its next frame keeps no history.
+        void Cut() { mCut = true; }
+        bool TakeCut() { return std::exchange(mCut, false); }
 
         glm::vec3 Forward() const;
         glm::vec3 Right() const;
@@ -57,5 +65,6 @@ namespace mir
         double mLastMouseX = 0.0;
         double mLastMouseY = 0.0;
         bool mHadLastMouse = false;
+        bool mCut = false;
     };
 }

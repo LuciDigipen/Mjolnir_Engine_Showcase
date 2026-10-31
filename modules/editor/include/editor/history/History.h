@@ -34,7 +34,8 @@ namespace mir
     public:
         explicit History(std::size_t budget = kHistoryBudget) : mBudget(budget) {}
 
-        void Submit(std::unique_ptr<ICommand> command);
+        // Discrete commands cannot merge with edits before or after them.
+        void Submit(std::unique_ptr<ICommand> command, bool discrete = false);
         void RequestUndo() { --mPending; ++mSubmissions; }
         void RequestRedo() { ++mPending; ++mSubmissions; }
 
@@ -109,7 +110,12 @@ namespace mir
 
         std::deque<Step> mSteps;
         std::size_t mCursor = 0;
-        std::vector<std::unique_ptr<ICommand>> mQueue;
+        struct QueuedCommand
+        {
+            std::unique_ptr<ICommand> mCommand;
+            bool mDiscrete = false;
+        };
+        std::vector<QueuedCommand> mQueue;
         int mPending = 0; // below 0 undoes, above 0 redoes
         bool mEndStep = false;
 

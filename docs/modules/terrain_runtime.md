@@ -22,6 +22,27 @@ pieces a `TerrainCollisionResidency` builds for the bodies that need them
 (#128), and, shared by every viewport, the GPU meshes of the draw units the
 viewports select (#125).
 
+## Material binding
+
+`TerrainRender` derives each vertex UV from the async mesh origin and the
+vertex's local XZ in meters, reducing the origin once in double. The material
+divides by its `tileSizeMeters`; the value must divide the shared validation
+period. `TerrainInstance.materialPath` resolves through the renderer-owned
+`SurfaceMaterialLibrary` as one named base layer with weight one. Binding and
+entity generation live in `InstanceResources`, separate from release, height
+query, collider and geometry cache. A material-only Edit updates that side only;
+an entity generation replacement at the same accepted placement keeps the
+release. Empty, invalid or unsupported bindings draw the diagnostic material and
+log once. The same consumer callback also checks the macro period against the
+shared validation period and the macro/parallax numeric bounds before a candidate
+material is published; terrain geometry and collision do not read them.
+
+## Tests
+
+CPU tests live in `modules/terrain/tests` (UV, scene serialization, entity
+generation, prefab capture) and `modules/renderer/tests` (catalog frontend,
+record packing). GPU and visual checks remain supervisor work.
+
 ```
 constructor    -> TerrainRuntime::Bind      streaming settings -> TerrainStreamingSettings, TerrainStreamer resources;
                                             renderer mesh streaming; collision residency; registers itself in the
@@ -48,9 +69,17 @@ Render         -> TerrainRuntime::Prepare   per viewport: select, SetInterest; t
 `terrain_streaming.local.json` beside the executable layered over it (see
 [terrain.md](terrain.md#streaming-and-cpu-residency-issue-126)). Valid settings
 become the `TerrainStreamingSettings` and `TerrainStreamer` World resources, the
-streamer with a `TerrainWorkerPool` that also builds meshes; the `gpu` section
-configures the renderer's mesh streaming (staging ring, bytes a frame) and a
-`TerrainMeshResidency`. Invalid settings, or missing ones in
+streamer with a `TerrainJobExecutor` background lane on the app-owned executor,
+also used for mesh/collision builds and release checks. `io.workerThreads` caps
+terrain's share of the engine workers; `--workers 0` runs inline. The adapter
+lives in `terrain_runtime/TerrainJobExecutor.h`; `terrain` only knows the executor
+interface. Runtime shutdown waits for submitted callbacks before destroying
+collaborators, then releases shared ownership without closing the lane. A retained
+streamer can keep posting work; only the last owner closes the lane.
+The `gpu` section
+sets the budgets of a `TerrainMeshResidency` and the least staging ring terrain
+asks the renderer for (`gpu.stagingMiB`). Terrain follows the renderer's per-frame
+upload budget, the game's `rendering.uploadMiBPerFrame`. Invalid settings, or missing ones in
 a scene with terrain, are one error, and no terrain loads; a game without
 terrain needs no file.
 

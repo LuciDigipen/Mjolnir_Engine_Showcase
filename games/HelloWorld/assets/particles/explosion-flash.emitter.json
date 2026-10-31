@@ -1,0 +1,91 @@
+{
+  "burst": 1,
+  "capacity": 8,
+  "followEmitter": false,
+  "inheritVelocity": 0.0,
+  "lifetime": 0.15000000596046448,
+  "localOffset": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "quality": {
+    "farDistance": 5000.0,
+    "importance": 1.0,
+    "minSpawnScale": 1.0,
+    "nearDistance": 1000.0
+  },
+  "renderer": {
+    "alignment": "screen",
+    "blend": "additive",
+    "color": [
+      3.0,
+      2.0,
+      1.0,
+      0.5
+    ],
+    "facing": "plane",
+    "fog": false,
+    "lighting": "unlit",
+    "maxDistance": 65536.0,
+    "size": 1.5,
+    "softDistance": 0.20000000298023224,
+    "sort": "none",
+    "stretch": 0.0,
+    "textured": false,
+    "velocity": [
+      0.0,
+      1.0,
+      0.0
+    ]
+  },
+  "seed": 1,
+  "spawnBehaviors": [
+    {
+      "enabled": true,
+      "name": "Initialize",
+      "parameters": []
+    }
+  ],
+  "spawnPerMeter": 0.0,
+  "spawnRate": 0.0,
+  "startDelay": 3.0,
+  "target": "gpu",
+  "teleportDistance": 100.0,
+  "texture": "particles/white.png",
+  "updateBehaviors": [
+    {
+      "enabled": true,
+      "name": "Age",
+      "parameters": []
+    },
+    {
+      "enabled": true,
+      "name": "Integrate",
+      "parameters": []
+    },
+    {
+      "enabled": true,
+      "name": "SizeOverLife",
+      "parameters": [
+        1.5
+      ]
+    },
+    {
+      "enabled": true,
+      "name": "FadeOverLife",
+      "parameters": [
+        0.0
+      ]
+    },
+    {
+      "enabled": true,
+      "name": "Noise",
+      "parameters": [
+        3.0199999809265137,
+        1.0
+      ]
+    }
+  ],
+  "version": 3
+}

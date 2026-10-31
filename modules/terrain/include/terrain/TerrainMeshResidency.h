@@ -56,6 +56,8 @@ namespace mir
         virtual uint64_t Footprint(uint32_t vertices, uint32_t indices) const = 0;
         // Handed over and not recorded for upload yet.
         virtual uint64_t QueuedBytes() const = 0;
+        // GPU bytes the renderer takes in one frame.
+        virtual uint64_t FrameBudgetBytes() const = 0;
         // Zero when the mesh cannot be queued.
         virtual TerrainGpuMeshId Upload(TerrainMeshData &&mesh) = 0;
         virtual TerrainGpuMeshState State(TerrainGpuMeshId mesh) const = 0;
@@ -147,6 +149,8 @@ namespace mir
         bool Ready(const TerrainPayloadKey &geometry) const;
         // Null unless Ready; marks the mesh drawn.
         const TerrainResidentMesh *Acquire(const TerrainPayloadKey &geometry, double now);
+        // Null unless Ready; does not extend mesh retention.
+        const TerrainResidentMesh *FindReady(const TerrainPayloadKey &geometry) const;
 
         // Every mesh of a release not in keep, built, building or uploading.
         void RetireReleases(std::span<const TerrainReleaseInfo> keep);

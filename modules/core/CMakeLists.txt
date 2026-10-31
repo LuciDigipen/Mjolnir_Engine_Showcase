@@ -33,6 +33,11 @@ target_link_libraries(engine_core_base PRIVATE spdlog::spdlog)
 # glm is PUBLIC: glm types are in the public math and component headers
 target_link_libraries(engine_core_base PUBLIC glm::glm)
 
+# UserDataDir: SHGetKnownFolderPath and CoTaskMemFree
+if(WIN32)
+    target_link_libraries(engine_core_base PRIVATE shell32 ole32)
+endif()
+
 engine_add_module(core INCLUDE_DIR include_ecs)
 
 target_sources(engine_core PRIVATE

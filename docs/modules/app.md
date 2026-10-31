@@ -23,11 +23,11 @@ it belongs.
 mDesc, mProject          the checks before anything is built: game directories, project_settings.json
 mSplash                  shown until main closes it
 mCommands, mWorld, mScheduler
-CoreModule, AssetsModule, SceneModule, PrefabModule
+CoreModule, AssetsModule, ParticlesModule, SceneModule, PrefabModule
 GameUIModule, GameShellModule    before ImGui, whose shutdown frees their textures' GPU side
-WindowModule, RendererModule, InputModule, AnimationModule, ImGuiModule, EditorModule (editor builds)
+WindowModule, RendererModule, ParticlesGpuModule, InputModule, AnimationModule, ImGuiModule, EditorModule (editor builds)
 CameraModule, AudioModule, PhysicsModule, TerrainModule
-ScriptModule, the five script bridges, TerrainRuntimeModule, GameUIImGuiModule
+ScriptModule, ParticlesRuntimeModule, the six script bridges, TerrainRuntimeModule, GameUIImGuiModule
 ```
 
 Between two module members a `SplashStep` sets the splash's status line, so the
@@ -90,7 +90,7 @@ what was built is torn down.
 ```
 NewScene     SceneUnload stage, SceneModule::New, SceneLoad stage
 LoadScene    probe and prompt, SceneUnload, SceneModule::LoadFromDisk, SceneLoad
-SaveScene    SceneModule::Save, SceneSaved stage
+SaveScene    prompt for an untitled scene, SceneModule::Bind, SceneModule::Save, SceneSaved stage
 PlayScene    PlayBegin stage, SceneModule::CaptureForPlay, Play mode
 StopScene    PlayEnd stage, SceneModule::RestoreFromPlay, Edit mode, SceneLoad stage
 asset swap   AssetsModule::BeginReload, ReloadPrepare stage, CommitReload, ReloadCommit stage
@@ -190,6 +190,12 @@ error. From the menu No keeps the current scene. A game build never asks, and
 `--non-interactive` answers No. A scene opened either way is incomplete in
 `SceneModule::LastLoad()`, so the editor marks it unsaved.
 
+**The empty scene over a corrupt `scene.json` is untitled.** It is not bound to
+the scene directory, so the broken files stay as they are. Save asks before it
+binds the scene and replaces `scene.json` and every entity and instance file
+there, and `--non-interactive` answers No. A New keeps the scene untitled, and a
+Load binds it.
+
 **Switching games restarts the process.** The component registry, the counter
 behind every component's signature bit, the Lua VM and the asset cache are all
 process-wide. Only a new process opens a game without the last one's leftovers:
@@ -262,6 +268,16 @@ through `mSwitchProjectTo`. All of them fail on a crash or a logged error.
    cheap for a large scene.
 
 ## Changed
+
+*2026-10-30* — **An empty scene over a corrupt `scene.json` is untitled (#291).**
+Was: the empty scene stayed bound to the game's scene directory, so the next
+Save rewrote `scene.json` and the stale-file sweep deleted every file in
+`entities/` and `instances/`, while the prompt said only that the broken file
+would be overwritten. Now: the scene is unbound, Save asks before replacing the
+broken scene, and the startup prompt says so. Because: Unity, Unreal and Godot
+keep that scene untitled until the user picks where to save it. Without Save As
+or more than one scene per game, the confirmation stands in for that choice;
+revisit once scene support grows.
 
 *2026-10-24* — **App builds modules, and transitions run stages.** Was: fixed
 subsystem members set up in `Initialize` and torn down in a hand-written

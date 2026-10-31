@@ -6,23 +6,33 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
+#include <renderer/SurfaceMaterialCatalog.h>
 #include <renderer/VulkanRenderer.h>
 #include "vulkan/CameraBuffer.h"
+#include "vulkan/DebugDraw.h"
 #include "vulkan/Device.h"
 #include "vulkan/FrameCapture.h"
 #include "vulkan/FrameSync.h"
+#include "vulkan/FxCompositionPass.h"
 #include "vulkan/ImGuiOverlay.h"
 #include "vulkan/MaterialStore.h"
+#include "vulkan/MaterialTable.h"
 #include "vulkan/MeshUploader.h"
 #include "vulkan/ModelDescriptors.h"
 #include "vulkan/PostProcessingStack.h"
 #include "vulkan/RayTracer.h"
+#include "vulkan/RasterSurfaces.h"
+#include "vulkan/SsgiTrace.h"
 #include "vulkan/ResourceStore.h"
 #include "vulkan/ShadowMaps.h"
 #include "vulkan/Swapchain.h"
 #include "vulkan/VulkanConstants.h"
+#if MIR_WITH_RTXGI
+#include "vulkan/Ddgi.h"
+#endif
 
 #include <core/log/Log.h>
+#include <core/log/SetupError.h>
 
 namespace mir
 {
@@ -31,14 +41,22 @@ namespace mir
         mSwapchain(std::make_unique<vk::Swapchain>()),
         mFrameSync(std::make_unique<vk::FrameSync>()),
         mResources(std::make_unique<vk::ResourceStore>()),
+        mMaterialTable(std::make_unique<vk::MaterialTable>()),
         mMaterialStore(std::make_unique<vk::MaterialStore>()),
+        mRasterSurfaces(std::make_unique<vk::RasterSurfaces>()),
+        mSsgiTrace(std::make_unique<vk::SsgiTrace>()),
         mCameraBuffer(std::make_unique<vk::CameraBuffer>()),
         mShadowMaps(std::make_unique<vk::ShadowMaps>()),
         mModelDescriptors(std::make_unique<vk::ModelDescriptors>()),
         mRayTracer(std::make_unique<vk::RayTracer>()),
+#if MIR_WITH_RTXGI
+        mDdgi(std::make_unique<vk::Ddgi>()),
+#endif
         mPostProcessing(std::make_unique<vk::PostProcessingStack>()),
+        mFxComposition(std::make_unique<vk::FxCompositionPass>()),
         mCapture(std::make_unique<vk::FrameCapture>()),
         mImGuiOverlay(std::make_unique<vk::ImGuiOverlay>()),
+        mDebugDraw(std::make_unique<vk::DebugDraw>()),
         mMeshUploads(std::make_unique<vk::MeshUploader>())
     {}
     VulkanRenderer::~VulkanRenderer() = default;
@@ -47,7 +65,30 @@ namespace mir
 
     bool VulkanRenderer::RayTracingActive(bool requested) const { return requested && RayTracingSupported(); }
 
+    bool VulkanRenderer::WireframeAvailable() const { return mDebugDraw->WireframeAvailable(); }
+
     bool VulkanRenderer::DlssAvailable() const { return mPostProcessing->DlssAvailable(); }
+
+    FxDeviceContext VulkanRenderer::FxDevice() const
+    {
+        return {mDevice->Handle(), mDevice->Allocator(), mDevice->ValidationEnabled(),
+            mDevice->Properties().limits.timestampPeriod, mDevice->TimestampBits()};
+    }
+
+    Registration VulkanRenderer::RegisterFxSystem(IFxSystem &system)
+    {
+        if (mFxSystem)
+            throw SetupError(ErrorCategory::Internal, "Register FX system", "renderer",
+                "An FX provider is already registered", "Unregister the existing provider before registering another.");
+        mFxSystem = &system;
+        return Registration(mFxLifetime, [this, provider = &system]
+        {
+            if (mFxSystem != provider) return;
+            if (mDevice->Handle()) mDevice->WaitIdle();
+            provider->Shutdown();
+            mFxSystem = nullptr;
+        });
+    }
 
     VulkanRenderer::GpuMemoryUsage VulkanRenderer::GetGpuMemoryUsage() const
     {
@@ -58,6 +99,8 @@ namespace mir
     VkExtent2D VulkanRenderer::SwapchainExtent() const { return mSwapchain->Extent(); }
 
     void VulkanRenderer::RequestSwapchainRecreate() { mSwapchain->MarkOutOfDate(); }
+
+    uint64_t VulkanRenderer::FxCompositionMemoryBytes() const { return mFxComposition->MemoryBytes(); }
 
     bool VulkanRenderer::Initialize(const RendererDesc &desc)
     {
@@ -84,6 +127,16 @@ namespace mir
         if (!mResources->Initialize(*mDevice))
             return false;
 
+        vk::MaterialTable *materialTable = nullptr;
+        if (mDevice->SharedMaterialTablesSupported())
+        {
+            if (!mMaterialTable->Initialize(*mDevice))
+                return false;
+            materialTable = mMaterialTable.get();
+        }
+        else
+            mMaterialTable.reset();
+
         if (!mCameraBuffer->Initialize(*mDevice))
             return false;
 
@@ -93,18 +146,29 @@ namespace mir
         if (!mModelDescriptors->Initialize(*mDevice))
             return false;
 
-        if (!mMaterialStore->Initialize(*mDevice, *mResources, vk::kHdrColorFormat,
+        if (!mMaterialStore->Initialize(*mDevice, *mResources, materialTable, vk::kHdrColorFormat,
             { mCameraBuffer->SetLayout(), mModelDescriptors->SetLayout(), mShadowMaps->SetLayout() }))
             return false;
 
         if (mDevice->RayTracingSupported() &&
-            !mRayTracer->Initialize(*mDevice, mSwapchain->Extent(), mCameraBuffer->SetLayout()))
+            !mRayTracer->Initialize(*mDevice, mSwapchain->Extent(), mCameraBuffer->SetLayout(), *mMaterialTable,
+                mMaterialStore->SurfaceMaterials().materials))
             return false;
 
-        mMeshUploads->Initialize(*mDevice);
+        if (!mMeshUploads->Initialize(*mDevice))
+            return false;
+        mRasterSurfaces->Initialize(*mDevice);
+        mSsgiTrace->Initialize(*mDevice, mCameraBuffer->SetLayout());
+#if MIR_WITH_RTXGI
+        if (mDevice->RayTracingSupported() && mDevice->DdgiSupported())
+            mDdgi->Initialize(*mDevice, mRayTracer->SceneLayout(), mCameraBuffer->SetLayout());
+#endif
 
-        return mPostProcessing->Initialize(*mDevice, mSwapchain->Format(), mSwapchain->Extent(),
-            mCameraBuffer->SetLayout());
+        if (!mPostProcessing->Initialize(*mDevice, mSwapchain->Format(), mSwapchain->Extent(),
+            mCameraBuffer->SetLayout()))
+            return false;
+
+        return mDebugDraw->Initialize(*mDevice, mSwapchain->Format());
     }
 
     bool VulkanRenderer::RecreateSwapchain()
@@ -114,12 +178,16 @@ namespace mir
         // The swapchain cannot reach ray tracing, so the facade resizes its output images.
         if (!mSwapchain->Recreate(*mWindow) ||
             (mDevice->RayTracingSupported() && !mRayTracer->Resize(mSwapchain->Extent())) ||
+            !mFxComposition->Resize(mSwapchain->Extent()) ||
             !mPostProcessing->Resize(mSwapchain->Extent()))
         {
             // Recreate may have cleared the flag already; set it so the next frame retries.
             mSwapchain->MarkOutOfDate();
             return false;
         }
+        mRasterSurfaces->Resize(mSwapchain->Extent());
+        mSsgiTrace->Shutdown();
+        if (!mRasterSurfaces->Active()) mMaterialStore->ReleaseSurfacePipelines();
         return true;
     }
 
@@ -133,9 +201,19 @@ namespace mir
 
             mMeshUploads->Shutdown(*mRayTracer);
 
+            if (mFxSystem) { mFxSystem->Shutdown(); mFxSystem = nullptr; }
+            mFxComposition->Shutdown();
+            mDebugDraw->Shutdown();
             mPostProcessing->Shutdown();
+            mRasterSurfaces->Shutdown();
+            mSsgiTrace->Shutdown();
+#if MIR_WITH_RTXGI
+            mDdgi->Shutdown();
+#endif
             mMaterialStore->Shutdown();
             mRayTracer->Shutdown();
+            if (mMaterialTable != nullptr)
+                mMaterialTable->Shutdown();
             mResources->Shutdown();
             mCapture->Shutdown();
             mModelDescriptors->Shutdown();
@@ -185,9 +263,19 @@ namespace mir
         return true;
     }
 
-    bool VulkanRenderer::ConfigureMeshStreaming(const MeshStreamingDesc &desc)
+    bool VulkanRenderer::RequestStagingBytes(uint64_t bytes)
     {
-        return mDevice->Handle() != VK_NULL_HANDLE && mMeshUploads->Configure(desc);
+        return mMeshUploads->RequestStagingBytes(bytes);
+    }
+
+    bool VulkanRenderer::SetUploadFrameBudget(uint64_t bytes)
+    {
+        return mMeshUploads->SetFrameBytes(bytes);
+    }
+
+    uint64_t VulkanRenderer::UploadFrameBudget() const
+    {
+        return mMeshUploads->FrameBytes();
     }
 
     MeshHandle VulkanRenderer::QueueMesh(std::vector<Vertex> vertices, std::vector<uint32_t> indices,
@@ -252,9 +340,33 @@ namespace mir
         return mMaterialStore->CreateMaterial(desc, *mResources, vk::kHdrColorFormat);
     }
 
+    bool VulkanRenderer::UpdateMaterialRecord(MaterialHandle handle, std::span<const std::byte> bytes)
+    {
+        return mMaterialStore->UpdateRecord(handle, bytes);
+    }
+
+    uint32_t VulkanRenderer::MaterialRecordOffset(MaterialHandle handle) const
+    {
+        const vk::GpuMaterial *const material = mMaterialStore->FindMaterial(handle);
+        return material != nullptr ? material->mRecordOffset : kInvalidMaterialRecordOffset;
+    }
+
     MaterialHandle VulkanRenderer::ErrorMaterial() const
     {
         return mMaterialStore->ErrorMaterial();
+    }
+
+    uint32_t VulkanRenderer::MaterialSamplerRow(const SamplerDesc &desc)
+    {
+        uint32_t row = UINT32_MAX;
+        if (mResources)
+            mResources->AcquireSampler(desc, &row);
+        return row;
+    }
+
+    const SurfaceMaterialCatalog &VulkanRenderer::SurfaceMaterials() const
+    {
+        return mMaterialStore->SurfaceMaterials();
     }
 
     bool VulkanRenderer::DestroyMaterial(MaterialHandle handle)
@@ -279,12 +391,24 @@ namespace mir
 
     void VulkanRenderer::ResetHistory()
     {
+        mSsgiTrace->ResetHistory();
+#if MIR_WITH_RTXGI
+        mDdgi->ResetHistory();
+#endif
         if (mPostProcessing)
             mPostProcessing->ResetHistory();
     }
 
+    void VulkanRenderer::SetGlobalIllumination(const DdgiSettings &settings)
+    {
+        if (settings == mDdgiSettings) return;
+        mDdgiSettings = settings;
+        if (mGiWasShading) mPostProcessing->ResetHistory();
+    }
+
     void VulkanRenderer::ReleaseSceneResources()
     {
+        if (mFxSystem) mFxSystem->ClearScene();
         if (mDevice->Handle() == VK_NULL_HANDLE)
             return;
 
@@ -292,6 +416,12 @@ namespace mir
         mDevice->WaitIdle();
 
         mMeshUploads->Clear(*mRayTracer);
+        mRasterSurfaces->Shutdown();
+        mSsgiTrace->Shutdown();
+        mMaterialStore->ReleaseSurfacePipelines();
+#if MIR_WITH_RTXGI
+        mDdgi->Shutdown();
+#endif
         mRayTracer->DestroyBlases();
         const std::size_t meshCount = mResources->ReleaseMeshes();
         mModelDescriptors->ResetFrames();

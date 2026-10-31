@@ -1,0 +1,45 @@
+{
+ "SoundBanksInfo": {
+  "Platform": "Windows",
+  "BasePlatform": "Windows",
+  "SchemaVersion": "16",
+  "SoundBankVersion": "172",
+  "SoundBanks": [
+   {
+    "Id": "393239870",
+    "Type": "User",
+    "GUID": "{EFD9AFF6-2DA4-4DFE-9835-9E287A1E85E2}",
+    "Language": "SFX",
+    "Hash": "{618D2897-FBFD-DC3D-7F53-20EFC9EC9552}",
+    "ObjectPath": "\\SoundBanks\\Default Work Unit\\Sfx",
+    "ShortName": "Sfx",
+    "Path": "Sfx.bnk",
+    "Media": [
+     {
+      "Id": "255435759",
+      "Language": "SFX",
+      "Streaming": "false",
+      "Location": "Memory",
+      "ShortName": "sfx_loop.wav",
+      "CachePath": "1C/{1CAC9475-9D06-DD7D-3AEC-FC92C88B646F}.wem"
+     }
+    ],
+    "Events": [
+     {
+      "Id": "1790112688",
+      "Name": "Play_Sfx_Loop",
+      "ObjectPath": "\\Events\\Default Work Unit\\Play_Sfx_Loop",
+      "GUID": "{C2A7FD30-64CC-424B-943A-A0CB144F3CA8}",
+      "DurationType": "Infinite",
+      "MediaRefs": [
+       {
+        "Id": "255435759"
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "FileHash": "{B721F870-C963-E274-F8D8-4EBA06762241}"
+ }
+}

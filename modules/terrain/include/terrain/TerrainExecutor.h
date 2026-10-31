@@ -25,7 +25,8 @@ namespace mir
     public:
         virtual ~TerrainExecutor() = default;
 
-        // Runs the job later on some thread. Jobs never throw.
+        // Runs on its executor, possibly inline with zero engine workers. Jobs
+        // never throw and must not depend on deferred execution.
         virtual void Post(std::function<void()> job) = 0;
     };
 

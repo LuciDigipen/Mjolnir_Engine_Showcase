@@ -8,6 +8,7 @@
  */
 #include <renderer/RendererModule.h>
 
+#include <renderer/ActiveCamera.h>
 #include <renderer/ComponentRegistration.h>
 #include <renderer/MeshResolveSystem.h>
 #include <renderer/PostProcessingSettings.h>
@@ -20,6 +21,8 @@
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/World.h>
 #include <core/log/SetupError.h>
+
+#include <stdexcept>
 
 namespace mir
 {
@@ -39,10 +42,16 @@ namespace mir
         RegisterRendererComponents();
         RegisterRendererEntityTypes();
         RegisterRendererPostEffects();
+        mSurfaceMaterials.Bind(assets.Cache(), mRenderer);
 
         context.world.EmplaceResource<ViewDrawSources>();
-        context.world.EmplaceResource<RenderSettings>(
-            RenderSettings::LoadFile(settings.mProjectSettingsPath).value_or(RenderSettings{}));
+        // physics fills it while a view shows colliders
+        context.world.EmplaceResource<DebugLines>();
+        const RenderSettings renderSettings =
+            RenderSettings::LoadFile(settings.mProjectSettingsPath).value_or(RenderSettings{});
+        context.world.EmplaceResource<RenderSettings>(renderSettings);
+        // The game's play-time upload budget.
+        mRenderer.SetUploadFrameBudget(renderSettings.UploadFrameBytes());
         context.world.EmplaceResource<PostProcessingSettings>(
             PostProcessingSettings::LoadFile(settings.mProjectSettingsPath).value_or(PostProcessingSettings{}));
 
@@ -50,6 +59,8 @@ namespace mir
         mMeshes = &context.scheduler.AddSystem<MeshResolveSystem>(SystemPhase::LateUpdate,
             SystemOrder{SystemOrder::kNormal}, mRenderer, &assets.Cache(),
             settings.mAssetIdRoot);
+        mActiveCamera = &context.scheduler.AddSystem<ActiveCameraSystem>(SystemPhase::Render,
+            SystemOrder{SystemOrder::kEarly});
         mRenderSystem = &context.scheduler.AddSystem<RenderSystem>(SystemPhase::Render,
             SystemOrder{SystemOrder::kNormal}, mRenderer);
 
@@ -62,16 +73,39 @@ namespace mir
         mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &)
             {
                 mMeshes->Reset();
+                mSurfaceMaterials.Reset();
                 mRenderer.ReleaseSceneResources();
             });
 
         // a cut: the history of the scene before says nothing about this one
-        mSceneLoad = context.scheduler.AddStage(Stage::SceneLoad, [this](SystemContext &) { mRenderer.ResetHistory(); });
-        mPlayBegin = context.scheduler.AddStage(Stage::PlayBegin, [this](SystemContext &) { mRenderer.ResetHistory(); });
+        mSceneLoad = context.scheduler.AddStage(Stage::SceneLoad, [this](SystemContext &)
+            {
+                mRenderer.ResetHistory();
+                mActiveCamera->Reset();
+                mRenderSystem->ResetCameraReports();
+            });
+        mPlayBegin = context.scheduler.AddStage(Stage::PlayBegin, [this](SystemContext &)
+            {
+                mRenderer.ResetHistory();
+                mActiveCamera->Reset();
+                mRenderSystem->ResetCameraReports();
+            });
+        mPlayEnd = context.scheduler.AddStage(Stage::PlayEnd, [this](SystemContext &) { mActiveCamera->Reset(); });
 
+        mReloadPrepare = context.scheduler.AddStage(Stage::ReloadPrepare, [this, &assets](SystemContext &)
+            {
+                std::string error;
+                if (!mSurfaceMaterials.PrepareReload(assets.Candidate(), mRenderer, &error))
+                    throw std::runtime_error(error);
+            });
+        mReloadAbort = context.scheduler.AddStage(Stage::ReloadAbort, [this](SystemContext &)
+            {
+                mSurfaceMaterials.AbortReload();
+            });
         mReloadCommit = context.scheduler.AddStage(Stage::ReloadCommit, [this, &assets](SystemContext &)
             {
                 mMeshes->CommitReload(&assets.Cache());
+                mSurfaceMaterials.CommitReload(assets.Cache());
             });
     }
 
@@ -79,6 +113,9 @@ namespace mir
     RendererModule::~RendererModule()
     {
         mReloadCommit.Reset();
+        mPlayEnd.Reset();
+        mReloadAbort.Reset();
+        mReloadPrepare.Reset();
         mPlayBegin.Reset();
         mSceneLoad.Reset();
         mSceneUnload.Reset();

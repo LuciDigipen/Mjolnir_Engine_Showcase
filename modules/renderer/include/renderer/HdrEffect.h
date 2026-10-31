@@ -25,9 +25,9 @@ namespace mir
         ACES = 2,
     };
 
+    // Exposure is the viewing Camera's.
     struct HdrParams
     {
-        float exposure = 1.0f;
         TonemapOperator op = TonemapOperator::Reinhard;
 
         bool operator==(const HdrParams &) const = default;

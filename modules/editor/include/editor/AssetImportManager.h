@@ -15,6 +15,7 @@
 #include <chrono>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -35,11 +36,13 @@ namespace mir
         // Cooks every source asset in the next batch, for a build that has no manifest yet
         void QueueFullCook();
         bool SourceHasAssets() const;
+        bool QueueChanged(const std::filesystem::path &path);
+        const std::filesystem::path &SourceAssetRoot() const { return mSourceAssetRoot; }
         void Handle(const AssetImportAction &action);
         void Update(bool editing);
 
         const AssetImportView &View() const { return mView; }
-        bool PendingApply() const { return mPendingApply; }
+        bool PendingApply() const { return mPendingApply && !mView.mProcessRunning && mQueued.Empty(); }
         void MarkApplied();
         void MarkApplyFailed(std::string diagnostic);
         void Reject(const std::string &model, std::string diagnostic);
@@ -47,7 +50,7 @@ namespace mir
     private:
         struct Batch
         {
-            std::set<std::string> models;
+            std::set<std::string> models, materials;
             std::set<std::filesystem::path> changed;
             std::set<std::string> removals;
             std::map<std::string, std::filesystem::path> moves;
@@ -57,8 +60,8 @@ namespace mir
             std::filesystem::path importSource, packageRoot, targetDirectory;
             bool Empty() const
             {
-                return models.empty() && changed.empty() && removals.empty() && moves.empty() && importSource.empty() &&
-                       !fullCook;
+                return models.empty() && materials.empty() && changed.empty() && removals.empty() && moves.empty() &&
+                       importSource.empty() && !fullCook;
             }
             void Clear() { *this = {}; }
         };
@@ -87,6 +90,8 @@ namespace mir
         std::unordered_map<std::string, std::string> mDiagnostics;
         std::map<std::filesystem::path, WatchedFile> mWatched;
         std::chrono::steady_clock::time_point mLastWatchPoll{};
+        std::optional<uint64_t> mImportCacheSignature;
+        bool mViewDirty = true;
         bool mPendingApply = false;
         bool mCancelRequested = false;
         bool mWatchInitialized = false;

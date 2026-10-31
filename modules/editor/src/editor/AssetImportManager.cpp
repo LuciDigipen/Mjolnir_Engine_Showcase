@@ -31,6 +31,13 @@ namespace mir
     namespace
     {
         using Json = nlohmann::json;
+        std::string LowerFilename(const std::filesystem::path &path)
+        {
+            std::string value = path.filename().string();
+            std::transform(value.begin(), value.end(), value.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            return value;
+        }
         bool IsModel(const std::filesystem::path &path)
         {
             auto ext = path.extension().string();
@@ -38,12 +45,16 @@ namespace mir
                            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
             return ext == ".gltf" || ext == ".glb";
         }
+        bool IsMaterial(const std::filesystem::path &path) { return LowerFilename(path).ends_with(".material.json"); }
         bool IsWatched(const std::filesystem::path &path)
         {
+            if (IsMaterial(path))
+                return true;
             auto ext = path.extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(),
                            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            return ext == ".gltf" || ext == ".glb" || ext == ".bin" || ext == ".png" || ext == ".jpg" || ext == ".jpeg";
+            return ext == ".gltf" || ext == ".glb" || ext == ".bin" || ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
+                   ext == ".slang" || ext == ".json";
         }
         // The key AssetCooker uses for a model under the source asset root
         AssetPathResult LogicalModelPath(std::string_view idRoot, const std::filesystem::path &relative)
@@ -129,14 +140,32 @@ namespace mir
             const Json assets = settings->value("assets", Json::object());
             mView.mAutoImport = assets.is_object() && assets.value("autoImport", false);
         }
-        RefreshView();
         PollWatcher();
+        RefreshView();
     }
 
     void AssetImportManager::QueueFullCook()
     {
         mQueued.fullCook = true;
         MIR_LOG_INFO("Asset import: no cooked manifest, cooking every asset under '{}'", mSourceAssetRoot.string());
+    }
+
+    bool AssetImportManager::QueueChanged(const std::filesystem::path &path)
+    {
+        std::error_code error;
+        const auto root = std::filesystem::weakly_canonical(mSourceAssetRoot,error);
+        if (error) return false;
+        const auto candidate = std::filesystem::weakly_canonical(path,error);
+        if (error) return false;
+        auto a=root.begin(), b=candidate.begin();
+        for (;a!=root.end() && b!=candidate.end() && *a==*b;++a,++b) {}
+        if (a!=root.end() || b==candidate.end()) return false;
+        const std::filesystem::directory_entry entry(candidate,error);
+        if (!error && entry.is_regular_file(error))
+            mWatched[candidate] = {Signature(entry),std::chrono::steady_clock::now(),false};
+        mQueued.changed.insert(candidate);
+        mRunningStale |= mView.mProcessRunning;
+        return true;
     }
 
     bool AssetImportManager::SourceHasAssets() const
@@ -160,6 +189,7 @@ namespace mir
 
     void AssetImportManager::SetStatus(const std::string &model, AssetImportStatus status, std::string diagnostic)
     {
+        mViewDirty = true;
         mStatus[model] = status;
         if (!diagnostic.empty())
             mDiagnostics[model] = std::move(diagnostic);
@@ -177,11 +207,17 @@ namespace mir
             break;
         case AssetImportActionKind::Reimport:
         case AssetImportActionKind::Retry:
-            mQueued.models.insert(action.mModelPath);
+            if (IsMaterial(action.mModelPath))
+                mQueued.materials.insert(action.mModelPath);
+            else
+                mQueued.models.insert(action.mModelPath);
             SetStatus(action.mModelPath, AssetImportStatus::Queued);
             break;
         case AssetImportActionKind::ForceReimport:
-            mQueued.models.insert(action.mModelPath);
+            if (IsMaterial(action.mModelPath))
+                mQueued.materials.insert(action.mModelPath);
+            else
+                mQueued.models.insert(action.mModelPath);
             mQueued.force = true;
             SetStatus(action.mModelPath, AssetImportStatus::Queued);
             break;
@@ -203,6 +239,8 @@ namespace mir
             {
                 for (const auto &model : mQueued.models)
                     SetStatus(model, AssetImportStatus::Canceled);
+                for (const auto &material : mQueued.materials)
+                    SetStatus(material, AssetImportStatus::Canceled);
                 for (const auto &model : mQueued.removals)
                     SetStatus(model, AssetImportStatus::Canceled);
                 for (const auto &[model, destination] : mQueued.moves)
@@ -289,10 +327,9 @@ namespace mir
         mRunning = std::move(mQueued);
         mQueued.Clear();
         std::vector<std::string> args = {"--out", mCookedRoot.string(), "--result", mResultPath.string()};
-        if (mRunning.fullCook)
         {
-            // a full cook rewrites the manifest from its roots alone, so it needs every root the build cooks
-            std::vector<std::string> idRoots = {"assets"};
+            // The active root stays first for external imports; every batch can resolve shared dependencies.
+            std::vector<std::string> idRoots = {mProject.mAssetIdRoot, "assets"};
             for (GameProject &game : DiscoverGameProjects())
             {
                 // a game with a broken assetsRoot has nothing to cook, and must not stop the others
@@ -303,25 +340,30 @@ namespace mir
                 }
                 catch (const SetupError &error)
                 {
-                    MIR_LOG_ERROR("Asset import: skipping '{}' in the full cook: {} ({})", game.mDir, error.What(),
+                    MIR_LOG_ERROR("Asset import: skipping '{}' in the cook: {} ({})", game.mDir, error.What(),
                         error.Cause());
                 }
             }
             std::error_code ec;
+            std::set<std::string> addedRoots;
             for (const std::string &idRoot : idRoots)
             {
                 // the build skips missing roots too, AssetCooker fails on them
-                if (std::filesystem::is_directory(mSourceRoot / idRoot, ec))
+                if (addedRoots.insert(idRoot).second && std::filesystem::is_directory(mSourceRoot / idRoot, ec))
                     args.insert(args.end(), {"--source-dir", (mSourceRoot / idRoot).string(), "--id-root", idRoot});
             }
         }
-        else
-            args.insert(args.end(), {"--source-dir", mSourceAssetRoot.string(), "--id-root", mProject.mAssetIdRoot});
         for (const auto &model : mRunning.models)
         {
             args.push_back("--model");
             args.push_back(model);
             SetStatus(model, AssetImportStatus::Processing);
+        }
+        for (const auto &material : mRunning.materials)
+        {
+            args.push_back("--material");
+            args.push_back(material);
+            SetStatus(material, AssetImportStatus::Processing);
         }
         for (const auto &changed : mRunning.changed)
         {
@@ -330,7 +372,7 @@ namespace mir
         }
         for (const auto &model : mRunning.removals)
         {
-            args.push_back("--remove-model");
+            args.push_back(IsMaterial(model) ? "--remove-material" : "--remove-model");
             args.push_back(model);
         }
         for (const auto &[model, destination] : mRunning.moves)
@@ -351,13 +393,16 @@ namespace mir
         {
             for (const auto &model : mRunning.models)
                 SetStatus(model, AssetImportStatus::Failed, "could not start AssetCooker");
+            for (const auto &material : mRunning.materials)
+                SetStatus(material, AssetImportStatus::Failed, "could not start AssetCooker");
             mRunning.Clear();
             return;
         }
         mView.mProcessRunning = true;
         mCancelRequested = false;
         mRunningStale = false;
-        MIR_LOG_INFO("Started AssetCooker for {} queued model(s)", mRunning.models.size());
+        MIR_LOG_INFO("Started AssetCooker for {} queued model(s) and {} material(s)", mRunning.models.size(),
+            mRunning.materials.size());
     }
 
     void AssetImportManager::FinishBatch(int exitCode, bool editing)
@@ -367,6 +412,8 @@ namespace mir
         {
             for (const auto &model : mRunning.models)
                 SetStatus(model, AssetImportStatus::Canceled);
+            for (const auto &material : mRunning.materials)
+                SetStatus(material, AssetImportStatus::Canceled);
             for (const auto &model : mRunning.removals)
                 SetStatus(model, AssetImportStatus::Canceled);
             for (const auto &[model, destination] : mRunning.moves)
@@ -383,12 +430,15 @@ namespace mir
                         result.value("diagnostic", Json::object()).value("message", "AssetCooker failed");
                     for (const auto &model : mRunning.models)
                         SetStatus(model, AssetImportStatus::Failed, message);
+                    for (const auto &material : mRunning.materials)
+                        SetStatus(material, AssetImportStatus::Failed, message);
                     mView.mLastError = message;
                     MIR_LOG_ERROR("Asset import failed: {}", message);
                 }
                 else
                 {
-                    bool cooked = false;
+                    mView.mLastError.clear();
+                    bool cooked = result.value("assetsChanged", false);
                     const Json resultModels = result.value("models", Json::array());
                     for (const auto &model : resultModels)
                     {
@@ -405,18 +455,21 @@ namespace mir
                                                                            : AssetImportStatus::WaitingForStop));
                     }
                     // a full cook replaces a missing manifest, so it applies even when no model changed
-                    mPendingApply |= (cooked || mRunning.fullCook) && !mRunningStale;
+                    mPendingApply |= cooked || mRunning.fullCook;
                 }
             }
             catch (const std::exception &error)
             {
                 for (const auto &model : mRunning.models)
                     SetStatus(model, AssetImportStatus::Failed, error.what());
+                for (const auto &material : mRunning.materials)
+                    SetStatus(material, AssetImportStatus::Failed, error.what());
             }
         }
         if (mRunningStale)
         {
             mQueued.models.insert(mRunning.models.begin(), mRunning.models.end());
+            mQueued.materials.insert(mRunning.materials.begin(), mRunning.materials.end());
             mQueued.changed.insert(mRunning.changed.begin(), mRunning.changed.end());
             mQueued.fullCook |= mRunning.fullCook;
         }
@@ -437,6 +490,17 @@ namespace mir
             now - mLastWatchPoll < std::chrono::milliseconds(250))
             return;
         mLastWatchPoll = now;
+        // External cooker runs can replace or remove the cache without changing
+        // source files. Check metadata at the watcher cadence, not every frame.
+        std::error_code cacheError;
+        const std::filesystem::directory_entry cacheFile(mCookedRoot / "import-cache.json", cacheError);
+        const std::optional<uint64_t> cacheSignature = !cacheError && cacheFile.is_regular_file(cacheError)
+            ? std::optional<uint64_t>(Signature(cacheFile)) : std::nullopt;
+        if (cacheError == std::errc::no_such_file_or_directory)
+            cacheError.clear();
+        if (cacheSignature != mImportCacheSignature || cacheError)
+            mViewDirty = true;
+        mImportCacheSignature = cacheSignature;
         std::set<std::filesystem::path> present;
         const bool cookerChangesSource =
             mView.mProcessRunning && (!mRunning.importSource.empty() || !mRunning.moves.empty());
@@ -448,6 +512,7 @@ namespace mir
             present.insert(path);
             const uint64_t signature = Signature(entry);
             auto [it, inserted] = mWatched.try_emplace(path, WatchedFile{signature, now, false});
+            mViewDirty |= inserted;
             if (inserted && mWatchInitialized)
             {
                 it->second.changedAt = now;
@@ -456,6 +521,7 @@ namespace mir
             }
             if (!inserted && it->second.signature != signature)
             {
+                mViewDirty = true;
                 it->second.signature = signature;
                 it->second.changedAt = now;
                 it->second.pending = true;
@@ -463,12 +529,15 @@ namespace mir
             }
             if (mView.mAutoImport && it->second.pending && now - it->second.changedAt >= std::chrono::milliseconds(500))
             {
-                if (IsModel(path))
+                if (IsModel(path) || IsMaterial(path))
                 {
                     const auto relative = std::filesystem::relative(path, mSourceAssetRoot);
                     if (const AssetPathResult logical = LogicalModelPath(mProject.mAssetIdRoot, relative); logical.Ok())
                     {
-                        mQueued.models.insert(logical.path);
+                        if (IsMaterial(path))
+                            mQueued.materials.insert(logical.path);
+                        else
+                            mQueued.models.insert(logical.path);
                         SetStatus(logical.path, AssetImportStatus::Queued);
                     }
                     else
@@ -483,6 +552,7 @@ namespace mir
         {
             if (!present.contains(it->first))
             {
+                mViewDirty = true;
                 mRunningStale |= mView.mProcessRunning && !cookerChangesSource;
                 if (mView.mAutoImport)
                     mQueued.changed.insert(it->first);
@@ -502,16 +572,17 @@ namespace mir
                 FinishBatch(*code, editing);
         if (!mView.mProcessRunning)
             StartBatch();
-        RefreshView();
+        if (mViewDirty)
+            RefreshView();
     }
 
     void AssetImportManager::RefreshView()
     {
         std::map<std::string, AssetImportModelView> models;
         for (const auto &entry : std::filesystem::recursive_directory_iterator(mSourceAssetRoot))
-            if (entry.is_regular_file() && IsModel(entry.path()))
+            if (entry.is_regular_file() && (IsModel(entry.path()) || IsMaterial(entry.path())))
             {
-                // Runs every frame: an unusable name is logged once, when the watcher sees it
+                // An unusable name is logged once, when the watcher sees it.
                 const auto relative = std::filesystem::relative(entry.path(), mSourceAssetRoot);
                 if (const AssetPathResult logical = LogicalModelPath(mProject.mAssetIdRoot, relative); logical.Ok())
                     models[logical.path].mPath = logical.path;
@@ -519,22 +590,26 @@ namespace mir
         try
         {
             const Json cache = ReadJson(mCookedRoot / "import-cache.json");
-            const Json cachedModels = cache.value("models", Json::object());
-            for (const auto &[path, record] : cachedModels.items())
-            {
-                auto &model = models[path];
-                model.mPath = path;
-                model.mAssetId = record.value("modelId", 0ull);
-                model.mLastSuccess = record.value("lastSuccess", 0ll);
-                model.mStatus =
-                    record.value("missing", false) ? AssetImportStatus::Missing : AssetImportStatus::UpToDate;
-                for (const auto &dependency : record.value("dependencies", Json::array()))
-                    model.mDependencies.push_back(dependency.get<std::string>());
-                for (const auto &entry : record.value("contents", Json::array()))
-                    model.mContents.push_back({entry.value("kind", std::string{}), entry.value("name", std::string{}),
-                                               entry.value("id", 0ull), entry.value("index", 0u)});
-                model.mDiagnostic = record.value("lastError", "");
-            }
+            auto applyRecords = [&](const Json &records, const char *idKey) {
+                for (const auto &[path, record] : records.items())
+                {
+                    auto &model = models[path];
+                    model.mPath = path;
+                    model.mAssetId = record.value(idKey, 0ull);
+                    model.mLastSuccess = record.value("lastSuccess", 0ll);
+                    model.mStatus =
+                        record.value("missing", false) ? AssetImportStatus::Missing : AssetImportStatus::UpToDate;
+                    for (const auto &dependency : record.value("dependencies", Json::array()))
+                        model.mDependencies.push_back(dependency.get<std::string>());
+                    for (const auto &entry : record.value("contents", Json::array()))
+                        model.mContents.push_back({entry.value("kind", std::string{}),
+                                                   entry.value("name", std::string{}), entry.value("id", 0ull),
+                                                   entry.value("index", 0u)});
+                    model.mDiagnostic = record.value("lastError", "");
+                }
+            };
+            applyRecords(cache.value("models", Json::object()), "modelId");
+            applyRecords(cache.value("materials", Json::object()), "materialId");
         }
         catch (const std::exception &error)
         {
@@ -550,6 +625,7 @@ namespace mir
         mView.mModels.clear();
         for (auto &[path, model] : models)
             mView.mModels.push_back(std::move(model));
+        mViewDirty = false;
     }
 
     void AssetImportManager::SaveAutoImport()

@@ -66,6 +66,26 @@ ones are fast. If you already cloned without `--recurse-submodules`, run
 
 Then build and check it: [Build loop](#build-loop) and [Verify](#verify).
 
+## Optional RTXGI DDGI SDK
+
+Enable GI support before building:
+
+```powershell
+cmake --preset windows-msvc-debug -DMIR_WITH_RTXGI=ON
+cmake --build --preset windows-msvc-debug
+```
+
+The default is `OFF`. Enabling it fetches RTXGI-DDGI SDK 1.3.6 at commit
+`f33e496ca31b3f0eec1c4e2cbaa8bb620e337fa6`, without samples or submodules.
+It requires DXC with SPIR-V support from the Vulkan SDK or PATH; override its
+location with `-DRTXGI_DXC_EXECUTABLE=<path>`. Review the SDK's `License.txt`
+before redistributing it.
+
+The engine owns probe resources and copies the SDK compute shaders to
+`shaders/rtxgi` beside the executable. Enable ray tracing and GI in Project
+Settings to use them. DLSS is configured independently. See the
+[renderer reference](modules/renderer.md) for settings and runtime behavior.
+
 ## Build loop
 
 Every build is the same three steps.
@@ -158,6 +178,51 @@ A module that starts linking `mir::editor` unconditionally fails this
 configure, because the target does not exist, so the separation cannot erode
 without someone noticing.
 
+## Builds without proprietary SDKs and daily CI
+
+`MIR_WITH_AUDIO` defaults to `ON`. Local builds with audio require the Wwise
+SDK (`WWISE_SDK_ROOT`, or the launcher's `WWISESDK` environment variable).
+Set it to `OFF` to omit `audio`, `audio_script`, their tests, and the app's
+audio registration and Lua bindings. Games run silently; saved audio components
+are skipped as unknown components. Scripts that call audio bindings should
+check that those methods exist first, as the HelloWorld audio demo does.
+`MIR_WITH_DLSS` defaults to `OFF`, which avoids fetching or linking NVIDIA NGX.
+
+The `ci-windows-editor-debug` and `ci-windows-game-release` presets explicitly
+disable both options and enable tests. Each has matching configure, build and
+test presets, so no Wwise or NVIDIA SDK is needed:
+
+```powershell
+cmake --preset ci-windows-editor-debug
+cmake --build --preset ci-windows-editor-debug
+ctest --preset ci-windows-editor-debug
+
+cmake --preset ci-windows-game-release
+cmake --build --preset ci-windows-game-release
+ctest --preset ci-windows-game-release
+```
+
+The test presets enable output on failure and exclude the `smoke` label:
+GitHub-hosted runners do not have the GPU/display required by the engine smoke
+tests. To check startup and gameplay without audio on a development machine,
+run `ctest --test-dir builds/ci-windows-editor-debug -L smoke --output-on-failure`
+(and likewise for the game Release tree).
+
+[Daily Windows build](../.github/workflows/daily-build.yml) checks out `master`
+with recursive submodules every day at 09:23 UTC and on manual dispatch. It
+uses the explicit `windows-2025-vs2026` image, verifies VS 2026 C++ tools,
+bootstraps the runner's vcpkg and installs Vulkan SDK 1.4.357.0 for `slangc`.
+vcpkg downloads and binary archives are cached between runs, keyed by preset
+and dependency definitions. Build options, parallelism and test filters live
+in `CMakePresets.json`.
+
+To start it manually, open **Actions > Daily Windows build > Run workflow**
+and select `master`. Scheduled workflows require this file on the repository's
+default branch, which must be `master`. Failed runs appear in Actions, upload
+CTest diagnostics when available, and open or comment on a shared failure
+issue to notify repository subscribers. Close that issue after resolving the
+failure. The notification job requires GitHub Actions issue write permission.
+
 ## Tests
 
 ### Run every test
@@ -196,7 +261,7 @@ In the Testing panel the same thing is a click on one case or one file.
 ### Smoke tests
 
 Every game with a `game.json` gets a `smoke.<game>` test. It runs
-`MjolnirEngine --game games/<game> --frames 120`, which closes the window after
+`MjolnirEngine --game games/<game> --hidden --frames 120`, which exits after
 120 frames and exits non-zero if anything was logged as an error.
 
 `smoke.switch` restarts from HelloWorld into EmptyScene and back — what
@@ -205,7 +270,9 @@ restart halfway through `--frames`. The next process gets the other half and the
 remaining `--switch-to` entries, and in a `--frames` run each process waits for
 the next one and exits with its code.
 
-They open a real window, so they need a GPU and a display. `-L smoke` runs only
+They create a hidden native window, so they need a GPU and a display. `--hidden`
+requires `--frames` and suppresses both splash and game/editor window, normal
+launches remain visible. `-L smoke` runs only
 them, `-LE smoke` skips them:
 
 ```

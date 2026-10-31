@@ -14,6 +14,7 @@
 #include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/components/Name.h>
 #include <editor/EditorWidgets.h>
+#include <editor/EntityDragPayload.h>
 #include <editor/Selection.h>
 #include <editor/history/AuthoredView.h>
 #include <editor/panels/ContentBrowserPanel.h>
@@ -37,6 +38,14 @@ namespace mir
 {
     namespace
     {
+        bool MatchesRowFilter(const World &world, Entity entity, const char *filter)
+        {
+            const Name *name = world.GetComponent<Name>(entity);
+            return name != nullptr
+                ? widgets::MatchesFilter(name->mValue, filter)
+                : widgets::MatchesFilter("Entity " + std::to_string(entity.mIndex), filter);
+        }
+
         void DrawEntityMenu(Selection &selection, Entity entity, IAuthoredEntities *authored, bool authoredDocument,
             EntityAction &action)
         {
@@ -65,8 +74,6 @@ namespace mir
 
             ImGui::EndPopup();
         }
-
-        constexpr const char *kEntityPayload = "MIR_HIERARCHY_ENTITIES";
 
         constexpr double kOpenOnHoverSeconds = 0.7;
         constexpr float kAutoScrollBand = 8.0f;
@@ -250,6 +257,15 @@ namespace mir
             context.dropDelivered = true;
         }
 
+        void DeliverParticleDrop(DrawContext &context, const ImGuiPayload &payload, Entity target)
+        {
+            context.action.mKind = target.IsNull() ? EntityActionKind::PlaceParticleSystem :
+                EntityActionKind::AttachParticleSystem;
+            context.action.mTarget = target;
+            context.action.mPrefabPath.assign(static_cast<const char *>(payload.Data), payload.DataSize);
+            context.dropDelivered = true;
+        }
+
         // Before, child or after, split 25 / 50 / 25 over the row and half the gap on each side
         void DropTargetForRow(DrawContext &context, Entity entity, bool collapsed)
         {
@@ -260,6 +276,21 @@ namespace mir
             // ImGui never lets the drag source be its own target, so the row needs a separate id
             if (!ImGui::BeginDragDropTargetCustom(rect, ImGui::GetIDWithSeed("##RowDrop", nullptr, ImGui::GetItemID())))
                 return;
+
+            if (!context.authoredDocument)
+            {
+                const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kParticleContentPayload,
+                    ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect);
+                if (payload != nullptr)
+                {
+                    context.hoveredRow = entity;
+                    context.preview = { DropKind::PlaceChild, ImRect(itemMin, itemMax), entity };
+                    if (payload->IsDelivery())
+                        DeliverParticleDrop(context, *payload, entity);
+                    ImGui::EndDragDropTarget();
+                    return;
+                }
+            }
 
             if (const ImGuiPayload *active = ImGui::GetDragDropPayload();
                 active != nullptr && active->IsDataType(kPrefabContentPayload))
@@ -328,6 +359,20 @@ namespace mir
             ImGuiWindow *window = ImGui::GetCurrentWindow();
             if (!ImGui::BeginDragDropTargetCustom(window->InnerRect, window->GetID("##HierarchyRootDrop")))
                 return;
+
+            if (!context.authoredDocument)
+            {
+                const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kParticleContentPayload,
+                    ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect);
+                if (payload != nullptr)
+                {
+                    context.preview = { DropKind::PlaceRoot, window->InnerRect, kNullEntity };
+                    if (payload->IsDelivery())
+                        DeliverParticleDrop(context, *payload, kNullEntity);
+                    ImGui::EndDragDropTarget();
+                    return;
+                }
+            }
 
             if (const ImGuiPayload *active = ImGui::GetDragDropPayload();
                 active != nullptr && active->IsDataType(kPrefabContentPayload))
@@ -462,6 +507,15 @@ namespace mir
         const ImGuiPayload *activePayload = ImGui::GetDragDropPayload();
         const bool dragging = activePayload != nullptr &&
             (activePayload->IsDataType(kEntityPayload) || activePayload->IsDataType(kPrefabContentPayload));
+
+        // another panel selected this entity: reveal it like a dropped row, dropping a search that hides it
+        if (world.IsAlive(selection.mReveal))
+        {
+            mReveal.push_back(selection.mReveal);
+            if (mFilter[0] != '\0' && !MatchesRowFilter(world, selection.mReveal, mFilter))
+                mFilter[0] = '\0';
+        }
+        selection.mReveal = kNullEntity;
 
         // reveal last frame's drop: open every ancestor, scroll to the last moved entity
         std::unordered_set<uint64_t> openRows;
@@ -629,11 +683,7 @@ namespace mir
         mFiltered.clear();
         world.ForEachAliveEntity([&](Entity entity)
             {
-                const Name *name = world.GetComponent<Name>(entity);
-                const bool matches = name != nullptr
-                    ? widgets::MatchesFilter(name->mValue, mFilter)
-                    : widgets::MatchesFilter("Entity " + std::to_string(entity.mIndex), mFilter);
-                if (!matches)
+                if (!MatchesRowFilter(world, entity, mFilter))
                     return;
                 mFiltered.insert(PackEntity(entity));
                 for (Entity ancestor = index.ParentOf(entity); !ancestor.IsNull(); ancestor = index.ParentOf(ancestor))

@@ -10,11 +10,14 @@
 #pragma once
 
 #include <core/ecs/EngineMode.h>
+#include <core/ecs/Entity.h>
+#include <core/ecs/components/Transform.h>
 #include <core/platform/Surface.h>
 #include <editor/BackgroundImage.h>
 #include <editor/EditorCamera.h>
 #include <editor/EditorPreferences.h>
 #include <editor/SnapToTerrain.h>
+#include <editor/ViewPie.h>
 #include <editor/history/History.h>
 #include <editor/panels/AssetImportPanel.h>
 #include <editor/panels/ContentBrowserPanel.h>
@@ -27,15 +30,19 @@
 #include <editor/panels/ProfilerPanel.h>
 #include <editor/panels/ProjectSettingsPanel.h>
 #include <imguiruntime/ImGuiRuntime.h>
+#include <renderer/DebugView.h>
 #include <renderer/PostProcessingSettings.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/VulkanRenderer.h>
 #include <window/Window.h>
 
+#include <glm/vec3.hpp>
+
 #include <filesystem>
 #include <map>
 #include <span>
 #include <string>
+#include <utility>
 #include <string_view>
 #include <vector>
 
@@ -133,24 +140,38 @@ namespace mir
 
         // imgui must already be initialized; the editor never owns the context
         bool Initialize(const ImGuiRuntime &imgui, Window &window, std::filesystem::path projectSettingsPath,
-                        World &world, ISceneOps &sceneOps, bool srgbOutput);
+            World &world, ISceneOps &sceneOps, bool srgbOutput);
 
-        //before ImGuiRuntime::Shutdown
+//before ImGuiRuntime::Shutdown
         void Shutdown();
 
         //between ImGuiRuntime::BeginFrame and EndFrame
         EditorActions DrawLayout(bool enableLayout, InputMap &inputMap, RenderSettings &renderSettings,
-                                 PostProcessingSettings &postProcessingSettings, const EngineModeState &mode,
-                                 std::span<const ProjectMenuEntry> projects, std::string_view currentProject,
-                                 World &activeWorld, World &sceneWorld, const EditorDocuments &documents,
-                                 const AssetImportView &assetImport, const VulkanRenderer &renderer,
-                                 const ContentBrowserView &contentBrowser, float dt);
+            PostProcessingSettings &postProcessingSettings, const EngineModeState &mode,
+            std::span<const ProjectMenuEntry> projects, std::string_view currentProject,
+            World &activeWorld, World &sceneWorld, const EditorDocuments &documents,
+            const AssetImportView &assetImport, const VulkanRenderer &renderer,
+            const ContentBrowserView &contentBrowser, float dt);
 
         VkRect2D SceneViewportRect() const { return mSceneViewportRect; }
 
         void UpdateCamera(float dt);
 
         EditorCamera &SceneCamera() { return mCamera; }
+
+        bool &ParticleEditorVisible() { return mShowParticles; }
+        std::string TakeParticleOpenRequest() { return std::exchange(mParticleOpenRequest, {}); }
+        // One undoable scene edit of a ParticleSystem's per-instance emitter offset.
+        void SubmitParticleEmitterOffset(World &world, Entity entity, uint32_t placementId, const glm::vec3 &offset);
+        int TakeParticleHistoryRequest() { return std::exchange(mParticleHistoryRequest, 0); }
+        void SetParticleHistoryAvailability(bool undo, bool redo)
+        {
+            mParticleCanUndo = undo;
+            mParticleCanRedo = redo;
+        }
+
+        // chosen in Edit only; Play keeps rendering the last choice
+        const DebugViewSettings &SceneDebugView() const { return mDebugView; }
 
         bool IsInitialized() const { return mInitialized; }
 
@@ -169,13 +190,20 @@ namespace mir
         // true: the * stays until the next save
         void SetSceneUnsaved(bool unsaved) { mHistory.SetUnsaved(unsaved); }
 
-        
+
         bool IsDocumentUnsaved(DocumentId document) const { return mHistory.IsUnsaved(document); }
         void SetDocumentUnsaved(DocumentId document, bool unsaved) { mHistory.SetUnsaved(document, unsaved); }
 
-        
+
         void SetAuthoringBackend(IAuthoringBackend *backend) { mHistory.SetAuthoringBackend(backend); }
         void SetAuthoredEntities(IAuthoredEntities *authored) { mAuthoredEntities = authored; }
+
+        // null = no Audio settings and no soundtrack picker
+        void SetAudio(IEditorAudio *audio)
+        {
+            mAudio = audio;
+            mInspectorPanel.SetAudio(audio);
+        }
 
     private:
         void DrawTitleBar();
@@ -183,12 +211,19 @@ namespace mir
         void DrawOpenProjectConfirm(EditorActions &actions);
         void DrawViewportGizmo(const EngineModeState &mode, World &world, EditorActions &actions,
             bool prefabDocument);
+        void BeginGizmoDrag(World &world, std::span<const Entity> selected);
+        // Applies the pivot's change since the drag began to every target, as one merging command.
+        void ApplyGizmoDrag(World &world);
         void DrawViewportPrefabDrop(bool documentTab, World &world);
         void UpdateViewportPicking(const EngineModeState &mode, World &world);
         // F moves the scene camera next to the primary selection.
         void FocusSelection(const EngineModeState &mode, World &world);
         void DrawSelectionHighlights(const EngineModeState &mode, World &world);
         void DrawComponentGizmos(const EngineModeState &mode, World &world);
+        // Held Z over the scene viewport opens the view pie; Edit only.
+        void UpdateViewPie(const EngineModeState &mode);
+        void DrawViewPie(std::optional<ViewPieItem> hovered);
+        void DrawDebugViewMenu(const EngineModeState &mode);
         void DrawNewProjectModal(EditorActions &actions, std::span<const ProjectMenuEntry> projects);
         void DrawEditMenu();
         // Retries a pending snap outside any panel's Draw; it only reads the World until an edit is ready.
@@ -216,6 +251,10 @@ namespace mir
         bool mShowInputSettings = false;
         bool mShowPostProcessing = false;
         bool mShowAssetImport = false;
+        bool mShowParticles = false;
+        std::string mParticleOpenRequest;
+        int mParticleHistoryRequest = 0;
+        bool mParticleHistoryFocused = false, mParticleCanUndo = false, mParticleCanRedo = false;
         bool mShowContentBrowser = false;
         bool mShowPreferences = false;
         bool mShowProfiler = false;
@@ -247,6 +286,7 @@ namespace mir
         std::size_t mSnapFrameSubmissions = 0;
         ISceneOps *mSceneOps = nullptr;
         IAuthoredEntities *mAuthoredEntities = nullptr;
+        IEditorAudio *mAudio = nullptr;
 
         std::filesystem::path mPreferencesPath;
         EditorPreferences mPreferences;
@@ -266,6 +306,26 @@ namespace mir
 
         // last frame's ImGuizmo::IsUsing
         bool mGizmoWasUsing = false;
+
+        DebugViewSettings mDebugView;
+
+        bool mViewPieOpen = false;
+        // Z came up inside the dead zone: the pie stays until a click or Escape
+        bool mViewPieSticky = false;
+        glm::vec2 mViewPieCenter{ 0.0f };
+
+        struct GizmoTarget
+        {
+            Entity mEntity;
+            WorldPose mParent;
+            WorldOffset mFromPivot;
+            Transform mStart;
+        };
+
+        // kept between frames while dragged, so the drag is measured from where it began
+        WorldPose mGizmoPivot;
+        WorldPose mGizmoDragStart;
+        std::vector<GizmoTarget> mGizmoTargets;
 
         // New Project modal
         bool mNewProjectRequested = false;

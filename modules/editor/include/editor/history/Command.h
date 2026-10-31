@@ -43,8 +43,8 @@ namespace mir
         virtual std::size_t Size() const = 0;
         virtual std::string Name() const = 0;
 
-
-        virtual bool TryMerge(const ICommand &) { return false; }
+        //History drops next after a merge, so a merge may take from it
+        virtual bool TryMerge(ICommand &) { return false; }
 
         virtual void CollectIds(std::vector<HistoryId> &out) const = 0;
 

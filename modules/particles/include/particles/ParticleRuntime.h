@@ -1,0 +1,200 @@
+/**
+ * @file ParticleRuntime.h
+ * @author sumin.park
+ * @brief Bounded logical instances and generational playback handles.
+ *
+ * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
+ *
+ */
+#pragma once
+
+#include "particles/ParticleEffect.h"
+#include "particles/ParticleRibbon.h"
+
+#include <core/ecs/Entity.h>
+#include <core/ecs/components/WorldTransform.h>
+#include <core/math/WorldCoordinates.h>
+
+#include <cstdint>
+#include <span>
+#include <vector>
+
+namespace mir
+{
+    inline constexpr uint32_t kMaxParticleEmitterInstances = 64;
+    inline constexpr uint32_t kParticleSpawnBudget = 4096;
+    inline constexpr float kParticleFloatWorldLimitMeters = 65536.0f;
+    inline constexpr float kParticleTileRadius = 64.0f;
+
+    struct ParticleHandle
+    {
+        uint32_t index = UINT32_MAX;
+        uint32_t generation = 0;
+        bool IsNull() const { return index == UINT32_MAX || generation == 0; }
+        bool operator==(const ParticleHandle &) const = default;
+    };
+
+    struct ParticleEmitterHandle
+    {
+        uint32_t index = UINT32_MAX;
+        uint32_t generation = 0;
+        bool IsNull() const { return index == UINT32_MAX || generation == 0; }
+        bool operator==(const ParticleEmitterHandle &) const = default;
+    };
+
+    enum class ParticleExecutionState { Active, Inactive, InactiveClear, Complete };
+
+    struct ParticleSystemInstance
+    {
+        ParticleHandle handle;
+        AssetId effectId;
+        ParticleEffect effect;
+        WorldPose pose;
+        WorldPosition tileOrigin;
+        Entity owner = kNullEntity;
+        ParticleExecutionState state = ParticleExecutionState::Active;
+        bool paused = false;
+        bool preview = false;
+        uint64_t reservedBytes = 0;
+        double drainRemaining = 0.0;
+        ParticleUserParameters parameters;
+        std::vector<ParticleEmitterHandle> emitters;
+    };
+
+    // Fractions interpolate the accepted attachment sweep, ages are at packet end.
+    struct ParticleBirth
+    {
+        float fraction = 1.0f;
+        float age = 0.0f;
+        uint32_t sequence = 0;
+        uint32_t reserved = 0;
+    };
+    static_assert(sizeof(ParticleBirth) == 16);
+
+    struct ParticleEmitterInstance
+    {
+        ParticleRibbonState ribbon;
+        ParticleEmitterHandle handle;
+        ParticleHandle system;
+        AssetId emitterId;
+        ParticleEmitterAsset definition;
+        WorldPose pose;
+        ParticleExecutionState state = ParticleExecutionState::Active;
+        bool paused = false;
+        // The system asset's placement offset and the entity's per-instance offset, both added to definition.localOffset.
+        glm::vec3 placementOffset{ 0 };
+        glm::vec3 instanceOffset{ 0 };
+        // Movement this tick that live particles of a followEmitter emitter copy, zero after a teleport.
+        glm::vec3 followDelta{ 0 };
+        WorldPosition attachmentPosition;
+        WorldPosition previousPosition;
+        WorldPosition spawnStart;
+        glm::vec3 attachmentVelocity{ 0 };
+        glm::vec3 emissionVelocity{ 0 };
+        std::vector<ParticleBirth> births;
+        double motionSeconds = 0.0;
+        double distanceRemainder = 0.0;
+        uint32_t birthSequence = 0;
+        bool burstPending = true;
+        // Simulated seconds spent Active, an emitter births nothing until this reaches definition.startDelay.
+        double activeSeconds = 0.0;
+        bool resetMotionOnPose = false;
+        bool teleported = false;
+        double spawnRemainder = 0.0;
+        double drainRemaining = 0.0;
+        uint32_t spawns = 0;
+        float seconds = 0.0f;
+        float qualityScale = 1;
+    };
+
+    struct ParticleBudgets
+    {
+        uint32_t emitters = kMaxParticleEmitterInstances;
+        uint32_t gpuParticles = 65536;
+        uint32_t ribbonPoints = 65536;
+        uint32_t births = kParticleSpawnBudget;
+        uint64_t cpuBytes = 64ull * 1024 * 1024;
+    };
+    struct ParticleDiagnostics
+    {
+        uint64_t gpuFrame = 0, gpuBytes = 0, gpuHighWaterBytes = 0, snapshotBytes = 0, uploadBytes = 0;
+        uint64_t rejectedGpu = 0, droppedGpuBirths = 0, completedPoolDrops = 0, deferredTextures = 0, droppedRibbonSegments = 0;
+        uint32_t gpuAlive = 0;
+        double cpuSubmitMs = 0, cpuRecordMs = 0, simulationGpuMs = 0, uploadGpuMs = 0, prepareGpuMs = 0, drawGpuMs = 0;
+        bool gpuTimingAvailable = false;
+    };
+
+    struct ParticleRuntimeStats
+    {
+        uint32_t active = 0;
+        uint32_t activeEmitters = 0;
+        uint64_t rejectedStarts = 0;
+        uint64_t droppedBudgetSpawns = 0;
+        uint64_t evictedRibbonPoints = 0;
+        uint64_t rejectedRibbonPoints = 0;
+        uint64_t rejectedCapacityStarts = 0, rejectedMemoryStarts = 0;
+        uint64_t cpuBytes = 0, cpuHighWaterBytes = 0;
+        uint32_t gpuCapacity = 0, ribbonCapacity = 0, ribbonPoints = 0, qualityReducedEmitters = 0;
+        double cpuMs = 0;
+        uint64_t ticks = 0;
+        double droppedSeconds = 0.0;
+    };
+
+    class ParticleRuntime
+    {
+    public:
+        explicit ParticleRuntime(uint32_t capacity = 64, ParticleBudgets budgets = {});
+        ParticleRuntime(const ParticleRuntime &) = delete;
+        ParticleRuntime &operator=(const ParticleRuntime &) = delete;
+        ParticleRuntime(ParticleRuntime &&) = delete;
+        ParticleRuntime &operator=(ParticleRuntime &&) = delete;
+
+        ParticleHandle Start(AssetId effectId, const ParticleEffect &effect,
+            WorldPose pose = {}, Entity owner = kNullEntity, const ParticleUserParameters *overrides = nullptr, bool preview = false);
+        const ParticleSystemInstance *Find(ParticleHandle handle) const;
+        const ParticleEmitterInstance *FindEmitter(ParticleEmitterHandle handle) const;
+        bool Stop(ParticleHandle handle);
+        bool ResumeEmission(ParticleHandle handle);
+        bool Pause(ParticleHandle handle, bool paused);
+        bool SetPose(ParticleHandle handle, const WorldPose &pose);
+        bool SetEmitterOffsets(ParticleHandle handle, std::span<const glm::vec3> offsets);
+        // The editor preview follows unsaved edits through these two. Placement offsets are the system asset's, and a
+        // change restarts motion like SetEmitterOffsets.
+        bool SetPlacementOffsets(ParticleHandle handle, std::span<const glm::vec3> offsets);
+        // Copies the data fields of an edited emitter into a playing one. Anything that needs a recook is left alone: the
+        // GPU behavior stacks and script, the texture, the capacity and the target. CPU ribbon behaviors do apply.
+        bool SetEmitterData(ParticleHandle handle, size_t index, const ParticleEmitterAsset &draft);
+        bool SetParameters(ParticleHandle handle, const ParticleUserParameters &parameters);
+        bool SetExecutionState(ParticleHandle handle, ParticleExecutionState state);
+        bool Destroy(ParticleHandle handle);
+        void Detach(Entity owner);
+        void Clear();
+        // Fixed 60 Hz, at most four steps, no catch-up queue after a hitch.
+        void Advance(float dt, bool previewsOnly = false);
+        void SetQualityOrigin(std::optional<WorldPosition> origin) { mQualityOrigin = origin; }
+        bool ConfigureBudgets(const ParticleBudgets &budgets);
+        const ParticleBudgets &Budgets() const { return mBudgets; }
+        const ParticleRuntimeStats &Stats() const { return mStats; }
+        uint32_t Capacity() const { return static_cast<uint32_t>(mSlots.size()); }
+        bool HasCapacity() const { return !mFree.empty() && !mEmitterFree.empty(); }
+        std::span<const ParticleSystemInstance> Slots() const { return mSlots; }
+        std::span<const ParticleEmitterInstance> EmitterSlots() const { return mEmitters; }
+
+    private:
+        bool SetOffsets(ParticleHandle handle, std::span<const glm::vec3> offsets, bool placement);
+        ParticleSystemInstance *Mutable(ParticleHandle handle);
+        ParticleEmitterInstance *MutableEmitter(ParticleEmitterHandle handle);
+        void RefreshStats();
+        void ReleaseEmitter(ParticleEmitterHandle handle);
+        std::vector<ParticleSystemInstance> mSlots;
+        std::vector<uint32_t> mGenerations;
+        std::vector<uint32_t> mFree;
+        std::vector<ParticleEmitterInstance> mEmitters;
+        std::vector<uint32_t> mEmitterGenerations;
+        std::vector<uint32_t> mEmitterFree;
+        ParticleRuntimeStats mStats;
+        double mRemainder = 0.0;
+        ParticleBudgets mBudgets;
+        std::optional<WorldPosition> mQualityOrigin;
+    };
+}

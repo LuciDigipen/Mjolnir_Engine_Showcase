@@ -93,6 +93,29 @@ TEST_CASE("Each frame admits queued meshes in order within its byte budget, the 
     CHECK(queue.UploadingBytes() == 6200);
 }
 
+TEST_CASE("A frame budget change applies from the next admission and leaves queued and in-flight meshes alone",
+          "[renderer][streaming]")
+{
+    MeshUploadQueue queue({.stagingBytes = 64 * kAlign, .frameBytes = 100});
+    for (uint32_t i = 0; i < 6; ++i)
+        queue.Push({Mesh(i), kAlign, 100});
+    CHECK(Slots(queue.Admit(1)) == std::vector<uint32_t>{0});
+
+    queue.SetFrameBytes(300);
+    CHECK(queue.Desc().frameBytes == 300);
+    CHECK(queue.Desc().stagingBytes == 64 * kAlign);
+    CHECK(queue.Uploading() == 1);
+    CHECK(queue.Pending() == 5);
+    CHECK(Slots(queue.Admit(2)) == std::vector<uint32_t>{1, 2, 3});
+    CHECK(queue.LastFrameBytes() == 300);
+
+    // The first mesh of a frame is still admitted.
+    queue.SetFrameBytes(10);
+    CHECK(Slots(queue.Admit(3)) == std::vector<uint32_t>{4});
+    CHECK(Slots(queue.Admit(4)) == std::vector<uint32_t>{5});
+    CHECK(queue.Complete(4).size() == 6);
+}
+
 TEST_CASE("An empty staging ring admits large uploads after completion or clearing", "[renderer][streaming]")
 {
     MeshUploadQueue queue({.stagingBytes = 4 * kAlign, .frameBytes = 4 * kAlign});

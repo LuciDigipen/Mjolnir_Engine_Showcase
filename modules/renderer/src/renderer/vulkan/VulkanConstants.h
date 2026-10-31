@@ -8,13 +8,15 @@
  */
 #pragma once
 
+#include <renderer/FxSystem.h>
+
 #include <volk.h>
 
 #include <cstdint>
 
 namespace mir::vk
 {
-    constexpr uint32_t kFramesInFlight = 2;
+    constexpr uint32_t kFramesInFlight = kFxFramesInFlight;
 
     constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
 

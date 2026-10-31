@@ -423,7 +423,10 @@ TEST_CASE("Lua terrain query reports malformed and nonfinite arguments before ch
         Compare(loaded.Eval(source), expected);
     }
     const auto entries = LogHistory::Snapshot();
-    CHECK(entries.size() == std::size(calls) * 2);
+    uint64_t logged = 0;
+    for (const auto &entry : entries)
+        logged += entry.count;
+    CHECK(logged == std::size(calls) * 2);
     CHECK(fixture.Resident().Handle().Source().Stats().reads == before.reads);
     CHECK(fixture.Resident().Handle().Source().Stats().bytes == before.bytes);
     for (const auto &entry : entries)

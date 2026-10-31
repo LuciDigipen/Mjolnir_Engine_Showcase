@@ -58,6 +58,8 @@ namespace mir::vk
         bool DlssAvailable() const;
         void ResetHistory();
 
+        // T0 experiment only, nullopt disables it without reallocating in-flight images.
+
         struct RasterInputs
         {
             VkImageView sceneColor;
@@ -77,7 +79,7 @@ namespace mir::vk
         bool NeedsVelocity() const { return mMotionBlurEnabled; }
 
         // Expects the scene color in SHADER_READ_ONLY and depth still a depth attachment; leaves
-        // depth in SHADER_READ_ONLY. Runs velocity, depth of field, motion blur and bloom, and
+        // depth in SHADER_READ_ONLY. Runs velocity, depth of field and motion blur, and
         // returns the color the composite reads.
         VkImageView RecordRaster(VkCommandBuffer cmd, uint32_t frame, const RasterInputs &inputs);
 
@@ -86,13 +88,15 @@ namespace mir::vk
         AntiAliasingMode RtAntiAliasingMode() const;
         uint32_t RtSampleCount() const { return mAntiAliasingRtSampleCount; }
 
-        // Runs Ray Reconstruction, depth of field, motion blur and bloom over RayTracer's outputs
+        // Runs Ray Reconstruction, depth of field and motion blur over RayTracer's outputs
         // inside rect, and returns the color the composite reads.
         VkImageView RecordRayTraced(VkCommandBuffer cmd, uint32_t frame, const RayTracer &rayTracer,
-            VkRect2D rect, glm::vec2 jitterPixels, float nearZ, float farZ, VkExtent2D extent);
+            const RenderView &view, glm::vec2 jitterPixels, VkExtent2D extent);
 
         // Raster, outside any render pass: with FXAA active, tonemaps color into FXAA's
         // intermediate. Returns whether FXAA is active - pass it on to RecordComposite.
+        // Renderer calls this after its FX composition hook.
+        void RecordBloom(VkCommandBuffer cmd, uint32_t frame, VkImageView color, VkExtent2D extent);
         bool PrepareComposite(VkCommandBuffer cmd, uint32_t frame, VkImageView color, VkExtent2D extent);
 
         // Inside the caller's swapchain pass: the FXAA pass over the intermediate, or the tonemap

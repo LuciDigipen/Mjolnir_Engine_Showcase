@@ -13,6 +13,7 @@ target_sources(engine_terrain PRIVATE
     src/terrain/TerrainHeightQuery.cpp
     src/terrain/TerrainLayout.cpp
     src/terrain/TerrainLod.cpp
+    src/terrain/TerrainMaterialUv.cpp
     src/terrain/TerrainMeshResidency.cpp
     src/terrain/TerrainPackFormat.cpp
     src/terrain/TerrainPackWriter.cpp
@@ -30,7 +31,6 @@ target_sources(engine_terrain PRIVATE
     src/terrain/TileAddressing.cpp
     src/terrain/TileHeights.cpp
 )
-
 target_link_libraries(engine_terrain PUBLIC mir::assets mir::core PRIVATE mir::serial)
 
 if(BUILD_TESTING)

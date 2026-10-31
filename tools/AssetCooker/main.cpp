@@ -10,6 +10,7 @@
 
 #include "GltfImporter.h"
 #include "ImageImporter.h"
+#include "MaterialCooker.h"
 #include <algorithm>
 #include <assets/AssetBlob.h>
 #include <core/fs/FileIO.h>
@@ -20,12 +21,14 @@
 #include <cctype>
 #include <chrono>
 #include <core/log/Log.h>
+#include <core/platform/Process.h>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <nlohmann/json.hpp>
 #include <prefab/PrefabAsset.h>
 #include <prefab/PrefabRegistry.h>
+#include <particles/ParticleEffect.h>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -44,8 +47,9 @@
 namespace
 {
     using Json = nlohmann::json;
-    constexpr uint32_t kCacheVersion = 3;
+    constexpr uint32_t kCacheVersion = 4;
     constexpr std::string_view kImporterFingerprint = "fastgltf-v2-stable-identity";
+    constexpr std::string_view kMaterialCookerFingerprint = "surface-material-v1-packed-2048";
     // One generation back, kept so a crashed cook can be rolled back.
     constexpr std::string_view kPreviousManifestFileName = "manifest.previous.blob";
     struct SourceRoot
@@ -57,8 +61,8 @@ namespace
     {
         std::vector<SourceRoot> roots;
         std::filesystem::path out, result;
-        std::vector<std::string> models;
-        std::vector<std::string> removals;
+        std::vector<std::string> models, materials;
+        std::vector<std::string> removals, materialRemovals;
         std::vector<std::pair<std::string, std::filesystem::path>> moves;
         std::vector<std::filesystem::path> changed;
         std::filesystem::path importSource, packageRoot, targetDirectory;
@@ -84,6 +88,14 @@ namespace
                        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         return value;
     }
+    std::string LowerFilename(const std::filesystem::path &path)
+    {
+        std::string value = path.filename().string();
+        std::transform(value.begin(), value.end(), value.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return value;
+    }
+    bool IsMaterialPath(const std::filesystem::path &path) { return LowerFilename(path).ends_with(".material.json"); }
     void Publish(const std::filesystem::path &path, std::span<const std::byte> bytes)
     {
         std::filesystem::create_directories(path.parent_path());
@@ -100,6 +112,40 @@ namespace
     void PublishText(const std::filesystem::path &path, const std::string &value)
     {
         Publish(path, std::as_bytes(std::span(value)));
+    }
+    std::vector<std::byte> CompileParticleScript(const std::string &source, const std::filesystem::path &out)
+    {
+        // The output lock serializes compiler scratch files with manifest publication.
+        const auto path = std::filesystem::absolute(out / ("particle-" + Hex(mir::Fnv1a64(source)) + ".slang"));
+        const auto spirv = std::filesystem::path(path.string() + ".spv");
+        struct Scratch
+        {
+            std::filesystem::path source, spirv;
+            ~Scratch()
+            {
+                std::error_code error;
+                std::filesystem::remove(source, error);
+                std::filesystem::remove(spirv, error);
+            }
+        } scratch{path, spirv};
+        PublishText(path, source);
+        // Remove an interrupted cook's output so a failed compile cannot reuse it.
+        std::filesystem::remove(spirv);
+        const std::vector<std::string> args{path.string(), "-target", "spirv", "-profile", "spirv_1_5",
+            "-entry", "computeMain", "-stage", "compute", "-fvk-use-entrypoint-name",
+            "-matrix-layout-column-major", "-O0", "-o", spirv.string()};
+        mir::ChildProcess compiler;
+        if (!compiler.Start(PARTICLE_SLANGC_EXECUTABLE, args))
+            throw std::runtime_error("cannot start particle shader compiler: " + std::string(PARTICLE_SLANGC_EXECUTABLE));
+        const auto exit = compiler.Wait();
+        if (!exit || *exit != 0)
+            throw std::runtime_error("particle shader compilation failed, slangc exit " + std::to_string(exit.value_or(-1)));
+        const auto bytes = mir::ReadBytes(spirv);
+        if (!bytes || bytes->size() < 20 || bytes->size() % 4 != 0 ||
+            std::to_integer<uint8_t>((*bytes)[0]) != 0x03 || std::to_integer<uint8_t>((*bytes)[1]) != 0x02 ||
+            std::to_integer<uint8_t>((*bytes)[2]) != 0x23 || std::to_integer<uint8_t>((*bytes)[3]) != 0x07)
+            throw std::runtime_error("particle compiler emitted missing or invalid SPIR-V");
+        return *bytes;
     }
     bool ProcessExists(uint64_t pid)
     {
@@ -203,8 +249,12 @@ namespace
                 options.result = value();
             else if (arg == "--model")
                 options.models.push_back(RequireAssetPath(mir::NormalizeAssetPath(value()), arg));
+            else if (arg == "--material")
+                options.materials.push_back(RequireAssetPath(mir::NormalizeAssetPath(value()), arg));
             else if (arg == "--remove-model")
                 options.removals.push_back(RequireAssetPath(mir::NormalizeAssetPath(value()), arg));
+            else if (arg == "--remove-material")
+                options.materialRemovals.push_back(RequireAssetPath(mir::NormalizeAssetPath(value()), arg));
             else if (arg == "--move-model")
             {
                 if (pendingMove)
@@ -282,9 +332,11 @@ namespace
             }
         };
         append(std::as_bytes(std::span(kImporterFingerprint)));
-        const uint32_t payloadVersions[]{mir::kModelAssetContentVersion,    mir::kMeshAssetContentVersion,
-                                         mir::kSkeletonAssetContentVersion, mir::kAnimationAssetContentVersion,
-                                         mir::kMaterialAssetContentVersion, mir::kTextureAssetContentVersion};
+        append(std::as_bytes(std::span(kMaterialCookerFingerprint)));
+        const uint32_t payloadVersions[]{mir::kModelAssetContentVersion,      mir::kMeshAssetContentVersion,
+                                         mir::kSkeletonAssetContentVersion,   mir::kAnimationAssetContentVersion,
+                                         mir::kMaterialAssetContentVersion,   mir::kTextureAssetContentVersion,
+                                         mir::kSurfaceMaterialAssetContentVersion};
         append(std::as_bytes(std::span(payloadVersions)));
         for (const auto &path : dependencies)
         {
@@ -293,6 +345,11 @@ namespace
             const auto bytes = mir::ReadBytes(path);
             if (!bytes)
                 throw std::runtime_error("missing dependency: " + path.string());
+            constexpr std::string_view lfs = "version https://git-lfs.github.com/spec/v1";
+            if (bytes->size() >= lfs.size() &&
+                std::string_view(reinterpret_cast<const char *>(bytes->data()), lfs.size()) == lfs)
+                throw std::runtime_error("dependency is a Git LFS pointer, not its content; run git lfs pull: " +
+                                         path.string());
             append(*bytes);
         }
         return hash;
@@ -388,6 +445,8 @@ namespace
     std::string StageMove(Options &options, Json &cache, const std::string &logical,
                           const std::filesystem::path &targetRelative)
     {
+        if (IsMaterialPath(std::filesystem::path(logical)))
+            throw std::runtime_error("Surface materials cannot be moved as glTF model packages");
         auto resolved = ResolveModel(options, logical);
         if (!resolved || !std::filesystem::is_regular_file(resolved->second))
             throw std::runtime_error("model to move does not exist: " + logical);
@@ -488,10 +547,15 @@ namespace
         std::filesystem::create_directories(options.out);
         OutputLock lock(options.out);
         StageExternalImport(options);
-        Json cache =
-            LoadJson(options.out / "import-cache.json", {{"version", kCacheVersion}, {"models", Json::object()}});
-        if (cache.value("version", 0u) != kCacheVersion)
-            cache = {{"version", kCacheVersion}, {"models", Json::object()}};
+        const auto cachePath = options.out / "import-cache.json";
+        Json cache = LoadJson(cachePath, Json::object());
+        const bool resetCache = !cache.is_object() || cache.value("version", 0u) != kCacheVersion ||
+                                !cache.contains("models") || !cache["models"].is_object() ||
+                                !cache.contains("materials") || !cache["materials"].is_object();
+        if (resetCache)
+            cache = {{"version", kCacheVersion}, {"models", Json::object()}, {"materials", Json::object()},
+                     {"requiresFullCook", true}};
+        const bool requiresFullCook = cache.value("requiresFullCook", false);
         std::vector<std::pair<std::string, std::string>> completedMoves;
         for (const auto &[model, destination] : options.moves)
         {
@@ -499,26 +563,61 @@ namespace
             options.models.push_back(moved);
             completedMoves.emplace_back(model, moved);
         }
-        const bool partial =
-            !options.models.empty() || !options.changed.empty() || !options.removals.empty() || !options.moves.empty();
+        // Particle dependencies form a small source graph, a changed member recooks
+        // the complete graph before publishing its replacement manifest.
+        bool particleChange = std::any_of(options.changed.begin(), options.changed.end(), [](const auto &path)
+            {
+                const auto name = path.filename().string();
+                return name.ends_with(".particle.json") || name.ends_with(".emitter.json");
+            });
+        if (!particleChange && !options.changed.empty())
+            for (const auto &root : options.roots)
+                for (const auto &entry : std::filesystem::recursive_directory_iterator(root.physical))
+                {
+                    if (!entry.is_regular_file() || !entry.path().filename().string().ends_with(".emitter.json"))
+                        continue;
+                    const auto bytes = mir::ReadBytes(entry.path());
+                    if (!bytes) continue;
+                    const auto emitter = mir::ReadParticleEmitterSource(
+                        {reinterpret_cast<const char *>(bytes->data()), bytes->size()}, root.logical);
+                    if (!emitter.mEmitter) continue;
+                    const auto texture = std::filesystem::weakly_canonical(root.physical / emitter.mTexturePath);
+                    particleChange = particleChange || std::any_of(options.changed.begin(), options.changed.end(),
+                        [&](const auto &changed) { return std::filesystem::weakly_canonical(changed) == texture; });
+                }
+        const bool partial = !requiresFullCook &&
+                             (!options.models.empty() || !options.materials.empty() || !options.changed.empty() ||
+                              !options.removals.empty() || !options.materialRemovals.empty() || !options.moves.empty());
         std::unordered_map<uint64_t, Output> outputs;
+        std::unordered_map<uint64_t, Output> previousOutputs;
+        if (auto previous = mir::AssetManifest::LoadFile(options.out / mir::kAssetManifestFileName))
+            for (const auto &entry : previous->Entries())
+                previousOutputs.emplace(entry.id.value,
+                    Output{entry.id, entry.typeTag, entry.contentVersion, std::string(previous->PathOf(entry))});
         if (partial)
-            if (auto previous = mir::AssetManifest::LoadFile(options.out / mir::kAssetManifestFileName))
-                for (const auto &entry : previous->Entries())
-                    outputs.emplace(entry.id.value, Output{entry.id, entry.typeTag, entry.contentVersion,
-                                                           std::string(previous->PathOf(entry))});
+            outputs = previousOutputs;
 
-        std::set<std::string> requested(options.models.begin(), options.models.end()), changedCanonical;
+        std::set<std::string> requested(options.models.begin(), options.models.end());
+        std::set<std::string> requestedMaterials(options.materials.begin(), options.materials.end());
+        std::set<std::string> changedCanonical;
         for (const auto &path : options.changed)
             changedCanonical.insert(std::filesystem::weakly_canonical(path).generic_string());
         if (!changedCanonical.empty())
+        {
             for (auto &[model, record] : cache["models"].items())
                 for (const auto &dependency : record.value("dependencies", Json::array()))
                     if (changedCanonical.contains(
                             std::filesystem::weakly_canonical(dependency.get<std::string>()).generic_string()))
                         requested.insert(model);
+            for (auto &[material, record] : cache["materials"].items())
+                for (const auto &dependency : record.value("dependencies", Json::array()))
+                    if (changedCanonical.contains(
+                            std::filesystem::weakly_canonical(dependency.get<std::string>()).generic_string()))
+                        requestedMaterials.insert(material);
+        }
 
         std::vector<std::pair<const SourceRoot *, std::filesystem::path>> models;
+        std::vector<std::pair<const SourceRoot *, std::filesystem::path>> materials;
         if (partial)
         {
             for (const auto &model : requested)
@@ -528,6 +627,13 @@ namespace
                     throw std::runtime_error("model is outside configured source roots: " + model);
                 models.push_back(*resolved);
             }
+            for (const auto &material : requestedMaterials)
+            {
+                auto resolved = ResolveModel(options, material);
+                if (!resolved)
+                    throw std::runtime_error("material is outside configured source roots: " + material);
+                materials.push_back(*resolved);
+            }
         }
         else
         {
@@ -536,7 +642,11 @@ namespace
                     if (entry.is_regular_file() &&
                         (LowerExtension(entry.path()) == ".gltf" || LowerExtension(entry.path()) == ".glb"))
                         models.emplace_back(&root, entry.path());
+                    else if (entry.is_regular_file() && IsMaterialPath(entry.path()))
+                        materials.emplace_back(&root, entry.path());
             std::sort(models.begin(), models.end(), [](const auto &a, const auto &b) { return a.second < b.second; });
+            std::sort(materials.begin(), materials.end(),
+                      [](const auto &a, const auto &b) { return a.second < b.second; });
         }
 
         std::vector<mir::cook::GltfImport> metadata;
@@ -549,6 +659,7 @@ namespace
                     resolved && std::filesystem::exists(resolved->second))
                     identityOwners.emplace(cachedRecord.at("identityPath").get<std::string>(), cachedPath);
         std::unordered_map<uint64_t, std::string> prefabAssetOwners;
+        bool assetsChanged = false;
         auto emit = [&](mir::AssetId id, const std::vector<std::byte> &bytes) {
             const auto blob = mir::ParseAssetBlob(bytes);
             if (!blob)
@@ -564,6 +675,8 @@ namespace
             if (!same)
                 Publish(path, bytes);
             Output output{id, blob->header.typeTag, blob->header.contentVersion, file};
+            const auto baseline = previousOutputs.find(id.value);
+            assetsChanged = assetsChanged || baseline == previousOutputs.end() || baseline->second.file != file;
             outputs[id.value] = output;
             return output;
         };
@@ -594,6 +707,43 @@ namespace
             emit(id, mir::BuildPrefabAsset(*parsed.mDocument));
         };
 
+        std::unordered_map<uint64_t, std::string> particleScripts;
+        auto cookParticleEmitter = [&](const SourceRoot &root, const std::filesystem::path &path)
+        {
+            const auto bytes = mir::ReadBytes(path);
+            if (!bytes) throw std::runtime_error("missing particle emitter: " + path.string());
+            auto emitter = mir::ReadParticleEmitterSource(
+                {reinterpret_cast<const char *>(bytes->data()), bytes->size()}, root.logical);
+            if (!emitter.mEmitter)
+                throw std::runtime_error(LogicalPath(root, path) + ": " + emitter.mError);
+            const auto texturePath = root.physical / emitter.mTexturePath;
+            const auto textureBytes = mir::ReadBytes(texturePath);
+            if (!textureBytes || !mir::cook::IsImagePath(texturePath))
+                throw std::runtime_error("missing or unsupported particle texture: " + texturePath.string());
+            if (emitter.mEmitter->simulationTarget == mir::ParticleSimulationTarget::GPU)
+            {
+                const auto source = mir::GenerateParticleScript(*emitter.mEmitter);
+                const auto layout = mir::ParticleScriptLayout();
+                const auto scriptId = mir::MakeAssetId("particles/generated/" + Hex(mir::Fnv1a64(source)) + ".spv");
+                const auto layoutId = mir::MakeAssetId("particles/generated/" + Hex(mir::Fnv1a64(layout)) + ".layout");
+                const auto found = particleScripts.find(scriptId.value);
+                if (found != particleScripts.end() && found->second != source)
+                    throw std::runtime_error("particle script identity collision");
+                if (found == particleScripts.end())
+                {
+                    const auto code = CompileParticleScript(source, options.out);
+                    emit(scriptId, mir::BuildAssetBlob(mir::kParticleScriptTypeTag, mir::kParticleScriptContentVersion, code));
+                    emit(layoutId, mir::BuildAssetBlob(mir::kParticleScriptLayoutTypeTag,
+                        mir::kParticleScriptLayoutContentVersion, std::as_bytes(std::span(layout))));
+                    particleScripts.emplace(scriptId.value, source);
+                }
+                emitter.mEmitter->script = scriptId;
+                emitter.mEmitter->scriptLayout = layoutId;
+            }
+            emit(emitter.mEmitter->texture, mir::BuildTypedAsset(mir::cook::DecodeImage(*textureBytes)));
+            emit(mir::MakeAssetId(LogicalPath(root, path)), mir::BuildParticleEmitterAsset(*emitter.mEmitter));
+        };
+
         for (const auto &logical : options.removals)
         {
             if (auto resolved = ResolveModel(options, logical); resolved && std::filesystem::exists(resolved->second))
@@ -604,6 +754,138 @@ namespace
                 outputs.erase(old.at("id").get<uint64_t>());
             cache["models"].erase(logical);
             resultModels.push_back({{"path", logical}, {"status", "removed"}});
+        }
+        for (const auto &logical : options.materialRemovals)
+        {
+            if (auto resolved = ResolveModel(options, logical); resolved && std::filesystem::exists(resolved->second))
+                throw std::runtime_error("refusing to remove an asset whose source still exists: " + logical);
+            if (!cache["materials"].contains(logical))
+                continue;
+            for (const auto &old : cache["materials"][logical].value("outputs", Json::array()))
+                outputs.erase(old.at("id").get<uint64_t>());
+            cache["materials"].erase(logical);
+            resultModels.push_back({{"path", logical}, {"status", "removed"}});
+        }
+
+        std::unordered_set<std::string> seenMaterials;
+        std::unordered_set<std::string> materialSourceImages;
+        std::vector<std::filesystem::path> physicalRoots;
+        for (const auto &candidate : options.roots)
+            physicalRoots.push_back(candidate.physical);
+        // A source image that a material packs is not a standalone asset. Drop
+        // an older standalone entry from the manifest on a partial cook.
+        auto eraseStandaloneSource = [&](const std::filesystem::path &image) {
+            const auto canonical = std::filesystem::weakly_canonical(image);
+            for (const auto &root : options.roots)
+            {
+                const auto relative = canonical.lexically_relative(std::filesystem::weakly_canonical(root.physical));
+                if (relative.empty() || relative.is_absolute() || *relative.begin() == "..")
+                    continue;
+                const auto logical = mir::MakeLogicalAssetPath(root.logical, relative.generic_string());
+                if (logical.Ok())
+                    outputs.erase(mir::MakeAssetId(logical.path).value);
+                break;
+            }
+        };
+        for (const auto &[root, path] : materials)
+        {
+            const std::string logical = LogicalPath(*root, path);
+            if (!std::filesystem::exists(path))
+            {
+                if (cache["materials"].contains(logical))
+                {
+                    cache["materials"][logical]["missing"] = true;
+                    resultModels.push_back({{"path", logical}, {"status", "missing"}});
+                    continue;
+                }
+                throw std::runtime_error("material does not exist: " + path.string());
+            }
+            seenMaterials.insert(logical);
+            auto &record = cache["materials"][logical];
+            if (!record.is_object())
+                record = Json::object();
+            if (record.contains("outputs"))
+                for (const auto &old : record["outputs"])
+                    outputs.erase(old.at("id").get<uint64_t>());
+            std::vector<std::filesystem::path> dependencies;
+            uint64_t fingerprint = 0;
+            try
+            {
+                mir::cook::MaterialDependencies material =
+                    mir::cook::InspectMaterialDependencies(path, logical, root->physical, physicalRoots);
+                for (const auto &image : material.images)
+                {
+                    materialSourceImages.insert(std::filesystem::weakly_canonical(image).generic_string());
+                    eraseStandaloneSource(image);
+                }
+                dependencies = std::move(material.files);
+                fingerprint = Fingerprint(dependencies);
+            }
+            catch (const std::exception &error)
+            {
+                record["lastError"] = error.what();
+                record["missing"] = false;
+                PublishText(options.out / "import-cache.json", cache.dump(2) + "\n");
+                throw std::runtime_error(logical + ": " + error.what());
+            }
+            if (!options.force && record.value("fingerprint", 0ull) == fingerprint &&
+                CachedOutputsValid(record, options.out))
+            {
+                for (const auto &cached : record["outputs"])
+                {
+                    Output output = OutputFromJson(cached);
+                    outputs[output.id.value] = output;
+                }
+                record["missing"] = false;
+                resultModels.push_back({{"path", logical},
+                                        {"status", "unchanged"},
+                                        {"materialId", record.value("materialId", 0ull)}});
+                continue;
+            }
+
+            mir::cook::MaterialImport imported;
+            try
+            {
+                // The paths were checked by the inspection pass.
+                imported = mir::cook::ImportMaterial(path, logical, root->physical, physicalRoots);
+            }
+            catch (const std::exception &error)
+            {
+                record["lastError"] = error.what();
+                record["missing"] = false;
+                PublishText(options.out / "import-cache.json", cache.dump(2) + "\n");
+                throw std::runtime_error(logical + ": " + error.what());
+            }
+            Json cachedOutputs = Json::array();
+            for (const auto &blob : imported.blobs)
+                cachedOutputs.push_back(OutputToJson(emit(blob.id, blob.bytes)));
+            Json dependencyNames = Json::array();
+            for (const auto &dependency : imported.dependencies)
+                dependencyNames.push_back(dependency.generic_string());
+            Json contents = Json::array();
+            for (const auto &entry : imported.contents)
+                contents.push_back({{"kind", entry.kind},
+                                    {"name", entry.name},
+                                    {"id", entry.id.value},
+                                    {"index", entry.index}});
+            Json sizes = Json::array();
+            for (const auto &size : imported.textureSizes)
+                sizes.push_back({{"role", size.role}, {"width", size.width}, {"height", size.height}});
+            record = {{"materialId", imported.materialId.value},
+                      {"fingerprint", fingerprint},
+                      {"dependencies", dependencyNames},
+                      {"outputs", cachedOutputs},
+                      {"contents", contents},
+                      {"textureSizes", sizes},
+                      {"missing", false},
+                      {"lastSuccess", std::chrono::duration_cast<std::chrono::seconds>(
+                                          std::chrono::system_clock::now().time_since_epoch())
+                                          .count()}};
+            resultModels.push_back({{"path", logical},
+                                    {"status", "cooked"},
+                                    {"materialId", imported.materialId.value},
+                                    {"dependencies", dependencyNames},
+                                    {"sizes", sizes}});
         }
 
         for (const auto &[root, path] : models)
@@ -747,6 +1029,36 @@ namespace
                             outputs[output.id.value] = output;
                     }
                 }
+            for (auto &[logical, record] : cache["materials"].items())
+                if (!seenMaterials.contains(logical))
+                {
+                    record["missing"] = true;
+                    for (const auto &cached : record.value("outputs", Json::array()))
+                    {
+                        Output output = OutputFromJson(cached);
+                        if (std::filesystem::exists(options.out / output.file))
+                            outputs[output.id.value] = output;
+                    }
+                }
+        }
+        // Standalone assets are rooted in the configured source roots. Particle changes
+        // recook this graph while retaining manifest entries from roots outside the request.
+        if (!partial || particleChange)
+        {
+            for (const auto &[logical, record] : cache["materials"].items())
+                for (const auto &dependency : record.value("dependencies", Json::array()))
+                {
+                    const auto path = std::filesystem::path(dependency.get<std::string>());
+                    if (mir::cook::IsImagePath(path))
+                        materialSourceImages.insert(std::filesystem::weakly_canonical(path).generic_string());
+                }
+            // The recook below re-emits every live particle source, so entries for deleted
+            // or renamed sources must not survive from the previous manifest.
+            std::erase_if(outputs, [](const auto &entry)
+                {
+                    return entry.second.tag == mir::kParticleEffectTypeTag ||
+                           entry.second.tag == mir::kParticleEmitterTypeTag;
+                });
             //a gltf's images are cooked by its import, under its own ids
             std::unordered_set<std::string> modelImages;
             for (const auto &[logical, record] : cache["models"].items())
@@ -763,8 +1075,13 @@ namespace
                 for (const auto &path : files)
                 {
                     const std::string ext = LowerExtension(path), filename = path.filename().string();
-                    if (ext == ".gltf" || ext == ".glb" || ext == ".slang" || ext == ".bnk" || ext == ".wem" ||
-                        filename.ends_with(".import.json") || filename.ends_with(".pending") || filename == ".gitkeep")
+                    // a bank's Wwise metadata is read loose, beside the bank
+                    const bool bankMetadata =
+                        ext == ".json" && std::filesystem::exists(std::filesystem::path(path).replace_extension(".bnk"));
+                    if (ext == ".gltf" || ext == ".glb" || IsMaterialPath(path) || ext == ".slang" ||
+                        ext == ".bnk" || ext == ".wem" ||
+                        bankMetadata || filename.ends_with(".import.json") || filename.ends_with(".pending") ||
+                        filename == ".gitkeep")
                         continue;
                     // TerrainTool owns recipes and releases.
                     const std::string logical = LogicalPath(root, path);
@@ -775,13 +1092,34 @@ namespace
                         cookPrefab(logical, path);
                         continue;
                     }
+                    if (filename.ends_with(".emitter.json"))
+                    {
+                        cookParticleEmitter(root, path);
+                        continue;
+                    }
+                    if (filename.ends_with(".particle.json"))
+                    {
+                        const auto effectBytes = mir::ReadBytes(path);
+                        if (!effectBytes)
+                            throw std::runtime_error("cannot read " + path.string());
+                        const auto effect = mir::ReadParticleEffectSource(
+                            {reinterpret_cast<const char *>(effectBytes->data()), effectBytes->size()}, root.logical);
+                        if (!effect.mEffect)
+                            throw std::runtime_error(logical + ": " + effect.mError);
+                        for (const auto &emitterPath : effect.mEmitterPaths)
+                            cookParticleEmitter(root, root.physical / emitterPath);
+                        emit(mir::MakeAssetId(logical), mir::BuildParticleEffectAsset(*effect.mEffect));
+                        continue;
+                    }
                     auto bytes = mir::ReadBytes(path);
                     if (!bytes)
                         throw std::runtime_error("cannot read " + path.string());
                     //any other image is a texture of its own, decoded here so
                     //runtime never parses an image format
-                    if (mir::cook::IsImagePath(path) &&
-                        !modelImages.contains(std::filesystem::weakly_canonical(path).generic_string()))
+                    const std::string canonicalPath = std::filesystem::weakly_canonical(path).generic_string();
+                    if (mir::cook::IsImagePath(path) && materialSourceImages.contains(canonicalPath))
+                        continue;
+                    if (mir::cook::IsImagePath(path) && !modelImages.contains(canonicalPath))
                     {
                         std::vector<std::byte> texture;
                         try
@@ -802,6 +1140,31 @@ namespace
         }
         for (const auto &imported : metadata)
             PublishText(imported.metadataPath, imported.metadata);
+        // Generated scripts may be shared across source roots, retire only dependencies
+        // unreferenced by every emitter retained in the replacement manifest.
+        std::unordered_set<uint64_t> particleDependencies;
+        bool canRetireParticleScripts = true;
+        for (const auto &[id, output] : outputs)
+            if (output.tag == mir::kParticleEmitterTypeTag)
+            {
+                const auto bytes = mir::ReadBytes(options.out / output.file);
+                const auto blob = bytes ? mir::ParseAssetBlob(*bytes) : std::nullopt;
+                const auto emitter = blob ? mir::ReadParticleEmitterAsset(*blob) : mir::ParticleEmitterAssetResult{};
+                if (!emitter.mEmitter)
+                {
+                    canRetireParticleScripts = false;
+                    break;
+                }
+                particleDependencies.insert(emitter.mEmitter->script.value);
+                particleDependencies.insert(emitter.mEmitter->scriptLayout.value);
+            }
+        if (canRetireParticleScripts)
+            std::erase_if(outputs, [&](const auto &entry)
+                {
+                    const auto &output = entry.second;
+                    return (output.tag == mir::kParticleScriptTypeTag || output.tag == mir::kParticleScriptLayoutTypeTag) &&
+                        !particleDependencies.contains(output.id.value);
+                });
         std::vector<Output> ordered;
         for (const auto &[id, output] : outputs)
             ordered.push_back(output);
@@ -811,10 +1174,14 @@ namespace
         for (const auto &output : ordered)
             entries.push_back({{output.id, output.tag, output.version}, output.file});
         const auto manifestPath = options.out / mir::kAssetManifestFileName;
+        const auto manifestBytes = mir::BuildAssetManifestBlob(entries);
+        const auto previousManifestBytes = mir::ReadBytes(manifestPath);
+        const bool manifestChanged = !previousManifestBytes || *previousManifestBytes != manifestBytes;
         if (auto bytes = mir::ReadBytes(manifestPath))
             Publish(options.out / kPreviousManifestFileName, *bytes);
-        Publish(manifestPath, mir::BuildAssetManifestBlob(entries));
-        PublishText(options.out / "import-cache.json", cache.dump(2) + "\n");
+        Publish(manifestPath, manifestBytes);
+        cache.erase("requiresFullCook");
+        PublishText(cachePath, cache.dump(2) + "\n");
 
         std::unordered_set<std::string> keep{std::string(mir::kAssetManifestFileName),
                                              std::string(kPreviousManifestFileName)};
@@ -831,8 +1198,12 @@ namespace
             const std::string status = v.value("status", "");
             return status == "cooked" || status == "removed";
         });
-        WriteResult(options, BuildResult(changed ? "succeeded" : "unchanged", resultModels));
-        MIR_LOG_INFO("AssetCooker: {} assets in manifest ({} model requests)", ordered.size(), models.size());
+        assetsChanged = assetsChanged || manifestChanged;
+        auto result = BuildResult(changed || assetsChanged ? "succeeded" : "unchanged", resultModels);
+        result["assetsChanged"] = assetsChanged;
+        WriteResult(options, result);
+        MIR_LOG_INFO("AssetCooker: {} assets in manifest ({} model, {} material requests)", ordered.size(),
+                     models.size(), materials.size());
         return 0;
     }
 } // namespace

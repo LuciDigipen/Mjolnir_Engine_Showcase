@@ -34,7 +34,7 @@ namespace
         "residency": { "mode": "Auto", "queryLeaseSeconds": 2.5 },
         "view": { "refineErrorPixels": 1.5, "mergeErrorPixels": 1.0, "prefetchErrorPixels": 0.5,
                   "prefetchBudgetMiB": 8 },
-        "gpu": { "budgetMiB": 256, "uploadMiBPerFrame": 12, "stagingMiB": 24, "meshRetainSeconds": 3 },
+        "gpu": { "budgetMiB": 256, "stagingMiB": 24, "meshRetainSeconds": 3 },
         "collision": { "spacingsMeters": [8, 4, 2, 1], "maxErrorMeters": 0.05, "pieceTiles": 4,
                        "seamOverlapMeters": 64, "bodyToleranceMeters": 0.1, "loadLatencySeconds": 0.5,
                        "latencyMarginSeconds": 0.25, "prefetchSeconds": 2, "budgetMiB": 48, "retainSeconds": 3 }
@@ -98,7 +98,6 @@ TEST_CASE("A complete settings file loads and the machine-local file overrides i
     CHECK(s.view.prefetchErrorPixels == 0.5);
     CHECK(s.view.prefetchBudgetBytes == uint64_t(8) * 1024 * 1024);
     CHECK(s.gpu.budgetBytes == uint64_t(256) * 1024 * 1024);
-    CHECK(s.gpu.uploadBytesPerFrame == uint64_t(12) * 1024 * 1024);
     CHECK(s.gpu.stagingBytes == uint64_t(24) * 1024 * 1024);
     CHECK(s.gpu.meshRetainSeconds == 3.0);
     CHECK(s.collision.spacingsMeters == std::vector<double>{8.0, 4.0, 2.0, 1.0});
@@ -115,7 +114,7 @@ TEST_CASE("A complete settings file loads and the machine-local file overrides i
 
     const TerrainStreamingSettingsLoad merged =
         files.Load(kComplete, R"({ "cpu": { "budgetMiB": 1536 }, "io": { "workerThreads": 1 },
-                                   "view": { "prefetchBudgetMiB": 0 }, "gpu": { "uploadMiBPerFrame": 0.5 } })");
+                                   "view": { "prefetchBudgetMiB": 0 }, "gpu": { "stagingMiB": 0.5 } })");
     REQUIRE(merged.settings);
     CHECK(merged.localFileFound);
     CHECK(merged.settings->cpu.budgetBytes == uint64_t(1536) * 1024 * 1024);
@@ -124,7 +123,7 @@ TEST_CASE("A complete settings file loads and the machine-local file overrides i
     CHECK(merged.settings->residency.mode == TerrainResidencyMode::Auto);
     CHECK(merged.settings->view.prefetchBudgetBytes == uint64_t(0));
     CHECK(merged.settings->view.refineErrorPixels == 1.5);
-    CHECK(merged.settings->gpu.uploadBytesPerFrame == uint64_t(512) * 1024);
+    CHECK(merged.settings->gpu.stagingBytes == uint64_t(512) * 1024);
     CHECK(merged.settings->gpu.budgetBytes == uint64_t(256) * 1024 * 1024);
 }
 
@@ -163,7 +162,7 @@ TEST_CASE("Missing, unknown and invalid settings are reported by path and file, 
             "residency": { "mode": "Lazy", "queryLeaseSeconds": 2.5 },
             "view": { "refineErrorPixels": 1.5, "mergeErrorPixels": 1.0, "prefetchErrorPixels": 0.5,
                       "prefetchBudgetMiB": "some" },
-            "gpu": { "budgetMiB": 256, "uploadMiBPerFrame": 12, "stagingMiB": 24, "meshRetainSeconds": 3 },
+            "gpu": { "budgetMiB": 256, "stagingMiB": 24, "meshRetainSeconds": 3 },
             "collision": { "spacingsMeters": [8, 4, 2, 1], "maxErrorMeters": 0.05, "pieceTiles": 4,
                            "seamOverlapMeters": 64, "bodyToleranceMeters": 0.1, "loadLatencySeconds": 0.5,
                            "latencyMarginSeconds": 0.25, "prefetchSeconds": 2, "budgetMiB": 48, "retainSeconds": 3 },
@@ -185,7 +184,7 @@ TEST_CASE("Missing, unknown and invalid settings are reported by path and file, 
             kComplete,
             R"({ "cpu": { "budgetMiB": 0 }, "io": { "workerThreads": 65 }, "retry": { "maxDelaySeconds": 0.01 },
                             "view": { "mergeErrorPixels": 2, "prefetchBudgetMiB": -1 },
-                            "gpu": { "uploadMiBPerFrame": 0, "meshRetainSeconds": -1 },
+                            "gpu": { "stagingMiB": 0, "meshRetainSeconds": -1 },
                             "collision": { "spacingsMeters": [4, 8], "pieceTiles": 0, "budgetMiB": 0 } })");
         CHECK_FALSE(load.settings);
         CHECK(Reports(load, local, "cpu.budgetMiB must be positive"));
@@ -195,12 +194,18 @@ TEST_CASE("Missing, unknown and invalid settings are reported by path and file, 
         CHECK(Reports(load, local,
                       "view.mergeErrorPixels must be a finite positive number of pixels, at most refineErrorPixels"));
         CHECK(Reports(load, local, "view.prefetchBudgetMiB must be zero or more"));
-        CHECK(Reports(load, local, "gpu.uploadMiBPerFrame must be positive"));
+        CHECK(Reports(load, local, "gpu.stagingMiB must be positive"));
         CHECK(Reports(load, local, "gpu.meshRetainSeconds must be a finite number of seconds, zero or more"));
         CHECK(Reports(load, local, "collision.spacingsMeters must list positive finite spacings, coarse to fine"));
         CHECK(Reports(load, local, "collision.pieceTiles must be at least 1"));
         CHECK(Reports(load, local, "collision.budgetMiB must be positive"));
         CHECK(load.problems.size() == 10);
+    }
+    SECTION("A retired setting is named, so a file that still has it is easy to fix")
+    {
+        const TerrainStreamingSettingsLoad load = files.Load(kComplete, R"({ "gpu": { "uploadMiBPerFrame": 8 } })");
+        CHECK_FALSE(load.settings);
+        CHECK(Reports(load, local, "gpu.uploadMiBPerFrame is not a known setting"));
     }
     SECTION("A file that is not a JSON object")
     {
@@ -213,7 +218,7 @@ TEST_CASE("Validation names every field of settings built in code that was left 
           "[terrain][streaming][settings]")
 {
     const std::vector<std::string> unset = ValidateTerrainStreamingSettings({});
-    CHECK(unset.size() == 27);
+    CHECK(unset.size() == 26);
     for (const char *path : {"cpu.budgetMiB",
                              "io.workerThreads",
                              "io.maxInstallsPerFrame",
@@ -228,7 +233,6 @@ TEST_CASE("Validation names every field of settings built in code that was left 
                              "view.prefetchErrorPixels",
                              "view.prefetchBudgetMiB",
                              "gpu.budgetMiB",
-                             "gpu.uploadMiBPerFrame",
                              "gpu.stagingMiB",
                              "gpu.meshRetainSeconds",
                              "collision.spacingsMeters",
@@ -258,7 +262,6 @@ TEST_CASE("Validation names every field of settings built in code that was left 
     s.view.prefetchErrorPixels = 2.0;
     s.view.prefetchBudgetBytes = 0;
     s.gpu.budgetBytes = 1;
-    s.gpu.uploadBytesPerFrame = 1;
     s.gpu.stagingBytes = 1;
     s.gpu.meshRetainSeconds = 0.0;
     s.collision.spacingsMeters = {2.0};

@@ -451,12 +451,23 @@ whole only to check a newly published release before an Edit switch, one pack at
 a time on a worker (see [Release switch](#release-switch-issue-129));
 `VerifyAllPacks` stays in TerrainTool's validate and publish.
 
-**Threads.** `TerrainWorkerPool` (`terrain/TerrainExecutor.h`,
-`io.workerThreads` `std::jthread`s) runs posted jobs; tests inject a
+**Threads.** Runtime uses `TerrainJobExecutor` (`terrain_runtime/TerrainJobExecutor.h`), a
+background lane on the app-owned engine executor. `io.workerThreads` caps terrain
+callbacks in flight, clamped to the engine worker count; no extra terrain threads
+are created. The same lane handles reads/decoding, mesh builds, collision shape
+builds and release verification. The standalone `TerrainWorkerPool` remains for
+tools/tests, and tests can inject a
 `TerrainManualExecutor` and a manual clock. Workers touch only the byte source,
 the immutable index and the decoders. Entries, height queries and the budget
 change only in `Update`, which installs at most `io.maxInstallsPerFrame`
 finished reads per call.
+
+Frame ranges take priority over queued background callbacks. Running IO is not
+preempted. Runtime shutdown closes its lane, drops unstarted callbacks and joins
+running ones before terrain collaborators die. Scene unload keeps the lane and
+uses existing terrain tickets/queues to discard stale results. `--workers 0`
+runs callbacks inline, so streaming updates may do IO/build work synchronously
+in that explicit serial mode. Budgets and install limits still apply.
 
 **Settings.** `TerrainStreamingSettings` (`terrain/TerrainStreamingSettings.h`)
 has no code defaults. `LoadTerrainStreamingSettings` reads the game's
@@ -473,7 +484,7 @@ ships:
   "residency": { "mode": "Auto", "queryLeaseSeconds": 2.0 },
   "view": { "refineErrorPixels": 1.0, "mergeErrorPixels": 0.75, "prefetchErrorPixels": 0.5,
             "prefetchBudgetMiB": 4 },
-  "gpu": { "budgetMiB": 128, "uploadMiBPerFrame": 8, "stagingMiB": 32, "meshRetainSeconds": 2.0 },
+  "gpu": { "budgetMiB": 128, "stagingMiB": 32, "meshRetainSeconds": 2.0 },
   "collision": { "spacingsMeters": [8.0, 4.0, 2.0, 1.0], "maxErrorMeters": 0.05, "pieceTiles": 4,
                  "seamOverlapMeters": 64.0, "bodyToleranceMeters": 0.05, "loadLatencySeconds": 0.5,
                  "latencyMarginSeconds": 0.5, "prefetchSeconds": 2.0, "budgetMiB": 64, "retainSeconds": 2.0 } }
@@ -655,12 +666,13 @@ frame that copied it). Until then the selector keeps drawing a ready coarser or
 finer unit, so a refined Region stays on screen until all of its children are
 usable, and a Region replaced by its 256 tiles no longer costs a frame.
 
-**Budgets from data.** `gpu.uploadBytesPerFrame` paces both ends: builds start
-while building and built bytes stay within it (one always may), built meshes go
-to the uploader while its queued bytes are below it, and the renderer records at
-most that many bytes a frame (vertex and index bytes plus the BLAS; the first
-mesh of a frame goes alone if larger), copied through a persistent ring of
-`gpu.stagingBytes`. `gpu.budgetBytes` caps what terrain holds on the GPU,
+**Budgets from data.** The renderer's per-frame upload budget (the game's
+`rendering.uploadMiBPerFrame`, read through `TerrainMeshUploader::FrameBudgetBytes`)
+paces both ends: builds start while building and built bytes stay within it (one
+always may), built meshes go to the uploader while its queued bytes are below
+it, and the renderer records at most that many bytes a frame (vertex and index
+bytes plus the BLAS; the first mesh of a frame goes alone if larger), copied
+through a persistent ring that terrain asks to be at least `gpu.stagingBytes`. `gpu.budgetBytes` caps what terrain holds on the GPU,
 counting meshes being built or uploaded and retired meshes the GPU may still
 read: a mesh that does not fit waits, and only a Visible one makes room, by
 retiring unwanted meshes and then Prefetch ones, never a Visible one. A mesh
@@ -988,11 +1000,12 @@ and places the shape at placement plus that origin (see
 
 ### Scene instances and pinned releases
 
-A scene holds terrain as a `TerrainInstance` component: the recipe path
-relative to the game's assetsRoot, nothing else. Its placement is the entity's
-Transform position, so the entity must be a root with identity rotation and
-unit scale. Tiles never become entities, and a scene file holds one small entity
-per instance.
+A scene holds terrain as a `TerrainInstance` component: the recipe path and
+an optional material path, both relative to the game's assetsRoot. Its
+placement is the entity's Transform position, so the entity must be a root with
+identity rotation and unit scale. The material is a render binding, not part of
+release or geometry identity. Tiles never become entities, and a scene file
+holds one small entity per instance.
 
 ```cpp
 // scenes/default/entities/1.json: Transform at (150000.5, -20, -75000.25) and
@@ -1242,17 +1255,17 @@ tools\TerrainTool\TerrainTool.exe publish --candidate terrain-candidates\relief-
 | `TerrainCollisionOwners`, `TerrainCollisionPieceArea`, `TerrainCollisionEvent`, `TerrainCollisionPieceName`, `TerrainCollisionStats` | `terrain/TerrainCollisionResidency.h` | which pieces a footprint may touch; placed, retired and failed pieces with spacing, error, build time, latency and bytes; held, peak and budget bytes, builds and latencies |
 | `TerrainViewSelector` | `terrain/TerrainViewSelection.h` | one viewport's selection over placed releases: `Update` (detail in every direction with hysteresis, frustum draws, wants), `Draws`, `Collect` (the same detail in another volume), `Wants`, `Stats` |
 | `TerrainMeshResidency` | `terrain/TerrainMeshResidency.h` | GPU meshes of draw units within the `gpu` budgets: `Install` (finished builds and uploads), `Request` (every viewport's wants: builds, hand-over, retirement), `State`, `Ready`, `Acquire`, `RetireReleases`, `RetireAll`, `Forget`, `TakeFailures`, `Stats`, `Usage` |
-| `TerrainMeshUploader`, `TerrainMeshData`, `TerrainGpuMeshId`, `TerrainGpuMeshState`, `TerrainMeshState`, `TerrainResidentMesh`, `TerrainMeshStats` | `terrain/TerrainMeshResidency.h` | the renderer side a caller implements (footprint, queued bytes, upload, state, retire, retiring bytes); a built mesh in its own frame; an upload's id and state; where a unit's mesh is; a ready mesh's id and origin; held, retiring and peak bytes and counters |
+| `TerrainMeshUploader`, `TerrainMeshData`, `TerrainGpuMeshId`, `TerrainGpuMeshState`, `TerrainMeshState`, `TerrainResidentMesh`, `TerrainMeshStats` | `terrain/TerrainMeshResidency.h` | the renderer side a caller implements (footprint, queued bytes, frame budget, upload, state, retire, retiring bytes); a built mesh in its own frame; an upload's id and state; where a unit's mesh is; a ready mesh's id and origin; held, retiring and peak bytes and counters |
 | `TerrainView`, `TerrainCullVolume`, `TerrainSelectionInstance`, `TerrainDrawUnit`, `TerrainUnitKind`, `TerrainUnitReady`, `TerrainViewStats` | `terrain/TerrainViewSelection.h` | the eye, camera-relative clip volume, focal length in pixels and far distance; a release at a placement; a tile at a LOD or a Region with its payload keys, distance and projected error; whether a unit can be drawn; drawn, stand-in, missing, wanted and prefetch counts |
 | `TerrainTileMesh`, `TerrainMeshVertex` | `terrain/TerrainTileMesh.h` | one tile's raster mesh: release, surface version, tile, double origin, sample range, float vertices (position, normal), `TriangulateCell` indices, bounds |
 | `BuildTerrainTileMesh`, `TerrainMeshResult`, `TerrainMeshStatus` | `terrain/TerrainTileMesh.h` | builds it from a `TileSampleLookup`; `MissingTile`, `MissingNeighbour`, `InvalidSamples`, `InvalidInput` instead of a mesh |
 | `TerrainTileMeshWorldOrigin` | `terrain/TerrainTileMesh.h` | placement plus mesh origin in double; nullopt for another asset or an overflow |
 | `TerrainAreaSamples`, `BuildTerrainAreaSamples` | `terrain/TerrainAreaSamples.h` | every meshed cell's samples in one block from the owning tiles, with its first sample as origin, for one collider over the map; refuses more than `kMaxTerrainAreaSamplesPerSide` (32768) a side |
-| `TerrainInstance`, `RegisterTerrainComponents` | `terrain/components/TerrainInstance.h`, `terrain/ComponentRegistration.h` | the scene component: `recipePath` (String, at most 63 characters) relative to assetsRoot; placement is the root entity's Transform position |
+| `TerrainInstance`, `RegisterTerrainComponents` | `terrain/components/TerrainInstance.h`, `terrain/ComponentRegistration.h` | the scene component: `recipePath` and `materialPath` (String, at most 63 characters each) relative to assetsRoot; placement is the root entity's Transform position |
 | `TerrainSceneSpec`, `TerrainInstanceSpec`, `TerrainIssue`, `TerrainIssueKind` | `terrain/TerrainScene.h` | what the World asks for, sorted by content; refusals with a one-line message (`MissingRecipe`, `BadRecipePath`, `InvalidPlacement`, `NoRelease`, `BadRelease`, `Overlap`); `HasTerrain` |
 | `CollectTerrainScene` | `terrain/TerrainScene.h` | reads every `TerrainInstance` and its Transform; resolves the asset id, checks the placement |
 | `TerrainResidentRelease` | `terrain/TerrainScene.h` | one release opened (index only) with its height query, filled by a streamer; `Open`, `Create` (from a handle or a shared one), `Info`, `Layout`, `Handle`, `SharedHandle`, `Query`, `Lookup` |
-| `TerrainWorld`, `TerrainInstanceState`, `TerrainWorldRect` | `terrain/TerrainScene.h` | World resource: per asset the pinned release and what `current` last named, per instance placement, effective XZ bounds and release; `HeightAt`, `SameDerivedState`, `RemoveInstance` |
+| `TerrainWorld`, `TerrainInstanceState`, `TerrainWorldRect` | `terrain/TerrainScene.h` | World resource: per asset the pinned release and what `current` last named, per instance placement, effective XZ bounds, release and current entity; `HeightAt`, `SameDerivedState`, `RemoveInstance`, `SyncInstanceEntities` |
 | `GroundQueryResult`, `GroundQueryCoverage`, `ProbeTerrainHeightResult`, `ProbeTerrainGround`, `ProbeTerrainGroundCoverage` | `terrain/TerrainGround.h` | editor ground answers: source-precision height samples; layout-only coverage and source spacing with no payload request; `CoarserAtSourceLimit` is not Ready unless its spacing reached the tile's source spacing |
 | `ResolveTerrainWorld`, `TerrainEagerLoad`, `TerrainCurrentMoved` | `terrain/TerrainScene.h` | resolve a spec against the releases through a streamer, reusing what is loaded; with `Wait` a new Eager release is waited for, with `Async` (the engine) not; a poll of the pointers |
 | `TerrainResolveOptions`, `TerrainReleaseOpener`, `TerrainReleaseFileOpener` | `terrain/TerrainScene.h` | `eager`; `keepLoaded` (the engine: a loaded asset keeps its release whatever `current` names); `adopt` (verified releases put in place of their assets' loaded ones); `open` (how a release is opened, on any thread; `OpenTerrainRelease` under the releases root by default) |
@@ -1593,7 +1606,7 @@ it: a mesh that does not fit waits, and only a Visible one may make room, by
 retiring unwanted meshes (least recently touched first) and then Prefetch ones
 (farthest first); a Visible mesh is never retired for room. Builds start Visible
 first, then Prefetch, by rank, while building and built bytes stay within
-`gpu.uploadBytesPerFrame` (one always may), and built meshes go to the uploader
+the renderer's frame budget (one always may), and built meshes go to the uploader
 while its queued bytes are below the same budget.
 
 ## State
@@ -1805,6 +1818,20 @@ physics side are in `tests/TerrainResidencyTestSupport.h`).
     out of P3).
 
 ## Changed
+
+*2026-10-31* — **Terrain follows the renderer's upload budget (#359).** Was:
+`gpu.uploadMiBPerFrame` in `terrain_streaming.json` set the renderer's per-frame
+budget and `gpu.stagingMiB` configured its ring, and terrain drew nothing if
+that configuration was refused. Now: the budget is the game's
+`rendering.uploadMiBPerFrame` in `project_settings.json`, shared by every
+consumer, and terrain reads it through `TerrainMeshUploader::FrameBudgetBytes`
+to pace its builds and hand-overs. `gpu.stagingMiB` is the least ring terrain
+asks for, and a refused request only logs. The `gpu.uploadMiBPerFrame` key is
+removed, so a `terrain_streaming.json` that still has it fails to load with
+"gpu.uploadMiBPerFrame is not a known setting" and the fix is to delete the key
+and set `rendering.uploadMiBPerFrame` instead. Because: terrain is one consumer
+of an upload path every asset shares, so it cannot own the number, and a game
+that streams a large terrain needs that number in its project settings.
 
 *2026-10-13* — **Release switches checked and prewarmed off the main thread
 (#129).** Was: in Edit the poll adopted a moved `current` at once, opening the

@@ -11,6 +11,7 @@
 #endif
 #include "ResourceStore.h"
 #include "Device.h"
+#include "MaterialTableLayout.h"
 #include "Slots.h"
 #include "VulkanUtil.h"
 
@@ -105,6 +106,8 @@ namespace mir::vk
     bool ResourceStore::Initialize(Device &device)
     {
         mDevice = &device;
+        if (AcquireSampler(SamplerDesc{}) == VK_NULL_HANDLE)
+            return false;
         return CreateDefaultTextures();
     }
 
@@ -307,17 +310,25 @@ namespace mir::vk
         return mHighestMeshGeneration;
     }
 
-    VkSampler ResourceStore::AcquireSampler(const SamplerDesc &desc)
+    VkSampler ResourceStore::AcquireSampler(const SamplerDesc &desc, uint32_t *outSlot)
     {
-        const uint64_t key = (static_cast<uint64_t>(desc.magFilter) << 40) |
-            (static_cast<uint64_t>(desc.minFilter) << 32) |
-            (static_cast<uint64_t>(desc.mipmapMode) << 24) |
-            (static_cast<uint64_t>(desc.addressModeU) << 16) |
-            (static_cast<uint64_t>(desc.addressModeV) << 8) |
-            (desc.useMips ? 1ull : 0ull);
+        const bool anisotropySupported = mDevice->SamplerAnisotropySupported();
+        const float anisotropyLimit = mDevice->MaxSamplerAnisotropy();
+        const float anisotropy = EffectiveAnisotropy(desc, anisotropySupported, anisotropyLimit);
+        const uint64_t key = SamplerCacheKey(desc, anisotropySupported, anisotropyLimit);
 
-        if (const auto it = mSamplers.find(key); it != mSamplers.end())
-            return it->second;
+        if (const auto it = mSamplerLookup.find(key); it != mSamplerLookup.end())
+        {
+            if (outSlot != nullptr)
+                *outSlot = it->second;
+            return mSamplerTable[it->second];
+        }
+
+        if (mSamplerTable.size() >= kMaxSharedSamplers)
+        {
+            MIR_LOG_ERROR("AcquireSampler: sampler table is full at {} rows", kMaxSharedSamplers);
+            return VK_NULL_HANDLE;
+        }
 
         const VkSamplerCreateInfo info{
             .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
@@ -327,7 +338,8 @@ namespace mir::vk
             .addressModeU = desc.addressModeU,
             .addressModeV = desc.addressModeV,
             .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
-            .anisotropyEnable = VK_FALSE,
+            .anisotropyEnable = anisotropy > 1.0f ? VK_TRUE : VK_FALSE,
+            .maxAnisotropy = anisotropy,
             .compareEnable = VK_FALSE,
             .minLod = 0.0f,
             .maxLod = desc.useMips ? VK_LOD_CLAMP_NONE : 0.0f,
@@ -340,15 +352,30 @@ namespace mir::vk
             return VK_NULL_HANDLE;
         }
 
-        mSamplers.emplace(key, sampler);
+        const uint32_t slot = static_cast<uint32_t>(mSamplerTable.size());
+        mSamplerTable.push_back(sampler);
+        mSamplerLookup.emplace(key, slot);
+        ++mSamplerTableVersion;
+        if (slot == 0)
+            mDefaultSampler = sampler;
+
+        if (outSlot != nullptr)
+            *outSlot = slot;
         return sampler;
+    }
+
+    VkSampler ResourceStore::SamplerAt(uint32_t slot) const
+    {
+        return slot < mSamplerTable.size() ? mSamplerTable[slot] : mDefaultSampler;
     }
 
     void ResourceStore::DestroySamplers()
     {
-        for (const auto &[key, sampler] : mSamplers)
+        for (const VkSampler sampler : mSamplerTable)
             vkDestroySampler(mDevice->Handle(), sampler, nullptr);
-        mSamplers.clear();
+        mSamplerTable.clear();
+        mSamplerLookup.clear();
+        mDefaultSampler = VK_NULL_HANDLE;
     }
 
     bool ResourceStore::CreateDefaultTextures()
@@ -403,7 +430,40 @@ namespace mir::vk
         // One staging blob for every level, one copy region each.
         std::vector<std::byte> pixels;
         std::vector<VkBufferImageCopy> regions;
-        const uint32_t levelCount = BuildMipChain(desc, pixels, regions);
+        uint32_t levelCount = 0;
+        if (!desc.mips.empty())
+        {
+            if (!TextureMipLayoutValid(desc))
+            {
+                MIR_LOG_ERROR("CreateTexture: {}x{} supplied mips do not form a complete chain", desc.width,
+                    desc.height);
+                return kNullTexture;
+            }
+            pixels.assign(desc.pixels.begin(), desc.pixels.end());
+            levelCount = static_cast<uint32_t>(desc.mips.size()) + 1;
+            uint32_t width = desc.width, height = desc.height;
+            VkDeviceSize offset = 0;
+            for (uint32_t level = 0; level < levelCount; ++level)
+            {
+                regions.push_back(VkBufferImageCopy{
+                    .bufferOffset = offset,
+                    .imageSubresource{
+                        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                        .mipLevel = level,
+                        .baseArrayLayer = 0,
+                        .layerCount = 1 },
+                    .imageExtent{ width, height, 1 } });
+                if (level == levelCount - 1)
+                    break;
+                const auto &mip = desc.mips[level];
+                offset = pixels.size();
+                pixels.insert(pixels.end(), mip.pixels.begin(), mip.pixels.end());
+                width = mip.width;
+                height = mip.height;
+            }
+        }
+        else
+            levelCount = BuildMipChain(desc, pixels, regions);
 
         VkBuffer staging = VK_NULL_HANDLE;
         VmaAllocation stagingAllocation = VK_NULL_HANDLE;
@@ -487,16 +547,27 @@ namespace mir::vk
             return kNullTexture;
         }
 
-        const uint32_t index = static_cast<uint32_t>(mTextures.size());
-        mTextures.push_back(texture);
+        const TextureHandle handle = mTextureTable.Add();
+        if (handle.IsNull())
+        {
+            MIR_LOG_ERROR("CreateTexture: image table is full at {} rows", mTextureTable.Capacity());
+            FreeTexture(texture);
+            return kNullTexture;
+        }
+
+        texture.mGeneration = handle.mGeneration;
+        if (handle.mIndex >= mTextures.size())
+            mTextures.resize(handle.mIndex + 1);
+        mTextures[handle.mIndex] = texture;
+        ++mTextureTableVersion;
 
         mDevice->NameObject(VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64_t>(texture.mImage),
-            std::format("Texture {}", index).c_str());
+            std::format("Texture {}", handle.mIndex).c_str());
 
         MIR_LOG_INFO("Texture {} uploaded: {}x{}, {} level(s), {} bytes",
-            index, desc.width, desc.height, levelCount, pixels.size());
+            handle.mIndex, desc.width, desc.height, levelCount, pixels.size());
 
-        return TextureHandle{ index, texture.mGeneration };
+        return handle;
     }
 
     void ResourceStore::FreeTexture(GpuTexture &texture)
@@ -509,30 +580,61 @@ namespace mir::vk
 
     bool ResourceStore::DestroyTexture(TextureHandle handle)
     {
-        if (handle == mDefaultWhiteTexture || handle == mDefaultNormalTexture || handle == mErrorTexture || FindTexture(handle) == nullptr)
+        if (handle == mDefaultWhiteTexture || handle == mDefaultNormalTexture || handle == mErrorTexture ||
+            FindTexture(handle) == nullptr)
             return false;
 
         GpuTexture &texture = mTextures[handle.mIndex];
         FreeTexture(texture);
-        RetireSlot(texture);
+        mTextureTable.Remove(handle);
+        texture = GpuTexture{};
+        texture.mGeneration = mTextureTable.Generation(handle.mIndex);
+        ++mTextureTableVersion;
         return true;
     }
 
     std::size_t ResourceStore::ReleaseTextures()
     {
-        // defaults hold the first few slots
-        // update slot if new default texture added
-        const std::size_t kept = std::min<std::size_t>(mTextures.size(), 3);
-        for (std::size_t i = kept; i < mTextures.size(); ++i)
+        std::size_t released = 0;
+        for (std::size_t i = 0; i < mTextures.size(); ++i)
+        {
+            const TextureHandle handle{ static_cast<uint32_t>(i), mTextures[i].mGeneration };
+            if (handle == mDefaultWhiteTexture || handle == mDefaultNormalTexture || handle == mErrorTexture ||
+                !mTextureTable.Contains(handle))
+                continue;
+
             FreeTexture(mTextures[i]);
-        const std::size_t released = mTextures.size() - kept;
-        mTextures.resize(kept);
+            mTextureTable.Remove(handle);
+            mTextures[i] = GpuTexture{};
+            mTextures[i].mGeneration = mTextureTable.Generation(i);
+            ++released;
+        }
+        if (released > 0)
+            ++mTextureTableVersion;
         return released;
     }
 
     const GpuTexture *ResourceStore::FindTexture(TextureHandle handle) const
     {
-        return FindSlot(mTextures, handle);
+        if (!mTextureTable.Contains(handle))
+            return nullptr;
+        return &mTextures[handle.mIndex];
+    }
+
+    uint32_t ResourceStore::TextureSlot(TextureHandle handle) const
+    {
+        return mTextureTable.Contains(handle) ? handle.mIndex : mDefaultWhiteTexture.mIndex;
+    }
+
+    VkImageView ResourceStore::ImageViewAt(uint32_t slot) const
+    {
+        if (slot < mTextures.size())
+        {
+            const TextureHandle handle{ slot, mTextures[slot].mGeneration };
+            if (mTextureTable.Contains(handle) && mTextures[slot].mView != VK_NULL_HANDLE)
+                return mTextures[slot].mView;
+        }
+        return mDefaultWhiteTexture.IsNull() ? VK_NULL_HANDLE : mTextures[mDefaultWhiteTexture.mIndex].mView;
     }
 
     void ResourceStore::DestroyTextures()
@@ -540,6 +642,8 @@ namespace mir::vk
         for (GpuTexture &texture : mTextures)
             FreeTexture(texture);
         mTextures.clear();
+        mTextureTable = TextureTable{};
+        mTextureTableVersion = 0;
         mDefaultWhiteTexture = kNullTexture;
         mDefaultNormalTexture = kNullTexture;
         mErrorTexture = kNullTexture;

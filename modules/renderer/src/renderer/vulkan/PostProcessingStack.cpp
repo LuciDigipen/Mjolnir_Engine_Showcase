@@ -75,7 +75,7 @@ namespace mir::vk
 
     void PostProcessingStack::Apply(const PostProcessingState &state, RayTracer &rayTracer, VkExtent2D extent)
     {
-        mPostProcess.SetParams(state.hdr.exposure, static_cast<int>(state.hdr.op));
+        mPostProcess.SetParams(state.exposure, static_cast<int>(state.hdr.op));
         mPostProcess.SetFilmParams(state.film.grain, state.film.contrast, state.film.saturation,
             state.film.vignetteStrength, state.film.vignetteRadius);
 
@@ -83,11 +83,10 @@ namespace mir::vk
         mBloom.SetParams(state.bloom.threshold, state.bloom.intensity, state.bloom.radius);
 
         mDepthOfFieldEnabled = state.depthOfFieldEnabled;
-        mDepthOfField.SetParams(state.depthOfField.focusDistance, state.depthOfField.aperture,
-            state.depthOfField.maxBlur);
+        mDepthOfField.SetParams(state.focusDistance, state.aperture, state.depthOfField.maxBlur);
 
         mMotionBlurEnabled = state.motionBlurEnabled;
-        mMotionBlur.SetParams(state.motionBlur.shutterStrength, static_cast<uint32_t>(state.motionBlur.sampleCount));
+        mMotionBlur.SetParams(state.shutterStrength, static_cast<uint32_t>(state.motionBlur.sampleCount));
 
         mAntiAliasingRtSampleCount = static_cast<uint32_t>(state.antiAliasing.rtSampleCount);
         const AntiAliasingMode mode = state.antiAliasing.mode;
@@ -190,13 +189,6 @@ namespace mir::vk
             colorSource = mMotionBlur.OutputView(frame);
         }
 
-        if (mBloomEnabled)
-        {
-            mDevice->BeginLabel(cmd, "Bloom Pass", { 1.0f, 0.5f, 0.0f, 1.0f });
-            mBloom.Record(cmd, frame, colorSource, inputs.extent);
-            mDevice->EndLabel(cmd);
-        }
-
         return colorSource;
     }
 
@@ -213,8 +205,9 @@ namespace mir::vk
     }
 
     VkImageView PostProcessingStack::RecordRayTraced(VkCommandBuffer cmd, uint32_t frame, const RayTracer &rayTracer,
-        VkRect2D rect, glm::vec2 jitterPixels, float nearZ, float farZ, VkExtent2D extent)
+        const RenderView &view, glm::vec2 jitterPixels, VkExtent2D extent)
     {
+        const VkRect2D rect = ResolveViewRect(view.rect, extent);
         VkImageView colorSource = rayTracer.View(RtImage::Output, frame);
 
     #if MIR_WITH_DLSS
@@ -259,7 +252,7 @@ namespace mir::vk
         {
             mDevice->BeginLabel(cmd, "Depth Of Field Pass", { 0.5f, 0.0f, 1.0f, 1.0f });
             mDepthOfField.Record(cmd, frame, colorSource, rayTracer.View(RtImage::Distance, frame),
-                /*isLinearDepth*/ true, nearZ, farZ, extent);
+                /*isLinearDepth*/ true, view.nearZ, view.farZ, extent);
             mDevice->EndLabel(cmd);
             colorSource = mDepthOfField.OutputView(frame);
         }
@@ -272,14 +265,15 @@ namespace mir::vk
             colorSource = mMotionBlur.OutputView(frame);
         }
 
-        if (mBloomEnabled)
-        {
-            mDevice->BeginLabel(cmd, "Bloom Pass", { 1.0f, 0.5f, 0.0f, 1.0f });
-            mBloom.Record(cmd, frame, colorSource, extent);
-            mDevice->EndLabel(cmd);
-        }
-
         return colorSource;
+    }
+
+    void PostProcessingStack::RecordBloom(VkCommandBuffer cmd, uint32_t frame, VkImageView color, VkExtent2D extent)
+    {
+        if (!mBloomEnabled) return;
+        mDevice->BeginLabel(cmd, "Bloom Pass", {1, 0.5f, 0, 1});
+        mBloom.Record(cmd, frame, color, extent);
+        mDevice->EndLabel(cmd);
     }
 
     bool PostProcessingStack::PrepareComposite(VkCommandBuffer cmd, uint32_t frame, VkImageView color,
@@ -294,7 +288,7 @@ namespace mir::vk
         mDevice->BeginLabel(cmd, "Tonemap Pass", { 1.0f, 1.0f, 0.0f, 1.0f });
 
         // Grain waits for the FXAA pass, so the edge blend can't smear it.
-        mPostProcess.Record(cmd, frame, color, mBloom.OutputView(frame), mBloom.Intensity(), FilmGrain{}, extent);
+        mPostProcess.Record(cmd, frame, color, mBloom.OutputView(frame), mBloomEnabled ? mBloom.Intensity() : 0.0f, FilmGrain{}, extent);
 
         mDevice->EndLabel(cmd);
         vkCmdEndRendering(cmd);
@@ -310,6 +304,6 @@ namespace mir::vk
         if (fxaa)
             mFxaa.Record(cmd, frame, mFxaa.IntermediateView(frame), grain, extent);
         else
-            mPostProcess.Record(cmd, frame, color, mBloom.OutputView(frame), mBloom.Intensity(), grain, extent);
+            mPostProcess.Record(cmd, frame, color, mBloom.OutputView(frame), mBloomEnabled ? mBloom.Intensity() : 0.0f, grain, extent);
     }
 }

@@ -8,6 +8,8 @@
  */
 #include <editor/EditorModule.h>
 
+#include "ParticleEditorPanel.h"
+
 #include <editor/CreateGameProject.h>
 #include <editor/IdeSettings.h>
 
@@ -130,6 +132,7 @@ namespace mir
           mSceneOps(context.world, scene.Scene(), mPrefabWorkspace, mProject.mRootDir)
     {
         mImport.Initialize(mProject);
+        mParticleEditor = std::make_unique<ParticleEditorPanel>(mImport.SourceAssetRoot(),mProject.mAssetIdRoot);
         mContentBrowser.Initialize(mProject);
 
         // The first frames run without assets; the import swaps them in once cooked
@@ -168,6 +171,7 @@ namespace mir
         mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &)
             {
                 mEditor.CancelSnapToTerrain();
+                mParticleEditor->OnHidden(mWorld);
                 mPrefabWorkspace.ResetResolve();
             });
 
@@ -207,6 +211,7 @@ namespace mir
         // after PrefabModule's, which committed and froze the prefabs
         mPlayBegin = context.scheduler.AddStage(Stage::PlayBegin, [this](SystemContext &)
             {
+                mParticleEditor->OnHidden(mWorld);
                 PrefabCoordinator &prefabs = mPrefab.Coordinator();
                 if (prefabs.ConsumeSceneMaintenance() && !mEditor.IsSceneUnsaved())
                     mEditor.SetSceneUnsaved(true);
@@ -223,6 +228,16 @@ namespace mir
                 mEditor.ClearHistory();
                 mPrefabBeforePlay = mPrefabWorkspace.ActiveDocument();
                 mPrefabWorkspace.ActivateScene();
+
+                
+                if (mAudio != nullptr && mEnableLayout)
+                    mAudioBeforePlay = mAudio->Live();
+            });
+        mPlayEnd = context.scheduler.AddStage(Stage::PlayEnd, [this](SystemContext &)
+            {
+                if (mAudio != nullptr && mAudioBeforePlay.has_value())
+                    mAudio->SetLive(*mAudioBeforePlay);
+                mAudioBeforePlay.reset();
             });
 
         // the previews' models stage from the candidate too
@@ -243,7 +258,7 @@ namespace mir
                 mPrefabWorkspace.DiscardPreparedReload();
             });
 
-        mDrawer = imgui.AddDrawer(DrawerGroup::Tools, [this, &window]
+        mDrawer = imgui.AddDrawer(DrawerGroup::Tools, [this, &window, &assets]
             {
                 if (window.Get().Width() == 0 || window.Get().Height() == 0)
                     return;
@@ -254,6 +269,22 @@ namespace mir
                     mWorld.Resource<EngineModeState>(), mProjectMenu, mProject.mDir,
                     preview != nullptr ? *preview : mWorld, mWorld, MakeEditorDocuments(), mImport.View(),
                     mRenderer.Renderer(), MakeContentBrowserView(), mFrameDt);
+                if (const std::string particlePath = mEditor.TakeParticleOpenRequest();
+                    !particlePath.empty() && IsEditing(mWorld))
+                {
+                    mParticleEditor->OpenSystem(particlePath, mWorld);
+                    mEditor.ParticleEditorVisible() = true;
+                }
+                const int particleHistoryRequest = mEditor.TakeParticleHistoryRequest();
+                if (particleHistoryRequest < 0) mParticleEditor->RequestUndoDraft();
+                else if (particleHistoryRequest > 0) mParticleEditor->RequestRedoDraft();
+                if (mEnableLayout)
+                    mParticleEditor->Draw(mEditor.ParticleEditorVisible(),mWorld,assets.Cache(),mImport,mEditor.SceneCamera(),mFrameDt);
+                else mParticleEditor->OnHidden(mWorld);
+                if (const auto offsetEdit = mParticleEditor->TakeInstanceOffsetEdit())
+                    mEditor.SubmitParticleEmitterOffset(mWorld, offsetEdit->mEntity, offsetEdit->mPlacementId, offsetEdit->mValue);
+                mEditor.SetParticleHistoryAvailability(mParticleEditor->CanUndoDraft(),
+                    mParticleEditor->CanRedoDraft());
                 mPrefabWorkspace.CloseMissingDocuments();
                 ApplyActions(actions);
                 FeedViewport();
@@ -265,6 +296,7 @@ namespace mir
         mReloadAbort.Reset();
         mReloadCommit.Reset();
         mReloadPrepare.Reset();
+        mPlayEnd.Reset();
         mPlayBegin.Reset();
         mSceneSaved.Reset();
         mSceneLoad.Reset();
@@ -281,6 +313,8 @@ namespace mir
         RenderSystem &rendering = mRenderer.Rendering();
         const VkRect2D viewport = mEditor.SceneViewportRect();
         rendering.SetViewportRect(0, mEnableLayout ? viewport : VkRect2D{});
+        // set in Edit only, but drawn in Play too
+        rendering.SetViewportDebugView(0, mEnableLayout ? mEditor.SceneDebugView() : DebugViewSettings{});
 
         // the game UI draws later this frame, into the same scene viewport
         GameUIArea &area = mWorld.Resource<GameUIArea>();
@@ -293,8 +327,10 @@ namespace mir
         if (editorView)
         {
             mEditor.UpdateCamera(mFrameDt);
-            const EditorCamera &camera = mEditor.SceneCamera();
+            EditorCamera &camera = mEditor.SceneCamera();
             rendering.SetExternalCamera(0, camera.Pose(), camera.mLens);
+            if (camera.TakeCut())
+                rendering.CutViewport(0);
         }
         else
         {
@@ -348,6 +384,23 @@ namespace mir
         if (actions.mContentBrowser.mKind == ContentBrowserActionKind::OpenInIde)
         {
             OpenInExternalIde(actions.mContentBrowser.mTargetPath);
+        }
+        else if (actions.mContentBrowser.mKind == ContentBrowserActionKind::NewParticleSystem)
+        {
+            const auto &folder = actions.mContentBrowser.mTargetPath;
+            const std::string assetFolder = folder == "assets" ? "" :
+                (folder.starts_with("assets/") ? folder.substr(7) : "particles");
+            mParticleEditor->PrepareNewSystem(assetFolder);
+            mEditor.ParticleEditorVisible() = true;
+        }
+        else if (actions.mContentBrowser.mKind == ContentBrowserActionKind::OpenParticleSystem)
+        {
+            const auto &path = actions.mContentBrowser.mTargetPath;
+            if (IsEditing(mWorld) && path.starts_with("assets/"))
+            {
+                mParticleEditor->OpenSystem(path.substr(7), mWorld);
+                mEditor.ParticleEditorVisible() = true;
+            }
         }
         else if (actions.mContentBrowser.mKind == ContentBrowserActionKind::OpenPrefab)
         {

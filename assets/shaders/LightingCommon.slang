@@ -1,4 +1,9 @@
+#include "FogCommon.slang"
+
 // Lighting shared by both pipelines; only shadow visibility differs.
+
+#ifndef MIR_LIGHTING_COMMON
+#define MIR_LIGHTING_COMMON
 
 // CameraData's layout must match the CameraData struct in CameraBuffer.cpp exactly.
 [[vk::binding(0, 1)]]
@@ -22,6 +27,7 @@ cbuffer CameraData
     float4x4 prevViewProj;
     float4x4 sunShadowViewProj;
     float4 jitterAndPad; // xy = this frame's sub-pixel jitter in pixels, ray tracing + Dlss only
+    float4 rayCone;      // x = one pixel's angular size; ray tracing material mip selection
 };
 
 // GpuLight's layout must match the GpuLight struct in CameraBuffer.cpp exactly.
@@ -48,20 +54,24 @@ interface IShadowVisibility
 }
 
 // Visibility is only queried where a light contributes, so RT skips rays it doesn't need.
-float3 ShadeLit<V : IShadowVisibility>(V visibility, float3 albedo, float3 N, float3 worldPos)
+float3 ShadeLitAndDiffuse<V : IShadowVisibility>(V visibility, float3 albedo, float3 N, float3 worldPos,
+    float3 indirectDiffuse, out float3 diffuseLighting)
 {
     const float3 L = normalize(lightDirWS.xyz);
     const float3 viewDir = normalize(cameraPos.xyz - worldPos);
     const float3 H = normalize(L + viewDir);
 
-    float3 color = albedo * ambientColor.rgb;
+    float3 color = albedo * indirectDiffuse;
+    diffuseLighting = float3(0);
 
     const float diffuse = max(dot(N, L), 0.0);
     if (diffuse > 0.0)
     {
         const float specular = pow(max(dot(N, H), 0.0), kShininess);
-        color += (albedo * lightColor.rgb * diffuse + lightColor.rgb * kSpecularStrength * specular) *
-                 visibility.Sun(L);
+        const float shadow = visibility.Sun(L);
+        const float3 diffuseColor = albedo * lightColor.rgb * diffuse;
+        color += (diffuseColor + lightColor.rgb * kSpecularStrength * specular) * shadow;
+        diffuseLighting += diffuseColor * shadow;
     }
 
     const int firstLight = int(lightingMeta.y);
@@ -82,15 +92,29 @@ float3 ShadeLit<V : IShadowVisibility>(V visibility, float3 albedo, float3 N, fl
         if (atten <= 0.0 || diffuseP <= 0.0)
             continue;
 
-        color += albedo * light.color.rgb * atten * diffuseP * visibility.Local(light, Lp, dist);
+        const float3 contribution = albedo * light.color.rgb * atten * diffuseP * visibility.Local(light, Lp, dist);
+        color += contribution;
+        diffuseLighting += contribution;
     }
 
     return color;
 }
 
+float3 ShadeLitWithIndirect<V : IShadowVisibility>(V visibility, float3 albedo, float3 N, float3 worldPos,
+    float3 indirectDiffuse)
+{
+    float3 diffuseLighting;
+    return ShadeLitAndDiffuse(visibility, albedo, N, worldPos, indirectDiffuse, diffuseLighting);
+}
+
+float3 ShadeLit<V : IShadowVisibility>(V visibility, float3 albedo, float3 N, float3 worldPos)
+{
+    return ShadeLitWithIndirect(visibility, albedo, N, worldPos, ambientColor.rgb);
+}
+
 float3 ApplyFog(float3 color, float dist)
 {
-    const float clampedDist = clamp(dist, fogRange.x, fogRange.y);
-    const float fogFactor = clamp(1.0 - exp(-fogColor.a * (clampedDist - fogRange.x)), 0.0, 1.0);
-    return lerp(color, fogColor.rgb, fogFactor);
+    return lerp(fogColor.rgb, color, DistanceFogTransmittance(dist, fogColor.a, fogRange.xy));
 }
+
+#endif

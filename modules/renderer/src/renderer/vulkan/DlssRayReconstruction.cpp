@@ -58,7 +58,7 @@ namespace mir::vk
 
         const NVSDK_NGX_Result initResult = NVSDK_NGX_VULKAN_Init_with_ProjectID(
             kNgxProjectId, kNgxEngineType, kNgxEngineVersion,
-            kNgxApplicationDataPath, mDevice->Instance(), mDevice->Physical(), mDevice->Handle(),
+            NgxApplicationDataPath(), mDevice->Instance(), mDevice->Physical(), mDevice->Handle(),
             vkGetInstanceProcAddr, vkGetDeviceProcAddr, &featureInfo);
         if (!NVSDK_NGX_SUCCEED(initResult))
         {

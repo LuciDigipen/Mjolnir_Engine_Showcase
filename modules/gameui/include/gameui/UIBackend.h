@@ -33,10 +33,10 @@ namespace mir
     public:
         virtual ~IUIBackend() = default;
 
-        // width x height RGBA8 pixels; an empty one when it cannot be made (logged)
+        // width x height RGBA8 pixels, an empty one when it cannot be made (logged)
         virtual UIBackendTexture CreateTexture(uint32_t width, uint32_t height, std::span<const uint8_t> rgba) = 0;
 
-        // one frame's list, into area, over the scene
-        virtual void Submit(const UIRect &area, const UIDrawList &list, const UITextures &textures) = 0;
+        // one frame's list, into area, over the scene, the list is in UI units, scale area pixels each
+        virtual void Submit(const UIRect &area, float scale, const UIDrawList &list, const UITextures &textures) = 0;
     };
 }

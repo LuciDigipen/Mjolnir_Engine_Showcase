@@ -19,6 +19,6 @@ namespace mir
     {
     public:
         UIBackendTexture CreateTexture(uint32_t width, uint32_t height, std::span<const uint8_t> rgba) override;
-        void Submit(const UIRect &area, const UIDrawList &list, const UITextures &textures) override;
+        void Submit(const UIRect &area, float scale, const UIDrawList &list, const UITextures &textures) override;
     };
 }

@@ -8,6 +8,8 @@
  */
 #pragma once
 
+#include <renderer/RendererCapabilities.h>
+
 #include <volk.h>
 
 #include <cstdint>
@@ -41,14 +43,26 @@ namespace mir::vk
         VkDevice Handle() const { return mDevice; }
         VkQueue Queue() const { return mQueue; }
         uint32_t QueueFamily() const { return mQueueFamily; }
+        uint32_t TimestampBits() const { return mTimestampBits; }
         VmaAllocator Allocator() const { return mAllocator; }
 
         const VkPhysicalDeviceProperties &Properties() const { return mProperties; }
 
-        bool RayTracingSupported() const { return mRayTracingSupported; }
+        bool RayTracingSupported() const { return mCapabilities.rayTracing; }
         const VkPhysicalDeviceRayTracingPipelinePropertiesKHR &RtProperties() const { return mRtProperties; }
 
+        // Shared image/sampler/material-record tables, available with or without ray tracing.
+        bool SharedMaterialTablesSupported() const { return mCapabilities.sharedMaterialTables; }
+        bool SamplerAnisotropySupported() const { return mCapabilities.samplerAnisotropy; }
+        float MaxSamplerAnisotropy() const { return mCapabilities.maxSamplerAnisotropy; }
+
         bool NgxSupported() const { return mNgxSupported; }
+
+        // line polygon mode, for the editor's wireframe view
+        bool FillModeNonSolidSupported() const { return mFillModeNonSolidSupported; }
+
+        // DDGI's trace set fits beside the ordinary RT sets; false keeps only the raster/RT lighting paths.
+        bool DdgiSupported() const { return mDdgiSupported; }
 
         struct MemoryBudget
         {
@@ -90,6 +104,7 @@ namespace mir::vk
         VkSurfaceKHR mSurface = VK_NULL_HANDLE;
 
         VkPhysicalDevice mPhysical = VK_NULL_HANDLE;
+        uint32_t mTimestampBits = 0;
         VkPhysicalDeviceProperties mProperties{};
         VkDevice mDevice = VK_NULL_HANDLE;
 
@@ -99,7 +114,9 @@ namespace mir::vk
 
         VmaAllocator mAllocator = VK_NULL_HANDLE;
 
-        bool mRayTracingSupported = false;
+        RendererCapabilities mCapabilities;
+        bool mFillModeNonSolidSupported = false;
+        bool mDdgiSupported = false;
         VkPhysicalDeviceRayTracingPipelinePropertiesKHR mRtProperties{};
 
         bool mNgxSupported = false;

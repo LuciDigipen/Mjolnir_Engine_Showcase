@@ -11,10 +11,15 @@
 #include <core/ecs/components/WorldTransform.h>
 #include <core/math/WorldCoordinates.h>
 #include <core/platform/Surface.h>
+#include <renderer/DebugView.h>
 #include <renderer/Material.h>
 #include <renderer/Mesh.h>
 #include <renderer/MeshStreaming.h>
 #include <renderer/PostProcessingState.h>
+#include <renderer/FxSystem.h>
+#include <core/Registration.h>
+#include <renderer/RenderSettings.h>
+#include <renderer/RtxgiConfig.h>
 #include <renderer/Texture.h>
 #include <renderer/components/Sky.h>
 
@@ -28,6 +33,7 @@
 #include <glm/vec4.hpp>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -49,14 +55,22 @@ namespace mir::vk
     class ShadowMaps;
     class ModelDescriptors;
     class RayTracer;
+    class MaterialTable;
+    class RasterSurfaces;
+    class SsgiTrace;
+    class Ddgi;
     class PostProcessingStack;
     class FrameCapture;
+    class FxCompositionPass;
     class ImGuiOverlay;
     class MeshUploader;
+    class DebugDraw;
 }
 
 namespace mir
 {
+    struct SurfaceMaterialCatalog;
+
     struct RendererDesc
     {
         const ISurfaceProvider *window;
@@ -157,6 +171,23 @@ namespace mir
         float nearZ = 0.1f;
         // farZ 0 = no far plane
         float farZ = 0.0f;
+        // Optional extended GI scene, used while DDGI can update this camera's volume.
+        // Coordinates are relative to this view's camera.
+        // nullopt keeps the ordinary RT path; an empty span is an empty scene.
+        std::optional<std::span<const DrawItem>> rayTracingItems;
+        // False when narrowing the extended scene omitted world draws. The
+        // final camera trace can still run; GI must fall back for this frame.
+        bool rayTracingSceneComplete = true;
+        // Stable camera identity for temporal effects; callers with no ID reset history on camera switches.
+        uint64_t historyId = 0;
+        // The camera jumped, this view keeps no history
+        bool cut = false;
+        // Editor-only debug drawing for this view; the default is the final render alone.
+        DebugViewSettings debugView;
+        // Vertex pairs drawn as lines over everything, never hidden by the scene; colliders while debugView asks.
+        std::span<const DebugLinePoint> debugLines;
+        // The lens FOV that produced viewProj, for rotation-invariant ray-cone math.
+        float fovYDegrees = 0.0f;
     };
 
     class VulkanRenderer
@@ -185,7 +216,16 @@ namespace mir
 
         bool DestroyMaterial(MaterialHandle handle);
 
+        // Raw reflected bytes for one material's record, published at the next
+        // BeginFrame. False without shared material tables, or for a stale handle.
+        bool UpdateMaterialRecord(MaterialHandle handle, std::span<const std::byte> bytes);
+        uint32_t MaterialRecordOffset(MaterialHandle handle) const;
+
         MaterialHandle ErrorMaterial() const;
+
+        // Stable shared-table rows for a material record's TextureRef fields.
+        uint32_t MaterialSamplerRow(const SamplerDesc &desc);
+        const SurfaceMaterialCatalog &SurfaceMaterials() const;
 
         void CaptureNextFrame(const std::filesystem::path &path);
 
@@ -193,6 +233,9 @@ namespace mir
 
         // the next frame starts temporal accumulation fresh (DLSS ray reconstruction's history)
         void ResetHistory();
+
+        // Exactly one FX provider, unregistration completes recorded uses before releasing it.
+        Registration RegisterFxSystem(IFxSystem &system);
 
         // Releases a selected model generation after a replacement has been
         // prepared. Handles not present in these spans remain valid.
@@ -203,8 +246,13 @@ namespace mir
         // Asynchronous meshes (renderer/MeshStreaming.h), none of which waits on the GPU: a queued mesh is copied
         // through the persistent staging ring at the start of a frame, within the per-frame byte budget, and is
         // Ready once that frame completes; a retired one is freed once every frame that may use it completes.
-        // CreateMesh and DestroyMesh stay synchronous. Configure once before queueing.
-        bool ConfigureMeshStreaming(const MeshStreamingDesc &desc);
+        // CreateMesh and DestroyMesh stay synchronous.
+        //
+        // Grows the staging ring to at least this size, true if it is that big afterwards.
+        bool RequestStagingBytes(uint64_t bytes);
+        // The GPU bytes one frame may write, shared by every consumer.
+        bool SetUploadFrameBudget(uint64_t bytes);
+        uint64_t UploadFrameBudget() const;
         MeshHandle QueueMesh(std::vector<Vertex> vertices, std::vector<uint32_t> indices,
             const MeshUploadOptions &options);
         MeshUploadState MeshState(MeshHandle handle) const;
@@ -228,6 +276,9 @@ namespace mir
         // the one flag AA mode clamping and the panel must agree with dispatch on.
         bool RayTracingActive(bool requested) const;
 
+        // false: the GPU cannot draw lines, and the Wireframe view shows the shaded scene
+        bool WireframeAvailable() const;
+
         // NGX support and a Ray Reconstruction feature that hasn't failed. Goes false for good
         // after an init/resize/evaluate failure, so Dlss stops being offered or selected.
         bool DlssAvailable() const;
@@ -239,6 +290,7 @@ namespace mir
         };
 
         GpuMemoryUsage GetGpuMemoryUsage() const;
+        uint64_t FxCompositionMemoryBytes() const;
 
         constexpr static uint32_t kMaxSpotShadows = 4;
         constexpr static uint32_t kMaxPointShadows = 2;
@@ -259,6 +311,8 @@ namespace mir
         // Every Post-Processing effect for the frame, already resolved by ResolvePostProcessing.
         // A disabled Bloom/DepthOfField/MotionBlur skips its GPU chain for the frame.
         void SetPostProcessing(const PostProcessingState &state);
+        void SetGlobalIllumination(const DdgiSettings &settings);
+        void SetScreenSpaceGlobalIllumination(const SsgiSettings &settings) { mSsgiSettings = settings; }
 
         void SetAtmosphere(const Sky &sky);
 
@@ -278,6 +332,7 @@ namespace mir
         void Shutdown();
 
     private:
+        FxDeviceContext FxDevice() const;
         bool RecreateSwapchain();
         // Shared prelude of DrawFrame and TraceFrame; nullopt skips the frame.
         std::optional<vk::FrameContext> BeginFrame();
@@ -287,7 +342,14 @@ namespace mir
         void RecordRtFrame(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views);
 
         void RecordCommands(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views);
-        void RecordView(VkCommandBuffer cmd, const RenderView &view, uint32_t viewIndex);
+        // Called inside the composite pass, after the composite and before ImGui: when a view has a
+        // debug view on, ends that pass, draws the wireframe and debug lines, and begins the ImGui pass
+        // again. sceneDepth is the raster path's depth image, null on the ray-traced path.
+        void RecordDebugViews(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views,
+            VkImage sceneDepth, VkImageView sceneDepthView);
+        enum class RasterPass { Scene, Opaque, Surface, Transparent };
+        uint32_t RecordView(VkCommandBuffer cmd, const RenderView &view, uint32_t viewIndex,
+            RasterPass pass = RasterPass::Scene, uint32_t cameraOffset = 0);
         uint32_t WriteCameraData(const RenderView &view, uint32_t viewIndex, bool applyJitter = false,
             glm::vec2 *outJitter = nullptr);
 
@@ -303,20 +365,37 @@ namespace mir
         std::unique_ptr<vk::Swapchain> mSwapchain;
         std::unique_ptr<vk::FrameSync> mFrameSync;
         std::unique_ptr<vk::ResourceStore> mResources;
+        // Only on a device with descriptor indexing; null keeps the legacy material path.
+        std::unique_ptr<vk::MaterialTable> mMaterialTable;
         std::unique_ptr<vk::MaterialStore> mMaterialStore;
+        std::unique_ptr<vk::RasterSurfaces> mRasterSurfaces;
+        std::unique_ptr<vk::SsgiTrace> mSsgiTrace;
+        SsgiSettings mSsgiSettings;
 
         std::unique_ptr<vk::CameraBuffer> mCameraBuffer;
         std::unique_ptr<vk::ShadowMaps> mShadowMaps;
         std::unique_ptr<vk::ModelDescriptors> mModelDescriptors;
         // Initialized only on a device with ray tracing; its Shutdown is a no-op otherwise.
         std::unique_ptr<vk::RayTracer> mRayTracer;
+#if MIR_WITH_RTXGI
+        std::unique_ptr<vk::Ddgi> mDdgi;
+#endif
+        DdgiSettings mDdgiSettings;
+        bool mGiWasShading = false;
+        // views[0]'s camera on the last TraceFrame.
+        uint64_t mTracedHistoryId = 0;
 
         // Every screen-space effect between the scene/trace pass and the swapchain.
         std::unique_ptr<vk::PostProcessingStack> mPostProcessing;
+        std::unique_ptr<vk::FxCompositionPass> mFxComposition;
+        IFxSystem *mFxSystem = nullptr;
+        std::shared_ptr<const void> mFxLifetime = std::make_shared<int>(0);
 
         std::unique_ptr<vk::FrameCapture> mCapture;
 
         std::unique_ptr<vk::ImGuiOverlay> mImGuiOverlay;
+
+        std::unique_ptr<vk::DebugDraw> mDebugDraw;
 
         std::unique_ptr<vk::MeshUploader> mMeshUploads;
 

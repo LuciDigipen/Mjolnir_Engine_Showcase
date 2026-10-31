@@ -295,3 +295,32 @@ TEST_CASE("EndFrame draws a sprite as an image of its ImGui texture", "[gameui]"
     CHECK(images >= 1);
     CHECK(drawList->VtxBuffer.Size >= 9 * 4);
 }
+
+TEST_CASE("EndFrame draws into an area below the design size at the UI's scale, text included", "[gameui]")
+{
+    ImGuiFixture imgui;
+    ImGuiUIBackend backend;
+    UIContext ui;
+    ui.SetBackend(&backend);
+    InputState input;
+    const InputMap map = DefaultInputMap();
+
+    ImGui::NewFrame();
+    ui.BeginFrame(UIRect{0, 0, 320, 240}, input, map, UIPointer{});
+    REQUIRE(ui.Scale() == 0.5f);
+    Button(ui, UIId("button"), UIRect{100, 100, 200, 40}, "Play");
+    ui.EndFrame();
+    ImGui::Render();
+
+    // at half size the face spans (50, 50) to (150, 70), and its text lies on it;
+    // a pixel over for the anti-aliased edge
+    const ImDrawList *drawList = ImGui::GetBackgroundDrawList(ImGui::GetMainViewport());
+    REQUIRE(drawList->VtxBuffer.Size > 4);
+    for (const ImDrawVert &vertex : drawList->VtxBuffer)
+    {
+        CHECK(vertex.pos.x >= 49.0f);
+        CHECK(vertex.pos.y >= 49.0f);
+        CHECK(vertex.pos.x <= 151.0f);
+        CHECK(vertex.pos.y <= 71.0f);
+    }
+}

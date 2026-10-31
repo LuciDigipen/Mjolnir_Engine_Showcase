@@ -11,8 +11,14 @@
 #include <project/GameProject.h>
 #include <animation/AnimationModule.h>
 #include <assets/AssetsModule.h>
+#ifndef MIR_WITH_AUDIO
+#error "MIR_WITH_AUDIO is set by linking mir::app"
+#endif
+#if MIR_WITH_AUDIO
+#include <app/GameAudioOptions.h>
 #include <audio/AudioModule.h>
 #include <audio_script/AudioScriptModule.h>
+#endif
 #include <camera/CameraModule.h>
 #include <core/ecs/CommandBuffer.h>
 #include <core/ecs/CoreModule.h>
@@ -27,6 +33,10 @@
 #include <input_script/InputScriptModule.h>
 #include <physics/PhysicsModule.h>
 #include <physics_script/PhysicsScriptModule.h>
+#include <particles/ParticlesModule.h>
+#include <particles_script/ParticlesScriptModule.h>
+#include <particles_runtime/ParticlesRuntimeModule.h>
+#include <particles_gpu/ParticlesGpuModule.h>
 #include <renderer/RendererModule.h>
 #include <renderer_script/RendererScriptModule.h>
 #include <prefab/PrefabModule.h>
@@ -38,6 +48,7 @@
 #include <terrain_script/TerrainScriptModule.h>
 #include <window/Splash.h>
 #include <window/WindowModule.h>
+#include <jobs/JobExecutor.h>
 
 // 1 with the editor, 0 for the game alone
 #ifndef MIR_WITH_EDITOR 
@@ -46,6 +57,9 @@
 
 #if MIR_WITH_EDITOR
 #include <editor/EditorModule.h>
+#endif
+#if MIR_WITH_AUDIO && MIR_WITH_EDITOR
+#include <app/EditorAudioOptions.h>
 #endif
 
 #include <cstdint>
@@ -78,12 +92,15 @@ namespace mir
         // 0: run until the window closes
         uint64_t mMaxFrames = 0;
         std::filesystem::path mCapturePath;
+        // Bounded automatic pool; --workers 0 explicitly selects serial execution.
+        uint32_t mWorkerThreads = static_cast<uint32_t>(JobExecutor::DefaultWorkerCount());
 
         // debug: draw UIDemoScreen, every core widget, as the game UI
         bool mUIDemo = false;
 
         // for automated cases
         bool mNonInteractive = false;
+        bool mHidden = false;
 
         // the game Initialize opens
         GameProject mProject;
@@ -137,10 +154,11 @@ namespace mir
         const std::optional<GameProject> &ProjectToOpen() const { return mProjectToOpen; }
 
         // Discards the scene's entities and replaces it with an empty one. incomplete: it
-        // stands in for a scene that could not be read
+        // stands in for a scene that could not be read, and stays untitled until saved
         void NewScene(std::string name = "untitled", bool incomplete = false);
 
-        // Writes Scene() to the game's scene directory. False on I/O failure
+        // Writes Scene() to the game's scene directory, asking first for an untitled scene.
+        // False on I/O failure or when the user declines
         bool SaveScene();
 
         // Replaces Scene() with the game's saved scene and resolves it. False without a
@@ -204,6 +222,9 @@ namespace mir
         // Asks what to do with a scene ProbeScene found broken; Refuse when nobody can answer
         SceneLoadChoice ChooseSceneLoad(const SceneProbe &probe, bool atStartup) const;
 
+        // Asks whether an untitled scene may replace the broken one in the scene directory
+        bool ConfirmBindUntitledScene() const;
+
         // Unload and load, with no checks; incomplete when entity files are missing
         void ReplaceSceneFromDisk(bool incomplete);
 
@@ -221,6 +242,7 @@ namespace mir
         AppDesc mDesc;
         GameProject mProject;
         StartupSplash mSplash;
+        JobExecutor mJobs;
 
         // before mWorld, so it is destroyed after it
         CommandBuffer mCommands;
@@ -229,6 +251,7 @@ namespace mir
 
         CoreModule mCore;
         AssetsModule mAssets;
+        ParticlesModule mParticles;
         SceneModule mScene;
         PrefabModule mPrefab;
         // before ImGuiModule: ImGui's shutdown frees the GPU side of the UI's textures,
@@ -238,6 +261,7 @@ namespace mir
         WindowModule mWindow;
         SplashStep mRendererStep{ mSplash, "Initializing renderer...", 0.2f };
         RendererModule mRenderer;
+        ParticlesGpuModule mParticlesGpu;
         // before ImGui and the editor, which read input and models
         InputModule mInput;
         AnimationModule mAnimation;
@@ -249,11 +273,23 @@ namespace mir
     #endif
         SplashStep mModulesStep{ mSplash, "Registering components...", 0.75f };
         CameraModule mCamera;
+    #if MIR_WITH_AUDIO
         AudioModule mAudio;
+        // handed to mGameShell, built before it, once both are up
+        GameAudioOptions mAudioOptions{ mAudio };
+    #if MIR_WITH_EDITOR
+        // handed to mEditor the same way
+        EditorAudioOptions mEditorAudio{ mAudio, mProject.mSoundBankDir };
+    #endif
+    #endif
         PhysicsModule mPhysics;
         TerrainModule mTerrainData;
         ScriptModule mScript;
+        ParticlesRuntimeModule mParticlesRuntime;
+        ParticlesScriptModule mParticlesScript;
+    #if MIR_WITH_AUDIO
         AudioScriptModule mAudioScript;
+    #endif
         InputScriptModule mInputScript;
         PhysicsScriptModule mPhysicsScript;
         RendererScriptModule mRendererScript;

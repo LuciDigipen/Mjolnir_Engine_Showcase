@@ -12,6 +12,7 @@
 #include <assets/AssetId.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -24,13 +25,17 @@ namespace mir
     inline constexpr uint32_t kAnimationAssetTypeTag = 0x4d494e41;
     inline constexpr uint32_t kMaterialAssetTypeTag = 0x4c54414d;
     inline constexpr uint32_t kTextureAssetTypeTag = 0x52584554;
+    // Generic .material.json surface material, distinct from a glTF material.
+    inline constexpr uint32_t kSurfaceMaterialAssetTypeTag = 0x4d525355;
     inline constexpr uint32_t kModelAssetContentVersion = 1;
     // Mesh payload v2 replaces the previous RAW!/v1 JSON passthrough representation.
     inline constexpr uint32_t kMeshAssetContentVersion = 2;
     inline constexpr uint32_t kSkeletonAssetContentVersion = 1;
     inline constexpr uint32_t kAnimationAssetContentVersion = 1;
     inline constexpr uint32_t kMaterialAssetContentVersion = 1;
-    inline constexpr uint32_t kTextureAssetContentVersion = 1;
+    // Texture payload v2 adds the format, color space and every mip level.
+    inline constexpr uint32_t kTextureAssetContentVersion = 2;
+    inline constexpr uint32_t kSurfaceMaterialAssetContentVersion = 1;
     inline constexpr uint32_t kNoAssetIndex = UINT32_MAX;
 
     enum class MeshTopology : uint32_t
@@ -163,11 +168,61 @@ namespace mir
         // glTF sampler enums; texture is decoded to RGBA8, sampled as sRGB.
         uint32_t wrapS = 10497, wrapT = 10497, minFilter = 9729, magFilter = 9729;
     };
+    // How the renderer must sample the payload, not how the bytes were authored.
+    enum class TextureFormat : uint32_t
+    {
+        Rgba8Unorm,
+        Rgba8Srgb
+    };
+    enum class TextureColorSpace : uint32_t
+    {
+        Linear,
+        Srgb
+    };
+    // A level above 0: its size and where it lives in TextureAsset::mipData.
+    struct TextureMip
+    {
+        uint32_t width = 0, height = 0, offset = 0, length = 0;
+    };
     struct TextureAsset
     {
         uint32_t width = 0, height = 0;
+        // Level 0, kept separate so every existing RGBA8 reader still works.
         std::vector<uint8_t> rgba;
+        TextureFormat format = TextureFormat::Rgba8Srgb;
+        TextureColorSpace colorSpace = TextureColorSpace::Srgb;
+        // Levels 1..N, smallest last; empty means level 0 alone.
+        std::vector<TextureMip> mips;
+        std::vector<uint8_t> mipData;
     };
+    struct SurfaceMaterialTexture
+    {
+        std::string role, path;
+        TextureColorSpace colorSpace = TextureColorSpace::Linear;
+    };
+    struct SurfaceMaterialAsset
+    {
+        uint32_t version = 1;
+        std::string shaderFile, shaderType;
+        std::vector<std::string> frontends;
+        // Reflected parameter values, kept as the source JSON object.
+        std::string parametersJson = "{}";
+        std::vector<SurfaceMaterialTexture> textures;
+        // The cooker's packed outputs, all null for a constant material.
+        AssetId albedoTexture, normalTexture, surfaceTexture;
+        uint32_t resolution = 2048;
+        // Root keys the schema does not know, so an editor saves them back.
+        std::string unknownJson = "{}";
+    };
+
+    inline uint32_t TextureMipCount(const TextureAsset &texture) { return 1 + static_cast<uint32_t>(texture.mips.size()); }
+    inline std::span<const uint8_t> TextureMipPixels(const TextureAsset &texture, uint32_t level)
+    {
+        if (level == 0)
+            return texture.rgba;
+        const TextureMip &mip = texture.mips.at(level - 1);
+        return std::span<const uint8_t>(texture.mipData).subspan(mip.offset, mip.length);
+    }
 
     class AssetCache;
 
@@ -185,5 +240,6 @@ namespace mir
     MIR_TYPED_ASSET(AnimationClipAsset)
     MIR_TYPED_ASSET(MaterialAsset)
     MIR_TYPED_ASSET(TextureAsset)
+    MIR_TYPED_ASSET(SurfaceMaterialAsset)
 #undef MIR_TYPED_ASSET
 } // namespace mir

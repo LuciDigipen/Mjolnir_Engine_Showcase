@@ -1,0 +1,1139 @@
+/**
+ * @file ParticleEffect.cpp
+ * @author sumin.park
+ * @brief Validated system/emitter schemas, blob framing and typed dependencies.
+ *
+ * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
+ *
+ */
+#include "particles/ParticleEffect.h"
+#include "ParticleRibbonBehaviors.h"
+
+#include <assets/AssetCache.h>
+#include <assets/AssetPath.h>
+#include <assets/ModelAsset.h>
+
+#include <glm/common.hpp>
+#include <glm/vector_relational.hpp>
+#include <nlohmann/json.hpp>
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <limits>
+#include <span>
+#include <stdexcept>
+#include <utility>
+
+namespace mir
+{
+    struct ParticleScriptWriter
+    {
+        std::string mSource;
+        bool mHasGradient = false;
+    };
+
+    namespace
+    {
+        using Json = nlohmann::json;
+
+        constexpr float kFloatMax = std::numeric_limits<float>::max();
+
+        std::string Number(float value) { return Json(value).dump(); }
+
+        std::string Vector3(const ParticleBehavior &behavior)
+        {
+            return "float3(" + Number(behavior.parameters[0]) + ", " + Number(behavior.parameters[1]) + ", " +
+                Number(behavior.parameters[2]) + ")";
+        }
+
+        std::string Color4(const ParticleBehavior &behavior, size_t first)
+        {
+            return "float4(" + Number(behavior.parameters[first]) + "," + Number(behavior.parameters[first + 1]) + "," +
+                Number(behavior.parameters[first + 2]) + "," + Number(behavior.parameters[first + 3]) + ")";
+        }
+
+        // Parameter shapes shared by several behaviors.
+        constexpr ParticleBehaviorParameter Scale(std::string_view name) { return { name, 0, 64, false, 1 }; }
+        constexpr ParticleBehaviorParameter Alpha(std::string_view name, float defaultValue) { return { name, 0, 1, false, defaultValue }; }
+        constexpr ParticleBehaviorParameter Unbounded(std::string_view name) { return { name, -kFloatMax, kFloatMax, false, 0 }; }
+        constexpr ParticleBehaviorParameter Variation(std::string_view name) { return { name, 0, 4096, false, 0 }; }
+
+        void EmitInitialize(ParticleScriptWriter &writer, const ParticleBehavior &)
+        {
+            writer.mSource += R"(
+        a.positionAge = float4(lerp(p.emissionStart.xyz, p.emission.xyz, birth.fraction), 0);
+        a.velocityLifetime = float4(p.velocity.xyz + p.attachmentVelocity.xyz * p.emissionStart.w, p.time.y);
+        a.sizeRotation = float4(p.time.z, 0, 0, 0);
+        a.color = p.color;
+)";
+        }
+
+        void EmitVelocityVariation(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
+        {
+            writer.mSource += "        a.velocityLifetime.xyz += " + Vector3(behavior) +
+                " * float3(SignedNoise(randomSeed), SignedNoise(randomSeed ^ 0x9e3779b9u), SignedNoise(randomSeed ^ 0x85ebca6bu));\n";
+        }
+
+        std::string Float3At(const ParticleBehavior &behavior, size_t first)
+        {
+            return "float3(" + Number(behavior.parameters[first]) + ", " + Number(behavior.parameters[first + 1]) + ", " +
+                Number(behavior.parameters[first + 2]) + ")";
+        }
+
+        // Parameters are kind (0 sphere, 1 box), the three sizes, spread in degrees and an outward speed.
+        void EmitShape(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
+        {
+            const auto &v = behavior.parameters;
+            writer.mSource += "        {\n";
+            if (v[0] == 0)
+                writer.mSource += "            float3 shape = RandomDirection(randomSeed ^ 0x68bc21ebu) * " + Number(v[1]) +
+                " * pow(SignedNoise(randomSeed ^ 0x02e5be93u) * 0.5 + 0.5, 1.0 / 3.0);\n";
+            else
+                writer.mSource += "            float3 shape = " + Float3At(behavior, 1) +
+                " * float3(SignedNoise(randomSeed ^ 0x68bc21ebu), SignedNoise(randomSeed ^ 0x02e5be93u), SignedNoise(randomSeed ^ 0x2c1b3c6du));\n";
+            writer.mSource += "            a.velocityLifetime.xyz = SpreadDirection(a.velocityLifetime.xyz, cos(radians(" +
+                Number(v[4]) + ")), randomSeed ^ 0x7f4a7c15u);\n";
+            writer.mSource += "            a.positionAge.xyz += shape;\n";
+            writer.mSource += "            float shapeLength = length(shape);\n";
+            writer.mSource += "            if (shapeLength > 1e-6) a.velocityLifetime.xyz += shape / shapeLength * " + Number(v[5]) + ";\n";
+            writer.mSource += "        }\n";
+        }
+
+        void EmitStartRotation(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
+        {
+            writer.mSource += "        a.sizeRotation.y = radians(" + Number(behavior.parameters[0]) +
+                ") * SignedNoise(randomSeed ^ 0x1b873593u);\n";
+        }
+
+        // Smooth per-particle noise over its age, so the wobble does not depend on world position or tile shifts.
+        void EmitNoise(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
+        {
+            writer.mSource += "    {\n";
+            writer.mSource += "        uint noiseSeed = a.identity.z * 0x9e3779b1u + a.identity.x * 0x85ebca6bu;\n";
+            writer.mSource += "        float noiseTime = a.positionAge.w * " + Number(behavior.parameters[1]) + ";\n";
+            writer.mSource += "        a.velocityLifetime.xyz += float3(SmoothNoise(noiseTime, noiseSeed), "
+                "SmoothNoise(noiseTime, noiseSeed ^ 0x68bc21ebu), SmoothNoise(noiseTime, noiseSeed ^ 0x02e5be93u)) * " +
+                Number(behavior.parameters[0]) + " * dt;\n";
+            writer.mSource += "    }\n";
+        }
+
+        void EmitSpin(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
+        {
+            writer.mSource += "    a.sizeRotation.y += radians(" + Number(behavior.parameters[0]) + " + " +
+                Number(behavior.parameters[1]) + " * SignedNoise(a.identity.z ^ 0x51ed270bu)) * dt;\n";
+        }
+
+        void EmitAge(ParticleScriptWriter &writer, const ParticleBehavior &)
+        {
+            writer.mSource += "    a.positionAge.w += dt;\n";
+        }
+
+        void EmitIntegrate(ParticleScriptWriter &writer, const ParticleBehavior &)
+        {
+            writer.mSource += "    a.positionAge.xyz += a.velocityLifetime.xyz * dt;\n";
+        }
+
+        void EmitAcceleration(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
+        {
+            writer.mSource += "    a.velocityLifetime.xyz += " + Vector3(behavior) + " * dt;\n";
+        }
+
+        void EmitDrag(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
+        {
+            writer.mSource += "    a.velocityLifetime.xyz += (p.wind.xyz - a.velocityLifetime.xyz) * (1 - exp(-" +
+                Number(behavior.parameters[0]) + " * dt));\n";
+        }
+
+        void EmitSizeOverLife(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
+        {
+            writer.mSource += "    a.sizeRotation.x = p.time.z * lerp(1.0, " + Number(behavior.parameters[0]) +
+                ", saturate(a.positionAge.w / a.velocityLifetime.w));\n";
+        }
+
+        void EmitFadeOverLife(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
+        {
+            writer.mSource += writer.mHasGradient ? "    a.color.a *= " : "    a.color.a = p.color.a * ";
+            writer.mSource += "lerp(1.0, " + Number(behavior.parameters[0]) +
+                ", saturate(a.positionAge.w / a.velocityLifetime.w));\n";
+        }
+
+        void EmitSizeCurve(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
+        {
+            writer.mSource += "    a.sizeRotation.x = p.time.z * lerp(lerp(" + Number(behavior.parameters[0]) + ", " +
+                Number(behavior.parameters[1]) + ", saturate(a.positionAge.w / a.velocityLifetime.w * 2)), " +
+                Number(behavior.parameters[2]) + ", saturate(a.positionAge.w / a.velocityLifetime.w * 2 - 1));\n";
+        }
+
+        void EmitColorGradient(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
+        {
+            writer.mSource += "    a.color = p.color * lerp(" + Color4(behavior, 0) + "," + Color4(behavior, 4) +
+                ", saturate(a.positionAge.w / a.velocityLifetime.w));\n";
+        }
+
+        void EmitFlipbook(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
+        {
+            const uint32_t columns = static_cast<uint32_t>(behavior.parameters[0]);
+            const uint32_t rows = static_cast<uint32_t>(behavior.parameters[1]);
+            writer.mSource += "    a.sizeRotation.z = fmod(floor(a.positionAge.w * " + Number(behavior.parameters[2]) + "), " +
+                std::to_string(columns * rows) + ".0);\n";
+            writer.mSource += "    a.sizeRotation.w = asfloat(" + std::to_string(columns | (rows << 16)) + "u);\n";
+        }
+
+        // One row per behavior, so a new behavior is one row plus its emit function.
+        const ParticleBehaviorInfo kBehaviors[]{
+            { "SizeCurve", false, ParticleSimulationTarget::GPU,
+                { Scale("start"), Scale("middle"), Scale("end") }, false, EmitSizeCurve, nullptr, false, 40,
+                "Size over lifetime", "Appearance", "Curve", ParticleBehaviorWidget::Curve },
+            { "ColorGradient", false, ParticleSimulationTarget::GPU,
+                { Scale("r0"), Scale("g0"), Scale("b0"), Alpha("a0", 1), Scale("r1"), Scale("g1"), Scale("b1"), Alpha("a1", 0) },
+                true, EmitColorGradient, nullptr, false, 50,{}, "Appearance", "Color over lifetime", ParticleBehaviorWidget::Gradient },
+            { "RibbonWidthCurve", false, ParticleSimulationTarget::CPU,
+                { Scale("start"), Scale("middle"), Scale("end") }, false, nullptr, ResolveRibbonWidthCurve, false, 20,
+                "Width over lifetime", "Appearance", "Curve", ParticleBehaviorWidget::Curve },
+            { "RibbonColorGradient", false, ParticleSimulationTarget::CPU,
+                { Scale("r0"), Scale("g0"), Scale("b0"), Alpha("a0", 1), Scale("r1"), Scale("g1"), Scale("b1"), Alpha("a1", 0) },
+                false, nullptr, ResolveRibbonColorGradient, false, 30,{}, "Appearance", "Color over lifetime", ParticleBehaviorWidget::Gradient },
+            { "RibbonSpawn", true, ParticleSimulationTarget::CPU,{ { "maxInterval", 1.0f / 60, 10, false, 0.25f } }, false, nullptr,
+                ResolveRibbonSpawn, true, 0,{}, "Emission" },
+            { "RibbonAge", false, ParticleSimulationTarget::CPU,{}, false, nullptr, ResolveRibbonAge, true, 0,{}, "Simulation" },
+            { "RibbonWind", false, ParticleSimulationTarget::CPU,{}, false, nullptr, ResolveRibbonWind, false, 10,{}, "Motion", "Wind drift" },
+            { "RibbonWidth", false, ParticleSimulationTarget::CPU,{ Scale("endScale") }, false, nullptr, ResolveRibbonWidth,
+                false, 20, "Width over lifetime", "Appearance", "Linear" },
+            { "RibbonFade", false, ParticleSimulationTarget::CPU,{}, false, nullptr, ResolveRibbonFade, false, 40,
+                {}, "Appearance", "Fade over lifetime" },
+            { "Initialize", true, ParticleSimulationTarget::GPU,{}, false, EmitInitialize, nullptr, true, 0,{}, "Simulation" },
+            { "VelocityVariation", true, ParticleSimulationTarget::GPU,
+                { Variation("x"), Variation("y"), Variation("z") }, false, EmitVelocityVariation, nullptr, false, 10,{}, "Motion" },
+            { "Shape", true, ParticleSimulationTarget::GPU,
+                { { "shape (0 sphere, 1 box)", 0, 1, true, 0 },{ "size x", 0, 4096, false, 0 },{ "size y", 0, 4096, false, 0 },
+                    { "size z", 0, 4096, false, 0 },{ "spread degrees", 0, 180, false, 0 },{ "outward speed", -4096, 4096, false, 0 } },
+                false, EmitShape, nullptr, false, 20,{}, "Emission", "Emission shape" },
+            { "StartRotation", true, ParticleSimulationTarget::GPU,{ { "variation degrees", 0, 180, false, 0 } }, false,
+                EmitStartRotation, nullptr, false, 30,{}, "Appearance", "Start rotation" },
+            { "Age", false, ParticleSimulationTarget::GPU,{}, false, EmitAge, nullptr, true, 0,{}, "Simulation" },
+            { "Noise", false, ParticleSimulationTarget::GPU,{ { "strength", 0, 1000, false, 1 },{ "frequency", 0, 50, false, 1 } },
+                false, EmitNoise, nullptr, false, 15,{}, "Motion", "Turbulence" },
+            { "Spin", false, ParticleSimulationTarget::GPU,{ { "speed degrees", -3600, 3600, false, 90 },{ "variation degrees", 0, 3600, false, 0 } },
+                false, EmitSpin, nullptr, false, 50,{}, "Appearance", "Spin" },
+            { "Integrate", false, ParticleSimulationTarget::GPU,{}, false, EmitIntegrate, nullptr, true, 30,{}, "Simulation" },
+            { "Acceleration", false, ParticleSimulationTarget::GPU,
+                { Unbounded("x"), Unbounded("y"), Unbounded("z") }, false, EmitAcceleration, nullptr, false, 10,{}, "Motion" },
+            { "Drag", false, ParticleSimulationTarget::GPU,{ { "coefficient", 0, 10000, false, 0 } }, false, EmitDrag,
+                nullptr, false, 20,{}, "Motion" },
+            { "SizeOverLife", false, ParticleSimulationTarget::GPU,{ Scale("endScale") }, false, EmitSizeOverLife,
+                nullptr, false, 40, "Size over lifetime", "Appearance", "Linear" },
+            { "FadeOverLife", false, ParticleSimulationTarget::GPU,{ Alpha("endAlpha", 0) }, true, EmitFadeOverLife,
+                nullptr, false, 60,{}, "Appearance", "Opacity over lifetime" },
+            { "Flipbook", false, ParticleSimulationTarget::GPU,
+                { { "columns", 1, 64, true, 1 },{ "rows", 1, 64, true, 1 },{ "fps", 0, 240, false, 0 } }, false, EmitFlipbook,
+                nullptr, false, 70,{}, "Appearance" } };
+
+        const ParticleBehaviorInfo *FindBehavior(std::string_view name, bool spawn, ParticleSimulationTarget target)
+        {
+            const auto found = std::find_if(std::begin(kBehaviors), std::end(kBehaviors),
+                [&](const ParticleBehaviorInfo &entry) { return entry.name == name && entry.spawn == spawn && entry.target == target; });
+            return found == std::end(kBehaviors) ? nullptr : &*found;
+        }
+
+        template <typename Result>
+        Result Invalid(std::string message)
+        {
+            Result result;
+            result.mError = std::move(message);
+            return result;
+        }
+
+        bool KnownFields(const Json &value, std::initializer_list<std::string_view> names)
+        {
+            if (!value.is_object())
+                return false;
+            for (const auto &[key, field] : value.items())
+                if (std::find(names.begin(), names.end(), key) == names.end())
+                    return false;
+            return true;
+        }
+
+        bool ReadParameters(const Json &value, ParticleUserParameters &parameters, std::string &error)
+        {
+            if (!KnownFields(value, { "spawnRateScale", "sizeScale", "wind" }))
+            {
+                error = "particle parameters must contain only spawnRateScale, sizeScale and wind";
+                return false;
+            }
+            for (const auto &[key, field] : value.items())
+                if (key != "wind" && !field.is_number())
+                {
+                    error = "particle parameter must be a number: " + key;
+                    return false;
+                }
+            if (value.contains("spawnRateScale")) parameters.spawnRateScale = value["spawnRateScale"].get<float>();
+            if (value.contains("sizeScale")) parameters.sizeScale = value["sizeScale"].get<float>();
+            if (value.contains("wind"))
+            {
+                const auto &wind = value["wind"];
+                if (!wind.is_array() || wind.size() != 3 ||
+                    std::any_of(wind.begin(), wind.end(), [](const auto &item) { return !item.is_number(); }))
+                {
+                    error = "particle wind must be a numeric three-vector";
+                    return false;
+                }
+                for (int i = 0; i < 3; ++i) parameters.wind[i] = wind[i].get<float>();
+            }
+            return ValidateParticleUserParameters(parameters, error);
+        }
+
+        Json WriteParameters(const ParticleUserParameters &parameters)
+        {
+            return Json{ { "spawnRateScale", parameters.spawnRateScale },{ "sizeScale", parameters.sizeScale },
+                { "wind",{ parameters.wind.x, parameters.wind.y, parameters.wind.z } } };
+        }
+
+        template <typename Vector>
+        bool ReadVector(const Json &value, Vector &vector)
+        {
+            if (!value.is_array() || value.size() != vector.length())
+                return false;
+            for (int i = 0; i < vector.length(); ++i)
+            {
+                if (!value[i].is_number()) return false;
+                vector[i] = value[i].template get<float>();
+            }
+            return true;
+        }
+
+        bool ReadRenderer(const Json &value, ParticleEmitterAsset &emitter)
+        {
+            if (!KnownFields(value, { "size", "color", "velocity", "alignment", "facing", "blend", "sort", "softDistance", "maxDistance", "lighting", "fog", "textured", "stretch" })) return false;
+            if (value.contains("size"))
+            {
+                if (!value["size"].is_number()) return false;
+                emitter.size = value["size"].get<float>();
+            }
+            auto choice = [&](const char *key, const char *zero, const char *one, uint32_t &out)
+                {
+                    if (!value.contains(key)) return true;
+                    if (value[key] == zero) { out = 0; return true; }
+                    if (value[key] == one) { out = 1; return true; }
+                    return false;
+                };
+            auto &r = emitter.renderer;
+            if (!choice("alignment", "screen", "velocity", r.alignment) ||
+                !choice("facing", "plane", "position", r.facing) ||
+                !choice("blend", "alpha", "additive", r.blend) ||
+                !choice("sort", "backToFront", "none", r.sort)) return false;
+            for (auto [key, target] :{ std::pair{ "softDistance", &r.softDistance }, std::pair{ "maxDistance", &r.maxDistance },
+                std::pair{ "stretch", &r.stretch } })
+                if (value.contains(key))
+                {
+                    if (!value[key].is_number()) return false;
+                    *target = value[key].get<float>();
+                }
+            for (auto [key, target] :{ std::pair{ "fog", &r.fog }, std::pair{ "textured", &r.textured } })
+                if (value.contains(key))
+                {
+                    if (!value[key].is_boolean()) return false;
+                    *target = value[key].get<bool>();
+                }
+            uint32_t lighting = 0;
+            if (!choice("lighting", "unlit", "sunAmbient", lighting)) return false;
+            r.lit = lighting != 0;
+            return (!value.contains("color") || ReadVector(value["color"], emitter.color)) &&
+                (!value.contains("velocity") || ReadVector(value["velocity"], emitter.velocity));
+        }
+
+        Json WriteRenderer(const ParticleEmitterAsset &emitter)
+        {
+            const auto &r = emitter.renderer;
+            return Json{ { "alignment", r.alignment ? "velocity" : "screen" },{ "facing", r.facing ? "position" : "plane" },
+                { "blend", r.blend ? "additive" : "alpha" },{ "sort", r.sort ? "none" : "backToFront" },
+                { "softDistance", r.softDistance },{ "maxDistance", r.maxDistance },{ "stretch", r.stretch },
+                { "lighting", r.lit ? "sunAmbient" : "unlit" },{ "fog", r.fog },{ "textured", r.textured },
+                { "size", emitter.size },
+                { "color",{ emitter.color.r, emitter.color.g, emitter.color.b, emitter.color.a } },
+                { "velocity",{ emitter.velocity.x, emitter.velocity.y, emitter.velocity.z } } };
+        }
+
+        bool ReadBehaviors(const Json &value, std::vector<ParticleBehavior> &behaviors, bool allowEnabled)
+        {
+            if (!value.is_array() || value.size() > 32) return false;
+            behaviors.clear();
+            for (const auto &entry : value)
+            {
+                if (!KnownFields(entry, allowEnabled ? std::initializer_list<std::string_view>{ "name", "parameters", "enabled" } :
+                    std::initializer_list<std::string_view>{ "name", "parameters" }) || !entry.contains("name") ||
+                    !entry["name"].is_string()) return false;
+                ParticleBehavior behavior{ entry["name"].get<std::string>(),{} };
+                if (entry.contains("enabled"))
+                {
+                    if (!allowEnabled || !entry["enabled"].is_boolean()) return false;
+                    behavior.enabled = entry["enabled"].get<bool>();
+                }
+                if (entry.contains("parameters"))
+                {
+                    if (!entry["parameters"].is_array() || entry["parameters"].size() > 8) return false;
+                    for (const auto &parameter : entry["parameters"])
+                    {
+                        if (!parameter.is_number()) return false;
+                        behavior.parameters.push_back(parameter.get<float>());
+                    }
+                }
+                behaviors.push_back(std::move(behavior));
+            }
+            return true;
+        }
+
+        Json WriteBehaviors(const ParticleEmitterAsset &emitter, bool spawn, bool source)
+        {
+            Json result = Json::array();
+            if (source)
+            {
+                const auto &behaviors = spawn ? emitter.spawnBehaviors : emitter.updateBehaviors;
+                for (const auto &behavior : behaviors)
+                {
+                    result.push_back(Json{ { "name", behavior.name },{ "parameters", behavior.parameters },
+                        { "enabled", behavior.enabled } });
+                }
+            }
+            else
+                for (const auto *behavior : ActiveParticleBehaviors(emitter, spawn))
+                    result.push_back(Json{ { "name", behavior->name },{ "parameters", behavior->parameters } });
+            return result;
+        }
+
+        bool ValidateBehaviors(const ParticleEmitterAsset &emitter, std::string &error)
+        {
+            for (bool spawn : {true, false})
+            {
+                const auto &behaviors = spawn ? emitter.spawnBehaviors : emitter.updateBehaviors;
+                if (behaviors.size() > 32)
+                {
+                    error = "particle behavior stack exceeds 32 entries";
+                    return false;
+                }
+                for (const auto &behavior : behaviors)
+                {
+                    const auto *definition = FindBehavior(behavior.name, spawn, emitter.simulationTarget);
+                    if (!definition)
+                    {
+                        error = "unknown particle behavior or unsupported stage/target: " + behavior.name;
+                        return false;
+                    }
+                    const auto earlier = std::span(behaviors).first(&behavior - behaviors.data());
+                    if (std::any_of(earlier.begin(), earlier.end(), [&](const ParticleBehavior &entry)
+                        {
+                            return entry.name == behavior.name;
+                        }))
+                    {
+                        error = "duplicate particle behavior: " + behavior.name;
+                        return false;
+                    }
+                    if (behavior.enabled && !definition->group.empty() &&
+                        std::any_of(earlier.begin(), earlier.end(), [&](const ParticleBehavior &entry)
+                            {
+                                const auto *prior = FindBehavior(entry.name, spawn, emitter.simulationTarget);
+                                return entry.enabled && prior && prior->group == definition->group;
+                            }))
+                    {
+                        error = "particle behavior modes conflict: " + behavior.name;
+                        return false;
+                    }
+                    if (definition->required && !behavior.enabled)
+                    {
+                        error = "required particle behavior cannot be disabled: " + behavior.name;
+                        return false;
+                    }
+                    bool valid = behavior.parameters.size() == definition->parameters.size();
+                    for (size_t i = 0; valid && i < behavior.parameters.size(); ++i)
+                    {
+                        const auto &range = definition->parameters.begin()[i];
+                        const float value = behavior.parameters[i];
+                        valid = std::isfinite(value) && value >= range.min && value <= range.max &&
+                            (!range.integer || std::floor(value) == value);
+                    }
+                    if (!valid)
+                    {
+                        error = "invalid particle behavior parameters: " + behavior.name;
+                        return false;
+                    }
+                }
+            }
+            if (emitter.simulationTarget == ParticleSimulationTarget::CPU &&
+                (emitter.capacity > 1024 || emitter.spawnRate != 0 || emitter.burst != 0))
+            {
+                error = "CPU ribbons require capacity <= 1024 and zero spawnRate/burst";
+                return false;
+            }
+            for (const auto &entry : kBehaviors)
+            {
+                const auto &stack = entry.spawn ? emitter.spawnBehaviors : emitter.updateBehaviors;
+                if (entry.required && entry.target == emitter.simulationTarget &&
+                    std::none_of(stack.begin(), stack.end(), [&](const ParticleBehavior &behavior)
+                        {
+                            return behavior.name == entry.name && behavior.enabled;
+                        }))
+                {
+                    error = "particle emitter requires behavior: " + std::string(entry.name);
+                    return false;
+                }
+            }
+            error.clear();
+            return true;
+        }
+
+        ParticleEffectResult ParseSystem(std::string_view text, bool source, std::string_view assetIdRoot)
+        {
+            const Json value = Json::parse(text, nullptr, false);
+            if (!KnownFields(value, source ? std::initializer_list<std::string_view>{ "version", "emitters", "placements", "parameters" } :
+                std::initializer_list<std::string_view>{ "emitterIds", "placementIds", "placementOffsets", "schemaVersion", "parameters" }))
+                return Invalid<ParticleEffectResult>("particle system must be an object with only the supported fields");
+            const char *versionKey = source ? "version" : "schemaVersion";
+            if (!value.contains(versionKey) || !value[versionKey].is_number_integer() ||
+                value[versionKey] != kParticleSourceVersion)
+                return Invalid<ParticleEffectResult>("unsupported particle system version, recreate it with the particle editor");
+            const auto key = source ? "placements" : "emitterIds";
+            if (!value.contains(key) || !value[key].is_array() || value[key].empty() || value[key].size() > kMaxSystemEmitters)
+                return Invalid<ParticleEffectResult>("particle system requires 1 to 8 emitter references");
+            ParticleEffectResult result;
+            ParticleEffect effect;
+            if (value.contains("parameters") && !ReadParameters(value["parameters"], effect.parameters, result.mError))
+                return result;
+            for (const auto &item : value[key])
+            {
+                const Json *reference = &item;
+                if (source)
+                {
+                    if (!KnownFields(item, { "id", "emitter", "offset" }) || !item.contains("id") ||
+                        !item["id"].is_number_unsigned() || item["id"] > UINT32_MAX ||
+                        !item.contains("emitter") || !item.contains("offset"))
+                        return Invalid<ParticleEffectResult>("particle placement requires id, emitter and offset");
+                    effect.placementIds.push_back(item["id"].get<uint32_t>());
+                    glm::vec3 offset;
+                    if (!ReadVector(item["offset"], offset))
+                        return Invalid<ParticleEffectResult>("invalid particle placement offset");
+                    effect.placementOffsets.push_back(offset);
+                    reference = &item["emitter"];
+                }
+                if (source)
+                {
+                    if (!reference->is_string())
+                        return Invalid<ParticleEffectResult>("particle emitter reference must be a path string");
+                    const auto &path = reference->get_ref<const std::string &>();
+                    const auto relative = NormalizeAssetPath(path);
+                    const auto logical = MakeLogicalAssetPath(assetIdRoot, path);
+                    if (!relative.Ok() || !logical.Ok() || !relative.path.ends_with(".emitter.json"))
+                        return Invalid<ParticleEffectResult>("particle emitter must be an .emitter.json inside the game's asset root");
+                    effect.emitters.push_back(MakeAssetId(logical.path));
+                    result.mEmitterPaths.push_back(relative.path);
+                }
+                else
+                {
+                    if (!reference->is_number_unsigned())
+                        return Invalid<ParticleEffectResult>("cooked particle emitter reference must be an unsigned asset ID");
+                    effect.emitters.push_back(AssetId{ reference->get<uint64_t>() });
+                }
+            }
+            if (!source)
+            {
+                if (!value.contains("placementIds") || !value["placementIds"].is_array() ||
+                    !value.contains("placementOffsets") || !value["placementOffsets"].is_array() ||
+                    value["placementIds"].size() != effect.emitters.size() ||
+                    value["placementOffsets"].size() != effect.emitters.size())
+                    return Invalid<ParticleEffectResult>("cooked particle placements do not match emitter references");
+                for (size_t i = 0; i < effect.emitters.size(); ++i)
+                {
+                    if (!value["placementIds"][i].is_number_unsigned() || value["placementIds"][i] > UINT32_MAX)
+                        return Invalid<ParticleEffectResult>("invalid cooked particle placement ID");
+                    effect.placementIds.push_back(value["placementIds"][i].get<uint32_t>());
+                    glm::vec3 offset;
+                    if (!ReadVector(value["placementOffsets"][i], offset))
+                        return Invalid<ParticleEffectResult>("invalid cooked particle placement offset");
+                    effect.placementOffsets.push_back(offset);
+                }
+            }
+            if (!ValidateParticleEffect(effect, result.mError)) return result;
+            result.mEffect = std::move(effect);
+            return result;
+        }
+
+        ParticleEmitterAssetResult ParseEmitter(std::string_view text, bool source, std::string_view assetIdRoot)
+        {
+            const Json value = Json::parse(text, nullptr, false);
+            if (!KnownFields(value, source ? std::initializer_list<std::string_view>{"version", "target", "lifetime", "spawnRate", "capacity", "texture", "renderer", "spawnBehaviors", "updateBehaviors", "localOffset", "startDelay", "spawnPerMeter", "burst", "seed", "inheritVelocity", "teleportDistance", "followEmitter", "quality"} :
+                std::initializer_list<std::string_view>{ "target", "lifetime", "spawnRate", "capacity", "textureId", "renderer", "spawnBehaviors", "updateBehaviors", "scriptId", "scriptLayoutId", "localOffset", "startDelay", "spawnPerMeter", "burst", "seed", "inheritVelocity", "teleportDistance", "followEmitter", "quality", "schemaVersion" }))
+                return Invalid<ParticleEmitterAssetResult>("particle emitter must be an object with only the supported fields");
+            const char *versionKey = source ? "version" : "schemaVersion";
+            if (!value.contains(versionKey) || !value[versionKey].is_number_integer() ||
+                value[versionKey] != kParticleSourceVersion)
+                return Invalid<ParticleEmitterAssetResult>("unsupported particle emitter version, recreate it with the particle editor");
+            if (!value.contains("target") || !value["target"].is_string() ||
+                (value["target"] != "gpu" && value["target"] != "cpu"))
+                return Invalid<ParticleEmitterAssetResult>("particle emitter target must be gpu or cpu");
+            if (!value.contains("lifetime") || !value["lifetime"].is_number() ||
+                !value.contains("spawnRate") || !value["spawnRate"].is_number() ||
+                !value.contains("capacity") || !value["capacity"].is_number_integer() ||
+                value["capacity"] < 1 || value["capacity"] > kMaxEffectParticles)
+                return Invalid<ParticleEmitterAssetResult>("invalid or missing lifetime, spawnRate or capacity");
+            ParticleEmitterAssetResult result;
+            ParticleEmitterAsset emitter;
+            emitter.simulationTarget = value["target"] == "gpu" ? ParticleSimulationTarget::GPU : ParticleSimulationTarget::CPU;
+            if (emitter.simulationTarget == ParticleSimulationTarget::CPU)
+            {
+                emitter.spawnBehaviors.clear();
+                emitter.updateBehaviors.clear();
+            }
+            if ((value.contains("spawnBehaviors") && !ReadBehaviors(value["spawnBehaviors"], emitter.spawnBehaviors, source)) ||
+                (value.contains("updateBehaviors") && !ReadBehaviors(value["updateBehaviors"], emitter.updateBehaviors, source)))
+                return Invalid<ParticleEmitterAssetResult>("invalid ordered particle behavior stack");
+            emitter.lifetime = value["lifetime"].get<float>();
+            emitter.spawnRate = value["spawnRate"].get<float>();
+            emitter.capacity = value["capacity"].get<uint32_t>();
+            if (value.contains("localOffset") && !ReadVector(value["localOffset"], emitter.localOffset))
+                return Invalid<ParticleEmitterAssetResult>("invalid particle attachment offset");
+            for (const auto key :{ "startDelay", "spawnPerMeter", "inheritVelocity", "teleportDistance" })
+                if (value.contains(key) && !value[key].is_number())
+                    return Invalid<ParticleEmitterAssetResult>("particle motion parameter must be numeric");
+            for (const auto key :{ "burst", "seed" })
+                if (value.contains(key) && (!value[key].is_number_integer() || value[key] < 0 || value[key] > UINT32_MAX))
+                    return Invalid<ParticleEmitterAssetResult>("particle burst/seed must be an unsigned 32-bit integer");
+            if (value.contains("spawnPerMeter")) emitter.spawnPerMeter = value["spawnPerMeter"].get<float>();
+            if (value.contains("burst")) emitter.burst = value["burst"].get<uint32_t>();
+            if (value.contains("seed")) emitter.seed = value["seed"].get<uint32_t>();
+            if (value.contains("inheritVelocity")) emitter.inheritVelocity = value["inheritVelocity"].get<float>();
+            if (value.contains("teleportDistance")) emitter.teleportDistance = value["teleportDistance"].get<float>();
+            if (value.contains("startDelay")) emitter.startDelay = value["startDelay"].get<float>();
+            if (value.contains("followEmitter"))
+            {
+                if (!value["followEmitter"].is_boolean()) return Invalid<ParticleEmitterAssetResult>("particle followEmitter must be a boolean");
+                emitter.followEmitter = value["followEmitter"].get<bool>();
+            }
+            if (value.contains("quality"))
+            {
+                const auto &quality = value["quality"];
+                if (!KnownFields(quality, { "importance", "nearDistance", "farDistance", "minSpawnScale" }))
+                    return Invalid<ParticleEmitterAssetResult>("invalid particle quality fields");
+                for (auto [key, target] :{ std::pair{ "importance", &emitter.quality.importance },
+                    std::pair{ "nearDistance", &emitter.quality.nearDistance }, std::pair{ "farDistance", &emitter.quality.farDistance },
+                    std::pair{ "minSpawnScale", &emitter.quality.minSpawnScale } })
+                    if (quality.contains(key))
+                    {
+                        if (!quality[key].is_number()) return Invalid<ParticleEmitterAssetResult>("particle quality must be numeric");
+                        *target = quality[key].get<float>();
+                    }
+            }
+            if (value.contains("renderer") && !ReadRenderer(value["renderer"], emitter))
+                return Invalid<ParticleEmitterAssetResult>("invalid particle renderer properties");
+            if (source)
+            {
+                if (!value.contains("texture") || !value["texture"].is_string())
+                    return Invalid<ParticleEmitterAssetResult>("particle emitter requires a texture path");
+                const auto &path = value["texture"].get_ref<const std::string &>();
+                const auto relative = NormalizeAssetPath(path);
+                const auto logical = MakeLogicalAssetPath(assetIdRoot, path);
+                if (!relative.Ok() || !logical.Ok())
+                    return Invalid<ParticleEmitterAssetResult>("particle texture must be inside the game's asset root");
+                emitter.texture = MakeAssetId(logical.path);
+                result.mTexturePath = relative.path;
+            }
+            else
+            {
+                if (!value.contains("textureId") || !value["textureId"].is_number_unsigned())
+                    return Invalid<ParticleEmitterAssetResult>("cooked particle emitter requires an unsigned textureId");
+                emitter.texture = AssetId{ value["textureId"].get<uint64_t>() };
+                if (!value.contains("scriptId") || !value["scriptId"].is_number_unsigned() ||
+                    !value.contains("scriptLayoutId") || !value["scriptLayoutId"].is_number_unsigned())
+                    return Invalid<ParticleEmitterAssetResult>("cooked emitter requires script and layout dependency IDs");
+                emitter.script = AssetId{ value["scriptId"].get<uint64_t>() };
+                emitter.scriptLayout = AssetId{ value["scriptLayoutId"].get<uint64_t>() };
+            }
+            if (!ValidateParticleEmitterAsset(emitter, result.mError)) return result;
+            result.mEmitter = emitter;
+            return result;
+        }
+    }
+
+    std::span<const ParticleBehaviorInfo> ParticleBehaviors() { return kBehaviors; }
+
+    std::vector<const ParticleBehavior *> ActiveParticleBehaviors(const ParticleEmitterAsset &emitter, bool spawn)
+    {
+        std::vector<const ParticleBehavior *> active;
+        const auto &behaviors = spawn ? emitter.spawnBehaviors : emitter.updateBehaviors;
+        for (const auto &behavior : behaviors)
+            if (behavior.enabled) active.push_back(&behavior);
+        std::stable_sort(active.begin(), active.end(), [&](const ParticleBehavior *left, const ParticleBehavior *right)
+            {
+                const auto *a = FindBehavior(left->name, spawn, emitter.simulationTarget);
+                const auto *b = FindBehavior(right->name, spawn, emitter.simulationTarget);
+                return a && b && a->order < b->order;
+            });
+        return active;
+    }
+
+    float EvaluateParticleCurve(float start, float middle, float end, float age)
+    {
+        const float t = std::clamp(age, 0.0f, 1.0f);
+        return t <= 0.5f ? std::lerp(start, middle, t * 2) : std::lerp(middle, end, t * 2 - 1);
+    }
+
+    // The cooked emitter fields, not validated, so the editor can describe a draft that is invalid.
+    static Json CookedEmitterJson(const ParticleEmitterAsset &emitter)
+    {
+        return Json{ { "target", emitter.simulationTarget == ParticleSimulationTarget::GPU ? "gpu" : "cpu" },
+            { "lifetime", emitter.lifetime },{ "spawnRate", emitter.spawnRate },{ "capacity", emitter.capacity },
+            { "textureId", emitter.texture.value },{ "renderer", WriteRenderer(emitter) },
+            { "quality",{ { "importance", emitter.quality.importance },{ "nearDistance", emitter.quality.nearDistance },
+                { "farDistance", emitter.quality.farDistance },{ "minSpawnScale", emitter.quality.minSpawnScale } } },
+            { "localOffset",{ emitter.localOffset.x, emitter.localOffset.y, emitter.localOffset.z } },
+            { "spawnPerMeter", emitter.spawnPerMeter },{ "burst", emitter.burst },{ "seed", emitter.seed },
+            { "inheritVelocity", emitter.inheritVelocity },{ "teleportDistance", emitter.teleportDistance },
+            { "startDelay", emitter.startDelay },{ "followEmitter", emitter.followEmitter },
+            { "spawnBehaviors", WriteBehaviors(emitter, true, false) },{ "updateBehaviors", WriteBehaviors(emitter, false, false) },
+            { "schemaVersion", kParticleSourceVersion },
+            { "scriptId", emitter.script.value },{ "scriptLayoutId", emitter.scriptLayout.value } };
+    }
+
+    static Json EmitterSourceJson(const ParticleEmitterAsset &emitter, std::string_view texturePath)
+    {
+        Json value = CookedEmitterJson(emitter);
+        for (const auto key :{ "textureId", "scriptId", "scriptLayoutId", "schemaVersion" }) value.erase(key);
+        value["version"] = kParticleSourceVersion;
+        value["texture"] = texturePath;
+        value["spawnBehaviors"] = WriteBehaviors(emitter, true, true);
+        value["updateBehaviors"] = WriteBehaviors(emitter, false, true);
+        return value;
+    }
+
+    std::string WriteParticleEmitterSource(const ParticleEmitterAsset &emitter, std::string_view texturePath)
+    {
+        std::string error;
+        if (!ValidateParticleEmitterAsset(emitter, error)) throw std::runtime_error(error);
+        const Json value = EmitterSourceJson(emitter, texturePath);
+        const auto result = ReadParticleEmitterSource(value.dump(), "assets");
+        if (!result.mEmitter) throw std::invalid_argument(result.mError);
+        return value.dump(2) + "\n";
+    }
+
+    std::string DescribeParticleEmitterDraft(const ParticleEmitterAsset &emitter, std::string_view texturePath)
+    {
+        return EmitterSourceJson(emitter, texturePath).dump();
+    }
+
+    static Json EffectSourceJson(const ParticleEffect &effect, std::span<const std::string> paths)
+    {
+        Json value{ { "version", kParticleSourceVersion },{ "parameters", WriteParameters(effect.parameters) } };
+        Json placements = Json::array();
+        for (size_t i = 0; i < paths.size(); ++i)
+        {
+            const uint32_t id = effect.placementIds.empty() ? static_cast<uint32_t>(i + 1) : effect.placementIds.at(i);
+            const glm::vec3 offset = effect.placementOffsets.empty() ? glm::vec3(0) : effect.placementOffsets.at(i);
+            placements.push_back(Json{ { "id", id },{ "emitter", paths[i] },
+                { "offset",{ offset.x, offset.y, offset.z } } });
+        }
+        value["placements"] = std::move(placements);
+        return value;
+    }
+
+    std::string DescribeParticleEffectDraft(const ParticleEffect &effect, std::span<const std::string> paths)
+    {
+        const bool matched = paths.size() == effect.emitters.size() &&
+            (effect.placementIds.empty() || effect.placementIds.size() == paths.size()) &&
+            (effect.placementOffsets.empty() || effect.placementOffsets.size() == paths.size());
+        return matched ? EffectSourceJson(effect, paths).dump() : std::string("unmatched placements");
+    }
+
+    std::string WriteParticleEffectSource(const ParticleEffect &effect, std::span<const std::string> paths)
+    {
+        if (paths.size() != effect.emitters.size()) throw std::invalid_argument("emitter paths must match system references");
+        const Json value = EffectSourceJson(effect, paths);
+        const auto result = ReadParticleEffectSource(value.dump(), "assets");
+        if (!result.mEffect) throw std::invalid_argument(result.mError);
+        return value.dump(2) + "\n";
+    }
+
+    bool ValidateParticleUserParameters(const ParticleUserParameters &parameters, std::string &error)
+    {
+        if (!std::isfinite(parameters.spawnRateScale) || parameters.spawnRateScale < 0 || parameters.spawnRateScale > 16 ||
+            !std::isfinite(parameters.sizeScale) || parameters.sizeScale < 0 || parameters.sizeScale > 16)
+        {
+            error = "particle parameter scales must be finite and in [0, 16]";
+            return false;
+        }
+        for (int i = 0; i < 3; ++i)
+            if (!std::isfinite(parameters.wind[i]) || std::abs(parameters.wind[i]) > 4096)
+            {
+                error = "particle wind must be finite and within 4096 metres per second";
+                return false;
+            }
+        error.clear();
+        return true;
+    }
+
+    std::string ParticleScriptLayout()
+    {
+        return R"({"version":2,"stride":160,"binding":4,"birthBinding":6,"birthStride":16,"pushConstantBytes":4,"fields":[{"name":"range","type":"uint4","offset":0},{"name":"time","type":"float4","offset":16},{"name":"velocity","type":"float4","offset":32},{"name":"color","type":"float4","offset":48},{"name":"emission","type":"float4","offset":64},{"name":"emissionStart","type":"float4","offset":80},{"name":"attachmentVelocity","type":"float4","offset":96},{"name":"tileDelta","type":"float4","offset":112},{"name":"wind","type":"float4","offset":128},{"name":"birthRange","type":"uint4","offset":144}]})";
+    }
+
+    std::string GenerateParticleScript(const ParticleEmitterAsset &emitter)
+    {
+        std::string error;
+        if (!ValidateParticleEmitterAsset(emitter, error)) throw std::runtime_error(error);
+        if (emitter.simulationTarget != ParticleSimulationTarget::GPU)
+            throw std::runtime_error("CPU particle emitters have no GPU script");
+        ParticleScriptWriter writer;
+        writer.mHasGradient = std::any_of(emitter.updateBehaviors.begin(), emitter.updateBehaviors.end(),
+            [](const ParticleBehavior &behavior) { return behavior.enabled && behavior.name == "ColorGradient"; });
+        writer.mSource = R"(
+struct Particle
+{
+    float4 positionAge;
+    float4 velocityLifetime;
+    float4 sizeRotation;
+    float4 color;
+    uint4 identity;
+};
+struct Parameters
+{
+    uint4 range;
+    float4 time;
+    float4 velocity;
+    float4 color;
+    float4 emission;
+    float4 emissionStart;
+    float4 attachmentVelocity;
+    float4 tileDelta;
+    float4 wind;
+    uint4 birthRange;
+};
+struct Birth
+{
+    float fraction, age;
+    uint sequence, reserved;
+};
+struct Counts
+{
+    uint vertices, alive, firstVertex, firstInstance;
+    uint spawned, dropped, generation, reserved;
+};
+[[vk::binding(2)]] RWStructuredBuffer<Particle> particles;
+[[vk::binding(3)]] RWStructuredBuffer<Counts> counts;
+[[vk::binding(4)]] StructuredBuffer<Parameters> inputs;
+[[vk::binding(6)]] StructuredBuffer<Birth> births;
+uint ParticleHash(uint value)
+{
+    value ^= value >> 16;
+    value *= 0x7feb352du;
+    value ^= value >> 15;
+    value *= 0x846ca68bu;
+    return value ^ (value >> 16);
+}
+float SignedNoise(uint value)
+{
+    return float(ParticleHash(value) >> 8) * (2.0 / 16777215.0) - 1.0;
+}
+float3 RandomDirection(uint seed)
+{
+    float z = SignedNoise(seed);
+    float phi = 3.14159265 * SignedNoise(seed ^ 0x9e3779b9u);
+    float r = sqrt(max(0.0, 1.0 - z * z));
+    return float3(r * cos(phi), r * sin(phi), z);
+}
+float3 SpreadDirection(float3 velocity, float cosMax, uint seed)
+{
+    float speed = length(velocity);
+    if (speed < 1e-6 || cosMax >= 1.0) return velocity;
+    float3 dir = velocity / speed;
+    float u = lerp(cosMax, 1.0, SignedNoise(seed) * 0.5 + 0.5);
+    float phi = 3.14159265 * SignedNoise(seed ^ 0x85ebca6bu);
+    float s = sqrt(max(0.0, 1.0 - u * u));
+    float3 t = normalize(abs(dir.y) < 0.99 ? cross(dir, float3(0, 1, 0)) : cross(dir, float3(1, 0, 0)));
+    float3 b = cross(dir, t);
+    return ((t * cos(phi) + b * sin(phi)) * s + dir * u) * speed;
+}
+float SmoothNoise(float x, uint seed)
+{
+    float cell = floor(x);
+    float f = x - cell;
+    f = f * f * (3.0 - 2.0 * f);
+    uint k = uint(cell);
+    return lerp(SignedNoise(seed + k), SignedNoise(seed + k + 1u), f);
+}
+void UpdateParticle(inout Particle a, Parameters p, float dt)
+{
+)";
+        const auto emitStage = [&](bool spawn)
+            {
+                for (const auto *behavior : ActiveParticleBehaviors(emitter, spawn))
+                {
+                    const auto *definition = FindBehavior(behavior->name, spawn, ParticleSimulationTarget::GPU);
+                    if (!definition || !definition->emit)
+                        throw std::runtime_error("particle behavior has no GPU emitter: " + behavior->name);
+                    definition->emit(writer, *behavior);
+                }
+            };
+        emitStage(false);
+        writer.mSource += R"(
+}
+struct Dispatch { uint emitterIndex; };
+[[vk::push_constant]] Dispatch dispatch;
+[shader("compute")]
+[numthreads(1, 1, 1)]
+void computeMain(uint3 id : SV_DispatchThreadID)
+{
+    uint instance = dispatch.emitterIndex;
+    Parameters p = inputs[instance];
+    Counts old = counts[instance];
+    uint alive = 0;
+    uint previous = old.generation == p.range.z && p.time.w == 0 ? min(old.alive, p.range.y) : 0;
+    for (uint i = 0; i < previous; ++i)
+    {
+        Particle a = particles[p.range.x + i];
+        a.positionAge.xyz += p.tileDelta.xyz;
+        UpdateParticle(a, p, p.time.x);
+        if (a.positionAge.w < a.velocityLifetime.w && all(isfinite(a.positionAge)) && all(abs(a.positionAge.xyz) <= 65536.0))
+            particles[p.range.x + alive++] = a;
+    }
+    uint spawned = min(p.range.w, p.range.y - alive);
+    uint spawnBase = old.generation == p.range.z && p.time.w == 0 ? old.reserved : 0;
+    for (uint i = 0; i < spawned; ++i)
+    {
+        Birth birth;
+        birth.fraction = 1;
+        birth.age = 0;
+        birth.sequence = spawnBase + i;
+        birth.reserved = 0;
+        if (i < p.birthRange.y) birth = births[p.birthRange.x + i];
+        uint randomSeed = birth.sequence ^ p.birthRange.z;
+        Particle a = (Particle)0;
+)";
+        emitStage(true);
+        const bool customFade = std::any_of(emitter.updateBehaviors.begin(), emitter.updateBehaviors.end(),
+            [](const ParticleBehavior &behavior)
+            {
+                return behavior.enabled && FindBehavior(behavior.name, false, ParticleSimulationTarget::GPU)->replacesFade;
+            });
+        writer.mSource += "        a.identity = uint4(instance, p.range.z, birth.sequence, " + std::to_string(customFade ? 1 : 0) + "u);\n";
+        writer.mSource += R"(
+        UpdateParticle(a, p, birth.age);
+        particles[p.range.x + alive + i] = a;
+    }
+    Counts c;
+    c.vertices = 6;
+    c.alive = alive + spawned;
+    c.firstVertex = 0;
+    c.firstInstance = 0;
+    c.spawned = spawned;
+    c.dropped = p.range.w - spawned;
+    c.generation = p.range.z;
+    c.reserved = spawnBase + p.range.w;
+    counts[instance] = c;
+}
+)";
+        return writer.mSource;
+    }
+
+    bool ValidateParticleEmitterAsset(const ParticleEmitterAsset &emitter, std::string &error)
+    {
+        const auto &q = emitter.quality;
+        if (!std::isfinite(q.importance) || q.importance < 0 || q.importance > 1 ||
+            !std::isfinite(q.nearDistance) || q.nearDistance < 0 || !std::isfinite(q.farDistance) ||
+            q.farDistance <= q.nearDistance || q.farDistance > 10000000 ||
+            !std::isfinite(q.minSpawnScale) || q.minSpawnScale < 0 || q.minSpawnScale > 1)
+        {
+            error = "invalid particle importance or distance quality bounds"; return false;
+        }
+        const auto &r = emitter.renderer;
+        if (r.alignment > 1 || r.facing > 1 || r.blend > 1 || r.sort > 1 ||
+            !std::isfinite(r.softDistance) || r.softDistance < 0 || r.softDistance > 1024 ||
+            !std::isfinite(r.maxDistance) || r.maxDistance <= 0 || r.maxDistance > 10000000 ||
+            !std::isfinite(r.stretch) || r.stretch < 0 || r.stretch > 16)
+        {
+            error = "particle renderer choices or finite distance bounds are invalid";
+            return false;
+        }
+        if (!std::isfinite(emitter.lifetime) || emitter.lifetime <= 0 || emitter.lifetime > kMaxEffectLifetime)
+            error = "particle lifetime must be finite and in (0, 120]";
+        else if (!std::isfinite(emitter.spawnRate) || emitter.spawnRate < 0 || emitter.spawnRate > kMaxEffectParticles)
+            error = "particle spawnRate must be finite and in [0, 65536]";
+        else if (emitter.capacity == 0 || emitter.capacity > kMaxEffectParticles)
+            error = "particle capacity must be in [1, 65536]";
+        else if (!std::isfinite(emitter.spawnPerMeter) || emitter.spawnPerMeter < 0 || emitter.spawnPerMeter > kMaxEffectParticles ||
+            emitter.burst > kMaxEffectParticles || !std::isfinite(emitter.inheritVelocity) || emitter.inheritVelocity < 0 || emitter.inheritVelocity > 16 ||
+            !std::isfinite(emitter.startDelay) || emitter.startDelay < 0 || emitter.startDelay > kMaxEffectLifetime ||
+            !std::isfinite(emitter.teleportDistance) || emitter.teleportDistance <= 0 || emitter.teleportDistance > 65536 ||
+            !std::isfinite(emitter.localOffset.x) || !std::isfinite(emitter.localOffset.y) || !std::isfinite(emitter.localOffset.z) ||
+            glm::any(glm::greaterThan(glm::abs(emitter.localOffset), glm::vec3(4096))))
+            error = "particle motion parameters exceed finite supported ranges";
+        else if (emitter.followEmitter && emitter.simulationTarget != ParticleSimulationTarget::GPU)
+            error = "followEmitter applies to GPU emitters only";
+        else if (emitter.texture.IsNull())
+            error = "particle texture dependency is null";
+        else if (emitter.simulationTarget != ParticleSimulationTarget::GPU && emitter.simulationTarget != ParticleSimulationTarget::CPU)
+            error = "unsupported particle simulation target";
+        else if (!std::isfinite(emitter.size) || emitter.size <= 0 || emitter.size > 64)
+            error = "particle sprite size must be finite and in (0, 64]";
+        else
+        {
+            for (int i = 0; i < 4; ++i)
+                if (!std::isfinite(emitter.color[i]) || emitter.color[i] < 0 ||
+                    (i == 3 && emitter.color[i] > 1))
+                {
+                    error = "particle color must be finite and nonnegative, alpha must be in [0, 1]";
+                    return false;
+                }
+            for (int i = 0; i < 3; ++i)
+                if (!std::isfinite(emitter.velocity[i]))
+                {
+                    error = "particle velocity must be finite";
+                    return false;
+                }
+            return ValidateBehaviors(emitter, error);
+        }
+        return false;
+    }
+
+    bool ValidateParticleEffect(const ParticleEffect &effect, std::string &error)
+    {
+        if (!ValidateParticleUserParameters(effect.parameters, error)) return false;
+        if (effect.emitters.empty() || effect.emitters.size() > kMaxSystemEmitters)
+        {
+            error = "particle system requires 1 to 8 emitter references";
+            return false;
+        }
+        if ((!effect.placementIds.empty() && effect.placementIds.size() != effect.emitters.size()) ||
+            (!effect.placementOffsets.empty() && effect.placementOffsets.size() != effect.emitters.size()))
+        {
+            error = "particle placements must match emitter references";
+            return false;
+        }
+        for (size_t i = 0; i < effect.emitters.size(); ++i)
+            if (effect.emitters[i].IsNull())
+            {
+                error = "particle system emitter references must be nonnull";
+                return false;
+            }
+        for (size_t i = 0; i < effect.emitters.size(); ++i)
+        {
+            const uint32_t id = effect.placementIds.empty() ? static_cast<uint32_t>(i + 1) : effect.placementIds[i];
+            const glm::vec3 offset = effect.placementOffsets.empty() ? glm::vec3(0) : effect.placementOffsets[i];
+            if (!id || (!effect.placementIds.empty() &&
+                std::find(effect.placementIds.begin(), effect.placementIds.begin() + i, id) != effect.placementIds.begin() + i) ||
+                !std::isfinite(offset.x) || !std::isfinite(offset.y) || !std::isfinite(offset.z) ||
+                glm::any(glm::greaterThan(glm::abs(offset), glm::vec3(4096))))
+            {
+                error = "particle placement IDs must be unique and offsets must be finite within 4096 metres";
+                return false;
+            }
+        }
+        if (!effect.emitterDefinitions.empty() && effect.emitterDefinitions.size() != effect.emitters.size())
+        {
+            error = "particle system emitter definitions must match its references";
+            return false;
+        }
+        for (const auto &emitter : effect.emitterDefinitions)
+            if (!ValidateParticleEmitterAsset(emitter, error)) return false;
+        error.clear();
+        return true;
+    }
+
+    ParticleEffectResult ReadParticleEffectSource(std::string_view text, std::string_view assetIdRoot)
+    {
+        return ParseSystem(text, true, assetIdRoot);
+    }
+
+    std::vector<std::byte> BuildParticleEffectAsset(const ParticleEffect &effect)
+    {
+        std::string error;
+        if (!ValidateParticleEffect(effect, error)) throw std::runtime_error(error);
+        Json ids = Json::array();
+        for (auto id : effect.emitters) ids.push_back(id.value);
+        Json value{ { "emitterIds", ids },{ "parameters", WriteParameters(effect.parameters) },
+            { "schemaVersion", kParticleSourceVersion } };
+        Json placementIds = Json::array(), offsets = Json::array();
+        for (size_t i = 0; i < effect.emitters.size(); ++i)
+        {
+            placementIds.push_back(effect.placementIds.empty() ? static_cast<uint32_t>(i + 1) : effect.placementIds[i]);
+            const auto offset = effect.placementOffsets.empty() ? glm::vec3(0) : effect.placementOffsets[i];
+            offsets.push_back(Json::array({ offset.x, offset.y, offset.z }));
+        }
+        value["placementIds"] = std::move(placementIds);
+        value["placementOffsets"] = std::move(offsets);
+        const auto text = value.dump();
+        return BuildAssetBlob(kParticleEffectTypeTag, kParticleEffectContentVersion, std::as_bytes(std::span(text)));
+    }
+
+    ParticleEffectResult ReadParticleEffectAsset(const AssetBlobView &blob)
+    {
+        if (blob.header.typeTag != kParticleEffectTypeTag || blob.header.contentVersion != kParticleEffectContentVersion)
+            return Invalid<ParticleEffectResult>("unsupported particle system type or content version");
+        return ParseSystem(AsStringView(blob), false, {});
+    }
+
+    ParticleEffectResult LoadParticleEffect(AssetCache &cache, AssetId id)
+    {
+        const auto *blob = cache.Load(id);
+        if (blob == nullptr) return Invalid<ParticleEffectResult>("particle system is missing or its blob is corrupt");
+        auto result = ReadParticleEffectAsset(*blob);
+        if (!result.mEffect) return result;
+        for (auto emitterId : result.mEffect->emitters)
+        {
+            auto emitter = LoadParticleEmitterAsset(cache, emitterId);
+            if (!emitter.mEmitter) return Invalid<ParticleEffectResult>("particle emitter dependency is missing or invalid: " + emitter.mError);
+            result.mEffect->emitterDefinitions.push_back(*emitter.mEmitter);
+        }
+        return result;
+    }
+
+    ParticleEmitterAssetResult ReadParticleEmitterSource(std::string_view text, std::string_view assetIdRoot)
+    {
+        return ParseEmitter(text, true, assetIdRoot);
+    }
+
+    std::vector<std::byte> BuildParticleEmitterAsset(const ParticleEmitterAsset &emitter)
+    {
+        std::string error;
+        if (!ValidateParticleEmitterAsset(emitter, error)) throw std::runtime_error(error);
+        const auto text = CookedEmitterJson(emitter).dump();
+        return BuildAssetBlob(kParticleEmitterTypeTag, kParticleEmitterContentVersion, std::as_bytes(std::span(text)));
+    }
+
+    ParticleEmitterAssetResult ReadParticleEmitterAsset(const AssetBlobView &blob)
+    {
+        if (blob.header.typeTag != kParticleEmitterTypeTag || blob.header.contentVersion != kParticleEmitterContentVersion)
+            return Invalid<ParticleEmitterAssetResult>("unsupported particle emitter type or content version");
+        return ParseEmitter(AsStringView(blob), false, {});
+    }
+
+    ParticleEmitterAssetResult LoadParticleEmitterAsset(AssetCache &cache, AssetId id)
+    {
+        const auto *blob = cache.Load(id);
+        if (blob == nullptr) return Invalid<ParticleEmitterAssetResult>("particle emitter is missing or its blob is corrupt");
+        auto result = ReadParticleEmitterAsset(*blob);
+        if (!result.mEmitter) return result;
+        const auto *texture = cache.Load(result.mEmitter->texture);
+        TextureAsset decoded;
+        std::string error;
+        if (texture == nullptr || !ReadTypedAsset(*texture, decoded, error))
+            return Invalid<ParticleEmitterAssetResult>("particle texture dependency is missing or invalid: " + error);
+        if (decoded.width > 2048 || decoded.height > 2048 || decoded.rgba.size() > 16 * 1024 * 1024)
+            return Invalid<ParticleEmitterAssetResult>("particle texture exceeds 2048 pixels per side or 16 MiB");
+        result.mEmitter->textureWidth = decoded.width;
+        result.mEmitter->textureHeight = decoded.height;
+        result.mEmitter->texturePixels = std::move(decoded.rgba);
+        if (result.mEmitter->simulationTarget == ParticleSimulationTarget::GPU)
+        {
+            const auto *script = cache.Load(result.mEmitter->script);
+            const auto *layout = cache.Load(result.mEmitter->scriptLayout);
+            uint32_t magic = 0;
+            if (script && script->content.size() >= 20) std::memcpy(&magic, script->content.data(), sizeof(magic));
+            if (!script || script->header.typeTag != kParticleScriptTypeTag ||
+                script->header.contentVersion != kParticleScriptContentVersion ||
+                script->content.size() % 4 != 0 || magic != 0x07230203u ||
+                !layout || layout->header.typeTag != kParticleScriptLayoutTypeTag ||
+                layout->header.contentVersion != kParticleScriptLayoutContentVersion ||
+                AsStringView(*layout) != ParticleScriptLayout())
+                return Invalid<ParticleEmitterAssetResult>("particle script or parameter layout dependency is missing or invalid");
+            result.mEmitter->scriptCode.assign(script->content.begin(), script->content.end());
+        }
+        return result;
+    }
+}

@@ -77,9 +77,22 @@ namespace mir
             a(v.baseColor, v.baseColorTexture, v.doubleSided, v.alpha, v.alphaCutoff, v.wrapS, v.wrapT, v.minFilter,
               v.magFilter);
         }
+        template <class A> void Fields(A &a, TextureMip &v)
+        {
+            a(v.width, v.height, v.offset, v.length);
+        }
         template <class A> void Fields(A &a, TextureAsset &v)
         {
-            a(v.width, v.height, v.rgba);
+            a(v.width, v.height, v.format, v.colorSpace, v.rgba, v.mips, v.mipData);
+        }
+        template <class A> void Fields(A &a, SurfaceMaterialTexture &v)
+        {
+            a(v.role, v.path, v.colorSpace);
+        }
+        template <class A> void Fields(A &a, SurfaceMaterialAsset &v)
+        {
+            a(v.version, v.shaderFile, v.shaderType, v.frontends, v.parametersJson, v.textures, v.albedoTexture,
+              v.normalTexture, v.surfaceTexture, v.resolution, v.unknownJson);
         }
 
         struct Writer
@@ -307,6 +320,8 @@ namespace mir
             return kMaterialAssetContentVersion;
         case kTextureAssetTypeTag:
             return kTextureAssetContentVersion;
+        case kSurfaceMaterialAssetTypeTag:
+            return kSurfaceMaterialAssetContentVersion;
         default:
             return 0;
         }
@@ -429,9 +444,61 @@ namespace mir
     }
     bool ValidateAsset(const TextureAsset &a, std::string &e)
     {
-        return (a.width > 0 && a.height > 0 && a.width <= 16384 && a.height <= 16384 &&
-                uint64_t(a.width) * a.height * 4 == a.rgba.size()) ||
-               Fail(e, "invalid RGBA texture");
+        constexpr uint32_t maxDimension = 16384;
+        if (a.width == 0 || a.height == 0 || a.width > maxDimension || a.height > maxDimension)
+            return Fail(e, "invalid texture dimensions");
+        if (a.format > TextureFormat::Rgba8Srgb || a.colorSpace > TextureColorSpace::Srgb)
+            return Fail(e, "invalid texture format/color space");
+        if ((a.format == TextureFormat::Rgba8Srgb) != (a.colorSpace == TextureColorSpace::Srgb))
+            return Fail(e, "texture format and color space disagree");
+        if (uint64_t(a.width) * a.height * 4 != a.rgba.size())
+            return Fail(e, "invalid RGBA texture data");
+        if (a.mips.empty())
+            return a.mipData.empty() || Fail(e, "mip data without mip descriptors");
+
+        uint32_t width = a.width, height = a.height, mip = 0;
+        size_t offset = 0;
+        while (width > 1 || height > 1)
+        {
+            width = std::max(width / 2, 1u);
+            height = std::max(height / 2, 1u);
+            if (mip >= a.mips.size())
+                return Fail(e, "incomplete mip chain");
+            const TextureMip &level = a.mips[mip++];
+            const uint64_t expected = uint64_t(width) * height * 4;
+            if (level.width != width || level.height != height || level.offset != offset || level.length != expected)
+                return Fail(e, "invalid mip descriptor");
+            offset += level.length;
+        }
+        if (mip != a.mips.size() || offset != a.mipData.size())
+            return Fail(e, "mip data does not match the chain");
+        return true;
+    }
+    bool ValidateAsset(const SurfaceMaterialAsset &a, std::string &e)
+    {
+        if (a.version != 1 || a.shaderFile.empty() || a.shaderType.empty())
+            return Fail(e, "invalid surface material header");
+        if (a.frontends.empty())
+            return Fail(e, "surface material has no frontends");
+        std::unordered_set<std::string> frontends;
+        for (const auto &frontend : a.frontends)
+            if ((frontend != "mesh" && frontend != "terrain") || !frontends.insert(frontend).second)
+                return Fail(e, "invalid surface material frontend");
+        if (a.parametersJson.empty() || a.parametersJson.front() != '{' || a.unknownJson.empty() ||
+            a.unknownJson.front() != '{')
+            return Fail(e, "invalid surface material JSON payload");
+        if (a.resolution == 0 || a.resolution > 16384)
+            return Fail(e, "invalid surface material resolution");
+        static const std::unordered_set<std::string> roles{"baseColor", "normal", "displacement", "roughness",
+                                                           "specular", "ao"};
+        std::unordered_set<std::string> seen;
+        for (const auto &texture : a.textures)
+            if (!roles.contains(texture.role) || !seen.insert(texture.role).second || texture.path.empty() ||
+                texture.colorSpace > TextureColorSpace::Srgb)
+                return Fail(e, "invalid surface material texture");
+        const bool anyPacked = !a.albedoTexture.IsNull() || !a.normalTexture.IsNull() || !a.surfaceTexture.IsNull();
+        const bool allPacked = !a.albedoTexture.IsNull() && !a.normalTexture.IsNull() && !a.surfaceTexture.IsNull();
+        return (!anyPacked || allPacked) || Fail(e, "incomplete packed texture set");
     }
 #define MIR_IMPL_TYPED(Type, Tag)                                                                                      \
     std::vector<std::byte> BuildTypedAsset(const Type &asset)                                                          \
@@ -480,5 +547,6 @@ namespace mir
     MIR_IMPL_TYPED(AnimationClipAsset, kAnimationAssetTypeTag)
     MIR_IMPL_TYPED(MaterialAsset, kMaterialAssetTypeTag)
     MIR_IMPL_TYPED(TextureAsset, kTextureAssetTypeTag)
+    MIR_IMPL_TYPED(SurfaceMaterialAsset, kSurfaceMaterialAssetTypeTag)
 #undef MIR_IMPL_TYPED
 } // namespace mir

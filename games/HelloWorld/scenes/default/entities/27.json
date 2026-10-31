@@ -1,0 +1,45 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [
+          0.0,
+          6.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [
+          0.0,
+          7.0,
+          0.0
+        ]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "systemName": "particles/rain.particle.json",
+        "playOnStart": true,
+        "overrideParameters": false
+      },
+      "type": "ParticleSystem"
+    }
+  ],
+  "id": 27,
+  "parent": 11
+}

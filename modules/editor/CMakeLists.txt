@@ -20,7 +20,8 @@ target_link_libraries(engine_editor
            mir::physics_layers
            # PrefabWorkspace.h and PrefabAuthoringAdapter.h take prefab types
            mir::prefab
-    PRIVATE mir::animation
+    PRIVATE mir::particles
+            mir::animation
             mir::assets
             mir::editortheme
             mir::gameui
@@ -31,7 +32,7 @@ target_link_libraries(engine_editor
             iconfontcppheaders::iconfontcppheaders
 )
 
-# background image: open-file dialog and the LocalAppData lookup
+# background image: open-file dialog
 if(WIN32)
     target_link_libraries(engine_editor PRIVATE ole32 shell32 uuid)
 endif()
@@ -47,12 +48,16 @@ target_sources(engine_editor PRIVATE
     src/editor/EditorPreferences.cpp
     src/editor/EditorWidgets.cpp
     src/editor/EntityBaseline.cpp
+    src/editor/ParticleEditorPanel.cpp
     src/editor/PrefabAuthoringAdapter.cpp
     src/editor/PrefabPlayMarks.cpp
     src/editor/PrefabWorkspace.cpp
     src/editor/SnapToTerrain.cpp
+    src/editor/ViewPie.cpp
+    src/editor/history/ActiveCameraEdit.cpp
     src/editor/history/AuthoredCommand.cpp
     src/editor/history/AuthoredEdit.cpp
+    src/editor/history/CommandGroup.cpp
     src/editor/history/ComponentCommands.cpp
     src/editor/history/DocumentNodeCommands.cpp
     src/editor/history/EntityCommands.cpp

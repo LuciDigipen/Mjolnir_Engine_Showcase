@@ -33,7 +33,7 @@
 namespace
 {
     constexpr std::string_view kUsage = "[--game <dir>] [--frames <N>] [--capture <png>] [--no-editor] [--ui-demo] "
-        "[--non-interactive] [--switch-to <dir>]...";
+        "[--non-interactive] [--hidden] [--workers <0..32>] [--switch-to <dir>]...";
 
     struct LaunchOptions
     {
@@ -43,11 +43,13 @@ namespace
         // 0: run until the window closes
         uint64_t mMaxFrames = 0;
         std::string mCapturePath;
+        uint32_t mWorkerThreads = static_cast<uint32_t>(mir::JobExecutor::DefaultWorkerCount());
         bool mNoEditor = false;
         bool mUIDemo = false;
 
         // for agents and CI: every prompt takes its safe answer instead of waiting for a click
         bool mNonInteractive = false;
+        bool mHidden = false;
 
         // test hook: games to restart into, in order
         std::vector<std::string> mProjectSwitches;
@@ -82,6 +84,13 @@ namespace
             {
                 options.mCapturePath = argv[++i];
             }
+            else if (arg == "--workers" && i + 1 < argc)
+            {
+                const std::string_view value = argv[++i];
+                const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), options.mWorkerThreads);
+                if (error != std::errc{} || end != value.data() + value.size() || options.mWorkerThreads > 32)
+                    ThrowUsage("--workers expects an integer from 0 to 32");
+            }
             else if (arg == "--no-editor")
             {
                 options.mNoEditor = true;
@@ -93,6 +102,10 @@ namespace
             else if (arg == "--non-interactive")
             {
                 options.mNonInteractive = true;
+            }
+            else if (arg == "--hidden")
+            {
+                options.mHidden = true;
             }
             else if (arg == "--switch-to" && i + 1 < argc)
             {
@@ -110,6 +123,8 @@ namespace
 
         if (!options.mCapturePath.empty() && options.mMaxFrames == 0)
             ThrowUsage("--capture needs --frames");
+        if (options.mHidden && options.mMaxFrames == 0)
+            ThrowUsage("--hidden needs --frames");
 
         return options;
     }
@@ -118,12 +133,15 @@ namespace
     std::vector<std::string> RelaunchArguments(const LaunchOptions &options, const mir::GameProject &next)
     {
         std::vector<std::string> args{ "--game", next.mDir };
+        args.insert(args.end(), {"--workers", std::to_string(options.mWorkerThreads)});
         if (options.mNoEditor)
             args.emplace_back("--no-editor");
         if (options.mUIDemo)
             args.emplace_back("--ui-demo");
         if (options.mNonInteractive)
             args.emplace_back("--non-interactive");
+        if (options.mHidden)
+            args.emplace_back("--hidden");
         if (!options.mCapturePath.empty())
         {
             args.emplace_back("--capture");
@@ -177,10 +195,12 @@ namespace
         desc.mProject = project;
         desc.mMaxFrames = options.mMaxFrames;
         desc.mCapturePath = options.mCapturePath;
+        desc.mWorkerThreads = options.mWorkerThreads;
         // a build without the editor is always the game; --no-editor is then a no-op
         desc.mEnableEditorLayout = mir::App::kHasEditor && !options.mNoEditor;
         desc.mUIDemo = options.mUIDemo;
         desc.mNonInteractive = options.mNonInteractive;
+        desc.mHidden = options.mHidden;
         if (!options.mProjectSwitches.empty())
             desc.mSwitchProjectTo = options.mProjectSwitches.front();
 

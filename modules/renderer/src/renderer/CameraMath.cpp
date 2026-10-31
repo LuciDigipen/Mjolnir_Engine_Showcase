@@ -127,6 +127,14 @@ namespace mir
         return WorldRay{ camera.position, glm::normalize(nearPoint) };
     }
 
+    std::array<glm::vec3, 4> FrustumSliceCorners(float fovYDegrees, float aspectRatio, float distance)
+    {
+        const float halfHeight = distance * std::tan(glm::radians(fovYDegrees) * 0.5f);
+        const float halfWidth = halfHeight * aspectRatio;
+        return { glm::vec3(halfWidth, halfHeight, -distance), glm::vec3(-halfWidth, halfHeight, -distance),
+                 glm::vec3(-halfWidth, -halfHeight, -distance), glm::vec3(halfWidth, -halfHeight, -distance) };
+    }
+
     namespace
     {
         struct OrthographicBasis
@@ -245,6 +253,30 @@ namespace mir
         if (along + halfChord < 0.0f)
             return std::nullopt;
         return std::max(along - halfChord, 0.0f);
+    }
+
+    glm::uvec2 ResolveRenderExtent(glm::ivec2 requestedOffset, glm::uvec2 requestedExtent,
+        glm::uvec2 swapchainExtent, glm::ivec2 *resolvedOffset)
+    {
+        const bool wholeWindow = requestedExtent.x == 0 || requestedExtent.y == 0;
+        glm::uvec2 extent = wholeWindow ? swapchainExtent : requestedExtent;
+        const int32_t x = wholeWindow ? 0 : std::clamp(requestedOffset.x, 0, static_cast<int32_t>(swapchainExtent.x));
+        const int32_t y = wholeWindow ? 0 : std::clamp(requestedOffset.y, 0, static_cast<int32_t>(swapchainExtent.y));
+        extent.x = std::min(extent.x, swapchainExtent.x - static_cast<uint32_t>(x));
+        extent.y = std::min(extent.y, swapchainExtent.y - static_cast<uint32_t>(y));
+        if (resolvedOffset != nullptr)
+            *resolvedOffset = {x, y};
+        return extent;
+    }
+
+    float CameraPixelAngularSize(float fovYDegrees, glm::uvec2 extent)
+    {
+        if (extent.x == 0 || extent.y == 0 || !std::isfinite(fovYDegrees) || fovYDegrees <= 0.0f ||
+            fovYDegrees >= 180.0f)
+            return 0.0f;
+
+        const float angle = 2.0f * std::tan(glm::radians(fovYDegrees) * 0.5f) / static_cast<float>(extent.y);
+        return std::isfinite(angle) && angle > 0.0f ? angle : 0.0f;
     }
 
     glm::vec2 HaltonJitter(uint32_t index)

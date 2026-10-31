@@ -417,8 +417,9 @@ namespace mir
             for (const auto &dependency : selected->mDependencies)
                 ImGui::BulletText("%s", dependency.c_str());
             ImGui::InputTextWithHint("Move to", "models/<model-name>", mMoveTarget, sizeof(mMoveTarget));
+            const bool material = Lowered(selected->mPath).ends_with(".material.json");
             ImGui::BeginDisabled(view.mProcessRunning || mMoveTarget[0] == '\0' ||
-                                 selected->mStatus == AssetImportStatus::Missing);
+                                 selected->mStatus == AssetImportStatus::Missing || material);
             if (ImGui::Button("Move model package"))
             {
                 action.mKind = AssetImportActionKind::Move;
@@ -426,6 +427,8 @@ namespace mir
                 action.mTargetDirectory = mMoveTarget;
             }
             ImGui::EndDisabled();
+            if (material)
+                ImGui::TextDisabled("Moving materials is not supported.");
             if (!selected->mDiagnostic.empty())
                 ImGui::TextWrapped("%s", selected->mDiagnostic.c_str());
         }

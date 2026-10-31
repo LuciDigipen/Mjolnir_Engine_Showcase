@@ -11,13 +11,35 @@
 
 #include <core/log/SetupError.h>
 #include <physics_layers/PhysicsLayerSettings.h>
+#include <renderer/RtxgiConfig.h>
 
 #include <imgui.h>
 
+#include <cmath>
 #include <cstdio>
 
 namespace mir
 {
+    namespace
+    {
+        // the volume as a percent and the mute beside it, true when either changed
+        bool DrawAudioChannel(const char *name, EditorAudioChannel &channel)
+        {
+            ImGui::PushID(name);
+            bool changed = false;
+            int percent = static_cast<int>(std::lround(channel.mVolume * 100.0f));
+            if (ImGui::SliderInt(name, &percent, 0, 100, "%d%%", ImGuiSliderFlags_AlwaysClamp))
+            {
+                channel.mVolume = static_cast<float>(percent) / 100.0f;
+                changed = true;
+            }
+            ImGui::SameLine();
+            changed |= ImGui::Checkbox("Muted", &channel.mMuted);
+            ImGui::PopID();
+            return changed;
+        }
+    }
+
     void ProjectSettingsPanel::DrawRendering(RenderSettings &renderSettings, RenderSettings &draftRenderSettings,
         const std::filesystem::path &savePath)
     {
@@ -25,9 +47,69 @@ namespace mir
 
         ImGui::Checkbox("Ray Tracing", &draftRenderSettings.rayTracing);
 
+        DdgiSettings &gi = draftRenderSettings.ddgi;
+        if (ImGui::TreeNode("Diffuse Global Illumination"))
+        {
+            ImGui::Checkbox("Enable GI", &gi.enabled);
+            if (!kRtxgiCompiledIn)
+                ImGui::TextWrapped("GI is unavailable in this build. Settings can still be saved.");
+            else
+                ImGui::TextWrapped("GI is available in this build.");
+            if (!draftRenderSettings.rayTracing)
+                ImGui::TextWrapped("GI requires ray tracing. Raster rendering uses its existing lighting.");
+            ImGui::InputScalarN("Volume center (world meters)", ImGuiDataType_Double, gi.origin.data(), 3,
+                nullptr, nullptr, "%.6f");
+            ImGui::InputInt3("Probe counts (XYZ)", gi.probeCounts.data());
+            ImGui::InputFloat("Probe spacing (meters)", &gi.probeSpacing);
+            constexpr int rayCounts[]{ 64, 128, 256, 512, 1024 };
+            constexpr const char *rayLabels[]{ "64", "128", "256", "512", "1024" };
+            int rayChoice = 0;
+            for (int i = 0; i < 5; ++i)
+                if (gi.raysPerProbe == rayCounts[i])
+                    rayChoice = i;
+            if (ImGui::Combo("Rays per probe", &rayChoice, rayLabels, 5))
+                gi.raysPerProbe = rayCounts[rayChoice];
+            ImGui::InputInt("Probes updated per frame", &gi.probesPerFrame);
+            ImGui::SliderFloat("GI intensity", &gi.intensity, 0.0f, 10.0f);
+            if (gi.ValidationError() == nullptr)
+            {
+                ImGui::Text("%llu probes, %llu rays/frame, %.1f MiB estimated",
+                    static_cast<unsigned long long>(gi.ProbeCount()),
+                    static_cast<unsigned long long>(uint64_t(gi.probesPerFrame) * gi.raysPerProbe),
+                    double(gi.EstimatedBytes()) / (1024.0 * 1024.0));
+            }
+            ImGui::TreePop();
+        }
+
+        SsgiSettings &ssgi = draftRenderSettings.ssgi;
+        if (ImGui::TreeNode("Screen Space Global Illumination"))
+        {
+            ImGui::Checkbox("Enable SSGI", &ssgi.enabled);
+            if (draftRenderSettings.rayTracing)
+                ImGui::TextWrapped("SSGI settings apply to raster rendering. Ray tracing uses its own GI settings.");
+            constexpr const char *qualities[]{ "Low", "Medium", "High" };
+            int quality = static_cast<int>(ssgi.quality);
+            if (ImGui::Combo("Quality", &quality, qualities, 3))
+                ssgi.quality = static_cast<SsgiQuality>(quality);
+            ImGui::Text("%u rays/pixel, up to %u steps/ray", ssgi.RaysPerPixel(), ssgi.MaxRaySteps());
+            ImGui::InputFloat("Maximum trace distance (meters)", &ssgi.maxTraceDistance);
+            ImGui::InputFloat("Surface thickness (meters)", &ssgi.thickness, 0.0f, 0.0f, "%.3f");
+            ImGui::SliderFloat("Indirect intensity", &ssgi.intensity, 0.0f, 10.0f);
+            ImGui::Checkbox("Half resolution", &ssgi.halfResolution);
+            ImGui::TreePop();
+        }
+
+        const char *giError = gi.ValidationError();
+        const char *ssgiError = ssgi.ValidationError();
+        if (giError)
+            ImGui::TextWrapped("%s", giError);
+        if (ssgiError)
+            ImGui::TextWrapped("%s", ssgiError);
+
         if (!mRenderingStatusMessage.empty() && draftRenderSettings != mMessageSnapshot)
             mRenderingStatusMessage.clear();
 
+        ImGui::BeginDisabled(giError != nullptr || ssgiError != nullptr);
         if (ImGui::Button("Save##Rendering"))
         {
             if (draftRenderSettings.SaveFile(savePath))
@@ -41,12 +123,73 @@ namespace mir
             }
             mMessageSnapshot = draftRenderSettings;
         }
+        ImGui::EndDisabled();
 
         if (!mRenderingStatusMessage.empty())
         {
             ImGui::SameLine();
             ImGui::TextDisabled("%s", mRenderingStatusMessage.c_str());
         }
+    }
+
+    void ProjectSettingsPanel::DrawAudio(IEditorAudio &audio, bool editing)
+    {
+        if (!mAudioDraftLoaded)
+        {
+            mDraftAudio = audio.Defaults();
+            mAudioDraftLoaded = true;
+        }
+
+        ImGui::SeparatorText("Audio");
+        ImGui::TextWrapped("What a player starts with, until they change it in the pause menu.");
+
+        ImGui::BeginDisabled(!editing);
+        ImGui::PushID("defaults");
+        DrawAudioChannel("Music", mDraftAudio.mMusic);
+        DrawAudioChannel("SFX", mDraftAudio.mSfx);
+        ImGui::PopID();
+
+        if (!mAudioStatus.empty() && mDraftAudio != mAudioStatusSnapshot)
+            mAudioStatus.clear();
+
+        if (ImGui::Button("Save##Audio"))
+        {
+            // and heard from now on, so Play sounds as a new player's game does
+            if (audio.SaveDefaults(mDraftAudio))
+            {
+                audio.SetLive(mDraftAudio);
+                mAudioStatus = "Saved.";
+            }
+            else
+            {
+                mAudioStatus = "Save failed - see log.";
+            }
+            mAudioStatusSnapshot = mDraftAudio;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Revert##Audio"))
+            mDraftAudio = audio.Defaults();
+        ImGui::EndDisabled();
+
+        if (!mAudioStatus.empty())
+        {
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", mAudioStatus.c_str());
+        }
+
+        if (editing)
+            return;
+
+        ImGui::Spacing();
+        ImGui::TextUnformatted("While playing");
+        ImGui::TextWrapped("Heard at once and put back on Stop; the defaults above stay as saved.");
+        EditorAudioLevels live = audio.Live();
+        ImGui::PushID("live");
+        bool changed = DrawAudioChannel("Music", live.mMusic);
+        changed |= DrawAudioChannel("SFX", live.mSfx);
+        ImGui::PopID();
+        if (changed)
+            audio.SetLive(live);
     }
 
     void ProjectSettingsPanel::DrawExternalTools(const std::filesystem::path &savePath)
@@ -60,10 +203,6 @@ namespace mir
         }
 
         ImGui::SeparatorText("External Tools");
-        ImGui::TextWrapped(
-            "Double-clicking a .lua or .json file in the Content Browser opens the whole project folder as the "
-            "workspace root in a new IDE window, with the file open. Empty IDE path auto-detects VS Code. Launch "
-            "args: {project} and {file} are substituted; a non-VS Code tool may need a different template.");
 
         if (ImGui::InputTextWithHint("IDE path", "auto-detect (VS Code)", mIdePathBuffer, sizeof(mIdePathBuffer)))
             mDraftIdeSettings.path = mIdePathBuffer;
@@ -124,10 +263,7 @@ namespace mir
             LoadLayers(savePath);
 
         ImGui::SeparatorText("Physics layers");
-        ImGui::TextWrapped(
-            "A body is on one layer and collides with the layers ticked below. Layer 0 is Default. An empty name is "
-            "a free slot; clearing a name frees it without moving the others. Saved layers apply to the running "
-            "world while editing.");
+        ImGui::TextWrapped("A body is on one layer and collides with the layers ticked below. Layer 0 is Default.");
 
         if (!editing)
             ImGui::BeginDisabled();
@@ -220,7 +356,7 @@ namespace mir
     }
 
     void ProjectSettingsPanel::Draw(RenderSettings &renderSettings, const std::filesystem::path &savePath,
-        bool &showInputSettings, PhysicsLayerUpdate *layerUpdate, bool editing)
+        bool &showInputSettings, PhysicsLayerUpdate *layerUpdate, IEditorAudio *audio, bool editing)
     {
         if (!mDraftLoaded)
         {
@@ -235,6 +371,8 @@ namespace mir
 
         DrawRendering(renderSettings, mDraftRenderSettings, savePath);
         DrawPhysicsLayers(savePath, layerUpdate, editing);
+        if (audio != nullptr)
+            DrawAudio(*audio, editing);
         DrawExternalTools(savePath);
     }
 }

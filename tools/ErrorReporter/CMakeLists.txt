@@ -1,5 +1,6 @@
 add_executable(MjolnirErrorReporter WIN32)
 target_sources(MjolnirErrorReporter PRIVATE main.cpp)
+engine_target_utf8(MjolnirErrorReporter)
 
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(tinyfiledialogs CONFIG REQUIRED)

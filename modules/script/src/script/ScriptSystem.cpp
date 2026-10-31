@@ -26,8 +26,8 @@ namespace mir
     void ScriptSystem::OnStart(SystemContext &context)
     {
         mQuery = &context.world.GetOrCreateQuery<ScriptRef>();
-        if (EntityChangeListeners *listeners = context.world.TryResource<EntityChangeListeners>())
-            listeners->AddBeforeRemove(&ScriptSystem::OnBeforeRemove, this);
+        if (ComponentFieldListeners *listeners = context.world.TryResource<ComponentFieldListeners>())
+            listeners->AddBeforeChange(&ScriptSystem::OnBeforeFieldChange, this);
     }
 
     void ScriptSystem::OnUpdate(SystemContext &context)
@@ -78,25 +78,16 @@ namespace mir
     void ScriptSystem::OnStop(SystemContext &context)
     {
         StopAllScripts(context);
-        if (EntityChangeListeners *listeners = context.world.TryResource<EntityChangeListeners>())
-            listeners->RemoveBeforeRemove(&ScriptSystem::OnBeforeRemove, this);
+        if (ComponentFieldListeners *listeners = context.world.TryResource<ComponentFieldListeners>())
+            listeners->RemoveBeforeChange(&ScriptSystem::OnBeforeFieldChange, this);
     }
 
-    void ScriptSystem::OnBeforeRemove(World &world, const EntityChangeSet &changes, void *user)
+    void ScriptSystem::OnBeforeFieldChange(World &world, std::span<const ComponentFieldChange> changes, void *user)
     {
         auto *self = static_cast<ScriptSystem *>(user);
-
-        for (Entity entity : changes.mRemovedEntities)
-            self->ReleaseScript(world, entity);
-
         const TypeId scriptType = TypeIdOf<ScriptRef>();
-        for (const EntityComponentRef &component : changes.mRemovedComponents)
-        {
-            if (component.mType == scriptType)
-                self->ReleaseScript(world, component.mEntity);
-        }
 
-        for (const EntityComponentChange &change : changes.mChangedComponents)
+        for (const ComponentFieldChange &change : changes)
         {
             if (!(change.mType == scriptType))
                 continue;

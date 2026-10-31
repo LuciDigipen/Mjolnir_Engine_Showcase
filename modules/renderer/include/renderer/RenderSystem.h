@@ -7,18 +7,23 @@
  *
  */
 #pragma once
+#include "renderer/ActiveCamera.h"
+#include "renderer/CameraCut.h"
 #include "renderer/CameraMath.h"
 #include "renderer/ViewDrawSource.h"
 #include "renderer/ViewSubmission.h"
 #include "renderer/VulkanRenderer.h"
 
+#include <core/debug/DebugLines.h>
 #include <core/ecs/Query.h>
 #include <core/ecs/System.h>
+#include <core/ecs/components/Name.h>
 #include <core/ecs/components/WorldTransform.h>
 #include <core/log/Log.h>
 #include <renderer/PostProcessingSettings.h>
 #include <renderer/PostProcessingState.h>
 #include <renderer/RenderSettings.h>
+#include <renderer/RtxgiConfig.h>
 #include <renderer/components/Camera.h>
 #include <renderer/components/Light.h>
 #include <renderer/components/MeshRenderer.h>
@@ -29,8 +34,10 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <format>
 #include <limits>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -65,6 +72,10 @@ namespace mir
         WorldPose mExternalCameraPose;
         Camera mExternalCamera{};
         bool mUseExternalCamera = false;
+
+        DebugViewSettings mDebugView;
+
+        bool mCut = false;
     };
 
     class RenderSystem final : public ISystem
@@ -73,7 +84,7 @@ namespace mir
         explicit RenderSystem(VulkanRenderer &renderer)
             : mRenderer(renderer)
         {
-            // Viewport 0 : whole window, first World Camera.
+            // Viewport 0 : whole window, the active World Camera.
             mViewports.push_back(Viewport{});
         }
 
@@ -89,6 +100,7 @@ namespace mir
             mSourceWorld = world;
             mPreviousPoses.clear();
             mCurrentPoses.clear();
+            mRenderer.ResetHistory();
         }
 
         ViewportId AddViewport(VkRect2D rect)
@@ -129,15 +141,35 @@ namespace mir
             }
         }
 
+        
+        void CutViewport(ViewportId id)
+        {
+            if (id < mViewports.size())
+                mViewports[id].mCut = true;
+        }
+
+        // The editor sets this on its scene viewport; a game build never does.
+        void SetViewportDebugView(ViewportId id, const DebugViewSettings &debugView)
+        {
+            if (id < mViewports.size())
+                mViewports[id].mDebugView = debugView;
+        }
+
+        // Each scene load and Play session reports a missing camera once.
+        void ResetCameraReports()
+        {
+            mWarnedNoCamera = false;
+            mWarnedNoActiveCamera = false;
+        }
+
         void OnUpdate(SystemContext &context) override
         {
             const RenderSettings &renderSettings = context.world.Resource<RenderSettings>();
+            mRenderer.SetGlobalIllumination(renderSettings.ddgi);
+            mRenderer.SetScreenSpaceGlobalIllumination(renderSettings.ssgi);
 
             World &source = mSourceWorld != nullptr ? *mSourceWorld : context.world;
             BindQueries(source);
-
-            mRenderer.SetPostProcessing(ResolvePostProcessing(context.world.Resource<PostProcessingSettings>(),
-                mRenderer.RayTracingActive(renderSettings.rayTracing), mRenderer.DlssAvailable()));
 
             bool haveSunLight = false;
             glm::vec3 sunDirWS{ 0.0f, 1.0f, 0.0f };
@@ -193,18 +225,16 @@ namespace mir
             }
             mRenderer.SetSkyVisible(haveSky);
 
-            bool haveDefaultCamera = false;
+            // No Camera at all draws from the origin with a default lens.
+            const PlayCamera playCamera = ResolvePlayCamera(source);
             WorldPose defaultCameraPose;
             Camera defaultCamera{};
-
-            mCameraQuery->ForEach([&](Entity, const WorldTransform &world, const Camera &camera)
-                {
-                    if (haveDefaultCamera)
-                        return;
-                    defaultCameraPose = world.Pose();
-                    defaultCamera = camera;
-                    haveDefaultCamera = true;
-                });
+            if (!playCamera.mEntity.IsNull())
+            {
+                defaultCameraPose = source.GetComponent<WorldTransform>(playCamera.mEntity)->Pose();
+                defaultCamera = *source.GetComponent<Camera>(playCamera.mEntity);
+            }
+            bool usedDefaultCamera = false;
 
             const VkExtent2D swapchainExtent = mRenderer.SwapchainExtent();
 
@@ -236,11 +266,12 @@ namespace mir
                             haveCamera = true;
                         });
                 }
-                else if (haveDefaultCamera)
+                else
                 {
                     cameraPose = defaultCameraPose;
                     camera = defaultCamera;
                     haveCamera = true;
+                    usedDefaultCamera = true;
                 }
 
                 if (!haveCamera)
@@ -258,6 +289,12 @@ namespace mir
                 mViewCameras.push_back(ViewCamera{ i, cameraPose, camera, viewExtent,
                                                   MakeCameraRelativeViewProjection(cameraPose, camera, aspect) });
             }
+
+            // Post effects read viewport 0's lens: the editor camera's in Edit, the active Camera's in Play.
+            const bool havePrimaryView = !mViewCameras.empty() && mViewCameras.front().viewport == 0;
+            mRenderer.SetPostProcessing(ResolvePostProcessing(context.world.Resource<PostProcessingSettings>(),
+                havePrimaryView ? mViewCameras.front().lens : Camera{},
+                mRenderer.RayTracingActive(renderSettings.rayTracing), mRenderer.DlssAvailable()));
 
             ViewDrawSources *viewSources = source.TryResource<ViewDrawSources>();
             if (viewSources)
@@ -408,13 +445,19 @@ namespace mir
             }
 
             mDrawItemsPerViewport.resize(mViewCameras.size());
+            mDebugLinesPerViewport.resize(mViewCameras.size());
             mRenderViews.clear();
+            const DebugLines *debugLines = source.TryResource<DebugLines>();
+            bool collidersWanted = false;
 
             size_t skippedItems = 0;
 
             for (size_t v = 0; v < mViewCameras.size(); ++v)
             {
                 const ViewCamera &view = mViewCameras[v];
+                const auto &viewport = mViewports[view.viewport];
+                const Entity viewCamera = viewport.mCameraEntity.IsNull() ? playCamera.mEntity : viewport.mCameraEntity;
+                const bool cut = viewport.mCut || (!viewport.mUseExternalCamera && IsCameraCut(source, viewCamera));
                 std::span<const WorldDrawItem> worldItems = mDrawItems;
                 if (viewSources && !viewSources->sources.empty())
                 {
@@ -427,17 +470,54 @@ namespace mir
                 // Each viewport narrows against its own camera, so the same
                 // world item gets a different model matrix per view.
                 std::vector<DrawItem> &items = mDrawItemsPerViewport[v];
-                skippedItems += BuildViewDrawItems(worldItems, view.pose.position, view.viewProj, items);
+                skippedItems += BuildViewDrawItems(worldItems, view.pose.position, view.viewProj, items, cut);
 
-                mRenderViews.push_back(RenderView{ mViewports[view.viewport].mRect, items, view.viewProj,
+                mRenderViews.push_back(RenderView{ viewport.mRect, items, view.viewProj,
                                                   view.pose.position, view.lens.mNearZ,
                                                   view.lens.HasFarPlane() ? view.lens.mFarZ : 0.0f });
+                mRenderViews.back().fovYDegrees = view.lens.mFovYDegrees;
+                mRenderViews.back().historyId = viewport.mUseExternalCamera ? UINT64_MAX : PackEntity(viewCamera);
+                mRenderViews.back().cut = cut;
+                mRenderViews.back().debugView = viewport.mDebugView;
+
+                mDebugLinesPerViewport[v].clear();
+                if (viewport.mDebugView.colliders)
+                {
+                    collidersWanted = true;
+                    if (debugLines != nullptr)
+                        BuildViewDebugLines(debugLines->mColliders, view.pose.position, mDebugLinesPerViewport[v]);
+                }
+                mRenderViews.back().debugLines = mDebugLinesPerViewport[v];
             }
+            // after every view, since two viewports can show the same camera
+            ClearCameraCuts(source);
+            for (Viewport &viewport : mViewports)
+                viewport.mCut = false;
+
+            // Only the main World's physics fills the lines; a preview World has none, so it asks for none.
+            if (DebugLines *mainLines = context.world.TryResource<DebugLines>())
+                mainLines->mCollidersWanted = collidersWanted && &source == &context.world;
 
             if (warnNoCamera && !mWarnedNoCamera)
             {
-                MIR_LOG_WARN("RenderSystem: a viewport has no Camera entity in the world; nothing will be drawn for it");
+                MIR_LOG_WARN("RenderSystem: a viewport's Camera entity is not in the world; nothing will be drawn for it");
                 mWarnedNoCamera = true;
+            }
+
+            if (usedDefaultCamera && !playCamera.mActive && !mWarnedNoActiveCamera)
+            {
+                if (playCamera.mEntity.IsNull())
+                {
+                    MIR_LOG_WARN("RenderSystem: the scene has no Camera; drawing from the origin with a default lens");
+                }
+                else
+                {
+                    const Name *name = source.GetComponent<Name>(playCamera.mEntity);
+                    const std::string label = name != nullptr ? std::string(name->mValue)
+                                                              : std::format("entity {}", playCamera.mEntity.mIndex);
+                    MIR_LOG_WARN("RenderSystem: no Camera is active; drawing through '{}' until one is", label);
+                }
+                mWarnedNoActiveCamera = true;
             }
 
             if (skippedItems > 0 && !mWarnedSkippedItems)
@@ -447,9 +527,34 @@ namespace mir
                 mWarnedSkippedItems = true;
             }
 
-            const bool traceable = mRenderer.RayTracingActive(renderSettings.rayTracing);
-            if (traceable && mRenderViews.size() == 1)
+            // Wireframe shows no shading, so it never pays for a trace
+            const bool wireframeOnly = mRenderViews.size() == 1 && mRenderer.WireframeAvailable() &&
+                mRenderViews.front().debugView.shading == ViewportShading::Wireframe;
+            // leaving or entering it swaps paths; temporal effects must not blend across the switch
+            if (wireframeOnly != mWasWireframeOnly)
             {
+                mRenderer.ResetHistory();
+                mWasWireframeOnly = wireframeOnly;
+            }
+
+            const bool traceable = mRenderer.RayTracingActive(renderSettings.rayTracing);
+            if (traceable && mRenderViews.size() == 1 && !wireframeOnly)
+            {
+                mRayTracingItems.clear();
+                if (kRtxgiCompiledIn && renderSettings.ddgi.enabled)
+                    if (MakeGiTraceVolume(renderSettings.ddgi))
+                    {
+                        const std::span<IViewDrawSource *const> sources = viewSources
+                            ? std::span<IViewDrawSource *const>(viewSources->sources)
+                            : std::span<IViewDrawSource *const>{};
+                        CollectRayTracingWorldDraws(mDrawItems, sources, 0, mRayTracingWorldItems);
+                        // Identity clip matrix preserves insertion order within opaque/
+                        // transparent groups; no camera-depth sorting for the TLAS.
+                        mRenderViews.front().rayTracingSceneComplete =
+                            BuildViewDrawItems(mRayTracingWorldItems, mRenderViews.front().cameraPosition,
+                                glm::mat4(1.0f), mRayTracingItems, mRenderViews.front().cut) == 0;
+                        mRenderViews.front().rayTracingItems = mRayTracingItems;
+                    }
                 mRenderer.TraceFrame(mRenderViews);
             }
             else
@@ -468,6 +573,11 @@ namespace mir
                 }
                 mRenderer.DrawFrame(mRenderViews);
             }
+        }
+
+        std::optional<WorldPosition> PrimaryCameraPosition() const
+        {
+            return mRenderViews.empty() ? std::nullopt : std::optional{mRenderViews.front().cameraPosition};
         }
 
     private:
@@ -497,14 +607,19 @@ namespace mir
         std::vector<WorldDrawItem> mPassItems;
         // Parallel to mViewCameras.
         std::vector<std::vector<DrawItem>> mDrawItemsPerViewport;
+        std::vector<std::vector<DebugLinePoint>> mDebugLinesPerViewport;
         std::vector<RenderView> mRenderViews;
+        std::vector<WorldDrawItem> mRayTracingWorldItems;
+        std::vector<DrawItem> mRayTracingItems;
         std::vector<DrawItem> mSunShadowItems;
         std::array<std::vector<DrawItem>, VulkanRenderer::kMaxSpotShadows> mSpotShadowItems;
         std::array<std::array<std::vector<DrawItem>, 6>, VulkanRenderer::kMaxPointShadows> mPointShadowItems;
 
         bool mWarnedNoCamera = false;
+        bool mWarnedNoActiveCamera = false;
         bool mWarnedNoRayTracing = false;
         bool mWarnedMultiViewRayTracing = false;
+        bool mWasWireframeOnly = false;
         bool mWarnedSkippedItems = false;
     };
 }

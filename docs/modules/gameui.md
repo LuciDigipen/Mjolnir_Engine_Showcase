@@ -18,6 +18,15 @@ them to the installed `IUIBackend`, which draws them offset to that area and
 clipped to it. Without a backend a frame runs and draws nothing, which is how
 the tests run.
 
+Those coordinates are UI units. An area at least the design size, 640 x 480
+unless `SetDesignSize` changes it, has one pixel per unit. A smaller one gets a
+`Scale()` below 1, set by whichever side falls further short, and `Bounds()`
+grows to match, so a screen lays out exactly as it would at the
+design size and the backend draws all of it smaller: rects, rounding, clips and
+the font size alike. Text therefore shrinks with the buttons it sits on, rather
+than a stack cutting its last rows away to fit. A larger area is never scaled
+up.
+
 `GameUIModule` owns the `UIContext` and the screens drawn into it, each a
 function registered with `AddScreen`. `RunFrame(area, pointer)` is one frame:
 `BeginFrame`, every screen in registration order, `EndFrame`. A backend bridge
@@ -234,7 +243,7 @@ layout.mSlider = sliderRow.Rest();
 ```
 
 A screen is laid out in `UIContext::SafeArea()`, its `Bounds()` less the
-safe-area insets. The insets are a setting, `SetSafeAreaInsets`, in pixels and
+safe-area insets. The insets are a setting, `SetSafeAreaInsets`, in UI units and
 kept across frames: a TV's title-safe margin, a notch, or a player's overscan
 choice, which whoever owns the screen sets and rescales on a resize. They are
 zero until set, so the safe area is the whole area. Nothing in a screen names
@@ -264,7 +273,7 @@ measuring pass, since nothing measures text yet.
 | `UIWidgetResult`, `UIDisplayOptions`; `Label`, `Button`, `Image`, `Bar`, `Toggle`, `Slider`; `Panel` | `gameui/UIWidgets.h` | The core widgets, in grey box or the style's art; `Panel` draws the style's panel and declares nothing |
 | `UIAnchor`, `UIAxis`, `UIStack`; `Inset`, `Anchor` | `gameui/UILayout.h` | Layout over rects: insets, anchoring to a point of a container, rows and columns cut from either end; `kUITopLeft` to `kUIBottomRight` |
 | `UIDemoScreen`, `UIDemoLayout` | `gameui/UIDemoScreen.h` | Every core widget on one screen, drawn by `App` under `--ui-demo`; `Layout(safeArea)` places it without drawing |
-| `UIContext`, `UIPrompt` | `gameui/UIContext.h` | `BeginFrame(area, InputState&, InputMap&, UIPointer)`/`EndFrame`, `Interact`, `Nav`, `CancelPressed`, `PausePressed`, `HoldInput`/`HoldsInput`, `FocusVisible`, `Prompt`, `Bounds`, `SafeArea`/`SetSafeAreaInsets`; owns the draw list, the state, the style, the textures and the safe-area insets |
+| `UIContext`, `UIPrompt` | `gameui/UIContext.h` | `BeginFrame(area, InputState&, InputMap&, UIPointer)`/`EndFrame`, `Interact`, `Nav`, `CancelPressed`, `PausePressed`, `HoldInput`/`HoldsInput`, `FocusVisible`, `Prompt`, `Bounds`, `SafeArea`/`SetSafeAreaInsets`, `Scale`/`SetDesignSize`; owns the draw list, the state, the style, the textures and the safe-area insets |
 
 Coordinates passed to `UIDrawList` and to `Interact` are local: `(0, 0)` is the
 top-left of the area. Each command stores its clip already intersected with
@@ -273,8 +282,8 @@ outside the clip is not recorded; text is not measured, so only an empty clip
 culls it.
 
 The pointer, like the area, is in window pixels. `UIState::BeginFrame` subtracts
-the area's origin once, so the hit test is right wherever the dock layout puts
-the scene viewport. A hit must fall inside the widget's rect, the clip and the
+the area's origin and divides by the scale once, so the hit test is right
+wherever the dock layout puts the scene viewport and however small it is. A hit must fall inside the widget's rect, the clip and the
 area, with right and bottom edges outside, so a widget that overhangs the
 viewport cannot be hit through an editor panel beside it.
 
@@ -496,7 +505,9 @@ and a lopsided one: everything inside the safe area, the menu down its left and
 centred above the prompts, its rows in order, and the prompts along the bottom
 clear of it. `tests/UIWidgets.tests.cpp` draws the demo through `UIContext` at
 16:9, 21:9 and 4:3 and checks every command it records lands inside
-`SafeArea()`, and that the insets move the menu. `smoke.ui-demo` runs `--ui-demo` on the
+`SafeArea()`, and that the insets move the menu, and that an area below the
+design size scales down to fit it, never up, with the pointer and the hit
+test in UI units. `smoke.ui-demo` runs `--ui-demo` on the
 GPU with validation, which uploads and frees the art. That the backend's output
 looks right is verified by running `--ui-demo`.
 

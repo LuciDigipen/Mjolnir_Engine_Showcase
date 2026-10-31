@@ -32,6 +32,8 @@ namespace mir
     // Places a linked Prefab instance; position is local to parent, or a world position for a root.
     std::unique_ptr<ICommand> MakePlacePrefabCommand(std::string contentPath, Entity parent,
         const WorldVec3 &position);
+    std::unique_ptr<ICommand> MakePlaceParticleSystemCommand(std::string contentPath, Entity parent,
+        const WorldVec3 &position);
 
     //null for EntityActionKind::None
     std::unique_ptr<ICommand> MakeEntityCommand(const EntityAction &action);

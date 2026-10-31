@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.26)
+cmake_minimum_required(VERSION 3.26)
 
 
 option(MIR_LARGE_WORLD "Double-precision world positions and Jolt" ON)
@@ -22,9 +22,7 @@ set (CMAKE_CXX_EXTENSIONS OFF)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg.json")
 
-#line for wwise
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-#end
 include(cmake/EnginePlatform.cmake)
 include(cmake/EngineModule.cmake)
 include(cmake/Shaders.cmake)
@@ -39,11 +37,17 @@ option(BUILD_TESTING "Build unit tests (per module, run via ctest)" ON)
 # presets set it.
 option(MJOLNIR_WITH_EDITOR "Build the editor into MjolnirEngine" ON)
 
+option(MIR_WITH_AUDIO "Build Wwise audio and Lua audio bindings" ON)
+
 # OFF (default): no network fetch, no NVIDIA SDK dependency - DLSS Ray
 # Reconstruction anti-aliasing stays unreachable, same as unsupported hardware.
 # ON: fetches the public NVIDIA/DLSS SDK via CMake FetchContent at configure
 # time (cmake/FindNGX.cmake), pinned to an exact release tag - never committed.
 option(MIR_WITH_DLSS "Fetch NGX/DLSS-RR SDK and build Ray Reconstruction" OFF)
+
+# Optional DDGI SDK and offline-compiled probe update shaders. OFF does not
+# fetch RTXGI or require DXC; runtime GI is integrated separately.
+option(MIR_WITH_RTXGI "Fetch RTXGI DDGI SDK and build Vulkan probe shaders" OFF)
 if(BUILD_TESTING)
     enable_testing()
     find_package(Catch2 3 CONFIG REQUIRED)
@@ -55,8 +59,10 @@ add_subdirectory(third_party)
 add_subdirectory(modules/animation)
 add_subdirectory(modules/app)
 add_subdirectory(modules/assets)
-add_subdirectory(modules/audio)
-add_subdirectory(modules/audio_script)
+if(MIR_WITH_AUDIO)
+    add_subdirectory(modules/audio)
+    add_subdirectory(modules/audio_script)
+endif()
 add_subdirectory(modules/camera)
 add_subdirectory(modules/core)
 add_subdirectory(modules/editor)
@@ -67,6 +73,11 @@ add_subdirectory(modules/gameui_imgui)
 add_subdirectory(modules/imguiruntime)
 add_subdirectory(modules/input)
 add_subdirectory(modules/input_script)
+add_subdirectory(modules/jobs)
+add_subdirectory(modules/particles)
+add_subdirectory(modules/particles_gpu)
+add_subdirectory(modules/particles_runtime)
+add_subdirectory(modules/particles_script)
 add_subdirectory(modules/physics)
 add_subdirectory(modules/physics_layers)
 add_subdirectory(modules/physics_script)
@@ -88,6 +99,36 @@ add_subdirectory(tools/TerrainTool)
 
 add_executable(MjolnirEngine WIN32)
 target_sources(MjolnirEngine PRIVATE main.cpp)
+engine_target_utf8(MjolnirEngine)
+
+foreach(surface_shader default model unlit error)
+    engine_add_shaders(MjolnirEngine
+        SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/${surface_shader}Surface.slang"
+        ENTRIES vertexMain:vertex fragmentMain:fragment)
+endforeach()
+
+if(MIR_WITH_RTXGI)
+    engine_add_shaders(MjolnirEngine
+        SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/raytraceGi.slang
+        INCLUDE_DIRS ${MIR_RTXGI_INCLUDE_DIR}
+        DEFINES HLSL=1 RTXGI_COORDINATE_SYSTEM=2
+        EXTRA_DEPENDS ${MIR_RTXGI_SHADER_DEPENDS}
+        ENTRIES rayGenMain:raygeneration missMain:miss closestHitMain:closesthit
+            anyHitMain:anyhit shadowMissMain:miss shadowAnyHitMain:anyhit)
+    engine_add_shaders(MjolnirEngine
+        SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/ddgiProbe.slang
+        INCLUDE_DIRS ${MIR_RTXGI_INCLUDE_DIR}
+        DEFINES HLSL=1 RTXGI_COORDINATE_SYSTEM=2
+        EXTRA_DEPENDS ${MIR_RTXGI_SHADER_DEPENDS}
+        ENTRIES probeRayGen:raygeneration probeMiss:miss probeClosestHit:closesthit
+            probeAnyHit:anyhit shadowMissMain:miss shadowAnyHitMain:anyhit)
+    get_property(rtxgi_shader_outputs GLOBAL PROPERTY MIR_RTXGI_SHADER_OUTPUTS)
+    add_custom_command(TARGET MjolnirEngine POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:MjolnirEngine>/shaders/rtxgi"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            ${rtxgi_shader_outputs} "$<TARGET_FILE_DIR:MjolnirEngine>/shaders/rtxgi"
+        VERBATIM COMMAND_EXPAND_LISTS)
+endif()
 
 # ReportFatal looks for the reporter beside the engine, so every build ships it there
 add_dependencies(MjolnirEngine MjolnirErrorReporter)
@@ -108,6 +149,22 @@ endif()
 if(MSVC)
     set_target_properties(MjolnirEngine PROPERTIES LINK_FLAGS "/ENTRY:mainCRTStartup")
 endif()
+
+engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/SsgiDepth.slang
+    ENTRIES initMain:compute reduceMain:compute)
+
+engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/SsgiTrace.slang
+    ENTRIES traceMain:compute)
+
+engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/SsgiFilter.slang
+    ENTRIES temporalMain:compute spatialMain:compute resolveMain:compute)
+
+engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/SsgiComposite.slang
+    ENTRIES vertexMain:vertex fragmentMain:fragment)
 
 engine_add_shaders(MjolnirEngine
     SOURCE assets/shaders/default.slang
@@ -154,8 +211,33 @@ engine_add_shaders(MjolnirEngine
     ENTRIES vertexMain:vertex compositeMain:fragment)
 
 engine_add_shaders(MjolnirEngine
+    SOURCE modules/particles_gpu/shaders/particlePool.slang
+    ENTRIES vertexMain:vertex fragmentMain:fragment ribbonVertex:vertex ribbonFragment:fragment)
+# Incremental build trees must not package the replaced fixed compute shader.
+file(REMOVE "${CMAKE_BINARY_DIR}/shaders/particlePool.computeMain.spv")
+engine_add_shaders(MjolnirEngine
+    SOURCE modules/particles_gpu/shaders/particleViewSort.slang
+    ENTRIES computeMain:compute)
+
+engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/fxComposition.slang
+    ENTRIES vertexMain:vertex fragmentMain:fragment)
+
+if(BUILD_TESTING)
+    add_subdirectory(tools/ParticleGpuCheck)
+endif()
+
+engine_add_shaders(MjolnirEngine
     SOURCE assets/shaders/shadowDepth.slang
     ENTRIES vertexMain:vertex)
+
+engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/debugWireframe.slang
+    ENTRIES vertexMain:vertex fragmentMain:fragment)
+
+engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/debugLines.slang
+    ENTRIES vertexMain:vertex fragmentMain:fragment)
 
 engine_add_shaders(MjolnirEngine
     SOURCE assets/shaders/shadowDistance.slang
@@ -257,6 +339,35 @@ foreach(manifest IN LISTS game_manifests)
     endif()
 endforeach()
 
+set(approved_asset_roots assets ${game_asset_roots})
+engine_add_surface_materials(MjolnirEngine
+    NAMESPACE default
+    ROOT assets
+    APPROVED_ROOTS ${approved_asset_roots})
+foreach(game_name IN LISTS game_names)
+    set(game_assets_root "games/${game_name}/assets")
+    if(IS_DIRECTORY "${CMAKE_SOURCE_DIR}/${game_assets_root}")
+        engine_add_surface_materials(MjolnirEngine
+            NAMESPACE ${game_name}
+            ROOT ${game_assets_root}
+            APPROVED_ROOTS ${approved_asset_roots})
+    endif()
+endforeach()
+engine_write_shader_manifest(MjolnirEngine)
+
+# The reflection/manifest tests read the generated files, so a test build must
+# produce the same shader outputs as a game build.
+if(TARGET engine_renderer_tests)
+    if(TARGET MjolnirEngine_surface_shaders_default)
+        add_dependencies(engine_renderer_tests MjolnirEngine_surface_shaders_default)
+    endif()
+    foreach(game_name IN LISTS game_names)
+        if(TARGET MjolnirEngine_surface_shaders_${game_name})
+            add_dependencies(engine_renderer_tests MjolnirEngine_surface_shaders_${game_name})
+        endif()
+    endforeach()
+endif()
+
 engine_cook_assets(MjolnirEngine
     SOURCE_ROOTS assets/ ${game_asset_roots}
     OUT_DIR ${CMAKE_BINARY_DIR}/cooked_assets)
@@ -298,10 +409,13 @@ find_package(nlohmann_json CONFIG REQUIRED)
 target_link_libraries(MjolnirEngine PRIVATE
     mir::app
     mir::assets
-    mir::audio
     mir::core
     mir::gameshell
     mir::input
+    mir::particles
+    mir::particles_gpu
+    mir::particles_runtime
+    mir::particles_script
     mir::physics
     mir::prefab
     mir::project
@@ -315,9 +429,12 @@ target_link_libraries(MjolnirEngine PRIVATE
 # They need a GPU; skip them with `ctest -LE smoke`.
 # --non-interactive: a broken scene fails at once instead of waiting on its prompt until the timeout.
 if(BUILD_TESTING)
+    add_test(NAME surface_material_discovery
+        COMMAND "${CMAKE_COMMAND}" -DSLANGC_EXECUTABLE=${SLANGC_EXECUTABLE}
+                -P "${CMAKE_SOURCE_DIR}/tools/tests/SurfaceMaterialDiscovery.cmake")
     foreach(game_name IN LISTS game_names)
         add_test(NAME smoke.${game_name}
-            COMMAND MjolnirEngine --non-interactive --game games/${game_name} --frames 120)
+            COMMAND MjolnirEngine --non-interactive --hidden --game games/${game_name} --frames 120)
         set_tests_properties(smoke.${game_name} PROPERTIES
             LABELS smoke
             TIMEOUT 120)
@@ -327,7 +444,7 @@ if(BUILD_TESTING)
     # frees it at shutdown
     if(EXISTS "${CMAKE_SOURCE_DIR}/games/HelloWorld/game.json")
         add_test(NAME smoke.ui-demo
-            COMMAND MjolnirEngine --non-interactive --game games/HelloWorld --ui-demo --frames 120)
+            COMMAND MjolnirEngine --non-interactive --hidden --game games/HelloWorld --ui-demo --frames 120)
         set_tests_properties(smoke.ui-demo PROPERTIES
             LABELS smoke
             TIMEOUT 120)
@@ -337,7 +454,7 @@ if(BUILD_TESTING)
     # HUD over it and its scripts running
     if(EXISTS "${CMAKE_SOURCE_DIR}/games/HelloWorld/game.json")
         add_test(NAME smoke.game-mode
-            COMMAND MjolnirEngine --non-interactive --game games/HelloWorld --no-editor --frames 120)
+            COMMAND MjolnirEngine --non-interactive --hidden --game games/HelloWorld --no-editor --frames 120)
         set_tests_properties(smoke.game-mode PROPERTIES
             LABELS smoke
             TIMEOUT 120)
@@ -346,8 +463,17 @@ if(BUILD_TESTING)
     # TerrainCheck from its scene camera, which sees both terrains: per-viewport selection, streaming and tracing
     if(EXISTS "${CMAKE_SOURCE_DIR}/games/TerrainCheck/game.json")
         add_test(NAME smoke.TerrainCheck.game-mode
-            COMMAND MjolnirEngine --non-interactive --game games/TerrainCheck --no-editor --frames 120)
+            COMMAND MjolnirEngine --non-interactive --hidden --game games/TerrainCheck --no-editor --frames 120)
         set_tests_properties(smoke.TerrainCheck.game-mode PROPERTIES
+            LABELS smoke
+            TIMEOUT 120)
+    endif()
+
+    # SoundtrackCheck plays from the first frame, so its soundtrack is posted while its bank may still be loading
+    if(EXISTS "${CMAKE_SOURCE_DIR}/games/SoundtrackCheck/game.json")
+        add_test(NAME smoke.SoundtrackCheck.game-mode
+            COMMAND MjolnirEngine --non-interactive --game games/SoundtrackCheck --no-editor --frames 120)
+        set_tests_properties(smoke.SoundtrackCheck.game-mode PROPERTIES
             LABELS smoke
             TIMEOUT 120)
     endif()
@@ -356,7 +482,7 @@ if(BUILD_TESTING)
     if(EXISTS "${CMAKE_SOURCE_DIR}/games/HelloWorld/game.json"
        AND EXISTS "${CMAKE_SOURCE_DIR}/games/EmptyScene/game.json")
         add_test(NAME smoke.switch
-            COMMAND MjolnirEngine --non-interactive --game games/HelloWorld
+            COMMAND MjolnirEngine --non-interactive --hidden --game games/HelloWorld
                     --switch-to games/EmptyScene --switch-to games/HelloWorld
                     --frames 180)
         set_tests_properties(smoke.switch PROPERTIES

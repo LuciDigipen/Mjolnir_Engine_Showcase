@@ -18,12 +18,12 @@
 
 namespace mir
 {
-    void History::Submit(std::unique_ptr<ICommand> command)
+    void History::Submit(std::unique_ptr<ICommand> command, bool discrete)
     {
         if (command)
         {
             ++mSubmissions;
-            mQueue.push_back(std::move(command));
+            mQueue.push_back({ std::move(command), discrete });
         }
     }
 
@@ -31,9 +31,15 @@ namespace mir
     {
         CommandContext context{ world, mIds, scene, mAuthoring };
 
-        std::vector<std::unique_ptr<ICommand>> queue = std::exchange(mQueue, {});
-        for (std::unique_ptr<ICommand> &command : queue)
-            Apply(std::move(command), context);
+        std::vector<QueuedCommand> queue = std::exchange(mQueue, {});
+        for (QueuedCommand &queued : queue)
+        {
+            if (queued.mDiscrete)
+                CloseOpenStep();
+            Apply(std::move(queued.mCommand), context);
+            if (queued.mDiscrete)
+                CloseOpenStep();
+        }
 
         
         if (std::exchange(mEndStep, false) || mPending != 0)
