@@ -1,13 +1,14 @@
 # Surface material pipeline
 
-*State as of 2026-10-26.* M2 (#331) defines the surface framework, the default
-PBR material, the `.material.json` schema, shader discovery and the shader
-manifest. Texture cooking and the terrain frontend are later issues.
+*State as of 2026-10-30.* M2 (#331) defines the surface framework, the default
+PBR material, shader discovery and the shader manifest. M3 (#332) adds typed
+material assets, packed texture cooking and versioned mip chains. The terrain
+frontend and runtime binding of the packed surface textures remain later work.
 
 ## Source contract
 
-A surface material is one UTF-8 JSON object. Unknown root keys must be preserved
-by an editor writing it back.
+A surface material is one UTF-8 JSON object. Unknown root keys are preserved in
+`SurfaceMaterialAsset::unknownJson` so an editor can save them back.
 
 ```json
 {
@@ -27,7 +28,7 @@ by an editor writing it back.
 }
 ```
 
-- `version` must be 1; another value fails configuration.
+- `version` must be 1; another value fails configuration or the cook.
 - `shader.file` resolves from the owning assets root, then another approved
   engine/game assets root. It may not be absolute or climb out. `shader.type`
   is the Slang type passed to `-specialize`.
@@ -35,13 +36,75 @@ by an editor writing it back.
   outputs; a terrain-only material is valid but waits for the terrain frontend.
 - `parameters` is keyed by the reflected field name. Packing rejects a missing
   field, an extra shape or an unsupported type.
-- `textures`, when present, uses exactly the six roles above. Missing textures
-  are valid for a constant material.
+- `textures` is optional. When present, only the six roles above are accepted;
+  each supplied role needs `path` and `colorSpace`. Missing roles use the packing
+  defaults below. Without textures the material has no packed texture ids.
+- `resolution` defaults to 2048 and selects the level-0 size of every packed
+  output.
+- A missing dependency or a Git LFS pointer in place of an image fails the cook
+  and names the file; restore source content with `git lfs pull`.
 
-The typed `SurfaceMaterialAsset` (tag `0x4d525355`, content version 1) is owned
-by the M3 asset work; M2 only parses the source contract for compilation and
-packing. The packed outputs map to the reflected `albedoTexture`,
-`normalTexture` and `surfaceTexture` fields.
+The typed `SurfaceMaterialAsset` (tag `0x4d525355`, content version 1) is distinct
+from the legacy glTF `MaterialAsset`. It stores the source contract and packed
+texture asset ids in `albedoTexture`, `normalTexture` and `surfaceTexture`.
+Those ids describe cooked outputs; resolving them into reflected `TextureRef`
+fields and the terrain material is later integration work. The cooker preserves
+parameter JSON without interpreting reflected fields.
+
+## Packing
+
+The six source roles map to three RGBA8 textures:
+
+| Output | Format | R | G | B | A |
+|---|---|---|---|---|---|
+| `albedoTexture` | `RGBA8_SRGB` | BaseColor R | BaseColor G | BaseColor B | AO, linear |
+| `normalTexture` | `RGBA8_UNORM` | normal X | normal Y | normal Z | 255 |
+| `surfaceTexture` | `RGBA8_UNORM` | roughness | displacement | linearized specular (F0) | 255 |
+
+Rules:
+
+- BaseColor RGB is decoded from sRGB, filtered in linear light and re-encoded
+  to sRGB. AO is always linear data, even when its source file or declared
+  `colorSpace` says sRGB; it is filtered linearly and written to alpha.
+- Normal X/Y/Z are decoded from the source OpenGL-convention normal, filtered
+  as vectors and renormalized at every mip. A vector whose length collapses to
+  near zero becomes the flat normal `(0, 0, 1)`.
+- Roughness and displacement are linear values and are filtered without any
+  height renormalization. Specular is decoded from sRGB to linear F0 and then
+  filtered and stored as UNORM.
+- Each output has a complete mip chain down to 1x1. An absent role contributes
+  the constant default: white BaseColor/AO, flat normal, roughness 1,
+  displacement 0.5, F0 0.04.
+
+`TextureAsset` content version 2 stores `format`, `colorSpace`, the level-0
+RGBA bytes and each higher mip's width, height, offset and length. Readers
+reject an old version, a partial chain, a truncated payload or inconsistent
+format/color-space metadata; the cooker's version fingerprint then forces a
+recook. The renderer validates and uploads a supplied chain without generating
+or replacing it.
+
+## Incremental cook and editor
+
+`AssetCooker` fingerprints the material JSON, its shader and every source image,
+together with the payload versions and the material cooker version. Material
+records live under `materials` in `import-cache.json` and carry their outputs,
+dependencies, texture sizes, last success and last error. A full cook finds
+materials under every source root; a partial cook accepts `--material` and maps
+`--changed` source paths onto the material records that depend on them. A missing
+or incompatible import cache forces a full recook; after a failed rebuild,
+`requiresFullCook` keeps that migration pending until the new manifest publishes.
+
+Material source images are inputs to the packed outputs, not standalone
+textures. A full cook leaves them out, and a partial cook drops an older
+standalone manifest entry for one. Manifest publication stays atomic with one
+previous generation.
+
+The editor passes the active game, shared engine and discovered game asset roots
+to both full and partial batches, keeping the active root first for external
+imports. It watches `.material.json`, images and shader sources. An edited
+material enters a finite `--material` batch; an edited dependency enters a
+`--changed` batch. A completed material-only batch still goes through the same
+`PendingApply` path, so it is applied in Edit and waits for Stop during Play.
 
 ## Material types
 

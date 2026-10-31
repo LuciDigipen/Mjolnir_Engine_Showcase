@@ -430,7 +430,40 @@ namespace mir::vk
         // One staging blob for every level, one copy region each.
         std::vector<std::byte> pixels;
         std::vector<VkBufferImageCopy> regions;
-        const uint32_t levelCount = BuildMipChain(desc, pixels, regions);
+        uint32_t levelCount = 0;
+        if (!desc.mips.empty())
+        {
+            if (!TextureMipLayoutValid(desc))
+            {
+                MIR_LOG_ERROR("CreateTexture: {}x{} supplied mips do not form a complete chain", desc.width,
+                    desc.height);
+                return kNullTexture;
+            }
+            pixels.assign(desc.pixels.begin(), desc.pixels.end());
+            levelCount = static_cast<uint32_t>(desc.mips.size()) + 1;
+            uint32_t width = desc.width, height = desc.height;
+            VkDeviceSize offset = 0;
+            for (uint32_t level = 0; level < levelCount; ++level)
+            {
+                regions.push_back(VkBufferImageCopy{
+                    .bufferOffset = offset,
+                    .imageSubresource{
+                        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                        .mipLevel = level,
+                        .baseArrayLayer = 0,
+                        .layerCount = 1 },
+                    .imageExtent{ width, height, 1 } });
+                if (level == levelCount - 1)
+                    break;
+                const auto &mip = desc.mips[level];
+                offset = pixels.size();
+                pixels.insert(pixels.end(), mip.pixels.begin(), mip.pixels.end());
+                width = mip.width;
+                height = mip.height;
+            }
+        }
+        else
+            levelCount = BuildMipChain(desc, pixels, regions);
 
         VkBuffer staging = VK_NULL_HANDLE;
         VmaAllocation stagingAllocation = VK_NULL_HANDLE;

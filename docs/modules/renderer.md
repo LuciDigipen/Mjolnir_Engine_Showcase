@@ -200,7 +200,7 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `MeshStreamingDesc`, `MeshUploadOptions`, `MeshUploadState`, `MeshStreamingStats` | `renderer/MeshStreaming.h` | the staging ring and per-frame byte budget; whether a queued mesh gets a BLAS; where a queued mesh is; the counters (bytes queued, uploading and retiring, idle waits, skipped draws, highest generation) |
 | `StagingRing`, `MeshUploadQueue`, `FrameRetireList` | `renderer/MeshStreaming.h` | the CPU bookkeeping behind them, tested without a device: ring space by frame, admission under the frame budget, objects kept until their last frame completes |
 | `ViewDrawSources`, `IViewDrawSource`, `ViewCamera` | `renderer/ViewDrawSource.h` | World resource of producers whose draws depend on the viewport (app's terrain): `Prepare` with every viewport's camera, then `AppendViewDraws` per view and `AppendVolumeDraws` per shadow volume at a view's detail |
-| `TextureDesc`, `TextureHandle` | `renderer/Texture.h` | `{width, height, pixels, srgb}`, tightly-packed RGBA8; `kNullTexture` falls back to a default in `CreateMaterial` |
+| `TextureDesc`, `TextureMipView`, `TextureHandle` | `renderer/Texture.h` | `{width, height, pixels, srgb, generateMips, mips}`, tightly-packed RGBA8; supplied `mips` must form the complete chain and are uploaded unchanged; `kNullTexture` falls back to a default in `CreateMaterial` |
 | `MaterialDesc`, `MaterialHandle` | `renderer/Material.h` | `{shaderName, cullMode, polygonMode, baseColorTexture, normalTexture, sampler, alphaMode, alphaCutoff, record, recordAlignment}`; `kNullMaterial` means the default. `SamplerDesc` carries the optional `maxAnisotropy` |
 | `MaterialRecordId`, `MaterialRecordTable`, `MaterialRecordRef` | `renderer/MaterialRecordTable.h` | Aligned raw-byte records: create/update/release, a frame-safe published copy and the set-0 reference |
 | `RtInstanceInfo` | `renderer/RtInstanceInfo.h` | CPU mirror of `RaySceneCommon.slang`'s per-instance struct; scalar padding keeps the offsets and ArrayStride identical |
@@ -803,6 +803,12 @@ table. A null or stale texture handle falls back to a flat white base color or
 a flat normal map, rather than failing material creation. `ErrorTexture()` is
 the texture for the broken case: a caller whose texture failed to load passes
 it instead of null, so the failure shows as magenta rather than as white.
+
+**A supplied mip chain is uploaded unchanged.** When `TextureDesc::mips` is
+non-empty, `CreateTexture` validates that levels 1..N halve down to 1x1 and
+copies them as-is; it does not run the CPU box filter over them. Only a
+level-0-only description with `generateMips` asks the renderer to build the
+chain.
 
 **`ReleaseSceneResources` is all or nothing, and the caller vouches for the
 handles.** It waits for the device to go idle, destroys every mesh, every

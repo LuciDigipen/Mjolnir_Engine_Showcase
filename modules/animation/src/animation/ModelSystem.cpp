@@ -62,10 +62,15 @@ namespace mir
                 return renderer.ErrorTexture();
             }
 
-            const TextureHandle handle = renderer.CreateTexture(
-                TextureDesc{ .width = tex.width,
-                    .height = tex.height, .pixels = std::as_bytes(std::span(tex.rgba)),
-                    .srgb = true, .generateMips = true });
+            TextureDesc desc{ .width = tex.width,
+                .height = tex.height,
+                .pixels = std::as_bytes(std::span(tex.rgba)),
+                .srgb = tex.format == TextureFormat::Rgba8Srgb,
+                .generateMips = tex.mips.empty() };
+            for (const auto &mip : tex.mips)
+                desc.mips.push_back({ mip.width, mip.height,
+                    std::as_bytes(std::span(tex.mipData).subspan(mip.offset, mip.length)) });
+            const TextureHandle handle = renderer.CreateTexture(desc);
 
             if (handle.IsNull())
             {

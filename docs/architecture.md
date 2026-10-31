@@ -65,6 +65,11 @@ An `AssetId` is a hash of the source path relative to the repository root, so th
 same file gets the same id on every machine, and any code can compute an id from
 a path.
 
+A generic surface material is a versioned `.material.json` that cooks to a
+`SurfaceMaterialAsset` plus three packed 2K textures and their complete mip
+chains. The schema, color rules and incremental cook are in
+[material-pipeline.md](material-pipeline.md).
+
 **Setup failures are fatal, and they tell the reader the fix.**
 
 Any module constructor that fails throws a `SetupError` naming the fix. `main`
