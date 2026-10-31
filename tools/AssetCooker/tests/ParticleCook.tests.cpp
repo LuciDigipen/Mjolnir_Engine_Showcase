@@ -338,3 +338,33 @@ TEST_CASE("CPU ribbon stacks cook and load without GPU script dependencies", "[p
     CHECK(emitter.scriptCode.empty());
     CHECK(emitter.updateBehaviors[2].parameters[0] == 8);
 }
+
+TEST_CASE("Particle cooker compiles shape, noise, rotation and stretch emitters", "[particles][cooker]")
+{
+    CookFixture fixture;
+    const auto emitter = nlohmann::json::parse(R"({"version":3,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,
+        "texture":"checker.png","startDelay":0.5,
+        "renderer":{"alignment":"velocity","stretch":0.05},
+        "spawnBehaviors":[{"name":"Initialize"},{"name":"Shape","parameters":[0,1.5,0,0,25,2]},
+            {"name":"StartRotation","parameters":[90]}],
+        "updateBehaviors":[{"name":"Age"},{"name":"Noise","parameters":[2,1.5]},{"name":"Integrate"},
+            {"name":"Spin","parameters":[120,30]}]})");
+    std::ofstream(fixture.source / "exhaust.emitter.json") << emitter.dump();
+    auto box = emitter;
+    box["spawnBehaviors"][1]["parameters"] = {1, 20, 1, 20, 0, 0};
+    std::ofstream(fixture.source / "second.emitter.json") << box.dump();
+    std::ofstream(fixture.source / "exhaust.particle.json") <<
+        R"({"version":3,"parameters":{},"placements":[{"id":1,"emitter":"exhaust.emitter.json","offset":[0,0,0]},{"id":2,"emitter":"second.emitter.json","offset":[0,0,0]}]})";
+    REQUIRE(fixture.Cook() == 0);
+    const auto manifest = mir::AssetManifest::LoadFile(fixture.out / mir::kAssetManifestFileName);
+    REQUIRE(manifest);
+    mir::AssetCache cache(&*manifest, fixture.out);
+    const auto system = mir::LoadParticleEffect(cache, mir::MakeAssetId("assets/exhaust.particle.json"));
+    REQUIRE(system.mEffect);
+    REQUIRE(system.mEffect->emitterDefinitions.size() == 2);
+    const auto &first = system.mEffect->emitterDefinitions[0];
+    CHECK(first.startDelay == 0.5f);
+    CHECK(first.renderer.stretch == 0.05f);
+    CHECK_FALSE(first.scriptCode.empty());
+    CHECK_FALSE(system.mEffect->emitterDefinitions[1].scriptCode.empty());
+}

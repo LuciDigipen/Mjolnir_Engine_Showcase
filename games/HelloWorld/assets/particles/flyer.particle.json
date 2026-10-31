@@ -1,0 +1,27 @@
+{
+  "version": 3,
+  "parameters": {
+    "spawnRateScale": 1.0,
+    "sizeScale": 1.0
+  },
+  "placements": [
+    {
+      "id": 1,
+      "emitter": "particles/flyer-smoke.emitter.json",
+      "offset": [
+        0,
+        0,
+        0.35
+      ]
+    },
+    {
+      "id": 2,
+      "emitter": "particles/flyer-contrail.emitter.json",
+      "offset": [
+        0,
+        0,
+        0
+      ]
+    }
+  ]
+}

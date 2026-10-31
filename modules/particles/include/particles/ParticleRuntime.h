@@ -92,6 +92,7 @@ namespace mir
         double distanceRemainder = 0.0;
         uint32_t birthSequence = 0;
         bool burstPending = true;
+        double delayRemaining = 0.0;
         bool resetMotionOnPose = false;
         bool teleported = false;
         double spawnRemainder = 0.0;

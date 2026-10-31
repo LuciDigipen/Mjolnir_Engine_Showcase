@@ -218,6 +218,26 @@ the registry order. Seeded variation hashes the emitter seed and birth sequence,
 promises repeatability for the same stream/timing, not cross-GPU bitwise identity.
 Flipbooks sample the cooked texture atlas.
 
+Four more GPU behaviors cover smoke, sparks and explosions. `Shape` is a spawn
+behavior with a kind (0 sphere, 1 box), three sizes, a spread cone in degrees and an
+outward speed. A sphere takes one radius, a box takes half extents along the world
+axes, spread turns the emitter velocity inside a cone, and the outward speed pushes
+each particle away from the shape centre. `StartRotation` gives each particle a random
+start angle within a variation in degrees. `Noise` is an update behavior that adds a
+smooth per-particle random acceleration, with a strength and a frequency in hertz, and
+because it follows the particle's age it does not depend on its position. `Spin` turns
+the sprite at a speed in degrees per second plus a per-particle variation. Rotation is
+stored in `sizeRotation.y`, so the size behaviors write only `sizeRotation.x`.
+
+An emitter's `startDelay` holds back its births, including its burst, for that many
+seconds after the system starts, so one system can stagger a flash, fire and smoke. The
+delay runs in whole 60 Hz steps, and a waiting emitter follows its attachment so its
+first birth does not sweep the motion made meanwhile. Renderer `stretch` lengthens a
+velocity-aligned quad by that many metres per metre per second of speed, which gives
+sparks and rain their streaks, and view culling widens each particle by the same amount.
+Rain is an emitter with a box `Shape` on an entity that follows the camera target, so
+it needs no volume feature of its own.
+
 ## CPU ribbon emitters
 
 CPU emitters use the same stack editing as GPU emitters, and the CPU registry is
@@ -323,6 +343,14 @@ See [acceptance results](../particle-acceptance.md) for quality settings,
 measurements and remaining gates.
 
 ## Changed
+
+*2026-10-30* — **Flight-sim effects.** Was: a fixed square sprite, spawn along the
+attachment path with box-noise velocity, and every emitter starting with its system.
+Now: `Shape`, `StartRotation`, `Noise` and `Spin` behaviors, renderer `stretch`, and
+emitter `startDelay`, all optional with the old behavior as the default. Because:
+fumes, sparks, explosions and rain needed emission volumes, turbulence, spin, streaks
+and staggered starts. `games/HelloWorld` has a flyer with smoke and a contrail, sparks,
+an explosion that replays every four seconds and rain, each as its own system.
 
 *2026-10-30* — **Each entity can offset every emitter of its system.** Was: placement
 offsets lived only in the system asset, so every instance shared them. Now:

@@ -24,7 +24,7 @@ namespace mir
     {
         ParticleRenderProperties RenderProperties(const ParticleRendererProperties &r)
         {
-            return {r.alignment, r.facing, r.blend, r.sort, r.softDistance, r.maxDistance, r.lit, r.fog, r.textured};
+            return {r.alignment, r.facing, r.blend, r.sort, r.softDistance, r.maxDistance, r.lit, r.fog, r.textured, r.stretch};
         }
     }
     std::vector<ParticleSubmission> BuildParticleRenderData(const ParticleRuntime &runtime, bool simulating)

@@ -50,7 +50,8 @@ namespace mir
     {
         return p.alignment<=1 && p.facing<=1 && p.blend<=1 && p.sort<=1 &&
             std::isfinite(p.softDistance) && p.softDistance>=0 && p.softDistance<=1024 &&
-            std::isfinite(p.maxDistance) && p.maxDistance>0 && p.maxDistance<=10000000;
+            std::isfinite(p.maxDistance) && p.maxDistance>0 && p.maxDistance<=10000000 &&
+            std::isfinite(p.stretch) && p.stretch>=0 && p.stretch<=16;
     }
     bool ParticleSphereVisible(glm::vec3 center,float radius,const glm::mat4 &viewProjection,float maxDistance)
     {

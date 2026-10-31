@@ -543,6 +543,8 @@ namespace mir
             ImGui::EndCombo();
         }
         mDirtyEmitter |= ImGui::DragFloat("Lifetime", &e.lifetime, 0.05f, 0.01f, 120, "%.2f s", ImGuiSliderFlags_AlwaysClamp);
+        mDirtyEmitter |= ImGui::DragFloat("Start delay", &e.startDelay, 0.05f, 0, 120, "%.2f s", ImGuiSliderFlags_AlwaysClamp);
+        ImGui::SetItemTooltip("Seconds after the system starts before this emitter births anything.");
         int capacity = static_cast<int>(e.capacity);
         if (ImGui::DragInt("Capacity", &capacity, 1, 1, e.simulationTarget == ParticleSimulationTarget::CPU ? 1024 : 65536, "%d", ImGuiSliderFlags_AlwaysClamp))
         {
@@ -567,6 +569,10 @@ namespace mir
         {
             auto &r = e.renderer;
             mDirtyEmitter |= Choice("Alignment", r.alignment, "Screen\0Velocity\0");
+            ImGui::BeginDisabled(r.alignment == 0);
+            mDirtyEmitter |= ImGui::DragFloat("Stretch", &r.stretch, 0.001f, 0, 16, "%.3f");
+            ImGui::SetItemTooltip("Extra quad length in metres per metre per second of speed, for streaks.");
+            ImGui::EndDisabled();
             mDirtyEmitter |= Choice("Facing", r.facing, "Camera plane\0Camera position\0");
             mDirtyEmitter |= Choice("Blend", r.blend, "Alpha\0Additive\0");
             mDirtyEmitter |= Choice("Sort", r.sort, "Back to front\0None\0");

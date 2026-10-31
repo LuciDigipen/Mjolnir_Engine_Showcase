@@ -298,7 +298,7 @@ namespace mir::gpu
                 view.options={properties.alignment,properties.facing,properties.blend,properties.sort};
                 const uint32_t textureWidth=ribbon?mRibbons[r].textureWidth:data.mSlots[slot].input.textureWidth;
                 const uint32_t textureHeight=ribbon?mRibbons[r].textureHeight:data.mSlots[slot].input.textureHeight;
-                view.texture={properties.textured?1.0f:0.0f,1.0f/std::max(1u,textureWidth),1.0f/std::max(1u,textureHeight),0};
+                view.texture={properties.textured?1.0f:0.0f,1.0f/std::max(1u,textureWidth),1.0f/std::max(1u,textureHeight),properties.alignment?properties.stretch:0.0f};
                 float distance=0;
                 if(ribbon)
                 {

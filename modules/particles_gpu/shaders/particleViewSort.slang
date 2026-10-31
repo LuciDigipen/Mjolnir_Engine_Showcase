@@ -16,7 +16,7 @@ uint2 VisibleNode(uint i,uint argument)
     {
         Particle p=particles[view.range.x+i];
         float3 center=view.anchor.xyz+p.positionAge.xyz;
-        float radius=abs(p.sizeRotation.x)*1.415;
+        float radius=abs(p.sizeRotation.x)*1.415+length(p.velocityLifetime.xyz)*view.limits.w;
         float4 clip=mul(view.viewProj,float4(center,1));
         float4 margin=float4(length(view.viewProj[0].xyz),length(view.viewProj[1].xyz),
             length(view.viewProj[2].xyz),length(view.viewProj[3].xyz))*radius;

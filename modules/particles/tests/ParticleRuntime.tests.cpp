@@ -8,6 +8,7 @@
  */
 #include <particles/ParticleRuntime.h>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <glm/geometric.hpp>
@@ -519,4 +520,38 @@ TEST_CASE("Resuming particle emission never sweeps stopped or paused attachment 
     move(10);
     runtime.Advance(1.0f / 60);
     CHECK(runtime.FindEmitter(emitter)->spawns == 10);
+}
+
+TEST_CASE("Start delay holds back births, the burst and the sweep until it ends", "[particles][delay]")
+{
+    mir::ParticleEmitterAsset emitter;
+    emitter.texture = {1};
+    emitter.startDelay = 0.5f;
+    emitter.spawnRate = 60;
+    emitter.burst = 5;
+    emitter.capacity = 256;
+    mir::ParticleEffect effect;
+    effect.emitters = {{1}};
+    effect.emitterDefinitions = {emitter};
+    mir::ParticleRuntime runtime;
+    const auto handle = runtime.Start({2}, effect);
+    REQUIRE_FALSE(handle.IsNull());
+    const auto *state = runtime.FindEmitter(runtime.Find(handle)->emitters[0]);
+    uint32_t born = 0;
+    int firstBirthTick = -1;
+    for (int tick = 1; tick <= 60; ++tick)
+    {
+        mir::WorldPose pose;
+        pose.position = *mir::WorldPosition::FromMeters(mir::WorldVec3(tick, 0, 0));
+        REQUIRE(runtime.SetPose(handle, pose));
+        runtime.Advance(1.0f / 60);
+        if (state->spawns && firstBirthTick < 0) firstBirthTick = tick;
+        if (firstBirthTick < 0) CHECK(state->births.empty());
+        born += state->spawns;
+        // The delayed emitter never sweeps the motion made while it waited.
+        if (tick == firstBirthTick) CHECK(state->attachmentVelocity.x == Catch::Approx(60.0f).margin(0.5f));
+    }
+    CHECK(firstBirthTick >= 30);
+    CHECK(firstBirthTick <= 32);
+    CHECK(born >= 5 + 25);
 }

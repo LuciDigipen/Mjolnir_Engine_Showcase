@@ -64,7 +64,7 @@ namespace mir
             writer.mSource += R"(
         a.positionAge = float4(lerp(p.emissionStart.xyz, p.emission.xyz, birth.fraction), 0);
         a.velocityLifetime = float4(p.velocity.xyz + p.attachmentVelocity.xyz * p.emissionStart.w, p.time.y);
-        a.sizeRotation = float4(p.time.z, p.time.z, 0, 0);
+        a.sizeRotation = float4(p.time.z, 0, 0, 0);
         a.color = p.color;
 )";
         }
@@ -73,6 +73,55 @@ namespace mir
         {
             writer.mSource += "        a.velocityLifetime.xyz += " + Vector3(behavior) +
                 " * float3(SignedNoise(randomSeed), SignedNoise(randomSeed ^ 0x9e3779b9u), SignedNoise(randomSeed ^ 0x85ebca6bu));\n";
+        }
+
+        std::string Float3At(const ParticleBehavior &behavior, size_t first)
+        {
+            return "float3(" + Number(behavior.parameters[first]) + ", " + Number(behavior.parameters[first + 1]) + ", " +
+                Number(behavior.parameters[first + 2]) + ")";
+        }
+
+        // Parameters are kind (0 sphere, 1 box), the three sizes, spread in degrees and an outward speed.
+        void EmitShape(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
+        {
+            const auto &v = behavior.parameters;
+            writer.mSource += "        {\n";
+            if (v[0] == 0)
+                writer.mSource += "            float3 shape = RandomDirection(randomSeed ^ 0x68bc21ebu) * " + Number(v[1]) +
+                " * pow(SignedNoise(randomSeed ^ 0x02e5be93u) * 0.5 + 0.5, 1.0 / 3.0);\n";
+            else
+                writer.mSource += "            float3 shape = " + Float3At(behavior, 1) +
+                " * float3(SignedNoise(randomSeed ^ 0x68bc21ebu), SignedNoise(randomSeed ^ 0x02e5be93u), SignedNoise(randomSeed ^ 0x2c1b3c6du));\n";
+            writer.mSource += "            a.velocityLifetime.xyz = SpreadDirection(a.velocityLifetime.xyz, cos(radians(" +
+                Number(v[4]) + ")), randomSeed ^ 0x7f4a7c15u);\n";
+            writer.mSource += "            a.positionAge.xyz += shape;\n";
+            writer.mSource += "            float shapeLength = length(shape);\n";
+            writer.mSource += "            if (shapeLength > 1e-6) a.velocityLifetime.xyz += shape / shapeLength * " + Number(v[5]) + ";\n";
+            writer.mSource += "        }\n";
+        }
+
+        void EmitStartRotation(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
+        {
+            writer.mSource += "        a.sizeRotation.y = radians(" + Number(behavior.parameters[0]) +
+                ") * SignedNoise(randomSeed ^ 0x2c1b3c6du);\n";
+        }
+
+        // Smooth per-particle noise over its age, so the wobble does not depend on world position or tile shifts.
+        void EmitNoise(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
+        {
+            writer.mSource += "    {\n";
+            writer.mSource += "        uint noiseSeed = a.identity.z * 0x9e3779b1u + a.identity.x * 0x85ebca6bu;\n";
+            writer.mSource += "        float noiseTime = a.positionAge.w * " + Number(behavior.parameters[1]) + ";\n";
+            writer.mSource += "        a.velocityLifetime.xyz += float3(SmoothNoise(noiseTime, noiseSeed), "
+                "SmoothNoise(noiseTime, noiseSeed ^ 0x68bc21ebu), SmoothNoise(noiseTime, noiseSeed ^ 0x02e5be93u)) * " +
+                Number(behavior.parameters[0]) + " * dt;\n";
+            writer.mSource += "    }\n";
+        }
+
+        void EmitSpin(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
+        {
+            writer.mSource += "    a.sizeRotation.y += radians(" + Number(behavior.parameters[0]) + " + " +
+                Number(behavior.parameters[1]) + " * SignedNoise(a.identity.z ^ 0x51ed270bu)) * dt;\n";
         }
 
         void EmitAge(ParticleScriptWriter &writer, const ParticleBehavior &)
@@ -98,7 +147,7 @@ namespace mir
 
         void EmitSizeOverLife(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
         {
-            writer.mSource += "    a.sizeRotation.xy = p.time.zz * lerp(1.0, " + Number(behavior.parameters[0]) +
+            writer.mSource += "    a.sizeRotation.x = p.time.z * lerp(1.0, " + Number(behavior.parameters[0]) +
                 ", saturate(a.positionAge.w / a.velocityLifetime.w));\n";
         }
 
@@ -111,7 +160,7 @@ namespace mir
 
         void EmitSizeCurve(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
         {
-            writer.mSource += "    a.sizeRotation.xy = p.time.zz * lerp(lerp(" + Number(behavior.parameters[0]) + ", " +
+            writer.mSource += "    a.sizeRotation.x = p.time.z * lerp(lerp(" + Number(behavior.parameters[0]) + ", " +
                 Number(behavior.parameters[1]) + ", saturate(a.positionAge.w / a.velocityLifetime.w * 2)), " +
                 Number(behavior.parameters[2]) + ", saturate(a.positionAge.w / a.velocityLifetime.w * 2 - 1));\n";
         }
@@ -138,37 +187,47 @@ namespace mir
                 "Size over lifetime", "Appearance", "Curve", ParticleBehaviorWidget::Curve },
             { "ColorGradient", false, ParticleSimulationTarget::GPU,
                 { Scale("r0"), Scale("g0"), Scale("b0"), Alpha("a0", 1), Scale("r1"), Scale("g1"), Scale("b1"), Alpha("a1", 0) },
-                true, EmitColorGradient, nullptr, false, 50, {}, "Appearance", "Color over lifetime", ParticleBehaviorWidget::Gradient },
+                true, EmitColorGradient, nullptr, false, 50,{}, "Appearance", "Color over lifetime", ParticleBehaviorWidget::Gradient },
             { "RibbonWidthCurve", false, ParticleSimulationTarget::CPU,
                 { Scale("start"), Scale("middle"), Scale("end") }, false, nullptr, ResolveRibbonWidthCurve, false, 20,
                 "Width over lifetime", "Appearance", "Curve", ParticleBehaviorWidget::Curve },
             { "RibbonColorGradient", false, ParticleSimulationTarget::CPU,
                 { Scale("r0"), Scale("g0"), Scale("b0"), Alpha("a0", 1), Scale("r1"), Scale("g1"), Scale("b1"), Alpha("a1", 0) },
-                false, nullptr, ResolveRibbonColorGradient, false, 30, {}, "Appearance", "Color over lifetime", ParticleBehaviorWidget::Gradient },
+                false, nullptr, ResolveRibbonColorGradient, false, 30,{}, "Appearance", "Color over lifetime", ParticleBehaviorWidget::Gradient },
             { "RibbonSpawn", true, ParticleSimulationTarget::CPU,{ { "maxInterval", 1.0f / 60, 10, false, 0.25f } }, false, nullptr,
-                ResolveRibbonSpawn, true, 0, {}, "Emission" },
-            { "RibbonAge", false, ParticleSimulationTarget::CPU,{}, false, nullptr, ResolveRibbonAge, true, 0, {}, "Simulation" },
-            { "RibbonWind", false, ParticleSimulationTarget::CPU,{}, false, nullptr, ResolveRibbonWind, false, 10, {}, "Motion", "Wind drift" },
+                ResolveRibbonSpawn, true, 0,{}, "Emission" },
+            { "RibbonAge", false, ParticleSimulationTarget::CPU,{}, false, nullptr, ResolveRibbonAge, true, 0,{}, "Simulation" },
+            { "RibbonWind", false, ParticleSimulationTarget::CPU,{}, false, nullptr, ResolveRibbonWind, false, 10,{}, "Motion", "Wind drift" },
             { "RibbonWidth", false, ParticleSimulationTarget::CPU,{ Scale("endScale") }, false, nullptr, ResolveRibbonWidth,
                 false, 20, "Width over lifetime", "Appearance", "Linear" },
             { "RibbonFade", false, ParticleSimulationTarget::CPU,{}, false, nullptr, ResolveRibbonFade, false, 40,
                 {}, "Appearance", "Fade over lifetime" },
-            { "Initialize", true, ParticleSimulationTarget::GPU,{}, false, EmitInitialize, nullptr, true, 0, {}, "Simulation" },
+            { "Initialize", true, ParticleSimulationTarget::GPU,{}, false, EmitInitialize, nullptr, true, 0,{}, "Simulation" },
             { "VelocityVariation", true, ParticleSimulationTarget::GPU,
-                { Variation("x"), Variation("y"), Variation("z") }, false, EmitVelocityVariation, nullptr, false, 10, {}, "Motion" },
-            { "Age", false, ParticleSimulationTarget::GPU,{}, false, EmitAge, nullptr, true, 0, {}, "Simulation" },
-            { "Integrate", false, ParticleSimulationTarget::GPU,{}, false, EmitIntegrate, nullptr, true, 30, {}, "Simulation" },
+                { Variation("x"), Variation("y"), Variation("z") }, false, EmitVelocityVariation, nullptr, false, 10,{}, "Motion" },
+            { "Shape", true, ParticleSimulationTarget::GPU,
+                { { "shape (0 sphere, 1 box)", 0, 1, true, 0 },{ "size x", 0, 4096, false, 0 },{ "size y", 0, 4096, false, 0 },
+                    { "size z", 0, 4096, false, 0 },{ "spread degrees", 0, 180, false, 0 },{ "outward speed", -4096, 4096, false, 0 } },
+                false, EmitShape, nullptr, false, 20,{}, "Emission", "Emission shape" },
+            { "StartRotation", true, ParticleSimulationTarget::GPU,{ { "variation degrees", 0, 180, false, 0 } }, false,
+                EmitStartRotation, nullptr, false, 30,{}, "Appearance", "Start rotation" },
+            { "Age", false, ParticleSimulationTarget::GPU,{}, false, EmitAge, nullptr, true, 0,{}, "Simulation" },
+            { "Noise", false, ParticleSimulationTarget::GPU,{ { "strength", 0, 1000, false, 1 },{ "frequency", 0, 50, false, 1 } },
+                false, EmitNoise, nullptr, false, 15,{}, "Motion", "Turbulence" },
+            { "Spin", false, ParticleSimulationTarget::GPU,{ { "speed degrees", -3600, 3600, false, 90 },{ "variation degrees", 0, 3600, false, 0 } },
+                false, EmitSpin, nullptr, false, 50,{}, "Appearance", "Spin" },
+            { "Integrate", false, ParticleSimulationTarget::GPU,{}, false, EmitIntegrate, nullptr, true, 30,{}, "Simulation" },
             { "Acceleration", false, ParticleSimulationTarget::GPU,
-                { Unbounded("x"), Unbounded("y"), Unbounded("z") }, false, EmitAcceleration, nullptr, false, 10, {}, "Motion" },
+                { Unbounded("x"), Unbounded("y"), Unbounded("z") }, false, EmitAcceleration, nullptr, false, 10,{}, "Motion" },
             { "Drag", false, ParticleSimulationTarget::GPU,{ { "coefficient", 0, 10000, false, 0 } }, false, EmitDrag,
-                nullptr, false, 20, {}, "Motion" },
+                nullptr, false, 20,{}, "Motion" },
             { "SizeOverLife", false, ParticleSimulationTarget::GPU,{ Scale("endScale") }, false, EmitSizeOverLife,
                 nullptr, false, 40, "Size over lifetime", "Appearance", "Linear" },
             { "FadeOverLife", false, ParticleSimulationTarget::GPU,{ Alpha("endAlpha", 0) }, true, EmitFadeOverLife,
-                nullptr, false, 60, {}, "Appearance", "Opacity over lifetime" },
+                nullptr, false, 60,{}, "Appearance", "Opacity over lifetime" },
             { "Flipbook", false, ParticleSimulationTarget::GPU,
                 { { "columns", 1, 64, true, 1 },{ "rows", 1, 64, true, 1 },{ "fps", 0, 240, false, 0 } }, false, EmitFlipbook,
-                nullptr, false, 70, {}, "Appearance" } };
+                nullptr, false, 70,{}, "Appearance" } };
 
         const ParticleBehaviorInfo *FindBehavior(std::string_view name, bool spawn, ParticleSimulationTarget target)
         {
@@ -245,7 +304,7 @@ namespace mir
 
         bool ReadRenderer(const Json &value, ParticleEmitterAsset &emitter)
         {
-            if (!KnownFields(value, { "size", "color", "velocity", "alignment", "facing", "blend", "sort", "softDistance", "maxDistance", "lighting", "fog", "textured" })) return false;
+            if (!KnownFields(value, { "size", "color", "velocity", "alignment", "facing", "blend", "sort", "softDistance", "maxDistance", "lighting", "fog", "textured", "stretch" })) return false;
             if (value.contains("size"))
             {
                 if (!value["size"].is_number()) return false;
@@ -263,7 +322,8 @@ namespace mir
                 !choice("facing", "plane", "position", r.facing) ||
                 !choice("blend", "alpha", "additive", r.blend) ||
                 !choice("sort", "backToFront", "none", r.sort)) return false;
-            for (auto [key, target] :{ std::pair{ "softDistance", &r.softDistance }, std::pair{ "maxDistance", &r.maxDistance } })
+            for (auto [key, target] :{ std::pair{ "softDistance", &r.softDistance }, std::pair{ "maxDistance", &r.maxDistance },
+                std::pair{ "stretch", &r.stretch } })
                 if (value.contains(key))
                 {
                     if (!value[key].is_number()) return false;
@@ -287,7 +347,7 @@ namespace mir
             const auto &r = emitter.renderer;
             return Json{ { "alignment", r.alignment ? "velocity" : "screen" },{ "facing", r.facing ? "position" : "plane" },
                 { "blend", r.blend ? "additive" : "alpha" },{ "sort", r.sort ? "none" : "backToFront" },
-                { "softDistance", r.softDistance },{ "maxDistance", r.maxDistance },
+                { "softDistance", r.softDistance },{ "maxDistance", r.maxDistance },{ "stretch", r.stretch },
                 { "lighting", r.lit ? "sunAmbient" : "unlit" },{ "fog", r.fog },{ "textured", r.textured },
                 { "size", emitter.size },
                 { "color",{ emitter.color.r, emitter.color.g, emitter.color.b, emitter.color.a } },
@@ -361,17 +421,19 @@ namespace mir
                     }
                     const auto earlier = std::span(behaviors).first(&behavior - behaviors.data());
                     if (std::any_of(earlier.begin(), earlier.end(), [&](const ParticleBehavior &entry)
-                        { return entry.name == behavior.name; }))
+                        {
+                            return entry.name == behavior.name;
+                        }))
                     {
                         error = "duplicate particle behavior: " + behavior.name;
                         return false;
                     }
                     if (behavior.enabled && !definition->group.empty() &&
                         std::any_of(earlier.begin(), earlier.end(), [&](const ParticleBehavior &entry)
-                        {
-                            const auto *prior = FindBehavior(entry.name, spawn, emitter.simulationTarget);
-                            return entry.enabled && prior && prior->group == definition->group;
-                        }))
+                            {
+                                const auto *prior = FindBehavior(entry.name, spawn, emitter.simulationTarget);
+                                return entry.enabled && prior && prior->group == definition->group;
+                            }))
                     {
                         error = "particle behavior modes conflict: " + behavior.name;
                         return false;
@@ -407,7 +469,9 @@ namespace mir
                 const auto &stack = entry.spawn ? emitter.spawnBehaviors : emitter.updateBehaviors;
                 if (entry.required && entry.target == emitter.simulationTarget &&
                     std::none_of(stack.begin(), stack.end(), [&](const ParticleBehavior &behavior)
-                        { return behavior.name == entry.name && behavior.enabled; }))
+                        {
+                            return behavior.name == entry.name && behavior.enabled;
+                        }))
                 {
                     error = "particle emitter requires behavior: " + std::string(entry.name);
                     return false;
@@ -495,8 +559,8 @@ namespace mir
         ParticleEmitterAssetResult ParseEmitter(std::string_view text, bool source, std::string_view assetIdRoot)
         {
             const Json value = Json::parse(text, nullptr, false);
-            if (!KnownFields(value, source ? std::initializer_list<std::string_view>{"version", "target", "lifetime", "spawnRate", "capacity", "texture", "renderer", "spawnBehaviors", "updateBehaviors", "localOffset", "spawnPerMeter", "burst", "seed", "inheritVelocity", "teleportDistance", "quality"} :
-                std::initializer_list<std::string_view>{ "target", "lifetime", "spawnRate", "capacity", "textureId", "renderer", "spawnBehaviors", "updateBehaviors", "scriptId", "scriptLayoutId", "localOffset", "spawnPerMeter", "burst", "seed", "inheritVelocity", "teleportDistance", "quality", "schemaVersion" }))
+            if (!KnownFields(value, source ? std::initializer_list<std::string_view>{"version", "target", "lifetime", "spawnRate", "capacity", "texture", "renderer", "spawnBehaviors", "updateBehaviors", "localOffset", "startDelay", "spawnPerMeter", "burst", "seed", "inheritVelocity", "teleportDistance", "quality"} :
+                std::initializer_list<std::string_view>{ "target", "lifetime", "spawnRate", "capacity", "textureId", "renderer", "spawnBehaviors", "updateBehaviors", "scriptId", "scriptLayoutId", "localOffset", "startDelay", "spawnPerMeter", "burst", "seed", "inheritVelocity", "teleportDistance", "quality", "schemaVersion" }))
                 return Invalid<ParticleEmitterAssetResult>("particle emitter must be an object with only the supported fields");
             const char *versionKey = source ? "version" : "schemaVersion";
             if (!value.contains(versionKey) || !value[versionKey].is_number_integer() ||
@@ -526,7 +590,7 @@ namespace mir
             emitter.capacity = value["capacity"].get<uint32_t>();
             if (value.contains("localOffset") && !ReadVector(value["localOffset"], emitter.localOffset))
                 return Invalid<ParticleEmitterAssetResult>("invalid particle attachment offset");
-            for (const auto key :{ "spawnPerMeter", "inheritVelocity", "teleportDistance" })
+            for (const auto key :{ "startDelay", "spawnPerMeter", "inheritVelocity", "teleportDistance" })
                 if (value.contains(key) && !value[key].is_number())
                     return Invalid<ParticleEmitterAssetResult>("particle motion parameter must be numeric");
             for (const auto key :{ "burst", "seed" })
@@ -537,6 +601,7 @@ namespace mir
             if (value.contains("seed")) emitter.seed = value["seed"].get<uint32_t>();
             if (value.contains("inheritVelocity")) emitter.inheritVelocity = value["inheritVelocity"].get<float>();
             if (value.contains("teleportDistance")) emitter.teleportDistance = value["teleportDistance"].get<float>();
+            if (value.contains("startDelay")) emitter.startDelay = value["startDelay"].get<float>();
             if (value.contains("quality"))
             {
                 const auto &quality = value["quality"];
@@ -591,11 +656,11 @@ namespace mir
         for (const auto &behavior : behaviors)
             if (behavior.enabled) active.push_back(&behavior);
         std::stable_sort(active.begin(), active.end(), [&](const ParticleBehavior *left, const ParticleBehavior *right)
-        {
-            const auto *a = FindBehavior(left->name, spawn, emitter.simulationTarget);
-            const auto *b = FindBehavior(right->name, spawn, emitter.simulationTarget);
-            return a && b && a->order < b->order;
-        });
+            {
+                const auto *a = FindBehavior(left->name, spawn, emitter.simulationTarget);
+                const auto *b = FindBehavior(right->name, spawn, emitter.simulationTarget);
+                return a && b && a->order < b->order;
+            });
         return active;
     }
 
@@ -717,6 +782,33 @@ float SignedNoise(uint value)
 {
     return float(ParticleHash(value) >> 8) * (2.0 / 16777215.0) - 1.0;
 }
+float3 RandomDirection(uint seed)
+{
+    float z = SignedNoise(seed);
+    float phi = 3.14159265 * SignedNoise(seed ^ 0x9e3779b9u);
+    float r = sqrt(max(0.0, 1.0 - z * z));
+    return float3(r * cos(phi), r * sin(phi), z);
+}
+float3 SpreadDirection(float3 velocity, float cosMax, uint seed)
+{
+    float speed = length(velocity);
+    if (speed < 1e-6 || cosMax >= 1.0) return velocity;
+    float3 dir = velocity / speed;
+    float u = lerp(cosMax, 1.0, SignedNoise(seed) * 0.5 + 0.5);
+    float phi = 3.14159265 * SignedNoise(seed ^ 0x85ebca6bu);
+    float s = sqrt(max(0.0, 1.0 - u * u));
+    float3 t = normalize(abs(dir.y) < 0.99 ? cross(dir, float3(0, 1, 0)) : cross(dir, float3(1, 0, 0)));
+    float3 b = cross(dir, t);
+    return ((t * cos(phi) + b * sin(phi)) * s + dir * u) * speed;
+}
+float SmoothNoise(float x, uint seed)
+{
+    float cell = floor(x);
+    float f = x - cell;
+    f = f * f * (3.0 - 2.0 * f);
+    uint k = uint(cell);
+    return lerp(SignedNoise(seed + k), SignedNoise(seed + k + 1u), f);
+}
 void UpdateParticle(inout Particle a, Parameters p, float dt)
 {
 )";
@@ -804,7 +896,8 @@ void computeMain(uint3 id : SV_DispatchThreadID)
         const auto &r = emitter.renderer;
         if (r.alignment > 1 || r.facing > 1 || r.blend > 1 || r.sort > 1 ||
             !std::isfinite(r.softDistance) || r.softDistance < 0 || r.softDistance > 1024 ||
-            !std::isfinite(r.maxDistance) || r.maxDistance <= 0 || r.maxDistance > 10000000)
+            !std::isfinite(r.maxDistance) || r.maxDistance <= 0 || r.maxDistance > 10000000 ||
+            !std::isfinite(r.stretch) || r.stretch < 0 || r.stretch > 16)
         {
             error = "particle renderer choices or finite distance bounds are invalid";
             return false;
@@ -817,6 +910,7 @@ void computeMain(uint3 id : SV_DispatchThreadID)
             error = "particle capacity must be in [1, 65536]";
         else if (!std::isfinite(emitter.spawnPerMeter) || emitter.spawnPerMeter < 0 || emitter.spawnPerMeter > kMaxEffectParticles ||
             emitter.burst > kMaxEffectParticles || !std::isfinite(emitter.inheritVelocity) || emitter.inheritVelocity < 0 || emitter.inheritVelocity > 16 ||
+            !std::isfinite(emitter.startDelay) || emitter.startDelay < 0 || emitter.startDelay > kMaxEffectLifetime ||
             !std::isfinite(emitter.teleportDistance) || emitter.teleportDistance <= 0 || emitter.teleportDistance > 65536 ||
             !std::isfinite(emitter.localOffset.x) || !std::isfinite(emitter.localOffset.y) || !std::isfinite(emitter.localOffset.z) ||
             glm::any(glm::greaterThan(glm::abs(emitter.localOffset), glm::vec3(4096))))
@@ -955,7 +1049,7 @@ void computeMain(uint3 id : SV_DispatchThreadID)
                 { "farDistance", emitter.quality.farDistance },{ "minSpawnScale", emitter.quality.minSpawnScale } } },
             { "localOffset",{ emitter.localOffset.x, emitter.localOffset.y, emitter.localOffset.z } },
             { "spawnPerMeter", emitter.spawnPerMeter },{ "burst", emitter.burst },{ "seed", emitter.seed },
-            { "inheritVelocity", emitter.inheritVelocity },{ "teleportDistance", emitter.teleportDistance },
+            { "inheritVelocity", emitter.inheritVelocity },{ "teleportDistance", emitter.teleportDistance },{ "startDelay", emitter.startDelay },
             { "spawnBehaviors", WriteBehaviors(emitter, true, false) },{ "updateBehaviors", WriteBehaviors(emitter, false, false) },
             { "schemaVersion", kParticleSourceVersion },
             { "scriptId", emitter.script.value },{ "scriptLayoutId", emitter.scriptLayout.value } }.dump();

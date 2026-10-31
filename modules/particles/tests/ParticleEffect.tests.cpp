@@ -628,3 +628,64 @@ TEST_CASE("Instance emitter offsets move each placement without sweeping or link
         CHECK_FALSE(runtime.SetEmitterOffsets(handle, many));
     }
 }
+
+TEST_CASE("Start delay and stretch survive source and cooked roundtrips and reject bad values", "[particles][authoring]")
+{
+    mir::ParticleEmitterAsset emitter;
+    emitter.texture = mir::MakeAssetId("assets/x.png");
+    emitter.startDelay = 0.75f;
+    emitter.renderer.alignment = 1;
+    emitter.renderer.stretch = 0.05f;
+    const auto source = mir::WriteParticleEmitterSource(emitter, "x.png");
+    const auto parsed = mir::ReadParticleEmitterSource(source, "assets");
+    REQUIRE(parsed.mEmitter);
+    CHECK(parsed.mEmitter->startDelay == 0.75f);
+    CHECK(parsed.mEmitter->renderer.stretch == 0.05f);
+    const auto cooked = mir::ReadParticleEmitterAsset(*mir::ParseAssetBlob(mir::BuildParticleEmitterAsset(*parsed.mEmitter)));
+    REQUIRE(cooked.mEmitter);
+    CHECK(cooked.mEmitter->startDelay == 0.75f);
+    CHECK(cooked.mEmitter->renderer.stretch == 0.05f);
+
+    std::string error;
+    for (const float bad : { -0.1f, 121.0f, std::numeric_limits<float>::quiet_NaN() })
+    {
+        auto changed = emitter;
+        changed.startDelay = bad;
+        CHECK_FALSE(mir::ValidateParticleEmitterAsset(changed, error));
+    }
+    for (const float bad : { -0.1f, 17.0f, std::numeric_limits<float>::infinity() })
+    {
+        auto changed = emitter;
+        changed.renderer.stretch = bad;
+        CHECK_FALSE(mir::ValidateParticleEmitterAsset(changed, error));
+    }
+}
+
+TEST_CASE("Shape noise and spin behaviors generate their script and keep fixed order", "[particles][authoring]")
+{
+    mir::ParticleEmitterAsset emitter;
+    emitter.texture = mir::MakeAssetId("assets/x.png");
+    emitter.spawnBehaviors = { { "Initialize", {} },{ "StartRotation", { 45 } },{ "Shape", { 1, 2, 3, 4, 20, 5 } } };
+    emitter.updateBehaviors = { { "Spin", { 90, 10 } },{ "Integrate", {} },{ "Noise", { 3, 2 } },{ "Age", {} } };
+    std::string error;
+    REQUIRE(mir::ValidateParticleEmitterAsset(emitter, error));
+    const auto box = mir::GenerateParticleScript(emitter);
+    CHECK(box.find("float3(2.0, 3.0, 4.0) * float3(SignedNoise") != std::string::npos);
+    CHECK(box.find("SpreadDirection(a.velocityLifetime.xyz, cos(radians(20.0))") != std::string::npos);
+    CHECK(box.find("* 5.0;") != std::string::npos);
+    CHECK(box.find("a.sizeRotation.y = radians(45.0)") != std::string::npos);
+    CHECK(box.find("a.sizeRotation.y += radians(90.0 + 10.0 * SignedNoise") != std::string::npos);
+    CHECK(box.find("SmoothNoise(noiseTime, noiseSeed)") != std::string::npos);
+    // Registry order: Age, Noise, Integrate, Spin, regardless of the stored order.
+    CHECK(box.find("a.positionAge.w +=") < box.find("noiseTime"));
+    CHECK(box.find("noiseTime") < box.find("a.positionAge.xyz +="));
+    CHECK(box.find("a.positionAge.xyz +=") < box.find("a.sizeRotation.y += radians(90"));
+    emitter.spawnBehaviors[2].parameters = { 0, 6, 0, 0, 0, 0 };
+    const auto sphere = mir::GenerateParticleScript(emitter);
+    CHECK(sphere.find("RandomDirection(randomSeed ^ 0x68bc21ebu) * 6.0") != std::string::npos);
+    for (const auto &bad : std::vector<std::vector<float>>{ { 2, 1, 1, 1, 0, 0 },{ 0, -1, 0, 0, 0, 0 },{ 0, 1, 0, 0, 181, 0 },{ 0, 1, 0, 0, 0, 5000 } })
+    {
+        emitter.spawnBehaviors[2].parameters = bad;
+        CHECK_FALSE(mir::ValidateParticleEmitterAsset(emitter, error));
+    }
+}

@@ -1,0 +1,45 @@
+{
+  "version": 3,
+  "parameters": {
+    "spawnRateScale": 1.0,
+    "sizeScale": 1.0
+  },
+  "placements": [
+    {
+      "id": 1,
+      "emitter": "particles/explosion-flash.emitter.json",
+      "offset": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "id": 2,
+      "emitter": "particles/explosion-fire.emitter.json",
+      "offset": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "id": 3,
+      "emitter": "particles/explosion-smoke.emitter.json",
+      "offset": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "id": 4,
+      "emitter": "particles/explosion-sparks.emitter.json",
+      "offset": [
+        0,
+        0,
+        0
+      ]
+    }
+  ]
+}

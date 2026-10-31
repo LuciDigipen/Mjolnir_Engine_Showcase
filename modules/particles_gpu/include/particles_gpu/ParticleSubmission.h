@@ -46,6 +46,7 @@ namespace mir
         uint32_t alignment = 0, facing = 0, blend = 0, sort = 0;
         float softDistance = 0.25f, maxDistance = 65536.0f;
         bool lit = false, fog = true, textured = false;
+        float stretch = 0.0f;
     };
     bool ValidParticleRenderProperties(const ParticleRenderProperties &properties);
 

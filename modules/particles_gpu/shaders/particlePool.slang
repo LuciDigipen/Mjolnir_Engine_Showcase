@@ -54,8 +54,18 @@ Varying vertexMain(uint vertex:SV_VertexID,uint instance:SV_InstanceID)
         up=SafeNormal(p.velocityLifetime.xyz-normal*dot(p.velocityLifetime.xyz,normal),up);
         right=SafeNormal(cross(up,normal),right);
     }
+    float quadLength=p.sizeRotation.x;
+    if(view.options.x!=0) quadLength+=length(p.velocityLifetime.xyz)*view.texture.w;
+    else
+    {
+        float s,c;
+        sincos(p.sizeRotation.y,s,c);
+        float3 rotatedRight=right*c+up*s;
+        up=up*c-right*s;
+        right=rotatedRight;
+    }
     float2 corner=corners[vertex];
-    float3 position=center+(right*corner.x+up*corner.y)*p.sizeRotation.x;
+    float3 position=center+right*corner.x*p.sizeRotation.x+up*corner.y*quadLength;
     Varying o;
     o.position=mul(view.viewProj,float4(position,1));o.localPosition=position;
     o.uv=corner;o.color=p.color;

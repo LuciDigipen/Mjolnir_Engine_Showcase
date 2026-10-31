@@ -148,7 +148,8 @@ namespace mir::gpu
                 const auto count=std::bit_ceil(slot.input.capacity);
                 Push push{context.views[v].viewProj,glm::vec4(*anchor,0),{slot.start,slot.input.capacity,count,i},
                     {uint32_t(v*kNodesPerView),v*kGpuParticleInstances,0,0},
-                    {slot.input.renderer.maxDistance,float(slot.input.renderer.sort),count<=2048?2.0f:1.0f,0}};
+                    {slot.input.renderer.maxDistance,float(slot.input.renderer.sort),count<=2048?2.0f:1.0f,
+                    slot.input.renderer.alignment?slot.input.renderer.stretch:0.0f}};
                 auto dispatch=[&]
                 {
                     vkCmdPushConstants(cmd,mLayout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(push),&push);

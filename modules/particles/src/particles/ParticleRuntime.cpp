@@ -152,6 +152,7 @@ namespace mir
             emitter.system = handle;
             emitter.emitterId = effect.emitters[i];
             emitter.definition = effect.emitterDefinitions[i];
+            emitter.delayRemaining = emitter.definition.startDelay;
             if (!effect.placementOffsets.empty()) emitter.definition.localOffset += effect.placementOffsets[i];
             if (emitter.definition.simulationTarget == ParticleSimulationTarget::CPU)
                 emitter.ribbon.points.reserve(emitter.definition.capacity);
@@ -478,7 +479,14 @@ namespace mir
                 parameters.spawnRateScale *= emitter->qualityScale;
                 emitter->seconds = static_cast<float>(steps * kStep);
                 emitter->motionSeconds += dt;
-                if (emitter->state == ParticleExecutionState::Active && steps)
+                if (emitter->state == ParticleExecutionState::Active && steps && emitter->delayRemaining > 0)
+                {
+                    emitter->delayRemaining -= steps * kStep;
+                    emitter->previousPosition = emitter->spawnStart = emitter->attachmentPosition;
+                    emitter->attachmentVelocity = glm::vec3(0);
+                    emitter->motionSeconds = 0;
+                }
+                else if (emitter->state == ParticleExecutionState::Active && steps)
                 {
                     const auto displacement = emitter->attachmentPosition.Meters() - emitter->previousPosition.Meters();
                     const double distance = static_cast<double>(glm::length(displacement));

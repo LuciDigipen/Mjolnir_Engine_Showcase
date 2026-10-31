@@ -67,6 +67,7 @@ namespace mir
         bool lit = false;
         bool fog = true;
         bool textured = false;
+        float stretch = 0.0f; // for velocity alignment
     };
 
     // Valid values are finite and within [min, max], integer parameters must also be whole numbers.
@@ -121,6 +122,7 @@ namespace mir
     struct ParticleEmitterAsset
     {
         float lifetime = 2.0f;
+        float startDelay = 0.0f;
         float spawnRate = 60.0f;
         uint32_t capacity = 256;
         glm::vec3 localOffset{ 0.0f };
