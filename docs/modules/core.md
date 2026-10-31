@@ -30,7 +30,7 @@ handler.
 A module is a class whose constructor takes a `ModuleContext`, the `World` and
 the `SystemScheduler`, plus the other modules it needs. It registers its parts
 there and frees them in its destructor. `CoreModule` is the first: core's
-components, `EngineModeState`, `EntityChangeListeners`, `FrameCommands`, the
+components, `EngineModeState`, `ComponentFieldListeners`, `FrameCommands`, the
 `RequestQueue` and `TransformPropagateSystem`.
 
 Everything a module registers comes back as a `Registration`, a move-only token
@@ -87,8 +87,8 @@ Resources are not components and carry none of the POD constraints. Nothing ever
 relocates one, so a resource may own heap memory and have a destructor.
 
 ```cpp
-world.EmplaceResource<EntityChangeListeners>();
-EntityChangeListeners *listeners = world.TryResource<EntityChangeListeners>();
+world.EmplaceResource<ComponentFieldListeners>();
+ComponentFieldListeners *listeners = world.TryResource<ComponentFieldListeners>();
 ```
 
 ### Access by name
@@ -117,6 +117,7 @@ const ComponentOps &health = ComponentRegistry::Instance().RegisterRuntime("Heal
 | `Archetype`, `ComponentColumn` | `ecs/Archetype.h` | Rows sharing a signature; one type's data in one |
 | `World` | `ecs/World.h` | Owns entities, archetypes, resources and the scene graph |
 | `ComponentHooks` | `ecs/World.h` | One OnAdd and one OnRemove per component type, per `World` |
+| `ComponentFieldListeners`, `ComponentFieldChange` | `ecs/ComponentFieldChanges.h` | Callbacks before and after a commit writes reflected fields; which fields it wrote |
 | `HierarchyIndex` | `ecs/HierarchyIndex.h` | The scene graph and the root order, read through `World::HierarchyIndex()` |
 | `SetParent`, `MoveToLastSibling` | `ecs/TransformHierarchy.h` | Reparent or reorder, keeping the world pose by default; move to the end of the siblings |
 | `CanSetParent`, `CanSetParentAll` | `ecs/TransformHierarchy.h` | The checks `SetParent` makes, without changing anything; for one entity or a list |
@@ -202,6 +203,12 @@ ends with the destroy. Neither kind may set or clear hooks, because that
 could resize the hook slots or destroy the running hook. World counts the hooks
 that are running, so setting hooks or dropping a hook token asserts inside one,
 and in Release it logs an error and does nothing.
+
+**Hooks own structure; `ComponentFieldListeners` owns field writes.** A commit
+that writes reflected fields, today only `PrefabCoordinator`'s, notifies the
+listeners once before and once after, with the fields it wrote per component.
+Its adds, removes and destroys go through `World`, so they reach the owners'
+hooks and are not in the payload. Inspector and undo writes notify nobody.
 
 **`DestroyEntity` is bottom-up.** Children are destroyed fully first, last
 child first. Each child stays linked until its own removal, so its hooks still
@@ -464,6 +471,16 @@ layout changes.
    `World::AddComponent` directly, rather than it being convention.
 
 ## Changed
+
+*2026-10-31* — **`EntityChangeListeners` is `ComponentFieldListeners`.** Was:
+one payload of removed and added entities and components plus changed fields,
+in `EntityChanges.h`, with a `BeforeRemove` phase. `ScriptSystem` and
+`MeshResolveSystem` released bindings from it on removal as well as on a
+renamed script, mesh or shader. Now: `ComponentFieldChanges.h` carries only
+`ComponentFieldChange`s, the phases are `BeforeChange` and `AfterChange`, and
+removal cleanup is the `ScriptRef` and `MeshRenderer` OnRemove hooks alone.
+Because: the hooks already fire on every remove and destroy the coordinator
+makes, so two mechanisms did the same job.
 
 *2026-10-25* — **`FieldDesc::Constrain` (#219).** Was: a field's enum names and
 clamp were read only by the Inspector's widgets. Now: `Constrain` applies them
