@@ -17,6 +17,7 @@
 
 namespace mir
 {
+    class AssetResolver;
     class AssetsModule;
     class GameUIModule;
 
@@ -32,7 +33,7 @@ namespace mir
     {
     public:
         GameShellModule(ModuleContext context, GameUIModule &gameUI, AssetsModule &assets,
-            const GameShellSettings &settings);
+            const AssetResolver &resolver, const GameShellSettings &settings);
 
         GameShellModule(const GameShellModule &) = delete;
         GameShellModule &operator=(const GameShellModule &) = delete;

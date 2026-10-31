@@ -94,9 +94,10 @@ namespace mir::test
             const AssetManifestSourceEntry entries[]{
                 {{AssetId{901}, kParticleScriptTypeTag, kParticleScriptContentVersion}, "script.blob"},
                 {{AssetId{902}, kParticleScriptLayoutTypeTag, kParticleScriptLayoutContentVersion}, "layout.blob"},
-                {{EffectId(), kParticleEffectTypeTag, effectVersion}, "effect.blob"},
+                {{EffectId(), kParticleEffectTypeTag, effectVersion}, "effect.blob", "assets/effects/exhaust.particle.json"},
                 {{EmitterId(), kParticleEmitterTypeTag, kParticleEmitterContentVersion}, "emitter.blob"},
-                {{TextureId(), textureTyped ? kTextureAssetTypeTag : kRawAssetTypeTag, 1}, "texture.blob"}};
+                {{TextureId(), textureTyped ? kTextureAssetTypeTag : kRawAssetTypeTag,
+                    textureTyped ? kTextureAssetContentVersion : kRawAssetContentVersion}, "texture.blob"}};
             Write(kAssetManifestFileName, BuildAssetManifestBlob(entries));
         }
 

@@ -124,7 +124,7 @@ namespace mir
 
     EditorModule::EditorModule(ModuleContext context, ImGuiModule &imgui, WindowModule &window,
         RendererModule &renderer, SceneModule &scene, PrefabModule &prefab, AssetsModule &assets,
-        const GameProject &project, bool enableLayout)
+        const AssetResolver &resolver, const GameProject &project, bool enableLayout)
         : mWorld(context.world), mRenderer(renderer), mScene(scene), mPrefab(prefab), mProject(project),
           mEnableLayout(enableLayout), mProjectMenu(BuildProjectMenu()),
           mPrefabAuthoring(context.world, prefab.Coordinator(), mProject.mRootDir, prefab.SourceDir()),
@@ -150,7 +150,7 @@ namespace mir
         }
         mEditor.SetAuthoringBackend(&mPrefabAuthoring);
         mEditor.SetAuthoredEntities(&mPrefabAuthoring);
-        mPrefabWorkspace.BindResolveSystems(&renderer.Renderer(), &assets.Cache(), mProject.mAssetIdRoot);
+        mPrefabWorkspace.BindResolveSystems(&renderer.Renderer(), &assets.Cache(), resolver);
         context.scheduler.AddSystem<PrefabPreviewSystem>(SystemPhase::LateUpdate,
             SystemOrder{SystemOrder::kNormal}, mPrefabWorkspace,
             prefab.Coordinator(), mEditor, [this] { RefreshPrefabHistory(); });

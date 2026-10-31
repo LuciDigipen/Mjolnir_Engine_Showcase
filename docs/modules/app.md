@@ -23,7 +23,7 @@ it belongs.
 mDesc, mProject          the checks before anything is built: game directories, project_settings.json
 mSplash                  shown until main closes it
 mCommands, mWorld, mScheduler
-CoreModule, AssetsModule, AsyncAssetService (only when a manifest exists), ParticlesModule, SceneModule, PrefabModule
+CoreModule, AssetsModule, AsyncAssetService (only when a manifest exists), AssetResolver, ParticlesModule, SceneModule, PrefabModule
 GameUIModule, GameShellModule    before ImGui, whose shutdown frees their textures' GPU side
 WindowModule, RendererModule, ParticlesGpuModule, InputModule, AnimationModule, ImGuiModule, EditorModule (editor builds)
 CameraModule, AudioModule, PhysicsModule, TerrainModule
@@ -271,6 +271,13 @@ through `mSwitchProjectTo`. All of them fail on a crash or a logged error.
    cheap for a large scene.
 
 ## Changed
+
+*2026-10-31* — **`App` owns an `AssetResolver`.** Was: `App` passed `mAssetIdRoot` to
+the particles, animation, script and renderer modules. Now: it builds one
+`AssetResolver` after `AssetsModule` and passes it by reference to those modules,
+the game shell and the editor, so a path is looked up the same way everywhere
+and a reload is seen without telling each holder. Because those modules only
+needed the root to turn a path into an id.
 
 *2026-10-31* — **`App` owns an `AsyncAssetService`.** Was: assets loaded only
 through the cache on the calling thread. Now: the service is built right after

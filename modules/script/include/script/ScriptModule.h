@@ -18,6 +18,7 @@
 
 namespace mir
 {
+    class AssetResolver;
     class AssetsModule;
     class ScriptResolveSystem;
     class ScriptSystem;
@@ -25,7 +26,7 @@ namespace mir
     class ScriptModule
     {
     public:
-        ScriptModule(ModuleContext context, AssetsModule &assets, std::string assetIdRoot);
+        ScriptModule(ModuleContext context, AssetsModule &assets, const AssetResolver &resolver);
 
         ScriptModule(const ScriptModule &) = delete;
         ScriptModule &operator=(const ScriptModule &) = delete;

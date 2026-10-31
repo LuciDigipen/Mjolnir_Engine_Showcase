@@ -9,7 +9,8 @@
 #include "particles/ParticleWorld.h"
 
 #include <assets/AssetCache.h>
-#include <assets/AssetPath.h>
+#include <assets/AssetId.h>
+#include <assets/AssetResolver.h>
 #include <core/log/Log.h>
 
 #include <algorithm>
@@ -20,8 +21,8 @@
 
 namespace mir
 {
-    ParticleWorld::ParticleWorld(World &world, AssetCache &assets, std::string assetIdRoot, uint32_t capacity)
-        : mWorld(world), mAssets(assets), mAssetIdRoot(std::move(assetIdRoot)), mRuntime(capacity)
+    ParticleWorld::ParticleWorld(World &world, AssetCache &assets, const AssetResolver &resolver, uint32_t capacity)
+        : mWorld(world), mAssets(assets), mResolver(resolver), mRuntime(capacity)
     {}
 
     const ParticleSystemInstance *ParticleWorld::Find(Entity owner) const
@@ -90,9 +91,9 @@ namespace mir
         const auto end = std::find(std::begin(system->systemName), std::end(system->systemName), '\0');
         if (end == std::end(system->systemName) || end == std::begin(system->systemName)) return system->userParameters;
         const std::string_view name(system->systemName, static_cast<size_t>(end - std::begin(system->systemName)));
-        const auto logical = MakeLogicalAssetPath(mAssetIdRoot, name);
-        if (!logical.Ok()) return system->userParameters;
-        const auto parsed = LoadParticleEffect(mAssets, MakeAssetId(logical.path));
+        const AssetId id = mResolver.Resolve(name);
+        if (id.IsNull()) return system->userParameters;
+        const auto parsed = LoadParticleEffect(mAssets, id);
         return parsed.mEffect ? parsed.mEffect->parameters : system->userParameters;
     }
 
@@ -162,8 +163,11 @@ namespace mir
             emitter.failedEffect = {};
             return;
         }
-        const auto logical = MakeLogicalAssetPath(mAssetIdRoot, name);
-        const AssetId id = logical.Ok() ? MakeAssetId(logical.path) : MakeAssetId(name);
+        std::string reason = "invalid effect asset path";
+        const AssetId id = mResolver.Resolve(name, &reason);
+        // a name that resolves to nothing is remembered by its text, so it is logged once and tried
+        // again when an asset has that name
+        const AssetId requested = id.IsNull() ? AssetId{ Fnv1a64(name) } : id;
         const ParticleSystemInstance *instance = Find(owner);
         if (instance != nullptr && instance->effectId != id)
         {
@@ -174,17 +178,16 @@ namespace mir
         if (instance == nullptr)
         {
             emitter.instance = {};
-            if (emitter.failedEffect == id)
+            if (emitter.failedEffect == requested)
                 return;
             if (!mRuntime.HasCapacity())
                 return;
-            auto parsed = logical.Ok() && end != std::end(emitter.systemName)
+            auto parsed = !id.IsNull() && end != std::end(emitter.systemName)
                 ? LoadParticleEffect(mAssets, id) : ParticleEffectResult{};
             if (!parsed.mEffect)
             {
-                emitter.failedEffect = id;
-                MIR_LOG_ERROR("Particle effect '{}': {}", name,
-                    parsed.mError.empty() ? "invalid effect asset path" : parsed.mError);
+                emitter.failedEffect = requested;
+                MIR_LOG_ERROR("Particle effect '{}': {}", name, parsed.mError.empty() ? reason : parsed.mError);
                 return;
             }
             emitter.instance = mRuntime.Start(id, *parsed.mEffect, pose, owner,

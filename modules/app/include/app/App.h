@@ -10,6 +10,7 @@
 
 #include <project/GameProject.h>
 #include <animation/AnimationModule.h>
+#include <assets/AssetResolver.h>
 #include <assets/AssetsModule.h>
 #include <assets/AsyncAssetService.h>
 #ifndef MIR_WITH_AUDIO
@@ -256,6 +257,7 @@ namespace mir
         CoreModule mCore;
         AssetsModule mAssets;
         std::unique_ptr<AsyncAssetService> mAssetService;
+        AssetResolver mResolver;
         ParticlesModule mParticles;
         SceneModule mScene;
         PrefabModule mPrefab;

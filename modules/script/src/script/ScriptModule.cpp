@@ -22,14 +22,14 @@
 
 namespace mir
 {
-    ScriptModule::ScriptModule(ModuleContext context, AssetsModule &assets, std::string assetIdRoot)
+    ScriptModule::ScriptModule(ModuleContext context, AssetsModule &assets, const AssetResolver &resolver)
     {
         RegisterScriptComponents();
 
         // the resolver first, so a ScriptRef made last frame runs this frame
         mResolver = &context.scheduler.AddSystem<ScriptResolveSystem>(SystemPhase::PreUpdate,
             SystemOrder{SystemOrder::kEarly}, mHost,
-            MakeScriptAssetLoader(mHost, mReload, assets.Cache(), std::move(assetIdRoot)));
+            MakeScriptAssetLoader(mHost, mReload, assets.Cache(), resolver));
         // before PhysicsSystem (kNormal), so what OnFixedUpdate sets acts on the same step
         context.scheduler.AddSystem<ScriptFixedSystem>(SystemPhase::FixedUpdate, SystemOrder{SystemOrder::kEarly}, mHost);
         mScripts = &context.scheduler.AddSystem<ScriptSystem>(SystemPhase::PreUpdate,

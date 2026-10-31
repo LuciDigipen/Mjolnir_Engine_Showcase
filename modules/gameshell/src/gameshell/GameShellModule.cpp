@@ -8,6 +8,7 @@
  */
 #include <gameshell/GameShellModule.h>
 
+#include <assets/AssetResolver.h>
 #include <assets/AssetsModule.h>
 #include <core/ecs/EngineMode.h>
 #include <core/ecs/Requests.h>
@@ -17,12 +18,12 @@
 namespace mir
 {
     GameShellModule::GameShellModule(ModuleContext context, GameUIModule &gameUI, AssetsModule &assets,
-        const GameShellSettings &settings)
+        const AssetResolver &resolver, const GameShellSettings &settings)
         : mWorld(context.world), mSettings(settings)
     {
         if (mSettings.mUIDemo)
         {
-            mDemo.Load(gameUI.Context(), &assets.Cache());
+            mDemo.Load(gameUI.Context(), &assets.Cache(), resolver);
             mScreen = gameUI.AddScreen([this](UIContext &ui, float) { mDemo.Draw(ui); });
             return;
         }

@@ -9,6 +9,7 @@
 #include <script/ScriptModule.h>
 #include <script/components/ScriptRef.h>
 
+#include <assets/AssetResolver.h>
 #include <assets/AssetsModule.h>
 #include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/SystemScheduler.h>
@@ -26,7 +27,8 @@ namespace
         mir::SystemScheduler scheduler;
         // no manifest there: an empty cache is enough, the test loads its script by hand
         mir::AssetsModule assets{ std::filesystem::temp_directory_path() / "mir_script_module_no_assets" };
-        mir::ScriptModule scripts{ { world, scheduler }, assets, "games/Test/assets" };
+        mir::AssetResolver resolver{ assets, "games/Test/assets" };
+        mir::ScriptModule scripts{ { world, scheduler }, assets, resolver };
 
         Fixture()
         {

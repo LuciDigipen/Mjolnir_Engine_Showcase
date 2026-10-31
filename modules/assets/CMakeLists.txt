@@ -7,6 +7,7 @@ target_sources(engine_assets PRIVATE
     src/assets/AssetIdRoot.cpp
     src/assets/AssetManifest.cpp
     src/assets/AssetPath.cpp
+    src/assets/AssetResolver.cpp
     src/assets/AssetSettings.cpp
     src/assets/AssetsModule.cpp
     src/assets/AsyncAssetService.cpp

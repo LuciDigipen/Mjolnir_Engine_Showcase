@@ -52,9 +52,9 @@ namespace mir
     }
 
     ParticlesModule::ParticlesModule(ModuleContext context, AssetsModule &assets,
-        std::string assetIdRoot, uint32_t capacity)
+        const AssetResolver &resolver, uint32_t capacity)
         : mParticles(context.world.EmplaceResource<ParticleWorld>(
-            context.world, assets.Cache(), std::move(assetIdRoot), capacity))
+            context.world, assets.Cache(), resolver, capacity))
     {
         context.world.EmplaceResource<ParticleDiagnostics>();
         RegisterParticleComponents();

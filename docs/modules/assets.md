@@ -46,6 +46,7 @@ if (AssetCache *cache = app.Assets())
 | `AssetsModule` | `assets/AssetsModule.h` | The manifest and cache, loaded at startup, and the reload candidate. `ReloadEpoch` counts committed reloads |
 | `AsyncAssetService`, `AssetRequest`, `AssetLoadState` | `assets/AsyncAssetService.h` | Reads and decodes assets on a background lane, `Request`, `State`, `Acquire`, `DrainCompletions`, `CancelAll`, `Idle` |
 | `AssetDecoder`, `AssetDependencies` | `assets/AssetDecoder.h` | A decode function with the type tags of the dependencies it reads, and the lookup it gets over the blobs already read |
+| `AssetResolver` | `assets/AssetResolver.h` | `Resolve` turns a path inside the game's assets folder into an `AssetId` through the manifest, `ResolveFull` does the same for an engine asset's full path, `PathOf` gives the path for a message |
 | `AssetSettings` | `assets/AssetSettings.h` | The `assets` section of `project_settings.json`, `loadThreads` |
 | `TextureAsset`, `TextureMip`, `SurfaceMaterialAsset` | `assets/ModelAsset.h` | Typed texture v2 (format, color space, level 0 and higher mip descriptors) and the generic `.material.json` surface material, distinct from the glTF `MaterialAsset` |
 | `ResolveAssetIdRoot` | `assets/AssetIdRoot.h` | Fills a `GameProject`'s asset id root; fails setup on an unusable `assetsRoot` |
@@ -87,6 +88,19 @@ empty and `.` segments drop, `..` pops a segment. A `..` that climbs out of
 its own root, an absolute path, a drive letter, `:` or NUL is an error, not a
 guess. A path spelled like that before `AssetPath` existed keeps its id; the
 cooked manifest was byte-identical before and after the change.
+
+**Code at runtime finds an asset by path through `AssetResolver`.** It normalizes the
+path the way the cooker does and looks it up in the manifest, so a path
+that no asset has is a null id and a reason, not a made-up id that fails later
+inside the cache. It reads the manifest the module holds now, so a lookup after a
+reload sees the new cook. `App` owns one, and a module takes it by reference
+instead of the id root string. The resolver keeps a reference to `AssetsModule`,
+which must outlive it. `Resolve` returns a null id for a path that is not valid
+or that no asset has, and its optional `error` says which, so a caller checks
+for null before it loads. `PathOf` gives the id in hex for an asset with no
+path. The cooker, the particle source parsers and the
+editor's file tools still build ids from source paths, because the files they
+name may not be cooked yet.
 
 **Case is part of the id.** `Terrain/A` and `terrain/A` are two assets even on
 Windows, where both open the same file. Folding case would have changed every
@@ -182,6 +196,15 @@ logical paths for any root spelling").
    at the cost of a file per asset and a registry to keep in sync.
 
 ## Changed
+
+*2026-10-31* — **`AssetResolver` replaces the id root in the runtime modules.** Was:
+`App` passed the id root string to the particles, animation, script and renderer
+modules, and each one joined it to a path and hashed the result, so an unknown
+path became an id that failed later inside the cache. Now: `App` owns one
+`AssetResolver`, those modules and the game shell take it by reference, and a
+path that no asset has is a null id with a reason. Because every one of those
+lookups would otherwise change when ids stop being path hashes. The editor's
+file tools and the particle source parsers are unchanged.
 
 *2026-10-31* — **`AsyncAssetService`.** Was: `AssetCache::Load` read, parsed and
 decoded on the calling thread, so a scene that opened blocked until every asset
