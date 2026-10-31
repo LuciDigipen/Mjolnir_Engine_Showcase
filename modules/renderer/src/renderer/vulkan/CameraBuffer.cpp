@@ -245,7 +245,7 @@ namespace mir::vk
 
         const bool hasHistory = viewIndex < kMaxViewsPerFrame;
         // A different camera in this slot is a cut: no velocity or jitter sequence carries over.
-        if (hasHistory && mPreviousHistoryId[viewIndex] != view.historyId)
+        if (hasHistory && (view.cut || mPreviousHistoryId[viewIndex] != view.historyId))
         {
             mHasPreviousViewProj[viewIndex] = false;
             mJitterIndex[viewIndex] = 0;

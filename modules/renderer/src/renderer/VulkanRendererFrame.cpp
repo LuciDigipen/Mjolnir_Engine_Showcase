@@ -555,7 +555,7 @@ namespace mir
             return;
 
         // different camera starts it over.
-        if (views[0].historyId != mTracedHistoryId)
+        if (views[0].cut || views[0].historyId != mTracedHistoryId)
         {
             mPostProcessing->ResetHistory();
             mTracedHistoryId = views[0].historyId;

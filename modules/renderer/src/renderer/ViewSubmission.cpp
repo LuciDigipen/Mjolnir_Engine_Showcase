@@ -81,7 +81,7 @@ namespace mir
     }
 
     size_t BuildViewDrawItems(std::span<const WorldDrawItem> items, WorldPosition viewportCamera,
-        const glm::mat4 &viewProj, std::vector<DrawItem> &out)
+        const glm::mat4 &viewProj, std::vector<DrawItem> &out, bool cut)
     {
         out.clear();
         out.reserve(items.size());
@@ -99,7 +99,7 @@ namespace mir
                 continue;
             }
 
-            const WorldPose &previousPose = item.previousPose.value_or(item.pose);
+            const WorldPose &previousPose = cut ? item.pose : item.previousPose.value_or(item.pose);
             const std::optional<glm::mat4> previousModel = item.translationGrid > 0.0f
                 ? GridMatrixRelativeTo(previousPose, viewportCamera,
                     item.translationGrid)

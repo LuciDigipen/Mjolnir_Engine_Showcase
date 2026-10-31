@@ -178,6 +178,8 @@ namespace mir
         bool rayTracingSceneComplete = true;
         // Stable camera identity for temporal effects; callers with no ID reset history on camera switches.
         uint64_t historyId = 0;
+        // The camera jumped, this view keeps no history
+        bool cut = false;
         // Editor-only debug drawing for this view; the default is the final render alone.
         DebugViewSettings debugView;
         // Vertex pairs drawn as lines over everything, never hidden by the scene; colliders while debugView asks.
