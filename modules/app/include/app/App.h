@@ -95,9 +95,6 @@ namespace mir
         // Bounded automatic pool; --workers 0 explicitly selects serial execution.
         uint32_t mWorkerThreads = static_cast<uint32_t>(JobExecutor::DefaultWorkerCount());
 
-        // Empty disables GPU timestamp capture.
-        std::filesystem::path mGpuTimingPath;
-
         // debug: draw UIDemoScreen, every core widget, as the game UI
         bool mUIDemo = false;
 

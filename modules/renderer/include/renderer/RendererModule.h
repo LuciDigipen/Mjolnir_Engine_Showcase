@@ -32,8 +32,6 @@ namespace mir
         // RenderSettings and PostProcessingSettings are read from it
         std::filesystem::path mProjectSettingsPath;
         std::string mAssetIdRoot;
-        // Empty disables GPU timestamp capture.
-        std::filesystem::path mGpuTimingPath;
     };
 
     class RendererModule

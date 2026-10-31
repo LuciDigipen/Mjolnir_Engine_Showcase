@@ -16,7 +16,6 @@
 #include "vulkan/FrameCapture.h"
 #include "vulkan/FrameSync.h"
 #include "vulkan/FxCompositionPass.h"
-#include "vulkan/GpuTiming.h"
 #include "vulkan/ImGuiOverlay.h"
 #include "vulkan/MaterialStore.h"
 #include "vulkan/MaterialTable.h"
@@ -243,7 +242,6 @@ namespace mir
             .pColorAttachments = &hdrColorAttachment,
             .pDepthAttachment = &depthAttachment };
 
-        mGpuTiming->MarkBegin(cmd, frame, vk::GpuTimingRegion::RasterScene);
         vkCmdBeginRendering(cmd, &renderingInfo);
         mDevice->BeginLabel(cmd, "Scene Pass", { 1.0f, 0.0f, 1.0f, 1.0f });
 
@@ -261,7 +259,6 @@ namespace mir
 
         mDevice->EndLabel(cmd);
         vkCmdEndRendering(cmd);
-        mGpuTiming->MarkEnd(cmd, frame, vk::GpuTimingRegion::RasterScene, extent);
 
         if (mRasterSurfaces->Active())
         {
@@ -405,8 +402,6 @@ namespace mir
         // After Begin's wait: this slot's last frame is done with its set 2 buffers.
         if (frame)
         {
-            mGpuTiming->BeginFrame(frame->cmd, mFrameSync->Index());
-            mGpuTiming->MarkBegin(frame->cmd, mFrameSync->Index(), vk::GpuTimingRegion::Frame);
             if (mFxSystem)
             {
                 mDevice->BeginLabel(frame->cmd, "FX simulation", {1, 0.5f, 0.1f, 1});
@@ -448,11 +443,7 @@ namespace mir
         mSsgiTrace->Configure(mRasterSurfaces->Active(), mSwapchain->Extent(), views, mSsgiSettings.halfResolution);
         mShadowMaps->RecordPasses(frame->cmd, mFrameSync->Index(), *mResources);
         RecordCommands(frame->cmd, frame->imageIndex, views);
-        mGpuTiming->MarkEnd(frame->cmd, mFrameSync->Index(), vk::GpuTimingRegion::Frame,
-            mSwapchain->Extent());
         const bool submitted = mFrameSync->End(*mSwapchain, *frame);
-        if (!submitted)
-            mGpuTiming->DiscardFrame(mFrameSync->Index());
 
         mCapture->Finish(submitted, *mSwapchain);
     }
@@ -491,7 +482,7 @@ namespace mir
         }
         mDevice->BeginLabel(cmd, "Ray Trace Pass", { 0.0f, 1.0f, 1.0f, 1.0f });
         mRayTracer->RecordTrace(cmd, frame, rect, mCameraBuffer->Set(frame),
-            cameraOffset, effectiveAaMode, mPostProcessing->RtSampleCount(), gi ? &*gi : nullptr, mGpuTiming.get());
+            cameraOffset, effectiveAaMode, mPostProcessing->RtSampleCount(), gi ? &*gi : nullptr);
         mDevice->EndLabel(cmd);
 
         const bool hasRect = rect.extent.width > 0 && rect.extent.height > 0;
@@ -579,11 +570,7 @@ namespace mir
             return;
 
         RecordRtFrame(frame->cmd, frame->imageIndex, views);
-        mGpuTiming->MarkEnd(frame->cmd, mFrameSync->Index(), vk::GpuTimingRegion::Frame,
-            mSwapchain->Extent());
         const bool submitted = mFrameSync->End(*mSwapchain, *frame);
-        if (!submitted)
-            mGpuTiming->DiscardFrame(mFrameSync->Index());
         mCapture->Finish(submitted, *mSwapchain);
     }
 

@@ -65,7 +65,6 @@ namespace mir::vk
     class ImGuiOverlay;
     class MeshUploader;
     class DebugDraw;
-    class GpuTiming;
 }
 
 namespace mir
@@ -77,8 +76,6 @@ namespace mir
         const ISurfaceProvider *window;
         const char *appName;
         bool enableValidation;
-        // Empty disables GPU timestamp capture.
-        std::filesystem::path gpuTimingPath;
     };
 
     // One draw in the fixed Scene world, built by RenderSystem from a
@@ -367,8 +364,6 @@ namespace mir
         std::unique_ptr<vk::Device> mDevice;
         std::unique_ptr<vk::Swapchain> mSwapchain;
         std::unique_ptr<vk::FrameSync> mFrameSync;
-        // Created only when RendererDesc::gpuTimingPath is set.
-        std::unique_ptr<vk::GpuTiming> mGpuTiming;
         std::unique_ptr<vk::ResourceStore> mResources;
         // Only on a device with descriptor indexing; null keeps the legacy material path.
         std::unique_ptr<vk::MaterialTable> mMaterialTable;

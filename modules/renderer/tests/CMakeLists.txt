@@ -17,7 +17,6 @@ engine_add_module_tests(renderer
     SurfaceMaterialLayout.tests.cpp
     MeshStreaming.tests.cpp
     FogEffect.tests.cpp
-    GpuTiming.tests.cpp
     HdrEffect.tests.cpp
     MotionBlurEffect.tests.cpp
     RendererCapabilities.tests.cpp

@@ -1,8 +1,7 @@
 # Surface material pipeline
 
 *State as of 2026-10-31.* Shared surface materials and terrain rendering include
-periodic macro variation and distance-faded parallax occlusion. GPU timing
-capture is opt-in; this document contains no performance measurements.
+periodic macro variation and distance-faded parallax occlusion.
 
 ## Source contract
 

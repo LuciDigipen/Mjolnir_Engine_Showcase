@@ -14,7 +14,6 @@
 #include "vulkan/FrameCapture.h"
 #include "vulkan/FrameSync.h"
 #include "vulkan/FxCompositionPass.h"
-#include "vulkan/GpuTiming.h"
 #include "vulkan/ImGuiOverlay.h"
 #include "vulkan/MaterialStore.h"
 #include "vulkan/MaterialTable.h"
@@ -41,7 +40,6 @@ namespace mir
         : mDevice(std::make_unique<vk::Device>()),
         mSwapchain(std::make_unique<vk::Swapchain>()),
         mFrameSync(std::make_unique<vk::FrameSync>()),
-        mGpuTiming(std::make_unique<vk::GpuTiming>()),
         mResources(std::make_unique<vk::ResourceStore>()),
         mMaterialTable(std::make_unique<vk::MaterialTable>()),
         mMaterialStore(std::make_unique<vk::MaterialStore>()),
@@ -123,9 +121,6 @@ namespace mir
         if (!mFrameSync->Initialize(*mDevice))
             return false;
 
-        if (!desc.gpuTimingPath.empty() && !mGpuTiming->Initialize(*mDevice, desc.gpuTimingPath))
-            return false;
-
         if (!mCapture->Initialize(*mDevice))
             return false;
 
@@ -202,8 +197,6 @@ namespace mir
         {
             mDevice->WaitIdle();
 
-            mGpuTiming->Flush();
-            mGpuTiming->Shutdown();
             mFrameSync->Shutdown();
 
             mMeshUploads->Shutdown(*mRayTracer);

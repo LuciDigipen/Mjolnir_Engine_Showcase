@@ -21,7 +21,6 @@ subsystem holds a pointer to the facade or to another subsystem.
 | `Device` | instance, debug messenger, surface, physical and logical device, queue, VMA allocator, cached device properties |
 | `Swapchain` | swapchain images and views, one depth image and one HDR color image per frame in flight, render-complete semaphores, acquire and present |
 | `FrameSync` | command pools and buffers, image-acquired semaphores, the frame timeline with `kFramesInFlight = 2` |
-| `GpuTiming` | optional per-frame-slot timestamp queries for the whole renderer submission, the raster scene pass and `TraceRays`, polled without waiting and written as CSV |
 | `ResourceStore` | meshes, textures, samplers and the three built-in textures (white, flat normal, error magenta), behind slot/generation handles |
 | `MaterialStore` | materials and their pipelines, set 0, the pipeline layout every material shares, the sky pipeline |
 | `MaterialTable` | set 4 on a descriptor-indexing device: the raw material-record buffer, the stable image rows and the distinct sampler rows, one descriptor set per frame |
