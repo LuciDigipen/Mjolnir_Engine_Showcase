@@ -5,6 +5,7 @@ engine_add_module_tests(terrain
     TerrainCollision.tests.cpp
     TerrainCollisionResidency.tests.cpp
     TerrainCollisionResidencyJolt.tests.cpp
+    TerrainGround.tests.cpp
     TerrainHeightQuery.tests.cpp
     TerrainIdentity.tests.cpp
     TerrainLayout.tests.cpp

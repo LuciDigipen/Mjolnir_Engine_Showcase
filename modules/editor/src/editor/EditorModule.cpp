@@ -170,6 +170,7 @@ namespace mir
         // after the renderer's: it freed every upload, the previews' too
         mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &)
             {
+                mEditor.CancelSnapToTerrain();
                 mParticleEditor->OnHidden(mWorld);
                 mPrefabWorkspace.ResetResolve();
             });
@@ -178,6 +179,7 @@ namespace mir
         mSceneLoad = context.scheduler.AddStage(Stage::SceneLoad, [this, &scene](SystemContext &)
             {
                 const SceneLoadResult &load = scene.LastLoad();
+                mEditor.CancelSnapToTerrain();
                 mEditor.ClearHistory();
                 if (load.cause != SceneLoadCause::FromSnapshot)
                 {
@@ -222,6 +224,7 @@ namespace mir
                 mPrefabMarksBeforePlay = CapturePrefabPlayMarks(documents,
                     [this](DocumentId document) { return mEditor.IsDocumentUnsaved(document); });
 
+                mEditor.CancelSnapToTerrain();
                 mEditor.ClearHistory();
                 mPrefabBeforePlay = mPrefabWorkspace.ActiveDocument();
                 mPrefabWorkspace.ActivateScene();
@@ -265,7 +268,7 @@ namespace mir
                     mWorld.Resource<RenderSettings>(), mWorld.Resource<PostProcessingSettings>(),
                     mWorld.Resource<EngineModeState>(), mProjectMenu, mProject.mDir,
                     preview != nullptr ? *preview : mWorld, mWorld, MakeEditorDocuments(), mImport.View(),
-                    mRenderer.Renderer(), MakeContentBrowserView());
+                    mRenderer.Renderer(), MakeContentBrowserView(), mFrameDt);
                 if (const std::string particlePath = mEditor.TakeParticleOpenRequest();
                     !particlePath.empty() && IsEditing(mWorld))
                 {

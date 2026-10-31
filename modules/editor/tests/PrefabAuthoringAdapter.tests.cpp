@@ -11,6 +11,7 @@
 #include <editor/history/AuthoredEdit.h>
 #include <editor/history/Authoring.h>
 #include <editor/history/History.h>
+#include <editor/SnapToTerrain.h>
 #include <editor/history/SceneOps.h>
 
 #include <core/ecs/ComponentRegistry.h>
@@ -30,6 +31,7 @@
 #include <scene/SceneInstancePatch.h>
 #include <scene/SceneIO.h>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <glm/gtc/quaternion.hpp>
@@ -97,6 +99,7 @@ namespace
     using mir::SetInstanceFieldOverride;
     using mir::StableId;
     using mir::SystemContext;
+    using mir::Transform;
     using mir::World;
 
     const std::string &ProcessToken()
@@ -545,6 +548,69 @@ TEST_CASE("A field override is one History step and survives undo and redo", "[a
     fixture.Redo();
     CHECK(fixture.mAdapter->FieldState(key) == AuthoredFieldState::Overridden);
     CHECK(FloatField(fixture.mWorld, fixture.Member(second), DataOps(), "amount") == 42.0f);
+}
+
+TEST_CASE("A snap override is one step, undo restores the prior override, and redo persists", "[app][authoring][snap]")
+{
+    TempDir dir;
+    Fixture fixture;
+    const std::filesystem::path prefabsDir = dir.mPath / "prefabs";
+    const std::filesystem::path prefabPath = prefabsDir / "test.prefab";
+    const std::filesystem::path sceneDir = dir.mPath / "scene";
+    std::filesystem::create_directories(prefabsDir);
+    REQUIRE(mir::WritePrefabFile(prefabPath, fixture.mDocument));
+    REQUIRE_FALSE(HasPrefabErrors(fixture.mCoordinator->Registry().Scan(prefabsDir)));
+
+    const SceneNodeAddress second{ 2 };
+    const AuthoredKey position = SceneEditKey(fixture, second, "Transform", "position");
+    const AuthoredKey rotation = SceneEditKey(fixture, second, "Transform", "rotation");
+    const mir::WorldVec3 beforePosition = *mir::TryWorldVec3FromDouble({ 2.0, 3.0, 4.0 });
+    const glm::quat beforeRotation = glm::angleAxis(0.3f, glm::vec3(0.0f, 1.0f, 0.0f));
+    fixture.Run(MakeAuthoredCommand("Override Transform",
+        { AuthoredEntry{ position, fixture.mAdapter->EncodeField(FieldKind::WorldPosition, &beforePosition) },
+          AuthoredEntry{ rotation, fixture.mAdapter->EncodeField(FieldKind::Quat, &beforeRotation) } }));
+    REQUIRE(fixture.mAdapter->FieldState(position) == AuthoredFieldState::Overridden);
+    REQUIRE(fixture.mAdapter->FieldState(rotation) == AuthoredFieldState::Overridden);
+    fixture.mHistory.EndStep();
+    fixture.Flush();
+
+    mir::SnapToTerrainEdit edit;
+    edit.mPosition = *mir::TryWorldVec3FromDouble({ 10.0, 20.0, 30.0 });
+    edit.mRotation = glm::angleAxis(0.6f, glm::vec3(0.0f, 1.0f, 0.0f));
+    std::unique_ptr<mir::ICommand> command =
+        mir::MakeSnapToTerrainCommand(fixture.Member(second), edit, fixture.mAdapter.get());
+    REQUIRE(command);
+    fixture.Run(std::move(command));
+    CHECK(fixture.mHistory.StepCount() == 2);
+    CHECK(fixture.mHistory.UndoName() == "Snap to Terrain");
+    CHECK(fixture.mAdapter->FieldState(position) == AuthoredFieldState::Overridden);
+    CHECK(fixture.mAdapter->FieldState(rotation) == AuthoredFieldState::Overridden);
+
+    fixture.Undo();
+    const Transform *transform = fixture.mWorld.GetComponent<Transform>(fixture.Member(second));
+    REQUIRE(transform != nullptr);
+    CHECK(transform->Position() == beforePosition);
+    CHECK(std::abs(glm::dot(transform->Rotation(), beforeRotation)) == Catch::Approx(1.0f).epsilon(1e-5));
+    CHECK(fixture.mAdapter->FieldState(position) == AuthoredFieldState::Overridden);
+    CHECK(fixture.mAdapter->FieldState(rotation) == AuthoredFieldState::Overridden);
+
+    fixture.Redo();
+    transform = fixture.mWorld.GetComponent<Transform>(fixture.Member(second));
+    REQUIRE(transform != nullptr);
+    CHECK(transform->Position() == edit.mPosition);
+    CHECK(std::abs(glm::dot(transform->Rotation(), edit.mRotation)) == Catch::Approx(1.0f).epsilon(1e-5));
+
+    REQUIRE(SaveScene(fixture, sceneDir));
+    World loadedWorld;
+    PrefabCoordinator loadedCoordinator;
+    REQUIRE_FALSE(HasPrefabErrors(loadedCoordinator.Registry().Scan(prefabsDir)));
+    const LoadedScene loaded = mir::LoadScene(loadedWorld, sceneDir, &loadedCoordinator.Resolver());
+    const ScenePrefabInstance &instance = loaded.mInstances.at(fixture.mRoot);
+    const Entity member = loaded.mEntities.at(instance.mBindings.at(second));
+    const Transform *loadedTransform = loadedWorld.GetComponent<Transform>(member);
+    REQUIRE(loadedTransform != nullptr);
+    CHECK(loadedTransform->Position() == edit.mPosition);
+    CHECK(std::abs(glm::dot(loadedTransform->Rotation(), edit.mRotation)) == Catch::Approx(1.0f).epsilon(1e-5));
 }
 
 TEST_CASE("An override equal to the template value is still an override", "[app][authoring]")

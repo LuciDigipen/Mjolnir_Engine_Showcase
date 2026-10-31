@@ -8,6 +8,7 @@
  */
 #pragma once
 
+#include <terrain_runtime/TerrainGroundBridge.h>
 #include <terrain_runtime/TerrainRender.h>
 #include <terrain_runtime/TerrainJobExecutor.h>
 
@@ -41,6 +42,7 @@
 namespace mir
 {
     class PhysicsWorld;
+    class TerrainGroundBridge;
     class SurfaceMaterialLibrary;
     class VulkanRenderer;
     class World;
@@ -194,6 +196,9 @@ namespace mir
 
         // Parallel to TerrainWorld::Instances().
         std::vector<InstanceResources> mResources;
+
+        // The World's GroundQuery source; registered before any scene terrain resolves.
+        std::unique_ptr<TerrainGroundBridge> mGround;
 
         // The streamer's worker pool, which also builds meshes and collision pieces.
         std::shared_ptr<TerrainJobExecutor> mPool;

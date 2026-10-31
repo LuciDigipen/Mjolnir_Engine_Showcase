@@ -8,6 +8,8 @@
  */
 #include <terrain_runtime/TerrainRuntime.h>
 
+#include <terrain_runtime/TerrainGroundBridge.h>
+
 #include <core/ecs/EngineMode.h>
 #include <core/ecs/Query.h>
 #include <core/ecs/World.h>
@@ -190,6 +192,7 @@ namespace mir
 
     TerrainRuntime::~TerrainRuntime()
     {
+        mGround.reset();
         // Finish runtime-owned builds before their collaborators die, but keep the
         // shared lane open for a streamer that outlives or replaces this runtime.
         if (mPool) mPool->WaitIdle();
@@ -215,6 +218,7 @@ namespace mir
             });
         mAssetIdRoot = project.mAssetIdRoot;
         mReleasesRoot = TerrainReleasesRoot(project.mRootDir);
+        mGround = std::make_unique<TerrainGroundBridge>(world);
         ViewDrawSources *sources = world.TryResource<ViewDrawSources>();
         if (!sources)
             sources = &world.EmplaceResource<ViewDrawSources>();
@@ -403,6 +407,8 @@ namespace mir
         mGuards.clear();
         mResources.clear();
         mWorld->Resource<TerrainWorld>() = TerrainWorld{};
+        if (mGround)
+            mGround->Invalidate();
         mSpec = {};
         mPendingSpec = {};
         mTagSpec = {};
@@ -440,6 +446,8 @@ namespace mir
         if (next.SameDerivedState(current))
         {
             current = std::move(next);
+            if (mGround)
+                mGround->Invalidate();
             return;
         }
 
@@ -463,6 +471,8 @@ namespace mir
 
         mResources = Build(next);
         current = std::move(next);
+        if (mGround)
+            mGround->Invalidate();
         ApplyResidencies();
         for (const Leaving &left : leaving)
             LogAdoption(*left.adoption, left.from, left.cpu, left.gpu, left.pieces);

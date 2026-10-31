@@ -11,6 +11,7 @@
 
 #include <core/ecs/ComponentFields.h>
 #include <core/ecs/World.h>
+#include <editor/SnapToTerrain.h>
 #include <editor/EditorAudio.h>
 #include <editor/panels/AssetImportPanel.h>
 
@@ -28,8 +29,9 @@ namespace mir
     {
     public:
         
-        void Draw(World &world, const AssetImportView &assets, History &history,
-            IAuthoredEntities *authored = nullptr);
+        // True when Snap to Terrain was clicked from the Transform menu.
+        bool Draw(World &world, const AssetImportView &assets, History &history,
+            IAuthoredEntities *authored, const SnapToTerrainAction &snap);
 
         // where a sound event picker's list comes from, null lists nothing
         void SetAudio(IEditorAudio *audio) { mSoundBanks.mAudio = audio; }

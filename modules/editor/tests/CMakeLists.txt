@@ -13,6 +13,7 @@ engine_add_module_tests(editor
     PrefabAuthoringAdapter.tests.cpp
     PrefabPlayMarks.tests.cpp
     PrefabWorkspace.tests.cpp
+    SnapToTerrain.tests.cpp
     ViewPie.tests.cpp
 )
 

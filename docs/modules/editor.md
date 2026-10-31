@@ -82,6 +82,17 @@ Prefab. The Hierarchy's Create Prefab turns a scene subtree into a new document,
 and dropping a Prefab row from the Content Browser into the Hierarchy or the
 scene viewport places a linked instance.
 
+The Transform header's Inspector menu offers **Snap to Terrain** on the Scene
+tab in Edit. `SnapToTerrainActionFor` disables it with a reason when there is no
+terrain coverage or the active document is a Prefab page. A request fills the
+bottom footprint from a `GroundQuery` probe, fits a plane, samples a second
+tilted footprint, and then submits one `Snap to Terrain` position+rotation
+command through `AuthoredEdit`. Sampling retries outside the panel's `Draw`;
+the session cancels on timeout, selection/document/Play changes, or a Transform,
+parent or terrain revision change. At the commit boundary it revalidates that
+context and refuses to queue its command when this frame submitted another edit
+or requested a scene, Play or document transition.
+
 `DrawLayout(true)` builds the dockspace once. It splits into left, right and
 bottom with `DockBuilderSplitNode`, keeps the centre undocked through
 `ImGuiDockNodeFlags_PassthruCentralNode`, docks `Hierarchy`, `Inspector` and
