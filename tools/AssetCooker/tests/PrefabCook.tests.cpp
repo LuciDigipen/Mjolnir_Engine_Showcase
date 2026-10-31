@@ -6,6 +6,7 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
+#include "CookTestSupport.h"
 #include <assets/AssetCache.h>
 #include <assets/AssetManifest.h>
 #include <core/fs/FileIO.h>
@@ -108,7 +109,7 @@ TEST_CASE("A prefab cooks to a typed blob under its UUID AssetId", "[cooker][pre
     REQUIRE(entry != nullptr);
     CHECK(entry->typeTag == mir::kPrefabAssetTypeTag);
     CHECK(entry->contentVersion == mir::kPrefabAssetContentVersion);
-    CHECK(manifest->Find(mir::MakeAssetId("assets/prefabs/parent.prefab")) == nullptr);
+    CHECK(manifest->FindByPath("assets/prefabs/parent.prefab") == nullptr);
 
     mir::AssetCache cache(&*manifest, root.mOut);
     const mir::AssetBlobView *blob = cache.Load(mir::PrefabAssetId(parent.mId));

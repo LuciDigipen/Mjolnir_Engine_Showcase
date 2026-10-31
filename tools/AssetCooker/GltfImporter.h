@@ -8,6 +8,7 @@
  */
 #pragma once
 #include <assets/AssetManifest.h>
+#include <assets/AssetMeta.h>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -30,17 +31,16 @@ namespace mir::cook
     struct GltfImport
     {
         AssetId modelId{};
-        std::string identityPath;
-        std::vector<std::string> aliases;
         std::vector<std::filesystem::path> dependencies;
         std::vector<ImportedBlob> blobs;
         std::vector<ImportedAsset> contents;
-        std::filesystem::path metadataPath;
-        std::string metadata;
+        // the importer state for the .meta, the part keys handed out so far
+        std::string importer;
     };
     // No output is published until all conversion/validation has succeeded.
+    // meta is the package's .meta: its guid is the model's id and its importer state keeps the keys stable
     GltfImport ImportGltf(const std::filesystem::path &path, const std::string &assetPath,
-                          const std::vector<std::filesystem::path> &cookedRoots);
+                          const std::vector<std::filesystem::path> &cookedRoots, const AssetMeta &meta);
 
     // Resolves URI dependencies without loading them. Every returned path is
     // canonical and confined to one of allowedRoots.

@@ -9,6 +9,7 @@ engine_add_module_tests(assets
     AssetsModule.tests.cpp
     AsyncAssetService.tests.cpp
     ModelAsset.tests.cpp
+    SourceAssetIds.tests.cpp
 )
 
 # the service tests build a JobExecutor

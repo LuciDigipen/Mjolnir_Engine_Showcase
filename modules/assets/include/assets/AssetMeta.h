@@ -30,6 +30,9 @@ namespace mir
         std::string importer = "{}";
     };
 
+    // The id of something inside a package, from the package's guid and a key that names the part
+    AssetId MakeChildAssetId(AssetId parent, std::string_view key);
+
     // The .meta file of a source file: its path with .meta added
     std::filesystem::path AssetMetaPath(const std::filesystem::path &source);
 

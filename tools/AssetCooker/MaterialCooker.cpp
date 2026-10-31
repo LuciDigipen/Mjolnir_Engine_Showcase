@@ -420,9 +420,9 @@ namespace mir::cook
             BuildTextureMipChain(out);
             return out;
         }
-        AssetId DerivedId(const std::string &assetPath, std::string_view role)
+        AssetId DerivedId(AssetId material, std::string_view role)
         {
-            return MakeAssetId(assetPath + "#" + std::string(role));
+            return MakeChildAssetId(material, role);
         }
         void Emit(MaterialImport &result, AssetId id, const auto &asset, std::string kind, std::string name)
         {
@@ -441,11 +441,11 @@ namespace mir::cook
 
     MaterialImport ImportMaterial(const std::filesystem::path &path, const std::string &assetPath,
                                   const std::filesystem::path &ownerRoot,
-                                  const std::vector<std::filesystem::path> &approvedRoots)
+                                  const std::vector<std::filesystem::path> &approvedRoots, AssetId guid)
     {
         ParsedMaterial parsed = Parse(path, assetPath, ownerRoot, approvedRoots);
         MaterialImport result;
-        result.materialId = MakeAssetId(assetPath);
+        result.materialId = guid;
         result.dependencies = parsed.files;
         result.sourceImages = parsed.images;
 
@@ -454,9 +454,9 @@ namespace mir::cook
             const TextureAsset albedo = PackAlbedo(parsed, ownerRoot, approvedRoots);
             const TextureAsset normal = PackNormal(parsed, ownerRoot, approvedRoots);
             const TextureAsset surface = PackSurface(parsed, ownerRoot, approvedRoots);
-            parsed.asset.albedoTexture = DerivedId(assetPath, "albedoTexture");
-            parsed.asset.normalTexture = DerivedId(assetPath, "normalTexture");
-            parsed.asset.surfaceTexture = DerivedId(assetPath, "surfaceTexture");
+            parsed.asset.albedoTexture = DerivedId(guid, "albedoTexture");
+            parsed.asset.normalTexture = DerivedId(guid, "normalTexture");
+            parsed.asset.surfaceTexture = DerivedId(guid, "surfaceTexture");
             Emit(result, parsed.asset.albedoTexture, albedo, "texture", "albedo");
             Emit(result, parsed.asset.normalTexture, normal, "texture", "normal");
             Emit(result, parsed.asset.surfaceTexture, surface, "texture", "surface");

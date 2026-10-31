@@ -23,13 +23,13 @@ Unsupported required extensions fail cook explicitly. Optional extensions use th
 
 ## Identity and publication
 
-Keep `<source>.import.json` in version control alongside its glTF. It stores allocated child keys and never recycles them. Unique nonempty names match across array reorder and content edits. Anonymous/duplicate-name objects use content or structural fingerprints; ambiguous matches fail with an instruction to assign unique names. Renaming named objects, editing anonymous objects, deleting metadata, or moving the source can change IDs. Assign unique names before importing assets that need stable references.
+Keep `<source>.meta` in version control alongside its glTF. Its guid is the model's id, and its importer section stores the allocated child keys and never recycles them. A child's id comes from the guid and its key. Unique nonempty names match across array reorder and content edits. Anonymous/duplicate-name objects use content or structural fingerprints; ambiguous matches fail with an instruction to assign unique names. Renaming named objects, editing anonymous objects or deleting the `.meta` can change IDs, and moving the source does not. Assign unique names before importing assets that need stable references.
 
 Every cooker invocation reimports glTF and reads its dependencies. CMake tracks files under cooked roots to trigger the cooker after edits. Dependency fingerprint caching is deferred.
 
 Blobs use asset ID plus content hash in their filenames. The cooker writes blobs to temporary files and atomically replaces the manifest only after all imports succeed. A failed import leaves the previous manifest and its blobs usable. Unreferenced blobs are pruned after successful publication. Metadata is append-only and may advance if publication itself fails; that does not invalidate the old manifest. Concurrent cooker processes targeting the same output directory are unsupported. The output directory must be outside source roots.
 
-A model's manifest entry carries its identity path as its logical path, and each alias entry carries its own path, so a lookup by name still finds the model after a move. The model lists its meshes, skeletons and clips as dependencies, a mesh lists its materials and textures, and a material lists its texture. The sub-assets have no logical path.
+A model's manifest entry carries its logical path, which follows the file when it moves, and the model keeps its id because the guid stays in its `.meta`. The model lists its meshes, skeletons and clips as dependencies, a mesh lists its materials and textures, and a material lists its texture. The sub-assets have no logical path.
 
 ## Importing from the editor
 
@@ -66,7 +66,7 @@ then add that id to the `entities` array in `scene.json`, move `nextId` past it,
 
 `ModelPlayer` carries two layers of reference. `modelName`, relative to the game's asset root, for example `models/example.glb`, and `clip` are convenient for hand-authored scenes. `modelAsset` and `animationAsset` hold 16-digit hex asset ids and take priority whenever they are set. The engine writes the id back after the first successful load, so a hand-written entity upgrades itself the next time the scene is saved. The Inspector does not expose these three raw reference fields as text inputs.
 
-An id survives its package being moved or renamed, because the cooker keeps the identity in `<source>.import.json` and republishes the old path as an alias, which a `modelName` does not. When `animationAsset` names a clip that a reimport removed, playback stops with a warning instead of quietly running a different one, which is what a shifted `clip` index would do.
+An id survives its package being moved or renamed, because the guid stays in its `.meta`, which a `modelName` does not. When `animationAsset` names a clip that a reimport removed, playback stops with a warning instead of quietly running a different one, which is what a shifted `clip` index would do.
 
 `clip` selects a clip (`-1` means rest pose); `scene = -1` selects the default scene. `time`, `speed`, `playing` and `loop` control each instance. Set `playing = false` and `time` for a fixed pose. Playback advances in Play mode while running; Edit mode and Play pause freeze the clock. There is no scene-level preview flag or animation preview window yet. Model nodes remain an internal hierarchy beneath the entity, rather than separate ECS entities.
 

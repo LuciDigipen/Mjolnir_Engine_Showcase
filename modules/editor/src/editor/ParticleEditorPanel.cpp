@@ -105,8 +105,15 @@ namespace mir
     }
 
     ParticleEditorPanel::ParticleEditorPanel(std::filesystem::path sourceRoot, std::string idRoot)
-        : mSourceRoot(std::move(sourceRoot)), mIdRoot(std::move(idRoot))
+        : mSourceRoot(std::move(sourceRoot)), mIdRoot(std::move(idRoot)),
+          mIds(std::vector<AssetSourceRoot>{ { mSourceRoot, mIdRoot } })
     {}
+
+    AssetId ParticleEditorPanel::IdOf(const std::string &path)
+    {
+        const auto logical = MakeLogicalAssetPath(mIdRoot, path);
+        return logical.Ok() ? mIds.IdAt(logical.path) : kNullAssetId;
+    }
 
     bool ParticleEditorPanel::OpenSystem(const std::string &path, World &world)
     {
@@ -195,7 +202,7 @@ namespace mir
             {
                 if (const auto source = ReadText(SourceFile(path)))
                 {
-                    const auto parsed = ReadParticleEffectSource(*source, mIdRoot);
+                    const auto parsed = ReadParticleEffectSource(*source, mIdRoot, [this](std::string_view logical) { return mIds.IdAt(logical); });
                     if (!parsed.mEffect) continue;
                     std::unordered_set<std::string> seen;
                     for (const auto &reference : parsed.mEmitterPaths)
@@ -210,12 +217,12 @@ namespace mir
     {
         const auto text = ReadText(SourceFile(path));
         if (!text) throw std::runtime_error("cannot read particle system source");
-        auto result = ReadParticleEffectSource(*text, mIdRoot);
+        auto result = ReadParticleEffectSource(*text, mIdRoot, [this](std::string_view logical) { return mIds.IdAt(logical); });
         if (!result.mEffect) throw std::invalid_argument(result.mError);
         if (result.mEmitterPaths.empty()) throw std::invalid_argument("particle system has no emitter placements");
         const auto emitterText = ReadText(SourceFile(result.mEmitterPaths.front()));
         if (!emitterText) throw std::runtime_error("cannot read the first emitter source");
-        auto emitter = ReadParticleEmitterSource(*emitterText, mIdRoot);
+        auto emitter = ReadParticleEmitterSource(*emitterText, mIdRoot, [this](std::string_view logical) { return mIds.IdAt(logical); });
         if (!emitter.mEmitter) throw std::invalid_argument(emitter.mError);
         mSystem = *result.mEffect; mReferences = result.mEmitterPaths; mSystemPath = path;
         mDirtySystem = false; mSelected = 0;
@@ -248,7 +255,7 @@ namespace mir
         {
             const auto text = ReadText(SourceFile(target));
             if (!text) throw std::runtime_error("cannot read emitter source, create the referenced emitter before loading it");
-            auto result = ReadParticleEmitterSource(*text, mIdRoot);
+            auto result = ReadParticleEmitterSource(*text, mIdRoot, [this](std::string_view logical) { return mIds.IdAt(logical); });
             if (!result.mEmitter) throw std::invalid_argument(result.mError);
             incoming.emitter = std::move(*result.mEmitter);
             incoming.texturePath = std::move(result.mTexturePath);
@@ -371,7 +378,7 @@ namespace mir
         const uint32_t last = *std::max_element(draft.placementIds.begin(), draft.placementIds.end());
         if (last == UINT32_MAX) throw std::runtime_error("particle placement IDs are exhausted");
         const uint32_t id = last + 1;
-        draft.emitters.push_back(MakeAssetId(MakeLogicalAssetPath(mIdRoot, path).path));
+        draft.emitters.push_back(IdOf(path));
         draft.placementIds.push_back(id);
         draft.placementOffsets.emplace_back(0.0f);
         std::string error;
@@ -387,7 +394,7 @@ namespace mir
         if (!mNewEmitterPath.ends_with(".emitter.json") || std::filesystem::exists(SourceFile(mNewEmitterPath)))
             throw std::invalid_argument("choose an unused .emitter.json path");
         const std::string texture = EnsureDefaultTexture(imports);
-        const auto emitter = EmitterTemplate(mNewEmitterTarget, MakeAssetId(MakeLogicalAssetPath(mIdRoot, texture).path));
+        const auto emitter = EmitterTemplate(mNewEmitterTarget, IdOf(texture));
         const auto source = WriteParticleEmitterSource(emitter, texture);
         const auto path = SourceFile(mNewEmitterPath);
         std::filesystem::create_directories(path.parent_path());
@@ -410,9 +417,9 @@ namespace mir
         if (std::filesystem::exists(SourceFile(emitterPath)))
             throw std::invalid_argument("the matching emitter asset already exists");
         const std::string texture = EnsureDefaultTexture(imports);
-        const auto emitter = EmitterTemplate(mNewEmitterTarget, MakeAssetId(MakeLogicalAssetPath(mIdRoot, texture).path));
+        const auto emitter = EmitterTemplate(mNewEmitterTarget, IdOf(texture));
         ParticleEffect effect;
-        effect.emitters = { MakeAssetId(MakeLogicalAssetPath(mIdRoot, emitterPath).path) };
+        effect.emitters = { IdOf(emitterPath) };
         effect.placementIds = { 1 };
         effect.placementOffsets = { { 0, 0, 0 } };
         const std::vector<std::string> paths{ emitterPath };
@@ -440,7 +447,7 @@ namespace mir
         {
             if (!std::filesystem::is_regular_file(SourceFile(path)))
                 throw std::invalid_argument("system references a missing emitter: " + path);
-            mSystem.emitters.push_back(MakeAssetId(MakeLogicalAssetPath(mIdRoot, path).path));
+            mSystem.emitters.push_back(IdOf(path));
         }
         std::string error;
         if (!ValidateParticleEffect(mSystem, error)) throw std::invalid_argument(error);
@@ -458,7 +465,7 @@ namespace mir
     {
         if (!std::filesystem::is_regular_file(SourceFile(texturePath)))
             throw std::invalid_argument("choose an existing texture asset for " + path);
-        emitter.texture = MakeAssetId(MakeLogicalAssetPath(mIdRoot, texturePath).path);
+        emitter.texture = IdOf(texturePath);
         std::string error;
         if (!ValidateParticleEmitterAsset(emitter, error)) throw std::invalid_argument(path + ": " + error);
         const auto source = WriteParticleEmitterSource(emitter, texturePath);
@@ -863,8 +870,7 @@ namespace mir
         if (!particles || !mPreviewing || !editing) return;
         if (!particles->Runtime().Find(particles->PreviewHandle()))
         {
-            const auto logical = MakeLogicalAssetPath(mIdRoot, mSystemPath);
-            const auto handle = particles->StartPreview(MakeAssetId(logical.path), mPreviewAnchor);
+            const auto handle = particles->StartPreview(IdOf(mSystemPath), mPreviewAnchor);
             if (handle.IsNull()) { mPreviewing = false;mError = "Cook this system and its dependencies before previewing."; }
             else particles->Runtime().Pause(handle, mPreviewPaused);
         }
@@ -894,7 +900,7 @@ namespace mir
         bool sameList = instance->effect.emitters.size() == count && mSystem.placementOffsets.size() == count &&
             instance->effect.emitterDefinitions.size() == count;
         for (size_t i = 0; sameList && i < count; ++i)
-            sameList = instance->effect.emitters[i] == MakeAssetId(MakeLogicalAssetPath(mIdRoot, mReferences[i]).path);
+            sameList = instance->effect.emitters[i] == IdOf(mReferences[i]);
         if (!sameList)
         {
             mPreviewStale = true;
@@ -932,7 +938,7 @@ namespace mir
             if (changed) runtime.SetEmitterData(handle, i, *draft);
             const auto &cooked = instance->effect.emitterDefinitions[i];
             mPreviewStale |= cooked.capacity != draft->capacity || cooked.simulationTarget != draft->simulationTarget ||
-                (!texturePath->empty() && cooked.texture != MakeAssetId(MakeLogicalAssetPath(mIdRoot, *texturePath).path)) ||
+                (!texturePath->empty() && cooked.texture != IdOf(*texturePath)) ||
                 (cooked.simulationTarget == ParticleSimulationTarget::GPU && !SameBehaviors(cooked, *draft));
         }
     }

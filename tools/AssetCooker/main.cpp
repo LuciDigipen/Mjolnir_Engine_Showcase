@@ -10,6 +10,7 @@
 
 #include "AssetReferences.h"
 #include "GltfImporter.h"
+#include "IdMigration.h"
 #include "ImageImporter.h"
 #include "MaterialCooker.h"
 #include <algorithm>
@@ -19,6 +20,7 @@
 #include <assets/AssetMeta.h>
 #include <assets/AssetManifest.h>
 #include <assets/AssetPath.h>
+#include <assets/SourceAssetIds.h>
 #include <assets/ModelAsset.h>
 #include <cctype>
 #include <chrono>
@@ -49,7 +51,7 @@
 namespace
 {
     using Json = nlohmann::json;
-    constexpr uint32_t kCacheVersion = 5;
+    constexpr uint32_t kCacheVersion = 6;
     constexpr std::string_view kImporterFingerprint = "fastgltf-v2-stable-identity";
     constexpr std::string_view kMaterialCookerFingerprint = "surface-material-v1-packed-2048";
     // One generation back, kept so a crashed cook can be rolled back.
@@ -69,6 +71,11 @@ namespace
         std::vector<std::filesystem::path> changed;
         std::filesystem::path importSource, packageRoot, targetDirectory;
         bool force = false;
+        // --migrate-ids reports, or with --apply performs, the move to .meta guids and rewrites the JSON
+        // under each --rewrite-dir
+        bool migrateIds = false;
+        bool applyMigration = false;
+        std::vector<std::filesystem::path> rewriteDirs;
     };
     struct Output
     {
@@ -282,6 +289,12 @@ namespace
                 options.targetDirectory = value();
             else if (arg == "--force")
                 options.force = true;
+            else if (arg == "--migrate-ids")
+                options.migrateIds = true;
+            else if (arg == "--apply")
+                options.applyMigration = true;
+            else if (arg == "--rewrite-dir")
+                options.rewriteDirs.emplace_back(value());
             else
                 throw std::runtime_error("unknown argument: " + arg);
         }
@@ -289,7 +302,7 @@ namespace
             throw std::runtime_error("--source-dir requires a following --id-root");
         if (pendingMove)
             throw std::runtime_error("--move-model requires a following --move-to");
-        if (options.roots.empty() || options.out.empty())
+        if (options.roots.empty() || (options.out.empty() && !options.migrateIds))
             throw std::runtime_error("source roots and output are required");
         return options;
     }
@@ -505,9 +518,10 @@ namespace
                 std::filesystem::copy_file(dependency, staged, std::filesystem::copy_options::none);
                 relocated[dependency] = destination / relative;
             }
-            const auto sidecar = std::filesystem::path(source.string() + ".import.json");
+            // the .meta goes along, so the moved model keeps its guid
+            const auto sidecar = mir::AssetMetaPath(source);
             if (std::filesystem::exists(sidecar))
-                std::filesystem::copy_file(sidecar, std::filesystem::path(newEntry.string() + ".import.json"));
+                std::filesystem::copy_file(sidecar, mir::AssetMetaPath(newEntry));
 
             if (LowerExtension(source) == ".gltf")
             {
@@ -534,7 +548,7 @@ namespace
             std::filesystem::rename(pending, destination);
             for (const auto &[oldPath, newPath] : relocated)
                 std::filesystem::remove(oldPath, error);
-            std::filesystem::remove(std::filesystem::path(source.string() + ".import.json"), error);
+            std::filesystem::remove(mir::AssetMetaPath(source), error);
         }
         catch (...)
         {
@@ -575,6 +589,11 @@ namespace
             options.models.push_back(moved);
             completedMoves.emplace_back(model, moved);
         }
+        std::vector<mir::AssetSourceRoot> sourceRoots;
+        for (const auto &root : options.roots)
+            sourceRoots.push_back({root.physical, root.logical});
+        mir::SourceAssetIds ids(std::move(sourceRoots));
+        ids.Scan();
         // Particle dependencies form a small source graph, a changed member recooks
         // the complete graph before publishing its replacement manifest.
         bool particleChange = std::any_of(options.changed.begin(), options.changed.end(), [](const auto &path)
@@ -666,15 +685,10 @@ namespace
                       [](const auto &a, const auto &b) { return a.second < b.second; });
         }
 
-        std::vector<mir::cook::GltfImport> metadata;
+        // each glTF source and the importer state its .meta keeps once the cook has published
+        std::vector<std::pair<std::filesystem::path, std::string>> importerStates;
         Json resultModels = Json::array();
         std::unordered_set<std::string> seenModels;
-        std::unordered_map<std::string, std::string> identityOwners;
-        for (const auto &[cachedPath, cachedRecord] : cache["models"].items())
-            if (cachedRecord.is_object() && cachedRecord.contains("identityPath"))
-                if (auto resolved = ResolveModel(options, cachedPath);
-                    resolved && std::filesystem::exists(resolved->second))
-                    identityOwners.emplace(cachedRecord.at("identityPath").get<std::string>(), cachedPath);
         std::unordered_map<uint64_t, std::string> prefabAssetOwners;
         bool assetsChanged = false;
         auto emit = [&](mir::AssetId id, const std::vector<std::byte> &bytes, std::string_view logicalPath = {}) {
@@ -711,6 +725,9 @@ namespace
             return output;
         };
 
+        // a file a particle source names, by the guid in its .meta
+        const mir::AssetIdOfPath particleIdOf = [&ids](std::string_view logical) { return ids.IdAt(logical); };
+
         std::unordered_map<mir::PrefabId, std::string> prefabOwners;
         auto cookPrefab = [&](const std::string &logical, const std::filesystem::path &path) {
             const mir::PrefabParseResult parsed = mir::ReadPrefabFile(path);
@@ -743,7 +760,7 @@ namespace
             const auto bytes = mir::ReadBytes(path);
             if (!bytes) throw std::runtime_error("missing particle emitter: " + path.string());
             auto emitter = mir::ReadParticleEmitterSource(
-                {reinterpret_cast<const char *>(bytes->data()), bytes->size()}, root.logical);
+                {reinterpret_cast<const char *>(bytes->data()), bytes->size()}, root.logical, particleIdOf);
             if (!emitter.mEmitter)
                 throw std::runtime_error(LogicalPath(root, path) + ": " + emitter.mError);
             const auto texturePath = root.physical / emitter.mTexturePath;
@@ -771,8 +788,7 @@ namespace
                 emitter.mEmitter->scriptLayout = layoutId;
             }
             emit(emitter.mEmitter->texture, mir::BuildTypedAsset(mir::cook::DecodeImage(*textureBytes)));
-            emit(mir::MakeAssetId(LogicalPath(root, path)), mir::BuildParticleEmitterAsset(*emitter.mEmitter),
-                 LogicalPath(root, path));
+            emit(ids.Meta(path).guid, mir::BuildParticleEmitterAsset(*emitter.mEmitter), LogicalPath(root, path));
         };
 
         for (const auto &logical : options.removals)
@@ -806,17 +822,7 @@ namespace
         // A source image that a material packs is not a standalone asset. Drop
         // an older standalone entry from the manifest on a partial cook.
         auto eraseStandaloneSource = [&](const std::filesystem::path &image) {
-            const auto canonical = std::filesystem::weakly_canonical(image);
-            for (const auto &root : options.roots)
-            {
-                const auto relative = canonical.lexically_relative(std::filesystem::weakly_canonical(root.physical));
-                if (relative.empty() || relative.is_absolute() || *relative.begin() == "..")
-                    continue;
-                const auto logical = mir::MakeLogicalAssetPath(root.logical, relative.generic_string());
-                if (logical.Ok())
-                    outputs.erase(mir::MakeAssetId(logical.path).value);
-                break;
-            }
+            outputs.erase(ids.KnownId(image).value);
         };
         for (const auto &[root, path] : materials)
         {
@@ -878,7 +884,7 @@ namespace
             try
             {
                 // The paths were checked by the inspection pass.
-                imported = mir::cook::ImportMaterial(path, logical, root->physical, physicalRoots);
+                imported = mir::cook::ImportMaterial(path, logical, root->physical, physicalRoots, ids.Meta(path).guid);
             }
             catch (const std::exception &error)
             {
@@ -978,7 +984,7 @@ namespace
             mir::cook::GltfImport imported;
             try
             {
-                imported = mir::cook::ImportGltf(path, logical, physicalRoots);
+                imported = mir::cook::ImportGltf(path, logical, physicalRoots, ids.Meta(path));
             }
             catch (const std::exception &error)
             {
@@ -987,37 +993,18 @@ namespace
                 PublishText(options.out / "import-cache.json", cache.dump(2) + "\n");
                 throw std::runtime_error(logical + ": " + error.what());
             }
-            if (auto owner = identityOwners.find(imported.identityPath);
-                owner != identityOwners.end() && owner->second != logical)
-                throw std::runtime_error("import identity is already used by '" + owner->second +
-                                         "'; remove the copied .import.json to import "
-                                         "this file as a new asset");
-            identityOwners[imported.identityPath] = logical;
             Json cachedOutputs = Json::array();
             std::optional<Output> modelOutput;
             for (const auto &blob : imported.blobs)
             {
                 Output output = emit(blob.id, blob.bytes,
-                    blob.id == imported.modelId ? std::string_view(imported.identityPath) : std::string_view());
+                    blob.id == imported.modelId ? std::string_view(logical) : std::string_view());
                 cachedOutputs.push_back(OutputToJson(output));
                 if (blob.id == imported.modelId)
                     modelOutput = output;
             }
             if (!modelOutput)
                 throw std::runtime_error("importer did not emit its model payload");
-            for (const auto &alias : imported.aliases)
-            {
-                const mir::AssetId aliasId = mir::MakeAssetId(alias);
-                if (aliasId == imported.modelId)
-                    continue;
-                Output aliasOutput = *modelOutput;
-                aliasOutput.id = aliasId;
-                aliasOutput.logicalPath = alias;
-                if (outputs.contains(aliasId.value) && outputs.at(aliasId.value).file != aliasOutput.file)
-                    throw std::runtime_error("model alias collides with another asset: " + alias);
-                outputs[aliasId.value] = aliasOutput;
-                cachedOutputs.push_back(OutputToJson(aliasOutput));
-            }
             Json dependencyNames = Json::array();
             for (const auto &dependency : imported.dependencies)
                 dependencyNames.push_back(dependency.generic_string());
@@ -1029,9 +1016,7 @@ namespace
                                     {"name", entry.name},
                                     {"id", entry.id.value},
                                     {"index", entry.index}});
-            record = {{"identityPath", imported.identityPath},
-                      {"aliases", imported.aliases},
-                      {"modelId", imported.modelId.value},
+            record = {{"modelId", imported.modelId.value},
                       {"fingerprint", fingerprint},
                       {"dependencies", dependencyNames},
                       {"contents", contents},
@@ -1040,7 +1025,7 @@ namespace
                       {"lastSuccess", std::chrono::duration_cast<std::chrono::seconds>(
                                           std::chrono::system_clock::now().time_since_epoch())
                                           .count()}};
-            metadata.push_back(std::move(imported));
+            importerStates.emplace_back(path, std::move(imported.importer));
             resultModels.push_back({{"path", logical},
                                     {"status", "cooked"},
                                     {"modelId", record["modelId"]},
@@ -1136,12 +1121,13 @@ namespace
                         if (!effectBytes)
                             throw std::runtime_error("cannot read " + path.string());
                         const auto effect = mir::ReadParticleEffectSource(
-                            {reinterpret_cast<const char *>(effectBytes->data()), effectBytes->size()}, root.logical);
+                            {reinterpret_cast<const char *>(effectBytes->data()), effectBytes->size()}, root.logical,
+                            particleIdOf);
                         if (!effect.mEffect)
                             throw std::runtime_error(logical + ": " + effect.mError);
                         for (const auto &emitterPath : effect.mEmitterPaths)
                             cookParticleEmitter(root, root.physical / emitterPath);
-                        emit(mir::MakeAssetId(logical), mir::BuildParticleEffectAsset(*effect.mEffect), logical);
+                        emit(ids.Meta(path).guid, mir::BuildParticleEffectAsset(*effect.mEffect), logical);
                         continue;
                     }
                     auto bytes = mir::ReadBytes(path);
@@ -1163,16 +1149,19 @@ namespace
                         {
                             throw std::runtime_error(logical + ": " + error.what());
                         }
-                        emit(mir::MakeAssetId(logical), texture, logical);
+                        emit(ids.Meta(path).guid, texture, logical);
                         continue;
                     }
-                    emit(mir::MakeAssetId(logical),
+                    emit(ids.Meta(path).guid,
                          mir::BuildAssetBlob(mir::kRawAssetTypeTag, mir::kRawAssetContentVersion, *bytes), logical);
                 }
             }
         }
-        for (const auto &imported : metadata)
-            PublishText(imported.metadataPath, imported.metadata);
+        for (auto &[source, state] : importerStates)
+        {
+            ids.Meta(source).importer = std::move(state);
+            ids.Save(source);
+        }
         // Generated scripts may be shared across source roots, so one stays while any
         // asset in the replacement manifest still points at it.
         std::unordered_set<uint64_t> referenced;
@@ -1240,6 +1229,17 @@ int main(int argc, char **argv)
     try
     {
         options = ParseOptions(argc, argv);
+        if (options.migrateIds)
+        {
+            mir::cook::IdMigrationOptions migration;
+            for (const auto &root : options.roots)
+                migration.roots.push_back({root.physical, root.logical});
+            migration.dataDirs = options.rewriteDirs;
+            migration.apply = options.applyMigration;
+            mir::cook::MigrateIds(migration);
+            mir::FlushLog();
+            return 0;
+        }
         const int result = Cook(options);
         mir::FlushLog();
         return result;

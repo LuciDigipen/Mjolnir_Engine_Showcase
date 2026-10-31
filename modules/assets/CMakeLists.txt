@@ -13,6 +13,7 @@ target_sources(engine_assets PRIVATE
     src/assets/AssetsModule.cpp
     src/assets/AsyncAssetService.cpp
     src/assets/ModelAsset.cpp
+    src/assets/SourceAssetIds.cpp
 )
 
 # jobs: the service holds a background lane, its types stay out of the public headers

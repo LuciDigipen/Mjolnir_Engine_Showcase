@@ -49,6 +49,12 @@ namespace mir
         }
     }
 
+    AssetId MakeChildAssetId(AssetId parent, std::string_view key)
+    {
+        const uint64_t value = Fnv1a64(std::format("{:016x}#{}", parent.value, key));
+        return AssetId{ value != 0 ? value : 1 };
+    }
+
     std::filesystem::path AssetMetaPath(const std::filesystem::path &source)
     {
         return std::filesystem::path(source.string() + std::string(kAssetMetaExtension));

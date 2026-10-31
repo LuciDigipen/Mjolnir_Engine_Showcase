@@ -86,6 +86,7 @@ namespace mir
         RendererModule &mRenderer;
         SceneModule &mScene;
         PrefabModule &mPrefab;
+        const AssetResolver &mResolver;
         GameProject mProject;
         bool mEnableLayout;
         float mFrameDt = 0.0f;

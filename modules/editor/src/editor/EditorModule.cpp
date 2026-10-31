@@ -17,6 +17,7 @@
 #include <assets/AssetId.h>
 #include <assets/AssetIdRoot.h>
 #include <assets/AssetPath.h>
+#include <assets/AssetResolver.h>
 #include <assets/AssetsModule.h>
 #include <core/ecs/EngineMode.h>
 #include <core/ecs/Requests.h>
@@ -103,20 +104,21 @@ namespace mir
             std::function<void()> mRefreshHistory;
         };
 
-        // true while a scene entity plays the model
-        bool IsModelReferenced(World &world, const std::string &assetIdRoot, AssetId model)
+        // true while a scene entity plays the model, by its id or, when it has none, by its name
+        bool IsModelReferenced(World &world, const std::string &assetIdRoot, AssetId model, std::string_view logicalPath)
         {
             bool referenced = false;
             world.GetOrCreateQuery<const ModelPlayer>().ForEach([&](Entity, const ModelPlayer &player)
                 {
-                    AssetId played = player.ModelAsset();
-                    if (played.IsNull() && !player.ModelName().empty())
+                    if (!player.ModelAsset().IsNull())
                     {
-                        const AssetPathResult logical = MakeLogicalAssetPath(assetIdRoot, player.ModelName());
-                        if (logical.Ok())
-                            played = MakeAssetId(logical.path);
+                        referenced |= !model.IsNull() && player.ModelAsset() == model;
+                        return;
                     }
-                    referenced |= played == model;
+                    if (player.ModelName().empty() || logicalPath.empty())
+                        return;
+                    const AssetPathResult named = MakeLogicalAssetPath(assetIdRoot, player.ModelName());
+                    referenced |= named.Ok() && named.path == logicalPath;
                 });
             return referenced;
         }
@@ -125,7 +127,8 @@ namespace mir
     EditorModule::EditorModule(ModuleContext context, ImGuiModule &imgui, WindowModule &window,
         RendererModule &renderer, SceneModule &scene, PrefabModule &prefab, AssetsModule &assets,
         const AssetResolver &resolver, const GameProject &project, bool enableLayout)
-        : mWorld(context.world), mRenderer(renderer), mScene(scene), mPrefab(prefab), mProject(project),
+        : mWorld(context.world), mRenderer(renderer), mScene(scene), mPrefab(prefab), mResolver(resolver),
+          mProject(project),
           mEnableLayout(enableLayout), mProjectMenu(BuildProjectMenu()),
           mPrefabAuthoring(context.world, prefab.Coordinator(), mProject.mRootDir, prefab.SourceDir()),
           mPrefabWorkspace(prefab.Coordinator(), mPrefabAuthoring),
@@ -366,11 +369,12 @@ namespace mir
         bool assetActionAccepted = true;
         if (actions.mAssetImport.mKind == AssetImportActionKind::Remove)
         {
-            AssetId target = MakeAssetId(actions.mAssetImport.mModelPath);
+            AssetId target = mResolver.ResolveFull(actions.mAssetImport.mModelPath);
             for (const auto &model : mImport.View().mModels)
                 if (model.mPath == actions.mAssetImport.mModelPath && model.mAssetId != 0)
                     target = AssetId{ model.mAssetId };
-            assetActionAccepted = !IsModelReferenced(mWorld, mProject.mAssetIdRoot, target);
+            assetActionAccepted =
+                !IsModelReferenced(mWorld, mProject.mAssetIdRoot, target, actions.mAssetImport.mModelPath);
             if (!assetActionAccepted)
                 mImport.Reject(actions.mAssetImport.mModelPath,
                     "cannot remove this asset while a scene entity references it");
@@ -413,7 +417,8 @@ namespace mir
                     mContentBrowser.AssetLogicalPath(actions.mContentBrowser.mTargetPath);
                     logical.has_value())
                 {
-                    contentBrowserActionAccepted = !IsModelReferenced(mWorld, mProject.mAssetIdRoot, MakeAssetId(*logical));
+                    contentBrowserActionAccepted =
+                        !IsModelReferenced(mWorld, mProject.mAssetIdRoot, mResolver.ResolveFull(*logical), *logical);
                     if (!contentBrowserActionAccepted)
                         mContentBrowser.Reject(actions.mContentBrowser.mTargetPath,
                             "cannot delete this asset while a scene entity references it");

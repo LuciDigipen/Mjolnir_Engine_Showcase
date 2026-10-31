@@ -37,7 +37,9 @@ if (AssetCache *cache = app.Assets())
 
 | Type | Header | Role |
 |---|---|---|
-| `AssetId` | `assets/AssetId.h` | FNV-1a 64 of the repo-relative source path; `kNullAssetId`, `MakeAssetId` |
+| `AssetId` | `assets/AssetId.h` | A 64-bit id, 0 is null. `MakeAssetId` hashes a string, for assets the cooker generates |
+| `AssetMeta`, `MakeRandomGuid`, `MakeChildAssetId`, `IsAssetToolingFile` | `assets/AssetMeta.h` | The `<source>.meta` file: its guid and importer state, a random guid, a package part's id from its guid and a key, and the files scans skip |
+| `SourceAssetIds` | `assets/SourceAssetIds.h` | The guids of the source files under a set of roots: reads every `.meta`, creates missing ones, fails on a duplicate guid, finds a file's id from its logical path |
 | `AssetPathResult` | `assets/AssetPath.h` | `NormalizeAssetPath`, `MakeLogicalAssetPath`: the one spelling of a logical path, or an `AssetPathError` |
 | `AssetBlobHeader` | `assets/AssetBlob.h` | 32 bytes: magic, format version, type tag, content version, size, content hash |
 | `AssetBlobView` | `assets/AssetBlob.h` | Header plus a span over the payload; `AsStringView` for text |
@@ -74,20 +76,42 @@ a warning, and the job queue lowers it to the executor's worker count.
 
 ## Rules
 
-**An `AssetId` is the hash of the source path relative to the repository root.**
+**An `AssetId` is the guid in the asset's `.meta` file.** The cooker writes
+`<source>.meta` beside every file it cooks into an asset, with a random 64-bit guid
+and, for a glTF, the part keys it has handed out. Commit it: a machine that cooks
+without it would invent another guid and every stored id would stop matching. The
+parts of a package, such as a glTF's meshes and clips, take their ids from the
+package's guid and a key (`MakeChildAssetId`). Generated particle scripts are named
+by a hash of their content, and a Prefab by its own UUID.
 
 Cook roots must never be absolute, and `engine_cook_assets` rejects one. The root
-string is part of what gets hashed, so an absolute path would bake one machine's
-checkout location into ids that have to match on every machine.
+string is part of every logical path, and a path is how code finds an asset, so an
+absolute path would bake one machine's checkout location into names that have to
+match on every machine.
 
-**Every id string goes through `assets/AssetPath.h`.** The engine and the cooker
+**Every logical path goes through `assets/AssetPath.h`.** The engine and the cooker
 build `<id root>/<relative path>` with `MakeLogicalAssetPath`, where the id root
 is `games/<Game>/<assetsRoot>` (or `assets` for the engine) and the relative
 path is what a scene stores. The rules are purely lexical: `\` becomes `/`,
 empty and `.` segments drop, `..` pops a segment. A `..` that climbs out of
 its own root, an absolute path, a drive letter, `:` or NUL is an error, not a
-guess. A path spelled like that before `AssetPath` existed keeps its id; the
-cooked manifest was byte-identical before and after the change.
+guess.
+
+**Renaming or moving a source file keeps its id.** The `.meta` travels with the
+file: the content browser moves it on a rename and removes it on a delete, it moves
+a single file renamed outside the editor, and the cooker moves it with a model. A
+scene that names an asset by path (`meshName`, `systemName`, `scriptName`,
+`modelName`) still has to be rewritten after a rename, because a path is a name and
+not an id.
+
+**Never copy a `.meta`.** A copied `.meta` repeats the original's guid, so the cook
+fails and names both files. Delete the copy's `.meta` and cook again. A `.meta` whose
+source file is gone is ignored with a warning.
+
+**Scans skip tooling files.** `IsAssetToolingFile` is true for `.meta`, `.import.json`,
+`.pending` and `.gitkeep`. The content browser, the import manager and the cooker
+leave them out, so a sidecar never shows as an asset and writing one never starts a
+reimport.
 
 **Code at runtime finds an asset by path through `AssetResolver`.** It normalizes the
 path the way the cooker does and looks it up in the manifest, so a path
@@ -102,14 +126,10 @@ path. The cooker, the particle source parsers and the
 editor's file tools still build ids from source paths, because the files they
 name may not be cooked yet.
 
-**Case is part of the id.** `Terrain/A` and `terrain/A` are two assets even on
-Windows, where both open the same file. Folding case would have changed every
-existing id and let two files collide on a case-sensitive filesystem; a wrong
-case now fails as a missing asset.
+**Case is part of the path.** `Terrain/A` and `terrain/A` are two paths even on
+Windows, where both open the same file. Folding case would let two files collide on
+a case-sensitive filesystem; a wrong case fails as a missing asset.
 
-**Renaming a source file changes its id.** There is no rename tracking, so a
-rename is a new asset as far as anything holding an id is concerned. Scenes
-that reference the old path must be updated explicitly.
 
 **`AssetCache` is move-only.** The `AssetBlobView` it hands out aliases the
 entry's own buffer, so copying the cache would leave two views onto one buffer.
@@ -178,7 +198,7 @@ including a validated typed texture dependency. Other files without a dedicated
 importer cook as raw passthrough blobs.
 
 Tests in `modules/assets/tests/`: `AssetBlob`, `AssetCache`, `AssetManifest`,
-`AssetPath`, `AssetSettings`, `AsyncAssetService`, `ModelAsset`. The cooker side of path identity is checked in
+`AssetMeta`, `AssetPath`, `AssetResolver`, `AssetSettings`, `AsyncAssetService`, `ModelAsset`, `SourceAssetIds`. The cooker side of path identity is checked in
 `tools/AssetCooker/tests/GltfImporter.tests.cpp` ("Cooker ids match the engine's
 logical paths for any root spelling").
 
@@ -192,10 +212,25 @@ logical paths for any root spelling").
    shared watch infrastructure to build on.
 3. **A packed archive** for distribution. Better to ship, worse to iterate, and
    it can be added later without changing any ids.
-4. **GUIDs in sidecar files**, if renames start to hurt. They survive a rename,
-   at the cost of a file per asset and a registry to keep in sync.
+4. **Scenes that name an asset by path.** `meshName`, `systemName`, `scriptName`
+   and `modelName` stay readable, so a rename means rewriting the scenes that use
+   it. Guid fields with a picker would fix that, and the choice waits until there
+   are real scenes. Emitter and effect source JSON also still names its texture and
+   emitters by path, which the cooker turns into guids through the `.meta` files.
 
 ## Changed
+
+*2026-10-31* — **Ids come from `.meta` guids.** Was: an id was a hash of the source
+path, a glTF kept its identity in `<source>.import.json` with an alias for every path
+it had been moved to, and renaming any other file made it a new asset. Now: every
+cooked source file has a `<source>.meta` holding a random guid, the guid is the id,
+a glTF's parts take theirs from the guid and a key, and the aliases and the old
+sidecar are gone. A duplicate guid fails the cook, and every scan skips the sidecars.
+Because a rename should not orphan the scenes, prefabs and particle sources that
+hold an id. `AssetCooker --migrate-ids` moved the existing data: it dry-runs unless
+given `--apply`, gives each glTF with an `.import.json` a guid, rewrites the old
+ids under each `--rewrite-dir` and deletes the old file, and it can be deleted once
+every game has migrated.
 
 *2026-10-31* — **`AssetResolver` replaces the id root in the runtime modules.** Was:
 `App` passed the id root string to the particles, animation, script and renderer

@@ -6,6 +6,7 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
+#include "CookTestSupport.h"
 #include "../MaterialCooker.h"
 #include <assets/AssetCache.h>
 #include <assets/AssetManifest.h>
@@ -112,7 +113,7 @@ namespace
         AssetCache cache(&*manifest, out);
         MaterialSnapshot snapshot;
         std::string error;
-        REQUIRE(LoadTypedAsset(cache, MakeAssetId(materialPath), snapshot.material, error));
+        REQUIRE(LoadTypedAsset(cache, test::PathId(*manifest, materialPath), snapshot.material, error));
         LoadTexture(cache, snapshot.material.albedoTexture, snapshot.albedo);
         LoadTexture(cache, snapshot.material.normalTexture, snapshot.normal);
         LoadTexture(cache, snapshot.material.surfaceTexture, snapshot.surface);
@@ -168,8 +169,8 @@ TEST_CASE("Surface material packs base color, AO, normals and F0 into three mip 
 
     // The six source images are inputs to this pack, not standalone 4K textures.
     for (const char *source : {"base", "ao", "roughness", "displacement", "specular", "normal"})
-        CHECK(manifest->Find(MakeAssetId(std::string("assets/textures/") + source + ".png")) == nullptr);
-    CHECK(manifest->Find(MakeAssetId("assets/materials/sand.material.json")) != nullptr);
+        CHECK(manifest->FindByPath(std::string("assets/textures/") + source + ".png") == nullptr);
+    CHECK(manifest->FindByPath("assets/materials/sand.material.json") != nullptr);
 
     const Json cooked = Json::parse(std::ifstream(result));
     REQUIRE(cooked.at("models").size() == 1);
@@ -235,7 +236,7 @@ TEST_CASE("Changed batches rebuild incompatible textures when the import cache i
 
     const auto manifest = AssetManifest::LoadFile(out / "manifest.blob");
     REQUIRE(manifest);
-    const AssetId extraId = MakeAssetId("assets/textures/extra.png");
+    const AssetId extraId = test::PathId(*manifest, "assets/textures/extra.png");
     REQUIRE(manifest->Find(extraId));
     std::vector<std::byte> legacyPixels(16);
     legacyPixels[0] = std::byte{1};
@@ -247,9 +248,11 @@ TEST_CASE("Changed batches rebuild incompatible textures when the import cache i
     for (const auto &entry : manifest->Entries())
     {
         if (entry.id == extraId)
-            entries.push_back({{entry.id, entry.typeTag, 1}, "legacy-texture.blob"});
+            entries.push_back({{entry.id, entry.typeTag, 1}, "legacy-texture.blob", manifest->LogicalPathOf(entry),
+                manifest->Dependencies(entry)});
         else
-            entries.push_back({entry, manifest->PathOf(entry)});
+            entries.push_back({entry, manifest->PathOf(entry), manifest->LogicalPathOf(entry),
+                manifest->Dependencies(entry)});
     }
     REQUIRE(WriteBytes(out / "manifest.blob", BuildAssetManifestBlob(entries)));
     const auto cachePath = out / "import-cache.json";
@@ -305,7 +308,7 @@ TEST_CASE("A material cook drops previously cooked source image entries", "[mate
         const auto manifest = AssetManifest::LoadFile(out / "manifest.blob");
         REQUIRE(manifest);
         CHECK(manifest->Count() == 6);
-        CHECK(manifest->Find(MakeAssetId("assets/textures/base.png")) != nullptr);
+        CHECK(manifest->FindByPath("assets/textures/base.png") != nullptr);
     }
 
     fixture.WriteMaterial();
@@ -316,8 +319,8 @@ TEST_CASE("A material cook drops previously cooked source image entries", "[mate
     REQUIRE(manifest);
     CHECK(manifest->Count() == 4);
     for (const char *source : {"base", "ao", "roughness", "displacement", "specular", "normal"})
-        CHECK(manifest->Find(MakeAssetId(std::string("assets/textures/") + source + ".png")) == nullptr);
-    CHECK(manifest->Find(MakeAssetId(materialPath)) != nullptr);
+        CHECK(manifest->FindByPath(std::string("assets/textures/") + source + ".png") == nullptr);
+    CHECK(manifest->FindByPath(materialPath) != nullptr);
 }
 
 TEST_CASE("A glTF package move refuses a surface material before moving files", "[material][cook][move]")
@@ -378,7 +381,7 @@ TEST_CASE("The authorized TerrainCheck set cooks at the default 2K resolution", 
     }
     const auto manifest = AssetManifest::LoadFile(out / "manifest.blob");
     REQUIRE(manifest);
-    CHECK(manifest->Find(MakeAssetId("fixture/materials/icelandic_sand.material.json")) != nullptr);
+    CHECK(manifest->FindByPath("fixture/materials/icelandic_sand.material.json") != nullptr);
     CHECK(manifest->Count() == 4);
     std::error_code error;
     fs::remove_all(root, error);

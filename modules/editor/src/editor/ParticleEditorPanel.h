@@ -8,6 +8,7 @@
  */
 #pragma once
 
+#include <assets/SourceAssetIds.h>
 #include <particles/ParticleRuntime.h>
 #include <core/ecs/Entity.h>
 
@@ -32,6 +33,9 @@ namespace mir
     {
     public:
         ParticleEditorPanel(std::filesystem::path sourceRoot, std::string idRoot);
+
+        // the id of the file at a path under the source root, null when there is no such file
+        AssetId IdOf(const std::string &path);
         void Draw(bool &open, World &world, AssetCache &assets, AssetImportManager &imports,
             const EditorCamera &camera, float dt);
         void OnHidden(World &world);
@@ -106,6 +110,8 @@ namespace mir
         void RedoDraft();
         std::filesystem::path mSourceRoot;
         std::string mIdRoot, mSystemPath, mEmitterPath, mTexturePath, mError;
+        // the guids in the .meta files of the source files, which the cooked assets are named by
+        SourceAssetIds mIds;
         std::string mNewSystemPath = "particles/new.particle.json";
         std::string mNewEmitterPath = "particles/new.emitter.json";
         std::vector<std::string> mSystems, mEmitters, mTextures, mReferences;

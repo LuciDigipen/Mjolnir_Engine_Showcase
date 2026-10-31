@@ -40,7 +40,8 @@ namespace mir::cook
                                                      const std::filesystem::path &ownerRoot,
                                                      const std::vector<std::filesystem::path> &approvedRoots);
     // No output is published until parsing, resolution, decoding and packing all succeed.
+    // guid is the material's own, and the packed textures take theirs from it
     MaterialImport ImportMaterial(const std::filesystem::path &path, const std::string &assetPath,
                                   const std::filesystem::path &ownerRoot,
-                                  const std::vector<std::filesystem::path> &approvedRoots);
+                                  const std::vector<std::filesystem::path> &approvedRoots, AssetId guid);
 } // namespace mir::cook
