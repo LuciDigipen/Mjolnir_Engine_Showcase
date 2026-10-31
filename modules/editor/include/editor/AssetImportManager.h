@@ -36,11 +36,13 @@ namespace mir
         // Cooks every source asset in the next batch, for a build that has no manifest yet
         void QueueFullCook();
         bool SourceHasAssets() const;
+        bool QueueChanged(const std::filesystem::path &path);
+        const std::filesystem::path &SourceAssetRoot() const { return mSourceAssetRoot; }
         void Handle(const AssetImportAction &action);
         void Update(bool editing);
 
         const AssetImportView &View() const { return mView; }
-        bool PendingApply() const { return mPendingApply; }
+        bool PendingApply() const { return mPendingApply && !mView.mProcessRunning && mQueued.Empty(); }
         void MarkApplied();
         void MarkApplyFailed(std::string diagnostic);
         void Reject(const std::string &model, std::string diagnostic);

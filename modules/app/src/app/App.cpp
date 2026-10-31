@@ -102,7 +102,7 @@ namespace mir
 
     App::StartupSplash::StartupSplash(const AppDesc &desc)
     {
-        screen.Show({ .mEngineName = desc.mAppName,
+        if (!desc.mHidden) screen.Show({ .mEngineName = desc.mAppName,
                       .mVersion = kEngineVersion,
                       .mCopyright = kEngineCopyright,
                       .mStatus = "Creating window...",
@@ -116,6 +116,7 @@ namespace mir
           mJobs(mDesc.mWorkerThreads),
           mCore(Context(), mCommands),
           mAssets(CookedAssetsDir()),
+          mParticles(Context(), mAssets, mProject.mAssetIdRoot),
           mScene(Context(), mProject.mSceneDir),
           mPrefab(Context(), mScene, PrefabSourceDir(mProject), kHasEditor ? nullptr : &mAssets),
           mGameUI(Context()),
@@ -127,6 +128,7 @@ namespace mir
                                       .mEnableValidation = mDesc.mEnableValidation,
                                       .mProjectSettingsPath = mProject.mProjectSettingsPath,
                                       .mAssetIdRoot = mProject.mAssetIdRoot }),
+          mParticlesGpu(mRenderer.Renderer()),
           mInput(Context(), mWindow.Get(), mProject.mProjectSettingsPath),
           mAnimation(Context(), mRenderer.Renderer(), mAssets, mProject.mAssetIdRoot, &mJobs),
           mImGui(Context(), mWindow, mRenderer),
@@ -142,6 +144,8 @@ namespace mir
           mPhysics(Context(), mProject.mProjectSettingsPath, &mJobs),
           mTerrainData(Context()),
           mScript(Context(), mAssets, mProject.mAssetIdRoot),
+          mParticlesRuntime(Context(), mParticles, mParticlesGpu, mRenderer.Rendering()),
+          mParticlesScript(mScript),
     #if MIR_WITH_AUDIO
           mAudioScript(mScript),
     #endif
@@ -170,7 +174,7 @@ namespace mir
         // every module is built, so a library that took the crash filter slot has done so
         ReclaimCrashHandler();
 
-        mWindow.Get().Show();
+        if (!mDesc.mHidden) mWindow.Get().Show();
     }
 
     // Systems stop while every module is alive; then members die in reverse, the

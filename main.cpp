@@ -33,7 +33,7 @@
 namespace
 {
     constexpr std::string_view kUsage = "[--game <dir>] [--frames <N>] [--capture <png>] [--no-editor] [--ui-demo] "
-        "[--non-interactive] [--workers <0..32>] [--switch-to <dir>]...";
+        "[--non-interactive] [--hidden] [--workers <0..32>] [--switch-to <dir>]...";
 
     struct LaunchOptions
     {
@@ -49,6 +49,7 @@ namespace
 
         // for agents and CI: every prompt takes its safe answer instead of waiting for a click
         bool mNonInteractive = false;
+        bool mHidden = false;
 
         // test hook: games to restart into, in order
         std::vector<std::string> mProjectSwitches;
@@ -102,6 +103,10 @@ namespace
             {
                 options.mNonInteractive = true;
             }
+            else if (arg == "--hidden")
+            {
+                options.mHidden = true;
+            }
             else if (arg == "--switch-to" && i + 1 < argc)
             {
                 options.mProjectSwitches.emplace_back(argv[++i]);
@@ -118,6 +123,8 @@ namespace
 
         if (!options.mCapturePath.empty() && options.mMaxFrames == 0)
             ThrowUsage("--capture needs --frames");
+        if (options.mHidden && options.mMaxFrames == 0)
+            ThrowUsage("--hidden needs --frames");
 
         return options;
     }
@@ -133,6 +140,8 @@ namespace
             args.emplace_back("--ui-demo");
         if (options.mNonInteractive)
             args.emplace_back("--non-interactive");
+        if (options.mHidden)
+            args.emplace_back("--hidden");
         if (!options.mCapturePath.empty())
         {
             args.emplace_back("--capture");
@@ -191,6 +200,7 @@ namespace
         desc.mEnableEditorLayout = mir::App::kHasEditor && !options.mNoEditor;
         desc.mUIDemo = options.mUIDemo;
         desc.mNonInteractive = options.mNonInteractive;
+        desc.mHidden = options.mHidden;
         if (!options.mProjectSwitches.empty())
             desc.mSwitchProjectTo = options.mProjectSwitches.front();
 

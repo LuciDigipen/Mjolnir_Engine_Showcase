@@ -32,6 +32,8 @@ namespace mir
         Reparent,
         CreatePrefab,
         PlacePrefab,
+        AttachParticleSystem,
+        PlaceParticleSystem,
     };
 
     struct EntityAction

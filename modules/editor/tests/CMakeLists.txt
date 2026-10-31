@@ -16,4 +16,4 @@ engine_add_module_tests(editor
 )
 
 # editor links scene privately; the tests build scenes for the scene ops and prefab previews
-target_link_libraries(engine_editor_tests PRIVATE mir::scene imgui::imgui)
+target_link_libraries(engine_editor_tests PRIVATE mir::scene mir::particles imgui::imgui)

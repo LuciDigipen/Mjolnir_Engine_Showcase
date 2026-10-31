@@ -15,6 +15,10 @@ target_link_libraries(engine_app
            mir::input_script
            mir::physics
            mir::physics_script
+           mir::particles
+           mir::particles_gpu
+           mir::particles_runtime
+           mir::particles_script
            mir::prefab
            mir::project
            mir::renderer

@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.26)
+cmake_minimum_required(VERSION 3.26)
 
 
 option(MIR_LARGE_WORLD "Double-precision world positions and Jolt" ON)
@@ -74,6 +74,10 @@ add_subdirectory(modules/imguiruntime)
 add_subdirectory(modules/input)
 add_subdirectory(modules/input_script)
 add_subdirectory(modules/jobs)
+add_subdirectory(modules/particles)
+add_subdirectory(modules/particles_gpu)
+add_subdirectory(modules/particles_runtime)
+add_subdirectory(modules/particles_script)
 add_subdirectory(modules/physics)
 add_subdirectory(modules/physics_layers)
 add_subdirectory(modules/physics_script)
@@ -205,6 +209,23 @@ engine_add_shaders(MjolnirEngine
 engine_add_shaders(MjolnirEngine
     SOURCE assets/shaders/motionBlur.slang
     ENTRIES vertexMain:vertex compositeMain:fragment)
+
+engine_add_shaders(MjolnirEngine
+    SOURCE modules/particles_gpu/shaders/particlePool.slang
+    ENTRIES vertexMain:vertex fragmentMain:fragment ribbonVertex:vertex ribbonFragment:fragment)
+# Incremental build trees must not package the replaced fixed compute shader.
+file(REMOVE "${CMAKE_BINARY_DIR}/shaders/particlePool.computeMain.spv")
+engine_add_shaders(MjolnirEngine
+    SOURCE modules/particles_gpu/shaders/particleViewSort.slang
+    ENTRIES computeMain:compute)
+
+engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/fxComposition.slang
+    ENTRIES vertexMain:vertex fragmentMain:fragment)
+
+if(BUILD_TESTING)
+    add_subdirectory(tools/ParticleGpuCheck)
+endif()
 
 engine_add_shaders(MjolnirEngine
     SOURCE assets/shaders/shadowDepth.slang
@@ -384,6 +405,10 @@ target_link_libraries(MjolnirEngine PRIVATE
     mir::core
     mir::gameshell
     mir::input
+    mir::particles
+    mir::particles_gpu
+    mir::particles_runtime
+    mir::particles_script
     mir::physics
     mir::prefab
     mir::project
@@ -402,7 +427,7 @@ if(BUILD_TESTING)
                 -P "${CMAKE_SOURCE_DIR}/tools/tests/SurfaceMaterialDiscovery.cmake")
     foreach(game_name IN LISTS game_names)
         add_test(NAME smoke.${game_name}
-            COMMAND MjolnirEngine --non-interactive --game games/${game_name} --frames 120)
+            COMMAND MjolnirEngine --non-interactive --hidden --game games/${game_name} --frames 120)
         set_tests_properties(smoke.${game_name} PROPERTIES
             LABELS smoke
             TIMEOUT 120)
@@ -412,7 +437,7 @@ if(BUILD_TESTING)
     # frees it at shutdown
     if(EXISTS "${CMAKE_SOURCE_DIR}/games/HelloWorld/game.json")
         add_test(NAME smoke.ui-demo
-            COMMAND MjolnirEngine --non-interactive --game games/HelloWorld --ui-demo --frames 120)
+            COMMAND MjolnirEngine --non-interactive --hidden --game games/HelloWorld --ui-demo --frames 120)
         set_tests_properties(smoke.ui-demo PROPERTIES
             LABELS smoke
             TIMEOUT 120)
@@ -422,7 +447,7 @@ if(BUILD_TESTING)
     # HUD over it and its scripts running
     if(EXISTS "${CMAKE_SOURCE_DIR}/games/HelloWorld/game.json")
         add_test(NAME smoke.game-mode
-            COMMAND MjolnirEngine --non-interactive --game games/HelloWorld --no-editor --frames 120)
+            COMMAND MjolnirEngine --non-interactive --hidden --game games/HelloWorld --no-editor --frames 120)
         set_tests_properties(smoke.game-mode PROPERTIES
             LABELS smoke
             TIMEOUT 120)
@@ -431,7 +456,7 @@ if(BUILD_TESTING)
     # TerrainCheck from its scene camera, which sees both terrains: per-viewport selection, streaming and tracing
     if(EXISTS "${CMAKE_SOURCE_DIR}/games/TerrainCheck/game.json")
         add_test(NAME smoke.TerrainCheck.game-mode
-            COMMAND MjolnirEngine --non-interactive --game games/TerrainCheck --no-editor --frames 120)
+            COMMAND MjolnirEngine --non-interactive --hidden --game games/TerrainCheck --no-editor --frames 120)
         set_tests_properties(smoke.TerrainCheck.game-mode PROPERTIES
             LABELS smoke
             TIMEOUT 120)
@@ -450,7 +475,7 @@ if(BUILD_TESTING)
     if(EXISTS "${CMAKE_SOURCE_DIR}/games/HelloWorld/game.json"
        AND EXISTS "${CMAKE_SOURCE_DIR}/games/EmptyScene/game.json")
         add_test(NAME smoke.switch
-            COMMAND MjolnirEngine --non-interactive --game games/HelloWorld
+            COMMAND MjolnirEngine --non-interactive --hidden --game games/HelloWorld
                     --switch-to games/EmptyScene --switch-to games/HelloWorld
                     --frames 180)
         set_tests_properties(smoke.switch PROPERTIES

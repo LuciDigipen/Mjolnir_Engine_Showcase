@@ -43,6 +43,7 @@ namespace mir::vk
         VkDevice Handle() const { return mDevice; }
         VkQueue Queue() const { return mQueue; }
         uint32_t QueueFamily() const { return mQueueFamily; }
+        uint32_t TimestampBits() const { return mTimestampBits; }
         VmaAllocator Allocator() const { return mAllocator; }
 
         const VkPhysicalDeviceProperties &Properties() const { return mProperties; }
@@ -103,6 +104,7 @@ namespace mir::vk
         VkSurfaceKHR mSurface = VK_NULL_HANDLE;
 
         VkPhysicalDevice mPhysical = VK_NULL_HANDLE;
+        uint32_t mTimestampBits = 0;
         VkPhysicalDeviceProperties mProperties{};
         VkDevice mDevice = VK_NULL_HANDLE;
 

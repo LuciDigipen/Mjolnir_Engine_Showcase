@@ -23,11 +23,11 @@ it belongs.
 mDesc, mProject          the checks before anything is built: game directories, project_settings.json
 mSplash                  shown until main closes it
 mCommands, mWorld, mScheduler
-CoreModule, AssetsModule, SceneModule, PrefabModule
+CoreModule, AssetsModule, ParticlesModule, SceneModule, PrefabModule
 GameUIModule, GameShellModule    before ImGui, whose shutdown frees their textures' GPU side
-WindowModule, RendererModule, InputModule, AnimationModule, ImGuiModule, EditorModule (editor builds)
+WindowModule, RendererModule, ParticlesGpuModule, InputModule, AnimationModule, ImGuiModule, EditorModule (editor builds)
 CameraModule, AudioModule, PhysicsModule, TerrainModule
-ScriptModule, the five script bridges, TerrainRuntimeModule, GameUIImGuiModule
+ScriptModule, ParticlesRuntimeModule, the six script bridges, TerrainRuntimeModule, GameUIImGuiModule
 ```
 
 Between two module members a `SplashStep` sets the splash's status line, so the

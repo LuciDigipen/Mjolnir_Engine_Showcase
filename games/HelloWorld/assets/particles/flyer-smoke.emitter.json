@@ -1,0 +1,92 @@
+{
+  "version": 3,
+  "target": "gpu",
+  "texture": "particles/white.png",
+  "lifetime": 2.6,
+  "spawnRate": 30,
+  "capacity": 1024,
+  "seed": 11,
+  "renderer": {
+    "size": 0.1,
+    "color": [
+      0.62,
+      0.62,
+      0.66,
+      0.4
+    ],
+    "velocity": [
+      0,
+      0.25,
+      0
+    ],
+    "blend": "alpha",
+    "sort": "backToFront",
+    "softDistance": 0.4,
+    "fog": true
+  },
+  "spawnBehaviors": [
+    {
+      "name": "Initialize",
+      "parameters": []
+    },
+    {
+      "name": "Shape",
+      "parameters": [
+        0,
+        0.05,
+        0,
+        0,
+        25,
+        0.4
+      ]
+    },
+    {
+      "name": "StartRotation",
+      "parameters": [
+        180
+      ]
+    }
+  ],
+  "updateBehaviors": [
+    {
+      "name": "Age",
+      "parameters": []
+    },
+    {
+      "name": "Noise",
+      "parameters": [
+        1.4,
+        0.9
+      ]
+    },
+    {
+      "name": "Drag",
+      "parameters": [
+        0.6
+      ]
+    },
+    {
+      "name": "Integrate",
+      "parameters": []
+    },
+    {
+      "name": "SizeOverLife",
+      "parameters": [
+        3.0
+      ]
+    },
+    {
+      "name": "FadeOverLife",
+      "parameters": [
+        0
+      ]
+    },
+    {
+      "name": "Spin",
+      "parameters": [
+        35,
+        30
+      ]
+    }
+  ]
+}

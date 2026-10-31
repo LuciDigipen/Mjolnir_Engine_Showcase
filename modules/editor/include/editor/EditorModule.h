@@ -21,6 +21,7 @@
 #include <core/Registration.h>
 #include <project/GameProject.h>
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -28,6 +29,7 @@
 namespace mir
 {
     class AssetsModule;
+    class ParticleEditorPanel;
     class ImGuiModule;
     class PrefabModule;
     class RendererModule;
@@ -95,6 +97,7 @@ namespace mir
         PrefabWorkspace mPrefabWorkspace;
         WorldSceneOps mSceneOps;
         Editor mEditor;
+        std::unique_ptr<ParticleEditorPanel> mParticleEditor;
 
         // Stop puts the World back as it was at Play, so it puts this back too
         bool mUnsavedBeforePlay = false;

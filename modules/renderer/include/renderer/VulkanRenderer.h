@@ -16,6 +16,8 @@
 #include <renderer/Mesh.h>
 #include <renderer/MeshStreaming.h>
 #include <renderer/PostProcessingState.h>
+#include <renderer/FxSystem.h>
+#include <core/Registration.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/RtxgiConfig.h>
 #include <renderer/Texture.h>
@@ -59,6 +61,7 @@ namespace mir::vk
     class Ddgi;
     class PostProcessingStack;
     class FrameCapture;
+    class FxCompositionPass;
     class ImGuiOverlay;
     class MeshUploader;
     class DebugDraw;
@@ -221,6 +224,9 @@ namespace mir
         // the next frame starts temporal accumulation fresh (DLSS ray reconstruction's history)
         void ResetHistory();
 
+        // Exactly one FX provider, unregistration completes recorded uses before releasing it.
+        Registration RegisterFxSystem(IFxSystem &system);
+
         // Releases a selected model generation after a replacement has been
         // prepared. Handles not present in these spans remain valid.
         void ReleaseModelResources(std::span<const MeshHandle> meshes,
@@ -269,6 +275,7 @@ namespace mir
         };
 
         GpuMemoryUsage GetGpuMemoryUsage() const;
+        uint64_t FxCompositionMemoryBytes() const;
 
         constexpr static uint32_t kMaxSpotShadows = 4;
         constexpr static uint32_t kMaxPointShadows = 2;
@@ -310,6 +317,7 @@ namespace mir
         void Shutdown();
 
     private:
+        FxDeviceContext FxDevice() const;
         bool RecreateSwapchain();
         // Shared prelude of DrawFrame and TraceFrame; nullopt skips the frame.
         std::optional<vk::FrameContext> BeginFrame();
@@ -364,6 +372,9 @@ namespace mir
 
         // Every screen-space effect between the scene/trace pass and the swapchain.
         std::unique_ptr<vk::PostProcessingStack> mPostProcessing;
+        std::unique_ptr<vk::FxCompositionPass> mFxComposition;
+        IFxSystem *mFxSystem = nullptr;
+        std::shared_ptr<const void> mFxLifetime = std::make_shared<int>(0);
 
         std::unique_ptr<vk::FrameCapture> mCapture;
 

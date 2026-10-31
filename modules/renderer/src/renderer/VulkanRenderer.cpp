@@ -12,6 +12,7 @@
 #include "vulkan/Device.h"
 #include "vulkan/FrameCapture.h"
 #include "vulkan/FrameSync.h"
+#include "vulkan/FxCompositionPass.h"
 #include "vulkan/ImGuiOverlay.h"
 #include "vulkan/MaterialStore.h"
 #include "vulkan/MaterialTable.h"
@@ -30,6 +31,7 @@
 #endif
 
 #include <core/log/Log.h>
+#include <core/log/SetupError.h>
 
 namespace mir
 {
@@ -50,6 +52,7 @@ namespace mir
         mDdgi(std::make_unique<vk::Ddgi>()),
 #endif
         mPostProcessing(std::make_unique<vk::PostProcessingStack>()),
+        mFxComposition(std::make_unique<vk::FxCompositionPass>()),
         mCapture(std::make_unique<vk::FrameCapture>()),
         mImGuiOverlay(std::make_unique<vk::ImGuiOverlay>()),
         mDebugDraw(std::make_unique<vk::DebugDraw>()),
@@ -65,6 +68,27 @@ namespace mir
 
     bool VulkanRenderer::DlssAvailable() const { return mPostProcessing->DlssAvailable(); }
 
+    FxDeviceContext VulkanRenderer::FxDevice() const
+    {
+        return {mDevice->Handle(), mDevice->Allocator(), mDevice->ValidationEnabled(),
+            mDevice->Properties().limits.timestampPeriod, mDevice->TimestampBits()};
+    }
+
+    Registration VulkanRenderer::RegisterFxSystem(IFxSystem &system)
+    {
+        if (mFxSystem)
+            throw SetupError(ErrorCategory::Internal, "Register FX system", "renderer",
+                "An FX provider is already registered", "Unregister the existing provider before registering another.");
+        mFxSystem = &system;
+        return Registration(mFxLifetime, [this, provider = &system]
+        {
+            if (mFxSystem != provider) return;
+            if (mDevice->Handle()) mDevice->WaitIdle();
+            provider->Shutdown();
+            mFxSystem = nullptr;
+        });
+    }
+
     VulkanRenderer::GpuMemoryUsage VulkanRenderer::GetGpuMemoryUsage() const
     {
         const vk::Device::MemoryBudget budget = mDevice->GpuMemoryBudget();
@@ -74,6 +98,8 @@ namespace mir
     VkExtent2D VulkanRenderer::SwapchainExtent() const { return mSwapchain->Extent(); }
 
     void VulkanRenderer::RequestSwapchainRecreate() { mSwapchain->MarkOutOfDate(); }
+
+    uint64_t VulkanRenderer::FxCompositionMemoryBytes() const { return mFxComposition->MemoryBytes(); }
 
     bool VulkanRenderer::Initialize(const RendererDesc &desc)
     {
@@ -150,6 +176,7 @@ namespace mir
         // The swapchain cannot reach ray tracing, so the facade resizes its output images.
         if (!mSwapchain->Recreate(*mWindow) ||
             (mDevice->RayTracingSupported() && !mRayTracer->Resize(mSwapchain->Extent())) ||
+            !mFxComposition->Resize(mSwapchain->Extent()) ||
             !mPostProcessing->Resize(mSwapchain->Extent()))
         {
             // Recreate may have cleared the flag already; set it so the next frame retries.
@@ -172,6 +199,8 @@ namespace mir
 
             mMeshUploads->Shutdown(*mRayTracer);
 
+            if (mFxSystem) { mFxSystem->Shutdown(); mFxSystem = nullptr; }
+            mFxComposition->Shutdown();
             mDebugDraw->Shutdown();
             mPostProcessing->Shutdown();
             mRasterSurfaces->Shutdown();
@@ -354,6 +383,7 @@ namespace mir
 
     void VulkanRenderer::ReleaseSceneResources()
     {
+        if (mFxSystem) mFxSystem->ClearScene();
         if (mDevice->Handle() == VK_NULL_HANDLE)
             return;
 

@@ -16,6 +16,7 @@ namespace mir
 {
     // A Prefab row's content path, as a drag payload for the Hierarchy and the scene viewport.
     inline constexpr const char *kPrefabContentPayload = "MIR_PREFAB_CONTENT";
+    inline constexpr const char *kParticleContentPayload = "MIR_PARTICLE_CONTENT";
 
     enum class ContentBrowserEntryKind
     {
@@ -50,6 +51,8 @@ namespace mir
         Delete,
         OpenInIde,    // double-clicked a script file - mTargetPath is the file
         OpenPrefab,   // double-clicked a Prefab - mTargetPath is the file
+        OpenParticleSystem,
+        NewParticleSystem,
     };
 
     struct ContentBrowserAction

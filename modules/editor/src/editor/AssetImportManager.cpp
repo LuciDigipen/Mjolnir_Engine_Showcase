@@ -43,7 +43,7 @@ namespace mir
             auto ext = path.extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(),
                            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            return ext == ".gltf" || ext == ".glb" || ext == ".bin" || ext == ".png" || ext == ".jpg" || ext == ".jpeg";
+            return ext == ".gltf" || ext == ".glb" || ext == ".bin" || ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".json";
         }
         // The key AssetCooker uses for a model under the source asset root
         AssetPathResult LogicalModelPath(std::string_view idRoot, const std::filesystem::path &relative)
@@ -137,6 +137,24 @@ namespace mir
     {
         mQueued.fullCook = true;
         MIR_LOG_INFO("Asset import: no cooked manifest, cooking every asset under '{}'", mSourceAssetRoot.string());
+    }
+
+    bool AssetImportManager::QueueChanged(const std::filesystem::path &path)
+    {
+        std::error_code error;
+        const auto root = std::filesystem::weakly_canonical(mSourceAssetRoot,error);
+        if (error) return false;
+        const auto candidate = std::filesystem::weakly_canonical(path,error);
+        if (error) return false;
+        auto a=root.begin(), b=candidate.begin();
+        for (;a!=root.end() && b!=candidate.end() && *a==*b;++a,++b) {}
+        if (a!=root.end() || b==candidate.end()) return false;
+        const std::filesystem::directory_entry entry(candidate,error);
+        if (!error && entry.is_regular_file(error))
+            mWatched[candidate] = {Signature(entry),std::chrono::steady_clock::now(),false};
+        mQueued.changed.insert(candidate);
+        mRunningStale |= mView.mProcessRunning;
+        return true;
     }
 
     bool AssetImportManager::SourceHasAssets() const
@@ -389,7 +407,8 @@ namespace mir
                 }
                 else
                 {
-                    bool cooked = false;
+                    mView.mLastError.clear();
+                    bool cooked = result.value("assetsChanged", false);
                     const Json resultModels = result.value("models", Json::array());
                     for (const auto &model : resultModels)
                     {
@@ -406,7 +425,7 @@ namespace mir
                                                                            : AssetImportStatus::WaitingForStop));
                     }
                     // a full cook replaces a missing manifest, so it applies even when no model changed
-                    mPendingApply |= (cooked || mRunning.fullCook) && !mRunningStale;
+                    mPendingApply |= cooked || mRunning.fullCook;
                 }
             }
             catch (const std::exception &error)

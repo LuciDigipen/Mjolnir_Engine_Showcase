@@ -35,10 +35,13 @@
 #include <renderer/VulkanRenderer.h>
 #include <window/Window.h>
 
+#include <glm/vec3.hpp>
+
 #include <filesystem>
 #include <map>
 #include <span>
 #include <string>
+#include <utility>
 #include <string_view>
 #include <vector>
 
@@ -136,24 +139,35 @@ namespace mir
 
         // imgui must already be initialized; the editor never owns the context
         bool Initialize(const ImGuiRuntime &imgui, Window &window, std::filesystem::path projectSettingsPath,
-                        World &world, ISceneOps &sceneOps, bool srgbOutput);
+            World &world, ISceneOps &sceneOps, bool srgbOutput);
 
-        //before ImGuiRuntime::Shutdown
+//before ImGuiRuntime::Shutdown
         void Shutdown();
 
         //between ImGuiRuntime::BeginFrame and EndFrame
         EditorActions DrawLayout(bool enableLayout, InputMap &inputMap, RenderSettings &renderSettings,
-                                 PostProcessingSettings &postProcessingSettings, const EngineModeState &mode,
-                                 std::span<const ProjectMenuEntry> projects, std::string_view currentProject,
-                                 World &activeWorld, World &sceneWorld, const EditorDocuments &documents,
-                                 const AssetImportView &assetImport, const VulkanRenderer &renderer,
-                                 const ContentBrowserView &contentBrowser);
+            PostProcessingSettings &postProcessingSettings, const EngineModeState &mode,
+            std::span<const ProjectMenuEntry> projects, std::string_view currentProject,
+            World &activeWorld, World &sceneWorld, const EditorDocuments &documents,
+            const AssetImportView &assetImport, const VulkanRenderer &renderer,
+            const ContentBrowserView &contentBrowser);
 
         VkRect2D SceneViewportRect() const { return mSceneViewportRect; }
 
         void UpdateCamera(float dt);
 
         EditorCamera &SceneCamera() { return mCamera; }
+
+        bool &ParticleEditorVisible() { return mShowParticles; }
+        std::string TakeParticleOpenRequest() { return std::exchange(mParticleOpenRequest, {}); }
+        // One undoable scene edit of a ParticleSystem's per-instance emitter offset.
+        void SubmitParticleEmitterOffset(World &world, Entity entity, uint32_t placementId, const glm::vec3 &offset);
+        int TakeParticleHistoryRequest() { return std::exchange(mParticleHistoryRequest, 0); }
+        void SetParticleHistoryAvailability(bool undo, bool redo)
+        {
+            mParticleCanUndo = undo;
+            mParticleCanRedo = redo;
+        }
 
         // chosen in Edit only; Play keeps rendering the last choice
         const DebugViewSettings &SceneDebugView() const { return mDebugView; }
@@ -172,11 +186,11 @@ namespace mir
         // true: the * stays until the next save
         void SetSceneUnsaved(bool unsaved) { mHistory.SetUnsaved(unsaved); }
 
-        
+
         bool IsDocumentUnsaved(DocumentId document) const { return mHistory.IsUnsaved(document); }
         void SetDocumentUnsaved(DocumentId document, bool unsaved) { mHistory.SetUnsaved(document, unsaved); }
 
-        
+
         void SetAuthoringBackend(IAuthoringBackend *backend) { mHistory.SetAuthoringBackend(backend); }
         void SetAuthoredEntities(IAuthoredEntities *authored) { mAuthoredEntities = authored; }
 
@@ -228,6 +242,10 @@ namespace mir
         bool mShowInputSettings = false;
         bool mShowPostProcessing = false;
         bool mShowAssetImport = false;
+        bool mShowParticles = false;
+        std::string mParticleOpenRequest;
+        int mParticleHistoryRequest = 0;
+        bool mParticleHistoryFocused = false, mParticleCanUndo = false, mParticleCanRedo = false;
         bool mShowContentBrowser = false;
         bool mShowPreferences = false;
         bool mShowProfiler = false;

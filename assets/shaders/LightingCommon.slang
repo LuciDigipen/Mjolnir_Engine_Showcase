@@ -1,3 +1,5 @@
+#include "FogCommon.slang"
+
 // Lighting shared by both pipelines; only shadow visibility differs.
 
 #ifndef MIR_LIGHTING_COMMON
@@ -111,9 +113,7 @@ float3 ShadeLit<V : IShadowVisibility>(V visibility, float3 albedo, float3 N, fl
 
 float3 ApplyFog(float3 color, float dist)
 {
-    const float clampedDist = clamp(dist, fogRange.x, fogRange.y);
-    const float fogFactor = clamp(1.0 - exp(-fogColor.a * (clampedDist - fogRange.x)), 0.0, 1.0);
-    return lerp(color, fogColor.rgb, fogFactor);
+    return lerp(fogColor.rgb, color, DistanceFogTransmittance(dist, fogColor.a, fogRange.xy));
 }
 
 #endif

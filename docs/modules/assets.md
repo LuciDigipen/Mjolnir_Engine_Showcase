@@ -96,7 +96,9 @@ forces a recook instead of a silent mismatch at load.
 [gltf-importer.md](../gltf-importer.md). A standalone `.png`, `.jpg` or `.jpeg`
 cooks to a `TextureAsset`, decoded to RGBA8, under the id of its own path; an
 image a glTF references is left to that model's import and stays a raw blob.
-Everything else cooks as a raw passthrough blob.
+`.particle.json` presets use the versioned [particle effect schema](particles.md),
+including a validated typed texture dependency. Other files without a dedicated
+importer cook as raw passthrough blobs.
 
 Tests in `modules/assets/tests/`: `AssetBlob`, `AssetCache`, `AssetManifest`,
 `AssetPath`. The cooker side of path identity is checked in

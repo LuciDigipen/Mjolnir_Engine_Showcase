@@ -33,6 +33,10 @@
 #include <input_script/InputScriptModule.h>
 #include <physics/PhysicsModule.h>
 #include <physics_script/PhysicsScriptModule.h>
+#include <particles/ParticlesModule.h>
+#include <particles_script/ParticlesScriptModule.h>
+#include <particles_runtime/ParticlesRuntimeModule.h>
+#include <particles_gpu/ParticlesGpuModule.h>
 #include <renderer/RendererModule.h>
 #include <renderer_script/RendererScriptModule.h>
 #include <prefab/PrefabModule.h>
@@ -96,6 +100,7 @@ namespace mir
 
         // for automated cases
         bool mNonInteractive = false;
+        bool mHidden = false;
 
         // the game Initialize opens
         GameProject mProject;
@@ -246,6 +251,7 @@ namespace mir
 
         CoreModule mCore;
         AssetsModule mAssets;
+        ParticlesModule mParticles;
         SceneModule mScene;
         PrefabModule mPrefab;
         // before ImGuiModule: ImGui's shutdown frees the GPU side of the UI's textures,
@@ -255,6 +261,7 @@ namespace mir
         WindowModule mWindow;
         SplashStep mRendererStep{ mSplash, "Initializing renderer...", 0.2f };
         RendererModule mRenderer;
+        ParticlesGpuModule mParticlesGpu;
         // before ImGui and the editor, which read input and models
         InputModule mInput;
         AnimationModule mAnimation;
@@ -278,6 +285,8 @@ namespace mir
         PhysicsModule mPhysics;
         TerrainModule mTerrainData;
         ScriptModule mScript;
+        ParticlesRuntimeModule mParticlesRuntime;
+        ParticlesScriptModule mParticlesScript;
     #if MIR_WITH_AUDIO
         AudioScriptModule mAudioScript;
     #endif

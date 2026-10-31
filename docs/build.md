@@ -261,7 +261,7 @@ In the Testing panel the same thing is a click on one case or one file.
 ### Smoke tests
 
 Every game with a `game.json` gets a `smoke.<game>` test. It runs
-`MjolnirEngine --game games/<game> --frames 120`, which closes the window after
+`MjolnirEngine --game games/<game> --hidden --frames 120`, which exits after
 120 frames and exits non-zero if anything was logged as an error.
 
 `smoke.switch` restarts from HelloWorld into EmptyScene and back — what
@@ -270,7 +270,9 @@ restart halfway through `--frames`. The next process gets the other half and the
 remaining `--switch-to` entries, and in a `--frames` run each process waits for
 the next one and exits with its code.
 
-They open a real window, so they need a GPU and a display. `-L smoke` runs only
+They create a hidden native window, so they need a GPU and a display. `--hidden`
+requires `--frames` and suppresses both splash and game/editor window, normal
+launches remain visible. `-L smoke` runs only
 them, `-LE smoke` skips them:
 
 ```

@@ -66,7 +66,9 @@ float3 TonemapAces(float3 color)
 float4 fragmentMain(VSOutput input) : SV_Target
 {
     float2 uv = input.position.xy * pushData.invExtent;
-    float3 hdr = gHdrColor.Sample(uv).rgb + gBloom.Sample(uv).rgb * pushData.bloomIntensity;
+    float3 hdr = gHdrColor.Sample(uv).rgb;
+    if (pushData.bloomIntensity > 0.0)
+        hdr += gBloom.Sample(uv).rgb * pushData.bloomIntensity;
     hdr *= pushData.exposure;
 
     float3 ldr;

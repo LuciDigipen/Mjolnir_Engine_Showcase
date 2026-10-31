@@ -20,12 +20,14 @@
 #include <cctype>
 #include <chrono>
 #include <core/log/Log.h>
+#include <core/platform/Process.h>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <nlohmann/json.hpp>
 #include <prefab/PrefabAsset.h>
 #include <prefab/PrefabRegistry.h>
+#include <particles/ParticleEffect.h>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -100,6 +102,40 @@ namespace
     void PublishText(const std::filesystem::path &path, const std::string &value)
     {
         Publish(path, std::as_bytes(std::span(value)));
+    }
+    std::vector<std::byte> CompileParticleScript(const std::string &source, const std::filesystem::path &out)
+    {
+        // The output lock serializes compiler scratch files with manifest publication.
+        const auto path = std::filesystem::absolute(out / ("particle-" + Hex(mir::Fnv1a64(source)) + ".slang"));
+        const auto spirv = std::filesystem::path(path.string() + ".spv");
+        struct Scratch
+        {
+            std::filesystem::path source, spirv;
+            ~Scratch()
+            {
+                std::error_code error;
+                std::filesystem::remove(source, error);
+                std::filesystem::remove(spirv, error);
+            }
+        } scratch{path, spirv};
+        PublishText(path, source);
+        // Remove an interrupted cook's output so a failed compile cannot reuse it.
+        std::filesystem::remove(spirv);
+        const std::vector<std::string> args{path.string(), "-target", "spirv", "-profile", "spirv_1_5",
+            "-entry", "computeMain", "-stage", "compute", "-fvk-use-entrypoint-name",
+            "-matrix-layout-column-major", "-O0", "-o", spirv.string()};
+        mir::ChildProcess compiler;
+        if (!compiler.Start(PARTICLE_SLANGC_EXECUTABLE, args))
+            throw std::runtime_error("cannot start particle shader compiler: " + std::string(PARTICLE_SLANGC_EXECUTABLE));
+        const auto exit = compiler.Wait();
+        if (!exit || *exit != 0)
+            throw std::runtime_error("particle shader compilation failed, slangc exit " + std::to_string(exit.value_or(-1)));
+        const auto bytes = mir::ReadBytes(spirv);
+        if (!bytes || bytes->size() < 20 || bytes->size() % 4 != 0 ||
+            std::to_integer<uint8_t>((*bytes)[0]) != 0x03 || std::to_integer<uint8_t>((*bytes)[1]) != 0x02 ||
+            std::to_integer<uint8_t>((*bytes)[2]) != 0x23 || std::to_integer<uint8_t>((*bytes)[3]) != 0x07)
+            throw std::runtime_error("particle compiler emitted missing or invalid SPIR-V");
+        return *bytes;
     }
     bool ProcessExists(uint64_t pid)
     {
@@ -499,14 +535,38 @@ namespace
             options.models.push_back(moved);
             completedMoves.emplace_back(model, moved);
         }
-        const bool partial =
-            !options.models.empty() || !options.changed.empty() || !options.removals.empty() || !options.moves.empty();
+        // Particle dependencies form a small source graph, a changed member recooks
+        // the complete graph before publishing its replacement manifest.
+        bool particleChange = std::any_of(options.changed.begin(), options.changed.end(), [](const auto &path)
+            {
+                const auto name = path.filename().string();
+                return name.ends_with(".particle.json") || name.ends_with(".emitter.json");
+            });
+        if (!particleChange && !options.changed.empty())
+            for (const auto &root : options.roots)
+                for (const auto &entry : std::filesystem::recursive_directory_iterator(root.physical))
+                {
+                    if (!entry.is_regular_file() || !entry.path().filename().string().ends_with(".emitter.json"))
+                        continue;
+                    const auto bytes = mir::ReadBytes(entry.path());
+                    if (!bytes) continue;
+                    const auto emitter = mir::ReadParticleEmitterSource(
+                        {reinterpret_cast<const char *>(bytes->data()), bytes->size()}, root.logical);
+                    if (!emitter.mEmitter) continue;
+                    const auto texture = std::filesystem::weakly_canonical(root.physical / emitter.mTexturePath);
+                    particleChange = particleChange || std::any_of(options.changed.begin(), options.changed.end(),
+                        [&](const auto &changed) { return std::filesystem::weakly_canonical(changed) == texture; });
+                }
+        const bool partial = !options.models.empty() || !options.changed.empty() || !options.removals.empty() ||
+                             !options.moves.empty();
         std::unordered_map<uint64_t, Output> outputs;
+        std::unordered_map<uint64_t, Output> previousOutputs;
+        if (auto previous = mir::AssetManifest::LoadFile(options.out / mir::kAssetManifestFileName))
+            for (const auto &entry : previous->Entries())
+                previousOutputs.emplace(entry.id.value,
+                    Output{entry.id, entry.typeTag, entry.contentVersion, std::string(previous->PathOf(entry))});
         if (partial)
-            if (auto previous = mir::AssetManifest::LoadFile(options.out / mir::kAssetManifestFileName))
-                for (const auto &entry : previous->Entries())
-                    outputs.emplace(entry.id.value, Output{entry.id, entry.typeTag, entry.contentVersion,
-                                                           std::string(previous->PathOf(entry))});
+            outputs = previousOutputs;
 
         std::set<std::string> requested(options.models.begin(), options.models.end()), changedCanonical;
         for (const auto &path : options.changed)
@@ -549,6 +609,7 @@ namespace
                     resolved && std::filesystem::exists(resolved->second))
                     identityOwners.emplace(cachedRecord.at("identityPath").get<std::string>(), cachedPath);
         std::unordered_map<uint64_t, std::string> prefabAssetOwners;
+        bool assetsChanged = false;
         auto emit = [&](mir::AssetId id, const std::vector<std::byte> &bytes) {
             const auto blob = mir::ParseAssetBlob(bytes);
             if (!blob)
@@ -564,6 +625,8 @@ namespace
             if (!same)
                 Publish(path, bytes);
             Output output{id, blob->header.typeTag, blob->header.contentVersion, file};
+            const auto baseline = previousOutputs.find(id.value);
+            assetsChanged = assetsChanged || baseline == previousOutputs.end() || baseline->second.file != file;
             outputs[id.value] = output;
             return output;
         };
@@ -592,6 +655,43 @@ namespace
                     existing->second.file + "'; regenerate the prefab UUID");
             prefabAssetOwners.emplace(id.value, logical);
             emit(id, mir::BuildPrefabAsset(*parsed.mDocument));
+        };
+
+        std::unordered_map<uint64_t, std::string> particleScripts;
+        auto cookParticleEmitter = [&](const SourceRoot &root, const std::filesystem::path &path)
+        {
+            const auto bytes = mir::ReadBytes(path);
+            if (!bytes) throw std::runtime_error("missing particle emitter: " + path.string());
+            auto emitter = mir::ReadParticleEmitterSource(
+                {reinterpret_cast<const char *>(bytes->data()), bytes->size()}, root.logical);
+            if (!emitter.mEmitter)
+                throw std::runtime_error(LogicalPath(root, path) + ": " + emitter.mError);
+            const auto texturePath = root.physical / emitter.mTexturePath;
+            const auto textureBytes = mir::ReadBytes(texturePath);
+            if (!textureBytes || !mir::cook::IsImagePath(texturePath))
+                throw std::runtime_error("missing or unsupported particle texture: " + texturePath.string());
+            if (emitter.mEmitter->simulationTarget == mir::ParticleSimulationTarget::GPU)
+            {
+                const auto source = mir::GenerateParticleScript(*emitter.mEmitter);
+                const auto layout = mir::ParticleScriptLayout();
+                const auto scriptId = mir::MakeAssetId("particles/generated/" + Hex(mir::Fnv1a64(source)) + ".spv");
+                const auto layoutId = mir::MakeAssetId("particles/generated/" + Hex(mir::Fnv1a64(layout)) + ".layout");
+                const auto found = particleScripts.find(scriptId.value);
+                if (found != particleScripts.end() && found->second != source)
+                    throw std::runtime_error("particle script identity collision");
+                if (found == particleScripts.end())
+                {
+                    const auto code = CompileParticleScript(source, options.out);
+                    emit(scriptId, mir::BuildAssetBlob(mir::kParticleScriptTypeTag, mir::kParticleScriptContentVersion, code));
+                    emit(layoutId, mir::BuildAssetBlob(mir::kParticleScriptLayoutTypeTag,
+                        mir::kParticleScriptLayoutContentVersion, std::as_bytes(std::span(layout))));
+                    particleScripts.emplace(scriptId.value, source);
+                }
+                emitter.mEmitter->script = scriptId;
+                emitter.mEmitter->scriptLayout = layoutId;
+            }
+            emit(emitter.mEmitter->texture, mir::BuildTypedAsset(mir::cook::DecodeImage(*textureBytes)));
+            emit(mir::MakeAssetId(LogicalPath(root, path)), mir::BuildParticleEmitterAsset(*emitter.mEmitter));
         };
 
         for (const auto &logical : options.removals)
@@ -747,6 +847,18 @@ namespace
                             outputs[output.id.value] = output;
                     }
                 }
+        }
+        // Standalone assets are rooted in the configured source roots. Particle changes
+        // recook this graph while retaining manifest entries from roots outside the request.
+        if (!partial || particleChange)
+        {
+            // The recook below re-emits every live particle source, so entries for deleted
+            // or renamed sources must not survive from the previous manifest.
+            std::erase_if(outputs, [](const auto &entry)
+                {
+                    return entry.second.tag == mir::kParticleEffectTypeTag ||
+                           entry.second.tag == mir::kParticleEmitterTypeTag;
+                });
             //a gltf's images are cooked by its import, under its own ids
             std::unordered_set<std::string> modelImages;
             for (const auto &[logical, record] : cache["models"].items())
@@ -779,6 +891,25 @@ namespace
                         cookPrefab(logical, path);
                         continue;
                     }
+                    if (filename.ends_with(".emitter.json"))
+                    {
+                        cookParticleEmitter(root, path);
+                        continue;
+                    }
+                    if (filename.ends_with(".particle.json"))
+                    {
+                        const auto effectBytes = mir::ReadBytes(path);
+                        if (!effectBytes)
+                            throw std::runtime_error("cannot read " + path.string());
+                        const auto effect = mir::ReadParticleEffectSource(
+                            {reinterpret_cast<const char *>(effectBytes->data()), effectBytes->size()}, root.logical);
+                        if (!effect.mEffect)
+                            throw std::runtime_error(logical + ": " + effect.mError);
+                        for (const auto &emitterPath : effect.mEmitterPaths)
+                            cookParticleEmitter(root, root.physical / emitterPath);
+                        emit(mir::MakeAssetId(logical), mir::BuildParticleEffectAsset(*effect.mEffect));
+                        continue;
+                    }
                     auto bytes = mir::ReadBytes(path);
                     if (!bytes)
                         throw std::runtime_error("cannot read " + path.string());
@@ -806,6 +937,31 @@ namespace
         }
         for (const auto &imported : metadata)
             PublishText(imported.metadataPath, imported.metadata);
+        // Generated scripts may be shared across source roots, retire only dependencies
+        // unreferenced by every emitter retained in the replacement manifest.
+        std::unordered_set<uint64_t> particleDependencies;
+        bool canRetireParticleScripts = true;
+        for (const auto &[id, output] : outputs)
+            if (output.tag == mir::kParticleEmitterTypeTag)
+            {
+                const auto bytes = mir::ReadBytes(options.out / output.file);
+                const auto blob = bytes ? mir::ParseAssetBlob(*bytes) : std::nullopt;
+                const auto emitter = blob ? mir::ReadParticleEmitterAsset(*blob) : mir::ParticleEmitterAssetResult{};
+                if (!emitter.mEmitter)
+                {
+                    canRetireParticleScripts = false;
+                    break;
+                }
+                particleDependencies.insert(emitter.mEmitter->script.value);
+                particleDependencies.insert(emitter.mEmitter->scriptLayout.value);
+            }
+        if (canRetireParticleScripts)
+            std::erase_if(outputs, [&](const auto &entry)
+                {
+                    const auto &output = entry.second;
+                    return (output.tag == mir::kParticleScriptTypeTag || output.tag == mir::kParticleScriptLayoutTypeTag) &&
+                        !particleDependencies.contains(output.id.value);
+                });
         std::vector<Output> ordered;
         for (const auto &[id, output] : outputs)
             ordered.push_back(output);
@@ -815,9 +971,12 @@ namespace
         for (const auto &output : ordered)
             entries.push_back({{output.id, output.tag, output.version}, output.file});
         const auto manifestPath = options.out / mir::kAssetManifestFileName;
+        const auto manifestBytes = mir::BuildAssetManifestBlob(entries);
+        const auto previousManifestBytes = mir::ReadBytes(manifestPath);
+        const bool manifestChanged = !previousManifestBytes || *previousManifestBytes != manifestBytes;
         if (auto bytes = mir::ReadBytes(manifestPath))
             Publish(options.out / kPreviousManifestFileName, *bytes);
-        Publish(manifestPath, mir::BuildAssetManifestBlob(entries));
+        Publish(manifestPath, manifestBytes);
         PublishText(options.out / "import-cache.json", cache.dump(2) + "\n");
 
         std::unordered_set<std::string> keep{std::string(mir::kAssetManifestFileName),
@@ -835,7 +994,10 @@ namespace
             const std::string status = v.value("status", "");
             return status == "cooked" || status == "removed";
         });
-        WriteResult(options, BuildResult(changed ? "succeeded" : "unchanged", resultModels));
+        assetsChanged = assetsChanged || manifestChanged;
+        auto result = BuildResult(changed || assetsChanged ? "succeeded" : "unchanged", resultModels);
+        result["assetsChanged"] = assetsChanged;
+        WriteResult(options, result);
         MIR_LOG_INFO("AssetCooker: {} assets in manifest ({} model requests)", ordered.size(), models.size());
         return 0;
     }
