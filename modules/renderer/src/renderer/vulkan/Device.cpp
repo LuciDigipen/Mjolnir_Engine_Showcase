@@ -194,7 +194,7 @@ namespace mir::vk
                         .ProjectId = kNgxProjectId,
                         .EngineType = kNgxEngineType,
                         .EngineVersion = kNgxEngineVersion } } },
-                .ApplicationDataPath = kNgxApplicationDataPath,
+                .ApplicationDataPath = NgxApplicationDataPath(),
                 .FeatureInfo = nullptr };
         }
 
