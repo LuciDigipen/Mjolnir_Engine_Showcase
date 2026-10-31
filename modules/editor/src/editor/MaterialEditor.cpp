@@ -298,7 +298,7 @@ namespace mir
         {
             std::string refreshError;
             const std::optional<MaterialDraftRefresh> refresh =
-                RefreshMaterialDraft(*existing, mRecipe, mLayout, schema->revision, &refreshError);
+                RefreshMaterialDraft(*existing, mRecipe, mLayout, frontend, schema->revision, &refreshError);
             if (!refresh)
             {
                 mState = TargetState::Invalid;
@@ -395,7 +395,7 @@ namespace mir
             const MaterialRecipe recipe = RecipeFromCooked(cooked, *source);
             std::string refreshError;
             const std::optional<MaterialDraftRefresh> refresh =
-                RefreshMaterialDraft(*draft, recipe, schema->layout, schema->revision, &refreshError);
+                RefreshMaterialDraft(*draft, recipe, schema->layout, draft->mFrontend, schema->revision, &refreshError);
             if (!refresh)
             {
                 draft->mSchemaStale = true;
@@ -506,7 +506,7 @@ namespace mir
 
         if (draft->mFrontends.size() > 1)
         {
-            ImGui::BeginDisabled(!editing || MaterialDraftDirty(*draft) || draft->mCooking);
+            ImGui::BeginDisabled(!editing || MaterialDraftNeedsSave(*draft) || draft->mCooking);
             if (ImGui::BeginCombo("Frontend", draft->mFrontend.c_str()))
             {
                 for (const std::string &frontend : draft->mFrontends)

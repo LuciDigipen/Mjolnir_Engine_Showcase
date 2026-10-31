@@ -48,8 +48,6 @@ namespace mir
         void MarkApplyFailed(std::string diagnostic);
         void Reject(const std::string &model, std::string diagnostic);
 
-        // The project's source asset root; logical assets live under it.
-        const std::filesystem::path &SourceAssetRoot() const { return mSourceAssetRoot; }
         // Queues one authored .material.json for a finite cook batch and returns
         // the request identity the apply ack must match.
         uint64_t ReimportMaterial(std::string_view logicalPath);

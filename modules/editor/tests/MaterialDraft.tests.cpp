@@ -263,7 +263,7 @@ TEST_CASE("A same-size schema reorder migrates by field name and preserves unsav
 
     std::string error;
     const std::optional<mir::MaterialDraftRefresh> refresh =
-        mir::RefreshMaterialDraft(draft, TestRecipe(), reordered, "reordered", &error);
+        mir::RefreshMaterialDraft(draft, TestRecipe(), reordered, draft.mFrontend, "reordered", &error);
     INFO(error);
     REQUIRE(refresh);
 
@@ -289,6 +289,51 @@ TEST_CASE("A same-size schema reorder migrates by field name and preserves unsav
     REQUIRE(overlay);
     CHECK(nlohmann::json::parse(*overlay).at("amount") == 5.0f);
     CHECK_FALSE(nlohmann::json::parse(*overlay).contains("count"));
+}
+
+TEST_CASE("A frontend switch refreshes its target and layout together", "[editor][material]")
+{
+    mir::MaterialDraft draft = TestDraft();
+    mir::MaterialRecipe recipe = TestRecipe();
+    recipe.frontends = {"terrain", "mesh"};
+    mir::MaterialLayout meshLayout = TestLayout();
+    meshLayout.fields[0].offset = 4;
+    meshLayout.fields[1].offset = 0;
+    mir::MaterialDraftPreviewed(draft, 10, R"({"amount":1.0})");
+    REQUIRE(draft.mPreviewedActive);
+
+    std::string error;
+    REQUIRE(mir::RefreshMaterialDraft(draft, recipe, meshLayout, "mesh", "mesh-schema", &error));
+    CHECK(draft.mFrontend == "mesh");
+    CHECK(Field(draft, "amount")->mLayout.offset == 4);
+    CHECK(Field(draft, "count")->mLayout.offset == 0);
+    CHECK(draft.mSchemaRevision == "mesh-schema");
+    CHECK_FALSE(draft.mPreviewedActive);
+
+    Field(draft, "amount")->mComponents[0] = 5.0f;
+    const std::optional<std::string> overlay = mir::MaterialDraftPreviewParameters(draft, true, true, 11);
+    REQUIRE(overlay);
+    CHECK(nlohmann::json::parse(*overlay).at("amount") == 5.0f);
+
+    REQUIRE(mir::RefreshMaterialDraft(draft, recipe, TestLayout(), "terrain", "terrain-schema", &error));
+    CHECK(draft.mFrontend == "terrain");
+    CHECK(Field(draft, "amount")->mLayout.offset == 0);
+    CHECK(Field(draft, "amount")->mComponents[0] == 5.0f);
+}
+
+TEST_CASE("A rejected frontend refresh preserves the previous target and draft", "[editor][material]")
+{
+    mir::MaterialDraft draft = TestDraft();
+    Field(draft, "amount")->mComponents[0] = 5.0f;
+    mir::MaterialRecipe malformed = TestRecipe();
+    malformed.parametersJson = "[]";
+    std::string error;
+    CHECK_FALSE(mir::RefreshMaterialDraft(draft, malformed, TestLayout(), "mesh", "bad-schema", &error));
+    CHECK_FALSE(error.empty());
+    CHECK(draft.mFrontend == "terrain");
+    CHECK(Field(draft, "amount")->mLayout.offset == 0);
+    CHECK(Field(draft, "amount")->mComponents[0] == 5.0f);
+    CHECK(mir::MaterialDraftDirty(draft));
 }
 
 TEST_CASE("A schema refresh reports removed and retyped dirty fields and adds new ones", "[editor][material]")
@@ -319,7 +364,7 @@ TEST_CASE("A schema refresh reports removed and retyped dirty fields and adds ne
 
     std::string error;
     const std::optional<mir::MaterialDraftRefresh> refresh =
-        mir::RefreshMaterialDraft(draft, recipe, changed, "changed", &error);
+        mir::RefreshMaterialDraft(draft, recipe, changed, draft.mFrontend, "changed", &error);
     INFO(error);
     REQUIRE(refresh);
     CHECK(refresh->mMessages.size() == 2);
@@ -354,8 +399,8 @@ TEST_CASE("A clean draft refreshes from an external cook without replaying clean
         "unknownParameter": 7.0
     })";
     std::string error;
-    REQUIRE(mir::RefreshMaterialDraft(first, changed, TestLayout(), "external", &error));
-    REQUIRE(mir::RefreshMaterialDraft(second, TestRecipe(), TestLayout(), "external", &error));
+    REQUIRE(mir::RefreshMaterialDraft(first, changed, TestLayout(), first.mFrontend, "external", &error));
+    REQUIRE(mir::RefreshMaterialDraft(second, TestRecipe(), TestLayout(), second.mFrontend, "external", &error));
 
     CHECK(Field(first, "amount")->mComponents[0] == 4.0f);
     CHECK_FALSE(mir::MaterialDraftDirty(first));

@@ -157,8 +157,10 @@ namespace mir
     // Refreshes a draft against a new accepted recipe and reflected layout.
     // Compatible unsaved values survive by name and kind; added fields take the
     // new baseline, removed/type-changed dirty fields are reported explicitly.
+    // The frontend must identify the supplied reflected layout; both change together on success.
     std::optional<MaterialDraftRefresh> RefreshMaterialDraft(MaterialDraft &draft, const MaterialRecipe &recipe,
-        const MaterialLayout &layout, std::string_view schemaRevision, std::string *error = nullptr);
+        const MaterialLayout &layout, std::string_view frontend, std::string_view schemaRevision,
+        std::string *error = nullptr);
 
     std::optional<MaterialDraftField> MaterialDraftFieldFromJson(const MaterialFieldLayout &layout,
         std::string_view valueJson, std::string *error = nullptr);

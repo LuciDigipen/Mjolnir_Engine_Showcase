@@ -415,10 +415,10 @@ namespace mir
     }
 
     std::optional<MaterialDraftRefresh> RefreshMaterialDraft(MaterialDraft &draft, const MaterialRecipe &recipe,
-        const MaterialLayout &layout, std::string_view schemaRevision, std::string *error)
+        const MaterialLayout &layout, std::string_view frontend, std::string_view schemaRevision, std::string *error)
     {
         std::optional<MaterialDraft> fresh = BuildMaterialDraft(draft.mIdentity, draft.mLogicalPath,
-            draft.mProjectKey, draft.mFrontend, recipe, layout, error);
+            draft.mProjectKey, std::string(frontend), recipe, layout, error);
         if (!fresh)
             return std::nullopt;
 

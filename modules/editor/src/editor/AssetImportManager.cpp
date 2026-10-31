@@ -240,7 +240,12 @@ namespace mir
                 for (const auto &model : mQueued.models)
                     SetStatus(model, AssetImportStatus::Canceled);
                 for (const auto &material : mQueued.materials)
+                {
                     SetStatus(material, AssetImportStatus::Canceled);
+                    const auto sequence = mQueued.materialSequences.find(material);
+                    if (sequence != mQueued.materialSequences.end())
+                        mMaterialFailureRevision[material] = sequence->second;
+                }
                 for (const auto &model : mQueued.removals)
                     SetStatus(model, AssetImportStatus::Canceled);
                 for (const auto &[model, destination] : mQueued.moves)
@@ -394,7 +399,12 @@ namespace mir
             for (const auto &model : mRunning.models)
                 SetStatus(model, AssetImportStatus::Failed, "could not start AssetCooker");
             for (const auto &material : mRunning.materials)
+            {
                 SetStatus(material, AssetImportStatus::Failed, "could not start AssetCooker");
+                const auto sequence = mRunning.materialSequences.find(material);
+                if (sequence != mRunning.materialSequences.end())
+                    mMaterialFailureRevision[material] = sequence->second;
+            }
             mRunning.Clear();
             return;
         }
@@ -413,7 +423,12 @@ namespace mir
             for (const auto &model : mRunning.models)
                 SetStatus(model, AssetImportStatus::Canceled);
             for (const auto &material : mRunning.materials)
+            {
                 SetStatus(material, AssetImportStatus::Canceled);
+                const auto sequence = mRunning.materialSequences.find(material);
+                if (sequence != mRunning.materialSequences.end())
+                    mMaterialFailureRevision[material] = sequence->second;
+            }
             for (const auto &model : mRunning.removals)
                 SetStatus(model, AssetImportStatus::Canceled);
             for (const auto &[model, destination] : mRunning.moves)
