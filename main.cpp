@@ -32,8 +32,8 @@
 
 namespace
 {
-    constexpr std::string_view kUsage = "[--game <dir>] [--frames <N>] [--capture <png>] [--no-editor] [--ui-demo] "
-        "[--non-interactive] [--hidden] [--workers <0..32>] [--switch-to <dir>]...";
+    constexpr std::string_view kUsage = "[--game <dir>] [--frames <N>] [--capture <png>] [--width <N>] [--height <N>] "
+        "[--gpu-timing <csv>] [--no-editor] [--ui-demo] [--non-interactive] [--hidden] [--workers <0..32>] [--switch-to <dir>]...";
 
     struct LaunchOptions
     {
@@ -44,6 +44,10 @@ namespace
         uint64_t mMaxFrames = 0;
         std::string mCapturePath;
         uint32_t mWorkerThreads = static_cast<uint32_t>(mir::JobExecutor::DefaultWorkerCount());
+        uint32_t mWidth = 0;
+        uint32_t mHeight = 0;
+        // empty: no GPU timestamp capture
+        std::string mGpuTimingPath;
         bool mNoEditor = false;
         bool mUIDemo = false;
 
@@ -90,6 +94,19 @@ namespace
                 const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), options.mWorkerThreads);
                 if (error != std::errc{} || end != value.data() + value.size() || options.mWorkerThreads > 32)
                     ThrowUsage("--workers expects an integer from 0 to 32");
+            }
+            else if ((arg == "--width" || arg == "--height") && i + 1 < argc)
+            {
+                const std::string_view value = argv[++i];
+                uint32_t parsed = 0;
+                const auto [parsedEnd, ec] = std::from_chars(value.data(), value.data() + value.size(), parsed);
+                if (ec != std::errc{} || parsedEnd != value.data() + value.size() || parsed == 0)
+                    ThrowUsage(std::string(arg) + " expects a positive integer, got '" + std::string(value) + "'");
+                (arg == "--width" ? options.mWidth : options.mHeight) = parsed;
+            }
+            else if (arg == "--gpu-timing" && i + 1 < argc)
+            {
+                options.mGpuTimingPath = argv[++i];
             }
             else if (arg == "--no-editor")
             {
@@ -147,6 +164,21 @@ namespace
             args.emplace_back("--capture");
             args.push_back(options.mCapturePath);
         }
+        if (!options.mGpuTimingPath.empty())
+        {
+            args.emplace_back("--gpu-timing");
+            args.push_back(options.mGpuTimingPath);
+        }
+        if (options.mWidth != 0)
+        {
+            args.emplace_back("--width");
+            args.push_back(std::to_string(options.mWidth));
+        }
+        if (options.mHeight != 0)
+        {
+            args.emplace_back("--height");
+            args.push_back(std::to_string(options.mHeight));
+        }
 
         if (options.mMaxFrames != 0)
         {
@@ -196,6 +228,11 @@ namespace
         desc.mMaxFrames = options.mMaxFrames;
         desc.mCapturePath = options.mCapturePath;
         desc.mWorkerThreads = options.mWorkerThreads;
+        desc.mGpuTimingPath = options.mGpuTimingPath;
+        if (options.mWidth != 0)
+            desc.mWidth = options.mWidth;
+        if (options.mHeight != 0)
+            desc.mHeight = options.mHeight;
         // a build without the editor is always the game; --no-editor is then a no-op
         desc.mEnableEditorLayout = mir::App::kHasEditor && !options.mNoEditor;
         desc.mUIDemo = options.mUIDemo;

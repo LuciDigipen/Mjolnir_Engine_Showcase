@@ -34,6 +34,8 @@ namespace mir
         MaterialHandle material;
         // Present only when the material declares tileSizeMeters.
         std::optional<double> tilePeriodMeters;
+        std::optional<SurfaceMaterialMacroParameters> macro;
+        std::optional<SurfaceMaterialParallaxParameters> parallax;
     };
 
     // Consumer validation runs before any pipeline is created.

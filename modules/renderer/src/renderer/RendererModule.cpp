@@ -30,7 +30,8 @@ namespace mir
         const RendererModuleSettings &settings)
     {
         if (!mRenderer.Initialize(
-            { .window = &surface, .appName = settings.mAppName, .enableValidation = settings.mEnableValidation }))
+            { .window = &surface, .appName = settings.mAppName, .enableValidation = settings.mEnableValidation,
+                .gpuTimingPath = settings.mGpuTimingPath }))
         {
             // the destructor does not run for a throwing constructor
             mRenderer.Shutdown();

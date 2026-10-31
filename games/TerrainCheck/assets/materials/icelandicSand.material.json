@@ -7,7 +7,19 @@
     "albedoTint": [1.0, 1.0, 1.0, 1.0],
     "roughnessScale": 1.0,
     "normalScale": 1.0,
-    "normalYUp": true
+    "normalYUp": true,
+    "macroPeriodMeters": 64.0,
+    "macroStrength": 0.35,
+    "macroHueShiftDegrees": 8.0,
+    "macroRoughnessContrast": 0.35,
+    "parallaxEnabled": true,
+    "parallaxRtEnabled": false,
+    "parallaxHeightMeters": 0.057,
+    "parallaxReference": 0.455,
+    "parallaxDistanceMeters": 0.08,
+    "parallaxSteps": 24,
+    "parallaxFadeStartMeters": 40.0,
+    "parallaxFadeEndMeters": 120.0
   },
   "textures": {
     "baseColor": { "path": "textures/icelandic_sand_and_rocks/Icelandic_Sand_And_Rocks_tcigfcgn_4K_BaseColor.jpg", "colorSpace": "srgb" },

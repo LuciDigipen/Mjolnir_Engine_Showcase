@@ -29,6 +29,7 @@ namespace mir::vk
     class ResourceStore;
     class MaterialStore;
     class MaterialTable;
+    class GpuTiming;
     struct GpuMesh;
 
     // Every image the trace writes, one per frame in flight each. Adding one is a row in
@@ -140,7 +141,7 @@ namespace mir::vk
         // sub-pixel samples and averages color only - distance/velocity keep the first sample.
         void RecordTrace(VkCommandBuffer cmd, uint32_t frame, const VkRect2D &rect,
             VkDescriptorSet cameraSet, uint32_t cameraOffset, AntiAliasingMode aaMode, uint32_t rtSampleCount,
-            const GiShading *gi = nullptr);
+            const GiShading *gi = nullptr, GpuTiming *timing = nullptr);
 
         // VK_NULL_HANDLE for a guide buffer while Dlss is inactive.
         VkImage Image(RtImage image, uint32_t frame) const { return Slot(image, frame).image; }

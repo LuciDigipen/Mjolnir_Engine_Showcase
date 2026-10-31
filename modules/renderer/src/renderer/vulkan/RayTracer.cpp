@@ -9,6 +9,7 @@
 #include "RayTracer.h"
 #include "RayFacing.h"
 #include "Device.h"
+#include "GpuTiming.h"
 #include <renderer/RtInstanceInfo.h>
 #include "MaterialStore.h"
 #include "MaterialTable.h"
@@ -1198,7 +1199,7 @@ namespace mir::vk
 
     void RayTracer::RecordTrace(VkCommandBuffer cmd, uint32_t frame, const VkRect2D &rect,
         VkDescriptorSet cameraSet, uint32_t cameraOffset, AntiAliasingMode aaMode, uint32_t rtSampleCount,
-        const GiShading *gi)
+        const GiShading *gi, GpuTiming *timing)
     {
         // Without guide images their bindings are unwritten, so the shader's Dlss branches must not run.
         if (aaMode == AntiAliasingMode::Dlss && !HasDlssGuides())
@@ -1249,9 +1250,13 @@ namespace mir::vk
                 VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,
                 0, sizeof(RtPushConstants), &pushConstants);
 
+            if (timing != nullptr)
+                timing->MarkBegin(cmd, frame, GpuTimingRegion::RtTraceRays);
             vkCmdTraceRaysKHR(cmd, gi ? &gi->raygen : &mSbtRaygenRegion, gi ? &gi->miss : &mSbtMissRegion,
                 gi ? &gi->hit : &mSbtHitRegion, gi ? &gi->callable : &mSbtCallableRegion,
                 rect.extent.width, rect.extent.height, 1);
+            if (timing != nullptr)
+                timing->MarkEnd(cmd, frame, GpuTimingRegion::RtTraceRays, rect.extent);
         }
 
         for (VkImage image : outputs)
