@@ -45,6 +45,7 @@ namespace mir::test
         static AssetId EmitterId() { return MakeAssetId("assets/effects/exhaust.emitter.json"); }
         static AssetId TextureId() { return MakeAssetId("assets/textures/white.png"); }
         const std::filesystem::path &Root() const { return mRoot; }
+        ParticleUserParameters authoredParameters;
         ParticleEffect Definition(float lifetime = 0.05f) const
         {
             ParticleEmitterAsset emitter;
@@ -55,6 +56,7 @@ namespace mir::test
             ParticleEffect system;
             system.emitters.push_back(EmitterId());
             system.emitterDefinitions.push_back(emitter);
+            system.parameters = authoredParameters;
             return system;
         }
 

@@ -852,6 +852,13 @@ namespace
         // recook this graph while retaining manifest entries from roots outside the request.
         if (!partial || particleChange)
         {
+            // The recook below re-emits every live particle source, so entries for deleted
+            // or renamed sources must not survive from the previous manifest.
+            std::erase_if(outputs, [](const auto &entry)
+                {
+                    return entry.second.tag == mir::kParticleEffectTypeTag ||
+                           entry.second.tag == mir::kParticleEmitterTypeTag;
+                });
             //a gltf's images are cooked by its import, under its own ids
             std::unordered_set<std::string> modelImages;
             for (const auto &[logical, record] : cache["models"].items())

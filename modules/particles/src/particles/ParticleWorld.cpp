@@ -81,6 +81,21 @@ namespace mir
         return true;
     }
 
+    std::optional<ParticleUserParameters> ParticleWorld::BaseParameters(Entity owner) const
+    {
+        const auto *system = mWorld.GetComponent<ParticleSystem>(owner);
+        if (!system) return std::nullopt;
+        if (system->overrideParameters) return system->userParameters;
+        if (const auto *instance = Find(owner)) return instance->effect.parameters;
+        const auto end = std::find(std::begin(system->systemName), std::end(system->systemName), '\0');
+        if (end == std::end(system->systemName) || end == std::begin(system->systemName)) return system->userParameters;
+        const std::string_view name(system->systemName, static_cast<size_t>(end - std::begin(system->systemName)));
+        const auto logical = MakeLogicalAssetPath(mAssetIdRoot, name);
+        if (!logical.Ok()) return system->userParameters;
+        const auto parsed = LoadParticleEffect(mAssets, MakeAssetId(logical.path));
+        return parsed.mEffect ? parsed.mEffect->parameters : system->userParameters;
+    }
+
     bool ParticleWorld::Destroy(Entity owner)
     {
         auto *emitter = mWorld.GetComponent<ParticleSystem>(owner);

@@ -47,23 +47,20 @@ namespace mir
             {
                 auto *particles = world.TryResource<ParticleWorld>();
                 if (!particles) return false;
-                const auto *component = world.GetComponent<ParticleSystem>(owner);
-                if (!component) return false;
-                const auto *instance = particles->Find(owner);
-                auto parameters = instance ? instance->parameters : component->userParameters;
-                parameters.spawnRateScale = spawnRateScale;
-                parameters.sizeScale = sizeScale;
-                return particles->SetParameters(owner, parameters);
+                auto parameters = particles->BaseParameters(owner);
+                if (!parameters) return false;
+                parameters->spawnRateScale = spawnRateScale;
+                parameters->sizeScale = sizeScale;
+                return particles->SetParameters(owner, *parameters);
             });
         worldType.set_function("particle_system_wind", [](World &world, Entity owner, float x, float y, float z)
             {
                 auto *particles = world.TryResource<ParticleWorld>();
-                const auto *component = world.GetComponent<ParticleSystem>(owner);
-                if (!particles || !component) return false;
-                const auto *instance = particles->Find(owner);
-                auto parameters = instance ? instance->parameters : component->userParameters;
-                parameters.wind = {x, y, z};
-                return particles->SetParameters(owner, parameters);
+                if (!particles) return false;
+                auto parameters = particles->BaseParameters(owner);
+                if (!parameters) return false;
+                parameters->wind = {x, y, z};
+                return particles->SetParameters(owner, *parameters);
             });
         worldType.set_function("particle_system_state", [](World &world, Entity owner)
             {

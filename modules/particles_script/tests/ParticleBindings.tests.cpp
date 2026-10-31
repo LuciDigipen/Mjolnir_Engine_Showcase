@@ -98,11 +98,37 @@ TEST_CASE("Particle Lua user overrides update live systems and reject invalid re
     REQUIRE(system);
     CHECK(system->parameters.spawnRateScale == 1.5f);
     CHECK(system->parameters.sizeScale == 2);
-    CHECK(system->parameters.wind == glm::vec3(3,4,-2));
+    CHECK(system->parameters.wind == glm::vec3(3, 4, -2));
     const auto *component = test.world.GetComponent<mir::ParticleSystem>(owner);
     REQUIRE(component);
     CHECK(component->userParameters.spawnRateScale == 1.5f);
     CHECK(component->userParameters.sizeScale == 2);
-    CHECK(component->userParameters.wind == glm::vec3(3,4,-2));
+    CHECK(component->userParameters.wind == glm::vec3(3, 4, -2));
+    host.DestroyInstance(instance);
+}
+
+TEST_CASE("Particle Lua setters before playback keep the other authored defaults", "[particles_script][particles]")
+{
+    mir::test::ParticleTestWorld test;
+    test.files.authoredParameters = { 0.5f, 2, glm::vec3(1, 2, 3) };
+    test.files.Publish();
+    const auto owner = test.System(false);
+    mir::ScriptHost host;
+    const auto bindings = mir::AddBindings(host, &mir::RegisterParticleBindings);
+    REQUIRE(host.LoadScriptSource("particle_preplay", R"(
+        local Controls = {}
+        function Controls.OnUpdate(self, world, entity, dt)
+            assert(world:particle_system_parameters(entity, 3, 4))
+        end
+        return Controls
+    )"));
+    const auto instance = host.CreateInstance("particle_preplay");
+    REQUIRE(instance != -1);
+    host.CallOnUpdate(test.world, test.commands, owner, instance, 1.0f / 60);
+    const auto *component = test.world.GetComponent<mir::ParticleSystem>(owner);
+    REQUIRE(component);
+    CHECK(component->userParameters.spawnRateScale == 3);
+    CHECK(component->userParameters.sizeScale == 4);
+    CHECK(component->userParameters.wind == glm::vec3(1, 2, 3));
     host.DestroyInstance(instance);
 }

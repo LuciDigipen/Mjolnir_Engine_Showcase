@@ -13,6 +13,7 @@
 
 #include <core/ecs/World.h>
 
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -32,6 +33,8 @@ namespace mir
         bool Stop(Entity owner);
         bool Pause(Entity owner, bool paused);
         bool SetParameters(Entity owner, const ParticleUserParameters &parameters);
+        // Parameters a setter should start from
+        std::optional<ParticleUserParameters> BaseParameters(Entity owner) const;
         bool Reset(Entity owner);
         bool Destroy(Entity owner);
         const ParticleSystemInstance *Find(Entity owner) const;
