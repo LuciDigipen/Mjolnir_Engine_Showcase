@@ -318,8 +318,12 @@ Preview uses a normal cooked system and the production runtime in Edit. Pause
 freezes its simulation, Clear, closing the panel, scene changes and Play discard
 it. Successful asset reload discards old history and restarts an active preview,
 preserving its pause choice. Failed cooking or reload keeps the last good assets.
-During Play, cooking can finish but asset apply waits for Stop. Unsaved source
-drafts stay separate from cooked preview data. Lua controls remain in
+During Play, cooking can finish but asset apply waits for Stop. A running preview
+follows unsaved edits to data fields live: the placement Origin, the system scales and
+wind, and an emitter's timing, spawn rates, size, color, velocity, offsets, renderer,
+quality and CPU ribbon behaviors. Edits that need a recook only mark the preview as
+out of date until Save and the cook finish: a changed emitter list, GPU behaviors,
+capacity or texture. Lua controls remain in
 particles_script, including `particle_system_wind(entity,x,y,z)`.
 
 Each emitter's `quality` object has importance (0 to 1), nearDistance,
@@ -343,6 +347,23 @@ See [acceptance results](../particle-acceptance.md) for quality settings,
 measurements and remaining gates.
 
 ## Changed
+
+*2026-10-30* — **Switching emitters in the panel keeps every edit.** Was: the panel held one
+emitter draft, so selecting another emitter was refused until Save. Now: a dirty emitter
+is stashed under its path when another is selected, restored when it is selected again,
+and Save writes every stashed draft with the system. The live preview applies stashed
+drafts too. Also, a start delay is compared with the emitter's simulated time instead of
+being counted down from the start, so a delay edited on a preview that just started
+applies, and the panel no longer lists always-on behaviors without values as greyed
+rows.
+
+*2026-10-30* — **The editor preview follows unsaved data edits.** Was: the preview played
+the last cook, so moving an Origin or changing a color did nothing until Save and a
+recook. Now: `ParticleRuntime::SetPlacementOffsets` and `SetEmitterData` update the
+playing preview from the draft, and the placement offset is its own emitter field
+instead of being folded into `definition.localOffset`. Because: authors need to see a
+position or look change while dragging it, and only GPU behavior stacks need a shader
+recompile.
 
 *2026-10-30* — **Flight-sim effects.** Was: a fixed square sprite, spawn along the
 attachment path with box-noise velocity, and every emitter starting with its system.

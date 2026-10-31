@@ -555,3 +555,141 @@ TEST_CASE("Start delay holds back births, the burst and the sweep until it ends"
     CHECK(firstBirthTick <= 32);
     CHECK(born >= 5 + 25);
 }
+
+TEST_CASE("A follow emitter reports its movement while a plain one and a teleport do not", "[particles][follow]")
+{
+    mir::ParticleEmitterAsset follow;
+    follow.texture = {1};
+    follow.spawnRate = 0;
+    follow.followEmitter = true;
+    auto plain = follow;
+    plain.followEmitter = false;
+    mir::ParticleEffect effect;
+    effect.emitters = {{1}, {1}};
+    effect.emitterDefinitions = {follow, plain};
+    mir::ParticleRuntime runtime;
+    const auto handle = runtime.Start({2}, effect);
+    REQUIRE_FALSE(handle.IsNull());
+    const auto *moving = runtime.FindEmitter(runtime.Find(handle)->emitters[0]);
+    const auto *still = runtime.FindEmitter(runtime.Find(handle)->emitters[1]);
+    double x = 0;
+    const auto move = [&](double distance, float dt)
+    {
+        x += distance;
+        mir::WorldPose pose;
+        pose.position = *mir::WorldPosition::FromMeters(mir::WorldVec3(x, 0, 0));
+        REQUIRE(runtime.SetPose(handle, pose));
+        runtime.Advance(dt);
+    };
+    for (int tick = 0; tick < 3; ++tick)
+    {
+        move(0.5, 1.0f / 60);
+        CHECK(moving->followDelta.x == Catch::Approx(0.5f));
+        CHECK(still->followDelta == glm::vec3(0));
+    }
+    // A frame shorter than one step simulates nothing, so the movement carries into the next step.
+    move(0.5, 0.004f);
+    CHECK(moving->followDelta == glm::vec3(0));
+    runtime.Advance(1.0f / 60);
+    CHECK(moving->followDelta.x == Catch::Approx(0.5f));
+    move(1000, 1.0f / 60);
+    CHECK(moving->followDelta == glm::vec3(0));
+}
+
+TEST_CASE("Live edits move placements and copy data fields but leave recook fields alone", "[particles][placement]")
+{
+    mir::ParticleEmitterAsset gpu;
+    gpu.texture = {1};
+    mir::ParticleEmitterAsset ribbon;
+    ribbon.texture = {1};
+    ribbon.simulationTarget = mir::ParticleSimulationTarget::CPU;
+    ribbon.spawnRate = 0;
+    ribbon.spawnPerMeter = 2;
+    ribbon.spawnBehaviors = {{"RibbonSpawn", {0.25f}}};
+    ribbon.updateBehaviors = {{"RibbonAge", {}}, {"RibbonFade", {}}};
+    mir::ParticleEffect effect;
+    effect.emitters = {{1}, {2}};
+    effect.placementIds = {1, 2};
+    effect.placementOffsets = {{1, 0, 0}, {0, 0, 0}};
+    effect.emitterDefinitions = {gpu, ribbon};
+    mir::ParticleRuntime runtime;
+    const auto handle = runtime.Start({2}, effect);
+    REQUIRE_FALSE(handle.IsNull());
+    const auto *first = runtime.FindEmitter(runtime.Find(handle)->emitters[0]);
+    const auto *second = runtime.FindEmitter(runtime.Find(handle)->emitters[1]);
+    CHECK(first->attachmentPosition.Meters().x == 1);
+
+    SECTION("Placement and instance offsets add together")
+    {
+        const std::vector<glm::vec3> instance{{0, 0, 2}, {0, 0, 0}};
+        REQUIRE(runtime.SetEmitterOffsets(handle, instance));
+        const std::vector<glm::vec3> placement{{3, 0, 0}, {0, 5, 0}};
+        REQUIRE(runtime.SetPlacementOffsets(handle, placement));
+        CHECK(first->attachmentPosition.Meters() == mir::WorldVec3(3, 0, 2));
+        CHECK(second->attachmentPosition.Meters() == mir::WorldVec3(0, 5, 0));
+        CHECK(first->previousPosition.Meters() == first->attachmentPosition.Meters());
+        CHECK_FALSE(runtime.SetPlacementOffsets(handle, std::vector<glm::vec3>{{0, 4097, 0}}));
+        CHECK(first->placementOffset == glm::vec3(3, 0, 0));
+    }
+    SECTION("A GPU draft copies its data fields but not capacity or behaviors")
+    {
+        auto draft = gpu;
+        draft.lifetime = 5;
+        draft.size = 0.5f;
+        draft.localOffset = {0, 2, 0};
+        draft.renderer.stretch = 0.2f;
+        draft.capacity = 999;
+        draft.updateBehaviors = {{"Age", {}}, {"Integrate", {}}, {"Drag", {1}}};
+        REQUIRE(runtime.SetEmitterData(handle, 0, draft));
+        CHECK(first->definition.lifetime == 5);
+        CHECK(first->definition.size == 0.5f);
+        CHECK(first->definition.renderer.stretch == 0.2f);
+        CHECK(first->attachmentPosition.Meters() == mir::WorldVec3(1, 2, 0));
+        CHECK(first->definition.capacity == gpu.capacity);
+        CHECK(first->definition.updateBehaviors.size() == gpu.updateBehaviors.size());
+    }
+    SECTION("A ribbon draft replaces its behaviors and has them resolved again")
+    {
+        auto draft = ribbon;
+        draft.updateBehaviors = {{"RibbonAge", {}}};
+        runtime.Advance(1.0f / 60);
+        REQUIRE(runtime.SetEmitterData(handle, 1, draft));
+        CHECK(second->definition.updateBehaviors.size() == 1);
+        CHECK(second->ribbon.resolvers.empty());
+    }
+    SECTION("Wrong targets, invalid drafts and bad indices are refused")
+    {
+        CHECK_FALSE(runtime.SetEmitterData(handle, 0, ribbon));
+        auto invalid = gpu;
+        invalid.lifetime = -1;
+        CHECK_FALSE(runtime.SetEmitterData(handle, 0, invalid));
+        CHECK_FALSE(runtime.SetEmitterData(handle, 5, gpu));
+        CHECK(first->definition.lifetime == gpu.lifetime);
+    }
+}
+
+TEST_CASE("A start delay set on a playing emitter holds back its births", "[particles][delay]")
+{
+    mir::ParticleEmitterAsset emitter;
+    emitter.texture = {1};
+    emitter.spawnRate = 60;
+    emitter.capacity = 256;
+    mir::ParticleEffect effect;
+    effect.emitters = {{1}};
+    effect.emitterDefinitions = {emitter};
+    mir::ParticleRuntime runtime;
+    const auto handle = runtime.Start({2}, effect);
+    REQUIRE_FALSE(handle.IsNull());
+    const auto *state = runtime.FindEmitter(runtime.Find(handle)->emitters[0]);
+    auto draft = emitter;
+    draft.startDelay = 1.0f;
+    REQUIRE(runtime.SetEmitterData(handle, 0, draft));
+    int firstBirthTick = -1;
+    for (int tick = 1; tick <= 90 && firstBirthTick < 0; ++tick)
+    {
+        runtime.Advance(1.0f / 60);
+        if (state->spawns) firstBirthTick = tick;
+    }
+    CHECK(firstBirthTick >= 60);
+    CHECK(firstBirthTick <= 62);
+}

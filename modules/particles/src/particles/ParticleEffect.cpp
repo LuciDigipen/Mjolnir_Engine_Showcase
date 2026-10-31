@@ -559,8 +559,8 @@ namespace mir
         ParticleEmitterAssetResult ParseEmitter(std::string_view text, bool source, std::string_view assetIdRoot)
         {
             const Json value = Json::parse(text, nullptr, false);
-            if (!KnownFields(value, source ? std::initializer_list<std::string_view>{"version", "target", "lifetime", "spawnRate", "capacity", "texture", "renderer", "spawnBehaviors", "updateBehaviors", "localOffset", "startDelay", "spawnPerMeter", "burst", "seed", "inheritVelocity", "teleportDistance", "quality"} :
-                std::initializer_list<std::string_view>{ "target", "lifetime", "spawnRate", "capacity", "textureId", "renderer", "spawnBehaviors", "updateBehaviors", "scriptId", "scriptLayoutId", "localOffset", "startDelay", "spawnPerMeter", "burst", "seed", "inheritVelocity", "teleportDistance", "quality", "schemaVersion" }))
+            if (!KnownFields(value, source ? std::initializer_list<std::string_view>{"version", "target", "lifetime", "spawnRate", "capacity", "texture", "renderer", "spawnBehaviors", "updateBehaviors", "localOffset", "startDelay", "spawnPerMeter", "burst", "seed", "inheritVelocity", "teleportDistance", "followEmitter", "quality"} :
+                std::initializer_list<std::string_view>{ "target", "lifetime", "spawnRate", "capacity", "textureId", "renderer", "spawnBehaviors", "updateBehaviors", "scriptId", "scriptLayoutId", "localOffset", "startDelay", "spawnPerMeter", "burst", "seed", "inheritVelocity", "teleportDistance", "followEmitter", "quality", "schemaVersion" }))
                 return Invalid<ParticleEmitterAssetResult>("particle emitter must be an object with only the supported fields");
             const char *versionKey = source ? "version" : "schemaVersion";
             if (!value.contains(versionKey) || !value[versionKey].is_number_integer() ||
@@ -602,6 +602,11 @@ namespace mir
             if (value.contains("inheritVelocity")) emitter.inheritVelocity = value["inheritVelocity"].get<float>();
             if (value.contains("teleportDistance")) emitter.teleportDistance = value["teleportDistance"].get<float>();
             if (value.contains("startDelay")) emitter.startDelay = value["startDelay"].get<float>();
+            if (value.contains("followEmitter"))
+            {
+                if (!value["followEmitter"].is_boolean()) return Invalid<ParticleEmitterAssetResult>("particle followEmitter must be a boolean");
+                emitter.followEmitter = value["followEmitter"].get<bool>();
+            }
             if (value.contains("quality"))
             {
                 const auto &quality = value["quality"];
@@ -915,6 +920,8 @@ void computeMain(uint3 id : SV_DispatchThreadID)
             !std::isfinite(emitter.localOffset.x) || !std::isfinite(emitter.localOffset.y) || !std::isfinite(emitter.localOffset.z) ||
             glm::any(glm::greaterThan(glm::abs(emitter.localOffset), glm::vec3(4096))))
             error = "particle motion parameters exceed finite supported ranges";
+        else if (emitter.followEmitter && emitter.simulationTarget != ParticleSimulationTarget::GPU)
+            error = "followEmitter applies to GPU emitters only";
         else if (emitter.texture.IsNull())
             error = "particle texture dependency is null";
         else if (emitter.simulationTarget != ParticleSimulationTarget::GPU && emitter.simulationTarget != ParticleSimulationTarget::CPU)
@@ -1049,7 +1056,7 @@ void computeMain(uint3 id : SV_DispatchThreadID)
                 { "farDistance", emitter.quality.farDistance },{ "minSpawnScale", emitter.quality.minSpawnScale } } },
             { "localOffset",{ emitter.localOffset.x, emitter.localOffset.y, emitter.localOffset.z } },
             { "spawnPerMeter", emitter.spawnPerMeter },{ "burst", emitter.burst },{ "seed", emitter.seed },
-            { "inheritVelocity", emitter.inheritVelocity },{ "teleportDistance", emitter.teleportDistance },{ "startDelay", emitter.startDelay },
+            { "inheritVelocity", emitter.inheritVelocity },{ "teleportDistance", emitter.teleportDistance },{ "startDelay", emitter.startDelay },{ "followEmitter", emitter.followEmitter },
             { "spawnBehaviors", WriteBehaviors(emitter, true, false) },{ "updateBehaviors", WriteBehaviors(emitter, false, false) },
             { "schemaVersion", kParticleSourceVersion },
             { "scriptId", emitter.script.value },{ "scriptLayoutId", emitter.scriptLayout.value } }.dump();

@@ -219,7 +219,7 @@ namespace mir::gpu
                 p.emission = glm::vec4(offset.value_or(glm::vec3(0)), 0);
                 p.emissionStart = glm::vec4(start.value_or(glm::vec3(0)), input.inheritVelocity);
                 p.attachmentVelocity = glm::vec4(input.attachmentVelocity, 0);
-                p.tileDelta = glm::vec4(delta.value_or(glm::vec3(0)), 0);
+                p.tileDelta = glm::vec4(delta.value_or(glm::vec3(0)) + input.followDelta, 0);
                 p.wind = glm::vec4(input.wind, 0);
                 const uint32_t count = bounded && !input.births.empty() ? input.spawns : 0;
                 p.birthRange = {birthCursor, count, input.seed, 0};

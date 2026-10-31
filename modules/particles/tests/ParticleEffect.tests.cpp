@@ -490,8 +490,8 @@ TEST_CASE("New particle authoring keeps disabled values and cooks one fixed beha
 {
     mir::ParticleEmitterAsset emitter;
     emitter.texture = mir::MakeAssetId("assets/x.png");
-    emitter.updateBehaviors = {{"FadeOverLife", {0}, false}, {"Integrate", {}},
-        {"ColorGradient", {1, 0, 0, 1, 0, 0, 1, 0.5f}}, {"Age", {}}, {"Acceleration", {0, 1, 0}}};
+    emitter.updateBehaviors = { { "FadeOverLife",{ 0 }, false },{ "Integrate",{} },
+        { "ColorGradient",{ 1, 0, 0, 1, 0, 0, 1, 0.5f } },{ "Age",{} },{ "Acceleration",{ 0, 1, 0 } } };
     const auto source = mir::WriteParticleEmitterSource(emitter, "x.png");
     CHECK(source.find("\"version\": 3") != std::string::npos);
     const auto read = mir::ReadParticleEmitterSource(source, "assets");
@@ -523,12 +523,12 @@ TEST_CASE("Particle authoring rejects duplicate or conflicting modes", "[particl
     mir::ParticleEmitterAsset emitter;
     emitter.texture = mir::MakeAssetId("assets/x.png");
     std::string error;
-    emitter.updateBehaviors.push_back({"Age", {}});
+    emitter.updateBehaviors.push_back({ "Age",{} });
     CHECK_FALSE(mir::ValidateParticleEmitterAsset(emitter, error));
     CHECK(error.find("duplicate") != std::string::npos);
     emitter.updateBehaviors.pop_back();
-    emitter.updateBehaviors.push_back({"SizeOverLife", {1}});
-    emitter.updateBehaviors.push_back({"SizeCurve", {1, 2, 1}});
+    emitter.updateBehaviors.push_back({ "SizeOverLife",{ 1 } });
+    emitter.updateBehaviors.push_back({ "SizeCurve",{ 1, 2, 1 } });
     CHECK_FALSE(mir::ValidateParticleEmitterAsset(emitter, error));
     CHECK(error.find("conflict") != std::string::npos);
     emitter.updateBehaviors.back().enabled = false;
@@ -539,13 +539,13 @@ TEST_CASE("Two placements reuse one emitter asset at distinct world origins", "[
 {
     mir::ParticleEmitterAsset emitter;
     emitter.texture = mir::MakeAssetId("assets/x.png");
-    emitter.localOffset = {0, 1, 0};
+    emitter.localOffset = { 0, 1, 0 };
     mir::ParticleEffect effect;
-    effect.emitters = {{1}, {1}};
-    effect.placementIds = {10, 20};
-    effect.placementOffsets = {{-2, 0, 0}, {2, 0, 0}};
-    effect.emitterDefinitions = {emitter, emitter};
-    const std::vector<std::string> paths{"x.emitter.json", "x.emitter.json"};
+    effect.emitters = { { 1 },{ 1 } };
+    effect.placementIds = { 10, 20 };
+    effect.placementOffsets = { { -2, 0, 0 },{ 2, 0, 0 } };
+    effect.emitterDefinitions = { emitter, emitter };
+    const std::vector<std::string> paths{ "x.emitter.json", "x.emitter.json" };
     const auto source = mir::WriteParticleEffectSource(effect, paths);
     const auto parsed = mir::ReadParticleEffectSource(source, "assets");
     REQUIRE(parsed.mEffect);
@@ -557,7 +557,7 @@ TEST_CASE("Two placements reuse one emitter asset at distinct world origins", "[
     mir::ParticleRuntime runtime;
     mir::WorldPose pose;
     pose.position = *mir::WorldPosition::FromMeters(mir::WorldVec3(100, 0, 0));
-    const auto handle = runtime.Start({2}, effect, pose);
+    const auto handle = runtime.Start({ 2 }, effect, pose);
     REQUIRE_FALSE(handle.IsNull());
     const auto *instance = runtime.Find(handle);
     REQUIRE(instance);
@@ -577,18 +577,18 @@ TEST_CASE("Instance emitter offsets move each placement without sweeping or link
     mir::ParticleEmitterAsset emitter;
     emitter.texture = mir::MakeAssetId("assets/x.png");
     mir::ParticleEffect effect;
-    effect.emitters = {{1}, {1}};
-    effect.placementIds = {10, 20};
-    effect.placementOffsets = {{-2, 0, 0}, {2, 0, 0}};
-    effect.emitterDefinitions = {emitter, emitter};
+    effect.emitters = { { 1 },{ 1 } };
+    effect.placementIds = { 10, 20 };
+    effect.placementOffsets = { { -2, 0, 0 },{ 2, 0, 0 } };
+    effect.emitterDefinitions = { emitter, emitter };
     mir::ParticleRuntime runtime;
     mir::WorldPose pose;
     pose.position = *mir::WorldPosition::FromMeters(mir::WorldVec3(100, 0, 0));
-    const auto handle = runtime.Start({2}, effect, pose);
+    const auto handle = runtime.Start({ 2 }, effect, pose);
     REQUIRE_FALSE(handle.IsNull());
     const auto &emitters = runtime.Find(handle)->emitters;
     const auto at = [&](size_t i) { return runtime.FindEmitter(emitters[i])->attachmentPosition.Meters(); };
-    const std::vector<glm::vec3> offsets{{0, 3, 0}, {0, -3, 0}};
+    const std::vector<glm::vec3> offsets{ { 0, 3, 0 },{ 0, -3, 0 } };
     REQUIRE(runtime.SetEmitterOffsets(handle, offsets));
     CHECK(at(0).x == 98);
     CHECK(at(0).y == 3);
@@ -606,7 +606,7 @@ TEST_CASE("Instance emitter offsets move each placement without sweeping or link
         CHECK(first->attachmentPosition.Meters().x == 99);
         REQUIRE(runtime.SetEmitterOffsets(handle, offsets));
         CHECK(first->previousPosition.Meters().x == 98);
-        const std::vector<glm::vec3> moved{{0, 4, 0}, {0, -3, 0}};
+        const std::vector<glm::vec3> moved{ { 0, 4, 0 },{ 0, -3, 0 } };
         REQUIRE(runtime.SetEmitterOffsets(handle, moved));
         CHECK(first->previousPosition.Meters() == first->attachmentPosition.Meters());
         CHECK(runtime.FindEmitter(emitters[1])->previousPosition.Meters().x == 102);
@@ -614,8 +614,8 @@ TEST_CASE("Instance emitter offsets move each placement without sweeping or link
     SECTION("A bad offset rejects the whole update")
     {
         const float nan = std::numeric_limits<float>::quiet_NaN();
-        CHECK_FALSE(runtime.SetEmitterOffsets(handle, std::vector<glm::vec3>{{0, 5, 0}, {nan, 0, 0}}));
-        CHECK_FALSE(runtime.SetEmitterOffsets(handle, std::vector<glm::vec3>{{0, 5, 0}, {0, 4097, 0}}));
+        CHECK_FALSE(runtime.SetEmitterOffsets(handle, std::vector<glm::vec3>{{0, 5, 0}, { nan, 0, 0 }}));
+        CHECK_FALSE(runtime.SetEmitterOffsets(handle, std::vector<glm::vec3>{{0, 5, 0}, { 0, 4097, 0 }}));
         CHECK(at(0).y == 3);
         CHECK(runtime.FindEmitter(emitters[0])->instanceOffset == glm::vec3(0, 3, 0));
     }
@@ -665,8 +665,8 @@ TEST_CASE("Shape noise and spin behaviors generate their script and keep fixed o
 {
     mir::ParticleEmitterAsset emitter;
     emitter.texture = mir::MakeAssetId("assets/x.png");
-    emitter.spawnBehaviors = { { "Initialize", {} },{ "StartRotation", { 45 } },{ "Shape", { 1, 2, 3, 4, 20, 5 } } };
-    emitter.updateBehaviors = { { "Spin", { 90, 10 } },{ "Integrate", {} },{ "Noise", { 3, 2 } },{ "Age", {} } };
+    emitter.spawnBehaviors = { { "Initialize",{} },{ "StartRotation",{ 45 } },{ "Shape",{ 1, 2, 3, 4, 20, 5 } } };
+    emitter.updateBehaviors = { { "Spin",{ 90, 10 } },{ "Integrate",{} },{ "Noise",{ 3, 2 } },{ "Age",{} } };
     std::string error;
     REQUIRE(mir::ValidateParticleEmitterAsset(emitter, error));
     const auto box = mir::GenerateParticleScript(emitter);
@@ -688,4 +688,29 @@ TEST_CASE("Shape noise and spin behaviors generate their script and keep fixed o
         emitter.spawnBehaviors[2].parameters = bad;
         CHECK_FALSE(mir::ValidateParticleEmitterAsset(emitter, error));
     }
+}
+
+TEST_CASE("Follow emitter roundtrips and only applies to GPU emitters", "[particles][authoring]")
+{
+    mir::ParticleEmitterAsset emitter;
+    emitter.texture = mir::MakeAssetId("assets/x.png");
+    emitter.followEmitter = true;
+    const auto parsed = mir::ReadParticleEmitterSource(mir::WriteParticleEmitterSource(emitter, "x.png"), "assets");
+    REQUIRE(parsed.mEmitter);
+    CHECK(parsed.mEmitter->followEmitter);
+    const auto cooked = mir::ReadParticleEmitterAsset(*mir::ParseAssetBlob(mir::BuildParticleEmitterAsset(*parsed.mEmitter)));
+    REQUIRE(cooked.mEmitter);
+    CHECK(cooked.mEmitter->followEmitter);
+    CHECK_FALSE(mir::ReadParticleEmitterSource(
+        R"({"version":3,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","followEmitter":1})", "assets").mEmitter);
+
+    emitter.simulationTarget = mir::ParticleSimulationTarget::CPU;
+    emitter.spawnRate = 0;
+    emitter.spawnBehaviors = { { "RibbonSpawn",{ 0.25f } } };
+    emitter.updateBehaviors = { { "RibbonAge",{} } };
+    std::string error;
+    CHECK_FALSE(mir::ValidateParticleEmitterAsset(emitter, error));
+    CHECK(error.find("followEmitter") != std::string::npos);
+    emitter.followEmitter = false;
+    CHECK(mir::ValidateParticleEmitterAsset(emitter, error));
 }

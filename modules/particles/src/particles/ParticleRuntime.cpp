@@ -52,6 +52,15 @@ namespace mir
             position = *point;
             return true;
         }
+
+        // After an origin moves, so the first birth does not sweep from the old position or link a ribbon to it.
+        void RestartMotion(ParticleEmitterInstance &emitter)
+        {
+            emitter.previousPosition = emitter.spawnStart = emitter.attachmentPosition;
+            emitter.attachmentVelocity = glm::vec3(0);
+            emitter.motionSeconds = 0;
+            emitter.ribbon.connected = false;
+        }
     }
 
     ParticleRuntime::ParticleRuntime(uint32_t capacity, ParticleBudgets budgets)
@@ -113,11 +122,10 @@ namespace mir
         }
         for (size_t i = 0; i < effect.emitterDefinitions.size(); ++i)
         {
-            auto definition = effect.emitterDefinitions[i];
-            if (!effect.placementOffsets.empty()) definition.localOffset += effect.placementOffsets[i];
+            const glm::vec3 placement = effect.placementOffsets.empty() ? glm::vec3(0) : effect.placementOffsets[i];
             WorldPosition attachment;
             glm::vec3 velocity;
-            if (!Attachment(pose, definition, glm::vec3(0), attachment, velocity))
+            if (!Attachment(pose, effect.emitterDefinitions[i], placement, attachment, velocity))
             {
                 ++mStats.rejectedStarts;
                 return {};
@@ -152,13 +160,13 @@ namespace mir
             emitter.system = handle;
             emitter.emitterId = effect.emitters[i];
             emitter.definition = effect.emitterDefinitions[i];
-            emitter.delayRemaining = emitter.definition.startDelay;
-            if (!effect.placementOffsets.empty()) emitter.definition.localOffset += effect.placementOffsets[i];
+            if (!effect.placementOffsets.empty()) emitter.placementOffset = effect.placementOffsets[i];
             if (emitter.definition.simulationTarget == ParticleSimulationTarget::CPU)
                 emitter.ribbon.points.reserve(emitter.definition.capacity);
             else emitter.births.reserve(mBudgets.births);
             emitter.pose = pose;
-            Attachment(pose, emitter.definition, emitter.instanceOffset, emitter.attachmentPosition, emitter.emissionVelocity);
+            Attachment(pose, emitter.definition, emitter.placementOffset + emitter.instanceOffset,
+                emitter.attachmentPosition, emitter.emissionVelocity);
             emitter.previousPosition = emitter.spawnStart = emitter.attachmentPosition;
             prepared.push_back(std::move(emitter));
         }
@@ -269,14 +277,16 @@ namespace mir
             {
                 WorldPosition attachment;
                 glm::vec3 velocity;
-                if (!Attachment(pose, emitter->definition, emitter->instanceOffset, attachment, velocity)) return false;
+                if (!Attachment(pose, emitter->definition, emitter->placementOffset + emitter->instanceOffset, attachment, velocity))
+                    return false;
             }
         instance->pose = pose;
         for (const auto emitterHandle : instance->emitters)
             if (auto *emitter = MutableEmitter(emitterHandle))
             {
                 emitter->pose = pose;
-                Attachment(pose, emitter->definition, emitter->instanceOffset, emitter->attachmentPosition, emitter->emissionVelocity);
+                Attachment(pose, emitter->definition, emitter->placementOffset + emitter->instanceOffset,
+                    emitter->attachmentPosition, emitter->emissionVelocity);
                 if (emitter->resetMotionOnPose)
                 {
                     emitter->previousPosition = emitter->spawnStart = emitter->attachmentPosition;
@@ -290,10 +300,24 @@ namespace mir
 
     bool ParticleRuntime::SetEmitterOffsets(ParticleHandle handle, std::span<const glm::vec3> offsets)
     {
+        return SetOffsets(handle, offsets, false);
+    }
+
+    bool ParticleRuntime::SetPlacementOffsets(ParticleHandle handle, std::span<const glm::vec3> offsets)
+    {
+        return SetOffsets(handle, offsets, true);
+    }
+
+    bool ParticleRuntime::SetOffsets(ParticleHandle handle, std::span<const glm::vec3> offsets, bool placement)
+    {
         auto *instance = Mutable(handle);
         if (instance == nullptr || instance->state != ParticleExecutionState::Active)
             return false;
         const size_t count = std::min(offsets.size(), instance->emitters.size());
+        const auto other = [&](const ParticleEmitterInstance &emitter)
+        {
+            return placement ? emitter.instanceOffset : emitter.placementOffset;
+        };
         // Reject the whole update before touching any emitter, like SetPose.
         for (size_t i = 0; i < count; ++i)
         {
@@ -302,20 +326,60 @@ namespace mir
             const auto *emitter = FindEmitter(instance->emitters[i]);
             WorldPosition attachment;
             glm::vec3 velocity;
-            if (emitter == nullptr || !Attachment(instance->pose, emitter->definition, offsets[i], attachment, velocity))
+            if (emitter == nullptr ||
+                !Attachment(instance->pose, emitter->definition, offsets[i] + other(*emitter), attachment, velocity))
                 return false;
         }
         for (size_t i = 0; i < count; ++i)
         {
             auto *emitter = MutableEmitter(instance->emitters[i]);
-            if (emitter->instanceOffset == offsets[i]) continue;
-            emitter->instanceOffset = offsets[i];
-            Attachment(instance->pose, emitter->definition, emitter->instanceOffset,
+            glm::vec3 &target = placement ? emitter->placementOffset : emitter->instanceOffset;
+            if (target == offsets[i]) continue;
+            target = offsets[i];
+            Attachment(instance->pose, emitter->definition, emitter->placementOffset + emitter->instanceOffset,
                 emitter->attachmentPosition, emitter->emissionVelocity);
-            emitter->previousPosition = emitter->spawnStart = emitter->attachmentPosition;
-            emitter->attachmentVelocity = glm::vec3(0);
-            emitter->motionSeconds = 0;
-            emitter->ribbon.connected = false;
+            RestartMotion(*emitter);
+        }
+        return true;
+    }
+
+    bool ParticleRuntime::SetEmitterData(ParticleHandle handle, size_t index, const ParticleEmitterAsset &draft)
+    {
+        auto *instance = Mutable(handle);
+        std::string error;
+        if (instance == nullptr || index >= instance->emitters.size() || !ValidateParticleEmitterAsset(draft, error))
+            return false;
+        auto *emitter = MutableEmitter(instance->emitters[index]);
+        if (emitter == nullptr || emitter->definition.simulationTarget != draft.simulationTarget)
+            return false;
+        auto &live = emitter->definition;
+        const bool moved = live.localOffset != draft.localOffset || live.velocity != draft.velocity;
+        live.lifetime = draft.lifetime;
+        live.startDelay = draft.startDelay;
+        live.spawnRate = draft.spawnRate;
+        live.spawnPerMeter = draft.spawnPerMeter;
+        live.burst = draft.burst;
+        live.seed = draft.seed;
+        live.inheritVelocity = draft.inheritVelocity;
+        live.teleportDistance = draft.teleportDistance;
+        live.followEmitter = draft.followEmitter;
+        live.localOffset = draft.localOffset;
+        live.velocity = draft.velocity;
+        live.size = draft.size;
+        live.color = draft.color;
+        live.renderer = draft.renderer;
+        live.quality = draft.quality;
+        if (live.simulationTarget == ParticleSimulationTarget::CPU)
+        {
+            live.spawnBehaviors = draft.spawnBehaviors;
+            live.updateBehaviors = draft.updateBehaviors;
+            emitter->ribbon.resolvers.clear();
+        }
+        if (moved && emitter->state == ParticleExecutionState::Active)
+        {
+            Attachment(instance->pose, live, emitter->placementOffset + emitter->instanceOffset,
+                emitter->attachmentPosition, emitter->emissionVelocity);
+            RestartMotion(*emitter);
         }
         return true;
     }
@@ -424,6 +488,7 @@ namespace mir
             emitter.seconds = 0;
             emitter.births.clear();
             emitter.teleported = false;
+            emitter.followDelta = glm::vec3(0);
         }
         if (!std::isfinite(dt) || dt <= 0)
             return;
@@ -479,9 +544,11 @@ namespace mir
                 parameters.spawnRateScale *= emitter->qualityScale;
                 emitter->seconds = static_cast<float>(steps * kStep);
                 emitter->motionSeconds += dt;
-                if (emitter->state == ParticleExecutionState::Active && steps && emitter->delayRemaining > 0)
+                const bool waiting = emitter->activeSeconds < emitter->definition.startDelay - 1e-9;
+                if (emitter->state == ParticleExecutionState::Active && steps) emitter->activeSeconds += steps * kStep;
+                if (emitter->state == ParticleExecutionState::Active && steps && waiting)
                 {
-                    emitter->delayRemaining -= steps * kStep;
+                    // A waiting emitter follows its attachment, so the first birth does not sweep the motion made meanwhile.
                     emitter->previousPosition = emitter->spawnStart = emitter->attachmentPosition;
                     emitter->attachmentVelocity = glm::vec3(0);
                     emitter->motionSeconds = 0;
@@ -500,6 +567,7 @@ namespace mir
                     emitter->attachmentVelocity = emitter->teleported ? glm::vec3(0) :
                         glm::vec3(displacement / WorldReal(emitter->motionSeconds));
                     if (emitter->teleported) emitter->distanceRemainder = 0;
+                    else if (emitter->definition.followEmitter) emitter->followDelta = glm::vec3(displacement);
                     if (emitter->definition.simulationTarget == ParticleSimulationTarget::CPU)
                     {
                         AdvanceParticleRibbon(*emitter, parameters, budget, mStats);

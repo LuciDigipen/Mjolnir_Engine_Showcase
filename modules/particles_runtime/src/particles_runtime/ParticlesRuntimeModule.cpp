@@ -52,6 +52,7 @@ namespace mir
             input.tileOrigin = system->tileOrigin;
             input.explicitTile = input.swept = true;
             input.attachmentVelocity = emitter.attachmentVelocity;
+            input.followDelta = advance ? emitter.followDelta : glm::vec3(0);
             input.inheritVelocity = emitter.definition.inheritVelocity;
             input.wind = system->parameters.wind;
             input.seed = emitter.definition.seed;

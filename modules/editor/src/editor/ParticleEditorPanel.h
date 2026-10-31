@@ -14,6 +14,7 @@
 #include <glm/vec3.hpp>
 
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -26,6 +27,7 @@ namespace mir
     class AssetCache;
     class EditorCamera;
     class World;
+    class ParticleWorld;
     class ParticleEditorPanel
     {
     public:
@@ -65,9 +67,16 @@ namespace mir
         void DrawSelectBar(World &world, AssetImportManager &imports);
         void DrawEditBar(AssetImportManager &imports);
         void DrawPreviewStrip(World &world, const EditorCamera &camera, float dt);
+        void SyncPreviewDraft(ParticleWorld &particles);
         void DrawEmitterStrip(World &world, AssetImportManager &imports);
         void DrawStatus(AssetImportManager &imports);
         void DrawSettings(World &world);
+        // An edited emitter that is not the selected one. Only dirty drafts are kept, so switching never loses an edit.
+        struct EmitterDraft
+        {
+            ParticleEmitterAsset emitter;
+            std::string texturePath, source;
+        };
         struct DraftSnapshot
         {
             ParticleEffect system;
@@ -76,7 +85,13 @@ namespace mir
             std::string systemPath, emitterPath, texturePath;
             std::string systemSource, emitterSource;
             size_t selected = 0;
+            std::map<std::string, EmitterDraft> stash;
         };
+        bool AnyEmitterDirty() const { return mDirtyEmitter || !mStashedEmitters.empty(); }
+        bool IsDirty() const { return mDirtySystem || AnyEmitterDirty(); }
+        void StashSelectedEmitter();
+        void SaveEmitterDraft(AssetImportManager &imports, const std::string &path, ParticleEmitterAsset &emitter,
+            const std::string &texturePath);
         DraftSnapshot CaptureDraft() const;
         void RestoreDraft(const DraftSnapshot &draft);
         void CommitDraftGesture();
@@ -101,11 +116,16 @@ namespace mir
         bool mCloseRequested = false;
         std::string mSavedSystemSource;
         std::unordered_map<std::string, std::string> mSavedEmitterSources;
+        std::map<std::string, EmitterDraft> mStashedEmitters;
         std::vector<DraftSnapshot> mUndoDrafts, mRedoDrafts;
         std::optional<DraftSnapshot> mGestureStart;
         WorldPose mPreviewAnchor;
         Entity mPreviewEntity = kNullEntity;
         float mPreviewTime = 0;
+        // The preview plays the last cook, so data edits are pushed into it live and a recook-only edit marks it stale.
+        ParticleHandle mSyncedHandle;
+        std::string mSyncedEmitterSource, mDraftEmitterSource;
+        bool mPreviewStale = false;
         std::optional<InstanceOffsetEdit> mOffsetEdit;
     };
 }

@@ -51,6 +51,19 @@ namespace mir
             const auto *component = world.GetComponent<ParticleSystem>(entity);
             return component != nullptr && systemPath == component->systemName ? entity : kNullEntity;
         }
+        // Whether two emitters run the same GPU script, which only depends on the enabled behaviors and their values.
+        bool SameBehaviors(const ParticleEmitterAsset &a, const ParticleEmitterAsset &b)
+        {
+            for (const bool spawn : { true, false })
+            {
+                const auto left = ActiveParticleBehaviors(a, spawn);
+                const auto right = ActiveParticleBehaviors(b, spawn);
+                if (left.size() != right.size()) return false;
+                for (size_t i = 0; i < left.size(); ++i)
+                    if (left[i]->name != right[i]->name || left[i]->parameters != right[i]->parameters) return false;
+            }
+            return true;
+        }
         bool Choice(const char *label, uint32_t &value, const char *choices)
         {
             int index = static_cast<int>(value);
@@ -97,7 +110,7 @@ namespace mir
 
     bool ParticleEditorPanel::OpenSystem(const std::string &path, World &world)
     {
-        if (mDirtySystem || mDirtyEmitter)
+        if (IsDirty())
         {
             mError = "Save or discard particle drafts before opening another system.";
             return false;
@@ -186,6 +199,7 @@ namespace mir
         mEmitterPath = mReferences.front();
         mTexturePath = std::move(emitter.mTexturePath);
         mDirtyEmitter = false; mError.clear();
+        mStashedEmitters.clear();
         mSavedEmitterSources[mEmitterPath] = WriteParticleEmitterSource(*mEmitter, mTexturePath);
         mSavedSystemSource = WriteParticleEffectSource(mSystem, mReferences);
         mUndoDrafts.clear(); mRedoDrafts.clear(); mGestureStart.reset();
@@ -194,6 +208,21 @@ namespace mir
     void ParticleEditorPanel::LoadEmitter(size_t index)
     {
         if (index >= mReferences.size()) return;
+        // Placements of the same emitter asset share one draft.
+        if (mEmitter && mReferences[index] == mEmitterPath)
+        {
+            mSelected = index;
+            return;
+        }
+        StashSelectedEmitter();
+        if (const auto stashed = mStashedEmitters.find(mReferences[index]); stashed != mStashedEmitters.end())
+        {
+            mEmitter = std::move(stashed->second.emitter);
+            mTexturePath = std::move(stashed->second.texturePath);
+            mStashedEmitters.erase(stashed);
+            mSelected = index; mEmitterPath = mReferences[index]; mDirtyEmitter = true; mError.clear();
+            return;
+        }
         const auto text = ReadText(SourceFile(mReferences[index]));
         if (!text) throw std::runtime_error("cannot read emitter source, create the referenced emitter before loading it");
         auto result = ReadParticleEmitterSource(*text, mIdRoot);
@@ -201,6 +230,12 @@ namespace mir
         mEmitter = *result.mEmitter; mTexturePath = result.mTexturePath;
         mSelected = index; mEmitterPath = mReferences[index]; mDirtyEmitter = false; mError.clear();
         mSavedEmitterSources[mEmitterPath] = WriteParticleEmitterSource(*mEmitter, mTexturePath);
+    }
+
+    void ParticleEditorPanel::StashSelectedEmitter()
+    {
+        if (mEmitter && mDirtyEmitter)
+            mStashedEmitters[mEmitterPath] = { *mEmitter, mTexturePath, WriteParticleEmitterSource(*mEmitter, mTexturePath) };
     }
 
     ParticleEditorPanel::DraftSnapshot ParticleEditorPanel::CaptureDraft() const
@@ -213,6 +248,7 @@ namespace mir
         draft.emitterPath = mEmitterPath;
         draft.texturePath = mTexturePath;
         draft.selected = mSelected;
+        draft.stash = mStashedEmitters;
         if (!mSystemPath.empty()) draft.systemSource = WriteParticleEffectSource(mSystem, mReferences);
         if (mEmitter) draft.emitterSource = WriteParticleEmitterSource(*mEmitter, mTexturePath);
         return draft;
@@ -227,6 +263,7 @@ namespace mir
         mEmitterPath = draft.emitterPath;
         mTexturePath = draft.texturePath;
         mSelected = draft.selected;
+        mStashedEmitters = draft.stash;
         mDirtySystem = draft.systemSource != mSavedSystemSource;
         const auto saved = mSavedEmitterSources.find(mEmitterPath);
         mDirtyEmitter = mEmitter && (saved == mSavedEmitterSources.end() ||
@@ -378,18 +415,24 @@ namespace mir
         mError.clear();
     }
 
+    void ParticleEditorPanel::SaveEmitterDraft(AssetImportManager &imports, const std::string &path,
+        ParticleEmitterAsset &emitter, const std::string &texturePath)
+    {
+        if (!std::filesystem::is_regular_file(SourceFile(texturePath)))
+            throw std::invalid_argument("choose an existing texture asset for " + path);
+        emitter.texture = MakeAssetId(MakeLogicalAssetPath(mIdRoot, texturePath).path);
+        std::string error;
+        if (!ValidateParticleEmitterAsset(emitter, error)) throw std::invalid_argument(path + ": " + error);
+        const auto source = WriteParticleEmitterSource(emitter, texturePath);
+        const auto file = SourceFile(path);
+        if (!WriteTextAtomic(file, source)) throw std::runtime_error("could not save emitter source");
+        imports.QueueChanged(file);
+        mSavedEmitterSources[path] = source;
+    }
+
     void ParticleEditorPanel::SaveEmitter(AssetImportManager &imports)
     {
-        if (!std::filesystem::is_regular_file(SourceFile(mTexturePath)))
-            throw std::invalid_argument("choose an existing texture asset");
-        mEmitter->texture = MakeAssetId(MakeLogicalAssetPath(mIdRoot, mTexturePath).path);
-        std::string error;
-        if (!ValidateParticleEmitterAsset(*mEmitter, error)) throw std::invalid_argument(error);
-        const auto source = WriteParticleEmitterSource(*mEmitter, mTexturePath);
-        const auto path = SourceFile(mEmitterPath);
-        if (!WriteTextAtomic(path, source)) throw std::runtime_error("could not save emitter source");
-        imports.QueueChanged(path);
-        mSavedEmitterSources[mEmitterPath] = source;
+        SaveEmitterDraft(imports, mEmitterPath, *mEmitter, mTexturePath);
         mDirtyEmitter = false;
         mError.clear();
     }
@@ -452,6 +495,11 @@ namespace mir
                     });
                 return { stack, static_cast<size_t>(found - stack.begin()) };
             };
+        std::string alwaysOn;
+        for (const auto &info : infos)
+            if (info.target == emitter.simulationTarget && info.required && info.parameters.size() == 0)
+                alwaysOn += (alwaysOn.empty() ? "" : ", ") + std::string(info.label.empty() ? info.name : info.label);
+        if (!alwaysOn.empty()) ImGui::TextDisabled("Always on: %s", alwaysOn.c_str());
         for (const char *section :{ "Emission", "Simulation", "Motion", "Appearance" })
         {
             if (!ImGui::CollapsingHeader(section, ImGuiTreeNodeFlags_DefaultOpen)) continue;
@@ -506,7 +554,12 @@ namespace mir
                 {
                     auto [stack, index] = find(info);
                     const std::string label(info.label.empty() ? info.name : info.label);
-                    if (info.required) ImGui::TextDisabled("%s (required)", label.c_str());
+                    if (info.required)
+                    {
+                        // Always-on behaviors without values are listed once above, nothing to change on them.
+                        if (info.parameters.size() == 0) { ImGui::PopID(); continue; }
+                        ImGui::TextUnformatted(label.c_str());
+                    }
                     else
                     {
                         bool enabled = index < stack.size() && stack[index].enabled;
@@ -560,6 +613,11 @@ namespace mir
         mDirtyEmitter |= ImGui::DragFloat3("Attachment offset", &e.localOffset.x, 0.05f);
         mDirtyEmitter |= ImGui::DragFloat3("Local velocity", &e.velocity.x, 0.05f);
         mDirtyEmitter |= ImGui::DragFloat("Inherited velocity", &e.inheritVelocity, 0.02f, 0, 16);
+        if (e.simulationTarget == ParticleSimulationTarget::GPU)
+        {
+            mDirtyEmitter |= ImGui::Checkbox("Follow emitter", &e.followEmitter);
+            ImGui::SetItemTooltip("Live particles move with the emitter's position instead of staying where they were born. Rotation is not followed.");
+        }
         mDirtyEmitter |= ImGui::DragFloat("Teleport distance", &e.teleportDistance, 1, 0.01f, 65536);
         mDirtyEmitter |= ImGui::InputScalar("Seed", ImGuiDataType_U32, &e.seed);
         mDirtyEmitter |= ImGui::DragFloat("Size", &e.size, 0.01f, 0.001f, 64);
@@ -648,6 +706,12 @@ namespace mir
     {
         CommitDraftGesture();
         if (mDirtyEmitter) SaveEmitter(imports);
+        while (!mStashedEmitters.empty())
+        {
+            auto draft = mStashedEmitters.begin();
+            SaveEmitterDraft(imports, draft->first, draft->second.emitter, draft->second.texturePath);
+            mStashedEmitters.erase(draft);
+        }
         if (mDirtySystem) SaveSystem(imports);
     }
 
@@ -658,7 +722,7 @@ namespace mir
         const float buttons = ImGui::CalcTextSize("Refresh").x + ImGui::CalcTextSize("+ New").x +
             style.FramePadding.x * 4 + style.ItemSpacing.x * 2;
         std::string requestedSystem;
-        ImGui::BeginDisabled(mDirtySystem || mDirtyEmitter);
+        ImGui::BeginDisabled(IsDirty());
         ImGui::SetNextItemWidth(-buttons);
         if (ImGui::BeginCombo("##System", mSystemPath.empty() ? "Select a particle system" : mSystemPath.c_str()))
         {
@@ -679,7 +743,7 @@ namespace mir
             {
                 try
                 {
-                    if (mDirtySystem || mDirtyEmitter) throw std::runtime_error("save or discard drafts before creating a system");
+                    if (IsDirty()) throw std::runtime_error("save or discard drafts before creating a system");
                     OnHidden(world);
                     CreateSystem(imports);
                     ImGui::CloseCurrentPopup();
@@ -708,7 +772,7 @@ namespace mir
             else if (ImGui::IsKeyPressed(ImGuiKey_Y)) RedoDraft();
         }
         ImGui::SameLine();
-        ImGui::BeginDisabled(!mDirtySystem && !mDirtyEmitter);
+        ImGui::BeginDisabled(!IsDirty());
         const bool save = ImGui::Button("Save");
         ImGui::SetItemTooltip("Writes the system and emitter sources and queues a recook.");
         ImGui::SameLine();
@@ -747,6 +811,8 @@ namespace mir
         ImGui::SameLine(); ImGui::Checkbox("Move", &mMovePreview);
         ImGui::SetItemTooltip("Sweeps the preview attachment side to side.");
         ImGui::EndDisabled();
+        if (mPreviewing && mPreviewStale)
+            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "Preview is out of date, Save and wait for the cook.");
         if (!particles || !mPreviewing || !editing) return;
         if (!particles->Runtime().Find(particles->PreviewHandle()))
         {
@@ -755,6 +821,7 @@ namespace mir
             if (handle.IsNull()) { mPreviewing = false;mError = "Cook this system and its dependencies before previewing."; }
             else particles->Runtime().Pause(handle, mPreviewPaused);
         }
+        SyncPreviewDraft(*particles);
         if (!mPreviewPaused)
         {
             mPreviewTime += std::min(dt, 0.067f);
@@ -764,6 +831,58 @@ namespace mir
             else if (mMovePreview)
                 pose.position = *WorldPosition::FromMeters(pose.position.Meters()+WorldVec3(std::sin(mPreviewTime)*2, 0, 0));
             particles->Runtime().SetPose(particles->PreviewHandle(), pose);
+        }
+    }
+
+    // Pushes the draft into the playing preview so Origin, offsets, renderer and timing edits show before Save. Edits that
+    // need a recook (a changed emitter list, GPU behaviors, capacity or texture) only mark the preview stale.
+    void ParticleEditorPanel::SyncPreviewDraft(ParticleWorld &particles)
+    {
+        mPreviewStale = false;
+        auto &runtime = particles.Runtime();
+        const ParticleHandle handle = particles.PreviewHandle();
+        const auto *instance = runtime.Find(handle);
+        if (instance == nullptr || mSystemPath.empty()) return;
+        const size_t count = mReferences.size();
+        bool sameList = instance->effect.emitters.size() == count && mSystem.placementOffsets.size() == count &&
+            instance->effect.emitterDefinitions.size() == count;
+        for (size_t i = 0; sameList && i < count; ++i)
+            sameList = instance->effect.emitters[i] == MakeAssetId(MakeLogicalAssetPath(mIdRoot, mReferences[i]).path);
+        if (!sameList)
+        {
+            mPreviewStale = true;
+            return;
+        }
+        runtime.SetPlacementOffsets(handle, mSystem.placementOffsets);
+        runtime.SetParameters(handle, mSystem.parameters);
+        if (handle != mSyncedHandle)
+        {
+            mSyncedHandle = handle;
+            mSyncedEmitterSource.clear();
+        }
+        const bool changed = mDraftEmitterSource != mSyncedEmitterSource;
+        mSyncedEmitterSource = mDraftEmitterSource;
+        // Placements of one emitter asset share its draft, the selected one or a stashed one.
+        for (size_t i = 0; i < count; ++i)
+        {
+            const ParticleEmitterAsset *draft = nullptr;
+            const std::string *texturePath = nullptr;
+            if (mEmitter && mReferences[i] == mEmitterPath)
+            {
+                draft = &*mEmitter;
+                texturePath = &mTexturePath;
+            }
+            else if (const auto stashed = mStashedEmitters.find(mReferences[i]); stashed != mStashedEmitters.end())
+            {
+                draft = &stashed->second.emitter;
+                texturePath = &stashed->second.texturePath;
+            }
+            if (draft == nullptr) continue;
+            if (changed) runtime.SetEmitterData(handle, i, *draft);
+            const auto &cooked = instance->effect.emitterDefinitions[i];
+            mPreviewStale |= cooked.capacity != draft->capacity || cooked.simulationTarget != draft->simulationTarget ||
+                (!texturePath->empty() && cooked.texture != MakeAssetId(MakeLogicalAssetPath(mIdRoot, *texturePath).path)) ||
+                (cooked.simulationTarget == ParticleSimulationTarget::GPU && !SameBehaviors(cooked, *draft));
         }
     }
 
@@ -818,7 +937,8 @@ namespace mir
                 ImGui::PushID(static_cast<int>(i));
                 const std::string label = std::to_string(i + 1) + "  " +
                     std::filesystem::path(mReferences[i]).filename().string() +
-                    (i == mSelected && mDirtyEmitter ? " *" : "");
+                    ((i == mSelected && mDirtyEmitter) || (mReferences[i] != mEmitterPath && mStashedEmitters.contains(mReferences[i]))
+                        ? " *" : "");
                 if (ImGui::Selectable(label.c_str(), i == mSelected)) picked = i;
                 ImGui::SetItemTooltip("%s", mReferences[i].c_str());
                 ImGui::PopID();
@@ -862,7 +982,7 @@ namespace mir
         {
             for (const auto &path : mEmitters)
                 if (ImGui::Selectable(path.c_str()))
-                    attempt([&] { AttachEmitter(path); if (!mDirtyEmitter) LoadEmitter(mReferences.size() - 1); });
+                    attempt([&] { AttachEmitter(path); LoadEmitter(mReferences.size() - 1); });
             ImGui::EndPopup();
         }
 
@@ -902,8 +1022,8 @@ namespace mir
         }
         else if (picked && *picked != mSelected)
         {
-            if (mDirtyEmitter) mError = "Save the current emitter before selecting another one.";
-            else { CommitDraftGesture(); LoadEmitter(*picked); }
+            CommitDraftGesture();
+            LoadEmitter(*picked);
         }
     }
 
@@ -952,7 +1072,7 @@ namespace mir
     void ParticleEditorPanel::Draw(bool &open, World &world, AssetCache &, AssetImportManager &imports,
         const EditorCamera &camera, float dt)
     {
-        if (!open && (mDirtySystem || mDirtyEmitter))
+        if (!open && IsDirty())
         {
             open = true;
             mCloseRequested = true;
@@ -962,6 +1082,8 @@ namespace mir
         if (!ImGui::Begin("Particle Editor", &open)) { ImGui::End();return; }
         mHistoryApplied = false;
         const DraftSnapshot before = CaptureDraft();
+        mDraftEmitterSource = before.emitterSource;
+        for (const auto &[path, draft] : before.stash) mDraftEmitterSource += path + draft.source;
         try
         {
             if (mPendingHistoryAction < 0) UndoDraft();
@@ -990,7 +1112,7 @@ namespace mir
             mDirtyEmitter = saved == mSavedEmitterSources.end() ||
                 CaptureDraft().emitterSource != saved->second;
         }
-        if (!open && (mDirtySystem || mDirtyEmitter))
+        if (!open && IsDirty())
         {
             open = true;
             mCloseRequested = true;

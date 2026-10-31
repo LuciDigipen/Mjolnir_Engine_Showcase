@@ -131,6 +131,8 @@ namespace mir
         uint32_t seed = 1;
         float inheritVelocity = 0.0f;
         float teleportDistance = 100.0f;
+        // GPU only. Live particles move by the emitter's own movement each tick, rotation is not followed.
+        bool followEmitter = false;
         AssetId texture;
         ParticleSimulationTarget simulationTarget = ParticleSimulationTarget::GPU;
         ParticleRendererProperties renderer;

@@ -66,6 +66,8 @@ namespace mir
         bool explicitTile = false;
         bool swept = false;
         glm::vec3 attachmentVelocity{0};
+        // Extra shift for live particles, so an emitter that follows its attachment carries them along.
+        glm::vec3 followDelta{0};
         glm::vec3 wind{0};
         float inheritVelocity = 0;
         uint32_t seed = 1;

@@ -81,7 +81,11 @@ namespace mir
         WorldPose pose;
         ParticleExecutionState state = ParticleExecutionState::Active;
         bool paused = false;
+        // The system asset's placement offset and the entity's per-instance offset, both added to definition.localOffset.
+        glm::vec3 placementOffset{ 0 };
         glm::vec3 instanceOffset{ 0 };
+        // Movement this tick that live particles of a followEmitter emitter copy, zero after a teleport.
+        glm::vec3 followDelta{ 0 };
         WorldPosition attachmentPosition;
         WorldPosition previousPosition;
         WorldPosition spawnStart;
@@ -92,7 +96,8 @@ namespace mir
         double distanceRemainder = 0.0;
         uint32_t birthSequence = 0;
         bool burstPending = true;
-        double delayRemaining = 0.0;
+        // Simulated seconds spent Active, an emitter births nothing until this reaches definition.startDelay.
+        double activeSeconds = 0.0;
         bool resetMotionOnPose = false;
         bool teleported = false;
         double spawnRemainder = 0.0;
@@ -153,6 +158,12 @@ namespace mir
         bool Pause(ParticleHandle handle, bool paused);
         bool SetPose(ParticleHandle handle, const WorldPose &pose);
         bool SetEmitterOffsets(ParticleHandle handle, std::span<const glm::vec3> offsets);
+        // The editor preview follows unsaved edits through these two. Placement offsets are the system asset's, and a
+        // change restarts motion like SetEmitterOffsets.
+        bool SetPlacementOffsets(ParticleHandle handle, std::span<const glm::vec3> offsets);
+        // Copies the data fields of an edited emitter into a playing one. Anything that needs a recook is left alone: the
+        // GPU behavior stacks and script, the texture, the capacity and the target. CPU ribbon behaviors do apply.
+        bool SetEmitterData(ParticleHandle handle, size_t index, const ParticleEmitterAsset &draft);
         bool SetParameters(ParticleHandle handle, const ParticleUserParameters &parameters);
         bool SetExecutionState(ParticleHandle handle, ParticleExecutionState state);
         bool Destroy(ParticleHandle handle);
@@ -170,6 +181,7 @@ namespace mir
         std::span<const ParticleEmitterInstance> EmitterSlots() const { return mEmitters; }
 
     private:
+        bool SetOffsets(ParticleHandle handle, std::span<const glm::vec3> offsets, bool placement);
         ParticleSystemInstance *Mutable(ParticleHandle handle);
         ParticleEmitterInstance *MutableEmitter(ParticleEmitterHandle handle);
         void RefreshStats();
