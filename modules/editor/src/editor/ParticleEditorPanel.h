@@ -8,7 +8,7 @@
  */
 #pragma once
 
-#include <assets/AssetId.h>
+#include <assets/SourceAssetIds.h>
 #include <particles/ParticleRuntime.h>
 #include <core/ecs/Entity.h>
 
@@ -111,8 +111,9 @@ namespace mir
         void RedoDraft();
         std::filesystem::path mSourceRoot;
         std::string mIdRoot, mSystemPath, mEmitterPath, mTexturePath, mError;
-        AssetId IdAtLogical(std::string_view logicalPath) const;
-        std::function<AssetId(std::string_view)> IdLookup() const;
+        // the guid of each source file, read again on every Scan
+        SourceAssetIds mIds;
+        std::function<AssetId(std::string_view)> IdLookup();
         std::string mNewSystemPath = "particles/new.particle.json";
         std::string mNewEmitterPath = "particles/new.emitter.json";
         std::vector<std::string> mSystems, mEmitters, mTextures, mReferences;

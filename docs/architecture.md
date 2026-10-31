@@ -448,7 +448,7 @@ root CMakeLists reads those from every `games/*/game.json` at configure time, so
 adding a game adds its assets without touching CMake.
 
 A `*.prefab` file is cooked to a typed payload under the id
-`prefab:<uuid>`, not the path hash every other asset uses. An editor build scans
+`prefab:<uuid>`, not a `.meta` guid like every other asset. An editor build scans
 the source `prefabs/` folder and reads the files directly; a build without the
 editor removes that copied source folder next to the executable and fills the
 Prefab registry from the cooked manifest instead. Both reach the same lookup by

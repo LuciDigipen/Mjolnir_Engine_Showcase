@@ -29,7 +29,7 @@ optionally only through blobs of chosen type tags.
 if (AssetCache *cache = app.Assets())
 {
     // resolver is the App's AssetResolver, which a module is handed by reference
-    if (const AssetBlobView *blob = cache->Load(resolver.Resolve("foo.txt")))
+    if (const AssetBlobView *blob = cache->Load(resolver.ResolveFull("assets/foo.txt")))
         Use(AsStringView(*blob));
 }
 ```

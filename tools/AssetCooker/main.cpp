@@ -1037,30 +1037,37 @@ namespace
 
         if (!partial)
         {
-            for (auto &[logical, record] : cache["models"].items())
-                if (!seenModels.contains(logical))
+            // A record whose source is gone keeps its outputs, unless this cook emitted them all again.
+            // Then the source moved, and its new record replaces the old one.
+            auto keepMissing = [&](Json &records, const std::unordered_set<std::string> &seen)
+            {
+                std::vector<std::string> moved;
+                for (auto &[logical, record] : records.items())
                 {
+                    if (seen.contains(logical))
+                        continue;
+                    const Json cachedOutputs = record.value("outputs", Json::array());
+                    const bool emittedAgain = !cachedOutputs.empty() &&
+                        std::all_of(cachedOutputs.begin(), cachedOutputs.end(), [&](const Json &cached)
+                            { return outputs.contains(cached.at("id").get<uint64_t>()); });
+                    if (emittedAgain)
+                    {
+                        moved.push_back(logical);
+                        continue;
+                    }
                     record["missing"] = true;
-                    for (const auto &cached : record.value("outputs", Json::array()))
+                    for (const auto &cached : cachedOutputs)
                     {
                         Output output = OutputFromJson(cached);
-                        // an id this cook already emitted is a source that moved, its new record is the right one
                         if (!outputs.contains(output.id.value) && std::filesystem::exists(options.out / output.file))
                             outputs[output.id.value] = output;
                     }
                 }
-            for (auto &[logical, record] : cache["materials"].items())
-                if (!seenMaterials.contains(logical))
-                {
-                    record["missing"] = true;
-                    for (const auto &cached : record.value("outputs", Json::array()))
-                    {
-                        Output output = OutputFromJson(cached);
-                        // an id this cook already emitted is a source that moved, its new record is the right one
-                        if (!outputs.contains(output.id.value) && std::filesystem::exists(options.out / output.file))
-                            outputs[output.id.value] = output;
-                    }
-                }
+                for (const std::string &logical : moved)
+                    records.erase(logical);
+            };
+            keepMissing(cache["models"], seenModels);
+            keepMissing(cache["materials"], seenMaterials);
         }
         // Standalone assets are rooted in the configured source roots. Particle changes
         // recook this graph while retaining manifest entries from roots outside the request.

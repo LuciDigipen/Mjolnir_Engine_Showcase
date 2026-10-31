@@ -759,3 +759,29 @@ TEST_CASE("A full cook after a rename that kept the .meta names the model by its
     CHECK(test::PathId(*after, "assets/renamed.gltf") == id);
     CHECK(after->FindByPath("assets/flag.gltf") == nullptr);
 }
+
+TEST_CASE("Removing the old record after a rename that kept the .meta keeps the renamed model",
+    "[gltf][cooker][identity]")
+{
+    Fixture f;
+    const auto out = fs::path(f.root.string() + "-rename-remove-cooked");
+    std::vector<std::string> full{ "--source-dir", f.root.string(), "--id-root", "assets", "--out", out.string() };
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, full, true) == 0);
+    const auto before = AssetManifest::LoadFile(out / "manifest.blob");
+    REQUIRE(before);
+    const AssetId id = test::PathId(*before, "assets/flag.gltf");
+    REQUIRE_FALSE(id.IsNull());
+
+    fs::rename(f.root / "flag.gltf", f.root / "renamed.gltf");
+    MoveAssetMeta(f.root / "flag.gltf", f.root / "renamed.gltf");
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, full, true) == 0);
+
+    // the editor offers Remove on a row for a path that no longer exists
+    std::vector<std::string> remove = full;
+    remove.insert(remove.end(), { "--remove-model", "assets/flag.gltf" });
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, remove, true) == 0);
+
+    const auto after = AssetManifest::LoadFile(out / "manifest.blob");
+    REQUIRE(after);
+    CHECK(test::PathId(*after, "assets/renamed.gltf") == id);
+}

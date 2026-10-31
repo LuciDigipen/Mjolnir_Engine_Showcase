@@ -106,25 +106,19 @@ namespace mir
     }
 
     ParticleEditorPanel::ParticleEditorPanel(std::filesystem::path sourceRoot, std::string idRoot)
-        : mSourceRoot(std::move(sourceRoot)), mIdRoot(std::move(idRoot))
+        : mSourceRoot(std::move(sourceRoot)), mIdRoot(std::move(idRoot)),
+          mIds(std::vector<AssetSourceRoot>{ { mSourceRoot, mIdRoot } })
     {}
 
-    AssetId ParticleEditorPanel::IdAtLogical(std::string_view logicalPath) const
+    std::function<AssetId(std::string_view)> ParticleEditorPanel::IdLookup()
     {
-        // a new index per lookup, so a file renamed or recreated since the last one is read as it is now
-        SourceAssetIds ids(std::vector<AssetSourceRoot>{ { mSourceRoot, mIdRoot } });
-        return ids.IdAt(logicalPath);
-    }
-
-    std::function<AssetId(std::string_view)> ParticleEditorPanel::IdLookup() const
-    {
-        return [this](std::string_view logical) { return IdAtLogical(logical); };
+        return [this](std::string_view logical) { return mIds.IdAt(logical); };
     }
 
     AssetId ParticleEditorPanel::IdOf(const std::string &path)
     {
         const auto logical = MakeLogicalAssetPath(mIdRoot, path);
-        return logical.Ok() ? IdAtLogical(logical.path) : kNullAssetId;
+        return logical.Ok() ? mIds.IdAt(logical.path) : kNullAssetId;
     }
 
     bool ParticleEditorPanel::OpenSystem(const std::string &path, World &world)
@@ -186,6 +180,7 @@ namespace mir
 
     void ParticleEditorPanel::Scan()
     {
+        mIds = SourceAssetIds(std::vector<AssetSourceRoot>{ { mSourceRoot, mIdRoot } });
         mSystems.clear();
         mEmitters.clear();
         mTextures.clear();

@@ -4,7 +4,7 @@
 #
 # SOURCE_ROOTS are relative to the repository root, not to the calling
 # CMakeLists. A subdirectory therefore passes "games/foo/assets", not "assets":
-# the root string is hashed into every asset id, so it has to mean the same
+# the root string is part of every logical path, so it has to mean the same
 # thing no matter which CMakeLists asks for it.
 #
 # A .material.json body names its shader and source images. Add the files it
@@ -105,7 +105,7 @@ function(engine_cook_assets target)
 
     set(out_dir "${ARG_OUT_DIR}")
 
-    # AssetCooker decides output filenames itself (hashed asset ids), so
+    # AssetCooker decides output filenames itself (an asset id and a content hash), so
     # unlike Shaders.cmake the exact OUTPUT set isn't known at configure time.
     # A stamp file stands in for it; DEPENDS on every source file still gives
     # recook-on-edit, and DEPENDS on the AssetCooker target recooks when the
