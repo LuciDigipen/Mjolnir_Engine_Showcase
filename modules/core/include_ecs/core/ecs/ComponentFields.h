@@ -146,11 +146,12 @@ namespace mir
         AssetRef, // String, shown as a picker combo sourced from the inspector's asset list
     };
 
-    // Which AssetImportView list an AssetRef field picks from.
+    // Which list an AssetRef field picks from.
     enum class AssetKind : uint8_t
     {
         None,
-        Model,
+        Model,      // AssetImportView's models
+        SoundEvent, // the events in the game's SoundBanks
     };
 
     struct FieldDesc
@@ -171,8 +172,9 @@ namespace mir
         float mMin = 0.0f;
         float mMax = 0.0f;
 
-        AssetKind mAssetKind = AssetKind::None;             // FieldWidget::AssetRef
+        AssetKind mAssetKind = AssetKind::None; 
         std::span<const std::string_view> mResetOnChange{}; // other field names to zero on write
+        std::string_view mBankField{}; // AssetKind::SoundEvent = the String field the picked event's bank goes in
 
         bool mHidden = false; // excluded from the inspector entirely (persistence-only)
 
@@ -202,7 +204,7 @@ namespace mir
             return true;
         }
 
-        // Clamps a clamped Float in place. False for an enum index with no name, or a NaN.
+        // Clamps a clamped Float in place. False for an enum index with no name or NaN.
         bool Constrain(void *value) const
         {
             if (mWidget == FieldWidget::Enum && mKind == FieldKind::Int && !mEnumNames.empty())

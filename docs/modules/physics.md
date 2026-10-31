@@ -28,9 +28,26 @@ A body is on one of 32 layers. The project's layer table, read by the `physics_l
 
 ## API
 
+Jolt runs simulation jobs on its own worker pool. PhysicsModule now uses the
+engine worker count for that pool: normal launches select up to four workers,
+`--workers N` overrides it, and `--workers 0` runs on the caller. Direct
+PhysicsWorld construction uses `PhysicsWorldDesc::mWorkerThreads = -1` for the
+same automatic default; zero now explicitly means no worker threads.
+
+After each step joins, PhysicsSystem gathers moving-body handles and reads
+positions/rotations through `ReadBodyPoses`. At 128 or more bodies, the engine
+executor processes ranges of 16 with one Jolt read lock per body and disjoint
+output slots. Smaller worlds read inline. Reused buffers retain allocation
+capacity. Once all ranges finish, transforms and interpolation history commit
+on main in parent-first order. Body edits, creation/removal, contact delivery
+and hierarchy access remain on main. Simulation and pose readback execute in
+separate joined phases; terrain background work may overlap simulation. Counts
+are per pool, not an aggregate thread cap.
+
 | Type | Header | Role |
 |---|---|---|
 | `PhysicsWorld` | `physics/PhysicsWorld.h` | The Jolt world: create and destroy bodies, edit them in place, forces and velocities, ray casts, the layer table, `Step`, the event drain |
+| `BodyPoseSnapshot`, `PhysicsWorld::ReadBodyPoses`, `PhysicsWorld::WorkerCount` | `physics/PhysicsWorld.h` | Joined pose readback and simulation worker configuration |
 | `RigidBody`, `AppliedBody` | `physics/components/RigidBody.h` | The component, and the copy of its fields the live body was last built from |
 | `PhysicsSystem` | `physics/PhysicsSystem.h` | The step, the body lifetime hooks, `Teleport` |
 | `PhysicsInterpolationSystem` | `physics/PhysicsInterpolationSystem.h` | The blend between the last two steps |

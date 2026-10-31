@@ -204,6 +204,21 @@ TEST_CASE("An EntityRef inside the snapshot points at the new copy", "[scene][sn
     CHECK(TargetOf(world, root) == child);
 }
 
+TEST_CASE("An EntityRef to its own entity points at the copy, not the original", "[scene][snapshot]")
+{
+    mir::RegisterCoreComponents();
+
+    World world;
+    LoadedScene scene = NewScene("test");
+    Entity root = CreateSceneEntity(world, scene);
+    SetTarget(world, root, root);
+
+    const Entity restored = RestoreEntity(world, CaptureEntity(world, root), scene);
+
+    CHECK(TargetOf(world, restored) == restored);
+    CHECK(TargetOf(world, root) == root);
+}
+
 TEST_CASE("An EntityRef leaving the snapshot keeps its live target", "[scene][snapshot]")
 {
     mir::RegisterCoreComponents();

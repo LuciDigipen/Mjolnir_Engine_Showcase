@@ -19,6 +19,7 @@
 #include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
 
+#include <array>
 #include <cstdint>
 #include <optional>
 
@@ -55,6 +56,10 @@ namespace mir
     // The ray through `ndc` of the viewport that `camera` and `lens` draw.
     WorldRay MakeCameraRay(const WorldPose &camera, const Camera &lens, float aspectRatio, glm::vec2 ndc);
 
+    // The view rectangle `distance` meters ahead in camera space (looking down -Z):
+    // top-right, top-left, bottom-left, bottom-right.
+    std::array<glm::vec3, 4> FrustumSliceCorners(float fovYDegrees, float aspectRatio, float distance);
+
     // A fixed-size, non-cascaded shadow frustum
     glm::mat4 MakeOrthographicViewProjection(const glm::vec3 &direction, float halfExtent, float nearZ);
 
@@ -70,6 +75,9 @@ namespace mir
     // narrows, so neither end is rounded to a far float position.
     std::optional<float> RayIntersectsBox(const WorldRay &ray, const WorldPose &box,
         const glm::vec3 &localMin, const glm::vec3 &localMax);
+
+    // Distance in meters along a unit-direction ray to where it enters the sphere, 0 if it starts inside.
+    std::optional<float> RayIntersectsSphere(const WorldRay &ray, WorldPosition center, float radius);
 
     // The index'th term of the Halton(2,3) low-discrepancy sequence.
     glm::vec2 HaltonJitter(uint32_t index);

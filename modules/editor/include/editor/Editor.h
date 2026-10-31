@@ -10,10 +10,13 @@
 #pragma once
 
 #include <core/ecs/EngineMode.h>
+#include <core/ecs/Entity.h>
+#include <core/ecs/components/Transform.h>
 #include <core/platform/Surface.h>
 #include <editor/BackgroundImage.h>
 #include <editor/EditorCamera.h>
 #include <editor/EditorPreferences.h>
+#include <editor/ViewPie.h>
 #include <editor/history/History.h>
 #include <editor/panels/AssetImportPanel.h>
 #include <editor/panels/ContentBrowserPanel.h>
@@ -26,6 +29,7 @@
 #include <editor/panels/ProfilerPanel.h>
 #include <editor/panels/ProjectSettingsPanel.h>
 #include <imguiruntime/ImGuiRuntime.h>
+#include <renderer/DebugView.h>
 #include <renderer/PostProcessingSettings.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/VulkanRenderer.h>
@@ -165,6 +169,9 @@ namespace mir
             mParticleCanRedo = redo;
         }
 
+        // chosen in Edit only; Play keeps rendering the last choice
+        const DebugViewSettings &SceneDebugView() const { return mDebugView; }
+
         bool IsInitialized() const { return mInitialized; }
 
         bool WantsCaptureKeyboard() const;
@@ -187,18 +194,32 @@ namespace mir
         void SetAuthoringBackend(IAuthoringBackend *backend) { mHistory.SetAuthoringBackend(backend); }
         void SetAuthoredEntities(IAuthoredEntities *authored) { mAuthoredEntities = authored; }
 
+        // null = no Audio settings and no soundtrack picker
+        void SetAudio(IEditorAudio *audio)
+        {
+            mAudio = audio;
+            mInspectorPanel.SetAudio(audio);
+        }
+
     private:
         void DrawTitleBar();
         void DrawOpenProjectMenu(std::span<const ProjectMenuEntry> projects, std::string_view currentProject);
         void DrawOpenProjectConfirm(EditorActions &actions);
         void DrawViewportGizmo(const EngineModeState &mode, World &world, EditorActions &actions,
             bool prefabDocument);
+        void BeginGizmoDrag(World &world, std::span<const Entity> selected);
+        // Applies the pivot's change since the drag began to every target, as one merging command.
+        void ApplyGizmoDrag(World &world);
         void DrawViewportPrefabDrop(bool documentTab, World &world);
         void UpdateViewportPicking(const EngineModeState &mode, World &world);
         // F moves the scene camera next to the primary selection.
         void FocusSelection(const EngineModeState &mode, World &world);
         void DrawSelectionHighlights(const EngineModeState &mode, World &world);
         void DrawComponentGizmos(const EngineModeState &mode, World &world);
+        // Held Z over the scene viewport opens the view pie; Edit only.
+        void UpdateViewPie(const EngineModeState &mode);
+        void DrawViewPie(std::optional<ViewPieItem> hovered);
+        void DrawDebugViewMenu(const EngineModeState &mode);
         void DrawNewProjectModal(EditorActions &actions, std::span<const ProjectMenuEntry> projects);
         void DrawEditMenu();
         void UpdateHistoryShortcuts(EditorActions &actions, const EngineModeState &mode);
@@ -254,6 +275,7 @@ namespace mir
         History mHistory;
         ISceneOps *mSceneOps = nullptr;
         IAuthoredEntities *mAuthoredEntities = nullptr;
+        IEditorAudio *mAudio = nullptr;
 
         std::filesystem::path mPreferencesPath;
         EditorPreferences mPreferences;
@@ -273,6 +295,26 @@ namespace mir
 
         // last frame's ImGuizmo::IsUsing
         bool mGizmoWasUsing = false;
+
+        DebugViewSettings mDebugView;
+
+        bool mViewPieOpen = false;
+        // Z came up inside the dead zone: the pie stays until a click or Escape
+        bool mViewPieSticky = false;
+        glm::vec2 mViewPieCenter{ 0.0f };
+
+        struct GizmoTarget
+        {
+            Entity mEntity;
+            WorldPose mParent;
+            WorldOffset mFromPivot;
+            Transform mStart;
+        };
+
+        // kept between frames while dragged, so the drag is measured from where it began
+        WorldPose mGizmoPivot;
+        WorldPose mGizmoDragStart;
+        std::vector<GizmoTarget> mGizmoTargets;
 
         // New Project modal
         bool mNewProjectRequested = false;

@@ -12,3 +12,6 @@
 *.ttf binary
 *.tindex binary
 *.tpack binary
+
+# LFS only for the TerrainCheck Icelandic sand source textures.
+games/TerrainCheck/assets/textures/icelandic_sand_and_rocks/*.jpg filter=lfs diff=lfs merge=lfs -text

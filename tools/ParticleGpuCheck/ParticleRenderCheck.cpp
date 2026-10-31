@@ -161,7 +161,7 @@ void RunParticleRenderCheck(mir::VulkanRenderer &renderer,mir::ParticlesGpuModul
     input.renderer.blend=1;input.renderer.alignment=1;input.renderer.facing=1;ribbon.renderer.facing=1;
     submit();capture("additive-facing");
     effects.depthOfFieldEnabled=effects.motionBlurEnabled=true;
-    effects.depthOfField.focusDistance=8;effects.depthOfField.aperture=0.08f;
+    effects.focusDistance=8;effects.aperture=0.08f;
     effects.antiAliasing.mode=rr?mir::AntiAliasingMode::Dlss:(rt?mir::AntiAliasingMode::Msaa:mir::AntiAliasingMode::Fxaa);
     renderer.SetPostProcessing(effects);frames();capture("post-effects");
     effects.depthOfFieldEnabled=effects.motionBlurEnabled=false;

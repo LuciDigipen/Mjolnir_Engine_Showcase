@@ -127,6 +127,14 @@ namespace mir
         return WorldRay{ camera.position, glm::normalize(nearPoint) };
     }
 
+    std::array<glm::vec3, 4> FrustumSliceCorners(float fovYDegrees, float aspectRatio, float distance)
+    {
+        const float halfHeight = distance * std::tan(glm::radians(fovYDegrees) * 0.5f);
+        const float halfWidth = halfHeight * aspectRatio;
+        return { glm::vec3(halfWidth, halfHeight, -distance), glm::vec3(-halfWidth, halfHeight, -distance),
+                 glm::vec3(-halfWidth, -halfHeight, -distance), glm::vec3(halfWidth, -halfHeight, -distance) };
+    }
+
     namespace
     {
         struct OrthographicBasis
@@ -226,6 +234,25 @@ namespace mir
         const glm::vec3 localDirection = glm::mat3(toLocal) * ray.direction;
 
         return RayIntersectsAABB(Ray{ localOrigin, localDirection }, localMin, localMax);
+    }
+
+    std::optional<float> RayIntersectsSphere(const WorldRay &ray, WorldPosition center, float radius)
+    {
+        const std::optional<glm::vec3> toCenter = TryCameraRelativeFloat(center, ray.origin);
+        if (!toCenter)
+            return std::nullopt;
+
+        // The off-axis offset as a vector, not |c|^2 - t^2, which cancels badly far from the camera.
+        const float along = glm::dot(*toCenter, ray.direction);
+        const glm::vec3 offAxis = *toCenter - ray.direction * along;
+        const float halfChordSq = radius * radius - glm::dot(offAxis, offAxis);
+        if (halfChordSq < 0.0f)
+            return std::nullopt;
+
+        const float halfChord = std::sqrt(halfChordSq);
+        if (along + halfChord < 0.0f)
+            return std::nullopt;
+        return std::max(along - halfChord, 0.0f);
     }
 
     glm::vec2 HaltonJitter(uint32_t index)

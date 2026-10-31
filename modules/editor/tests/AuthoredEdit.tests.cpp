@@ -133,7 +133,7 @@ namespace
         AuthoredAction Apply(const AuthoredKey &key) override
         {
             AuthoredAction action;
-            if (mRefuseApply)
+            if (mRefuseApply || (!mRefuseApplyField.empty() && key.mField == mRefuseApplyField))
             {
                 action.mAllowed = false;
                 action.mReason = "scene-dependent";
@@ -185,6 +185,7 @@ namespace
         std::vector<mir::AuthoredApplyTarget> mTargets;
         std::size_t mAppliedTarget = 0;
         bool mRefuseApply = false;
+        std::string mRefuseApplyField;
         bool mRefuseCreatePrefab = false;
 
     private:
@@ -381,4 +382,37 @@ TEST_CASE("Apply routes to the chosen layer", "[editor][history][authored-edit]"
     fixture.Run(std::move(command));
     CHECK(fixture.mHistory.StepCount() == 1);
     CHECK(fixture.mBackend.mWritten.size() == 1);
+}
+
+TEST_CASE("A field and the field a pick writes with it revert and apply as one command, or not at all",
+    "[editor][history][authored-edit]")
+{
+    Fixture fixture;
+    fixture.mView.mMembers.insert(mir::PackEntity(fixture.mEntity));
+    const AuthoredKey keys[] = {
+        *fixture.mView.KeyOf(fixture.mEntity, "AuthoredEditTestData", "amount"),
+        *fixture.mView.KeyOf(fixture.mEntity, "AuthoredEditTestData", "bonus"),
+    };
+    fixture.mBackend.Put(keys[0], "5");
+    fixture.mBackend.Put(keys[1], "6");
+
+    fixture.Run(mir::MakeRevertAuthoredCommand(fixture.mView, keys));
+    CHECK(fixture.mHistory.StepCount() == 1);
+    CHECK(fixture.mBackend.mWrites == 1);
+    CHECK_FALSE(fixture.mBackend.At(keys[0]).has_value());
+    CHECK_FALSE(fixture.mBackend.At(keys[1]).has_value());
+
+    fixture.mHistory.RequestUndo();
+    fixture.mHistory.Flush(fixture.mWorld, fixture.mScene);
+    CHECK(fixture.mBackend.At(keys[0]) == "5");
+    CHECK(fixture.mBackend.At(keys[1]) == "6");
+
+    fixture.Run(mir::MakeApplyAuthoredCommand(fixture.mView, keys));
+    CHECK(fixture.mBackend.mWritten.size() == 2);
+    CHECK(fixture.mBackend.At(keys[0]) == "1");
+    CHECK(fixture.mBackend.At(keys[1]) == "1");
+
+    // one refused is all refused, so the event is never applied without its bank
+    fixture.mView.mRefuseApplyField = "bonus";
+    CHECK(mir::MakeApplyAuthoredCommand(fixture.mView, keys) == nullptr);
 }

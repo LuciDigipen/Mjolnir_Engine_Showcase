@@ -11,6 +11,7 @@
 #include <editor/AssetImportManager.h>
 #include <editor/ContentBrowserWatcher.h>
 #include <editor/Editor.h>
+#include <editor/EditorAudio.h>
 #include <editor/PrefabAuthoringAdapter.h>
 #include <editor/PrefabPlayMarks.h>
 #include <editor/PrefabWorkspace.h>
@@ -52,13 +53,20 @@ namespace mir
         AssetImportManager &Import() { return mImport; }
         bool LayoutEnabled() const { return mEnableLayout; }
 
+        // set once the audio is built, null leaves out the Audio settings and the soundtrack picker
+        void SetAudio(IEditorAudio *audio)
+        {
+            mAudio = audio;
+            mEditor.SetAudio(audio);
+        }
+
     private:
         // what the menus, toolbar and panels asked for this frame
         void ApplyActions(const EditorActions &actions);
         void OpenInExternalIde(const std::string &relativePath);
         void OpenPrefabAsset(const std::string &relativePath);
 
-        // Save Prefab on a Prefab tab; on the Scene tab, the unsaved prefabs it uses, then the scene
+        // Save Prefab on a Prefab tab
         void SaveActiveDocument();
 
         // the active Prefab tab's preview World in Edit, else null
@@ -70,7 +78,7 @@ namespace mir
         PrefabWorkspace::PrefabUnsaved UnsavedPrefabs() const;
         PrefabWorkspace::PrefabSaved MarkSavedPrefabs();
 
-        // after DrawLayout: the scene viewport's rect, and in Edit the editor camera
+        
         void FeedViewport();
 
         World &mWorld;
@@ -84,7 +92,7 @@ namespace mir
 
         AssetImportManager mImport;
         ContentBrowserWatcher mContentBrowser;
-        // before mSceneOps and mEditor: they die after them, once Shutdown stopped the editor using them
+        
         PrefabAuthoringAdapter mPrefabAuthoring;
         PrefabWorkspace mPrefabWorkspace;
         WorldSceneOps mSceneOps;
@@ -93,21 +101,25 @@ namespace mir
 
         // Stop puts the World back as it was at Play, so it puts this back too
         bool mUnsavedBeforePlay = false;
-        // Play shows the Scene tab; Stop reopens the Prefab tab it left
+        // Play shows the Scene tab, Stop reopens the Prefab tab it left
         std::optional<PrefabId> mPrefabBeforePlay;
-        // the Prefab tabs' marks: Stop restores them with the World
+        // the Prefab tabs' marks, Stop restores them with the World
         PrefabPlayMarks mPrefabMarksBeforePlay;
 
-        // a Prefab file changed under an open document: its save point no longer holds
+        IEditorAudio *mAudio = nullptr;
+        // Stop puts the volumes back too, so trying them in Play changes nothing for good
+        std::optional<EditorAudioLevels> mAudioBeforePlay;
+
+        
         void RefreshPrefabHistory();
 
-        // last: they unregister before anything above is destroyed
         Registration mFrameBegin;
         Registration mDrawer;
         Registration mSceneUnload;
         Registration mSceneLoad;
         Registration mSceneSaved;
         Registration mPlayBegin;
+        Registration mPlayEnd;
         Registration mReloadPrepare;
         Registration mReloadCommit;
         Registration mReloadAbort;

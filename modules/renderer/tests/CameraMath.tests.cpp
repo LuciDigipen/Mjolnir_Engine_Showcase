@@ -247,6 +247,29 @@ TEST_CASE("The hit distance is meters along the ray for a scaled box", "[rendere
     CHECK_FALSE(mir::RayIntersectsBox(ray, behind, glm::vec3(-0.5f), glm::vec3(0.5f)));
 }
 
+TEST_CASE("A sphere pick is ranked where the ray enters it", "[renderer]")
+{
+    const WorldRay ray = CenterRayFrom(kEdgeB);
+    const auto hit = [&](const glm::dvec3 &offset)
+        { return mir::RayIntersectsSphere(ray, At(kEdgeB + offset), 0.5f); };
+
+    const std::optional<float> straight = hit(glm::dvec3(0.0, 0.0, -10.0));
+    REQUIRE(straight);
+    CHECK(std::abs(*straight - 9.5f) <= 1e-4f);
+
+    // off the axis the ray enters later, at the sphere's surface rather than its nearest point
+    const std::optional<float> grazing = hit(glm::dvec3(0.25, 0.0, -10.0));
+    REQUIRE(grazing);
+    CHECK(std::abs(*grazing - (10.0f - std::sqrt(0.1875f))) <= 1e-4f);
+
+    CHECK_FALSE(hit(glm::dvec3(0.75, 0.0, -10.0)));
+    CHECK_FALSE(hit(glm::dvec3(0.0, 0.0, 10.0)));
+
+    const std::optional<float> inside = hit(glm::dvec3(0.0, 0.0, 0.25));
+    REQUIRE(inside);
+    CHECK(*inside == 0.0f);
+}
+
 TEST_CASE("A box beyond float range of the ray is not hit", "[renderer][lwc]")
 {
     if (!mir::kLargeWorld)
@@ -359,5 +382,19 @@ TEST_CASE("SnapToShadowTexels moves an anchor only across the light, onto a worl
         const glm::dvec3 nudgedMoved =
             glm::dvec3(mir::SnapToShadowTexels(nudged, direction, texel).Meters()) - glm::dvec3(snapped.Meters());
         CHECK(glm::length(nudgedMoved - glm::dvec3(direction) * 3.0) == Catch::Approx(0.0).margin(1e-6));
+    }
+}
+
+TEST_CASE("FrustumSliceCorners sizes the view rectangle by fov and aspect", "[renderer][camera]")
+{
+    // tan(45) = 1, so the half-height equals the distance
+    const std::array<glm::vec3, 4> corners = mir::FrustumSliceCorners(90.0f, 2.0f, 3.0f);
+    const glm::vec3 expected[4] = { { 6.0f, 3.0f, -3.0f }, { -6.0f, 3.0f, -3.0f },
+                                    { -6.0f, -3.0f, -3.0f }, { 6.0f, -3.0f, -3.0f } };
+    for (int i = 0; i < 4; ++i)
+    {
+        CHECK(corners[i].x == Catch::Approx(expected[i].x));
+        CHECK(corners[i].y == Catch::Approx(expected[i].y));
+        CHECK(corners[i].z == Catch::Approx(expected[i].z));
     }
 }

@@ -44,3 +44,15 @@ function(engine_target_vulkan_platform_defines target)
             VK_USE_PLATFORM_WAYLAND_KHR)
     endif()
 endfunction()
+
+# engine_target_utf8(<target>)
+#
+# For every executable. Windows narrows paths, argv and -A calls through the
+# process code page, so without this path::string() throws on a character the
+# system's ANSI page lacks. The manifest makes that page UTF-8, as on Linux.
+set(ENGINE_UTF8_MANIFEST "${CMAKE_CURRENT_LIST_DIR}/Utf8CodePage.manifest")
+function(engine_target_utf8 target)
+    if(ENGINE_PLATFORM STREQUAL "Windows")
+        target_sources(${target} PRIVATE "${ENGINE_UTF8_MANIFEST}")
+    endif()
+endfunction()

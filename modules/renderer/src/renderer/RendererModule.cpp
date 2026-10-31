@@ -8,6 +8,7 @@
  */
 #include <renderer/RendererModule.h>
 
+#include <renderer/ActiveCamera.h>
 #include <renderer/ComponentRegistration.h>
 #include <renderer/MeshResolveSystem.h>
 #include <renderer/PostProcessingSettings.h>
@@ -41,6 +42,8 @@ namespace mir
         RegisterRendererPostEffects();
 
         context.world.EmplaceResource<ViewDrawSources>();
+        // physics fills it while a view shows colliders
+        context.world.EmplaceResource<DebugLines>();
         context.world.EmplaceResource<RenderSettings>(
             RenderSettings::LoadFile(settings.mProjectSettingsPath).value_or(RenderSettings{}));
         context.world.EmplaceResource<PostProcessingSettings>(
@@ -50,6 +53,8 @@ namespace mir
         mMeshes = &context.scheduler.AddSystem<MeshResolveSystem>(SystemPhase::LateUpdate,
             SystemOrder{SystemOrder::kNormal}, mRenderer, &assets.Cache(),
             settings.mAssetIdRoot);
+        mActiveCamera = &context.scheduler.AddSystem<ActiveCameraSystem>(SystemPhase::Render,
+            SystemOrder{SystemOrder::kEarly});
         mRenderSystem = &context.scheduler.AddSystem<RenderSystem>(SystemPhase::Render,
             SystemOrder{SystemOrder::kNormal}, mRenderer);
 
@@ -66,8 +71,19 @@ namespace mir
             });
 
         // a cut: the history of the scene before says nothing about this one
-        mSceneLoad = context.scheduler.AddStage(Stage::SceneLoad, [this](SystemContext &) { mRenderer.ResetHistory(); });
-        mPlayBegin = context.scheduler.AddStage(Stage::PlayBegin, [this](SystemContext &) { mRenderer.ResetHistory(); });
+        mSceneLoad = context.scheduler.AddStage(Stage::SceneLoad, [this](SystemContext &)
+            {
+                mRenderer.ResetHistory();
+                mActiveCamera->Reset();
+                mRenderSystem->ResetCameraReports();
+            });
+        mPlayBegin = context.scheduler.AddStage(Stage::PlayBegin, [this](SystemContext &)
+            {
+                mRenderer.ResetHistory();
+                mActiveCamera->Reset();
+                mRenderSystem->ResetCameraReports();
+            });
+        mPlayEnd = context.scheduler.AddStage(Stage::PlayEnd, [this](SystemContext &) { mActiveCamera->Reset(); });
 
         mReloadCommit = context.scheduler.AddStage(Stage::ReloadCommit, [this, &assets](SystemContext &)
             {
@@ -79,6 +95,7 @@ namespace mir
     RendererModule::~RendererModule()
     {
         mReloadCommit.Reset();
+        mPlayEnd.Reset();
         mPlayBegin.Reset();
         mSceneLoad.Reset();
         mSceneUnload.Reset();

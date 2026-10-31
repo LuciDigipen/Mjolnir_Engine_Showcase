@@ -33,7 +33,7 @@
 namespace
 {
     constexpr std::string_view kUsage = "[--game <dir>] [--frames <N>] [--capture <png>] [--no-editor] [--ui-demo] "
-        "[--non-interactive] [--hidden] [--switch-to <dir>]...";
+        "[--non-interactive] [--hidden] [--workers <0..32>] [--switch-to <dir>]...";
 
     struct LaunchOptions
     {
@@ -43,6 +43,7 @@ namespace
         // 0: run until the window closes
         uint64_t mMaxFrames = 0;
         std::string mCapturePath;
+        uint32_t mWorkerThreads = static_cast<uint32_t>(mir::JobExecutor::DefaultWorkerCount());
         bool mNoEditor = false;
         bool mUIDemo = false;
 
@@ -82,6 +83,13 @@ namespace
             else if (arg == "--capture" && i + 1 < argc)
             {
                 options.mCapturePath = argv[++i];
+            }
+            else if (arg == "--workers" && i + 1 < argc)
+            {
+                const std::string_view value = argv[++i];
+                const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), options.mWorkerThreads);
+                if (error != std::errc{} || end != value.data() + value.size() || options.mWorkerThreads > 32)
+                    ThrowUsage("--workers expects an integer from 0 to 32");
             }
             else if (arg == "--no-editor")
             {
@@ -125,6 +133,7 @@ namespace
     std::vector<std::string> RelaunchArguments(const LaunchOptions &options, const mir::GameProject &next)
     {
         std::vector<std::string> args{ "--game", next.mDir };
+        args.insert(args.end(), {"--workers", std::to_string(options.mWorkerThreads)});
         if (options.mNoEditor)
             args.emplace_back("--no-editor");
         if (options.mUIDemo)
@@ -186,6 +195,7 @@ namespace
         desc.mProject = project;
         desc.mMaxFrames = options.mMaxFrames;
         desc.mCapturePath = options.mCapturePath;
+        desc.mWorkerThreads = options.mWorkerThreads;
         // a build without the editor is always the game; --no-editor is then a no-op
         desc.mEnableEditorLayout = mir::App::kHasEditor && !options.mNoEditor;
         desc.mUIDemo = options.mUIDemo;

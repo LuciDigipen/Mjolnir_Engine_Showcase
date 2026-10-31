@@ -13,6 +13,7 @@
 #pragma once
 
 #include <physics/components/RigidBody.h>
+#include <physics/PhysicsWorld.h>
 
 #include <core/ecs/Query.h>
 #include <core/ecs/System.h>
@@ -31,6 +32,7 @@ namespace mir
     class PhysicsSystem final : public ISystem
     {
     public:
+        explicit PhysicsSystem(JobExecutor *jobs = nullptr) : mJobs(jobs) {}
         void OnStart(SystemContext &context) override;
         void OnUpdate(SystemContext &context) override;
 
@@ -58,5 +60,8 @@ namespace mir
         Query<Transform, RigidBody> *mQuery = nullptr;
         // the moving bodies, parents first, for the pull
         std::vector<Entity> mOrder;
+        JobExecutor *mJobs = nullptr;
+        std::vector<BodyHandle> mReadBodies;
+        std::vector<BodyPoseSnapshot> mReadPoses;
     };
 }

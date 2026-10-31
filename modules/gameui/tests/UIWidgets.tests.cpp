@@ -571,3 +571,49 @@ TEST_CASE("The demo screen draws inside the context's safe area at 16:9, 21:9 an
         }
     }
 }
+
+TEST_CASE("An area below the design size scales the whole UI down: bounds and the pointer are in UI units",
+          "[gameui][layout]")
+{
+    Fixture f;
+    UIWidgetResult result;
+    const auto draw = [&](UIContext &ui)
+    {
+        result = Button(ui, UIId("button"), kRect, "Play");
+    };
+
+    // half the design size, offset in the window as the editor's viewport is
+    constexpr UIRect kHalf{300, 80, 320, 240};
+    f.SetArea(kHalf);
+
+    // kRect's middle, (200, 120) in UI units, in window pixels
+    const UIPointer over{kHalf.x + 200.0f * 0.5f, kHalf.y + 120.0f * 0.5f, false};
+    f.Frame(draw, over);
+    f.Frame(draw, over);
+    CHECK(f.UI().Scale() == Catch::Approx(0.5f));
+    CHECK(f.UI().Bounds() == UIRect{0, 0, 640, 480});
+    CHECK(f.UI().DrawList().CurrentClip() == UIRect{0, 0, 640, 480});
+    CHECK(result.mHovered);
+
+    SECTION("the narrower side sets the scale")
+    {
+        f.SetArea(UIRect{0, 0, 160, 480});
+        f.Frame(draw);
+        CHECK(f.UI().Scale() == Catch::Approx(0.25f));
+        CHECK(f.UI().Bounds().width == Catch::Approx(640.0f));
+    }
+    SECTION("a larger area is never scaled up")
+    {
+        f.SetArea(UIRect{0, 0, 1920, 1080});
+        f.Frame(draw);
+        CHECK(f.UI().Scale() == 1.0f);
+        CHECK(f.UI().Bounds() == UIRect{0, 0, 1920, 1080});
+    }
+    SECTION("a design size of 0 leaves the area as it is")
+    {
+        f.UI().SetDesignSize(0.0f, 0.0f);
+        f.Frame(draw);
+        CHECK(f.UI().Scale() == 1.0f);
+        CHECK(f.UI().Bounds() == UIRect{0, 0, 320, 240});
+    }
+}

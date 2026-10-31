@@ -13,8 +13,9 @@ registers a drawer in the `Game` group. Each frame the drawer takes the area
 from `GameUIArea`, or the whole window, the pointer from the window's raw input,
 and calls `GameUIModule::RunFrame`.
 
-`ImGuiUIBackend` replays a draw list into ImGui's background list, which ImGui
-renders before every window, and `VulkanRenderer` draws ImGui after the 3D
+`ImGuiUIBackend` replays a draw list into ImGui's background list, its UI units
+times the frame's scale, font size and rounding included. ImGui renders that list
+before every window, and `VulkanRenderer` draws ImGui after the 3D
 views, so the game UI lands over the scene and under Hierarchy, Inspector and
 Output. A texture's pixels go into an `ImTextureData` in `WantCreate`,
 registered as a user texture; `ImGui_ImplVulkan` creates, uploads and frees it,

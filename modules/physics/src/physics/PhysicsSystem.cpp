@@ -26,9 +26,6 @@ namespace mir
     {
         using detail::BodyPose;
 
-        // The shape follows the world scale: a box per axis, a sphere by the largest axis, a capsule by the
-        // axis it stands along for its height and the larger of the other two for its radius. The collider
-        // offset scales with it; a rotated non-uniform parent is as close as the decomposition gets.
         // The decomposed scale of a rotating parent wobbles in the last digits, which is not a change.
         bool SameScale(const glm::vec3 &a, const glm::vec3 &b)
         {
@@ -53,31 +50,15 @@ namespace mir
 
         BodyDesc BodyDescFor(const RigidBody &rigidBody, const BodyPose &pose, Entity entity)
         {
-            const glm::vec3 scale = glm::abs(pose.scale);
-            // the enum can hold any int a field write puts in it
-            const int axis = std::clamp(static_cast<int>(rigidBody.axis), 0, 2);
-            const float along = scale[axis];
-            const float across = std::max(scale[(axis + 1) % 3], scale[(axis + 2) % 3]);
-            const bool capsule = rigidBody.shape == PhysicsShape::Capsule;
-
-            return {.mMotion = rigidBody.motion,
-                    .mShape = rigidBody.shape,
-                    .mPosition = pose.position,
-                    .mRotation = pose.rotation,
-                    .mHalfExtent = rigidBody.halfExtent * scale,
-                    .mRadius = rigidBody.radius * (capsule ? across : std::max({ scale.x, scale.y, scale.z })),
-                    .mHalfHeight = rigidBody.halfHeight * along,
-                    .mAxis = rigidBody.axis,
-                    .mOffset = rigidBody.offset * pose.scale,
-                    .mRotationOffset = rigidBody.rotationOffset,
-                    .mLayer = LayerOf(rigidBody, entity),
-                    .mIsTrigger = rigidBody.isTrigger,
-                    .mDetectStay = rigidBody.detectStay,
-                    .mMass = rigidBody.mass,
-                    .mGravityFactor = rigidBody.gravityFactor,
-                    .mFriction = rigidBody.friction,
-                    .mRestitution = rigidBody.restitution,
-                    .mAllowSleeping = rigidBody.allowSleeping};
+            BodyDesc desc = detail::ShapeDescOf(rigidBody, pose);
+            desc.mLayer = LayerOf(rigidBody, entity);
+            desc.mDetectStay = rigidBody.detectStay;
+            desc.mMass = rigidBody.mass;
+            desc.mGravityFactor = rigidBody.gravityFactor;
+            desc.mFriction = rigidBody.friction;
+            desc.mRestitution = rigidBody.restitution;
+            desc.mAllowSleeping = rigidBody.allowSleeping;
+            return desc;
         }
 
         // The one place a body is built: the add hook, the PlayBegin pass and the first-step fallback share it.
@@ -206,7 +187,7 @@ namespace mir
                 {
                     // The Transform came after the RigidBody, so the add hook had nothing to build from.
                     MIR_LOG_WARN("PhysicsSystem: entity {} had no body at its first step; created it now, "
-                                 "its Transform was added after its RigidBody",
+                        "its Transform was added after its RigidBody",
                         entity.mIndex);
                     CreateBodyFor(world, physics, entity, rigidBody);
                     return;
@@ -251,10 +232,11 @@ namespace mir
     void PhysicsSystem::PullPoses(World &world, PhysicsWorld &physics)
     {
         detail::ParentFirst(world, *mQuery, mOrder);
-        for (const Entity entity : mOrder)
+        mReadBodies.resize(mOrder.size());
+        mReadPoses.resize(mOrder.size());
+        for (size_t i = 0; i < mOrder.size(); ++i)
         {
-            Transform &transform = *world.GetComponent<Transform>(entity);
-            RigidBody &rigidBody = *world.GetComponent<RigidBody>(entity);
+            RigidBody &rigidBody = *world.GetComponent<RigidBody>(mOrder[i]);
 
             // The step reached the target, so the velocity MoveKinematic set must not carry it on.
             if (rigidBody.runtime.movedToTarget)
@@ -263,14 +245,22 @@ namespace mir
                 physics.SetBodyAngularVelocity(rigidBody.runtime.body, glm::vec3(0.0f));
                 rigidBody.runtime.movedToTarget = false;
             }
+            mReadBodies[i] = rigidBody.runtime.body;
+        }
+        physics.ReadBodyPoses(mReadBodies, mReadPoses, mJobs);
+        for (size_t i = 0; i < mOrder.size(); ++i)
+        {
+            const Entity entity = mOrder[i];
+            Transform &transform = *world.GetComponent<Transform>(entity);
+            RigidBody &rigidBody = *world.GetComponent<RigidBody>(entity);
 
             rigidBody.runtime.previousPosition = rigidBody.runtime.currentPosition;
             rigidBody.runtime.previousRotation = rigidBody.runtime.currentRotation;
 
             // A body Jolt left at a non-finite position, or one that does not fit back through its
             // parents, keeps its last Transform instead of writing that back.
-            if (const std::optional<WorldPosition> position = physics.BodyPosition(rigidBody.runtime.body))
-                detail::WriteWorldPose(world, entity, transform, *position, physics.BodyRotation(rigidBody.runtime.body));
+            if (mReadPoses[i].position)
+                detail::WriteWorldPose(world, entity, transform, *mReadPoses[i].position, mReadPoses[i].rotation);
 
             // What the entity resolves to now, not Jolt's pose: the round trip through the parents can
             // differ by float rounding, and the next push compares against this.

@@ -24,6 +24,7 @@
 #include <physics_layers/PhysicsLayers.h>
 #include <editor/Selection.h>
 #include <editor/history/AuthoredEdit.h>
+#include <editor/history/CommandGroup.h>
 #include <editor/history/ComponentCommands.h>
 #include <editor/history/DocumentNodeCommands.h>
 #include <editor/history/EntityCommands.h>
@@ -83,24 +84,63 @@ namespace mir
             return ImGuizmo::TRANSLATE;
         }
 
-        
         template <typename T>
-        std::unique_ptr<ICommand> SetTransformField(World &world, Entity entity, std::string_view fieldName,
-            const T &value, std::string_view verb, IAuthoredEntities *authored)
+        void AddTransformField(std::vector<FieldValue> &values, const ComponentOps &ops, std::string_view fieldName,
+            const T &value)
         {
-            const ComponentOps *ops = ComponentRegistry::Instance().FindBySeq(TypeIdOf<Transform>().seq);
-            const FieldDesc *field = ops != nullptr ? ops->FindField(fieldName) : nullptr;
+            const FieldDesc *field = ops.FindField(fieldName);
             if (field == nullptr)
-                return nullptr;
+                return;
 
             FieldValue fieldValue;
-            fieldValue.mField = static_cast<uint32_t>(field - ops->mFields.data());
+            fieldValue.mField = static_cast<uint32_t>(field - ops.mFields.data());
             static_assert(sizeof(T) <= sizeof(fieldValue.mBytes));
             std::memcpy(fieldValue.mBytes, &value, sizeof(T));
+            values.push_back(fieldValue);
+        }
 
-            const Name *name = world.GetComponent<Name>(entity);
-            return MakeSetFieldsEditCommand(entity, *ops, { fieldValue },
-                std::format("{} {}", verb, name != nullptr ? name->mValue : "Entity"), authored);
+        // The selected entities the gizmo can move, in selection order, so the primary stays last.
+        std::vector<Entity> GizmoSelection(World &world)
+        {
+            std::vector<Entity> entities;
+            if (const Selection *selection = world.TryResource<Selection>())
+            {
+                for (const Entity entity : selection->mSelected)
+                {
+                    if (world.IsAlive(entity) && world.GetComponent<Transform>(entity) != nullptr)
+                        entities.push_back(entity);
+                }
+            }
+            return entities;
+        }
+
+        // The mean of the entities' origins, on the unscaled axes of the last one.
+        std::optional<WorldPose> SelectionPivot(World &world, std::span<const Entity> entities)
+        {
+            const WorldPose primary = ResolveWorld(world, entities.back());
+
+            // summed as offsets from the primary, so far positions keep their precision
+            WorldVec3 sum(0);
+            for (const Entity entity : entities)
+            {
+                const std::optional<WorldOffset> offset =
+                    TryWorldDifference(ResolveWorld(world, entity).position, primary.position);
+                if (!offset)
+                    return std::nullopt;
+                sum += offset->Meters();
+            }
+
+            const std::optional<WorldOffset> mean =
+                WorldOffset::FromMeters(sum / static_cast<WorldReal>(entities.size()));
+            const std::optional<WorldPosition> position =
+                mean ? TryTranslateWorld(primary.position, *mean) : std::nullopt;
+            if (!position)
+                return std::nullopt;
+
+            glm::quat rotation{};
+            glm::vec3 scale{};
+            DecomposeRotationScale(primary.linear, rotation, scale);
+            return WorldPose{ *position, glm::mat3_cast(glm::normalize(rotation)) };
         }
 
         // Radius around the entity's origin that holds its scaled mesh box.
@@ -128,14 +168,27 @@ namespace mir
             return true;
         }
 
+        // A segment that passes behind the camera is cut there rather than dropped, so a long
+        // gizmo line still shows when the scene camera stands inside it.
         void DrawWorldLine(ImDrawList *drawList, const glm::mat4 &viewProj, float x0, float y0, float width,
             float height, const glm::vec3 &a, const glm::vec3 &b, ImU32 color, float thickness)
         {
-            ImVec2 sa, sb;
-            if (!ProjectToScreen(viewProj, x0, y0, width, height, a, sa) ||
-                !ProjectToScreen(viewProj, x0, y0, width, height, b, sb))
+            constexpr float kMinW = 0.01f;
+            glm::vec4 clipA = viewProj * glm::vec4(a, 1.0f);
+            glm::vec4 clipB = viewProj * glm::vec4(b, 1.0f);
+            if (clipA.w <= kMinW && clipB.w <= kMinW)
                 return;
-            drawList->AddLine(sa, sb, color, thickness);
+            if (clipA.w <= kMinW)
+                clipA = glm::mix(clipA, clipB, (kMinW - clipA.w) / (clipB.w - clipA.w));
+            else if (clipB.w <= kMinW)
+                clipB = glm::mix(clipB, clipA, (kMinW - clipB.w) / (clipA.w - clipB.w));
+
+            const auto toScreen = [&](const glm::vec4 &clip)
+                {
+                    const glm::vec2 ndc = glm::vec2(clip) / clip.w;
+                    return ImVec2(x0 + (ndc.x * 0.5f + 0.5f) * width, y0 + (ndc.y * 0.5f + 0.5f) * height);
+                };
+            drawList->AddLine(toScreen(clipA), toScreen(clipB), color, thickness);
         }
 
         void DrawWorldCircle(ImDrawList *drawList, const glm::mat4 &viewProj, float x0, float y0, float width,
@@ -174,11 +227,35 @@ namespace mir
                     static_cast<ImU32>(colorRGBA), segments);
             }
 
+            float Aspect() const override { return mHeight > 0.0f ? mWidth / mHeight : 1.0f; }
+
         private:
             ImDrawList *mDrawList;
             glm::mat4 mViewProj;
             float mX0, mY0, mWidth, mHeight;
         };
+
+
+        // screen pixels from the pie's center to its items, and the radius where nothing is picked
+        constexpr float kViewPieRadius = 110.0f;
+        constexpr float kViewPieDeadZone = 24.0f;
+
+        ImDrawList *ViewportOverlayDrawList()
+        {
+            const ImGuiViewport *viewport = ImGui::GetMainViewport();
+            ImGui::SetNextWindowPos(viewport->Pos);
+            ImGui::SetNextWindowSize(viewport->Size);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+            ImGui::Begin("##ViewportOverlay", nullptr,
+                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoBackground |
+                    ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
+                    ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing |
+                    ImGuiWindowFlags_NoBringToFrontOnFocus);
+            ImDrawList *drawList = ImGui::GetWindowDrawList();
+            ImGui::End();
+            ImGui::PopStyleVar();
+            return drawList;
+        }
 
         // The tab bar over the scene viewport; the viewport itself starts below it.
         float DrawDocumentTabs(float x, float y, float width, const EditorDocuments &documents, EditorActions &actions,
@@ -570,7 +647,10 @@ namespace mir
         if (mode.mMode != EngineMode::Edit)
             return;
 
-        if (!ImGui::GetIO().WantTextInput && !mWindow->RawInput().IsDown(MouseButton::Right))
+        const bool modalOpen = ImGui::GetTopMostPopupModal() != nullptr;
+        // a drag keeps the operation it began with
+        if (!modalOpen && !mGizmoWasUsing && !ImGui::GetIO().WantTextInput &&
+            !mWindow->RawInput().IsDown(MouseButton::Right))
         {
             if (ImGui::IsKeyPressed(ImGuiKey_W, false))
                 mGizmoOperation = GizmoOperation::Translate;
@@ -583,10 +663,9 @@ namespace mir
         if (mSceneViewportRect.extent.width == 0 || mSceneViewportRect.extent.height == 0)
             return;
 
-        const Selection *selection = world.TryResource<Selection>();
-        const Entity entity = selection != nullptr ? selection->Primary() : kNullEntity;
-        const bool hasGizmoTarget =
-            !entity.IsNull() && world.IsAlive(entity) && world.GetComponent<Transform>(entity) != nullptr;
+        const std::vector<Entity> selected = GizmoSelection(world);
+        // a drag keeps its pivot even when everything it moves is gone
+        const bool hasGizmoTarget = mGizmoWasUsing || !selected.empty();
 
         // A Prefab tab keeps the toolbar (and its Save) visible with nothing selected.
         if (!hasGizmoTarget && !prefabDocument)
@@ -641,13 +720,21 @@ namespace mir
         if (!hasGizmoTarget)
             return;
 
+        if (!mGizmoWasUsing)
+        {
+            const std::optional<WorldPose> pivot = SelectionPivot(world, selected);
+            if (!pivot)
+                return;
+            mGizmoPivot = *pivot;
+        }
+
         // ImGuizmo works in the scene viewport's camera-relative space: the
         // camera is the origin, so its float matrices stay small however far
         // the entity is from the Scene origin.
         const WorldPose camera = mCamera.Pose();
         const glm::mat4 view = glm::inverse(glm::mat4(camera.linear));
 
-        const std::optional<glm::mat4> resolved = ResolveWorld(world, entity).TryMatrixRelativeTo(camera.position);
+        const std::optional<glm::mat4> resolved = mGizmoPivot.TryMatrixRelativeTo(camera.position);
         if (!resolved)
             return;
         glm::mat4 gizmoMatrix = *resolved;
@@ -665,53 +752,133 @@ namespace mir
 
         ImGuizmo::SetOrthographic(false);
         ImGuizmo::BeginFrame();
-        ImGuizmo::SetDrawlist(ImGui::GetForegroundDrawList(ImGui::GetMainViewport()));
+        ImGuizmo::SetDrawlist(ViewportOverlayDrawList());
         ImGuizmo::SetRect(x, y, width, height);
+        ImGuizmo::Enable(!modalOpen && !mViewPieOpen);
 
         const ImGuizmo::MODE gizmoMode = mGizmoSpace == GizmoSpace::Local ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
         const bool changed = ImGuizmo::Manipulate(glm::value_ptr(view), glm::value_ptr(proj),
             ToImGuizmoOperation(mGizmoOperation), gizmoMode, glm::value_ptr(gizmoMatrix));
 
-        
+
+        if (ImGuizmo::IsUsing() && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
+            ImGuizmo::Enable(false);
+
+
         const bool usingGizmo = ImGuizmo::IsUsing();
-        if (mGizmoWasUsing && !usingGizmo)
-            mHistory.EndStep();
-        mGizmoWasUsing = usingGizmo;
+        if (usingGizmo && !mGizmoWasUsing)
+        {
+            mGizmoDragStart = mGizmoPivot;
+            BeginGizmoDrag(world, selected);
+        }
 
-        if (!changed)
-            return;
-
-        // A root composes under the identity at the Scene origin.
-        const Entity parent = ParentOf(world, entity);
-        const WorldPose parentPose = parent.IsNull() ? WorldPose{} : ResolveWorld(world, parent);
-
-        // Each operation writes only its own channel, so rotating or scaling
-        // never sends a far position through the float matrix and back.
-        if (mGizmoOperation == GizmoOperation::Translate)
+        // the release frame can still carry the last change
+        if (changed && (usingGizmo || mGizmoWasUsing))
         {
             const std::optional<WorldOffset> fromCamera =
                 WorldOffset::FromMeters(WorldVec3(glm::vec3(gizmoMatrix[3])));
-            const std::optional<WorldPosition> moved =
+            const std::optional<WorldPosition> position =
                 fromCamera ? TryTranslateWorld(camera.position, *fromCamera) : std::nullopt;
-            const std::optional<ParentLocalTranslation> local =
-                moved ? TryWorldToParentLocal(parentPose, *moved) : std::nullopt;
-            if (local)
-                mHistory.Submit(SetTransformField(world, entity, "position", local->Meters(), "Move",
-                    mAuthoredEntities));
-            return;
+            if (position)
+            {
+                mGizmoPivot = WorldPose{ *position, glm::mat3(gizmoMatrix) };
+                ApplyGizmoDrag(world);
+            }
         }
 
-        if (glm::determinant(parentPose.linear) == 0.0f)
+        if (mGizmoWasUsing && !usingGizmo)
+        {
+            mHistory.EndStep();
+            mGizmoTargets.clear();
+        }
+        mGizmoWasUsing = usingGizmo;
+    }
+
+    void Editor::BeginGizmoDrag(World &world, std::span<const Entity> selected)
+    {
+        mGizmoTargets.clear();
+
+        // a child of another selected entity already moves with it
+        for (const Entity entity : TopmostInHierarchyOrder(world, selected))
+        {
+            // A root composes under the identity at the Scene origin.
+            const Entity parent = ParentOf(world, entity);
+            const WorldPose parentPose = parent.IsNull() ? WorldPose{} : ResolveWorld(world, parent);
+            const std::optional<WorldOffset> fromPivot =
+                TryWorldDifference(ResolveWorld(world, entity).position, mGizmoDragStart.position);
+            const Transform *transform = world.GetComponent<Transform>(entity);
+
+            // a zero-scale parent leaves no local values to write
+            if (transform != nullptr && fromPivot && glm::determinant(parentPose.linear) != 0.0f)
+                mGizmoTargets.push_back(GizmoTarget{ entity, parentPose, *fromPivot, *transform });
+        }
+    }
+
+    void Editor::ApplyGizmoDrag(World &world)
+    {
+        const ComponentOps *ops = ComponentRegistry::Instance().FindBySeq(TypeIdOf<Transform>().seq);
+        const std::optional<WorldOffset> moved = TryWorldDifference(mGizmoPivot.position, mGizmoDragStart.position);
+        if (ops == nullptr || !moved)
             return;
 
-        glm::vec3 scale{};
-        glm::quat rotation{};
-        DecomposeRotationScale(glm::inverse(parentPose.linear) * glm::mat3(gizmoMatrix), rotation, scale);
+        const bool translate = mGizmoOperation == GizmoOperation::Translate;
+        const bool rotate = mGizmoOperation == GizmoOperation::Rotate;
+        const char *verb = translate ? "Move" : rotate ? "Rotate" : "Scale";
 
-        if (mGizmoOperation == GizmoOperation::Rotate)
-            mHistory.Submit(SetTransformField(world, entity, "rotation", rotation, "Rotate", mAuthoredEntities));
+        // The start axes are unit length, so this is the drag's rotation, or its stretch along them.
+        const glm::mat3 change = mGizmoPivot.linear * glm::transpose(mGizmoDragStart.linear);
+        const glm::mat3 about = rotate ? glm::mat3_cast(glm::normalize(glm::quat_cast(change))) : change;
+        const WorldMat3 aboutPivot(about);
+
+        std::vector<std::unique_ptr<ICommand>> commands;
+        for (const GizmoTarget &target : mGizmoTargets)
+        {
+            if (!world.IsAlive(target.mEntity) || world.GetComponent<Transform>(target.mEntity) == nullptr)
+                continue;
+
+            // Positions move as offsets in world precision, so no far position
+            // goes through the float matrix and back.
+            std::vector<FieldValue> values;
+            const WorldVec3 fromPivot = target.mFromPivot.Meters();
+            if (translate || fromPivot != WorldVec3(0))
+            {
+                const std::optional<WorldOffset> shift =
+                    translate ? moved : WorldOffset::FromMeters(aboutPivot * fromPivot - fromPivot);
+                const std::optional<ParentLocalTranslation> localShift =
+                    shift ? TryWorldOffsetToParentLocal(WorldMat3(target.mParent.linear), *shift) : std::nullopt;
+                const std::optional<ParentLocalTranslation> position = localShift
+                    ? ParentLocalTranslation::FromMeters(target.mStart.Position() + localShift->Meters())
+                    : std::nullopt;
+                if (!position)
+                    continue;
+                AddTransformField(values, *ops, "position", position->Meters());
+            }
+
+            if (!translate)
+            {
+                const glm::mat3 axes = glm::inverse(target.mParent.linear) * about * target.mParent.linear * glm::mat3_cast(target.mStart.Rotation());
+                glm::quat turned{};
+                glm::vec3 stretched{};
+                DecomposeRotationScale(axes, turned, stretched);
+                if (rotate)
+                    AddTransformField(values, *ops, "rotation", glm::normalize(turned));
+                else
+                    AddTransformField(values, *ops, "scale", target.mStart.Scale() * stretched);
+            }
+
+            const Name *name = world.GetComponent<Name>(target.mEntity);
+            commands.push_back(MakeSetFieldsEditCommand(target.mEntity, *ops, std::move(values),
+                std::format("{} {}", verb, name != nullptr ? name->mValue : "Entity"), mAuthoredEntities));
+        }
+
+        if (commands.empty())
+            return;
+
+        if (mGizmoTargets.size() == 1)
+            mHistory.Submit(std::move(commands.front()));
         else
-            mHistory.Submit(SetTransformField(world, entity, "scale", scale, "Scale", mAuthoredEntities));
+            mHistory.Submit(MakeCommandGroup(std::format("{} {} Entities", verb, mGizmoTargets.size()),
+                std::move(commands)));
     }
 
     void Editor::DrawViewportPrefabDrop(bool documentTab, World &world)
@@ -849,6 +1016,10 @@ namespace mir
         if (ImGuizmo::IsOver() || ImGuizmo::IsUsing())
             return;
 
+        // a click that picks a pie wedge is not a pick in the scene
+        if (mViewPieOpen)
+            return;
+
         if (!justPressed)
             return;
 
@@ -880,8 +1051,8 @@ namespace mir
                 }
             });
 
-        // Any component whose owning module registered a pick radius (e.g. Light): a simple
-        // world-space sphere test around the entity's transform origin.
+        // Any component whose owning module registered a pick radius (e.g. Light): a world-space
+        // sphere around the entity's transform origin, ranked where the ray enters it.
         for (const ComponentOps *ops : ComponentRegistry::Instance().All())
         {
             if (ops->mPickRadius == nullptr)
@@ -895,25 +1066,12 @@ namespace mir
                     if (transform == nullptr)
                         return;
 
-                    const std::optional<glm::vec3> fromRay =
-                        TryCameraRelativeFloat(transform->Position(), ray.origin);
-                    if (!fromRay)
-                        return;
-                    const glm::vec3 pos = *fromRay;
-                    const float t = glm::dot(pos, ray.direction);
-                    if (t < 0.0f)
-                        return;
-
                     const void *component = ops->GetComponent(world, entity);
-                    const float pickRadius = ops->mPickRadius(component);
-
-                    const glm::vec3 closest = ray.direction * t;
-                    if (glm::length(pos - closest) > pickRadius)
-                        return;
-
-                    if (t < hitDistance)
+                    const std::optional<float> distance =
+                        RayIntersectsSphere(ray, transform->Position(), ops->mPickRadius(component));
+                    if (distance && *distance < hitDistance)
                     {
-                        hitDistance = t;
+                        hitDistance = *distance;
                         hitEntity = entity;
                     }
                 });
@@ -942,7 +1100,7 @@ namespace mir
         const WorldPose camera = mCamera.Pose();
         const glm::mat4 viewProj = MakeCameraRelativeViewProjection(camera, mCamera.mLens, width / height);
 
-        ImDrawList *drawList = ImGui::GetForegroundDrawList(ImGui::GetMainViewport());
+        ImDrawList *drawList = ViewportOverlayDrawList();
         drawList->PushClipRect(ImVec2(x0, y0), ImVec2(x0 + width, y0 + height), true);
         const Entity primary = selection->Primary();
 
@@ -1009,7 +1167,7 @@ namespace mir
         const WorldPose camera = mCamera.Pose();
         const glm::mat4 viewProj = MakeCameraRelativeViewProjection(camera, mCamera.mLens, width / height);
 
-        ImDrawList *drawList = ImGui::GetForegroundDrawList(ImGui::GetMainViewport());
+        ImDrawList *drawList = ViewportOverlayDrawList();
         drawList->PushClipRect(ImVec2(x0, y0), ImVec2(x0 + width, y0 + height), true);
 
         const ScreenGizmoCanvas canvas(drawList, viewProj, x0, y0, width, height);
@@ -1268,6 +1426,7 @@ namespace mir
             DrawSelectionHighlights(mode, activeWorld);
             DrawComponentGizmos(mode, activeWorld);
             DrawViewportGizmo(mode, activeWorld, actions, documentTab);
+            UpdateViewPie(mode);
 
             ImGui::PopStyleColor(pushedColors);
             if (ImGui::BeginMainMenuBar())
@@ -1309,6 +1468,8 @@ namespace mir
                 }
                 if (ImGui::BeginMenu("Debug"))
                 {
+                    DrawDebugViewMenu(mode);
+                    ImGui::Separator();
                     ImGui::MenuItem("Style Editor", nullptr, &mShowStyleEditor);
                     ImGui::MenuItem("Profiler", nullptr, &mShowProfiler);
                     ImGui::EndMenu();
@@ -1344,7 +1505,7 @@ namespace mir
             {
                 if (ImGui::Begin("Project Settings", &mShowProjectSettings))
                     mProjectSettingsPanel.Draw(renderSettings, mProjectSettingsPath, mShowInputSettings,
-                        sceneWorld.TryResource<PhysicsLayerUpdate>(), mode.mMode == EngineMode::Edit);
+                        sceneWorld.TryResource<PhysicsLayerUpdate>(), mAudio, mode.mMode == EngineMode::Edit);
                 ImGui::End();
             }
             else
@@ -1447,6 +1608,126 @@ namespace mir
 
         if (ImGui::MenuItem((redo + "###Redo").c_str(), "Ctrl+Y", false, mHistory.CanRedo()))
             mHistory.RequestRedo();
+    }
+
+    void Editor::DrawDebugViewMenu(const EngineModeState &mode)
+    {
+        // shown in Play, but only Edit changes it, as with the pie
+        ImGui::BeginDisabled(mode.mMode != EngineMode::Edit);
+        if (ImGui::BeginMenu("Shading"))
+        {
+            for (const ViewPieItem item : kViewPieItems)
+            {
+                if (item == ViewPieItem::Colliders)
+                    continue;
+                if (ImGui::MenuItem(ViewPieLabel(item), "Z", ViewPieItemActive(mDebugView, item)))
+                    ApplyViewPieItem(mDebugView, item);
+            }
+            ImGui::EndMenu();
+        }
+        ImGui::MenuItem(ViewPieLabel(ViewPieItem::Colliders), "Z", &mDebugView.colliders);
+        ImGui::EndDisabled();
+    }
+
+    void Editor::UpdateViewPie(const EngineModeState &mode)
+    {
+        // view changes are Edit-only; Play keeps rendering what Edit picked
+        if (mode.mMode != EngineMode::Edit || ImGui::GetTopMostPopupModal() != nullptr ||
+            mSceneViewportRect.extent.width == 0 || mSceneViewportRect.extent.height == 0)
+        {
+            mViewPieOpen = false;
+            return;
+        }
+
+        const ImGuiIO &io = ImGui::GetIO();
+        const glm::vec2 mouse(io.MousePos.x, io.MousePos.y);
+        if (!mViewPieOpen)
+        {
+            // Ctrl+Z is undo, and a held right button is flying the camera
+            if (io.WantTextInput || io.KeyCtrl || io.KeyAlt || io.KeySuper || WantsCaptureMouse() ||
+                mWindow->RawInput().IsDown(MouseButton::Right) || !ImGui::IsKeyPressed(ImGuiKey_Z, false))
+                return;
+
+            const glm::vec2 min(mSceneViewportRect.offset.x, mSceneViewportRect.offset.y);
+            const glm::vec2 max = min + glm::vec2(mSceneViewportRect.extent.width, mSceneViewportRect.extent.height);
+            if (mouse.x < min.x || mouse.y < min.y || mouse.x >= max.x || mouse.y >= max.y)
+                return;
+
+            mViewPieOpen = true;
+            mViewPieSticky = false;
+            mViewPieCenter = mouse;
+        }
+
+        const std::optional<ViewPieItem> hovered = ViewPieItemAt(mouse - mViewPieCenter, kViewPieDeadZone);
+        bool choose = false;
+        bool close = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+        if (!close && !mViewPieSticky && !ImGui::IsKeyDown(ImGuiKey_Z))
+        {
+            // released over a wedge picks it; released in the dead zone keeps the pie for a click
+            choose = hovered.has_value();
+            close = choose;
+            mViewPieSticky = !choose;
+        }
+        else if (!close && mViewPieSticky && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+        {
+            choose = hovered.has_value();
+            close = true;
+        }
+
+        if (choose)
+            ApplyViewPieItem(mDebugView, *hovered);
+        if (close)
+        {
+            mViewPieOpen = false;
+            return;
+        }
+        DrawViewPie(hovered);
+    }
+
+    void Editor::DrawViewPie(std::optional<ViewPieItem> hovered)
+    {
+        // a window over the viewport, so while the pie is up it takes the mouse from picking and the camera
+        ImGui::SetNextWindowPos(ImVec2(static_cast<float>(mSceneViewportRect.offset.x),
+            static_cast<float>(mSceneViewportRect.offset.y)));
+        ImGui::SetNextWindowSize(ImVec2(static_cast<float>(mSceneViewportRect.extent.width),
+            static_cast<float>(mSceneViewportRect.extent.height)));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::Begin("##ViewPie", nullptr,
+            ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoNav |
+                ImGuiWindowFlags_NoFocusOnAppearing);
+
+        ImDrawList *drawList = ImGui::GetWindowDrawList();
+        const ImGuiStyle &style = ImGui::GetStyle();
+        const ImVec2 center(mViewPieCenter.x, mViewPieCenter.y);
+
+        drawList->AddCircle(center, kViewPieDeadZone, ImGui::GetColorU32(ImGuiCol_Border), 0, 2.0f);
+        if (hovered)
+            drawList->AddLine(center, ImGui::GetMousePos(), ImGui::GetColorU32(ImGuiCol_ButtonHovered), 2.0f);
+
+        for (const ViewPieItem item : kViewPieItems)
+        {
+            const bool active = ViewPieItemActive(mDebugView, item);
+            const std::string label = active ? std::string(ICON_FA_CHECK "  ") + ViewPieLabel(item)
+                                             : std::string(ViewPieLabel(item));
+            const ImVec2 textSize = ImGui::CalcTextSize(label.c_str());
+            const ImVec2 size(textSize.x + style.FramePadding.x * 2.0f, textSize.y + style.FramePadding.y * 2.0f);
+
+            // each box sits past the radius on its own side, centered on its axis
+            const glm::vec2 dir = ViewPieDirection(item);
+            const ImVec2 min(center.x + dir.x * kViewPieRadius + (dir.x - 1.0f) * size.x * 0.5f,
+                center.y + dir.y * kViewPieRadius + (dir.y - 1.0f) * size.y * 0.5f);
+            const ImVec2 max(min.x + size.x, min.y + size.y);
+
+            const ImGuiCol fill = item == hovered ? ImGuiCol_ButtonHovered : active ? ImGuiCol_Button : ImGuiCol_PopupBg;
+            drawList->AddRectFilled(min, max, ImGui::GetColorU32(fill), style.FrameRounding);
+            drawList->AddRect(min, max, ImGui::GetColorU32(ImGuiCol_Border), style.FrameRounding);
+            drawList->AddText(ImVec2(min.x + style.FramePadding.x, min.y + style.FramePadding.y),
+                ImGui::GetColorU32(ImGuiCol_Text), label.c_str());
+        }
+
+        ImGui::End();
+        ImGui::PopStyleVar();
     }
 
     void Editor::UpdateHistoryShortcuts(EditorActions &actions, const EngineModeState &mode)

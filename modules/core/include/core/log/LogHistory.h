@@ -12,6 +12,7 @@
 
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -24,6 +25,8 @@ namespace mir
         std::string file;
         int line = 0;
         std::chrono::system_clock::time_point time;
+        // occurrences collapsed into this entry, the first included
+        uint64_t count = 1;
     };
 
     class LogHistory
@@ -32,7 +35,10 @@ namespace mir
         LogHistory() = delete;
 
         static void SetCapacity(std::size_t capacity);
-        static void Push(LogEntry entry);
+        // the id names this entry for AddRepeat
+        static uint64_t Push(LogEntry entry);
+        // false once the entry is evicted or cleared
+        static bool AddRepeat(uint64_t id);
         static std::vector<LogEntry> Snapshot();
         static void Clear();
     };

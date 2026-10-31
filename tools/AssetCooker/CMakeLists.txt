@@ -8,10 +8,12 @@ target_link_libraries(gltf_importer PUBLIC mir::assets PRIVATE fastgltf::fastglt
 target_sources(AssetCooker PRIVATE main.cpp)
 # The compiler is a cooker dependency, game binaries load only cooked SPIR-V.
 target_compile_definitions(AssetCooker PRIVATE PARTICLE_SLANGC_EXECUTABLE="${SLANGC_EXECUTABLE}")
+engine_target_utf8(AssetCooker)
 # terrain: only for IsTerrainFileExcludedFromCook.
 target_link_libraries(AssetCooker PRIVATE gltf_importer mir::assets mir::core mir::terrain mir::prefab mir::particles nlohmann_json::nlohmann_json)
 if(BUILD_TESTING)
     add_executable(gltf_importer_tests tests/GltfImporter.tests.cpp tests/PrefabCook.tests.cpp tests/ParticleCook.tests.cpp)
+    engine_target_utf8(gltf_importer_tests)
     target_link_libraries(gltf_importer_tests PRIVATE gltf_importer mir::animation mir::prefab mir::particles nlohmann_json::nlohmann_json Catch2::Catch2WithMain)
     target_compile_definitions(gltf_importer_tests PRIVATE GLTF_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
     target_compile_definitions(gltf_importer_tests PRIVATE PARTICLE_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/particle_fixtures")

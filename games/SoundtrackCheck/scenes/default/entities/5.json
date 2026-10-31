@@ -1,0 +1,70 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [
+          0.9,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [
+          0.9,
+          0.0,
+          0.0
+        ]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "SFX"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "materialShader": "",
+        "meshName": "meshes/cube.mesh.json",
+        "tint": [
+          0.4,
+          0.8,
+          1.0,
+          1.0
+        ]
+      },
+      "type": "MeshRenderer"
+    },
+    {
+      "fields": {
+        "eventName": "Play_Sfx_Loop",
+        "loop": false,
+        "playOnStart": true
+      },
+      "type": "AudioEmitter"
+    },
+    {
+      "fields": {
+        "scriptName": "sfx_controls"
+      },
+      "type": "ScriptRef"
+    }
+  ],
+  "id": 5,
+  "parent": 0
+}

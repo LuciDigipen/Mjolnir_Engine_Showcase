@@ -17,6 +17,10 @@ function AudioRtpc.NewInstanceData()
 end
 
 function AudioRtpc.OnUpdate(self, world, entity, dt)
+    -- Audio bindings are absent in MIR_WITH_AUDIO=OFF builds.
+    if not world.set_rtpc then
+        return
+    end
     self.elapsed = self.elapsed + dt
 
     -- 0..100, the range a Wwise game parameter is given by default

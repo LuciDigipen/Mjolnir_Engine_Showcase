@@ -15,6 +15,7 @@
 #include <chrono>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -89,6 +90,8 @@ namespace mir
         std::unordered_map<std::string, std::string> mDiagnostics;
         std::map<std::filesystem::path, WatchedFile> mWatched;
         std::chrono::steady_clock::time_point mLastWatchPoll{};
+        std::optional<uint64_t> mImportCacheSignature;
+        bool mViewDirty = true;
         bool mPendingApply = false;
         bool mCancelRequested = false;
         bool mWatchInitialized = false;

@@ -118,6 +118,14 @@ the history and sets the mark from `SceneModule::LastLoad()`, `SceneSaved`
 clears it, `PlayBegin` remembers it for Stop to put back, and `ReloadCommit`
 marks the import applied.
 
+`AssetImportManager` caches the import panel's model view. Source additions,
+edits and removals invalidate it through the existing 250 ms watcher poll;
+that poll also checks the cooked import-cache file's timestamp/size signature
+for external replacement, creation or deletion. Unchanged frames reuse the view
+without rescanning sources or reparsing JSON. Explicit actions, cooker completion
+and reload apply/failure still refresh immediately, so statuses and diagnostics
+do not wait for the next poll. Layout-disabled editor builds keep these services.
+
 The Prefab documents are a `PrefabWorkspace`, one preview World per open Prefab
 tab, and a `PrefabAuthoringAdapter`. The adapter bridges History and the prefab
 module's authored state; `prefab/PrefabAuthoring` owns the edits themselves.
@@ -159,6 +167,7 @@ bool IsDocumentUnsaved(DocumentId document) const;              // the same for 
 void SetDocumentUnsaved(DocumentId document, bool unsaved);
 void SetAuthoringBackend(IAuthoringBackend *backend);           // the module's PrefabAuthoringAdapter
 void SetAuthoredEntities(IAuthoredEntities *authored);          // document edits and instance overrides
+void SetAudio(IEditorAudio *audio);                             // null: no Audio settings, no soundtrack picker
 
 // between ImGuiRuntime::BeginFrame and EndFrame
 EditorActions DrawLayout(bool enableLayout, InputMap &inputMap, RenderSettings &renderSettings,
@@ -191,6 +200,7 @@ EditorCamera &SceneCamera();
 | `ContentBrowserView`, `ContentBrowserEntryView` | `editor/panels/ContentBrowserPanel.h` | The open project's content root as a flat list of files/directories, plus `mLastRenamedFrom`/`mLastRenamedTo` for one tick when a same-tick remove+add looks like a rename |
 | `ContentBrowserAction`, `ContentBrowserActionKind` | `editor/panels/ContentBrowserPanel.h` | `{mKind, mTargetPath, mNewName}`: `CreateFolder`, `Rename`, `Delete`, `OpenInIde` or `OpenPrefab`, for `App` to carry out (see [app.md](app.md)) |
 | `kPrefabContentPayload` | `editor/panels/ContentBrowserPanel.h` | The drag payload a Prefab row carries into the Hierarchy or the scene viewport |
+| `IEditorAudio`, `EditorAudioLevels`, `EditorAudioChannel`, `EditorSoundBank` | `editor/EditorAudio.h` | What the editor reads and changes of the game's audio: the live volumes, the project's defaults and each SoundBank's events. `App` implements it with the audio module and sets it on `EditorModule::SetAudio`, so the editor never links `audio` |
 | `IdeSettings`, `DetectDefaultIde` | `editor/IdeSettings.h` | The `project_settings.json` "ide.path" string (empty: auto-detect VS Code), edited from `ProjectSettingsPanel`'s External Tools section |
 | `EntityAction`, `EntityActionKind` | `editor/panels/HierarchyPanel.h` | `{mKind, mPreset, mTarget, mTargets, mParent, mBefore}`: `Create` (null `mPreset` = New), `Delete`, `Duplicate`, `CopyAsOrdinaryObject`, `Reparent`, `CreatePrefab` or `PlacePrefab`, which `MakeEntityCommand` or `MakeDocumentEntityCommand` turns into a command (see [editor-history.md](editor-history.md)) |
 | `NeighborInHierarchy` | `editor/panels/HierarchyPanel.h` | The entity to select after deleting one: next sibling, else previous, else the parent |
@@ -224,7 +234,9 @@ next poll with no restart.
 Clicking an entity in `Hierarchy`, or clicking it directly in the scene
 viewport (`Editor::UpdateViewportPicking`, a ray/AABB test against every
 `(WorldTransform, MeshRenderer, MeshBounds)` entity - see
-[renderer.md](renderer.md) for `MeshBounds`), writes it into `Selection`
+[renderer.md](renderer.md) for `MeshBounds` - plus `RayIntersectsSphere`
+against every component that registered a pick radius, such as `Light`; the
+nearest entry along the ray wins), writes it into `Selection`
 (`editor/Selection.h`), a `World` resource `HierarchyPanel` installs on
 first draw if nothing already has. Both call the same
 `ApplyClick(Selection&, Entity, bool additive)`: a plain click replaces the
@@ -310,6 +322,35 @@ does exist, drawn over the viewport by `DrawViewportGizmo` via ImGuizmo - it's
 a separate, `Selection`-driven overlay, not part of `InspectorPanel`'s
 field-table drawing described here.)
 
+A `FieldWidget::AssetRef` field with `AssetKind::SoundEvent`, the `Soundtrack`'s
+and the `AudioEmitter`'s `eventName`, is a combo of the game's SoundBanks with
+their events under them, read through `IEditorAudio::SoundBanks()` each time it
+opens, so a bank regenerated while the editor runs shows up. A pick writes the
+event and, into the field `mBankField` names, its bank, as one Set fields
+command, so one undo takes back both; an emitter has no bank field. The
+`Soundtrack`'s bank field is `mHidden` and shows in the combo's preview instead.
+On a Prefab instance the event shows as overridden when either is, and its
+Revert and Apply to take both overridden keys as one command through the span
+overloads of `MakeRevertAuthoredCommand` and `MakeApplyAuthoredCommand`, refused
+whole if either is refused, so an event is never left with another's bank.
+
+A bank holds its events by ID only, so one without Wwise's `<bank>.json` beside
+it, such as `HelloWorld`'s `Test`, is listed with its events unknown and a box
+under it to type an event into; Enter picks it from that bank. Banks with their
+JSON are pick-only. A current event no bank lists, typed earlier or into an
+unknown bank, still shows at the top as "(not listed)".
+
+**Audio in Project Settings.** With `IEditorAudio` set, the panel has an Audio
+section between Physics layers and External Tools. In Edit it edits a draft of
+the project's default music and SFX volume and mute; Save writes the `audio`
+section of `project_settings.json`, makes it what the pause menu's Restore
+defaults goes back to, and applies it, so Play sounds as a new player's game
+does. In Play the defaults are greyed out and a "While playing" group changes
+what is heard at once. `EditorModule` takes the volumes at `PlayBegin` and puts
+them back at `PlayEnd`, so neither that group nor the pause menu's Audio screen
+changes anything for good, and the defaults are never written from them. With
+`--no-editor` the volumes are not put back, as in a game build.
+
 Component edits go to `History` as commands, like entity actions, so each one
 can be undone. They change no `LoadedScene` entry, so `App` has nothing to do
 for them. Once no ImGui item is active after an edit, the panel calls
@@ -341,6 +382,19 @@ source. There is no compiler or runtime check for it.
 
 **The rect is only valid within or after `DrawLayout(true)` in the same frame.**
 
+**Viewport gizmos draw into the `##ViewportOverlay` window, not a foreground or
+background draw list.** The window sits behind every other window, so panels,
+menus and modals, dimming included, cover the transform gizmo, the selection
+boxes and component gizmos. The foreground list paints over every window, and
+the game UI paints over the background list. The window spans the main viewport
+because ImGuizmo hit-tests its rect. Each draw clips itself to the scene viewport.
+
+**A component gizmo's line is cut where it passes behind the scene camera, not
+dropped.** `DrawWorldLine` clips the segment at a small positive clip-space `w`,
+so a long line such as a selected `Camera`'s frustum still shows while the scene
+camera stands inside it. `GizmoCanvas::Aspect` gives the drawer the scene
+viewport's width over height, which is also the aspect Play renders at.
+
 **The Open Project dialog is opened after the menu bar ends, not from the menu
 item.** `OpenPopup` and `BeginPopupModal` have to run under the same ID stack.
 Called from inside the menu, `OpenPopup` opens a popup that nothing ever draws.
@@ -356,6 +410,16 @@ save through `IniFilename`, a pointer into this `Editor`'s string, after the
 editor has shut down. It saves only if ImGui got as far as loading settings, the
 same guard `DestroyContext` uses, so a failed startup never overwrites the file
 with an empty one.
+
+**Background textures outlive `Editor` and are freed from ImGui's shutdown hook.**
+`Editor::Shutdown` runs before `ImGuiRuntime::Shutdown`, so the renderer backend
+still owns the GPU textures when `BackgroundImage` is destroyed. Its destructor
+therefore hands the active and retired CPU textures to an
+`ImGuiContextHookType_Shutdown` hook with its own payload, rather than freeing
+them early or retaining a dangling `BackgroundImage` pointer. The hook runs after
+the backend destroys the GPU side, unregisters and deletes the CPU textures, and
+logs if real renderer data somehow remains. Never reorder the editor before
+`ImGuiModule` to "fix" this.
 
 **`Editor` is a class rather than free functions**, because it carries state
 across calls — the viewport rect, the Style Editor toggle, the game waiting on
@@ -508,6 +572,57 @@ or the dialog themselves. History needs neither, and its tests are in
    deleted, not everything recursively under a deleted folder.
 
 ## Changed
+
+*2026-10-28* — **Audio: a soundtrack event picker and an Audio section in
+Project Settings (#305).** Was: a `Soundtrack`'s event and bank were typed by
+hand, and the default volumes could only be set by editing
+`project_settings.json`. Now: the event is picked from the SoundBanks' events,
+which sets the bank too, and Project Settings saves the default music and SFX
+volume and mute and changes the live ones in Play, put back on Stop. Because:
+designers set a scene's soundtrack and the project's volumes without editing
+files, and a trial in Play should not leave the volumes changed.
+
+*2026-10-27* — **Switching the active camera is one undo step;
+`MakeCommandGroup` (#231).** Was: the Inspector recorded only the camera it
+turned on, and `ActiveCameraSystem` cleared the old one outside history, so
+undo left no camera active. Now: the Inspector's field edits and Paste Values
+go through `MakeFieldEditCommand` (`editor/history/ActiveCameraEdit.h`), which
+groups turning a `Camera` on with clearing every other active one, using
+`MakeCommandGroup` (`editor/history/CommandGroup.h`): several commands done in
+order and undone in reverse as one step. Because: undo should bring back the
+camera that was active.
+
+*2026-10-27* — **The scene camera has no depth of field or motion blur
+(#231).** Was: the Post-Processing panel's focus, aperture and shutter applied
+to the scene view as to every camera. Now: those values and exposure are
+`Camera` fields read from the viewing lens, and `EditorCamera::mLens` sets
+aperture and shutter to 0, with exposure 1. Because: a game camera's focus
+distance and shutter mean nothing from wherever the scene camera is flying.
+
+*2026-10-27* — **Gizmo lines clip at the scene camera; `GizmoCanvas::Aspect`
+(#231).** Was: a gizmo line with either end behind the scene camera was not
+drawn, and a drawer could not size anything to the viewport. Now: the line is
+cut where it crosses behind the camera, and the canvas reports the viewport's
+aspect. Because: a `Camera`'s frustum runs from its near plane to a far plane
+100 m out, so standing inside it hid it.
+
+*2026-10-26* — **A modal covers the viewport gizmos.** Was: the transform
+gizmo, the selection boxes and component gizmos drew into the main viewport's
+foreground draw list, which ImGui paints after every window, so they showed
+through a modal and its dimming, and the gizmo could still be hovered and
+dragged through the backdrop. Now: they draw into `##ViewportOverlay` (see
+Rules). While `GetTopMostPopupModal()` is set, `ImGuizmo::Enable` is off, which
+also greys the gizmo, and W, E and R leave the operation alone. Floating panels
+and open menus over the viewport cover the gizmos too.
+
+*2026-10-26* — **A light no longer takes viewport clicks across its whole
+range.** Was: a Point or Spot light's pick sphere had the light's `range` as
+its radius (an Area light's was 1.5 × `areaSize`), and the light was ranked by
+its center's distance along the ray, so a click on empty space or on an object
+behind the light's center anywhere inside that range selected the light. Now:
+every light picks with a 0.3 m sphere at its origin, ranked by where the ray
+enters it (`RayIntersectsSphere`, see [renderer.md](renderer.md)), the same
+measure the mesh boxes use.
 
 *2026-10-25*, **A Physics layers section in `ProjectSettingsPanel`.** Was: the panel drew Input, Rendering and
 External Tools, and every body collided with every other. Now: it edits the `physicsLayers` section of

@@ -868,8 +868,12 @@ namespace
                 for (const auto &path : files)
                 {
                     const std::string ext = LowerExtension(path), filename = path.filename().string();
+                    // a bank's Wwise metadata is read loose, beside the bank
+                    const bool bankMetadata =
+                        ext == ".json" && std::filesystem::exists(std::filesystem::path(path).replace_extension(".bnk"));
                     if (ext == ".gltf" || ext == ".glb" || ext == ".slang" || ext == ".bnk" || ext == ".wem" ||
-                        filename.ends_with(".import.json") || filename.ends_with(".pending") || filename == ".gitkeep")
+                        bankMetadata || filename.ends_with(".import.json") || filename.ends_with(".pending") ||
+                        filename == ".gitkeep")
                         continue;
                     // TerrainTool owns recipes and releases.
                     const std::string logical = LogicalPath(root, path);

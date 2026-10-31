@@ -45,6 +45,41 @@ namespace mir
         return MakeViewProjection(glm::mat4(camera.linear), lens, aspectRatio);
     }
 
+    std::optional<GiTraceVolume> MakeGiTraceVolume(const DdgiSettings &settings)
+    {
+        if (settings.ValidationError() != nullptr)
+            return std::nullopt;
+        const auto center = WorldPosition::FromDoubleMeters(
+            glm::dvec3(settings.origin[0], settings.origin[1], settings.origin[2]));
+        if (!center)
+            return std::nullopt;
+        return GiTraceVolume{ *center };
+    }
+
+    void CollectRayTracingWorldDraws(std::span<const WorldDrawItem> worldItems,
+        std::span<IViewDrawSource *const> sources, size_t view, std::vector<WorldDrawItem> &out)
+    {
+        out.assign(worldItems.begin(), worldItems.end());
+        for (IViewDrawSource *source : sources)
+            source->AppendRayTracingDraws(view, out);
+    }
+
+    void BuildViewDebugLines(std::span<const DebugLineVertex> lines, WorldPosition viewportCamera,
+                             std::vector<DebugLinePoint> &out)
+    {
+        out.clear();
+        out.reserve(lines.size());
+        for (size_t i = 0; i + 1 < lines.size(); i += 2)
+        {
+            const std::optional<glm::vec3> from = TryCameraRelativeFloat(lines[i].position, viewportCamera);
+            const std::optional<glm::vec3> to = TryCameraRelativeFloat(lines[i + 1].position, viewportCamera);
+            if (!from || !to)
+                continue;
+            out.push_back({ *from, lines[i].color });
+            out.push_back({ *to, lines[i + 1].color });
+        }
+    }
+
     size_t BuildViewDrawItems(std::span<const WorldDrawItem> items, WorldPosition viewportCamera,
         const glm::mat4 &viewProj, std::vector<DrawItem> &out)
     {

@@ -72,7 +72,7 @@ set(_wwise_cfg_RELWITHDEBINFO Profile)
 set(_wwise_cfg_MINSIZEREL Release)
 
 set(_wwise_cmake_configs DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
-set(_wwise_libs_common AkSoundEngine AkMemoryMgr AkStreamMgr)
+set(_wwise_libs_common AkSoundEngine AkMemoryMgr AkStreamMgr AkVorbisDecoder)
 
 set(_wwise_libs_profiling CommunicationCentral)
 

@@ -97,6 +97,7 @@ namespace mir::vk
         glm::mat4 mPreviousViewProj[kMaxViewsPerFrame]{};
         WorldPosition mPreviousCameraPosition[kMaxViewsPerFrame]{};
         bool mHasPreviousViewProj[kMaxViewsPerFrame]{};
+        uint64_t mPreviousHistoryId[kMaxViewsPerFrame]{};
 
         // One Halton(2,3) index per view slot, advanced once per applyJitter=true WriteView call.
         uint32_t mJitterIndex[kMaxViewsPerFrame]{};

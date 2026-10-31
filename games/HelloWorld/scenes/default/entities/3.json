@@ -33,6 +33,7 @@
     },
     {
       "fields": {
+        "active": true,
         "farZ": 100.0,
         "fovYDegrees": 60.0,
         "nearZ": 0.1

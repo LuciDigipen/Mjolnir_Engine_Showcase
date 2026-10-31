@@ -4,8 +4,9 @@
  * @brief Tests for gameshell: the pause menu opened, navigated and closed by
  *        the gamepad alone, the mouse alone and the keyboard alone, game input
  *        held while it is open, the HUD out of the stick's reach, and both in
- *        the editor's viewport and fullscreen. Raw input goes through
- *        InputSystem and the default bindings, as in App.
+ *        the editor's viewport and fullscreen, and the Audio screen the same
+ *        way. Raw input goes through InputSystem and the default bindings, as
+ *        in App.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -39,8 +40,43 @@ namespace
 
     constexpr UIId kResume("pause_resume");
     constexpr UIId kRestart("pause_restart");
+    constexpr UIId kAudio("pause_audio");
     constexpr UIId kQuit("pause_quit");
     constexpr UIId kHudPause("hud_pause");
+
+    constexpr UIId kMusicVolume("audio_music_volume");
+    constexpr UIId kMusicMute("audio_music_mute");
+    constexpr UIId kSfxVolume("audio_sfx_volume");
+    constexpr UIId kRestoreDefaults("audio_restore_defaults");
+    constexpr UIId kAudioBack("audio_back");
+
+    struct TestChannel
+    {
+        float mVolume = 0.5f;
+        bool mMuted = false;
+
+        bool operator==(const TestChannel &) const = default;
+    };
+
+    constexpr TestChannel kProjectDefault{0.8f, false};
+
+    // the audio module stood in for: what the screen set, and the project's defaults to go back to
+    class TestAudioOptions final : public IAudioOptions
+    {
+    public:
+        float Volume(AudioChannel channel) const override { return Of(channel).mVolume; }
+        void SetVolume(AudioChannel channel, float volume) override { Of(channel).mVolume = volume; }
+        bool Muted(AudioChannel channel) const override { return Of(channel).mMuted; }
+        void SetMuted(AudioChannel channel, bool muted) override { Of(channel).mMuted = muted; }
+        void RestoreDefaults() override { mMusic = mSfx = kProjectDefault; }
+
+        TestChannel mMusic;
+        TestChannel mSfx;
+
+    private:
+        TestChannel &Of(AudioChannel channel) { return channel == AudioChannel::Music ? mMusic : mSfx; }
+        const TestChannel &Of(AudioChannel channel) const { return channel == AudioChannel::Music ? mMusic : mSfx; }
+    };
 
     class TestWindow final : public Window
     {
@@ -116,8 +152,24 @@ namespace
         {
             const std::optional<UIRect> drawn = TextAt(text);
             REQUIRE(drawn.has_value());
-            mWindow.mRaw.mouseX = mArea.x + drawn->x + 4.0;
-            mWindow.mRaw.mouseY = mArea.y + drawn->y + 4.0;
+            MoveTo(drawn->x + 4.0f, drawn->y + 4.0f);
+            Frame();
+        }
+
+        // in UI units, as drawn text gives them
+        void MoveTo(float x, float y)
+        {
+            mWindow.mRaw.mouseX = mArea.x + x * mUI.Scale();
+            mWindow.mRaw.mouseY = mArea.y + y * mUI.Scale();
+        }
+
+        // pushed for a frame and let go the next
+        void Flick(GamepadAxis axis, float value)
+        {
+            mWindow.mRaw.gamepads[0].connected = true;
+            mWindow.mRaw.gamepads[0].axes[static_cast<size_t>(axis)] = value;
+            Frame();
+            mWindow.mRaw.gamepads[0].axes[static_cast<size_t>(axis)] = 0.0f;
             Frame();
         }
 
@@ -126,6 +178,20 @@ namespace
             for (const UIDrawCommand &command : mUI.DrawList().Commands())
                 if (command.mKind == UIDrawCommandKind::Text && mUI.DrawList().TextOf(command) == text)
                     return command.mRect;
+            return std::nullopt;
+        }
+
+        // the rect a widget drew under its text: a button's face
+        std::optional<UIRect> FaceUnder(std::string_view text)
+        {
+            std::optional<UIRect> face;
+            for (const UIDrawCommand &command : mUI.DrawList().Commands())
+            {
+                if (command.mKind == UIDrawCommandKind::Rect)
+                    face = command.mRect;
+                else if (command.mKind == UIDrawCommandKind::Text && mUI.DrawList().TextOf(command) == text)
+                    return face;
+            }
             return std::nullopt;
         }
 
@@ -346,6 +412,41 @@ TEST_CASE("The menu and HUD draw inside the editor's viewport and fullscreen, at
     }
 }
 
+TEST_CASE("A viewport too short for the menu scales it down whole, text and all, and the mouse still lands",
+          "[gameshell]")
+{
+    // the editor's viewport with the console docked tall under it
+    constexpr UIRect kShort{300, 80, 1280, 240};
+    Fixture f(kShort);
+    TestAudioOptions audio;
+    f.Shell().SetAudioOptions(&audio);
+    f.Frame();
+    f.Tap(Key::Escape);
+    REQUIRE(f.Shell().MenuOpen());
+    CHECK(f.UI().Scale() == Catch::Approx(0.5f));
+
+    // no button is squeezed out from under its text
+    const float textHeight = f.UI().Style().mTextHeight;
+    for (const std::string_view text : {"Resume", "Restart", "Audio", "Quit"})
+    {
+        INFO(text);
+        const std::optional<UIRect> label = f.TextAt(text);
+        const std::optional<UIRect> face = f.FaceUnder(text);
+        REQUIRE(label.has_value());
+        REQUIRE(face.has_value());
+        CHECK(face->height == Catch::Approx(40.0f));
+        CHECK(label->y >= face->y);
+        CHECK(label->y + textHeight <= face->Bottom());
+    }
+
+    const std::optional<UIRect> prompt = f.TextAt("Select");
+    REQUIRE(prompt.has_value());
+    CHECK(prompt->y + textHeight <= f.UI().Bounds().Bottom());
+
+    f.PointAt("Quit");
+    CHECK(f.Click() == GameShellAction::Quit);
+}
+
 TEST_CASE("The HUD's clock counts play, stops in the menu and starts again on Restart and on a new Play",
           "[gameshell]")
 {
@@ -378,4 +479,228 @@ TEST_CASE("The HUD's clock counts play, stops in the menu and starts again on Re
     f.Frame(false, 1.0f);
     f.Frame(true, 1.0f);
     CHECK(f.Shell().PlaySeconds() == Catch::Approx(1.0f));
+}
+
+TEST_CASE("Without audio options the menu has no Audio entry; with them it does", "[gameshell]")
+{
+    Fixture f;
+    f.Frame();
+    f.Tap(Key::Escape);
+    REQUIRE(f.Shell().MenuOpen());
+    CHECK_FALSE(f.TextAt("Audio").has_value());
+
+    TestAudioOptions audio;
+    f.Shell().SetAudioOptions(&audio);
+    f.Frame();
+    CHECK(f.TextAt("Audio").has_value());
+}
+
+TEST_CASE("The Audio screen opens, adjusts and backs out by the gamepad alone", "[gameshell]")
+{
+    Fixture f;
+    TestAudioOptions audio;
+    f.Shell().SetAudioOptions(&audio);
+    f.Frame();
+
+    CHECK(f.Tap(GamepadButton::Start) == GameShellAction::Pause);
+    f.Tap(GamepadButton::DpadDown);
+    f.Tap(GamepadButton::DpadDown);
+    CHECK(f.Focus() == kAudio);
+
+    // A opens it on its first control, and the menu stays open
+    CHECK(f.Tap(GamepadButton::A) == GameShellAction::None);
+    REQUIRE(f.Shell().AudioScreenOpen());
+    CHECK(f.Focus() == kMusicVolume);
+
+    // the D-pad steps the slider, and the volume follows on the same frame
+    f.Tap(GamepadButton::DpadRight);
+    CHECK(audio.mMusic.mVolume == Catch::Approx(0.6f).margin(1e-4));
+    f.Tap(GamepadButton::DpadLeft);
+    f.Tap(GamepadButton::DpadLeft);
+    CHECK(audio.mMusic.mVolume == Catch::Approx(0.4f).margin(1e-4));
+
+    // and the left stick does both
+    f.Flick(GamepadAxis::LeftY, 1.0f);
+    CHECK(f.Focus() == kMusicMute);
+    f.Tap(GamepadButton::A);
+    CHECK(audio.mMusic.mMuted);
+    f.Tap(GamepadButton::DpadDown);
+    CHECK(f.Focus() == kSfxVolume);
+    f.Flick(GamepadAxis::LeftX, -1.0f);
+    CHECK(audio.mSfx.mVolume == Catch::Approx(0.4f).margin(1e-4));
+
+    f.Tap(GamepadButton::DpadDown);
+    f.Tap(GamepadButton::DpadDown);
+    CHECK(f.Focus() == kRestoreDefaults);
+    f.Tap(GamepadButton::A);
+    CHECK(audio.mMusic == kProjectDefault);
+    CHECK(audio.mSfx == kProjectDefault);
+
+    // B goes back a step, onto Audio, without resuming
+    CHECK(f.Tap(GamepadButton::B) == GameShellAction::None);
+    CHECK(f.Shell().MenuOpen());
+    CHECK_FALSE(f.Shell().AudioScreenOpen());
+    CHECK(f.Focus() == kAudio);
+
+    // Start resumes from inside it, and the menu opens on Resume next time
+    f.Tap(GamepadButton::A);
+    REQUIRE(f.Shell().AudioScreenOpen());
+    CHECK(f.Tap(GamepadButton::Start) == GameShellAction::Resume);
+    CHECK_FALSE(f.Shell().MenuOpen());
+    CHECK(f.Tap(GamepadButton::Start) == GameShellAction::Pause);
+    CHECK_FALSE(f.Shell().AudioScreenOpen());
+    CHECK(f.Focus() == kResume);
+}
+
+TEST_CASE("The Audio screen steps a volume through ten steps by the keyboard alone, and Escape backs out a step",
+          "[gameshell]")
+{
+    Fixture f;
+    TestAudioOptions audio;
+    f.Shell().SetAudioOptions(&audio);
+    f.Frame();
+
+    CHECK(f.Tap(Key::Escape) == GameShellAction::Pause);
+    f.Tap(Key::Up);
+    CHECK(f.Focus() == kQuit);
+    f.Tap(Key::Up);
+    CHECK(f.Focus() == kAudio);
+    CHECK(f.Tap(Key::Enter) == GameShellAction::None);
+    REQUIRE(f.Shell().AudioScreenOpen());
+    CHECK(f.Focus() == kMusicVolume);
+
+    // up to full and no further, then ten steps down to silent
+    for (int i = 0; i < 6; ++i)
+        f.Tap(Key::Right);
+    CHECK(audio.mMusic.mVolume == Catch::Approx(1.0f));
+    float last = audio.mMusic.mVolume;
+    for (int step = 0; step < 10; ++step)
+    {
+        f.Tap(Key::Left);
+        CHECK(audio.mMusic.mVolume < last);
+        last = audio.mMusic.mVolume;
+    }
+    CHECK(audio.mMusic.mVolume == Catch::Approx(0.0f).margin(1e-4));
+
+    // down the column to Back, and round
+    for (int i = 0; i < 5; ++i)
+        f.Tap(Key::Down);
+    CHECK(f.Focus() == kAudioBack);
+    f.Tap(Key::Down);
+    CHECK(f.Focus() == kMusicVolume);
+    f.Tap(Key::Up);
+    CHECK(f.Focus() == kAudioBack);
+
+    CHECK(f.Tap(Key::Enter) == GameShellAction::None);
+    CHECK(f.Shell().MenuOpen());
+    CHECK_FALSE(f.Shell().AudioScreenOpen());
+    CHECK(f.Focus() == kAudio);
+
+    // Escape is Back and Pause both: a step back first, then the game resumes
+    f.Tap(Key::Enter);
+    REQUIRE(f.Shell().AudioScreenOpen());
+    CHECK(f.Tap(Key::Escape) == GameShellAction::None);
+    CHECK(f.Shell().MenuOpen());
+    CHECK_FALSE(f.Shell().AudioScreenOpen());
+    CHECK(f.Tap(Key::Escape) == GameShellAction::Resume);
+    CHECK_FALSE(f.Shell().MenuOpen());
+}
+
+TEST_CASE("The Audio screen is used by the mouse alone, in the editor's viewport", "[gameshell]")
+{
+    Fixture f(kViewport);
+    TestAudioOptions audio;
+    f.Shell().SetAudioOptions(&audio);
+    f.Frame();
+
+    f.PointAt("Pause");
+    CHECK(f.Click() == GameShellAction::Pause);
+    f.PointAt("Audio");
+    CHECK(f.Click() == GameShellAction::None);
+    REQUIRE(f.Shell().AudioScreenOpen());
+    // the click lands on the release, so the screen draws from the frame after
+    f.Frame();
+
+    // the music slider lies between its name and its percent; dragged, it follows past either end
+    const std::optional<UIRect> name = f.TextAt("Music");
+    const std::optional<UIRect> percent = f.TextAt("50%");
+    REQUIRE(name.has_value());
+    REQUIRE(percent.has_value());
+    const float y = percent->y + 4.0f;
+
+    f.MoveTo((name->x + percent->x) * 0.5f, y);
+    f.SetMouse(MouseButton::Left, true);
+    f.Frame();
+    f.Frame();
+    CHECK(audio.mMusic.mVolume > 0.0f);
+    CHECK(audio.mMusic.mVolume < 1.0f);
+    f.MoveTo(kViewport.width, y);
+    f.Frame();
+    CHECK(audio.mMusic.mVolume == Catch::Approx(1.0f));
+    f.MoveTo(name->x, y);
+    f.Frame();
+    CHECK(audio.mMusic.mVolume == Catch::Approx(0.0f).margin(1e-4));
+    f.SetMouse(MouseButton::Left, false);
+    f.Frame();
+    CHECK(f.TextAt("0%").has_value());
+
+    f.PointAt("Mute SFX");
+    f.Click();
+    CHECK(audio.mSfx.mMuted);
+    f.PointAt("Restore defaults");
+    f.Click();
+    CHECK(audio.mMusic == kProjectDefault);
+    CHECK(audio.mSfx == kProjectDefault);
+
+    // the right button backs out a step, and so does the Back button
+    f.SetMouse(MouseButton::Right, true);
+    CHECK(f.Frame() == GameShellAction::None);
+    f.SetMouse(MouseButton::Right, false);
+    f.Frame();
+    CHECK(f.Shell().MenuOpen());
+    CHECK_FALSE(f.Shell().AudioScreenOpen());
+
+    f.PointAt("Audio");
+    f.Click();
+    REQUIRE(f.Shell().AudioScreenOpen());
+    f.Frame();
+    f.PointAt("Back");
+    CHECK(f.Click() == GameShellAction::None);
+    CHECK(f.Shell().MenuOpen());
+    CHECK_FALSE(f.Shell().AudioScreenOpen());
+}
+
+TEST_CASE("The Audio screen draws inside the editor's viewport and fullscreen, at any safe area", "[gameshell]")
+{
+    for (const UIRect area : {kViewport, kFullscreen})
+    {
+        for (const UIEdges insets : {UIEdges{}, UIEdges{area.width * 0.05f, area.height * 0.05f, area.width * 0.05f,
+                                                          area.height * 0.05f}})
+        {
+            Fixture f(area);
+            TestAudioOptions audio;
+            f.Shell().SetAudioOptions(&audio);
+            f.UI().SetSafeAreaInsets(insets);
+            f.Frame();
+            f.Tap(Key::Escape);
+            f.Tap(Key::Up);
+            f.Tap(Key::Up);
+            f.Tap(Key::Enter);
+            REQUIRE(f.Shell().AudioScreenOpen());
+
+            const UIRect bounds = f.UI().Bounds();
+            const UIRect safe = f.UI().SafeArea();
+            for (const UIDrawCommand &command : f.UI().DrawList().Commands())
+            {
+                const UIRect &inside = command.mRect == bounds ? bounds : safe;
+                CHECK(command.mRect.x >= inside.x);
+                CHECK(command.mRect.y >= inside.y);
+                CHECK(command.mRect.Right() <= inside.Right());
+                CHECK(command.mRect.Bottom() <= inside.Bottom());
+            }
+
+            for (const std::string_view text : {"Audio", "Music", "Mute music", "SFX", "Mute SFX", "Restore defaults"})
+                CHECK(f.TextAt(text).has_value());
+        }
+    }
 }

@@ -21,6 +21,7 @@
 #include <terrain/TerrainCollision.h>
 #include <terrain/TerrainAssetPath.h>
 #include <terrain/TerrainExecutor.h>
+#include <jobs/JobExecutor.h>
 #include <terrain/TerrainStreamingSettings.h>
 
 #include <glm/geometric.hpp>
@@ -162,6 +163,9 @@ namespace mir
 
     TerrainRuntime::~TerrainRuntime()
     {
+        // Finish runtime-owned builds before their collaborators die, but keep the
+        // shared lane open for a streamer that outlives or replaces this runtime.
+        if (mPool) mPool->WaitIdle();
         if (!mWorld)
             return;
         if (ViewDrawSources *sources = mWorld->TryResource<ViewDrawSources>())
@@ -172,7 +176,7 @@ namespace mir
             mCollision->Clear();
     }
 
-    void TerrainRuntime::Bind(World &world, VulkanRenderer &renderer, const GameProject &project)
+    void TerrainRuntime::Bind(World &world, VulkanRenderer &renderer, const GameProject &project, JobExecutor &jobs)
     {
         mWorld = &world;
         mRenderer = &renderer;
@@ -202,10 +206,10 @@ namespace mir
 
         const TerrainStreamingSettings &settings = *load.settings;
         world.EmplaceResource<TerrainStreamingSettings>(settings);
-        mPool = std::make_shared<TerrainWorkerPool>(settings.io.workerThreads);
+        mPool = std::make_shared<TerrainJobExecutor>(jobs, settings.io.workerThreads);
         world.EmplaceResource<TerrainStreamer>(settings, mPool);
-        MIR_LOG_INFO("Terrain streaming: {:.0f} MiB CPU budget, {} read workers, {} residency{}",
-                     MiB(settings.cpu.budgetBytes), settings.io.workerThreads,
+        MIR_LOG_INFO("Terrain streaming: {:.0f} MiB CPU budget, {} shared slots ({} engine workers), {} residency{}",
+                     MiB(settings.cpu.budgetBytes), mPool->Concurrency(), jobs.WorkerCount(),
                      TerrainResidencyModeName(*settings.residency.mode),
                      load.localFileFound ? " (machine-local overrides applied)" : "");
         MIR_LOG_INFO("Terrain views: refine above {} px, merge below {} px, prefetch to {} px within {:.1f} MiB",
@@ -922,14 +926,24 @@ namespace mir
         return [this](const TerrainDrawUnit &unit) { return mMeshes->Ready(unit.geometry); };
     }
 
-    void TerrainRuntime::AppendDraws(std::span<const TerrainDrawUnit> units, std::vector<WorldDrawItem> &out)
+    void TerrainRuntime::AppendRayTracingDraws(size_t view, std::vector<WorldDrawItem> &out)
+    {
+        if (view >= mFrameViews.size() || !mMeshes)
+            return;
+        std::vector<TerrainDrawUnit> units;
+        mViews[mFrameViews[view]].selector->CollectForRayTracing(Ready(), units);
+        AppendDraws(units, out, false);
+    }
+
+    void TerrainRuntime::AppendDraws(std::span<const TerrainDrawUnit> units, std::vector<WorldDrawItem> &out, bool retain)
     {
         const std::span<const TerrainInstanceState> instances = mWorld->Resource<TerrainWorld>().Instances();
         for (const TerrainDrawUnit &unit : units)
         {
             if (unit.instance >= instances.size())
                 continue;
-            const TerrainResidentMesh *mesh = mMeshes->Acquire(unit.geometry, mFrameTime);
+            const TerrainResidentMesh *mesh = retain ? mMeshes->Acquire(unit.geometry, mFrameTime)
+                : mMeshes->FindReady(unit.geometry);
             if (!mesh)
                 continue;
             if (std::optional<WorldDrawItem> draw = MakeTerrainDraw(*mesh, instances[unit.instance].placement))

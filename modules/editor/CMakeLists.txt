@@ -32,7 +32,7 @@ target_link_libraries(engine_editor
             iconfontcppheaders::iconfontcppheaders
 )
 
-# background image: open-file dialog and the LocalAppData lookup
+# background image: open-file dialog
 if(WIN32)
     target_link_libraries(engine_editor PRIVATE ole32 shell32 uuid)
 endif()
@@ -52,8 +52,11 @@ target_sources(engine_editor PRIVATE
     src/editor/PrefabAuthoringAdapter.cpp
     src/editor/PrefabPlayMarks.cpp
     src/editor/PrefabWorkspace.cpp
+    src/editor/ViewPie.cpp
+    src/editor/history/ActiveCameraEdit.cpp
     src/editor/history/AuthoredCommand.cpp
     src/editor/history/AuthoredEdit.cpp
+    src/editor/history/CommandGroup.cpp
     src/editor/history/ComponentCommands.cpp
     src/editor/history/DocumentNodeCommands.cpp
     src/editor/history/EntityCommands.cpp

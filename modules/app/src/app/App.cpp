@@ -113,6 +113,7 @@ namespace mir
         : mDesc(Prepared(desc)),
           mProject(mDesc.mProject),
           mSplash(mDesc),
+          mJobs(mDesc.mWorkerThreads),
           mCore(Context(), mCommands),
           mAssets(CookedAssetsDir()),
           mParticles(Context(), mAssets, mProject.mAssetIdRoot),
@@ -129,28 +130,40 @@ namespace mir
                                       .mAssetIdRoot = mProject.mAssetIdRoot }),
           mParticlesGpu(mRenderer.Renderer()),
           mInput(Context(), mWindow.Get(), mProject.mProjectSettingsPath),
-          mAnimation(Context(), mRenderer.Renderer(), mAssets, mProject.mAssetIdRoot),
+          mAnimation(Context(), mRenderer.Renderer(), mAssets, mProject.mAssetIdRoot, &mJobs),
           mImGui(Context(), mWindow, mRenderer),
     #if MIR_WITH_EDITOR
-          mEditor(Context(), mImGui, mWindow, mRenderer, mScene, mPrefab, mAssets, mProject,
-              mDesc.mEnableEditorLayout),
+        mEditor(Context(), mImGui, mWindow, mRenderer, mScene, mPrefab, mAssets, mProject,
+            mDesc.mEnableEditorLayout),
     #endif
           mCamera(Context()),
-          mAudio(Context(), mProject.mSoundBankDir),
-          mPhysics(Context(), mProject.mProjectSettingsPath),
+    #if MIR_WITH_AUDIO
+          mAudio(Context(), mProject.mSoundBankDir, mProject.mProjectSettingsPath,
+              UserDataDir() / mProject.mName / "settings.json"),
+    #endif
+          mPhysics(Context(), mProject.mProjectSettingsPath, &mJobs),
           mTerrainData(Context()),
           mScript(Context(), mAssets, mProject.mAssetIdRoot),
           mParticlesRuntime(Context(), mParticles, mParticlesGpu, mRenderer.Rendering()),
           mParticlesScript(mScript),
+    #if MIR_WITH_AUDIO
           mAudioScript(mScript),
+    #endif
           mInputScript(mScript),
           mPhysicsScript(mScript),
           mRendererScript(mScript),
           mTerrainScript(mScript),
-          mTerrain(Context(), mRenderer, mProject),
+          mTerrain(Context(), mRenderer, mProject, mJobs),
           mGameUIImGui(Context(), mImGui, mWindow, mGameUI),
           mFixedTimestep{ .mStep = mDesc.mFixedDeltaSeconds, .mMaxSteps = mDesc.mMaxFixedSteps }
     {
+    #if MIR_WITH_AUDIO
+        mGameShell.SetAudioOptions(&mAudioOptions);
+    #if MIR_WITH_EDITOR
+        mEditor.SetAudio(&mEditorAudio);
+    #endif
+    #endif
+
         mSplash.screen.SetProgress("Loading scene...", 0.9f);
         LoadProjectScene();
 
@@ -217,6 +230,17 @@ namespace mir
             return false;
         }
 
+        if (!mScene.IsBound())
+        {
+            if (!ConfirmBindUntitledScene())
+            {
+                MIR_LOG_WARN("App::SaveScene: the untitled scene was not saved, '{}' is left as it is",
+                    mProject.mSceneDir.string());
+                return false;
+            }
+            mScene.Bind();
+        }
+
         const bool saved = mScene.Save(&mPrefab.Coordinator().Resolver());
         if (saved)
             RunStage(Stage::SceneSaved);
@@ -278,17 +302,28 @@ namespace mir
         if (!probe.mManifestError.empty())
         {
             const std::string message = manifest + " cannot be read (" + probe.mManifestError +
-                ").\n\nStart with an empty scene? Saving it will overwrite the broken file; restore it from git "
-                "first if you need it.\n\n" + refuse;
+                ").\n\nStart with an empty, untitled scene? The broken scene stays on disk as it is, and Save "
+                "asks before replacing it.\n\n" + refuse;
             return AskYesNo("Scene file is corrupt", message, mDesc.mNonInteractive) ? SceneLoadChoice::StartEmpty
-                                                                                     : SceneLoadChoice::Refuse;
+                : SceneLoadChoice::Refuse;
         }
 
         const std::string message = std::to_string(MissingFileCount(probe)) + " file(s) listed in " + manifest +
             " are missing or unreadable (" + MissingFileList(probe) + ").\n\nOpen the scene without them? Saving it will drop them for good; restore them from git first "
             "if you need them.\n\n" + refuse;
         return AskYesNo("Scene has missing entities", message, mDesc.mNonInteractive) ? SceneLoadChoice::Load
-                                                                                        : SceneLoadChoice::Refuse;
+            : SceneLoadChoice::Refuse;
+    }
+
+    bool App::ConfirmBindUntitledScene() const
+    {
+        const std::string sceneDir = mProject.mSceneDir.string();
+        const std::string message = "This scene is untitled. It was started empty in place of the scene in " +
+            sceneDir + ", which could not be read.\n\nSave it there? That replaces " +
+            std::string(kSceneManifestFileName) + " and every entity and instance file in " + sceneDir +
+            "; restore them from git first if you need them. To open the old scene instead, restore it and "
+            "choose File > Load Scene.\n\nChoose No to leave the files as they are.";
+        return AskYesNo("Save the untitled scene", message, mDesc.mNonInteractive);
     }
 
     void App::PlayScene()
@@ -412,7 +447,7 @@ namespace mir
         switch (ChooseSceneLoad(probe, true))
         {
         case SceneLoadChoice::StartEmpty:
-            MIR_LOG_WARN("Starting with an empty scene over the corrupt '{}'", manifest.string());
+            MIR_LOG_WARN("Starting with an untitled empty scene, the corrupt '{}' is left as it is", manifest.string());
             mScene.New("untitled", true);
             RunStage(Stage::SceneLoad);
             return;

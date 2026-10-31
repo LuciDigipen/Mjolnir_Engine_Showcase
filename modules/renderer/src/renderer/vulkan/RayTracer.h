@@ -8,6 +8,7 @@
  */
 #pragma once
 
+#include <renderer/SurfaceMaterialCatalog.h>
 #include <renderer/VulkanRenderer.h>
 #include "Image2D.h"
 #include "VulkanConstants.h"
@@ -16,6 +17,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -26,6 +28,7 @@ namespace mir::vk
     class Device;
     class ResourceStore;
     class MaterialStore;
+    class MaterialTable;
     struct GpuMesh;
 
     // Every image the trace writes, one per frame in flight each. Adding one is a row in
@@ -50,8 +53,10 @@ namespace mir::vk
     class RayTracer
     {
     public:
-        // The output images match `extent`; the camera set is borrowed as set 1 of the pipeline layout.
-        bool Initialize(Device &device, VkExtent2D extent, VkDescriptorSetLayout cameraSetLayout);
+        // The output images match `extent`; the camera set is borrowed as set 1 of the pipeline
+        // layout. The shared table supplies set 0's image, sampler and record rows.
+        bool Initialize(Device &device, VkExtent2D extent, VkDescriptorSetLayout cameraSetLayout,
+            MaterialTable &table, std::span<const SurfaceMaterialRegistration> surfaceMaterials);
         void Shutdown();
 
         // Recreates the output images at the swapchain's new extent; the caller idles the device first.
@@ -101,14 +106,41 @@ namespace mir::vk
         void DestroyBLAS(MeshBlas &blas);
         void DestroyBlases();
 
-        // Builds the frame's TLAS from `items` and traces `rect` into the output image,
+        struct PreparedScene
+        {
+            VkAccelerationStructureKHR tlas = VK_NULL_HANDLE;
+            VkDescriptorSet descriptors = VK_NULL_HANDLE;
+            VkDescriptorSetLayout layout = VK_NULL_HANDLE;
+            uint32_t instanceCount = 0;
+            bool truncated = false; // Requested scene exceeded capacity, even if camera fallback succeeded.
+            // False when a per-material hit group offset exceeds DDGI's fixed SBT groups.
+            bool giCompatible = true;
+        };
+
+        PreparedScene PrepareScene(VkCommandBuffer cmd, uint32_t frame, std::span<const DrawItem> items,
+            const ResourceStore &resources, const MaterialStore &materials,
+            std::optional<std::span<const DrawItem>> fallbackItems = std::nullopt);
+        VkDescriptorSetLayout SceneLayout() const { return mSetLayout; }
+
+        // Borrowed from Ddgi for this frame's final camera trace only.
+        struct GiShading
+        {
+            VkPipeline pipeline = VK_NULL_HANDLE;
+            VkPipelineLayout layout = VK_NULL_HANDLE;
+            VkDescriptorSet descriptors = VK_NULL_HANDLE;
+            VkStridedDeviceAddressRegionKHR raygen{}, miss{}, hit{}, callable{};
+            float intensity = 1.0f;
+            float weight = 0.0f;
+        };
+
+        // Traces the already prepared frame's TLAS into the output image,
         // which ends in SHADER_READ_ONLY for the caller to sample (PostProcess's tonemap pass).
         // aaMode selects rayGenMain's branch: Off/Dlss trace one sample per pixel (Dlss's jitter
         // already rode in through cameraSet's CameraData), Msaa loops rtSampleCount (1/2/4/8) standard-pattern
         // sub-pixel samples and averages color only - distance/velocity keep the first sample.
-        void Record(VkCommandBuffer cmd, uint32_t frame, std::span<const DrawItem> items, const VkRect2D &rect,
-            VkDescriptorSet cameraSet, uint32_t cameraOffset, const ResourceStore &resources,
-            const MaterialStore &materials, AntiAliasingMode aaMode, uint32_t rtSampleCount);
+        void RecordTrace(VkCommandBuffer cmd, uint32_t frame, const VkRect2D &rect,
+            VkDescriptorSet cameraSet, uint32_t cameraOffset, AntiAliasingMode aaMode, uint32_t rtSampleCount,
+            const GiShading *gi = nullptr);
 
         // VK_NULL_HANDLE for a guide buffer while Dlss is inactive.
         VkImage Image(RtImage image, uint32_t frame) const { return Slot(image, frame).image; }
@@ -138,14 +170,18 @@ namespace mir::vk
         void DestroyScene();
         bool CreatePipeline(VkDescriptorSetLayout cameraSetLayout);
         void WriteDescriptorSets();
+        void WriteMaterialTableDescriptors(uint32_t frame);
         bool BuildBLAS(const GpuMesh &mesh, uint32_t vertexCount, VkCommandBuffer cmd, MeshBlas &outBlas,
             VkBuffer &outScratchBuffer, VmaAllocation &outScratchAllocation);
         // Aligned to minAccelerationStructureScratchOffsetAlignment.
         bool CreateScratchBuffer(VkDeviceSize size, VkBuffer &outBuffer, VmaAllocation &outAllocation);
-        void RecordTlasBuild(VkCommandBuffer cmd, uint32_t frame, std::span<const DrawItem> items,
-            const ResourceStore &resources, const MaterialStore &materials);
+        PreparedScene RecordTlasBuild(VkCommandBuffer cmd, uint32_t frame, std::span<const DrawItem> items,
+            const ResourceStore &resources, const MaterialStore &materials,
+            std::optional<std::span<const DrawItem>> fallbackItems);
 
         Device *mDevice = nullptr;
+        MaterialTable *mTable = nullptr;
+        std::vector<SurfaceMaterialRegistration> mSurfaceMaterials;
         VkDeviceSize mScratchAlignment = 1;
 
         VkDescriptorSetLayout mSetLayout = VK_NULL_HANDLE;
@@ -164,8 +200,7 @@ namespace mir::vk
         constexpr static uint32_t kMaxInstances = 16384;
         bool mWarnedInstanceCap = false;
 
-        std::vector<VkDescriptorImageInfo> mTextureInfos;
-        bool mWarnedTextureCap = false;
+        uint64_t mTableVersion[kFramesInFlight]{};
 
         VkExtent2D mExtent{};
 

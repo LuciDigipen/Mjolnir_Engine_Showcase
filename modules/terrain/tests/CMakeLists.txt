@@ -34,6 +34,7 @@ target_compile_definitions(engine_terrain_tests PRIVATE
 # the crash runs in a child process, so the test run survives it
 if(WIN32 AND BUILD_TESTING)
     add_executable(engine_terrain_crash_probe TerrainCrashProbe.cpp)
+    engine_target_utf8(engine_terrain_crash_probe)
     target_link_libraries(engine_terrain_crash_probe PRIVATE mir::terrain)
     target_sources(engine_terrain_tests PRIVATE TerrainCrash.tests.cpp)
     add_dependencies(engine_terrain_tests engine_terrain_crash_probe)

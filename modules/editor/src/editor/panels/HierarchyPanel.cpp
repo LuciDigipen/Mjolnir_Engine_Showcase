@@ -14,6 +14,7 @@
 #include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/components/Name.h>
 #include <editor/EditorWidgets.h>
+#include <editor/EntityDragPayload.h>
 #include <editor/Selection.h>
 #include <editor/history/AuthoredView.h>
 #include <editor/panels/ContentBrowserPanel.h>
@@ -37,6 +38,14 @@ namespace mir
 {
     namespace
     {
+        bool MatchesRowFilter(const World &world, Entity entity, const char *filter)
+        {
+            const Name *name = world.GetComponent<Name>(entity);
+            return name != nullptr
+                ? widgets::MatchesFilter(name->mValue, filter)
+                : widgets::MatchesFilter("Entity " + std::to_string(entity.mIndex), filter);
+        }
+
         void DrawEntityMenu(Selection &selection, Entity entity, IAuthoredEntities *authored, bool authoredDocument,
             EntityAction &action)
         {
@@ -65,8 +74,6 @@ namespace mir
 
             ImGui::EndPopup();
         }
-
-        constexpr const char *kEntityPayload = "MIR_HIERARCHY_ENTITIES";
 
         constexpr double kOpenOnHoverSeconds = 0.7;
         constexpr float kAutoScrollBand = 8.0f;
@@ -501,6 +508,15 @@ namespace mir
         const bool dragging = activePayload != nullptr &&
             (activePayload->IsDataType(kEntityPayload) || activePayload->IsDataType(kPrefabContentPayload));
 
+        // another panel selected this entity: reveal it like a dropped row, dropping a search that hides it
+        if (world.IsAlive(selection.mReveal))
+        {
+            mReveal.push_back(selection.mReveal);
+            if (mFilter[0] != '\0' && !MatchesRowFilter(world, selection.mReveal, mFilter))
+                mFilter[0] = '\0';
+        }
+        selection.mReveal = kNullEntity;
+
         // reveal last frame's drop: open every ancestor, scroll to the last moved entity
         std::unordered_set<uint64_t> openRows;
         Entity scrollTo = kNullEntity;
@@ -667,11 +683,7 @@ namespace mir
         mFiltered.clear();
         world.ForEachAliveEntity([&](Entity entity)
             {
-                const Name *name = world.GetComponent<Name>(entity);
-                const bool matches = name != nullptr
-                    ? widgets::MatchesFilter(name->mValue, mFilter)
-                    : widgets::MatchesFilter("Entity " + std::to_string(entity.mIndex), mFilter);
-                if (!matches)
+                if (!MatchesRowFilter(world, entity, mFilter))
                     return;
                 mFiltered.insert(PackEntity(entity));
                 for (Entity ancestor = index.ParentOf(entity); !ancestor.IsNull(); ancestor = index.ParentOf(ancestor))
