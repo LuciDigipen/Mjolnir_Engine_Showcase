@@ -9,6 +9,7 @@
 
 #include "TerrainDerivatives.h"
 #include "TerrainFinalSurface.h"
+#include "TerrainProgress.h"
 #include <terrain/TileAddressing.h>
 #include <algorithm>
 #include <array>
@@ -157,8 +158,10 @@ namespace mir::terrainbake
                 break;
             result.layers.push_back(*next);
         }
+        uint64_t tilesDone = 0;
         for (const auto &tile : heights)
         {
+            TerrainProgressStep("derivatives: tiles", tilesDone++, heights.size());
             const auto sourceLayout = final.Layout(tile);
             auto found = std::find_if(result.layers.begin(), result.layers.end(),
                                       [&](const auto &v)

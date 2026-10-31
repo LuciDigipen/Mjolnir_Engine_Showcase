@@ -11,6 +11,8 @@
 #include <unordered_map>
 
 #include "TerrainGenerator.h"
+#include "TerrainHeightSource.h"
+#include "TerrainProgress.h"
 #include "TerrainSeams.h"
 #include "TerrainValidate.h"
 
@@ -164,6 +166,11 @@ namespace mir::terrainbake
 
     std::optional<std::vector<TileHeights>> BakeFinalHeights(const TerrainRecipe &recipe, TerrainReport &report)
     {
+        if (recipe.IsHeightmap() && !recipe.heightSource)
+        {
+            report.Add({std::string(check::kGenerate), "parameters.source", {}, std::nullopt, "height source not loaded"});
+            return std::nullopt;
+        }
         const TerrainGenerator generator(recipe);
         const TerrainLayout &layout = generator.Layout();
         const TileRange range = layout.Tiles();
@@ -194,6 +201,9 @@ namespace mir::terrainbake
                                             layout.IntervalsPerTile(), kMaxTerrainTileIntervals)});
                     return std::nullopt;
                 }
+                TerrainProgressStep("generate: tiles", tiles.size(),
+                                    uint64_t(int64_t(range.max.x) - range.min.x + 1) *
+                                        uint64_t(int64_t(range.max.z) - range.min.z + 1));
                 const SourceFillResult filled = generator.FillTile(*sourceLayout, {x, z}, tile->Samples());
                 report.referenceSamples += filled.referenceSamples;
                 report.peakDoubleSamples = std::max(report.peakDoubleSamples, filled.peakDoubleSamples);
@@ -214,6 +224,7 @@ namespace mir::terrainbake
                    std::format("{} source tiles from \"{}\" v{}; fixed reference {} m, tile {} m; {}", tiles.size(),
                                recipe.generatorId, recipe.generatorVersion, layout.SampleSpacing(), layout.TileSize(),
                                recipe.recipeVersion == 1 ? "uniform P1 heights unchanged" : "filtered source grids"));
+        TerrainProgressStage("seams");
         if (!AdjustTerrainSeams(recipe, tiles, report))
             return std::nullopt;
         return tiles;
@@ -291,6 +302,7 @@ namespace mir::terrainbake
         const uint64_t nonce = options.nonce ? *options.nonce : MakeTerrainReleaseNonce();
         const TerrainReleaseInfo info{asset, source, kTerrainFormatVersion,
                                       MintTerrainReleaseId(asset, source, heightsHash, nonce)};
+        TerrainProgressStage("encode");
         auto encoded = EncodeTerrainRelease(info, layers, records, derivatives->payloads, derivatives->regions->writes,
                                             options.pack);
         if (!encoded)
@@ -344,10 +356,26 @@ namespace mir::terrainbake
                 {std::string(check::kRecipe), std::move(issue.field), {}, std::nullopt, std::move(issue.message)});
         if (!parsed.recipe)
             return false;
-        const TerrainRecipe &recipe = *parsed.recipe;
+        TerrainRecipe &recipe = *parsed.recipe;
         const TerrainSourceFingerprint fingerprint = FingerprintRecipe(recipe);
         report.recipeFingerprint = fingerprint;
         report.Ran(check::kRecipe, std::format("fingerprint {}", TerrainIdHex(fingerprint.value)));
+
+        if (recipe.IsHeightmap())
+        {
+            // Here rather than at parse: sync with a current release must not need the file.
+            TerrainProgressStage("load heights");
+            std::string error;
+            const fs::path source = recipe.recipeDir /
+                fs::path(std::u8string_view(reinterpret_cast<const char8_t *>(recipe.heightmapPath.data()),
+                                            recipe.heightmapPath.size()));
+            recipe.heightSource = TerrainHeightSource::Load(source, recipe.heightmapHash, recipe.layout, error);
+            if (!recipe.heightSource)
+            {
+                report.Add({std::string(check::kGenerate), "parameters.source", {}, std::nullopt, std::move(error)});
+                return false;
+            }
+        }
 
         std::optional<std::vector<TileHeights>> tiles = BakeFinalHeights(recipe, report);
         if (!tiles)
@@ -361,6 +389,7 @@ namespace mir::terrainbake
         report.nonce = baked->nonce;
         report.layout = baked->layout;
 
+        TerrainProgressStage("write");
         // Written beside the target so the rename stays on one volume.
         fs::path staging = out;
         staging += "." + TerrainIdHex(baked->info.release.value) + ".partial";
@@ -383,6 +412,7 @@ namespace mir::terrainbake
             return false;
         }
 
+        TerrainProgressStage("validate");
         ValidateTerrainCandidate(staging, {&recipe, true}, report);
         if (!report.Ok())
         {

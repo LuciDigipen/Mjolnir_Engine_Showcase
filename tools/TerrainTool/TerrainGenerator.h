@@ -65,6 +65,7 @@ namespace mir::terrainbake
     private:
         TerrainLayout mLayout;
         bool mFiltered = false;
+        std::shared_ptr<const TerrainHeightSource> mHeightSource;
         ReliefParameters mRelief;
         OctaveNoise mBroad;
         OctaveNoise mRidges;

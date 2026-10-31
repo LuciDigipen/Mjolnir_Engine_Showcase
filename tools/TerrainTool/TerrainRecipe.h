@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -26,8 +27,13 @@ namespace mir::terrainbake
     inline constexpr std::string_view kReliefGeneratorId = "mir.relief";
     // Bump when anything changes the samples.
     inline constexpr uint32_t kReliefGeneratorVersion = 2;
+    inline constexpr std::string_view kHeightmapGeneratorId = "mir.heightmap";
+    // Bump when anything changes the samples.
+    inline constexpr uint32_t kHeightmapGeneratorVersion = 1;
     // float32 still resolves ~1 mm here.
     inline constexpr double kMaxHeightMagnitude = 10000.0;
+
+    class TerrainHeightSource;
 
     struct NoiseTerm
     {
@@ -75,7 +81,14 @@ namespace mir::terrainbake
         // v1 is uniform; v2 null requires explicit coverage.
         std::optional<double> defaultSpacing;
         std::vector<TerrainSourceRule> sourceRules;
+        // "mir.heightmap" only. The hash, not the path, identifies the samples, so only it is fingerprinted.
+        std::string heightmapPath;    // as written; relative to the recipe's directory
+        uint64_t heightmapHash = 0;   // FNV-1a 64 of the whole file
+        std::filesystem::path recipeDir; // set by LoadTerrainRecipe
+        // Loaded only when a bake runs, so a current release needs no source file.
+        std::shared_ptr<const TerrainHeightSource> heightSource;
 
+        bool IsHeightmap() const { return generatorId == kHeightmapGeneratorId; }
         std::optional<double> SourceSpacing(TileCoord tile) const;
         std::optional<TerrainLayout> SourceLayout(TileCoord tile) const;
         std::vector<TerrainLayout> SourceLayers() const;

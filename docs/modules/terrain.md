@@ -1418,7 +1418,9 @@ seam next to an unreadable tile is reported as not checked, never as passing.
 (#113) evaluates each sample at `SamplePosition(i)` in double and rounds once to
 float, with no per-tile state, so neighbours share edge and corner samples bit
 for bit and tile order cannot change a sample. Its output is source height, not
-the final height a release stores (#114, #115).
+the final height a release stores (#114, #115). `mir.heightmap` keeps this rule:
+each sample reads its grid position from the MHGT file, exactly on the file's
+samples, and clamps at the file's edge for a coarse grid's filter ring.
 
 **Terrain-local and world convert only through core.** `AddressWorld` and the
 height query use `TryWorldToTerrainLocal`, and the query places its surface
@@ -1815,6 +1817,18 @@ physics side are in `tests/TerrainResidencyTestSupport.h`).
     out of P3).
 
 ## Changed
+
+*2026-10-31* — **Authored heights through `mir.heightmap`.** Was: `mir.relief`
+was the only generator. Now: a recipe can name an MHGT file by relative
+`parameters.source` and FNV-1a 64 `parameters.contentHash`. The fingerprint
+holds the hash, not the path, so moving the file does not rebake. Only a bake
+reads the file, so `sync` with a current release needs no source; a missing or
+mismatched file fails `generate` with its reason. Relief fingerprints are
+unchanged. See `TerrainHeightSource.h` for the format and
+`docs/terrain/caldera-import-plan.md` for the first use. The `TerrainTool`
+command line also prints timed stage and percent progress to stdout
+(`TerrainProgress.h`); library callers stay silent. Validation rebuilds regions
+and repeats those stages.
 
 *2026-10-13* — **Release switches checked and prewarmed off the main thread
 (#129).** Was: in Edit the poll adopted a moved `current` at once, opening the
