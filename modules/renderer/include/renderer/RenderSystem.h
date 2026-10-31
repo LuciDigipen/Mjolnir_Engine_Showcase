@@ -462,6 +462,7 @@ namespace mir
                 mRenderViews.push_back(RenderView{ mViewports[view.viewport].mRect, items, view.viewProj,
                                                   view.pose.position, view.lens.mNearZ,
                                                   view.lens.HasFarPlane() ? view.lens.mFarZ : 0.0f });
+                mRenderViews.back().fovYDegrees = view.lens.mFovYDegrees;
                 const auto &viewport = mViewports[view.viewport];
                 mRenderViews.back().historyId = viewport.mUseExternalCamera ? UINT64_MAX :
                     PackEntity(viewport.mCameraEntity.IsNull() ? playCamera.mEntity : viewport.mCameraEntity);

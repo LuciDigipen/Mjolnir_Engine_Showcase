@@ -9,17 +9,23 @@
 #include <terrain_runtime/TerrainRender.h>
 
 #include <core/ecs/components/WorldTransform.h>
+#include <terrain/TerrainMaterialUv.h>
 
 #include <utility>
 
 namespace mir
 {
-    std::vector<Vertex> MakeTerrainVertices(std::span<const TerrainMeshVertex> mesh, const glm::vec3 &color)
+    std::vector<Vertex> MakeTerrainVertices(std::span<const TerrainMeshVertex> mesh,
+                                            const TerrainLocalPosition &origin, const glm::vec3 &color)
     {
         std::vector<Vertex> vertices;
         vertices.reserve(mesh.size());
+        const glm::dvec3 originMeters = origin.Meters();
         for (const TerrainMeshVertex &v : mesh)
-            vertices.push_back(Vertex{.pos = v.position, .color = color, .normal = v.normal});
+            vertices.push_back(Vertex{.pos = v.position,
+                                      .color = color,
+                                      .normal = v.normal,
+                                      .uv = TerrainMaterialUv(originMeters, v.position)});
         return vertices;
     }
 
@@ -36,7 +42,7 @@ namespace mir
     TerrainGpuMeshId TerrainGpuUploader::Upload(TerrainMeshData &&mesh)
     {
         const MeshHandle handle =
-            mRenderer.QueueMesh(MakeTerrainVertices(mesh.vertices), std::move(mesh.indices), mOptions);
+            mRenderer.QueueMesh(MakeTerrainVertices(mesh.vertices, mesh.origin), std::move(mesh.indices), mOptions);
         if (handle.IsNull())
             return 0;
         return (uint64_t(handle.mGeneration) << 32) | handle.mIndex;
@@ -73,7 +79,8 @@ namespace mir
         return MeshHandle{uint32_t(mesh & 0xffffffffu), uint32_t(mesh >> 32)};
     }
 
-    std::optional<WorldDrawItem> MakeTerrainDraw(const TerrainResidentMesh &mesh, const TerrainPlacement &placement)
+    std::optional<WorldDrawItem> MakeTerrainDraw(const TerrainResidentMesh &mesh, const TerrainPlacement &placement,
+                                                 MaterialHandle material, const glm::vec4 &diagnosticTint)
     {
         const std::optional<WorldPosition> origin = TryTerrainLocalToWorld(mesh.origin, placement.translation);
         if (!origin)
@@ -82,7 +89,8 @@ namespace mir
         WorldDrawItem draw;
         draw.mesh = TerrainGpuUploader::Handle(mesh.id);
         draw.pose = WorldPose{*origin};
-        draw.tint = kTerrainDiagnosticTint;
+        draw.material = material;
+        draw.tint = material.IsNull() ? diagnosticTint : glm::vec4(1.0f);
         draw.translationGrid = kTerrainTranslationGrid;
         return draw;
     }

@@ -22,6 +22,25 @@ pieces a `TerrainCollisionResidency` builds for the bodies that need them
 (#128), and, shared by every viewport, the GPU meshes of the draw units the
 viewports select (#125).
 
+## Material binding
+
+`TerrainRender` derives each vertex UV from the async mesh origin and the
+vertex's local XZ in meters, reducing the origin once in double. The material
+divides by its `tileSizeMeters`; the value must divide the shared validation
+period. `TerrainInstance.materialPath` resolves through the renderer-owned
+`SurfaceMaterialLibrary` as one named base layer with weight one. Binding and
+entity generation live in `InstanceResources`, separate from release, height
+query, collider and geometry cache. A material-only Edit updates that side only;
+an entity generation replacement at the same accepted placement keeps the
+release. Empty, invalid or unsupported bindings draw the diagnostic material and
+log once.
+
+## Tests
+
+CPU tests live in `modules/terrain/tests` (UV, scene serialization, entity
+generation, prefab capture) and `modules/renderer/tests` (catalog frontend,
+record packing). GPU and visual checks remain supervisor work.
+
 ```
 constructor    -> TerrainRuntime::Bind      streaming settings -> TerrainStreamingSettings, TerrainStreamer resources;
                                             renderer mesh streaming; collision residency; registers itself in the

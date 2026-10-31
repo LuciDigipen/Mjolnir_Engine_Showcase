@@ -20,11 +20,15 @@ void layoutMain<M : IMaterial>(uniform StructuredBuffer<M> layout)
     input.viewDistance = 1.0;
     input.vertexColor = float4(1, 1, 1, 1);
     input.frontFace = true;
+    input.uvDensity = 0.0;
 
     MaterialContext context;
     context.rayTraced = true;
     context.uvDx = float2(0, 0);
     context.uvDy = float2(0, 0);
+    context.footprintMeters = 0.0;
+    context.incidence = 1.0;
+    context.uvDensity = 0.0;
 
     layoutOutput.Store(0, asuint(layout[0].Evaluate(input, context).roughness));
 }

@@ -191,14 +191,14 @@ TEST_CASE("The runtime surface catalog names unique assets and valid shared shad
     for (const nlohmann::json &material : catalog.at("materials"))
     {
         const std::string stem = material.at("stem").get<std::string>();
-        CHECK(assets.insert(material.at("asset").get<std::string>()).second);
+        CHECK(assets.insert(material.at("asset").get<std::string>() + "|" + material.at("frontend").get<std::string>()).second);
         for (const char *entry : { "vertexMain", "fragmentMain", "closestHitSurface", "layout" })
         {
             const auto outputPath = shaderDir / (stem + "." + entry + ".spv");
             INFO(outputPath.string());
             CHECK(compiledOutputs.contains(outputPath.lexically_normal()));
         }
-        CHECK(material.at("frontend") == "mesh");
+        CHECK((material.at("frontend") == "mesh" || material.at("frontend") == "terrain"));
         CHECK(material.at("parameters").is_object());
         CHECK(material.at("reflection").get<std::string>().find('/') == std::string::npos);
         defaultMaterial = defaultMaterial ||
@@ -216,7 +216,11 @@ TEST_CASE("The runtime surface catalog names unique assets and valid shared shad
         const auto layout = mir::ParseMaterialLayout(reflection, &error);
         INFO(error);
         REQUIRE(layout.has_value());
-        const auto record = mir::PackMaterialRecord(*layout, material.at("parameters").dump(), &error);
+        nlohmann::json parameters = material.at("parameters");
+        for (const mir::MaterialFieldLayout &field : layout->fields)
+            if (field.kind == mir::MaterialFieldKind::TextureRef)
+                parameters[field.name] = nlohmann::json{{"image", 0}, {"sampler", 0}};
+        const auto record = mir::PackMaterialRecord(*layout, parameters.dump(), &error);
         INFO(error);
         REQUIRE(record.has_value());
         CHECK(record->size() == layout->size);

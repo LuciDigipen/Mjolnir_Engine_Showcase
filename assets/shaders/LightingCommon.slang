@@ -27,6 +27,7 @@ cbuffer CameraData
     float4x4 prevViewProj;
     float4x4 sunShadowViewProj;
     float4 jitterAndPad; // xy = this frame's sub-pixel jitter in pixels, ray tracing + Dlss only
+    float4 rayCone;      // x = one pixel's angular size; ray tracing material mip selection
 };
 
 // GpuLight's layout must match the GpuLight struct in CameraBuffer.cpp exactly.

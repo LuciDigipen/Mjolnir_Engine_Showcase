@@ -6,6 +6,7 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
+#include <renderer/SurfaceMaterialCatalog.h>
 #include <renderer/VulkanRenderer.h>
 #include "vulkan/CameraBuffer.h"
 #include "vulkan/DebugDraw.h"
@@ -342,6 +343,19 @@ namespace mir
     MaterialHandle VulkanRenderer::ErrorMaterial() const
     {
         return mMaterialStore->ErrorMaterial();
+    }
+
+    uint32_t VulkanRenderer::MaterialSamplerRow(const SamplerDesc &desc)
+    {
+        uint32_t row = UINT32_MAX;
+        if (mResources)
+            mResources->AcquireSampler(desc, &row);
+        return row;
+    }
+
+    const SurfaceMaterialCatalog &VulkanRenderer::SurfaceMaterials() const
+    {
+        return mMaterialStore->SurfaceMaterials();
     }
 
     bool VulkanRenderer::DestroyMaterial(MaterialHandle handle)

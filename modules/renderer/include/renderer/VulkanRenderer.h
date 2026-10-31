@@ -69,6 +69,8 @@ namespace mir::vk
 
 namespace mir
 {
+    struct SurfaceMaterialCatalog;
+
     struct RendererDesc
     {
         const ISurfaceProvider *window;
@@ -182,6 +184,8 @@ namespace mir
         DebugViewSettings debugView;
         // Vertex pairs drawn as lines over everything, never hidden by the scene; colliders while debugView asks.
         std::span<const DebugLinePoint> debugLines;
+        // The lens FOV that produced viewProj, for rotation-invariant ray-cone math.
+        float fovYDegrees = 0.0f;
     };
 
     class VulkanRenderer
@@ -216,6 +220,10 @@ namespace mir
         uint32_t MaterialRecordOffset(MaterialHandle handle) const;
 
         MaterialHandle ErrorMaterial() const;
+
+        // Stable shared-table rows for a material record's TextureRef fields.
+        uint32_t MaterialSamplerRow(const SamplerDesc &desc);
+        const SurfaceMaterialCatalog &SurfaceMaterials() const;
 
         void CaptureNextFrame(const std::filesystem::path &path);
 

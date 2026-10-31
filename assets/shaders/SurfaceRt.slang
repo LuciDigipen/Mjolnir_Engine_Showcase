@@ -161,6 +161,19 @@ float3 FaceNormal(RtInstanceInfo info, float3 op0, float3 op1, float3 op2)
     return dot(worldNormal, WorldRayDirection()) > 0.0 ? -worldNormal : worldNormal;
 }
 
+// UV units per world meter from the hit triangle's own parameterization.
+float UvDensity(RtInstanceInfo info, uint3 indices, float3 op0, float3 op1, float3 op2)
+{
+    const float2 uv0 = LoadFloat4(info, indices.x, kUvOffset).xy;
+    const float2 uv1 = LoadFloat4(info, indices.y, kUvOffset).xy;
+    const float2 uv2 = LoadFloat4(info, indices.z, kUvOffset).xy;
+    const float3 e1 = info.modelCol0.xyz * (op1.x - op0.x) + info.modelCol1.xyz * (op1.y - op0.y) +
+                      info.modelCol2.xyz * (op1.z - op0.z);
+    const float3 e2 = info.modelCol0.xyz * (op2.x - op0.x) + info.modelCol1.xyz * (op2.y - op0.y) +
+                      info.modelCol2.xyz * (op2.z - op0.z);
+    return SurfaceUvDensity(e1, e2, uv0, uv1, uv2);
+}
+
 [shader("closesthit")]
 void closestHitSurface<M : IMaterial>(inout RayPayload payload, in BuiltInTriangleIntersectionAttributes attribs)
 {
@@ -193,14 +206,21 @@ void closestHitSurface<M : IMaterial>(inout RayPayload payload, in BuiltInTriang
     const float2 uv = float2(InterpolateFloat(info, indices, barycentrics, kUvOffset),
         InterpolateFloat(info, indices, barycentrics, kUvOffset + 1));
 
+    const float uvDensity = UvDensity(info, indices, op0, op1, op2);
+    const float cosIncidence = max(abs(dot(normalize(N), normalize(WorldRayDirection()))), 0.05);
+
     MaterialContext context;
     context.rayTraced = true;
     context.uvDx = float2(0.0, 0.0);
     context.uvDy = float2(0.0, 0.0);
+    context.footprintMeters = RayTCurrent() * rayCone.x / cosIncidence;
+    context.incidence = cosIncidence;
+    context.uvDensity = uvDensity;
 
     const M material = gSurfaceRecords.Load<M>(info.materialRecord);
-    const SurfaceInput surfaceInput =
+    SurfaceInput surfaceInput =
         MeshFrontend::Build(hitWorldPos, N, tangentFrame, uv, objectPos, vertexColor, frontFace);
+    surfaceInput.uvDensity = uvDensity;
     const SurfaceOutput surface = ApplySurfaceTint(material.Evaluate(surfaceInput, context), info.tint);
 
     SurfaceRayVisibility visibility;
