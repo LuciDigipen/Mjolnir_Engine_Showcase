@@ -31,6 +31,15 @@ are enabled with `overrideParameters`. Handles and playback flags are transient,
 including when a component is copied, a scene is loaded or Play is restored. No
 particle editor widgets or preview are provided yet.
 
+`emitterOffsets` holds one local offset per placement, in placement order, up to
+eight. It adds to the system asset's placement offset and rotates with the entity,
+so the same system can sit differently on each entity. The scene saves it as the
+hidden fields `emitterOffset0` to `emitterOffset7`. The particle panel edits it for
+the selected entity that plays the open system, as one undoable scene edit, and the
+inspector does not show it. `ParticleRuntime::SetEmitterOffsets` restarts an
+emitter's motion when its offset changes, so moving an origin never sweeps particles
+or links a ribbon between the old and new position.
+
 AssetCooker recognizes the exact suffix `.particle.json`. All fields below are
 required and unknown fields are rejected:
 
@@ -314,6 +323,12 @@ See [acceptance results](../particle-acceptance.md) for quality settings,
 measurements and remaining gates.
 
 ## Changed
+
+*2026-10-30* — **Each entity can offset every emitter of its system.** Was: placement
+offsets lived only in the system asset, so every instance shared them. Now:
+`ParticleSystem` carries `emitterOffsets`, and the runtime adds them to the placement
+offsets. Because: the same system is placed on aircraft with different nozzle and
+wingtip positions.
 
 *2026-10-30* — **Version 2 particle sources are gone.** Was: system source version 2
 listed unique `emitters`, emitter source version 2 kept its authored order, allowed

@@ -11,10 +11,13 @@
 #include <particles/ParticleRuntime.h>
 #include <core/ecs/Entity.h>
 
+#include <glm/vec3.hpp>
+
 #include <filesystem>
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace mir
@@ -36,6 +39,13 @@ namespace mir
         bool CanRedoDraft() const { return !mRedoDrafts.empty(); }
         void RequestUndoDraft() { mPendingHistoryAction = -1; }
         void RequestRedoDraft() { mPendingHistoryAction = 1; }
+        struct InstanceOffsetEdit
+        {
+            Entity mEntity = kNullEntity;
+            uint32_t mIndex = 0;
+            glm::vec3 mValue{ 0 };
+        };
+        std::optional<InstanceOffsetEdit> TakeInstanceOffsetEdit() { return std::exchange(mOffsetEdit, std::nullopt); }
     private:
         std::filesystem::path SourceFile(std::string_view relative) const;
         void Scan();
@@ -55,7 +65,7 @@ namespace mir
         void DrawSelectBar(World &world, AssetImportManager &imports);
         void DrawEditBar(AssetImportManager &imports);
         void DrawPreviewStrip(World &world, const EditorCamera &camera, float dt);
-        void DrawEmitterStrip(AssetImportManager &imports);
+        void DrawEmitterStrip(World &world, AssetImportManager &imports);
         void DrawStatus(AssetImportManager &imports);
         void DrawSettings(World &world);
         struct DraftSnapshot
@@ -96,5 +106,6 @@ namespace mir
         WorldPose mPreviewAnchor;
         Entity mPreviewEntity = kNullEntity;
         float mPreviewTime = 0;
+        std::optional<InstanceOffsetEdit> mOffsetEdit;
     };
 }

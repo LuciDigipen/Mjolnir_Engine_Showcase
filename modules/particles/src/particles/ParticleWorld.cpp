@@ -180,6 +180,7 @@ namespace mir
         if (emitter.overrideParameters) mRuntime.SetParameters(emitter.instance, emitter.userParameters);
         else if (const auto *current = mRuntime.Find(emitter.instance)) mRuntime.SetParameters(emitter.instance, current->effect.parameters);
         mRuntime.SetPose(emitter.instance, pose);
+        mRuntime.SetEmitterOffsets(emitter.instance, emitter.emitterOffsets);
         mRuntime.Pause(emitter.instance, emitter.paused);
     }
 

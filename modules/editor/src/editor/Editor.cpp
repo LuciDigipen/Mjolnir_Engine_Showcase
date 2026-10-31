@@ -364,6 +364,22 @@ namespace mir
         mPreferencesPanel.SetStatus("Cleared.");
     }
 
+    void Editor::SubmitParticleEmitterOffset(World &world, Entity entity, uint32_t index, const glm::vec3 &offset)
+    {
+        const ComponentOps *ops = ComponentRegistry::Instance().FindBySeq(TypeIdOf<ParticleSystem>().seq);
+        const std::string fieldName = "emitterOffset" + std::to_string(index);
+        const FieldDesc *field = ops != nullptr && index < kMaxSystemEmitters ? ops->FindField(fieldName) : nullptr;
+        if (field == nullptr)
+            return;
+
+        FieldValue value;
+        value.mField = static_cast<uint32_t>(field - ops->mFields.data());
+        std::memcpy(value.mBytes, &offset, sizeof(offset));
+        const Name *name = world.GetComponent<Name>(entity);
+        mHistory.Submit(MakeSetFieldsEditCommand(entity, *ops, { value },
+            std::format("Move particle emitter {}", name != nullptr ? name->mValue : "Entity"), mAuthoredEntities));
+    }
+
     void Editor::Shutdown()
     {
         if (!mInitialized)

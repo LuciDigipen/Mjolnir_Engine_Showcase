@@ -571,3 +571,60 @@ TEST_CASE("Two placements reuse one emitter asset at distinct world origins", "[
     CHECK(left->attachmentPosition.Meters().y == 1);
     CHECK(right->attachmentPosition.Meters().y == 1);
 }
+
+TEST_CASE("Instance emitter offsets move each placement without sweeping or linking", "[particles][placement]")
+{
+    mir::ParticleEmitterAsset emitter;
+    emitter.texture = mir::MakeAssetId("assets/x.png");
+    mir::ParticleEffect effect;
+    effect.emitters = {{1}, {1}};
+    effect.placementIds = {10, 20};
+    effect.placementOffsets = {{-2, 0, 0}, {2, 0, 0}};
+    effect.emitterDefinitions = {emitter, emitter};
+    mir::ParticleRuntime runtime;
+    mir::WorldPose pose;
+    pose.position = *mir::WorldPosition::FromMeters(mir::WorldVec3(100, 0, 0));
+    const auto handle = runtime.Start({2}, effect, pose);
+    REQUIRE_FALSE(handle.IsNull());
+    const auto &emitters = runtime.Find(handle)->emitters;
+    const auto at = [&](size_t i) { return runtime.FindEmitter(emitters[i])->attachmentPosition.Meters(); };
+    const std::vector<glm::vec3> offsets{{0, 3, 0}, {0, -3, 0}};
+    REQUIRE(runtime.SetEmitterOffsets(handle, offsets));
+    CHECK(at(0).x == 98);
+    CHECK(at(0).y == 3);
+    CHECK(at(1).x == 102);
+    CHECK(at(1).y == -3);
+    const auto *first = runtime.FindEmitter(emitters[0]);
+    CHECK(first->previousPosition.Meters() == first->attachmentPosition.Meters());
+    CHECK(first->spawnStart.Meters() == first->attachmentPosition.Meters());
+
+    SECTION("An unchanged offset keeps the motion span, a changed one restarts it")
+    {
+        pose.position = *mir::WorldPosition::FromMeters(mir::WorldVec3(101, 0, 0));
+        REQUIRE(runtime.SetPose(handle, pose));
+        CHECK(first->previousPosition.Meters().x == 98);
+        CHECK(first->attachmentPosition.Meters().x == 99);
+        REQUIRE(runtime.SetEmitterOffsets(handle, offsets));
+        CHECK(first->previousPosition.Meters().x == 98);
+        const std::vector<glm::vec3> moved{{0, 4, 0}, {0, -3, 0}};
+        REQUIRE(runtime.SetEmitterOffsets(handle, moved));
+        CHECK(first->previousPosition.Meters() == first->attachmentPosition.Meters());
+        CHECK(runtime.FindEmitter(emitters[1])->previousPosition.Meters().x == 102);
+    }
+    SECTION("A bad offset rejects the whole update")
+    {
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        CHECK_FALSE(runtime.SetEmitterOffsets(handle, std::vector<glm::vec3>{{0, 5, 0}, {nan, 0, 0}}));
+        CHECK_FALSE(runtime.SetEmitterOffsets(handle, std::vector<glm::vec3>{{0, 5, 0}, {0, 4097, 0}}));
+        CHECK(at(0).y == 3);
+        CHECK(runtime.FindEmitter(emitters[0])->instanceOffset == glm::vec3(0, 3, 0));
+    }
+    SECTION("Extra offsets are ignored and a stale handle is refused")
+    {
+        const std::vector<glm::vec3> many(8, glm::vec3(0, 1, 0));
+        REQUIRE(runtime.SetEmitterOffsets(handle, many));
+        CHECK(at(1).y == 1);
+        REQUIRE(runtime.Destroy(handle));
+        CHECK_FALSE(runtime.SetEmitterOffsets(handle, many));
+    }
+}

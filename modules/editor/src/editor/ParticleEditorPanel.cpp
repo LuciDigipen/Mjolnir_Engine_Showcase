@@ -42,6 +42,15 @@ namespace mir
             value = text;
             return true;
         }
+
+        Entity SelectedSystemEntity(World &world, const std::string &systemPath)
+        {
+            const auto *selection = world.TryResource<Selection>();
+            if (selection == nullptr || selection->mSelected.size() != 1) return kNullEntity;
+            const Entity entity = selection->mSelected.front();
+            const auto *component = world.GetComponent<ParticleSystem>(entity);
+            return component != nullptr && systemPath == component->systemName ? entity : kNullEntity;
+        }
         bool Choice(const char *label, uint32_t &value, const char *choices)
         {
             int index = static_cast<int>(value);
@@ -715,16 +724,10 @@ namespace mir
             mPreviewAnchor = camera.Pose();
             mPreviewAnchor.linear = WorldMat3(1);
             mPreviewAnchor.position = *WorldPosition::FromMeters(camera.Position().Meters()+WorldVec3(camera.Forward())*WorldReal(6));
-            if (const auto *selection = world.TryResource<Selection>();
-                selection != nullptr && selection->mSelected.size() == 1)
+            if (const Entity entity = SelectedSystemEntity(world, mSystemPath); !entity.IsNull())
             {
-                const Entity entity = selection->mSelected.front();
-                if (const auto *component = world.GetComponent<ParticleSystem>(entity);
-                    component != nullptr && mSystemPath == component->systemName)
-                {
-                    mPreviewEntity = entity;
-                    mPreviewAnchor = ResolveWorld(world, entity);
-                }
+                mPreviewEntity = entity;
+                mPreviewAnchor = ResolveWorld(world, entity);
             }
         }
         ImGui::SetItemTooltip("Preview uses cooked assets, at the selected entity when it uses this system.\n"
@@ -759,7 +762,7 @@ namespace mir
     }
 
     // Every action targets the selected emitter, so the strip needs no per-row buttons.
-    void ParticleEditorPanel::DrawEmitterStrip(AssetImportManager &imports)
+    void ParticleEditorPanel::DrawEmitterStrip(World &world, AssetImportManager &imports)
     {
         if (mSystemPath.empty()) return;
         enum class Action { None, Duplicate, Remove, Up, Down };
@@ -822,6 +825,16 @@ namespace mir
             ImGui::SetNextItemWidth(-1);
             mDirtySystem |= ImGui::DragFloat3("##Origin", &mSystem.placementOffsets[mSelected].x, 0.05f,
                 -4096, 4096, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        }
+        // Per-instance offsets live on the scene entity, so they only show for the selected entity playing this system.
+        if (const Entity target = IsEditing(world) ? SelectedSystemEntity(world, mSystemPath) : kNullEntity;
+            hasSelection && !target.IsNull())
+        {
+            glm::vec3 offset = world.GetComponent<ParticleSystem>(target)->emitterOffsets[mSelected];
+            ImGui::TextDisabled("Offset on the selected entity");
+            ImGui::SetNextItemWidth(-1);
+            if (ImGui::DragFloat3("##InstanceOffset", &offset.x, 0.05f, -4096, 4096, "%.2f", ImGuiSliderFlags_AlwaysClamp))
+                mOffsetEdit = InstanceOffsetEdit{ target, static_cast<uint32_t>(mSelected), offset };
         }
 
         // A throw between Begin and End would unbalance the popup stack, so failures are caught here.
@@ -951,7 +964,7 @@ namespace mir
             DrawSelectBar(world, imports);
             DrawEditBar(imports);
             DrawPreviewStrip(world, camera, dt);
-            DrawEmitterStrip(imports);
+            DrawEmitterStrip(world, imports);
             DrawStatus(imports);
             DrawSettings(world);
         }

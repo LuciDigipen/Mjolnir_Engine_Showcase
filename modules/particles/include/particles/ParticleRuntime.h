@@ -81,11 +81,12 @@ namespace mir
         WorldPose pose;
         ParticleExecutionState state = ParticleExecutionState::Active;
         bool paused = false;
+        glm::vec3 instanceOffset{ 0 };
         WorldPosition attachmentPosition;
         WorldPosition previousPosition;
         WorldPosition spawnStart;
-        glm::vec3 attachmentVelocity{0};
-        glm::vec3 emissionVelocity{0};
+        glm::vec3 attachmentVelocity{ 0 };
+        glm::vec3 emissionVelocity{ 0 };
         std::vector<ParticleBirth> births;
         double motionSeconds = 0.0;
         double distanceRemainder = 0.0;
@@ -150,6 +151,7 @@ namespace mir
         bool ResumeEmission(ParticleHandle handle);
         bool Pause(ParticleHandle handle, bool paused);
         bool SetPose(ParticleHandle handle, const WorldPose &pose);
+        bool SetEmitterOffsets(ParticleHandle handle, std::span<const glm::vec3> offsets);
         bool SetParameters(ParticleHandle handle, const ParticleUserParameters &parameters);
         bool SetExecutionState(ParticleHandle handle, ParticleExecutionState state);
         bool Destroy(ParticleHandle handle);

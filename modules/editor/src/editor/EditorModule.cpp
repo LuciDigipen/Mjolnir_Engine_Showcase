@@ -268,6 +268,8 @@ namespace mir
                 if (mEnableLayout)
                     mParticleEditor->Draw(mEditor.ParticleEditorVisible(),mWorld,assets.Cache(),mImport,mEditor.SceneCamera(),mFrameDt);
                 else mParticleEditor->OnHidden(mWorld);
+                if (const auto offsetEdit = mParticleEditor->TakeInstanceOffsetEdit())
+                    mEditor.SubmitParticleEmitterOffset(mWorld, offsetEdit->mEntity, offsetEdit->mIndex, offsetEdit->mValue);
                 mEditor.SetParticleHistoryAvailability(mParticleEditor->CanUndoDraft(),
                     mParticleEditor->CanRedoDraft());
                 mPrefabWorkspace.CloseMissingDocuments();

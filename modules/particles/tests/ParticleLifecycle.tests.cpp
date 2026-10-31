@@ -179,7 +179,9 @@ TEST_CASE("Particle save load and repeated play scene transitions never serializ
 
     const auto *ops = mir::ComponentRegistry::Instance().Find("ParticleSystem");
     REQUIRE(ops);
-    CHECK(ops->mFields.size() == 6);
+    CHECK(ops->mFields.size() == 6 + mir::kMaxSystemEmitters);
+    CHECK(ops->FindField("emitterOffset7") != nullptr);
+    CHECK(ops->FindField("emitterOffset8") == nullptr);
     CHECK(ops->FindField("wind") != nullptr);
     CHECK(ops->FindField("spawnRateScale") != nullptr);
     CHECK(ops->FindField("sizeScale") != nullptr);
@@ -310,4 +312,45 @@ TEST_CASE("Inactive particle systems reconcile reflected user overrides while dr
     component.overrideParameters = false;
     test.Tick();
     CHECK(test.Particles().Find(owner)->parameters.sizeScale == 1);
+}
+
+TEST_CASE("Particle emitter offsets are hidden persisted fields that move only their own instance", "[particles]")
+{
+    int hidden = 0;
+    for (const auto &field : mir::kParticleSystemFields)
+        if (field.mName.starts_with("emitterOffset"))
+        {
+            CHECK(field.mHidden);
+            CHECK(field.mKind == mir::FieldKind::Vec3);
+            CHECK(field.mOffset == offsetof(mir::ParticleSystem, emitterOffsets) + hidden * sizeof(glm::vec3));
+            ++hidden;
+        }
+    CHECK(hidden == static_cast<int>(mir::kMaxSystemEmitters));
+
+    mir::test::ParticleTestWorld test;
+    test.files.Publish(1.0f);
+    const auto moved = test.System();
+    const auto still = test.System();
+    test.world.GetComponent<mir::ParticleSystem>(moved)->emitterOffsets[0] = {3, 0, 0};
+    test.Tick();
+    REQUIRE(test.Particles().Find(moved));
+    REQUIRE(test.Particles().Find(still));
+    const auto position = [&](mir::Entity owner)
+    {
+        return test.Particles().Runtime().FindEmitter(test.Particles().Find(owner)->emitters[0])->attachmentPosition.Meters();
+    };
+    CHECK(position(moved).x - position(still).x == 3);
+
+    auto scene = mir::NewScene("particle offsets");
+    scene.mEntities.emplace(mir::AllocateStableId(scene), moved);
+    const auto dir = test.files.Root() / "offsets-scene";
+    REQUIRE(mir::SaveScene(test.world, dir, scene));
+    mir::UnloadScene(test.world, scene);
+    test.StageEvent(mir::Stage::SceneUnload);
+    scene = mir::LoadScene(test.world, dir);
+    REQUIRE(scene.mEntities.size() == 1);
+    const auto *loaded = test.world.GetComponent<mir::ParticleSystem>(scene.mEntities.begin()->second);
+    REQUIRE(loaded);
+    CHECK(loaded->emitterOffsets[0] == glm::vec3(3, 0, 0));
+    CHECK(loaded->emitterOffsets[1] == glm::vec3(0));
 }
