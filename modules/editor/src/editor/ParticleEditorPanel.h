@@ -48,10 +48,16 @@ namespace mir
         void SaveEmitter(AssetImportManager &imports);
         std::string EnsureDefaultTexture(AssetImportManager &imports);
         void DrawEmitter();
-        void DrawStack(bool spawn);
         void DrawBehaviors();
         void DrawBehaviorControls(ParticleBehavior &behavior, const ParticleBehaviorInfo &info);
         void DrawDiagnostics(World &world);
+        void SaveAll(AssetImportManager &imports);
+        void DrawSelectBar(World &world, AssetImportManager &imports);
+        void DrawEditBar(AssetImportManager &imports);
+        void DrawPreviewStrip(World &world, const EditorCamera &camera, float dt);
+        void DrawEmitterStrip(AssetImportManager &imports);
+        void DrawStatus(AssetImportManager &imports);
+        void DrawSettings(World &world);
         struct DraftSnapshot
         {
             ParticleEffect system;

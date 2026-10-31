@@ -22,7 +22,6 @@ namespace
     mir::ParticleEmitterAsset RibbonEmitter()
     {
         mir::ParticleEmitterAsset emitter;
-        emitter.sourceVersion = 2; // preserve the original stack-editing characterization
         emitter.simulationTarget = mir::ParticleSimulationTarget::CPU;
         emitter.spawnRate = 0;
         emitter.spawnPerMeter = 2;
@@ -80,95 +79,49 @@ TEST_CASE("A saved width curve reaches the playing ribbon", "[particles][stacked
 {
     CheckCurve(RibbonEmitter(), 23.0f, 5.08f, 15.3f);
 }
-TEST_CASE("Adding a second width curve overrides the first, and removing it restores the first", "[particles][stackedit]")
-{
-    auto emitter = RibbonEmitter();
-    REQUIRE(mir::AddParticleBehavior(emitter, false, "RibbonWidthCurve"));
-    REQUIRE(emitter.updateBehaviors.back().name == "RibbonWidthCurve");
-    CHECK(emitter.updateBehaviors.back().parameters == std::vector<float>{1, 1, 1});
-    CheckCurve(emitter, 1, 1, 1);
-    REQUIRE(mir::RemoveParticleBehavior(emitter, false, emitter.updateBehaviors.size() - 1));
-    CheckCurve(emitter, 23.0f, 5.08f, 15.3f);
-}
 TEST_CASE("Editing a curve parameter in place changes the cooked width", "[particles][stackedit]")
 {
     auto emitter = RibbonEmitter();
     emitter.updateBehaviors[2].parameters = {2, 8, 3};
     CheckCurve(emitter, 2, 8, 3);
 }
-TEST_CASE("Reordering moves the override: a constant width placed last beats the curve before it", "[particles][stackedit]")
+TEST_CASE("A width mode switch keeps the inactive curve values and restores them", "[particles][stackedit]")
 {
     auto emitter = RibbonEmitter();
+    CHECK_FALSE(mir::AddParticleBehavior(emitter, false, "RibbonWidthCurve"));
     REQUIRE(mir::AddParticleBehavior(emitter, false, "RibbonWidth"));
+    CHECK_FALSE(emitter.updateBehaviors[2].enabled);
+    CHECK(emitter.updateBehaviors.back().enabled);
     // RibbonWidth defaults to an end scale of 1, a flat width equal to the emitter size.
     CheckCurve(emitter, 1, 1, 1);
-    REQUIRE(mir::MoveParticleBehavior(emitter, false, emitter.updateBehaviors.size() - 1, -1));
-    REQUIRE(mir::MoveParticleBehavior(emitter, false, 3, -1));
-    CHECK(emitter.updateBehaviors[2].name == "RibbonWidth");
-    CHECK(emitter.updateBehaviors[3].name == "RibbonWidthCurve");
+    REQUIRE(mir::SetParticleBehaviorEnabled(emitter, false, 2, true));
+    CHECK(emitter.updateBehaviors[2].enabled);
+    CHECK_FALSE(emitter.updateBehaviors.back().enabled);
+    CHECK(emitter.updateBehaviors[2].parameters == std::vector<float>{23.0f, 5.08f, 15.3f});
     CheckCurve(emitter, 23.0f, 5.08f, 15.3f);
+    std::string error;
+    CHECK(mir::ValidateParticleEmitterAsset(emitter, error));
 }
-TEST_CASE("Required ribbon behaviors keep their last copy and everything else can go", "[particles][stackedit]")
+TEST_CASE("Required ribbon behaviors stay and everything else can go", "[particles][stackedit]")
 {
     auto emitter = RibbonEmitter();
     CHECK_FALSE(mir::CanRemoveParticleBehavior(emitter, true, 0));
     CHECK_FALSE(mir::RemoveParticleBehavior(emitter, true, 0));
     CHECK_FALSE(mir::CanRemoveParticleBehavior(emitter, false, 0));
-    REQUIRE(mir::AddParticleBehavior(emitter, false, "RibbonAge"));
-    CHECK(mir::CanRemoveParticleBehavior(emitter, false, 0));
-    REQUIRE(mir::RemoveParticleBehavior(emitter, false, 0));
-    CHECK_FALSE(mir::CanRemoveParticleBehavior(emitter, false, emitter.updateBehaviors.size() - 1));
-    CHECK(mir::CanRemoveParticleBehavior(emitter, false, 1));
+    CHECK_FALSE(mir::SetParticleBehaviorEnabled(emitter, false, 0, false));
     for (size_t i = emitter.updateBehaviors.size(); i-- > 0;)
         if (emitter.updateBehaviors[i].name != "RibbonAge") REQUIRE(mir::RemoveParticleBehavior(emitter, false, i));
     CHECK(emitter.updateBehaviors.size() == 1);
     std::string error;
     CHECK(mir::ValidateParticleEmitterAsset(emitter, error));
 }
-TEST_CASE("Stack edits reject unknown names, wrong-stage names, a full stack and bad indices", "[particles][stackedit]")
+TEST_CASE("Stack edits reject unknown names, wrong-stage names, duplicates and bad indices", "[particles][stackedit]")
 {
     auto emitter = RibbonEmitter();
     CHECK_FALSE(mir::AddParticleBehavior(emitter, false, "Integrate"));
     CHECK_FALSE(mir::AddParticleBehavior(emitter, true, "RibbonAge"));
     CHECK_FALSE(mir::AddParticleBehavior(emitter, false, "Nope"));
-    while (emitter.updateBehaviors.size() < 32) REQUIRE(mir::AddParticleBehavior(emitter, false, "RibbonWind"));
     CHECK_FALSE(mir::AddParticleBehavior(emitter, false, "RibbonWind"));
     CHECK_FALSE(mir::RemoveParticleBehavior(emitter, false, 99));
-    CHECK_FALSE(mir::MoveParticleBehavior(emitter, false, 0, -1));
-    CHECK_FALSE(mir::MoveParticleBehavior(emitter, false, 31, 1));
-    CHECK_FALSE(mir::MoveParticleBehavior(emitter, false, 99, 1));
-}
-
-TEST_CASE("New authoring keeps one behavior per kind and remembers inactive size mode", "[particles][stackedit][authoring]")
-{
-    auto emitter = RibbonEmitter();
-    emitter.sourceVersion = 3;
-    CHECK_FALSE(mir::AddParticleBehavior(emitter, false, "RibbonWidthCurve"));
-    REQUIRE(mir::AddParticleBehavior(emitter, false, "RibbonWidth"));
-    CHECK_FALSE(emitter.updateBehaviors[2].enabled);
-    CHECK(emitter.updateBehaviors.back().enabled);
-    CHECK_FALSE(mir::MoveParticleBehavior(emitter, false, 2, 1));
-    CHECK_FALSE(mir::RemoveParticleBehavior(emitter, true, 0));
-    REQUIRE(mir::SetParticleBehaviorEnabled(emitter, false, 2, true));
-    CHECK(emitter.updateBehaviors[2].enabled);
-    CHECK_FALSE(emitter.updateBehaviors.back().enabled);
-    CHECK(emitter.updateBehaviors[2].parameters == std::vector<float>{23.0f, 5.08f, 15.3f});
-    std::string error;
-    CHECK(mir::ValidateParticleEmitterAsset(emitter, error));
-}
-
-TEST_CASE("Legacy emitter upgrade refuses duplicates and preserves its original on failure", "[particles][stackedit][authoring]")
-{
-    auto emitter = RibbonEmitter();
-    emitter.updateBehaviors.push_back({"RibbonAge", {}});
-    const auto original = emitter.updateBehaviors;
-    std::string message;
-    CHECK_FALSE(mir::UpgradeParticleEmitter(emitter, message));
-    CHECK(emitter.sourceVersion == 2);
-    CHECK(emitter.updateBehaviors.size() == original.size());
-    CHECK(message.find("duplicate") != std::string::npos);
-    emitter.updateBehaviors.pop_back();
-    REQUIRE(mir::UpgradeParticleEmitter(emitter, message));
-    CHECK(emitter.sourceVersion == 3);
-    CHECK(message.empty());
+    CHECK_FALSE(mir::SetParticleBehaviorEnabled(emitter, false, 99, true));
 }

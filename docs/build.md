@@ -207,10 +207,7 @@ the next one and exits with its code.
 
 They create a hidden native window, so they need a GPU and a display. `--hidden`
 requires `--frames` and suppresses both splash and game/editor window, normal
-launches remain visible. `smoke.FlightEffectsCheck.game-mode` also exercises the
-new flight route without the editor. The test-only `FlightEffectsCheck` target
-provides longer fixed-step profiles, see its [game README](../games/FlightEffectsCheck/README.md).
-`-L smoke` runs only
+launches remain visible. `-L smoke` runs only
 them, `-LE smoke` skips them:
 
 ```

@@ -21,7 +21,6 @@ namespace
     mir::ParticleEffect Ribbon(float lifetime = 4, uint32_t capacity = 256, std::vector<mir::ParticleBehavior> update = kDefaultUpdate)
     {
         mir::ParticleEmitterAsset emitter;
-        emitter.sourceVersion = 2; // characterize the original ordered ribbon behavior
         emitter.simulationTarget = mir::ParticleSimulationTarget::CPU;
         emitter.spawnRate = 0;
         emitter.spawnPerMeter = 2;
@@ -253,20 +252,6 @@ TEST_CASE("Optional CPU ribbon behaviors fall back to the emitter values when om
     for (const auto &point : noFade) CHECK(point.color.a == Catch::Approx(0.5f));
     for (const auto &point : noWidth) CHECK(point.width == Catch::Approx(0.15f));
 }
-TEST_CASE("CPU ribbon behaviors assign, so a later duplicate overrides an earlier one", "[particles][ribbon]")
-{
-    const auto doubled = Fly({kAge, kWind, {"RibbonWidth", {3}}, {"RibbonWidth", {1}}, kFade});
-    for (const auto &point : doubled) CHECK(point.width == Catch::Approx(0.15f));
-    const auto curveAfter = Fly({kAge, kWind, {"RibbonWidth", {3}}, {"RibbonWidthCurve", {0.5f, 2, 1}}, kFade});
-    CHECK(curveAfter.front().width == Catch::Approx(0.1875f).margin(1e-6));
-    const auto twiceFaded = Fly({kAge, kWind, kFade, kFade});
-    const auto once = Fly({kAge, kWind, kFade});
-    for (size_t i = 0; i < once.size(); ++i) CHECK(twiceFaded[i].color.a == Catch::Approx(once[i].color.a));
-    const auto fadeBefore = Fly({kAge, kWind, kFade, {"RibbonColorGradient", kGradient}});
-    const auto fadeAfter = Fly({kAge, kWind, {"RibbonColorGradient", kGradient}, kFade});
-    CHECK(fadeBefore.front().color.a == Catch::Approx(0.4375f));
-    CHECK(fadeAfter.front().color.a == Catch::Approx(0.328125f));
-}
 TEST_CASE("CPU ribbon behaviors that own different attributes can be reordered", "[particles][ribbon]")
 {
     const auto canonical = Fly({kAge, kWind, {"RibbonWidth", {3}}, kFade});
@@ -279,7 +264,7 @@ TEST_CASE("CPU ribbon behaviors that own different attributes can be reordered",
         CHECK(shuffled[i].position.Meters().y == Catch::Approx(canonical[i].position.Meters().y));
     }
 }
-TEST_CASE("CPU ribbon stacks require spawn and age but accept duplicates up to the limit", "[particles][ribbon]")
+TEST_CASE("CPU ribbon stacks require spawn and age and reject duplicates", "[particles][ribbon]")
 {
     std::string error;
     auto emitter = Ribbon().emitterDefinitions[0];
@@ -292,10 +277,9 @@ TEST_CASE("CPU ribbon stacks require spawn and age but accept duplicates up to t
     CHECK(error.find("RibbonAge") != std::string::npos);
     emitter.updateBehaviors = {kAge};
     CHECK(mir::ValidateParticleEmitterAsset(emitter, error));
-    emitter.updateBehaviors.assign(32, kAge);
-    CHECK(mir::ValidateParticleEmitterAsset(emitter, error));
-    emitter.updateBehaviors.push_back(kAge);
+    emitter.updateBehaviors = {kAge, kAge};
     CHECK_FALSE(mir::ValidateParticleEmitterAsset(emitter, error));
+    CHECK(error.find("duplicate") != std::string::npos);
     emitter.updateBehaviors = {kAge, {"Integrate", {}}};
     CHECK_FALSE(mir::ValidateParticleEmitterAsset(emitter, error));
 }
@@ -303,7 +287,6 @@ TEST_CASE("CPU ribbon stacks require spawn and age but accept duplicates up to t
 TEST_CASE("New ribbon authoring combines gradient alpha with fade regardless of stored order", "[particles][ribbon][authoring]")
 {
     auto effect = Ribbon(4, 256, {kFade, {"RibbonColorGradient", kGradient}, kAge});
-    effect.emitterDefinitions[0].sourceVersion = 3;
     mir::ParticleRuntime runtime;
     const auto handle = runtime.Start({2}, effect);
     REQUIRE_FALSE(handle.IsNull());

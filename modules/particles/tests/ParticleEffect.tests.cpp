@@ -23,7 +23,7 @@
 TEST_CASE("Particle system source cooks emitter references and user parameter defaults", "[particles]")
 {
     const auto source = mir::ReadParticleEffectSource(
-        R"({"version":2,"emitters":["effects/exhaust.emitter.json"],"parameters":{"spawnRateScale":2,"sizeScale":0.5}})", "assets");
+        R"({"version":3,"placements":[{"id":1,"emitter":"effects/exhaust.emitter.json","offset":[0,0,0]}],"parameters":{"spawnRateScale":2,"sizeScale":0.5}})", "assets");
     REQUIRE(source.mEffect);
     REQUIRE(source.mEffect->emitters.size() == 1);
     CHECK(source.mEffect->emitters[0] == mir::test::ParticleTestAssets::EmitterId());
@@ -43,7 +43,7 @@ TEST_CASE("Particle system source cooks emitter references and user parameter de
 TEST_CASE("Particle emitter source cooks renderer properties and a typed texture reference", "[particles]")
 {
     const auto source = mir::ReadParticleEmitterSource(
-        R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"textures/white.png",
+        R"({"version":3,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"textures/white.png",
             "renderer":{"size":0.25,"color":[1,0.5,0.25,0.5],"velocity":[0,2,0]}})", "assets");
     REQUIRE(source.mEmitter);
     CHECK(source.mEmitter->texture == mir::test::ParticleTestAssets::TextureId());
@@ -67,20 +67,19 @@ TEST_CASE("Particle system source rejects unsupported schemas references and use
 {
     for (const std::string_view source : {
         "[]", "{bad", "{}",
-            R"({"version":1,"emitters":["effects/exhaust.emitter.json"]})",
-            R"({"version":2,"emitters":[]})",
-            R"({"version":2,"emitters":[1]})",
-            R"({"version":2,"emitters":["effects/exhaust.emitter.json","effects/exhaust.emitter.json"]})",
-            R"({"version":2,"emitters":["../outside.emitter.json"]})",
-            R"({"version":2,"emitters":["C:/outside.emitter.json"]})",
-            R"({"version":2,"emitters":["texture.png"]})",
-            R"({"version":2,"emitters":["effects/exhaust.emitter.json"],"typo":1})",
-            R"({"version":2,"emitters":["effects/exhaust.emitter.json"],"parameters":null})",
-            R"({"version":2,"emitters":["effects/exhaust.emitter.json"],"parameters":{"spawnRateScale":-1}})",
-            R"({"version":2,"emitters":["effects/exhaust.emitter.json"],"parameters":{"sizeScale":17}})",
-            R"({"version":2,"emitters":["effects/exhaust.emitter.json"],"parameters":{"sizeScale":1e100}})",
-            R"({"version":2,"emitters":["effects/exhaust.emitter.json"],"parameters":{"sizeScale":true}})",
-            R"({"version":2,"emitters":["effects/exhaust.emitter.json"],"parameters":{"unknown":1}})"})
+            R"({"version":1,"placements":[{"id":1,"emitter":"effects/exhaust.emitter.json","offset":[0,0,0]}]})",
+            R"({"version":3,"placements":[]})",
+            R"({"version":3,"placements":[{"id":1,"emitter":1,"offset":[0,0,0]}]})",
+            R"({"version":3,"placements":[{"id":1,"emitter":"../outside.emitter.json","offset":[0,0,0]}]})",
+            R"({"version":3,"placements":[{"id":1,"emitter":"C:/outside.emitter.json","offset":[0,0,0]}]})",
+            R"({"version":3,"placements":[{"id":1,"emitter":"texture.png","offset":[0,0,0]}]})",
+            R"({"version":3,"placements":[{"id":1,"emitter":"effects/exhaust.emitter.json","offset":[0,0,0]}],"typo":1})",
+            R"({"version":3,"placements":[{"id":1,"emitter":"effects/exhaust.emitter.json","offset":[0,0,0]}],"parameters":null})",
+            R"({"version":3,"placements":[{"id":1,"emitter":"effects/exhaust.emitter.json","offset":[0,0,0]}],"parameters":{"spawnRateScale":-1}})",
+            R"({"version":3,"placements":[{"id":1,"emitter":"effects/exhaust.emitter.json","offset":[0,0,0]}],"parameters":{"sizeScale":17}})",
+            R"({"version":3,"placements":[{"id":1,"emitter":"effects/exhaust.emitter.json","offset":[0,0,0]}],"parameters":{"sizeScale":1e100}})",
+            R"({"version":3,"placements":[{"id":1,"emitter":"effects/exhaust.emitter.json","offset":[0,0,0]}],"parameters":{"sizeScale":true}})",
+            R"({"version":3,"placements":[{"id":1,"emitter":"effects/exhaust.emitter.json","offset":[0,0,0]}],"parameters":{"unknown":1}})"})
     {
         const auto result = mir::ReadParticleEffectSource(source, "assets");
         CHECK_FALSE(result.mEffect);
@@ -93,21 +92,22 @@ TEST_CASE("Particle emitter source rejects unsafe paths invalid targets and malf
     for (const std::string_view source : {
         "[]", "{bad", "{}",
             R"({"version":1,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"textures/white.png"})",
-            R"({"version":2,"target":"other","lifetime":2,"spawnRate":60,"capacity":256,"texture":"textures/white.png"})",
-            R"({"version":2,"target":"gpu","lifetime":-1,"spawnRate":60,"capacity":256,"texture":"textures/white.png"})",
-            R"({"version":2,"target":"gpu","lifetime":121,"spawnRate":60,"capacity":256,"texture":"textures/white.png"})",
-            R"({"version":2,"target":"gpu","lifetime":1e100,"spawnRate":60,"capacity":256,"texture":"textures/white.png"})",
-            R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":-1,"capacity":256,"texture":"textures/white.png"})",
-            R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":1.5,"texture":"textures/white.png"})",
-            R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":65537,"texture":"textures/white.png"})",
-            R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"../outside.png"})",
-            R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"C:/outside.png"})",
-            R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","typo":1})",
-            R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","renderer":{"size":0}})",
-            R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","renderer":{"color":[1,1,1,2]}})",
-            R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","renderer":{"velocity":[0,1]}})",
-            R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","renderer":{"velocity":[0,1e100,0]}})",
-            R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","renderer":{"typo":1}})"})
+            R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"textures/white.png"})",
+            R"({"version":3,"target":"other","lifetime":2,"spawnRate":60,"capacity":256,"texture":"textures/white.png"})",
+            R"({"version":3,"target":"gpu","lifetime":-1,"spawnRate":60,"capacity":256,"texture":"textures/white.png"})",
+            R"({"version":3,"target":"gpu","lifetime":121,"spawnRate":60,"capacity":256,"texture":"textures/white.png"})",
+            R"({"version":3,"target":"gpu","lifetime":1e100,"spawnRate":60,"capacity":256,"texture":"textures/white.png"})",
+            R"({"version":3,"target":"gpu","lifetime":2,"spawnRate":-1,"capacity":256,"texture":"textures/white.png"})",
+            R"({"version":3,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":1.5,"texture":"textures/white.png"})",
+            R"({"version":3,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":65537,"texture":"textures/white.png"})",
+            R"({"version":3,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"../outside.png"})",
+            R"({"version":3,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"C:/outside.png"})",
+            R"({"version":3,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","typo":1})",
+            R"({"version":3,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","renderer":{"size":0}})",
+            R"({"version":3,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","renderer":{"color":[1,1,1,2]}})",
+            R"({"version":3,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","renderer":{"velocity":[0,1]}})",
+            R"({"version":3,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","renderer":{"velocity":[0,1e100,0]}})",
+            R"({"version":3,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","renderer":{"typo":1}})"})
     {
         const auto result = mir::ReadParticleEmitterSource(source, "assets");
         CHECK_FALSE(result.mEmitter);
@@ -213,7 +213,7 @@ TEST_CASE("Particle behavior stacks reject unknown behaviors unsupported stages 
             R"("updateBehaviors":[{"parameters":[]}])",
             R"("updateBehaviors":{})"})
     {
-        const auto text = std::string(R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png",)") +
+        const auto text = std::string(R"({"version":3,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png",)") +
             std::string(fields) + "}";
         const auto result = mir::ReadParticleEmitterSource(text, "assets");
         INFO(text);
@@ -221,44 +221,13 @@ TEST_CASE("Particle behavior stacks reject unknown behaviors unsupported stages 
         CHECK_FALSE(result.mError.empty());
     }
     const auto cpu = mir::ReadParticleEmitterSource(
-        R"({"version":2,"target":"cpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","updateBehaviors":[{"name":"Age"}]})", "assets");
+        R"({"version":3,"target":"cpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png","updateBehaviors":[{"name":"Age"}]})", "assets");
     CHECK_FALSE(cpu.mEmitter);
     mir::ParticleEmitterAsset emitter;
     emitter.texture = mir::MakeAssetId("assets/x.png");
     emitter.updateBehaviors = { { "Acceleration",{ 0, std::numeric_limits<float>::infinity(), 0 } } };
     std::string error;
     CHECK_FALSE(mir::ValidateParticleEmitterAsset(emitter, error));
-}
-
-TEST_CASE("Particle behavior stack order survives cooking and determines generated execution order", "[particles]")
-{
-    const auto parsed = mir::ReadParticleEmitterSource(
-        R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png",
-            "spawnBehaviors":[{"name":"Initialize"}],
-            "updateBehaviors":[{"name":"Acceleration","parameters":[0,-9.8,0]},{"name":"Integrate"},{"name":"Age"}]})", "assets");
-    REQUIRE(parsed.mEmitter);
-    const auto bytes = mir::BuildParticleEmitterAsset(*parsed.mEmitter);
-    const auto cooked = mir::ReadParticleEmitterAsset(*mir::ParseAssetBlob(bytes));
-    REQUIRE(cooked.mEmitter);
-    REQUIRE(cooked.mEmitter->updateBehaviors.size() == 3);
-    CHECK(cooked.mEmitter->updateBehaviors[0].name == "Acceleration");
-    CHECK(cooked.mEmitter->updateBehaviors[0].parameters == (std::vector<float>{0, -9.8f, 0}));
-    CHECK(cooked.mEmitter->updateBehaviors[1].name == "Integrate");
-    CHECK(cooked.mEmitter->updateBehaviors[2].name == "Age");
-    const auto source = mir::GenerateParticleScript(*cooked.mEmitter);
-    const auto acceleration = source.find("a.velocityLifetime.xyz +=");
-    const auto integrate = source.find("a.positionAge.xyz +=");
-    const auto age = source.find("a.positionAge.w +=");
-    REQUIRE(acceleration != std::string::npos);
-    REQUIRE(integrate != std::string::npos);
-    REQUIRE(age != std::string::npos);
-    CHECK(acceleration < integrate);
-    CHECK(integrate < age);
-    auto reversed = *cooked.mEmitter;
-    std::swap(reversed.updateBehaviors[0], reversed.updateBehaviors[2]);
-    const auto changed = mir::GenerateParticleScript(reversed);
-    CHECK(changed != source);
-    CHECK(changed.find("a.positionAge.w +=") < changed.find("a.velocityLifetime.xyz +="));
 }
 
 TEST_CASE("Identical particle stacks share generated code independently of emitter values", "[particles]")
@@ -307,7 +276,7 @@ TEST_CASE("Particle blob readers reject malformed type version and asset framing
 TEST_CASE("Particle motion inputs and wind survive source and cooked roundtrips", "[particles]")
 {
     const auto source = mir::ReadParticleEmitterSource(
-        R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":30,"capacity":256,"texture":"x.png",
+        R"({"version":3,"target":"gpu","lifetime":2,"spawnRate":30,"capacity":256,"texture":"x.png",
             "localOffset":[-2,0.5,1],"spawnPerMeter":8.5,"burst":12,"seed":4294967295,
             "inheritVelocity":0.75,"teleportDistance":150})", "assets");
     REQUIRE(source.mEmitter);
@@ -322,7 +291,7 @@ TEST_CASE("Particle motion inputs and wind survive source and cooked roundtrips"
     CHECK(cooked.mEmitter->teleportDistance == 150);
 
     const auto system = mir::ReadParticleEffectSource(
-        R"({"version":2,"emitters":["x.emitter.json"],"parameters":{"wind":[3,-1,12]}})", "assets");
+        R"({"version":3,"placements":[{"id":1,"emitter":"x.emitter.json","offset":[0,0,0]}],"parameters":{"wind":[3,-1,12]}})", "assets");
     REQUIRE(system.mEffect);
     const auto systemBytes = mir::BuildParticleEffectAsset(*system.mEffect);
     const auto loaded = mir::ReadParticleEffectAsset(*mir::ParseAssetBlob(systemBytes));
@@ -351,7 +320,7 @@ TEST_CASE("Particle motion sources reject malformed values before cooking", "[pa
             R"("inheritVelocity":-1)", R"("inheritVelocity":17)", R"("inheritVelocity":1e100)",
             R"("teleportDistance":0)", R"("teleportDistance":65537)", R"("teleportDistance":null)"})
     {
-        const auto text = std::string(R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png",)") +
+        const auto text = std::string(R"({"version":3,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":256,"texture":"x.png",)") +
             std::string(fields) + "}";
         INFO(text);
         const auto result = mir::ReadParticleEmitterSource(text, "assets");
@@ -360,7 +329,7 @@ TEST_CASE("Particle motion sources reject malformed values before cooking", "[pa
     }
     for (const std::string_view wind : {"null", "[1,2]", "[1,2,3,4]", "[1,true,3]", "[4097,0,0]", "[0,1e100,0]"})
     {
-        const auto text = std::string(R"({"version":2,"emitters":["x.emitter.json"],"parameters":{"wind":)") +
+        const auto text = std::string(R"({"version":3,"placements":[{"id":1,"emitter":"x.emitter.json","offset":[0,0,0]}],"parameters":{"wind":)") +
             std::string(wind) + "}}";
         INFO(text);
         CHECK_FALSE(mir::ReadParticleEffectSource(text, "assets").mEffect);
@@ -424,7 +393,7 @@ TEST_CASE("Particle motion behaviors validate declared stages targets and numeri
 
 TEST_CASE("Particle renderer properties roundtrip through source and cooked emitters", "[particles][rendering]")
 {
-    const auto source = mir::ReadParticleEmitterSource(R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,
+    const auto source = mir::ReadParticleEmitterSource(R"({"version":3,"target":"gpu","lifetime":2,"spawnRate":60,
         "capacity":128,"texture":"x.png","renderer":{"alignment":"velocity","facing":"position",
         "blend":"additive","sort":"none","softDistance":1.5,"maxDistance":1200,"lighting":"sunAmbient",
         "fog":false,"textured":true}})", "assets");
@@ -441,7 +410,7 @@ TEST_CASE("Particle renderer schemas reject invalid choices and nonfinite distan
     for (const auto renderer:{ R"({"facing":"bad"})",R"({"alignment":true})",R"({"sort":0})",R"({"blend":"opaque"})",
         R"({"softDistance":-1})",R"({"maxDistance":0})",R"({"lighting":"pbr"})",R"({"fog":1})",R"({"textured":"yes"})" })
     {
-        const auto source = std::string(R"({"version":2,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":128,"texture":"x.png","renderer":)")+
+        const auto source = std::string(R"({"version":3,"target":"gpu","lifetime":2,"spawnRate":60,"capacity":128,"texture":"x.png","renderer":)")+
             renderer+"}";
         CHECK_FALSE(mir::ReadParticleEmitterSource(source, "assets").mEmitter);
     }
@@ -457,13 +426,17 @@ namespace
     mir::ParticleEmitterAsset EmitterWith(const mir::ParticleBehaviorInfo &info, std::vector<float> values)
     {
         mir::ParticleEmitterAsset emitter;
-        emitter.sourceVersion = 2; // registry ranges are independent of the new required core behaviors
         emitter.texture = mir::MakeAssetId("assets/x.png");
         emitter.simulationTarget = info.target;
         const mir::ParticleBehavior behavior{ std::string(info.name), std::move(values) };
         if (info.target == mir::ParticleSimulationTarget::GPU)
         {
-            (info.spawn ? emitter.spawnBehaviors : emitter.updateBehaviors) = { behavior };
+            // The default stacks hold the required core behaviors, the behavior under test replaces its own entry or joins them.
+            auto &stack = info.spawn ? emitter.spawnBehaviors : emitter.updateBehaviors;
+            const auto existing = std::find_if(stack.begin(), stack.end(),
+                [&](const mir::ParticleBehavior &entry) { return entry.name == behavior.name; });
+            if (existing != stack.end()) *existing = behavior;
+            else stack.push_back(behavior);
             return emitter;
         }
         // CPU behaviors are only legal inside the ribbon stack, so swap the behavior under test into it.
@@ -529,7 +502,6 @@ TEST_CASE("New particle authoring keeps disabled values and cooks one fixed beha
     const auto cooked = mir::ReadParticleEmitterAsset(*mir::ParseAssetBlob(mir::BuildParticleEmitterAsset(*read.mEmitter)));
     REQUIRE(cooked.mEmitter);
     REQUIRE(cooked.mEmitter->updateBehaviors.size() == 4);
-    CHECK(cooked.mEmitter->sourceVersion == 3);
     CHECK(cooked.mEmitter->updateBehaviors[0].name == "Age");
     CHECK(cooked.mEmitter->updateBehaviors[1].name == "Acceleration");
     CHECK(cooked.mEmitter->updateBehaviors[2].name == "Integrate");
@@ -546,7 +518,7 @@ TEST_CASE("New particle authoring keeps disabled values and cooks one fixed beha
     CHECK(opacityOnly.find("a.color.a = p.color.a * lerp(1.0") != std::string::npos);
 }
 
-TEST_CASE("New particle authoring rejects duplicate or conflicting modes without changing legacy stacks", "[particles][authoring]")
+TEST_CASE("Particle authoring rejects duplicate or conflicting modes", "[particles][authoring]")
 {
     mir::ParticleEmitterAsset emitter;
     emitter.texture = mir::MakeAssetId("assets/x.png");
@@ -554,9 +526,6 @@ TEST_CASE("New particle authoring rejects duplicate or conflicting modes without
     emitter.updateBehaviors.push_back({"Age", {}});
     CHECK_FALSE(mir::ValidateParticleEmitterAsset(emitter, error));
     CHECK(error.find("duplicate") != std::string::npos);
-    emitter.sourceVersion = 2;
-    CHECK(mir::ValidateParticleEmitterAsset(emitter, error));
-    emitter.sourceVersion = 3;
     emitter.updateBehaviors.pop_back();
     emitter.updateBehaviors.push_back({"SizeOverLife", {1}});
     emitter.updateBehaviors.push_back({"SizeCurve", {1, 2, 1}});
@@ -601,8 +570,4 @@ TEST_CASE("Two placements reuse one emitter asset at distinct world origins", "[
     CHECK(right->attachmentPosition.Meters().x == 102);
     CHECK(left->attachmentPosition.Meters().y == 1);
     CHECK(right->attachmentPosition.Meters().y == 1);
-    auto legacy = effect;
-    legacy.sourceVersion = 2;
-    std::string error;
-    CHECK_FALSE(mir::ValidateParticleEffect(legacy, error));
 }

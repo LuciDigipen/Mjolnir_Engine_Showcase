@@ -33,6 +33,8 @@ namespace mir
     inline constexpr uint32_t kParticleScriptContentVersion = 2u;
     inline constexpr uint32_t kParticleScriptLayoutTypeTag = 0x594C5350u;
     inline constexpr uint32_t kParticleScriptLayoutContentVersion = 2u;
+    // Authored source and cooked schema version, older formats are rejected rather than upgraded.
+    inline constexpr uint32_t kParticleSourceVersion = 3;
     inline constexpr uint32_t kMaxSystemEmitters = 8;
     inline constexpr uint32_t kMaxEffectParticles = 65536;
     inline constexpr float kMaxEffectLifetime = 120.0f;
@@ -136,7 +138,6 @@ namespace mir
         glm::vec3 velocity{ 0.0f, 1.0f, 0.0f };
         std::vector<ParticleBehavior> spawnBehaviors{ { "Initialize",{} } };
         std::vector<ParticleBehavior> updateBehaviors{ { "Age",{} },{ "Integrate",{} } };
-        uint32_t sourceVersion = 3; // version 2 keeps its authored order and duplicate semantics
         AssetId script;
         AssetId scriptLayout;
         // Loaded cooked dependency, no source shader reaches the runtime.
@@ -150,7 +151,6 @@ namespace mir
         std::vector<AssetId> emitters;
         std::vector<uint32_t> placementIds;
         std::vector<glm::vec3> placementOffsets;
-        uint32_t sourceVersion = 3;
         ParticleUserParameters parameters;
         // Loaded dependencies, omitted from the system blob itself.
         std::vector<ParticleEmitterAsset> emitterDefinitions;

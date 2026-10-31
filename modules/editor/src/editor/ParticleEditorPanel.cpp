@@ -58,15 +58,15 @@ namespace mir
                 emitter.simulationTarget = ParticleSimulationTarget::CPU;
                 emitter.spawnRate = 0;
                 emitter.spawnPerMeter = 2;
-                emitter.spawnBehaviors = {{"RibbonSpawn", {0.25f}}};
-                emitter.updateBehaviors = {{"RibbonAge", {}}, {"RibbonWind", {}},
-                    {"RibbonWidthCurve", {1, 1, 0}}, {"RibbonFade", {}}};
+                emitter.spawnBehaviors = { { "RibbonSpawn",{ 0.25f } } };
+                emitter.updateBehaviors = { { "RibbonAge",{} },{ "RibbonWind",{} },
+                    { "RibbonWidthCurve",{ 1, 1, 0 } },{ "RibbonFade",{} } };
                 if (type == 4)
                 {
                     emitter.spawnPerMeter = 1;
                     emitter.lifetime = 3;
                     emitter.size = 0.35f;
-                    emitter.color = {0.7f, 0.8f, 1.0f, 0.65f};
+                    emitter.color = { 0.7f, 0.8f, 1.0f, 0.65f };
                 }
             }
             else if (type == 3)
@@ -74,8 +74,8 @@ namespace mir
                 emitter.spawnRate = 90;
                 emitter.lifetime = 0.65f;
                 emitter.size = 0.12f;
-                emitter.velocity = {0, 0, -3};
-                emitter.updateBehaviors.push_back({"FadeOverLife", {0}});
+                emitter.velocity = { 0, 0, -3 };
+                emitter.updateBehaviors.push_back({ "FadeOverLife",{ 0 } });
             }
             else if (type == 0) emitter.spawnRate = 0;
             return emitter;
@@ -157,7 +157,7 @@ namespace mir
                 }
             }
             catch (const std::exception &) { continue; }
-        mScanned = true;
+            mScanned = true;
     }
 
     void ParticleEditorPanel::LoadSystem(const std::string &path)
@@ -284,10 +284,6 @@ namespace mir
         if (mReferences.size() >= kMaxSystemEmitters || !std::filesystem::is_regular_file(SourceFile(path)))
             throw std::invalid_argument("choose an existing emitter asset, maximum eight placements");
         auto draft = mSystem;
-        draft.sourceVersion = 3;
-        if (draft.placementIds.empty())
-            for (size_t i = 0; i < draft.emitters.size(); ++i) draft.placementIds.push_back(static_cast<uint32_t>(i + 1));
-        if (draft.placementOffsets.empty()) draft.placementOffsets.resize(draft.emitters.size());
         const uint32_t last = *std::max_element(draft.placementIds.begin(), draft.placementIds.end());
         if (last == UINT32_MAX) throw std::runtime_error("particle placement IDs are exhausted");
         const uint32_t id = last + 1;
@@ -332,10 +328,10 @@ namespace mir
         const std::string texture = EnsureDefaultTexture(imports);
         const auto emitter = EmitterTemplate(mNewEmitterTarget, MakeAssetId(MakeLogicalAssetPath(mIdRoot, texture).path));
         ParticleEffect effect;
-        effect.emitters = {MakeAssetId(MakeLogicalAssetPath(mIdRoot, emitterPath).path)};
-        effect.placementIds = {1};
-        effect.placementOffsets = {{0, 0, 0}};
-        const std::vector<std::string> paths{emitterPath};
+        effect.emitters = { MakeAssetId(MakeLogicalAssetPath(mIdRoot, emitterPath).path) };
+        effect.placementIds = { 1 };
+        effect.placementOffsets = { { 0, 0, 0 } };
+        const std::vector<std::string> paths{ emitterPath };
         const auto emitterSource = WriteParticleEmitterSource(emitter, texture);
         const auto systemSource = WriteParticleEffectSource(effect, paths);
         const auto emitterFile = SourceFile(emitterPath), systemFile = SourceFile(mNewSystemPath);
@@ -389,68 +385,6 @@ namespace mir
         mError.clear();
     }
 
-    void ParticleEditorPanel::DrawStack(bool spawn)
-    {
-        auto &definition = *mEmitter;
-        auto &stack = spawn ? definition.spawnBehaviors : definition.updateBehaviors;
-        ImGui::PushID(spawn ? "spawn" : "update");
-        ImGui::TextUnformatted(spawn ? "Spawn stack" : "Update stack");
-        ImGui::TextDisabled("Runs top to bottom, a later behavior overrides what an earlier one set.");
-        for (size_t i = 0; i < stack.size(); ++i)
-        {
-            ImGui::PushID(static_cast<int>(i));
-            auto &behavior = stack[i];
-            const auto infos = ParticleBehaviors();
-            const auto info = std::find_if(infos.begin(), infos.end(), [&](const auto &entry)
-                {
-                    return entry.name == behavior.name && entry.spawn == spawn && entry.target == definition.simulationTarget;
-                });
-            const bool expanded = ImGui::TreeNodeEx(behavior.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
-            if (expanded)
-            {
-                if (behavior.name == "ColorGradient" || behavior.name == "RibbonColorGradient")
-                {
-                    mDirtyEmitter |= ImGui::ColorEdit4("Start color", behavior.parameters.data(), ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_Float);
-                    mDirtyEmitter |= ImGui::ColorEdit4("End color", behavior.parameters.data()+4, ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_Float);
-                }
-                else
-                {
-                    for (size_t p = 0; p < behavior.parameters.size(); ++p)
-                    {
-                        const std::string label = info != infos.end() && p < info->parameters.size() ?
-                            std::string(info->parameters.begin()[p].name) : "Parameter " + std::to_string(p);
-                        mDirtyEmitter |= ImGui::DragFloat(label.c_str(), &behavior.parameters[p], 0.02f);
-                    }
-                    if (behavior.name == "SizeCurve" || behavior.name == "RibbonWidthCurve")
-                    {
-                        float samples[64];
-                        for (int p = 0; p < 64; ++p) samples[p] = EvaluateParticleCurve(behavior.parameters[0], behavior.parameters[1], behavior.parameters[2], p/63.0f);
-                        ImGui::PlotLines("Normalized life", samples, 64, 0, nullptr, 0, *std::max_element(samples, samples+64)+0.1f, ImVec2(0, 65));
-                    }
-                }
-                ImGui::TreePop();
-            }
-            {
-                bool changed = false;
-                if (i && ImGui::SmallButton("Up")) changed = MoveParticleBehavior(definition, spawn, i, -1);
-                ImGui::SameLine();
-                if (i+1 < stack.size() && ImGui::SmallButton("Down")) changed = MoveParticleBehavior(definition, spawn, i, 1);
-                ImGui::SameLine();
-                if (CanRemoveParticleBehavior(definition, spawn, i) && ImGui::SmallButton("Remove")) changed = RemoveParticleBehavior(definition, spawn, i);
-                if (changed) { mDirtyEmitter = true; ImGui::PopID(); break; }
-            }
-            ImGui::PopID();
-        }
-        if (stack.size() < 32 && ImGui::BeginCombo("Add behavior", "Select behavior"))
-        {
-            for (const auto &info : ParticleBehaviors())
-                if (info.target == definition.simulationTarget && info.spawn == spawn && ImGui::Selectable(std::string(info.name).c_str()))
-                    mDirtyEmitter |= AddParticleBehavior(definition, spawn, info.name);
-            ImGui::EndCombo();
-        }
-        ImGui::PopID();
-    }
-
     void ParticleEditorPanel::DrawBehaviorControls(ParticleBehavior &behavior, const ParticleBehaviorInfo &info)
     {
         if (info.widget == ParticleBehaviorWidget::Gradient)
@@ -501,13 +435,15 @@ namespace mir
         auto &emitter = *mEmitter;
         const auto infos = ParticleBehaviors();
         const auto find = [&](const ParticleBehaviorInfo &info) -> std::pair<std::vector<ParticleBehavior> &, size_t>
-        {
-            auto &stack = info.spawn ? emitter.spawnBehaviors : emitter.updateBehaviors;
-            const auto found = std::find_if(stack.begin(), stack.end(), [&](const ParticleBehavior &behavior)
-                { return behavior.name == info.name; });
-            return {stack, static_cast<size_t>(found - stack.begin())};
-        };
-        for (const char *section : { "Emission", "Simulation", "Motion", "Appearance" })
+            {
+                auto &stack = info.spawn ? emitter.spawnBehaviors : emitter.updateBehaviors;
+                const auto found = std::find_if(stack.begin(), stack.end(), [&](const ParticleBehavior &behavior)
+                    {
+                        return behavior.name == info.name;
+                    });
+                return { stack, static_cast<size_t>(found - stack.begin()) };
+            };
+        for (const char *section :{ "Emission", "Simulation", "Motion", "Appearance" })
         {
             if (!ImGui::CollapsingHeader(section, ImGuiTreeNodeFlags_DefaultOpen)) continue;
             for (const auto &info : infos)
@@ -517,7 +453,9 @@ namespace mir
                 if (!info.group.empty())
                 {
                     const auto prior = std::find_if(infos.begin(), infos.end(), [&](const ParticleBehaviorInfo &entry)
-                        { return entry.target == info.target && entry.group == info.group; });
+                        {
+                            return entry.target == info.target && entry.group == info.group;
+                        });
                     if (&*prior != &info) { ImGui::PopID(); continue; }
                     const ParticleBehaviorInfo *selected = nullptr;
                     for (const auto &choice : infos)
@@ -565,8 +503,8 @@ namespace mir
                         bool enabled = index < stack.size() && stack[index].enabled;
                         if (ImGui::Checkbox(label.c_str(), &enabled))
                             mDirtyEmitter |= index < stack.size() ?
-                                SetParticleBehaviorEnabled(emitter, info.spawn, index, enabled) :
-                                AddParticleBehavior(emitter, info.spawn, info.name);
+                            SetParticleBehaviorEnabled(emitter, info.spawn, index, enabled) :
+                            AddParticleBehavior(emitter, info.spawn, info.name);
                     }
                     auto [current, currentIndex] = find(info);
                     if (currentIndex < current.size() && current[currentIndex].enabled)
@@ -615,26 +553,7 @@ namespace mir
         mDirtyEmitter |= ImGui::InputScalar("Seed", ImGuiDataType_U32, &e.seed);
         mDirtyEmitter |= ImGui::DragFloat("Size", &e.size, 0.01f, 0.001f, 64);
         mDirtyEmitter |= ImGui::ColorEdit4("Base color", &e.color.x, ImGuiColorEditFlags_HDR|ImGuiColorEditFlags_Float);
-        if (e.sourceVersion == 2)
-        {
-            ImGui::TextWrapped("Legacy ordered emitter. Upgrade to edit one behavior per setting. "
-                "The fixed order or opacity blend may change its appearance.");
-            if (ImGui::Button("Upgrade to simple behavior editor"))
-            {
-                std::string message;
-                if (UpgradeParticleEmitter(e, message))
-                {
-                    mDirtyEmitter = true;
-                    mError = message;
-                }
-                else mError = message;
-            }
-            if (e.sourceVersion == 2 && ImGui::CollapsingHeader("Legacy ordered stack"))
-            {
-                DrawStack(true); DrawStack(false);
-            }
-        }
-        if (e.sourceVersion >= 3) DrawBehaviors();
+        DrawBehaviors();
         if (ImGui::CollapsingHeader("Renderer", ImGuiTreeNodeFlags_DefaultOpen))
         {
             auto &r = e.renderer;
@@ -710,6 +629,307 @@ namespace mir
         }
     }
 
+    void ParticleEditorPanel::SaveAll(AssetImportManager &imports)
+    {
+        CommitDraftGesture();
+        if (mDirtyEmitter) SaveEmitter(imports);
+        if (mDirtySystem) SaveSystem(imports);
+    }
+
+    void ParticleEditorPanel::DrawSelectBar(World &world, AssetImportManager &imports)
+    {
+        if (!mScanned) Scan();
+        const ImGuiStyle &style = ImGui::GetStyle();
+        const float buttons = ImGui::CalcTextSize("Refresh").x + ImGui::CalcTextSize("+ New").x +
+            style.FramePadding.x * 4 + style.ItemSpacing.x * 2;
+        std::string requestedSystem;
+        ImGui::BeginDisabled(mDirtySystem || mDirtyEmitter);
+        ImGui::SetNextItemWidth(-buttons);
+        if (ImGui::BeginCombo("##System", mSystemPath.empty() ? "Select a particle system" : mSystemPath.c_str()))
+        {
+            for (const auto &path : mSystems)
+                if (ImGui::Selectable(path.c_str(), path == mSystemPath)) requestedSystem = path;
+            ImGui::EndCombo();
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Refresh")) Scan();
+        ImGui::SameLine();
+        if (ImGui::Button("+ New")) ImGui::OpenPopup("New particle system");
+        if (ImGui::BeginPopup("New particle system"))
+        {
+            Text("Path", mNewSystemPath);
+            ImGui::Combo("Template", &mNewEmitterTarget, "Blank\0Sprite\0Ribbon\0Exhaust\0Contrail\0");
+            if (ImGui::Button("Create"))
+            {
+                try
+                {
+                    if (mDirtySystem || mDirtyEmitter) throw std::runtime_error("save or discard drafts before creating a system");
+                    OnHidden(world);
+                    CreateSystem(imports);
+                    ImGui::CloseCurrentPopup();
+                }
+                catch (const std::bad_alloc &) { throw; }
+                catch (const std::exception &error) { mError = error.what(); }
+            }
+            ImGui::EndPopup();
+        }
+        if (!requestedSystem.empty()) { OnHidden(world); LoadSystem(requestedSystem); }
+    }
+
+    void ParticleEditorPanel::DrawEditBar(AssetImportManager &imports)
+    {
+        ImGui::BeginDisabled(mUndoDrafts.empty() && !mGestureStart);
+        if (ImGui::Button("Undo")) UndoDraft();
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(mRedoDrafts.empty());
+        if (ImGui::Button("Redo")) RedoDraft();
+        ImGui::EndDisabled();
+        const ImGuiIO &io = ImGui::GetIO();
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && io.KeyCtrl && !io.WantTextInput)
+        {
+            if (ImGui::IsKeyPressed(ImGuiKey_Z)) UndoDraft();
+            else if (ImGui::IsKeyPressed(ImGuiKey_Y)) RedoDraft();
+        }
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!mDirtySystem && !mDirtyEmitter);
+        const bool save = ImGui::Button("Save");
+        ImGui::SetItemTooltip("Writes the system and emitter sources and queues a recook.");
+        ImGui::SameLine();
+        const bool discard = ImGui::Button("Discard");
+        ImGui::EndDisabled();
+        if (save) SaveAll(imports);
+        else if (discard && !mSystemPath.empty()) LoadSystem(mSystemPath);
+    }
+
+    void ParticleEditorPanel::DrawPreviewStrip(World &world, const EditorCamera &camera, float dt)
+    {
+        auto *particles = world.TryResource<ParticleWorld>();
+        const bool editing = IsEditing(world);
+        if (!editing) OnHidden(world);
+        ImGui::BeginDisabled(!particles || !editing || mSystemPath.empty());
+        if (ImGui::Button("Preview"))
+        {
+            OnHidden(world);mPreviewing = true;mPreviewPaused = false;mPreviewTime = 0;
+            mPreviewAnchor = camera.Pose();
+            mPreviewAnchor.linear = WorldMat3(1);
+            mPreviewAnchor.position = *WorldPosition::FromMeters(camera.Position().Meters()+WorldVec3(camera.Forward())*WorldReal(6));
+            if (const auto *selection = world.TryResource<Selection>();
+                selection != nullptr && selection->mSelected.size() == 1)
+            {
+                const Entity entity = selection->mSelected.front();
+                if (const auto *component = world.GetComponent<ParticleSystem>(entity);
+                    component != nullptr && mSystemPath == component->systemName)
+                {
+                    mPreviewEntity = entity;
+                    mPreviewAnchor = ResolveWorld(world, entity);
+                }
+            }
+        }
+        ImGui::SetItemTooltip("Preview uses cooked assets, at the selected entity when it uses this system.\n"
+            "Save recooks in Edit, Play waits until Stop.");
+        ImGui::SameLine();
+        if (ImGui::Button(mPreviewPaused ? "Resume" : "Pause"))
+        {
+            mPreviewPaused = !mPreviewPaused;if (particles) particles->Runtime().Pause(particles->PreviewHandle(), mPreviewPaused);
+        }
+        ImGui::SameLine(); if (ImGui::Button("Clear")) OnHidden(world);
+        ImGui::SameLine(); ImGui::Checkbox("Move", &mMovePreview);
+        ImGui::SetItemTooltip("Sweeps the preview attachment side to side.");
+        ImGui::EndDisabled();
+        if (!particles || !mPreviewing || !editing) return;
+        if (!particles->Runtime().Find(particles->PreviewHandle()))
+        {
+            const auto logical = MakeLogicalAssetPath(mIdRoot, mSystemPath);
+            const auto handle = particles->StartPreview(MakeAssetId(logical.path), mPreviewAnchor);
+            if (handle.IsNull()) { mPreviewing = false;mError = "Cook this system and its dependencies before previewing."; }
+            else particles->Runtime().Pause(handle, mPreviewPaused);
+        }
+        if (!mPreviewPaused)
+        {
+            mPreviewTime += std::min(dt, 0.067f);
+            auto pose = mPreviewAnchor;
+            if (!mPreviewEntity.IsNull() && world.IsAlive(mPreviewEntity))
+                pose = ResolveWorld(world, mPreviewEntity);
+            else if (mMovePreview)
+                pose.position = *WorldPosition::FromMeters(pose.position.Meters()+WorldVec3(std::sin(mPreviewTime)*2, 0, 0));
+            particles->Runtime().SetPose(particles->PreviewHandle(), pose);
+        }
+    }
+
+    // Every action targets the selected emitter, so the strip needs no per-row buttons.
+    void ParticleEditorPanel::DrawEmitterStrip(AssetImportManager &imports)
+    {
+        if (mSystemPath.empty()) return;
+        enum class Action { None, Duplicate, Remove, Up, Down };
+        const size_t count = mReferences.size();
+        const bool hasSelection = mSelected < count;
+        // Unmatched placement arrays can only be browsed, not restructured.
+        const bool placed = mSystem.emitters.size() == count && mSystem.placementIds.size() == count &&
+            mSystem.placementOffsets.size() == count;
+        const bool full = count >= kMaxSystemEmitters;
+        Action action = Action::None;
+        std::optional<size_t> picked;
+        ImGui::Separator();
+        ImGui::Text("Emitters %zu/%u", count, kMaxSystemEmitters);
+        ImGui::BeginDisabled(!placed || full);
+        if (ImGui::SmallButton("New")) ImGui::OpenPopup("New emitter");
+        ImGui::SetItemTooltip("Create a new emitter asset and add it.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Add")) ImGui::OpenPopup("Add existing emitter");
+        ImGui::SetItemTooltip("Add an existing emitter asset.");
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!hasSelection);
+        if (ImGui::SmallButton("Copy")) action = Action::Duplicate;
+        ImGui::SetItemTooltip("Place the selected emitter again, one metre along X.");
+        ImGui::EndDisabled();
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!placed || !hasSelection || count < 2);
+        if (ImGui::SmallButton("Remove")) action = Action::Remove;
+        ImGui::SetItemTooltip("Remove the selected emitter from this system. The emitter asset stays.");
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!placed || !hasSelection || mSelected == 0);
+        if (ImGui::SmallButton("Up")) action = Action::Up;
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!placed || !hasSelection || mSelected + 1 >= count);
+        if (ImGui::SmallButton("Down")) action = Action::Down;
+        ImGui::EndDisabled();
+
+        const ImGuiStyle &style = ImGui::GetStyle();
+        const float rows = static_cast<float>(std::clamp<size_t>(count, 3, kMaxSystemEmitters));
+        if (ImGui::BeginChild("##Emitters", ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * rows + style.WindowPadding.y * 2),
+            ImGuiChildFlags_Borders))
+        {
+            for (size_t i = 0; i < count; ++i)
+            {
+                ImGui::PushID(static_cast<int>(i));
+                const std::string label = std::to_string(i + 1) + "  " +
+                    std::filesystem::path(mReferences[i]).filename().string() +
+                    (i == mSelected && mDirtyEmitter ? " *" : "");
+                if (ImGui::Selectable(label.c_str(), i == mSelected)) picked = i;
+                ImGui::SetItemTooltip("%s", mReferences[i].c_str());
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndChild();
+        if (placed && hasSelection)
+        {
+            ImGui::TextDisabled("Origin relative to the scene entity");
+            ImGui::SetNextItemWidth(-1);
+            mDirtySystem |= ImGui::DragFloat3("##Origin", &mSystem.placementOffsets[mSelected].x, 0.05f,
+                -4096, 4096, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        }
+
+        // A throw between Begin and End would unbalance the popup stack, so failures are caught here.
+        const auto attempt = [this](auto &&work)
+            {
+                try { work(); }
+                catch (const std::bad_alloc &) { throw; }
+                catch (const std::exception &error) { mError = error.what(); }
+            };
+        if (ImGui::BeginPopup("New emitter"))
+        {
+            Text("Path", mNewEmitterPath);
+            ImGui::Combo("Template", &mNewEmitterTarget, "Blank\0Sprite\0Ribbon\0Exhaust\0Contrail\0");
+            if (ImGui::Button("Create"))
+                attempt([&] { CreateEmitter(imports); ImGui::CloseCurrentPopup(); });
+            ImGui::EndPopup();
+        }
+        if (ImGui::BeginPopup("Add existing emitter"))
+        {
+            for (const auto &path : mEmitters)
+                if (ImGui::Selectable(path.c_str()))
+                    attempt([&] { AttachEmitter(path); if (!mDirtyEmitter) LoadEmitter(mReferences.size() - 1); });
+            ImGui::EndPopup();
+        }
+
+        if (action != Action::None && hasSelection)
+        {
+            const size_t i = mSelected;
+            if (action == Action::Duplicate)
+            {
+                const auto offset = mSystem.placementOffsets[i];
+                AttachEmitter(mReferences[i]);
+                mSystem.placementOffsets.back() = offset + glm::vec3(1.0f, 0.0f, 0.0f);
+                mSelected = mReferences.size() - 1;
+            }
+            else if (action == Action::Remove)
+            {
+                if (mDirtyEmitter) mError = "Save the emitter before removing it from the system.";
+                else
+                {
+                    mReferences.erase(mReferences.begin() + i);
+                    mSystem.emitters.erase(mSystem.emitters.begin() + i);
+                    mSystem.placementIds.erase(mSystem.placementIds.begin() + i);
+                    mSystem.placementOffsets.erase(mSystem.placementOffsets.begin() + i);
+                    mDirtySystem = true;
+                    LoadEmitter(std::min(i, mReferences.size() - 1));
+                }
+            }
+            else
+            {
+                const size_t other = action == Action::Up ? i - 1 : i + 1;
+                std::swap(mReferences[i], mReferences[other]);
+                std::swap(mSystem.emitters[i], mSystem.emitters[other]);
+                std::swap(mSystem.placementIds[i], mSystem.placementIds[other]);
+                std::swap(mSystem.placementOffsets[i], mSystem.placementOffsets[other]);
+                mSelected = other;
+                mDirtySystem = true;
+            }
+        }
+        else if (picked && *picked != mSelected)
+        {
+            if (mDirtyEmitter) mError = "Save the current emitter before selecting another one.";
+            else { CommitDraftGesture(); LoadEmitter(*picked); }
+        }
+    }
+
+    void ParticleEditorPanel::DrawStatus(AssetImportManager &imports)
+    {
+        if (!mError.empty()) ImGui::TextWrapped("%s", mError.c_str());
+        if (mEmitter)
+        {
+            std::string error;
+            if (!ValidateParticleEmitterAsset(*mEmitter, error)) ImGui::TextWrapped("Validation: %s", error.c_str());
+        }
+        if (!imports.View().mLastError.empty()) ImGui::TextWrapped("Cook/reload: %s", imports.View().mLastError.c_str());
+        if (imports.View().mProcessRunning) ImGui::TextUnformatted("Cooking source assets...");
+        if (imports.PendingApply()) ImGui::TextUnformatted("Cook complete, waiting for the next Edit reload.");
+    }
+
+    // The settings scroll on their own so the select bar, preview strip and emitter list stay pinned.
+    void ParticleEditorPanel::DrawSettings(World &world)
+    {
+        const bool visible = ImGui::BeginChild("##Settings", ImVec2(0, 0));
+        if (visible)
+        {
+            ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.5f);
+            try
+            {
+                if (mSystemPath.empty()) ImGui::TextDisabled("Select or create a particle system.");
+                else
+                {
+                    if (ImGui::CollapsingHeader(mDirtySystem ? "System settings *" : "System settings"))
+                    {
+                        mDirtySystem |= ImGui::DragFloat("Birth scale", &mSystem.parameters.spawnRateScale, 0.05f, 0, 16);
+                        mDirtySystem |= ImGui::DragFloat("Size scale", &mSystem.parameters.sizeScale, 0.05f, 0, 16);
+                        mDirtySystem |= ImGui::DragFloat3("World wind", &mSystem.parameters.wind.x, 0.05f);
+                    }
+                    DrawEmitter();
+                }
+                if (ImGui::CollapsingHeader("Profiling and limits")) DrawDiagnostics(world);
+            }
+            catch (const std::bad_alloc &) { throw; }
+            catch (const std::exception &error) { mError = error.what(); }
+            ImGui::PopItemWidth();
+        }
+        ImGui::EndChild();
+    }
+
     void ParticleEditorPanel::Draw(bool &open, World &world, AssetCache &, AssetImportManager &imports,
         const EditorCamera &camera, float dt)
     {
@@ -719,7 +939,7 @@ namespace mir
             mCloseRequested = true;
         }
         if (!open) { OnHidden(world);return; }
-        ImGui::SetNextWindowSize(ImVec2(1050, std::min(800.0f, ImGui::GetMainViewport()->WorkSize.y-80)), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(380, std::min(800.0f, ImGui::GetMainViewport()->WorkSize.y-80)), ImGuiCond_FirstUseEver);
         if (!ImGui::Begin("Particle Editor", &open)) { ImGui::End();return; }
         mHistoryApplied = false;
         const DraftSnapshot before = CaptureDraft();
@@ -728,212 +948,12 @@ namespace mir
             if (mPendingHistoryAction < 0) UndoDraft();
             else if (mPendingHistoryAction > 0) RedoDraft();
             mPendingHistoryAction = 0;
-            ImGui::BeginDisabled(mUndoDrafts.empty() && !mGestureStart);
-            if (ImGui::Button("Undo")) UndoDraft();
-            ImGui::EndDisabled();
-            ImGui::SameLine();
-            ImGui::BeginDisabled(mRedoDrafts.empty());
-            if (ImGui::Button("Redo")) RedoDraft();
-            ImGui::EndDisabled();
-            const ImGuiIO &io = ImGui::GetIO();
-            if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && io.KeyCtrl &&
-                !io.WantTextInput)
-            {
-                if (ImGui::IsKeyPressed(ImGuiKey_Z)) UndoDraft();
-                else if (ImGui::IsKeyPressed(ImGuiKey_Y)) RedoDraft();
-            }
-            ImGui::SameLine();
-            if (!mScanned || ImGui::Button("Refresh systems")) Scan();
-            Text("New system path", mNewSystemPath);
-            ImGui::Combo("Template", &mNewEmitterTarget, "Blank\0Sprite\0Ribbon\0Exhaust\0Contrail\0");
-            if (ImGui::Button("Create particle system"))
-            {
-                if (mDirtySystem || mDirtyEmitter) throw std::runtime_error("save or discard drafts before creating a system");
-                OnHidden(world);
-                CreateSystem(imports);
-            }
-            if ((mDirtySystem || mDirtyEmitter) && ImGui::Button("Discard drafts and reload")) LoadSystem(mSystemPath);
-            std::string requestedSystem;
-            ImGui::BeginDisabled(mDirtySystem || mDirtyEmitter);
-            if (ImGui::BeginCombo("System", mSystemPath.empty() ? "Select a particle system" : mSystemPath.c_str()))
-            {
-                for (const auto &path:mSystems) if (ImGui::Selectable(path.c_str(), path==mSystemPath)) requestedSystem = path;
-                ImGui::EndCombo();
-            }
-            ImGui::EndDisabled();
-            if (!requestedSystem.empty()) { OnHidden(world); LoadSystem(requestedSystem); }
-            auto *particles = world.TryResource<ParticleWorld>();
-            const bool editing = IsEditing(world);
-            if (!editing) OnHidden(world);
-            ImGui::BeginDisabled(!particles || !editing || mSystemPath.empty());
-            if (ImGui::Button("Preview"))
-            {
-                OnHidden(world);mPreviewing = true;mPreviewPaused = false;mPreviewTime = 0;
-                mPreviewAnchor = camera.Pose();
-                mPreviewAnchor.linear = WorldMat3(1);
-                mPreviewAnchor.position = *WorldPosition::FromMeters(camera.Position().Meters()+WorldVec3(camera.Forward())*WorldReal(6));
-                if (const auto *selection = world.TryResource<Selection>();
-                    selection != nullptr && selection->mSelected.size() == 1)
-                {
-                    const Entity entity = selection->mSelected.front();
-                    if (const auto *component = world.GetComponent<ParticleSystem>(entity);
-                        component != nullptr && mSystemPath == component->systemName)
-                    {
-                        mPreviewEntity = entity;
-                        mPreviewAnchor = ResolveWorld(world, entity);
-                    }
-                }
-            }
-            ImGui::SameLine();
-            if (ImGui::Button(mPreviewPaused ? "Resume preview" : "Pause preview"))
-            {
-                mPreviewPaused = !mPreviewPaused;if (particles) particles->Runtime().Pause(particles->PreviewHandle(), mPreviewPaused);
-            }
-            ImGui::SameLine(); if (ImGui::Button("Clear preview")) OnHidden(world);
-            ImGui::Checkbox("Move preview attachment", &mMovePreview);
-            ImGui::EndDisabled();
-            if (particles && mPreviewing && editing)
-            {
-                if (!particles->Runtime().Find(particles->PreviewHandle()))
-                {
-                    const auto logical = MakeLogicalAssetPath(mIdRoot, mSystemPath);
-                    const auto handle = particles->StartPreview(MakeAssetId(logical.path), mPreviewAnchor);
-                    if (handle.IsNull()) { mPreviewing = false;mError = "Cook this system and its dependencies before previewing."; }
-                    else particles->Runtime().Pause(handle, mPreviewPaused);
-                }
-                if (!mPreviewPaused)
-                {
-                    mPreviewTime += std::min(dt, 0.067f);
-                    auto pose = mPreviewAnchor;
-                    if (!mPreviewEntity.IsNull() && world.IsAlive(mPreviewEntity))
-                        pose = ResolveWorld(world, mPreviewEntity);
-                    else if (mMovePreview)
-                        pose.position = *WorldPosition::FromMeters(pose.position.Meters()+WorldVec3(std::sin(mPreviewTime)*2, 0, 0));
-                    particles->Runtime().SetPose(particles->PreviewHandle(), pose);
-                }
-            }
-            ImGui::TextWrapped("Preview uses cooked assets%s. Save and recook applies in Edit, Play waits until Stop.",
-                mPreviewEntity.IsNull() ? "" : " at the selected entity");
-            if (ImGui::CollapsingHeader("Profiling and limits")) DrawDiagnostics(world);
-            if (!mSystemPath.empty())
-            {
-                ImGui::Separator();
-                if (ImGui::CollapsingHeader("Effect settings", ImGuiTreeNodeFlags_DefaultOpen))
-                {
-                ImGui::TextWrapped("Shared settings for every place this effect is used in a scene.%s", mDirtySystem ? " Unsaved." : "");
-                mDirtySystem |= ImGui::DragFloat("System birth scale", &mSystem.parameters.spawnRateScale, 0.05f, 0, 16);
-                mDirtySystem |= ImGui::DragFloat("System size scale", &mSystem.parameters.sizeScale, 0.05f, 0, 16);
-                mDirtySystem |= ImGui::DragFloat3("World wind", &mSystem.parameters.wind.x, 0.05f);
-                }
-                if (mSystem.sourceVersion == 2)
-                {
-                    ImGui::TextWrapped("This older effect plays as saved. Upgrade to add another position for the same emitter.");
-                    if (ImGui::Button("Upgrade effect"))
-                    {
-                        mSystem.sourceVersion = 3;
-                        mDirtySystem = true;
-                    }
-                }
-                std::optional<size_t> requestedEmitter;
-                std::optional<size_t> detachPlacement;
-                std::optional<std::pair<size_t, size_t>> movePlacement;
-                std::optional<size_t> duplicatePlacement;
-                ImGui::Separator();
-                ImGui::TextUnformatted("Emitters in this effect");
-                ImGui::TextWrapped("Each entry creates particles at a local position. Reuse an emitter to make another nozzle.");
-                for (size_t i = 0;i<mReferences.size();++i)
-                {
-                    ImGui::PushID(static_cast<int>(i));
-                    if (mSystem.sourceVersion == 2)
-                        ImGui::TextWrapped("%s", mReferences[i].c_str());
-                    else
-                    {
-                        if (ImGui::Selectable(mReferences[i].c_str(), mSelected == i)) requestedEmitter = i;
-                        if (mSelected == i)
-                        {
-                            ImGui::TextUnformatted("Position relative to the effect's scene entity");
-                            mDirtySystem |= ImGui::DragFloat3("##Local origin", &mSystem.placementOffsets[i].x, 0.05f,
-                                -4096, 4096, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-                            if (mReferences.size() < kMaxSystemEmitters && ImGui::SmallButton("Add another at +1 X"))
-                                duplicatePlacement = i;
-                            if (mReferences.size() > 1)
-                            {
-                                ImGui::SameLine();
-                                if (ImGui::SmallButton("Remove from effect")) detachPlacement = i;
-                            }
-                            if (i && ImGui::SmallButton("Move up")) movePlacement = {{i, i - 1}};
-                            if (i + 1 < mReferences.size())
-                            {
-                                ImGui::SameLine();
-                                if (ImGui::SmallButton("Move down")) movePlacement = {{i, i + 1}};
-                            }
-                        }
-                    }
-                    ImGui::PopID();
-                }
-                if (movePlacement)
-                {
-                    const auto [a, b] = *movePlacement;
-                    std::swap(mReferences[a], mReferences[b]);
-                    std::swap(mSystem.emitters[a], mSystem.emitters[b]);
-                    std::swap(mSystem.placementIds[a], mSystem.placementIds[b]);
-                    std::swap(mSystem.placementOffsets[a], mSystem.placementOffsets[b]);
-                    if (mSelected == a) mSelected = b;
-                    else if (mSelected == b) mSelected = a;
-                    mDirtySystem = true;
-                }
-                else if (duplicatePlacement)
-                {
-                    const auto i = *duplicatePlacement;
-                    const auto offset = mSystem.placementOffsets[i];
-                    AttachEmitter(mReferences[i]);
-                    mSystem.placementOffsets.back() = offset + glm::vec3(1.0f, 0.0f, 0.0f);
-                }
-                else if (detachPlacement)
-                {
-                    const auto i = *detachPlacement;
-                    mReferences.erase(mReferences.begin() + i);
-                    mSystem.emitters.erase(mSystem.emitters.begin() + i);
-                    mSystem.placementIds.erase(mSystem.placementIds.begin() + i);
-                    mSystem.placementOffsets.erase(mSystem.placementOffsets.begin() + i);
-                    mDirtySystem = true;
-                    if (i == mSelected) { mEmitter.reset(); mEmitterPath.clear(); }
-                }
-                else if (requestedEmitter && *requestedEmitter != mSelected)
-                {
-                    if (mDirtyEmitter) mError = "Save the current emitter before selecting another one.";
-                    else { CommitDraftGesture(); LoadEmitter(*requestedEmitter); }
-                }
-                if (mSystem.sourceVersion >= 3)
-                {
-                    ImGui::BeginDisabled(mReferences.size() >= kMaxSystemEmitters);
-                    ImGui::TextUnformatted("Add an existing emitter");
-                    ImGui::SetNextItemWidth(-1);
-                    if (ImGui::BeginCombo("##Use existing emitter", "Choose emitter asset"))
-                    {
-                        for (const auto &path : mEmitters)
-                            if (ImGui::Selectable(path.c_str())) AttachEmitter(path);
-                        ImGui::EndCombo();
-                    }
-                    if (ImGui::TreeNode("Create a new emitter"))
-                    {
-                        Text("Asset path", mNewEmitterPath);
-                        if (ImGui::Button("Create and add")) CreateEmitter(imports);
-                        ImGui::TreePop();
-                    }
-                    ImGui::EndDisabled();
-                }
-                if (ImGui::Button("Save effect"))
-                    SaveSystem(imports);
-            }
-            DrawEmitter();
-            if (mEmitter && ImGui::Button("Save emitter"))
-                SaveEmitter(imports);
-            if (mEmitter)
-            {
-                std::string error;
-                if (!ValidateParticleEmitterAsset(*mEmitter, error)) ImGui::TextWrapped("Validation: %s", error.c_str());
-            }
+            DrawSelectBar(world, imports);
+            DrawEditBar(imports);
+            DrawPreviewStrip(world, camera, dt);
+            DrawEmitterStrip(imports);
+            DrawStatus(imports);
+            DrawSettings(world);
         }
         catch (const std::bad_alloc &) { throw; }
         catch (const std::exception &error) { mError = error.what(); }
@@ -964,9 +984,7 @@ namespace mir
             {
                 try
                 {
-                    CommitDraftGesture();
-                    if (mDirtyEmitter) SaveEmitter(imports);
-                    if (mDirtySystem) SaveSystem(imports);
+                    SaveAll(imports);
                     mCloseRequested = false;
                     open = false;
                     ImGui::CloseCurrentPopup();
@@ -979,7 +997,7 @@ namespace mir
                 mError.clear();
                 if (!mSystemPath.empty())
                     try { LoadSystem(mSystemPath); }
-                    catch (const std::exception &error) { mError = error.what(); }
+                catch (const std::exception &error) { mError = error.what(); }
                 if (mError.empty())
                 {
                     mCloseRequested = false;
@@ -995,10 +1013,6 @@ namespace mir
             }
             ImGui::EndPopup();
         }
-        if (!mError.empty()) ImGui::TextWrapped("%s", mError.c_str());
-        if (!imports.View().mLastError.empty()) ImGui::TextWrapped("Cook/reload: %s", imports.View().mLastError.c_str());
-        if (imports.View().mProcessRunning) ImGui::TextUnformatted("Cooking source assets...");
-        if (imports.PendingApply()) ImGui::TextUnformatted("Cook complete, waiting for the next Edit reload.");
         ImGui::End();
         if (!open) OnHidden(world);
     }

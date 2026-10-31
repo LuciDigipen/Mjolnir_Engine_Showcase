@@ -36,19 +36,20 @@ required and unknown fields are rejected:
 
 ```json
 {
-  "version": 2,
-  "emitters": ["exhaust.emitter.json"],
-  "parameters": {"spawnRateScale": 1.0, "sizeScale": 1.0}
+  "version": 3,
+  "parameters": {"spawnRateScale": 1.0, "sizeScale": 1.0},
+  "placements": [{"id": 1, "emitter": "exhaust.emitter.json", "offset": [0, 0, 0]}]
 }
 ```
 
-A system lists at most eight unique emitter asset paths and may set finite scale
-parameters in [0, 16]. Each `.emitter.json` version 1 defines target (`gpu` or
+A system lists at most eight placements. A placement has a unique id, an emitter asset
+path and a local offset, and the same emitter asset may be placed more than once.
+Scale parameters are finite and in [0, 16]. Each `.emitter.json` version 3 defines target (`gpu` or
 `cpu`), lifetime, spawn rate, capacity, texture, and optional renderer defaults
 (size, color and velocity). Emitter and texture paths resolve from the asset root
 and must stay inside it. Textures use the typed texture cooker. Missing or invalid
 dependencies fail before manifest publication. System blobs use type tag
-`0x54524150`, version 2; emitter blobs use type tag `0x454D4954`, version 3.
+`0x54524150`, version 3; emitter blobs use type tag `0x454D4954`, version 7.
 Cooked system assets retain emitter IDs, while loaded system definitions resolve
 those emitter and texture assets through `AssetCache`. Runtime never reads source
 JSON or decodes images.
@@ -143,8 +144,10 @@ from other roots during particle-only recooks.
 
 ## Cooked behavior stacks
 
-Emitter source version 2 accepts ordered `spawnBehaviors` and `updateBehaviors` arrays.
-Each entry has a `name` and a numeric `parameters` array. The initial GPU registry
+Emitter source version 3 accepts `spawnBehaviors` and `updateBehaviors` arrays.
+Each entry has a `name`, a numeric `parameters` array and an `enabled` flag. A behavior
+appears at most once, behaviors run in the registry's fixed order, and behaviors in
+one mode group exclude each other. A required behavior cannot be disabled. The initial GPU registry
 supports spawn `Initialize` (no parameters) and update `Age`, `Integrate` (no
 parameters), and `Acceleration` (three finite floats, metres per second squared).
 Omitted GPU stacks default to Initialize and Age/Integrate, reproducing the original
@@ -201,28 +204,20 @@ claiming large-world precision.
 Additional GPU operations are spawn `VelocityVariation` (three nonnegative velocity
 amplitudes), and update `Drag` (coefficient), `SizeOverLife` (end size multiplier),
 `FadeOverLife` (end alpha), and `Flipbook` (integer columns, integer rows, frames per
-second). Curves interpolate linearly with normalized age, authored behavior order
-is respected. Seeded variation hashes the emitter seed and birth sequence, it
+second). Curves interpolate linearly with normalized age and behaviors run in
+the registry order. Seeded variation hashes the emitter seed and birth sequence, it
 promises repeatability for the same stream/timing, not cross-GPU bitwise identity.
-Place Age before lifetime curves. Flipbooks sample the cooked texture atlas.
-
-`ParticleFlight` is a normal game project with a scripted two-engine aircraft,
-a follow camera, time/distance spawning, bursts, rotating offsets, world wind,
-seeded spread, size/alpha curves and a four-frame flipbook. Its 96 m radius path
-crosses shared tile boundaries. The existing `ParticleCheck` remains the static
-three-emitter comparison scene. Two CPU ribbon emitters provide persistent contrails.
+Flipbooks sample the cooked texture atlas.
 
 ## CPU ribbon emitters
 
-CPU emitters use the same ordered stacks as GPU emitters, and the CPU registry is
+CPU emitters use the same stack editing as GPU emitters, and the CPU registry is
 `RibbonSpawn(maxInterval)` for the spawn stage plus `RibbonAge`, `RibbonWind`,
 `RibbonWidth(endScale)`, `RibbonWidthCurve(start, middle, end)`, `RibbonColorGradient`
 and `RibbonFade` for the update stage. `RibbonSpawn` and `RibbonAge` are required,
-everything else is optional and any behavior may appear more than once. Behaviors
-assign the attributes they own, so the last width behavior sets the width, the last
-`RibbonSpawn` sets the interval, and `RibbonColorGradient` assigns the whole color and
-drops an earlier `RibbonFade`. `RibbonFade` scales the current alpha by the remaining
-life. Without a width behavior the width is the emitter size, without a gradient the
+everything else is optional and each behavior appears at most once. Behaviors
+assign the attributes they own. `RibbonColorGradient` assigns the whole color, then
+`RibbonFade` scales the gradient alpha by the remaining life. Without a width behavior the width is the emitter size, without a gradient the
 color is the emitter color, without `RibbonFade` alpha stays constant and without
 `RibbonWind` samples do not drift. The stack is resolved once per tick, so the cost
 does not grow per sample. This focused stack has no GPU script dependency.
@@ -278,8 +273,8 @@ Project > Particles edits system references, user scales and world wind, emitter
 spawn/update stacks, renderer properties and importance/distance quality. Save
 buttons write validated source JSON atomically and queue the normal AssetCooker
 workflow. GPU stack edits compile new scripts, renderer-only edits retain script
-identity. Emitter source remains version 1 and system source version 2, cooked
-emitter content is version 5.
+identity. Emitter and system source are version 3, cooked system content is
+version 3 and cooked emitter content is version 7.
 
 `SizeCurve(start,middle,end)` and `RibbonWidthCurve(start,middle,end)` interpolate
 linearly at normalized ages 0, 0.5 and 1. `ColorGradient` and
@@ -315,13 +310,27 @@ are alive, games can configure the same ParticleBudgets API. CPU bytes are a
 conservative retained-data reservation including definitions, payloads and bounded
 history/birth buffers, not an allocator-wide measurement.
 
-`games/FlightEffectsCheck` provides a shared scripted route for interactive play
-and test-only hidden profiling. It exercises acceleration, wind, turns, offscreen
-history, stop/drain, large coordinates and eight aircraft. See
-[acceptance results](../particle-acceptance.md) for quality settings, measurements
-and remaining gates.
+See [acceptance results](../particle-acceptance.md) for quality settings,
+measurements and remaining gates.
 
 ## Changed
+
+*2026-10-30* — **Version 2 particle sources are gone.** Was: system source version 2
+listed unique `emitters`, emitter source version 2 kept its authored order, allowed
+duplicates and let a later behavior override an earlier one, and the editor could
+upgrade either. Now: system and emitter sources are version 3 only, behaviors run in
+registry order, each appears once, and older sources or cooked blobs are rejected
+with a message to recreate them. `ParticleCheck`, `ParticleFlight`,
+`FlightEffectsCheck` and the `FlightEffectsCheck` tool were deleted with them. Because:
+the ordered stack and the upgrade paths doubled every authoring rule, and the only
+version 2 assets were those test games.
+
+*2026-10-30* — **The particle panel is a narrow column.** Was: a 1050 px window with a
+420 px emitter column, creation beside selection and the emitter list scrolling away
+with the settings. Now: a 380 px window with the system select and create bar, the edit
+bar, the preview strip and the emitter list pinned above scrolling settings, and one
+Save for the system and emitter. Because: the preview was hard to see and emitters were
+hard to find, add and remove.
 
 *2026-10-29* â€” **CPU ribbon stacks are editable.** Was: the validator accepted one fixed
 shape, `RibbonSpawn` then `RibbonAge`, `RibbonWind`, a width, an optional gradient and

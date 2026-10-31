@@ -172,7 +172,6 @@ engine_add_shaders(MjolnirEngine
 
 if(BUILD_TESTING)
     add_subdirectory(tools/ParticleGpuCheck)
-    add_subdirectory(tools/FlightEffectsCheck)
 endif()
 
 engine_add_shaders(MjolnirEngine
@@ -367,27 +366,6 @@ if(BUILD_TESTING)
         set_tests_properties(smoke.game-mode PROPERTIES
             LABELS smoke
             TIMEOUT 120)
-    endif()
-
-    if(EXISTS "${CMAKE_SOURCE_DIR}/games/ParticleFlight/game.json")
-        add_test(NAME smoke.ParticleFlight.game-mode
-            COMMAND MjolnirEngine --non-interactive --hidden --game games/ParticleFlight --no-editor --frames 240)
-        set_tests_properties(smoke.ParticleFlight.game-mode PROPERTIES
-            LABELS smoke RUN_SERIAL TRUE TIMEOUT 120)
-    endif()
-
-    if(EXISTS "${CMAKE_SOURCE_DIR}/games/FlightEffectsCheck/game.json")
-        add_test(NAME smoke.FlightEffectsCheck.game-mode
-            COMMAND MjolnirEngine --non-interactive --hidden --game games/FlightEffectsCheck --no-editor --frames 240)
-        set_tests_properties(smoke.FlightEffectsCheck.game-mode PROPERTIES
-            LABELS smoke RUN_SERIAL TRUE TIMEOUT 120)
-    endif()
-
-    if(EXISTS "${CMAKE_SOURCE_DIR}/games/ParticleCheck/game.json")
-        add_test(NAME smoke.ParticleCheck.game-mode
-            COMMAND MjolnirEngine --non-interactive --hidden --game games/ParticleCheck --no-editor --frames 180)
-        set_tests_properties(smoke.ParticleCheck.game-mode PROPERTIES
-            LABELS smoke RUN_SERIAL TRUE TIMEOUT 120)
     endif()
 
     # TerrainCheck from its scene camera, which sees both terrains: per-viewport selection, streaming and tracing

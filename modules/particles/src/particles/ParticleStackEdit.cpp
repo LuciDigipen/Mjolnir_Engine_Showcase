@@ -38,11 +38,11 @@ namespace mir
         auto &stack = Stack(emitter, spawn);
         const auto *info = Find(emitter, spawn, name);
         if (!info || stack.size() >= kMaxStackEntries) return false;
-        if (emitter.sourceVersion >= 3 && std::any_of(stack.begin(), stack.end(),
+        if (std::any_of(stack.begin(), stack.end(),
             [&](const ParticleBehavior &entry) { return entry.name == name; })) return false;
         ParticleBehavior behavior{ std::string(info->name),{} };
         for (const auto &parameter : info->parameters) behavior.parameters.push_back(parameter.defaultValue);
-        if (emitter.sourceVersion >= 3 && !info->group.empty())
+        if (!info->group.empty())
             for (auto &entry : stack)
             {
                 const auto *other = Find(emitter, spawn, entry.name);
@@ -57,9 +57,7 @@ namespace mir
         const auto &stack = spawn ? emitter.spawnBehaviors : emitter.updateBehaviors;
         if (index >= stack.size()) return false;
         const auto *info = Find(emitter, spawn, stack[index].name);
-        if (!info || !info->required) return true;
-        if (emitter.sourceVersion >= 3) return false;
-        return std::count_if(stack.begin(), stack.end(), [&](const ParticleBehavior &entry) { return entry.name == stack[index].name; }) > 1;
+        return !info || !info->required;
     }
 
     bool RemoveParticleBehavior(ParticleEmitterAsset &emitter, bool spawn, size_t index)
@@ -70,18 +68,8 @@ namespace mir
         return true;
     }
 
-    bool MoveParticleBehavior(ParticleEmitterAsset &emitter, bool spawn, size_t index, int direction)
-    {
-        if (emitter.sourceVersion >= 3) return false;
-        auto &stack = Stack(emitter, spawn);
-        if (index >= stack.size() || (direction < 0 && index == 0) || (direction > 0 && index + 1 >= stack.size())) return false;
-        std::swap(stack[index], stack[direction < 0 ? index - 1 : index + 1]);
-        return true;
-    }
-
     bool SetParticleBehaviorEnabled(ParticleEmitterAsset &emitter, bool spawn, size_t index, bool enabled)
     {
-        if (emitter.sourceVersion < 3) return false;
         auto &stack = Stack(emitter, spawn);
         if (index >= stack.size()) return false;
         const auto *info = Find(emitter, spawn, stack[index].name);
@@ -93,38 +81,6 @@ namespace mir
                 if (candidate && candidate->group == info->group) other.enabled = false;
             }
         stack[index].enabled = enabled;
-        return true;
-    }
-
-    bool UpgradeParticleEmitter(ParticleEmitterAsset &emitter, std::string &message)
-    {
-        if (emitter.sourceVersion >= 3) { message.clear(); return true; }
-        auto upgraded = emitter;
-        upgraded.sourceVersion = 3;
-        if (!ValidateParticleEmitterAsset(upgraded, message)) return false;
-        bool reordered = false;
-        for (bool spawn : { true, false })
-        {
-            const auto &old = spawn ? emitter.spawnBehaviors : emitter.updateBehaviors;
-            const auto ordered = ActiveParticleBehaviors(upgraded, spawn);
-            for (size_t i = 0; i < ordered.size(); ++i)
-                if (ordered[i]->name != old[i].name) reordered = true;
-        }
-        const auto has = [&](std::string_view name)
-            {
-                return std::any_of(emitter.updateBehaviors.begin(), emitter.updateBehaviors.end(),
-                    [&](const ParticleBehavior &behavior) { return behavior.name == name; });
-            };
-        const bool opacityChanges = (has("ColorGradient") && has("FadeOverLife")) ||
-            (has("FadeOverLife") && std::any_of(emitter.updateBehaviors.begin(), emitter.updateBehaviors.end(),
-                [](const ParticleBehavior &behavior)
-                {
-                    return behavior.name == "FadeOverLife" && behavior.parameters[0] != 0;
-                }));
-        const bool ribbonOrderChanges = has("RibbonColorGradient") && has("RibbonFade") && reordered;
-        emitter = std::move(upgraded);
-        message = reordered || opacityChanges || ribbonOrderChanges ?
-            "Fixed behavior order or opacity composition may change the effect, compare the preview before saving." : "";
         return true;
     }
 }

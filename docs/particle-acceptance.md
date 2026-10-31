@@ -6,7 +6,7 @@ T8 through T11 remain separate work, including reflection, shadow and GI rays.
 
 ## Route and method
 
-`games/FlightEffectsCheck` uses one or eight aircraft, each with two GPU exhaust
+`games/FlightEffectsCheck`, deleted on 2026-10-30, used one or eight aircraft, each with two GPU exhaust
 and two CPU contrail emitters. The shared Lua route accelerates, turns, changes wind,
 moves the camera 10 km away and back, stops emission at 80 simulated seconds and
 continues to 150 seconds. Contrails use a four-metre or 0.25-second sampling tier,
