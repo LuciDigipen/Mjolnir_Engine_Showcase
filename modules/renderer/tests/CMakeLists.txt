@@ -13,6 +13,7 @@ engine_add_module_tests(renderer
     MaterialReflection.tests.cpp
     MaterialResolution.tests.cpp
     SurfaceMaterialCatalog.tests.cpp
+    SurfaceMaterialLibrary.tests.cpp
     SurfaceMaterialLayout.tests.cpp
     MeshStreaming.tests.cpp
     FogEffect.tests.cpp

@@ -56,6 +56,15 @@ namespace mir
         return nullptr;
     }
 
+    const SurfaceMaterialRegistration *SurfaceMaterialCatalog::FindByAsset(
+        std::string_view asset, std::string_view frontend) const
+    {
+        for (const SurfaceMaterialRegistration &material : materials)
+            if (material.asset == asset && material.frontend == frontend)
+                return &material;
+        return nullptr;
+    }
+
     uint32_t SurfaceMaterialCatalog::IndexOf(const SurfaceMaterialRegistration *registration) const
     {
         if (registration == nullptr)
@@ -128,7 +137,8 @@ namespace mir
                 material.shader = entry.at("shader").get<std::string>();
                 material.parametersJson = entry.at("parameters").dump();
                 material.reflectionFile = entry.at("reflection").get<std::string>();
-                if (material.stem.empty() || material.type.empty() || material.frontend != "mesh" ||
+                if (material.stem.empty() || material.type.empty() ||
+                    (material.frontend != "mesh" && material.frontend != "terrain") ||
                     material.asset.empty() || material.shader.empty() || material.reflectionFile.empty())
                 {
                     SetError(error, "surface material catalog entry is incomplete");

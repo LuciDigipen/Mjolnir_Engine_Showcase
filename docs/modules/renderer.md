@@ -246,8 +246,12 @@ build-generated `shaders/surface_materials.json` is the runtime registration
 catalog. Records are packed from each entry's authored parameters and typed
 reflection, never from a C++ field mirror. RT allocates a primary/shadow SBT
 record pair per catalog entry; a surface instance's even base offset is
-`2 + 2*i`, so primary and shadow rays both stay in bounds. See
-`docs/material-pipeline.md` and ADR 0003.
+`2 + 2*i`, so primary and shadow rays both stay in bounds. Terrain registrations
+are compiled through `SurfaceTerrainForward.slang` and `SurfaceTerrainRt.slang`;
+`SurfaceMaterialLibrary` stages a complete candidate generation in
+`ReloadPrepare`, swaps it in `ReloadCommit`, and retires the old
+materials/textures through `ReleaseModelResources`. See
+`docs/material-pipeline.md`, ADR 0003 and ADR 0004.
 
 **Vulkan 1.4 with `dynamicRendering`, `synchronization2`, `timelineSemaphore` and
 `shaderDrawParameters`.** A device missing any of them is rejected during

@@ -1000,11 +1000,12 @@ and places the shape at placement plus that origin (see
 
 ### Scene instances and pinned releases
 
-A scene holds terrain as a `TerrainInstance` component: the recipe path
-relative to the game's assetsRoot, nothing else. Its placement is the entity's
-Transform position, so the entity must be a root with identity rotation and
-unit scale. Tiles never become entities, and a scene file holds one small entity
-per instance.
+A scene holds terrain as a `TerrainInstance` component: the recipe path and
+an optional material path, both relative to the game's assetsRoot. Its
+placement is the entity's Transform position, so the entity must be a root with
+identity rotation and unit scale. The material is a render binding, not part of
+release or geometry identity. Tiles never become entities, and a scene file
+holds one small entity per instance.
 
 ```cpp
 // scenes/default/entities/1.json: Transform at (150000.5, -20, -75000.25) and
@@ -1260,11 +1261,11 @@ tools\TerrainTool\TerrainTool.exe publish --candidate terrain-candidates\relief-
 | `BuildTerrainTileMesh`, `TerrainMeshResult`, `TerrainMeshStatus` | `terrain/TerrainTileMesh.h` | builds it from a `TileSampleLookup`; `MissingTile`, `MissingNeighbour`, `InvalidSamples`, `InvalidInput` instead of a mesh |
 | `TerrainTileMeshWorldOrigin` | `terrain/TerrainTileMesh.h` | placement plus mesh origin in double; nullopt for another asset or an overflow |
 | `TerrainAreaSamples`, `BuildTerrainAreaSamples` | `terrain/TerrainAreaSamples.h` | every meshed cell's samples in one block from the owning tiles, with its first sample as origin, for one collider over the map; refuses more than `kMaxTerrainAreaSamplesPerSide` (32768) a side |
-| `TerrainInstance`, `RegisterTerrainComponents` | `terrain/components/TerrainInstance.h`, `terrain/ComponentRegistration.h` | the scene component: `recipePath` (String, at most 63 characters) relative to assetsRoot; placement is the root entity's Transform position |
+| `TerrainInstance`, `RegisterTerrainComponents` | `terrain/components/TerrainInstance.h`, `terrain/ComponentRegistration.h` | the scene component: `recipePath` and `materialPath` (String, at most 63 characters each) relative to assetsRoot; placement is the root entity's Transform position |
 | `TerrainSceneSpec`, `TerrainInstanceSpec`, `TerrainIssue`, `TerrainIssueKind` | `terrain/TerrainScene.h` | what the World asks for, sorted by content; refusals with a one-line message (`MissingRecipe`, `BadRecipePath`, `InvalidPlacement`, `NoRelease`, `BadRelease`, `Overlap`); `HasTerrain` |
 | `CollectTerrainScene` | `terrain/TerrainScene.h` | reads every `TerrainInstance` and its Transform; resolves the asset id, checks the placement |
 | `TerrainResidentRelease` | `terrain/TerrainScene.h` | one release opened (index only) with its height query, filled by a streamer; `Open`, `Create` (from a handle or a shared one), `Info`, `Layout`, `Handle`, `SharedHandle`, `Query`, `Lookup` |
-| `TerrainWorld`, `TerrainInstanceState`, `TerrainWorldRect` | `terrain/TerrainScene.h` | World resource: per asset the pinned release and what `current` last named, per instance placement, effective XZ bounds and release; `HeightAt`, `SameDerivedState`, `RemoveInstance` |
+| `TerrainWorld`, `TerrainInstanceState`, `TerrainWorldRect` | `terrain/TerrainScene.h` | World resource: per asset the pinned release and what `current` last named, per instance placement, effective XZ bounds, release and current entity; `HeightAt`, `SameDerivedState`, `RemoveInstance`, `SyncInstanceEntities` |
 | `ResolveTerrainWorld`, `TerrainEagerLoad`, `TerrainCurrentMoved` | `terrain/TerrainScene.h` | resolve a spec against the releases through a streamer, reusing what is loaded; with `Wait` a new Eager release is waited for, with `Async` (the engine) not; a poll of the pointers |
 | `TerrainResolveOptions`, `TerrainReleaseOpener`, `TerrainReleaseFileOpener` | `terrain/TerrainScene.h` | `eager`; `keepLoaded` (the engine: a loaded asset keeps its release whatever `current` names); `adopt` (verified releases put in place of their assets' loaded ones); `open` (how a release is opened, on any thread; `OpenTerrainRelease` under the releases root by default) |
 | `PeekTerrainCurrentPointer` | `terrain/TerrainRelease.h` | `ReadTerrainCurrentPointer` without the FileIO log line when nothing is published |

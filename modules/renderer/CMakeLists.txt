@@ -21,12 +21,12 @@ target_include_directories(engine_renderer PRIVATE ${Stb_INCLUDE_DIR})
 
 target_link_libraries(engine_renderer
     PUBLIC volk::volk_headers
+            mir::assets
             mir::core
             glm::glm
             nlohmann_json::nlohmann_json
     PRIVATE GPUOpen::VulkanMemoryAllocator
             imgui::imgui
-            mir::assets
             mir::serial
 )
 
@@ -68,6 +68,7 @@ target_sources(engine_renderer PRIVATE
     src/renderer/MaterialReflection.cpp
     src/renderer/MaterialResolution.cpp
     src/renderer/SurfaceMaterialCatalog.cpp
+    src/renderer/SurfaceMaterialLibrary.cpp
     src/renderer/MotionBlurEffect.cpp
     src/renderer/PostEffectRegistry.cpp
     src/renderer/PostProcessingSettings.cpp

@@ -57,6 +57,36 @@ struct MaterialRecordRef
     uint reserved;
 };
 
+// World-space UV gradients on a triangle. The maximum singular value of the
+// 2x3 Jacobian is the largest UV change per meter, including rank-one UVs.
+float3 SurfaceUvGradient(float3 e1, float3 e2, float du1, float du2)
+{
+    const float a = dot(e1, e1);
+    const float b = dot(e1, e2);
+    const float c = dot(e2, e2);
+    const float determinant = a * c - b * b;
+    if (!(abs(determinant) > 1e-20) || !isfinite(determinant))
+        return float3(0.0, 0.0, 0.0);
+    return ((c * du1 - b * du2) * e1 + (a * du2 - b * du1) * e2) / determinant;
+}
+
+float SurfaceUvDensity(float3 e1, float3 e2, float2 uv0, float2 uv1, float2 uv2)
+{
+    const float2 duv1 = uv1 - uv0;
+    const float2 duv2 = uv2 - uv0;
+    const float3 gradientU = SurfaceUvGradient(e1, e2, duv1.x, duv2.x);
+    const float3 gradientV = SurfaceUvGradient(e1, e2, duv1.y, duv2.y);
+    const float uu = dot(gradientU, gradientU);
+    const float vv = dot(gradientV, gradientV);
+    const float uv = dot(gradientU, gradientV);
+    const float trace = uu + vv;
+    const float difference = uu - vv;
+    const float largest = 0.5 * (trace + sqrt(max(difference * difference + 4.0 * uv * uv, 0.0)));
+    if (!(largest > 0.0) || !isfinite(largest))
+        return 0.0;
+    return sqrt(largest);
+}
+
 struct SurfaceInput
 {
     float3 positionRS;
@@ -69,6 +99,8 @@ struct SurfaceInput
     float viewDistance;
     float4 vertexColor;
     bool frontFace;
+    // UV units per meter at this point; ray tracing uses it for the mip level.
+    float uvDensity;
 };
 
 // Every field lerps, and height lets layered materials blend by height later.
@@ -95,13 +127,23 @@ struct MaterialContext
     bool rayTraced;
     float2 uvDx;
     float2 uvDy;
+    // The ray cone's world footprint at the hit and its incidence cosine.
+    float footprintMeters;
+    float incidence;
+    // UV units per meter for the coordinates the material samples.
+    float uvDensity;
 
     float4 Sample(TextureRef texture, float2 uv)
     {
         const uint image = NonUniformResourceIndex(texture.image);
         const uint sampler = NonUniformResourceIndex(texture.sampler);
         if (rayTraced)
-            return gSurfaceImages[image].SampleLevel(gSurfaceSamplers[sampler], uv, 0.0);
+        {
+            uint width, height;
+            gSurfaceImages[image].GetDimensions(width, height);
+            const float footprint = max(uvDensity * footprintMeters * max(width, height), 0.0);
+            return gSurfaceImages[image].SampleLevel(gSurfaceSamplers[sampler], uv, log2(max(footprint, 1.0)));
+        }
         return gSurfaceImages[image].SampleGrad(gSurfaceSamplers[sampler], uv, uvDx, uvDy);
     }
 
@@ -110,7 +152,12 @@ struct MaterialContext
         const uint image = NonUniformResourceIndex(texture.image);
         const uint sampler = NonUniformResourceIndex(texture.sampler);
         if (rayTraced)
-            return gSurfaceImages[image].SampleLevel(gSurfaceSamplers[sampler], uv, 0.0);
+        {
+            uint width, height;
+            gSurfaceImages[image].GetDimensions(width, height);
+            const float footprint = max(uvDensity * footprintMeters * max(width, height), 0.0);
+            return gSurfaceImages[image].SampleLevel(gSurfaceSamplers[sampler], uv, log2(max(footprint, 1.0)));
+        }
         return gSurfaceImages[image].SampleGrad(gSurfaceSamplers[sampler], uv, dx, dy);
     }
 };
@@ -136,6 +183,29 @@ struct MeshFrontend
         input.viewDistance = length(cameraPos.xyz - positionRS);
         input.vertexColor = vertexColor;
         input.frontFace = frontFace;
+        input.uvDensity = 0.0;
+        return input;
+    }
+};
+
+struct TerrainFrontend
+{
+    static SurfaceInput Build(float3 positionRS, float3 macroNormalWS, float2 uv0, float3 localPos,
+        float4 vertexColor, bool frontFace, float uvDensity)
+    {
+        SurfaceInput input;
+        input.positionRS = positionRS;
+        input.normalWS = SafeNormalize(macroNormalWS, float3(0.0, 1.0, 0.0));
+        const float4 tangent = TerrainTangentFrame(input.normalWS);
+        input.tangentWS = tangent.xyz;
+        input.bitangentSign = tangent.w;
+        input.uv0 = uv0;
+        input.localPos = localPos;
+        input.viewDirWS = normalize(cameraPos.xyz - positionRS);
+        input.viewDistance = length(cameraPos.xyz - positionRS);
+        input.vertexColor = vertexColor;
+        input.frontFace = frontFace;
+        input.uvDensity = uvDensity;
         return input;
     }
 };

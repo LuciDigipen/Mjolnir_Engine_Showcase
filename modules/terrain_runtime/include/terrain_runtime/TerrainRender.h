@@ -31,8 +31,10 @@ namespace mir
     // Lets neighbouring tiles meet bit for bit near the camera.
     inline constexpr float kTerrainTranslationGrid = 1.0f / 4096.0f;
 
-    // In the mesh's own frame; color only feeds the unlit shader.
+    // In the mesh's own frame; uv carries the material phase from the async
+    // mesh origin, and color only feeds the unlit shader.
     std::vector<Vertex> MakeTerrainVertices(std::span<const TerrainMeshVertex> mesh,
+                                            const TerrainLocalPosition &origin,
                                             const glm::vec3 &color = glm::vec3(1.0f));
 
     // Terrain meshes through the renderer's asynchronous uploads; an id is a mesh handle.
@@ -67,5 +69,8 @@ namespace mir
     };
 
     // A ready mesh drawn at an instance's placement; nullopt when its origin does not fit the world.
-    std::optional<WorldDrawItem> MakeTerrainDraw(const TerrainResidentMesh &mesh, const TerrainPlacement &placement);
+    // A valid material replaces the diagnostic tint.
+    std::optional<WorldDrawItem> MakeTerrainDraw(const TerrainResidentMesh &mesh, const TerrainPlacement &placement,
+                                                 MaterialHandle material = kNullMaterial,
+                                                 const glm::vec4 &diagnosticTint = kTerrainDiagnosticTint);
 }

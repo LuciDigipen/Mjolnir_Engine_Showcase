@@ -19,11 +19,14 @@ namespace mir
     {
         // Relative to assetsRoot; SceneIO truncates past 63 characters.
         char recipePath[kFieldStringCapacity] = {};
+        // Empty keeps the diagnostic material.
+        char materialPath[kFieldStringCapacity] = {};
     };
 
     MIR_ASSERT_COMPONENT(TerrainInstance);
 
     inline constexpr FieldDesc kTerrainInstanceFields[] = {
         {"recipePath", FieldKind::String, offsetof(TerrainInstance, recipePath)},
+        {"materialPath", FieldKind::String, offsetof(TerrainInstance, materialPath)},
     };
 }
