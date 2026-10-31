@@ -149,4 +149,8 @@ namespace mir
         { .mName = "allowSleeping", .mKind = FieldKind::Bool, .mOffset = offsetof(RigidBody, allowSleeping) },
         { .mName = "layer", .mKind = FieldKind::Int, .mOffset = offsetof(RigidBody, layer) },
     };
+
+    inline constexpr TransientField kRigidBodyTransient[] = {
+        { offsetof(RigidBody, runtime), sizeof(RigidBody::runtime) },
+    };
 }

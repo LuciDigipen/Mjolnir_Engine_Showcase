@@ -15,6 +15,6 @@ namespace mir
 {
     void RegisterParticleComponents()
     {
-        ComponentRegistry::Instance().Register<ParticleSystem>(kParticleSystemFields);
+        ComponentRegistry::Instance().Register<ParticleSystem>(kParticleSystemFields, kParticleSystemTransient);
     }
 }
