@@ -28,7 +28,8 @@ optionally only through blobs of chosen type tags.
 ```cpp
 if (AssetCache *cache = app.Assets())
 {
-    if (const AssetBlobView *blob = cache->Load(MakeAssetId("assets/foo.txt")))
+    // resolver is the App's AssetResolver, which a module is handed by reference
+    if (const AssetBlobView *blob = cache->Load(resolver.Resolve("foo.txt")))
         Use(AsStringView(*blob));
 }
 ```
@@ -123,8 +124,8 @@ which must outlive it. `Resolve` returns a null id for a path that is not valid
 or that no asset has, and its optional `error` says which, so a caller checks
 for null before it loads. `PathOf` gives the id in hex for an asset with no
 path. The cooker, the particle source parsers and the
-editor's file tools still build ids from source paths, because the files they
-name may not be cooked yet.
+editor's file tools read an id from the `.meta` of a source file instead, because
+the files they name may not be cooked yet.
 
 **Case is part of the path.** `Terrain/A` and `terrain/A` are two paths even on
 Windows, where both open the same file. Folding case would let two files collide on
@@ -238,8 +239,8 @@ modules, and each one joined it to a path and hashed the result, so an unknown
 path became an id that failed later inside the cache. Now: `App` owns one
 `AssetResolver`, those modules and the game shell take it by reference, and a
 path that no asset has is a null id with a reason. Because every one of those
-lookups would otherwise change when ids stop being path hashes. The editor's
-file tools and the particle source parsers are unchanged.
+lookups would otherwise change when ids stop being path hashes. The cooker, the particle source
+parsers and the editor's file tools are not part of this change.
 
 *2026-10-31* — **`AsyncAssetService`.** Was: `AssetCache::Load` read, parsed and
 decoded on the calling thread, so a scene that opened blocked until every asset

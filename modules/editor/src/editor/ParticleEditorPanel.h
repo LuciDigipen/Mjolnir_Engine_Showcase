@@ -8,13 +8,14 @@
  */
 #pragma once
 
-#include <assets/SourceAssetIds.h>
+#include <assets/AssetId.h>
 #include <particles/ParticleRuntime.h>
 #include <core/ecs/Entity.h>
 
 #include <glm/vec3.hpp>
 
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -110,8 +111,8 @@ namespace mir
         void RedoDraft();
         std::filesystem::path mSourceRoot;
         std::string mIdRoot, mSystemPath, mEmitterPath, mTexturePath, mError;
-        // the guids in the .meta files of the source files, which the cooked assets are named by
-        SourceAssetIds mIds;
+        AssetId IdAtLogical(std::string_view logicalPath) const;
+        std::function<AssetId(std::string_view)> IdLookup() const;
         std::string mNewSystemPath = "particles/new.particle.json";
         std::string mNewEmitterPath = "particles/new.emitter.json";
         std::vector<std::string> mSystems, mEmitters, mTextures, mReferences;

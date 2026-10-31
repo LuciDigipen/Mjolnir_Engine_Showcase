@@ -61,9 +61,9 @@ Data that owns memory lives in a world resource, or in the module that manages i
 `tools/AssetCooker` converts source files into one container format at build
 time. The runtime reads only that format.
 
-An `AssetId` is a hash of the source path relative to the repository root, so the
-same file gets the same id on every machine, and any code can compute an id from
-a path.
+An `AssetId` is the random guid in the asset's `<source>.meta` file, so a file keeps
+its id when it is renamed or moved, and code finds an asset by its path through
+the manifest.
 
 A generic surface material is a versioned `.material.json` that cooks to a
 `SurfaceMaterialAsset` plus three packed 2K textures and their complete mip
@@ -386,26 +386,24 @@ normalizer the cooker uses.
 A key missing from `game.json` falls back to a default in `GameProject.cpp`. The
 `assetsRoot` default is written a second time in the root CMakeLists, which reads
 the same key at configure time to decide what to cook, and the two have to agree
-or the cooker and the runtime hash ids from different trees.
+or the cooker and the runtime build paths from different trees.
 
 Cooked assets are named the other way round, by id rather than by path.
 
 ```
 scene field  "meshes/cube.mesh.json"
              |
-     mAssetIdRoot + "/" + name
+     AssetResolver::Resolve      mAssetIdRoot + "/" + path, normalized
              |
-     MakeAssetId()               FNV-1a 64 of the path string
-             |
-     AssetManifest::Find(id)
+     AssetManifest::FindByPath   the logical path to its entry, and so its id
              |
      CookedAssetsDir() / PathOf(entry)
 ```
 
-A scene names an asset by a path that is never opened. The string is hashed into
-an `AssetId`, the manifest turns that id into a cooked file, and a real path
-exists only at that last step ([An asset](#an-asset)). That hash is also why
-`assetsRoot` cannot change once a build has cooked.
+A scene names an asset by a path that is never opened. The resolver looks the path
+up in the manifest, which gives the asset's id and its cooked file, and a real path
+exists only at that last step ([An asset](#an-asset)). The root is part of every
+logical path, which is why `assetsRoot` cannot change once a build has cooked.
 
 Bytes then move through one stack, whichever lane named the file.
 
@@ -456,10 +454,10 @@ editor removes that copied source folder next to the executable and fills the
 Prefab registry from the cooked manifest instead. Both reach the same lookup by
 `PrefabId`, so a scene's instance record never names a source path.
 
-An `AssetId` is the FNV-1a 64 hash of the source path relative to the repository
-root. That is why `engine_cook_assets` rejects an absolute cook root: the root
-string is part of what gets hashed, so an absolute path would bake one machine's
-checkout location into ids that have to match on every machine.
+An `AssetId` is the guid in the asset's `.meta` file. `engine_cook_assets` still
+rejects an absolute cook root, because the root string is part of every logical
+path, and an absolute path would bake one machine's checkout location into names
+that have to match on every machine.
 
 Shaders do not go through this. They are compiled by `slangc` into `.spv` files
 and copied next to the executable separately.
@@ -549,8 +547,8 @@ table. See [script.md](modules/script.md).
 5. No CI. Tests are run by hand.
 6. **The Content Browser's rename detection is best-effort.** A rename is
    recognized only when it is the single remove+add pair in a 250ms poll tick
-   with a matching size+mtime signature; renaming/moving an asset never
-   rewrites scene references to its old `AssetId` (see
+   with a matching size+mtime signature; renaming or moving an asset keeps its `AssetId`
+   but never rewrites the scene fields that name it by path (see
    [modules/assets.md](modules/assets.md)).
 
 ## Changed

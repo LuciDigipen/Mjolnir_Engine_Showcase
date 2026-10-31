@@ -187,7 +187,7 @@ frame stays art while hovered.
 
 ```cpp
 // UIDemoScreen::Load; the Button and Toggle calls in Draw do not change
-UISprite button = ui.Textures().Load(*assets, MakeAssetId("assets/ui/button.png"));
+UISprite button = ui.Textures().Load(*assets, resolver.ResolveFull("assets/ui/button.png"));
 button.mSlice = UIEdges{8, 8, 8, 8};
 ui.Style().mWidgetSprite = button;
 ```

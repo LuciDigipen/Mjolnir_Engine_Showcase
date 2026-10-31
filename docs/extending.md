@@ -275,7 +275,8 @@ a reconfigure to join the glob; editing an existing one does not.
 ```cpp
 if (AssetCache *cache = app.Assets())
 {
-    if (const AssetBlobView *blob = cache->Load(MakeAssetId("assets/foo.txt")))
+    // resolver is the App's AssetResolver, which a module is handed by reference
+    if (const AssetBlobView *blob = cache->Load(resolver.Resolve("foo.txt")))
         Use(blob->content);
 }
 ```

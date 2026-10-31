@@ -33,7 +33,7 @@ namespace
         {
             static std::atomic<int> counter{ 0 };
             dir = fs::temp_directory_path() /
-                  ("mir_source_ids_" + std::to_string(CurrentProcessId()) + "_" + std::to_string(counter.fetch_add(1)));
+                ("mir_source_ids_" + std::to_string(CurrentProcessId()) + "_" + std::to_string(counter.fetch_add(1)));
             std::error_code ec;
             fs::remove_all(dir, ec);
             fs::create_directories(dir / "game", ec);
@@ -48,7 +48,7 @@ namespace
 
         std::vector<AssetSourceRoot> List() const
         {
-            return { { dir / "game", "games/Game/assets" }, { dir / "engine", "assets" } };
+            return { { dir / "game", "games/Game/assets" },{ dir / "engine", "assets" } };
         }
 
         fs::path File(const std::string &relative, const std::string &text = "x") const
@@ -196,4 +196,31 @@ TEST_CASE("Importer state saved on a file is read back next time", "[assets][sou
     again.Scan();
     CHECK(again.Meta(model).importer == R"({"next":2})");
     CHECK(again.Meta(model).guid == guid);
+}
+
+TEST_CASE("A long-lived SourceAssetIds follows a file renamed with its .meta", "[assets][sourceids]")
+{
+    const Roots roots;
+    const fs::path a = roots.File("game/particles/a.particle.json");
+    SourceAssetIds ids(roots.List());
+    const AssetId before = ids.IdAt("games/Game/assets/particles/a.particle.json");
+    REQUIRE_FALSE(before.IsNull());
+
+    const fs::path b = roots.dir / "game/particles/b.particle.json";
+    fs::rename(a, b);
+    MoveAssetMeta(a, b);
+    AssetId after;
+    REQUIRE_NOTHROW(after = ids.IdAt("games/Game/assets/particles/b.particle.json"));
+    CHECK(after == before);
+}
+
+TEST_CASE("A guid is still a duplicate while both files exist", "[assets][sourceids]")
+{
+    const Roots roots;
+    const fs::path a = roots.File("game/a.png");
+    const fs::path copy = roots.File("game/copy.png");
+    SourceAssetIds ids(roots.List());
+    const AssetId guid = ids.Meta(a).guid;
+    roots.WriteMeta(copy, guid.value);
+    CHECK_THROWS_AS(ids.Meta(copy), std::runtime_error);
 }

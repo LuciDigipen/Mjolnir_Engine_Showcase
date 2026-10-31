@@ -12,6 +12,7 @@
 #include <editor/EditorCamera.h>
 
 #include <assets/AssetPath.h>
+#include <assets/SourceAssetIds.h>
 #include <assets/AssetCache.h>
 #include <core/ecs/EngineMode.h>
 #include <core/ecs/TransformHierarchy.h>
@@ -105,14 +106,25 @@ namespace mir
     }
 
     ParticleEditorPanel::ParticleEditorPanel(std::filesystem::path sourceRoot, std::string idRoot)
-        : mSourceRoot(std::move(sourceRoot)), mIdRoot(std::move(idRoot)),
-          mIds(std::vector<AssetSourceRoot>{ { mSourceRoot, mIdRoot } })
+        : mSourceRoot(std::move(sourceRoot)), mIdRoot(std::move(idRoot))
     {}
+
+    AssetId ParticleEditorPanel::IdAtLogical(std::string_view logicalPath) const
+    {
+        // a new index per lookup, so a file renamed or recreated since the last one is read as it is now
+        SourceAssetIds ids(std::vector<AssetSourceRoot>{ { mSourceRoot, mIdRoot } });
+        return ids.IdAt(logicalPath);
+    }
+
+    std::function<AssetId(std::string_view)> ParticleEditorPanel::IdLookup() const
+    {
+        return [this](std::string_view logical) { return IdAtLogical(logical); };
+    }
 
     AssetId ParticleEditorPanel::IdOf(const std::string &path)
     {
         const auto logical = MakeLogicalAssetPath(mIdRoot, path);
-        return logical.Ok() ? mIds.IdAt(logical.path) : kNullAssetId;
+        return logical.Ok() ? IdAtLogical(logical.path) : kNullAssetId;
     }
 
     bool ParticleEditorPanel::OpenSystem(const std::string &path, World &world)
@@ -202,7 +214,7 @@ namespace mir
             {
                 if (const auto source = ReadText(SourceFile(path)))
                 {
-                    const auto parsed = ReadParticleEffectSource(*source, mIdRoot, [this](std::string_view logical) { return mIds.IdAt(logical); });
+                    const auto parsed = ReadParticleEffectSource(*source, mIdRoot, IdLookup());
                     if (!parsed.mEffect) continue;
                     std::unordered_set<std::string> seen;
                     for (const auto &reference : parsed.mEmitterPaths)
@@ -217,12 +229,12 @@ namespace mir
     {
         const auto text = ReadText(SourceFile(path));
         if (!text) throw std::runtime_error("cannot read particle system source");
-        auto result = ReadParticleEffectSource(*text, mIdRoot, [this](std::string_view logical) { return mIds.IdAt(logical); });
+        auto result = ReadParticleEffectSource(*text, mIdRoot, IdLookup());
         if (!result.mEffect) throw std::invalid_argument(result.mError);
         if (result.mEmitterPaths.empty()) throw std::invalid_argument("particle system has no emitter placements");
         const auto emitterText = ReadText(SourceFile(result.mEmitterPaths.front()));
         if (!emitterText) throw std::runtime_error("cannot read the first emitter source");
-        auto emitter = ReadParticleEmitterSource(*emitterText, mIdRoot, [this](std::string_view logical) { return mIds.IdAt(logical); });
+        auto emitter = ReadParticleEmitterSource(*emitterText, mIdRoot, IdLookup());
         if (!emitter.mEmitter) throw std::invalid_argument(emitter.mError);
         mSystem = *result.mEffect; mReferences = result.mEmitterPaths; mSystemPath = path;
         mDirtySystem = false; mSelected = 0;
@@ -255,7 +267,7 @@ namespace mir
         {
             const auto text = ReadText(SourceFile(target));
             if (!text) throw std::runtime_error("cannot read emitter source, create the referenced emitter before loading it");
-            auto result = ReadParticleEmitterSource(*text, mIdRoot, [this](std::string_view logical) { return mIds.IdAt(logical); });
+            auto result = ReadParticleEmitterSource(*text, mIdRoot, IdLookup());
             if (!result.mEmitter) throw std::invalid_argument(result.mError);
             incoming.emitter = std::move(*result.mEmitter);
             incoming.texturePath = std::move(result.mTexturePath);

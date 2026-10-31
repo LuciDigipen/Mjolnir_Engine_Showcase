@@ -32,6 +32,24 @@ namespace mir
         return std::filesystem::weakly_canonical(source).generic_string();
     }
 
+    void SourceAssetIds::Claim(uint64_t guid, const std::string &key)
+    {
+        const auto [owner, inserted] = mOwners.emplace(guid, key);
+        if (inserted || owner->second == key)
+            return;
+
+        // the first file is gone, so the .meta moved with its file
+        std::error_code ec;
+        if (!std::filesystem::exists(owner->second, ec))
+        {
+            mMetas.erase(owner->second);
+            owner->second = key;
+            return;
+        }
+        throw std::runtime_error(std::format(
+            "{:016x} is the guid of both '{}' and '{}'; delete the .meta of the copy", guid, owner->second, key));
+    }
+
     void SourceAssetIds::Scan()
     {
         for (const AssetSourceRoot &root : mRoots)
@@ -55,11 +73,7 @@ namespace mir
                     throw std::runtime_error(entry.path().string() + " is not a valid .meta file");
 
                 const std::string key = Key(source);
-                const auto [owner, inserted] = mOwners.emplace(meta->guid.value, key);
-                if (!inserted && owner->second != key)
-                    throw std::runtime_error(std::format("{:016x} is the guid of both '{}' and '{}'; delete the .meta of "
-                                                         "the copy",
-                        meta->guid.value, owner->second, key));
+                Claim(meta->guid.value, key);
                 mTaken.insert(meta->guid.value);
                 mMetas.insert_or_assign(key, std::move(*meta));
             }
@@ -81,10 +95,8 @@ namespace mir
             if (!WriteAssetMeta(AssetMetaPath(source), *meta))
                 throw std::runtime_error("cannot write " + AssetMetaPath(source).string());
         }
-        else if (const auto [owner, inserted] = mOwners.emplace(meta->guid.value, key);
-            !inserted && owner->second != key)
-            throw std::runtime_error(std::format("{:016x} is the guid of both '{}' and '{}'; delete the .meta of the copy",
-                meta->guid.value, owner->second, key));
+        else
+            Claim(meta->guid.value, key);
 
         mOwners.emplace(meta->guid.value, key);
         mTaken.insert(meta->guid.value);

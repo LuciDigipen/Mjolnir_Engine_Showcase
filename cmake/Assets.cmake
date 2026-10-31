@@ -76,9 +76,9 @@ function(engine_cook_assets target)
         if(IS_ABSOLUTE "${root}")
             message(FATAL_ERROR
                 "engine_cook_assets: SOURCE_ROOTS must be relative to the repository "
-                "root, but got the absolute path \"${root}\". The root is hashed into "
-                "every asset id, so an absolute path would bake this machine's "
-                "checkout location into ids that must match on every machine.")
+                "root, but got the absolute path \"${root}\". The root is part of every "
+                "logical path, so an absolute path would bake this machine's "
+                "checkout location into names that must match on every machine.")
         endif()
 
         # BASE_DIR is the repository root, not CMAKE_CURRENT_SOURCE_DIR: the
@@ -97,9 +97,9 @@ function(engine_cook_assets target)
         _engine_material_cook_dependencies("${root_abs}" material_dependencies)
         list(APPEND source_files ${material_dependencies})
 
-        # Passed as given, not resolved to absolute: AssetCooker hashes
-        # "<root>/<relative path>" into each asset's id, so an absolute path
-        # here would bake this machine's checkout location into every id.
+        # Passed as given, not resolved to absolute: AssetCooker builds each
+        # asset's logical path as "<root>/<relative path>", so an absolute path
+        # here would bake this machine's checkout location into every path.
         list(APPEND cooker_args --source "${root}")
     endforeach()
 

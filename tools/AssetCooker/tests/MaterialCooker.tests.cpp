@@ -387,3 +387,21 @@ TEST_CASE("The authorized TerrainCheck set cooks at the default 2K resolution", 
     fs::remove_all(root, error);
     fs::remove_all(out, error);
 }
+
+TEST_CASE("A changed .meta guid recooks the material under the new id", "[material][cook][incremental]")
+{
+    MaterialFixture fixture;
+    const auto out = fs::path(fixture.root.string() + "-guid");
+    const auto result = out / "result.json";
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, fixture.Args(out, result), true) == 0);
+
+    const fs::path source = fixture.root / "materials/sand.material.json";
+    AssetMeta meta = *ReadAssetMeta(AssetMetaPath(source));
+    meta.guid = AssetId{ meta.guid.value ^ 0x10 };
+    REQUIRE(WriteAssetMeta(AssetMetaPath(source), meta));
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, fixture.Args(out, result), true) == 0);
+
+    const auto manifest = AssetManifest::LoadFile(out / "manifest.blob");
+    REQUIRE(manifest);
+    CHECK(test::PathId(*manifest, "assets/materials/sand.material.json") == meta.guid);
+}

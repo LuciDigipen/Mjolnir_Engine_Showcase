@@ -51,6 +51,7 @@ namespace mir
 
     private:
         static std::string Key(const std::filesystem::path &source);
+        void Claim(uint64_t guid, const std::string &key);
         std::filesystem::path PhysicalOf(std::string_view logicalPath) const;
 
         std::vector<AssetSourceRoot> mRoots;

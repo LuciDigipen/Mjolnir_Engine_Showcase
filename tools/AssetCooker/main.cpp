@@ -866,7 +866,7 @@ namespace
                 throw std::runtime_error(logical + ": " + error.what());
             }
             if (!options.force && record.value("fingerprint", 0ull) == fingerprint &&
-                CachedOutputsValid(record, options.out))
+                record.value("materialId", 0ull) == ids.Meta(path).guid.value && CachedOutputsValid(record, options.out))
             {
                 for (const auto &cached : record["outputs"])
                 {
@@ -968,7 +968,7 @@ namespace
                 throw std::runtime_error(logical + ": " + error.what());
             }
             if (!options.force && record.value("fingerprint", 0ull) == fingerprint &&
-                CachedOutputsValid(record, options.out))
+                record.value("modelId", 0ull) == ids.Meta(path).guid.value && CachedOutputsValid(record, options.out))
             {
                 for (const auto &cached : record["outputs"])
                 {
@@ -1044,7 +1044,8 @@ namespace
                     for (const auto &cached : record.value("outputs", Json::array()))
                     {
                         Output output = OutputFromJson(cached);
-                        if (std::filesystem::exists(options.out / output.file))
+                        // an id this cook already emitted is a source that moved, its new record is the right one
+                        if (!outputs.contains(output.id.value) && std::filesystem::exists(options.out / output.file))
                             outputs[output.id.value] = output;
                     }
                 }
@@ -1055,7 +1056,8 @@ namespace
                     for (const auto &cached : record.value("outputs", Json::array()))
                     {
                         Output output = OutputFromJson(cached);
-                        if (std::filesystem::exists(options.out / output.file))
+                        // an id this cook already emitted is a source that moved, its new record is the right one
+                        if (!outputs.contains(output.id.value) && std::filesystem::exists(options.out / output.file))
                             outputs[output.id.value] = output;
                     }
                 }

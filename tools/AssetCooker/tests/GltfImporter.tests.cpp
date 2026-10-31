@@ -736,3 +736,26 @@ TEST_CASE("A cooked model lists its dependencies and keeps them through a partia
     const auto keptDependencies = after->Dependencies(*kept);
     CHECK(std::vector<AssetId>(keptDependencies.begin(), keptDependencies.end()) == before);
 }
+
+TEST_CASE("A full cook after a rename that kept the .meta names the model by its new path",
+    "[gltf][cooker][identity]")
+{
+    Fixture f;
+    const auto out = fs::path(f.root.string() + "-rename-cooked");
+    std::vector<std::string> full{ "--source-dir", f.root.string(), "--id-root", "assets", "--out", out.string() };
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, full, true) == 0);
+    const auto before = AssetManifest::LoadFile(out / "manifest.blob");
+    REQUIRE(before);
+    const AssetId id = test::PathId(*before, "assets/flag.gltf");
+    REQUIRE_FALSE(id.IsNull());
+
+    // what ContentBrowserWatcher::RenameEntry does
+    fs::rename(f.root / "flag.gltf", f.root / "renamed.gltf");
+    MoveAssetMeta(f.root / "flag.gltf", f.root / "renamed.gltf");
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, full, true) == 0);
+
+    const auto after = AssetManifest::LoadFile(out / "manifest.blob");
+    REQUIRE(after);
+    CHECK(test::PathId(*after, "assets/renamed.gltf") == id);
+    CHECK(after->FindByPath("assets/flag.gltf") == nullptr);
+}
