@@ -183,6 +183,7 @@ namespace mir::vk
             mViews[i].currentMatrix = views[i].viewProj;
             mViews[i].currentCamera = views[i].cameraPosition;
             mViews[i].currentId = views[i].historyId;
+            if (views[i].cut) mViews[i].historyValid = false;
         }
         if (!requested || rects.empty() || Active() || mFailed) return;
         if (!FitsBudget(rects, half, mDevice->Properties().limits) || !Create())

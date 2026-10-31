@@ -1,7 +1,8 @@
 /**
  * @file CameraBindings.tests.cpp
  * @author Quy Dong Ta
- * @brief Tests for the Lua world:get_active_camera and world:set_active_camera bindings.
+ * @brief Tests for the Lua world:get_active_camera, world:set_active_camera and
+ *        world:cut_camera bindings.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -14,6 +15,7 @@
 #include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/World.h>
 
+#include <renderer/CameraCut.h>
 #include <renderer/components/Camera.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -41,6 +43,8 @@ namespace
             { "setOther", FieldKind::Bool },
             { "getsOther", FieldKind::Bool },
             { "setBare", FieldKind::Bool },
+            { "cutSelf", FieldKind::Bool },
+            { "cutBare", FieldKind::Bool },
         };
         return ComponentRegistry::Instance().RegisterRuntime("CameraBindingsProbe", fields);
     }
@@ -69,6 +73,21 @@ function T.OnStart(self, world, entity)
 
     local bare = world:spawn()
     world:set(entity, "CameraBindingsProbe", "setBare", world:set_active_camera(bare))
+end
+
+return T
+)LUA";
+
+    constexpr std::string_view kCutSource = R"LUA(
+local T = {}
+
+function T.NewInstanceData()
+    return {}
+end
+
+function T.OnStart(self, world, entity)
+    world:set(entity, "CameraBindingsProbe", "cutSelf", world:cut_camera(entity))
+    world:set(entity, "CameraBindingsProbe", "cutBare", world:cut_camera(world:spawn()))
 end
 
 return T
@@ -106,4 +125,28 @@ TEST_CASE("world:set_active_camera switches the camera at once, and get_active_c
 
     CHECK(world.GetComponent<Camera>(other)->mActive);
     CHECK_FALSE(world.GetComponent<Camera>(self)->mActive);
+}
+
+TEST_CASE("world:cut_camera marks a cut on a Camera and refuses an entity without one", "[script][renderer]")
+{
+    World world;
+    CommandBuffer commands;
+    ScriptHost host;
+    const mir::Registration bindings = mir::AddBindings(host, &mir::RegisterCameraBindings);
+
+    const Entity self = world.CreateEntity();
+    world.AddComponent<Camera>(self, Camera{});
+    ProbeOps().AddDefault(world, self);
+
+    REQUIRE(host.LoadScriptSource("cut_camera", kCutSource));
+    const int32_t instance = host.CreateInstance("cut_camera");
+    REQUIRE(instance != -1);
+
+    host.CallOnStart(world, commands, self, instance);
+    commands.Flush(world);
+    host.DestroyInstance(instance);
+
+    CHECK(ReadProbeBool(world, self, "cutSelf"));
+    CHECK_FALSE(ReadProbeBool(world, self, "cutBare"));
+    CHECK(mir::IsCameraCut(world, self));
 }

@@ -68,6 +68,7 @@ namespace mir
             return false;
 
         mPosition = *eye;
+        mCut = true;
         return true;
     }
 
