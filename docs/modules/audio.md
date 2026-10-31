@@ -47,7 +47,8 @@ positioning, no entity mapping and no component.
 `AudioModule` starts Wwise with the game's SoundBank directory in its
 constructor and terminates it in its destructor. It registers the audio
 components, `AudioEmitterSystem`, `AudioListenerSystem`, `SoundtrackSystem` and a
-render system in `LateUpdate`, in that order, and the `AudioEmitter` and
+render system in `LateUpdate`, the first three at `kNormal` and the render after
+them at `kLate`, and the `AudioEmitter` and
 `Soundtrack` OnRemove hooks. The render system runs `audio::Update` every frame,
 ungated, so UI sounds and fades still play in Edit and while paused.
 

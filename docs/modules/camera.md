@@ -13,6 +13,8 @@ A `CameraController` sits on the same root entity as a `Camera`.
 `Propagate`, so a follow target's `WorldTransform` is this frame's, including a `RigidBody` that `PhysicsInterpolationSystem` blended just
 before. After writing the camera's `Transform` it calls `ResolveWorld` on the
 camera, because propagation has already run and `RenderSystem` reads the cache.
+It runs at `kEarly`, before the other `LateUpdate` systems that read that cache,
+such as `AudioListenerSystem`.
 
 `mode` picks one of two behaviours:
 

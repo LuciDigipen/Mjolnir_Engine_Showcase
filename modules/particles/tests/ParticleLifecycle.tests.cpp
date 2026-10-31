@@ -269,7 +269,7 @@ TEST_CASE("Particle world resolves two emitter dependencies and retires both aft
         {{test.files.EffectId(), mir::kParticleEffectTypeTag, mir::kParticleEffectContentVersion}, "effect.blob"},
         {{test.files.EmitterId(), mir::kParticleEmitterTypeTag, mir::kParticleEmitterContentVersion}, "emitter.blob"},
         {{secondId, mir::kParticleEmitterTypeTag, mir::kParticleEmitterContentVersion}, "secondary.blob"},
-        {{test.files.TextureId(), mir::kTextureAssetTypeTag, 1}, "texture.blob"}};
+        {{test.files.TextureId(), mir::kTextureAssetTypeTag, mir::kTextureAssetContentVersion}, "texture.blob"}};
     test.files.Write(mir::kAssetManifestFileName, mir::BuildAssetManifestBlob(entries));
     test.assets.BeginReload();
     test.StageEvent(mir::Stage::ReloadPrepare);
@@ -398,7 +398,7 @@ TEST_CASE("Per-entity offsets follow the placement id, not the emitter's positio
         {{test.files.EffectId(), mir::kParticleEffectTypeTag, mir::kParticleEffectContentVersion}, "effect.blob"},
         {{test.files.EmitterId(), mir::kParticleEmitterTypeTag, mir::kParticleEmitterContentVersion}, "emitter.blob"},
         {{secondId, mir::kParticleEmitterTypeTag, mir::kParticleEmitterContentVersion}, "secondary.blob"},
-        {{test.files.TextureId(), mir::kTextureAssetTypeTag, 1}, "texture.blob"}};
+        {{test.files.TextureId(), mir::kTextureAssetTypeTag, mir::kTextureAssetContentVersion}, "texture.blob"}};
     test.files.Write(mir::kAssetManifestFileName, mir::BuildAssetManifestBlob(entries));
     test.assets.BeginReload();
     test.StageEvent(mir::Stage::ReloadPrepare);
