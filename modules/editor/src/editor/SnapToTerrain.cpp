@@ -74,11 +74,17 @@ namespace mir
             return linear;
         }
 
-        glm::dvec3 BottomCenter(const SnapToTerrainFacts &facts)
+        double BottomY(const SnapToTerrainFacts &facts, const glm::mat3 &linear)
+        {
+            // A negative transformed local-Y direction makes local max Y the lower face.
+            return linear[1].y < 0.0f ? facts.mLocalMax.y : facts.mLocalMin.y;
+        }
+
+        glm::dvec3 BottomCenter(const SnapToTerrainFacts &facts, const glm::mat3 &linear)
         {
             if (!facts.mHasBounds)
                 return glm::dvec3(0.0);
-            return {(facts.mLocalMin.x + facts.mLocalMax.x) * 0.5, facts.mLocalMin.y,
+            return {(facts.mLocalMin.x + facts.mLocalMax.x) * 0.5, BottomY(facts, linear),
                     (facts.mLocalMin.z + facts.mLocalMax.z) * 0.5};
         }
 
@@ -245,20 +251,14 @@ namespace mir
         if (glm::dot(heading, heading) < kHeadingEpsilon)
             heading = {0.0f, 0.0f, 1.0f};
 
-        const float angle = std::atan2(heading.x, heading.z);
-        const glm::quat yaw = glm::angleAxis(angle, glm::vec3(0.0f, 1.0f, 0.0f));
-        const glm::vec3 upFloat(up);
-        const glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
-        glm::quat tilt(1.0f, 0.0f, 0.0f, 0.0f);
-        const float cosine = glm::clamp(glm::dot(worldUp, upFloat), -1.0f, 1.0f);
-        if (cosine < 1.0f - 1e-6f)
-        {
-            glm::vec3 axis = glm::cross(worldUp, upFloat);
-            if (glm::dot(axis, axis) < 1e-12f)
-                axis = glm::vec3(1.0f, 0.0f, 0.0f);
-            tilt = glm::angleAxis(std::acos(cosine), glm::normalize(axis));
-        }
-        const glm::quat result = glm::normalize(tilt * yaw);
+        // Keep XZ parallel to the old heading, solving only Y to lie in the terrain plane.
+        // Rotating a yaw by the shortest up-to-normal tilt would also rotate its XZ heading.
+        glm::dvec3 alignedForward(heading.x,
+            -(up.x * heading.x + up.z * heading.z) / up.y, heading.z);
+        alignedForward = glm::normalize(alignedForward);
+        const glm::dvec3 right = glm::normalize(glm::cross(up, alignedForward));
+        const glm::mat3 basis{glm::vec3(right), glm::vec3(up), glm::vec3(alignedForward)};
+        const glm::quat result = glm::normalize(glm::quat_cast(basis));
         if (!Finite(result))
             return std::nullopt;
         return result;
@@ -336,10 +336,11 @@ namespace mir
 
         const glm::dvec3 min = facts.mLocalMin;
         const glm::dvec3 max = facts.mLocalMax;
-        const glm::dvec3 centre{(min.x + max.x) * 0.5, min.y, (min.z + max.z) * 0.5};
+        const double bottomY = BottomY(facts, linear);
+        const glm::dvec3 centre = BottomCenter(facts, linear);
         const std::array<glm::dvec3, 4> corners{
-            glm::dvec3(min.x, min.y, min.z), glm::dvec3(max.x, min.y, min.z),
-            glm::dvec3(max.x, min.y, max.z), glm::dvec3(min.x, min.y, max.z)};
+            glm::dvec3(min.x, bottomY, min.z), glm::dvec3(max.x, bottomY, min.z),
+            glm::dvec3(max.x, bottomY, max.z), glm::dvec3(min.x, bottomY, max.z)};
         const std::array<glm::dvec3, 4> worldCorners{toWorld(corners[0]), toWorld(corners[1]), toWorld(corners[2]),
                                                      toWorld(corners[3])};
         double minX = worldCorners[0].x, maxX = worldCorners[0].x, minZ = worldCorners[0].z,
@@ -363,7 +364,7 @@ namespace mir
                 {
                     if (x == midX && z == midZ)
                         continue;
-                    points.push_back(toWorld(glm::dvec3(x, min.y, z)));
+                    points.push_back(toWorld(glm::dvec3(x, bottomY, z)));
                 }
             return points;
         }
@@ -417,7 +418,7 @@ namespace mir
 
         const glm::mat3 linear = Linear(rig.mCurrentWorldRotation, rig.mScale);
         const glm::dvec3 centre = glm::dvec3(rig.mOrigin.Meters()) +
-                                  glm::dvec3(linear * glm::vec3(BottomCenter(rig.mFacts)));
+                                  glm::dvec3(linear * glm::vec3(BottomCenter(rig.mFacts, linear)));
         const std::optional<WorldPosition> centrePosition = WorldPosition::FromDoubleMeters(centre);
         if (!centrePosition)
         {
@@ -585,7 +586,7 @@ namespace mir
                                                                const GroundQuery &ground) const
     {
         Sampled sampled;
-        const glm::dvec3 bottomCentre = BottomCenter(mBindings.mFacts);
+        const glm::dvec3 bottomCentre = BottomCenter(mBindings.mFacts, linear);
         const glm::dvec3 centreD = glm::dvec3(origin.Meters()) + glm::dvec3(linear * glm::vec3(bottomCentre));
         const std::optional<WorldPosition> centre = WorldPosition::FromDoubleMeters(centreD);
         if (!centre)
@@ -697,7 +698,8 @@ namespace mir
             }
 
             const glm::mat3 snappedLinear = Linear(*rotation, mBindings.mScale);
-            const glm::dvec3 offset = glm::dvec3(snappedLinear * glm::vec3(BottomCenter(mBindings.mFacts)));
+            const glm::dvec3 offset =
+                glm::dvec3(snappedLinear * glm::vec3(BottomCenter(mBindings.mFacts, snappedLinear)));
             const std::optional<WorldPosition> candidate =
                 WorldPosition::FromDoubleMeters(plane->mPoint - offset);
             if (!candidate)
@@ -755,7 +757,8 @@ namespace mir
             }
 
             const glm::mat3 snappedLinear = Linear(*rotation, mBindings.mScale);
-            const glm::dvec3 offset = glm::dvec3(snappedLinear * glm::vec3(BottomCenter(mBindings.mFacts)));
+            const glm::dvec3 offset =
+                glm::dvec3(snappedLinear * glm::vec3(BottomCenter(mBindings.mFacts, snappedLinear)));
             const std::optional<WorldPosition> worldPosition =
                 WorldPosition::FromDoubleMeters(plane->mPoint - offset);
             if (!worldPosition)

@@ -319,6 +319,29 @@ TEST_CASE("Snap rotation keeps the world-Y heading and drops old pitch and roll"
     CHECK_FALSE(mir::SnapToTerrainWorldRotation(current, {0.0, 0.0, 1.0}));
 }
 
+TEST_CASE("Slope alignment preserves the horizontal heading", "[editor][snap]")
+{
+    for (const float yaw : {glm::quarter_pi<float>(), -0.8f, 2.4f})
+    {
+        const glm::quat current = glm::angleAxis(yaw, glm::vec3(0.0f, 1.0f, 0.0f)) *
+                                  glm::angleAxis(0.3f, glm::vec3(1.0f, 0.0f, 0.0f));
+        const glm::vec3 before = current * glm::vec3(0.0f, 0.0f, 1.0f);
+        const glm::vec3 heading = glm::normalize(glm::vec3(before.x, 0.0f, before.z));
+        for (const glm::dvec3 rawNormal : {glm::dvec3(1.0, 1.0, 0.0), glm::dvec3(-1.0, 1.0, 0.0),
+                                         glm::dvec3(0.0, 1.0, 2.0), glm::dvec3(0.3, 1.0, -0.8)})
+        {
+            const glm::dvec3 normal = glm::normalize(rawNormal);
+            const std::optional<glm::quat> rotation = mir::SnapToTerrainWorldRotation(current, normal);
+            REQUIRE(rotation);
+            const glm::vec3 forward = *rotation * glm::vec3(0.0f, 0.0f, 1.0f);
+            const glm::vec3 after = glm::normalize(glm::vec3(forward.x, 0.0f, forward.z));
+            CHECK(glm::length(after - heading) < 1e-5f);
+            const glm::vec3 up = *rotation * glm::vec3(0.0f, 1.0f, 0.0f);
+            CHECK(glm::length(up - glm::vec3(normal)) < 1e-5f);
+        }
+    }
+}
+
 TEST_CASE("A parent must be uniform, unsheared and invertible", "[editor][snap]")
 {
     const glm::quat rotation = glm::angleAxis(0.5f, glm::normalize(glm::vec3(1.0f, 2.0f, 3.0f)));
@@ -360,6 +383,61 @@ TEST_CASE("A footprint uses corners, a grid or a cross by source spacing", "[edi
     CHECK(cross[2] == glm::dvec3(-1.0, 10.0, 4.0));
     CHECK(cross[3] == glm::dvec3(3.0, 10.0, 8.0));
     CHECK(cross[4] == glm::dvec3(3.0, 10.0, 0.0));
+}
+
+TEST_CASE("Negative Y scale samples the lower face for corners and grids", "[editor][snap]")
+{
+    mir::SnapToTerrainFacts facts;
+    facts.mHasBounds = true;
+    facts.mLocalMin = {-2.0, -1.0, -3.0};
+    facts.mLocalMax = {4.0, 2.0, 5.0};
+    glm::mat3 linear(1.0f);
+    linear[1].y = -2.0f;
+    for (const double spacing : {100.0, 0.5})
+    {
+        const std::vector<glm::dvec3> points =
+            mir::SnapToTerrainFootprint(At(3.0, 10.0, 4.0), linear, facts, spacing);
+        REQUIRE(points.size() == (spacing == 100.0 ? 5 : 9));
+        CHECK(points.front() == glm::dvec3(4.0, 6.0, 5.0));
+        for (const glm::dvec3 point : points)
+            CHECK(point.y == Catch::Approx(6.0));
+    }
+}
+
+TEST_CASE("A mirrored Y snap places its lower face on the terrain", "[editor][snap]")
+{
+    Fixture fixture;
+    MeshBounds *bounds = fixture.mWorld.GetComponent<MeshBounds>(fixture.mEntity);
+    REQUIRE(bounds != nullptr);
+    bounds->mLocalMin = glm::vec3(-4.0f, -1.0f, -1.0f);
+    bounds->mLocalMax = glm::vec3(2.0f, 2.0f, 3.0f);
+    const glm::vec3 scale(1.5f, -2.0f, 0.75f);
+    fixture.TransformOf().SetScale(scale);
+    fixture.TransformOf().SetPosition(Vec(3.0, 10.0, 4.0));
+    fixture.TransformOf().SetRotation(glm::angleAxis(glm::quarter_pi<float>(), glm::vec3(0.0f, 1.0f, 0.0f)));
+    fixture.mSource.mA = 0.5;
+    fixture.mSource.mB = -0.25;
+
+    SnapToTerrainSession session;
+    REQUIRE(session.Begin(fixture.mWorld, mir::kSceneDocument, *fixture.mGround).mEnabled);
+    const std::optional<SnapToTerrainEdit> edit =
+        session.TakeEdit(fixture.mWorld, mir::kSceneDocument, *fixture.mGround, true, {});
+    REQUIRE(edit);
+    glm::mat3 linear = glm::mat3_cast(edit->mRotation);
+    linear[0] *= scale.x;
+    linear[1] *= scale.y;
+    linear[2] *= scale.z;
+    for (const float z : {-1.0f, 3.0f})
+        for (const float x : {-4.0f, 2.0f})
+        {
+            // Local max Y is the actual lower face after mirroring.
+            const glm::dvec3 bottom = glm::dvec3(edit->mPosition) +
+                                      glm::dvec3(linear * glm::vec3(x, 2.0f, z));
+            const double height = 5.0 + 0.5 * bottom.x - 0.25 * bottom.z;
+            CHECK(bottom.y == Catch::Approx(height).margin(1e-4));
+        }
+    CHECK(fixture.TransformOf().Scale() == scale);
+    CHECK(fixture.TransformOf().Position() == Vec(3.0, 10.0, 4.0));
 }
 
 TEST_CASE("A ready snap writes nothing until its edit is taken", "[editor][snap]")
