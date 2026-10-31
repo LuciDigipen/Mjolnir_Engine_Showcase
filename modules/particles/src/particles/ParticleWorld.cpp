@@ -13,6 +13,7 @@
 #include <core/log/Log.h>
 
 #include <algorithm>
+#include <array>
 #include <iterator>
 #include <stdexcept>
 #include <utility>
@@ -180,7 +181,18 @@ namespace mir
         if (emitter.overrideParameters) mRuntime.SetParameters(emitter.instance, emitter.userParameters);
         else if (const auto *current = mRuntime.Find(emitter.instance)) mRuntime.SetParameters(emitter.instance, current->effect.parameters);
         mRuntime.SetPose(emitter.instance, pose);
-        mRuntime.SetEmitterOffsets(emitter.instance, emitter.emitterOffsets);
+        if (const auto *running = mRuntime.Find(emitter.instance))
+        {
+            // Offsets belong to placement ids, the emitter at index i is the placement with the i-th id.
+            std::array<glm::vec3, kMaxSystemEmitters> offsets{};
+            for (size_t i = 0; i < running->effect.emitters.size() && i < offsets.size(); ++i)
+            {
+                const uint32_t id = running->effect.placementIds.empty() ? static_cast<uint32_t>(i + 1) : running->effect.placementIds[i];
+                if (const size_t slot = FindEmitterOffsetSlot(emitter, id); slot != kNoEmitterOffsetSlot)
+                    offsets[i] = emitter.emitterOffsets[slot];
+            }
+            mRuntime.SetEmitterOffsets(emitter.instance, offsets);
+        }
         mRuntime.Pause(emitter.instance, emitter.paused);
     }
 

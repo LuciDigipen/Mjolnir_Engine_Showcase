@@ -44,7 +44,7 @@ namespace mir
         struct InstanceOffsetEdit
         {
             Entity mEntity = kNullEntity;
-            uint32_t mIndex = 0;
+            uint32_t mPlacementId = 0;
             glm::vec3 mValue{ 0 };
         };
         std::optional<InstanceOffsetEdit> TakeInstanceOffsetEdit() { return std::exchange(mOffsetEdit, std::nullopt); }
@@ -90,6 +90,13 @@ namespace mir
         bool AnyEmitterDirty() const { return mDirtyEmitter || !mStashedEmitters.empty(); }
         bool IsDirty() const { return mDirtySystem || AnyEmitterDirty(); }
         void StashSelectedEmitter();
+        // Dirty flags from a snapshot, so Draw and an undo or redo decide them the same way.
+        void RecomputeDirty(const DraftSnapshot &draft);
+        // An edit that changes the system, or the emitter when the same one is still selected. Selecting another is no edit.
+        static bool DraftChanged(const DraftSnapshot &before, const DraftSnapshot &after);
+        // The path itself when unused, else the first free numbered variant, checking every suffix a new file would take.
+        std::string UnusedSourcePath(const std::string &path, std::string_view suffix,
+            std::initializer_list<std::string_view> alsoSuffixes = {}) const;
         void SaveEmitterDraft(AssetImportManager &imports, const std::string &path, ParticleEmitterAsset &emitter,
             const std::string &texturePath);
         DraftSnapshot CaptureDraft() const;

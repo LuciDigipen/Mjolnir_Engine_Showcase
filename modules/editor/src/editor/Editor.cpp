@@ -441,19 +441,36 @@ namespace mir
         mPreferencesPanel.SetStatus("Cleared.");
     }
 
-    void Editor::SubmitParticleEmitterOffset(World &world, Entity entity, uint32_t index, const glm::vec3 &offset)
+    void Editor::SubmitParticleEmitterOffset(World &world, Entity entity, uint32_t placementId, const glm::vec3 &offset)
     {
         const ComponentOps *ops = ComponentRegistry::Instance().FindBySeq(TypeIdOf<ParticleSystem>().seq);
-        const std::string fieldName = "emitterOffset" + std::to_string(index);
-        const FieldDesc *field = ops != nullptr && index < kMaxSystemEmitters ? ops->FindField(fieldName) : nullptr;
-        if (field == nullptr)
+        const ParticleSystem *component = world.GetComponent<ParticleSystem>(entity);
+        if (ops == nullptr || component == nullptr || placementId == 0)
             return;
 
-        FieldValue value;
-        value.mField = static_cast<uint32_t>(field - ops->mFields.data());
-        std::memcpy(value.mBytes, &offset, sizeof(offset));
+        // The offset sits in the slot that already holds this placement, else in a free one, which also records the id.
+        size_t slot = FindEmitterOffsetSlot(*component, placementId);
+        const bool claimsSlot = slot == kNoEmitterOffsetSlot;
+        if (claimsSlot)
+            slot = FindFreeEmitterOffsetSlot(*component);
+        if (slot == kNoEmitterOffsetSlot)
+            return;
+
+        const auto valueOf = [&](const std::string &fieldName, const void *bytes, size_t size, FieldValue &out)
+        {
+            const FieldDesc *field = ops->FindField(fieldName);
+            if (field == nullptr)
+                return false;
+            out.mField = static_cast<uint32_t>(field - ops->mFields.data());
+            std::memcpy(out.mBytes, bytes, size);
+            return true;
+        };
+        std::vector<FieldValue> values(claimsSlot ? 2 : 1);
+        if (!valueOf("emitterOffset" + std::to_string(slot), &offset, sizeof(offset), values[0]) ||
+            (claimsSlot && !valueOf("emitterOffsetPlacement" + std::to_string(slot), &placementId, sizeof(placementId), values[1])))
+            return;
         const Name *name = world.GetComponent<Name>(entity);
-        mHistory.Submit(MakeSetFieldsEditCommand(entity, *ops, { value },
+        mHistory.Submit(MakeSetFieldsEditCommand(entity, *ops, std::move(values),
             std::format("Move particle emitter {}", name != nullptr ? name->mValue : "Entity"), mAuthoredEntities));
     }
 

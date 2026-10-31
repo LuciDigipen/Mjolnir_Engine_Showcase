@@ -31,12 +31,15 @@ are enabled with `overrideParameters`. Handles and playback flags are transient,
 including when a component is copied, a scene is loaded or Play is restored. No
 particle editor widgets or preview are provided yet.
 
-`emitterOffsets` holds one local offset per placement, in placement order, up to
-eight. It adds to the system asset's placement offset and rotates with the entity,
-so the same system can sit differently on each entity. The scene saves it as the
-hidden fields `emitterOffset0` to `emitterOffset7`. The particle panel edits it for
-the selected entity that plays the open system, as one undoable scene edit, and the
-inspector does not show it. `ParticleRuntime::SetEmitterOffsets` restarts an
+`emitterOffsets` holds up to eight local offsets, each in a slot whose `offsetPlacementIds`
+entry names the placement it belongs to (0 means unused). The offset adds to the system
+asset's placement offset and rotates with the entity, so the same system can sit
+differently on each entity. Offsets follow the placement id, so reordering or removing
+emitters in the system never moves an offset onto another emitter, and an offset whose
+placement was removed simply does nothing. The scene saves the slots as the hidden fields
+`emitterOffset0` to `emitterOffset7` and `emitterOffsetPlacement0` to `emitterOffsetPlacement7`.
+The particle panel edits the offset of the selected placement for the selected entity that
+plays the open system, as one undoable scene edit, and the inspector does not show it. `ParticleRuntime::SetEmitterOffsets` restarts an
 emitter's motion when its offset changes, so moving an origin never sweeps particles
 or links a ribbon between the old and new position.
 
@@ -347,6 +350,14 @@ See [acceptance results](../particle-acceptance.md) for quality settings,
 measurements and remaining gates.
 
 ## Changed
+
+*2026-10-30* — **Per-entity offsets are keyed by placement id.** Was: `emitterOffsets[i]`
+applied to the emitter at index `i`, so an Up, Down or Remove in the panel left every entity's
+offsets on the wrong emitters. Now: each slot carries the id of its placement, and the panel,
+the editor command and `ParticleWorld::Synchronize` all look offsets up by id. Offsets saved
+before this change have no ids and are ignored. Also, the editor compares drafts through
+`DescribeParticleEmitterDraft` and `DescribeParticleEffectDraft`, which never throw, because the
+Write functions refuse an invalid draft and a half-typed value used to be fatal.
 
 *2026-10-30* — **Switching emitters in the panel keeps every edit.** Was: the panel held one
 emitter draft, so selecting another emitter was refused until Save. Now: a dirty emitter

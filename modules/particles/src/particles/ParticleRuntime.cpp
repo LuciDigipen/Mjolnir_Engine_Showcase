@@ -53,13 +53,12 @@ namespace mir
             return true;
         }
 
-        // After an origin moves, so the first birth does not sweep from the old position or link a ribbon to it.
+        // The motion span starts here, so the next birth does not sweep from an earlier position.
         void RestartMotion(ParticleEmitterInstance &emitter)
         {
             emitter.previousPosition = emitter.spawnStart = emitter.attachmentPosition;
             emitter.attachmentVelocity = glm::vec3(0);
             emitter.motionSeconds = 0;
-            emitter.ribbon.connected = false;
         }
     }
 
@@ -254,9 +253,7 @@ namespace mir
                     emitter->spawns = 0;
                     emitter->seconds = 0;
                     emitter->births.clear();
-                    emitter->previousPosition = emitter->spawnStart = emitter->attachmentPosition;
-                    emitter->attachmentVelocity = glm::vec3(0);
-                    emitter->motionSeconds = 0;
+                    RestartMotion(*emitter);
                 }
             }
         return true;
@@ -289,9 +286,7 @@ namespace mir
                     emitter->attachmentPosition, emitter->emissionVelocity);
                 if (emitter->resetMotionOnPose)
                 {
-                    emitter->previousPosition = emitter->spawnStart = emitter->attachmentPosition;
-                    emitter->attachmentVelocity = glm::vec3(0);
-                    emitter->motionSeconds = 0;
+                    RestartMotion(*emitter);
                     emitter->resetMotionOnPose = false;
                 }
             }
@@ -339,6 +334,7 @@ namespace mir
             Attachment(instance->pose, emitter->definition, emitter->placementOffset + emitter->instanceOffset,
                 emitter->attachmentPosition, emitter->emissionVelocity);
             RestartMotion(*emitter);
+            emitter->ribbon.connected = false;
         }
         return true;
     }
@@ -380,6 +376,7 @@ namespace mir
             Attachment(instance->pose, live, emitter->placementOffset + emitter->instanceOffset,
                 emitter->attachmentPosition, emitter->emissionVelocity);
             RestartMotion(*emitter);
+            emitter->ribbon.connected = false;
         }
         return true;
     }
@@ -507,11 +504,7 @@ namespace mir
             {
                 for (const auto handle : instance.emitters)
                     if (auto *emitter = MutableEmitter(handle))
-                    {
-                        emitter->previousPosition = emitter->spawnStart = emitter->attachmentPosition;
-                        emitter->motionSeconds = 0;
-                        emitter->attachmentVelocity = glm::vec3(0);
-                    }
+                        RestartMotion(*emitter);
                 continue;
             }
             if (steps && glm::length(instance.pose.position.Meters() - instance.tileOrigin.Meters()) > WorldReal(kParticleTileRadius))
@@ -525,9 +518,7 @@ namespace mir
                     continue;
                 if (emitter->resetMotionOnPose)
                 {
-                    emitter->previousPosition = emitter->spawnStart = emitter->attachmentPosition;
-                    emitter->attachmentVelocity = glm::vec3(0);
-                    emitter->motionSeconds = 0;
+                    RestartMotion(*emitter);
                     emitter->resetMotionOnPose = false;
                 }
                 auto parameters = instance.parameters;
@@ -549,9 +540,7 @@ namespace mir
                 if (emitter->state == ParticleExecutionState::Active && steps && waiting)
                 {
                     // A waiting emitter follows its attachment, so the first birth does not sweep the motion made meanwhile.
-                    emitter->previousPosition = emitter->spawnStart = emitter->attachmentPosition;
-                    emitter->attachmentVelocity = glm::vec3(0);
-                    emitter->motionSeconds = 0;
+                    RestartMotion(*emitter);
                 }
                 else if (emitter->state == ParticleExecutionState::Active && steps)
                 {

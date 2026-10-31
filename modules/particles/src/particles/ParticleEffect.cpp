@@ -103,7 +103,7 @@ namespace mir
         void EmitStartRotation(ParticleScriptWriter &writer, const ParticleBehavior &behavior)
         {
             writer.mSource += "        a.sizeRotation.y = radians(" + Number(behavior.parameters[0]) +
-                ") * SignedNoise(randomSeed ^ 0x2c1b3c6du);\n";
+                ") * SignedNoise(randomSeed ^ 0x1b873593u);\n";
         }
 
         // Smooth per-particle noise over its age, so the wobble does not depend on world position or tile shifts.
@@ -675,23 +675,51 @@ namespace mir
         return t <= 0.5f ? std::lerp(start, middle, t * 2) : std::lerp(middle, end, t * 2 - 1);
     }
 
-    std::string WriteParticleEmitterSource(const ParticleEmitterAsset &emitter, std::string_view texturePath)
+    // The cooked emitter fields, not validated, so the editor can describe a draft that is invalid.
+    static Json CookedEmitterJson(const ParticleEmitterAsset &emitter)
     {
-        const auto bytes = BuildParticleEmitterAsset(emitter);
-        Json value = Json::parse(AsStringView(*ParseAssetBlob(bytes)));
+        return Json{ { "target", emitter.simulationTarget == ParticleSimulationTarget::GPU ? "gpu" : "cpu" },
+            { "lifetime", emitter.lifetime },{ "spawnRate", emitter.spawnRate },{ "capacity", emitter.capacity },
+            { "textureId", emitter.texture.value },{ "renderer", WriteRenderer(emitter) },
+            { "quality",{ { "importance", emitter.quality.importance },{ "nearDistance", emitter.quality.nearDistance },
+                { "farDistance", emitter.quality.farDistance },{ "minSpawnScale", emitter.quality.minSpawnScale } } },
+            { "localOffset",{ emitter.localOffset.x, emitter.localOffset.y, emitter.localOffset.z } },
+            { "spawnPerMeter", emitter.spawnPerMeter },{ "burst", emitter.burst },{ "seed", emitter.seed },
+            { "inheritVelocity", emitter.inheritVelocity },{ "teleportDistance", emitter.teleportDistance },
+            { "startDelay", emitter.startDelay },{ "followEmitter", emitter.followEmitter },
+            { "spawnBehaviors", WriteBehaviors(emitter, true, false) },{ "updateBehaviors", WriteBehaviors(emitter, false, false) },
+            { "schemaVersion", kParticleSourceVersion },
+            { "scriptId", emitter.script.value },{ "scriptLayoutId", emitter.scriptLayout.value } };
+    }
+
+    static Json EmitterSourceJson(const ParticleEmitterAsset &emitter, std::string_view texturePath)
+    {
+        Json value = CookedEmitterJson(emitter);
         for (const auto key :{ "textureId", "scriptId", "scriptLayoutId", "schemaVersion" }) value.erase(key);
         value["version"] = kParticleSourceVersion;
         value["texture"] = texturePath;
         value["spawnBehaviors"] = WriteBehaviors(emitter, true, true);
         value["updateBehaviors"] = WriteBehaviors(emitter, false, true);
+        return value;
+    }
+
+    std::string WriteParticleEmitterSource(const ParticleEmitterAsset &emitter, std::string_view texturePath)
+    {
+        std::string error;
+        if (!ValidateParticleEmitterAsset(emitter, error)) throw std::runtime_error(error);
+        const Json value = EmitterSourceJson(emitter, texturePath);
         const auto result = ReadParticleEmitterSource(value.dump(), "assets");
         if (!result.mEmitter) throw std::invalid_argument(result.mError);
         return value.dump(2) + "\n";
     }
 
-    std::string WriteParticleEffectSource(const ParticleEffect &effect, std::span<const std::string> paths)
+    std::string DescribeParticleEmitterDraft(const ParticleEmitterAsset &emitter, std::string_view texturePath)
     {
-        if (paths.size() != effect.emitters.size()) throw std::invalid_argument("emitter paths must match system references");
+        return EmitterSourceJson(emitter, texturePath).dump();
+    }
+
+    static Json EffectSourceJson(const ParticleEffect &effect, std::span<const std::string> paths)
+    {
         Json value{ { "version", kParticleSourceVersion },{ "parameters", WriteParameters(effect.parameters) } };
         Json placements = Json::array();
         for (size_t i = 0; i < paths.size(); ++i)
@@ -702,6 +730,21 @@ namespace mir
                 { "offset",{ offset.x, offset.y, offset.z } } });
         }
         value["placements"] = std::move(placements);
+        return value;
+    }
+
+    std::string DescribeParticleEffectDraft(const ParticleEffect &effect, std::span<const std::string> paths)
+    {
+        const bool matched = paths.size() == effect.emitters.size() &&
+            (effect.placementIds.empty() || effect.placementIds.size() == paths.size()) &&
+            (effect.placementOffsets.empty() || effect.placementOffsets.size() == paths.size());
+        return matched ? EffectSourceJson(effect, paths).dump() : std::string("unmatched placements");
+    }
+
+    std::string WriteParticleEffectSource(const ParticleEffect &effect, std::span<const std::string> paths)
+    {
+        if (paths.size() != effect.emitters.size()) throw std::invalid_argument("emitter paths must match system references");
+        const Json value = EffectSourceJson(effect, paths);
         const auto result = ReadParticleEffectSource(value.dump(), "assets");
         if (!result.mEffect) throw std::invalid_argument(result.mError);
         return value.dump(2) + "\n";
@@ -1049,17 +1092,7 @@ void computeMain(uint3 id : SV_DispatchThreadID)
     {
         std::string error;
         if (!ValidateParticleEmitterAsset(emitter, error)) throw std::runtime_error(error);
-        const auto text = Json{ { "target", emitter.simulationTarget == ParticleSimulationTarget::GPU ? "gpu" : "cpu" },
-            { "lifetime", emitter.lifetime },{ "spawnRate", emitter.spawnRate },{ "capacity", emitter.capacity },
-            { "textureId", emitter.texture.value },{ "renderer", WriteRenderer(emitter) },
-            { "quality",{ { "importance", emitter.quality.importance },{ "nearDistance", emitter.quality.nearDistance },
-                { "farDistance", emitter.quality.farDistance },{ "minSpawnScale", emitter.quality.minSpawnScale } } },
-            { "localOffset",{ emitter.localOffset.x, emitter.localOffset.y, emitter.localOffset.z } },
-            { "spawnPerMeter", emitter.spawnPerMeter },{ "burst", emitter.burst },{ "seed", emitter.seed },
-            { "inheritVelocity", emitter.inheritVelocity },{ "teleportDistance", emitter.teleportDistance },{ "startDelay", emitter.startDelay },{ "followEmitter", emitter.followEmitter },
-            { "spawnBehaviors", WriteBehaviors(emitter, true, false) },{ "updateBehaviors", WriteBehaviors(emitter, false, false) },
-            { "schemaVersion", kParticleSourceVersion },
-            { "scriptId", emitter.script.value },{ "scriptLayoutId", emitter.scriptLayout.value } }.dump();
+        const auto text = CookedEmitterJson(emitter).dump();
         return BuildAssetBlob(kParticleEmitterTypeTag, kParticleEmitterContentVersion, std::as_bytes(std::span(text)));
     }
 

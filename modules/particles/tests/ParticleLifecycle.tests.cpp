@@ -179,8 +179,9 @@ TEST_CASE("Particle save load and repeated play scene transitions never serializ
 
     const auto *ops = mir::ComponentRegistry::Instance().Find("ParticleSystem");
     REQUIRE(ops);
-    CHECK(ops->mFields.size() == 6 + mir::kMaxSystemEmitters);
+    CHECK(ops->mFields.size() == 6 + 2 * mir::kMaxSystemEmitters);
     CHECK(ops->FindField("emitterOffset7") != nullptr);
+    CHECK(ops->FindField("emitterOffsetPlacement7") != nullptr);
     CHECK(ops->FindField("emitterOffset8") == nullptr);
     CHECK(ops->FindField("wind") != nullptr);
     CHECK(ops->FindField("spawnRateScale") != nullptr);
@@ -316,21 +317,43 @@ TEST_CASE("Inactive particle systems reconcile reflected user overrides while dr
 
 TEST_CASE("Particle emitter offsets are hidden persisted fields that move only their own instance", "[particles]")
 {
-    int hidden = 0;
+    int offsets = 0, ids = 0;
     for (const auto &field : mir::kParticleSystemFields)
-        if (field.mName.starts_with("emitterOffset"))
+    {
+        CHECK(field.mName.starts_with("emitterOffset") == field.mHidden);
+        if (field.mName.starts_with("emitterOffsetPlacement"))
         {
-            CHECK(field.mHidden);
-            CHECK(field.mKind == mir::FieldKind::Vec3);
-            CHECK(field.mOffset == offsetof(mir::ParticleSystem, emitterOffsets) + hidden * sizeof(glm::vec3));
-            ++hidden;
+            CHECK(field.mKind == mir::FieldKind::Int);
+            CHECK(field.mOffset == offsetof(mir::ParticleSystem, offsetPlacementIds) + ids * sizeof(uint32_t));
+            ++ids;
         }
-    CHECK(hidden == static_cast<int>(mir::kMaxSystemEmitters));
+        else if (field.mName.starts_with("emitterOffset"))
+        {
+            CHECK(field.mKind == mir::FieldKind::Vec3);
+            CHECK(field.mOffset == offsetof(mir::ParticleSystem, emitterOffsets) + offsets * sizeof(glm::vec3));
+            ++offsets;
+        }
+    }
+    CHECK(offsets == static_cast<int>(mir::kMaxSystemEmitters));
+    CHECK(ids == static_cast<int>(mir::kMaxSystemEmitters));
+
+    mir::ParticleSystem lookup;
+    CHECK(mir::FindEmitterOffsetSlot(lookup, 1) == mir::kNoEmitterOffsetSlot);
+    CHECK(mir::FindFreeEmitterOffsetSlot(lookup) == 0);
+    lookup.offsetPlacementIds[0] = 4;
+    lookup.offsetPlacementIds[1] = 9;
+    CHECK(mir::FindEmitterOffsetSlot(lookup, 9) == 1);
+    CHECK(mir::FindEmitterOffsetSlot(lookup, 0) == mir::kNoEmitterOffsetSlot);
+    CHECK(mir::FindFreeEmitterOffsetSlot(lookup) == 2);
+    for (auto &id : lookup.offsetPlacementIds) id = 1;
+    CHECK(mir::FindFreeEmitterOffsetSlot(lookup) == mir::kNoEmitterOffsetSlot);
 
     mir::test::ParticleTestWorld test;
     test.files.Publish(1.0f);
     const auto moved = test.System();
     const auto still = test.System();
+    // The first emitter of the published effect is placement 1.
+    test.world.GetComponent<mir::ParticleSystem>(moved)->offsetPlacementIds[0] = 1;
     test.world.GetComponent<mir::ParticleSystem>(moved)->emitterOffsets[0] = {3, 0, 0};
     test.Tick();
     REQUIRE(test.Particles().Find(moved));
@@ -351,6 +374,47 @@ TEST_CASE("Particle emitter offsets are hidden persisted fields that move only t
     REQUIRE(scene.mEntities.size() == 1);
     const auto *loaded = test.world.GetComponent<mir::ParticleSystem>(scene.mEntities.begin()->second);
     REQUIRE(loaded);
+    CHECK(loaded->offsetPlacementIds[0] == 1);
     CHECK(loaded->emitterOffsets[0] == glm::vec3(3, 0, 0));
+    CHECK(loaded->offsetPlacementIds[1] == 0);
     CHECK(loaded->emitterOffsets[1] == glm::vec3(0));
+}
+
+TEST_CASE("Per-entity offsets follow the placement id, not the emitter's position in the list", "[particles]")
+{
+    mir::test::ParticleTestWorld test;
+    auto definition = test.files.Definition();
+    const auto secondId = mir::MakeAssetId("assets/effects/secondary.emitter.json");
+    auto second = definition.emitterDefinitions[0];
+    definition.emitters.push_back(secondId);
+    definition.emitterDefinitions.push_back(second);
+    definition.placementIds = {7, 3};
+    definition.placementOffsets = {{0, 0, 0}, {0, 0, 0}};
+    test.files.Write("effect.blob", mir::BuildParticleEffectAsset(definition));
+    test.files.Write("secondary.blob", mir::BuildParticleEmitterAsset(second));
+    const mir::AssetManifestSourceEntry entries[]{
+        {{mir::AssetId{901}, mir::kParticleScriptTypeTag, mir::kParticleScriptContentVersion}, "script.blob"},
+        {{mir::AssetId{902}, mir::kParticleScriptLayoutTypeTag, mir::kParticleScriptLayoutContentVersion}, "layout.blob"},
+        {{test.files.EffectId(), mir::kParticleEffectTypeTag, mir::kParticleEffectContentVersion}, "effect.blob"},
+        {{test.files.EmitterId(), mir::kParticleEmitterTypeTag, mir::kParticleEmitterContentVersion}, "emitter.blob"},
+        {{secondId, mir::kParticleEmitterTypeTag, mir::kParticleEmitterContentVersion}, "secondary.blob"},
+        {{test.files.TextureId(), mir::kTextureAssetTypeTag, 1}, "texture.blob"}};
+    test.files.Write(mir::kAssetManifestFileName, mir::BuildAssetManifestBlob(entries));
+    test.assets.BeginReload();
+    test.StageEvent(mir::Stage::ReloadPrepare);
+    test.assets.CommitReload();
+    test.StageEvent(mir::Stage::ReloadCommit);
+    const auto owner = test.System();
+    auto &component = *test.world.GetComponent<mir::ParticleSystem>(owner);
+    component.offsetPlacementIds[0] = 3;
+    component.emitterOffsets[0] = {0, 4, 0};
+    // A removed or unknown placement keeps its slot but moves nothing.
+    component.offsetPlacementIds[1] = 99;
+    component.emitterOffsets[1] = {0, 9, 0};
+    test.Tick();
+    REQUIRE(test.Particles().Find(owner));
+    const auto &emitters = test.Particles().Find(owner)->emitters;
+    REQUIRE(emitters.size() == 2);
+    const auto y = [&](size_t i) { return test.Particles().Runtime().FindEmitter(emitters[i])->attachmentPosition.Meters().y; };
+    CHECK(y(1) - y(0) == 4);
 }

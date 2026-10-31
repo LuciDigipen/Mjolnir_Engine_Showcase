@@ -161,7 +161,7 @@ namespace mir
         bool &ParticleEditorVisible() { return mShowParticles; }
         std::string TakeParticleOpenRequest() { return std::exchange(mParticleOpenRequest, {}); }
         // One undoable scene edit of a ParticleSystem's per-instance emitter offset.
-        void SubmitParticleEmitterOffset(World &world, Entity entity, uint32_t index, const glm::vec3 &offset);
+        void SubmitParticleEmitterOffset(World &world, Entity entity, uint32_t placementId, const glm::vec3 &offset);
         int TakeParticleHistoryRequest() { return std::exchange(mParticleHistoryRequest, 0); }
         void SetParticleHistoryAvailability(bool undo, bool redo)
         {

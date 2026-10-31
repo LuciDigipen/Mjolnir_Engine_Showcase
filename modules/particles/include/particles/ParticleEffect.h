@@ -176,6 +176,10 @@ namespace mir
 
     std::string WriteParticleEmitterSource(const ParticleEmitterAsset &emitter, std::string_view texturePath);
     std::string WriteParticleEffectSource(const ParticleEffect &effect, std::span<const std::string> emitterPaths);
+    // A stable text of a draft that is never validated and never throws, for comparing an edited draft with a saved
+    // one. The Write functions above refuse an invalid draft, so the editor cannot compare with them.
+    std::string DescribeParticleEmitterDraft(const ParticleEmitterAsset &emitter, std::string_view texturePath);
+    std::string DescribeParticleEffectDraft(const ParticleEffect &effect, std::span<const std::string> emitterPaths);
     bool ValidateParticleUserParameters(const ParticleUserParameters &parameters, std::string &error);
     bool ValidateParticleEmitterAsset(const ParticleEmitterAsset &emitter, std::string &error);
     std::string GenerateParticleScript(const ParticleEmitterAsset &emitter);

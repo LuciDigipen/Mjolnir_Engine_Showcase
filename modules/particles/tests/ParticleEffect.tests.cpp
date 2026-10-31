@@ -714,3 +714,41 @@ TEST_CASE("Follow emitter roundtrips and only applies to GPU emitters", "[partic
     emitter.followEmitter = false;
     CHECK(mir::ValidateParticleEmitterAsset(emitter, error));
 }
+
+TEST_CASE("Describing a draft never throws, so the editor can compare an invalid one", "[particles][authoring]")
+{
+    mir::ParticleEmitterAsset emitter;
+    emitter.texture = mir::MakeAssetId("assets/x.png");
+    const auto valid = mir::DescribeParticleEmitterDraft(emitter, "x.png");
+    emitter.quality.nearDistance = 6000; // above the default farDistance of 5000
+    std::string error;
+    REQUIRE_FALSE(mir::ValidateParticleEmitterAsset(emitter, error));
+    CHECK_THROWS(mir::WriteParticleEmitterSource(emitter, "x.png"));
+    std::string invalid;
+    CHECK_NOTHROW(invalid = mir::DescribeParticleEmitterDraft(emitter, "x.png"));
+    CHECK(invalid != valid);
+    CHECK(mir::DescribeParticleEmitterDraft(emitter, "x.png") == invalid);
+
+    mir::ParticleEffect effect;
+    effect.emitters = {{1}};
+    effect.parameters.sizeScale = 99; // outside [0, 16]
+    const std::vector<std::string> paths{"x.emitter.json"};
+    CHECK_THROWS(mir::WriteParticleEffectSource(effect, paths));
+    CHECK_NOTHROW(mir::DescribeParticleEffectDraft(effect, paths));
+    CHECK_NOTHROW(mir::DescribeParticleEffectDraft(effect, {}));
+}
+
+TEST_CASE("Box shape and start rotation draw independent noise", "[particles][authoring]")
+{
+    mir::ParticleEmitterAsset emitter;
+    emitter.texture = mir::MakeAssetId("assets/x.png");
+    emitter.spawnBehaviors = { { "Initialize",{} },{ "Shape",{ 1, 1, 1, 1, 0, 0 } },{ "StartRotation",{ 90 } } };
+    const auto script = mir::GenerateParticleScript(emitter);
+    for (const std::string salt : { "0x68bc21ebu", "0x02e5be93u", "0x2c1b3c6du", "0x1b873593u", "0x7f4a7c15u" })
+    {
+        INFO(salt);
+        const auto first = script.find(salt);
+        REQUIRE(first != std::string::npos);
+        CHECK(script.find(salt, first + 1) == std::string::npos);
+    }
+}

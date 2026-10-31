@@ -23,7 +23,11 @@ namespace mir
         bool playOnStart = true;
         bool overrideParameters = false;
         ParticleUserParameters userParameters;
-        glm::vec3 emitterOffsets[kMaxSystemEmitters] = {};// Per-instance origin of each emitter placement
+        // Per-instance origin of emitter placements. A slot belongs to the placement whose id is in the same slot of
+        // offsetPlacementIds, 0 meaning unused, so reordering or removing placements in the system never moves an offset
+        // onto another emitter.
+        uint32_t offsetPlacementIds[kMaxSystemEmitters] = {};
+        glm::vec3 emitterOffsets[kMaxSystemEmitters] = {};
         ParticleHandle instance;
         bool initialized = false;
         bool wantsPlay = false;
@@ -48,6 +52,33 @@ namespace mir
         { .mName = "emitterOffset5", .mKind = FieldKind::Vec3, .mOffset = offsetof(ParticleSystem, emitterOffsets) + 5 * sizeof(glm::vec3), .mHidden = true },
         { .mName = "emitterOffset6", .mKind = FieldKind::Vec3, .mOffset = offsetof(ParticleSystem, emitterOffsets) + 6 * sizeof(glm::vec3), .mHidden = true },
         { .mName = "emitterOffset7", .mKind = FieldKind::Vec3, .mOffset = offsetof(ParticleSystem, emitterOffsets) + 7 * sizeof(glm::vec3), .mHidden = true },
+        { .mName = "emitterOffsetPlacement0", .mKind = FieldKind::Int, .mOffset = offsetof(ParticleSystem, offsetPlacementIds), .mHidden = true },
+        { .mName = "emitterOffsetPlacement1", .mKind = FieldKind::Int, .mOffset = offsetof(ParticleSystem, offsetPlacementIds) + 1 * sizeof(uint32_t), .mHidden = true },
+        { .mName = "emitterOffsetPlacement2", .mKind = FieldKind::Int, .mOffset = offsetof(ParticleSystem, offsetPlacementIds) + 2 * sizeof(uint32_t), .mHidden = true },
+        { .mName = "emitterOffsetPlacement3", .mKind = FieldKind::Int, .mOffset = offsetof(ParticleSystem, offsetPlacementIds) + 3 * sizeof(uint32_t), .mHidden = true },
+        { .mName = "emitterOffsetPlacement4", .mKind = FieldKind::Int, .mOffset = offsetof(ParticleSystem, offsetPlacementIds) + 4 * sizeof(uint32_t), .mHidden = true },
+        { .mName = "emitterOffsetPlacement5", .mKind = FieldKind::Int, .mOffset = offsetof(ParticleSystem, offsetPlacementIds) + 5 * sizeof(uint32_t), .mHidden = true },
+        { .mName = "emitterOffsetPlacement6", .mKind = FieldKind::Int, .mOffset = offsetof(ParticleSystem, offsetPlacementIds) + 6 * sizeof(uint32_t), .mHidden = true },
+        { .mName = "emitterOffsetPlacement7", .mKind = FieldKind::Int, .mOffset = offsetof(ParticleSystem, offsetPlacementIds) + 7 * sizeof(uint32_t), .mHidden = true },
     };
-    static_assert(kMaxSystemEmitters == 8, "kParticleSystemFields lists one emitterOffset field per placement");
+    static_assert(kMaxSystemEmitters == 8, "kParticleSystemFields lists one offset and one placement id field per slot");
+    static_assert(sizeof(uint32_t) == sizeof(int32_t), "the placement id slots are saved through Int fields");
+
+    inline constexpr size_t kNoEmitterOffsetSlot = static_cast<size_t>(-1);
+
+    // The slot that holds this placement's offset, or kNoEmitterOffsetSlot.
+    inline size_t FindEmitterOffsetSlot(const ParticleSystem &component, uint32_t placementId)
+    {
+        if (placementId == 0) return kNoEmitterOffsetSlot;
+        for (size_t slot = 0; slot < kMaxSystemEmitters; ++slot)
+            if (component.offsetPlacementIds[slot] == placementId) return slot;
+        return kNoEmitterOffsetSlot;
+    }
+
+    inline size_t FindFreeEmitterOffsetSlot(const ParticleSystem &component)
+    {
+        for (size_t slot = 0; slot < kMaxSystemEmitters; ++slot)
+            if (component.offsetPlacementIds[slot] == 0) return slot;
+        return kNoEmitterOffsetSlot;
+    }
 }
