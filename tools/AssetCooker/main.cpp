@@ -16,6 +16,7 @@
 #include <assets/AssetBlob.h>
 #include <core/fs/FileIO.h>
 #include <assets/AssetId.h>
+#include <assets/AssetMeta.h>
 #include <assets/AssetManifest.h>
 #include <assets/AssetPath.h>
 #include <assets/ModelAsset.h>
@@ -1113,8 +1114,7 @@ namespace
                         ext == ".json" && std::filesystem::exists(std::filesystem::path(path).replace_extension(".bnk"));
                     if (ext == ".gltf" || ext == ".glb" || IsMaterialPath(path) || ext == ".slang" ||
                         ext == ".bnk" || ext == ".wem" ||
-                        bankMetadata || filename.ends_with(".import.json") || filename.ends_with(".pending") ||
-                        filename == ".gitkeep")
+                        bankMetadata || mir::IsAssetToolingFile(path))
                         continue;
                     // TerrainTool owns recipes and releases.
                     const std::string logical = LogicalPath(root, path);

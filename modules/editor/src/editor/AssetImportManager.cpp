@@ -9,6 +9,7 @@
 #include <editor/AssetImportManager.h>
 
 #include <assets/AssetIdRoot.h>
+#include <assets/AssetMeta.h>
 #include <assets/AssetPath.h>
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
@@ -48,6 +49,8 @@ namespace mir
         bool IsMaterial(const std::filesystem::path &path) { return LowerFilename(path).ends_with(".material.json"); }
         bool IsWatched(const std::filesystem::path &path)
         {
+            if (IsAssetToolingFile(path))
+                return false;
             if (IsMaterial(path))
                 return true;
             auto ext = path.extension().string();
@@ -174,7 +177,7 @@ namespace mir
         for (const auto &entry : std::filesystem::recursive_directory_iterator(mSourceAssetRoot, ec))
         {
             std::error_code entryEc;
-            if (entry.is_regular_file(entryEc) && entry.path().filename() != ".gitkeep")
+            if (entry.is_regular_file(entryEc) && !IsAssetToolingFile(entry.path()))
                 return true;
         }
         return false;

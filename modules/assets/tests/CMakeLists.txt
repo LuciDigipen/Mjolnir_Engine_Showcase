@@ -1,6 +1,7 @@
 engine_add_module_tests(assets
     AssetBlob.tests.cpp
     AssetManifest.tests.cpp
+    AssetMeta.tests.cpp
     AssetPath.tests.cpp
     AssetResolver.tests.cpp
     AssetCache.tests.cpp
