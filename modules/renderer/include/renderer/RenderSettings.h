@@ -9,6 +9,8 @@
  */
 #pragma once
 
+#include <renderer/MeshStreaming.h>
+
 #include <array>
 #include <cstdint>
 #include <filesystem>
@@ -58,7 +60,7 @@ namespace mir
 
     struct RenderSettings
     {
-        static constexpr double kDefaultUploadMiBPerFrame = 4.0;
+        static constexpr double kDefaultUploadMiBPerFrame = double(kDefaultFrameBytes) / (1024.0 * 1024.0);
         static constexpr double kMaxUploadMiBPerFrame = 1024.0;
 
         bool rayTracing = false;
