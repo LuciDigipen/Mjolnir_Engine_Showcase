@@ -61,7 +61,7 @@ struct IcelandicSandMaterial : IMaterial
             const float3 macro = macroContext.Sample(macro, input.uv0 / macroPeriodMeters).rgb;
             const float variation = macro.r * 2.0 - 1.0;
             albedo.rgb *= 1.0 + strength * variation;
-            albedo.rgb = SurfaceHueShift(albedo.rgb, (macro.g * 2.0 - 1.0) * macroHueShiftDegrees);
+            albedo.rgb = SurfaceHueShift(albedo.rgb, strength * (macro.g * 2.0 - 1.0) * macroHueShiftDegrees);
             roughness = saturate(roughness + strength * macroRoughnessContrast * (macro.b * 2.0 - 1.0));
         }
 
