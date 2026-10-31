@@ -96,7 +96,8 @@ namespace mir::test
                 {{AssetId{902}, kParticleScriptLayoutTypeTag, kParticleScriptLayoutContentVersion}, "layout.blob"},
                 {{EffectId(), kParticleEffectTypeTag, effectVersion}, "effect.blob"},
                 {{EmitterId(), kParticleEmitterTypeTag, kParticleEmitterContentVersion}, "emitter.blob"},
-                {{TextureId(), textureTyped ? kTextureAssetTypeTag : kRawAssetTypeTag, 1}, "texture.blob"}};
+                {{TextureId(), textureTyped ? kTextureAssetTypeTag : kRawAssetTypeTag,
+                     textureTyped ? kTextureAssetContentVersion : 1}, "texture.blob"}};
             Write(kAssetManifestFileName, BuildAssetManifestBlob(entries));
         }
 
