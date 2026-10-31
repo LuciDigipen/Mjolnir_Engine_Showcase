@@ -42,4 +42,10 @@ namespace mir
     inline constexpr FieldDesc kScriptRefFields[] = {
         {"scriptName", FieldKind::String, offsetof(ScriptRef, scriptName)},
     };
+
+    inline constexpr TransientField kScriptRefTransient[] = {
+        { offsetof(ScriptRef, instanceRef), sizeof(ScriptRef::instanceRef) },
+        { offsetof(ScriptRef, started), sizeof(ScriptRef::started) },
+        { offsetof(ScriptRef, resolvedName), sizeof(ScriptRef::resolvedName) },
+    };
 }

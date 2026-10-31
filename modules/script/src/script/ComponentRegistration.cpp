@@ -17,6 +17,6 @@ namespace mir
 {
     void RegisterScriptComponents()
     {
-        ComponentRegistry::Instance().Register<ScriptRef>(kScriptRefFields);
+        ComponentRegistry::Instance().Register<ScriptRef>(kScriptRefFields, kScriptRefTransient);
     }
 }

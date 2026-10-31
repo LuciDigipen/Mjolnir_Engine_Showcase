@@ -19,6 +19,7 @@
 #include <glm/vec3.hpp>
 
 #include <array>
+#include <cstddef>
 #include <cstring>
 #include <limits>
 #include <string_view>
@@ -33,6 +34,7 @@ namespace
     using mir::FieldKind;
     using mir::RuntimeFieldDecl;
     using mir::Transform;
+    using mir::TransientField;
     using mir::World;
 
     // Distinct from every other test's components: the registry is
@@ -57,6 +59,21 @@ namespace
     const ComponentOps &Health()
     {
         return ComponentRegistry::Instance().Register<RegistryHealth>(kHealthFields);
+    }
+
+    struct RegistryLive
+    {
+        int hp = 0;
+        int handle = -1;
+    };
+
+    inline constexpr TransientField kLiveTransient[] = {
+        {offsetof(RegistryLive, handle), sizeof(RegistryLive::handle)},
+    };
+
+    const ComponentOps &Live()
+    {
+        return ComponentRegistry::Instance().Register<RegistryLive>({}, kLiveTransient);
     }
 }
 
@@ -147,6 +164,80 @@ TEST_CASE("AddDefault installs the type's default value")
 
     REQUIRE(ops.Has(world, entity));
     CHECK(world.GetComponent<RegistryHealth>(entity)->hp == RegistryHealth{}.hp);
+}
+
+TEST_CASE("Every add path resets a transient field to its default and keeps the rest")
+{
+    const ComponentOps &ops = Live();
+    World world;
+    CommandBuffer commands;
+
+    // the original's live state, as Duplicate, a prefab instance or a snapshot carries it
+    const RegistryLive copied{5, 9};
+
+    const Entity typed = world.CreateEntity();
+    world.AddComponent(typed, copied);
+
+    const Entity raw = world.CreateEntity();
+    world.AddRaw(raw, ops.mType, ops.mSize, ops.mAlign, &copied);
+
+    const Entity erased = world.CreateEntity();
+    ops.AddCopy(world, erased, &copied);
+
+    const Entity deferred = world.CreateEntity();
+    commands.Add(deferred, copied);
+    const Entity deferredRaw = world.CreateEntity();
+    commands.AddRaw(deferredRaw, ops.mType, ops.mSize, ops.mAlign, &copied);
+    const Entity deferredErased = world.CreateEntity();
+    ops.DeferAdd(commands, deferredErased, &copied);
+    commands.Flush(world);
+
+    for (const Entity entity : {typed, raw, erased, deferred, deferredRaw, deferredErased})
+    {
+        CAPTURE(entity.mIndex);
+        const RegistryLive *live = world.GetComponent<RegistryLive>(entity);
+        REQUIRE(live != nullptr);
+        CHECK(live->hp == 5);
+        CHECK(live->handle == -1);
+    }
+}
+
+TEST_CASE("OnAdd already sees the transient field reset")
+{
+    Live();
+    World world;
+
+    int seen = 0;
+    const mir::Registration hooks = world.SetComponentHooks<RegistryLive>(
+        {.onAdd = [&seen](World &w, Entity e) { seen = w.GetComponent<RegistryLive>(e)->handle; }});
+
+    const Entity entity = world.CreateEntity();
+    world.AddComponent(entity, RegistryLive{5, 9});
+
+    CHECK(seen == -1);
+}
+
+TEST_CASE("An archetype move keeps a transient field")
+{
+    Live();
+    World world;
+
+    const Entity entity = world.CreateEntity();
+    world.AddComponent(entity, RegistryLive{});
+    world.GetComponent<RegistryLive>(entity)->handle = 9;
+
+    world.AddComponent(entity, RegistryHealth{3});
+
+    CHECK(world.GetComponent<RegistryLive>(entity)->handle == 9);
+}
+
+TEST_CASE("Registering again without transient fields keeps the declared ones")
+{
+    const ComponentOps &ops = Live();
+    ComponentRegistry::Instance().Register<RegistryLive>();
+
+    REQUIRE(ops.mTransient.size() == 1);
+    CHECK(ops.mTransient[0].mOffset == offsetof(RegistryLive, handle));
 }
 
 TEST_CASE("A field write on Transform goes through the setter, not the bytes")
