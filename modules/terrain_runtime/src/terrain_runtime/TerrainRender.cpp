@@ -39,6 +39,11 @@ namespace mir
         return mRenderer.MeshStreaming().pendingBytes;
     }
 
+    uint64_t TerrainGpuUploader::FrameBudgetBytes() const
+    {
+        return mRenderer.UploadFrameBudget();
+    }
+
     TerrainGpuMeshId TerrainGpuUploader::Upload(TerrainMeshData &&mesh)
     {
         const MeshHandle handle =

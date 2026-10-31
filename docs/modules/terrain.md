@@ -484,7 +484,7 @@ ships:
   "residency": { "mode": "Auto", "queryLeaseSeconds": 2.0 },
   "view": { "refineErrorPixels": 1.0, "mergeErrorPixels": 0.75, "prefetchErrorPixels": 0.5,
             "prefetchBudgetMiB": 4 },
-  "gpu": { "budgetMiB": 128, "uploadMiBPerFrame": 8, "stagingMiB": 32, "meshRetainSeconds": 2.0 },
+  "gpu": { "budgetMiB": 128, "stagingMiB": 32, "meshRetainSeconds": 2.0 },
   "collision": { "spacingsMeters": [8.0, 4.0, 2.0, 1.0], "maxErrorMeters": 0.05, "pieceTiles": 4,
                  "seamOverlapMeters": 64.0, "bodyToleranceMeters": 0.05, "loadLatencySeconds": 0.5,
                  "latencyMarginSeconds": 0.5, "prefetchSeconds": 2.0, "budgetMiB": 64, "retainSeconds": 2.0 } }
@@ -666,12 +666,13 @@ frame that copied it). Until then the selector keeps drawing a ready coarser or
 finer unit, so a refined Region stays on screen until all of its children are
 usable, and a Region replaced by its 256 tiles no longer costs a frame.
 
-**Budgets from data.** `gpu.uploadBytesPerFrame` paces both ends: builds start
-while building and built bytes stay within it (one always may), built meshes go
-to the uploader while its queued bytes are below it, and the renderer records at
-most that many bytes a frame (vertex and index bytes plus the BLAS; the first
-mesh of a frame goes alone if larger), copied through a persistent ring of
-`gpu.stagingBytes`. `gpu.budgetBytes` caps what terrain holds on the GPU,
+**Budgets from data.** The renderer's per-frame upload budget (the game's
+`rendering.uploadMiBPerFrame`, read through `TerrainMeshUploader::FrameBudgetBytes`)
+paces both ends: builds start while building and built bytes stay within it (one
+always may), built meshes go to the uploader while its queued bytes are below
+it, and the renderer records at most that many bytes a frame (vertex and index
+bytes plus the BLAS; the first mesh of a frame goes alone if larger), copied
+through a persistent ring that terrain asks to be at least `gpu.stagingBytes`. `gpu.budgetBytes` caps what terrain holds on the GPU,
 counting meshes being built or uploaded and retired meshes the GPU may still
 read: a mesh that does not fit waits, and only a Visible one makes room, by
 retiring unwanted meshes and then Prefetch ones, never a Visible one. A mesh
@@ -1254,7 +1255,7 @@ tools\TerrainTool\TerrainTool.exe publish --candidate terrain-candidates\relief-
 | `TerrainCollisionOwners`, `TerrainCollisionPieceArea`, `TerrainCollisionEvent`, `TerrainCollisionPieceName`, `TerrainCollisionStats` | `terrain/TerrainCollisionResidency.h` | which pieces a footprint may touch; placed, retired and failed pieces with spacing, error, build time, latency and bytes; held, peak and budget bytes, builds and latencies |
 | `TerrainViewSelector` | `terrain/TerrainViewSelection.h` | one viewport's selection over placed releases: `Update` (detail in every direction with hysteresis, frustum draws, wants), `Draws`, `Collect` (the same detail in another volume), `Wants`, `Stats` |
 | `TerrainMeshResidency` | `terrain/TerrainMeshResidency.h` | GPU meshes of draw units within the `gpu` budgets: `Install` (finished builds and uploads), `Request` (every viewport's wants: builds, hand-over, retirement), `State`, `Ready`, `Acquire`, `RetireReleases`, `RetireAll`, `Forget`, `TakeFailures`, `Stats`, `Usage` |
-| `TerrainMeshUploader`, `TerrainMeshData`, `TerrainGpuMeshId`, `TerrainGpuMeshState`, `TerrainMeshState`, `TerrainResidentMesh`, `TerrainMeshStats` | `terrain/TerrainMeshResidency.h` | the renderer side a caller implements (footprint, queued bytes, upload, state, retire, retiring bytes); a built mesh in its own frame; an upload's id and state; where a unit's mesh is; a ready mesh's id and origin; held, retiring and peak bytes and counters |
+| `TerrainMeshUploader`, `TerrainMeshData`, `TerrainGpuMeshId`, `TerrainGpuMeshState`, `TerrainMeshState`, `TerrainResidentMesh`, `TerrainMeshStats` | `terrain/TerrainMeshResidency.h` | the renderer side a caller implements (footprint, queued bytes, frame budget, upload, state, retire, retiring bytes); a built mesh in its own frame; an upload's id and state; where a unit's mesh is; a ready mesh's id and origin; held, retiring and peak bytes and counters |
 | `TerrainView`, `TerrainCullVolume`, `TerrainSelectionInstance`, `TerrainDrawUnit`, `TerrainUnitKind`, `TerrainUnitReady`, `TerrainViewStats` | `terrain/TerrainViewSelection.h` | the eye, camera-relative clip volume, focal length in pixels and far distance; a release at a placement; a tile at a LOD or a Region with its payload keys, distance and projected error; whether a unit can be drawn; drawn, stand-in, missing, wanted and prefetch counts |
 | `TerrainTileMesh`, `TerrainMeshVertex` | `terrain/TerrainTileMesh.h` | one tile's raster mesh: release, surface version, tile, double origin, sample range, float vertices (position, normal), `TriangulateCell` indices, bounds |
 | `BuildTerrainTileMesh`, `TerrainMeshResult`, `TerrainMeshStatus` | `terrain/TerrainTileMesh.h` | builds it from a `TileSampleLookup`; `MissingTile`, `MissingNeighbour`, `InvalidSamples`, `InvalidInput` instead of a mesh |
@@ -1604,7 +1605,7 @@ it: a mesh that does not fit waits, and only a Visible one may make room, by
 retiring unwanted meshes (least recently touched first) and then Prefetch ones
 (farthest first); a Visible mesh is never retired for room. Builds start Visible
 first, then Prefetch, by rank, while building and built bytes stay within
-`gpu.uploadBytesPerFrame` (one always may), and built meshes go to the uploader
+the renderer's frame budget (one always may), and built meshes go to the uploader
 while its queued bytes are below the same budget.
 
 ## State
@@ -1816,6 +1817,20 @@ physics side are in `tests/TerrainResidencyTestSupport.h`).
     out of P3).
 
 ## Changed
+
+*2026-10-31* — **Terrain follows the renderer's upload budget (#359).** Was:
+`gpu.uploadMiBPerFrame` in `terrain_streaming.json` set the renderer's per-frame
+budget and `gpu.stagingMiB` configured its ring, and terrain drew nothing if
+that configuration was refused. Now: the budget is the game's
+`rendering.uploadMiBPerFrame` in `project_settings.json`, shared by every
+consumer, and terrain reads it through `TerrainMeshUploader::FrameBudgetBytes`
+to pace its builds and hand-overs. `gpu.stagingMiB` is the least ring terrain
+asks for, and a refused request only logs. The `gpu.uploadMiBPerFrame` key is
+removed, so a `terrain_streaming.json` that still has it fails to load with
+"gpu.uploadMiBPerFrame is not a known setting" and the fix is to delete the key
+and set `rendering.uploadMiBPerFrame` instead. Because: terrain is one consumer
+of an upload path every asset shares, so it cannot own the number, and a game
+that streams a large terrain needs that number in its project settings.
 
 *2026-10-13* — **Release switches checked and prewarmed off the main thread
 (#129).** Was: in Edit the poll adopted a moved `current` at once, opening the

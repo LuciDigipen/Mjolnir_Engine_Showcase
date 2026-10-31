@@ -75,8 +75,9 @@ interface. Runtime shutdown waits for submitted callbacks before destroying
 collaborators, then releases shared ownership without closing the lane. A retained
 streamer can keep posting work; only the last owner closes the lane.
 The `gpu` section
-configures the renderer's mesh streaming (staging ring, bytes a frame) and a
-`TerrainMeshResidency`. Invalid settings, or missing ones in
+sets the budgets of a `TerrainMeshResidency` and the least staging ring terrain
+asks the renderer for (`gpu.stagingMiB`). Terrain follows the renderer's per-frame
+upload budget, the game's `rendering.uploadMiBPerFrame`. Invalid settings, or missing ones in
 a scene with terrain, are one error, and no terrain loads; a game without
 terrain needs no file.
 

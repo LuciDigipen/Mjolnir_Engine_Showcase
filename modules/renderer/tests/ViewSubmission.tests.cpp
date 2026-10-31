@@ -440,6 +440,22 @@ TEST_CASE("Submission carries the linear part and draw data through", "[renderer
     CHECK(view[0].deformation.size() == 2);
 }
 
+TEST_CASE("A cut view draws a moved item with no velocity", "[renderer][camera]")
+{
+    WorldDrawItem item = ItemAt({ 1.0, 2.0, 3.0 });
+    item.previousPose = WorldPose{ At({ 101.0, 2.0, 3.0 }) };
+    const std::vector<WorldDrawItem> world{ item };
+
+    std::vector<DrawItem> view;
+    mir::BuildViewDrawItems(world, At({ 0.0, 0.0, 0.0 }), glm::mat4(1.0f), view);
+    REQUIRE(view.size() == 1);
+    CHECK(view[0].previousModel != view[0].model);
+
+    mir::BuildViewDrawItems(world, At({ 0.0, 0.0, 0.0 }), glm::mat4(1.0f), view, /*cut*/ true);
+    REQUIRE(view.size() == 1);
+    CHECK(view[0].previousModel == view[0].model);
+}
+
 TEST_CASE("Neighbouring tile draws meet on their shared edge after narrowing", "[renderer][lwc]")
 {
     if (!mir::kLargeWorld)
