@@ -618,8 +618,9 @@ A `historyId` change is a camera cut for the other temporal state too:
 `CameraBuffer` drops that view slot's previous view-projection and jitter
 sequence, so motion blur sees no camera motion, and `TraceFrame` resets DLSS.
 A view with `cut` set is the same cut without a camera change: the camera
-jumped. DDGI keeps its probes through either, since they light the world, not
-the view.
+jumped. Its draws are built with no previous pose too, so an object that moved
+with the camera (a player teleported along with it) gets no velocity either.
+DDGI keeps its probes through either, since they light the world, not the view.
 Filtering has a separate 256 MiB allocation cap across frame slots; unsupported
 layouts retain existing lighting.
 
@@ -950,10 +951,13 @@ session.
 **Whoever causes a camera cut signals it; `RenderSystem` does not guess one
 from camera motion.** Switching the camera a view draws through changes its `historyId`,
 which is already a cut. A camera that jumps without changing (a teleport, a
-respawn) is cut with `CutCamera(world, camera)` or `world:cut_camera(camera)`.
-`RenderSystem` sets `cut` on every view drawing through that camera the next
-frame, then clears every cut, so each one resets history once; a cut on a
-camera no view shows is dropped. Scene load and Play begin are the same signal
+respawn) is cut with `CutCamera(world, camera)` or `world:cut_camera(camera)`;
+an external camera, which no entity names, with `RenderSystem::CutViewport(id)`
+(the editor camera's `FocusOn`, `SetPosition` and document switches, see
+[editor.md](editor.md)). `RenderSystem` sets `cut` on every view drawing
+through that camera or viewport the next frame, builds those views' draws with
+no previous pose, then clears every cut, so each one resets history once; a
+cut on a camera no view shows is dropped. Scene load and Play begin are the same signal
 at the transition level: `RendererModule` calls `ResetHistory` from those
 stages.
 
@@ -1066,9 +1070,11 @@ history (#298).** Was: only a camera switch (a `historyId` change), a scene
 load and Play begin reset temporal history, so the first frame after a camera
 teleport blended in the frames before it: DLSS ghosted and motion blur smeared.
 Now:
-`CutCamera` / `world:cut_camera` mark a cut, `RenderSystem` sets
-`RenderView::cut` on the views drawing through that camera for one frame, and
-the renderer treats it as a `historyId` change. Because: only the code that
+`CutCamera` / `world:cut_camera` mark a cut, and `CutViewport` does for an
+external camera, which the editor camera calls when it jumps. `RenderSystem`
+sets `RenderView::cut` on the views drawing through that camera for one frame,
+builds their draws with no previous pose, and the renderer treats it as a
+`historyId` change. Because: only the code that
 moves the camera knows a jump from fast motion; a view-matrix threshold would
 miss small jumps and cut fast turns.
 

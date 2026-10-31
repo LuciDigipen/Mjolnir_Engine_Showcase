@@ -89,7 +89,10 @@ snapshot/restore untouched). `Update` reads `Window::RawInput()` directly
 rather than `InputMap`/`InputState`, so a project's key bindings can't affect
 the editor's own camera. Right-drag flies/looks (WASD/QE, scroll for speed);
 `Editor::UpdateCamera` gates that on `!WantsCaptureMouse()` so a drag ImGui
-itself is handling doesn't also move it.
+itself is handling doesn't also move it. A jump (`FocusOn`, `SetPosition`, a
+document switch) marks a camera cut, which `EditorModule::FeedViewport` takes
+with `TakeCut()` and hands to `RenderSystem::CutViewport(0)`, so the frame
+after it reuses no temporal history; flying does not cut.
 
 ### The module
 
@@ -193,7 +196,7 @@ EditorCamera &SceneCamera();
 | `EntityAction`, `EntityActionKind` | `editor/panels/HierarchyPanel.h` | `{mKind, mPreset, mTarget, mTargets, mParent, mBefore}`: `Create` (null `mPreset` = New), `Delete`, `Duplicate`, `CopyAsOrdinaryObject`, `Reparent`, `CreatePrefab` or `PlacePrefab`, which `MakeEntityCommand` or `MakeDocumentEntityCommand` turns into a command (see [editor-history.md](editor-history.md)) |
 | `NeighborInHierarchy` | `editor/panels/HierarchyPanel.h` | The entity to select after deleting one: next sibling, else previous, else the parent |
 | `IsBaselineComponent`, `AddMissingBaseline` | `editor/EntityBaseline.h` | The components every editor-created entity has: `Transform`, `WorldTransform`, `Name` |
-| `EditorCamera` | `editor/EditorCamera.h` | Free-fly scene camera, `WorldPosition` + yaw/pitch (`Pose()`, `Translate`, `FocusOn`), outside the `World` |
+| `EditorCamera` | `editor/EditorCamera.h` | Free-fly scene camera, `WorldPosition` + yaw/pitch (`Pose()`, `Translate`, `FocusOn`, `Cut`/`TakeCut`), outside the `World` |
 | `widgets::*` | `editor/EditorWidgets.h` | The editor's UE5-style ImGui widgets: `CategoryHeader`, `BeginPropertyGrid`/`PropertyRow`/`EndPropertyGrid`, `AxisDragN` (X/Y/Z/W colour-tagged fields), `SearchBox`, `ToolbarButton`, `IconTextButton`, `PushRowSelectionColors`, `MatchesFilter`. Colours come from `EditorTheme` |
 | `Selection` | `editor/Selection.h` | `{mSelected, mAnchor}` (a `vector<Entity>`, ordered by selection - `.back()` is primary - and the shift-click range start), the `World` resource `Hierarchy` and viewport picking write and `Inspector`/the gizmo read |
 

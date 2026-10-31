@@ -1693,6 +1693,7 @@ namespace mir
                 FocusDocumentRoot(world);
             mDocumentCameras.emplace(documents.mActive, mCamera);
         }
+        mCamera.Cut();
         mCameraDocument = documents.mActive;
     }
 
