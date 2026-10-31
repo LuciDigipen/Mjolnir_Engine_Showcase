@@ -15,6 +15,7 @@
 #include "vulkan/Device.h"
 #include "vulkan/FrameCapture.h"
 #include "vulkan/FrameSync.h"
+#include "vulkan/FxCompositionPass.h"
 #include "vulkan/ImGuiOverlay.h"
 #include "vulkan/MaterialStore.h"
 #include "vulkan/MaterialTable.h"
@@ -44,6 +45,7 @@
 
 namespace mir
 {
+    static_assert(kFxMaxViews == vk::kMaxViewsPerFrame);
     uint32_t VulkanRenderer::RecordView(VkCommandBuffer cmd, const RenderView &view, uint32_t viewIndex,
         RasterPass pass, uint32_t cameraOffset)
     {
@@ -68,111 +70,130 @@ namespace mir
         }
         const VkDescriptorSet cameraSet = mCameraBuffer->Set(mFrameSync->Index());
         const VkDescriptorSet shadowSet = mShadowMaps->Set(mFrameSync->Index());
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
-            1, 1, &cameraSet, 1, &cameraOffset);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
-            3, 1, &shadowSet, 0, nullptr);
-
-        if (mMaterialTable != nullptr)
-        {
-            const VkDescriptorSet tableSet = mMaterialTable->Set(mFrameSync->Index());
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
-                vk::kMaterialTableSetIndex, 1, &tableSet, 0, nullptr);
-        }
-
-        VkPipeline boundPipeline = VK_NULL_HANDLE;
-        VkDescriptorSet boundDescriptorSet = VK_NULL_HANDLE;
-        uint32_t boundRecordRefOffset = UINT32_MAX;
-
         // Wireframe draws only lines, over the clear color; without line support it stays shaded
         const bool shaded = view.debugView.shading != ViewportShading::Wireframe || !mDebugDraw->WireframeAvailable();
         const size_t drawCount = shaded ? view.items.size() : 0;
 
-        // no mesh/material batching yet, just draw per item
-        // EQUAL replay runs in reverse so the original GREATER winner owns depth ties.
-        for (size_t iteration = 0; iteration < drawCount; ++iteration)
+        // The items one pass selects. The Scene pass runs it twice, opaque then blended, with the sky between them.
+        const auto recordItems = [&](RasterPass filter)
         {
-            const size_t draw = surfaces ? view.items.size() - 1 - iteration : iteration;
-            const DrawItem &item = view.items[draw];
-            const vk::GpuMaterial *const material = mMaterialStore->FindOrDefault(item.material);
-            if (material == nullptr) continue;
-            const bool transparent = item.transparent || material->mDescription.alphaMode == MaterialAlphaMode::Blend;
-            if ((pass == RasterPass::Opaque || surfaces) && transparent) continue;
-            if (pass == RasterPass::Transparent && !transparent) continue;
-            const vk::GpuMesh *const mesh = mResources->FindMesh(item.mesh);
-            if (mesh == nullptr)
-            {
-                if (!surfaces && !item.mesh.IsNull())
-                    ++mSkippedDraws;
-                continue;
-            }
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
+                1, 1, &cameraSet, 1, &cameraOffset);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
+                3, 1, &shadowSet, 0, nullptr);
 
-            const VkPipeline pipeline = surfaces ? mMaterialStore->SurfacePipeline(item.material) : material->mPipeline;
-            if (!pipeline) continue;
-            if (material->mModelShader)
+            if (mMaterialTable != nullptr)
             {
-                if (surfaces)
-                {
-                    if (!modelSets[draw]) continue;
-                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
-                        2, 1, &modelSets[draw], 0, nullptr);
-                }
-                else
-                {
-                    const VkDescriptorSet set = mModelDescriptors->Bind(cmd, mMaterialStore->PipelineLayout(),
-                        mFrameSync->Index(), item.deformation, material->mParameters);
-                    if (!set) continue;
-                    if (mRasterSurfaces->Active()) modelSets[draw] = set;
-                }
-            }
-
-            if (pipeline != boundPipeline)
-            {
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-                boundPipeline = pipeline;
-            }
-
-            const bool sharedTables = mMaterialTable != nullptr;
-            const uint32_t recordRefOffset = sharedTables
-                ? mMaterialStore->RecordRefDynamicOffset(mFrameSync->Index(), material->mMaterialIndex)
-                : 0;
-            if (material->mDescriptorSet != boundDescriptorSet || recordRefOffset != boundRecordRefOffset)
-            {
+                const VkDescriptorSet tableSet = mMaterialTable->Set(mFrameSync->Index());
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
-                    0, 1, &material->mDescriptorSet, sharedTables ? 1u : 0u,
-                    sharedTables ? &recordRefOffset : nullptr);
-                boundDescriptorSet = material->mDescriptorSet;
-                boundRecordRefOffset = recordRefOffset;
+                    vk::kMaterialTableSetIndex, 1, &tableSet, 0, nullptr);
             }
 
-            const VkDeviceSize vertexOffset = 0;
-            vkCmdBindVertexBuffers(cmd, 0, 1, &mesh->mVertexBuffer, &vertexOffset);
+            VkPipeline boundPipeline = VK_NULL_HANDLE;
+            VkDescriptorSet boundDescriptorSet = VK_NULL_HANDLE;
+            uint32_t boundRecordRefOffset = UINT32_MAX;
 
-            vkCmdBindIndexBuffer(cmd, mesh->mIndexBuffer, 0, VK_INDEX_TYPE_UINT32);
+            // no mesh/material batching yet, just draw per item
+            // EQUAL replay runs in reverse so the original GREATER winner owns depth ties.
+            for (size_t iteration = 0; iteration < drawCount; ++iteration)
+            {
+                const size_t draw = surfaces ? view.items.size() - 1 - iteration : iteration;
+                const DrawItem &item = view.items[draw];
+                const vk::GpuMaterial *const material = mMaterialStore->FindOrDefault(item.material);
+                if (material == nullptr) continue;
+                const bool transparent = item.transparent || material->mDescription.alphaMode == MaterialAlphaMode::Blend;
+                if ((filter == RasterPass::Opaque || surfaces) && transparent) continue;
+                if (filter == RasterPass::Transparent && !transparent) continue;
+                const vk::GpuMesh *const mesh = mResources->FindMesh(item.mesh);
+                if (mesh == nullptr)
+                {
+                    if (!surfaces && !item.mesh.IsNull())
+                        ++mSkippedDraws;
+                    continue;
+                }
 
-            const vk::RasterPushConstants pushData{
-                .model = item.model,
-                .normalCol0 = glm::vec4(item.normalMatrix[0], 0.0f),
-                .normalCol1 = glm::vec4(item.normalMatrix[1], 0.0f),
-                .normalCol2 = glm::vec4(item.normalMatrix[2], 0.0f),
-                .tint = item.tint };
+                const VkPipeline pipeline = surfaces ? mMaterialStore->SurfacePipeline(item.material) : material->mPipeline;
+                if (!pipeline) continue;
+                if (material->mModelShader)
+                {
+                    if (surfaces)
+                    {
+                        if (!modelSets[draw]) continue;
+                        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
+                            2, 1, &modelSets[draw], 0, nullptr);
+                    }
+                    else
+                    {
+                        const VkDescriptorSet set = mModelDescriptors->Bind(cmd, mMaterialStore->PipelineLayout(),
+                            mFrameSync->Index(), item.deformation, material->mParameters);
+                        if (!set) continue;
+                        if (mRasterSurfaces->Active()) modelSets[draw] = set;
+                    }
+                }
 
-            vkCmdPushConstants(cmd, mMaterialStore->PipelineLayout(), vk::kRasterPushConstantStages,
-                0, sizeof(vk::RasterPushConstants), &pushData);
+                if (pipeline != boundPipeline)
+                {
+                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+                    boundPipeline = pipeline;
+                }
 
-            vkCmdDrawIndexed(cmd, mesh->mIndexCount, 1, 0, 0, 0);
-        }
+                const bool sharedTables = mMaterialTable != nullptr;
+                const uint32_t recordRefOffset = sharedTables
+                    ? mMaterialStore->RecordRefDynamicOffset(mFrameSync->Index(), material->mMaterialIndex)
+                    : 0;
+                if (material->mDescriptorSet != boundDescriptorSet || recordRefOffset != boundRecordRefOffset)
+                {
+                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
+                        0, 1, &material->mDescriptorSet, sharedTables ? 1u : 0u,
+                        sharedTables ? &recordRefOffset : nullptr);
+                    boundDescriptorSet = material->mDescriptorSet;
+                    boundRecordRefOffset = recordRefOffset;
+                }
 
-        // Sky last, at the far depth 0: the test (GEQUAL, no write) passes only
+                const VkDeviceSize vertexOffset = 0;
+                vkCmdBindVertexBuffers(cmd, 0, 1, &mesh->mVertexBuffer, &vertexOffset);
+
+                vkCmdBindIndexBuffer(cmd, mesh->mIndexBuffer, 0, VK_INDEX_TYPE_UINT32);
+
+                const vk::RasterPushConstants pushData{
+                    .model = item.model,
+                    .normalCol0 = glm::vec4(item.normalMatrix[0], 0.0f),
+                    .normalCol1 = glm::vec4(item.normalMatrix[1], 0.0f),
+                    .normalCol2 = glm::vec4(item.normalMatrix[2], 0.0f),
+                    .tint = item.tint };
+
+                vkCmdPushConstants(cmd, mMaterialStore->PipelineLayout(), vk::kRasterPushConstantStages,
+                    0, sizeof(vk::RasterPushConstants), &pushData);
+
+                vkCmdDrawIndexed(cmd, mesh->mIndexCount, 1, 0, 0, 0);
+            }
+
+        };
+
+        // Sky after the opaque items, at the far depth 0: the test (GEQUAL, no write) passes only
         // where nothing above wrote depth, i.e. still at the clear value - a
         // fullscreen ray-marched shader paying its cost only on actual
         // background pixels, with early-z doing the rejection.
-        if (mSkyVisible && shaded && (pass == RasterPass::Scene || pass == RasterPass::Opaque))
+        const auto recordSky = [&]
         {
+            if (!mSkyVisible || !shaded) return;
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->SkyPipeline());
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->SkyPipelineLayout(),
                 0, 1, &cameraSet, 1, &cameraOffset);
             vkCmdDraw(cmd, 3, 1, 0, 0);
+        };
+
+        // Blended items draw after the sky, which would otherwise paint over them where they write no depth.
+        if (pass == RasterPass::Scene)
+        {
+            recordItems(RasterPass::Opaque);
+            recordSky();
+            recordItems(RasterPass::Transparent);
+        }
+        else
+        {
+            recordItems(pass);
+            if (pass == RasterPass::Opaque) recordSky();
         }
         return cameraOffset;
     }
@@ -284,7 +305,7 @@ namespace mir
 
         const std::span<const RenderView> drawnViews = views.subspan(0, viewCount);
 
-        const VkImageView colorSource = mPostProcessing->RecordRaster(cmd, frame, {
+        VkImageView colorSource = mPostProcessing->RecordRaster(cmd, frame, {
             .sceneColor = mSwapchain->HdrColorView(frame),
             .depthImage = mSwapchain->DepthImage(frame),
             .depthView = mSwapchain->DepthView(frame),
@@ -294,6 +315,10 @@ namespace mir
             .resources = mResources.get(),
             .extent = extent });
 
+        colorSource = mFxComposition->Record(*mDevice, mFxSystem,
+            {{FxDevice(), cmd, frame, mFrameSync->LastIssuedValue()}, colorSource, mSwapchain->DepthView(frame),
+                drawnViews, extent, false, {}, vk::kHdrColorFormat, mCameraBuffer->Environment()});
+        mPostProcessing->RecordBloom(cmd, frame, colorSource, extent);
         const bool fxaaActive = mPostProcessing->PrepareComposite(cmd, frame, colorSource, extent);
 
         vk::ImageBarrier(cmd, mSwapchain->Image(imageIndex), VK_IMAGE_ASPECT_COLOR_BIT,
@@ -377,6 +402,12 @@ namespace mir
         // After Begin's wait: this slot's last frame is done with its set 2 buffers.
         if (frame)
         {
+            if (mFxSystem)
+            {
+                mDevice->BeginLabel(frame->cmd, "FX simulation", {1, 0.5f, 0.1f, 1});
+                mFxSystem->RecordSimulation({FxDevice(), frame->cmd, mFrameSync->Index(), frame->signalValue});
+                mDevice->EndLabel(frame->cmd);
+            }
             mModelDescriptors->ResetFrame(mFrameSync->Index());
             mMeshUploads->Collect(*mResources, *mRayTracer, mFrameSync->CompletedValue());
             mMeshUploads->Record(frame->cmd, frame->signalValue, *mResources, *mRayTracer);
@@ -456,9 +487,8 @@ namespace mir
 
         const bool hasRect = rect.extent.width > 0 && rect.extent.height > 0;
 
-        const VkImageView colorSource = hasRect
-            ? mPostProcessing->RecordRayTraced(cmd, frame, *mRayTracer, rect, jitterPixels, view.nearZ, view.farZ,
-                mSwapchain->Extent())
+        VkImageView colorSource = hasRect
+            ? mPostProcessing->RecordRayTraced(cmd, frame, *mRayTracer, view, jitterPixels, mSwapchain->Extent())
             : mRayTracer->View(vk::RtImage::Output, frame);
 
         vk::ImageBarrier(cmd, mSwapchain->Image(imageIndex), VK_IMAGE_ASPECT_COLOR_BIT,
@@ -467,6 +497,15 @@ namespace mir
             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+
+        if (hasRect)
+        {
+            colorSource = mFxComposition->Record(*mDevice, mFxSystem,
+                {{FxDevice(), cmd, frame, mFrameSync->LastIssuedValue()}, colorSource,
+                    mRayTracer->View(vk::RtImage::Distance, frame), std::span(&view, 1),
+                    mSwapchain->Extent(), true, jitterPixels, vk::kHdrColorFormat, mCameraBuffer->Environment()});
+            mPostProcessing->RecordBloom(cmd, frame, colorSource, mSwapchain->Extent());
+        }
 
         // Cleared: outside the view rect nothing else draws.
         vk::BeginFullscreenPass(cmd, mSwapchain->View(imageIndex), mSwapchain->Extent(), VK_ATTACHMENT_LOAD_OP_CLEAR,

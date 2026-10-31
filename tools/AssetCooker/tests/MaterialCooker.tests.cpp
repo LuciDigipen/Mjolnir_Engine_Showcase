@@ -225,6 +225,74 @@ TEST_CASE("Material batches skip unchanged inputs and recook edited sources", "[
     CHECK(failed.at("diagnostic").at("message").get<std::string>().find("Git LFS pointer") != std::string::npos);
 }
 
+TEST_CASE("Changed batches rebuild incompatible textures when the import cache is reset", "[material][cook][incremental]")
+{
+    MaterialFixture fixture;
+    fixture.WriteSolid("textures/extra.png", 90, 90, 90, 255);
+    const auto out = fs::path(fixture.root.string() + "-cache-upgrade");
+    const auto result = out / "result.json";
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, fixture.Args(out, result), true) == 0);
+
+    const auto manifest = AssetManifest::LoadFile(out / "manifest.blob");
+    REQUIRE(manifest);
+    const AssetId extraId = MakeAssetId("assets/textures/extra.png");
+    REQUIRE(manifest->Find(extraId));
+    std::vector<std::byte> legacyPixels(16);
+    legacyPixels[0] = std::byte{1};
+    legacyPixels[4] = std::byte{1};
+    legacyPixels[8] = std::byte{4};
+    legacyPixels[15] = std::byte{255};
+    REQUIRE(WriteBytes(out / "legacy-texture.blob", BuildAssetBlob(kTextureAssetTypeTag, 1, legacyPixels)));
+    std::vector<AssetManifestSourceEntry> entries;
+    for (const auto &entry : manifest->Entries())
+    {
+        if (entry.id == extraId)
+            entries.push_back({{entry.id, entry.typeTag, 1}, "legacy-texture.blob"});
+        else
+            entries.push_back({entry, manifest->PathOf(entry)});
+    }
+    REQUIRE(WriteBytes(out / "manifest.blob", BuildAssetManifestBlob(entries)));
+    const auto cachePath = out / "import-cache.json";
+    Json cache = Json::parse(std::ifstream(cachePath));
+    cache["version"] = 3;
+    cache.erase("materials");
+    REQUIRE(WriteText(cachePath, cache.dump()));
+    auto args = fixture.Args(out, result);
+    args.insert(args.end(), {"--changed", (fixture.root / "textures/base.png").string()});
+
+    SECTION("An older cache version requires a complete recook") {}
+    SECTION("A missing cache requires a complete recook")
+    {
+        REQUIRE(fs::remove(cachePath));
+    }
+    SECTION("A failed upgrade keeps the complete recook pending")
+    {
+        REQUIRE(WriteText(fixture.root / "textures/base.png", "version https://git-lfs.github.com/spec/v1\n"));
+        REQUIRE(LaunchProcess(GLTF_COOKER_EXE, args, true) != 0);
+        const auto failedManifest = AssetManifest::LoadFile(out / "manifest.blob");
+        REQUIRE(failedManifest);
+        REQUIRE(failedManifest->Find(extraId));
+        CHECK(failedManifest->Find(extraId)->contentVersion == 1);
+        CHECK(Json::parse(std::ifstream(cachePath)).at("requiresFullCook") == true);
+    }
+    fixture.WriteSolid("textures/base.png", 64, 64, 64, 255);
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, args, true) == 0);
+    CHECK(Json::parse(std::ifstream(result)).at("status") == "succeeded");
+    CHECK(LoadSnapshot(out, "assets/materials/sand.material.json").albedo.rgba[0] == 64);
+    const auto upgraded = AssetManifest::LoadFile(out / "manifest.blob");
+    REQUIRE(upgraded);
+    REQUIRE(upgraded->Find(extraId));
+    CHECK(upgraded->Find(extraId)->contentVersion == kTextureAssetContentVersion);
+    AssetCache upgradedCache(&*upgraded, out);
+    TextureAsset extra;
+    LoadTexture(upgradedCache, extraId, extra);
+    CHECK(extra.width == 4);
+    CHECK(extra.rgba[0] == 90);
+    const auto rebuiltCache = Json::parse(std::ifstream(cachePath));
+    CHECK_FALSE(rebuiltCache.contains("requiresFullCook"));
+    CHECK(rebuiltCache.at("materials").contains("assets/materials/sand.material.json"));
+}
+
 TEST_CASE("A material cook drops previously cooked source image entries", "[material][cook][incremental]")
 {
     MaterialFixture fixture;

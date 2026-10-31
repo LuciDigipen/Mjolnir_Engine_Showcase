@@ -626,8 +626,8 @@ TEST_CASE("Mass, gravity factor, friction, restitution and sleeping reach the bo
         const mir::Entity a = fixture.Add(glm::vec3(-5.0f, 3.0f, 0.0f), bouncy);
         const mir::Entity b = fixture.Add(glm::vec3(5.0f, 3.0f, 0.0f), dead);
 
-        double highestBouncy = 0.0;
-        double highestDead = 0.0;
+        mir::WorldReal highestBouncy = 0.0;
+        mir::WorldReal highestDead = 0.0;
         for (int i = 0; i < 120; ++i)
         {
             fixture.Run(1);
@@ -844,7 +844,7 @@ TEST_CASE("Editing the body properties during Play reaches the body", "[physics]
         fixture.Add(glm::vec3(0.0f), kStaticBox);
         const mir::Entity ball = fixture.Add(glm::vec3(0.0f, 3.0f, 0.0f), kDynamicSphere);
         BodyComponent(fixture, ball).restitution = 0.9f;
-        double highest = 0.0;
+        mir::WorldReal highest = 0.0;
         for (int i = 0; i < 120; ++i)
         {
             fixture.Run(1);

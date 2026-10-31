@@ -1,0 +1,113 @@
+{
+  "burst": 90,
+  "capacity": 256,
+  "followEmitter": false,
+  "inheritVelocity": 0.0,
+  "lifetime": 1.2999999523162842,
+  "localOffset": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "quality": {
+    "farDistance": 5000.0,
+    "importance": 1.0,
+    "minSpawnScale": 1.0,
+    "nearDistance": 1000.0
+  },
+  "renderer": {
+    "alignment": "velocity",
+    "blend": "additive",
+    "color": [
+      4.0,
+      2.4000000953674316,
+      0.800000011920929,
+      1.0
+    ],
+    "facing": "plane",
+    "fog": false,
+    "lighting": "unlit",
+    "maxDistance": 65536.0,
+    "size": 0.029999999329447746,
+    "softDistance": 0.0,
+    "sort": "none",
+    "stretch": 0.03500000014901161,
+    "textured": false,
+    "velocity": [
+      0.0,
+      1.0,
+      0.0
+    ]
+  },
+  "seed": 45,
+  "spawnBehaviors": [
+    {
+      "enabled": true,
+      "name": "Initialize",
+      "parameters": []
+    },
+    {
+      "enabled": true,
+      "name": "VelocityVariation",
+      "parameters": [
+        3.0,
+        3.0,
+        3.0
+      ]
+    },
+    {
+      "enabled": true,
+      "name": "Shape",
+      "parameters": [
+        0.0,
+        0.05000000074505806,
+        0.0,
+        0.0,
+        0.0,
+        9.0
+      ]
+    }
+  ],
+  "spawnPerMeter": 6.199999809265137,
+  "spawnRate": 0.0,
+  "startDelay": 0.0,
+  "target": "gpu",
+  "teleportDistance": 100.0,
+  "texture": "particles/white.png",
+  "updateBehaviors": [
+    {
+      "enabled": true,
+      "name": "Age",
+      "parameters": []
+    },
+    {
+      "enabled": true,
+      "name": "Acceleration",
+      "parameters": [
+        0.0,
+        -9.800000190734863,
+        0.0
+      ]
+    },
+    {
+      "enabled": true,
+      "name": "Drag",
+      "parameters": [
+        0.6000000238418579
+      ]
+    },
+    {
+      "enabled": true,
+      "name": "Integrate",
+      "parameters": []
+    },
+    {
+      "enabled": true,
+      "name": "FadeOverLife",
+      "parameters": [
+        0.0
+      ]
+    }
+  ],
+  "version": 3
+}

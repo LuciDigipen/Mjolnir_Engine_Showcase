@@ -90,14 +90,18 @@ together with the payload versions and the material cooker version. Material
 records live under `materials` in `import-cache.json` and carry their outputs,
 dependencies, texture sizes, last success and last error. A full cook finds
 materials under every source root; a partial cook accepts `--material` and maps
-`--changed` source paths onto the material records that depend on them.
+`--changed` source paths onto the material records that depend on them. A missing
+or incompatible import cache forces a full recook; after a failed rebuild,
+`requiresFullCook` keeps that migration pending until the new manifest publishes.
 
 Material source images are inputs to the packed outputs, not standalone
 textures. A full cook leaves them out, and a partial cook drops an older
 standalone manifest entry for one. Manifest publication stays atomic with one
 previous generation.
 
-The editor watches `.material.json`, images and shader sources. An edited
+The editor passes the active game, shared engine and discovered game asset roots
+to both full and partial batches, keeping the active root first for external
+imports. It watches `.material.json`, images and shader sources. An edited
 material enters a finite `--material` batch; an edited dependency enters a
 `--changed` batch. A completed material-only batch still goes through the same
 `PendingApply` path, so it is applied in Edit and waits for Stop during Play.

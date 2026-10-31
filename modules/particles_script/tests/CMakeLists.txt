@@ -1,0 +1,3 @@
+engine_add_module_tests(particles_script ParticleBindings.tests.cpp)
+target_include_directories(engine_particles_script_tests PRIVATE ${CMAKE_SOURCE_DIR}/modules/particles/tests)
+target_link_libraries(engine_particles_script_tests PRIVATE mir::particles)

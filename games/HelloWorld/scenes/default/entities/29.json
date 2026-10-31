@@ -1,0 +1,51 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [
+          -1.5,
+          1.0,
+          -2.5
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [
+          -1.5,
+          1.0,
+          -2.5
+        ]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "systemName": "particles/explosion.particle.json",
+        "playOnStart": true,
+        "overrideParameters": false
+      },
+      "type": "ParticleSystem"
+    },
+    {
+      "fields": {
+        "scriptName": "particle_replay"
+      },
+      "type": "ScriptRef"
+    }
+  ],
+  "id": 29,
+  "parent": 0
+}

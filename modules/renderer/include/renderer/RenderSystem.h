@@ -558,6 +558,11 @@ namespace mir
             }
         }
 
+        std::optional<WorldPosition> PrimaryCameraPosition() const
+        {
+            return mRenderViews.empty() ? std::nullopt : std::optional{mRenderViews.front().cameraPosition};
+        }
+
     private:
         void BindQueries(World &world)
         {

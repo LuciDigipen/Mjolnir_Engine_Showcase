@@ -8,8 +8,8 @@ drives it from the ECS.
 
 ## Model
 
-`VulkanRenderer` is the module's public face, and it coordinates rather than
-owns. Its Vulkan state lives in subsystems under `src/renderer/vulkan/`, in
+`VulkanRenderer` is the module's public face and owns frame scheduling and the
+generic FX registration boundary. Its Vulkan state lives in subsystems under `src/renderer/vulkan/`, in
 namespace `mir::vk`. The public header only forward-declares them and holds
 each through a `std::unique_ptr`, so no Vulkan internals reach `app` or game
 code. Each subsystem owns its objects and stores the `Device` it was given in
@@ -29,12 +29,13 @@ subsystem holds a pointer to the facade or to another subsystem.
 | `ModelDescriptors` | set 2: per-draw model data, reset each frame |
 | `ShadowMaps` | set 3: Sun, spot and point shadow maps, their pipelines and casters |
 | `RayTracer` | a BLAS per mesh slot, a TLAS per frame, the RT pipeline and SBT, and every image the trace writes, one row each in `RayTracer.cpp`'s `kRtImages` table (format, binding, clear value, stage), addressed by `RtImage`: color, linear distance and per-pixel velocity always, plus Ray Reconstruction's guide buffers (albedo, normal/roughness, specular albedo, projected depth) while Dlss is active |
-| `PostProcessingStack` | every screen-space effect between the scene/trace pass and the swapchain, behind one `Initialize`/`Resize`/`Shutdown`, one `Apply` of the frame's `PostProcessingState`, and one record call per pipeline (`RecordRaster`/`RecordRayTraced`, then `PrepareComposite`/`RecordComposite`). It owns the effect subsystems below by value, plus their enabled flags, the active AA mode and sample count, and whether Ray Reconstruction is still available. `RayTracer` is passed in per call, never stored |
+| `FxCompositionPass` | one HDR composition image and copy pipeline per frame slot, followed by registered FX draws inside renderer-owned dynamic rendering |
+| `PostProcessingStack` | screen-space effects and final composite behind one `Initialize`/`Resize`/`Shutdown`; it owns effect subsystems and their settings. FX simulation and particle lifetime are outside this stack |
 | ↳ `DlssRayReconstruction` | `MIR_WITH_DLSS` builds only: NGX, the Ray Reconstruction feature and its output images - denoises and anti-aliases `RayTracer`'s output at native resolution, ahead of `DepthOfField` |
 | ↳ `DepthOfField` | the CoC, near/far blur and composite pipelines and their half/full-res working images - reads whatever linear-HDR color and depth/distance the stack hands it; its output becomes what `MotionBlur`, `Bloom` and `PostProcess` read from there on |
 | ↳ `VelocityPass` | raster-only: a second, depth-equal (no write) walk of the same `DrawItem`s the Scene Pass just drew, through `velocity.slang`, into its own per-pixel velocity image - the same shape as `ShadowMaps`' depth-only pass, not a screen-space one |
 | ↳ `MotionBlur` | the composite pipeline that samples color along whatever velocity buffer it's handed (`VelocityPass`'s output on raster, `RayTracer`'s `RtImage::Velocity` on ray tracing) - reads `DepthOfField`'s result when enabled, ahead of `Bloom` |
-| ↳ `Bloom` | the bright-pass extract, downsample and additive-upsample pipelines and mip chain - reads whatever linear-HDR source the stack hands it (`DepthOfField`'s or `MotionBlur`'s result when enabled), ahead of `PostProcess` |
+| ↳ `Bloom` | the bright-pass extract, downsample and additive-upsample pipelines and mip chain - reads the resolved HDR color, including registered FX draws, ahead of `PostProcess` |
 | ↳ `PostProcess` | the tonemap pipeline and per-frame descriptor sets - the composite both pipelines end in, sampling the scene color (and `Bloom`'s result); the same `tonemap.slang` pass also carries the film look (contrast, saturation, vignette, animated grain), applied after the tonemap itself - grain moves to `Fxaa` while FXAA runs |
 | ↳ `Fxaa` | raster only: the FXAA pipeline and, while Fxaa is the active mode, the LDR intermediate the tonemap pass writes into ahead of it |
 | `FrameCapture` | the `CaptureNextFrame` buffer and the PNG it writes |
@@ -45,8 +46,8 @@ The facade's own code is `VulkanRenderer.cpp`, which holds initialize, shutdown,
 the resource calls and the setters, and `VulkanRendererFrame.cpp`, which holds the
 frame loop and pass recording. The scene, shadow and trace passes record on the
 facade because they read several subsystems at once; everything after them -
-the post effects and the tonemap/FXAA composite - is one `PostProcessingStack`
-call per step, so a new screen-space effect never touches the facade.
+post effects and the tonemap/FXAA composite use `PostProcessingStack`. FX
+composition is a renderer-owned step between opaque effects and bloom.
 
 A frame starts in `BeginFrame`. It recreates the swapchain when the window
 changed size, or when `RequestSwapchainRecreate` asked for it, then `FrameSync::Begin` waits for the frame slot, acquires an image
@@ -432,11 +433,14 @@ the shader only touches them on its Dlss branches, and `RayTracer::RecordTrace`
 downgrades a Dlss trace to Msaa if the guides are missing. That flag is why
 ray tracing support now also requires `descriptorBindingPartiallyBound`.
 
-**Pass order.** Raster: scene, velocity, depth of field, motion blur, bloom,
-then tonemap - with Fxaa active the tonemap writes into `Fxaa`'s intermediate
+**Pass order.** Raster: scene, velocity, depth of field, motion blur, FX
+composition, bloom, then tonemap - with Fxaa active the tonemap writes into `Fxaa`'s intermediate
 and the FXAA pass draws to the swapchain. Ray traced: trace (jittered under
-Dlss), Ray Reconstruction, then the same depth of field, motion blur, bloom and
-tonemap. Everything after scene/trace is `PostProcessingStack`'s:
+Dlss), Ray Reconstruction, then depth of field, motion blur, FX composition,
+bloom and tonemap. The renderer records FX composition between opaque effects
+and bloom. `particles_gpu` registers an `IFxSystem`, while the renderer retains
+ownership of HDR images, synchronization and pass order. This registration
+boundary is the public exception that exposes Vulkan types:
 `RecordRaster` or `RecordRayTraced` returns the color the composite reads,
 `PrepareComposite` (raster) renders the FXAA intermediate, and
 `RecordComposite` draws inside the facade's swapchain pass, ahead of ImGui.
@@ -2115,3 +2119,18 @@ built from one hardcoded shader. Now: one pipeline per `MaterialDesc`, built at
 creation. A second look (`unlit.slang`) forced a decision about how a draw picks
 its pipeline, and a different fragment shader is a different pipeline in Vulkan
 rather than a parameter on an existing one.
+
+## FX production composition
+
+`IFxSystem::RecordSimulation` runs once after the frame-slot wait. The composition
+pass calls `PrepareDraw` outside dynamic rendering for view-local compute, then
+`RecordDraw` inside its HDR target. FX receives the camera buffer's staged sun,
+ambient and fog environment, without a dependency on particle types.
+
+Raster meshes draw in opaque and transparent phases with sky between them,
+preserving submitted order within each phase. Camera and shadow descriptors rebind
+after the sky pipeline. FX follows opaque DoF/motion blur and RR where enabled,
+then feeds bloom and tonemap. Disabled bloom passes zero intensity and does not
+sample stale bloom pixels. The single-view RT restriction is retained. Current
+particle spatial AA, glass ordering and secondary-ray limits are documented in
+[particles_gpu](particles_gpu.md).

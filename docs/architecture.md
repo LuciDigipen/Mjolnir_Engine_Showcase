@@ -100,6 +100,7 @@ each library links in the engine, besides `core`; `app` links everything.
 | `physics_layers` | plain | `core_base`, `serial` |
 | `core` | module | `core_base` |
 | `assets` | module | `project` |
+| `particles` | module | `assets` |
 | `scene` | module | `serial` |
 | `prefab` | module | `assets`, `scene`, `serial` |
 | `window` | module | none |
@@ -108,11 +109,13 @@ each library links in the engine, besides `core`; `app` links everything.
 | `input` | module | `window`, `serial` |
 | `camera` | module | `input` |
 | `renderer` | module | `assets`, `serial` |
+| `particles_gpu` | module | `renderer` |
 | `animation` | module | `assets`, `renderer`, `jobs` |
 | `terrain` | module | `assets`, `serial`, `jobs` |
+| `particles_runtime` | module, bridge | `particles`, `particles_gpu` |
 | `terrain_runtime` | module, bridge | `terrain`, `renderer`, `physics`, `project`, `jobs` |
 | `script` | module | `assets` |
-| `audio_script`, `input_script`, `physics_script`, `renderer_script`, `terrain_script` | module, bridge | `script` and its library |
+| `audio_script`, `input_script`, `physics_script`, `renderer_script`, `terrain_script`, `particles_script` | module, bridge | `script` and its library |
 | `imguiruntime` | module | `window`, `renderer`, `input` |
 | `gameui` | module | `assets`, `input` |
 | `gameui_imgui` | module, bridge | `gameui`, `imguiruntime`, `window` |
@@ -122,7 +125,7 @@ each library links in the engine, besides `core`; `app` links everything.
 A cross-library piece moves into a library only when that adds no cycle, no new
 third-party code to the library's link closure, and no new runtime setup to its
 tests. Otherwise it is a bridge library. `terrain_runtime` is one, so `terrain`
-and `TerrainTool` need neither Vulkan nor Jolt. The five `*_script` bridges are
+and `TerrainTool` need neither Vulkan nor Jolt. The six `*_script` bridges are
 the others, so no library but `script` and its bridges sees Lua.
 
 `gameui` names no graphics API. The `gameui_imgui` bridge puts its draw list in
@@ -138,13 +141,14 @@ would.
 | `window` | An OS window and its event pump | [window.md](modules/window.md) |
 | `renderer` | The whole Vulkan path, and render-facing components | [renderer.md](modules/renderer.md) |
 | `assets` | Cooked blobs, manifest, cache | [assets.md](modules/assets.md) |
+| `particles` | Cooked effect definitions, emitter handles and CPU playback lifecycle | [particles.md](modules/particles.md) |
 | `animation` | Model pose sampling and per-instance playback data | [animation.md](modules/animation.md) |
 | `scene` | Scene save and load, the scene the World holds, the Play snapshot | [scene.md](modules/scene.md) |
 | `prefab` | Prefab source/cooked resources, compiled templates and scene instances | [prefab.md](modules/prefab.md) |
 | `serial` | JSON documents on disk | [serial.md](modules/serial.md) |
 | `script` | Lua embedding, ECS bindings, the script resolver | [script.md](modules/script.md) |
 | `physics` | Jolt world, `RigidBody`, the step, layers, events | [physics.md](modules/physics.md) |
-| `*_script` | Five bridges adding one library's Lua bindings each | [script-bridges.md](modules/script-bridges.md) |
+| `*_script` | Six bridges adding one library's Lua bindings each | [script-bridges.md](modules/script-bridges.md) |
 | `terrain_runtime` | Terrain streaming, drawing and collision at runtime | [terrain_runtime.md](modules/terrain_runtime.md) |
 | `audio` | Wwise lifetime and the per-frame pump | [audio.md](modules/audio.md) |
 | `camera` | Gameplay camera control: follow a target, or free-fly from input | [camera.md](modules/camera.md) |

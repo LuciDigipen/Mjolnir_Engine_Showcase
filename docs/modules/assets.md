@@ -105,8 +105,10 @@ cooks to a `TextureAsset` v2, decoded to RGBA8 with a complete mip chain, under
 the id of its own path; an image a glTF references is left to that model's
 import and stays a raw blob. A `.material.json` cooks to a
 `SurfaceMaterialAsset` plus three packed `TextureAsset`s, see
-[material-pipeline.md](../material-pipeline.md). Everything else cooks as a raw
-passthrough blob.
+[material-pipeline.md](../material-pipeline.md). `.particle.json` presets use the
+versioned [particle effect schema](particles.md),
+including a validated typed texture dependency. Other files without a dedicated
+importer cook as raw passthrough blobs.
 
 Tests in `modules/assets/tests/`: `AssetBlob`, `AssetCache`, `AssetManifest`,
 `AssetPath`, `ModelAsset`. The cooker side of path identity is checked in

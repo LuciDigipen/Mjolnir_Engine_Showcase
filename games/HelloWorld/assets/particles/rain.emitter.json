@@ -1,0 +1,63 @@
+{
+  "version": 3,
+  "target": "gpu",
+  "texture": "particles/white.png",
+  "lifetime": 0.55,
+  "spawnRate": 450,
+  "capacity": 2048,
+  "seed": 77,
+  "inheritVelocity": 0,
+  "renderer": {
+    "size": 0.012,
+    "color": [
+      0.75,
+      0.85,
+      1.0,
+      0.45
+    ],
+    "velocity": [
+      0,
+      -14,
+      0
+    ],
+    "alignment": "velocity",
+    "stretch": 0.05,
+    "blend": "alpha",
+    "sort": "none",
+    "softDistance": 0,
+    "fog": true
+  },
+  "spawnBehaviors": [
+    {
+      "name": "Initialize",
+      "parameters": []
+    },
+    {
+      "name": "Shape",
+      "parameters": [
+        1,
+        7,
+        0.1,
+        7,
+        0,
+        0
+      ]
+    }
+  ],
+  "updateBehaviors": [
+    {
+      "name": "Age",
+      "parameters": []
+    },
+    {
+      "name": "Integrate",
+      "parameters": []
+    },
+    {
+      "name": "FadeOverLife",
+      "parameters": [
+        0.4
+      ]
+    }
+  ]
+}

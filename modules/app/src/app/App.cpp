@@ -102,7 +102,7 @@ namespace mir
 
     App::StartupSplash::StartupSplash(const AppDesc &desc)
     {
-        screen.Show({ .mEngineName = desc.mAppName,
+        if (!desc.mHidden) screen.Show({ .mEngineName = desc.mAppName,
                       .mVersion = kEngineVersion,
                       .mCopyright = kEngineCopyright,
                       .mStatus = "Creating window...",
@@ -116,6 +116,7 @@ namespace mir
           mJobs(mDesc.mWorkerThreads),
           mCore(Context(), mCommands),
           mAssets(CookedAssetsDir()),
+          mParticles(Context(), mAssets, mProject.mAssetIdRoot),
           mScene(Context(), mProject.mSceneDir),
           mPrefab(Context(), mScene, PrefabSourceDir(mProject), kHasEditor ? nullptr : &mAssets),
           mGameUI(Context()),
@@ -127,6 +128,7 @@ namespace mir
                                       .mEnableValidation = mDesc.mEnableValidation,
                                       .mProjectSettingsPath = mProject.mProjectSettingsPath,
                                       .mAssetIdRoot = mProject.mAssetIdRoot }),
+          mParticlesGpu(mRenderer.Renderer()),
           mInput(Context(), mWindow.Get(), mProject.mProjectSettingsPath),
           mAnimation(Context(), mRenderer.Renderer(), mAssets, mProject.mAssetIdRoot, &mJobs),
           mImGui(Context(), mWindow, mRenderer),
@@ -142,6 +144,8 @@ namespace mir
           mPhysics(Context(), mProject.mProjectSettingsPath, &mJobs),
           mTerrainData(Context()),
           mScript(Context(), mAssets, mProject.mAssetIdRoot),
+          mParticlesRuntime(Context(), mParticles, mParticlesGpu, mRenderer.Rendering()),
+          mParticlesScript(mScript),
     #if MIR_WITH_AUDIO
           mAudioScript(mScript),
     #endif
@@ -170,7 +174,7 @@ namespace mir
         // every module is built, so a library that took the crash filter slot has done so
         ReclaimCrashHandler();
 
-        mWindow.Get().Show();
+        if (!mDesc.mHidden) mWindow.Get().Show();
     }
 
     // Systems stop while every module is alive; then members die in reverse, the
@@ -224,6 +228,17 @@ namespace mir
         {
             MIR_LOG_WARN("App::SaveScene: ignored while Play is running (Stop first)");
             return false;
+        }
+
+        if (!mScene.IsBound())
+        {
+            if (!ConfirmBindUntitledScene())
+            {
+                MIR_LOG_WARN("App::SaveScene: the untitled scene was not saved, '{}' is left as it is",
+                    mProject.mSceneDir.string());
+                return false;
+            }
+            mScene.Bind();
         }
 
         const bool saved = mScene.Save(&mPrefab.Coordinator().Resolver());
@@ -287,8 +302,8 @@ namespace mir
         if (!probe.mManifestError.empty())
         {
             const std::string message = manifest + " cannot be read (" + probe.mManifestError +
-                ").\n\nStart with an empty scene? Saving it will overwrite the broken file; restore it from git "
-                "first if you need it.\n\n" + refuse;
+                ").\n\nStart with an empty, untitled scene? The broken scene stays on disk as it is, and Save "
+                "asks before replacing it.\n\n" + refuse;
             return AskYesNo("Scene file is corrupt", message, mDesc.mNonInteractive) ? SceneLoadChoice::StartEmpty
                 : SceneLoadChoice::Refuse;
         }
@@ -298,6 +313,17 @@ namespace mir
             "if you need them.\n\n" + refuse;
         return AskYesNo("Scene has missing entities", message, mDesc.mNonInteractive) ? SceneLoadChoice::Load
             : SceneLoadChoice::Refuse;
+    }
+
+    bool App::ConfirmBindUntitledScene() const
+    {
+        const std::string sceneDir = mProject.mSceneDir.string();
+        const std::string message = "This scene is untitled. It was started empty in place of the scene in " +
+            sceneDir + ", which could not be read.\n\nSave it there? That replaces " +
+            std::string(kSceneManifestFileName) + " and every entity and instance file in " + sceneDir +
+            "; restore them from git first if you need them. To open the old scene instead, restore it and "
+            "choose File > Load Scene.\n\nChoose No to leave the files as they are.";
+        return AskYesNo("Save the untitled scene", message, mDesc.mNonInteractive);
     }
 
     void App::PlayScene()
@@ -421,7 +447,7 @@ namespace mir
         switch (ChooseSceneLoad(probe, true))
         {
         case SceneLoadChoice::StartEmpty:
-            MIR_LOG_WARN("Starting with an empty scene over the corrupt '{}'", manifest.string());
+            MIR_LOG_WARN("Starting with an untitled empty scene, the corrupt '{}' is left as it is", manifest.string());
             mScene.New("untitled", true);
             RunStage(Stage::SceneLoad);
             return;

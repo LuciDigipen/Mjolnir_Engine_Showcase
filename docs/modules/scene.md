@@ -116,6 +116,12 @@ snapshot. Its commands replace the scene without unloading it first, because
 is incomplete. `SceneLoad` stage functions read it through `LastLoad()`, and are
 its only readers.
 
+The scene is bound to the scene directory unless it is untitled. An incomplete
+`New`, the empty scene that stands in for one that could not be read, unbinds
+it, and `Save` refuses until `Bind`, so nothing replaces the broken files until
+the user chooses to. Any other `New` keeps the binding, because the broken scene
+is still on disk, and `LoadFromDisk` binds.
+
 `CreateSceneEntity` is the one call an editor's "add entity" needs, so allocation
 and registration cannot happen for one without the other.
 
@@ -269,9 +275,13 @@ round-trip their bindings, placement and field/component patches, including
 nested occurrences, explicit nulls and cross-instance references. A missing
 Prefab keeps the record unchanged.
 
+*As of 2026-10-30.* An untitled scene leaves the broken scene's files alone
+until `Bind`, and `LoadFromDisk` binds it.
+
 Tests in `modules/scene/tests/SceneIO.tests.cpp`,
-`modules/scene/tests/PlaySnapshot.tests.cpp` and
-`modules/scene/tests/EntitySnapshot.tests.cpp`.
+`modules/scene/tests/PlaySnapshot.tests.cpp`,
+`modules/scene/tests/EntitySnapshot.tests.cpp` and
+`modules/scene/tests/SceneModule.tests.cpp`.
 
 Resolving names back into live handles after a load is not done here — a
 `ScriptRef.scriptName` into an `instanceRef`, a mesh name into a `MeshHandle`, or
@@ -296,6 +306,13 @@ in `terrain_runtime`'s `SceneLoad` function (see
    of sweeping the whole registry per entity.
 
 ## Changed
+
+*2026-10-30* — **An untitled scene is not bound to the scene directory (#291).**
+Was: `SceneModule` saved every scene to its directory, including the empty one
+started over a corrupt `scene.json`, so the first Save deleted the broken
+scene's entity and instance files. Now: an incomplete `New` unbinds the scene,
+and `Save` refuses until `Bind`. Because: replacing the broken scene must be a
+separate choice, which `App` asks for (see [app.md](app.md)).
 
 *2026-10-24* — **`SceneModule`.** Was: `App` held the `LoadedScene` and the
 Play snapshot and called `LoadScene`, `SaveScene`, `CaptureWorld` and
