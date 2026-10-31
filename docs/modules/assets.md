@@ -19,6 +19,12 @@ release files (`.tindex`, `.tpack`, anything under `terrain/releases`) are
 TerrainTool's, and the cooker skips them by the rule in
 `terrain/TerrainAssetPath.h` (see [terrain.md](terrain.md)).
 
+The manifest also records what each asset depends on, and a logical path for
+the assets something refers to by name. The cooker reads the dependencies from
+each payload as it writes the blob, so nothing at runtime has to decode a blob
+to learn what else it needs. `Closure` lists an asset and everything it reaches,
+optionally only through blobs of chosen type tags.
+
 ```cpp
 if (AssetCache *cache = app.Assets())
 {
@@ -35,7 +41,7 @@ if (AssetCache *cache = app.Assets())
 | `AssetPathResult` | `assets/AssetPath.h` | `NormalizeAssetPath`, `MakeLogicalAssetPath`: the one spelling of a logical path, or an `AssetPathError` |
 | `AssetBlobHeader` | `assets/AssetBlob.h` | 32 bytes: magic, format version, type tag, content version, size, content hash |
 | `AssetBlobView` | `assets/AssetBlob.h` | Header plus a span over the payload; `AsStringView` for text |
-| `AssetManifest` | `assets/AssetManifest.h` | id to type tag, content version and path, over a shared path table |
+| `AssetManifest` | `assets/AssetManifest.h` | id to type tag, content version, cooked file, logical path and direct dependencies, over a shared path table and edge table. `FindByPath`, `Dependencies`, `Closure` |
 | `AssetCache` | `assets/AssetCache.h` | `Load`, `Get`, `Invalidate`, `ResolvedPath` |
 | `AssetsModule` | `assets/AssetsModule.h` | The manifest and cache, loaded at startup, and the reload candidate |
 | `TextureAsset`, `TextureMip`, `SurfaceMaterialAsset` | `assets/ModelAsset.h` | Typed texture v2 (format, color space, level 0 and higher mip descriptors) and the generic `.material.json` surface material, distinct from the glTF `MaterialAsset` |
@@ -75,6 +81,14 @@ that reference the old path must be updated explicitly.
 
 **`AssetCache` is move-only.** The `AssetBlobView` it hands out aliases the
 entry's own buffer, so copying the cache would leave two views onto one buffer.
+
+**A dependency edge always points at an entry of the same manifest.** `Parse`
+rejects one that does not, and the cooker fails the cook naming the asset that
+holds it, so a walk over the graph never meets a missing target.
+
+**A logical path names one entry.** `Parse` rejects a duplicate. Sub-assets that
+nothing refers to by name, such as a glTF's meshes, have an empty one, and an
+empty name matches nothing.
 
 **A failed load is remembered.** The cache does not re-check the disk every frame
 for something that was not there.
@@ -129,6 +143,17 @@ logical paths for any root spelling").
    at the cost of a file per asset and a registry to keep in sync.
 
 ## Changed
+
+*2026-10-31* — **Manifest v2: logical paths and dependency edges.** Was: an entry
+held an id, a type tag, a content version and the cooked file name, and the
+cooker decoded emitter blobs again after writing them to find which generated
+scripts to keep. Now: an entry also holds a logical path and a range into an
+edge table, the cooker records the edges when it emits each blob, a script stays
+only while an edge points at it, and a cook fails when an edge target is not in
+the manifest. An old manifest is rejected, so the first cook after the change is
+a full one. Because a request for a model needs its meshes and skeletons known
+before any blob is read, and a lookup by name needs the manifest to carry the
+name.
 
 *2026-10-26* — **Surface materials and cooked mip chains.** Was: a texture was
 RGBA8 level 0 only and the runtime generated mips. Now: `TextureAsset` v2

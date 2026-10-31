@@ -667,3 +667,54 @@ TEST_CASE("A standalone image cooks to a texture, and an image a glTF references
     std::ofstream(f.root / "ui" / "broken.png") << "not a png";
     CHECK(LaunchProcess(GLTF_COOKER_EXE, args, true) != 0);
 }
+
+TEST_CASE("A cooked model lists its dependencies and keeps them through a partial cook", "[gltf][cooker][graph]")
+{
+    Fixture f;
+    const auto out = fs::path(f.root.string() + "-graph-cooked");
+    const auto result = out / "result.json";
+    std::vector<std::string> full{ "--source-dir", f.root.string(), "--id-root", "assets",
+                                  "--out",        out.string(),    "--result",  result.string() };
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, full, true) == 0);
+    auto manifest = AssetManifest::LoadFile(out / "manifest.blob");
+    REQUIRE(manifest);
+
+    const AssetId modelId = MakeAssetId("assets/flag.gltf");
+    const auto *model = manifest->Find(modelId);
+    REQUIRE(model);
+    CHECK(manifest->LogicalPathOf(*model) == "assets/flag.gltf");
+    CHECK(manifest->FindByPath("assets/flag.gltf") == model);
+
+    // the model names its mesh, skeleton and clip, the material and texture are behind the mesh
+    std::set<uint32_t> direct;
+    for (const AssetId dependency : manifest->Dependencies(*model))
+        direct.insert(manifest->Find(dependency)->typeTag);
+    CHECK(direct == std::set<uint32_t>{ kMeshAssetTypeTag, kSkeletonAssetTypeTag, kAnimationAssetTypeTag });
+
+    std::set<uint32_t> reached;
+    for (const AssetId id : manifest->Closure(modelId))
+        reached.insert(manifest->Find(id)->typeTag);
+    CHECK(reached.contains(kMaterialAssetTypeTag));
+    CHECK(reached.contains(kTextureAssetTypeTag));
+
+    // asking for the geometry types alone stops before the material
+    const uint32_t wanted[]{ kMeshAssetTypeTag, kSkeletonAssetTypeTag, kAnimationAssetTypeTag };
+    for (const AssetId id : manifest->Closure(modelId, wanted))
+    {
+        const uint32_t tag = manifest->Find(id)->typeTag;
+        CHECK((id == modelId || std::find(std::begin(wanted), std::end(wanted), tag) != std::end(wanted)));
+    }
+
+    // an unchanged model is restored from the cache record, edges and name included
+    const std::vector<AssetId> before(manifest->Dependencies(*model).begin(), manifest->Dependencies(*model).end());
+    std::vector<std::string> partial{ "--source-dir", f.root.string(), "--id-root",        "assets",   "--out",
+                                     out.string(),   "--model",       "assets/flag.gltf", "--result", result.string() };
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, partial, true) == 0);
+    const auto after = AssetManifest::LoadFile(out / "manifest.blob");
+    REQUIRE(after);
+    const auto *kept = after->Find(modelId);
+    REQUIRE(kept);
+    CHECK(after->LogicalPathOf(*kept) == "assets/flag.gltf");
+    const auto keptDependencies = after->Dependencies(*kept);
+    CHECK(std::vector<AssetId>(keptDependencies.begin(), keptDependencies.end()) == before);
+}

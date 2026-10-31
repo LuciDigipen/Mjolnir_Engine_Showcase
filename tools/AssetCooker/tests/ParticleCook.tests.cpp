@@ -15,6 +15,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -367,4 +368,46 @@ TEST_CASE("Particle cooker compiles shape, noise, rotation and stretch emitters"
     CHECK(first.renderer.stretch == 0.05f);
     CHECK_FALSE(first.scriptCode.empty());
     CHECK_FALSE(system.mEffect->emitterDefinitions[1].scriptCode.empty());
+}
+
+TEST_CASE("Cooked particle assets carry logical paths and dependency edges", "[particles][cooker][graph]")
+{
+    CookFixture fixture;
+    REQUIRE(fixture.Cook() == 0);
+    const auto manifest = mir::AssetManifest::LoadFile(fixture.out / mir::kAssetManifestFileName);
+    REQUIRE(manifest);
+    const auto effectId = mir::MakeAssetId("assets/exhaust.particle.json");
+    const auto emitterId = mir::MakeAssetId("assets/exhaust.emitter.json");
+    const auto textureId = mir::MakeAssetId("assets/checker.png");
+
+    const auto *effect = manifest->FindByPath("assets/exhaust.particle.json");
+    REQUIRE(effect);
+    CHECK(effect->id == effectId);
+    // the texture is emitted by its own file and again by the emitter that uses it
+    const auto *texture = manifest->FindByPath("assets/checker.png");
+    REQUIRE(texture);
+    CHECK(texture->id == textureId);
+
+    const auto effectDependencies = manifest->Dependencies(*effect);
+    REQUIRE(effectDependencies.size() == 1);
+    CHECK(effectDependencies[0] == emitterId);
+
+    // everything this fixture cooks is reachable from the effect
+    const auto closure = manifest->Closure(effectId);
+    CHECK(closure.front() == effectId);
+    CHECK(closure.size() == manifest->Count());
+    CHECK(std::find(closure.begin(), closure.end(), textureId) != closure.end());
+}
+
+TEST_CASE("A partial cook keeps the names and edges of assets it does not recook", "[particles][cooker][graph]")
+{
+    CookFixture fixture;
+    REQUIRE(fixture.Cook() == 0);
+    const auto before = mir::ReadBytes(fixture.out / mir::kAssetManifestFileName);
+    REQUIRE(before);
+
+    const auto unrelated = fixture.source / "notes.txt";
+    std::ofstream(unrelated) << "not an asset";
+    REQUIRE(fixture.Cook(unrelated) == 0);
+    CHECK(mir::ReadBytes(fixture.out / mir::kAssetManifestFileName) == before);
 }

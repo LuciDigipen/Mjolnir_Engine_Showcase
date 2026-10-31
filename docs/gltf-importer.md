@@ -29,6 +29,8 @@ Every cooker invocation reimports glTF and reads its dependencies. CMake tracks 
 
 Blobs use asset ID plus content hash in their filenames. The cooker writes blobs to temporary files and atomically replaces the manifest only after all imports succeed. A failed import leaves the previous manifest and its blobs usable. Unreferenced blobs are pruned after successful publication. Metadata is append-only and may advance if publication itself fails; that does not invalidate the old manifest. Concurrent cooker processes targeting the same output directory are unsupported. The output directory must be outside source roots.
 
+A model's manifest entry carries its identity path as its logical path, and each alias entry carries its own path, so a lookup by name still finds the model after a move. The model lists its meshes, skeletons and clips as dependencies, a mesh lists its materials and textures, and a material lists its texture. The sub-assets have no logical path.
+
 ## Importing from the editor
 
 Open `Project ▸ Asset Import`. Dropping a `.gltf`/`.glb`, or the folder that holds one, anywhere on the panel stages it: the package root defaults to the folder the entry sits in, or to the dropped folder itself, and an empty target becomes `models/<name>`, suffixed `-2`, `-3` on collision. Confirming copies the entry together with only the dependencies it actually references, then cooks it. A file that already lives under the game's asset root is reimported in place instead of being copied a second time. `Advanced: import by path` keeps the older typed-path form.
