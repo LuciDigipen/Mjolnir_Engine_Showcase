@@ -430,6 +430,28 @@ namespace mir
         mRenderer.Renderer().RequestSwapchainRecreate();
     }
 
+    bool App::HasUnsavedMaterialDrafts() const
+    {
+#if MIR_WITH_EDITOR
+        return mEditor.HasUnsavedMaterialDrafts();
+#else
+        return false;
+#endif
+    }
+
+    bool App::ConfirmEditorExit()
+    {
+        if (!HasUnsavedMaterialDrafts())
+            return true;
+        if (mDesc.mNonInteractive || mDesc.mMaxFrames != 0)
+        {
+            MIR_LOG_WARN("Closing with unsaved material drafts in a bounded run; they are not saved automatically.");
+            return true;
+        }
+        return AskYesNo("Unsaved material drafts",
+            "Close and discard the unsaved material drafts? They are never saved automatically.", false);
+    }
+
     void App::UnloadCurrentScene()
     {
         mScene.Unload();
@@ -512,8 +534,16 @@ namespace mir
 
         auto previous = std::chrono::steady_clock::now();
 
-        while (!mWindow.Get().ShouldClose())
+        while (true)
         {
+            if (mWindow.Get().ShouldClose())
+            {
+                if (!mProjectToOpen.has_value() && !ConfirmEditorExit())
+                    mWindow.Get().CancelClose();
+                else
+                    break;
+            }
+
             mWindow.Get().PollEvents();
 
             const auto now = std::chrono::steady_clock::now();

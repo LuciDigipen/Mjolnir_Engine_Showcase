@@ -16,7 +16,9 @@ rather than at runtime.
 definition lives in whichever backend `CMakeLists.txt` compiled. A caller
 therefore holds a `unique_ptr<Window>` and never names a backend type.
 
-`Window` adds two methods of its own, `PollEvents` and `ShouldClose`. The other
+`Window` adds its own `PollEvents`, `ShouldClose`, `RequestClose` and `CancelClose`.
+`CancelClose` clears the GLFW close flag after the app has asked about unsaved
+work. The other
 three come from `ISurfaceProvider`, which is declared in `core`. That split is
 the point of the design: the renderer takes the base and never sees the event
 pump.

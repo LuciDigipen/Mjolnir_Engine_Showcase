@@ -208,6 +208,12 @@ namespace mir
         // what the editor, the game shell and the import asked for last frame
         void ApplyRequests();
 
+        // True when the editor has material drafts that are not accepted yet.
+        bool HasUnsavedMaterialDrafts() const;
+
+        // One guard for OS close, Alt+F4, the custom title bar and Request::Quit.
+        bool ConfirmEditorExit();
+
         // destroys the scene's entities, then the SceneUnload stage frees what they held
         void UnloadCurrentScene();
 

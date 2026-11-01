@@ -32,6 +32,7 @@ namespace mir
     class AssetsModule;
     class ParticleEditorPanel;
     class ImGuiModule;
+    class MaterialEditor;
     class PrefabModule;
     class RendererModule;
     class SceneModule;
@@ -53,6 +54,7 @@ namespace mir
         const Editor &Get() const { return mEditor; }
         AssetImportManager &Import() { return mImport; }
         bool LayoutEnabled() const { return mEnableLayout; }
+        bool HasUnsavedMaterialDrafts() const;
 
         // set once the audio is built, null leaves out the Audio settings and the soundtrack picker
         void SetAudio(IEditorAudio *audio)
@@ -88,6 +90,7 @@ namespace mir
         PrefabModule &mPrefab;
         const AssetResolver &mResolver;
         GameProject mProject;
+        AssetsModule *mAssets = nullptr;
         bool mEnableLayout;
         float mFrameDt = 0.0f;
         std::vector<ProjectMenuEntry> mProjectMenu;
@@ -100,6 +103,8 @@ namespace mir
         WorldSceneOps mSceneOps;
         Editor mEditor;
         std::unique_ptr<ParticleEditorPanel> mParticleEditor;
+        std::unique_ptr<MaterialEditor> mMaterialEditor;
+        bool mShowMaterialEditor = false;
 
         // Stop puts the World back as it was at Play, so it puts this back too
         bool mUnsavedBeforePlay = false;

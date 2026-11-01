@@ -346,8 +346,8 @@ TEST_CASE("The authorized TerrainCheck set cooks at the default 2K resolution", 
     const auto gameRoot = sourceRoot / "games/TerrainCheck/assets";
     const auto engineRoot = sourceRoot / "assets";
     const auto stamp = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
-    const auto root = fs::current_path() / ("terraincheck-material-fixture-" + stamp);
-    const auto out = fs::current_path() / ("terraincheck-material-cooked-" + stamp);
+    const auto root = fs::temp_directory_path() / ("terraincheck-material-fixture-" + stamp);
+    const auto out = fs::temp_directory_path() / ("terraincheck-material-cooked-" + stamp);
     fs::create_directories(root / "materials");
     const Json material = {
         {"version", 1},
@@ -360,12 +360,20 @@ TEST_CASE("The authorized TerrainCheck set cooks at the default 2K resolution", 
           {"roughness", {{"path", "textures/icelandic_sand_and_rocks/Icelandic_Sand_And_Rocks_tcigfcgn_4K_Roughness.jpg"}, {"colorSpace", "linear"}}},
           {"specular", {{"path", "textures/icelandic_sand_and_rocks/Icelandic_Sand_And_Rocks_tcigfcgn_4K_Specular.jpg"}, {"colorSpace", "srgb"}}},
           {"ao", {{"path", "textures/icelandic_sand_and_rocks/Icelandic_Sand_And_Rocks_tcigfcgn_4K_AO.jpg"}, {"colorSpace", "srgb"}}}}}};
+    // A fresh cache cooks every declared root. Keep this fixture independent
+    // of other materials that the game or engine adds later.
+    fs::create_directories(root / "shaders");
+    fs::copy_file(engineRoot / "shaders/default.slang", root / "shaders/default.slang");
+    for (const auto &texture : material.at("textures"))
+    {
+        const fs::path relative = texture.at("path").get<std::string>();
+        fs::create_directories((root / relative).parent_path());
+        fs::copy_file(gameRoot / relative, root / relative);
+    }
     std::ofstream(root / "materials/icelandic_sand.material.json") << material.dump(2);
 
     const auto result = out / "result.json";
     const std::vector<std::string> args{"--source-dir", root.string(), "--id-root", "fixture",
-                                        "--source-dir", gameRoot.string(), "--id-root", "games/TerrainCheck/assets",
-                                        "--source-dir", engineRoot.string(), "--id-root", "assets",
                                         "--out", out.string(), "--result", result.string(), "--material",
                                         "fixture/materials/icelandic_sand.material.json"};
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, args, true) == 0);

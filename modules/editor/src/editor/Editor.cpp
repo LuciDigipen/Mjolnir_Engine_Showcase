@@ -625,7 +625,7 @@ namespace mir
         ImGui::EndMenu();
     }
 
-    void Editor::DrawOpenProjectConfirm(EditorActions &actions)
+    void Editor::DrawOpenProjectConfirm(EditorActions &actions, bool materialDraftsUnsaved)
     {
         constexpr const char *kPopupId = "Open Project##Confirm";
 
@@ -644,6 +644,8 @@ namespace mir
         ImGui::Text("Open \"%s\"?", mPendingProject.mName.c_str());
         ImGui::TextDisabled("The editor restarts with this game.");
         ImGui::TextDisabled("Unsaved changes to the current scene will be lost.");
+        if (materialDraftsUnsaved)
+            ImGui::TextDisabled("Unsaved material drafts will be discarded, never saved automatically.");
         ImGui::Spacing();
 
         if (ImGui::Button("Open"))
@@ -1217,7 +1219,8 @@ namespace mir
         drawList->PopClipRect();
     }
 
-    void Editor::DrawNewProjectModal(EditorActions &actions, std::span<const ProjectMenuEntry> projects)
+    void Editor::DrawNewProjectModal(EditorActions &actions, std::span<const ProjectMenuEntry> projects,
+        bool materialDraftsUnsaved)
     {
         constexpr const char *kPopupId = "New Project";
 
@@ -1237,6 +1240,8 @@ namespace mir
 
         ImGui::InputTextWithHint("Name", "Project name...", mNewProjectName, sizeof(mNewProjectName));
         ImGui::Checkbox("Ray Tracing", &mNewProjectRayTracing);
+        if (materialDraftsUnsaved)
+            ImGui::TextDisabled("Unsaved material drafts will be discarded, never saved automatically.");
         ImGui::Spacing();
 
         const std::string_view name(mNewProjectName);
@@ -1272,7 +1277,8 @@ namespace mir
         PostProcessingSettings &postProcessingSettings, const EngineModeState &mode,
         std::span<const ProjectMenuEntry> projects, std::string_view currentProject, World &activeWorld,
         World &sceneWorld, const EditorDocuments &documents, const AssetImportView &assetImport,
-        const VulkanRenderer &renderer, const ContentBrowserView &contentBrowser, float dt)
+        const VulkanRenderer &renderer, const ContentBrowserView &contentBrowser, bool materialPanelVisible,
+        bool materialDraftsUnsaved, float dt)
     {
         EditorActions actions;
 
@@ -1488,6 +1494,8 @@ namespace mir
                     ImGui::MenuItem("Asset Import", nullptr, &mShowAssetImport);
                     ImGui::MenuItem("Particles", nullptr, &mShowParticles);
                     ImGui::MenuItem("Content Browser", nullptr, &mShowContentBrowser);
+                    if (ImGui::MenuItem("Material", nullptr, materialPanelVisible))
+                        actions.mToggleMaterialEditor = true;
                     ImGui::Separator();
                     ImGui::MenuItem("Preferences", nullptr, &mShowPreferences);
                     ImGui::EndMenu();
@@ -1507,8 +1515,8 @@ namespace mir
             }
             pushedColors = pushPanelAlpha();
 
-            DrawOpenProjectConfirm(actions);
-            DrawNewProjectModal(actions, projects);
+            DrawOpenProjectConfirm(actions, materialDraftsUnsaved);
+            DrawNewProjectModal(actions, projects, materialDraftsUnsaved);
 
             if (mShowStyleEditor)
             {

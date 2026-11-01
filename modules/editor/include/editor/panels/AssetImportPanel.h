@@ -20,6 +20,9 @@ namespace mir
         Ready,
         Queued,
         Processing,
+        // The cooker finished, but the new outputs are not committed to the
+        // runtime asset cache and renderer yet.
+        WaitingForApply,
         UpToDate,
         Failed,
         WaitingForStop,

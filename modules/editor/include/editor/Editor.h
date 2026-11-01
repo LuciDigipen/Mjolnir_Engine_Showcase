@@ -125,6 +125,7 @@ namespace mir
         ContentBrowserAction mContentBrowser;
         EditorDocumentAction mDocument;
         bool mSaveActiveDocument = false;
+        bool mToggleMaterialEditor = false;
     };
 
     class Editor
@@ -151,9 +152,12 @@ namespace mir
             std::span<const ProjectMenuEntry> projects, std::string_view currentProject,
             World &activeWorld, World &sceneWorld, const EditorDocuments &documents,
             const AssetImportView &assetImport, const VulkanRenderer &renderer,
-            const ContentBrowserView &contentBrowser, float dt);
+            const ContentBrowserView &contentBrowser, bool materialPanelVisible,
+            bool materialDraftsUnsaved, float dt);
 
         VkRect2D SceneViewportRect() const { return mSceneViewportRect; }
+
+        const std::string &ContentBrowserSelection() const { return mContentBrowserPanel.SelectedPath(); }
 
         void UpdateCamera(float dt);
 
@@ -208,7 +212,7 @@ namespace mir
     private:
         void DrawTitleBar();
         void DrawOpenProjectMenu(std::span<const ProjectMenuEntry> projects, std::string_view currentProject);
-        void DrawOpenProjectConfirm(EditorActions &actions);
+        void DrawOpenProjectConfirm(EditorActions &actions, bool materialDraftsUnsaved);
         void DrawViewportGizmo(const EngineModeState &mode, World &world, EditorActions &actions,
             bool prefabDocument);
         void BeginGizmoDrag(World &world, std::span<const Entity> selected);
@@ -224,7 +228,8 @@ namespace mir
         void UpdateViewPie(const EngineModeState &mode);
         void DrawViewPie(std::optional<ViewPieItem> hovered);
         void DrawDebugViewMenu(const EngineModeState &mode);
-        void DrawNewProjectModal(EditorActions &actions, std::span<const ProjectMenuEntry> projects);
+        void DrawNewProjectModal(EditorActions &actions, std::span<const ProjectMenuEntry> projects,
+            bool materialDraftsUnsaved);
         void DrawEditMenu();
         // Retries a pending snap outside any panel's Draw; it only reads the World until an edit is ready.
         void PollSnapToTerrain(World &world, DocumentId document, const EngineModeState &mode, float dt);

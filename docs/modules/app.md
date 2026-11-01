@@ -37,7 +37,10 @@ splash follows startup without the constructor body doing it.
 
 ```
 Start(scheduler)                       systems cache their queries
-while not ShouldClose:
+while true:
+    if ShouldClose:                    OS close, Alt+F4, title bar or Request::Quit
+        unless a confirmed project switch or an interactive discard confirmation
+        permits exit: CancelClose and continue
     PollEvents                         close flag and size refresh here
     dt = min(elapsed, mMaxDeltaSeconds)
     ApplyRequests                      last frame's transitions, and a game to switch to
@@ -522,7 +525,9 @@ one would have meant reaching into `core` for every process-wide singleton.
 *2026-09-14* — **`AppDesc::mMaxFrames`.** Was: `Run` ended only when someone
 closed the window, so nothing could drive the engine unattended. Now: after
 `mMaxFrames` frames `Run` calls `Window::RequestClose`, the same exit as the
-close button. `main.cpp`'s `--frames` sets it for the `smoke.<game>` tests.
+close button. The loop checks `ShouldClose` before polling and asks the editor
+for unsaved material drafts; a confirmed project switch (`mProjectToOpen`) and
+bounded or non-interactive runs skip that prompt and never save automatically. `main.cpp`'s `--frames` sets it for the `smoke.<game>` tests.
 
 *2026-09-12* — **`NewScene`/`SaveScene`/`LoadScene` refuse while Play is
 running.** Was: nothing stopped any of the three from running mid-Play — Save

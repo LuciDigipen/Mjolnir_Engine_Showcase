@@ -65,6 +65,9 @@ target_sources(engine_editor PRIVATE
     src/editor/history/History.cpp
     src/editor/history/SubtreeRecord.cpp
     src/editor/IdeSettings.cpp
+    src/editor/MaterialDraft.cpp
+    src/editor/MaterialEditor.cpp
+    src/editor/MaterialRecipe.cpp
     src/editor/panels/HierarchyPanel.cpp
     src/editor/panels/AssetImportPanel.cpp
     src/editor/panels/ContentBrowserPanel.cpp
