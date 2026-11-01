@@ -50,9 +50,20 @@ namespace mir
     // compile SurfaceLayout.slang and pass that JSON.
     std::optional<MaterialLayout> ParseMaterialLayout(std::string_view reflectionJson, std::string *error = nullptr);
 
+    // Changes whenever a field name, kind, offset, size or the record size
+    // changes, so a same-sized offset reorder cannot reuse an old layout.
+    std::string MaterialLayoutRevision(const MaterialLayout &layout);
+
     // Packs a .material.json "parameters" object by reflected field name.
     std::optional<std::vector<std::byte>> PackMaterialRecord(const MaterialLayout &layout,
         std::string_view parametersJson, std::string *error = nullptr);
+
+    // Overlays reflected numeric fields from a second parameters object onto
+    // one already resolved by CreateFromAsset. TextureRef rows and fields the
+    // overlay leaves out keep their resolved values; an unknown name, a
+    // TextureRef override or an unusable number is rejected.
+    std::optional<std::string> OverlayMaterialParameters(const MaterialLayout &layout,
+        std::string_view resolvedParametersJson, std::string_view overridesJson, std::string *error = nullptr);
 
     // "<namespace>_<type>_<hash>". The hash covers the normalized shader source,
     // type and frontend, so two same-named types or punctuation/case variants

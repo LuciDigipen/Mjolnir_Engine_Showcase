@@ -11,6 +11,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstring>
+#include <utility>
 
 using namespace mir;
 
@@ -104,6 +105,22 @@ TEST_CASE("Material packing rejects fields it cannot lay out", "[renderer][mater
     CHECK_FALSE(error.empty());
 }
 
+TEST_CASE("A same-size field reorder changes the material schema revision", "[renderer][material][reflection]")
+{
+    mir::MaterialLayout first;
+    first.fields = {
+        {.name = "x", .kind = mir::MaterialFieldKind::Float, .offset = 0, .size = 4},
+        {.name = "y", .kind = mir::MaterialFieldKind::Float, .offset = 4, .size = 4},
+    };
+    first.size = 16;
+
+    mir::MaterialLayout reordered = first;
+    std::swap(reordered.fields[0].offset, reordered.fields[1].offset);
+
+    CHECK(mir::MaterialLayoutRevision(first) == mir::MaterialLayoutRevision(first));
+    CHECK(mir::MaterialLayoutRevision(first) != mir::MaterialLayoutRevision(reordered));
+}
+
 TEST_CASE("Malformed material layouts reject before packing", "[renderer][material][reflection]")
 {
     const char *overflow = R"({"entryPoints":[{"parameters":[{"type":{"baseShape":"structuredBuffer",
@@ -172,6 +189,44 @@ TEST_CASE("Material packing rejects wrong JSON types and out-of-range numbers", 
     CHECK(PackMaterialRecord(*layout,
         R"({"flag":false,"index":0,"count":2147483647,"value":3.5})")
               .has_value());
+}
+
+TEST_CASE("Parameter overlays keep resolved texture rows", "[renderer][material][reflection]")
+{
+    const auto layout = ParseMaterialLayout(kReflection);
+    REQUIRE(layout.has_value());
+    std::string error;
+    const auto merged = OverlayMaterialParameters(*layout,
+        R"({"amount": 1.5, "color": [2.0, 3.0, 4.0], "texture": {"image": 7}})",
+        R"({"amount": 9.0, "color": [5.0, 6.0, 7.0]})", &error);
+    INFO(error);
+    REQUIRE(merged.has_value());
+
+    const auto bytes = PackMaterialRecord(*layout, *merged, &error);
+    INFO(error);
+    REQUIRE(bytes.has_value());
+    float amount = 0.0f;
+    std::memcpy(&amount, bytes->data(), sizeof(amount));
+    CHECK(amount == 9.0f);
+    float color[3]{};
+    std::memcpy(color, bytes->data() + 16, sizeof(color));
+    CHECK(color[2] == 7.0f);
+    uint32_t image = 0;
+    std::memcpy(&image, bytes->data() + 28, sizeof(image));
+    CHECK(image == 7);
+
+    CHECK_FALSE(OverlayMaterialParameters(*layout,
+        R"({"amount": 1.0, "color": [1.0, 1.0, 1.0], "texture": {"image": 1}})",
+        R"({"unknown": 2.0})", &error)
+                    .has_value());
+    CHECK_FALSE(OverlayMaterialParameters(*layout,
+        R"({"amount": 1.0, "color": [1.0, 1.0, 1.0], "texture": {"image": 1}})",
+        R"({"texture": {"image": 3}})", &error)
+                    .has_value());
+    CHECK_FALSE(OverlayMaterialParameters(*layout,
+        R"({"amount": 1.0, "color": [1.0, 1.0, 1.0], "texture": {"image": 1}})",
+        R"({"amount": 1e300})", &error)
+                    .has_value());
 }
 
 TEST_CASE("Material shader names carry their namespace", "[renderer][material][reflection]")

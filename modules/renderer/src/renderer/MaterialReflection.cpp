@@ -538,6 +538,78 @@ namespace mir
         }
     }
 
+    std::string MaterialLayoutRevision(const MaterialLayout &layout)
+    {
+        uint64_t hash = 1469598103934665603ull;
+        const auto mix = [&](std::string_view bytes)
+        {
+            for (const unsigned char byte : bytes)
+            {
+                hash ^= byte;
+                hash *= 1099511628211ull;
+            }
+        };
+        const auto mixValue = [&](uint32_t value)
+        {
+            char bytes[sizeof(value)];
+            std::memcpy(bytes, &value, sizeof(value));
+            mix(std::string_view(bytes, sizeof(bytes)));
+        };
+        mixValue(layout.size);
+        for (const MaterialFieldLayout &field : layout.fields)
+        {
+            mix(field.name);
+            mixValue(static_cast<uint32_t>(field.kind));
+            mixValue(field.offset);
+            mixValue(field.size);
+        }
+        return std::to_string(hash);
+    }
+
+    std::optional<std::string> OverlayMaterialParameters(const MaterialLayout &layout,
+        std::string_view resolvedParametersJson, std::string_view overridesJson, std::string *error)
+    {
+        nlohmann::json resolved;
+        nlohmann::json overrides;
+        try
+        {
+            resolved = nlohmann::json::parse(resolvedParametersJson);
+            overrides = nlohmann::json::parse(overridesJson);
+        }
+        catch (const nlohmann::json::exception &exception)
+        {
+            SetError(error, std::string("material parameters are not JSON: ") + exception.what());
+            return std::nullopt;
+        }
+        if (!resolved.is_object() || !overrides.is_object())
+        {
+            SetError(error, "material parameters and overrides must be JSON objects");
+            return std::nullopt;
+        }
+
+        for (const auto &[name, value] : overrides.items())
+        {
+            const auto field = std::find_if(layout.fields.begin(), layout.fields.end(),
+                [&](const MaterialFieldLayout &candidate) { return candidate.name == name; });
+            if (field == layout.fields.end())
+            {
+                SetError(error, "material parameter '" + name + "' is not in the reflected layout");
+                return std::nullopt;
+            }
+            if (field->kind == MaterialFieldKind::TextureRef)
+            {
+                SetError(error, "material texture '" + name + "' is edited through the source recipe");
+                return std::nullopt;
+            }
+            resolved[name] = value;
+        }
+
+        const std::optional<std::vector<std::byte>> packed = PackMaterialRecord(layout, resolved.dump(), error);
+        if (!packed)
+            return std::nullopt;
+        return resolved.dump();
+    }
+
     std::string MaterialShaderStem(std::string_view nameSpace, std::string_view type,
         std::string_view shaderPath, std::string_view frontend)
     {

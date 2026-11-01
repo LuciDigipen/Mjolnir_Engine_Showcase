@@ -104,6 +104,21 @@ material enters a finite `--material` batch; an edited dependency enters a
 `--changed` batch. A completed material-only batch still goes through the same
 `PendingApply` path, so it is applied in Edit and waits for Stop during Play.
 
+## Editor drafts
+
+The Material panel builds its controls from the compiled reflection and keeps
+one draft per normalized project and logical asset path. Numeric edits publish
+the packed record through `SurfaceMaterialLibrary::PreviewParameters`; the
+library overlays the values on the resolved parameters, runs the consumer
+validator and updates the shared record table without creating a pipeline.
+Raster and RT read the same record, so every use of the asset previews together.
+
+Save writes only changed `parameters` and `textures.<role>.path` members through
+`UpdateJsonFile`; unknown keys and the other texture fields stay. A successful
+write queues one finite `--material` batch, and the ordinary Edit reload
+publishes the new record. A failed batch keeps the last-good material and the
+draft. Texture replacement changes only the source path, so packing, colour
+space, resolution and mip generation are unchanged. Play is read-only.
 ## Material types
 
 A material file defines only the surface function:

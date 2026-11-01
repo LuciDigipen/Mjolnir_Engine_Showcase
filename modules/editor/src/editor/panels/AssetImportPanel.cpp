@@ -32,6 +32,8 @@ namespace mir
                 return "Queued";
             case AssetImportStatus::Processing:
                 return "Processing";
+            case AssetImportStatus::WaitingForApply:
+                return "Waiting for apply";
             case AssetImportStatus::UpToDate:
                 return "Up to date";
             case AssetImportStatus::Failed:
@@ -60,6 +62,7 @@ namespace mir
                 return StatusColor::Warning;
             case AssetImportStatus::Queued:
             case AssetImportStatus::Processing:
+            case AssetImportStatus::WaitingForApply:
                 return StatusColor::Info;
             default:
                 return StatusColor::Muted;

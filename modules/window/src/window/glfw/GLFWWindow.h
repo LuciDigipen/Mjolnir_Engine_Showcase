@@ -46,6 +46,7 @@ namespace mir
         void ToggleMaximize() override;
         bool IsMaximized() const override;
         void RequestClose() override;
+        void CancelClose() override;
         void Show() override;
 
         void ToggleFullscreen() override;
