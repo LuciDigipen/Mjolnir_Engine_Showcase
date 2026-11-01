@@ -15,6 +15,7 @@
 #include <editor/PrefabAuthoringAdapter.h>
 #include <editor/PrefabPlayMarks.h>
 #include <editor/PrefabWorkspace.h>
+#include <editor/ShaderHotReload.h>
 #include <editor/WorldSceneOps.h>
 
 #include <core/ecs/ModuleContext.h>
@@ -95,7 +96,8 @@ namespace mir
 
         AssetImportManager mImport;
         ContentBrowserWatcher mContentBrowser;
-        
+        ShaderHotReload mShaderHotReload;
+        // before mSceneOps and mEditor: they die after them, once Shutdown stopped the editor using them
         PrefabAuthoringAdapter mPrefabAuthoring;
         PrefabWorkspace mPrefabWorkspace;
         WorldSceneOps mSceneOps;

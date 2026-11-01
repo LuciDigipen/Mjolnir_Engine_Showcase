@@ -38,6 +38,8 @@ set(MIR_SHADER_COMMON_ARGS
 
 set_property(GLOBAL PROPERTY MIR_SHADER_MANIFEST_OUTPUTS "")
 set_property(GLOBAL PROPERTY MIR_SHADER_MANIFEST_TEMPLATES "")
+set_property(GLOBAL PROPERTY MIR_SHADER_ASSET_ROOTS "")
+set_property(GLOBAL PROPERTY MIR_SHADER_GENERATED_OUTPUTS "")
 set_property(GLOBAL PROPERTY MIR_SURFACE_CATALOG_ENTRIES "")
 set_property(GLOBAL PROPERTY MIR_SURFACE_COMPILED_KEYS "")
 set_property(GLOBAL PROPERTY MIR_SURFACE_COMPILED_STEMS "")
@@ -47,6 +49,24 @@ function(_mir_json_escape out_var value)
     string(REPLACE "\"" "\\\"" escaped "${escaped}")
     string(REPLACE "\n" "\\n" escaped "${escaped}")
     set(${out_var} "${escaped}" PARENT_SCOPE)
+endfunction()
+
+# Standalone source fixtures may supply the already-built tool.
+if(MIR_SHADER_PUBLISHER AND NOT TARGET ShaderPublisher)
+    add_executable(ShaderPublisher IMPORTED GLOBAL)
+    set_property(TARGET ShaderPublisher PROPERTY IMPORTED_LOCATION "${MIR_SHADER_PUBLISHER}")
+endif()
+
+function(_mir_compile_command out_var output)
+    if(TARGET ShaderPublisher)
+        get_filename_component(name "${output}" NAME)
+        set(command "$<TARGET_FILE:ShaderPublisher>"
+            --manifest "${CMAKE_BINARY_DIR}/shader_build/shader_manifest.json"
+            --cache "${CMAKE_BINARY_DIR}/shader_build" --compile "${name}")
+    else()
+        set(command ${ARGN})
+    endif()
+    set(${out_var} ${command} PARENT_SCOPE)
 endfunction()
 
 function(_mir_normalize_logical out_var value)
@@ -149,6 +169,7 @@ endfunction()
 function(engine_write_shader_manifest target)
     get_property(outputs GLOBAL PROPERTY MIR_SHADER_MANIFEST_OUTPUTS)
     get_property(templates GLOBAL PROPERTY MIR_SHADER_MANIFEST_TEMPLATES)
+    get_property(asset_roots GLOBAL PROPERTY MIR_SHADER_ASSET_ROOTS)
     get_property(catalog_entries GLOBAL PROPERTY MIR_SURFACE_CATALOG_ENTRIES)
     _mir_json_array(common_json ${MIR_SHADER_COMMON_ARGS})
     _mir_json_escape(slangc_json "${SLANGC_EXECUTABLE}")
@@ -156,35 +177,33 @@ function(engine_write_shader_manifest target)
 
     string(JOIN ",\n    " outputs_json ${outputs})
     string(JOIN ",\n    " templates_json ${templates})
+    string(JOIN ",\n    " asset_roots_json ${asset_roots})
     string(JOIN ",\n    " catalog_json ${catalog_entries})
 
-    set(manifest "${CMAKE_BINARY_DIR}/shaders/shader_manifest.json")
+    set(manifest "${CMAKE_BINARY_DIR}/shader_build/shader_manifest.json")
     string(CONCAT manifest_json
         "{\n  \"version\": 1,\n  \"slangc\": \"${slangc_json}\",\n"
         "  \"workingDirectory\": \"${working_json}\",\n  \"commonArguments\": ${common_json},\n"
+        "  \"assetRoots\": [\n    ${asset_roots_json}\n  ],\n"
         "  \"outputs\": [\n    ${outputs_json}\n  ],\n"
         "  \"frontendTemplates\": [\n    ${templates_json}\n  ]\n}\n")
-    file(WRITE "${manifest}" "${manifest_json}")
+    file(GENERATE OUTPUT "${manifest}" CONTENT "${manifest_json}")
 
-    set(catalog "${CMAKE_BINARY_DIR}/shaders/surface_materials.json")
+    set(catalog "${CMAKE_BINARY_DIR}/shader_build/surface_materials.json")
     string(CONCAT catalog_file
         "{\n  \"version\": 1,\n  \"materials\": [\n    ${catalog_json}\n  ]\n}\n")
-    file(WRITE "${catalog}" "${catalog_file}")
+    file(GENERATE OUTPUT "${catalog}" CONTENT "${catalog_file}")
 
-    # Parameter-only material edits regenerate the catalog without relinking.
-    # Sync on every target build; copy_if_different preserves unchanged files.
-    set(metadata_target "${target}_sync_shader_metadata")
-    add_custom_target(${metadata_target}
-        COMMAND "${CMAKE_COMMAND}" -E make_directory
-                "$<TARGET_FILE_DIR:${target}>/shaders"
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${manifest}" "$<TARGET_FILE_DIR:${target}>/shaders/shader_manifest.json"
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${catalog}" "$<TARGET_FILE_DIR:${target}>/shaders/surface_materials.json"
-        DEPENDS "${manifest}" "${catalog}"
-        COMMENT "Syncing shader manifest and surface material catalog next to ${target}"
-        VERBATIM)
-    add_dependencies(${target} ${metadata_target})
+    if(TARGET ShaderPublisher)
+        get_property(generated GLOBAL PROPERTY MIR_SHADER_GENERATED_OUTPUTS)
+        add_custom_target(${target}_publish_shaders
+            COMMAND "$<TARGET_FILE:ShaderPublisher>" --manifest "${manifest}" --catalog "${catalog}"
+                    --cache "${CMAKE_BINARY_DIR}/shader_build" --root "$<TARGET_FILE_DIR:${target}>/shaders"
+            DEPENDS ShaderPublisher ${generated}
+            COMMENT "Checking shader content and publishing complete generations"
+            VERBATIM)
+        add_dependencies(${target} ${target}_publish_shaders)
+    endif()
 endfunction()
 
 # Recursively collects the files a Slang source #include"s
@@ -266,7 +285,7 @@ function(engine_add_shaders target)
     # No generator expression in this path: add_custom_command(OUTPUT) paths
     # containing a genex cannot be matched against add_custom_target(DEPENDS),
     # so the command silently never runs.
-    set(gen_dir "${CMAKE_BINARY_DIR}/shaders")
+    set(gen_dir "${CMAKE_BINARY_DIR}/shader_build")
 
     set(outputs "")
 
@@ -291,11 +310,12 @@ function(engine_add_shaders target)
         set(arguments "${SLANGC_EXECUTABLE}" "${source_abs}" ${MIR_SHADER_COMMON_ARGS} ${extra_flags}
             -entry "${entry_name}" -stage "${entry_stage}"
             -reflection-json "${reflection}" -depfile "${depfile}" -o "${spv}")
+        _mir_compile_command(compile_command "${spv}" ${arguments})
 
         add_custom_command(
             OUTPUT "${spv}"
             COMMAND "${CMAKE_COMMAND}" -E make_directory "${gen_dir}"
-            COMMAND ${arguments}
+            COMMAND ${compile_command}
             # DEPENDS on the source (plus anything it #includes,
             # transitively) gives recompile-on-edit for free.
             DEPENDS "${source_abs}" ${included_deps} ${ARG_EXTRA_DEPENDS}
@@ -304,6 +324,7 @@ function(engine_add_shaders target)
             COMMENT "slangc ${source_name}.slang [${entry_name}/${entry_stage}]"
             VERBATIM
             COMMAND_EXPAND_LISTS)
+        set_property(GLOBAL APPEND PROPERTY MIR_SHADER_GENERATED_OUTPUTS "${spv}")
         _mir_manifest_add_output(
             OUTPUT "${spv}"
             SOURCES "${source_abs}"
@@ -323,15 +344,6 @@ function(engine_add_shaders target)
     add_custom_target(${shader_target} DEPENDS ${outputs})
     add_dependencies(${target} ${shader_target})
 
-    # The exe resolves shaders relative to its own directory, not the CWD.
-    add_custom_command(TARGET ${target} POST_BUILD
-        COMMAND "${CMAKE_COMMAND}" -E make_directory
-                "$<TARGET_FILE_DIR:${target}>/shaders"
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                ${outputs} "$<TARGET_FILE_DIR:${target}>/shaders"
-        COMMENT "Copying ${source_name} shaders next to ${target}"
-        VERBATIM
-        COMMAND_EXPAND_LISTS)
 endfunction()
 
 function(_mir_surface_template_registered out_var)
@@ -350,7 +362,12 @@ function(_mir_register_mesh_frontend_template)
     endif()
     set_property(GLOBAL APPEND PROPERTY MIR_SHADER_MANIFEST_FRONTENDS mesh)
 
-    set(template "{\n    \"frontend\": \"mesh\",\n    \"placeholders\": [\"{materialSource}\", \"{type}\", \"{stem}\"],\n    \"vertex\": [\"{materialSource}\", \"-entry\", \"vertexMain\", \"-stage\", \"vertex\"],\n    \"fragment\": [\"{materialSource}\", \"-entry\", \"fragmentMain\", \"-stage\", \"fragment\", \"-specialize\", \"{type}\"],\n    \"raytracing\": [\"{materialSource}\", \"-entry\", \"closestHitSurface\", \"-stage\", \"closesthit\", \"-specialize\", \"{type}\"],\n    \"layout\": [\"{materialSource}\", \"-entry\", \"layoutMain\", \"-stage\", \"compute\", \"-specialize\", \"{type}\"]\n  }")
+    set(template "{\n    \"frontend\": \"mesh\",\n    \"placeholders\": [\"{surfaceForward}\", \"{surfaceRt}\", \"{surfaceLayout}\", \"{materialSource}\", \"{type}\", \"{stem}\"],\n    \"vertex\": [\"{surfaceForward}\", \"{materialSource}\", \"-fvk-use-gl-layout\", \"-entry\", \"vertexMain\", \"-stage\", \"vertex\"],\n    \"fragment\": [\"{surfaceForward}\", \"{materialSource}\", \"-fvk-use-gl-layout\", \"-entry\", \"fragmentMain\", \"-stage\", \"fragment\", \"-specialize\", \"{type}\"],\n    \"raytracing\": [\"{surfaceRt}\", \"{materialSource}\", \"-fvk-use-gl-layout\", \"-entry\", \"closestHitSurface\", \"-stage\", \"closesthit\", \"-specialize\", \"{type}\"],\n    \"layout\": [\"{surfaceLayout}\", \"{materialSource}\", \"-fvk-use-gl-layout\", \"-entry\", \"layoutMain\", \"-stage\", \"compute\", \"-specialize\", \"{type}\"]\n  }")
+    string(JSON template SET "${template}" placeholders "[\"{materialSource}\",\"{type}\",\"{stem}\"]")
+    foreach(frontend_source IN ITEMS Forward Rt Layout)
+        _mir_json_escape(frontend_path "${MIR_REPO_ROOT}/assets/shaders/Surface${frontend_source}.slang")
+        string(REPLACE "{surface${frontend_source}}" "${frontend_path}" template "${template}")
+    endforeach()
     set_property(GLOBAL APPEND PROPERTY MIR_SHADER_MANIFEST_TEMPLATES "${template}")
 endfunction()
 
@@ -381,6 +398,12 @@ function(engine_add_surface_materials target)
     endif()
 
     get_filename_component(root_abs "${ARG_ROOT}" ABSOLUTE BASE_DIR "${MIR_REPO_ROOT}")
+    file(RELATIVE_PATH root_relative "${MIR_REPO_ROOT}" "${root_abs}")
+    file(TO_CMAKE_PATH "${root_relative}" root_relative)
+    _mir_json_escape(root_json "${root_relative}")
+    _mir_json_escape(namespace_json "${ARG_NAMESPACE}")
+    set_property(GLOBAL APPEND PROPERTY MIR_SHADER_ASSET_ROOTS
+        "{\n    \"root\": \"${root_json}\",\n    \"namespace\": \"${namespace_json}\"\n  }")
     file(GLOB_RECURSE material_files CONFIGURE_DEPENDS "${root_abs}/*.material.json")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${material_files})
 
@@ -395,7 +418,7 @@ function(engine_add_surface_materials target)
     _engine_scan_shader_includes("${terrain_rt}" terrain_rt_deps)
     _engine_scan_shader_includes("${layout_pass}" layout_deps)
 
-    set(gen_dir "${CMAKE_BINARY_DIR}/shaders")
+    set(gen_dir "${CMAKE_BINARY_DIR}/shader_build")
     set(surface_outputs "")
     set(surface_reflections "")
     get_property(compiled_keys GLOBAL PROPERTY MIR_SURFACE_COMPILED_KEYS)
@@ -565,16 +588,19 @@ function(engine_add_surface_materials target)
                 endif()
                 list(APPEND arguments -reflection-json "${output_reflection}" -depfile "${depfile}" -o "${output}")
 
+                _mir_compile_command(compile_command "${output}" ${arguments})
+
                 add_custom_command(
                     OUTPUT "${output}"
                     COMMAND "${CMAKE_COMMAND}" -E make_directory "${gen_dir}"
-                    COMMAND ${arguments}
+                    COMMAND ${compile_command}
                     DEPENDS ${deps}
                     DEPFILE "${depfile}"
                     BYPRODUCTS "${output_reflection}"
                     COMMENT "slangc ${stem}.slang [${entry}/${stage}]"
                     VERBATIM
                     COMMAND_EXPAND_LISTS)
+                set_property(GLOBAL APPEND PROPERTY MIR_SHADER_GENERATED_OUTPUTS "${output}")
                 _mir_manifest_add_output(
                     OUTPUT "${output}"
                     SOURCES ${sources}
@@ -597,12 +623,5 @@ function(engine_add_surface_materials target)
         set(shader_target ${target}_surface_shaders_${ARG_NAMESPACE})
         add_custom_target(${shader_target} DEPENDS ${surface_outputs})
         add_dependencies(${target} ${shader_target})
-        add_custom_command(TARGET ${target} POST_BUILD
-            COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:${target}>/shaders"
-            COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${surface_outputs} ${surface_reflections}
-                    "$<TARGET_FILE_DIR:${target}>/shaders"
-            COMMENT "Copying surface material shaders next to ${target}"
-            VERBATIM
-            COMMAND_EXPAND_LISTS)
     endif()
 endfunction()

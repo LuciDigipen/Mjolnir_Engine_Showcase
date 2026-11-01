@@ -130,6 +130,11 @@ namespace mir
         if (blockBytes > UINT32_MAX)
             return kNullMaterialRecord;
 
+        std::vector<std::byte> pendingBytes(size);
+        mFreeRanges.reserve(mFreeRanges.size() + 1);
+        mBlocks.reserve(mBlocks.size() + 1);
+        mWrites.reserve(mWrites.size() + 1);
+        mOffsetChanges.reserve(mOffsetChanges.size() + 1);
         uint32_t offset = 0;
         if (!AllocateRange(static_cast<uint32_t>(blockBytes), requestedAlignment, offset))
             return kNullMaterialRecord;
@@ -151,7 +156,7 @@ namespace mir
         Block &block = mBlocks[index];
         const uint32_t nextGeneration = block.mGeneration + 1;
         block = Block{};
-        block.mPendingBytes.resize(size);
+        block.mPendingBytes = std::move(pendingBytes);
         block.mOffset = offset;
         block.mStride = stride;
         block.mSize = size;

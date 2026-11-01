@@ -21,6 +21,7 @@ namespace mir::vk
     bool PostProcess::Initialize(Device &device, VkFormat swapchainFormat)
     {
         mDevice = &device;
+        mSwapchainFormat = swapchainFormat;
 
         const VkSamplerCreateInfo samplerInfo{
             .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
@@ -121,99 +122,9 @@ namespace mir::vk
             return false;
         }
 
-        VkShaderModule vertModule = CreateShaderModule(mDevice->Handle(), ShaderPath("tonemap.vertexMain.spv"));
-        VkShaderModule fragModule = CreateShaderModule(mDevice->Handle(), ShaderPath("tonemap.fragmentMain.spv"));
-        if (vertModule == VK_NULL_HANDLE || fragModule == VK_NULL_HANDLE)
-        {
-            if (vertModule != VK_NULL_HANDLE)
-                vkDestroyShaderModule(mDevice->Handle(), vertModule, nullptr);
-            if (fragModule != VK_NULL_HANDLE)
-                vkDestroyShaderModule(mDevice->Handle(), fragModule, nullptr);
+        mPipeline = BuildPipeline();
+        if (mPipeline == VK_NULL_HANDLE)
             return false;
-        }
-
-        const VkPipelineShaderStageCreateInfo stages[]{
-            { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-             .stage = VK_SHADER_STAGE_VERTEX_BIT,
-             .module = vertModule,
-             .pName = "vertexMain" },
-            { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-             .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
-             .module = fragModule,
-             .pName = "fragmentMain" } };
-
-        // No vertex input: the shader builds a fullscreen triangle, same trick as sky.slang.
-        const VkPipelineVertexInputStateCreateInfo vertexInput{
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
-
-        const VkPipelineInputAssemblyStateCreateInfo inputAssembly{
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
-            .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST };
-
-        const VkPipelineViewportStateCreateInfo viewportState{
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
-            .viewportCount = 1,
-            .scissorCount = 1 };
-
-        const VkPipelineRasterizationStateCreateInfo rasterizer{
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-            .polygonMode = VK_POLYGON_MODE_FILL,
-            .cullMode = VK_CULL_MODE_NONE,
-            .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
-            .lineWidth = 1.0f };
-
-        const VkPipelineMultisampleStateCreateInfo multisample{
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-            .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT };
-
-        const VkPipelineColorBlendAttachmentState blendAttachment{
-            .blendEnable = VK_FALSE,
-            .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-                              VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT };
-
-        const VkPipelineColorBlendStateCreateInfo colorBlend{
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-            .attachmentCount = 1,
-            .pAttachments = &blendAttachment };
-
-        const VkDynamicState dynamicStates[]{ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
-        const VkPipelineDynamicStateCreateInfo dynamicState{
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-            .dynamicStateCount = 2,
-            .pDynamicStates = dynamicStates };
-
-        // No depth attachment: this pass only ever reads an already-shaded color image.
-        const VkPipelineRenderingCreateInfo renderingInfo{
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-            .colorAttachmentCount = 1,
-            .pColorAttachmentFormats = &swapchainFormat };
-
-        const VkGraphicsPipelineCreateInfo pipelineInfo{
-            .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-            .pNext = &renderingInfo,
-            .stageCount = 2,
-            .pStages = stages,
-            .pVertexInputState = &vertexInput,
-            .pInputAssemblyState = &inputAssembly,
-            .pViewportState = &viewportState,
-            .pRasterizationState = &rasterizer,
-            .pMultisampleState = &multisample,
-            .pColorBlendState = &colorBlend,
-            .pDynamicState = &dynamicState,
-            .layout = mPipelineLayout };
-
-        const VkResult result = vkCreateGraphicsPipelines(
-            mDevice->Handle(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &mPipeline);
-
-        vkDestroyShaderModule(mDevice->Handle(), vertModule, nullptr);
-        vkDestroyShaderModule(mDevice->Handle(), fragModule, nullptr);
-
-        if (result != VK_SUCCESS)
-        {
-            MIR_LOG_CRITICAL("Initialize: vkCreateGraphicsPipelines failed: {}", static_cast<int>(result));
-            return false;
-        }
-
         mDevice->NameObject(VK_OBJECT_TYPE_PIPELINE, reinterpret_cast<uint64_t>(mPipeline), "Tonemap pipeline");
 
         return true;
@@ -294,5 +205,137 @@ namespace mir::vk
         vkCmdPushConstants(cmd, mPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pushConstants), &pushConstants);
 
         vkCmdDraw(cmd, 3, 1, 0, 0);
+    }
+
+    VkPipeline PostProcess::BuildPipeline()
+    {
+        VkPipeline outPipeline = VK_NULL_HANDLE;
+        VkShaderModule vertModule = CreateShaderModule(mDevice->Handle(), ShaderPath("tonemap.vertexMain.spv"));
+        VkShaderModule fragModule = CreateShaderModule(mDevice->Handle(), ShaderPath("tonemap.fragmentMain.spv"));
+        if (vertModule == VK_NULL_HANDLE || fragModule == VK_NULL_HANDLE)
+        {
+            if (vertModule != VK_NULL_HANDLE)
+                vkDestroyShaderModule(mDevice->Handle(), vertModule, nullptr);
+            if (fragModule != VK_NULL_HANDLE)
+                vkDestroyShaderModule(mDevice->Handle(), fragModule, nullptr);
+            return VK_NULL_HANDLE;
+        }
+
+        const VkPipelineShaderStageCreateInfo stages[]{
+            { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+             .stage = VK_SHADER_STAGE_VERTEX_BIT,
+             .module = vertModule,
+             .pName = "vertexMain" },
+            { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+             .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+             .module = fragModule,
+             .pName = "fragmentMain" } };
+
+        // No vertex input: the shader builds a fullscreen triangle, same trick as sky.slang.
+        const VkPipelineVertexInputStateCreateInfo vertexInput{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
+
+        const VkPipelineInputAssemblyStateCreateInfo inputAssembly{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+            .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST };
+
+        const VkPipelineViewportStateCreateInfo viewportState{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+            .viewportCount = 1,
+            .scissorCount = 1 };
+
+        const VkPipelineRasterizationStateCreateInfo rasterizer{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+            .polygonMode = VK_POLYGON_MODE_FILL,
+            .cullMode = VK_CULL_MODE_NONE,
+            .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+            .lineWidth = 1.0f };
+
+        const VkPipelineMultisampleStateCreateInfo multisample{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+            .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT };
+
+        const VkPipelineColorBlendAttachmentState blendAttachment{
+            .blendEnable = VK_FALSE,
+            .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                              VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT };
+
+        const VkPipelineColorBlendStateCreateInfo colorBlend{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+            .attachmentCount = 1,
+            .pAttachments = &blendAttachment };
+
+        const VkDynamicState dynamicStates[]{ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+        const VkPipelineDynamicStateCreateInfo dynamicState{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+            .dynamicStateCount = 2,
+            .pDynamicStates = dynamicStates };
+
+        // No depth attachment: this pass only ever reads an already-shaded color image.
+        const VkPipelineRenderingCreateInfo renderingInfo{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+            .colorAttachmentCount = 1,
+            .pColorAttachmentFormats = &mSwapchainFormat };
+
+        const VkGraphicsPipelineCreateInfo pipelineInfo{
+            .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+            .pNext = &renderingInfo,
+            .stageCount = 2,
+            .pStages = stages,
+            .pVertexInputState = &vertexInput,
+            .pInputAssemblyState = &inputAssembly,
+            .pViewportState = &viewportState,
+            .pRasterizationState = &rasterizer,
+            .pMultisampleState = &multisample,
+            .pColorBlendState = &colorBlend,
+            .pDynamicState = &dynamicState,
+            .layout = mPipelineLayout };
+
+        const VkResult result = vkCreateGraphicsPipelines(
+            mDevice->Handle(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &outPipeline);
+
+        vkDestroyShaderModule(mDevice->Handle(), vertModule, nullptr);
+        vkDestroyShaderModule(mDevice->Handle(), fragModule, nullptr);
+
+        if (result != VK_SUCCESS)
+        {
+            MIR_LOG_CRITICAL("Initialize: vkCreateGraphicsPipelines failed: {}", static_cast<int>(result));
+            return VK_NULL_HANDLE;
+        }
+
+        return outPipeline;
+    }
+
+    bool PostProcess::PrepareShaderReload(std::string *error)
+    {
+        DiscardShaderReload();
+        mReloadPipeline = BuildPipeline();
+        if (mReloadPipeline == VK_NULL_HANDLE)
+        {
+            if (error != nullptr)
+                *error = "the tonemap pipeline could not be created";
+            return false;
+        }
+        mReloadPrepared = true;
+        return true;
+    }
+
+    void PostProcess::CommitShaderReload()
+    {
+        if (!mReloadPrepared)
+            return;
+        if (mPipeline != VK_NULL_HANDLE)
+            vkDestroyPipeline(mDevice->Handle(), mPipeline, nullptr);
+        mPipeline = mReloadPipeline;
+        mReloadPipeline = VK_NULL_HANDLE;
+        mReloadPrepared = false;
+    }
+
+    void PostProcess::DiscardShaderReload()
+    {
+        if (mReloadPipeline != VK_NULL_HANDLE)
+            vkDestroyPipeline(mDevice->Handle(), mReloadPipeline, nullptr);
+        mReloadPipeline = VK_NULL_HANDLE;
+        mReloadPrepared = false;
     }
 }

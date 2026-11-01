@@ -8,6 +8,9 @@
  */
 #include "core/fs/Paths.h"
 
+#include <mutex>
+#include <utility>
+
 #if defined(_WIN32)
 #include <windows.h>
 #include <shlobj.h>
@@ -38,6 +41,9 @@ namespace mir
         #endif
         }
 
+        std::mutex gShaderRootMutex;
+        std::filesystem::path gShaderRootOverride;
+
         std::filesystem::path QueryExecutableDir()
         {
             std::filesystem::path path = QueryExecutablePath();
@@ -60,8 +66,31 @@ namespace mir
         return dir;
     }
 
+    void SetShaderRootOverride(std::filesystem::path path)
+    {
+        std::lock_guard<std::mutex> lock(gShaderRootMutex);
+        gShaderRootOverride = std::move(path);
+    }
+
+    void ClearShaderRootOverride()
+    {
+        std::lock_guard<std::mutex> lock(gShaderRootMutex);
+        gShaderRootOverride.clear();
+    }
+
+    std::filesystem::path ShaderRootOverride()
+    {
+        std::lock_guard<std::mutex> lock(gShaderRootMutex);
+        return gShaderRootOverride;
+    }
+
     std::filesystem::path ShaderPath(std::string_view name)
     {
+        {
+            std::lock_guard<std::mutex> lock(gShaderRootMutex);
+            if (!gShaderRootOverride.empty())
+                return gShaderRootOverride / name;
+        }
         return ExecutableDir() / "shaders" / name;
     }
 

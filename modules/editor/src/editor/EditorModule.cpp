@@ -175,6 +175,7 @@ namespace mir
         mImport.Initialize(mProject);
         mParticleEditor = std::make_unique<ParticleEditorPanel>(mImport.SourceAssetRoot(),mProject.mAssetIdRoot);
         mContentBrowser.Initialize(mProject);
+        mShaderHotReload.Initialize(mProject.mRootDir, &renderer.Renderer());
 
         // The first frames run without assets; the import swaps them in once cooked
         if (!assets.HadManifest() && mImport.SourceHasAssets())
@@ -201,6 +202,7 @@ namespace mir
             {
                 mFrameDt = frame.dt;
                 mImport.Update(IsEditing(mWorld));
+                mShaderHotReload.Update();
                 if (mImport.PendingApply() && IsEditing(mWorld))
                     mWorld.Resource<RequestQueue>().Push(Request::ApplyImportedAssets);
                 mContentBrowser.Update();
@@ -389,6 +391,7 @@ namespace mir
         mEditor.Shutdown();
         // stops a running cooker
         mImport.Shutdown();
+        mShaderHotReload.Shutdown();
     }
 
     bool EditorModule::HasUnsavedMaterialDrafts() const

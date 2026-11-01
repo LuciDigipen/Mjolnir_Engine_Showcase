@@ -188,6 +188,25 @@ TEST_CASE("The shader manifest covers legacy and namespaced surface outputs", "[
     CHECK(manifest.at("workingDirectory").is_string());
     CHECK(manifest.at("commonArguments").is_array());
     CHECK(manifest.at("frontendTemplates").is_array());
+    REQUIRE_FALSE(manifest.at("frontendTemplates").empty());
+    const nlohmann::json &meshTemplate = manifest.at("frontendTemplates")[0];
+    CHECK(meshTemplate.at("frontend") == "mesh");
+    const auto &placeholders = meshTemplate.at("placeholders");
+    CHECK(std::find(placeholders.begin(), placeholders.end(), "{materialSource}") != placeholders.end());
+    CHECK(std::find(placeholders.begin(), placeholders.end(), "{type}") != placeholders.end());
+    CHECK(std::find(placeholders.begin(), placeholders.end(), "{stem}") != placeholders.end());
+    for (const char *stage : { "vertex", "fragment", "raytracing", "layout" })
+    {
+        const auto &arguments = meshTemplate.at(stage);
+        CHECK(std::find(arguments.begin(), arguments.end(), "-fvk-use-gl-layout") != arguments.end());
+        CHECK(std::find(arguments.begin(), arguments.end(), "{materialSource}") != arguments.end());
+        const auto frontend = std::filesystem::u8path(arguments.at(0).get<std::string>());
+        CHECK(frontend.is_absolute());
+        CHECK(std::filesystem::is_regular_file(frontend));
+    }
+    CHECK(std::filesystem::u8path(meshTemplate.at("vertex")[0].get<std::string>()).filename() == "SurfaceForward.slang");
+    CHECK(std::filesystem::u8path(meshTemplate.at("raytracing")[0].get<std::string>()).filename() == "SurfaceRt.slang");
+    CHECK(std::filesystem::u8path(meshTemplate.at("layout")[0].get<std::string>()).filename() == "SurfaceLayout.slang");
     REQUIRE(manifest.at("outputs").is_array());
 
     const std::string defaultStem =
