@@ -17,6 +17,7 @@ engine_add_module_tests(renderer
     SurfaceMaterialLayout.tests.cpp
     MeshAssetDecoder.tests.cpp
     MeshLoadTracker.tests.cpp
+    TextureLoadTracker.tests.cpp
     MeshResolveSystem.tests.cpp
     MeshStreaming.tests.cpp
     FogEffect.tests.cpp

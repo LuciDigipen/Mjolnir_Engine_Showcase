@@ -7,6 +7,7 @@
  *
  */
 #include <renderer/MeshLoadTracker.h>
+#include <renderer/AssetUploadCache.h>
 
 #include <assets/AssetBlob.h>
 #include <assets/AssetManifest.h>
@@ -276,4 +277,51 @@ TEST_CASE("Reset forgets loads without touching the uploader", "[renderer][mesh-
     CHECK(f.tracker.Find(Id("tri")) == nullptr);
     CHECK(f.uploader.retired.empty());
     CHECK(f.uploader.Count(MeshUploadState::Pending) == 1);
+}
+
+TEST_CASE("Common upload cache protects independent claims and cancels the last unfinished upload",
+    "[renderer][upload-cache]")
+{
+    Fixture f({ { "tri", std::string(kTriangle) } });
+    struct View
+    {
+        AssetUploadPhase phase = AssetUploadPhase::Decoding;
+        MeshHandle handle;
+        MeshBounds bounds;
+    };
+    using Cache = AssetUploadCache<DecodedMesh, MeshHandle, View, &View::handle>;
+    auto cache = std::make_shared<Cache>(&f.service, kMeshAssetDecoder,
+        [&f](std::shared_ptr<const DecodedMesh> mesh)
+            { return f.uploader.QueueMesh({ mesh->vertices, mesh->indices, mesh }, {}); },
+        [&f](MeshHandle handle) { return f.uploader.MeshState(handle); },
+        [&f](MeshHandle handle) { f.uploader.RetireMesh(handle); },
+        [](MeshHandle, const DecodedMesh &) { return uint64_t(200); },
+        [](View &view, const DecodedMesh &mesh) { view.bounds = mesh.bounds; });
+    cache->Request(Id("tri"), "tri");
+    AssetUploadLease<Cache> first(cache, Id("tri"));
+    AssetUploadLease<Cache> second(cache, Id("tri"));
+    f.service.DrainCompletions();
+    cache->Update();
+    REQUIRE(first.Get());
+    const auto handle = first.Get()->handle;
+    REQUIRE_FALSE(handle.IsNull());
+    first.Reset();
+    CHECK(f.uploader.MeshState(handle) == UploadState::Pending);
+    second.Reset();
+    CHECK(f.uploader.MeshState(handle) == UploadState::Stale);
+    CHECK(cache->Empty());
+    cache->Request(Id("tri"), "tri");
+    AssetUploadLease<Cache> held(cache, Id("tri"));
+    f.service.DrainCompletions();
+    cache->Update();
+    const auto ready = held.Get()->handle;
+    f.uploader.Record(ready);
+    f.uploader.Complete(ready);
+    cache->Update();
+    CHECK(held.Get()->phase == AssetUploadPhase::Ready);
+    CHECK(held.Get()->bounds.mLocalMax == glm::vec3(1, 1, 0));
+    cache->SetBudget(0);
+    CHECK(f.uploader.MeshState(ready) == UploadState::Ready);
+    held.Reset();
+    CHECK(f.uploader.MeshState(ready) == UploadState::Stale);
 }

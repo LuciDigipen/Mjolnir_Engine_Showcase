@@ -8,6 +8,8 @@
  */
 #pragma once
 
+#include <renderer/UploadState.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -15,6 +17,7 @@
 
 namespace mir
 {
+    using TextureUploadState = UploadState;
     struct TextureHandle
     {
         static constexpr uint32_t kNullIndex = UINT32_MAX;

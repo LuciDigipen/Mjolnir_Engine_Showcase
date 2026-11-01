@@ -1,0 +1,6 @@
+add_executable(TextureGpuCheck main.cpp)
+target_link_libraries(TextureGpuCheck PRIVATE mir::renderer mir::window)
+set_target_properties(TextureGpuCheck PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+add_dependencies(TextureGpuCheck MjolnirEngine)
+add_test(NAME smoke.texture-gpu COMMAND TextureGpuCheck "${CMAKE_BINARY_DIR}/texture-gpu")
+set_tests_properties(smoke.texture-gpu PROPERTIES LABELS smoke RUN_SERIAL TRUE TIMEOUT 180)

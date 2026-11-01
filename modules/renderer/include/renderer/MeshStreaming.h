@@ -9,6 +9,8 @@
 #pragma once
 
 #include <renderer/Mesh.h>
+#include <renderer/Texture.h>
+#include <renderer/UploadState.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -54,18 +56,7 @@ namespace mir
         static MeshUploadSource Own(std::vector<Vertex> vertices, std::vector<uint32_t> indices);
     };
 
-    enum class MeshUploadState : uint8_t
-    {
-        // Null, retired, released, or not a mesh.
-        Stale,
-        // Queued; nothing recorded yet.
-        Pending,
-        // Recorded in a frame the GPU has not finished.
-        Uploading,
-        Ready,
-        // Its buffers could not be allocated; retire it.
-        Failed,
-    };
+    using MeshUploadState = UploadState;
 
     struct MeshStreamingStats
     {
@@ -86,6 +77,10 @@ namespace mir
         uint64_t retired = 0;
         uint64_t failed = 0;
         uint64_t uploadedBytes = 0;
+        uint64_t textureQueued = 0;
+        uint64_t textureUploaded = 0;
+        uint64_t textureSourceBytes = 0;
+        uint64_t textureAllocatedBytes = 0;
         uint64_t blasBuilt = 0;
         uint64_t blasBytes = 0;
         uint64_t lastFrameBytes = 0;
@@ -148,6 +143,11 @@ namespace mir
             MeshHandle mesh;
             uint64_t stagingBytes = 0;
             uint64_t gpuBytes = 0;
+            TextureHandle texture;
+            uint32_t mip = 0;
+            uint32_t firstRow = 0;
+            uint32_t rowCount = 0;
+            uint64_t rowBytes = 0;
         };
 
         struct Admitted
@@ -160,9 +160,11 @@ namespace mir
         void Push(const Item &item);
         // False once the mesh was admitted.
         bool Cancel(MeshHandle mesh);
+        bool Cancel(TextureHandle texture);
         std::vector<Admitted> Admit(uint64_t frame);
         // Meshes admitted for frames at or below completed, oldest first; their staging space comes back.
         std::vector<MeshHandle> Complete(uint64_t completed);
+        std::vector<Item> CompleteUploads(uint64_t completed);
         // Changes the per-frame budget from the next Admit.
         void SetFrameBytes(uint64_t frameBytes);
         // Everything queued or in flight is forgotten.

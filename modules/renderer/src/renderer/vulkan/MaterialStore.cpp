@@ -94,6 +94,9 @@ namespace mir::vk
 
         // Before the pool: frees each material's set into it.
         DestroyMaterials();
+        mRetiredTextureSets.ReleaseAll([this](VkDescriptorSet &set)
+            { vkFreeDescriptorSets(mDevice->Handle(), mDescriptorPool, 1, &set); });
+        mTextureWaiting.clear();
         mDefaultMaterial = kNullMaterial;
         mErrorMaterial = kNullMaterial;
         DestroyRecordRefBuffer();
@@ -162,19 +165,18 @@ namespace mir::vk
             return false;
         }
 
-        // One set per material. A model primitive eats two (front and mirrored
-        // front face), so this is not as generous as it looks.
+        // One active set per material, plus room for an old set retained while a texture binding changes.
         std::array<VkDescriptorPoolSize, 2> poolSizes{ {
             { .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-              .descriptorCount = kMaxMaterials * kMaterialSetCombinedImages },
+              .descriptorCount = 2 * kMaxMaterials * kMaterialSetCombinedImages },
             { .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
-              .descriptorCount = kMaxMaterials * kMaterialSetRecordUniformBuffers } } };
+              .descriptorCount = 2 * kMaxMaterials * kMaterialSetRecordUniformBuffers } } };
         const uint32_t poolSizeCount = mTable != nullptr ? static_cast<uint32_t>(poolSizes.size()) : 1u;
 
         const VkDescriptorPoolCreateInfo poolInfo{
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
             .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
-            .maxSets = kMaxMaterials,
+            .maxSets = 2 * kMaxMaterials,
             .poolSizeCount = poolSizeCount,
             .pPoolSizes = poolSizes.data() };
 
@@ -427,6 +429,11 @@ namespace mir::vk
 
     MaterialHandle MaterialStore::CreateMaterial(MaterialDesc desc, ResourceStore &resources, VkFormat colorFormat)
     {
+        if (mFreeIndices.empty() && mMaterials.size() >= kMaxMaterials)
+        {
+            MIR_LOG_ERROR("CreateMaterial: material table is full at {} entries", kMaxMaterials);
+            return kNullMaterial;
+        }
         std::string resolutionError;
         const auto resolved = ResolveMaterialDesc(desc, mSurfaceMaterials, mTable != nullptr, &resolutionError);
         if (!resolved)
@@ -442,12 +449,12 @@ namespace mir::vk
 
         const TextureHandle baseColorHandle = resources.FindTexture(desc.baseColorTexture) != nullptr
             ? desc.baseColorTexture
-            : resources.DefaultWhiteTexture();
+            : resources.FindTextureSlot(desc.baseColorTexture) ? resources.ErrorTexture() : resources.DefaultWhiteTexture();
         const GpuTexture *const baseColor = resources.FindTexture(baseColorHandle);
 
         const TextureHandle normalHandle = resources.FindTexture(desc.normalTexture) != nullptr
             ? desc.normalTexture
-            : resources.DefaultNormalTexture();
+            : resources.FindTextureSlot(desc.normalTexture) ? resources.ErrorTexture() : resources.DefaultNormalTexture();
         const GpuTexture *const normal = resources.FindTexture(normalHandle);
 
         if (baseColor == nullptr || normal == nullptr)
@@ -606,6 +613,9 @@ namespace mir::vk
         if (mTable != nullptr)
             WriteRecordRefEverywhere(index);
 
+        if ((resources.FindTextureSlot(desc.baseColorTexture) != nullptr && resources.FindTexture(desc.baseColorTexture) == nullptr) ||
+            (resources.FindTextureSlot(desc.normalTexture) != nullptr && resources.FindTexture(desc.normalTexture) == nullptr))
+            mTextureWaiting.push_back({ index, mMaterials[index].mGeneration });
         MIR_LOG_INFO("Material created: {} (index {})", desc.shaderName, index);
         return MaterialHandle{ index, mMaterials[index].mGeneration };
     }
@@ -677,6 +687,62 @@ namespace mir::vk
         vmaFlushAllocation(mDevice->Allocator(), mRecordRefAllocation, offset, mRecordRefFrameStride);
     }
 
+    void MaterialStore::RefreshTextures(ResourceStore &resources, uint64_t completed, uint64_t lastUse)
+    {
+        mRetiredTextureSets.Collect(completed, [this](VkDescriptorSet &set)
+            { vkFreeDescriptorSets(mDevice->Handle(), mDescriptorPool, 1, &set); });
+        std::erase_if(mTextureWaiting, [&](MaterialHandle handle)
+            {
+                if (FindMaterial(handle) == nullptr)
+                    return true;
+                auto &material = mMaterials[handle.mIndex];
+                const auto pending = [&resources](TextureHandle texture)
+                    {
+                        const auto *slot = resources.FindTextureSlot(texture);
+                        return slot && (slot->mState == TextureUploadState::Pending ||
+                            slot->mState == TextureUploadState::Uploading);
+                    };
+                if (pending(material.mDescription.baseColorTexture) || pending(material.mDescription.normalTexture))
+                    return false;
+                VkDescriptorSet replacement = VK_NULL_HANDLE;
+                const VkDescriptorSetAllocateInfo allocation{ .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+                    .descriptorPool = mDescriptorPool, .descriptorSetCount = 1, .pSetLayouts = &mSetLayout };
+                if (vkAllocateDescriptorSets(mDevice->Handle(), &allocation, &replacement) != VK_SUCCESS)
+                {
+                    MIR_LOG_ERROR("Material {}: texture descriptor allocation failed, keeping the fallback", handle.mIndex);
+                    return true;
+                }
+                std::array<VkCopyDescriptorSet, 3> copies{};
+                for (uint32_t i = 0; i < copies.size(); ++i)
+                    copies[i] = { .sType = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET,
+                        .srcSet = material.mDescriptorSet, .srcBinding = i,
+                        .dstSet = replacement, .dstBinding = i, .descriptorCount = 1 };
+                vkUpdateDescriptorSets(mDevice->Handle(), 0, nullptr, mTable != nullptr ? 3u : 2u, copies.data());
+                const auto resolve = [&resources](TextureHandle requested, TextureHandle fallback)
+                    {
+                        if (resources.FindTexture(requested))
+                            return requested;
+                        return requested.IsNull() ? fallback : resources.ErrorTexture();
+                    };
+                const TextureHandle base = resolve(material.mDescription.baseColorTexture, resources.DefaultWhiteTexture());
+                const TextureHandle normal = resolve(material.mDescription.normalTexture, resources.DefaultNormalTexture());
+                const std::array<VkDescriptorImageInfo, 2> images{ {
+                    { material.mSampler, resources.FindTexture(base)->mView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+                    { material.mSampler, resources.FindTexture(normal)->mView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } } };
+                std::array<VkWriteDescriptorSet, 2> writes{};
+                for (uint32_t i = 0; i < writes.size(); ++i)
+                    writes[i] = { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                        .dstSet = replacement, .dstBinding = i, .descriptorCount = 1,
+                        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &images[i] };
+                vkUpdateDescriptorSets(mDevice->Handle(), 2, writes.data(), 0, nullptr);
+                mRetiredTextureSets.Push(lastUse, 0, material.mDescriptorSet);
+                material.mDescriptorSet = replacement;
+                material.mBaseColorView = images[0].imageView;
+                material.mBaseColorSlot = resources.TextureSlot(base);
+                return true;
+            });
+    }
+
     void MaterialStore::FreeMaterial(GpuMaterial &material)
     {
         // The sampler belongs to the resource store's cache, not to the material.
@@ -734,6 +800,9 @@ namespace mir::vk
 
     std::size_t MaterialStore::ReleaseMaterials()
     {
+        mTextureWaiting.clear();
+        mRetiredTextureSets.ReleaseAll([this](VkDescriptorSet &set)
+            { vkFreeDescriptorSets(mDevice->Handle(), mDescriptorPool, 1, &set); });
         const GpuMaterial *const defaultMaterial = FindMaterial(mDefaultMaterial);
         const GpuMaterial *const errorMaterial = FindMaterial(mErrorMaterial);
         if (defaultMaterial == nullptr || errorMaterial == nullptr)
@@ -773,6 +842,7 @@ namespace mir::vk
 
     void MaterialStore::DestroyMaterials()
     {
+        mTextureWaiting.clear();
         for (GpuMaterial &material : mMaterials)
             FreeMaterial(material);
         mMaterials.clear();

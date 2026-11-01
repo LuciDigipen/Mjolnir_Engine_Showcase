@@ -13,6 +13,7 @@
 #include <core/platform/Surface.h>
 #include <renderer/DebugView.h>
 #include <renderer/IMeshResolveHost.h>
+#include <renderer/ITextureUploader.h>
 #include <renderer/Material.h>
 #include <renderer/Mesh.h>
 #include <renderer/MeshStreaming.h>
@@ -191,7 +192,7 @@ namespace mir
         float fovYDegrees = 0.0f;
     };
 
-    class VulkanRenderer : public IMeshResolveHost
+    class VulkanRenderer : public IMeshResolveHost, public ITextureUploader
     {
     public:
         VulkanRenderer();
@@ -210,6 +211,10 @@ namespace mir
         bool DestroyMesh(MeshHandle handle);
 
         TextureHandle CreateTexture(const TextureDesc &desc);
+        TextureHandle QueueTexture(TextureUploadSource source) override;
+        TextureUploadState TextureState(TextureHandle handle) const override;
+        bool RetireTexture(TextureHandle handle) override;
+        uint64_t TextureFootprint(TextureHandle handle) const override;
 
         TextureHandle ErrorTexture() const;
 
@@ -358,7 +363,6 @@ namespace mir
         struct ReleasedResources
         {
             std::vector<MaterialHandle> materials;
-            std::vector<TextureHandle> textures;
         };
         FrameRetireList<ReleasedResources> mReleasedResources;
         glm::vec4 mClearColor{ 0.02f, 0.02f, 0.02f, 1.0f };

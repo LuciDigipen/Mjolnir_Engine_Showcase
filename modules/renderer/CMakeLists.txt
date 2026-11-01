@@ -38,6 +38,8 @@ target_sources(engine_renderer PRIVATE
     ${VOLK_SOURCE}
     src/renderer/MeshAssetDecoder.cpp
     src/renderer/MeshLoadTracker.cpp
+    src/renderer/TextureLoadTracker.cpp
+    src/renderer/TextureUpload.cpp
     src/renderer/vulkan/FxCompositionPass.cpp
 )
 

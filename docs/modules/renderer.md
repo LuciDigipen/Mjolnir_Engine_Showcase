@@ -157,6 +157,35 @@ after frame completion, shutdown drains all releases after waiting for the GPU.
 The global `ReleaseSceneResources` operation remains for explicit full cleanup,
 ordinary scene unload does not call it.
 
+### Shared texture uploads
+
+`ITextureUploader` exposes `QueueTexture`, `TextureState`, `TextureFootprint` and
+`RetireTexture`. `TextureLoads(service)` returns the renderer's shared texture
+cache for that catalog revision. A `TextureLoadLease` retains one consumer's
+claim, independently of scene and prefab lifetimes. Mesh and texture trackers
+specialize the same `AssetUploadCache` lifecycle, decoding, uploading, ready or
+failed. Ready unused entries have an adjustable 256 MiB target per cache,
+active claims are protected, and abandoning the last unfinished claim cancels it.
+
+The texture decoder reads cooked pixels and prepares missing mips on a worker.
+`PrepareTextureUpload` preserves supplied mip chains and filters generated RGB
+in linear light, alpha stays linear. `QueueTexture` requires a prepared chain.
+The queued source retains its immutable pixels until the last staging copy,
+then drops its reference before GPU completion. CPU cache residency is separate,
+so the service may still retain the same allocation. Source and decoded byte
+counters describe overlapping ownership and must not be added together.
+
+Textures and meshes share one staging ring and transfer budget. A large mip is
+split into row bands, partial work rotates behind other queued work, and ring
+spans remain reserved until their submitting frame completes. Texture state
+becomes Ready only after its final upload frame completes. Retiring a partial
+texture cancels its remaining bands and defers GPU destruction until prior
+copies have finished. Pending image-table slots sample the error texture.
+Materials created with a pending texture acquire a replacement descriptor set
+when it becomes ready, the old set retires after its last possible frame.
+Existing model loading still uses synchronous `CreateTexture`, migration to
+these shared texture claims is a separate step.
+
 At `ReloadCommit` the module calls `CommitReload`. It retires the meshes that are
 still queued or uploading, frees the ready ones, and forgets every entity's names,
 so the next `LateUpdate` resolves every renderer again, including one
@@ -884,9 +913,9 @@ three built-ins, and drops every queued, uploading and retired mesh. The next
 and 1. The next `CreateTexture` reuses index 3, since the built-in textures
 keep 0 to 2. Every mesh slot's generation moves on (#127), so a mesh handle
 kept across the call misses instead of naming the next mesh in its slot;
-texture generations are not bumped, so a texture handle kept across the call
-names whatever is created next in its slot, with no error. `App` calls it only
-right after unloading a scene, when no `MeshRenderer` is left.
+texture slots are cleared too. Callers must release all claims before this
+explicit full cleanup. Ordinary scene unload releases its World-local claims
+instead, so prefab previews keep their resources.
 
 **`DestroyMesh`/`DestroyMaterial` free one handle at a time, unlike
 `ReleaseSceneResources`, and unlike it they *do* bump the slot's generation**
@@ -906,9 +935,10 @@ stops drawing (`RecordView`'s existing null-mesh skip) or draws magenta (the
 error-material fallback), rather than crashing. `DestroyMaterial` additionally
 always refuses on the default and error materials. Draws fall back to them for
 the process lifetime, which is the same reason `ReleaseSceneResources` keeps
-them. Textures have no public per-handle
-destroy yet (see Backlog). Material lookups check the generation the same
-way mesh and texture lookups do.
+them. `RetireTexture` provides nonblocking per-handle texture retirement,
+invalidates the handle immediately and protects submitted work with the frame
+timeline. It refuses the built-in textures. Material lookups check the
+generation the same way mesh and texture lookups do.
 
 **`RenderSystem` runs in `Render` because `TransformPropagateSystem` runs in
 `Propagate`.** Placed any earlier, it would draw the previous frame's matrices.
@@ -1069,23 +1099,28 @@ workers and a shared fake, `FakeMeshUploader` for the uploads and
 each load, and `MeshResolveSystem` for what an entity sees, including renames
 during a load, bounds appearing on Ready, shared meshes, removal, and the first
 cook of a game that started without a manifest reaching a scene and a preview.
-`CookedMeshDir.h` writes the cooked blobs they read. The unit tests do not reach
+`CookedMeshDir.h` writes the cooked blobs they read. `TextureLoadTracker` tests
+use `FakeTextureUploader` to control staging, completion, cancellation and
+independent claims across reloads. `MeshStreaming` also checks texture row-band
+admission, fairness, ring bounds, CPU mip filtering and supplied mip preservation.
+The unit tests do not reach
 `MeshUploader::Record`, `Forget` and `Clear`, where the renderer drops the data
 reference after the staging copy, so those release points rely on the editor and
 game smoke runs. None of the anti-aliasing passes themselves, nor their resource
 lifetimes, have an automated test.
-Everything that needs a device is verified by the smoke tests and
+`TextureGpuCheck` supplies device coverage for a 4K texture larger than the
+staging ring. It compares streamed pixels against synchronous upload, checks
+per-frame budget and mesh progress, verifies pending-material replacement,
+source release before Ready, partial cancellation and zero live allocations at
+shutdown. Run it through `ctest -R smoke.texture-gpu`, it is built only with
+`BUILD_TESTING=ON`. Other device behavior is verified by the smoke tests and
 `TerrainRenderProbe`.
 
 ## Backlog
 
-1. **Per-handle destroy for textures.** Meshes and materials have it
-   (`DestroyMesh`/`DestroyMaterial` — see Changed); textures still only go
-   away in bulk, via `ReleaseSceneResources` and `ReleaseModelResources`.
-   `ResourceStore::DestroyTexture` exists, but the public API does not expose
-   it. Lower
-   priority than meshes/materials were: nothing today creates or discards
-   textures at a rate that makes the gap felt.
+1. **Model resource preparation.** Migrate model dependency loading onto shared
+   CPU claims and queued GPU uploads, keeping per-entity pose and playback apart
+   from immutable model resources.
 2. **Draw-item sorting and batching.** There is one pipeline bind per item today,
    so a frame scales with the number of distinct materials rather than with draw
    count.
