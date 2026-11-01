@@ -223,4 +223,11 @@ namespace mir
             return true;
         }
     };
+
+    // Bytes of this run's live state. Every add resets them to the default value, so a copy never shares them
+    struct TransientField
+    {
+        uint32_t mOffset = 0;
+        uint32_t mSize = 0;
+    };
 }

@@ -55,6 +55,13 @@ namespace mir
         bool operator==(const TerrainIssue &) const = default;
     };
 
+    struct TerrainMaterialLayer
+    {
+        std::string materialPath;
+        float weight = 1.0f;
+        std::string name = "base";
+    };
+
     struct TerrainInstanceSpec
     {
         std::string recipePath;
@@ -63,6 +70,13 @@ namespace mir
         AssetId asset;
         WorldPosition translation;
         Entity entity;
+        // Raw and resolved material binding; the equality below ignores it so
+        // an Edit keeps the loaded releases and collision.
+        std::string materialPath;
+        std::string materialLogicalPath;
+        AssetId material;
+        // The runtime resolves only one base layer with weight one.
+        std::vector<TerrainMaterialLayer> materialLayers;
 
         bool operator==(const TerrainInstanceSpec &other) const;
     };
@@ -78,8 +92,12 @@ namespace mir
         bool operator==(const TerrainSceneSpec &) const = default;
     };
 
+    // The id of the asset with this logical path.
+    using TerrainMaterialIdLookup = std::function<AssetId(std::string_view logicalPath)>;
+
     // Refuses a bad recipe path, and a placement other than a root's translation.
-    TerrainSceneSpec CollectTerrainScene(World &world, std::string_view assetIdRoot);
+    TerrainSceneSpec CollectTerrainScene(World &world, std::string_view assetIdRoot,
+                                         const TerrainMaterialIdLookup &materialId);
 
     // One opened release and its height query. Only the index is read here; a TerrainStreamer it is added
     // to makes payloads resident and is the only writer of the query's residency.
@@ -163,6 +181,8 @@ namespace mir
         TerrainPlacement placement;
         TerrainWorldRect bounds;
         std::shared_ptr<TerrainResidentRelease> release;
+        // Names the instance's render binding; never part of derived-state equality.
+        Entity entity;
     };
 
     // World resource. App replaces it only at Edit frame boundaries, so a Play keeps its releases.
@@ -193,6 +213,9 @@ namespace mir
 
         // For an instance whose mesh or collider failed.
         void RemoveInstance(size_t index);
+        // A new entity generation at the same accepted asset and placement
+        // keeps the release; only the render binding identity changes.
+        void SyncInstanceEntities(const TerrainSceneSpec &spec);
 
     private:
       friend TerrainWorld ResolveTerrainWorld(const TerrainSceneSpec &, const std::filesystem::path &,

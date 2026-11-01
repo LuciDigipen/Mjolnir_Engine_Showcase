@@ -1,4 +1,4 @@
-engine_add_module_tests(core_base
+engine_add_module_tests(core_base NO_SYSTEM_TIES
     Paths.tests.cpp
     FileIO.tests.cpp
     Process.tests.cpp
@@ -29,12 +29,13 @@ engine_add_module_tests(core
     Requests.tests.cpp
     ModuleUnwind.tests.cpp
     FixedTimestep.tests.cpp
+    GroundQuery.tests.cpp
     Transform.tests.cpp
     TransformHierarchy.tests.cpp
     Resources.tests.cpp
     ComponentHooks.tests.cpp
     Entity.tests.cpp
-    EntityChanges.tests.cpp
+    ComponentFieldChanges.tests.cpp
     ComponentRegistry.tests.cpp
     EntityPresetRegistry.tests.cpp
     RuntimeQuery.tests.cpp

@@ -22,6 +22,27 @@ pieces a `TerrainCollisionResidency` builds for the bodies that need them
 (#128), and, shared by every viewport, the GPU meshes of the draw units the
 viewports select (#125).
 
+## Material binding
+
+`TerrainRender` derives each vertex UV from the async mesh origin and the
+vertex's local XZ in meters, reducing the origin once in double. The material
+divides by its `tileSizeMeters`; the value must divide the shared validation
+period. `TerrainInstance.materialPath` resolves through the renderer-owned
+`SurfaceMaterialLibrary` as one named base layer with weight one. Binding and
+entity generation live in `InstanceResources`, separate from release, height
+query, collider and geometry cache. A material-only Edit updates that side only;
+an entity generation replacement at the same accepted placement keeps the
+release. Empty, invalid or unsupported bindings draw the diagnostic material and
+log once. The same consumer callback also checks the macro period against the
+shared validation period and the macro/parallax numeric bounds before a candidate
+material is published; terrain geometry and collision do not read them.
+
+## Tests
+
+CPU tests live in `modules/terrain/tests` (UV, scene serialization, entity
+generation, prefab capture) and `modules/renderer/tests` (catalog frontend,
+record packing). GPU and visual checks remain supervisor work.
+
 ```
 constructor    -> TerrainRuntime::Bind      streaming settings -> TerrainStreamingSettings, TerrainStreamer resources;
                                             renderer mesh streaming; collision residency; registers itself in the
@@ -139,7 +160,8 @@ shape.
 | Type | Header | Role |
 |---|---|---|
 | `TerrainRuntimeModule` | `terrain_runtime/TerrainRuntimeModule.h` | The module: binds the runtime, registers its `FrameBegin` work and its stage functions |
-| `TerrainRuntime` | `terrain_runtime/TerrainRuntime.h` | Streaming, residencies, release switching, per-viewport drawing, the physics step gate |
+| `TerrainRuntime` | `terrain_runtime/TerrainRuntime.h` | Streaming, residencies, release switching, per-viewport drawing, the physics step gate, and the World's `GroundQuery` binding |
+| `TerrainGroundBridge` | `terrain_runtime/TerrainGroundBridge.h` | Registers the scene's `TerrainWorld` as the World's `GroundQuery` source; unregisters through its `Registration`; invalidates the query when a resolve or unload replaces the terrain |
 | `TerrainGpuUploader` | `terrain_runtime/TerrainRender.h` | Queues a built terrain mesh with the renderer |
 
 ## Rules

@@ -398,3 +398,45 @@ TEST_CASE("FrustumSliceCorners sizes the view rectangle by fov and aspect", "[re
         CHECK(corners[i].z == Catch::Approx(expected[i].z));
     }
 }
+
+TEST_CASE("Camera pixel angular size follows the lens FOV and resolution", "[renderer][camera]")
+{
+    const float size = mir::CameraPixelAngularSize(kLens.mFovYDegrees, glm::uvec2{1920, 1080});
+    REQUIRE(size > 0.0f);
+    CHECK(std::isfinite(size));
+    const float expected = 2.0f * std::tan(glm::radians(kLens.mFovYDegrees) * 0.5f) / 1080.0f;
+    CHECK(size == Catch::Approx(expected));
+
+    CHECK(mir::CameraPixelAngularSize(kLens.mFovYDegrees, glm::uvec2{3840, 2160}) ==
+          Catch::Approx(size * 0.5f));
+    const float narrow = mir::CameraPixelAngularSize(30.0f, glm::uvec2{1920, 1080});
+    CHECK(narrow == Catch::Approx(2.0f * std::tan(glm::radians(30.0f) * 0.5f) / 1080.0f));
+    CHECK(narrow < size);
+    CHECK(mir::CameraPixelAngularSize(0.0f, glm::uvec2{1920, 1080}) == 0.0f);
+    CHECK(mir::CameraPixelAngularSize(200.0f, glm::uvec2{1920, 1080}) == 0.0f);
+    CHECK(mir::CameraPixelAngularSize(kLens.mFovYDegrees, glm::uvec2{0, 0}) == 0.0f);
+}
+
+TEST_CASE("A render view resolves its effective viewport extent", "[renderer][camera]")
+{
+    const glm::uvec2 window{1920, 1080};
+    CHECK(mir::ResolveRenderExtent(glm::ivec2{0, 0}, glm::uvec2{0, 0}, window) == window);
+
+    glm::ivec2 offset{0, 0};
+    CHECK(mir::ResolveRenderExtent(glm::ivec2{37, 41}, glm::uvec2{0, 0}, window, &offset) == window);
+    CHECK(offset == glm::ivec2{0, 0});
+    CHECK(mir::ResolveRenderExtent(glm::ivec2{37, 41}, glm::uvec2{0, 200}, window, &offset) == window);
+    CHECK(offset == glm::ivec2{0, 0});
+    CHECK(mir::ResolveRenderExtent(glm::ivec2{10, 20}, glm::uvec2{320, 200}, window, &offset) ==
+          glm::uvec2{320, 200});
+    CHECK(offset == glm::ivec2{10, 20});
+
+    CHECK(mir::ResolveRenderExtent(glm::ivec2{1910, 1070}, glm::uvec2{320, 200}, window, &offset) ==
+          glm::uvec2{10, 10});
+    CHECK(offset == glm::ivec2{1910, 1070});
+
+    const glm::uvec2 full = mir::ResolveRenderExtent(glm::ivec2{0, 0}, glm::uvec2{0, 0}, window);
+    CHECK(mir::CameraPixelAngularSize(kLens.mFovYDegrees, full) > 0.0f);
+    const glm::uvec2 dlss = mir::ResolveRenderExtent(glm::ivec2{0, 0}, glm::uvec2{1280, 720}, window);
+    CHECK(mir::CameraPixelAngularSize(kLens.mFovYDegrees, dlss) > 0.0f);
+}

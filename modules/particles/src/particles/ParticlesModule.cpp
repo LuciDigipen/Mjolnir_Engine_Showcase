@@ -59,15 +59,6 @@ namespace mir
         context.world.EmplaceResource<ParticleDiagnostics>();
         RegisterParticleComponents();
         mHooks = context.world.SetComponentHooks<ParticleSystem>({
-            .onAdd = [](World &world, Entity owner)
-            {
-                auto &emitter = *world.GetComponent<ParticleSystem>(owner);
-                emitter.instance = {};
-                emitter.initialized = false;
-                emitter.wantsPlay = false;
-                emitter.paused = false;
-                emitter.failedEffect = {};
-            },
             .onRemove = [this](World &, Entity owner) { mParticles.Detach(owner); } });
         context.scheduler.AddSystem<ParticleUpdateSystem>(SystemPhase::LateUpdate,
             SystemOrder{ 70 }, mParticles);

@@ -61,6 +61,13 @@ namespace mir
         { .mName = "emitterOffsetPlacement6", .mKind = FieldKind::Int, .mOffset = offsetof(ParticleSystem, offsetPlacementIds) + 6 * sizeof(uint32_t), .mHidden = true },
         { .mName = "emitterOffsetPlacement7", .mKind = FieldKind::Int, .mOffset = offsetof(ParticleSystem, offsetPlacementIds) + 7 * sizeof(uint32_t), .mHidden = true },
     };
+    inline constexpr TransientField kParticleSystemTransient[] = {
+        { offsetof(ParticleSystem, instance), sizeof(ParticleSystem::instance) },
+        { offsetof(ParticleSystem, initialized), sizeof(ParticleSystem::initialized) },
+        { offsetof(ParticleSystem, wantsPlay), sizeof(ParticleSystem::wantsPlay) },
+        { offsetof(ParticleSystem, paused), sizeof(ParticleSystem::paused) },
+        { offsetof(ParticleSystem, failedEffect), sizeof(ParticleSystem::failedEffect) },
+    };
     static_assert(kMaxSystemEmitters == 8, "kParticleSystemFields lists one offset and one placement id field per slot");
     static_assert(sizeof(uint32_t) == sizeof(int32_t), "the placement id slots are saved through Int fields");
 

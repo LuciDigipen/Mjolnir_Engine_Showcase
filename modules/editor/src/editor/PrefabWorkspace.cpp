@@ -99,7 +99,7 @@ namespace mir
         World &world = preview->mWorld;
         world.EmplaceResource<EngineModeState>();
         world.EmplaceResource<Selection>();
-        world.EmplaceResource<EntityChangeListeners>();
+        world.EmplaceResource<ComponentFieldListeners>();
         world.EmplaceResource<ModelDrawItems>();
         world.EmplaceResource<ModelMorphOverrides>();
         world.EmplaceResource<ViewDrawSources>();

@@ -23,6 +23,8 @@
 #include <core/log/Assert.h>
 #include <core/log/SetupError.h>
 
+#include <stdexcept>
+
 namespace mir
 {
     RendererModule::RendererModule(ModuleContext context, const ISurfaceProvider &surface, AssetsModule &assets,
@@ -41,6 +43,7 @@ namespace mir
         RegisterRendererComponents();
         RegisterRendererEntityTypes();
         RegisterRendererPostEffects();
+        mSurfaceMaterials.Bind(assets.Cache(), mRenderer);
 
         context.world.EmplaceResource<ViewDrawSources>();
         // physics fills it while a view shows colliders
@@ -73,6 +76,7 @@ namespace mir
         mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &)
             {
                 mMeshes->Reset();
+                mSurfaceMaterials.Reset();
                 mRenderer.ReleaseSceneResources();
             });
 
@@ -91,9 +95,20 @@ namespace mir
             });
         mPlayEnd = context.scheduler.AddStage(Stage::PlayEnd, [this](SystemContext &) { mActiveCamera->Reset(); });
 
+        mReloadPrepare = context.scheduler.AddStage(Stage::ReloadPrepare, [this, &assets](SystemContext &)
+            {
+                std::string error;
+                if (!mSurfaceMaterials.PrepareReload(assets.Candidate(), mRenderer, &error))
+                    throw std::runtime_error(error);
+            });
+        mReloadAbort = context.scheduler.AddStage(Stage::ReloadAbort, [this](SystemContext &)
+            {
+                mSurfaceMaterials.AbortReload();
+            });
         mReloadCommit = context.scheduler.AddStage(Stage::ReloadCommit, [this, &assets](SystemContext &)
             {
                 mMeshes->CommitReload(&assets.Cache());
+                mSurfaceMaterials.CommitReload(assets.Cache());
             });
     }
 
@@ -102,6 +117,8 @@ namespace mir
     {
         mReloadCommit.Reset();
         mPlayEnd.Reset();
+        mReloadAbort.Reset();
+        mReloadPrepare.Reset();
         mPlayBegin.Reset();
         mSceneLoad.Reset();
         mSceneUnload.Reset();

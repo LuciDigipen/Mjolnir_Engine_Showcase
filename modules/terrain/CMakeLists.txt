@@ -9,9 +9,11 @@ target_sources(engine_terrain PRIVATE
     src/terrain/TerrainAssetPath.cpp
     src/terrain/TerrainByteSource.cpp
     src/terrain/TerrainExecutor.cpp
+    src/terrain/TerrainGround.cpp
     src/terrain/TerrainHeightQuery.cpp
     src/terrain/TerrainLayout.cpp
     src/terrain/TerrainLod.cpp
+    src/terrain/TerrainMaterialUv.cpp
     src/terrain/TerrainMeshResidency.cpp
     src/terrain/TerrainPackFormat.cpp
     src/terrain/TerrainPackWriter.cpp

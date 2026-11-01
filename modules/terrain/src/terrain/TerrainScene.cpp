@@ -222,7 +222,8 @@ namespace mir
                translation.Meters() == other.translation.Meters();
     }
 
-    TerrainSceneSpec CollectTerrainScene(World &world, std::string_view assetIdRoot)
+    TerrainSceneSpec CollectTerrainScene(World &world, std::string_view assetIdRoot,
+                                         const TerrainMaterialIdLookup &materialId)
     {
         TerrainSceneSpec spec;
         world.GetOrCreateQuery<const TerrainInstance>().ForEach(
@@ -254,8 +255,20 @@ namespace mir
                 }
 
                 const Transform &transform = *world.GetComponent<Transform>(entity);
-                spec.instances.push_back(
-                    {recipe, path.logicalPath, path.asset, *WorldPosition::FromMeters(transform.Position()), entity});
+                TerrainInstanceSpec placed{recipe, path.logicalPath, path.asset,
+                                           *WorldPosition::FromMeters(transform.Position()), entity};
+                placed.materialPath = FixedString(instance.materialPath);
+                if (!placed.materialPath.empty())
+                {
+                    const AssetPathResult material = MakeLogicalAssetPath(assetIdRoot, placed.materialPath);
+                    if (material.Ok())
+                    {
+                        placed.materialLogicalPath = material.path;
+                        placed.material = materialId(material.path);
+                        placed.materialLayers.push_back({placed.materialPath, 1.0f});
+                    }
+                }
+                spec.instances.push_back(std::move(placed));
             });
 
         std::sort(spec.instances.begin(), spec.instances.end(),
@@ -345,6 +358,19 @@ namespace mir
             mInstances.erase(mInstances.begin() + static_cast<std::ptrdiff_t>(index));
     }
 
+    void TerrainWorld::SyncInstanceEntities(const TerrainSceneSpec &spec)
+    {
+        for (TerrainInstanceState &instance : mInstances)
+            for (const TerrainInstanceSpec &candidate : spec.instances)
+                if (candidate.asset == instance.placement.asset &&
+                    candidate.translation.Meters() == instance.placement.translation.Meters() &&
+                    candidate.recipePath == instance.recipePath)
+                {
+                    instance.entity = candidate.entity;
+                    break;
+                }
+    }
+
     TerrainWorld ResolveTerrainWorld(const TerrainSceneSpec &spec, const std::filesystem::path &releasesRoot,
                                      const TerrainWorld *previous, std::vector<TerrainIssue> &issues,
                                      TerrainStreamer &streamer, TerrainEagerLoad eager)
@@ -374,7 +400,8 @@ namespace mir
             if (!asset.release)
                 continue;
             placed.push_back({instance.recipePath, TerrainPlacement{instance.asset, instance.translation},
-                              Rect(asset.release->Layout(), instance.translation), asset.release});
+                              Rect(asset.release->Layout(), instance.translation), asset.release,
+                              instance.entity});
         }
 
         std::vector<bool> refused(placed.size(), false);

@@ -10,6 +10,7 @@
 #include "TerrainPackTestSupport.h"
 #include "TerrainStreamingTestSupport.h"
 
+#include <assets/AssetPath.h>
 #include <terrain/ComponentRegistration.h>
 #include <terrain/TerrainAreaSamples.h>
 #include <terrain/TerrainAssetPath.h>
@@ -135,7 +136,7 @@ namespace
     TerrainWorld Resolve(World &world, const std::filesystem::path &root, const TerrainWorld *previous,
                          std::vector<TerrainIssue> &issues)
     {
-        const TerrainSceneSpec spec = CollectTerrainScene(world, kIdRoot);
+        const TerrainSceneSpec spec = CollectTerrainScene(world, kIdRoot, HashedAssetId);
         issues = spec.issues;
         return ResolveTerrainWorld(spec, root, previous, issues, world.Resource<TerrainStreamer>(),
                                    TerrainEagerLoad::Wait);
@@ -189,9 +190,24 @@ TEST_CASE("A far TerrainInstance saves and reloads with its placement exact and 
     LoadedScene authored = NewScene("terrain");
     const Entity terrain = CreateSceneEntity(authoredScene.world, authored);
     AddTransform(authoredScene.world, terrain, Transform(Position(kFar)));
-    authoredScene.world.AddComponent(terrain, Recipe(kRecipe));
-    const TerrainSceneSpec authoredSpec = CollectTerrainScene(authoredScene.world, kIdRoot);
+    TerrainInstance authoredInstance = Recipe(kRecipe);
+    constexpr std::string_view kMaterial = "materials/icelandic.material.json";
+    std::memcpy(authoredInstance.materialPath, kMaterial.data(), kMaterial.size());
+    authoredScene.world.AddComponent(terrain, authoredInstance);
+    // an id that is not a hash of the path, like the guid the cooker gives a material
+    const auto guidOf = [](std::string_view path) { return AssetId{ MakeAssetId(path).value ^ 0x5a5a }; };
+    const TerrainSceneSpec authoredSpec = CollectTerrainScene(authoredScene.world, kIdRoot, guidOf);
     REQUIRE(authoredSpec.instances.size() == 1);
+    CHECK(authoredSpec.instances[0].materialPath == kMaterial);
+    CHECK(authoredSpec.instances[0].materialLogicalPath ==
+          MakeLogicalAssetPath(kIdRoot, kMaterial).path);
+    CHECK(authoredSpec.instances[0].material == guidOf(MakeLogicalAssetPath(kIdRoot, kMaterial).path));
+    REQUIRE(authoredSpec.instances[0].materialLayers.size() == 1);
+    CHECK(authoredSpec.instances[0].materialLayers[0].weight == 1.0f);
+    CHECK(authoredSpec.instances[0].materialLayers[0].name == "base");
+    TerrainSceneSpec rebound = authoredSpec;
+    rebound.instances[0].materialPath = "materials/other.material.json";
+    CHECK(rebound == authoredSpec);
 
     const std::filesystem::path dir = MakeScratchDir("scene_save");
     REQUIRE(SaveScene(authoredScene.world, dir, authored));
@@ -204,19 +220,22 @@ TEST_CASE("A far TerrainInstance saves and reloads with its placement exact and 
     const LoadedScene loaded = LoadScene(reloaded.world, dir);
     CHECK(loaded.mEntities.size() == 1);
     CHECK(EntityCount(reloaded.world) == 1);
-    const TerrainSceneSpec spec = CollectTerrainScene(reloaded.world, kIdRoot);
+    const TerrainSceneSpec spec = CollectTerrainScene(reloaded.world, kIdRoot, guidOf);
     CHECK(spec == authoredSpec);
     REQUIRE(spec.instances.size() == 1);
     CHECK(glm::dvec3(spec.instances[0].translation.Meters()) == kFar);
     CHECK(spec.instances[0].recipePath == kRecipe);
     CHECK(spec.instances[0].asset == TerrainAsset(kRecipe));
+    CHECK(spec.instances[0].materialPath == kMaterial);
+    CHECK(spec.instances[0].materialLogicalPath == authoredSpec.instances[0].materialLogicalPath);
+    CHECK(spec.instances[0].material == authoredSpec.instances[0].material);
     CHECK(spec.instances[0].entity == loaded.mEntities.begin()->second);
 
     const PlaySnapshot snapshot = CaptureWorld(reloaded.world);
     const LoadedScene restored = RestoreWorld(reloaded.world, snapshot);
     CHECK(restored.mEntities.size() == 1);
     CHECK(EntityCount(reloaded.world) == 1);
-    const TerrainSceneSpec restoredSpec = CollectTerrainScene(reloaded.world, kIdRoot);
+    const TerrainSceneSpec restoredSpec = CollectTerrainScene(reloaded.world, kIdRoot, guidOf);
     CHECK(restoredSpec == authoredSpec);
     // operator== ignores the entity, which the restore recreates.
     REQUIRE(restoredSpec.instances.size() == 1);
@@ -236,7 +255,7 @@ TEST_CASE("A far TerrainInstance saves and reloads with its placement exact and 
         REQUIRE(SaveScene(precise.world, preciseDir, preciseScene));
         Scene back;
         (void)LoadScene(back.world, preciseDir);
-        const TerrainSceneSpec backSpec = CollectTerrainScene(back.world, kIdRoot);
+        const TerrainSceneSpec backSpec = CollectTerrainScene(back.world, kIdRoot, guidOf);
         REQUIRE(backSpec.instances.size() == 1);
         CHECK(glm::dvec3(backSpec.instances[0].translation.Meters()) == fine);
         std::filesystem::remove_all(preciseDir);
@@ -269,7 +288,7 @@ TEST_CASE("Only a root's translation places terrain, and the reference must name
     const Entity flipped = AddInstance(world, "terrain/flipped.terrain.json", {0.0, 0.0, 0.0});
     world.GetComponent<Transform>(flipped)->SetRotation(glm::quat(-1.0f, 0.0f, 0.0f, 0.0f));
 
-    const TerrainSceneSpec spec = CollectTerrainScene(world, kIdRoot);
+    const TerrainSceneSpec spec = CollectTerrainScene(world, kIdRoot, HashedAssetId);
     CHECK(spec.HasTerrain());
     REQUIRE(spec.instances.size() == 2);
     CHECK(spec.instances[0].recipePath == "terrain/flipped.terrain.json");
@@ -290,15 +309,15 @@ TEST_CASE("Only a root's translation places terrain, and the reference must name
     CHECK(Says(IssueFor(spec.issues, "terrain/bare.terrain.json"), "entity 'Ground' has no Transform"));
 
     const size_t entities = EntityCount(world);
-    (void)CollectTerrainScene(world, kIdRoot);
+    (void)CollectTerrainScene(world, kIdRoot, HashedAssetId);
     CHECK(EntityCount(world) == entities);
 
     // Refused instances still make a terrain scene.
     Scene refusedOnly;
     AddInstance(refusedOnly.world, "", kFar);
-    CHECK(CollectTerrainScene(refusedOnly.world, kIdRoot).HasTerrain());
+    CHECK(CollectTerrainScene(refusedOnly.world, kIdRoot, HashedAssetId).HasTerrain());
     Scene none;
-    CHECK_FALSE(CollectTerrainScene(none.world, kIdRoot).HasTerrain());
+    CHECK_FALSE(CollectTerrainScene(none.world, kIdRoot, HashedAssetId).HasTerrain());
 }
 
 TEST_CASE("The engine's id root and the build's sync arguments name the same terrain asset", "[terrain][scene]")
@@ -315,6 +334,33 @@ TEST_CASE("The engine's id root and the build's sync arguments name the same ter
     CHECK(TerrainIdHex(engine.asset.value) == "93f78444273cf162");
 }
 
+TEST_CASE("A new entity generation at one placement keeps the release and rebinds", "[terrain][scene]")
+{
+    const std::filesystem::path root = MakeScratchDir("scene_generation");
+    const Published published = Publish(root, TerrainAsset(kRecipe), 0xA119, 0.0f);
+    Scene scene;
+    const Entity first = AddInstance(scene.world, kRecipe, kFar);
+    (void)first;
+
+    std::vector<TerrainIssue> issues;
+    TerrainWorld terrain = Resolve(scene.world, root, nullptr, issues);
+    REQUIRE(issues.empty());
+    REQUIRE(terrain.Instances().size() == 1);
+    const std::shared_ptr<TerrainResidentRelease> release = terrain.Instances()[0].release;
+
+    TerrainSceneSpec rebound = CollectTerrainScene(scene.world, kIdRoot, HashedAssetId);
+    REQUIRE(rebound.instances.size() == 1);
+    rebound.instances[0].entity = scene.world.CreateEntity();
+    rebound.instances[0].materialPath = "materials/other.material.json";
+    rebound.instances[0].materialLayers = {{rebound.instances[0].materialPath, 1.0f}};
+    CHECK(rebound == CollectTerrainScene(scene.world, kIdRoot, HashedAssetId));
+
+    terrain.SyncInstanceEntities(rebound);
+    CHECK(terrain.Instances()[0].entity == rebound.instances[0].entity);
+    CHECK(terrain.Instances()[0].release == release);
+    CHECK(terrain.Instances()[0].release->Info() == published.info);
+    std::filesystem::remove_all(root);
+}
 TEST_CASE("A resolved instance answers, meshes and collides from one release at its far placement", "[terrain][scene]")
 {
     const std::filesystem::path root = MakeScratchDir("scene_resolve");

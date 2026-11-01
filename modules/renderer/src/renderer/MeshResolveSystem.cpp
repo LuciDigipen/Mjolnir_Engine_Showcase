@@ -137,31 +137,22 @@ namespace mir
 
     void MeshResolveSystem::OnStart(SystemContext &context)
     {
-        if (EntityChangeListeners *listeners = context.world.TryResource<EntityChangeListeners>())
-            listeners->AddBeforeRemove(&MeshResolveSystem::OnBeforeRemove, this);
+        if (ComponentFieldListeners *listeners = context.world.TryResource<ComponentFieldListeners>())
+            listeners->AddBeforeChange(&MeshResolveSystem::OnBeforeFieldChange, this);
     }
 
     void MeshResolveSystem::OnStop(SystemContext &context)
     {
-        if (EntityChangeListeners *listeners = context.world.TryResource<EntityChangeListeners>())
-            listeners->RemoveBeforeRemove(&MeshResolveSystem::OnBeforeRemove, this);
+        if (ComponentFieldListeners *listeners = context.world.TryResource<ComponentFieldListeners>())
+            listeners->RemoveBeforeChange(&MeshResolveSystem::OnBeforeFieldChange, this);
     }
 
-    void MeshResolveSystem::OnBeforeRemove(World &, const EntityChangeSet &changes, void *user)
+    void MeshResolveSystem::OnBeforeFieldChange(World &, std::span<const ComponentFieldChange> changes, void *user)
     {
         auto *self = static_cast<MeshResolveSystem *>(user);
         const TypeId meshType = TypeIdOf<MeshRenderer>();
 
-        for (Entity entity : changes.mRemovedEntities)
-            self->mResolved.erase(PackEntity(entity));
-
-        for (const EntityComponentRef &component : changes.mRemovedComponents)
-        {
-            if (component.mType == meshType)
-                self->mResolved.erase(PackEntity(component.mEntity));
-        }
-
-        for (const EntityComponentChange &change : changes.mChangedComponents)
+        for (const ComponentFieldChange &change : changes)
         {
             if (!(change.mType == meshType))
                 continue;

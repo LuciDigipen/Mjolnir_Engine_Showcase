@@ -8,6 +8,7 @@
  */
 #pragma once
 
+#include <renderer/SurfaceMaterialLibrary.h>
 #include <renderer/VulkanRenderer.h>
 
 #include <core/ecs/ModuleContext.h>
@@ -50,9 +51,11 @@ namespace mir
         VulkanRenderer &Renderer() { return mRenderer; }
         RenderSystem &Rendering() { return *mRenderSystem; }
         MeshResolveSystem &Meshes() { return *mMeshes; }
+        SurfaceMaterialLibrary &SurfaceMaterials() { return mSurfaceMaterials; }
 
     private:
         VulkanRenderer mRenderer;
+        SurfaceMaterialLibrary mSurfaceMaterials;
 
         // owned by the scheduler, which outlives this module
         MeshResolveSystem *mMeshes = nullptr;
@@ -65,6 +68,8 @@ namespace mir
         Registration mSceneLoad;
         Registration mPlayBegin;
         Registration mPlayEnd;
+        Registration mReloadPrepare;
+        Registration mReloadAbort;
         Registration mReloadCommit;
     };
 }

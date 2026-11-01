@@ -16,6 +16,6 @@ namespace mir
 {
     void RegisterPhysicsComponents()
     {
-        ComponentRegistry::Instance().Register<RigidBody>(kRigidBodyFields);
+        ComponentRegistry::Instance().Register<RigidBody>(kRigidBodyFields, kRigidBodyTransient);
     }
 }

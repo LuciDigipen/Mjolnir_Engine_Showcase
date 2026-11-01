@@ -165,7 +165,7 @@ namespace mir
           mPhysicsScript(mScript),
           mRendererScript(mScript),
           mTerrainScript(mScript),
-          mTerrain(Context(), mRenderer, mProject, mJobs),
+          mTerrain(Context(), mRenderer, mProject, mResolver, mJobs),
           mGameUIImGui(Context(), mImGui, mWindow, mGameUI),
           mFixedTimestep{ .mStep = mDesc.mFixedDeltaSeconds, .mMaxSteps = mDesc.mMaxFixedSteps }
     {

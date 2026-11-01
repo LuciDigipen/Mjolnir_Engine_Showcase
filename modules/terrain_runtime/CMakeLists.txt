@@ -1,6 +1,7 @@
 engine_add_module(terrain_runtime)
 
 target_sources(engine_terrain_runtime PRIVATE
+    src/terrain_runtime/TerrainGroundBridge.cpp
     src/terrain_runtime/TerrainJobExecutor.cpp
     src/terrain_runtime/TerrainRender.cpp
     src/terrain_runtime/TerrainRuntime.cpp

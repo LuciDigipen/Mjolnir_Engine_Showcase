@@ -280,7 +280,9 @@ hold.
 `Transform`; it runs zero or more times a frame with the fixed step as `dt`.
 Before each step `PhysicsSystem` calls the `PhysicsStepGates` World resource's
 gates; terrain is one, placing collision pieces and holding bodies whose ground
-is not collidable yet (#128). `TransformPropagateSystem` runs in `Propagate`,
+is not collidable yet (#128). Terrain also binds the `GroundQuery` World
+resource, so the editor's Snap to Terrain can ask for source heights without
+linking the terrain stack. `TransformPropagateSystem` runs in `Propagate`,
 after every `Transform` writer, and `RenderSystem` runs in `Render`, after all
 of them, so every `WorldTransform` it reads is current for the frame being
 drawn.

@@ -8,6 +8,9 @@
  */
 #include <terrain_runtime/TerrainRuntime.h>
 
+#include <terrain_runtime/TerrainGroundBridge.h>
+
+#include <assets/AssetResolver.h>
 #include <core/ecs/EngineMode.h>
 #include <core/ecs/Query.h>
 #include <core/ecs/World.h>
@@ -17,11 +20,13 @@
 #include <physics/PhysicsWorld.h>
 #include <physics/components/RigidBody.h>
 #include <renderer/RenderSettings.h>
+#include <renderer/SurfaceMaterialLibrary.h>
 #include <renderer/VulkanRenderer.h>
 #include <terrain/TerrainCollision.h>
 #include <terrain/TerrainAssetPath.h>
 #include <terrain/TerrainExecutor.h>
 #include <jobs/JobExecutor.h>
+#include <terrain/TerrainMaterialUv.h>
 #include <terrain/TerrainStreamingSettings.h>
 
 #include <glm/geometric.hpp>
@@ -52,6 +57,31 @@ namespace mir
         double MiB(uint64_t bytes)
         {
             return double(bytes) / (1024.0 * 1024.0);
+        }
+
+        bool ValidateSurfaceMaterialParameters(const SurfaceMaterialBinding &binding, std::string &error)
+        {
+            if (binding.tilePeriodMeters && !TerrainMaterialTilePeriodSupported(*binding.tilePeriodMeters))
+            {
+                error = std::format("tileSizeMeters {} is not a supported divisor of the terrain UV period",
+                                    *binding.tilePeriodMeters);
+                return false;
+            }
+            if (binding.macro)
+            {
+                if (!ValidateSurfaceMaterialMacroParameters(*binding.macro, &error))
+                    return false;
+                if (binding.macro->periodMeters &&
+                    !TerrainMaterialTilePeriodSupported(*binding.macro->periodMeters))
+                {
+                    error = std::format("macroPeriodMeters {} is not a supported divisor of the terrain UV period",
+                                        *binding.macro->periodMeters);
+                    return false;
+                }
+            }
+            if (binding.parallax && !ValidateSurfaceMaterialParallaxParameters(*binding.parallax, &error))
+                return false;
+            return true;
         }
 
         uint64_t ReleaseFootprint(const TerrainIndex &index)
@@ -163,6 +193,7 @@ namespace mir
 
     TerrainRuntime::~TerrainRuntime()
     {
+        mGround.reset();
         // Finish runtime-owned builds before their collaborators die, but keep the
         // shared lane open for a streamer that outlives or replaces this runtime.
         if (mPool) mPool->WaitIdle();
@@ -176,12 +207,20 @@ namespace mir
             mCollision->Clear();
     }
 
-    void TerrainRuntime::Bind(World &world, VulkanRenderer &renderer, const GameProject &project, JobExecutor &jobs)
+    void TerrainRuntime::Bind(World &world, VulkanRenderer &renderer, SurfaceMaterialLibrary &materials,
+                              const GameProject &project, const AssetResolver &resolver, JobExecutor &jobs)
     {
         mWorld = &world;
         mRenderer = &renderer;
+        mSurfaceMaterials = &materials;
+        mSurfaceMaterials->SetMaterialValidator([](const SurfaceMaterialBinding &binding, std::string &error)
+            {
+                return ValidateSurfaceMaterialParameters(binding, error);
+            });
+        mResolver = &resolver;
         mAssetIdRoot = project.mAssetIdRoot;
         mReleasesRoot = TerrainReleasesRoot(project.mRootDir);
+        mGround = std::make_unique<TerrainGroundBridge>(world);
         ViewDrawSources *sources = world.TryResource<ViewDrawSources>();
         if (!sources)
             sources = &world.EmplaceResource<ViewDrawSources>();
@@ -292,7 +331,8 @@ namespace mir
         if (mSwitch)
             mSwitch->Resume();
 
-        TerrainSceneSpec spec = CollectTerrainScene(*mWorld, mAssetIdRoot);
+        TerrainSceneSpec spec = CollectTerrainScene(*mWorld, mAssetIdRoot,
+                                                    [this](std::string_view path) { return mResolver->ResolveFull(path); });
         if (spec == mPendingSpec)
             mPendingAge += dt;
         else
@@ -312,11 +352,14 @@ namespace mir
 
         if (!edited && !moved && ready.empty())
         {
+            // A material edit changes no release, query or collider.
+            SyncBindings(spec);
             TagColliders(spec);
             return;
         }
         // A moved pointer or a switch alone keeps the loaded instances, not a half-typed edit.
         Apply(edited ? spec : mSpec, std::move(ready));
+        SyncBindings(mSpec);
         TagColliders(spec);
     }
 
@@ -367,6 +410,8 @@ namespace mir
         mGuards.clear();
         mResources.clear();
         mWorld->Resource<TerrainWorld>() = TerrainWorld{};
+        if (mGround)
+            mGround->Invalidate();
         mSpec = {};
         mPendingSpec = {};
         mTagSpec = {};
@@ -404,6 +449,8 @@ namespace mir
         if (next.SameDerivedState(current))
         {
             current = std::move(next);
+            if (mGround)
+                mGround->Invalidate();
             return;
         }
 
@@ -427,6 +474,8 @@ namespace mir
 
         mResources = Build(next);
         current = std::move(next);
+        if (mGround)
+            mGround->Invalidate();
         ApplyResidencies();
         for (const Leaving &left : leaving)
             LogAdoption(*left.adoption, left.from, left.cpu, left.gpu, left.pieces);
@@ -465,10 +514,149 @@ namespace mir
                 next.RemoveInstance(i);
                 continue;
             }
-            built.push_back({instance.release->Info(), instance.placement});
+            InstanceResources resources;
+            resources.release = instance.release->Info();
+            resources.placement = instance.placement;
+            resources.entity = instance.entity;
+            if (const TerrainInstanceSpec *spec =
+                    SpecFor(mSpec, instance.entity) ? SpecFor(mSpec, instance.entity)
+                                                     : SpecForPlacement(mSpec, instance))
+            {
+                resources.materialPath = spec->materialPath;
+                resources.materialLogicalPath = spec->materialLogicalPath;
+                resources.materialAsset = spec->material;
+                resources.materialLayers = spec->materialLayers;
+            }
+            built.push_back(std::move(resources));
             ++i;
         }
         return built;
+    }
+
+    const TerrainInstanceSpec *TerrainRuntime::SpecFor(const TerrainSceneSpec &spec, Entity entity) const
+    {
+        for (const TerrainInstanceSpec &instance : spec.instances)
+            if (instance.entity == entity)
+                return &instance;
+        return nullptr;
+    }
+
+    const TerrainInstanceSpec *TerrainRuntime::SpecForPlacement(const TerrainSceneSpec &spec,
+        const TerrainInstanceState &instance) const
+    {
+        for (const TerrainInstanceSpec &candidate : spec.instances)
+            if (candidate.recipePath == instance.recipePath && candidate.asset == instance.placement.asset &&
+                candidate.translation.Meters() == instance.placement.translation.Meters())
+                return &candidate;
+        return nullptr;
+    }
+
+    void TerrainRuntime::SyncSpecMaterials(const TerrainSceneSpec &spec)
+    {
+        for (TerrainInstanceSpec &target : mSpec.instances)
+            for (const TerrainInstanceSpec &source : spec.instances)
+                if (source.recipePath == target.recipePath && source.asset == target.asset &&
+                    source.translation.Meters() == target.translation.Meters())
+                {
+                    target.materialPath = source.materialPath;
+                    target.materialLogicalPath = source.materialLogicalPath;
+                    target.material = source.material;
+                    target.materialLayers = source.materialLayers;
+                    break;
+                }
+    }
+
+    void TerrainRuntime::SyncBindings(const TerrainSceneSpec &spec)
+    {
+        TerrainWorld &world = mWorld->Resource<TerrainWorld>();
+        world.SyncInstanceEntities(spec);
+        SyncSpecMaterials(spec);
+        if (mResources.size() != world.Instances().size())
+            return;
+        for (size_t i = 0; i < mResources.size(); ++i)
+        {
+            InstanceResources &resources = mResources[i];
+            const TerrainInstanceState &state = world.Instances()[i];
+            resources.entity = state.entity;
+            if (const TerrainInstanceSpec *instance =
+                    SpecFor(spec, state.entity) ? SpecFor(spec, state.entity) : SpecForPlacement(spec, state))
+            {
+                if (resources.materialPath != instance->materialPath)
+                    resources.materialGeneration = 0;
+                resources.materialPath = instance->materialPath;
+                resources.materialLogicalPath = instance->materialLogicalPath;
+                resources.materialAsset = instance->material;
+                resources.materialLayers = instance->materialLayers;
+            }
+            else
+            {
+                if (!resources.materialPath.empty())
+                    resources.materialGeneration = 0;
+                resources.materialPath.clear();
+                resources.materialLogicalPath.clear();
+                resources.materialAsset = {};
+                resources.materialLayers.clear();
+            }
+        }
+        for (InstanceResources &resources : mResources)
+            ResolveBinding(resources);
+
+        std::vector<SurfaceMaterialUse> uses;
+        for (const InstanceResources &resources : mResources)
+            if (!resources.materialLogicalPath.empty() && !resources.materialAsset.IsNull())
+                uses.push_back({resources.materialLogicalPath, resources.materialAsset, "terrain",
+                                !resources.material.IsNull()});
+        mSurfaceMaterials->SetActiveMaterials(uses);
+    }
+
+    void TerrainRuntime::ResolveBinding(InstanceResources &instance)
+    {
+        if (!mSurfaceMaterials || instance.materialPath.empty())
+        {
+            instance.material = kNullMaterial;
+            instance.materialGeneration = mSurfaceMaterials ? mSurfaceMaterials->Generation() : 0;
+            return;
+        }
+        if (instance.materialGeneration == mSurfaceMaterials->Generation())
+            return;
+
+        instance.materialGeneration = mSurfaceMaterials->Generation();
+        instance.material = kNullMaterial;
+        const auto baseLayer = std::find_if(instance.materialLayers.begin(), instance.materialLayers.end(),
+            [](const TerrainMaterialLayer &layer) { return layer.name == "base"; });
+        if (instance.materialLayers.size() != 1 || baseLayer == instance.materialLayers.end() ||
+            baseLayer->weight != 1.0f)
+        {
+            Report(std::format("Terrain instance material list '{}': only one base layer with weight one is "
+                               "supported; keeping the diagnostic material",
+                               instance.materialPath));
+            return;
+        }
+        if (instance.materialLogicalPath.empty() || instance.materialAsset.IsNull())
+        {
+            Report(std::format("Terrain instance on entity #{}: material path '{}' is not an asset under the "
+                               "game's assetsRoot; keeping the diagnostic material",
+                               instance.entity.mIndex, instance.materialPath));
+            return;
+        }
+
+        std::string error;
+        const std::optional<SurfaceMaterialBinding> binding = mSurfaceMaterials->Acquire(
+            instance.materialLogicalPath, instance.materialAsset, "terrain", &error);
+        if (!binding)
+        {
+            Report(std::format("Terrain instance material '{}': {}; keeping the diagnostic material",
+                               instance.materialPath, error));
+            return;
+        }
+        std::string parameterError;
+        if (!ValidateSurfaceMaterialParameters(*binding, parameterError))
+        {
+            Report(std::format("Terrain instance material '{}': {}; keeping the diagnostic material",
+                               instance.materialPath, parameterError));
+            return;
+        }
+        instance.material = binding->material;
     }
 
     bool TerrainRuntime::HasMeshPayloads(const TerrainInstanceState &instance)
@@ -947,7 +1135,10 @@ namespace mir
                 : mMeshes->FindReady(unit.geometry);
             if (!mesh)
                 continue;
-            if (std::optional<WorldDrawItem> draw = MakeTerrainDraw(*mesh, instances[unit.instance].placement))
+            const MaterialHandle material =
+                unit.instance < mResources.size() ? mResources[unit.instance].material : kNullMaterial;
+            if (std::optional<WorldDrawItem> draw =
+                    MakeTerrainDraw(*mesh, instances[unit.instance].placement, material))
                 out.push_back(*draw);
         }
     }

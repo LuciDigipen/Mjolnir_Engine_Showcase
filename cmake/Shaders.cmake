@@ -344,12 +344,24 @@ function(_mir_surface_template_registered out_var)
 endfunction()
 
 function(_mir_register_mesh_frontend_template)
-    _mir_surface_template_registered(registered)
-    if(registered)
+    get_property(frontends GLOBAL PROPERTY MIR_SHADER_MANIFEST_FRONTENDS)
+    if("mesh" IN_LIST frontends)
         return()
     endif()
+    set_property(GLOBAL APPEND PROPERTY MIR_SHADER_MANIFEST_FRONTENDS mesh)
 
     set(template "{\n    \"frontend\": \"mesh\",\n    \"placeholders\": [\"{materialSource}\", \"{type}\", \"{stem}\"],\n    \"vertex\": [\"{materialSource}\", \"-entry\", \"vertexMain\", \"-stage\", \"vertex\"],\n    \"fragment\": [\"{materialSource}\", \"-entry\", \"fragmentMain\", \"-stage\", \"fragment\", \"-specialize\", \"{type}\"],\n    \"raytracing\": [\"{materialSource}\", \"-entry\", \"closestHitSurface\", \"-stage\", \"closesthit\", \"-specialize\", \"{type}\"],\n    \"layout\": [\"{materialSource}\", \"-entry\", \"layoutMain\", \"-stage\", \"compute\", \"-specialize\", \"{type}\"]\n  }")
+    set_property(GLOBAL APPEND PROPERTY MIR_SHADER_MANIFEST_TEMPLATES "${template}")
+endfunction()
+
+function(_mir_register_terrain_frontend_template)
+    get_property(frontends GLOBAL PROPERTY MIR_SHADER_MANIFEST_FRONTENDS)
+    if("terrain" IN_LIST frontends)
+        return()
+    endif()
+    set_property(GLOBAL APPEND PROPERTY MIR_SHADER_MANIFEST_FRONTENDS terrain)
+
+    set(template "{\n    \"frontend\": \"terrain\",\n    \"placeholders\": [\"{materialSource}\", \"{type}\", \"{stem}\"],\n    \"vertex\": [\"{materialSource}\", \"-entry\", \"vertexMain\", \"-stage\", \"vertex\"],\n    \"fragment\": [\"{materialSource}\", \"-entry\", \"fragmentMain\", \"-stage\", \"fragment\", \"-specialize\", \"{type}\"],\n    \"raytracing\": [\"{materialSource}\", \"-entry\", \"closestHitSurface\", \"-stage\", \"closesthit\", \"-specialize\", \"{type}\"],\n    \"layout\": [\"{materialSource}\", \"-entry\", \"layoutMain\", \"-stage\", \"compute\", \"-specialize\", \"{type}\"]\n  }")
     set_property(GLOBAL APPEND PROPERTY MIR_SHADER_MANIFEST_TEMPLATES "${template}")
 endfunction()
 
@@ -374,9 +386,13 @@ function(engine_add_surface_materials target)
 
     set(forward "${MIR_REPO_ROOT}/assets/shaders/SurfaceForward.slang")
     set(rt "${MIR_REPO_ROOT}/assets/shaders/SurfaceRt.slang")
+    set(terrain_forward "${MIR_REPO_ROOT}/assets/shaders/SurfaceTerrainForward.slang")
+    set(terrain_rt "${MIR_REPO_ROOT}/assets/shaders/SurfaceTerrainRt.slang")
     set(layout_pass "${MIR_REPO_ROOT}/assets/shaders/SurfaceLayout.slang")
     _engine_scan_shader_includes("${forward}" forward_deps)
-    _engine_scan_shader_includes("${rt}" rt_deps)
+    _engine_scan_shader_includes("${rt}" mesh_rt_deps)
+    _engine_scan_shader_includes("${terrain_forward}" terrain_forward_deps)
+    _engine_scan_shader_includes("${terrain_rt}" terrain_rt_deps)
     _engine_scan_shader_includes("${layout_pass}" layout_deps)
 
     set(gen_dir "${CMAKE_BINARY_DIR}/shaders")
@@ -410,14 +426,12 @@ function(engine_add_surface_materials target)
             message(FATAL_ERROR "${material}: frontends must be a non-empty array")
         endif()
 
-        set(has_mesh FALSE)
+        set(frontends "")
         math(EXPR frontend_last "${frontend_count} - 1")
         foreach(index RANGE ${frontend_last})
             string(JSON frontend GET "${material_json}" frontends ${index})
-            if(frontend STREQUAL "mesh")
-                set(has_mesh TRUE)
-            elseif(frontend STREQUAL "terrain")
-                # Compiled by the terrain frontend in M4.
+            if(frontend STREQUAL "mesh" OR frontend STREQUAL "terrain")
+                list(APPEND frontends "${frontend}")
             else()
                 message(FATAL_ERROR "${material}: unknown frontend '${frontend}'")
             endif()
@@ -462,110 +476,120 @@ function(engine_add_surface_materials target)
             message(FATAL_ERROR "${material}: parameters must be an object")
         endif()
 
-        if(NOT has_mesh)
-            message(STATUS "Material ${material_rel}: terrain-only frontend waits for M4; no mesh outputs")
-            continue()
-        endif()
+        foreach(frontend IN LISTS frontends)
+            _mir_surface_identity(stem key "${ARG_NAMESPACE}" "${shader_type}" "${shader_rel}" "${frontend}")
+            list(FIND compiled_keys "${key}" compiled_index)
+            if(NOT compiled_index EQUAL -1)
+                list(GET compiled_stems ${compiled_index} stem)
+            endif()
+            set(reflection "${gen_dir}/${stem}.layout.spv.reflection.json")
+            get_filename_component(reflection_name "${reflection}" NAME)
 
-        _mir_surface_identity(stem key "${ARG_NAMESPACE}" "${shader_type}" "${shader_rel}" mesh)
-        list(FIND compiled_keys "${key}" compiled_index)
-        if(NOT compiled_index EQUAL -1)
-            list(GET compiled_stems ${compiled_index} stem)
-        endif()
-        set(reflection "${gen_dir}/${stem}.layout.spv.reflection.json")
-        get_filename_component(reflection_name "${reflection}" NAME)
+            _mir_json_escape(stem_json "${stem}")
+            _mir_json_escape(type_json "${shader_type}")
+            _mir_json_escape(asset_json "${material_rel}")
+            _mir_json_escape(shader_json "${shader_rel}")
+            _mir_json_escape(frontend_json "${frontend}")
+            _mir_json_escape(reflection_json "${reflection_name}")
+            string(CONCAT catalog_entry
+                "{\n      \"stem\": \"${stem_json}\",\n      \"type\": \"${type_json}\",\n"
+                "      \"frontend\": \"${frontend_json}\",\n      \"asset\": \"${asset_json}\",\n"
+                "      \"shader\": \"${shader_json}\",\n      \"parameters\": ${parameters},\n"
+                "      \"reflection\": \"${reflection_json}\"\n    }")
+            set_property(GLOBAL APPEND PROPERTY MIR_SURFACE_CATALOG_ENTRIES "${catalog_entry}")
 
-        _mir_json_escape(stem_json "${stem}")
-        _mir_json_escape(type_json "${shader_type}")
-        _mir_json_escape(asset_json "${material_rel}")
-        _mir_json_escape(shader_json "${shader_rel}")
-        _mir_json_escape(reflection_json "${reflection_name}")
-        string(CONCAT catalog_entry
-            "{\n      \"stem\": \"${stem_json}\",\n      \"type\": \"${type_json}\",\n"
-            "      \"frontend\": \"mesh\",\n      \"asset\": \"${asset_json}\",\n"
-            "      \"shader\": \"${shader_json}\",\n      \"parameters\": ${parameters},\n"
-            "      \"reflection\": \"${reflection_json}\"\n    }")
-        set_property(GLOBAL APPEND PROPERTY MIR_SURFACE_CATALOG_ENTRIES "${catalog_entry}")
+            if(key IN_LIST compiled_keys)
+                foreach(entry IN ITEMS vertexMain fragmentMain closestHitSurface layout)
+                    list(APPEND surface_outputs "${gen_dir}/${stem}.${entry}.spv")
+                    list(APPEND surface_reflections "${gen_dir}/${stem}.${entry}.spv.reflection.json")
+                endforeach()
+                continue()
+            endif()
+            set_property(GLOBAL APPEND PROPERTY MIR_SURFACE_COMPILED_KEYS "${key}")
+            set_property(GLOBAL APPEND PROPERTY MIR_SURFACE_COMPILED_STEMS "${stem}")
+            list(APPEND compiled_keys "${key}")
+            list(APPEND compiled_stems "${stem}")
 
-        if(key IN_LIST compiled_keys)
-            continue()
-        endif()
-        set_property(GLOBAL APPEND PROPERTY MIR_SURFACE_COMPILED_KEYS "${key}")
-        set_property(GLOBAL APPEND PROPERTY MIR_SURFACE_COMPILED_STEMS "${stem}")
-        list(APPEND compiled_keys "${key}")
-        list(APPEND compiled_stems "${stem}")
-
-        _mir_register_mesh_frontend_template()
-
-        set(outputs "${gen_dir}/${stem}.vertexMain.spv;${gen_dir}/${stem}.fragmentMain.spv;${gen_dir}/${stem}.closestHitSurface.spv;${gen_dir}/${stem}.layout.spv")
-        foreach(output IN LISTS outputs)
-            set(output_reflection "${output}.reflection.json")
-            get_filename_component(output_name "${output}" NAME)
-            if(output_name MATCHES "\\.vertexMain\\.spv$")
-                set(entry vertexMain)
-                set(stage vertex)
-                set(sources "${forward}")
-                set(deps ${forward_deps} "${shader_abs}")
-                set(specialize "")
-                set(frontend mesh)
-            elseif(output_name MATCHES "\\.fragmentMain\\.spv$")
-                set(entry fragmentMain)
-                set(stage fragment)
-                set(sources "${forward};${shader_abs}")
-                set(deps ${forward_deps} "${shader_abs}")
-                set(specialize "${shader_type}")
-                set(frontend mesh)
-            elseif(output_name MATCHES "\\.closestHitSurface\\.spv$")
-                set(entry closestHitSurface)
-                set(stage closesthit)
-                set(sources "${rt};${shader_abs}")
-                set(deps ${rt_deps} "${shader_abs}")
-                set(specialize "${shader_type}")
-                set(frontend mesh)
+            if(frontend STREQUAL "terrain")
+                set(front_pass "${terrain_forward}")
+                set(front_deps ${terrain_forward_deps})
+                set(rt_pass "${terrain_rt}")
+                set(rt_deps ${terrain_rt_deps})
+                _mir_register_terrain_frontend_template()
             else()
-                set(entry layoutMain)
-                set(stage compute)
-                set(sources "${layout_pass};${shader_abs}")
-                set(deps ${layout_deps} "${shader_abs}")
-                set(specialize "${shader_type}")
-                set(frontend "")
+                set(front_pass "${forward}")
+                set(front_deps ${forward_deps})
+                set(rt_pass "${rt}")
+                set(rt_deps ${mesh_rt_deps})
+                _mir_register_mesh_frontend_template()
             endif()
 
-            set(depfile "${output}.d")
-            set(extra_flags -fvk-use-gl-layout)
-            set(specialize_args "")
-            set(arguments "${SLANGC_EXECUTABLE}" ${sources} ${MIR_SHADER_COMMON_ARGS} ${extra_flags}
-                -entry "${entry}" -stage "${stage}")
-            if(specialize)
-                set(specialize_args -specialize "${specialize}")
-                list(APPEND arguments ${specialize_args})
-            endif()
-            list(APPEND arguments -reflection-json "${output_reflection}" -depfile "${depfile}" -o "${output}")
+            set(outputs "${gen_dir}/${stem}.vertexMain.spv;${gen_dir}/${stem}.fragmentMain.spv;${gen_dir}/${stem}.closestHitSurface.spv;${gen_dir}/${stem}.layout.spv")
+            foreach(output IN LISTS outputs)
+                set(output_reflection "${output}.reflection.json")
+                get_filename_component(output_name "${output}" NAME)
+                if(output_name MATCHES "\\.vertexMain\\.spv$")
+                    set(entry vertexMain)
+                    set(stage vertex)
+                    set(sources "${front_pass}")
+                    set(deps ${front_deps} "${shader_abs}")
+                    set(specialize "")
+                elseif(output_name MATCHES "\\.fragmentMain\\.spv$")
+                    set(entry fragmentMain)
+                    set(stage fragment)
+                    set(sources "${front_pass};${shader_abs}")
+                    set(deps ${front_deps} "${shader_abs}")
+                    set(specialize "${shader_type}")
+                elseif(output_name MATCHES "\\.closestHitSurface\\.spv$")
+                    set(entry closestHitSurface)
+                    set(stage closesthit)
+                    set(sources "${rt_pass};${shader_abs}")
+                    set(deps ${rt_deps} "${shader_abs}")
+                    set(specialize "${shader_type}")
+                else()
+                    set(entry layoutMain)
+                    set(stage compute)
+                    set(sources "${layout_pass};${shader_abs}")
+                    set(deps ${layout_deps} "${shader_abs}")
+                    set(specialize "${shader_type}")
+                endif()
 
-            add_custom_command(
-                OUTPUT "${output}"
-                COMMAND "${CMAKE_COMMAND}" -E make_directory "${gen_dir}"
-                COMMAND ${arguments}
-                DEPENDS ${deps}
-                DEPFILE "${depfile}"
-                BYPRODUCTS "${output_reflection}"
-                COMMENT "slangc ${stem}.slang [${entry}/${stage}]"
-                VERBATIM
-                COMMAND_EXPAND_LISTS)
-            _mir_manifest_add_output(
-                OUTPUT "${output}"
-                SOURCES ${sources}
-                ENTRY "${entry}"
-                STAGE "${stage}"
-                TYPE surface
-                SPECIALIZE "${specialize}"
-                REFLECTION "${output_reflection}"
-                DEPFILE "${depfile}"
-                FRONTEND "${frontend}"
-                ARGUMENTS ${arguments})
+                set(depfile "${output}.d")
+                set(extra_flags -fvk-use-gl-layout)
+                set(specialize_args "")
+                set(arguments "${SLANGC_EXECUTABLE}" ${sources} ${MIR_SHADER_COMMON_ARGS} ${extra_flags}
+                    -entry "${entry}" -stage "${stage}")
+                if(specialize)
+                    set(specialize_args -specialize "${specialize}")
+                    list(APPEND arguments ${specialize_args})
+                endif()
+                list(APPEND arguments -reflection-json "${output_reflection}" -depfile "${depfile}" -o "${output}")
 
-            list(APPEND surface_outputs "${output}")
-            list(APPEND surface_reflections "${output_reflection}")
+                add_custom_command(
+                    OUTPUT "${output}"
+                    COMMAND "${CMAKE_COMMAND}" -E make_directory "${gen_dir}"
+                    COMMAND ${arguments}
+                    DEPENDS ${deps}
+                    DEPFILE "${depfile}"
+                    BYPRODUCTS "${output_reflection}"
+                    COMMENT "slangc ${stem}.slang [${entry}/${stage}]"
+                    VERBATIM
+                    COMMAND_EXPAND_LISTS)
+                _mir_manifest_add_output(
+                    OUTPUT "${output}"
+                    SOURCES ${sources}
+                    ENTRY "${entry}"
+                    STAGE "${stage}"
+                    TYPE surface
+                    SPECIALIZE "${specialize}"
+                    REFLECTION "${output_reflection}"
+                    DEPFILE "${depfile}"
+                    FRONTEND "${frontend}"
+                    ARGUMENTS ${arguments})
+
+                list(APPEND surface_outputs "${output}")
+                list(APPEND surface_reflections "${output_reflection}")
+            endforeach()
         endforeach()
     endforeach()
 

@@ -52,7 +52,7 @@ namespace mir::vk
         void SetAtmosphere(const Sky &sky) { mAtmosphere = sky; }
 
         uint32_t WriteView(uint32_t frame, const RenderView &view, uint32_t viewIndex, const ViewShadowInfo &shadow,
-            bool applyJitter, glm::vec2 *outJitter = nullptr);
+            VkExtent2D viewExtent, bool applyJitter, glm::vec2 *outJitter = nullptr);
 
         FxEnvironment Environment() const
         {

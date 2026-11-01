@@ -13,6 +13,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <cstdint>
+#include <string_view>
 #include <vector>
 
 using namespace mir;
@@ -156,7 +159,7 @@ TEST_CASE("OnStart runs once and OnStop runs in the same order", "[ecs][system]"
 
     scheduler.AddSystem<TagSystem>(SystemPhase::PreUpdate, SystemOrder{SystemOrder::kNormal}, recorder, 1);
     scheduler.AddSystem<TagSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kNormal}, recorder, 2);
-    scheduler.AddSystem<TagSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kNormal}, recorder, 3);
+    scheduler.AddSystem<TagSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kLate}, recorder, 3);
 
     SystemContext context{world, commands};
     REQUIRE_FALSE(scheduler.Started());
@@ -399,4 +402,70 @@ TEST_CASE("FixedUpdate gets the fixed step as dt, other phases keep the frame dt
 
     // the caller's context keeps the frame dt
     REQUIRE(context.dt == 0.05f);
+}
+
+TEST_CASE("Registration ties keep registration order, reversed ties run backwards", "[ecs][system]")
+{
+    World world;
+    CommandBuffer commands;
+    SystemContext context{world, commands};
+
+    const auto run = [&](SystemTies ties)
+    {
+        Recorder recorder;
+        SystemScheduler scheduler{ties};
+        scheduler.AddSystem<TagSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kNormal}, recorder, 1);
+        scheduler.AddSystem<TagSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kNormal}, recorder, 2);
+        scheduler.AddSystem<TagSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kEarly}, recorder, 3);
+        scheduler.AddSystem<TagSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kNormal}, recorder, 4);
+        scheduler.Start(context);
+        scheduler.Update(context);
+        return recorder.updated;
+    };
+
+    REQUIRE(run(SystemTies{}) == std::vector<int>{3, 1, 2, 4});
+    REQUIRE(run(SystemTies{SystemTies::Reverse}) == std::vector<int>{3, 4, 2, 1});
+}
+
+TEST_CASE("A shuffle seed repeats its order, and only ties move", "[ecs][system]")
+{
+    World world;
+    CommandBuffer commands;
+    SystemContext context{world, commands};
+
+    const auto run = [&](uint32_t seed)
+    {
+        Recorder recorder;
+        SystemScheduler scheduler{SystemTies{SystemTies::Shuffle, seed}};
+        scheduler.AddSystem<TagSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kLate}, recorder, 0);
+        for (int id = 1; id <= 8; ++id)
+            scheduler.AddSystem<TagSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kNormal}, recorder, id);
+        scheduler.AddSystem<TagSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kEarly}, recorder, 9);
+        scheduler.Start(context);
+        scheduler.Update(context);
+        return recorder.updated;
+    };
+
+    const std::vector<int> registration{9, 1, 2, 3, 4, 5, 6, 7, 8, 0};
+    bool moved = false;
+    for (uint32_t seed = 0; seed < 4; ++seed)
+    {
+        const std::vector<int> order = run(seed);
+        REQUIRE(order == run(seed));
+        REQUIRE(order.front() == 9);
+        REQUIRE(order.back() == 0);
+        REQUIRE(std::is_permutation(order.begin(), order.end(), registration.begin()));
+        moved = moved || order != registration;
+    }
+    REQUIRE(moved);
+}
+
+TEST_CASE("SystemNames lists a phase's systems in run order", "[ecs][system]")
+{
+    SystemScheduler scheduler{SystemTies{}};
+    scheduler.AddSystem<CountSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kLate});
+    scheduler.AddSystem<SpawnSystem>(SystemPhase::Update, SystemOrder{SystemOrder::kEarly});
+
+    REQUIRE(scheduler.SystemNames(SystemPhase::Update) == std::vector<std::string_view>{"SpawnSystem", "CountSystem"});
+    REQUIRE(scheduler.SystemNames(SystemPhase::Render).empty());
 }

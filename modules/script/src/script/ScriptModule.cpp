@@ -35,14 +35,7 @@ namespace mir
         mScripts = &context.scheduler.AddSystem<ScriptSystem>(SystemPhase::PreUpdate,
             SystemOrder{SystemOrder::kNormal}, mHost);
 
-        // a copy arrives with the original's bytes, so it starts without an instance and not yet started
         mHooks = context.world.SetComponentHooks<ScriptRef>({
-            .onAdd = [](World &world, Entity entity)
-            {
-                ScriptRef &ref = *world.GetComponent<ScriptRef>(entity);
-                ref.instanceRef = -1;
-                ref.started = false;
-            },
             .onRemove = [this](World &world, Entity entity)
             {
                 ReleaseScriptInstance(mHost, *world.GetComponent<ScriptRef>(entity));

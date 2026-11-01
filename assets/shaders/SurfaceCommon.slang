@@ -57,6 +57,36 @@ struct MaterialRecordRef
     uint reserved;
 };
 
+// World-space UV gradients on a triangle. The maximum singular value of the
+// 2x3 Jacobian is the largest UV change per meter, including rank-one UVs.
+float3 SurfaceUvGradient(float3 e1, float3 e2, float du1, float du2)
+{
+    const float a = dot(e1, e1);
+    const float b = dot(e1, e2);
+    const float c = dot(e2, e2);
+    const float determinant = a * c - b * b;
+    if (!(abs(determinant) > 1e-20) || !isfinite(determinant))
+        return float3(0.0, 0.0, 0.0);
+    return ((c * du1 - b * du2) * e1 + (a * du2 - b * du1) * e2) / determinant;
+}
+
+float SurfaceUvDensity(float3 e1, float3 e2, float2 uv0, float2 uv1, float2 uv2)
+{
+    const float2 duv1 = uv1 - uv0;
+    const float2 duv2 = uv2 - uv0;
+    const float3 gradientU = SurfaceUvGradient(e1, e2, duv1.x, duv2.x);
+    const float3 gradientV = SurfaceUvGradient(e1, e2, duv1.y, duv2.y);
+    const float uu = dot(gradientU, gradientU);
+    const float vv = dot(gradientV, gradientV);
+    const float uv = dot(gradientU, gradientV);
+    const float trace = uu + vv;
+    const float difference = uu - vv;
+    const float largest = 0.5 * (trace + sqrt(max(difference * difference + 4.0 * uv * uv, 0.0)));
+    if (!(largest > 0.0) || !isfinite(largest))
+        return 0.0;
+    return sqrt(largest);
+}
+
 struct SurfaceInput
 {
     float3 positionRS;
@@ -69,6 +99,8 @@ struct SurfaceInput
     float viewDistance;
     float4 vertexColor;
     bool frontFace;
+    // UV units per meter at this point; ray tracing uses it for the mip level.
+    float uvDensity;
 };
 
 // Every field lerps, and height lets layered materials blend by height later.
@@ -95,13 +127,23 @@ struct MaterialContext
     bool rayTraced;
     float2 uvDx;
     float2 uvDy;
+    // The ray cone's world footprint at the hit and its incidence cosine.
+    float footprintMeters;
+    float incidence;
+    // UV units per meter for the coordinates the material samples.
+    float uvDensity;
 
     float4 Sample(TextureRef texture, float2 uv)
     {
         const uint image = NonUniformResourceIndex(texture.image);
         const uint sampler = NonUniformResourceIndex(texture.sampler);
         if (rayTraced)
-            return gSurfaceImages[image].SampleLevel(gSurfaceSamplers[sampler], uv, 0.0);
+        {
+            uint width, height;
+            gSurfaceImages[image].GetDimensions(width, height);
+            const float footprint = max(uvDensity * footprintMeters * max(width, height), 0.0);
+            return gSurfaceImages[image].SampleLevel(gSurfaceSamplers[sampler], uv, log2(max(footprint, 1.0)));
+        }
         return gSurfaceImages[image].SampleGrad(gSurfaceSamplers[sampler], uv, uvDx, uvDy);
     }
 
@@ -110,10 +152,137 @@ struct MaterialContext
         const uint image = NonUniformResourceIndex(texture.image);
         const uint sampler = NonUniformResourceIndex(texture.sampler);
         if (rayTraced)
-            return gSurfaceImages[image].SampleLevel(gSurfaceSamplers[sampler], uv, 0.0);
+        {
+            uint width, height;
+            gSurfaceImages[image].GetDimensions(width, height);
+            const float footprint = max(uvDensity * footprintMeters * max(width, height), 0.0);
+            return gSurfaceImages[image].SampleLevel(gSurfaceSamplers[sampler], uv, log2(max(footprint, 1.0)));
+        }
         return gSurfaceImages[image].SampleGrad(gSurfaceSamplers[sampler], uv, dx, dy);
     }
 };
+
+// Hue rotation around the neutral axis; zero degrees returns the input.
+float3 SurfaceHueShift(float3 color, float degrees)
+{
+    if (!isfinite(degrees) || degrees == 0.0)
+        return color;
+    const float radians = degrees * 0.017453292519943295;
+    const float3 axis = float3(0.5773502691896258, 0.5773502691896258, 0.5773502691896258);
+    const float cosine = cos(radians);
+    const float sine = sin(radians);
+    const float3 rotated = color * cosine + cross(axis, color) * sine + axis * dot(axis, color) * (1.0 - cosine);
+    return max(rotated, float3(0.0));
+}
+
+float SurfaceParallaxFade(float distance, float fadeStartMeters, float fadeEndMeters)
+{
+    if (!isfinite(distance) || !isfinite(fadeStartMeters) || !isfinite(fadeEndMeters) ||
+        !(fadeEndMeters > fadeStartMeters))
+        return 0.0;
+    return 1.0 - smoothstep(fadeStartMeters, fadeEndMeters, distance);
+}
+
+// The macro sample is in its own repeat, so raster gradients and the RT
+// footprint must use the macro period rather than the detail-tile period.
+MaterialContext SurfaceMacroContext(MaterialContext context, float tileSizeMeters, float macroPeriodMeters)
+{
+    const float scale = tileSizeMeters / max(macroPeriodMeters, 0.001);
+    context.uvDx *= scale;
+    context.uvDy *= scale;
+    context.uvDensity *= scale;
+    return context;
+}
+
+// Marches the height texture in tangent space before any surface sampling. The
+// ray is centered on the authored reference height, so a constant height above
+// or below it yields the opposite signed intersection without quantization.
+// The raster path reuses the caller's uvDx/uvDy, so SampleGrad keeps the
+// original derivatives; the RT path uses MaterialContext's explicit level of
+// detail. Fade scales the found offset continuously, and maxDistance clamps it.
+float2 SurfaceParallaxUv(SurfaceInput input, MaterialContext context, TextureRef heightTexture,
+    float2 uv, float tileSizeMeters, float heightMeters, float reference, float maxDistanceMeters,
+    float fadeStartMeters, float fadeEndMeters, uint maxSteps, bool rayTracedEnabled)
+{
+    if (maxSteps == 0 || !(tileSizeMeters > 0.001) || !isfinite(tileSizeMeters) || !(heightMeters > 0.0) ||
+        !isfinite(heightMeters) || !isfinite(reference) || !isfinite(maxDistanceMeters) ||
+        !(maxDistanceMeters > 0.0))
+        return uv;
+    if (context.rayTraced && !rayTracedEnabled)
+        return uv;
+
+    const float fade = SurfaceParallaxFade(input.viewDistance, fadeStartMeters, fadeEndMeters);
+    if (!(fade > 0.0))
+        return uv;
+
+    const float3 normal = SafeNormalize(input.normalWS, float3(0.0, 1.0, 0.0));
+    const float3 tangent = SafeNormalize(input.tangentWS, float3(1.0, 0.0, 0.0));
+    const float3 bitangent = input.bitangentSign * cross(normal, tangent);
+    const float3 viewDirection = SafeNormalize(input.viewDirWS, float3(0.0, 0.0, -1.0));
+    const float3 viewTangent = float3(dot(viewDirection, tangent), dot(viewDirection, bitangent),
+        dot(viewDirection, normal));
+    if (!(viewTangent.z > 0.0))
+        return uv;
+
+    // Fade the offset to zero as the view reaches the horizon instead of
+    // switching at a threshold; the search direction stays bounded below.
+    const float incidenceFade = smoothstep(0.0, 0.05, viewTangent.z);
+    if (!(incidenceFade > 0.0))
+        return uv;
+
+    // Bounds the horizontal offset at grazing angles instead of letting it
+    // diverge, which keeps every step finite and the march stable.
+    float2 rayDirection = viewTangent.xy / max(viewTangent.z, 0.15);
+    const float rayLength = length(rayDirection);
+    if (!isfinite(rayLength))
+        return uv;
+    if (rayLength > 8.0)
+        rayDirection *= 8.0 / rayLength;
+
+    const uint steps = min(maxSteps, 128u);
+    const float uvPerMeter = 1.0 / tileSizeMeters;
+    const float clampedReference = saturate(reference);
+    const float maximumOffsetUv = maxDistanceMeters * uvPerMeter;
+
+    // A signed height s in meters is the ray's height relative to the reference
+    // plane: the surface at uv + dir*s*fade is at (packed - reference)*H. Searching
+    // from +H down to -H visits the highest/visible surface first; the full range
+    // always contains a crossing because packed is in [0, 1] and the reference is
+    // clamped to that range.
+    float previousS = heightMeters;
+    float2 previousUv = uv + rayDirection * ((previousS * fade) * uvPerMeter);
+    float previousSurface = (context.Sample(heightTexture, previousUv, context.uvDx, context.uvDy).g -
+                                clampedReference) * heightMeters;
+    float previousGap = previousSurface - previousS;
+
+    for (uint index = 1; index <= steps; ++index)
+    {
+        const float currentS = heightMeters - 2.0 * heightMeters * float(index) / float(steps);
+        const float2 currentUv = uv + rayDirection * ((currentS * fade) * uvPerMeter);
+        const float currentSurface = (context.Sample(heightTexture, currentUv, context.uvDx, context.uvDy).g -
+                                         clampedReference) * heightMeters;
+        const float currentGap = currentSurface - currentS;
+        if (!isfinite(currentGap))
+            return uv;
+        if (previousGap <= 0.0 && currentGap >= 0.0)
+        {
+            const float denominator = currentGap - previousGap;
+            const float fraction = denominator > 1e-12 ? saturate(-previousGap / denominator) : 0.0;
+            float intersection = lerp(previousS, currentS, fraction);
+            if (abs(intersection) < 1e-7)
+                intersection = 0.0;
+            float2 offsetUv = rayDirection * (intersection * fade * uvPerMeter);
+            const float offsetLength = length(offsetUv);
+            if (offsetLength > maximumOffsetUv)
+                offsetUv *= maximumOffsetUv / offsetLength;
+            return uv + offsetUv * incidenceFade;
+        }
+        previousS = currentS;
+        previousGap = currentGap;
+    }
+
+    return uv;
+}
 
 interface IMaterial
 {
@@ -136,6 +305,29 @@ struct MeshFrontend
         input.viewDistance = length(cameraPos.xyz - positionRS);
         input.vertexColor = vertexColor;
         input.frontFace = frontFace;
+        input.uvDensity = 0.0;
+        return input;
+    }
+};
+
+struct TerrainFrontend
+{
+    static SurfaceInput Build(float3 positionRS, float3 macroNormalWS, float2 uv0, float3 localPos,
+        float4 vertexColor, bool frontFace, float uvDensity)
+    {
+        SurfaceInput input;
+        input.positionRS = positionRS;
+        input.normalWS = SafeNormalize(macroNormalWS, float3(0.0, 1.0, 0.0));
+        const float4 tangent = TerrainTangentFrame(input.normalWS);
+        input.tangentWS = tangent.xyz;
+        input.bitangentSign = tangent.w;
+        input.uv0 = uv0;
+        input.localPos = localPos;
+        input.viewDirWS = normalize(cameraPos.xyz - positionRS);
+        input.viewDistance = length(cameraPos.xyz - positionRS);
+        input.vertexColor = vertexColor;
+        input.frontFace = frontFace;
+        input.uvDensity = uvDensity;
         return input;
     }
 };

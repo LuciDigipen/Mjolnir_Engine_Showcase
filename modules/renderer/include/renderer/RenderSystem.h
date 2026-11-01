@@ -475,6 +475,7 @@ namespace mir
                 mRenderViews.push_back(RenderView{ viewport.mRect, items, view.viewProj,
                                                   view.pose.position, view.lens.mNearZ,
                                                   view.lens.HasFarPlane() ? view.lens.mFarZ : 0.0f });
+                mRenderViews.back().fovYDegrees = view.lens.mFovYDegrees;
                 mRenderViews.back().historyId = viewport.mUseExternalCamera ? UINT64_MAX : PackEntity(viewCamera);
                 mRenderViews.back().cut = cut;
                 mRenderViews.back().debugView = viewport.mDebugView;

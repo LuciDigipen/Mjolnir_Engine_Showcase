@@ -8,6 +8,7 @@
  */
 #pragma once
 
+#include <terrain_runtime/TerrainGroundBridge.h>
 #include <terrain_runtime/TerrainRender.h>
 #include <terrain_runtime/TerrainJobExecutor.h>
 
@@ -40,7 +41,10 @@
 
 namespace mir
 {
+    class AssetResolver;
     class PhysicsWorld;
+    class TerrainGroundBridge;
+    class SurfaceMaterialLibrary;
     class VulkanRenderer;
     class World;
 
@@ -61,7 +65,8 @@ namespace mir
         // Loads the game's streaming settings; when they are valid, emplaces them and a TerrainStreamer, sets up
         // the renderer's mesh streaming and draws terrain per viewport through the World's ViewDrawSources, and
         // guards each fixed step through its PhysicsStepGates.
-        void Bind(World &world, VulkanRenderer &renderer, const GameProject &project, JobExecutor &jobs);
+        void Bind(World &world, VulkanRenderer &renderer, SurfaceMaterialLibrary &materials,
+                  const GameProject &project, const AssetResolver &resolver, JobExecutor &jobs);
 
         // The one point per frame where finished terrain reads, mesh builds and uploads are installed; call
         // before any system runs.
@@ -97,6 +102,14 @@ namespace mir
         {
             TerrainReleaseInfo release;
             TerrainPlacement placement;
+            // Identity and binding are separate from the shared geometry cache.
+            Entity entity;
+            std::string materialPath;
+            std::string materialLogicalPath;
+            AssetId materialAsset;
+            std::vector<TerrainMaterialLayer> materialLayers;
+            MaterialHandle material;
+            uint64_t materialGeneration = 0;
         };
 
         struct ViewState
@@ -135,6 +148,13 @@ namespace mir
         double Now() const;
         void Apply(TerrainSceneSpec spec, std::vector<TerrainReleaseAdoption> adopted = {});
         std::vector<InstanceResources> Build(TerrainWorld &next);
+        // Binding edits never trigger Apply; this only refreshes render-side materials.
+        void SyncBindings(const TerrainSceneSpec &spec);
+        void SyncSpecMaterials(const TerrainSceneSpec &spec);
+        void ResolveBinding(InstanceResources &instance);
+        const TerrainInstanceSpec *SpecFor(const TerrainSceneSpec &spec, Entity entity) const;
+        const TerrainInstanceSpec *SpecForPlacement(const TerrainSceneSpec &spec,
+            const TerrainInstanceState &instance) const;
         bool HasMeshPayloads(const TerrainInstanceState &instance);
         // The loaded and staged releases to the mesh and collision residencies.
         void ApplyResidencies();
@@ -160,6 +180,8 @@ namespace mir
 
         World *mWorld = nullptr;
         VulkanRenderer *mRenderer = nullptr;
+        SurfaceMaterialLibrary *mSurfaceMaterials = nullptr;
+        const AssetResolver *mResolver = nullptr;
         std::string mAssetIdRoot;
         std::filesystem::path mReleasesRoot;
         // Why there is no streamer; reported once, when a scene has terrain.
@@ -176,6 +198,9 @@ namespace mir
 
         // Parallel to TerrainWorld::Instances().
         std::vector<InstanceResources> mResources;
+
+        // The World's GroundQuery source; registered before any scene terrain resolves.
+        std::unique_ptr<TerrainGroundBridge> mGround;
 
         // The streamer's worker pool, which also builds meshes and collision pieces.
         std::shared_ptr<TerrainJobExecutor> mPool;

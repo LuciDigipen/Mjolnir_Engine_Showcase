@@ -37,6 +37,8 @@ namespace mir
         const SurfaceMaterialRegistration *Find(std::string_view stem) const;
         const SurfaceMaterialRegistration *Find(std::string_view stem, std::string_view asset) const;
         const SurfaceMaterialRegistration *FindByAsset(std::string_view asset) const;
+        // The same asset may declare one registration per frontend.
+        const SurfaceMaterialRegistration *FindByAsset(std::string_view asset, std::string_view frontend) const;
         // Registration index for the primary/shadow SBT pair; UINT32_MAX when absent.
         uint32_t IndexOf(const SurfaceMaterialRegistration *registration) const;
         // Primary and shadow records are adjacent, so a surface instance's
