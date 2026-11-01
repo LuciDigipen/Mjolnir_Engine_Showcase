@@ -128,8 +128,6 @@ namespace mir
         Registration mSceneSaved;
         Registration mPlayBegin;
         Registration mPlayEnd;
-        Registration mReloadPrepare;
         Registration mReloadCommit;
-        Registration mReloadAbort;
     };
 }

@@ -1,7 +1,7 @@
 /**
  * @file ModelSystem.cpp
  * @author Jackey Cen
- * @brief GPU upload, reload and per-frame evaluation of ModelPlayer instances.
+ * @brief Model claims, reload replacement and per-frame evaluation of ModelPlayer instances.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -23,244 +23,74 @@
 
 namespace mir
 {
-    namespace
-    {
-        SamplerDesc ToSamplerDesc(const MaterialAsset &material)
-        {
-            const auto wrap = [](uint32_t gl)
-                {
-                    return gl == 33071 ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE
-                        : gl == 33648 ? VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT
-                        : VK_SAMPLER_ADDRESS_MODE_REPEAT;
-                };
-
-            SamplerDesc sampler;
-            sampler.magFilter = material.magFilter == 9728 ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
-            // NEAREST, NEAREST_MIPMAP_NEAREST, NEAREST_MIPMAP_LINEAR.
-            sampler.minFilter = (material.minFilter == 9728 || material.minFilter == 9984 ||
-                material.minFilter == 9986)
-                ? VK_FILTER_NEAREST
-                : VK_FILTER_LINEAR;
-// *_MIPMAP_LINEAR.
-            sampler.mipmapMode = (material.minFilter == 9986 || material.minFilter == 9987)
-                ? VK_SAMPLER_MIPMAP_MODE_LINEAR
-                : VK_SAMPLER_MIPMAP_MODE_NEAREST;
-            sampler.addressModeU = wrap(material.wrapS);
-            sampler.addressModeV = wrap(material.wrapT);
-            // Only the four *_MIPMAP_* minFilters sample past level 0.
-            sampler.useMips = material.minFilter >= 9984;
-            return sampler;
-        }
-
-        TextureHandle UploadTexture(VulkanRenderer &renderer, AssetCache &assets, AssetId model, AssetId texture)
-        {
-            TextureAsset tex;
-            std::string error;
-            if (!LoadTypedAsset(assets, texture, tex, error))
-            {
-                MIR_LOG_ERROR("Model {:016x}: texture {:016x}: {}, using error texture", model.value, texture.value, error);
-                return renderer.ErrorTexture();
-            }
-
-            TextureDesc desc{ .width = tex.width,
-                .height = tex.height,
-                .pixels = std::as_bytes(std::span(tex.rgba)),
-                .srgb = tex.format == TextureFormat::Rgba8Srgb,
-                .generateMips = tex.mips.empty() };
-            for (const auto &mip : tex.mips)
-                desc.mips.push_back({ mip.width, mip.height,
-                    std::as_bytes(std::span(tex.mipData).subspan(mip.offset, mip.length)) });
-            const TextureHandle handle = renderer.CreateTexture(desc);
-
-            if (handle.IsNull())
-            {
-                MIR_LOG_ERROR("Model {:016x}: texture {:016x} GPU upload failed, using error texture", model.value, texture.value);
-                return renderer.ErrorTexture();
-            }
-
-            return handle;
-        }
-
-        bool ReadMaterial(AssetCache &assets, AssetId model, AssetId material, MaterialAsset &out)
-        {
-            std::string error;
-            if (!LoadTypedAsset(assets, material, out, error))
-            {
-                MIR_LOG_ERROR("Model {:016x}: material {:016x}: {}, using error texture", model.value, material.value,
-                    error);
-                return false;
-            }
-            return true;
-        }
-
-    } // namespace
-    void ModelSystem::Reset()
-    {
-        DiscardPreparedReload();
-        mModels.clear();
-        mTextures.clear();
-        mFailed.clear();
-        mDeformations.clear();
-    }
     void ModelSystem::ReleaseResources()
     {
-        Release(mModels, mTextures);
-        Reset();
+        // A pending preparation drops its own claims, a published model releases its meshes and materials.
+        for (auto &[id, entry] : mModels)
+            ReleasePreparedModel(mRenderer, std::move(entry.ready));
+        mModels.clear();
+        mFailed.clear();
+        mDeformations.clear();
         mRequestedModels.clear();
         mPreviousPoses.clear();
         mCurrentPoses.clear();
     }
 
-    ModelSystem::Loaded ModelSystem::LoadInto(AssetCache &assets, AssetId id,
-        std::unordered_map<uint64_t, TextureHandle> &textures)
+    void ModelSystem::Prepare(Entry &entry, AssetId id)
     {
-        Loaded loaded;
-        std::string error;
-        if (!LoadModelResources(assets, id, loaded.resources, error))
-            throw std::runtime_error(error);
-        std::unordered_set<uint64_t> existingTextures;
-        for (const auto &[textureId, handle] : textures)
-            existingTextures.insert(textureId);
-        try
+        entry.failure.clear();
+        entry.pending = std::make_unique<ModelPreparation>(mRenderer, mRenderer, mRenderer.ErrorTexture(), mAssets, id,
+            mResolver.PathOf(id));
+    }
+
+    const PreparedModel *ModelSystem::Load(AssetId id)
+    {
+        auto found = mModels.find(id.value);
+        if (found == mModels.end())
         {
-            for (const auto &[key, mesh] : loaded.resources.meshes)
+            found = mModels.emplace(id.value, Entry{}).first;
+            Prepare(found->second, id);
+        }
+        const Entry &entry = found->second;
+        if (entry.ready)
+            return entry.ready.get();
+        if (!entry.failure.empty())
+            throw std::runtime_error(entry.failure);
+        return nullptr;
+    }
+
+    void ModelSystem::AdvancePreparations()
+    {
+        for (auto &[id, entry] : mModels)
+        {
+            if (!entry.pending)
+                continue;
+            const ModelPreparation::State state = entry.pending->Advance();
+            if (state == ModelPreparation::State::Ready)
             {
-                auto &primitives = loaded.meshes[key];
-                for (const auto &p : mesh.primitives)
-                {
-                    std::vector<Vertex> vertices;
-                    vertices.reserve(p.vertices.size());
-                    for (const auto &v : p.vertices)
-                        vertices.push_back({ v.position, glm::vec3(v.color), v.normal, v.uv, v.color.a, v.tangent });
-                    MaterialAsset material;
-                    const bool materialRead = p.material.IsNull() || ReadMaterial(assets, id, p.material, material);
-                    if (materialRead && material.baseColorTexture != p.baseColorTexture)
-                        throw std::runtime_error("mesh/material texture reference mismatch");
-                    MaterialDesc desc;
-                    desc.shaderName = "model";
-                    desc.cullMode = material.doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
-                    desc.topology = p.topology == MeshTopology::Triangles ? VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
-                        : p.topology == MeshTopology::Lines ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST
-                        : VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
-                    desc.sampler = ToSamplerDesc(material);
-                    desc.alphaMode = static_cast<MaterialAlphaMode>(material.alpha);
-                    desc.alphaCutoff = material.alphaCutoff;
-                    if (!materialRead)
-                        desc.baseColorTexture = mRenderer.ErrorTexture();
-                    else if (!material.baseColorTexture.IsNull())
-                    {
-                        const auto texId = material.baseColorTexture.value;
-                        if (!textures.contains(texId))
-                        {
-                            textures.emplace(texId, UploadTexture(mRenderer, assets, id, material.baseColorTexture));
-                        }
-                        desc.baseColorTexture = textures.at(texId);
-                    }
-                    GpuPrimitive gpu;
-                    gpu.mesh = mRenderer.CreateMesh(vertices, p.indices);
-                    gpu.material = mRenderer.CreateMaterial(desc);
-                    desc.frontFace = VK_FRONT_FACE_CLOCKWISE;
-                    gpu.mirrored = mRenderer.CreateMaterial(desc);
-                    const bool materialFailed = gpu.material.IsNull() || gpu.mirrored.IsNull();
-                    if (materialFailed)
-                    {
-                        MIR_LOG_ERROR("Model {:016x}: '{}' material creation failed, using error material", id.value,
-                            desc.shaderName);
-                        if (gpu.material.IsNull())
-                            gpu.material = mRenderer.ErrorMaterial();
-                        if (gpu.mirrored.IsNull())
-                            gpu.mirrored = mRenderer.ErrorMaterial();
-                    }
-                    // Magenta, not the base color, which would tint the error texture and hide the failure.
-                    gpu.factor = materialFailed || desc.baseColorTexture == mRenderer.ErrorTexture()
-                        ? glm::vec4(1, 0, 1, 1)
-                        : material.baseColor;
-                    gpu.transparent = !materialFailed && material.alpha == MaterialAlpha::Blend;
-                    primitives.push_back(gpu);
-                    if (gpu.mesh.IsNull())
-                        throw std::runtime_error("GPU mesh creation failed");
-                }
+                ReleasePreparedModel(mRenderer, std::move(entry.ready));
+                entry.ready = entry.pending->Take();
+                entry.pending.reset();
+            }
+            else if (state == ModelPreparation::State::Failed)
+            {
+                if (entry.ready)
+                    MIR_LOG_WARN("Model {:016x}: replacement was rejected, keeping the previous one: {}", id,
+                        entry.pending->Error());
+                else
+                    entry.failure = entry.pending->Error();
+                entry.pending.reset();
             }
         }
-        catch (...)
-        {
-            std::unordered_map<uint64_t, Loaded> failedModels;
-            failedModels.emplace(id.value, std::move(loaded));
-            std::unordered_map<uint64_t, TextureHandle> failedTextures;
-            for (auto it = textures.begin(); it != textures.end();)
-                if (!existingTextures.contains(it->first))
-                {
-                    failedTextures.emplace(*it);
-                    it = textures.erase(it);
-                }
-                else
-                    ++it;
-            Release(failedModels, failedTextures);
-            throw;
-        }
-        return loaded;
     }
 
-    ModelSystem::Loaded &ModelSystem::Load(AssetId id)
+    void ModelSystem::CommitReload()
     {
-        if (auto it = mModels.find(id.value); it != mModels.end())
-            return it->second;
-        if (!mAssets)
-            throw std::runtime_error("model asset cache unavailable");
-
-        return mModels.emplace(id.value, LoadInto(*mAssets, id, mTextures)).first->second;
-    }
-
-    void ModelSystem::Release(std::unordered_map<uint64_t, Loaded> &models,
-        std::unordered_map<uint64_t, TextureHandle> &textures)
-    {
-        std::vector<MeshHandle> meshes;
-        std::vector<MaterialHandle> materials;
-        std::vector<TextureHandle> textureHandles;
-        for (const auto &[id, model] : models)
-            for (const auto &[meshId, primitives] : model.meshes)
-                for (const auto &primitive : primitives)
-                {
-                    meshes.push_back(primitive.mesh);
-                    materials.push_back(primitive.material);
-                    materials.push_back(primitive.mirrored);
-                }
-        for (const auto &[id, texture] : textures)
-            textureHandles.push_back(texture);
-        if (!meshes.empty() || !materials.empty() || !textureHandles.empty())
-            mRenderer.ReleaseModelResources(meshes, materials, textureHandles);
-        models.clear();
-        textures.clear();
-    }
-
-    bool ModelSystem::PrepareReload(AssetCache &assets, std::string &error)
-    {
-        DiscardPreparedReload();
-        try
-        {
-            for (const auto &[id, loaded] : mModels)
-                mPreparedModels.emplace(id, LoadInto(assets, AssetId{ id }, mPreparedTextures));
-            return true;
-        }
-        catch (const std::exception &exception)
-        {
-            error = exception.what();
-            DiscardPreparedReload();
-            return false;
-        }
-    }
-
-    void ModelSystem::CommitReload(AssetCache *assets)
-    {
-        Release(mModels, mTextures);
-        mModels = std::move(mPreparedModels);
-        mTextures = std::move(mPreparedTextures);
-        mAssets = assets;
+        for (auto &[id, entry] : mModels)
+            Prepare(entry, AssetId{ id });
         mFailed.clear();
         mRequestedModels.clear();
     }
-
-    void ModelSystem::DiscardPreparedReload() { Release(mPreparedModels, mPreparedTextures); }
 
     void ModelSystem::Forget(World &world, Entity entity)
     {
@@ -274,6 +104,7 @@ namespace mir
     }
     void ModelSystem::OnUpdate(SystemContext &context)
     {
+        AdvancePreparations();
         auto &draws = context.world.Resource<ModelDrawItems>();
         draws.items.clear();
         mDeformations.clear();
@@ -284,7 +115,7 @@ namespace mir
         {
             uint64_t entity;
             std::string path;
-            const Loaded *loaded;
+            const PreparedModel *loaded;
             ModelEvaluationInput sample;
         };
         struct Result { ModelEvaluationResult value; std::exception_ptr error; };
@@ -320,13 +151,16 @@ namespace mir
                         return;
                     try
                     {
-                        auto &data = Load(id);
+                        const PreparedModel *data = Load(id);
+                        // hidden until the first preparation settles
+                        if (data == nullptr)
+                            return;
                         if (player.ModelAsset().IsNull())
                             player.SetModelAsset(id);
                         if (player.IsPlaying() && IsSimulating(context.world))
                             player.SetTime(player.Time() + context.dt * player.Speed());
                         uint32_t clip = uint32_t(player.Clip());
-                        const auto &animations = data.resources.model.animations;
+                        const auto &animations = data->resources->model.animations;
                         if (!player.AnimationAsset().IsNull())
                         {
                             const auto found = std::find(animations.begin(), animations.end(), player.AnimationAsset());
@@ -342,10 +176,10 @@ namespace mir
                         }
                         else if (clip < animations.size())
                             player.SetAnimationAsset(animations[clip]);
-                        if (!player.Loops() && clip < data.resources.clips.size())
-                            player.SetTime(std::clamp(player.Time(), 0.0f, data.resources.clips[clip].duration));
+                        if (!player.Loops() && clip < data->resources->clips.size())
+                            player.SetTime(std::clamp(player.Time(), 0.0f, data->resources->clips[clip].duration));
                         ModelEvaluationInput sample;
-                        sample.resources = &data.resources;
+                        sample.resources = data->resources.get();
                         sample.world = transform.Pose();
                         sample.clip = clip;
                         sample.scene = static_cast<uint32_t>(player.Scene());
@@ -354,7 +188,7 @@ namespace mir
                         if (overrides)
                             if (auto it = overrides->instances.find(packed); it != overrides->instances.end())
                                 sample.overrides = it->second;
-                        inputs.push_back(Input{packed, path, &data, std::move(sample)});
+                        inputs.push_back(Input{packed, path, data, std::move(sample)});
                     }
                     catch (const std::exception &e)
                     {
@@ -400,7 +234,7 @@ namespace mir
                 {
                     for (auto &node : result.value.nodes)
                     {
-                        const auto mesh = input.loaded->resources.model.nodes[node.index].mesh;
+                        const auto mesh = input.loaded->resources->model.nodes[node.index].mesh;
                         const auto &gpu = input.loaded->meshes.at(mesh.value);
                         const WorldPose *previous = nullptr;
                         if (auto entity = mPreviousPoses.find(input.entity); entity != mPreviousPoses.end())

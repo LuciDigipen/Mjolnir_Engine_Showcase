@@ -38,6 +38,15 @@ namespace mir
                 MeshAsset mesh;
                 if (!read(node.mesh, mesh))
                     return false;
+                for (const auto &primitive : mesh.primitives)
+                    if (!primitive.material.IsNull() && !data.materials.contains(primitive.material.value))
+                    {
+                        MaterialAsset material;
+                        std::string ignored;
+                        if (const AssetBlobView *blob = dependencies.Find(primitive.material);
+                            blob != nullptr && ReadTypedAsset(*blob, material, ignored))
+                            data.materials.emplace(primitive.material.value, std::move(material));
+                    }
                 data.meshes.emplace(node.mesh.value, std::move(mesh));
             }
         for (const auto &skin : data.model.skins)
@@ -117,7 +126,7 @@ namespace mir
     }
     const AssetDecoder<ModelResources> &ModelResourcesDecoder()
     {
-        static constexpr uint32_t kTags[]{ kMeshAssetTypeTag, kSkeletonAssetTypeTag, kAnimationAssetTypeTag };
+        static constexpr uint32_t kTags[]{ kMeshAssetTypeTag, kSkeletonAssetTypeTag, kAnimationAssetTypeTag, kMaterialAssetTypeTag };
         static constexpr AssetDecoder<ModelResources> kDecoder{ DecodeModelResources, kTags };
         return kDecoder;
     }

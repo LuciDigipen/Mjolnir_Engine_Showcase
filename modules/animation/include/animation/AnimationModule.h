@@ -15,7 +15,7 @@
 
 namespace mir
 {
-    class AssetsModule;
+    class AsyncAssetService;
     class ModelSystem;
     class AssetResolver;
     class VulkanRenderer;
@@ -24,7 +24,7 @@ namespace mir
     class AnimationModule
     {
     public:
-        AnimationModule(ModuleContext context, VulkanRenderer &renderer, AssetsModule &assets,
+        AnimationModule(ModuleContext context, VulkanRenderer &renderer, AsyncAssetService *assets,
             const AssetResolver &resolver, JobExecutor *jobs = nullptr);
 
         AnimationModule(const AnimationModule &) = delete;
@@ -39,8 +39,6 @@ namespace mir
         // last: they unregister before anything above is destroyed
         Registration mHooks;
         Registration mSceneUnload;
-        Registration mReloadPrepare;
         Registration mReloadCommit;
-        Registration mReloadAbort;
     };
 }

@@ -1,0 +1,189 @@
+/**
+ * @file ModelPreparation.tests.cpp
+ * @author sumin.park
+ * @brief Background model preparation, texture settling, error appearance and release tests.
+ *
+ * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
+ *
+ */
+#include <animation/ModelPreparation.h>
+
+#include <assets/AssetsModule.h>
+#include <assets/ModelAsset.h>
+#include <core/fs/FileIO.h>
+#include <jobs/JobExecutor.h>
+
+#include "support/CookedMeshDir.h"
+#include "support/FakeMeshResolveHost.h"
+#include "support/FakeTextureUploader.h"
+
+#include <catch2/catch_test_macros.hpp>
+
+using namespace mir;
+
+namespace
+{
+    const AssetId kModel = MakeAssetId("model");
+    const AssetId kMesh = MakeAssetId("mesh");
+    const AssetId kMaterial = MakeAssetId("material");
+    const AssetId kTexture = MakeAssetId("texture");
+    const TextureHandle kError{ 777, 1 };
+
+    struct CookedModel : test::CookedDir
+    {
+        explicit CookedModel(bool withTexture = true)
+        {
+            ModelAsset model;
+            model.nodes.resize(1);
+            model.nodes[0].key = "root";
+            model.nodes[0].mesh = kMesh;
+            model.scenes = { { "scene", { 0 } } };
+            MeshPrimitive primitive;
+            primitive.vertices.resize(3);
+            primitive.indices = { 0, 1, 2 };
+            primitive.material = kMaterial;
+            primitive.baseColorTexture = kTexture;
+            MeshAsset mesh;
+            mesh.primitives.push_back(primitive);
+            MaterialAsset material;
+            material.baseColor = glm::vec4(0.25f, 0.5f, 0.75f, 1);
+            material.baseColorTexture = kTexture;
+            TextureAsset texture;
+            texture.width = texture.height = 4;
+            texture.rgba.assign(64, 80);
+
+            const std::vector<std::pair<std::string, std::vector<std::byte>>> blobs{
+                { "model.blob", BuildTypedAsset(model) }, { "mesh.blob", BuildTypedAsset(mesh) },
+                { "material.blob", BuildTypedAsset(material) }, { "texture.blob", BuildTypedAsset(texture) } };
+            for (const auto &[file, bytes] : blobs)
+                REQUIRE(WriteBytes(Path() / file, bytes));
+            const AssetId modelEdges[]{ kMesh }, meshEdges[]{ kMaterial }, materialEdges[]{ kTexture };
+            std::vector<AssetManifestSourceEntry> entries{
+                { { kModel, kModelAssetTypeTag, kModelAssetContentVersion }, "model.blob", "model", modelEdges },
+                { { kMesh, kMeshAssetTypeTag, kMeshAssetContentVersion }, "mesh.blob", "mesh", meshEdges },
+                { { kMaterial, kMaterialAssetTypeTag, kMaterialAssetContentVersion }, "material.blob", "material",
+                  materialEdges },
+                { { kTexture, kTextureAssetTypeTag, kTextureAssetContentVersion }, "texture.blob", "texture", {} } };
+            // a texture the catalog does not list, its material still names it
+            if (!withTexture)
+            {
+                entries.pop_back();
+                entries.back().dependencies = {};
+            }
+            REQUIRE(WriteBytes(Path() / kAssetManifestFileName, BuildAssetManifestBlob(entries)));
+        }
+    };
+
+    struct Fixture : CookedModel
+    {
+        explicit Fixture(bool withTexture = true)
+            : CookedModel(withTexture), mAssets(Path()), mJobs(0), mService(mAssets, mJobs, 1),
+              mPreparation(mHost, mTextures, kError, &mService, kModel, "model")
+        {}
+
+        ModelPreparation::State Frame()
+        {
+            mService.DrainCompletions();
+            return mPreparation.Advance();
+        }
+
+        // Frames until the texture upload is queued
+        void QueueTexture()
+        {
+            for (int frame = 0; frame < 8 && mTextures.mEntries.empty(); ++frame)
+                Frame();
+            REQUIRE(mTextures.mEntries.size() == 1);
+        }
+
+        AssetsModule mAssets;
+        JobExecutor mJobs;
+        AsyncAssetService mService;
+        test::FakeMeshResolveHost mHost;
+        test::FakeTextureUploader mTextures;
+        ModelPreparation mPreparation;
+    };
+}
+
+TEST_CASE("A model publishes after its texture settles and uses the texture", "[animation][model-preparation]")
+{
+    Fixture f;
+    f.QueueTexture();
+    const TextureHandle texture{ 0, 1 };
+    CHECK(f.Frame() == ModelPreparation::State::Textures);
+    CHECK(f.mHost.createdMaterials.empty());
+    f.mTextures.Begin(texture);
+    f.mTextures.CopyAll(texture);
+    f.mTextures.Complete(texture);
+    REQUIRE(f.Frame() == ModelPreparation::State::Ready);
+    REQUIRE(f.mHost.createdMaterials.size() == 2);
+    CHECK(f.mHost.createdMaterials[0].baseColorTexture == texture);
+
+    auto model = f.mPreparation.Take();
+    REQUIRE(model);
+    const auto &primitives = model->meshes.at(kMesh.value);
+    REQUIRE(primitives.size() == 1);
+    CHECK(primitives[0].factor == glm::vec4(0.25f, 0.5f, 0.75f, 1));
+    CHECK(f.mPreparation.Take() == nullptr);
+
+    ReleasePreparedModel(f.mHost, std::move(model));
+    CHECK(f.mHost.releasedMeshes.size() == 1);
+    CHECK(f.mHost.releasedMaterials.size() == 2);
+    // the unused texture stays cached for the next consumer
+    CHECK(f.mTextures.TextureState(texture) == TextureUploadState::Ready);
+}
+
+TEST_CASE("A failed texture publishes the magenta error appearance", "[animation][model-preparation]")
+{
+    Fixture f;
+    f.QueueTexture();
+    const TextureHandle texture{ 0, 1 };
+    f.mTextures.Fail(texture);
+    REQUIRE(f.Frame() == ModelPreparation::State::Ready);
+    REQUIRE(f.mHost.createdMaterials.size() == 2);
+    CHECK(f.mHost.createdMaterials[0].baseColorTexture == kError);
+    const auto model = f.mPreparation.Take();
+    REQUIRE(model);
+    CHECK(model->meshes.at(kMesh.value)[0].factor == glm::vec4(1, 0, 1, 1));
+}
+
+TEST_CASE("A missing texture blob settles as an error appearance", "[animation][model-preparation]")
+{
+    Fixture f(false);
+    for (int frame = 0; frame < 4 && f.mPreparation.GetState() != ModelPreparation::State::Ready; ++frame)
+        f.Frame();
+    // an unreachable texture is a texture failure, the model still publishes
+    REQUIRE(f.mPreparation.GetState() == ModelPreparation::State::Ready);
+    const auto model = f.mPreparation.Take();
+    CHECK(model->meshes.at(kMesh.value)[0].factor == glm::vec4(1, 0, 1, 1));
+}
+
+TEST_CASE("A preparation without an asset service fails", "[animation][model-preparation]")
+{
+    test::FakeMeshResolveHost host;
+    test::FakeTextureUploader textures;
+    ModelPreparation preparation(host, textures, kError, nullptr, kModel, "model");
+    CHECK(preparation.Advance() == ModelPreparation::State::Failed);
+    CHECK_FALSE(preparation.Error().empty());
+    CHECK(preparation.Take() == nullptr);
+}
+
+TEST_CASE("Abandoning a preparation drops its texture claim", "[animation][model-preparation]")
+{
+    CookedModel cooked;
+    AssetsModule assets(cooked.Path());
+    JobExecutor jobs(0);
+    AsyncAssetService service(assets, jobs, 1);
+    test::FakeMeshResolveHost host;
+    test::FakeTextureUploader textures;
+    {
+        ModelPreparation preparation(host, textures, kError, &service, kModel, "model");
+        for (int frame = 0; frame < 8 && textures.mEntries.empty(); ++frame)
+        {
+            service.DrainCompletions();
+            preparation.Advance();
+        }
+        REQUIRE(textures.mEntries.size() == 1);
+    }
+    CHECK(textures.mRetired.size() == 1);
+    CHECK(host.createdMaterials.empty());
+}

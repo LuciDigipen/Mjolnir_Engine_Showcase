@@ -141,7 +141,7 @@ namespace mir
                                     .mAssetService = mAssetService.get() }),
         mParticlesGpu(mRenderer.Renderer()),
         mInput(Context(), mWindow.Get(), mProject.mProjectSettingsPath),
-        mAnimation(Context(), mRenderer.Renderer(), mAssets, mResolver, &mJobs),
+        mAnimation(Context(), mRenderer.Renderer(), mAssetService.get(), mResolver, &mJobs),
         mImGui(Context(), mWindow, mRenderer),
     #if MIR_WITH_EDITOR
         mEditor(Context(), mImGui, mWindow, mRenderer, mScene, mPrefab, mAssets, mAssetService.get(), mResolver,

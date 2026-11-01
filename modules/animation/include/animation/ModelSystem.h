@@ -3,17 +3,18 @@
  * @author Jackey Cen
  * @brief Turns ModelPlayer instances into GPU draws, in SystemPhase::LateUpdate.
  *
- * Loads each referenced model once through AssetCache, uploads its meshes,
- * materials and textures to the VulkanRenderer, advances playback while the
- * world is simulating, evaluates the pose and fills the ModelDrawItems resource
- * that RenderSystem draws. LateUpdate runs after Propagate, so WorldTransform
- * is current. PrepareReload/CommitReload swap GPU resources around an import.
+ * Claims each referenced model through a background ModelPreparation, so loading never blocks a
+ * frame. An entity draws once its model is published, advances playback while the world is
+ * simulating, evaluates the pose and fills the ModelDrawItems resource that RenderSystem draws.
+ * LateUpdate runs after Propagate, so WorldTransform is current. A catalog reload prepares
+ * replacements in the background and keeps drawing the old model until its replacement is usable.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
 #pragma once
 #include <animation/ModelAnimation.h>
+#include <animation/ModelPreparation.h>
 #include <core/ecs/System.h>
 #include <renderer/VulkanRenderer.h>
 #include <unordered_set>
@@ -21,20 +22,20 @@
 namespace mir
 {
     class AssetResolver;
+    class AsyncAssetService;
     class JobExecutor;
     class ModelSystem final : public ISystem
     {
     public:
-        ModelSystem(VulkanRenderer &renderer, AssetCache *assets, const AssetResolver &resolver,
+        ModelSystem(VulkanRenderer &renderer, AsyncAssetService *assets, const AssetResolver &resolver,
             JobExecutor *jobs = nullptr)
             : mRenderer(renderer), mAssets(assets), mResolver(resolver), mJobs(jobs)
         {}
-        void Reset();
-        // Frees this World's uploads without releasing resources owned by other Worlds.
+        // Frees this World's models without releasing resources owned by other Worlds.
         void ReleaseResources();
-        bool PrepareReload(AssetCache &assets, std::string &error);
-        void CommitReload(AssetCache *assets);
-        void DiscardPreparedReload();
+        // Prepares every loaded model again from the committed catalog. The old models keep drawing
+        // until each replacement is usable, and a replacement that fails leaves the old one in place.
+        void CommitReload();
         void OnUpdate(SystemContext &context) override;
 
         // ModelPlayer's OnRemove: drops the entity's request, poses and morph overrides, so a
@@ -42,29 +43,21 @@ namespace mir
         void Forget(World &world, Entity entity);
 
     private:
-        struct GpuPrimitive
+        struct Entry
         {
-            MeshHandle mesh;
-            MaterialHandle material, mirrored;
-            glm::vec4 factor{ 1 };
-            bool transparent = false;
+            std::unique_ptr<PreparedModel> ready;
+            std::unique_ptr<ModelPreparation> pending;
+            std::string failure;
         };
-        struct Loaded
-        {
-            ModelResources resources;
-            std::unordered_map<uint64_t, std::vector<GpuPrimitive>> meshes;
-        };
-        Loaded &Load(AssetId id);
-        Loaded LoadInto(AssetCache &assets, AssetId id, std::unordered_map<uint64_t, TextureHandle> &textures);
-        void Release(std::unordered_map<uint64_t, Loaded> &models, std::unordered_map<uint64_t, TextureHandle> &textures);
+        // The published model, null while its first preparation runs. Throws when that preparation failed.
+        const PreparedModel *Load(AssetId id);
+        void Prepare(Entry &entry, AssetId id);
+        void AdvancePreparations();
         VulkanRenderer &mRenderer;
-        AssetCache *mAssets;
+        AsyncAssetService *mAssets;
         const AssetResolver &mResolver;
         JobExecutor *mJobs;
-        std::unordered_map<uint64_t, Loaded> mModels;
-        std::unordered_map<uint64_t, TextureHandle> mTextures;
-        std::unordered_map<uint64_t, Loaded> mPreparedModels;
-        std::unordered_map<uint64_t, TextureHandle> mPreparedTextures;
+        std::unordered_map<uint64_t, Entry> mModels;
         std::unordered_set<uint64_t> mFailed;
         std::unordered_map<uint64_t, uint64_t> mRequestedModels;
         std::vector<std::vector<glm::vec4>> mDeformations;

@@ -10,11 +10,13 @@ does not own the renderer, the ECS update loop, or import of source glTF files.
 
 `AssetCooker` turns a glTF package into a Model plus typed Mesh, Skeleton,
 AnimationClip, Material, and Texture assets. `LoadModelResources` resolves the
-Model's mesh, skeleton, and clip dependencies through `AssetCache`, then checks
-their cross-references before a model can be evaluated. `DecodeModelResources`
-does the same over blobs already read, and `ModelResourcesDecoder` names the
-mesh, skeleton and clip types it needs, so a background load reads those and
-leaves materials and textures to their own requests. The source format is never
+Model's mesh, skeleton, clip and material dependencies through `AssetCache`, then
+checks their cross-references before a model can be evaluated.
+`DecodeModelResources` does the same over blobs already read, and
+`ModelResourcesDecoder` names the mesh, skeleton, clip and material types it
+needs, so a background load reads those and leaves textures to their own
+requests. A material that is missing or does not parse is absent from the
+result, and its primitives take the error appearance. The source format is never
 parsed here.
 
 `ModelPlayer` is the ECS component for one instance. It stores the model and
@@ -26,9 +28,9 @@ parent hierarchy. A `ModelMorphOverrides` world resource can replace sampled
 weights for one entity and node without changing the asset.
 
 `ModelSystem` is registered by `AnimationModule` in `LateUpdate` with the asset
-cache and the Vulkan renderer. The module also clears its per-entity state from
-the `ModelPlayer` OnRemove hook, frees its GPU caches at `SceneUnload`, and stages,
-commits or drops an asset swap at `ReloadPrepare`, `ReloadCommit` and `ReloadAbort`. It resolves each `ModelPlayer`, advances its clock only while Play is
+service and the Vulkan renderer. The module also clears its per-entity state from
+the `ModelPlayer` OnRemove hook, frees its models at `SceneUnload`, and starts
+replacement preparation at `ReloadCommit`. It resolves each `ModelPlayer`, advances its clock only while Play is
 simulating, evaluates a pose, and submits per-draw deformation data. The
 renderer shader applies morph, then skin, then the instance transform;
 `DeformPrimitive` provides the CPU reference for that order.
@@ -95,26 +97,39 @@ morph weights must match the mesh. `LoadModelResources` rejects mismatches;
 it does not silently render a partial model.
 
 **A broken texture or material draws magenta; a broken mesh fails the model.**
-`ModelSystem` loads each primitive's material and base color texture after
-`LoadModelResources` has accepted the model. A material or texture blob that is
-missing or does not parse logs an error with the model and asset IDs. The
+`ModelPreparation` builds a model's meshes and materials once its CPU records
+decode and every base color texture has settled. A material or texture blob that
+is missing or does not parse logs an error with the model and asset IDs. The
 primitive then gets the renderer's `ErrorTexture()`. A `CreateMaterial` that
 returns null logs an error, and the primitive gets `ErrorMaterial()`. In every
 case the primitive's tint becomes magenta too, because the ray tracer reads
-only the tint. A failed texture is cached as the error texture, so it logs
-once per texture and is retried on the next reload. A cooked `TextureAsset`
+only the tint. A failed texture logs once per preparation and is retried on the next
+reload. A cooked `TextureAsset`
 supplies its own format, color space and complete mip chain, so `CreateTexture`
 uploads that chain instead of generating one. A failed `CreateMesh` still fails
 the whole model, since there is nothing to draw.
+
+**A model is prepared in the background and published whole.** `ModelSystem`
+claims each referenced model through a `ModelPreparation`, which claims the
+model's CPU records and one `TextureLoadLease` per base color texture, and never
+waits on either. When every texture is ready or failed it creates the meshes and
+materials once and publishes an immutable `PreparedModel`, so no entity patches a
+material later. The first load keeps the model hidden until then, and a
+structural failure marks the model failed. A reload prepares a replacement per
+loaded model from the new catalog while the old `PreparedModel` keeps drawing,
+then switches that model when its replacement is usable. A replacement that
+fails leaves the old model in place and logs a warning, and a failed texture
+publishes the magenta error appearance like an initial load. Playback, poses
+and deformations stay with the entity. Meshes and materials are still created
+per World, only textures and the CPU records are shared across Worlds.
 
 ## State
 
 *As of 2026-09-24.* The module samples translation, rotation, scale, and
 morph-weight tracks with STEP, LINEAR, and CUBICSPLINE interpolation. It
 evaluates hierarchy, selected glTF scene visibility, skin matrices, and
-optional per-instance morph overrides. `ModelSystem` shares loaded GPU
-resources between instances and rebuilds them around import reloads and scene
-changes. Tests in `modules/animation/tests/ModelAnimation.tests.cpp` cover
+optional per-instance morph overrides. `ModelSystem` shares one prepared model between the instances of a World, and
+a reload prepares replacements in the background while the old models draw. Tests in `modules/animation/tests/ModelAnimation.tests.cpp` cover
 interpolation, deterministic seeking, hierarchy, morph-before-skin behavior,
 and invalid typed assets. GPU draw behavior is outside this unit test target.
 
@@ -140,6 +155,13 @@ material, threw out of `LoadInto`. The entity was marked failed and the model
 did not draw at all. Now: each of those logs an error and the primitive draws
 with the renderer's error texture or error material and a magenta tint. Only
 a failed mesh still fails the model. Because: issue #19.
+
+*2026-11-01* — **Models prepare in the background.** `ModelSystem` loaded a
+model and uploaded its textures synchronously, and a reload staged GPU resources
+at `ReloadPrepare` so a rejected cook vetoed the swap. `ModelPreparation` now
+claims shared CPU records and texture leases, the module no longer stages or
+aborts a model reload, and the replacement policy above covers late failures.
+`ModelResources` also carries the materials the meshes name.
 
 *2026-09-24* — **ModelSystem moved into this module; ModelPlayer made private.**
 `ModelSystem` was in `app`, which left the component and its only system in

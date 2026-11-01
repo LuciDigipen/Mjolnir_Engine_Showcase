@@ -183,8 +183,8 @@ texture cancels its remaining bands and defers GPU destruction until prior
 copies have finished. Pending image-table slots sample the error texture.
 Materials created with a pending texture acquire a replacement descriptor set
 when it becomes ready, the old set retires after its last possible frame.
-Existing model loading still uses synchronous `CreateTexture`, migration to
-these shared texture claims is a separate step.
+Model base color textures use these claims through `ModelPreparation`
+in the animation module.
 
 At `ReloadCommit` the module calls `CommitReload`. It retires the meshes that are
 still queued or uploading, frees the ready ones, and forgets every entity's names,

@@ -11,7 +11,7 @@
 #include <animation/ModelPlayer.h>
 #include <animation/ModelSystem.h>
 
-#include <assets/AssetsModule.h>
+#include <assets/AsyncAssetService.h>
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/World.h>
 
@@ -21,7 +21,7 @@
 
 namespace mir
 {
-    AnimationModule::AnimationModule(ModuleContext context, VulkanRenderer &renderer, AssetsModule &assets,
+    AnimationModule::AnimationModule(ModuleContext context, VulkanRenderer &renderer, AsyncAssetService *assets,
         const AssetResolver &resolver, JobExecutor *jobs)
     {
         RegisterModelPlayer();
@@ -31,7 +31,7 @@ namespace mir
 
         // a WorldTransform reader
         mModels = &context.scheduler.AddSystem<ModelSystem>(SystemPhase::LateUpdate,
-            SystemOrder{SystemOrder::kNormal}, renderer, &assets.Cache(),
+            SystemOrder{SystemOrder::kNormal}, renderer, assets,
             resolver, jobs);
 
         mHooks = context.world.SetComponentHooks<ModelPlayer>({ .onRemove = [this](World &world, Entity entity)
@@ -46,20 +46,10 @@ namespace mir
                 frame.world.Resource<ModelMorphOverrides>().instances.clear();
             });
 
-        // stages the new cook's GPU resources; a rejection vetoes the swap
-        mReloadPrepare = context.scheduler.AddStage(Stage::ReloadPrepare, [this, &assets](SystemContext &)
+        // the new cook's models prepare in the background while the old ones keep drawing
+        mReloadCommit = context.scheduler.AddStage(Stage::ReloadCommit, [this](SystemContext &)
             {
-                std::string error;
-                if (!mModels->PrepareReload(assets.Candidate(), error))
-                    throw std::runtime_error("new model resources were rejected: " + error);
-            });
-        mReloadCommit = context.scheduler.AddStage(Stage::ReloadCommit, [this, &assets](SystemContext &)
-            {
-                mModels->CommitReload(&assets.Cache());
-            });
-        mReloadAbort = context.scheduler.AddStage(Stage::ReloadAbort, [this](SystemContext &)
-            {
-                mModels->DiscardPreparedReload();
+                mModels->CommitReload();
             });
     }
 }

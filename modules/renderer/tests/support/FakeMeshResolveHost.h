@@ -47,7 +47,11 @@ namespace mir::test
             return MeshHandle{ mNextSync++, kSyncGeneration };
         }
 
-        MaterialHandle CreateMaterial(const MaterialDesc &) override { return MaterialHandle{ mNextMaterial++, 1 }; }
+        MaterialHandle CreateMaterial(const MaterialDesc &desc) override
+        {
+            createdMaterials.push_back(desc);
+            return MaterialHandle{ mNextMaterial++, 1 };
+        }
         MaterialHandle ErrorMaterial() const override { return MaterialHandle{ 9999, 1 }; }
 
         void ReleaseModelResources(std::span<const MeshHandle> meshes, std::span<const MaterialHandle> materials,
@@ -66,6 +70,7 @@ namespace mir::test
         std::size_t syncMeshes = 0;
         std::vector<MeshHandle> releasedMeshes;
         std::vector<MaterialHandle> releasedMaterials;
+        std::vector<MaterialDesc> createdMaterials;
 
     private:
         uint32_t mNextSync = 0;

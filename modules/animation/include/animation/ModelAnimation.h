@@ -18,6 +18,8 @@ namespace mir
     {
         ModelAsset model;
         std::unordered_map<uint64_t, MeshAsset> meshes;
+        // Materials the meshes name, an unreadable one is absent and its primitives take the error appearance.
+        std::unordered_map<uint64_t, MaterialAsset> materials;
         std::unordered_map<uint64_t, SkeletonAsset> skeletons;
         std::vector<AnimationClipAsset> clips;
     };
@@ -32,7 +34,7 @@ namespace mir
     // Reads the model from root and its meshes, skeletons and clips from dependencies
     bool DecodeModelResources(const AssetBlobView &root, const AssetDependencies &dependencies, ModelResources &result,
                               std::string &error);
-    // The dependency types DecodeModelResources reads, so materials and textures are not loaded with a model
+    // The dependency types DecodeModelResources reads, so textures are not loaded with a model
     const AssetDecoder<ModelResources> &ModelResourcesDecoder();
     std::vector<float> SampleAnimationTrack(const AnimationTrack &track, float time);
     // Reset to rest pose each sample; deterministic seeking and independent instances.

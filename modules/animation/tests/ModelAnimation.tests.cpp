@@ -268,12 +268,13 @@ TEST_CASE("Model resources fail when a dependency blob is not available", "[anim
     CHECK(resources.meshes.empty());
 }
 
-TEST_CASE("The model decoder lists the geometry, skeleton and clip types", "[animation][assets]")
+TEST_CASE("The model decoder lists the geometry, skeleton, clip and material types", "[animation][assets]")
 {
     const AssetDecoder<ModelResources> &decoder = ModelResourcesDecoder();
     CHECK(decoder.decode == &DecodeModelResources);
     const std::vector<uint32_t> tags(decoder.dependencyTags.begin(), decoder.dependencyTags.end());
-    CHECK(tags == std::vector<uint32_t>{kMeshAssetTypeTag, kSkeletonAssetTypeTag, kAnimationAssetTypeTag});
+    CHECK(tags == std::vector<uint32_t>{kMeshAssetTypeTag, kSkeletonAssetTypeTag, kAnimationAssetTypeTag,
+        kMaterialAssetTypeTag});
     // one descriptor for the whole process, so requests for a model deduplicate
     CHECK(&ModelResourcesDecoder() == &decoder);
 }
