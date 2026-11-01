@@ -266,7 +266,8 @@ TEST_CASE("Particle world resolves two emitter dependencies and retires both aft
     const mir::AssetManifestSourceEntry entries[]{
         {{mir::AssetId{901}, mir::kParticleScriptTypeTag, mir::kParticleScriptContentVersion}, "script.blob"},
         {{mir::AssetId{902}, mir::kParticleScriptLayoutTypeTag, mir::kParticleScriptLayoutContentVersion}, "layout.blob"},
-        {{test.files.EffectId(), mir::kParticleEffectTypeTag, mir::kParticleEffectContentVersion}, "effect.blob"},
+        {{test.files.EffectId(), mir::kParticleEffectTypeTag, mir::kParticleEffectContentVersion}, "effect.blob",
+            "assets/effects/exhaust.particle.json"},
         {{test.files.EmitterId(), mir::kParticleEmitterTypeTag, mir::kParticleEmitterContentVersion}, "emitter.blob"},
         {{secondId, mir::kParticleEmitterTypeTag, mir::kParticleEmitterContentVersion}, "secondary.blob"},
         {{test.files.TextureId(), mir::kTextureAssetTypeTag, mir::kTextureAssetContentVersion}, "texture.blob"}};
@@ -395,7 +396,8 @@ TEST_CASE("Per-entity offsets follow the placement id, not the emitter's positio
     const mir::AssetManifestSourceEntry entries[]{
         {{mir::AssetId{901}, mir::kParticleScriptTypeTag, mir::kParticleScriptContentVersion}, "script.blob"},
         {{mir::AssetId{902}, mir::kParticleScriptLayoutTypeTag, mir::kParticleScriptLayoutContentVersion}, "layout.blob"},
-        {{test.files.EffectId(), mir::kParticleEffectTypeTag, mir::kParticleEffectContentVersion}, "effect.blob"},
+        {{test.files.EffectId(), mir::kParticleEffectTypeTag, mir::kParticleEffectContentVersion}, "effect.blob",
+            "assets/effects/exhaust.particle.json"},
         {{test.files.EmitterId(), mir::kParticleEmitterTypeTag, mir::kParticleEmitterContentVersion}, "emitter.blob"},
         {{secondId, mir::kParticleEmitterTypeTag, mir::kParticleEmitterContentVersion}, "secondary.blob"},
         {{test.files.TextureId(), mir::kTextureAssetTypeTag, mir::kTextureAssetContentVersion}, "texture.blob"}};

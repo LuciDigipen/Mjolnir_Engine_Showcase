@@ -192,3 +192,90 @@ TEST_CASE("ContentBrowserWatcher throws a System SetupError when the game direct
         CHECK(error.Path() == project.mRootDir);
     }
 }
+
+TEST_CASE("ContentBrowserWatcher hides tooling files and keeps listing assets", "[app][content-browser][meta]")
+{
+    TempProject temp;
+    temp.Write("assets/white.png");
+    temp.Write("assets/white.png.meta");
+    temp.Write("assets/duck.glb.import.json");
+    temp.Write("assets/manifest.blob.pending");
+    temp.Write("assets/data/.gitkeep");
+
+    ContentBrowserWatcher watcher;
+    REQUIRE_NOTHROW(watcher.Initialize(temp.Project()));
+    CHECK(HasEntry(watcher.View(), "assets/white.png"));
+    CHECK(HasEntry(watcher.View(), "assets/data"));
+    CHECK_FALSE(HasEntry(watcher.View(), "assets/white.png.meta"));
+    CHECK_FALSE(HasEntry(watcher.View(), "assets/duck.glb.import.json"));
+    CHECK_FALSE(HasEntry(watcher.View(), "assets/manifest.blob.pending"));
+    CHECK_FALSE(HasEntry(watcher.View(), "assets/data/.gitkeep"));
+
+    // one written later stays hidden too
+    temp.Write("assets/other.png.meta");
+    WaitForNextPoll();
+    watcher.Update();
+    CHECK_FALSE(HasEntry(watcher.View(), "assets/other.png.meta"));
+}
+
+TEST_CASE("ContentBrowserWatcher renames and deletes a file with its .meta", "[app][content-browser][meta]")
+{
+    TempProject temp;
+    temp.Write("assets/old.png");
+    temp.Write("assets/old.png.meta", "guid");
+    temp.Write("assets/gone.png");
+    temp.Write("assets/gone.png.meta", "guid");
+
+    ContentBrowserWatcher watcher;
+    REQUIRE_NOTHROW(watcher.Initialize(temp.Project()));
+
+    ContentBrowserAction rename;
+    rename.mKind = ContentBrowserActionKind::Rename;
+    rename.mTargetPath = "assets/old.png";
+    rename.mNewName = "new.png";
+    watcher.Handle(rename);
+    CHECK(std::filesystem::exists(temp.root / "assets" / "new.png"));
+    CHECK(std::filesystem::exists(temp.root / "assets" / "new.png.meta"));
+    CHECK_FALSE(std::filesystem::exists(temp.root / "assets" / "old.png.meta"));
+
+    ContentBrowserAction remove;
+    remove.mKind = ContentBrowserActionKind::Delete;
+    remove.mTargetPath = "assets/gone.png";
+    watcher.Handle(remove);
+    CHECK_FALSE(std::filesystem::exists(temp.root / "assets" / "gone.png"));
+    CHECK_FALSE(std::filesystem::exists(temp.root / "assets" / "gone.png.meta"));
+}
+
+TEST_CASE("ContentBrowserWatcher moves the .meta of a file renamed outside the editor", "[app][content-browser][meta]")
+{
+    TempProject temp;
+    temp.Write("assets/keep.png");
+    temp.Write("assets/keep.png.meta", "guid");
+
+    ContentBrowserWatcher watcher;
+    REQUIRE_NOTHROW(watcher.Initialize(temp.Project()));
+
+    std::filesystem::rename(temp.root / "assets" / "keep.png", temp.root / "assets" / "renamed.png");
+    WaitForNextPoll();
+    watcher.Update();
+    CHECK(watcher.View().mLastRenamedTo == "assets/renamed.png");
+    CHECK(std::filesystem::exists(temp.root / "assets" / "renamed.png.meta"));
+    CHECK_FALSE(std::filesystem::exists(temp.root / "assets" / "keep.png.meta"));
+}
+
+TEST_CASE("ContentBrowserWatcher keeps the .meta files inside a renamed folder", "[app][content-browser][meta]")
+{
+    TempProject temp;
+    temp.Write("assets/textures/a.png");
+    temp.Write("assets/textures/a.png.meta", "guid");
+
+    ContentBrowserWatcher watcher;
+    REQUIRE_NOTHROW(watcher.Initialize(temp.Project()));
+
+    ContentBrowserAction rename;
+    rename.mKind = ContentBrowserActionKind::Rename;
+    rename.mTargetPath = "assets/textures";
+    rename.mNewName = "images";
+    watcher.Handle(rename);
+    CHECK(std::filesystem::exists(temp.root / "assets" / "images" / "a.png.meta"));
+}

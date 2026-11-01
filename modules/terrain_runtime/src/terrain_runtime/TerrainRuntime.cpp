@@ -10,6 +10,7 @@
 
 #include <terrain_runtime/TerrainGroundBridge.h>
 
+#include <assets/AssetResolver.h>
 #include <core/ecs/EngineMode.h>
 #include <core/ecs/Query.h>
 #include <core/ecs/World.h>
@@ -207,7 +208,7 @@ namespace mir
     }
 
     void TerrainRuntime::Bind(World &world, VulkanRenderer &renderer, SurfaceMaterialLibrary &materials,
-                              const GameProject &project, JobExecutor &jobs)
+                              const GameProject &project, const AssetResolver &resolver, JobExecutor &jobs)
     {
         mWorld = &world;
         mRenderer = &renderer;
@@ -216,6 +217,7 @@ namespace mir
             {
                 return ValidateSurfaceMaterialParameters(binding, error);
             });
+        mResolver = &resolver;
         mAssetIdRoot = project.mAssetIdRoot;
         mReleasesRoot = TerrainReleasesRoot(project.mRootDir);
         mGround = std::make_unique<TerrainGroundBridge>(world);
@@ -329,7 +331,8 @@ namespace mir
         if (mSwitch)
             mSwitch->Resume();
 
-        TerrainSceneSpec spec = CollectTerrainScene(*mWorld, mAssetIdRoot);
+        TerrainSceneSpec spec = CollectTerrainScene(*mWorld, mAssetIdRoot,
+                                                    [this](std::string_view path) { return mResolver->ResolveFull(path); });
         if (spec == mPendingSpec)
             mPendingAge += dt;
         else

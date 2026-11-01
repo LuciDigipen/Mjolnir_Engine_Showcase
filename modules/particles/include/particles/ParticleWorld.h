@@ -20,11 +20,12 @@
 namespace mir
 {
     class AssetCache;
+    class AssetResolver;
 
     class ParticleWorld
     {
     public:
-        ParticleWorld(World &world, AssetCache &assets, std::string assetIdRoot, uint32_t capacity = 64);
+        ParticleWorld(World &world, AssetCache &assets, const AssetResolver &resolver, uint32_t capacity = 64);
         ParticleWorld(const ParticleWorld &) = delete;
         ParticleWorld &operator=(const ParticleWorld &) = delete;
 
@@ -54,7 +55,7 @@ namespace mir
     private:
         World &mWorld;
         AssetCache &mAssets;
-        std::string mAssetIdRoot;
+        const AssetResolver &mResolver;
         ParticleRuntime mRuntime;
         std::unordered_map<uint64_t, ParticleEffect> mPendingEffects;
         bool mReloadPrepared = false;

@@ -11,7 +11,7 @@
 #include <animation/ModelEvaluation.h>
 #include <jobs/JobExecutor.h>
 #include <exception>
-#include <assets/AssetPath.h>
+#include <assets/AssetResolver.h>
 #include <cmath>
 #include <core/ecs/EngineMode.h>
 #include <core/ecs/World.h>
@@ -297,20 +297,20 @@ namespace mir
                     alive.insert(packed);
                     if (player.ModelName().empty() && player.ModelAsset().IsNull())
                         return;
-                    const AssetPathResult logical = MakeLogicalAssetPath(mRoot, player.ModelName());
-                    const std::string path = logical.Ok() ? logical.path : std::string(player.ModelName());
                     AssetId id = player.ModelAsset();
                     if (id.IsNull())
                     {
-                        if (!logical.Ok())
+                        std::string reason;
+                        id = mResolver.Resolve(player.ModelName(), &reason);
+                        if (id.IsNull())
                         {
                             if (mFailed.insert(packed).second)
-                                MIR_LOG_ERROR("Model '{}': {}", player.ModelName(), Describe(logical.error));
+                                MIR_LOG_ERROR("Model '{}': {}", player.ModelName(), reason);
                             mRequestedModels[packed] = 0;
                             return;
                         }
-                        id = MakeAssetId(path);
                     }
+                    const std::string path = mResolver.PathOf(id);
                     if (mRequestedModels[packed] != id.value)
                     {
                         mRequestedModels[packed] = id.value;

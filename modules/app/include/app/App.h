@@ -10,7 +10,9 @@
 
 #include <project/GameProject.h>
 #include <animation/AnimationModule.h>
+#include <assets/AssetResolver.h>
 #include <assets/AssetsModule.h>
+#include <assets/AsyncAssetService.h>
 #ifndef MIR_WITH_AUDIO
 #error "MIR_WITH_AUDIO is set by linking mir::app"
 #endif
@@ -139,6 +141,9 @@ namespace mir
         // Never null; empty until a build or import cooks something
         AssetCache *Assets() { return &mAssets.Cache(); }
 
+        // The background asset loader. Null when there was no manifest at startup, for the whole session
+        AsyncAssetService *AssetService() { return mAssetService.get(); }
+
         // The scene currently in the World
         LoadedScene &Scene() { return mScene.Scene(); }
 
@@ -257,6 +262,8 @@ namespace mir
 
         CoreModule mCore;
         AssetsModule mAssets;
+        std::unique_ptr<AsyncAssetService> mAssetService;
+        AssetResolver mResolver;
         ParticlesModule mParticles;
         SceneModule mScene;
         PrefabModule mPrefab;

@@ -14,7 +14,7 @@
 #include <assets/AssetBlob.h>
 #include <assets/AssetCache.h>
 #include <assets/AssetId.h>
-#include <assets/AssetPath.h>
+#include <assets/AssetResolver.h>
 #include <core/ecs/World.h>
 #include <core/log/Log.h>
 
@@ -24,22 +24,22 @@
 namespace mir
 {
     ScriptLoader MakeScriptAssetLoader(IScriptHost &host, ScriptReloadWatcher &reload, AssetCache &assets,
-        std::string assetIdRoot)
+        const AssetResolver &resolver)
     {
-        return [&host, &reload, &assets, idRoot = std::move(assetIdRoot)](std::string_view name)
+        return [&host, &reload, &assets, &resolver](std::string_view name)
             {
-                const AssetPathResult path = MakeLogicalAssetPath(idRoot, "scripts/" + std::string(name) + ".lua");
-                if (!path.Ok())
+                std::string reason;
+                const AssetId id = resolver.Resolve("scripts/" + std::string(name) + ".lua", &reason);
+                if (id.IsNull())
                 {
-                    MIR_LOG_ERROR("Script '{}': {}", name, Describe(path.error));
+                    MIR_LOG_ERROR("Script '{}': {}", name, reason);
                     return false;
                 }
 
-                const AssetId id = MakeAssetId(path.path);
                 const AssetBlobView *blob = assets.Load(id);
                 if (blob == nullptr || !host.LoadScriptSource(name, AsStringView(*blob)))
                 {
-                    MIR_LOG_ERROR("Script '{}': could not load '{}'", name, path.path);
+                    MIR_LOG_ERROR("Script '{}': could not load '{}'", name, resolver.PathOf(id));
                     return false;
                 }
 

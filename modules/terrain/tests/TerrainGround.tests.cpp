@@ -123,7 +123,7 @@ namespace
         TerrainWorld Resolve(const std::filesystem::path &root, TerrainEagerLoad eager)
         {
             std::vector<TerrainIssue> issues;
-            const TerrainSceneSpec spec = CollectTerrainScene(world, kIdRoot);
+            const TerrainSceneSpec spec = CollectTerrainScene(world, kIdRoot, HashedAssetId);
             issues = spec.issues;
             return ResolveTerrainWorld(spec, root, nullptr, issues, world.Resource<TerrainStreamer>(), eager);
         }

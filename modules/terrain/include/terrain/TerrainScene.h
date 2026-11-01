@@ -92,8 +92,12 @@ namespace mir
         bool operator==(const TerrainSceneSpec &) const = default;
     };
 
+    // The id of the asset with this logical path.
+    using TerrainMaterialIdLookup = std::function<AssetId(std::string_view logicalPath)>;
+
     // Refuses a bad recipe path, and a placement other than a root's translation.
-    TerrainSceneSpec CollectTerrainScene(World &world, std::string_view assetIdRoot);
+    TerrainSceneSpec CollectTerrainScene(World &world, std::string_view assetIdRoot,
+                                         const TerrainMaterialIdLookup &materialId);
 
     // One opened release and its height query. Only the index is read here; a TerrainStreamer it is added
     // to makes payloads resident and is the only writer of the query's residency.

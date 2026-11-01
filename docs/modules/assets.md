@@ -19,10 +19,17 @@ release files (`.tindex`, `.tpack`, anything under `terrain/releases`) are
 TerrainTool's, and the cooker skips them by the rule in
 `terrain/TerrainAssetPath.h` (see [terrain.md](terrain.md)).
 
+The manifest also records what each asset depends on, and a logical path for
+the assets something refers to by name. The cooker reads the dependencies from
+each payload as it writes the blob, so nothing at runtime has to decode a blob
+to learn what else it needs. `Closure` lists an asset and everything it reaches,
+optionally only through blobs of chosen type tags.
+
 ```cpp
 if (AssetCache *cache = app.Assets())
 {
-    if (const AssetBlobView *blob = cache->Load(MakeAssetId("assets/foo.txt")))
+    // resolver is the App's AssetResolver, which a module is handed by reference
+    if (const AssetBlobView *blob = cache->Load(resolver.ResolveFull("assets/foo.txt")))
         Use(AsStringView(*blob));
 }
 ```
@@ -31,13 +38,19 @@ if (AssetCache *cache = app.Assets())
 
 | Type | Header | Role |
 |---|---|---|
-| `AssetId` | `assets/AssetId.h` | FNV-1a 64 of the repo-relative source path; `kNullAssetId`, `MakeAssetId` |
+| `AssetId` | `assets/AssetId.h` | A 64-bit id, 0 is null. `MakeAssetId` hashes a string, for assets the cooker generates |
+| `AssetMeta`, `MakeRandomGuid`, `MakeChildAssetId`, `IsAssetToolingFile` | `assets/AssetMeta.h` | The `<source>.meta` file: its guid and importer state, a random guid, a package part's id from its guid and a key, and the files scans skip |
+| `SourceAssetIds` | `assets/SourceAssetIds.h` | The guids of the source files under a set of roots: reads every `.meta`, creates missing ones, fails on a duplicate guid, finds a file's id from its logical path |
 | `AssetPathResult` | `assets/AssetPath.h` | `NormalizeAssetPath`, `MakeLogicalAssetPath`: the one spelling of a logical path, or an `AssetPathError` |
 | `AssetBlobHeader` | `assets/AssetBlob.h` | 32 bytes: magic, format version, type tag, content version, size, content hash |
 | `AssetBlobView` | `assets/AssetBlob.h` | Header plus a span over the payload; `AsStringView` for text |
-| `AssetManifest` | `assets/AssetManifest.h` | id to type tag, content version and path, over a shared path table |
+| `AssetManifest` | `assets/AssetManifest.h` | id to type tag, content version, cooked file, logical path and direct dependencies, over a shared path table and edge table. `FindByPath`, `Dependencies`, `Closure` |
 | `AssetCache` | `assets/AssetCache.h` | `Load`, `Get`, `Invalidate`, `ResolvedPath` |
-| `AssetsModule` | `assets/AssetsModule.h` | The manifest and cache, loaded at startup, and the reload candidate |
+| `AssetsModule` | `assets/AssetsModule.h` | The manifest and cache, loaded at startup, and the reload candidate. `ReloadEpoch` counts committed reloads |
+| `AsyncAssetService`, `AssetRequest`, `AssetLoadState` | `assets/AsyncAssetService.h` | Reads and decodes assets on a background lane, `Request`, `State`, `Acquire`, `DrainCompletions`, `CancelAll`, `Idle` |
+| `AssetDecoder`, `AssetDependencies` | `assets/AssetDecoder.h` | A decode function with the type tags of the dependencies it reads, and the lookup it gets over the blobs already read |
+| `AssetResolver` | `assets/AssetResolver.h` | `Resolve` turns a path inside the game's assets folder into an `AssetId` through the manifest, `ResolveFull` does the same for an engine asset's full path, `PathOf` gives the path for a message |
+| `AssetSettings` | `assets/AssetSettings.h` | The `assets` section of `project_settings.json`, `loadThreads` |
 | `TextureAsset`, `TextureMip`, `SurfaceMaterialAsset` | `assets/ModelAsset.h` | Typed texture v2 (format, color space, level 0 and higher mip descriptors) and the generic `.material.json` surface material, distinct from the glTF `MaterialAsset` |
 | `ResolveAssetIdRoot` | `assets/AssetIdRoot.h` | Fills a `GameProject`'s asset id root; fails setup on an unusable `assetsRoot` |
 
@@ -47,34 +60,109 @@ module's life, so a holder keeps its pointer across a reload. A reload is
 `BeginReload` (a manifest it cannot parse throws), then holders prepare from
 `Candidate()`, then `CommitReload` swaps it in or `AbortReload` drops it.
 
+`AsyncAssetService` reads, parses and decodes assets on a background lane of the
+app's `JobExecutor` and hands the results to the main thread. `Request` takes an
+id and an `AssetDecoder<T>`, a decode function plus the type tags of the
+dependencies it reads. The manifest is read on the main thread when a request is
+made, the root and the dependencies of those types are copied into one job, and
+the worker reads each file, checks its header against its manifest entry and
+calls the decoder. A result is a `shared_ptr<const T>`, so a holder keeps its
+data past `CancelAll`. `DrainCompletions` runs once a frame before the systems
+update, and it is the only place a request changes state. The cache stays as it
+was, and nothing moves onto the service until a consumer asks for it.
+
+`assets.loadThreads` in `project_settings.json` is how many loads run at once,
+2 by default and 1 to 32. A value outside that range keeps the default and logs
+a warning, and the job queue lowers it to the executor's worker count.
+
 ## Rules
 
-**An `AssetId` is the hash of the source path relative to the repository root.**
+**An `AssetId` is the guid in the asset's `.meta` file.** The cooker writes
+`<source>.meta` beside every file it cooks into an asset, with a random 64-bit guid
+and, for a glTF, the part keys it has handed out. Commit it: a machine that cooks
+without it would invent another guid and every stored id would stop matching. The
+parts of a package, such as a glTF's meshes and clips, take their ids from the
+package's guid and a key (`MakeChildAssetId`). Generated particle scripts are named
+by a hash of their content, and a Prefab by its own UUID.
 
 Cook roots must never be absolute, and `engine_cook_assets` rejects one. The root
-string is part of what gets hashed, so an absolute path would bake one machine's
-checkout location into ids that have to match on every machine.
+string is part of every logical path, and a path is how code finds an asset, so an
+absolute path would bake one machine's checkout location into names that have to
+match on every machine.
 
-**Every id string goes through `assets/AssetPath.h`.** The engine and the cooker
+**Every logical path goes through `assets/AssetPath.h`.** The engine and the cooker
 build `<id root>/<relative path>` with `MakeLogicalAssetPath`, where the id root
 is `games/<Game>/<assetsRoot>` (or `assets` for the engine) and the relative
 path is what a scene stores. The rules are purely lexical: `\` becomes `/`,
 empty and `.` segments drop, `..` pops a segment. A `..` that climbs out of
 its own root, an absolute path, a drive letter, `:` or NUL is an error, not a
-guess. A path spelled like that before `AssetPath` existed keeps its id; the
-cooked manifest was byte-identical before and after the change.
+guess.
 
-**Case is part of the id.** `Terrain/A` and `terrain/A` are two assets even on
-Windows, where both open the same file. Folding case would have changed every
-existing id and let two files collide on a case-sensitive filesystem; a wrong
-case now fails as a missing asset.
+**Renaming or moving a source file keeps its id.** The `.meta` travels with the
+file: the content browser moves it on a rename and removes it on a delete, it moves
+a single file renamed outside the editor, and the cooker moves it with a model. A
+scene that names an asset by path (`meshName`, `systemName`, `scriptName`,
+`modelName`) still has to be rewritten after a rename, because a path is a name and
+not an id.
 
-**Renaming a source file changes its id.** There is no rename tracking, so a
-rename is a new asset as far as anything holding an id is concerned. Scenes
-that reference the old path must be updated explicitly.
+**Never copy a `.meta`.** A copied `.meta` repeats the original's guid, so the cook
+fails and names both files. Delete the copy's `.meta` and cook again. A `.meta` whose
+source file is gone is ignored with a warning.
+
+**Scans skip tooling files.** `IsAssetToolingFile` is true for `.meta`, `.import.json`,
+`.pending` and `.gitkeep`. The content browser, the import manager and the cooker
+leave them out, so a sidecar never shows as an asset and writing one never starts a
+reimport.
+
+**Code at runtime finds an asset by path through `AssetResolver`.** It normalizes the
+path the way the cooker does and looks it up in the manifest, so a path
+that no asset has is a null id and a reason, not a made-up id that fails later
+inside the cache. It reads the manifest the module holds now, so a lookup after a
+reload sees the new cook. `App` owns one, and a module takes it by reference
+instead of the id root string. The resolver keeps a reference to `AssetsModule`,
+which must outlive it. `Resolve` returns a null id for a path that is not valid
+or that no asset has, and its optional `error` says which, so a caller checks
+for null before it loads. `PathOf` gives the id in hex for an asset with no
+path. The cooker, the particle source parsers and the
+editor's file tools read an id from the `.meta` of a source file instead, because
+the files they name may not be cooked yet.
+
+**Case is part of the path.** `Terrain/A` and `terrain/A` are two paths even on
+Windows, where both open the same file. Folding case would let two files collide on
+a case-sensitive filesystem; a wrong case fails as a missing asset.
+
 
 **`AssetCache` is move-only.** The `AssetBlobView` it hands out aliases the
 entry's own buffer, so copying the cache would leave two views onto one buffer.
+
+**A dependency edge always points at an entry of the same manifest.** `Parse`
+rejects one that does not, and the cooker fails the cook naming the asset that
+holds it, so a walk over the graph never meets a missing target.
+
+**A logical path names one entry.** `Parse` rejects a duplicate. Sub-assets that
+nothing refers to by name, such as a glTF's meshes, have an empty one, and an
+empty name matches nothing.
+
+**The service is main thread only, and a worker touches nothing shared.** A job
+holds copied paths, type tags and versions, so it never reads the manifest or
+the cache, and a reload cannot free anything it uses. A decoder runs on a worker,
+so it must not touch shared state.
+
+**Two requests for one asset and decoder share one load.** The key is the id and
+the descriptor's address, so a descriptor has static storage, and the same
+asset under another decoder is a separate load.
+
+**The service remembers a failed load too.** It logs the failure once at the
+drain, and asking again returns the same failed handle without reading anything,
+until `CancelAll` or a reload.
+
+**`CancelAll` and a committed reload make every earlier handle `Stale`.** The
+service sees a reload through `ReloadEpoch` at its next drain or request. Loads
+that have not started are dropped, running ones finish and their results are
+discarded.
+
+**With no workers a load runs inside `Request`.** Its result still waits for the
+next drain, so a state changes at the same point in both modes.
 
 **A failed load is remembered.** The cache does not re-check the disk every frame
 for something that was not there.
@@ -111,7 +199,7 @@ including a validated typed texture dependency. Other files without a dedicated
 importer cook as raw passthrough blobs.
 
 Tests in `modules/assets/tests/`: `AssetBlob`, `AssetCache`, `AssetManifest`,
-`AssetPath`, `ModelAsset`. The cooker side of path identity is checked in
+`AssetMeta`, `AssetPath`, `AssetResolver`, `AssetSettings`, `AsyncAssetService`, `ModelAsset`, `SourceAssetIds`. The cooker side of path identity is checked in
 `tools/AssetCooker/tests/GltfImporter.tests.cpp` ("Cooker ids match the engine's
 logical paths for any root spelling").
 
@@ -125,10 +213,54 @@ logical paths for any root spelling").
    shared watch infrastructure to build on.
 3. **A packed archive** for distribution. Better to ship, worse to iterate, and
    it can be added later without changing any ids.
-4. **GUIDs in sidecar files**, if renames start to hurt. They survive a rename,
-   at the cost of a file per asset and a registry to keep in sync.
+4. **Scenes that name an asset by path.** `meshName`, `systemName`, `scriptName`
+   and `modelName` stay readable, so a rename means rewriting the scenes that use
+   it. Guid fields with a picker would fix that, and the choice waits until there
+   are real scenes. Emitter and effect source JSON also still names its texture and
+   emitters by path, which the cooker turns into guids through the `.meta` files.
 
 ## Changed
+
+*2026-10-31* — **Ids come from `.meta` guids.** Was: an id was a hash of the source
+path, a glTF kept its identity in `<source>.import.json` with an alias for every path
+it had been moved to, and renaming any other file made it a new asset. Now: every
+cooked source file has a `<source>.meta` holding a random guid, the guid is the id,
+a glTF's parts take theirs from the guid and a key, and the aliases and the old
+sidecar are gone. A duplicate guid fails the cook, and every scan skips the sidecars.
+Because a rename should not orphan the scenes, prefabs and particle sources that
+hold an id. `AssetCooker --migrate-ids` moved the existing data: it dry-runs unless
+given `--apply`, gives each glTF with an `.import.json` a guid, rewrites the old
+ids under each `--rewrite-dir` and deletes the old file, and it can be deleted once
+every game has migrated.
+
+*2026-10-31* — **`AssetResolver` replaces the id root in the runtime modules.** Was:
+`App` passed the id root string to the particles, animation, script and renderer
+modules, and each one joined it to a path and hashed the result, so an unknown
+path became an id that failed later inside the cache. Now: `App` owns one
+`AssetResolver`, those modules and the game shell take it by reference, and a
+path that no asset has is a null id with a reason. Because every one of those
+lookups would otherwise change when ids stop being path hashes. The cooker, the particle source
+parsers and the editor's file tools are not part of this change.
+
+*2026-10-31* — **`AsyncAssetService`.** Was: `AssetCache::Load` read, parsed and
+decoded on the calling thread, so a scene that opened blocked until every asset
+it named was in memory, and the cache was not safe to hand to a worker. Now: the
+service does that work on a background lane from copied manifest data and
+publishes results at a drain, `LoadModelResources` has a form over blobs already
+read, and the lane size is the `assets.loadThreads` setting. Because loading had
+to stop blocking the frame without making the cache thread safe. The cache and
+its callers are unchanged.
+
+*2026-10-31* — **Manifest v2: logical paths and dependency edges.** Was: an entry
+held an id, a type tag, a content version and the cooked file name, and the
+cooker decoded emitter blobs again after writing them to find which generated
+scripts to keep. Now: an entry also holds a logical path and a range into an
+edge table, the cooker records the edges when it emits each blob, a script stays
+only while an edge points at it, and a cook fails when an edge target is not in
+the manifest. An old manifest is rejected, so the first cook after the change is
+a full one. Because a request for a model needs its meshes and skeletons known
+before any blob is read, and a lookup by name needs the manifest to carry the
+name.
 
 *2026-10-26* — **Surface materials and cooked mip chains.** Was: a texture was
 RGBA8 level 0 only and the runtime generated mips. Now: `TextureAsset` v2

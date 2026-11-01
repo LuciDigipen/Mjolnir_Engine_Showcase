@@ -16,6 +16,7 @@
 #include <script/ScriptSystem.h>
 #include <window/Window.h>
 
+#include <assets/AssetResolver.h>
 #include <assets/AssetsModule.h>
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/TypeId.h>
@@ -62,7 +63,8 @@ TEST_CASE("The input, script and physics modules keep the ordering constraints c
     mir::AssetsModule assets{ none };
     mir::InputModule input{ { world, scheduler }, window, none / "ProjectSettings.json" };
     mir::PhysicsModule physics{ { world, scheduler }, none / "ProjectSettings.json" };
-    mir::ScriptModule scripts{ { world, scheduler }, assets, "games/Test/assets" };
+    mir::AssetResolver resolver{ assets, "games/Test/assets" };
+    mir::ScriptModule scripts{ { world, scheduler }, assets, resolver };
 
     CHECK(RunsBefore<mir::InputSystem, mir::ScriptSystem>(scheduler, mir::SystemPhase::PreUpdate));
     CHECK(RunsBefore<mir::ScriptResolveSystem, mir::ScriptSystem>(scheduler, mir::SystemPhase::PreUpdate));

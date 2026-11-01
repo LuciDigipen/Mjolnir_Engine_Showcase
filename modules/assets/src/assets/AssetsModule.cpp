@@ -73,6 +73,7 @@ namespace mir
         mCandidate.reset();
         mManifest = std::move(mCandidateManifest);
         mCache.emplace(mManifest.get(), mCookedDir);
+        ++mReloadEpoch;
     }
 
     void AssetsModule::AbortReload()

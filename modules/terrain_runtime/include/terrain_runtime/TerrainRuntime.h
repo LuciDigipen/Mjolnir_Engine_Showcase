@@ -41,6 +41,7 @@
 
 namespace mir
 {
+    class AssetResolver;
     class PhysicsWorld;
     class TerrainGroundBridge;
     class SurfaceMaterialLibrary;
@@ -65,7 +66,7 @@ namespace mir
         // the renderer's mesh streaming and draws terrain per viewport through the World's ViewDrawSources, and
         // guards each fixed step through its PhysicsStepGates.
         void Bind(World &world, VulkanRenderer &renderer, SurfaceMaterialLibrary &materials,
-                  const GameProject &project, JobExecutor &jobs);
+                  const GameProject &project, const AssetResolver &resolver, JobExecutor &jobs);
 
         // The one point per frame where finished terrain reads, mesh builds and uploads are installed; call
         // before any system runs.
@@ -180,6 +181,7 @@ namespace mir
         World *mWorld = nullptr;
         VulkanRenderer *mRenderer = nullptr;
         SurfaceMaterialLibrary *mSurfaceMaterials = nullptr;
+        const AssetResolver *mResolver = nullptr;
         std::string mAssetIdRoot;
         std::filesystem::path mReleasesRoot;
         // Why there is no streamer; reported once, when a scene has terrain.

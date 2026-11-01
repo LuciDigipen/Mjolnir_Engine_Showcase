@@ -10,6 +10,7 @@
 
 #include "ParticleTestAssets.h"
 
+#include <assets/AssetResolver.h>
 #include <assets/AssetsModule.h>
 #include <core/ecs/CoreModule.h>
 #include <core/ecs/EngineMode.h>
@@ -31,7 +32,8 @@ namespace mir::test
         SystemScheduler scheduler;
         CoreModule core{{world, scheduler}, commands};
         AssetsModule assets{files.Root()};
-        ParticlesModule module{{world, scheduler}, assets, "assets", 2};
+        AssetResolver resolver{assets, "assets"};
+        ParticlesModule module{{world, scheduler}, assets, resolver, 2};
         SystemContext context{world, commands, 1.0f / 60.0f};
 
         ParticleTestWorld()

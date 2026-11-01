@@ -4,7 +4,7 @@
 #
 # SOURCE_ROOTS are relative to the repository root, not to the calling
 # CMakeLists. A subdirectory therefore passes "games/foo/assets", not "assets":
-# the root string is hashed into every asset id, so it has to mean the same
+# the root string is part of every logical path, so it has to mean the same
 # thing no matter which CMakeLists asks for it.
 #
 # A .material.json body names its shader and source images. Add the files it
@@ -76,9 +76,9 @@ function(engine_cook_assets target)
         if(IS_ABSOLUTE "${root}")
             message(FATAL_ERROR
                 "engine_cook_assets: SOURCE_ROOTS must be relative to the repository "
-                "root, but got the absolute path \"${root}\". The root is hashed into "
-                "every asset id, so an absolute path would bake this machine's "
-                "checkout location into ids that must match on every machine.")
+                "root, but got the absolute path \"${root}\". The root is part of every "
+                "logical path, so an absolute path would bake this machine's "
+                "checkout location into names that must match on every machine.")
         endif()
 
         # BASE_DIR is the repository root, not CMAKE_CURRENT_SOURCE_DIR: the
@@ -97,15 +97,15 @@ function(engine_cook_assets target)
         _engine_material_cook_dependencies("${root_abs}" material_dependencies)
         list(APPEND source_files ${material_dependencies})
 
-        # Passed as given, not resolved to absolute: AssetCooker hashes
-        # "<root>/<relative path>" into each asset's id, so an absolute path
-        # here would bake this machine's checkout location into every id.
+        # Passed as given, not resolved to absolute: AssetCooker builds each
+        # asset's logical path as "<root>/<relative path>", so an absolute path
+        # here would bake this machine's checkout location into every path.
         list(APPEND cooker_args --source "${root}")
     endforeach()
 
     set(out_dir "${ARG_OUT_DIR}")
 
-    # AssetCooker decides output filenames itself (hashed asset ids), so
+    # AssetCooker decides output filenames itself (an asset id and a content hash), so
     # unlike Shaders.cmake the exact OUTPUT set isn't known at configure time.
     # A stamp file stands in for it; DEPENDS on every source file still gives
     # recook-on-edit, and DEPENDS on the AssetCooker target recooks when the

@@ -11,6 +11,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <limits>
+#include <unordered_map>
 using namespace mir;
 TEST_CASE("ModelPlayer scene fields omit transient preview state", "[animation]")
 {
@@ -175,4 +176,104 @@ TEST_CASE("Typed assets reject truncation oversized arrays trailing bytes and cy
     m.nodes[0].key = "cycle";
     m.nodes[0].parent = 0;
     CHECK_FALSE(ValidateAsset(m, error));
+}
+
+namespace
+{
+    // Blobs by id, as a worker would hold them after reading a model's files
+    struct BlobSet
+    {
+        std::unordered_map<uint64_t, std::vector<std::byte>> bytes;
+        std::unordered_map<uint64_t, AssetBlobView> views;
+
+        void Add(AssetId id, std::vector<std::byte> blob)
+        {
+            auto &stored = bytes[id.value] = std::move(blob);
+            views[id.value] = *ParseAssetBlob(stored);
+        }
+        AssetDependencies Lookup() const
+        {
+            return AssetDependencies([this](AssetId id) -> const AssetBlobView *
+                {
+                    const auto found = views.find(id.value);
+                    return found == views.end() ? nullptr : &found->second;
+                });
+        }
+    };
+
+    struct ModelBlobs
+    {
+        AssetId model = MakeAssetId("model"), mesh = MakeAssetId("mesh"), clip = MakeAssetId("clip");
+        BlobSet blobs;
+
+        ModelBlobs()
+        {
+            ModelAsset asset;
+            asset.nodes.resize(1);
+            asset.nodes[0].key = "root";
+            asset.nodes[0].mesh = mesh;
+            asset.scenes = {{"scene", {0}}};
+            asset.animations = {clip};
+            blobs.Add(model, BuildTypedAsset(asset));
+
+            MeshAsset geometry;
+            MeshPrimitive primitive;
+            primitive.vertices.resize(3);
+            primitive.indices = {0, 1, 2};
+            geometry.primitives.push_back(primitive);
+            blobs.Add(mesh, BuildTypedAsset(geometry));
+
+            AnimationTrack track;
+            track.target = "root";
+            track.path = AnimationPath::Translation;
+            track.times = {0, 1};
+            track.values = {0, 0, 0, 1, 0, 0};
+            AnimationClipAsset animation;
+            animation.duration = 1;
+            animation.tracks = {track};
+            blobs.Add(clip, BuildTypedAsset(animation));
+        }
+    };
+}
+
+TEST_CASE("Model resources decode from a root blob and its dependency blobs", "[animation][assets]")
+{
+    ModelBlobs set;
+    ModelResources resources;
+    std::string error;
+    const AssetDependencies lookup = set.blobs.Lookup();
+    REQUIRE(DecodeModelResources(set.blobs.views.at(set.model.value), lookup, resources, error));
+    CHECK(resources.model.nodes.size() == 1);
+    CHECK(resources.meshes.contains(set.mesh.value));
+    CHECK(resources.clips.size() == 1);
+}
+
+TEST_CASE("Model resources fail when a dependency blob is not available", "[animation][assets]")
+{
+    ModelBlobs set;
+    ModelResources resources;
+    std::string error;
+
+    SECTION("the mesh")
+    {
+        set.blobs.views.erase(set.mesh.value);
+    }
+    SECTION("the clip")
+    {
+        set.blobs.views.erase(set.clip.value);
+    }
+    const AssetDependencies lookup = set.blobs.Lookup();
+    CHECK_FALSE(DecodeModelResources(set.blobs.views.at(set.model.value), lookup, resources, error));
+    CHECK(error == "no cooked blob");
+    CHECK(resources.meshes.empty());
+}
+
+TEST_CASE("The model decoder lists the geometry, skeleton and clip types", "[animation][assets]")
+{
+    const AssetDecoder<ModelResources> &decoder = ModelResourcesDecoder();
+    CHECK(decoder.decode == &DecodeModelResources);
+    const std::vector<uint32_t> tags(decoder.dependencyTags.begin(), decoder.dependencyTags.end());
+    CHECK(tags == std::vector<uint32_t>{kMeshAssetTypeTag, kSkeletonAssetTypeTag, kAnimationAssetTypeTag});
+    // one descriptor for the whole process, so requests for a model deduplicate
+    CHECK(&ModelResourcesDecoder() == &decoder);
 }
