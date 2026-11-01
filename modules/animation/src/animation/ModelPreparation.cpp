@@ -50,7 +50,7 @@ namespace mir
         AsyncAssetService *assets, AssetId id, std::string label)
         : mHost(host), mErrorTexture(errorTexture), mId(id), mLabel(std::move(label)),
           mTracker(textures.TextureLoads(assets)), mMeshTracker(host.ModelMeshes(assets)),
-          mMaterials(host.MaterialRecords()), mRevision(assets != nullptr ? assets->Revision() : 0)
+          mMaterials(host.MaterialRecords()), mService(assets), mRevision(assets != nullptr ? assets->Revision() : 0)
     {
         if (assets == nullptr)
         {
@@ -112,8 +112,10 @@ namespace mir
             const AssetId texture = material.baseColorTexture;
             if (texture.IsNull() || mTextureClaims.contains(texture.value))
                 continue;
-            mTracker->Request(texture, std::format("{} texture {:016x}", mLabel, texture.value));
-            mTextureClaims.emplace(texture.value, TextureLoadLease(mTracker, texture));
+            const UploadKey key{ texture, UploadContent(mService, texture) };
+            mTextureKeys.emplace(texture.value, key);
+            mTracker->Request(key, std::format("{} texture {:016x}", mLabel, texture.value));
+            mTextureClaims.emplace(texture.value, TextureLoadLease(mTracker, key));
         }
         mState = State::Textures;
     }
@@ -192,7 +194,7 @@ namespace mir
                     {
                         std::vector<TextureLoadLease> claims;
                         if (!claimedTexture.IsNull())
-                            claims.emplace_back(mTracker, claimedTexture);
+                            claims.emplace_back(mTracker, mTextureKeys.at(claimedTexture.value));
                         MaterialLease lease(mMaterials, mMaterials->Acquire(variant, std::move(claims)));
                         const MaterialHandle handle = lease.Get();
                         model->materialClaims.push_back(std::move(lease));
@@ -220,8 +222,12 @@ namespace mir
                     primitives.push_back(gpu);
 
                     // A record is shared by every consumer that asks for the same bytes and options.
-                    const GpuRecordKey recordKey{ AssetId{ key }, static_cast<uint32_t>(index),
-                        ContentIdentity::ForRevision(mRevision), MeshUploadOptions{ .rayTracing = true } };
+                    // The mesh blob alone decides the vertices, so an unchanged mesh keeps its record across a reload.
+                    const uint64_t content = UploadContent(mService, AssetId{ key });
+                    const ContentIdentity identity = (content >> 63) != 0 ? ContentIdentity::ForRevision(mRevision)
+                                                                          : ContentIdentity::ForContent(content);
+                    const GpuRecordKey recordKey{ AssetId{ key }, static_cast<uint32_t>(index), identity,
+                        MeshUploadOptions{ .rayTracing = true } };
                     const AssetId record = mMeshTracker->Request(recordKey,
                         [&p]
                         {

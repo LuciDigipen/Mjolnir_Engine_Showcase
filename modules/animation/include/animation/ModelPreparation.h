@@ -77,10 +77,13 @@ namespace mir
         std::shared_ptr<TextureLoadTracker> mTracker;
         std::shared_ptr<ModelMeshTracker> mMeshTracker;
         std::shared_ptr<MaterialRecordCache> mMaterials;
+        AsyncAssetService *mService;
         uint32_t mRevision = 0;
         AssetLease<ModelResources> mResources;
         std::shared_ptr<const ModelResources> mLoaded;
         std::unordered_map<uint64_t, TextureLoadLease> mTextureClaims;
+        // The upload record each texture asset names, its content decides whether an old record is reused.
+        std::unordered_map<uint64_t, UploadKey> mTextureKeys;
         // Built once the textures settle, published when every mesh upload is ready.
         std::unique_ptr<PreparedModel> mPrepared;
         struct MeshSlot

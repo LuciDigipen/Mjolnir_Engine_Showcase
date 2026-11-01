@@ -15,6 +15,7 @@
 #include <core/EngineVersion.h>
 #include <core/ecs/EngineMode.h>
 #include <core/ecs/Requests.h>
+#include <core/ecs/SceneLoadGroup.h>
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
 #include <core/log/SetupError.h>
@@ -24,6 +25,8 @@
 #include <prefab/PrefabCoordinator.h>
 #include <project/ProjectSettings.h>
 #include <scene/SceneIO.h>
+
+#include <imgui.h>
 
 #include <algorithm>
 #include <chrono>
@@ -37,6 +40,9 @@ namespace mir
 {
     namespace
     {
+        // Longest a standalone game holds its simulation for resources that never settle.
+        constexpr double kSceneGateTimeoutSeconds = 30.0;
+
         size_t MissingFileCount(const SceneProbe &probe)
         {
             return probe.mMissingEntities.size() + probe.mMissingInstances.size();
@@ -180,7 +186,11 @@ namespace mir
 
         //without the editor there is no Play button
         if (!mDesc.mEnableEditorLayout)
+        {
+            mGateScenes = true;
+            mLoadingDrawer = mImGui.AddDrawer(DrawerGroup::Game, [this] { DrawLoadingOverlay(); });
             PlayScene();
+        }
 
         // every module is built, so a library that took the crash filter slot has done so
         ReclaimCrashHandler();
@@ -375,6 +385,60 @@ namespace mir
         SetPlayState(mWorld, IsPaused(mWorld) ? PlayState::Running : PlayState::Paused);
     }
 
+    void App::UpdateSceneGate()
+    {
+        if (!mGateScenes)
+            return;
+        SceneLoadGroup &group = mWorld.Resource<SceneLoadGroup>();
+        if (!group.Ready())
+        {
+            if (!mSceneGated && IsPlaying(mWorld))
+            {
+                mSceneGated = true;
+                mGateStartedAt = mElapsed;
+                mGateStartFrame = mFrame;
+            }
+            if (mSceneGated && IsSimulating(mWorld))
+                SetPlayState(mWorld, PlayState::Paused);
+            // a resource that never settles must not hold the game forever
+            if (mSceneGated && mElapsed - mGateStartedAt > kSceneGateTimeoutSeconds)
+            {
+                MIR_LOG_ERROR("The scene is still not ready after {} seconds, starting it anyway",
+                    kSceneGateTimeoutSeconds);
+                group.ForceReady();
+            }
+            return;
+        }
+        if (!mSceneGated)
+            return;
+        mSceneGated = false;
+        if (IsPaused(mWorld))
+            SetPlayState(mWorld, PlayState::Running);
+        MIR_LOG_INFO("Scene ready after {} frames", mFrame - mGateStartFrame);
+    }
+
+    void App::DrawLoadingOverlay()
+    {
+        if (!mSceneGated)
+            return;
+        const SceneLoadGroup &group = mWorld.Resource<SceneLoadGroup>();
+        const ImGuiViewport *viewport = ImGui::GetMainViewport();
+        ImDrawList *draw = ImGui::GetForegroundDrawList();
+        const ImVec2 min = viewport->Pos, max(min.x + viewport->Size.x, min.y + viewport->Size.y);
+        draw->AddRectFilled(min, ImVec2(max.x, max.y), IM_COL32(0, 0, 0, 255));
+
+        // the bar waits for the work set, so it never walks backwards as more is found
+        const char *status = group.Discovered() ? "Loading scene..." : "Preparing scene...";
+        const float width = std::min(viewport->Size.x * 0.4f, 480.0f);
+        const ImVec2 center(min.x + viewport->Size.x * 0.5f, min.y + viewport->Size.y * 0.5f);
+        const ImVec2 textSize = ImGui::CalcTextSize(status);
+        draw->AddText(ImVec2(center.x - textSize.x * 0.5f, center.y - 24.0f), IM_COL32(255, 255, 255, 255), status);
+        draw->AddRect(ImVec2(center.x - width * 0.5f, center.y), ImVec2(center.x + width * 0.5f, center.y + 8.0f),
+            IM_COL32(255, 255, 255, 255));
+        draw->AddRectFilled(ImVec2(center.x - width * 0.5f, center.y),
+            ImVec2(center.x - width * 0.5f + width * group.Progress(), center.y + 8.0f), IM_COL32(255, 255, 255, 255));
+    }
+
     void App::ApplyRequests()
     {
         RequestQueue &queue = mWorld.Resource<RequestQueue>();
@@ -554,6 +618,7 @@ namespace mir
             ApplyRequests();
             if (mAssetService)
                 mAssetService->DrainCompletions();
+            UpdateSceneGate();
 
             SystemContext frameContext = MakeContext(dt);
             mScheduler.RunFrameSlot(FrameSlot::FrameBegin, frameContext);
@@ -568,6 +633,7 @@ namespace mir
             if (!mDesc.mCapturePath.empty() && mFrame + 1 == mDesc.mMaxFrames)
                 mRenderer.Renderer().CaptureNextFrame(mDesc.mCapturePath);
             mScheduler.Update(context, fixedSteps, mFixedTimestep.mStep);
+            mWorld.Resource<SceneLoadGroup>().EndFrame();
 
             if (mWorld.Resource<InputState>().JustPressed(kToggleFullscreenAction))
                 ToggleFullscreen();

@@ -13,6 +13,7 @@
 #include <assets/AsyncAssetService.h>
 #include <core/Registration.h>
 #include <core/ecs/CommandBuffer.h>
+#include <core/ecs/SceneLoadGroup.h>
 #include <core/ecs/World.h>
 #include <jobs/JobExecutor.h>
 #include <renderer/MeshAssetDecoder.h>
@@ -402,4 +403,72 @@ TEST_CASE("The first cook makes the meshes of a scene and a preview drawable wit
     CHECK(f.scene.BoundsOf(sceneEntity) != nullptr);
     CHECK_FALSE(preview.MeshOf(previewEntity).IsNull());
     CHECK(preview.BoundsOf(previewEntity) != nullptr);
+}
+
+TEST_CASE("A scene is ready when its mesh bindings have bounds or failed for good", "[renderer][mesh-resolve][scene-load]")
+{
+    Fixture f;
+    SceneLoadGroup &group = f.scene.world.EmplaceResource<SceneLoadGroup>();
+    group.Begin();
+    f.scene.Spawn("tri");
+
+    // a frame to learn the work, then frames while the upload and the bounds catch up
+    f.Frame();
+    group.EndFrame();
+    CHECK_FALSE(group.Ready());
+    f.Frame();
+    group.EndFrame();
+    CHECK_FALSE(group.Ready());
+    CHECK(group.Progress() < 1.0f);
+
+    f.FinishUploads();
+    for (int frame = 0; frame < 4 && !group.Ready(); ++frame)
+    {
+        f.Frame();
+        group.EndFrame();
+    }
+    CHECK(group.Ready());
+    CHECK(group.Progress() == 1.0f);
+}
+
+TEST_CASE("A mesh that cannot load settles its binding so the scene does not wait for it", "[renderer][mesh-resolve][scene-load]")
+{
+    Fixture f;
+    SceneLoadGroup &group = f.scene.world.EmplaceResource<SceneLoadGroup>();
+    group.Begin();
+    f.scene.Spawn("no-such-mesh");
+    for (int frame = 0; frame < 6 && !group.Ready(); ++frame)
+    {
+        f.Frame();
+        group.EndFrame();
+    }
+    CHECK(group.Ready());
+    CHECK(f.host.uploader.queued == 0);
+}
+
+TEST_CASE("A scene with no resource bindings is ready after its first full frame", "[renderer][mesh-resolve][scene-load]")
+{
+    Fixture f;
+    SceneLoadGroup &group = f.scene.world.EmplaceResource<SceneLoadGroup>();
+    group.Begin();
+    f.Frame();
+    group.EndFrame();
+    CHECK_FALSE(group.Ready());
+    f.Frame();
+    group.EndFrame();
+    CHECK(group.Ready());
+}
+
+TEST_CASE("A builtin shape is settled the frame it resolves", "[renderer][mesh-resolve][scene-load]")
+{
+    Fixture f;
+    SceneLoadGroup &group = f.scene.world.EmplaceResource<SceneLoadGroup>();
+    group.Begin();
+    f.scene.Spawn("Cube");
+    for (int frame = 0; frame < 4 && !group.Ready(); ++frame)
+    {
+        f.Frame();
+        group.EndFrame();
+    }
+    CHECK(group.Ready());
 }

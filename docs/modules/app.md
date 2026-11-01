@@ -243,6 +243,15 @@ left in `App` is the import's failure report in `ApplyImportedAssets`.
 **`NewScene`/`SaveScene`/`LoadScene` refuse while Play is running.** These can
 corrupt the current scene.
 
+**A standalone game waits for its scene's resources.** Without the editor layout
+`App` pauses Play at the start of each frame while `SceneLoadGroup` is not ready,
+and resumes it when it is. Window events, completion drains and the renderer's
+uploads keep running, and an overlay covers the half-loaded scene with a bar that
+waits for the work set before it moves. The gate gives up after 30 seconds with an
+error log, so one resource that never settles cannot hold the game forever. The
+editor's Play is never gated. A pause is the mechanism, so anything that ignores
+`IsSimulating` still runs during the wait.
+
 ## State
 
 *As of 2026-10-24.* The loop runs, the scheduler ticks, scripts drive entities,

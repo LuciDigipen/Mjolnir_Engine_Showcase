@@ -9,6 +9,7 @@
 #pragma once
 
 #include "ModuleContext.h"
+#include "core/Registration.h"
 
 namespace mir
 {
@@ -23,5 +24,9 @@ namespace mir
 
         CoreModule(const CoreModule &) = delete;
         CoreModule &operator=(const CoreModule &) = delete;
+
+    private:
+        // a scene load starts a new SceneLoadGroup
+        Registration mSceneLoad;
     };
 }

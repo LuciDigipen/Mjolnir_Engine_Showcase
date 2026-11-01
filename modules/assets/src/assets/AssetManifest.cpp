@@ -243,6 +243,74 @@ namespace mir
         return std::span<const AssetId>(mEdges).subspan(entry.depOffset, entry.depCount);
     }
 
+    uint64_t AssetManifest::ContentHash(const AssetManifestEntry &entry) const
+    {
+        const std::string_view path = PathOf(entry);
+        const size_t dash = path.rfind('-'), dot = path.rfind('.');
+        if (dash == std::string_view::npos || dot == std::string_view::npos || dot <= dash + 1 || dot - dash - 1 != 16)
+            return 0;
+        uint64_t value = 0;
+        for (size_t i = dash + 1; i < dot; ++i)
+        {
+            const char c = path[i];
+            uint64_t digit;
+            if (c >= '0' && c <= '9')
+                digit = c - '0';
+            else if (c >= 'a' && c <= 'f')
+                digit = c - 'a' + 10;
+            else
+                return 0;
+            value = (value << 4) | digit;
+        }
+        return value;
+    }
+
+    namespace
+    {
+        constexpr uint64_t Mix(uint64_t hash, uint64_t value)
+        {
+            hash = (hash ^ value) * 0x100000001b3ull;
+            return hash ^ (hash >> 29);
+        }
+    }
+
+    namespace
+    {
+        // Known content never sets the top bit, so a caller can use that bit for a value of its own.
+        constexpr uint64_t Known(uint64_t hash)
+        {
+            hash &= 0x7FFFFFFFFFFFFFFFull;
+            return hash == 0 ? 1 : hash;
+        }
+    }
+
+    uint64_t AssetManifest::EntryContent(AssetId id) const
+    {
+        const AssetManifestEntry *entry = Find(id);
+        const uint64_t content = entry != nullptr ? ContentHash(*entry) : 0;
+        if (content == 0)
+            return 0;
+        uint64_t hash = Mix(0xcbf29ce484222325ull, id.value);
+        hash = Mix(Mix(Mix(hash, entry->typeTag), entry->contentVersion), content);
+        return Known(hash);
+    }
+
+    uint64_t AssetManifest::ClosureContent(AssetId root, std::span<const uint32_t> tags) const
+    {
+        const std::vector<AssetId> closure = Closure(root, tags);
+        if (closure.empty())
+            return 0;
+        uint64_t hash = 0xcbf29ce484222325ull;
+        for (const AssetId id : closure)
+        {
+            const uint64_t content = EntryContent(id);
+            if (content == 0)
+                return 0;
+            hash = Mix(hash, content);
+        }
+        return Known(hash);
+    }
+
     std::vector<AssetId> AssetManifest::Closure(AssetId root, std::span<const uint32_t> tags) const
     {
         std::vector<AssetId> result;

@@ -210,6 +210,18 @@ packs its six image roles into three cooked textures. The full cook leaves the
 source images out, and a partial material cook drops an older standalone
 manifest entry for them.
 
+## Content identity
+
+A cooked blob is named `<id>-<fnv hash>.blob`, so its manifest path carries what
+its bytes are. `AssetManifest::EntryContent` folds an entry's id, type, version and
+that hash into one value, and `ClosureContent` folds a root and the dependencies a
+decoder reads, in closure order. `AsyncAssetService::ContentOf` answers for a
+request, and zero means the name carried no hash, so the content cannot be
+known. A reload keeps the decoded results of requests whose content is known and
+the next request for the same asset, decoder and content adopts one without
+reading or decoding again, if a borrower still holds it. A request whose content
+changed, a dependency included, decodes as before.
+
 ## State
 
 *As of 2026-10-26.* Ids, the blob container, the manifest and the cache all work.
@@ -247,6 +259,12 @@ logical paths for any root spelling").
    emitters by path, which the cooker turns into guids through the `.meta` files.
 
 ## Changed
+
+*2026-11-01* — **Decoded results survive a reload when their content is unchanged.**
+Was: a committed reload dropped every unclaimed result and decoded again, whatever
+the cook changed. Now: a result is kept by decoded content, derived from the
+content hash in the blob file name, and adopted by the next request for the same
+asset and decoder, see Content identity.
 
 *2026-10-31* — **Ids come from `.meta` guids.** Was: an id was a hash of the source
 path, a glTF kept its identity in `<source>.import.json` with an alias for every path

@@ -83,6 +83,8 @@ namespace mir
 
         const CachedMesh &ResolveMesh(const std::string &meshName);
         MeshView ViewOf(const CachedMesh &cached) const;
+        // A failure is as final as a ready mesh, the scene stops waiting for it
+        static bool Failed(const CachedMesh &cached);
         MaterialHandle ResolveMaterial(const std::string &shaderName);
 
         IMeshResolveHost &mRenderer;

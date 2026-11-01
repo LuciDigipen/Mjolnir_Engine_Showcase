@@ -19,6 +19,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <format>
+
 using namespace mir;
 
 namespace
@@ -31,7 +33,10 @@ namespace
 
     struct CookedModel : test::CookedDir
     {
-        explicit CookedModel(bool withTexture = true)
+        explicit CookedModel(bool withTexture = true) { Write(withTexture); }
+
+        // Blob names carry a content hash like a cook's, a mesh variant changes the mesh blob alone.
+        void Write(bool withTexture = true, uint32_t meshVariant = 0)
         {
             ModelAsset model;
             model.nodes.resize(1);
@@ -40,6 +45,7 @@ namespace
             model.scenes = { { "scene", { 0 } } };
             MeshPrimitive primitive;
             primitive.vertices.resize(3);
+            primitive.vertices[0].position.x = static_cast<float>(meshVariant);
             primitive.indices = { 0, 1, 2 };
             primitive.material = kMaterial;
             primitive.baseColorTexture = kTexture;
@@ -52,18 +58,21 @@ namespace
             texture.width = texture.height = 4;
             texture.rgba.assign(64, 80);
 
+            const std::string modelFile = "model-0000000000000011.blob",
+                meshFile = std::format("mesh-{:016x}.blob", 0x12 + meshVariant),
+                materialFile = "material-0000000000000013.blob", textureFile = "texture-0000000000000014.blob";
             const std::vector<std::pair<std::string, std::vector<std::byte>>> blobs{
-                { "model.blob", BuildTypedAsset(model) }, { "mesh.blob", BuildTypedAsset(mesh) },
-                { "material.blob", BuildTypedAsset(material) }, { "texture.blob", BuildTypedAsset(texture) } };
+                { modelFile, BuildTypedAsset(model) }, { meshFile, BuildTypedAsset(mesh) },
+                { materialFile, BuildTypedAsset(material) }, { textureFile, BuildTypedAsset(texture) } };
             for (const auto &[file, bytes] : blobs)
                 REQUIRE(WriteBytes(Path() / file, bytes));
             const AssetId modelEdges[]{ kMesh }, meshEdges[]{ kMaterial }, materialEdges[]{ kTexture };
             std::vector<AssetManifestSourceEntry> entries{
-                { { kModel, kModelAssetTypeTag, kModelAssetContentVersion }, "model.blob", "model", modelEdges },
-                { { kMesh, kMeshAssetTypeTag, kMeshAssetContentVersion }, "mesh.blob", "mesh", meshEdges },
-                { { kMaterial, kMaterialAssetTypeTag, kMaterialAssetContentVersion }, "material.blob", "material",
+                { { kModel, kModelAssetTypeTag, kModelAssetContentVersion }, modelFile, "model", modelEdges },
+                { { kMesh, kMeshAssetTypeTag, kMeshAssetContentVersion }, meshFile, "mesh", meshEdges },
+                { { kMaterial, kMaterialAssetTypeTag, kMaterialAssetContentVersion }, materialFile, "material",
                   materialEdges },
-                { { kTexture, kTextureAssetTypeTag, kTextureAssetContentVersion }, "texture.blob", "texture", {} } };
+                { { kTexture, kTextureAssetTypeTag, kTextureAssetContentVersion }, textureFile, "texture", {} } };
             // a texture the catalog does not list, its material still names it
             if (!withTexture)
             {
@@ -257,4 +266,62 @@ TEST_CASE("Abandoning a preparation drops its texture claim", "[animation][model
     }
     CHECK(textures.mRetired.size() == 1);
     CHECK(host.createdMaterials.empty());
+}
+
+TEST_CASE("A reload with unchanged content republishes from the existing records", "[animation][model-preparation]")
+{
+    Fixture f;
+    f.QueueTexture();
+    const TextureHandle texture{ 0, 1 };
+    f.mTextures.Begin(texture);
+    f.mTextures.CopyAll(texture);
+    f.mTextures.Complete(texture);
+    f.Frame();
+    const MeshHandle mesh{ 0, 1 };
+    f.mHost.uploader.Record(mesh);
+    f.mHost.uploader.Complete(mesh);
+    REQUIRE(f.Frame() == ModelPreparation::State::Ready);
+    const auto before = f.mPreparation.Take();
+    const auto resources = before->resources;
+
+    SECTION("an identical cook")
+    {
+        f.Write();
+        f.mAssets.BeginReload();
+        f.mAssets.CommitReload();
+        ModelPreparation after(f.mHost, f.mTextures, kError, &f.mService, kModel, "model");
+        // the decoded model is adopted, so nothing waits on the lane
+        REQUIRE(after.Advance() == ModelPreparation::State::Ready);
+        const auto replacement = after.Take();
+        CHECK(replacement->resources == resources);
+        CHECK(replacement->meshes.at(kMesh.value)[0].mesh == mesh);
+        CHECK(replacement->meshes.at(kMesh.value)[0].material == before->meshes.at(kMesh.value)[0].material);
+        CHECK(f.mHost.uploader.queued == 1);
+        CHECK(f.mTextures.mQueued == 1);
+        CHECK(f.mHost.createdMaterials.size() == 2);
+    }
+    SECTION("a cook that changes only the mesh")
+    {
+        f.Write(true, 1);
+        f.mAssets.BeginReload();
+        f.mAssets.CommitReload();
+        ModelPreparation after(f.mHost, f.mTextures, kError, &f.mService, kModel, "model");
+        for (int frame = 0; frame < 8 && after.GetState() != ModelPreparation::State::Meshes; ++frame)
+        {
+            f.mService.DrainCompletions();
+            after.Advance();
+        }
+        REQUIRE(after.GetState() == ModelPreparation::State::Meshes);
+        // a new mesh upload, the texture and both materials are the same records
+        CHECK(f.mHost.uploader.queued == 2);
+        CHECK(f.mTextures.mQueued == 1);
+        CHECK(f.mHost.createdMaterials.size() == 2);
+        f.mHost.uploader.Complete(MeshHandle{ 1, 1 });
+        REQUIRE(after.Advance() == ModelPreparation::State::Ready);
+        const auto replacement = after.Take();
+        CHECK(replacement->meshes.at(kMesh.value)[0].mesh == MeshHandle{ 1, 1 });
+        CHECK(replacement->meshes.at(kMesh.value)[0].material == before->meshes.at(kMesh.value)[0].material);
+        // the old model still draws its own mesh until it is released
+        CHECK(before->meshes.at(kMesh.value)[0].mesh == mesh);
+    }
 }

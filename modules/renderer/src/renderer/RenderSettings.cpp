@@ -136,6 +136,16 @@ namespace mir
         return std::isfinite(mib) && mib > 0.0 && mib <= kMaxUploadMiBPerFrame;
     }
 
+    bool RenderSettings::ValidResidencyMiB(double mib)
+    {
+        return std::isfinite(mib) && mib > 0.0 && mib <= kMaxResidencyMiB;
+    }
+
+    uint64_t RenderSettings::ResidencyBytes() const
+    {
+        return std::max<uint64_t>(1, uint64_t(residencyMiB * 1024.0 * 1024.0));
+    }
+
     uint64_t RenderSettings::UploadFrameBytes() const
     {
         // Never zero.
@@ -165,6 +175,10 @@ namespace mir
         double uploadMiB = settings.uploadMiBPerFrame;
         if (ReadNumber(*renderingIt, "uploadMiBPerFrame", uploadMiB) && ValidUploadMiBPerFrame(uploadMiB))
             settings.uploadMiBPerFrame = uploadMiB;
+
+        double residencyMiB = settings.residencyMiB;
+        if (ReadNumber(*renderingIt, "residencyMiB", residencyMiB) && ValidResidencyMiB(residencyMiB))
+            settings.residencyMiB = residencyMiB;
 
         const auto gi = renderingIt->find("ddgi");
         if (gi != renderingIt->end() && gi->is_object())
@@ -226,12 +240,12 @@ namespace mir
     bool RenderSettings::SaveFile(const std::filesystem::path &path) const
     {
         if (ddgi.ValidationError() != nullptr || ssgi.ValidationError() != nullptr ||
-            !ValidUploadMiBPerFrame(uploadMiBPerFrame))
+            !ValidUploadMiBPerFrame(uploadMiBPerFrame) || !ValidResidencyMiB(residencyMiB))
             return false;
         return UpdateJsonFile(path, [this](json &root)
             {
                 root["rendering"] = json{ { "rayTracing", rayTracing },
-                    { "uploadMiBPerFrame", uploadMiBPerFrame },
+                    { "uploadMiBPerFrame", uploadMiBPerFrame }, { "residencyMiB", residencyMiB },
                     { "ddgi", {
                         { "enabled", ddgi.enabled }, { "origin", ddgi.origin },
                         { "probeCounts", ddgi.probeCounts }, { "probeSpacing", ddgi.probeSpacing },

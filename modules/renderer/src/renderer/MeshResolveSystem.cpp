@@ -11,6 +11,7 @@
 #include <assets/AssetId.h>
 #include <assets/AssetResolver.h>
 #include <core/ecs/Query.h>
+#include <core/ecs/SceneLoadGroup.h>
 #include <core/ecs/TypeId.h>
 #include <core/ecs/World.h>
 #include <core/log/Log.h>
@@ -67,7 +68,7 @@ namespace mir
 
         // materials come from shaders, not the asset cache, so they stay
         mMeshes.clear();
-        mTracker->EvictUnused();
+        // The tracker outlives the catalog, an unchanged mesh keeps its GPU record and a changed one has a new key.
         mTracker = mRenderer.MeshLoads(mAssets);
         mResolved.clear();
     }
@@ -129,8 +130,9 @@ namespace mir
 
         // the tracker reports a failed load once, and this entry remembers it
         cached.mAsset = id;
-        mTracker->Request(id, mResolver.PathOf(id));
-        cached.mLease = MeshLoadLease(mTracker, id);
+        const UploadKey key{ id, UploadContent(mAssets, id) };
+        mTracker->Request(key, mResolver.PathOf(id));
+        cached.mLease = MeshLoadLease(mTracker, key);
         return cached;
     }
 
@@ -145,6 +147,15 @@ namespace mir
         // the draw path skips a mesh that is not Ready, so the queued handle goes on at once
         return MeshView{ load->mesh,
             load->phase == MeshLoadPhase::Ready ? std::optional<MeshBounds>(load->bounds) : std::nullopt };
+    }
+
+    bool MeshResolveSystem::Failed(const CachedMesh &cached)
+    {
+        // a builtin shape is made at once, and a name that did not resolve was logged and stays unresolved
+        if (cached.mAsset.IsNull())
+            return true;
+        const MeshLoad *load = cached.mLease.Get();
+        return load == nullptr || load->phase == MeshLoadPhase::Failed;
     }
 
     MaterialHandle MeshResolveSystem::ResolveMaterial(const std::string &shaderName)
@@ -185,6 +196,7 @@ namespace mir
         std::unordered_set<std::string> usedMeshes;
         std::unordered_set<std::string> usedShaders;
 
+        uint32_t required = 0, settled = 0;
         world.GetOrCreateQuery<MeshRenderer>().ForEach(
             [&](Entity entity, MeshRenderer &meshRenderer)
             {
@@ -219,7 +231,18 @@ namespace mir
                     resolved.mShader = shaderName;
                     meshRenderer.material = shaderName.empty() ? MaterialHandle{} : ResolveMaterial(resolved.mShader);
                 }
+
+                // The scene needs this binding resolved: bounds published, or a failure that will not change.
+                if (!meshName.empty())
+                {
+                    ++required;
+                    const auto cached = mMeshes.find(resolved.mMesh);
+                    if (world.Has<MeshBounds>(entity) || (cached != mMeshes.end() && Failed(cached->second)))
+                        ++settled;
+                }
             });
+        if (SceneLoadGroup *group = world.TryResource<SceneLoadGroup>())
+            group->Report(this, required, settled);
 
         std::vector<MeshHandle> releasedMeshes;
         std::vector<MaterialHandle> releasedMaterials;

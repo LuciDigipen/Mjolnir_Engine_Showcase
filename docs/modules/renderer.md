@@ -190,10 +190,17 @@ Model primitives arrive as memory from a typed mesh asset, not the raw format
 `MeshLoadTracker` decodes, so `ModelMeshes(service)` returns a `ModelMeshTracker`
 that reuses the same upload lifecycle with caller-supplied vertices. A record is
 named by a `GpuRecordKey`, the cooked asset and primitive, a `ContentIdentity` and
-the creation options. Until blob content identity exists the identity is the
-catalog revision, so a changed asset never reuses an old record, and the tracker
-is per revision as well. The key table gives each key a sequential id, so there
-is no hash collision to reason about. `MaterialRecords()` returns one
+the creation options. The key table gives each key a sequential id, so there is
+no hash collision to reason about.
+
+The mesh, model mesh and texture trackers are shared across catalog revisions,
+and an upload record is named by an `UploadKey`, the asset and the decoded
+content from `AsyncAssetService::ContentOf`. After a reload an unchanged asset
+asks for the same key and finds its GPU record, a changed asset has another key
+and uploads again while the old record serves whoever still holds it. A blob
+whose file name carries no content hash has unknown content, and its key is
+qualified by the catalog revision instead, so it is never assumed unchanged.
+`UploadContent` builds that value and keeps the top bit for the revision form. `MaterialRecords()` returns one
 `MaterialRecordCache` for the renderer. It keys a material by its complete
 resolved description compared by value, including the texture handle and
 generation, the sampler, render state and record bytes, so equal descriptions
@@ -203,8 +210,9 @@ variant differ in front face and are two records. A record owns the
 consumer, and an unused record stays until the renderer is over its residency
 target because it pins textures.
 
-`GpuResidency` holds one total target (512 MiB by default) and optional category
-limits for meshes and textures. Each cache reports the bytes it holds, and the
+`GpuResidency` holds one total target and optional category limits for meshes
+and textures. The target is the project's `rendering.residencyMiB`, 512 by
+default, and a value that is not a positive number up to 65536 keeps the default. Each cache reports the bytes it holds, and the
 mesh cache reports retiring bytes that the GPU still reads. A cache that has
 dropped its last claim asks `Excess` and releases its own unused records,
 oldest first, until it has freed that much. Active claims are never released, so
@@ -304,7 +312,7 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `AntiAliasingMode`, `AntiAliasingParams`, `ClampAntiAliasingMode`, `ClampRtSampleCount` | `renderer/AntiAliasingEffect.h` | Off/Fxaa/Msaa/Dlss and `rtSampleCount`; the Post-Processing entry's json shape; the mode and sample-count enforcement `ResolvePostProcessing` applies every frame - see Rules |
 | `PostProcessingState`, `ResolvePostProcessing` | `renderer/PostProcessingState.h` | `PostProcessingSettings` and the viewing `Camera`'s lens resolved into the exact values `SetPostProcessing` applies: defaults for a missing entry, neutral values for a disabled one (fog density 0, exposure 1/None, bloom intensity 0, neutral film), negative lens values 0, motion blur's sample count at least 1, AA clamped. Pure, so it is unit-tested without a device |
 | `DlssConfig.h` | `renderer/DlssConfig.h` (generated) | `MIR_WITH_DLSS`/`kDlssCompiledIn` and the NGX project id |
-| `RenderSettings` | `renderer/RenderSettings.h` | Project Settings' `"rendering"` section (`rayTracing`, `uploadMiBPerFrame` and `ddgi`); `LoadFile`/`SaveFile`, a World resource `RendererModule` loads |
+| `RenderSettings` | `renderer/RenderSettings.h` | Project Settings' `"rendering"` section (`rayTracing`, `uploadMiBPerFrame`, `residencyMiB` and `ddgi`); `LoadFile`/`SaveFile`, a World resource `RendererModule` loads |
 
 ## Rules
 

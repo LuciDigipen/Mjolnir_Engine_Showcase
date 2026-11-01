@@ -160,6 +160,12 @@ did not draw at all. Now: each of those logs an error and the primitive draws
 with the renderer's error texture or error material and a magenta tint. Only
 a failed mesh still fails the model. Because: issue #19.
 
+*2026-11-01* — **A reload reuses what did not change.** Was: every reload
+prepared each model from nothing. Now: the decoded model is adopted by content, and
+the mesh, texture and material records are found by their keys, so an identical cook
+republishes the same handles and a cook that changes one mesh uploads that mesh
+alone.
+
 *2026-11-01* — **Models prepare in the background.** `ModelSystem` loaded a
 model and uploaded its textures synchronously, and a reload staged GPU resources
 at `ReloadPrepare` so a rejected cook vetoed the swap. `ModelPreparation` now

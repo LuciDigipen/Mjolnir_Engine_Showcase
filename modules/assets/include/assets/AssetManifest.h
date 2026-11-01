@@ -82,6 +82,17 @@ namespace mir
         // The root is always kept, and an unknown root gives an empty result.
         std::vector<AssetId> Closure(AssetId root, std::span<const uint32_t> tags = {}) const;
 
+        // The blob's content hash, read from its content-addressed file name (<id>-<hash>.blob). Zero when the
+        // name carries none, so the content is unknown and must not be assumed unchanged.
+        uint64_t ContentHash(const AssetManifestEntry &entry) const;
+        // One value for an entry alone: its id, type, version and blob hash. Zero when unknown or absent. Known
+        // content values never have the top bit set.
+        uint64_t EntryContent(AssetId id) const;
+        // One value for the root and everything Closure reaches under tags, in closure order. Equal values mean
+        // equal decoded results. Zero when any member is unknown or the root is not in the manifest. Empty tags
+        // follow Closure and reach every dependency, use EntryContent for a root-only decode.
+        uint64_t ClosureContent(AssetId root, std::span<const uint32_t> tags = {}) const;
+
         std::size_t Count() const { return mEntries.size(); }
         std::span<const AssetManifestEntry> Entries() const { return mEntries; }
 

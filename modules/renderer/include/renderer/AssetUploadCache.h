@@ -15,6 +15,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -23,6 +24,37 @@
 namespace mir
 {
     enum class AssetUploadPhase : uint8_t { Decoding, Uploading, Ready, Failed };
+
+    // What an upload record was made from. Content is the decoded identity from the asset service, zero for a
+    // cache that lives for one catalog revision. A cache shared across revisions always passes content, so a
+    // changed asset never reuses an old record while an unchanged one keeps its GPU resource.
+    struct UploadKey
+    {
+        AssetId asset;
+        uint64_t content = 0;
+
+        UploadKey() = default;
+        UploadKey(AssetId assetId, uint64_t contentId = 0) : asset(assetId), content(contentId) {}
+        bool operator==(const UploadKey &) const = default;
+    };
+
+    // The content part of an UploadKey for a request to the service: the decoded content when the catalog knows it,
+    // else a value qualified by the catalog revision with the top bit set, which never equals known content.
+    inline uint64_t UploadContent(AsyncAssetService *assets, AssetId id, std::span<const uint32_t> tags = {})
+    {
+        if (assets == nullptr)
+            return 0x8000000000000000ull;
+        const uint64_t content = assets->ContentOfTags(id, tags);
+        return content != 0 ? content : 0x8000000000000000ull | (uint64_t(assets->Revision()) + 1);
+    }
+
+    struct UploadKeyHash
+    {
+        std::size_t operator()(const UploadKey &key) const
+        {
+            return std::hash<uint64_t>{}(key.asset.value) ^ (std::hash<uint64_t>{}(key.content) * 0x9E3779B97F4A7C15ull);
+        }
+    };
 
     template <class Decoded, class Handle, class View, Handle View::*Member>
     class AssetUploadCache
@@ -58,15 +90,15 @@ namespace mir
         AssetUploadCache(const AssetUploadCache &) = delete;
         AssetUploadCache &operator=(const AssetUploadCache &) = delete;
 
-        const View &Request(AssetId id, const std::string &label);
+        const View &Request(UploadKey key, const std::string &label);
         // Requests a record from data already in memory. make runs only when the record is absent, the caller
         // chooses key so it names the content and creation options. Use Request for cooked assets.
-        const View &RequestInline(AssetId key, const std::function<std::shared_ptr<const Decoded>()> &make,
+        const View &RequestInline(UploadKey key, const std::function<std::shared_ptr<const Decoded>()> &make,
             const std::string &label);
-        const View *Find(AssetId id) const;
-        void Retain(AssetId id);
-        void Drop(AssetId id);
-        std::vector<AssetId> Update();
+        const View *Find(UploadKey key) const;
+        void Retain(UploadKey key);
+        void Drop(UploadKey key);
+        std::vector<UploadKey> Update();
         void Reset() { mEntries.clear(); mWaiting.clear(); }
         void Release(std::vector<Handle> &ready);
         void EvictUnused();
@@ -103,8 +135,8 @@ namespace mir
         Footprint mFootprint;
         Metadata mMetadata;
         std::function<uint64_t()> mRetiring;
-        std::unordered_map<uint64_t, Entry> mEntries;
-        std::vector<uint64_t> mWaiting;
+        std::unordered_map<UploadKey, Entry, UploadKeyHash> mEntries;
+        std::vector<UploadKey> mWaiting;
         std::shared_ptr<GpuResidency> mResidency;
         GpuCategory mCategory;
         uint32_t mHolder = 0;
@@ -116,7 +148,7 @@ namespace mir
     {
     public:
         AssetUploadLease() = default;
-        AssetUploadLease(std::shared_ptr<Cache> cache, AssetId id) : mCache(std::move(cache)), mId(id)
+        AssetUploadLease(std::shared_ptr<Cache> cache, UploadKey id) : mCache(std::move(cache)), mId(id)
             { mCache->Retain(mId); }
         ~AssetUploadLease() { Reset(); }
         AssetUploadLease(const AssetUploadLease &) = delete;
@@ -127,13 +159,15 @@ namespace mir
         const typename Cache::ViewType *Get() const { return mCache ? mCache->Find(mId) : nullptr; }
     private:
         std::shared_ptr<Cache> mCache;
-        AssetId mId;
+        UploadKey mId;
     };
 
     template <class Cache> class AssetUploadRegistry
     {
     public:
-        template <class Uploader> std::shared_ptr<Cache> Get(Uploader &uploader, AsyncAssetService *assets);
+        // A cache shared across revisions keys its records by content, one per revision drops with its catalog.
+        template <class Uploader>
+        std::shared_ptr<Cache> Get(Uploader &uploader, AsyncAssetService *assets, bool sharedAcrossRevisions = false);
         template <class Retire> void Release(Retire retire);
     private:
         struct Entry

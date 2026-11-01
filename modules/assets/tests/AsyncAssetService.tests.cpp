@@ -743,3 +743,119 @@ TEST_CASE("A lane of no loads is refused", "[assets][async]")
     JobExecutor jobs(0);
     CHECK_THROWS_AS(AsyncAssetService(assets, jobs, 0), std::invalid_argument);
 }
+
+TEST_CASE("A result whose content is unchanged survives a reload without decoding again", "[assets][async][content]")
+{
+    ResetCounters();
+    Cooked cooked;
+    cooked.Add("greeting", "hello");
+    cooked.Find("greeting").cookedFile = "greeting-00000000000000aa.blob";
+    cooked.Add("note", "same");
+    cooked.Find("note").cookedFile = "note-00000000000000bb.blob";
+    cooked.Write();
+    AssetsModule assets(cooked.dir);
+    JobExecutor jobs(0);
+    AsyncAssetService service(assets, jobs, 1);
+    auto first = service.RequestLease(Id("greeting"), kTextDecoder);
+    service.DrainCompletions();
+    REQUIRE(first.Acquire());
+    const auto before = first.Acquire();
+    CHECK(gDecodes == 1);
+    CHECK(service.ContentOf(Id("greeting"), kTextDecoder) != 0);
+
+    SECTION("an identical cook")
+    {
+        const uint64_t content = service.ContentOf(Id("greeting"), kTextDecoder);
+        cooked.Write();
+        assets.BeginReload();
+        assets.CommitReload();
+        CHECK(service.ContentOf(Id("greeting"), kTextDecoder) == content);
+        auto again = service.RequestLease(Id("greeting"), kTextDecoder);
+        // ready at once, the lane never ran
+        CHECK(again.State() == AssetLoadState::Ready);
+        CHECK(again.Acquire() == before);
+        CHECK(gDecodes == 1);
+    }
+    SECTION("a cook that changes only another asset")
+    {
+        cooked.Find("note").bytes = MakeBlob(kTextTag, 1, "changed");
+        cooked.Find("note").cookedFile = "note-00000000000000cc.blob";
+        cooked.Write();
+        assets.BeginReload();
+        assets.CommitReload();
+        auto again = service.RequestLease(Id("greeting"), kTextDecoder);
+        CHECK(again.Acquire() == before);
+        CHECK(gDecodes == 1);
+    }
+    SECTION("a cook that changes the asset")
+    {
+        const uint64_t content = service.ContentOf(Id("greeting"), kTextDecoder);
+        cooked.Find("greeting").bytes = MakeBlob(kTextTag, 1, "bye");
+        cooked.Find("greeting").cookedFile = "greeting-00000000000000dd.blob";
+        cooked.Write();
+        assets.BeginReload();
+        assets.CommitReload();
+        CHECK(service.ContentOf(Id("greeting"), kTextDecoder) != content);
+        auto again = service.RequestLease(Id("greeting"), kTextDecoder);
+        CHECK(again.State() == AssetLoadState::Queued);
+        service.DrainCompletions();
+        REQUIRE(again.Acquire());
+        CHECK(again.Acquire()->value == "bye");
+        CHECK(gDecodes == 2);
+    }
+    SECTION("a decoder is part of the identity")
+    {
+        cooked.Write();
+        assets.BeginReload();
+        assets.CommitReload();
+        auto upper = service.RequestLease(Id("greeting"), kUpperDecoder);
+        CHECK(upper.State() == AssetLoadState::Queued);
+        service.DrainCompletions();
+        CHECK(upper.Acquire()->value == "HELLO");
+    }
+}
+
+TEST_CASE("A blob whose name carries no content hash is never assumed unchanged", "[assets][async][content]")
+{
+    ResetCounters();
+    Cooked cooked;
+    cooked.Add("greeting", "hello");
+    cooked.Write();
+    AssetsModule assets(cooked.dir);
+    JobExecutor jobs(0);
+    AsyncAssetService service(assets, jobs, 1);
+    CHECK(service.ContentOf(Id("greeting"), kTextDecoder) == 0);
+    auto first = service.RequestLease(Id("greeting"), kTextDecoder);
+    service.DrainCompletions();
+    cooked.Find("greeting").bytes = MakeBlob(kTextTag, 1, "bye");
+    cooked.Write();
+    assets.BeginReload();
+    assets.CommitReload();
+    auto again = service.RequestLease(Id("greeting"), kTextDecoder);
+    service.DrainCompletions();
+    REQUIRE(again.Acquire());
+    CHECK(again.Acquire()->value == "bye");
+    CHECK(gDecodes == 2);
+}
+
+TEST_CASE("A dependency's content is part of its dependent's identity", "[assets][async][content]")
+{
+    ResetCounters();
+    Cooked cooked;
+    cooked.Add("part-a", "a", {}, kPartTag);
+    cooked.Find("part-a").cookedFile = "part-a-0000000000000011.blob";
+    cooked.Add("bundle", "root", { Id("part-a") });
+    cooked.Find("bundle").cookedFile = "bundle-0000000000000022.blob";
+    cooked.Write();
+    AssetsModule assets(cooked.dir);
+    JobExecutor jobs(0);
+    AsyncAssetService service(assets, jobs, 1);
+    const uint64_t content = service.ContentOf(Id("bundle"), kBundleDecoder);
+    CHECK(content != 0);
+    cooked.Find("part-a").bytes = MakeBlob(kPartTag, 1, "changed");
+    cooked.Find("part-a").cookedFile = "part-a-0000000000000033.blob";
+    cooked.Write();
+    assets.BeginReload();
+    assets.CommitReload();
+    CHECK(service.ContentOf(Id("bundle"), kBundleDecoder) != content);
+}

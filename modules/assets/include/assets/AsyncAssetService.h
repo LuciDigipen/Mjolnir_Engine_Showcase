@@ -73,6 +73,16 @@ namespace mir
 
         AssetLoadState State(AssetRequest request) const;
 
+        // Identity of what a request for id with this decoder would decode, from the current catalog. Equal
+        // values mean equal results, across catalog revisions too. Zero when it cannot be known, such as a
+        // blob whose name carries no content hash, and then only the revision tells content apart.
+        template <class T>
+        uint64_t ContentOf(AssetId id, const AssetDecoder<T> &decoder) const
+        {
+            return ContentOfTags(id, decoder.dependencyTags);
+        }
+        uint64_t ContentOfTags(AssetId id, std::span<const uint32_t> tags) const;
+
         // convert failure to printable string
         const std::string &FailureReason(AssetRequest request) const;
 
@@ -126,6 +136,9 @@ namespace mir
 
             AssetId id;
             std::shared_ptr<detail::AssetLoadRecord> record;
+            // what the result was made from, zero when unknown
+            uint64_t content = 0;
+            const void *descriptor = nullptr;
         };
 
         struct DedupKey
@@ -141,6 +154,16 @@ namespace mir
             {
                 return std::hash<uint64_t>{}(key.id) ^ (std::hash<const void *>{}(key.descriptor) * 0x9E3779B97F4A7C15ull);
             }
+        };
+
+        // A result a reload left behind, adopted by the first request for the same decoded content.
+        struct Carried
+        {
+            DedupKey key;
+            uint64_t content = 0;
+            std::type_index type = typeid(void);
+            std::weak_ptr<const void> result;
+            uint64_t bytes = 0;
         };
 
         AssetRequest RequestErased(AssetId id, const void *descriptor, std::type_index type,
@@ -167,6 +190,7 @@ namespace mir
         std::vector<Slot> mSlots;
         std::vector<uint32_t> mFreeSlots;
         std::unordered_map<DedupKey, uint32_t, DedupKeyHash> mDedup;
+        std::vector<Carried> mCarried;
         struct Allocation
         {
             std::weak_ptr<const void> value;

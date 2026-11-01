@@ -208,6 +208,11 @@ namespace mir
         // what the editor, the game shell and the import asked for last frame
         void ApplyRequests();
 
+        // A standalone game holds its simulation paused until the scene's resources are ready, while the
+        // window, completions and uploads keep running. The editor never gates Play.
+        void UpdateSceneGate();
+        void DrawLoadingOverlay();
+
         // True when the editor has material drafts that are not accepted yet.
         bool HasUnsavedMaterialDrafts() const;
 
@@ -315,5 +320,12 @@ namespace mir
         double mElapsed = 0.0;
         uint64_t mFrame = 0;
         FixedTimestep mFixedTimestep;
+
+        bool mGateScenes = false;
+        bool mSceneGated = false;
+        double mGateStartedAt = 0.0;
+        uint64_t mGateStartFrame = 0;
+        // last: it unregisters before anything it draws from is destroyed
+        Registration mLoadingDrawer;
     };
 } // namespace mir

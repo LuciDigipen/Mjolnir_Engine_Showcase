@@ -7,37 +7,37 @@
 namespace mir
 {
     template <class Decoded, class Handle, class View, Handle View::*Member>
-    const View &AssetUploadCache<Decoded, Handle, View, Member>::Request(AssetId id, const std::string &label)
+    const View &AssetUploadCache<Decoded, Handle, View, Member>::Request(UploadKey key, const std::string &label)
     {
-        const auto found = mEntries.find(id.value);
+        const auto found = mEntries.find(key);
         if (found != mEntries.end())
             return found->second.mView;
-        Entry &entry = mEntries[id.value];
+        Entry &entry = mEntries[key];
         entry.mLabel = label;
         if (mAssets == nullptr)
             Fail(entry, "there is no asset service");
         else
         {
-            entry.mRequest = mAssets->RequestLease(id, mDecoder);
-            mWaiting.push_back(id.value);
+            entry.mRequest = mAssets->RequestLease(key.asset, mDecoder);
+            mWaiting.push_back(key);
         }
         return entry.mView;
     }
 
     template <class Decoded, class Handle, class View, Handle View::*Member>
-    const View &AssetUploadCache<Decoded, Handle, View, Member>::RequestInline(AssetId key,
+    const View &AssetUploadCache<Decoded, Handle, View, Member>::RequestInline(UploadKey key,
         const std::function<std::shared_ptr<const Decoded>()> &make, const std::string &label)
     {
-        const auto found = mEntries.find(key.value);
+        const auto found = mEntries.find(key);
         if (found != mEntries.end())
             return found->second.mView;
-        Entry &entry = mEntries[key.value];
+        Entry &entry = mEntries[key];
         entry.mLabel = label;
         entry.mInline = make();
         if (!entry.mInline)
             Fail(entry, "there is no data to upload");
         else
-            mWaiting.push_back(key.value);
+            mWaiting.push_back(key);
         return entry.mView;
     }
 
@@ -51,24 +51,24 @@ namespace mir
     }
 
     template <class Decoded, class Handle, class View, Handle View::*Member>
-    const View *AssetUploadCache<Decoded, Handle, View, Member>::Find(AssetId id) const
+    const View *AssetUploadCache<Decoded, Handle, View, Member>::Find(UploadKey key) const
     {
-        const auto found = mEntries.find(id.value);
+        const auto found = mEntries.find(key);
         return found == mEntries.end() ? nullptr : &found->second.mView;
     }
 
     template <class Decoded, class Handle, class View, Handle View::*Member>
-    void AssetUploadCache<Decoded, Handle, View, Member>::Retain(AssetId id)
+    void AssetUploadCache<Decoded, Handle, View, Member>::Retain(UploadKey key)
     {
-        auto &entry = mEntries.at(id.value);
+        auto &entry = mEntries.at(key);
         ++entry.mConsumers;
         entry.mLastUse = ++mUseSerial;
     }
 
     template <class Decoded, class Handle, class View, Handle View::*Member>
-    void AssetUploadCache<Decoded, Handle, View, Member>::Drop(AssetId id)
+    void AssetUploadCache<Decoded, Handle, View, Member>::Drop(UploadKey key)
     {
-        const auto found = mEntries.find(id.value);
+        const auto found = mEntries.find(key);
         if (found == mEntries.end() || found->second.mConsumers == 0)
             return;
         Entry &entry = found->second;
@@ -81,15 +81,15 @@ namespace mir
             return;
         }
         RetireEntry(entry);
-        std::erase(mWaiting, id.value);
+        std::erase(mWaiting, key);
         mEntries.erase(found);
     }
 
     template <class Decoded, class Handle, class View, Handle View::*Member>
-    std::vector<AssetId> AssetUploadCache<Decoded, Handle, View, Member>::Update()
+    std::vector<UploadKey> AssetUploadCache<Decoded, Handle, View, Member>::Update()
     {
-        std::vector<AssetId> changed;
-        std::erase_if(mWaiting, [&](uint64_t key)
+        std::vector<UploadKey> changed;
+        std::erase_if(mWaiting, [&](const UploadKey &key)
             {
                 Entry &entry = mEntries.at(key);
                 const auto before = entry.mView.phase;
@@ -98,7 +98,7 @@ namespace mir
                 if (entry.mView.phase == AssetUploadPhase::Uploading)
                     Upload(entry);
                 if (entry.mView.phase != before)
-                    changed.push_back(AssetId{ key });
+                    changed.push_back(key);
                 return entry.mView.phase == AssetUploadPhase::Ready || entry.mView.phase == AssetUploadPhase::Failed;
             });
         return changed;
@@ -219,11 +219,11 @@ namespace mir
         }
         if (need == 0)
             return;
-        std::vector<std::pair<uint64_t, uint64_t>> unused;
+        std::vector<std::pair<uint64_t, UploadKey>> unused;
         for (const auto &[key, entry] : mEntries)
             if (entry.mConsumers == 0 && entry.mView.phase == AssetUploadPhase::Ready)
                 unused.emplace_back(entry.mLastUse, key);
-        std::sort(unused.begin(), unused.end());
+        std::sort(unused.begin(), unused.end(), [](const auto &a, const auto &b) { return a.first < b.first; });
         uint64_t freed = 0;
         for (const auto &[serial, key] : unused)
         {
@@ -260,9 +260,10 @@ namespace mir
 
     template <class Cache>
     template <class Uploader>
-    std::shared_ptr<Cache> AssetUploadRegistry<Cache>::Get(Uploader &uploader, AsyncAssetService *assets)
+    std::shared_ptr<Cache> AssetUploadRegistry<Cache>::Get(Uploader &uploader, AsyncAssetService *assets,
+        bool sharedAcrossRevisions)
     {
-        const uint32_t revision = assets ? assets->Revision() : 0;
+        const uint32_t revision = assets && !sharedAcrossRevisions ? assets->Revision() : 0;
         std::erase_if(mCaches, [assets, revision](const Entry &cache)
             {
                 if (cache.mAssets != assets || cache.mRevision == revision || cache.mCache.use_count() != 1)

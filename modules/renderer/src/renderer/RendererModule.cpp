@@ -53,6 +53,7 @@ namespace mir
         context.world.EmplaceResource<RenderSettings>(renderSettings);
         // The game's play-time upload budget.
         mRenderer.SetUploadFrameBudget(renderSettings.UploadFrameBytes());
+        mRenderer.SharedResidency()->SetTotalTarget(renderSettings.ResidencyBytes());
         context.world.EmplaceResource<PostProcessingSettings>(
             PostProcessingSettings::LoadFile(settings.mProjectSettingsPath).value_or(PostProcessingSettings{}));
 

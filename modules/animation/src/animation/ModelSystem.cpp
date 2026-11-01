@@ -14,6 +14,7 @@
 #include <assets/AssetResolver.h>
 #include <cmath>
 #include <core/ecs/EngineMode.h>
+#include <core/ecs/SceneLoadGroup.h>
 #include <core/ecs/World.h>
 #include <core/ecs/components/WorldTransform.h>
 #include <core/log/Log.h>
@@ -117,6 +118,8 @@ namespace mir
         };
         struct Result { ModelEvaluationResult value; std::exception_ptr error; };
         std::vector<Input> inputs;
+        // The scene needs each model resolved: published, or failed in a way that will not change.
+        uint32_t required = 0, settled = 0;
         {
             context.world.GetOrCreateQuery<ModelPlayer, const WorldTransform>().ForEach(
                 [&](Entity entity, ModelPlayer &player, const WorldTransform &transform)
@@ -125,6 +128,7 @@ namespace mir
                     alive.insert(packed);
                     if (player.ModelName().empty() && player.ModelAsset().IsNull())
                         return;
+                    ++required;
                     AssetId id = player.ModelAsset();
                     if (id.IsNull())
                     {
@@ -135,6 +139,7 @@ namespace mir
                             if (mFailed.insert(packed).second)
                                 MIR_LOG_ERROR("Model '{}': {}", player.ModelName(), reason);
                             mRequestedModels[packed] = 0;
+                            ++settled;
                             return;
                         }
                     }
@@ -145,13 +150,19 @@ namespace mir
                         mFailed.erase(packed);
                     }
                     if (mFailed.contains(packed))
+                    {
+                        ++settled;
                         return;
+                    }
+                    bool counted = false;
                     try
                     {
                         const PreparedModel *data = Load(id);
                         // hidden until the first preparation settles
                         if (data == nullptr)
                             return;
+                        ++settled;
+                        counted = true;
                         if (player.ModelAsset().IsNull())
                             player.SetModelAsset(id);
                         if (player.IsPlaying() && IsSimulating(context.world))
@@ -191,8 +202,12 @@ namespace mir
                     {
                         MIR_LOG_ERROR("Model '{}': {}", path, e.what());
                         mFailed.insert(packed);
+                        if (!counted)
+                            ++settled;
                     }
                 });
+            if (SceneLoadGroup *group = context.world.TryResource<SceneLoadGroup>())
+                group->Report(this, required, settled);
         } // main-thread gather; no query or World access escapes into a job
         std::vector<Result> results(inputs.size());
         {

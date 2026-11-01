@@ -115,6 +115,10 @@ namespace mir
             mDedup.erase(found);
         }
 
+        const auto catalog = mAssets.ManifestSnapshot();
+        const AssetManifest &manifest = *catalog;
+        const uint64_t content = dependencyTags.empty() ? manifest.EntryContent(id) : manifest.ClosureContent(id, dependencyTags);
+
         uint32_t index;
         if (mFreeSlots.empty())
         {
@@ -129,11 +133,26 @@ namespace mir
         }
         mSlots[index].record->mPinned = pinned;
         mSlots[index].record->mLastUse = ++mUseSerial;
+        mSlots[index].content = content;
+        mSlots[index].descriptor = descriptor;
         mDedup.emplace(key, index);
+
+        // An unchanged result from an earlier catalog is adopted, nothing is read or decoded again.
+        if (content != 0)
+            if (const auto carried = std::find_if(mCarried.begin(), mCarried.end(),
+                    [&](const Carried &item) { return item.key == key && item.content == content && item.type == type; });
+                carried != mCarried.end())
+                if (auto result = carried->result.lock())
+                {
+                    auto &record = *mSlots[index].record;
+                    record.mResult = std::move(result);
+                    record.mBytes = carried->bytes;
+                    record.mState = AssetLoadState::Ready;
+                    mCarried.erase(carried);
+                    return { index, mGeneration };
+                }
         ++mQueuedCount;
 
-        const auto catalog = mAssets.ManifestSnapshot();
-        const AssetManifest &manifest = *catalog;
         std::vector<AssetId> closure;
         if (manifest.Find(id) != nullptr)
             closure = dependencyTags.empty() ? std::vector<AssetId>{ id } : manifest.Closure(id, dependencyTags);
@@ -345,6 +364,12 @@ namespace mir
         return mQueuedCount == 0;
     }
 
+    uint64_t AsyncAssetService::ContentOfTags(AssetId id, std::span<const uint32_t> tags) const
+    {
+        const auto catalog = mAssets.ManifestSnapshot();
+        return tags.empty() ? catalog->EntryContent(id) : catalog->ClosureContent(id, tags);
+    }
+
     uint32_t AsyncAssetService::Revision() const { return mAssets.ReloadEpoch(); }
 
     uint64_t AsyncAssetService::DecodedBytes() const
@@ -412,6 +437,11 @@ namespace mir
         mSeenReloadEpoch = mAssets.ReloadEpoch();
         // Existing leases retain their revision, new requests resolve against the new catalog.
         ++mGeneration;
+        std::erase_if(mCarried, [](const Carried &item) { return item.result.expired(); });
+        for (const Slot &slot : mSlots)
+            if (slot.record && slot.content != 0 && slot.record->mState == AssetLoadState::Ready && slot.record->mResult)
+                mCarried.push_back({ DedupKey{ slot.id.value, slot.descriptor }, slot.content, slot.record->mType,
+                    slot.record->mResult, slot.record->mBytes });
         for (Slot &slot : mSlots)
             if (slot.record && slot.record->mConsumers == 0)
                 slot.record->mCancelled = true;

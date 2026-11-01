@@ -52,7 +52,10 @@ namespace
         std::vector<AssetId> Frame()
         {
             service.DrainCompletions();
-            return tracker.Update();
+            std::vector<AssetId> changed;
+            for (const UploadKey &key : tracker.Update())
+                changed.push_back(key.asset);
+            return changed;
         }
 
         CookedDir cooked;

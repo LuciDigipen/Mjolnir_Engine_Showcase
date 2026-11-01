@@ -54,7 +54,7 @@ namespace mir
 
     std::shared_ptr<TextureLoadTracker> ITextureUploader::TextureLoads(AsyncAssetService *assets)
     {
-        return mTextureCaches.Get(*this, assets);
+        return mTextureCaches.Get(*this, assets, true);
     }
 
     void ITextureUploader::ReleaseCachedTextures()
