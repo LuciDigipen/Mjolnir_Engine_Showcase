@@ -63,7 +63,10 @@ namespace mir
 
     bool VulkanRenderer::RayTracingSupported() const { return mDevice->RayTracingSupported(); }
 
-    bool VulkanRenderer::RayTracingActive(bool requested) const { return requested && RayTracingSupported(); }
+    bool VulkanRenderer::RayTracingActive(bool requested) const
+    {
+        return requested && RayTracingSupported() && !mRayTracingOutOfMemory;
+    }
 
     bool VulkanRenderer::WireframeAvailable() const { return mDebugDraw->WireframeAvailable(); }
 
@@ -229,14 +232,8 @@ namespace mir
 
     MeshHandle VulkanRenderer::CreateMesh(std::span<const Vertex> vertices, std::span<const uint32_t> indices)
     {
-        const MeshHandle handle = mResources->CreateMesh(vertices, indices);
-        if (handle.IsNull() || !mDevice->RayTracingSupported())
-            return handle;
-
-        if (!mRayTracer->BuildMeshBlas(handle.mIndex, *mResources->FindMesh(handle), static_cast<uint32_t>(vertices.size())))
-            MIR_LOG_ERROR("CreateMesh: BLAS build failed, mesh will raster only");
-
-        return handle;
+        // No BLAS yet: one takes about as much memory as the mesh, and a raster frame never reads it.
+        return mResources->CreateMesh(vertices, indices);
     }
 
     bool VulkanRenderer::DestroyMesh(MeshHandle handle)
@@ -423,6 +420,7 @@ namespace mir
         mDdgi->Shutdown();
 #endif
         mRayTracer->DestroyBlases();
+        mRayTracingOutOfMemory = false;
         const std::size_t meshCount = mResources->ReleaseMeshes();
         mModelDescriptors->ResetFrames();
         // The default textures and the default and error materials stay: CreateMaterial and draws fall back to them.

@@ -559,7 +559,7 @@ namespace mir
             }
             else
             {
-                if (renderSettings.rayTracing && !traceable && !mWarnedNoRayTracing)
+                if (renderSettings.rayTracing && !mRenderer.RayTracingSupported() && !mWarnedNoRayTracing)
                 {
                     MIR_LOG_WARN("RenderSystem: Ray Tracing is on in Project Settings but this device/driver "
                         "doesn't support it; falling back to raster");

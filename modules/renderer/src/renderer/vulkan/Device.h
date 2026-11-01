@@ -49,6 +49,8 @@ namespace mir::vk
         const VkPhysicalDeviceProperties &Properties() const { return mProperties; }
 
         bool RayTracingSupported() const { return mCapabilities.rayTracing; }
+        // Budget less use on the largest device-local heap; 0 when over budget.
+        uint64_t DeviceLocalFreeBytes() const;
         const VkPhysicalDeviceRayTracingPipelinePropertiesKHR &RtProperties() const { return mRtProperties; }
 
         // Shared image/sampler/material-record tables, available with or without ray tracing.

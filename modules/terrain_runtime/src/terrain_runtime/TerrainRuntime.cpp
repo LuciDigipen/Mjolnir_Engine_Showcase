@@ -963,7 +963,7 @@ namespace mir
 
         // A BLAS only when the project traces; meshes made the other way are made again.
         const RenderSettings *render = mWorld->TryResource<RenderSettings>();
-        const bool rayTracing = render && render->rayTracing && mRenderer->RayTracingSupported();
+        const bool rayTracing = render && mRenderer->RayTracingActive(render->rayTracing);
         if (rayTracing != mUploader->RayTracing())
         {
             mMeshes->RetireAll();

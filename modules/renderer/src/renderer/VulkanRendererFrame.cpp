@@ -42,6 +42,8 @@
 
 #include <algorithm>
 #include <array>
+#include <map>
+#include <utility>
 
 namespace mir
 {
@@ -561,6 +563,10 @@ namespace mir
             mTracedHistoryId = views[0].historyId;
         }
 
+        // Before anything else tracing allocates. The next frame draws raster.
+        if (!BuildOwedBlases(views))
+            return;
+
 #if MIR_WITH_RTXGI
         mDdgi->Configure(mDdgiSettings, views[0].rayTracingItems.has_value());
 #endif
@@ -572,6 +578,57 @@ namespace mir
         RecordRtFrame(frame->cmd, frame->imageIndex, views);
         const bool submitted = mFrameSync->End(*mSwapchain, *frame);
         mCapture->Finish(submitted, *mSwapchain);
+    }
+
+    bool VulkanRenderer::BuildOwedBlases(std::span<const RenderView> views)
+    {
+        // A mesh drawn many times is owed once.
+        std::map<uint32_t, MeshHandle> owed;
+        const auto collect = [this, &owed](std::span<const DrawItem> items)
+            {
+                for (const DrawItem &item : items)
+                {
+                    const vk::GpuMesh *const mesh = mResources->FindMeshSlot(item.mesh);
+                    if (mesh != nullptr && mesh->mBlasVertexCount != 0)
+                        owed.emplace(item.mesh.mIndex, item.mesh);
+                }
+            };
+        for (const RenderView &view : views)
+        {
+            collect(view.items);
+            if (view.rayTracingItems.has_value())
+                collect(*view.rayTracingItems);
+        }
+        if (owed.empty())
+            return true;
+
+        uint64_t blasBytes = 0;
+        uint64_t largestScratch = 0;
+        for (const auto &[index, handle] : owed)
+        {
+            const vk::GpuMesh &mesh = *mResources->FindMeshSlot(handle);
+            const vk::RayTracer::BlasSizes sizes = mRayTracer->MeshBlasSizes(mesh.mBlasVertexCount, mesh.mIndexCount);
+            blasBytes += sizes.accelerationStructure;
+            largestScratch = std::max<uint64_t>(largestScratch, sizes.scratch);
+        }
+        const uint64_t freeBytes = mDevice->DeviceLocalFreeBytes();
+        if (!RayTracingSceneFits(blasBytes, largestScratch, freeBytes))
+        {
+            MIR_LOG_WARN("Ray Tracing is off for this scene: it needs {} MiB of BLASes with {} MiB of device memory free; "
+                "drawing raster", blasBytes >> 20, freeBytes >> 20);
+            mRayTracingOutOfMemory = true;
+            return false;
+        }
+
+        for (const auto &[index, handle] : owed)
+        {
+            vk::GpuMesh &mesh = *mResources->FindMeshSlot(handle);
+            // cleared either way, so a failure reports once and the mesh stays out of the trace
+            const uint32_t vertexCount = std::exchange(mesh.mBlasVertexCount, 0);
+            if (!mRayTracer->BuildMeshBlas(index, mesh, vertexCount))
+                MIR_LOG_ERROR("BuildOwedBlases: BLAS build failed for mesh {}, it stays out of the trace", index);
+        }
+        return true;
     }
 
     uint32_t VulkanRenderer::WriteCameraData(const RenderView &view, uint32_t viewIndex, bool applyJitter,
