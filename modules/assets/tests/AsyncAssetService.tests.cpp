@@ -127,6 +127,7 @@ namespace
             std::vector<std::byte> bytes;
             bool write = true;
             std::vector<AssetId> dependencies;
+            std::string cookedFile;
         };
 
         std::filesystem::path dir;
@@ -171,7 +172,7 @@ namespace
             std::vector<AssetManifestSourceEntry> entries;
             for (const Item &item : items)
             {
-                files.push_back(item.name + ".blob");
+                files.push_back(item.cookedFile.empty() ? item.name + ".blob" : item.cookedFile);
                 if (item.write)
                     REQUIRE(WriteBytes(dir / files.back(), item.bytes));
                 else
@@ -508,17 +509,164 @@ TEST_CASE("CancelAll cancels loads that have not started and drops the ones that
 
     // the one lane is busy with the first load, so the second waits behind it
     const AssetRequest second = service.Request(Id("second"), kTextDecoder);
-    auto cancel = std::async(std::launch::async, [&service] { service.CancelAll(); });
-
-    // CancelAll is stuck waiting for the running load, which means it already closed the lane
-    REQUIRE(cancel.wait_for(100ms) == std::future_status::timeout);
+    // Invalidation completes on main while the worker is still held at its gate.
+    const auto cancelStart = std::chrono::steady_clock::now();
+    service.CancelAll();
+    CHECK(std::chrono::steady_clock::now() - cancelStart < 500ms);
+    CHECK_FALSE(gRelease.load());
     gRelease = true;
-    cancel.get();
 
     CHECK(gDecodes == 0);
     CHECK(service.State(first) == AssetLoadState::Stale);
     CHECK(service.State(second) == AssetLoadState::Stale);
     CHECK(service.Idle());
+}
+
+TEST_CASE("Independent leases share data without invalidating another reader", "[assets][async][lease]")
+{
+    ResetCounters();
+    Cooked cooked;
+    cooked.Add("greeting", "hello");
+    cooked.Write();
+    AssetsModule assets(cooked.dir);
+    JobExecutor jobs(0);
+    AsyncAssetService service(assets, jobs, 1);
+    auto first = service.RequestLease(Id("greeting"), kTextDecoder);
+    auto second = service.RequestLease(Id("greeting"), kTextDecoder);
+    service.DrainCompletions();
+    CHECK(gDecodes == 1);
+    REQUIRE(first.Acquire() == second.Acquire());
+    const auto borrowed = first.Acquire();
+    first.Reset();
+    CHECK(service.EvictUnused() == 0);
+    REQUIRE(second.Acquire());
+    CHECK(second.Acquire()->value == "hello");
+    second.Reset();
+    CHECK(service.EvictUnused() == 1);
+    CHECK(borrowed->value == "hello");
+    auto again = service.RequestLease(Id("greeting"), kTextDecoder);
+    service.DrainCompletions();
+    CHECK(gDecodes == 2);
+    CHECK(again.Acquire()->value == "hello");
+}
+
+TEST_CASE("A moved lease holds one claim and survives service destruction", "[assets][async][lease]")
+{
+    Cooked cooked;
+    cooked.Add("greeting", "hello");
+    cooked.Write();
+    AssetsModule assets(cooked.dir);
+    JobExecutor jobs(0);
+    AssetLease<Text> held;
+    {
+        AsyncAssetService service(assets, jobs, 1);
+        auto first = service.RequestLease(Id("greeting"), kTextDecoder);
+        held = std::move(first);
+        CHECK(first.State() == AssetLoadState::Stale);
+        service.DrainCompletions();
+        CHECK(service.EvictUnused() == 0);
+    }
+    REQUIRE(held.Acquire());
+    CHECK(held.Acquire()->value == "hello");
+}
+
+TEST_CASE("Decoded residency counts borrowers after eviction and protects active leases", "[assets][async][lease]")
+{
+    Cooked cooked;
+    cooked.Add("greeting", "hello");
+    cooked.Write();
+    AssetsModule assets(cooked.dir);
+    JobExecutor jobs(0);
+    AsyncAssetService service(assets, jobs, 1);
+    service.SetDecodedBudget(0);
+    auto lease = service.RequestLease(Id("greeting"), kTextDecoder);
+    service.DrainCompletions();
+    REQUIRE(lease.Acquire());
+    CHECK(service.DecodedBytes() == sizeof(Text));
+    auto borrowed = lease.Acquire();
+    lease.Reset();
+    service.DrainCompletions();
+    CHECK(service.DecodedBytes() == sizeof(Text));
+    CHECK(borrowed->value == "hello");
+    borrowed.reset();
+    CHECK(service.DecodedBytes() == 0);
+}
+
+TEST_CASE("A reload preserves leases and publishes new data independently", "[assets][async][lease]")
+{
+    Cooked cooked;
+    cooked.Add("greeting", "old");
+    cooked.Write();
+    AssetsModule assets(cooked.dir);
+    JobExecutor jobs(0);
+    AsyncAssetService service(assets, jobs, 1);
+    auto old = service.RequestLease(Id("greeting"), kTextDecoder);
+    cooked.Find("greeting").bytes = MakeBlob(kTextTag, 1, "new");
+    cooked.Write();
+    assets.BeginReload();
+    assets.CommitReload();
+    auto current = service.RequestLease(Id("greeting"), kTextDecoder);
+    service.DrainCompletions();
+    REQUIRE(old.Acquire());
+    REQUIRE(current.Acquire());
+    CHECK(old.Acquire()->value == "old");
+    CHECK(current.Acquire()->value == "new");
+}
+
+TEST_CASE("Releasing the last queued lease cancels only that decode", "[assets][async][lease]")
+{
+    ResetCounters();
+    Cooked cooked;
+    cooked.Add("first", "1");
+    cooked.Add("second", "2");
+    cooked.Write();
+    AssetsModule assets(cooked.dir);
+    JobExecutor jobs(1);
+    AsyncAssetService service(assets, jobs, 1);
+    auto first = service.RequestLease(Id("first"), kGatedDecoder);
+    const auto deadline = std::chrono::steady_clock::now() + 10s;
+    while (!gStarted && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(1ms);
+    REQUIRE(gStarted);
+    auto second = service.RequestLease(Id("second"), kTextDecoder);
+    second.Reset();
+    gRelease = true;
+    REQUIRE(DrainUntilIdle(service));
+    CHECK(gDecodes == 0);
+    REQUIRE(first.Acquire());
+    CHECK(first.Acquire()->value == "1");
+}
+
+TEST_CASE("Delayed reads retain their catalog inputs across a committed cook", "[assets][async][lease]")
+{
+    ResetCounters();
+    Cooked cooked;
+    cooked.Add("blocker", "block");
+    cooked.Add("greeting", "old");
+    cooked.Find("greeting").cookedFile = "old.blob";
+    cooked.Write();
+    AssetsModule assets(cooked.dir);
+    JobExecutor jobs(1);
+    AsyncAssetService service(assets, jobs, 1);
+    auto blocker = service.RequestLease(Id("blocker"), kGatedDecoder);
+    const auto deadline = std::chrono::steady_clock::now() + 10s;
+    while (!gStarted && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(1ms);
+    REQUIRE(gStarted);
+    auto old = service.RequestLease(Id("greeting"), kTextDecoder);
+    cooked.Find("greeting").cookedFile = "new.blob";
+    cooked.Find("greeting").bytes = MakeBlob(kTextTag, 1, "new");
+    cooked.Write();
+    assets.BeginReload();
+    assets.CommitReload();
+    auto current = service.RequestLease(Id("greeting"), kTextDecoder);
+    CHECK_FALSE(gRelease.load());
+    gRelease = true;
+    REQUIRE(DrainUntilIdle(service));
+    REQUIRE(old.Acquire());
+    REQUIRE(current.Acquire());
+    CHECK(old.Acquire()->value == "old");
+    CHECK(current.Acquire()->value == "new");
 }
 
 TEST_CASE("A committed reload drops results made before it", "[assets][async]")

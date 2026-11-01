@@ -338,6 +338,7 @@ namespace mir
         std::optional<vk::FrameContext> BeginFrame();
         // No wait: the caller idles the device first. False for a null or stale handle.
         bool DestroyMeshAndBlas(MeshHandle handle);
+        void CollectReleasedResources(uint64_t completed);
 
         void RecordRtFrame(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views);
 
@@ -354,6 +355,12 @@ namespace mir
             glm::vec2 *outJitter = nullptr);
 
     private:
+        struct ReleasedResources
+        {
+            std::vector<MaterialHandle> materials;
+            std::vector<TextureHandle> textures;
+        };
+        FrameRetireList<ReleasedResources> mReleasedResources;
         glm::vec4 mClearColor{ 0.02f, 0.02f, 0.02f, 1.0f };
 
         bool mSkyVisible = false;

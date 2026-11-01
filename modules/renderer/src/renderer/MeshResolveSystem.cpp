@@ -22,18 +22,18 @@
 #include <algorithm>
 #include <span>
 #include <utility>
+#include <unordered_set>
 #include <vector>
 
 namespace mir
 {
     MeshResolveSystem::MeshResolveSystem(IMeshResolveHost &renderer, AsyncAssetService *assets,
         const AssetResolver &resolver)
-        : mRenderer(renderer), mResolver(resolver), mTracker(renderer, assets)
+        : mRenderer(renderer), mResolver(resolver), mAssets(assets), mTracker(renderer.MeshLoads(assets))
     {}
 
     void MeshResolveSystem::Reset()
     {
-        mTracker.Reset();
         mMeshes.clear();
         mMaterials.clear();
         mResolved.clear();
@@ -46,8 +46,7 @@ namespace mir
         for (const auto &[name, cached] : mMeshes)
             if (!cached.mMesh.IsNull())
                 meshes.push_back(cached.mMesh);
-        // queued and uploading meshes are retired, only the ready ones are released here
-        mTracker.Release(meshes);
+        // Asset meshes belong to the shared cache, this World owns only its builtin meshes and materials.
         for (const auto &[name, material] : mMaterials)
             if (!material.IsNull())
                 materials.push_back(material);
@@ -64,11 +63,12 @@ namespace mir
             if (!cached.mMesh.IsNull())
                 meshes.push_back(cached.mMesh);
         }
-        mTracker.Release(meshes);
         mRenderer.ReleaseModelResources(meshes, {}, {});
 
         // materials come from shaders, not the asset cache, so they stay
         mMeshes.clear();
+        mTracker->EvictUnused();
+        mTracker = mRenderer.MeshLoads(mAssets);
         mResolved.clear();
     }
 
@@ -129,7 +129,8 @@ namespace mir
 
         // the tracker reports a failed load once, and this entry remembers it
         cached.mAsset = id;
-        mTracker.Request(id, mResolver.PathOf(id));
+        mTracker->Request(id, mResolver.PathOf(id));
+        cached.mLease = MeshLoadLease(mTracker, id);
         return cached;
     }
 
@@ -138,7 +139,7 @@ namespace mir
         if (cached.mAsset.IsNull())
             return MeshView{ cached.mMesh, cached.mBounds };
 
-        const MeshLoad *load = mTracker.Find(cached.mAsset);
+        const MeshLoad *load = cached.mLease.Get();
         if (load == nullptr)
             return MeshView{};
         // the draw path skips a mesh that is not Ready, so the queued handle goes on at once
@@ -166,7 +167,7 @@ namespace mir
         World &world = context.world;
 
         // the assets whose load moved a step since last frame
-        const std::vector<AssetId> advanced = mTracker.Update();
+        mTracker->Update();
 
         std::vector<Entity> staleBounds;
         std::erase_if(mResolved,
@@ -181,6 +182,8 @@ namespace mir
             });
 
         std::vector<std::pair<Entity, std::optional<MeshBounds>>> pendingBounds;
+        std::unordered_set<std::string> usedMeshes;
+        std::unordered_set<std::string> usedShaders;
 
         world.GetOrCreateQuery<MeshRenderer>().ForEach(
             [&](Entity entity, MeshRenderer &meshRenderer)
@@ -188,6 +191,8 @@ namespace mir
                 ResolvedNames &resolved = mResolved[PackEntity(entity)];
                 const std::string_view meshName = meshRenderer.meshName;
                 const std::string_view shaderName = meshRenderer.materialShader;
+                usedMeshes.emplace(meshName);
+                usedShaders.emplace(shaderName);
 
                 if (resolved.mMesh != meshName)
                 {
@@ -197,11 +202,11 @@ namespace mir
                     meshRenderer.mesh = view.mMesh;
                     pendingBounds.emplace_back(entity, view.mBounds);
                 }
-                else if (!advanced.empty() && !meshName.empty())
+                else if (!meshName.empty() && !world.Has<MeshBounds>(entity))
                 {
                     // the entity's mesh loaded a step, take its handle and bounds
                     const auto cached = mMeshes.find(resolved.mMesh);
-                    if (cached != mMeshes.end() && std::ranges::find(advanced, cached->second.mAsset) != advanced.end())
+                    if (cached != mMeshes.end())
                     {
                         const MeshView view = ViewOf(cached->second);
                         meshRenderer.mesh = view.mMesh;
@@ -215,6 +220,26 @@ namespace mir
                     meshRenderer.material = shaderName.empty() ? MaterialHandle{} : ResolveMaterial(resolved.mShader);
                 }
             });
+
+        std::vector<MeshHandle> releasedMeshes;
+        std::vector<MaterialHandle> releasedMaterials;
+        std::erase_if(mMeshes, [&](const auto &item)
+            {
+                if (usedMeshes.contains(item.first))
+                    return false;
+                if (item.second.mAsset.IsNull() && !item.second.mMesh.IsNull())
+                    releasedMeshes.push_back(item.second.mMesh);
+                return true;
+            });
+        std::erase_if(mMaterials, [&](const auto &item)
+            {
+                if (usedShaders.contains(item.first))
+                    return false;
+                releasedMaterials.push_back(item.second);
+                return true;
+            });
+        if (!releasedMeshes.empty() || !releasedMaterials.empty())
+            mRenderer.ReleaseModelResources(releasedMeshes, releasedMaterials, {});
 
         for (const Entity entity : staleBounds)
         {

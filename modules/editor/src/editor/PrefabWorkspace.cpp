@@ -312,20 +312,6 @@ namespace mir
         }
     }
 
-    void PrefabWorkspace::ResetResolve()
-    {
-        for (auto &[id, document] : mDocuments)
-        {
-            (void)id;
-            if (document->mMesh != nullptr)
-                document->mMesh->Reset();
-            if (document->mModel != nullptr)
-                document->mModel->Reset();
-            document->mWorld.Resource<ModelDrawItems>().items.clear();
-            document->mWorld.Resource<ModelMorphOverrides>().instances.clear();
-        }
-    }
-
     void PrefabWorkspace::InvalidateExternalSavePoints(const std::function<void(PrefabId)> &invalidate)
     {
         for (PrefabId id : mCoordinator.ConsumeExternalChanges())

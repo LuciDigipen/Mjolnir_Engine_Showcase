@@ -70,8 +70,32 @@ calls the decoder. A result is a `shared_ptr<const T>`, so a holder keeps its
 data past `CancelAll`. `DrainCompletions` runs once a frame before the systems
 update, and it is the only place a request changes state. The cache stays as it
 was. `MeshResolveSystem` is the first consumer, and it never calls `CancelAll`: a
-result nobody claims stays in its slot until the next reload, and a request for the
-same mesh again finds it decoded.
+result nobody claims can stay decoded within the service's cache budget, and a
+later request can reuse it.
+
+Consumers can use `RequestLease<T>` to obtain a move-only `AssetLease<T>`.
+Independent leases share a decode, releasing one never invalidates another.
+The last release cancels unfinished work through a job token, without waiting.
+The service admits jobs from its own pending queue, so cancellation does not
+require closing the executor lane. Shutdown joins running jobs.
+
+`ManifestSnapshot()` retains an immutable catalog across replacement. A reload
+invalidates observer `AssetRequest` handles, while existing leases retain their
+old revision and new leases resolve against the new catalog. Completions carry
+their record identity, so a late result cannot populate a recycled slot.
+
+`SetDecodedBudget` controls an unused decoded-cache target (64 MiB initially).
+Active leases are protected, unused results are evicted in request-use order.
+`AssetDecoder::sizeBytes` describes owned allocations for variable-sized results,
+otherwise accounting uses `sizeof(T)`. `DecodedBytes` includes borrowed payloads
+after their cache entries are evicted. A borrower remains valid across eviction.
+`EvictUnused` explicitly removes all unclaimed lease-managed entries. Observer
+requests pin their records until reset and should not be used for evictable work.
+
+Cooked blob filenames include their content hash. Publication retains older blob
+files for delayed readers across multiple cooks. Storage reclamation requires an
+offline clean with runtime readers stopped, current/previous manifests alone do
+not establish that older files are unused.
 
 `assets.loadThreads` in `project_settings.json` is how many loads run at once,
 2 by default and 1 to 32. A value outside that range keeps the default and logs
@@ -160,10 +184,9 @@ until `CancelAll` or a reload. `FailureReason` returns why, because the log line
 carries only the id and a caller that knows the asset's name logs it with the
 reason.
 
-**`CancelAll` and a committed reload make every earlier handle `Stale`.** The
-service sees a reload through `ReloadEpoch` at its next drain or request. Loads
-that have not started are dropped, running ones finish and their results are
-discarded.
+**`CancelAll` invalidates requests without waiting for running workers.** A
+committed reload makes observer handles stale, but preserves claimed leases to
+older revisions. The service sees a reload at its next drain or request.
 
 **With no workers a load runs inside `Request`.** Its result still waits for the
 next drain, so a state changes at the same point in both modes.

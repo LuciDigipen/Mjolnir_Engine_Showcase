@@ -34,5 +34,9 @@ namespace mir
         std::string &error);
 
     // The mesh asset's decoder, no dependencies. One shared descriptor so requests for a mesh dedupe.
-    inline constexpr AssetDecoder<DecodedMesh> kMeshAssetDecoder{ DecodeMeshAsset, {} };
+    inline uint64_t DecodedMeshBytes(const DecodedMesh &mesh)
+    {
+        return sizeof(mesh) + mesh.vertices.capacity() * sizeof(Vertex) + mesh.indices.capacity() * sizeof(uint32_t);
+    }
+    inline constexpr AssetDecoder<DecodedMesh> kMeshAssetDecoder{ DecodeMeshAsset, {}, DecodedMeshBytes };
 }

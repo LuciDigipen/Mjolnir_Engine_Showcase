@@ -212,12 +212,11 @@ namespace mir
                 RefreshPrefabHistory();
             });
 
-        // after the renderer's: it freed every upload, the previews' too
+        // Scene-local editor work ends here, independent prefab Worlds retain their resources.
         mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &)
             {
                 mEditor.CancelSnapToTerrain();
                 mParticleEditor->OnHidden(mWorld);
-                mPrefabWorkspace.ResetResolve();
             });
 
         // every handle the undo history holds dies with the scene it came from

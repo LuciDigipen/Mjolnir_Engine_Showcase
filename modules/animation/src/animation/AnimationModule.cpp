@@ -41,7 +41,7 @@ namespace mir
 
         mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &frame)
             {
-                mModels->Reset();
+                mModels->ReleaseResources();
                 frame.world.Resource<ModelDrawItems>().items.clear();
                 frame.world.Resource<ModelMorphOverrides>().instances.clear();
             });

@@ -10,9 +10,11 @@
 
 #include "assets/AssetDecoder.h"
 #include "assets/AssetId.h"
+#include "assets/AssetLease.h"
 
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <span>
@@ -26,15 +28,6 @@ namespace mir
     class AssetsModule;
     class BackgroundJobQueue;
     class JobExecutor;
-
-    // Where a request is. Stale means it predates CancelAll or a reload, or was never made.
-    enum class AssetLoadState : uint8_t
-    {
-        Stale,
-        Queued,
-        Ready,
-        Failed
-    };
 
     struct AssetRequest
     {
@@ -59,16 +52,24 @@ namespace mir
         template <class T>
         AssetRequest Request(AssetId id, const AssetDecoder<T> &decoder)
         {
-            return RequestErased(id, &decoder, typeid(T), decoder.dependencyTags,
-                [decode = decoder.decode](const AssetBlobView &root, const AssetDependencies &dependencies,
-                    std::string &error) -> std::shared_ptr<const void>
-                {
-                    auto value = std::make_shared<T>();
-                    if (!decode(root, dependencies, *value, error))
-                        return nullptr;
-                    return value;
-                });
+            return RequestErased(id, &decoder, typeid(T), decoder.dependencyTags, MakeDecode(decoder), true);
         }
+
+        // Independent claims share one decode. Leases and borrowed results may outlive the service.
+        template <class T>
+        AssetLease<T> RequestLease(AssetId id, const AssetDecoder<T> &decoder)
+        {
+            const AssetRequest request = RequestErased(id, &decoder, typeid(T), decoder.dependencyTags,
+                MakeDecode(decoder), false);
+            return AssetLease<T>(mSlots[request.index].record);
+        }
+
+        // Drops unused lease-managed entries. Outstanding borrowers remain valid.
+        std::size_t EvictUnused();
+        uint32_t Revision() const;
+        uint64_t DecodedBytes() const;
+        // Active claims and borrowers can exceed this target, only unused entries are evicted.
+        void SetDecodedBudget(uint64_t bytes);
 
         AssetLoadState State(AssetRequest request) const;
 
@@ -87,29 +88,44 @@ namespace mir
         // anything reads State.
         void DrainCompletions();
 
-        // Drops every request and result, cancels loads that have not started and waits for the
-        // ones running. Every earlier handle reports Stale afterwards.
+        // Invalidates requests without waiting. Queued callbacks skip cancelled records,
+        // running workers finish safely. Only service destruction waits for workers.
         void CancelAll();
 
         // True when no request is waiting for a result
         bool Idle() const;
 
     private:
-        using ErasedDecode = std::function<std::shared_ptr<const void>(
+        struct DecodedResult
+        {
+            std::shared_ptr<const void> value;
+            uint64_t bytes = 0;
+        };
+        using ErasedDecode = std::function<DecodedResult(
             const AssetBlobView &root, const AssetDependencies &dependencies, std::string &error)>;
+
+        template <class T> static ErasedDecode MakeDecode(const AssetDecoder<T> &decoder)
+        {
+            return [decode = decoder.decode, size = decoder.sizeBytes](const AssetBlobView &root,
+                const AssetDependencies &dependencies, std::string &error) -> DecodedResult
+                {
+                    auto value = std::make_shared<T>();
+                    if (!decode(root, dependencies, *value, error))
+                        return {};
+                    return { value, size ? size(*value) : sizeof(T) };
+                };
+        }
 
         struct Completions;
         struct Job;
 
         struct Slot
         {
-            Slot(AssetId assetId, std::type_index assetType) : id(assetId), type(assetType) {}
+            Slot(AssetId assetId, std::type_index assetType)
+                : id(assetId), record(std::make_shared<detail::AssetLoadRecord>(assetType)) {}
 
             AssetId id;
-            std::type_index type;
-            AssetLoadState state = AssetLoadState::Queued;
-            std::shared_ptr<const void> result;
-            std::string error;
+            std::shared_ptr<detail::AssetLoadRecord> record;
         };
 
         struct DedupKey
@@ -128,23 +144,36 @@ namespace mir
         };
 
         AssetRequest RequestErased(AssetId id, const void *descriptor, std::type_index type,
-            std::span<const uint32_t> dependencyTags, ErasedDecode decode);
+            std::span<const uint32_t> dependencyTags, ErasedDecode decode, bool pinned);
         std::shared_ptr<const void> AcquireErased(AssetRequest request, std::type_index type) const;
         static void RunJob(Job &job) noexcept;
         // CancelAll when a reload was committed since the last call
         void SyncReloadEpoch();
+        void TrimDecoded();
+        void DispatchPending();
 
         AssetsModule &mAssets;
         JobExecutor &mJobs;
         std::size_t mConcurrency;
         std::unique_ptr<BackgroundJobQueue> mQueue;
         std::shared_ptr<Completions> mCompletions;
+        std::deque<std::unique_ptr<Job>> mPending;
+        std::size_t mActiveJobs = 0;
 
         // starts at 1 so a default AssetRequest is Stale
         uint32_t mGeneration = 1;
         uint32_t mSeenReloadEpoch;
         std::size_t mQueuedCount = 0;
         std::vector<Slot> mSlots;
+        std::vector<uint32_t> mFreeSlots;
         std::unordered_map<DedupKey, uint32_t, DedupKeyHash> mDedup;
+        struct Allocation
+        {
+            std::weak_ptr<const void> value;
+            uint64_t bytes;
+        };
+        std::vector<Allocation> mAllocations;
+        uint64_t mDecodedBudget = 64ull * 1024 * 1024;
+        uint64_t mUseSerial = 0;
     };
 }

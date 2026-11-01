@@ -85,9 +85,6 @@ namespace mir
         void CommitReload(AssetCache *assets);
         void DiscardPreparedReload();
 
-        // After App released the scene's GPU resources.
-        void ResetResolve();
-
         // Invalidate History save points without clearing undo/redo or marking a disk write.
         void InvalidateExternalSavePoints(const std::function<void(PrefabId)> &invalidate);
 

@@ -31,6 +31,8 @@ namespace mir
         // Never null, and the same object across a reload, so holders keep their pointer
         AssetCache &Cache() { return *mCache; }
         const AssetManifest &Manifest() const { return *mManifest; }
+        // A reader can retain a catalog while a later cook is committed.
+        std::shared_ptr<const AssetManifest> ManifestSnapshot() const { return mManifest; }
 
         // false when startup found no manifest
         bool HadManifest() const { return mHadManifest; }
@@ -52,10 +54,10 @@ namespace mir
 
         // the caches hold a raw pointer to their manifest: manifest first, so it dies last,
         // and on the heap, so the address survives the swap
-        std::unique_ptr<AssetManifest> mManifest;
+        std::shared_ptr<AssetManifest> mManifest;
         std::optional<AssetCache> mCache;
 
-        std::unique_ptr<AssetManifest> mCandidateManifest;
+        std::shared_ptr<AssetManifest> mCandidateManifest;
         std::optional<AssetCache> mCandidate;
     };
 }

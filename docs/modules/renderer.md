@@ -136,15 +136,26 @@ as soon as it exists, and the draw path skips the mesh until its upload is Ready
 bounds for a mesh that is not drawing. A builtin shape has no asset and resolves
 in the same frame. Changing `meshName` while a load is in flight resolves the
 entity to the new name and leaves the old load to the tracker, because other
-entities may share it. A decode failure or a failed upload logs once and the
+entities may share it. When the last World releases an unfinished load, its
+upload is cancelled. A decode failure or a failed upload logs once and the
 entity draws nothing, and a failed upload's handle is retired.
 
 A renderer whose names are both empty is never touched, so a handle set from code
 keeps its value. Clearing `meshName` nulls the mesh and removes `MeshBounds`.
 Removing the `MeshRenderer` removes `MeshBounds` too, and its OnRemove forgets
 the entity's names, so a packed id the World hands out again starts unresolved.
-`Reset()` empties the caches and runs at `SceneUnload`, before
-`ReleaseSceneResources`.
+Each resolve system holds World-local bindings into a renderer-owned mesh cache
+shared with prefab previews. Scene unload releases those bindings without
+destroying resources used by another World. Ready unused meshes remain cached
+under a 256 MiB target per revision, `SetBudget` evicts unused meshes in use order.
+Active bindings are protected. Builtin meshes and per-World materials are released
+with their World. Removing the last entity using a mesh drops that World's claim.
+
+`ReleaseModelResources` schedules mesh, material and texture retirement against
+the last issued GPU frame instead of waiting for the device. Collection runs
+after frame completion, shutdown drains all releases after waiting for the GPU.
+The global `ReleaseSceneResources` operation remains for explicit full cleanup,
+ordinary scene unload does not call it.
 
 At `ReloadCommit` the module calls `CommitReload`. It retires the meshes that are
 still queued or uploading, frees the ready ones, and forgets every entity's names,

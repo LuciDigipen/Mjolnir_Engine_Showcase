@@ -1206,17 +1206,9 @@ namespace
         cache.erase("requiresFullCook");
         PublishText(cachePath, cache.dump(2) + "\n");
 
-        std::unordered_set<std::string> keep{std::string(mir::kAssetManifestFileName),
-                                             std::string(kPreviousManifestFileName)};
-        for (const auto &output : ordered)
-            keep.insert(output.file);
-        if (auto previous = mir::AssetManifest::LoadFile(options.out / kPreviousManifestFileName))
-            for (const auto &entry : previous->Entries())
-                keep.insert(std::string(previous->PathOf(entry)));
-        for (const auto &entry : std::filesystem::directory_iterator(options.out))
-            if (entry.is_regular_file() && entry.path().extension() == ".blob" &&
-                !keep.contains(entry.path().filename().string()))
-                std::filesystem::remove(entry.path());
+        // Blobs are content addressed. A running editor may still hold any older catalog,
+        // so publication never deletes an input a background reader can still need.
+        // Reclaim storage only during an offline clean with runtime readers stopped.
         const bool changed = std::any_of(resultModels.begin(), resultModels.end(), [](const Json &v) {
             const std::string status = v.value("status", "");
             return status == "cooked" || status == "removed";

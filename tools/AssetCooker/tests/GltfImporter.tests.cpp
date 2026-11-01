@@ -499,11 +499,10 @@ TEST_CASE("Cooker publishes atomically and retains one fallback manifest generat
     auto updated = AssetManifest::LoadFile(out / "manifest.blob");
     REQUIRE(updated);
     CHECK(updated->Find(oldClip) == nullptr);
-    // The running editor may still reference the immediately previous
-    // generation until it accepts the replacement.
+    // Readers can pin more than one older catalog, publication retains their immutable inputs.
     CHECK(fs::exists(out / oldPath));
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, args, true) == 0);
-    CHECK_FALSE(fs::exists(out / oldPath));
+    CHECK(fs::exists(out / oldPath));
     const auto before = ReadBytes(out / "manifest.blob");
     REQUIRE(before);
     j["accessors"][0]["byteOffset"] = 999999;

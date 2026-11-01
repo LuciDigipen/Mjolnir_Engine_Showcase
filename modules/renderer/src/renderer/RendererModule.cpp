@@ -75,9 +75,9 @@ namespace mir
         // no scene entity holds a mesh or material handle now
         mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &)
             {
-                mMeshes->Reset();
+                mMeshes->ReleaseResources();
                 mSurfaceMaterials.Reset();
-                mRenderer.ReleaseSceneResources();
+                mRenderer.ResetHistory();
             });
 
         // a cut: the history of the scene before says nothing about this one

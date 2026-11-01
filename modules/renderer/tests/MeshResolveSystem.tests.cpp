@@ -185,7 +185,7 @@ TEST_CASE("An entity renamed while its first mesh loads ends up with the new mes
     f.Frame();
     REQUIRE(f.scene.BoundsOf(entity) != nullptr);
     CHECK(f.scene.BoundsOf(entity)->mLocalMax == glm::vec3(4.0f, 4.0f, 0.0f));
-    CHECK(f.host.uploader.retired.empty());
+    CHECK(f.host.uploader.retired.size() == 1);
 }
 
 TEST_CASE("Entities that name one mesh share one load and one set of bounds", "[renderer][mesh-resolve]")
@@ -213,7 +213,7 @@ TEST_CASE("Entities that name one mesh share one load and one set of bounds", "[
     CHECK(f.scene.BoundsOf(second) != nullptr);
 }
 
-TEST_CASE("An entity removed while its mesh loads leaves the load for the next entity", "[renderer][mesh-resolve]")
+TEST_CASE("An entity removed during loading cancels its upload and a later entity requests a new one", "[renderer][mesh-resolve]")
 {
     Fixture f;
     const Entity entity = f.scene.Spawn("tri");
@@ -224,14 +224,17 @@ TEST_CASE("An entity removed while its mesh loads leaves the load for the next e
     f.FinishUploads();
     f.Frame();
     CHECK(f.host.uploader.queued == 1);
-    CHECK(f.host.uploader.retired.empty());
+    CHECK(f.host.uploader.retired.size() == 1);
 
-    // a later entity finds the finished mesh at once, handle and bounds in its first frame
+    // The CPU result can be cached, but the cancelled GPU upload cannot be revived.
     const Entity later = f.scene.Spawn("tri");
+    f.Frame();
+    f.Frame();
+    f.FinishUploads();
     f.Frame();
     CHECK_FALSE(f.scene.MeshOf(later).IsNull());
     CHECK(f.scene.BoundsOf(later) != nullptr);
-    CHECK(f.host.uploader.queued == 1);
+    CHECK(f.host.uploader.queued == 2);
 }
 
 TEST_CASE("Renaming between a loaded asset and a builtin shape swaps handle and bounds", "[renderer][mesh-resolve]")
@@ -280,7 +283,7 @@ TEST_CASE("A mesh that cannot load leaves its entity undrawn", "[renderer][mesh-
     CHECK(f.host.uploader.queued == 0);
 }
 
-TEST_CASE("Releasing the system retires unfinished uploads and releases the ready ones", "[renderer][mesh-resolve]")
+TEST_CASE("Releasing a World cancels unfinished meshes and retains unused ready meshes", "[renderer][mesh-resolve]")
 {
     Fixture f;
     f.scene.Spawn("tri");
@@ -295,8 +298,72 @@ TEST_CASE("Releasing the system retires unfinished uploads and releases the read
 
     f.scene.system.ReleaseResources();
 
-    CHECK(f.host.releasedMeshes.size() == 1);
+    CHECK(f.host.releasedMeshes.empty());
+    CHECK(f.host.uploader.meshes.size() == 1);
+    f.host.ReleaseCachedMeshes();
     CHECK(f.host.uploader.meshes.empty());
+}
+
+TEST_CASE("Scene and prefab Worlds share one upload and unload independently", "[renderer][mesh-resolve]")
+{
+    Fixture f;
+    Scene preview(f.host, &f.service, f.resolver);
+    const Entity sceneEntity = f.scene.Spawn("tri");
+    const Entity previewEntity = preview.Spawn("tri");
+    f.Frame();
+    preview.Update();
+    f.Frame();
+    preview.Update();
+    REQUIRE(f.host.uploader.queued == 1);
+    REQUIRE(f.scene.MeshOf(sceneEntity) == preview.MeshOf(previewEntity));
+    f.FinishUploads();
+    f.Frame();
+    preview.Update();
+    REQUIRE(preview.BoundsOf(previewEntity));
+    const MeshHandle shared = preview.MeshOf(previewEntity);
+    f.scene.system.ReleaseResources();
+    preview.Update();
+    CHECK(preview.MeshOf(previewEntity) == shared);
+    CHECK(f.host.MeshState(shared) == MeshUploadState::Ready);
+    CHECK(f.host.uploader.retired.empty());
+    preview.system.ReleaseResources();
+    f.host.ReleaseCachedMeshes();
+    CHECK(f.host.MeshState(shared) == MeshUploadState::Stale);
+}
+
+TEST_CASE("Removing the last user cancels a pending upload without affecting another World", "[renderer][mesh-resolve]")
+{
+    Fixture f;
+    Scene preview(f.host, &f.service, f.resolver);
+    const Entity a = f.scene.Spawn("tri");
+    const Entity b = preview.Spawn("tri");
+    f.Frame();
+    preview.Update();
+    f.Frame();
+    preview.Update();
+    const MeshHandle shared = f.scene.MeshOf(a);
+    f.scene.world.DestroyEntity(a);
+    f.Frame();
+    CHECK(f.host.MeshState(shared) == MeshUploadState::Pending);
+    preview.world.DestroyEntity(b);
+    preview.Update();
+    CHECK(f.host.MeshState(shared) == MeshUploadState::Stale);
+}
+
+TEST_CASE("GPU cache pressure evicts unused meshes and preserves active World claims", "[renderer][mesh-resolve]")
+{
+    Fixture f;
+    const Entity entity = f.scene.Spawn("tri");
+    f.Frame();
+    f.Frame();
+    f.FinishUploads();
+    f.Frame();
+    const MeshHandle handle = f.scene.MeshOf(entity);
+    f.host.MeshLoads(&f.service)->SetBudget(0);
+    CHECK(f.host.MeshState(handle) == MeshUploadState::Ready);
+    f.scene.world.DestroyEntity(entity);
+    f.Frame();
+    CHECK(f.host.MeshState(handle) == MeshUploadState::Stale);
 }
 
 TEST_CASE("The first cook makes the meshes of a scene and a preview drawable without reopening them",

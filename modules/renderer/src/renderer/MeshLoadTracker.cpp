@@ -36,7 +36,7 @@ namespace mir
             return entry.load;
         }
 
-        entry.request = mAssets->Request(id, kMeshAssetDecoder);
+        entry.request = mAssets->RequestLease(id, kMeshAssetDecoder);
         mWaiting.push_back(id.value);
         return entry.load;
     }
@@ -45,6 +45,75 @@ namespace mir
     {
         const auto found = mEntries.find(id.value);
         return found != mEntries.end() ? &found->second.load : nullptr;
+    }
+
+    void MeshLoadTracker::Retain(AssetId id)
+    {
+        ++mEntries.at(id.value).consumers;
+        mEntries.at(id.value).lastUse = ++mUseSerial;
+    }
+
+    void MeshLoadTracker::Drop(AssetId id)
+    {
+        const auto found = mEntries.find(id.value);
+        if (found == mEntries.end() || found->second.consumers == 0)
+            return;
+        Entry &entry = found->second;
+        --entry.consumers;
+        if (entry.consumers != 0)
+            return;
+        if (entry.load.phase == MeshLoadPhase::Ready)
+        {
+            entry.lastUse = ++mUseSerial;
+            Trim();
+            return;
+        }
+        if (!entry.load.mesh.IsNull())
+            mUploader.RetireMesh(entry.load.mesh);
+        std::erase(mWaiting, id.value);
+        mEntries.erase(found);
+    }
+
+    void MeshLoadTracker::EvictUnused()
+    {
+        std::erase_if(mEntries, [this](const auto &item)
+            {
+                const Entry &entry = item.second;
+                if (entry.consumers != 0)
+                    return false;
+                if (!entry.load.mesh.IsNull())
+                    mUploader.RetireMesh(entry.load.mesh);
+                std::erase(mWaiting, item.first);
+                return true;
+            });
+    }
+
+    void MeshLoadTracker::SetBudget(uint64_t bytes)
+    {
+        mBudget = bytes;
+        Trim();
+    }
+
+    void MeshLoadTracker::Trim()
+    {
+        uint64_t bytes = mUploader.MeshStreaming().retiringBytes;
+        std::vector<std::pair<uint64_t, uint64_t>> unused;
+        for (const auto &[key, entry] : mEntries)
+        {
+            bytes += entry.bytes;
+            if (entry.consumers == 0 && entry.load.phase == MeshLoadPhase::Ready)
+                unused.emplace_back(entry.lastUse, key);
+        }
+        std::sort(unused.begin(), unused.end());
+        for (const auto &[serial, key] : unused)
+        {
+            if (bytes <= mBudget)
+                break;
+            auto found = mEntries.find(key);
+            bytes -= found->second.bytes;
+            mUploader.RetireMesh(found->second.load.mesh);
+            mEntries.erase(found);
+        }
     }
 
     std::vector<AssetId> MeshLoadTracker::Update()
@@ -71,13 +140,13 @@ namespace mir
 
     void MeshLoadTracker::StepDecoding(Entry &entry)
     {
-        switch (mAssets->State(entry.request))
+        switch (entry.request.State())
         {
         case AssetLoadState::Queued:
             return;
         case AssetLoadState::Failed:
             // the service logs only the id, so the label goes out with its reason
-            Fail(entry, mAssets->FailureReason(entry.request));
+            Fail(entry, entry.request.FailureReason());
             return;
         case AssetLoadState::Stale:
             Fail(entry, "its load was dropped by a reload");
@@ -86,7 +155,7 @@ namespace mir
             break;
         }
 
-        const std::shared_ptr<const DecodedMesh> decoded = mAssets->Acquire<DecodedMesh>(entry.request);
+        const std::shared_ptr<const DecodedMesh> decoded = entry.request.Acquire();
         if (!decoded)
         {
             Fail(entry, "its decoded mesh is missing");
@@ -103,8 +172,11 @@ namespace mir
         }
 
         entry.load.mesh = handle;
+        entry.bytes = mUploader.MeshFootprint(static_cast<uint32_t>(decoded->vertices.size()),
+            static_cast<uint32_t>(decoded->indices.size()), MeshUploadOptions{ .rayTracing = true });
         entry.load.bounds = decoded->bounds;
         entry.load.phase = MeshLoadPhase::Uploading;
+        entry.request.Reset();
     }
 
     void MeshLoadTracker::StepUploading(Entry &entry)

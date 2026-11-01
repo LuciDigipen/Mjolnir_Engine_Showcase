@@ -32,11 +32,11 @@ namespace mir
                 throw SetupError(ErrorCategory::BuildOutput, "The cooked asset manifest is corrupt", manifestPath,
                     "it could not be parsed as an asset manifest", "Rebuild to re-cook the assets.");
             }
-            mManifest = std::make_unique<AssetManifest>(std::move(*manifest));
+            mManifest = std::make_shared<AssetManifest>(std::move(*manifest));
         }
         else
         {
-            mManifest = std::make_unique<AssetManifest>();
+            mManifest = std::make_shared<AssetManifest>();
             MIR_LOG_INFO("No asset manifest at '{}', starting with no cooked assets", manifestPath.string());
         }
 
@@ -52,7 +52,7 @@ namespace mir
         if (!manifest.has_value())
             throw std::runtime_error("the new asset manifest could not be loaded");
 
-        mCandidateManifest = std::make_unique<AssetManifest>(std::move(*manifest));
+        mCandidateManifest = std::make_shared<AssetManifest>(std::move(*manifest));
         mCandidate.emplace(mCandidateManifest.get(), mCookedDir);
     }
 

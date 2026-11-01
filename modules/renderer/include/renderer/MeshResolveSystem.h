@@ -63,6 +63,7 @@ namespace mir
             std::optional<MeshBounds> mBounds;
             // non-null for a mesh asset
             AssetId mAsset;
+            MeshLoadLease mLease;
         };
 
         // the names an entity's handles were last resolved from
@@ -86,7 +87,8 @@ namespace mir
 
         IMeshResolveHost &mRenderer;
         const AssetResolver &mResolver;
-        MeshLoadTracker mTracker;
+        AsyncAssetService *mAssets;
+        std::shared_ptr<MeshLoadTracker> mTracker;
 
         std::unordered_map<std::string, CachedMesh> mMeshes;         // by meshName
         std::unordered_map<std::string, MaterialHandle> mMaterials;  // by materialShader
