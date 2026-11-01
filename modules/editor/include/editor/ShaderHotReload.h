@@ -13,6 +13,7 @@
 #include <chrono>
 #include <filesystem>
 #include <functional>
+#include <future>
 #include <memory>
 #include <map>
 #include <optional>
@@ -64,11 +65,6 @@ namespace mir
             std::string error;
             bool superseded = false;
         };
-        struct Compilation
-        {
-            Job job;
-            std::atomic_bool complete{false};
-        };
         bool RefreshManifest();
         void RebuildDependencies(const std::filesystem::path &directory);
         std::vector<std::filesystem::path> ApprovedRoots() const;
@@ -93,7 +89,8 @@ namespace mir
         bool mEnabled = false, mPublishBusy = false;
         std::atomic_bool mCancel{false};
         std::unique_ptr<BackgroundJobQueue> mQueue;
-        std::shared_ptr<Compilation> mCompiling;
+        std::future<Job> mCompilation;
+        std::filesystem::path mCompilationDirectory;
         std::optional<Job> mReady;
     };
 }

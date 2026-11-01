@@ -329,7 +329,9 @@ The editor borrows App's shared JobExecutor and owns a BackgroundJobQueue with
 concurrency one for shader compilation. Each batch compiles its affected outputs
 sequentially; it does not create a separate worker pool. The engine's worker count
 also controls this lane: zero workers executes compilation inline. Compilation
-results cross back to the main-thread FrameBegin callback before publication and
+results and exceptions use BackgroundJobQueue::Submit and its standard future;
+the watcher has no separate task-completion wrapper or completion flag. Results
+cross back to the main-thread FrameBegin callback before publication and
 GPU prepare/commit; pipeline replacement still waits for device idle. Shutdown
 cancels queued shader work, signals active compiler cancellation, and waits only
 for this lane before removing its owned artifacts. Other consumers of the shared

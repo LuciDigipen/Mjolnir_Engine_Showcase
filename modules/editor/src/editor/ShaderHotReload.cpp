@@ -89,8 +89,9 @@ namespace mir
         // Close only our lane: queued callbacks are cancelled, running compilers
         // observe mCancel, and borrowed watcher state stays alive until they finish.
         mQueue.reset();
-        if (mCompiling) RemoveJob(mCompiling->job.directory);
-        mCompiling.reset();
+        mCompilation = {};
+        RemoveJob(mCompilationDirectory);
+        mCompilationDirectory.clear();
         DropReady();
         mPendingSources.clear();
         mPendingMaterials.clear();
@@ -195,34 +196,32 @@ namespace mir
         job.materialEpoch = mMaterialEpoch;
         job.directory = UniqueShaderJobDirectory(mShaderDir / ".jobs");
         mCancel = false;
-        mCompiling = std::make_shared<Compilation>();
-        mCompiling->job = std::move(job);
-        mQueue->Post([this, compilation = mCompiling]
+        mCompilationDirectory = job.directory;
+        mCompilation = mQueue->Submit([this, job = std::move(job)]() mutable
             {
-                auto &job = compilation->job;
-                try
+                for (const auto &output : job.outputs)
                 {
-                    for (const auto &output : job.outputs)
-                    {
-                        auto artifact = CompileShaderArtifact(job.manifest, output, job.directory, {}, &mCancel);
-                        job.superseded |= artifact.superseded || artifact.cancelled;
-                        if (!artifact.success) { job.error = output.output + ": " + artifact.diagnostic; break; }
-                        job.inputs.insert(job.inputs.end(), artifact.inputs.begin(), artifact.inputs.end());
-                        job.artifacts.push_back(std::move(artifact));
-                    }
+                    auto artifact = CompileShaderArtifact(job.manifest, output, job.directory, {}, &mCancel);
+                    job.superseded |= artifact.superseded || artifact.cancelled;
+                    if (!artifact.success) { job.error = output.output + ": " + artifact.diagnostic; break; }
+                    job.inputs.insert(job.inputs.end(), artifact.inputs.begin(), artifact.inputs.end());
+                    job.artifacts.push_back(std::move(artifact));
                 }
-                catch (const std::exception &exception) { job.error = exception.what(); }
-                catch (...) { job.error = "unknown compiler failure"; }
-                // Publish the result only after all worker writes are complete.
-                compilation->complete.store(true, std::memory_order_release);
+                return std::move(job);
             });
     }
     void ShaderHotReload::PollJob()
     {
-        if (mCompiling && mCompiling->complete.load(std::memory_order_acquire))
+        if (mCompilation.valid() && mCompilation.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
         {
-            mReady = std::move(mCompiling->job);
-            mCompiling.reset();
+            try { mReady = mCompilation.get(); }
+            catch (...)
+            {
+                RemoveJob(mCompilationDirectory);
+                mCompilationDirectory.clear();
+                throw;
+            }
+            mCompilationDirectory.clear();
         }
         if (!mReady) return;
         auto &job = *mReady;
@@ -258,7 +257,7 @@ namespace mir
                 mPendingSources.insert(changed.begin(), changed.end());
                 mPendingSince = std::chrono::steady_clock::now();
             }
-            if (mCompiling || mReady)
+            if (mCompilation.valid() || mReady)
             {
                 if (!changed.empty() || (mReady && mReady->materialEpoch != mMaterialEpoch)) mCancel = true;
                 PollJob();
@@ -299,6 +298,7 @@ namespace mir
             StartJob(std::move(job));
         }
         catch (const std::exception &exception) { mLastDiagnostic = exception.what(); }
+        catch (...) { mLastDiagnostic = "unknown compiler failure"; }
     }
     bool ShaderHotReload::PublishJob(Job &job)
     {
