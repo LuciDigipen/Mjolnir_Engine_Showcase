@@ -13,7 +13,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -37,6 +39,19 @@ namespace mir
     {
         // A BLAS is built too when the device supports ray tracing.
         bool rayTracing = false;
+    };
+
+    // Read-only mesh data for an upload, and whatever keeps it alive. The renderer copies it into staging when the
+    // upload is recorded and drops the keepalive right after, so a holder that shares the data (an asset cache)
+    // is the only owner left.
+    struct MeshUploadSource
+    {
+        std::span<const Vertex> vertices;
+        std::span<const uint32_t> indices;
+        std::shared_ptr<const void> keepalive;
+
+        // A source that owns these vectors.
+        static MeshUploadSource Own(std::vector<Vertex> vertices, std::vector<uint32_t> indices);
     };
 
     enum class MeshUploadState : uint8_t

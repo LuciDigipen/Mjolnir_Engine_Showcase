@@ -278,10 +278,9 @@ namespace mir
         return mMeshUploads->FrameBytes();
     }
 
-    MeshHandle VulkanRenderer::QueueMesh(std::vector<Vertex> vertices, std::vector<uint32_t> indices,
-        const MeshUploadOptions &options)
+    MeshHandle VulkanRenderer::QueueMesh(MeshUploadSource source, const MeshUploadOptions &options)
     {
-        return mMeshUploads->Queue(*mResources, *mRayTracer, std::move(vertices), std::move(indices), options);
+        return mMeshUploads->Queue(*mResources, *mRayTracer, std::move(source), options);
     }
 
     MeshUploadState VulkanRenderer::MeshState(MeshHandle handle) const

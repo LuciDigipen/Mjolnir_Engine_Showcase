@@ -145,9 +145,8 @@ It also declares `ClearErrorReport`, `ErrorReportPath`, `CrashDumpPath` and
 Vulkan instance name, engine-level, and nothing user-facing ever sees it.
 
 Accessors: `GetWorld()`, `Systems()`, `Splash()`, `Assets()`, `AssetService()`,
-`Scene()`, `Project()` and `ProjectToOpen()`. `AssetService()` is null when there
-was no manifest at startup, and it stays null for the session even if an import
-cooks the first assets. `Renderer()` is marked a temporary seam,
+`Scene()`, `Project()` and `ProjectToOpen()`. `AssetService()` is built even without a
+manifest, and it adopts the first cook an import applies through the reload epoch. `Renderer()` is marked a temporary seam,
 because `Renderer.h` is still an empty abstraction placeholder.
 
 `ToggleFullscreen()` switches the window between windowed and fullscreen and

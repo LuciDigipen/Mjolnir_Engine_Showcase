@@ -10,9 +10,13 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <glm/vec3.hpp>
+
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace mir;
@@ -234,4 +238,33 @@ TEST_CASE("Retired objects are released once every frame that may use them compl
     CHECK(released == std::vector<std::string>{"a", "b", "c"});
     CHECK(retired.Bytes() == 0);
     CHECK(retired.Size() == 0);
+}
+
+// These cover the source's own ownership only. The renderer's release points (MeshUploader Record, Forget and
+// Clear) need a device and have no unit test, the editor and game smoke runs reach them.
+TEST_CASE("MeshUploadSource::Own spans its data and frees it with the last keepalive", "[renderer][streaming]")
+{
+    std::vector<Vertex> vertices(3);
+    vertices[2].pos = glm::vec3(1.0f, 2.0f, 3.0f);
+    MeshUploadSource source = MeshUploadSource::Own(std::move(vertices), { 0, 1, 2 });
+
+    CHECK(source.vertices.size() == 3);
+    CHECK(source.indices.size() == 3);
+    CHECK(source.vertices[2].pos == glm::vec3(1.0f, 2.0f, 3.0f));
+    CHECK(source.keepalive.use_count() == 1);
+
+    const std::weak_ptr<const void> watcher = source.keepalive;
+    source.keepalive.reset();
+    CHECK(watcher.expired());
+}
+
+TEST_CASE("Resetting one keepalive leaves another holder of the data alone", "[renderer][streaming]")
+{
+    MeshUploadSource source = MeshUploadSource::Own(std::vector<Vertex>(2), { 0, 1, 0 });
+    const std::shared_ptr<const void> cache = source.keepalive;
+
+    // the renderer's copy into staging is done, it drops its reference
+    source.keepalive.reset();
+
+    CHECK(cache.use_count() == 1);
 }

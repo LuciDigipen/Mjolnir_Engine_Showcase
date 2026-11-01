@@ -50,8 +50,8 @@ namespace mir::vk
         // With the device idle.
         void Shutdown(RayTracer &rayTracer);
 
-        MeshHandle Queue(ResourceStore &resources, const RayTracer &rayTracer, std::vector<Vertex> vertices,
-                         std::vector<uint32_t> indices, const MeshUploadOptions &options);
+        MeshHandle Queue(ResourceStore &resources, const RayTracer &rayTracer, MeshUploadSource source,
+                         const MeshUploadOptions &options);
         uint64_t Footprint(const RayTracer &rayTracer, uint32_t vertexCount, uint32_t indexCount,
                            const MeshUploadOptions &options) const;
         // Freed once lastUse completes; a mesh not recorded yet is canceled at once. False for a stale handle.
@@ -71,8 +71,7 @@ namespace mir::vk
         struct Queued
         {
             MeshHandle mesh;
-            std::vector<Vertex> vertices;
-            std::vector<uint32_t> indices;
+            MeshUploadSource source;
             bool blas = false;
         };
 

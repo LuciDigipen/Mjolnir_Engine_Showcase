@@ -47,7 +47,7 @@ if (AssetCache *cache = app.Assets())
 | `AssetManifest` | `assets/AssetManifest.h` | id to type tag, content version, cooked file, logical path and direct dependencies, over a shared path table and edge table. `FindByPath`, `Dependencies`, `Closure` |
 | `AssetCache` | `assets/AssetCache.h` | `Load`, `Get`, `Invalidate`, `ResolvedPath` |
 | `AssetsModule` | `assets/AssetsModule.h` | The manifest and cache, loaded at startup, and the reload candidate. `ReloadEpoch` counts committed reloads |
-| `AsyncAssetService`, `AssetRequest`, `AssetLoadState` | `assets/AsyncAssetService.h` | Reads and decodes assets on a background lane, `Request`, `State`, `Acquire`, `DrainCompletions`, `CancelAll`, `Idle` |
+| `AsyncAssetService`, `AssetRequest`, `AssetLoadState` | `assets/AsyncAssetService.h` | Reads and decodes assets on a background lane, `Request`, `State`, `Acquire`, `FailureReason`, `DrainCompletions`, `CancelAll`, `Idle` |
 | `AssetDecoder`, `AssetDependencies` | `assets/AssetDecoder.h` | A decode function with the type tags of the dependencies it reads, and the lookup it gets over the blobs already read |
 | `AssetResolver` | `assets/AssetResolver.h` | `Resolve` turns a path inside the game's assets folder into an `AssetId` through the manifest, `ResolveFull` does the same for an engine asset's full path, `PathOf` gives the path for a message |
 | `AssetSettings` | `assets/AssetSettings.h` | The `assets` section of `project_settings.json`, `loadThreads` |
@@ -69,7 +69,9 @@ the worker reads each file, checks its header against its manifest entry and
 calls the decoder. A result is a `shared_ptr<const T>`, so a holder keeps its
 data past `CancelAll`. `DrainCompletions` runs once a frame before the systems
 update, and it is the only place a request changes state. The cache stays as it
-was, and nothing moves onto the service until a consumer asks for it.
+was. `MeshResolveSystem` is the first consumer, and it never calls `CancelAll`: a
+result nobody claims stays in its slot until the next reload, and a request for the
+same mesh again finds it decoded.
 
 `assets.loadThreads` in `project_settings.json` is how many loads run at once,
 2 by default and 1 to 32. A value outside that range keeps the default and logs
@@ -154,7 +156,9 @@ asset under another decoder is a separate load.
 
 **The service remembers a failed load too.** It logs the failure once at the
 drain, and asking again returns the same failed handle without reading anything,
-until `CancelAll` or a reload.
+until `CancelAll` or a reload. `FailureReason` returns why, because the log line
+carries only the id and a caller that knows the asset's name logs it with the
+reason.
 
 **`CancelAll` and a committed reload make every earlier handle `Stale`.** The
 service sees a reload through `ReloadEpoch` at its next drain or request. Loads

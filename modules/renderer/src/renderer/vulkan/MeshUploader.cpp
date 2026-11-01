@@ -122,27 +122,28 @@ namespace mir::vk
         return bytes;
     }
 
-    MeshHandle MeshUploader::Queue(ResourceStore &resources, const RayTracer &rayTracer, std::vector<Vertex> vertices,
-                                   std::vector<uint32_t> indices, const MeshUploadOptions &options)
+    MeshHandle MeshUploader::Queue(ResourceStore &resources, const RayTracer &rayTracer, MeshUploadSource source,
+                                   const MeshUploadOptions &options)
     {
         if (!Configured())
         {
             MIR_LOG_ERROR("QueueMesh: mesh streaming is not configured");
             return kNullMesh;
         }
-        if (vertices.empty() || indices.empty())
+        if (source.vertices.empty() || source.indices.empty())
         {
             MIR_LOG_ERROR("QueueMesh: vertices and indices must both be non-empty");
             return kNullMesh;
         }
 
         const bool blas = options.rayTracing && mDevice->RayTracingSupported();
-        const uint64_t staging = vertices.size() * sizeof(Vertex) + indices.size() * sizeof(uint32_t);
-        const uint64_t gpu = Footprint(rayTracer, uint32_t(vertices.size()), uint32_t(indices.size()), options);
+        const uint64_t staging = source.vertices.size() * sizeof(Vertex) + source.indices.size() * sizeof(uint32_t);
+        const uint64_t gpu =
+            Footprint(rayTracer, uint32_t(source.vertices.size()), uint32_t(source.indices.size()), options);
         const MeshHandle handle = resources.ReserveMesh();
         resources.FindMeshSlot(handle)->mBytes = gpu;
         mQueue.Push({handle, staging, gpu});
-        mQueued[handle.mIndex] = Queued{handle, std::move(vertices), std::move(indices), blas};
+        mQueued[handle.mIndex] = Queued{handle, std::move(source), blas};
         ++mQueuedCount;
         return handle;
     }
@@ -211,11 +212,13 @@ namespace mir::vk
             if (found == mQueued.end() || found->second.mesh != handle || mesh == nullptr ||
                 mesh->mState != GpuMeshState::Pending)
                 continue;
-            const Queued queued = std::move(found->second);
+            Queued queued = std::move(found->second);
             mQueued.erase(found);
 
-            const VkDeviceSize vertexBytes = queued.vertices.size() * sizeof(Vertex);
-            const VkDeviceSize indexBytes = queued.indices.size() * sizeof(uint32_t);
+            const uint32_t vertexCount = uint32_t(queued.source.vertices.size());
+            const uint32_t indexCount = uint32_t(queued.source.indices.size());
+            const VkDeviceSize vertexBytes = VkDeviceSize(vertexCount) * sizeof(Vertex);
+            const VkDeviceSize indexBytes = VkDeviceSize(indexCount) * sizeof(uint32_t);
             if (!resources.CreateMeshBuffers(*mesh, handle.mIndex, vertexBytes, indexBytes, queued.blas))
             {
                 MIR_LOG_ERROR("Mesh {}: device buffer allocation failed, the upload is dropped", handle.mIndex);
@@ -256,8 +259,10 @@ namespace mir::vk
                 targetAllocation = ownAllocation;
                 mRetired.Push(frame, vertexBytes + indexBytes, Garbage{{}, {{own, ownAllocation}}});
             }
-            std::memcpy(target, queued.vertices.data(), vertexBytes);
-            std::memcpy(target + vertexBytes, queued.indices.data(), indexBytes);
+            std::memcpy(target, queued.source.vertices.data(), vertexBytes);
+            std::memcpy(target + vertexBytes, queued.source.indices.data(), indexBytes);
+            // Nothing reads the CPU data past this copy, a BLAS build reads the device buffers.
+            queued.source.keepalive.reset();
             vmaFlushAllocation(mDevice->Allocator(), targetAllocation, entry.stagingOffset ? offset : 0,
                                vertexBytes + indexBytes);
 
@@ -266,11 +271,11 @@ namespace mir::vk
             const VkBufferCopy indexCopy{.srcOffset = offset + vertexBytes, .dstOffset = 0, .size = indexBytes};
             vkCmdCopyBuffer(cmd, source, mesh->mIndexBuffer, 1, &indexCopy);
 
-            mesh->mIndexCount = uint32_t(queued.indices.size());
+            mesh->mIndexCount = indexCount;
             mesh->mState = GpuMeshState::Uploading;
             mUploadedBytes += entry.item.gpuBytes;
             if (queued.blas)
-                builds.push_back({handle.mIndex, mesh, uint32_t(queued.vertices.size())});
+                builds.push_back({handle.mIndex, mesh, vertexCount});
         }
 
         if (!builds.empty())

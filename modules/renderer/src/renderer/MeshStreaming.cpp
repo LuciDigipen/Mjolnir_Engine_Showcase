@@ -9,9 +9,22 @@
 #include <renderer/MeshStreaming.h>
 
 #include <algorithm>
+#include <utility>
 
 namespace mir
 {
+    MeshUploadSource MeshUploadSource::Own(std::vector<Vertex> vertices, std::vector<uint32_t> indices)
+    {
+        struct Payload
+        {
+            std::vector<Vertex> vertices;
+            std::vector<uint32_t> indices;
+        };
+
+        const auto payload = std::make_shared<const Payload>(Payload{std::move(vertices), std::move(indices)});
+        return MeshUploadSource{payload->vertices, payload->indices, payload};
+    }
+
     std::optional<uint64_t> StagingRing::Allocate(uint64_t bytes, uint64_t alignment, uint64_t frame)
     {
         if (bytes == 0 || bytes > mCapacity || alignment == 0)

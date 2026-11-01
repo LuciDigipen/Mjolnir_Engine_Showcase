@@ -63,10 +63,11 @@ namespace mir
     }
 
     void PrefabWorkspace::BindResolveSystems(VulkanRenderer *renderer, AssetCache *assets,
-        const AssetResolver &resolver)
+        AsyncAssetService *assetService, const AssetResolver &resolver)
     {
         mRenderer = renderer;
         mAssets = assets;
+        mAssetService = assetService;
         mResolver = &resolver;
     }
 
@@ -116,7 +117,7 @@ namespace mir
         {
             preview->mMesh = &preview->mScheduler.AddSystem<MeshResolveSystem>(SystemPhase::PostUpdate,
                 SystemOrder{SystemOrder::kNormal}, *mRenderer,
-                mAssets, *mResolver);
+                mAssetService, *mResolver);
             preview->mModel = &preview->mScheduler.AddSystem<ModelSystem>(SystemPhase::PostUpdate,
                 SystemOrder{SystemOrder::kNormal}, *mRenderer,
                 mAssets, *mResolver);
@@ -295,7 +296,7 @@ namespace mir
             if (document->mModel != nullptr)
                 document->mModel->CommitReload(assets);
             if (document->mMesh != nullptr)
-                document->mMesh->CommitReload(assets);
+                document->mMesh->CommitReload();
             document->mWorld.Resource<ModelDrawItems>().items.clear();
             document->mWorld.Resource<ModelMorphOverrides>().instances.clear();
         }

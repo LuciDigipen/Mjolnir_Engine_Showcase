@@ -59,8 +59,6 @@ namespace mir
         std::unique_ptr<AsyncAssetService> MakeAssetService(
             AssetsModule &assets, JobExecutor &jobs, const std::filesystem::path &projectSettingsPath)
         {
-            if (!assets.HadManifest())
-                return nullptr;
             return std::make_unique<AsyncAssetService>(
                 assets, jobs, AssetSettings::LoadFile(projectSettingsPath).loadThreads);
         }
@@ -121,53 +119,54 @@ namespace mir
 
     App::App(const AppDesc &desc)
         : mDesc(Prepared(desc)),
-          mProject(mDesc.mProject),
-          mSplash(mDesc),
-          mJobs(mDesc.mWorkerThreads),
-          mCore(Context(), mCommands),
-          mAssets(CookedAssetsDir()),
-          mAssetService(MakeAssetService(mAssets, mJobs, mProject.mProjectSettingsPath)),
-          mResolver(mAssets, mProject.mAssetIdRoot),
-          mParticles(Context(), mAssets, mResolver),
-          mScene(Context(), mProject.mSceneDir),
-          mPrefab(Context(), mScene, PrefabSourceDir(mProject), kHasEditor ? nullptr : &mAssets),
-          mGameUI(Context()),
-          mGameShell(Context(), mGameUI, mAssets, mResolver,
-              GameShellSettings{ .mUIDemo = mDesc.mUIDemo, .mQuitStopsPlay = mDesc.mEnableEditorLayout }),
-          mWindow(MakeWindowDesc(mDesc)),
-          mRenderer(Context(), mWindow.Get(), mAssets,
-              RendererModuleSettings{ .mAppName = mDesc.mAppName,
-                                      .mEnableValidation = mDesc.mEnableValidation,
-                                      .mProjectSettingsPath = mProject.mProjectSettingsPath,
-                                      .mResolver = &mResolver }),
-          mParticlesGpu(mRenderer.Renderer()),
-          mInput(Context(), mWindow.Get(), mProject.mProjectSettingsPath),
-          mAnimation(Context(), mRenderer.Renderer(), mAssets, mResolver, &mJobs),
-          mImGui(Context(), mWindow, mRenderer),
+        mProject(mDesc.mProject),
+        mSplash(mDesc),
+        mJobs(mDesc.mWorkerThreads),
+        mCore(Context(), mCommands),
+        mAssets(CookedAssetsDir()),
+        mAssetService(MakeAssetService(mAssets, mJobs, mProject.mProjectSettingsPath)),
+        mResolver(mAssets, mProject.mAssetIdRoot),
+        mParticles(Context(), mAssets, mResolver),
+        mScene(Context(), mProject.mSceneDir),
+        mPrefab(Context(), mScene, PrefabSourceDir(mProject), kHasEditor ? nullptr : &mAssets),
+        mGameUI(Context()),
+        mGameShell(Context(), mGameUI, mAssets, mResolver,
+            GameShellSettings{ .mUIDemo = mDesc.mUIDemo, .mQuitStopsPlay = mDesc.mEnableEditorLayout }),
+        mWindow(MakeWindowDesc(mDesc)),
+        mRenderer(Context(), mWindow.Get(), mAssets,
+            RendererModuleSettings{ .mAppName = mDesc.mAppName,
+                                    .mEnableValidation = mDesc.mEnableValidation,
+                                    .mProjectSettingsPath = mProject.mProjectSettingsPath,
+                                    .mResolver = &mResolver,
+                                    .mAssetService = mAssetService.get() }),
+        mParticlesGpu(mRenderer.Renderer()),
+        mInput(Context(), mWindow.Get(), mProject.mProjectSettingsPath),
+        mAnimation(Context(), mRenderer.Renderer(), mAssets, mResolver, &mJobs),
+        mImGui(Context(), mWindow, mRenderer),
     #if MIR_WITH_EDITOR
-        mEditor(Context(), mImGui, mWindow, mRenderer, mScene, mPrefab, mAssets, mResolver, mProject,
-            mDesc.mEnableEditorLayout),
+        mEditor(Context(), mImGui, mWindow, mRenderer, mScene, mPrefab, mAssets, mAssetService.get(), mResolver,
+            mProject, mDesc.mEnableEditorLayout),
     #endif
-          mCamera(Context()),
+        mCamera(Context()),
     #if MIR_WITH_AUDIO
-          mAudio(Context(), mProject.mSoundBankDir, mProject.mProjectSettingsPath,
-              UserDataDir() / mProject.mName / "settings.json"),
+        mAudio(Context(), mProject.mSoundBankDir, mProject.mProjectSettingsPath,
+            UserDataDir() / mProject.mName / "settings.json"),
     #endif
-          mPhysics(Context(), mProject.mProjectSettingsPath, &mJobs),
-          mTerrainData(Context()),
-          mScript(Context(), mAssets, mResolver),
-          mParticlesRuntime(Context(), mParticles, mParticlesGpu, mRenderer.Rendering()),
-          mParticlesScript(mScript),
+        mPhysics(Context(), mProject.mProjectSettingsPath, &mJobs),
+        mTerrainData(Context()),
+        mScript(Context(), mAssets, mResolver),
+        mParticlesRuntime(Context(), mParticles, mParticlesGpu, mRenderer.Rendering()),
+        mParticlesScript(mScript),
     #if MIR_WITH_AUDIO
-          mAudioScript(mScript),
+        mAudioScript(mScript),
     #endif
-          mInputScript(mScript),
-          mPhysicsScript(mScript),
-          mRendererScript(mScript),
-          mTerrainScript(mScript),
-          mTerrain(Context(), mRenderer, mProject, mResolver, mJobs),
-          mGameUIImGui(Context(), mImGui, mWindow, mGameUI),
-          mFixedTimestep{ .mStep = mDesc.mFixedDeltaSeconds, .mMaxSteps = mDesc.mMaxFixedSteps }
+        mInputScript(mScript),
+        mPhysicsScript(mScript),
+        mRendererScript(mScript),
+        mTerrainScript(mScript),
+        mTerrain(Context(), mRenderer, mProject, mResolver, mJobs),
+        mGameUIImGui(Context(), mImGui, mWindow, mGameUI),
+        mFixedTimestep{ .mStep = mDesc.mFixedDeltaSeconds, .mMaxSteps = mDesc.mMaxFixedSteps }
     {
     #if MIR_WITH_AUDIO
         mGameShell.SetAudioOptions(&mAudioOptions);
@@ -432,11 +431,11 @@ namespace mir
 
     bool App::HasUnsavedMaterialDrafts() const
     {
-#if MIR_WITH_EDITOR
+    #if MIR_WITH_EDITOR
         return mEditor.HasUnsavedMaterialDrafts();
-#else
+    #else
         return false;
-#endif
+    #endif
     }
 
     bool App::ConfirmEditorExit()

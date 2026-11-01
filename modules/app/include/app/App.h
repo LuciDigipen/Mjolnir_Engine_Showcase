@@ -141,7 +141,7 @@ namespace mir
         // Never null; empty until a build or import cooks something
         AssetCache *Assets() { return &mAssets.Cache(); }
 
-        // The background asset loader. Null when there was no manifest at startup, for the whole session
+        // The background asset loader, one for the whole session even when the first cook comes later
         AsyncAssetService *AssetService() { return mAssetService.get(); }
 
         // The scene currently in the World

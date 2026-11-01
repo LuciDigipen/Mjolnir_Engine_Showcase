@@ -40,8 +40,13 @@ material is published; terrain geometry and collision do not read them.
 ## Tests
 
 CPU tests live in `modules/terrain/tests` (UV, scene serialization, entity
-generation, prefab capture) and `modules/renderer/tests` (catalog frontend,
-record packing). GPU and visual checks remain supervisor work.
+generation, prefab capture), `modules/renderer/tests` (catalog frontend, record
+packing) and `modules/terrain_runtime/tests`. The last holds
+`TerrainGpuUploader.tests.cpp`, which runs the adapter against the renderer's
+shared `FakeMeshUploader` and checks the queue and rejection paths, the ray tracing
+option, the state mapping, retirement and the footprint and budget pass-through. The adapter's calls into the
+real renderer, and everything else in the bridge, are covered only by the
+`terrain` tests and the smoke runs. GPU and visual checks remain supervisor work.
 
 ```
 constructor    -> TerrainRuntime::Bind      streaming settings -> TerrainStreamingSettings, TerrainStreamer resources;
@@ -129,8 +134,8 @@ the `TerrainMeshResidency` (see
 the selector keeps a ready coarser or finer unit drawn until then. The
 residency builds a wanted unit's mesh on the worker pool from the resident LOD
 and normal payloads (through `MakeTerrainRenderMesh`) or the Region payload,
-and `TerrainGpuUploader` (`TerrainRender.h`) queues it with the
-renderer's `QueueMesh`, with a BLAS only while the project's `rayTracing` is on
+and `TerrainGpuUploader` (`TerrainRender.h`) queues it through the renderer's
+`IMeshUploader`, with a BLAS only while the project's `rayTracing` is on
 and the device supports it (turning it either way retires every terrain mesh,
 to be made again); meshes are keyed by payload, so instances of one release and
 all viewports share them. A mesh nobody wanted or drew for
@@ -214,6 +219,14 @@ the whole spec. Tested through `terrain` (`TerrainScene`, `TerrainCollider`,
    without the other. No headless target needs that today.
 
 ## Changed
+
+*2026-10-31* — **`TerrainGpuUploader` adapts terrain's uploader onto the
+renderer's `IMeshUploader` (#361).** Was: it held a `VulkanRenderer`. Now: it
+holds an `IMeshUploader`, builds a `MeshUploadSource::Own` from the terrain
+vertices, and its tests run against the renderer's `FakeMeshUploader`. `terrain`
+still links no renderer, the adapter is the only place the two meet. Because: the
+mesh load tracker needed the same interface, and the adapter's state mapping had
+no test.
 
 *2026-10-24* — **Moved out of `app` into a bridge library.** Was:
 `src/app/TerrainRuntime` and `TerrainRender`, private to `app`, called by

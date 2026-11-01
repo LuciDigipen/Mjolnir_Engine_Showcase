@@ -60,7 +60,7 @@ namespace mir
 
         // a WorldTransform reader
         mMeshes = &context.scheduler.AddSystem<MeshResolveSystem>(SystemPhase::LateUpdate,
-            SystemOrder{SystemOrder::kNormal}, mRenderer, &assets.Cache(),
+            SystemOrder{SystemOrder::kNormal}, mRenderer, settings.mAssetService,
             *settings.mResolver);
         mActiveCamera = &context.scheduler.AddSystem<ActiveCameraSystem>(SystemPhase::Render,
             SystemOrder{SystemOrder::kEarly});
@@ -107,7 +107,7 @@ namespace mir
             });
         mReloadCommit = context.scheduler.AddStage(Stage::ReloadCommit, [this, &assets](SystemContext &)
             {
-                mMeshes->CommitReload(&assets.Cache());
+                mMeshes->CommitReload();
                 mSurfaceMaterials.CommitReload(assets.Cache());
             });
     }

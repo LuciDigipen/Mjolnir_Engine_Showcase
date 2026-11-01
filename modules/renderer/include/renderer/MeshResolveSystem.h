@@ -8,10 +8,12 @@
  */
 #pragma once
 
+#include <assets/AssetId.h>
 #include <core/ecs/ComponentFieldChanges.h>
 #include <core/ecs/System.h>
 #include <renderer/Material.h>
 #include <renderer/Mesh.h>
+#include <renderer/MeshLoadTracker.h>
 #include <renderer/components/MeshBounds.h>
 
 #include <cstdint>
@@ -23,15 +25,17 @@
 
 namespace mir
 {
-    class AssetCache;
     class AssetResolver;
-    class VulkanRenderer;
+    class AsyncAssetService;
+    class IMeshResolveHost;
 
-    // Resolves resources every frame
+    // Resolves resources every frame. A mesh asset loads in the background, its entities draw it the frame its
+    // upload completes and gain MeshBounds then. A builtin shape resolves in the same frame.
     class MeshResolveSystem final : public ISystem
     {
     public:
-        MeshResolveSystem(VulkanRenderer &renderer, AssetCache *assets, const AssetResolver &resolver);
+        // assets may be null, and every mesh asset then fails to load.
+        MeshResolveSystem(IMeshResolveHost &renderer, AsyncAssetService *assets, const AssetResolver &resolver);
 
         // Call at ReleaseSceneResources
         void Reset();
@@ -41,7 +45,7 @@ namespace mir
 
         // Frees this system's uploads while other Worlds keep rendering.
         void ReleaseResources();
-        void CommitReload(AssetCache *assets);
+        void CommitReload();
 
         void OnStart(SystemContext &context) override;
         void OnUpdate(SystemContext &context) override;
@@ -51,10 +55,14 @@ namespace mir
         // a renamed mesh or shader resolves again; a removal is Forget's
         static void OnBeforeFieldChange(World &world, std::span<const ComponentFieldChange> changes, void *user);
 
+        // What a mesh name stands for, a builtin shape or an asset loaded by mTracker
         struct CachedMesh
         {
+            // builtin shapes only
             MeshHandle mMesh;
             std::optional<MeshBounds> mBounds;
+            // non-null for a mesh asset
+            AssetId mAsset;
         };
 
         // the names an entity's handles were last resolved from
@@ -64,12 +72,21 @@ namespace mir
             std::string mShader;
         };
 
+        // The handle and bounds an entity of this mesh shows now. The handle is null until the upload is queued
+        // and bounds exist only once it draws.
+        struct MeshView
+        {
+            MeshHandle mMesh;
+            std::optional<MeshBounds> mBounds;
+        };
+
         const CachedMesh &ResolveMesh(const std::string &meshName);
+        MeshView ViewOf(const CachedMesh &cached) const;
         MaterialHandle ResolveMaterial(const std::string &shaderName);
 
-        VulkanRenderer &mRenderer;
-        AssetCache *mAssets;
+        IMeshResolveHost &mRenderer;
         const AssetResolver &mResolver;
+        MeshLoadTracker mTracker;
 
         std::unordered_map<std::string, CachedMesh> mMeshes;         // by meshName
         std::unordered_map<std::string, MaterialHandle> mMaterials;  // by materialShader

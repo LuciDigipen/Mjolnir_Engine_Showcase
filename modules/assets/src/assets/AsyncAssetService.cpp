@@ -182,6 +182,12 @@ namespace mir
         return mSlots[request.index].state;
     }
 
+    const std::string &AsyncAssetService::FailureReason(AssetRequest request) const
+    {
+        static const std::string none;
+        return State(request) == AssetLoadState::Failed ? mSlots[request.index].error : none;
+    }
+
     std::shared_ptr<const void> AsyncAssetService::AcquireErased(AssetRequest request, std::type_index type) const
     {
         if (State(request) != AssetLoadState::Ready)
@@ -215,6 +221,7 @@ namespace mir
             else
             {
                 slot.state = AssetLoadState::Failed;
+                slot.error = item.error;
                 MIR_LOG_ERROR("AsyncAssetService: asset {:016x} failed to load: {}", slot.id.value, item.error);
             }
         }

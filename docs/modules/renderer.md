@@ -125,6 +125,20 @@ the `meshName` and `materialShader` each entity was last resolved from, keyed by
 `MeshBounds` come from caches keyed by name, so renderers naming the same mesh
 share one upload.
 
+A mesh asset loads in the background. The first entity to use a name asks
+`AsyncAssetService` to read and decode it on a worker, where `DecodeMeshAsset`
+parses the JSON, checks the indices and computes the bounds. `MeshLoadTracker`
+follows each asset one step per frame. A finished decode is queued with
+`QueueMesh`, sharing the decoded data with the asset service and asking for a
+BLAS when the device supports one. The `MeshRenderer` takes the queued handle
+as soon as it exists, and the draw path skips the mesh until its upload is Ready.
+`MeshBounds` are added when the mesh is Ready, so picking and scripts never see
+bounds for a mesh that is not drawing. A builtin shape has no asset and resolves
+in the same frame. Changing `meshName` while a load is in flight resolves the
+entity to the new name and leaves the old load to the tracker, because other
+entities may share it. A decode failure or a failed upload logs once and the
+entity draws nothing, and a failed upload's handle is retired.
+
 A renderer whose names are both empty is never touched, so a handle set from code
 keeps its value. Clearing `meshName` nulls the mesh and removes `MeshBounds`.
 Removing the `MeshRenderer` removes `MeshBounds` too, and its OnRemove forgets
@@ -132,8 +146,9 @@ the entity's names, so a packed id the World hands out again starts unresolved.
 `Reset()` empties the caches and runs at `SceneUnload`, before
 `ReleaseSceneResources`.
 
-At `ReloadCommit` the module calls `CommitReload` with the new `AssetCache`. It frees the cached meshes and forgets every entity's names, so
-the next `LateUpdate` resolves every renderer from the new cache, including one
+At `ReloadCommit` the module calls `CommitReload`. It retires the meshes that are
+still queued or uploading, frees the ready ones, and forgets every entity's names,
+so the next `LateUpdate` resolves every renderer again, including one
 whose mesh failed before the import. That runs before `Render`, so no freed mesh
 is drawn. A mesh file that is not valid JSON, lacks a vertex field, or has an
 index past its vertices logs an error and resolves to no mesh.
@@ -163,7 +178,7 @@ void ResetHistory();                         // the next frame accumulates fresh
 bool RequestStagingBytes(uint64_t bytes);                    // grows the ring if idle; false keeps the current ring
 bool SetUploadFrameBudget(uint64_t bytes);                   // per-frame bytes, from the next frame; false for zero
 uint64_t UploadFrameBudget() const;                          // the budget now, shared by every consumer
-MeshHandle QueueMesh(std::vector<Vertex> vertices, std::vector<uint32_t> indices, const MeshUploadOptions &options);
+MeshHandle QueueMesh(MeshUploadSource source, const MeshUploadOptions &options);   // spans plus a keepalive
 MeshUploadState MeshState(MeshHandle handle) const;          // Stale, Pending, Uploading, Ready or Failed
 bool RetireMesh(MeshHandle handle);                          // stale at once, freed after its last frame
 uint64_t MeshFootprint(uint32_t vertexCount, uint32_t indexCount, const MeshUploadOptions &options) const;
@@ -313,7 +328,11 @@ the submit and wait.
 
 **A queued mesh never waits: it uploads at the start of a frame and is Ready
 once that frame completes (#127).** `QueueMesh` reserves a slot (state
-Pending, no buffers) and keeps the vertex and index vectors. At the start of
+Pending, no buffers) and keeps the `MeshUploadSource`: read-only spans over the
+vertices and indices, and a `shared_ptr` that keeps them alive. `MeshUploadSource::Own`
+makes one that owns its vectors, and a caller that shares its data, such as the
+asset service, passes its own reference. The renderer drops the reference right
+after the staging copy, so only the sharing holder keeps the data. At the start of
 each recorded frame, after `FrameSync::Begin`'s wait, `MeshUploader` takes
 queued meshes in order while they fit `MeshStreamingDesc::frameBytes` (vertex
 and index bytes plus the acceleration structure, the first mesh of a frame
@@ -1032,8 +1051,18 @@ back to the World's default camera in Play.
 submission, anti-aliasing's json shape, mode clamping and sample-count rounding
 (`AntiAliasingEffect.tests.cpp`) and the asynchronous mesh bookkeeping
 (`MeshStreaming`: staging ring, frame budget, cancellation, retirement by frame).
-None of the anti-aliasing passes themselves, nor their resource lifetimes, have
-an automated test.
+The mesh loading path has three suites over the real `AsyncAssetService` with no
+workers and a shared fake, `FakeMeshUploader` for the uploads and
+`FakeMeshResolveHost` on top of it for the creation and release calls:
+`MeshAssetDecoder` for the parse and bounds, `MeshLoadTracker` for the phase of
+each load, and `MeshResolveSystem` for what an entity sees, including renames
+during a load, bounds appearing on Ready, shared meshes, removal, and the first
+cook of a game that started without a manifest reaching a scene and a preview.
+`CookedMeshDir.h` writes the cooked blobs they read. The unit tests do not reach
+`MeshUploader::Record`, `Forget` and `Clear`, where the renderer drops the data
+reference after the staging copy, so those release points rely on the editor and
+game smoke runs. None of the anti-aliasing passes themselves, nor their resource
+lifetimes, have an automated test.
 Everything that needs a device is verified by the smoke tests and
 `TerrainRenderProbe`.
 
@@ -1104,6 +1133,29 @@ Everything that needs a device is verified by the smoke tests and
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-10-31* — **Mesh assets load in the background, and the upload is an
+interface (#361).** Was: `MeshResolveSystem` read the blob, parsed the JSON and
+called the synchronous `CreateMesh` the first time an entity used a mesh name, so
+opening a scene with JSON meshes stalled the first frame. `QueueMesh` took
+vectors by value, and terrain's adapter was written against `VulkanRenderer`.
+Now: the parse runs in an `AssetDecoder` on an `AsyncAssetService` worker,
+`MeshLoadTracker` follows each load and queues the result, and `MeshBounds` are
+added once the mesh is Ready. `QueueMesh` takes a `MeshUploadSource`, and
+`VulkanRenderer` implements `IMeshUploader` (`QueueMesh`, `MeshState`,
+`RetireMesh`, `MeshFootprint`, `MeshStreaming`, `UploadFrameBudget`), so the
+tracker and terrain's adapter run against a `FakeMeshUploader` in tests.
+`MeshResolveSystem` takes the asset service in place of `AssetCache`, and
+`CommitReload` takes no argument. It also takes an `IMeshResolveHost`, which adds
+`CreateMesh`, `CreateMaterial`, `ErrorMaterial` and `ReleaseModelResources` to
+`IMeshUploader`, so its entity logic is tested without a device. The service now
+exists even for a game that starts without a manifest, so the first cook an
+editor applies reaches every mesh, and a failed load logs its asset name with the
+service's reason. Because: the service already decodes off the
+main thread and the upload ring already copies within a frame budget, and a
+shared source lets the renderer and the service hold one decode with no copy.
+Mesh resolve never cancels the service, so a decode still running at scene unload
+finishes and stays in the service until the next reload.
 
 *2026-10-31* — **The renderer owns the upload staging ring and budget (#359).**
 Was: terrain was the only user and configured the ring and the per-frame budget

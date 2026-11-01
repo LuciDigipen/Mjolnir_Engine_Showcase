@@ -72,6 +72,9 @@ namespace mir
 
         AssetLoadState State(AssetRequest request) const;
 
+        // convert failure to printable string
+        const std::string &FailureReason(AssetRequest request) const;
+
         // The decoded result, or null unless the request is Ready and was made for this T. It stays
         // valid while the caller holds it, even past CancelAll.
         template <class T>
@@ -106,6 +109,7 @@ namespace mir
             std::type_index type;
             AssetLoadState state = AssetLoadState::Queued;
             std::shared_ptr<const void> result;
+            std::string error;
         };
 
         struct DedupKey

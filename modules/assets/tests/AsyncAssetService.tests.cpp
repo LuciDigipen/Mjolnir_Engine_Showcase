@@ -366,6 +366,7 @@ TEST_CASE("A failed load is reported, remembered and not decoded again", "[asset
     const AssetRequest request = service.Request(Id("subject"), *decoder);
     service.DrainCompletions();
     CHECK(service.State(request) == AssetLoadState::Failed);
+    CHECK_FALSE(service.FailureReason(request).empty());
     CHECK(service.Acquire<Text>(request) == nullptr);
     CHECK(service.Idle());
     const int decodes = gDecodes;
