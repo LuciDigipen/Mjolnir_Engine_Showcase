@@ -20,6 +20,7 @@
 namespace mir
 {
     class ActiveCameraSystem;
+    class AssetResolver;
     class AssetsModule;
     class MeshResolveSystem;
     class RenderSystem;
@@ -31,7 +32,8 @@ namespace mir
         bool mEnableValidation = true;
         // RenderSettings and PostProcessingSettings are read from it
         std::filesystem::path mProjectSettingsPath;
-        std::string mAssetIdRoot;
+        // looks up the names a MeshRenderer holds, required
+        const AssetResolver *mResolver = nullptr;
     };
 
     class RendererModule

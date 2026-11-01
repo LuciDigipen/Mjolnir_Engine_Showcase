@@ -17,13 +17,14 @@
 
 namespace mir
 {
+    class AssetResolver;
     class AssetsModule;
     class ParticleWorld;
 
     class ParticlesModule
     {
     public:
-        ParticlesModule(ModuleContext context, AssetsModule &assets, std::string assetIdRoot,
+        ParticlesModule(ModuleContext context, AssetsModule &assets, const AssetResolver &resolver,
             uint32_t capacity = 64);
         ParticlesModule(const ParticlesModule &) = delete;
         ParticlesModule &operator=(const ParticlesModule &) = delete;

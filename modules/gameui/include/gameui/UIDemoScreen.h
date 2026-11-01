@@ -18,6 +18,7 @@
 namespace mir
 {
     class AssetCache;
+    class AssetResolver;
 
 
     struct UIDemoLayout
@@ -43,7 +44,7 @@ namespace mir
         static UIDemoLayout Layout(const UIRect &safeArea);
 
 
-        void Load(UIContext &ui, AssetCache *assets);
+        void Load(UIContext &ui, AssetCache *assets, const AssetResolver &resolver);
 
         // between UIContext::BeginFrame and EndFrame
         void Draw(UIContext &ui);

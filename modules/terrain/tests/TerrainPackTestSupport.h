@@ -42,6 +42,11 @@ namespace mir::test
         return MakeAssetId(logical.path);
     }
 
+    inline AssetId HashedAssetId(std::string_view logicalPath)
+    {
+        return MakeAssetId(logicalPath);
+    }
+
     // Exact in float here; a function of global indices, so neighbours share edges.
     inline float AnalyticHeight(int64_t i, int64_t k, float salt = 0.0f)
     {

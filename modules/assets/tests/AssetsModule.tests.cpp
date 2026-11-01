@@ -102,3 +102,24 @@ TEST_CASE("A reload with a corrupt manifest throws and keeps the cache", "[asset
 
     CHECK(&assets.Cache() == before);
 }
+
+TEST_CASE("The reload epoch counts committed reloads only", "[assets][module]")
+{
+    const CookedDir dir;
+    dir.WriteManifest(mir::BuildAssetManifestBlob({}));
+    mir::AssetsModule assets(dir.path);
+    CHECK(assets.ReloadEpoch() == 0);
+
+    assets.BeginReload();
+    CHECK(assets.ReloadEpoch() == 0);
+    assets.AbortReload();
+    CHECK(assets.ReloadEpoch() == 0);
+
+    assets.BeginReload();
+    assets.CommitReload();
+    CHECK(assets.ReloadEpoch() == 1);
+
+    assets.BeginReload();
+    assets.CommitReload();
+    CHECK(assets.ReloadEpoch() == 2);
+}

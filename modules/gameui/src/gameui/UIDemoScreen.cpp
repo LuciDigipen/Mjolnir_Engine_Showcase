@@ -13,7 +13,7 @@
 #include <gameui/UILayout.h>
 #include <gameui/UIWidgets.h>
 
-#include <assets/AssetId.h>
+#include <assets/AssetResolver.h>
 #include <core/log/Log.h>
 #include <input/DefaultInputMap.h>
 
@@ -108,13 +108,13 @@ namespace mir
         return layout;
     }
 
-    void UIDemoScreen::Load(UIContext &ui, AssetCache *assets)
+    void UIDemoScreen::Load(UIContext &ui, AssetCache *assets, const AssetResolver &resolver)
     {
         if (assets == nullptr)
             return;
 
         UITextures &textures = ui.Textures();
-        const auto load = [&](std::string_view path) { return textures.Load(*assets, MakeAssetId(path)); };
+        const auto load = [&](std::string_view path) { return textures.Load(*assets, resolver.ResolveFull(path)); };
         mArt = Art{.mPanel = Sliced(load("assets/ui/panel.png"), 16.0f),
                    .mButton = Sliced(load("assets/ui/button.png"), 8.0f),
                    .mButtonHovered = Sliced(load("assets/ui/button_hover.png"), 8.0f),

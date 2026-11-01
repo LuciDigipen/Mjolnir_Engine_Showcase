@@ -11,6 +11,7 @@
 #include <assets/AssetBlob.h>
 #include <assets/AssetId.h>
 
+#include <functional>
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 
@@ -186,12 +187,17 @@ namespace mir
     std::string ParticleScriptLayout();
     // Unresolved definitions may be empty, runtime instances require every dependency.
     bool ValidateParticleEffect(const ParticleEffect &effect, std::string &error);
-    ParticleEffectResult ReadParticleEffectSource(std::string_view text, std::string_view assetIdRoot);
+    // Turns the logical path of a file a source names into its id, null when there is no such file. Empty
+    // means the id is the hash of the logical path.
+    using AssetIdOfPath = std::function<AssetId(std::string_view logicalPath)>;
+    ParticleEffectResult ReadParticleEffectSource(std::string_view text, std::string_view assetIdRoot,
+        const AssetIdOfPath &idOf = {});
     std::vector<std::byte> BuildParticleEffectAsset(const ParticleEffect &effect);
     ParticleEffectResult ReadParticleEffectAsset(const AssetBlobView &blob);
     ParticleEffectResult LoadParticleEffect(AssetCache &cache, AssetId id);
 
-    ParticleEmitterAssetResult ReadParticleEmitterSource(std::string_view text, std::string_view assetIdRoot);
+    ParticleEmitterAssetResult ReadParticleEmitterSource(std::string_view text, std::string_view assetIdRoot,
+        const AssetIdOfPath &idOf = {});
     std::vector<std::byte> BuildParticleEmitterAsset(const ParticleEmitterAsset &emitter);
     ParticleEmitterAssetResult ReadParticleEmitterAsset(const AssetBlobView &blob);
     // Validates the texture dependency as a cooked texture, never a source image.

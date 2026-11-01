@@ -8,6 +8,7 @@
  */
 #pragma once
 #include <assets/AssetCache.h>
+#include <assets/AssetDecoder.h>
 #include <assets/ModelAsset.h>
 #include <unordered_map>
 
@@ -28,6 +29,11 @@ namespace mir
         std::vector<float> weights;
     };
     bool LoadModelResources(AssetCache &cache, AssetId id, ModelResources &result, std::string &error);
+    // Reads the model from root and its meshes, skeletons and clips from dependencies
+    bool DecodeModelResources(const AssetBlobView &root, const AssetDependencies &dependencies, ModelResources &result,
+                              std::string &error);
+    // The dependency types DecodeModelResources reads, so materials and textures are not loaded with a model
+    const AssetDecoder<ModelResources> &ModelResourcesDecoder();
     std::vector<float> SampleAnimationTrack(const AnimationTrack &track, float time);
     // Reset to rest pose each sample; deterministic seeking and independent instances.
     std::vector<NodePose> EvaluateModel(const ModelResources &model, uint32_t clip, float time, bool loop);

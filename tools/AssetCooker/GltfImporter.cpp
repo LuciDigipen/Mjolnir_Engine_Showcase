@@ -36,8 +36,8 @@ namespace mir::cook
         std::string Hash(const std::string &s) { return std::to_string(Fnv1a64(s)); }
         struct Ids
         {
-            Json data = { { "version", 2 },{ "next", 1 },{ "objects", Json::object() } };
-            std::string root;
+            Json data = { { "next", 1 },{ "objects", Json::object() } };
+            AssetId guid;
             std::set<std::string> used;
             std::string Key(const std::string &kind, const std::string &name, const std::string &fingerprint,
                 bool shareContent)
@@ -55,7 +55,7 @@ namespace mir::cook
                 }
                 return kind + "/" + objects.at(match).get<std::string>();
             }
-            AssetId Id(const std::string &key) const { return MakeAssetId(root + "#" + key); }
+            AssetId Id(const std::string &key) const { return MakeChildAssetId(guid, key); }
         };
         template <class T> std::vector<T> Read(const fastgltf::Asset &a, size_t index)
         {
@@ -294,35 +294,19 @@ namespace mir::cook
     }
 
     GltfImport ImportGltf(const std::filesystem::path &path, const std::string &assetPath,
-        const std::vector<std::filesystem::path> &roots)
+        const std::vector<std::filesystem::path> &roots, const AssetMeta &meta)
     {
         GltfImport result;
-        result.metadataPath = path.string() + ".import.json";
+        Require(!meta.guid.IsNull(), "the model has no guid");
         Ids ids;
-        if (std::filesystem::exists(result.metadataPath))
-        {
-            std::ifstream in(result.metadataPath);
-            in >> ids.data;
-            const uint32_t version = ids.data.at("version").get<uint32_t>();
-            Require(version == 1 || version == 2, "unsupported import metadata version");
-            if (version == 1)
-            {
-                ids.data["version"] = 2;
-                ids.data["identityPath"] = assetPath;
-                ids.data["aliases"] = Json::array({ assetPath });
-            }
-        }
-        if (!ids.data.contains("identityPath"))
-            ids.data["identityPath"] = assetPath;
-        if (!ids.data.contains("aliases"))
-            ids.data["aliases"] = Json::array();
-        ids.root = ids.data.at("identityPath").get<std::string>();
-        auto &aliases = ids.data["aliases"];
-        if (std::find(aliases.begin(), aliases.end(), Json(assetPath)) == aliases.end())
-            aliases.push_back(assetPath);
-        result.identityPath = ids.root;
-        result.aliases = aliases.get<std::vector<std::string>>();
-        result.modelId = MakeAssetId(ids.root);
+        ids.guid = meta.guid;
+        const Json state = Json::parse(meta.importer, nullptr, false);
+        Require(state.is_object(), "the importer state in the .meta is not a JSON object");
+        if (state.contains("next"))
+            ids.data["next"] = state.at("next");
+        if (state.contains("objects"))
+            ids.data["objects"] = state.at("objects");
+        result.modelId = meta.guid;
         auto file = fastgltf::GltfDataBuffer::FromPath(path);
         Require(file.error() == fastgltf::Error::None, "cannot read glTF");
         fastgltf::Parser parser;
@@ -759,13 +743,13 @@ namespace mir::cook
             model.animations.push_back(id);
         }
 
-        emit(result.modelId, model, "model", std::filesystem::path(result.identityPath).filename().string());
+        emit(result.modelId, model, "model", std::filesystem::path(assetPath).filename().string());
         for (size_t i = 0; i < model.scenes.size(); ++i)
             result.contents.push_back({ kNullAssetId, "scene",
                                        model.scenes[i].name.empty() ? "scene " + std::to_string(i)
                                                                     : model.scenes[i].name,
                                        uint32_t(i) });
-        result.metadata = ids.data.dump(2) + "\n";
+        result.importer = ids.data.dump();
         return result;
     }
 } // namespace mir::cook

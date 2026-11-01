@@ -6,6 +6,7 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
+#include "CookTestSupport.h"
 #include <assets/AssetCache.h>
 #include <assets/AssetManifest.h>
 #include <core/fs/FileIO.h>
@@ -108,7 +109,7 @@ TEST_CASE("A prefab cooks to a typed blob under its UUID AssetId", "[cooker][pre
     REQUIRE(entry != nullptr);
     CHECK(entry->typeTag == mir::kPrefabAssetTypeTag);
     CHECK(entry->contentVersion == mir::kPrefabAssetContentVersion);
-    CHECK(manifest->Find(mir::MakeAssetId("assets/prefabs/parent.prefab")) == nullptr);
+    CHECK(manifest->FindByPath("assets/prefabs/parent.prefab") == nullptr);
 
     mir::AssetCache cache(&*manifest, root.mOut);
     const mir::AssetBlobView *blob = cache.Load(mir::PrefabAssetId(parent.mId));
@@ -172,4 +173,37 @@ TEST_CASE("Two prefabs sharing a UUID fail the cook and name both files", "[cook
     const std::string message = ErrorOf(root.mOut / "result.json");
     CHECK(message.find("one.prefab") != std::string::npos);
     CHECK(message.find("two.prefab") != std::string::npos);
+}
+
+TEST_CASE("A prefab lists the prefabs it nests as dependencies", "[cooker][prefab][graph]")
+{
+    CookRoot root;
+    const mir::PrefabDocument child = mir::NewPrefabDocument();
+    const mir::PrefabDocument parent = ParentOf(child);
+    REQUIRE(mir::WritePrefabFile(root.mSource / "prefabs" / "child.prefab", child));
+    REQUIRE(mir::WritePrefabFile(root.mSource / "prefabs" / "parent.prefab", parent));
+    REQUIRE(root.Cook() == 0);
+
+    const std::optional<mir::AssetManifest> manifest = root.Manifest();
+    REQUIRE(manifest.has_value());
+    const mir::AssetManifestEntry *parentEntry = manifest->Find(mir::PrefabAssetId(parent.mId));
+    const mir::AssetManifestEntry *childEntry = manifest->Find(mir::PrefabAssetId(child.mId));
+    REQUIRE(parentEntry != nullptr);
+    REQUIRE(childEntry != nullptr);
+
+    const auto dependencies = manifest->Dependencies(*parentEntry);
+    REQUIRE(dependencies.size() == 1);
+    CHECK(dependencies[0] == mir::PrefabAssetId(child.mId));
+    CHECK(manifest->Dependencies(*childEntry).empty());
+}
+
+TEST_CASE("A prefab that nests a prefab nobody cooked fails the cook", "[cooker][prefab][graph]")
+{
+    CookRoot root;
+    const mir::PrefabDocument child = mir::NewPrefabDocument();
+    REQUIRE(mir::WritePrefabFile(root.mSource / "prefabs" / "parent.prefab", ParentOf(child)));
+
+    CHECK(root.Cook() != 0);
+    CHECK_FALSE(fs::exists(root.mOut / mir::kAssetManifestFileName));
+    CHECK(ErrorOf(root.mOut / "result.json").find("not cooked") != std::string::npos);
 }

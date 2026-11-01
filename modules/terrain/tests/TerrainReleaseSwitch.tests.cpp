@@ -275,7 +275,7 @@ namespace
             TerrainInstance instance{};
             std::memcpy(instance.recipePath, kRecipe.data(), kRecipe.size());
             world.AddComponent(entity, instance);
-            spec = CollectTerrainScene(world, kIdRoot);
+            spec = CollectTerrainScene(world, kIdRoot, HashedAssetId);
             REQUIRE(spec.instances.size() == 1);
             Apply({});
         }

@@ -222,7 +222,8 @@ namespace mir
                translation.Meters() == other.translation.Meters();
     }
 
-    TerrainSceneSpec CollectTerrainScene(World &world, std::string_view assetIdRoot)
+    TerrainSceneSpec CollectTerrainScene(World &world, std::string_view assetIdRoot,
+                                         const TerrainMaterialIdLookup &materialId)
     {
         TerrainSceneSpec spec;
         world.GetOrCreateQuery<const TerrainInstance>().ForEach(
@@ -263,7 +264,7 @@ namespace mir
                     if (material.Ok())
                     {
                         placed.materialLogicalPath = material.path;
-                        placed.material = MakeAssetId(material.path);
+                        placed.material = materialId(material.path);
                         placed.materialLayers.push_back({placed.materialPath, 1.0f});
                     }
                 }

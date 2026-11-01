@@ -21,15 +21,16 @@
 namespace mir
 {
     class AssetCache;
+    class AssetResolver;
     class IScriptHost;
     class ScriptReloadWatcher;
 
     // Loads a script's source into the host by name; false when it is unavailable (logged)
     using ScriptLoader = std::function<bool(std::string_view scriptName)>;
 
-    // From the cooked assets, tracked for hot reload. The cache outlives the loader
+    // From the cooked assets, tracked for hot reload. The cache and the resolver outlive the loader
     ScriptLoader MakeScriptAssetLoader(IScriptHost &host, ScriptReloadWatcher &reload, AssetCache &assets,
-        std::string assetIdRoot);
+        const AssetResolver &resolver);
 
     // Destroys ref's instance, if any, so the next resolve creates a fresh one
     void ReleaseScriptInstance(IScriptHost &host, ScriptRef &ref);

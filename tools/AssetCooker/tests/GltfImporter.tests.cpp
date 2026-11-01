@@ -6,6 +6,7 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
+#include "CookTestSupport.h"
 #include "../GltfImporter.h"
 #include "../ImageImporter.h"
 #include <algorithm>
@@ -30,13 +31,15 @@ namespace
     struct Fixture
     {
         fs::path root;
+        // the .meta of flag.gltf and flag.glb, whose guid is the model's id
+        AssetMeta meta = [] { AssetMeta m; m.guid = AssetId{ 0x1234ABCD5678EF01ull }; return m; }();
         Fixture()
         {
             root = fs::current_path() /
                 ("gltf-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
             fs::create_directories(root);
             for (const auto &p : fs::directory_iterator(GLTF_FIXTURE_DIR))
-                if (p.is_regular_file() && !p.path().filename().string().ends_with(".import.json"))
+                if (p.is_regular_file() && !IsAssetToolingFile(p.path()))
                     fs::copy_file(p.path(), root / p.path().filename());
         }
         Json Read()
@@ -49,8 +52,10 @@ namespace
         void Write(const Json &j) { std::ofstream(root / "flag.gltf") << j.dump(2); }
         cook::GltfImport Import(const char *file = "flag.gltf")
         {
-            return cook::ImportGltf(root / file, std::string("assets/") + file, { root });
+            return cook::ImportGltf(root / file, std::string("assets/") + file, { root }, meta);
         }
+        // keeps the part keys an import handed out, as the cooker does in the .meta
+        void Keep(const cook::GltfImport &imported) { meta.importer = imported.importer; }
     };
     template <class T> T Find(const cook::GltfImport &result, uint32_t tag, size_t index = 0)
     {
@@ -108,21 +113,30 @@ TEST_CASE("glTF and GLB cook geometry texture skeleton and morph animation", "[g
     }
 }
 
-TEST_CASE("glTF sidecar migration keeps model identity and records moved path "
-    "aliases",
+TEST_CASE("A model keeps its id and the ids of its parts when it is imported from another path",
     "[gltf][identity]")
 {
     Fixture f;
-    auto before = cook::ImportGltf(f.root / "flag.gltf", "assets/models/flag/flag.gltf", { f.root });
-    std::ofstream(before.metadataPath) << before.metadata;
-    auto moved = cook::ImportGltf(f.root / "flag.gltf", "assets/models/renamed/flag.gltf", { f.root });
+    auto before = f.Import();
+    f.Keep(before);
+    auto moved = cook::ImportGltf(f.root / "flag.gltf", "assets/models/renamed/flag.gltf", { f.root }, f.meta);
+    CHECK(before.modelId == f.meta.guid);
     CHECK(moved.modelId == before.modelId);
-    CHECK(moved.identityPath == "assets/models/flag/flag.gltf");
-    CHECK(std::find(moved.aliases.begin(), moved.aliases.end(), "assets/models/flag/flag.gltf") != moved.aliases.end());
-    CHECK(std::find(moved.aliases.begin(), moved.aliases.end(), "assets/models/renamed/flag.gltf") !=
-        moved.aliases.end());
-    const Json metadata = Json::parse(moved.metadata);
-    CHECK(metadata.at("version") == 2);
+    auto ids = [](const cook::GltfImport &imported)
+    {
+        std::set<uint64_t> out;
+        for (const auto &blob : imported.blobs)
+            out.insert(blob.id.value);
+        return out;
+    };
+    CHECK(ids(moved) == ids(before));
+
+    // the parts take their ids from the guid, so another guid gives other ids
+    AssetMeta other = f.meta;
+    other.guid = AssetId{ 0x0F0F0F0F0F0F0F0Full };
+    const auto copy = cook::ImportGltf(f.root / "flag.gltf", "assets/flag.gltf", { f.root }, other);
+    for (const uint64_t id : ids(copy))
+        CHECK_FALSE(ids(before).contains(id));
 }
 
 TEST_CASE("Cooker incremental batches preserve unrelated entries and repair "
@@ -138,7 +152,7 @@ TEST_CASE("Cooker incremental batches preserve unrelated entries and repair "
     auto manifest = AssetManifest::LoadFile(out / "manifest.blob");
     REQUIRE(manifest);
     const auto originalCount = manifest->Count();
-    const auto *model = manifest->Find(MakeAssetId("assets/flag.gltf"));
+    const auto *model = manifest->FindByPath("assets/flag.gltf");
     REQUIRE(model);
     const auto modelBlob = out / manifest->PathOf(*model);
 
@@ -174,7 +188,7 @@ TEST_CASE("External import copies only the glTF entry and referenced package "
     CHECK_FALSE(fs::exists(project / "models/flag/flag.glb"));
     const auto manifest = AssetManifest::LoadFile(out / "manifest.blob");
     REQUIRE(manifest);
-    CHECK(manifest->Find(MakeAssetId("games/Test/assets/models/flag/flag.gltf")) != nullptr);
+    CHECK(manifest->FindByPath("games/Test/assets/models/flag/flag.gltf") != nullptr);
 }
 
 TEST_CASE("Cooker move keeps stable identity and relocates private dependencies", "[gltf][cooker][move]")
@@ -183,7 +197,10 @@ TEST_CASE("Cooker move keeps stable identity and relocates private dependencies"
     const auto out = fs::path(f.root.string() + "-move-cooked");
     std::vector<std::string> full{ "--source-dir", f.root.string(), "--id-root", "assets", "--out", out.string() };
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, full, true) == 0);
-    const auto oldId = MakeAssetId("assets/flag.gltf");
+    const auto firstManifest = AssetManifest::LoadFile(out / "manifest.blob");
+    REQUIRE(firstManifest);
+    const auto oldId = test::PathId(*firstManifest, "assets/flag.gltf");
+    REQUIRE_FALSE(oldId.IsNull());
     std::vector<std::string> move = full;
     move.insert(move.end(), { "--move-model", "assets/flag.gltf", "--move-to", "models/Flag" });
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, move, true) == 0);
@@ -193,8 +210,9 @@ TEST_CASE("Cooker move keeps stable identity and relocates private dependencies"
     CHECK(fs::exists(f.root / "models/Flag/checker.png"));
     const auto manifest = AssetManifest::LoadFile(out / "manifest.blob");
     REQUIRE(manifest);
-    CHECK(manifest->Find(oldId) != nullptr);
-    CHECK(manifest->Find(MakeAssetId("assets/models/Flag/flag.gltf")) != nullptr);
+    // the moved model keeps its id, and the old path no longer names anything
+    CHECK(test::PathId(*manifest, "assets/models/Flag/flag.gltf") == oldId);
+    CHECK(manifest->FindByPath("assets/flag.gltf") == nullptr);
 }
 
 TEST_CASE("Explicit removal drops a missing model while preserving the rest of "
@@ -208,17 +226,17 @@ TEST_CASE("Explicit removal drops a missing model while preserving the rest of "
     const auto before = AssetManifest::LoadFile(out / "manifest.blob");
     REQUIRE(before);
     fs::remove(f.root / "flag.glb");
-    fs::remove(f.root / "flag.glb.import.json");
+    fs::remove(f.root / "flag.glb.meta");
     std::vector<std::string> remove = full;
     remove.insert(remove.end(), { "--remove-model", "assets/flag.glb" });
     REQUIRE(LaunchProcess(GLTF_COOKER_EXE, remove, true) == 0);
     const auto after = AssetManifest::LoadFile(out / "manifest.blob");
     REQUIRE(after);
-    CHECK(after->Find(MakeAssetId("assets/flag.glb")) == nullptr);
-    CHECK(after->Find(MakeAssetId("assets/flag.gltf")) != nullptr);
+    CHECK(after->FindByPath("assets/flag.glb") == nullptr);
+    CHECK(after->FindByPath("assets/flag.gltf") != nullptr);
     CHECK(after->Count() < before->Count());
 }
-TEST_CASE("Copied import metadata is rejected as an identity conflict", "[gltf][cooker][identity]")
+TEST_CASE("A copied .meta is rejected as a duplicate guid", "[gltf][cooker][identity]")
 {
     Fixture f;
     const auto out = fs::path(f.root.string() + "-identity-cooked");
@@ -227,7 +245,7 @@ TEST_CASE("Copied import metadata is rejected as an identity conflict", "[gltf][
     const auto manifestBefore = ReadBytes(out / "manifest.blob");
     REQUIRE(manifestBefore);
     fs::create_directories(f.root / "copy");
-    for (const char *name :{ "flag.gltf", "flag.bin", "checker.png", "flag.gltf.import.json" })
+    for (const char *name :{ "flag.gltf", "flag.bin", "checker.png", "flag.gltf.meta" })
         fs::copy_file(f.root / name, f.root / "copy" / name);
     CHECK(LaunchProcess(GLTF_COOKER_EXE, args, true) != 0);
     CHECK(ReadBytes(out / "manifest.blob") == manifestBefore);
@@ -282,7 +300,7 @@ TEST_CASE("Reordering named glTF nodes preserves stable keys and animation targe
 {
     Fixture f;
     auto before = f.Import();
-    std::ofstream(before.metadataPath) << before.metadata;
+    f.Keep(before);
     auto j = f.Read();
     std::swap(j["nodes"][0], j["nodes"][2]);
     auto remap = [](int n) { return n == 0 ? 2 : n == 2 ? 0 : n; };
@@ -358,7 +376,7 @@ TEST_CASE("Editing an external buffer changes mesh payload without changing "
 {
     Fixture f;
     auto before = f.Import();
-    std::ofstream(before.metadataPath) << before.metadata;
+    f.Keep(before);
     auto bytes = ReadBytes(f.root / "flag.bin");
     REQUIRE(bytes);
     float changed = -.75f;
@@ -470,7 +488,7 @@ TEST_CASE("Cooker publishes atomically and retains one fallback manifest generat
     AssetCache cache(&*manifest, out);
     ModelResources model;
     std::string error;
-    REQUIRE(LoadModelResources(cache, MakeAssetId("assets/flag.gltf"), model, error));
+    REQUIRE(LoadModelResources(cache, test::PathId(*manifest, "assets/flag.gltf"), model, error));
     REQUIRE(model.model.animations.size() == 2);
     auto oldClip = model.model.animations.back();
     auto oldPath = std::string(manifest->PathOf(*manifest->Find(oldClip)));
@@ -495,7 +513,7 @@ TEST_CASE("Cooker publishes atomically and retains one fallback manifest generat
     // Last successful publication remains usable even after a failed import.
     AssetCache stillValid(&*updated, out);
     ModelResources loaded;
-    CHECK(LoadModelResources(stillValid, MakeAssetId("assets/flag.gltf"), loaded, error));
+    CHECK(LoadModelResources(stillValid, test::PathId(*updated, "assets/flag.gltf"), loaded, error));
 }
 
 TEST_CASE("Cooker ids match the engine's logical paths for any root spelling", "[cooker][identity]")
@@ -514,7 +532,7 @@ TEST_CASE("Cooker ids match the engine's logical paths for any root spelling", "
         INFO(relative);
         const AssetPathResult logical = MakeLogicalAssetPath("games/Test/assets", relative);
         REQUIRE(logical.Ok());
-        CHECK(manifest->Find(MakeAssetId(logical.path)) != nullptr);
+        CHECK(manifest->FindByPath(logical.path) != nullptr);
     }
 
     const auto rejected = fs::path(f.root.string() + "-rejected-cooked");
@@ -612,11 +630,11 @@ TEST_CASE("A full cook leaves terrain recipes and release files to TerrainTool",
         const auto manifest = AssetManifest::LoadFile(out / "manifest.blob");
         REQUIRE(manifest);
         CHECK(manifest->Count() == 1);
-        CHECK(manifest->Find(MakeAssetId("games/T/assets/data/a.txt")) != nullptr);
+        CHECK(manifest->FindByPath("games/T/assets/data/a.txt") != nullptr);
         for (const auto &relative : terrainFiles)
         {
             INFO(relative);
-            CHECK(manifest->Find(MakeAssetId("games/T/assets/" + relative)) == nullptr);
+            CHECK(manifest->FindByPath("games/T/assets/" + relative) == nullptr);
             CHECK(ReadText(source / relative) == "terrain " + relative);
         }
         size_t blobs = 0;
@@ -641,12 +659,12 @@ TEST_CASE("A standalone image cooks to a texture, and an image a glTF references
     auto manifest = AssetManifest::LoadFile(out / "manifest.blob");
     REQUIRE(manifest);
 
-    const auto *frame = manifest->Find(MakeAssetId("assets/ui/frame.png"));
+    const auto *frame = manifest->FindByPath("assets/ui/frame.png");
     REQUIRE(frame);
     CHECK(frame->typeTag == kTextureAssetTypeTag);
     CHECK(frame->contentVersion == kTextureAssetContentVersion);
     AssetCache cache(&*manifest, out);
-    const AssetBlobView *blob = cache.Load(MakeAssetId("assets/ui/frame.png"));
+    const AssetBlobView *blob = cache.Load(test::PathId(*manifest, "assets/ui/frame.png"));
     REQUIRE(blob);
     TextureAsset texture;
     std::string error;
@@ -659,11 +677,111 @@ TEST_CASE("A standalone image cooks to a texture, and an image a glTF references
     CHECK(texture.rgba == decoded.rgba);
 
     // flag.gltf's own copy is its import's texture; the file is left as it was
-    const auto *checker = manifest->Find(MakeAssetId("assets/checker.png"));
+    const auto *checker = manifest->FindByPath("assets/checker.png");
     REQUIRE(checker);
     CHECK(checker->typeTag == kRawAssetTypeTag);
 
     // a broken image fails the cook rather than shipping a texture nothing can read
     std::ofstream(f.root / "ui" / "broken.png") << "not a png";
     CHECK(LaunchProcess(GLTF_COOKER_EXE, args, true) != 0);
+}
+
+TEST_CASE("A cooked model lists its dependencies and keeps them through a partial cook", "[gltf][cooker][graph]")
+{
+    Fixture f;
+    const auto out = fs::path(f.root.string() + "-graph-cooked");
+    const auto result = out / "result.json";
+    std::vector<std::string> full{ "--source-dir", f.root.string(), "--id-root", "assets",
+                                  "--out",        out.string(),    "--result",  result.string() };
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, full, true) == 0);
+    auto manifest = AssetManifest::LoadFile(out / "manifest.blob");
+    REQUIRE(manifest);
+
+    const AssetId modelId = test::PathId(*manifest, "assets/flag.gltf");
+    const auto *model = manifest->Find(modelId);
+    REQUIRE(model);
+    CHECK(manifest->LogicalPathOf(*model) == "assets/flag.gltf");
+    CHECK(manifest->FindByPath("assets/flag.gltf") == model);
+
+    // the model names its mesh, skeleton and clip, the material and texture are behind the mesh
+    std::set<uint32_t> direct;
+    for (const AssetId dependency : manifest->Dependencies(*model))
+        direct.insert(manifest->Find(dependency)->typeTag);
+    CHECK(direct == std::set<uint32_t>{ kMeshAssetTypeTag, kSkeletonAssetTypeTag, kAnimationAssetTypeTag });
+
+    std::set<uint32_t> reached;
+    for (const AssetId id : manifest->Closure(modelId))
+        reached.insert(manifest->Find(id)->typeTag);
+    CHECK(reached.contains(kMaterialAssetTypeTag));
+    CHECK(reached.contains(kTextureAssetTypeTag));
+
+    // asking for the geometry types alone stops before the material
+    const uint32_t wanted[]{ kMeshAssetTypeTag, kSkeletonAssetTypeTag, kAnimationAssetTypeTag };
+    for (const AssetId id : manifest->Closure(modelId, wanted))
+    {
+        const uint32_t tag = manifest->Find(id)->typeTag;
+        CHECK((id == modelId || std::find(std::begin(wanted), std::end(wanted), tag) != std::end(wanted)));
+    }
+
+    // an unchanged model is restored from the cache record, edges and name included
+    const std::vector<AssetId> before(manifest->Dependencies(*model).begin(), manifest->Dependencies(*model).end());
+    std::vector<std::string> partial{ "--source-dir", f.root.string(), "--id-root",        "assets",   "--out",
+                                     out.string(),   "--model",       "assets/flag.gltf", "--result", result.string() };
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, partial, true) == 0);
+    const auto after = AssetManifest::LoadFile(out / "manifest.blob");
+    REQUIRE(after);
+    const auto *kept = after->Find(modelId);
+    REQUIRE(kept);
+    CHECK(after->LogicalPathOf(*kept) == "assets/flag.gltf");
+    const auto keptDependencies = after->Dependencies(*kept);
+    CHECK(std::vector<AssetId>(keptDependencies.begin(), keptDependencies.end()) == before);
+}
+
+TEST_CASE("A full cook after a rename that kept the .meta names the model by its new path",
+    "[gltf][cooker][identity]")
+{
+    Fixture f;
+    const auto out = fs::path(f.root.string() + "-rename-cooked");
+    std::vector<std::string> full{ "--source-dir", f.root.string(), "--id-root", "assets", "--out", out.string() };
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, full, true) == 0);
+    const auto before = AssetManifest::LoadFile(out / "manifest.blob");
+    REQUIRE(before);
+    const AssetId id = test::PathId(*before, "assets/flag.gltf");
+    REQUIRE_FALSE(id.IsNull());
+
+    // what ContentBrowserWatcher::RenameEntry does
+    fs::rename(f.root / "flag.gltf", f.root / "renamed.gltf");
+    MoveAssetMeta(f.root / "flag.gltf", f.root / "renamed.gltf");
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, full, true) == 0);
+
+    const auto after = AssetManifest::LoadFile(out / "manifest.blob");
+    REQUIRE(after);
+    CHECK(test::PathId(*after, "assets/renamed.gltf") == id);
+    CHECK(after->FindByPath("assets/flag.gltf") == nullptr);
+}
+
+TEST_CASE("Removing the old record after a rename that kept the .meta keeps the renamed model",
+    "[gltf][cooker][identity]")
+{
+    Fixture f;
+    const auto out = fs::path(f.root.string() + "-rename-remove-cooked");
+    std::vector<std::string> full{ "--source-dir", f.root.string(), "--id-root", "assets", "--out", out.string() };
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, full, true) == 0);
+    const auto before = AssetManifest::LoadFile(out / "manifest.blob");
+    REQUIRE(before);
+    const AssetId id = test::PathId(*before, "assets/flag.gltf");
+    REQUIRE_FALSE(id.IsNull());
+
+    fs::rename(f.root / "flag.gltf", f.root / "renamed.gltf");
+    MoveAssetMeta(f.root / "flag.gltf", f.root / "renamed.gltf");
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, full, true) == 0);
+
+    // the editor offers Remove on a row for a path that no longer exists
+    std::vector<std::string> remove = full;
+    remove.insert(remove.end(), { "--remove-model", "assets/flag.gltf" });
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, remove, true) == 0);
+
+    const auto after = AssetManifest::LoadFile(out / "manifest.blob");
+    REQUIRE(after);
+    CHECK(test::PathId(*after, "assets/renamed.gltf") == id);
 }

@@ -15,6 +15,7 @@
 
 namespace mir
 {
+    class AssetResolver;
     class RendererModule;
     class TerrainRuntime;
     class JobExecutor;
@@ -23,7 +24,8 @@ namespace mir
     class TerrainRuntimeModule
     {
     public:
-        TerrainRuntimeModule(ModuleContext context, RendererModule &renderer, const GameProject &project, JobExecutor &jobs);
+        TerrainRuntimeModule(ModuleContext context, RendererModule &renderer, const GameProject &project, const AssetResolver &resolver,
+                             JobExecutor &jobs);
         ~TerrainRuntimeModule();
 
         TerrainRuntimeModule(const TerrainRuntimeModule &) = delete;

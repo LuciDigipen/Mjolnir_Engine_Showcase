@@ -6,6 +6,7 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
+#include "CookTestSupport.h"
 #include <assets/AssetCache.h>
 #include <assets/AssetManifest.h>
 #include <core/fs/FileIO.h>
@@ -15,6 +16,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -75,7 +77,7 @@ TEST_CASE("Particle system cooks and resolves its emitter and typed texture depe
     auto manifest = mir::AssetManifest::LoadFile(fixture.out / mir::kAssetManifestFileName);
     REQUIRE(manifest);
     CHECK(manifest->Count() == 5);
-    const auto id = mir::MakeAssetId("assets/exhaust.particle.json");
+    const auto id = mir::test::PathId(*manifest, "assets/exhaust.particle.json");
     const auto *entry = manifest->Find(id);
     REQUIRE(entry);
     CHECK(entry->typeTag == mir::kParticleEffectTypeTag);
@@ -84,9 +86,9 @@ TEST_CASE("Particle system cooks and resolves its emitter and typed texture depe
     const auto loaded = mir::LoadParticleEffect(cache, id);
     REQUIRE(loaded.mEffect);
     REQUIRE(loaded.mEffect->emitters.size() == 1);
-    CHECK(loaded.mEffect->emitters[0] == mir::MakeAssetId("assets/exhaust.emitter.json"));
+    CHECK(loaded.mEffect->emitters[0] == mir::test::PathId(*manifest, "assets/exhaust.emitter.json"));
     REQUIRE(loaded.mEffect->emitterDefinitions.size() == 1);
-    CHECK(loaded.mEffect->emitterDefinitions[0].texture == mir::MakeAssetId("assets/checker.png"));
+    CHECK(loaded.mEffect->emitterDefinitions[0].texture == mir::test::PathId(*manifest, "assets/checker.png"));
     CHECK(loaded.mEffect->emitterDefinitions[0].spawnRate == 60.0f);
     const auto *emitterEntry = manifest->Find(loaded.mEffect->emitters[0]);
     REQUIRE(emitterEntry);
@@ -143,7 +145,7 @@ TEST_CASE("Particle emitter changes recook the dependent system graph", "[partic
     auto manifest = mir::AssetManifest::LoadFile(fixture.out / mir::kAssetManifestFileName);
     REQUIRE(manifest);
     mir::AssetCache cache(&*manifest, fixture.out);
-    const auto loaded = mir::LoadParticleEffect(cache, mir::MakeAssetId("assets/exhaust.particle.json"));
+    const auto loaded = mir::LoadParticleEffect(cache, mir::test::PathId(*manifest, "assets/exhaust.particle.json"));
     REQUIRE(loaded.mEffect);
     REQUIRE(loaded.mEffect->emitterDefinitions.size() == 1);
     const auto &emitter = loaded.mEffect->emitterDefinitions[0];
@@ -175,9 +177,9 @@ TEST_CASE("Particle-only recook retains assets from other source roots", "[parti
         return mir::LaunchProcess(GLTF_COOKER_EXE, values, true).value_or(-1);
     };
     REQUIRE(args(false) == 0);
-    const auto retained = mir::MakeAssetId("other/retained.txt");
     auto manifest = mir::AssetManifest::LoadFile(fixture.out / mir::kAssetManifestFileName);
     REQUIRE(manifest);
+    const auto retained = mir::test::PathId(*manifest, "other/retained.txt");
     REQUIRE(manifest->Find(retained));
 
     std::ofstream(fixture.source / "exhaust.emitter.json") <<
@@ -197,8 +199,8 @@ TEST_CASE("Particle stacks share scripts and changed stacks replace dependencies
     REQUIRE(manifest);
     CHECK(manifest->Count() == 6);
     mir::AssetCache cache(&*manifest, fixture.out);
-    const auto first = mir::LoadParticleEmitterAsset(cache, mir::MakeAssetId("assets/exhaust.emitter.json"));
-    const auto second = mir::LoadParticleEmitterAsset(cache, mir::MakeAssetId("assets/second.emitter.json"));
+    const auto first = mir::LoadParticleEmitterAsset(cache, mir::test::PathId(*manifest, "assets/exhaust.emitter.json"));
+    const auto second = mir::LoadParticleEmitterAsset(cache, mir::test::PathId(*manifest, "assets/second.emitter.json"));
     REQUIRE(first.mEmitter);
     REQUIRE(second.mEmitter);
     CHECK(first.mEmitter->script == second.mEmitter->script);
@@ -212,7 +214,7 @@ TEST_CASE("Particle stacks share scripts and changed stacks replace dependencies
     REQUIRE(changedManifest);
     CHECK(changedManifest->Count() == 7);
     mir::AssetCache changedCache(&*changedManifest, fixture.out);
-    const auto changed = mir::LoadParticleEmitterAsset(changedCache, mir::MakeAssetId("assets/second.emitter.json"));
+    const auto changed = mir::LoadParticleEmitterAsset(changedCache, mir::test::PathId(*changedManifest, "assets/second.emitter.json"));
     REQUIRE(changed.mEmitter);
     CHECK(changed.mEmitter->script != first.mEmitter->script);
     CHECK(changed.mEmitter->scriptCode != first.mEmitter->scriptCode);
@@ -280,7 +282,7 @@ TEST_CASE("Particle cooker compiles moving exhaust behaviors and shares scripts 
     REQUIRE(manifest);
     CHECK(manifest->Count() == 6);
     mir::AssetCache cache(&*manifest, fixture.out);
-    const auto system = mir::LoadParticleEffect(cache, mir::MakeAssetId("assets/exhaust.particle.json"));
+    const auto system = mir::LoadParticleEffect(cache, mir::test::PathId(*manifest, "assets/exhaust.particle.json"));
     REQUIRE(system.mEffect);
     REQUIRE(system.mEffect->emitterDefinitions.size() == 2);
     CHECK(system.mEffect->parameters.wind == glm::vec3(8, 0, -2));
@@ -330,7 +332,7 @@ TEST_CASE("CPU ribbon stacks cook and load without GPU script dependencies", "[p
     REQUIRE(manifest);
     CHECK(manifest->Count() == 3);
     mir::AssetCache cache(&*manifest,fixture.out);
-    const auto loaded = mir::LoadParticleEffect(cache,mir::MakeAssetId("assets/exhaust.particle.json"));
+    const auto loaded = mir::LoadParticleEffect(cache,mir::test::PathId(*manifest, "assets/exhaust.particle.json"));
     REQUIRE(loaded.mEffect);
     const auto &emitter = loaded.mEffect->emitterDefinitions[0];
     CHECK(emitter.simulationTarget == mir::ParticleSimulationTarget::CPU);
@@ -359,7 +361,7 @@ TEST_CASE("Particle cooker compiles shape, noise, rotation and stretch emitters"
     const auto manifest = mir::AssetManifest::LoadFile(fixture.out / mir::kAssetManifestFileName);
     REQUIRE(manifest);
     mir::AssetCache cache(&*manifest, fixture.out);
-    const auto system = mir::LoadParticleEffect(cache, mir::MakeAssetId("assets/exhaust.particle.json"));
+    const auto system = mir::LoadParticleEffect(cache, mir::test::PathId(*manifest, "assets/exhaust.particle.json"));
     REQUIRE(system.mEffect);
     REQUIRE(system.mEffect->emitterDefinitions.size() == 2);
     const auto &first = system.mEffect->emitterDefinitions[0];
@@ -367,4 +369,46 @@ TEST_CASE("Particle cooker compiles shape, noise, rotation and stretch emitters"
     CHECK(first.renderer.stretch == 0.05f);
     CHECK_FALSE(first.scriptCode.empty());
     CHECK_FALSE(system.mEffect->emitterDefinitions[1].scriptCode.empty());
+}
+
+TEST_CASE("Cooked particle assets carry logical paths and dependency edges", "[particles][cooker][graph]")
+{
+    CookFixture fixture;
+    REQUIRE(fixture.Cook() == 0);
+    const auto manifest = mir::AssetManifest::LoadFile(fixture.out / mir::kAssetManifestFileName);
+    REQUIRE(manifest);
+    const auto effectId = mir::test::PathId(*manifest, "assets/exhaust.particle.json");
+    const auto emitterId = mir::test::PathId(*manifest, "assets/exhaust.emitter.json");
+    const auto textureId = mir::test::PathId(*manifest, "assets/checker.png");
+
+    const auto *effect = manifest->FindByPath("assets/exhaust.particle.json");
+    REQUIRE(effect);
+    CHECK(effect->id == effectId);
+    // the texture is emitted by its own file and again by the emitter that uses it
+    const auto *texture = manifest->FindByPath("assets/checker.png");
+    REQUIRE(texture);
+    CHECK(texture->id == textureId);
+
+    const auto effectDependencies = manifest->Dependencies(*effect);
+    REQUIRE(effectDependencies.size() == 1);
+    CHECK(effectDependencies[0] == emitterId);
+
+    // everything this fixture cooks is reachable from the effect
+    const auto closure = manifest->Closure(effectId);
+    CHECK(closure.front() == effectId);
+    CHECK(closure.size() == manifest->Count());
+    CHECK(std::find(closure.begin(), closure.end(), textureId) != closure.end());
+}
+
+TEST_CASE("A partial cook keeps the names and edges of assets it does not recook", "[particles][cooker][graph]")
+{
+    CookFixture fixture;
+    REQUIRE(fixture.Cook() == 0);
+    const auto before = mir::ReadBytes(fixture.out / mir::kAssetManifestFileName);
+    REQUIRE(before);
+
+    const auto unrelated = fixture.source / "notes.txt";
+    std::ofstream(unrelated) << "not an asset";
+    REQUIRE(fixture.Cook(unrelated) == 0);
+    CHECK(mir::ReadBytes(fixture.out / mir::kAssetManifestFileName) == before);
 }
