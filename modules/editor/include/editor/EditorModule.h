@@ -33,6 +33,7 @@ namespace mir
     class AssetsModule;
     class ParticleEditorPanel;
     class ImGuiModule;
+    class JobExecutor;
     class MaterialEditor;
     class PrefabModule;
     class RendererModule;
@@ -45,7 +46,7 @@ namespace mir
         // enableLayout false: the editor is built in but the window is the game (--no-editor)
         EditorModule(ModuleContext context, ImGuiModule &imgui, WindowModule &window, RendererModule &renderer,
             SceneModule &scene, PrefabModule &prefab, AssetsModule &assets, const AssetResolver &resolver,
-            const GameProject &project, bool enableLayout);
+            const GameProject &project, JobExecutor &jobs, bool enableLayout);
         ~EditorModule();
 
         EditorModule(const EditorModule &) = delete;

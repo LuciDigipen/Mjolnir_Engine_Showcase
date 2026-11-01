@@ -7,11 +7,15 @@
  */
 #include <editor/ShaderHotReload.h>
 #include <core/fs/FileIO.h>
+#include <jobs/BackgroundJobQueue.h>
+#include <jobs/JobExecutor.h>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <nlohmann/json.hpp>
 
 #include <thread>
+#include <future>
 
 namespace
 {
@@ -33,6 +37,8 @@ namespace
     }
     struct Fixture
     {
+        explicit Fixture(std::size_t workers = 1) : jobs(workers) {}
+        mir::JobExecutor jobs;
         std::filesystem::path root = mir::UniqueShaderJobDirectory(std::filesystem::temp_directory_path() /
             std::filesystem::u8path("mjolnir shader-\xe6\xb5\x8b\xe8\xaf\x95"));
         std::filesystem::path shaders = root / "runtime";
@@ -90,11 +96,13 @@ namespace
 
 TEST_CASE("Watcher discovers new includes and keeps them across restart", "[editor][shader][watcher]")
 {
-    Fixture fixture;
+    const auto workers = GENERATE(0u, 1u);
+    CAPTURE(workers);
+    Fixture fixture(workers);
     fixture.Seed();
     {
         mir::ShaderHotReload watcher;
-        watcher.Initialize(fixture.root, fixture.shaders, fixture.Backend());
+        watcher.Initialize(fixture.root, fixture.shaders, fixture.Backend(), fixture.jobs);
         REQUIRE(watcher.Enabled());
         const auto stamp = std::filesystem::last_write_time(fixture.include);
         REQUIRE(mir::WriteText(fixture.include, "float Value() { return 2.0; }\n"));
@@ -108,7 +116,7 @@ TEST_CASE("Watcher discovers new includes and keeps them across restart", "[edit
         REQUIRE(Pump(watcher, [&] { return fixture.commits == 3; }));
     }
     mir::ShaderHotReload restarted;
-    restarted.Initialize(fixture.root, fixture.shaders, fixture.Backend());
+    restarted.Initialize(fixture.root, fixture.shaders, fixture.Backend(), fixture.jobs);
     REQUIRE(restarted.Enabled());
     REQUIRE(mir::WriteText(fixture.root / "new-value.slang", "float NewValue() { return 5.0; }\n"));
     REQUIRE(Pump(restarted, [&] { return fixture.commits == 4; }));
@@ -124,7 +132,7 @@ TEST_CASE("Watcher keeps last-good state after a late owner rejects preparation"
     mir::ShaderGenerationStore reader(fixture.shaders);
     const auto before = reader.CurrentId();
     mir::ShaderHotReload watcher;
-    watcher.Initialize(fixture.root, fixture.shaders, fixture.Backend());
+    watcher.Initialize(fixture.root, fixture.shaders, fixture.Backend(), fixture.jobs);
     fixture.reject = true;
     REQUIRE(mir::WriteText(fixture.include, "float Value() { return 2.0; }\n"));
     REQUIRE(Pump(watcher, [&] { return fixture.discards == 1; }));
@@ -175,7 +183,7 @@ TEST_CASE("Watcher expands all registered frontends under current custom asset r
     REQUIRE(store.PublishPointer());
     store.Unlock();
     mir::ShaderHotReload watcher;
-    watcher.Initialize(project, fixture.shaders, fixture.Backend());
+    watcher.Initialize(project, fixture.shaders, fixture.Backend(), fixture.jobs);
     REQUIRE(watcher.Enabled());
     const std::string material = R"({"version":1,"shader":{"file":"shared.slang","type":"Custom"},"frontends":["mesh","terrain"],"parameters":{}})";
     REQUIRE(mir::WriteText(other / "ignored.material.json", material));
@@ -217,7 +225,7 @@ TEST_CASE("Watcher shutdown cancels an active compiler and removes its owned art
     REQUIRE(store.PublishPointer());
     store.Unlock();
     mir::ShaderHotReload watcher;
-    watcher.Initialize(fixture.root, fixture.shaders, fixture.Backend());
+    watcher.Initialize(fixture.root, fixture.shaders, fixture.Backend(), fixture.jobs);
     REQUIRE(watcher.Enabled());
     REQUIRE(mir::WriteText(fixture.include, "float Value() { return 2.0; }\n"));
     REQUIRE(Pump(watcher, [&] { return std::filesystem::exists(barrier); }));
@@ -234,7 +242,7 @@ TEST_CASE("Watcher retries a busy publication without blocking frames or losing 
     Fixture fixture;
     fixture.Seed();
     mir::ShaderHotReload watcher;
-    watcher.Initialize(fixture.root, fixture.shaders, fixture.Backend());
+    watcher.Initialize(fixture.root, fixture.shaders, fixture.Backend(), fixture.jobs);
     mir::ShaderGenerationStore lock(fixture.shaders);
     uint64_t id;
     REQUIRE(lock.BeginPublish(&id));
@@ -256,7 +264,7 @@ TEST_CASE("Watcher rebases a completed job without dropping externally published
     Fixture fixture;
     fixture.Seed();
     mir::ShaderHotReload watcher;
-    watcher.Initialize(fixture.root, fixture.shaders, fixture.Backend());
+    watcher.Initialize(fixture.root, fixture.shaders, fixture.Backend(), fixture.jobs);
     mir::ShaderGenerationStore external(fixture.shaders);
     uint64_t generation;
     REQUIRE(external.BeginPublish(&generation));
@@ -282,3 +290,43 @@ TEST_CASE("Watcher rebases a completed job without dropping externally published
     CHECK(finalManifest->Find("external.spv"));
 }
 #endif
+
+TEST_CASE("Watcher cancels queued compilation without waiting for unrelated shared jobs", "[editor][shader][watcher]")
+{
+    Fixture fixture;
+    fixture.Seed();
+    std::promise<void> release, started;
+    auto released = release.get_future().share();
+    auto running = started.get_future();
+    mir::BackgroundJobQueue other(fixture.jobs, 1);
+    {
+        struct ReleaseWorker
+        {
+            std::promise<void> &release;
+            ~ReleaseWorker() { release.set_value(); }
+        } releaseWorker{release};
+        other.Post([released, &started] { started.set_value(); released.wait(); });
+        REQUIRE(running.wait_for(std::chrono::seconds(2)) == std::future_status::ready);
+        mir::ShaderHotReload watcher;
+        watcher.Initialize(fixture.root, fixture.shaders, fixture.Backend(), fixture.jobs);
+        REQUIRE(watcher.Enabled());
+        REQUIRE(mir::WriteText(fixture.include, "float Value() { return 2.0; }\n"));
+        const auto jobs = fixture.shaders / ".jobs";
+        REQUIRE(Pump(watcher, [&] { return std::filesystem::exists(jobs) && !std::filesystem::is_empty(jobs); }));
+        const auto before = std::chrono::steady_clock::now();
+        watcher.Shutdown();
+        CHECK(std::chrono::steady_clock::now() - before < std::chrono::seconds(2));
+        CHECK(fixture.commits == 0);
+        CHECK(std::filesystem::is_empty(jobs));
+    }
+    other.WaitIdle();
+    // Closing the shader lane leaves the executor usable by other consumers.
+    bool completed = false;
+    other.Post([&] { completed = true; });
+    other.WaitIdle();
+    CHECK(completed);
+    mir::ShaderHotReload restarted;
+    restarted.Initialize(fixture.root, fixture.shaders, fixture.Backend(), fixture.jobs);
+    REQUIRE(mir::WriteText(fixture.include, "float Value() { return 3.0; }\n"));
+    REQUIRE(Pump(restarted, [&] { return fixture.commits == 1; }));
+}

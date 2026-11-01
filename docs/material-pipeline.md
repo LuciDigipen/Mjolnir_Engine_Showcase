@@ -322,3 +322,15 @@ Unchanged outputs do not block a supported material or post-process edit.
 Reflection-only material layout outputs participate in record migration rather
 than this pipeline-owner restriction. RTXGI SDK binaries retain their separately
 packaged shader path and are not watched as Slang outputs.
+
+### Shader compilation scheduling
+
+The editor borrows App's shared JobExecutor and owns a BackgroundJobQueue with
+concurrency one for shader compilation. Each batch compiles its affected outputs
+sequentially; it does not create a separate worker pool. The engine's worker count
+also controls this lane: zero workers executes compilation inline. Compilation
+results cross back to the main-thread FrameBegin callback before publication and
+GPU prepare/commit; pipeline replacement still waits for device idle. Shutdown
+cancels queued shader work, signals active compiler cancellation, and waits only
+for this lane before removing its owned artifacts. Other consumers of the shared
+executor remain available.

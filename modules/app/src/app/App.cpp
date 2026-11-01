@@ -145,7 +145,7 @@ namespace mir
           mAnimation(Context(), mRenderer.Renderer(), mAssets, mResolver, &mJobs),
           mImGui(Context(), mWindow, mRenderer),
     #if MIR_WITH_EDITOR
-        mEditor(Context(), mImGui, mWindow, mRenderer, mScene, mPrefab, mAssets, mResolver, mProject,
+        mEditor(Context(), mImGui, mWindow, mRenderer, mScene, mPrefab, mAssets, mResolver, mProject, mJobs,
             mDesc.mEnableEditorLayout),
     #endif
           mCamera(Context()),

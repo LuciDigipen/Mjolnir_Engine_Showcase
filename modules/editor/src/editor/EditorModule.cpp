@@ -167,7 +167,7 @@ namespace mir
 
     EditorModule::EditorModule(ModuleContext context, ImGuiModule &imgui, WindowModule &window,
         RendererModule &renderer, SceneModule &scene, PrefabModule &prefab, AssetsModule &assets,
-        const AssetResolver &resolver, const GameProject &project, bool enableLayout)
+        const AssetResolver &resolver, const GameProject &project, JobExecutor &jobs, bool enableLayout)
         : mWorld(context.world), mRenderer(renderer), mScene(scene), mPrefab(prefab), mResolver(resolver),
           mProject(project), mAssets(&assets),
           mEnableLayout(enableLayout), mProjectMenu(BuildProjectMenu()),
@@ -178,7 +178,7 @@ namespace mir
         mImport.Initialize(mProject);
         mParticleEditor = std::make_unique<ParticleEditorPanel>(mImport.SourceAssetRoot(),mProject.mAssetIdRoot);
         mContentBrowser.Initialize(mProject);
-        mShaderHotReload.Initialize(mProject.mRootDir, &renderer.Renderer());
+        mShaderHotReload.Initialize(mProject.mRootDir, &renderer.Renderer(), jobs);
 
         // The first frames run without assets; the import swaps them in once cooked
         if (!assets.HadManifest() && mImport.SourceHasAssets())

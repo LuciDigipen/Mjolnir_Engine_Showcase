@@ -11,6 +11,7 @@
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
 #include <renderer/VulkanRenderer.h>
+#include <jobs/BackgroundJobQueue.h>
 
 #include <nlohmann/json.hpp>
 
@@ -47,27 +48,32 @@ namespace mir
             std::filesystem::remove_all(path, ignored);
         }
     }
+    ShaderHotReload::ShaderHotReload() = default;
     ShaderHotReload::~ShaderHotReload() { Shutdown(); }
 
-    void ShaderHotReload::Initialize(const std::filesystem::path &projectRoot, VulkanRenderer *renderer)
+    void ShaderHotReload::Initialize(const std::filesystem::path &projectRoot, VulkanRenderer *renderer, JobExecutor &jobs)
     {
         if (renderer == nullptr) return;
         Initialize(projectRoot, ExecutableDir() / "shaders", {
             [renderer] { return renderer->ShaderReloadAvailable(); },
             [renderer](const auto &directory, auto *error) { return renderer->PrepareShaderReload(directory, error); },
             [renderer] { renderer->CommitPreparedShaderReload(); },
-            [renderer] { renderer->DiscardPreparedShaderReload(); }});
+            [renderer] { renderer->DiscardPreparedShaderReload(); }}, jobs);
     }
 
     void ShaderHotReload::Initialize(const std::filesystem::path &projectRoot,
-        const std::filesystem::path &shaderRoot, ShaderReloadBackend backend)
+        const std::filesystem::path &shaderRoot, ShaderReloadBackend backend, JobExecutor &jobs)
     {
         Shutdown();
         mProjectRoot = std::filesystem::weakly_canonical(projectRoot);
         mShaderDir = shaderRoot;
         mBackend = std::move(backend);
         mEnabled = mBackend.available && mBackend.prepare && mBackend.commit && mBackend.discard && RefreshManifest();
-        if (mEnabled) PollMaterials();
+        if (mEnabled)
+        {
+            mQueue = std::make_unique<BackgroundJobQueue>(jobs, 1);
+            PollMaterials();
+        }
         else MIR_LOG_INFO("Shader hot reload disabled: {}", mLastDiagnostic);
     }
 
@@ -80,11 +86,11 @@ namespace mir
     {
         mEnabled = false;
         mCancel = true;
-        if (mFuture.valid())
-        {
-            try { RemoveJob(mFuture.get().directory); }
-            catch (...) {}
-        }
+        // Close only our lane: queued callbacks are cancelled, running compilers
+        // observe mCancel, and borrowed watcher state stays alive until they finish.
+        mQueue.reset();
+        if (mCompiling) RemoveJob(mCompiling->job.directory);
+        mCompiling.reset();
         DropReady();
         mPendingSources.clear();
         mPendingMaterials.clear();
@@ -189,8 +195,11 @@ namespace mir
         job.materialEpoch = mMaterialEpoch;
         job.directory = UniqueShaderJobDirectory(mShaderDir / ".jobs");
         mCancel = false;
-        mFuture = std::async(std::launch::async, [this, job = std::move(job)]() mutable
+        mCompiling = std::make_shared<Compilation>();
+        mCompiling->job = std::move(job);
+        mQueue->Post([this, compilation = mCompiling]
             {
+                auto &job = compilation->job;
                 try
                 {
                     for (const auto &output : job.outputs)
@@ -204,13 +213,17 @@ namespace mir
                 }
                 catch (const std::exception &exception) { job.error = exception.what(); }
                 catch (...) { job.error = "unknown compiler failure"; }
-                return std::move(job);
+                // Publish the result only after all worker writes are complete.
+                compilation->complete.store(true, std::memory_order_release);
             });
     }
     void ShaderHotReload::PollJob()
     {
-        if (!mReady && mFuture.valid() && mFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
-            mReady = mFuture.get();
+        if (mCompiling && mCompiling->complete.load(std::memory_order_acquire))
+        {
+            mReady = std::move(mCompiling->job);
+            mCompiling.reset();
+        }
         if (!mReady) return;
         auto &job = *mReady;
         std::string error;
@@ -245,7 +258,7 @@ namespace mir
                 mPendingSources.insert(changed.begin(), changed.end());
                 mPendingSince = std::chrono::steady_clock::now();
             }
-            if (mFuture.valid() || mReady)
+            if (mCompiling || mReady)
             {
                 if (!changed.empty() || (mReady && mReady->materialEpoch != mMaterialEpoch)) mCancel = true;
                 PollJob();

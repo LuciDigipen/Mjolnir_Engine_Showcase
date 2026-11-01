@@ -13,7 +13,7 @@
 #include <chrono>
 #include <filesystem>
 #include <functional>
-#include <future>
+#include <memory>
 #include <map>
 #include <optional>
 #include <set>
@@ -21,6 +21,8 @@
 namespace mir
 {
     class VulkanRenderer;
+    class JobExecutor;
+    class BackgroundJobQueue;
 
     struct ShaderReloadBackend
     {
@@ -33,10 +35,12 @@ namespace mir
     class ShaderHotReload
     {
     public:
+        ShaderHotReload();
         ~ShaderHotReload();
-        void Initialize(const std::filesystem::path &projectRoot, VulkanRenderer *renderer);
+        // Main-thread API; the shared executor must outlive this watcher.
+        void Initialize(const std::filesystem::path &projectRoot, VulkanRenderer *renderer, JobExecutor &jobs);
         void Initialize(const std::filesystem::path &projectRoot, const std::filesystem::path &shaderRoot,
-            ShaderReloadBackend backend);
+            ShaderReloadBackend backend, JobExecutor &jobs);
         void Shutdown();
         void Update();
         bool Enabled() const { return mEnabled; }
@@ -59,6 +63,11 @@ namespace mir
             std::string materialName;
             std::string error;
             bool superseded = false;
+        };
+        struct Compilation
+        {
+            Job job;
+            std::atomic_bool complete{false};
         };
         bool RefreshManifest();
         void RebuildDependencies(const std::filesystem::path &directory);
@@ -83,7 +92,8 @@ namespace mir
         uint64_t mLastRevision = 0, mLoadedGeneration = 0, mMaterialEpoch = 0;
         bool mEnabled = false, mPublishBusy = false;
         std::atomic_bool mCancel{false};
-        std::future<Job> mFuture;
+        std::unique_ptr<BackgroundJobQueue> mQueue;
+        std::shared_ptr<Compilation> mCompiling;
         std::optional<Job> mReady;
     };
 }
