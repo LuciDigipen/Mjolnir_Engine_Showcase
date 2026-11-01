@@ -182,6 +182,13 @@ namespace
             mir::LogFilePath().string());
     }
 
+    // Run can fail while the splash still waits on the first view; it would cover the report
+    void CloseSplash(std::optional<mir::App> &app)
+    {
+        if (app.has_value())
+            app->Splash().Close();
+    }
+
     int RunEngine(const LaunchOptions &options)
     {
         // a bad --game is the command line's fault, a bad defaultGame is the data's
@@ -212,23 +219,22 @@ namespace
             // also loads the game's scene
             app.emplace(desc);
 
-            // Only now is startup actually done - close explicitly rather than
-            // leaning on WS_EX_TOPMOST z-order to hide the swap.
-            app->Splash().SetProgress("Ready", 1.0f);
-            app->Splash().Close();
-
+            // opens the window once the first view has loaded
             app->Run();
         }
         catch (const mir::SetupError &error)
         {
+            CloseSplash(app);
             return mir::ReportFatal(error);
         }
         catch (const std::exception &error)
         {
+            CloseSplash(app);
             return mir::ReportFatal(InternalError(error.what()));
         }
         catch (...)
         {
+            CloseSplash(app);
             return mir::ReportFatal(InternalError("unknown exception"));
         }
 

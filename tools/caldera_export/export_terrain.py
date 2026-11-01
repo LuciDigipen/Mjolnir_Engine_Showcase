@@ -38,6 +38,29 @@ EDGE_BLEND = 32.0  # meters inside the map edge forced down to full depth
 MAX_MEAN_ERROR = 0.02
 MAX_P99_ERROR = 0.25
 MAX_SHARED_SAMPLE_SHARE = 0.05  # tiles only meet along seams; more means they are stacked
+RUNWAY_LAYER = 'map_source/prefabs/br/wz_vg/mp_wz_island/season_4/map_airfield.usd'
+RUNWAY_PRIM = '/world/map_airfield/building_set_a/airfield_grounds/airfield_grounds_runway'
+RUNWAY_TRANSLATE = (-23042.0, -22118.0, 872.0)  # stage units (inches)
+RUNWAY_ROTATE_Z = -135.0  # degrees
+RUNWAY_PLACEMENT_TOLERANCE = 1e-3
+# Material name to meters lifted above the base, so coplanar overlays do not z-fight.
+RUNWAY_KEPT = {
+    'concrete_brushed_spotty_01_rvl_bot': 0.0,
+    'cement_ground_patchwork_cracked': 0.01,
+    'concrete_edge_crease_seam_02': 0.02,
+    'asphalt_painted_line_02': 0.03,
+}
+RUNWAY_DROPPED = {
+    'concrete_sidewalk_cracked_01',  # duplicates the base
+    'stain_generic_03_rvl',
+    'grass_st_dry_crabgrass_rvl_top3',
+    'letters_numbers_scoreboard_fn_01',
+    'rp_ground_dirt_gravel_01b_dec',
+    'water_puddle_frozen_tiling_01_rvl',
+}
+STAMP_DEPTH = 0.10  # meters the terrain sits under the runway surface
+STAMP_PAD = 2.0  # meters past the footprint held at the stamped height
+STAMP_BLEND = 10.0  # meters to get back to the original height
 
 
 class ExportError(Exception):
@@ -84,6 +107,105 @@ def read_tiles(root, expected_tiles):
     if missing:
         raise ExportError(f'no height mesh for {", ".join(missing)}; is districtLod set to full?')
     return [(name, found[name]) for name in names], UsdGeom.GetStageMetersPerUnit(stage)
+
+
+def read_runway(root):
+    """Engine-space triangles per kept material, as float64 arrays of shape (n, 3, 3).
+
+    Composes through the district layer, whose mask keeps everything but the runway unloaded.
+    Each triangle keeps the authored winding; the axis change is a pure rotation.
+    """
+    path = Path(root) / RUNWAY_LAYER
+    if not path.exists():
+        raise ExportError(f'no runway district layer at {path}')
+    mask = Usd.StagePopulationMask()
+    mask.Add(Sdf.Path(RUNWAY_PRIM))
+    stage = Usd.Stage.OpenMasked(str(path), mask, Usd.Stage.LoadAll)
+    units = UsdGeom.GetStageMetersPerUnit(stage)
+    runway = stage.GetPrimAtPath(RUNWAY_PRIM)
+    if not runway:
+        raise ExportError(f'no {RUNWAY_PRIM} in {path}')
+    angle = math.radians(RUNWAY_ROTATE_Z)
+    placement = np.array([[math.cos(angle), math.sin(angle), 0.0, 0.0], [-math.sin(angle), math.cos(angle), 0.0, 0.0],
+                          [0.0, 0.0, 1.0, 0.0], [*RUNWAY_TRANSLATE, 1.0]])
+    found = np.array(UsdGeom.Xformable(runway).ComputeLocalToWorldTransform(Usd.TimeCode.Default()))
+    if np.abs(found - placement).max() > RUNWAY_PLACEMENT_TOLERANCE:
+        raise ExportError(f'runway placement changed: {found.tolist()}')
+
+    triangles = {name: [] for name in RUNWAY_KEPT}
+    for prim in stage.Traverse():
+        if prim.GetTypeName() != 'Mesh' or UsdGeom.Imageable(prim).ComputePurpose() == UsdGeom.Tokens.guide:
+            continue
+        mesh = UsdGeom.Mesh(prim)
+        if mesh.GetOrientationAttr().Get() != UsdGeom.Tokens.rightHanded:
+            raise ExportError(f'{prim.GetPath()}: left-handed mesh')
+        xf = np.array(mesh.ComputeLocalToWorldTransform(Usd.TimeCode.Default()))
+        world = np.array(mesh.GetPointsAttr().Get(), dtype=np.float64) @ xf[:3, :3] + xf[3, :3]
+        engine = np.stack((world[:, 0], world[:, 2], -world[:, 1]), axis=1) * units
+        counts = np.array(mesh.GetFaceVertexCountsAttr().Get())
+        indices = np.array(mesh.GetFaceVertexIndicesAttr().Get())
+        starts = np.concatenate(([0], np.cumsum(counts)[:-1]))
+        for subset in UsdGeom.Subset.GetAllGeomSubsets(mesh):
+            name = subset.GetPrim().GetName()
+            if name in RUNWAY_DROPPED:
+                continue
+            if name not in RUNWAY_KEPT:
+                raise ExportError(f'{prim.GetPath()}: material {name} has no decision')
+            for face in subset.GetIndicesAttr().Get():
+                ring = indices[starts[face]:starts[face] + counts[face]]
+                for k in range(1, len(ring) - 1):
+                    triangles[name].append(engine[[ring[0], ring[k], ring[k + 1]]])
+    if not triangles[next(iter(RUNWAY_KEPT))]:
+        raise ExportError(f'no base triangles under {RUNWAY_PRIM}')
+    return {name: np.array(t, dtype=np.float64).reshape(-1, 3, 3) for name, t in triangles.items()}
+
+
+def rasterize_top(triangles, half_extent, spacing):
+    """Highest triangle height at each grid sample, NaN where nothing covers it."""
+    n = int(round(half_extent * 2 / spacing)) + 1
+    top = np.full((n, n), np.nan, dtype=np.float64)
+    for tris in triangles.values():
+        for a, b, c in tris:
+            d = (b[0] - a[0]) * (c[2] - a[2]) - (c[0] - a[0]) * (b[2] - a[2])
+            if abs(d) < 1e-9:
+                continue
+            xs, zs = (a[0], b[0], c[0]), (a[2], b[2], c[2])
+            col0 = math.ceil((min(xs) + half_extent) / spacing)
+            col1 = math.floor((max(xs) + half_extent) / spacing)
+            row0 = math.ceil((min(zs) + half_extent) / spacing)
+            row1 = math.floor((max(zs) + half_extent) / spacing)
+            if col0 > col1 or row0 > row1:
+                continue
+            x = -half_extent + np.arange(col0, col1 + 1)[None, :] * spacing
+            z = -half_extent + np.arange(row0, row1 + 1)[:, None] * spacing
+            u = ((x - a[0]) * (c[2] - a[2]) - (c[0] - a[0]) * (z - a[2])) / d
+            v = ((b[0] - a[0]) * (z - a[2]) - (x - a[0]) * (b[2] - a[2])) / d
+            inside = (u >= 0) & (v >= 0) & (u + v <= 1)
+            y = a[1] + u * (b[1] - a[1]) + v * (c[1] - a[1])
+            window = top[row0:row1 + 1, col0:col1 + 1]
+            window[inside] = np.fmax(window[inside], y[inside])
+    return top
+
+
+def stamp_runway(grid, triangles, half_extent, spacing):
+    """Fit the terrain under the runway in place: follow its surface, then blend back. Returns stats."""
+    top = rasterize_top(triangles, half_extent, spacing)
+    covered = ~np.isnan(top)
+    if not covered.any():
+        raise ExportError('runway covers no terrain samples')
+    distance, nearest = ndimage.distance_transform_edt(~covered, sampling=spacing, return_indices=True)
+    target = top[nearest[0], nearest[1]] - STAMP_DEPTH
+    t = smoothstep((distance - STAMP_PAD) / STAMP_BLEND)
+    touched = distance < STAMP_PAD + STAMP_BLEND
+    change = (target - grid)[touched] * (1.0 - t[touched])
+    grid[touched] += change.astype(grid.dtype)
+    below = top[covered] - grid[covered]
+    return {
+        'covered_samples': int(covered.sum()),
+        'touched_samples': int(touched.sum()),
+        'largest_change_m': float(np.abs(change).max()),
+        'depth_below_surface_m': [float(below.min()), float(below.max())],
+    }
 
 
 def merge_lattice(tiles, units, half_extent):
@@ -287,8 +409,12 @@ def caldera_commit(root):
 
 
 def export(root, game_dir, sea_level=0.0, half_extent=1792.0, spacing=1.0, intervals=256, expected_tiles=14,
-           max_mean_error=MAX_MEAN_ERROR, max_p99_error=MAX_P99_ERROR):
-    """Run the export; returns the report. Raises ExportError, writing nothing, when a gate fails."""
+           max_mean_error=MAX_MEAN_ERROR, max_p99_error=MAX_P99_ERROR, runway=None):
+    """Run the export; returns the report. Raises ExportError, writing nothing, when a gate fails.
+
+    runway holds read_runway's triangles to stamp into the terrain. Resample error is measured
+    before the stamp, because the stamp moves terrain away from the source on purpose.
+    """
     # Engine tiles start at sample 0, so a half extent off a tile edge widens the map past the bounds.
     tile_size = intervals * spacing
     if half_extent % tile_size != 0:
@@ -306,6 +432,7 @@ def export(root, game_dir, sea_level=0.0, half_extent=1792.0, spacing=1.0, inter
 
     grid = resample(heights, step, origin, half_extent, spacing)
     error = measure_error(original, grid, step, origin, half_extent, spacing)
+    stamp = stamp_runway(grid, runway, half_extent, spacing) if runway else None
     failures = check_gates(grid, error, stats, sea_level, max_mean_error, max_p99_error)
     if failures:
         raise ExportError('; '.join(failures))
@@ -325,6 +452,8 @@ def export(root, game_dir, sea_level=0.0, half_extent=1792.0, spacing=1.0, inter
         'source': stats,
         'resample_error': error,
     }
+    if stamp:
+        report['runway_stamp'] = stamp
     # The recipe goes last among the outputs the bake reads, so its hash never names missing heights.
     write_atomic(source_dir / 'caldera.heights', data)
     write_atomic(recipe_path, recipe_text(half_extent, spacing, intervals, '../../source/caldera.heights', content_hash).encode())
@@ -339,7 +468,7 @@ def main():
     parser.add_argument('--sea-level', type=float, default=0.0)
     args = parser.parse_args()
     try:
-        report = export(args.caldera_root, args.game_dir, sea_level=args.sea_level)
+        report = export(args.caldera_root, args.game_dir, sea_level=args.sea_level, runway=read_runway(args.caldera_root))
     except ExportError as e:
         print(f'export failed: {e}', file=sys.stderr)
         return 1

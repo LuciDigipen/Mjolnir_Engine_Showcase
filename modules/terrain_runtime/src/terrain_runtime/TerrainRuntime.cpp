@@ -1078,6 +1078,21 @@ namespace mir
         AppendDraws(units, out);
     }
 
+    std::optional<size_t> TerrainRuntime::AreasLoading() const
+    {
+        if (!Bound() || !Streamer() || !mMeshes || mWorld->Resource<TerrainWorld>().Instances().empty())
+            return 0;
+        if (mFrameViews.empty())
+            return std::nullopt;
+        size_t loading = 0;
+        for (const size_t view : mFrameViews)
+        {
+            const TerrainViewStats &stats = mViews[view].selector->Stats();
+            loading += stats.missing + stats.coarserFallbacks + stats.otherFallbacks;
+        }
+        return loading;
+    }
+
     TerrainUnitReady TerrainRuntime::Ready() const
     {
         return [this](const TerrainDrawUnit &unit) { return mMeshes->Ready(unit.geometry); };

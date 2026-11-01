@@ -23,10 +23,12 @@
 #include <prefab/PrefabCoordinator.h>
 #include <project/ProjectSettings.h>
 #include <scene/SceneIO.h>
+#include <terrain_runtime/TerrainRuntime.h>
 
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <format>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -167,14 +169,18 @@ namespace mir
         mSplash.screen.SetProgress("Loading scene...", 0.9f);
         LoadProjectScene();
 
-        //without the editor there is no Play button
-        if (!mDesc.mEnableEditorLayout)
-            PlayScene();
-
         // every module is built, so a library that took the crash filter slot has done so
         ReclaimCrashHandler();
 
-        if (!mDesc.mHidden) mWindow.Get().Show();
+        // a bounded or hidden run counts frames from here, so nothing holds it back
+        if (mDesc.mHidden || mDesc.mMaxFrames != 0)
+            RevealWindow();
+        else
+        {
+            mSplash.screen.SetProgress("Loading scene assets...", 0.9f);
+            mFirstView.emplace();
+            mFirstViewStart = std::chrono::steady_clock::now();
+        }
     }
 
     // Systems stop while every module is alive; then members die in reverse, the
@@ -470,6 +476,47 @@ namespace mir
             "Restore those files from git, or open the scene in the editor and choose to load it without them.");
     }
 
+    void App::WaitForFirstView()
+    {
+        if (!mFirstView.has_value())
+            return;
+
+        const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - mFirstViewStart).count();
+        const size_t before = mFirstView->Pending();
+        const StartupGate::Result result = mFirstView->Update(mTerrain.Runtime().AreasLoading(), seconds);
+        if (result == StartupGate::Result::Waiting)
+        {
+            if (mFirstView->Pending() != before)
+            {
+                const std::string status = std::format("Loading scene assets ({} left)...", mFirstView->Pending());
+                mSplash.screen.SetProgress(status.c_str(), 0.9f + 0.1f * mFirstView->Progress());
+            }
+            return;
+        }
+
+        if (result == StartupGate::Result::Ready)
+            MIR_LOG_INFO("First view loaded after {:.2f} s and {} frames", seconds, mFrame);
+        else
+            MIR_LOG_WARN("Opening the window with {} areas still loading: {} after {:.2f} s", mFirstView->Pending(),
+                result == StartupGate::Result::Stalled ? "no progress" : "time limit reached", seconds);
+
+        mFirstView.reset();
+        RevealWindow();
+    }
+
+    void App::RevealWindow()
+    {
+        //without the editor there is no Play button
+        if (!mDesc.mEnableEditorLayout)
+            PlayScene();
+
+        // Only now is startup actually done - close explicitly rather than
+        // leaning on WS_EX_TOPMOST z-order to hide the swap.
+        if (!mDesc.mHidden) mWindow.Get().Show();
+        mSplash.screen.SetProgress("Ready", 1.0f);
+        mSplash.screen.Close();
+    }
+
     void App::RunSwitchHook()
     {
         if (mSwitchHookFired || mDesc.mSwitchProjectTo.empty() || mDesc.mMaxFrames == 0)
@@ -530,6 +577,8 @@ namespace mir
                 ToggleFullscreen();
 
             ++mFrame;
+
+            WaitForFirstView();
 
             RunSwitchHook();
 

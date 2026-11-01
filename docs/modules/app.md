@@ -21,7 +21,7 @@ it belongs.
 
 ```
 mDesc, mProject          the checks before anything is built: game directories, project_settings.json
-mSplash                  shown until main closes it
+mSplash                  shown until the first view has loaded and the window opens
 mCommands, mWorld, mScheduler
 CoreModule, AssetsModule, ParticlesModule, SceneModule, PrefabModule
 GameUIModule, GameShellModule    before ImGui, whose shutdown frees their textures' GPU side
@@ -35,6 +35,15 @@ splash follows startup without the constructor body doing it.
 
 `Run` is a plain loop with no fixed timestep.
 
+The window stays hidden behind the splash while `Run` renders its first frames,
+so what the first view needs has loaded when it opens. Models load on their
+first frame; terrain streams, and `StartupGate` waits until every area the
+viewports chose can draw as chosen. It gives up with a warning after 10 s without
+progress or 60 s in all, for example past a budget or after a failed read.
+`RevealWindow` then starts Play in a game without an editor, shows the window and
+closes the splash, so a game's simulation and audio do not run while hidden. A
+`--frames` or `--hidden` run does not wait, so frame counts mean what they did.
+
 ```
 Start(scheduler)                       systems cache their queries
 while not ShouldClose:
@@ -47,6 +56,7 @@ while not ShouldClose:
     SystemScheduler::Update            PreUpdate, Update, FixedUpdate x fixedSteps, PostUpdate, Propagate, LateUpdate, Render
     if ToggleFullscreen just pressed: ToggleFullscreen    F11; the swapchain follows next frame
     ++frame
+    until the window opens: StartupGate on TerrainRuntime::AreasLoading, then RevealWindow
     halfway through mMaxFrames, if mSwitchProjectTo: RequestOpenProject
     if mMaxFrames reached: RequestClose
 ```
