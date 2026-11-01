@@ -25,9 +25,7 @@ namespace mir
 {
     void ModelSystem::ReleaseResources()
     {
-        // A pending preparation drops its own claims, a published model releases its meshes and materials.
-        for (auto &[id, entry] : mModels)
-            ReleasePreparedModel(mRenderer, std::move(entry.ready));
+        // Dropping the claims is the release, the renderer keeps unused records under its residency target.
         mModels.clear();
         mFailed.clear();
         mDeformations.clear();
@@ -68,7 +66,6 @@ namespace mir
             const ModelPreparation::State state = entry.pending->Advance();
             if (state == ModelPreparation::State::Ready)
             {
-                ReleasePreparedModel(mRenderer, std::move(entry.ready));
                 entry.ready = entry.pending->Take();
                 entry.pending.reset();
             }

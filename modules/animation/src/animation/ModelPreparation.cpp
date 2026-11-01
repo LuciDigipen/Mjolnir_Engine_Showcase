@@ -9,6 +9,7 @@
 #include "animation/ModelPreparation.h"
 
 #include <core/log/Log.h>
+#include <renderer/MeshAssetDecoder.h>
 
 #include <format>
 #include <stdexcept>
@@ -43,38 +44,13 @@ namespace mir
             sampler.useMips = material.minFilter >= 9984;
             return sampler;
         }
-
-        void ReleaseGpu(IMeshResolveHost &host, const PreparedModel &model)
-        {
-            std::vector<MeshHandle> meshes;
-            std::vector<MaterialHandle> materials;
-            for (const auto &[meshId, primitives] : model.meshes)
-                for (const auto &primitive : primitives)
-                {
-                    if (!primitive.mesh.IsNull())
-                        meshes.push_back(primitive.mesh);
-                    if (!primitive.material.IsNull())
-                        materials.push_back(primitive.material);
-                    if (!primitive.mirrored.IsNull())
-                        materials.push_back(primitive.mirrored);
-                }
-            if (!meshes.empty() || !materials.empty())
-                host.ReleaseModelResources(meshes, materials, {});
-        }
-    }
-
-    void ReleasePreparedModel(IMeshResolveHost &host, std::unique_ptr<PreparedModel> model)
-    {
-        if (!model)
-            return;
-        ReleaseGpu(host, *model);
-        model.reset();
     }
 
     ModelPreparation::ModelPreparation(IMeshResolveHost &host, ITextureUploader &textures, TextureHandle errorTexture,
         AsyncAssetService *assets, AssetId id, std::string label)
         : mHost(host), mErrorTexture(errorTexture), mId(id), mLabel(std::move(label)),
-          mTracker(textures.TextureLoads(assets))
+          mTracker(textures.TextureLoads(assets)), mMeshTracker(host.ModelMeshes(assets)),
+          mMaterials(host.MaterialRecords()), mRevision(assets != nullptr ? assets->Revision() : 0)
     {
         if (assets == nullptr)
         {
@@ -87,6 +63,8 @@ namespace mir
     void ModelPreparation::Fail(std::string reason)
     {
         mError = std::move(reason);
+        mPrepared.reset();
+        mMeshSlots.clear();
         mTextureClaims.clear();
         mResources.Reset();
         mState = State::Failed;
@@ -121,6 +99,8 @@ namespace mir
             if (TexturesSettled())
                 Build();
         }
+        if (mState == State::Meshes)
+            AwaitMeshes();
         return mState;
     }
 
@@ -153,18 +133,18 @@ namespace mir
     {
         auto model = std::make_unique<PreparedModel>();
         model->resources = mLoaded;
+        std::vector<MeshSlot> slots;
         try
         {
             const ModelResources &resources = *mLoaded;
             for (const auto &[key, mesh] : resources.meshes)
             {
                 auto &primitives = model->meshes[key];
-                for (const auto &p : mesh.primitives)
+                for (size_t index = 0; index < mesh.primitives.size(); ++index)
                 {
-                    std::vector<Vertex> vertices;
-                    vertices.reserve(p.vertices.size());
-                    for (const auto &v : p.vertices)
-                        vertices.push_back({ v.position, glm::vec3(v.color), v.normal, v.uv, v.color.a, v.tangent });
+                    const MeshPrimitive &p = mesh.primitives[index];
+                    if (p.vertices.empty() || p.indices.empty())
+                        throw std::runtime_error("GPU mesh creation failed");
                     MaterialAsset material;
                     bool materialRead = true;
                     if (!p.material.IsNull())
@@ -188,13 +168,17 @@ namespace mir
                     desc.sampler = ToSamplerDesc(material);
                     desc.alphaMode = static_cast<MaterialAlphaMode>(material.alpha);
                     desc.alphaCutoff = material.alphaCutoff;
+                    AssetId claimedTexture;
                     if (!materialRead)
                         desc.baseColorTexture = mErrorTexture;
                     else if (!material.baseColorTexture.IsNull())
                     {
                         const TextureLoad *view = mTextureClaims.at(material.baseColorTexture.value).Get();
                         if (view != nullptr && view->phase == AssetUploadPhase::Ready)
+                        {
                             desc.baseColorTexture = view->texture;
+                            claimedTexture = material.baseColorTexture;
+                        }
                         else
                         {
                             MIR_LOG_ERROR("Model {:016x}: texture {:016x} did not load, using error texture",
@@ -202,11 +186,22 @@ namespace mir
                             desc.baseColorTexture = mErrorTexture;
                         }
                     }
+
+                    // Both variants share the texture, each record keeps its own claim on it.
+                    const auto acquire = [&](const MaterialDesc &variant)
+                    {
+                        std::vector<TextureLoadLease> claims;
+                        if (!claimedTexture.IsNull())
+                            claims.emplace_back(mTracker, claimedTexture);
+                        MaterialLease lease(mMaterials, mMaterials->Acquire(variant, std::move(claims)));
+                        const MaterialHandle handle = lease.Get();
+                        model->materialClaims.push_back(std::move(lease));
+                        return handle;
+                    };
                     PreparedPrimitive gpu;
-                    gpu.mesh = mHost.CreateMesh(vertices, p.indices);
-                    gpu.material = mHost.CreateMaterial(desc);
+                    gpu.material = acquire(desc);
                     desc.frontFace = VK_FRONT_FACE_CLOCKWISE;
-                    gpu.mirrored = mHost.CreateMaterial(desc);
+                    gpu.mirrored = acquire(desc);
                     const bool materialFailed = gpu.material.IsNull() || gpu.mirrored.IsNull();
                     if (materialFailed)
                     {
@@ -223,14 +218,30 @@ namespace mir
                         : material.baseColor;
                     gpu.transparent = !materialFailed && material.alpha == MaterialAlpha::Blend;
                     primitives.push_back(gpu);
-                    if (gpu.mesh.IsNull())
-                        throw std::runtime_error("GPU mesh creation failed");
+
+                    // A record is shared by every consumer that asks for the same bytes and options.
+                    const GpuRecordKey recordKey{ AssetId{ key }, static_cast<uint32_t>(index),
+                        ContentIdentity::ForRevision(mRevision), MeshUploadOptions{ .rayTracing = true } };
+                    const AssetId record = mMeshTracker->Request(recordKey,
+                        [&p]
+                        {
+                            auto decoded = std::make_shared<DecodedMesh>();
+                            decoded->vertices.reserve(p.vertices.size());
+                            for (const auto &v : p.vertices)
+                                decoded->vertices.push_back(
+                                    { v.position, glm::vec3(v.color), v.normal, v.uv, v.color.a, v.tangent });
+                            decoded->indices = p.indices;
+                            decoded->bounds = ComputeMeshBounds(decoded->vertices);
+                            return std::shared_ptr<const DecodedMesh>(std::move(decoded));
+                        },
+                        std::format("{} mesh {:016x}.{}", mLabel, key, index));
+                    model->meshClaims.emplace_back(mMeshTracker, record);
+                    slots.push_back({ key, primitives.size() - 1 });
                 }
             }
         }
         catch (const std::exception &exception)
         {
-            ReleaseGpu(mHost, *model);
             Fail(exception.what());
             return;
         }
@@ -239,6 +250,31 @@ namespace mir
         mTextureClaims.clear();
         mLoaded.reset();
         mPrepared = std::move(model);
+        mMeshSlots = std::move(slots);
+        mState = State::Meshes;
+    }
+
+    void ModelPreparation::AwaitMeshes()
+    {
+        mMeshTracker->Update();
+        mMaterials->Trim();
+        bool ready = true;
+        for (const ModelMeshLease &claim : mPrepared->meshClaims)
+        {
+            const MeshLoad *view = claim.Get();
+            if (view == nullptr || view->phase == AssetUploadPhase::Failed)
+            {
+                Fail("GPU mesh creation failed");
+                return;
+            }
+            ready = ready && view->phase == AssetUploadPhase::Ready;
+        }
+        if (!ready)
+            return;
+        for (size_t slot = 0; slot < mMeshSlots.size(); ++slot)
+            mPrepared->meshes.at(mMeshSlots[slot].mesh)[mMeshSlots[slot].primitive].mesh =
+                mPrepared->meshClaims[slot].Get()->mesh;
+        mMeshSlots.clear();
         mState = State::Ready;
     }
 

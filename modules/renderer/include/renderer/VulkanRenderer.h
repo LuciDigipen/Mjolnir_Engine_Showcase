@@ -260,6 +260,8 @@ namespace mir
         bool SetUploadFrameBudget(uint64_t bytes);
         // The IMeshUploader calls, see renderer/IMeshUploader.h.
         uint64_t UploadFrameBudget() const override;
+        // One target for the mesh and texture caches together.
+        std::shared_ptr<GpuResidency> SharedResidency() override { return mResidency; }
         MeshHandle QueueMesh(MeshUploadSource source, const MeshUploadOptions &options) override;
         MeshUploadState MeshState(MeshHandle handle) const override;
         bool RetireMesh(MeshHandle handle) override;
@@ -365,6 +367,7 @@ namespace mir
             std::vector<MaterialHandle> materials;
         };
         FrameRetireList<ReleasedResources> mReleasedResources;
+        std::shared_ptr<GpuResidency> mResidency = std::make_shared<GpuResidency>();
         glm::vec4 mClearColor{ 0.02f, 0.02f, 0.02f, 1.0f };
 
         bool mSkyVisible = false;

@@ -10,8 +10,10 @@
 
 #include <renderer/IMeshUploader.h>
 #include <renderer/Material.h>
+#include <renderer/MaterialRecordCache.h>
 #include <renderer/Mesh.h>
 #include <renderer/MeshLoadTracker.h>
+#include <renderer/ModelMeshTracker.h>
 #include <renderer/Texture.h>
 
 #include <algorithm>
@@ -30,9 +32,31 @@ namespace mir
             return mMeshCaches.Get(*this, assets);
         }
 
+        // One GPU record cache per catalog revision for primitives that arrive as memory.
+        std::shared_ptr<ModelMeshTracker> ModelMeshes(AsyncAssetService *assets)
+        {
+            return mModelMeshCaches.Get(*this, assets);
+        }
+
+        // Materials shared by every World using this renderer, keyed by their resolved description.
+        std::shared_ptr<MaterialRecordCache> MaterialRecords()
+        {
+            if (!mMaterialRecords)
+                mMaterialRecords = std::make_shared<MaterialRecordCache>(*this);
+            return mMaterialRecords;
+        }
+
         void ReleaseCachedMeshes()
         {
             mMeshCaches.Release([this](MeshHandle handle) { RetireMesh(handle); });
+            mModelMeshCaches.Release([this](MeshHandle handle) { RetireMesh(handle); });
+        }
+
+        // Forgets the records, the renderer destroys the materials themselves.
+        void ReleaseCachedMaterials()
+        {
+            if (mMaterialRecords)
+                mMaterialRecords->Reset();
         }
 
         // Builtin shapes are small, so they are created in place.
@@ -45,5 +69,7 @@ namespace mir
 
     private:
         AssetUploadRegistry<MeshLoadTracker> mMeshCaches;
+        AssetUploadRegistry<ModelMeshTracker> mModelMeshCaches;
+        std::shared_ptr<MaterialRecordCache> mMaterialRecords;
     };
 }

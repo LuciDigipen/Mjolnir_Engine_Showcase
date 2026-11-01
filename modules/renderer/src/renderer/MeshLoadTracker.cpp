@@ -20,6 +20,6 @@ namespace mir
                 { return uploader.MeshFootprint(static_cast<uint32_t>(mesh.vertices.size()),
                     static_cast<uint32_t>(mesh.indices.size()), { .rayTracing = true }); },
             [](MeshLoad &view, const DecodedMesh &mesh) { view.bounds = mesh.bounds; },
-            [&uploader] { return uploader.MeshStreaming().retiringBytes; })
+            [&uploader] { return uploader.MeshStreaming().retiringBytes; }, uploader.SharedResidency(), GpuCategory::Mesh)
     {}
 }

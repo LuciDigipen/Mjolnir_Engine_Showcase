@@ -195,6 +195,7 @@ namespace mir
     {
         if (mDevice->Handle() != VK_NULL_HANDLE)
         {
+            ReleaseCachedMaterials();
             ReleaseCachedMeshes();
             ReleaseCachedTextures();
             mDevice->WaitIdle();
@@ -433,6 +434,7 @@ namespace mir
 
     void VulkanRenderer::ReleaseSceneResources()
     {
+        ReleaseCachedMaterials();
         ReleaseCachedMeshes();
         ReleaseCachedTextures();
         if (mFxSystem) mFxSystem->ClearScene();

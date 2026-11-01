@@ -112,16 +112,20 @@ the whole model, since there is nothing to draw.
 **A model is prepared in the background and published whole.** `ModelSystem`
 claims each referenced model through a `ModelPreparation`, which claims the
 model's CPU records and one `TextureLoadLease` per base color texture, and never
-waits on either. When every texture is ready or failed it creates the meshes and
-materials once and publishes an immutable `PreparedModel`, so no entity patches a
-material later. The first load keeps the model hidden until then, and a
-structural failure marks the model failed. A reload prepares a replacement per
+waits on either. When every texture is ready or failed it claims the renderer's
+shared material records, queues the primitives through the shared mesh upload
+path, and publishes an immutable `PreparedModel` once the meshes are ready, so no
+entity patches a material later. The first load keeps the model hidden until
+then, and a structural failure or a failed mesh upload marks the model failed. A reload prepares a replacement per
 loaded model from the new catalog while the old `PreparedModel` keeps drawing,
 then switches that model when its replacement is usable. A replacement that
 fails leaves the old model in place and logs a warning, and a failed texture
 publishes the magenta error appearance like an initial load. Playback, poses
-and deformations stay with the entity. Meshes and materials are still created
-per World, only textures and the CPU records are shared across Worlds.
+and deformations stay with the entity. A `PreparedModel` only holds claims on
+renderer-owned records, so Worlds that prepare the same model share its meshes,
+materials, textures and CPU records, and dropping the model releases the claims,
+not the GPU memory. The renderer keeps unused records under its residency
+target.
 
 ## State
 
@@ -159,7 +163,8 @@ a failed mesh still fails the model. Because: issue #19.
 *2026-11-01* — **Models prepare in the background.** `ModelSystem` loaded a
 model and uploaded its textures synchronously, and a reload staged GPU resources
 at `ReloadPrepare` so a rejected cook vetoed the swap. `ModelPreparation` now
-claims shared CPU records and texture leases, the module no longer stages or
+claims shared CPU records, texture leases and renderer-owned mesh and material
+records, the module no longer stages or
 aborts a model reload, and the replacement policy above covers late failures.
 `ModelResources` also carries the materials the meshes name.
 

@@ -9,10 +9,12 @@
 #pragma once
 
 #include <assets/AsyncAssetService.h>
+#include <renderer/GpuResidency.h>
 #include <renderer/UploadState.h>
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -35,12 +37,32 @@ namespace mir
         using Metadata = std::function<void(View &, const Decoded &)>;
         AssetUploadCache(AsyncAssetService *assets, const AssetDecoder<Decoded> &decoder,
             Queue queue, State state, Retire retire, Footprint footprint, Metadata metadata,
-            std::function<uint64_t()> retiring = {})
+            std::function<uint64_t()> retiring = {}, std::shared_ptr<GpuResidency> residency = nullptr,
+            GpuCategory category = GpuCategory::Mesh)
             : mAssets(assets), mDecoder(decoder), mQueue(std::move(queue)), mState(std::move(state)),
               mRetire(std::move(retire)), mFootprint(std::move(footprint)), mMetadata(std::move(metadata)),
-              mRetiring(std::move(retiring)) {}
+              mRetiring(std::move(retiring)), mResidency(std::move(residency)), mCategory(category)
+        {
+            if (mResidency)
+            {
+                mHolder = mResidency->AddHolder(mCategory, [this] { return HeldBytes(); });
+                if (mRetiring)
+                    mResidency->SetRetiring(mCategory, mRetiring);
+            }
+        }
+        ~AssetUploadCache()
+        {
+            if (mResidency)
+                mResidency->RemoveHolder(mHolder);
+        }
+        AssetUploadCache(const AssetUploadCache &) = delete;
+        AssetUploadCache &operator=(const AssetUploadCache &) = delete;
 
         const View &Request(AssetId id, const std::string &label);
+        // Requests a record from data already in memory. make runs only when the record is absent, the caller
+        // chooses key so it names the content and creation options. Use Request for cooked assets.
+        const View &RequestInline(AssetId key, const std::function<std::shared_ptr<const Decoded>()> &make,
+            const std::string &label);
         const View *Find(AssetId id) const;
         void Retain(AssetId id);
         void Drop(AssetId id);
@@ -48,7 +70,9 @@ namespace mir
         void Reset() { mEntries.clear(); mWaiting.clear(); }
         void Release(std::vector<Handle> &ready);
         void EvictUnused();
-        void SetBudget(uint64_t bytes) { mBudget = bytes; Trim(); }
+        // A cap for this cache alone, beside the renderer-wide residency target.
+        void SetBudget(uint64_t bytes) { mCap = bytes; Trim(); }
+        uint64_t HeldBytes() const;
         bool Empty() const { return mEntries.empty(); }
 
     private:
@@ -56,6 +80,8 @@ namespace mir
         {
             View mView;
             AssetLease<Decoded> mRequest;
+            // Data that did not come from the asset service, dropped once queued.
+            std::shared_ptr<const Decoded> mInline;
             std::string mLabel;
             size_t mConsumers = 0;
             uint64_t mBytes = 0;
@@ -66,6 +92,7 @@ namespace mir
         void RetireEntry(const Entry &entry);
         void Fail(Entry &entry, const std::string &reason);
         void Decode(Entry &entry);
+        void Publish(Entry &entry, const std::shared_ptr<const Decoded> &decoded);
         void Upload(Entry &entry);
         void Trim();
         AsyncAssetService *mAssets;
@@ -78,7 +105,10 @@ namespace mir
         std::function<uint64_t()> mRetiring;
         std::unordered_map<uint64_t, Entry> mEntries;
         std::vector<uint64_t> mWaiting;
-        uint64_t mBudget = 256ull * 1024 * 1024;
+        std::shared_ptr<GpuResidency> mResidency;
+        GpuCategory mCategory;
+        uint32_t mHolder = 0;
+        std::optional<uint64_t> mCap;
         uint64_t mUseSerial = 0;
     };
 

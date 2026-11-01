@@ -186,6 +186,32 @@ when it becomes ready, the old set retires after its last possible frame.
 Model base color textures use these claims through `ModelPreparation`
 in the animation module.
 
+Model primitives arrive as memory from a typed mesh asset, not the raw format
+`MeshLoadTracker` decodes, so `ModelMeshes(service)` returns a `ModelMeshTracker`
+that reuses the same upload lifecycle with caller-supplied vertices. A record is
+named by a `GpuRecordKey`, the cooked asset and primitive, a `ContentIdentity` and
+the creation options. Until blob content identity exists the identity is the
+catalog revision, so a changed asset never reuses an old record, and the tracker
+is per revision as well. The key table gives each key a sequential id, so there
+is no hash collision to reason about. `MaterialRecords()` returns one
+`MaterialRecordCache` for the renderer. It keys a material by its complete
+resolved description compared by value, including the texture handle and
+generation, the sampler, render state and record bytes, so equal descriptions
+from different Worlds or models share one GPU material. A normal and a mirrored
+variant differ in front face and are two records. A record owns the
+`TextureLoadLease` claims that keep its textures valid, a `MaterialLease` is one
+consumer, and an unused record stays until the renderer is over its residency
+target because it pins textures.
+
+`GpuResidency` holds one total target (512 MiB by default) and optional category
+limits for meshes and textures. Each cache reports the bytes it holds, and the
+mesh cache reports retiring bytes that the GPU still reads. A cache that has
+dropped its last claim asks `Excess` and releases its own unused records,
+oldest first, until it has freed that much. Active claims are never released, so
+the renderer can stay over the target while the work set is larger than it.
+`SetBudget` on a cache is a separate cap for that cache alone, and no cache has a
+default budget of its own.
+
 At `ReloadCommit` the module calls `CommitReload`. It retires the meshes that are
 still queued or uploading, frees the ready ones, and forgets every entity's names,
 so the next `LateUpdate` resolves every renderer again, including one
@@ -1651,6 +1677,13 @@ migrates a project predating this (only `rendering.fog`, no
 `postProcessing.effects.Fog` yet) by seeding `Fog.enabled` from the legacy
 bool once; a project already saved under the new scheme is never
 overridden by a stale leftover flag. Because: issue #210.
+
+*2026-11-01* — **Shared model mesh and material records, one residency target.**
+Was: a model created its own meshes with a synchronous `CreateMesh` and its own
+materials per World, and the mesh and texture caches each held a 256 MiB budget
+per catalog revision. Now `ModelMeshTracker` queues model primitives through the
+shared transfer ring, `MaterialRecordCache` shares materials by value and holds
+their texture claims, and `GpuResidency` is the one target they all answer to.
 
 *2026-10-18* — **`PostProcessingSettings` and `PostEffectRegistry` (#207).**
 Was: no post-processing concept existed. Now: `PostProcessingSettings`

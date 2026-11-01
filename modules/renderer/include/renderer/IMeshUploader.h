@@ -8,10 +8,12 @@
  */
 #pragma once
 
+#include <renderer/GpuResidency.h>
 #include <renderer/Mesh.h>
 #include <renderer/MeshStreaming.h>
 
 #include <cstdint>
+#include <memory>
 
 namespace mir
 {
@@ -33,5 +35,12 @@ namespace mir
         virtual MeshStreamingStats MeshStreaming() const = 0;
         // The GPU bytes one frame may write, shared by every consumer.
         virtual uint64_t UploadFrameBudget() const = 0;
+        // The residency target the uploader's caches share, one per renderer. Caches keep it alive, a lease
+        // may outlive the renderer.
+        virtual std::shared_ptr<GpuResidency> SharedResidency() { return mResidency; }
+        GpuResidency &Residency() { return *SharedResidency(); }
+
+    private:
+        std::shared_ptr<GpuResidency> mResidency = std::make_shared<GpuResidency>();
     };
 }

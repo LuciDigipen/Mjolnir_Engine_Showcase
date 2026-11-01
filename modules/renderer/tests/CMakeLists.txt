@@ -8,6 +8,7 @@ engine_add_module_tests(renderer
     DepthOfFieldEffect.tests.cpp
     DescriptorLayoutLimits.tests.cpp
     FilmEffect.tests.cpp
+    GpuRecords.tests.cpp
     Material.tests.cpp
     MaterialRecordTable.tests.cpp
     MaterialReflection.tests.cpp

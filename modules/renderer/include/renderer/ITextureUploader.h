@@ -10,6 +10,7 @@
 
 #include <renderer/TextureUpload.h>
 #include <renderer/AssetUploadCache.h>
+#include <renderer/GpuResidency.h>
 
 namespace mir
 {
@@ -24,7 +25,11 @@ namespace mir
         virtual uint64_t TextureFootprint(TextureHandle handle) const = 0;
         std::shared_ptr<TextureLoadTracker> TextureLoads(AsyncAssetService *assets);
         void ReleaseCachedTextures();
+        // The residency target the uploader's caches share, one per renderer.
+        virtual std::shared_ptr<GpuResidency> SharedResidency() { return mResidency; }
+        GpuResidency &Residency() { return *SharedResidency(); }
     private:
+        std::shared_ptr<GpuResidency> mResidency = std::make_shared<GpuResidency>();
         AssetUploadRegistry<TextureLoadTracker> mTextureCaches;
     };
 }

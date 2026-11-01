@@ -3,9 +3,10 @@
  * @author sumin.park
  * @brief Shared immutable model resources, prepared in the background without blocking a frame.
  *
- * A preparation claims a model's CPU records and its textures, then builds the GPU meshes and
- * materials once every texture has settled. Playback, poses and draw extraction stay with the
- * ModelSystem that owns the entities.
+ * A preparation claims a model's CPU records and its textures, then claims shared GPU material
+ * records and queues shared mesh uploads once every texture has settled, and publishes after the
+ * meshes are ready. The renderer owns the GPU records, a PreparedModel only holds claims on them.
+ * Playback, poses and draw extraction stay with the ModelSystem that owns the entities.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -15,6 +16,8 @@
 #include <animation/ModelAnimation.h>
 #include <assets/AsyncAssetService.h>
 #include <renderer/IMeshResolveHost.h>
+#include <renderer/MaterialRecordCache.h>
+#include <renderer/ModelMeshTracker.h>
 #include <renderer/ITextureUploader.h>
 #include <renderer/TextureLoadTracker.h>
 
@@ -33,21 +36,21 @@ namespace mir
         bool transparent = false;
     };
 
-    // Never changes once published. The texture claims keep the textures alive for the materials.
+    // Never changes once published. The handles are valid while the claims below are held, and the claims
+    // drop in reverse order, meshes and materials before the textures they sample.
     struct PreparedModel
     {
         std::shared_ptr<const ModelResources> resources;
         std::unordered_map<uint64_t, std::vector<PreparedPrimitive>> meshes;
         std::vector<TextureLoadLease> textures;
+        std::vector<MaterialLease> materialClaims;
+        std::vector<ModelMeshLease> meshClaims;
     };
-
-    // Releases the model's meshes and materials, then its texture claims.
-    void ReleasePreparedModel(IMeshResolveHost &host, std::unique_ptr<PreparedModel> model);
 
     class ModelPreparation
     {
     public:
-        enum class State : uint8_t { Loading, Textures, Ready, Failed };
+        enum class State : uint8_t { Loading, Textures, Meshes, Ready, Failed };
 
         // assets may be null, the preparation then fails.
         ModelPreparation(IMeshResolveHost &host, ITextureUploader &textures, TextureHandle errorTexture,
@@ -65,16 +68,27 @@ namespace mir
         void RequestTextures(const ModelResources &resources);
         bool TexturesSettled() const;
         void Build();
+        void AwaitMeshes();
 
         IMeshResolveHost &mHost;
         TextureHandle mErrorTexture;
         AssetId mId;
         std::string mLabel;
         std::shared_ptr<TextureLoadTracker> mTracker;
+        std::shared_ptr<ModelMeshTracker> mMeshTracker;
+        std::shared_ptr<MaterialRecordCache> mMaterials;
+        uint32_t mRevision = 0;
         AssetLease<ModelResources> mResources;
         std::shared_ptr<const ModelResources> mLoaded;
         std::unordered_map<uint64_t, TextureLoadLease> mTextureClaims;
+        // Built once the textures settle, published when every mesh upload is ready.
         std::unique_ptr<PreparedModel> mPrepared;
+        struct MeshSlot
+        {
+            uint64_t mesh = 0;
+            size_t primitive = 0;
+        };
+        std::vector<MeshSlot> mMeshSlots;
         std::string mError;
         State mState = State::Loading;
     };

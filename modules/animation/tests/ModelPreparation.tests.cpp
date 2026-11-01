@@ -104,7 +104,7 @@ namespace
     };
 }
 
-TEST_CASE("A model publishes after its texture settles and uses the texture", "[animation][model-preparation]")
+TEST_CASE("A model publishes after its texture and meshes are ready and uses both", "[animation][model-preparation]")
 {
     Fixture f;
     f.QueueTexture();
@@ -114,22 +114,89 @@ TEST_CASE("A model publishes after its texture settles and uses the texture", "[
     f.mTextures.Begin(texture);
     f.mTextures.CopyAll(texture);
     f.mTextures.Complete(texture);
-    REQUIRE(f.Frame() == ModelPreparation::State::Ready);
+    // the materials exist and the mesh upload is queued, the model waits for it
+    REQUIRE(f.Frame() == ModelPreparation::State::Meshes);
     REQUIRE(f.mHost.createdMaterials.size() == 2);
     CHECK(f.mHost.createdMaterials[0].baseColorTexture == texture);
+    CHECK(f.mHost.createdMaterials[0].frontFace != f.mHost.createdMaterials[1].frontFace);
+    REQUIRE(f.mHost.uploader.queued == 1);
+    CHECK(f.mHost.syncMeshes == 0);
+    CHECK(f.mPreparation.Take() == nullptr);
+    const MeshHandle mesh{ 0, 1 };
+    f.mHost.uploader.Record(mesh);
+    CHECK(f.Frame() == ModelPreparation::State::Meshes);
+    f.mHost.uploader.Complete(mesh);
+    REQUIRE(f.Frame() == ModelPreparation::State::Ready);
 
     auto model = f.mPreparation.Take();
     REQUIRE(model);
     const auto &primitives = model->meshes.at(kMesh.value);
     REQUIRE(primitives.size() == 1);
+    CHECK(primitives[0].mesh == mesh);
     CHECK(primitives[0].factor == glm::vec4(0.25f, 0.5f, 0.75f, 1));
     CHECK(f.mPreparation.Take() == nullptr);
 
-    ReleasePreparedModel(f.mHost, std::move(model));
-    CHECK(f.mHost.releasedMeshes.size() == 1);
-    CHECK(f.mHost.releasedMaterials.size() == 2);
-    // the unused texture stays cached for the next consumer
+    // dropping the claims keeps the records for the next consumer
+    model.reset();
+    CHECK(f.mHost.releasedMaterials.empty());
+    CHECK(f.mHost.uploader.retired.empty());
     CHECK(f.mTextures.TextureState(texture) == TextureUploadState::Ready);
+    f.mHost.MaterialRecords()->EvictUnused();
+    CHECK(f.mHost.releasedMaterials.size() == 2);
+}
+
+TEST_CASE("A second preparation of the same model shares the mesh and material records",
+    "[animation][model-preparation]")
+{
+    Fixture f;
+    f.QueueTexture();
+    const TextureHandle texture{ 0, 1 };
+    f.mTextures.Begin(texture);
+    f.mTextures.CopyAll(texture);
+    f.mTextures.Complete(texture);
+    f.Frame();
+    const MeshHandle mesh{ 0, 1 };
+    f.mHost.uploader.Record(mesh);
+    f.mHost.uploader.Complete(mesh);
+    REQUIRE(f.Frame() == ModelPreparation::State::Ready);
+    auto first = f.mPreparation.Take();
+
+    ModelPreparation other(f.mHost, f.mTextures, kError, &f.mService, kModel, "model");
+    for (int frame = 0; frame < 8 && other.GetState() != ModelPreparation::State::Ready; ++frame)
+    {
+        f.mService.DrainCompletions();
+        other.Advance();
+    }
+    REQUIRE(other.GetState() == ModelPreparation::State::Ready);
+    CHECK(f.mHost.uploader.queued == 1);
+    CHECK(f.mHost.createdMaterials.size() == 2);
+    CHECK(f.mTextures.mQueued == 1);
+    auto second = other.Take();
+    CHECK(second->meshes.at(kMesh.value)[0].mesh == first->meshes.at(kMesh.value)[0].mesh);
+    CHECK(second->meshes.at(kMesh.value)[0].material == first->meshes.at(kMesh.value)[0].material);
+
+    // the records stay while either model holds them
+    first.reset();
+    f.mHost.MaterialRecords()->EvictUnused();
+    CHECK(f.mHost.releasedMaterials.empty());
+    second.reset();
+    f.mHost.MaterialRecords()->EvictUnused();
+    CHECK(f.mHost.releasedMaterials.size() == 2);
+}
+
+TEST_CASE("A failed mesh upload fails the model and drops its claims", "[animation][model-preparation]")
+{
+    Fixture f;
+    f.QueueTexture();
+    const TextureHandle texture{ 0, 1 };
+    f.mTextures.Fail(texture);
+    REQUIRE(f.Frame() == ModelPreparation::State::Meshes);
+    f.mHost.uploader.Fail(MeshHandle{ 0, 1 });
+    CHECK(f.Frame() == ModelPreparation::State::Failed);
+    CHECK(f.mPreparation.Error() == "GPU mesh creation failed");
+    CHECK(f.mPreparation.Take() == nullptr);
+    // an unused failed record leaves the cache, the next request uploads again
+    CHECK(f.mHost.uploader.retired.size() == 1);
 }
 
 TEST_CASE("A failed texture publishes the magenta error appearance", "[animation][model-preparation]")
@@ -138,9 +205,11 @@ TEST_CASE("A failed texture publishes the magenta error appearance", "[animation
     f.QueueTexture();
     const TextureHandle texture{ 0, 1 };
     f.mTextures.Fail(texture);
-    REQUIRE(f.Frame() == ModelPreparation::State::Ready);
+    REQUIRE(f.Frame() == ModelPreparation::State::Meshes);
     REQUIRE(f.mHost.createdMaterials.size() == 2);
     CHECK(f.mHost.createdMaterials[0].baseColorTexture == kError);
+    f.mHost.uploader.Complete(MeshHandle{ 0, 1 });
+    REQUIRE(f.Frame() == ModelPreparation::State::Ready);
     const auto model = f.mPreparation.Take();
     REQUIRE(model);
     CHECK(model->meshes.at(kMesh.value)[0].factor == glm::vec4(1, 0, 1, 1));
@@ -149,10 +218,12 @@ TEST_CASE("A failed texture publishes the magenta error appearance", "[animation
 TEST_CASE("A missing texture blob settles as an error appearance", "[animation][model-preparation]")
 {
     Fixture f(false);
-    for (int frame = 0; frame < 4 && f.mPreparation.GetState() != ModelPreparation::State::Ready; ++frame)
+    for (int frame = 0; frame < 4 && f.mPreparation.GetState() != ModelPreparation::State::Meshes; ++frame)
         f.Frame();
     // an unreachable texture is a texture failure, the model still publishes
-    REQUIRE(f.mPreparation.GetState() == ModelPreparation::State::Ready);
+    REQUIRE(f.mPreparation.GetState() == ModelPreparation::State::Meshes);
+    f.mHost.uploader.Complete(MeshHandle{ 0, 1 });
+    REQUIRE(f.Frame() == ModelPreparation::State::Ready);
     const auto model = f.mPreparation.Take();
     CHECK(model->meshes.at(kMesh.value)[0].factor == glm::vec4(1, 0, 1, 1));
 }

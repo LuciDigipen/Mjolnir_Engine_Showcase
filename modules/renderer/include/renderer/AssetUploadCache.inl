@@ -25,6 +25,32 @@ namespace mir
     }
 
     template <class Decoded, class Handle, class View, Handle View::*Member>
+    const View &AssetUploadCache<Decoded, Handle, View, Member>::RequestInline(AssetId key,
+        const std::function<std::shared_ptr<const Decoded>()> &make, const std::string &label)
+    {
+        const auto found = mEntries.find(key.value);
+        if (found != mEntries.end())
+            return found->second.mView;
+        Entry &entry = mEntries[key.value];
+        entry.mLabel = label;
+        entry.mInline = make();
+        if (!entry.mInline)
+            Fail(entry, "there is no data to upload");
+        else
+            mWaiting.push_back(key.value);
+        return entry.mView;
+    }
+
+    template <class Decoded, class Handle, class View, Handle View::*Member>
+    uint64_t AssetUploadCache<Decoded, Handle, View, Member>::HeldBytes() const
+    {
+        uint64_t bytes = 0;
+        for (const auto &[key, entry] : mEntries)
+            bytes += entry.mBytes;
+        return bytes;
+    }
+
+    template <class Decoded, class Handle, class View, Handle View::*Member>
     const View *AssetUploadCache<Decoded, Handle, View, Member>::Find(AssetId id) const
     {
         const auto found = mEntries.find(id.value);
@@ -122,6 +148,13 @@ namespace mir
     template <class Decoded, class Handle, class View, Handle View::*Member>
     void AssetUploadCache<Decoded, Handle, View, Member>::Decode(Entry &entry)
     {
+        if (entry.mInline)
+        {
+            const auto decoded = std::move(entry.mInline);
+            entry.mInline.reset();
+            Publish(entry, decoded);
+            return;
+        }
         const auto state = entry.mRequest.State();
         if (state == AssetLoadState::Queued)
             return;
@@ -137,6 +170,14 @@ namespace mir
             Fail(entry, "its decoded data is missing");
             return;
         }
+        Publish(entry, decoded);
+        entry.mRequest.Reset();
+    }
+
+    template <class Decoded, class Handle, class View, Handle View::*Member>
+    void AssetUploadCache<Decoded, Handle, View, Member>::Publish(Entry &entry,
+        const std::shared_ptr<const Decoded> &decoded)
+    {
         const Handle handle = mQueue(decoded);
         if (handle.IsNull())
         {
@@ -147,7 +188,6 @@ namespace mir
         entry.mBytes = mFootprint(handle, *decoded);
         mMetadata(entry.mView, *decoded);
         entry.mView.phase = AssetUploadPhase::Uploading;
-        entry.mRequest.Reset();
     }
 
     template <class Decoded, class Handle, class View, Handle View::*Member>
@@ -170,21 +210,27 @@ namespace mir
     template <class Decoded, class Handle, class View, Handle View::*Member>
     void AssetUploadCache<Decoded, Handle, View, Member>::Trim()
     {
-        uint64_t bytes = mRetiring ? mRetiring() : 0;
+        uint64_t need = mResidency ? mResidency->Excess(mCategory) : 0;
+        if (mCap)
+        {
+            const uint64_t used = HeldBytes() + (mRetiring ? mRetiring() : 0);
+            if (used > *mCap)
+                need = std::max(need, used - *mCap);
+        }
+        if (need == 0)
+            return;
         std::vector<std::pair<uint64_t, uint64_t>> unused;
         for (const auto &[key, entry] : mEntries)
-        {
-            bytes += entry.mBytes;
             if (entry.mConsumers == 0 && entry.mView.phase == AssetUploadPhase::Ready)
                 unused.emplace_back(entry.mLastUse, key);
-        }
         std::sort(unused.begin(), unused.end());
+        uint64_t freed = 0;
         for (const auto &[serial, key] : unused)
         {
-            if (bytes <= mBudget)
+            if (freed >= need)
                 break;
             auto found = mEntries.find(key);
-            bytes -= found->second.mBytes;
+            freed += found->second.mBytes;
             RetireEntry(found->second);
             mEntries.erase(found);
         }
