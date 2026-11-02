@@ -51,7 +51,7 @@ games/                one directory per game — no C++
   EmptyScene/           a game with an empty scene, for the smoke test
   SoundtrackCheck/      a streamed soundtrack and an SFX loop, with saved Lua volumes and mutes
 
-tools/                AssetCooker, new_module.ps1, new_file.ps1, wwise/ (SoundtrackCheck's banks)
+tools/                AssetCooker, MjolnirBuild, new_module.ps1, new_file.ps1, wwise/ (SoundtrackCheck's banks)
 templates/            what the scaffolding scripts stamp out
 third_party/          imgui (submodule), imgui_config, IconFontCppHeaders
 assets/               engine source assets and shaders, cooked into the build tree

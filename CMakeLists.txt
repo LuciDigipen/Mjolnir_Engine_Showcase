@@ -98,6 +98,7 @@ add_subdirectory(tools/AssetCooker)
 add_subdirectory(tools/ShaderPublisher)
 add_subdirectory(tools/ErrorReporter)
 add_subdirectory(tools/TerrainTool)
+add_subdirectory(tools/MjolnirBuild)
 
 add_executable(MjolnirEngine WIN32)
 target_sources(MjolnirEngine PRIVATE main.cpp)
@@ -151,7 +152,9 @@ if(MJOLNIR_WITH_EDITOR)
     file(TO_CMAKE_PATH "${CMAKE_SOURCE_DIR}" asset_workspace_source_root)
     file(GENERATE
         OUTPUT "$<TARGET_FILE_DIR:MjolnirEngine>/asset_workspace.json"
-        CONTENT "{\n  \"version\": 1,\n  \"sourceRoot\": \"${asset_workspace_source_root}\",\n  \"assetCooker\": \"$<TARGET_FILE:AssetCooker>\"\n}\n")
+        CONTENT "{\n  \"version\": 1,\n  \"sourceRoot\": \"${asset_workspace_source_root}\",\n  \"assetCooker\": \"$<TARGET_FILE:AssetCooker>\",\n  \"buildTool\": \"$<TARGET_FILE:MjolnirBuild>\"\n}\n")
+    # File > Build runs it
+    add_dependencies(MjolnirEngine MjolnirBuild)
 endif()
 
 if(MSVC)
@@ -383,6 +386,10 @@ endif()
 engine_cook_assets(MjolnirEngine
     SOURCE_ROOTS assets/ ${game_asset_roots}
     OUT_DIR ${CMAKE_BINARY_DIR}/cooked_assets)
+# They compare a one-game cook with this one
+if(TARGET mjolnir_build_tests)
+    add_dependencies(mjolnir_build_tests MjolnirEngine_cook_assets)
+endif()
 
 engine_copy_fonts(MjolnirEngine SOURCE_DIR fonts)
 # The master logo and the icon compiled into the exe aren't read at runtime
