@@ -32,8 +32,9 @@ namespace
     constexpr const char *kUsage =
         "usage:\n"
         "  MjolnirBuild --game <checkout>/games/<name> --player <template> --out <dir> [--result <json>]\n"
-        "Cooks the game, then copies it with the player template into <dir>, built in <dir>.tmp and\n"
-        "moved into place only when every step succeeds. <dir> must be empty, a previous build, or\n"
+        "Cooks the game, then copies it with the player template into <dir>, where <dir>/<name>.exe\n"
+        "starts it. Built in <dir>.tmp and moved into place only when every step succeeds, and\n"
+        "compared with this build's player_info.json. <dir> must be empty, a previous build, or\n"
         "missing, and lie outside the checkout or under its builds/. Make a template with\n"
         "  cmake --install builds/windows-msvc-game-release --prefix <template>\n"
         "Exit 0: built; 1: the build failed; 2: bad arguments.\n";
@@ -81,8 +82,9 @@ namespace
             std::fprintf(stderr, "MjolnirBuild: WARNING: %s\n", warning.c_str());
 
         if (report.mOk)
-            std::printf("MjolnirBuild: built %s into %s (%zu assets, %.1f MB)\n", report.mGame.c_str(),
-                PathText(report.mOutDir).c_str(), report.mAssetCount, static_cast<double>(report.mBytes) / 1e6);
+            std::printf("MjolnirBuild: built %s into %s (%zu assets, %.1f MB); run %s\n", report.mGame.c_str(),
+                PathText(report.mOutDir).c_str(), report.mAssetCount, static_cast<double>(report.mBytes) / 1e6,
+                PathText(report.mExecutable.filename()).c_str());
         else
             std::fprintf(stderr, "MjolnirBuild: error: %s\n", report.mError.c_str());
     }
@@ -114,6 +116,7 @@ int main(int argc, char **argv)
         request.mOutDir = out;
         request.mAssetCooker = MJOLNIR_BUILD_ASSET_COOKER;
         request.mTerrainTool = MJOLNIR_BUILD_TERRAIN_TOOL;
+        request.mEditorInfo = MJOLNIR_BUILD_EDITOR_INFO;
 
         const BuildReport report = RunGameBuild(request);
         Print(report);

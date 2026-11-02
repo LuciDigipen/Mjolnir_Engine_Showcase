@@ -524,4 +524,36 @@ if(BUILD_TESTING)
             LABELS smoke
             TIMEOUT 120)
     endif()
+
+    # A game build installs itself as a player template, packages every game with
+    # MjolnirBuild, then starts each package as a double-click would: no --game.
+    # The packages go outside this build folder, where MjolnirBuild refuses to write
+    if(NOT MJOLNIR_WITH_EDITOR)
+        get_filename_component(build_name "${CMAKE_BINARY_DIR}" NAME)
+        set(package_dir "${CMAKE_SOURCE_DIR}/builds/smoke-build/${build_name}")
+        add_test(NAME build.player
+            COMMAND "${CMAKE_COMMAND}" "-DBUILD_DIR=${CMAKE_BINARY_DIR}" "-DPREFIX=${package_dir}/player"
+                    -P "${CMAKE_SOURCE_DIR}/tools/MjolnirBuild/tests/InstallPlayer.cmake")
+        set_tests_properties(build.player PROPERTIES
+            FIXTURES_SETUP build_player
+            LABELS smoke
+            TIMEOUT 300)
+        foreach(game_name IN LISTS game_names)
+            add_test(NAME build.package.${game_name}
+                COMMAND MjolnirBuild --game "${CMAKE_SOURCE_DIR}/games/${game_name}" --player "${package_dir}/player"
+                        --out "${package_dir}/${game_name}" --result "${package_dir}/${game_name}.json")
+            set_tests_properties(build.package.${game_name} PROPERTIES
+                FIXTURES_REQUIRED build_player
+                FIXTURES_SETUP build_${game_name}
+                LABELS smoke
+                TIMEOUT 600)
+            add_test(NAME smoke.build.${game_name}
+                COMMAND "${CMAKE_COMMAND}" "-DRESULT=${package_dir}/${game_name}.json"
+                        -P "${CMAKE_SOURCE_DIR}/tools/MjolnirBuild/tests/RunPackagedGame.cmake")
+            set_tests_properties(smoke.build.${game_name} PROPERTIES
+                FIXTURES_REQUIRED build_${game_name}
+                LABELS smoke
+                TIMEOUT 120)
+        endforeach()
+    endif()
 endif()

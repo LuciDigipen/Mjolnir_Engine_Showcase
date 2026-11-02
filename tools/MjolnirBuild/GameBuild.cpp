@@ -2,6 +2,7 @@
  * @file GameBuild.cpp
  * @author Quy Dong Ta
  * @brief The build steps: check, template, cook, game data, sound banks, terrain, finish.
+ *        The output starts its game with no arguments, from <game name>.exe and engine.json.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -12,9 +13,11 @@
 
 #include <assets/AssetIdRoot.h>
 #include <assets/AssetManifest.h>
+#include <core/fs/FileIO.h>
 #include <core/log/SetupError.h>
 #include <core/platform/Process.h>
 #include <project/GameProject.h>
+#include <project/ProjectSettings.h>
 #include <serial/JsonFile.h>
 #include <terrain/TerrainStreamingSettings.h>
 
@@ -22,12 +25,14 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <iterator>
 #include <optional>
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
+#include <utility>
 
 namespace mir::build
 {
@@ -50,6 +55,14 @@ namespace mir::build
             using std::runtime_error::runtime_error;
         };
 
+        // player_info.json's feature flags, each with the CMake option that sets it
+        constexpr std::pair<std::string_view, std::string_view> kFeatures[] = {
+            { "largeWorld", "MIR_LARGE_WORLD" },
+            { "audio", "MIR_WITH_AUDIO" },
+            { "dlss", "MIR_WITH_DLSS" },
+            { "rtxgi", "MIR_WITH_RTXGI" },
+        };
+
         struct GameInputs
         {
             fs::path mSourceRoot;
@@ -57,6 +70,9 @@ namespace mir::build
             std::string mDirName;
             GameProject mProject;
             fs::path mPlayerDir;
+            Json mPlayerInfo;
+            // MjolnirEngine.exe's name in the build
+            std::string mExeName;
             fs::path mOutDir;
         };
 
@@ -164,6 +180,94 @@ namespace mir::build
             return message;
         }
 
+        bool EqualsIgnoringCase(std::string_view a, std::string_view b)
+        {
+            return std::ranges::equal(a, b, [](unsigned char x, unsigned char y) {
+                return std::tolower(x) == std::tolower(y);
+            });
+        }
+
+        // Why Windows would not take name.exe as a file name, or nullopt
+        std::optional<std::string> ExeNameProblem(std::string_view name)
+        {
+            constexpr std::string_view kNotAllowed = R"(<>:"/\|?*)";
+            if (name.empty())
+                return "it is empty";
+            for (const char c : name)
+            {
+                if (static_cast<unsigned char>(c) < 0x20 || kNotAllowed.find(c) != std::string_view::npos)
+                    return "Windows does not allow <>:\"/\\|?* or control characters in a file name";
+            }
+            if (name.back() == '.' || name.back() == ' ')
+                return "a file name cannot end in a dot or a space";
+
+            // CON.exe and lpt1.anything.exe are devices
+            const std::string_view device = name.substr(0, name.find('.'));
+            for (std::string_view reserved : { "CON", "PRN", "AUX", "NUL" })
+            {
+                if (EqualsIgnoringCase(device, reserved))
+                    return "Windows reserves it for a device";
+            }
+            if (device.size() == 4 && (EqualsIgnoringCase(device.substr(0, 3), "COM") ||
+                    EqualsIgnoringCase(device.substr(0, 3), "LPT")) && device[3] >= '1' && device[3] <= '9')
+                return "Windows reserves it for a device";
+            return std::nullopt;
+        }
+
+        std::optional<bool> Flag(const Json &info, std::string_view key)
+        {
+            const auto it = info.find(std::string(key));
+            if (it == info.end() || !it->is_boolean())
+                return std::nullopt;
+            return it->get<bool>();
+        }
+
+        std::string Text(const Json &info, std::string_view key)
+        {
+            const auto it = info.find(std::string(key));
+            return it != info.end() && it->is_string() ? it->get<std::string>() : "unknown";
+        }
+
+        // Warns where the template was built differently from the editor the game is made in
+        void ComparePlayerInfo(const GameInputs &inputs, const fs::path &editorInfo, BuildReport &report)
+        {
+            const Json &player = inputs.mPlayerInfo;
+            std::error_code ec;
+            const bool hasBanks = fs::is_directory(inputs.mProject.mSoundBankDir, ec) &&
+                !fs::is_empty(inputs.mProject.mSoundBankDir, ec);
+            const bool silent = hasBanks && Flag(player, "audio") == false;
+            if (silent)
+                report.mWarnings.push_back("the game has SoundBanks, but the player template was built with "
+                                           "MIR_WITH_AUDIO OFF, so the packaged game plays no sound");
+
+            if (editorInfo.empty())
+                return;
+            const std::optional<Json> editor = ReadJsonFile(editorInfo);
+            if (!editor || !editor->is_object())
+            {
+                report.mWarnings.push_back("could not read the editor's " + PathText(editorInfo) +
+                    ", so the player template was not compared with it");
+                return;
+            }
+
+            const auto version = [](const Json &info) {
+                return Text(info, "engineVersion") + " at commit " + Text(info, "commit").substr(0, 10);
+            };
+            if (version(player) != version(*editor))
+                report.mWarnings.push_back("the player template is engine " + version(player) + ", the editor " +
+                    version(*editor) + "; build the template and the editor from the same commit");
+
+            for (const auto &[key, option] : kFeatures)
+            {
+                const std::optional<bool> ours = Flag(player, key);
+                const std::optional<bool> theirs = Flag(*editor, key);
+                if (!ours || !theirs || *ours == *theirs || (silent && key == "audio"))
+                    continue;
+                report.mWarnings.push_back("the player template was built with " + std::string(option) +
+                    (*ours ? " ON" : " OFF") + " and the editor with it " + (*theirs ? "ON" : "OFF"));
+            }
+        }
+
         GameInputs ResolveInputs(const BuildRequest &request)
         {
             GameInputs inputs;
@@ -215,6 +319,20 @@ namespace mir::build
                     ", so it is not a player template" + install);
             if (info->value("editor", true))
                 throw BuildError(PathText(inputs.mPlayerDir) + " is an editor build, not a player" + install);
+            inputs.mPlayerInfo = *info;
+
+            const std::string &name = inputs.mProject.mName;
+            if (const std::optional<std::string> problem = ExeNameProblem(name))
+                throw BuildError("game.json's name \"" + name + "\" cannot name the exe: " + *problem +
+                    "; change it in game.json");
+            inputs.mExeName = name + ".exe";
+            for (const fs::directory_entry &entry : fs::directory_iterator(inputs.mPlayerDir))
+            {
+                const std::string file = PathText(entry.path().filename());
+                if (file != kPlayerExecutable && EqualsIgnoringCase(file, inputs.mExeName))
+                    throw BuildError("game.json's name \"" + name + "\" would make " + inputs.mExeName +
+                        ", which the player template already holds; change it in game.json");
+            }
 
             if (const std::optional<std::string> problem =
                     CheckOutputDir(request.mOutDir, { inputs.mSourceRoot, inputs.mPlayerDir }))
@@ -222,7 +340,7 @@ namespace mir::build
             inputs.mOutDir = NormalizedPath(request.mOutDir);
 
             // The whole game folder, terrain releases included, lands under games/<name>/
-            const std::size_t longest = std::max({ LongestPath(inputs.mPlayerDir),
+            const std::size_t longest = std::max({ LongestPath(inputs.mPlayerDir), inputs.mExeName.size(),
                 ("games/" + inputs.mDirName + "/").size() + LongestPath(inputs.mGameDir), kCookedPathLength });
             if (const std::optional<std::string> problem = CheckPathLength(inputs.mOutDir, longest))
                 throw BuildError(*problem);
@@ -240,9 +358,17 @@ namespace mir::build
                     report.mWarnings.push_back("the player template holds " + name + ", which it should not; not copied");
                     continue;
                 }
-                Copy(entry.path(), staging / entry.path().filename());
+                Copy(entry.path(), staging / (name == kPlayerExecutable ? inputs.mExeName : name));
             }
             return true;
+        }
+
+        // With no --game, the player starts the game engine.json names
+        void WriteEngineManifest(const GameInputs &inputs, const fs::path &staging)
+        {
+            const Json manifest = { { "defaultGame", "games/" + inputs.mDirName } };
+            if (!WriteText(staging / kEngineManifestFileName, manifest.dump(4) + "\n"))
+                throw BuildError("could not write " + PathText(staging / kEngineManifestFileName));
         }
 
         std::size_t Cook(const GameInputs &inputs, const fs::path &staging, const fs::path &cooker)
@@ -277,8 +403,13 @@ namespace mir::build
             std::error_code ec;
 
             Copy(inputs.mGameDir / kGameManifestFileName, gameOut / kGameManifestFileName);
-            if (fs::is_regular_file(project.mProjectSettingsPath, ec))
-                Copy(project.mProjectSettingsPath, gameOut / kProjectSettingsFileName);
+            if (std::optional<Json> settings = ReadProjectSettings(project.mProjectSettingsPath))
+            {
+                for (std::string_view section : kMachineSettingsSections)
+                    settings->erase(std::string(section));
+                if (!WriteText(gameOut / kProjectSettingsFileName, settings->dump(2) + "\n"))
+                    throw BuildError("could not write " + PathText(gameOut / kProjectSettingsFileName));
+            }
             if (fs::is_regular_file(inputs.mGameDir / kTerrainStreamingSettingsFileName, ec))
                 Copy(inputs.mGameDir / kTerrainStreamingSettingsFileName, gameOut / kTerrainStreamingSettingsFileName);
 
@@ -364,6 +495,7 @@ namespace mir::build
                 inputs = ResolveInputs(request);
                 report.mGame = inputs.mDirName;
                 report.mOutDir = inputs.mOutDir;
+                ComparePlayerInfo(inputs, request.mEditorInfo, report);
                 return true;
             });
 
@@ -376,13 +508,17 @@ namespace mir::build
                 report.mAssetCount = Cook(inputs, staging, request.mAssetCooker);
                 return true;
             });
-            RunStep(report, "game data", [&] { return CopyGameData(inputs, gameOut, report); });
+            RunStep(report, "game data", [&] {
+                WriteEngineManifest(inputs, staging);
+                return CopyGameData(inputs, gameOut, report);
+            });
             RunStep(report, "sound banks", [&] { return CopySoundBanks(inputs, gameOut); });
             RunStep(report, "terrain", [&] { return PackageTerrain(inputs, gameOut, request.mTerrainTool); });
             RunStep(report, "finish", [&] {
                 report.mBytes = FolderBytes(staging);
                 CommitStaging(staging, inputs.mOutDir);
                 staging.clear();
+                report.mExecutable = inputs.mOutDir / inputs.mExeName;
                 return true;
             });
             report.mOk = true;
@@ -418,7 +554,9 @@ namespace mir::build
             { "assets", report.mAssetCount },
             { "bytes", report.mBytes },
         };
-        if (!report.mOk)
+        if (report.mOk)
+            json["executable"] = PathText(report.mExecutable);
+        else
             json["error"] = report.mError;
         return json.dump(2) + "\n";
     }

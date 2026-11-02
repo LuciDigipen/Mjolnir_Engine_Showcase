@@ -24,6 +24,9 @@ namespace mir::build
         std::filesystem::path mOutDir;
         std::filesystem::path mAssetCooker;
         std::filesystem::path mTerrainTool;
+
+        // The editor's player_info.json, which the template is compared with; empty skips the comparison
+        std::filesystem::path mEditorInfo;
     };
 
     enum class StepStatus
@@ -45,6 +48,9 @@ namespace mir::build
         bool mOk = false;
         std::string mGame;
         std::filesystem::path mOutDir;
+
+        // <out>/<game.json name>.exe, set once the build is in place
+        std::filesystem::path mExecutable;
         std::vector<BuildStep> mSteps;
         std::vector<std::string> mWarnings;
         std::string mError;

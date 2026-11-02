@@ -231,6 +231,25 @@ Each `*.terrain.json` gets the release that
 build the engine after editing a recipe. A game with no SoundBanks or terrain
 skips those steps.
 
+The output starts its game with no arguments, so a double-click plays it:
+
+- `MjolnirEngine.exe` is renamed to `game.json`'s `name`, e.g. `HelloWorld.exe`.
+  A name Windows cannot use as a file name, or one that would replace another
+  template file, is refused. The renamed exe still finds
+  `MjolnirErrorReporter.exe` and logs to `logs/` beside it.
+- `engine.json` names the game as `defaultGame`, and the window takes
+  `game.json`'s `title`.
+- The copied `project_settings.json` leaves out the sections that describe one
+  machine, such as `ide` with the IDE's install path. They are listed in
+  `kMachineSettingsSections` in `modules/project/include/project/ProjectSettings.h`;
+  add a new machine-specific section there. The source file is never changed.
+
+The template's `player_info.json` is compared with the one beside the
+`MjolnirEngine` that MjolnirBuild was built with, which for an editor build is
+the editor's. A different commit or engine version, or a different large
+world, audio, DLSS or RTXGI option, is a warning, as is a game with SoundBanks
+packaged with a template built without audio.
+
 The build happens in `<out>.tmp` and replaces `<out>` only when every step
 succeeds, so a failed build leaves the previous one where it was; the previous
 build waits in `<out>.old` during the swap. `<out>`, `<out>.tmp` and
@@ -241,12 +260,19 @@ previous build, which holds `mjolnir_build.json`, and `<out>.tmp` and
 it would pass 259 characters is refused too: the engine cannot open such a path.
 
 `--result` gets a JSON report, a failed build's included: the status, each
-step's status and time, warnings, the error, the asset count and the size. The
-exit code is 0 when built, 1 when the build failed, 2 for bad arguments. The
-editor finds the tool through `buildTool` in `asset_workspace.json`.
+step's status and time, warnings, the error (or, once built, the exe's path as
+`executable`), the asset count and the size. The exit code is 0 when built, 1
+when the build failed, 2 for bad arguments. The editor finds the tool through
+`buildTool` in `asset_workspace.json`.
 
-The output has no `engine.json` yet, so start it with
-`MjolnirEngine.exe --game games/<name>`.
+A game build's CTest packages every game the same way. `build.player` installs
+the build as a template, `build.package.<game>` runs MjolnirBuild into
+`builds/smoke-build/<build folder>/<game>`, and `smoke.build.<game>` starts the
+exe with no `--game`, as a double-click does. All are labelled `smoke`:
+
+```
+ctest --test-dir builds/windows-msvc-game-release -R "^smoke\.build\." --output-on-failure
+```
 
 ## Builds without proprietary SDKs and daily CI
 
