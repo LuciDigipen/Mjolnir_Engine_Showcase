@@ -68,7 +68,8 @@ made, the root and the dependencies of those types are copied into one job, and
 the worker reads each file, checks its header against its manifest entry and
 calls the decoder. A result is a `shared_ptr<const T>`, so a holder keeps its
 data past `CancelAll`. `DrainCompletions` runs once a frame before the systems
-update, and it is the only place a request changes state. The cache stays as it
+update, and it is the only place a finished decode becomes visible. A request for
+content that is already decoded and alive is ready as soon as it is made. The cache stays as it
 was. `MeshResolveSystem` is the first consumer, and it never calls `CancelAll`: a
 result nobody claims can stay decoded within the service's cache budget, and a
 later request can reuse it.
@@ -93,9 +94,12 @@ after their cache entries are evicted. A borrower remains valid across eviction.
 requests pin their records until reset and should not be used for evictable work.
 
 Cooked blob filenames include their content hash. Publication retains older blob
-files for delayed readers across multiple cooks. Storage reclamation requires an
-offline clean with runtime readers stopped, current/previous manifests alone do
-not establish that older files are unused.
+files for delayed readers across multiple cooks. Storage reclamation is the
+explicit `AssetCooker --clean --out <dir>`, run with every engine and editor
+reader stopped: current and previous manifests alone do not establish that older
+files are unused. It deletes the `.blob` files the current manifest does not name,
+and the previous manifest, leaves every other file alone, and refuses a directory
+without a valid manifest. Nothing deletes online.
 
 `assets.loadThreads` in `project_settings.json` is how many loads run at once,
 2 by default and 1 to 32. A value outside that range keeps the default and logs
@@ -221,8 +225,11 @@ known. The service remembers every decoded
 result of known content for as long as anything holds it, so the next request for
 the same asset, decoder and content adopts it without reading or decoding again,
 across a reload and after the service evicted its own copy. Two holders of one
-mesh therefore hold one decoded mesh. A request whose content
-changed, a dependency included, decodes as before.
+mesh therefore hold one decoded mesh. A decode that is still running is shared the
+same way: a request for the same asset, decoder and known content after a reload
+joins it instead of starting a second one, and releasing one claim cancels nothing
+the other needs. A request whose content changed, a dependency included, decodes
+as before.
 
 ## State
 

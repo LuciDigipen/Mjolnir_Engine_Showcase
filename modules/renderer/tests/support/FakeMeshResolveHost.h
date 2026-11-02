@@ -49,11 +49,15 @@ namespace mir::test
 
         MaterialHandle CreateMaterial(const MaterialDesc &desc) override
         {
-            // a full material table refuses until some are released
-            if (createdMaterials.size() - releasedMaterials.size() >= materialLimit)
+            // a released material keeps its slot until its frame completes, as in the renderer
+            if (createdMaterials.size() - freedMaterials >= materialLimit || rejectMaterials)
                 return MaterialHandle{};
             createdMaterials.push_back(desc);
             return MaterialHandle{ mNextMaterial++, 1 };
+        }
+        bool MaterialSlotsExhausted() const override
+        {
+            return !rejectMaterials && createdMaterials.size() - freedMaterials >= materialLimit;
         }
         MaterialHandle ErrorMaterial() const override { return MaterialHandle{ 9999, 1 }; }
 
@@ -69,12 +73,21 @@ namespace mir::test
             releasedMaterials.insert(releasedMaterials.end(), materials.begin(), materials.end());
         }
 
+        void CompleteFrame()
+        {
+            freedMaterials = releasedMaterials.size();
+            uploader.CompleteFrame();
+        }
+
         FakeMeshUploader uploader;
         std::size_t syncMeshes = 0;
         std::vector<MeshHandle> releasedMeshes;
         std::vector<MaterialHandle> releasedMaterials;
         std::vector<MaterialDesc> createdMaterials;
         std::size_t materialLimit = SIZE_MAX;
+        std::size_t freedMaterials = 0;
+        // the renderer cannot make a material for a reason other than a full table
+        bool rejectMaterials = false;
 
     private:
         uint32_t mNextSync = 0;

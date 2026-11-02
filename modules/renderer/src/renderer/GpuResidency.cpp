@@ -47,14 +47,24 @@ namespace mir
         return bytes;
     }
 
-    uint64_t GpuResidency::Excess(GpuCategory category) const
+    uint64_t GpuResidency::HeldTotal() const
     {
-        uint64_t excess = 0;
+        uint64_t bytes = 0;
+        for (size_t category = 0; category < static_cast<size_t>(GpuCategory::Count); ++category)
+            bytes += Held(static_cast<GpuCategory>(category));
+        return bytes;
+    }
+
+    uint64_t GpuResidency::TotalExcess() const
+    {
+        const uint64_t total = HeldTotal();
+        return total > mTotalTarget ? total - mTotalTarget : 0;
+    }
+
+    uint64_t GpuResidency::CategoryExcess(GpuCategory category) const
+    {
         const std::optional<uint64_t> &limit = mLimits[Index(category)];
-        if (const uint64_t used = Used(category); limit && used > *limit)
-            excess = used - *limit;
-        if (const uint64_t total = UsedTotal(); total > mTotalTarget)
-            excess = std::max(excess, total - mTotalTarget);
-        return excess;
+        const uint64_t held = Held(category);
+        return limit && held > *limit ? held - *limit : 0;
     }
 }

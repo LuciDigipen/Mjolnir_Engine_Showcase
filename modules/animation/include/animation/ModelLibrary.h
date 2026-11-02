@@ -25,6 +25,7 @@ namespace mir
         {
             AssetId asset;
             uint64_t content = 0;
+            uint32_t revision = 0;
             std::shared_ptr<const PreparedModel> ready;
             std::unique_ptr<ModelPreparation> pending;
             std::string failure;

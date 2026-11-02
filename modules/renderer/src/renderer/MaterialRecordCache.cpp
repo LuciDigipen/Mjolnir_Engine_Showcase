@@ -87,20 +87,31 @@ namespace mir
         return hash;
     }
 
-    uint64_t MaterialRecordCache::Acquire(const MaterialDesc &desc, std::vector<TextureLoadLease> claims)
+    uint64_t MaterialRecordCache::Acquire(const MaterialDesc &desc, std::vector<TextureLoadLease> claims,
+        MaterialAcquire *status)
     {
+        const auto report = [status](MaterialAcquire result) { if (status != nullptr) *status = result; };
         MaterialValueKey key = MaterialValueKey::Of(desc);
         if (const auto found = mIds.find(key); found != mIds.end())
-            return found->second;
-        MaterialHandle handle = mHost.CreateMaterial(desc);
-        if (handle.IsNull() && !mRecords.empty())
         {
-            // The material table is a fixed number of slots, unused records hold some of them
-            EvictUnused();
-            handle = mHost.CreateMaterial(desc);
+            report(MaterialAcquire::Ready);
+            return found->second;
         }
+        const MaterialHandle handle = mHost.CreateMaterial(desc);
         if (handle.IsNull())
+        {
+            if (!mHost.MaterialSlotsExhausted())
+            {
+                report(MaterialAcquire::Failed);
+                return 0;
+            }
+            // The table is a fixed number of slots, and the unused records hold some. Releasing them frees their
+            // slots only when their frames complete, so the caller waits and asks again on a later frame.
+            EvictUnused();
+            report(MaterialAcquire::Waiting);
             return 0;
+        }
+        report(MaterialAcquire::Ready);
         const uint64_t id = mNextId++;
         Record &record = mRecords[id];
         record.recordBytes = key.record.empty() ? 0
@@ -195,9 +206,12 @@ namespace mir
     void MaterialRecordCache::Trim()
     {
         GpuResidency &residency = *mResidency;
-        const uint64_t textureNeed = residency.Excess(GpuCategory::Texture);
-        const uint64_t recordNeed = residency.Excess(GpuCategory::Material);
-        if (textureNeed == 0 && recordNeed == 0)
+        // The total overage is one amount however it is freed, texture bytes and table bytes both count toward
+        // it once. A category limit is separate and only its own kind of bytes can satisfy it.
+        const uint64_t totalNeed = residency.TotalExcess();
+        const uint64_t textureNeed = residency.CategoryExcess(GpuCategory::Texture);
+        const uint64_t recordNeed = residency.CategoryExcess(GpuCategory::Material);
+        if (totalNeed == 0 && textureNeed == 0 && recordNeed == 0)
             return;
 
         // Unused records, oldest first. A record is released only if that gives something back.
@@ -225,19 +239,24 @@ namespace mir
         uint64_t freedTexture = 0, freedRecord = 0;
         for (const auto &[serial, id] : unused)
         {
-            if (freedTexture >= textureNeed && freedRecord >= recordNeed)
+            const bool totalUnmet = freedTexture + freedRecord < totalNeed;
+            const bool textureUnmet = freedTexture < textureNeed;
+            const bool recordUnmet = freedRecord < recordNeed;
+            if (!totalUnmet && !textureUnmet && !recordUnmet)
                 break;
             const auto record = mRecords.find(id);
             uint64_t texturesFreed = 0;
-            bool helps = freedRecord < recordNeed && record->second.recordBytes > 0;
-            if (freedTexture < textureNeed)
-                for (const TextureLoadLease &claim : record->second.claims)
-                {
-                    PinnedTexture &texture = textures[IdOf(claim)];
-                    // every claim left on the texture belongs to an unused record still to go
-                    if (texture.unused == texture.claims)
-                        helps = true;
-                }
+            bool freesTexture = false;
+            for (const TextureLoadLease &claim : record->second.claims)
+            {
+                PinnedTexture &texture = textures[IdOf(claim)];
+                // every claim left on the texture belongs to an unused record still to go
+                if (texture.unused == texture.claims)
+                    freesTexture = true;
+            }
+            const bool freesRecord = record->second.recordBytes > 0;
+            const bool helps = ((freesTexture || freesRecord) && totalUnmet) || (freesTexture && textureUnmet) ||
+                (freesRecord && recordUnmet);
             if (!helps)
                 continue;
             for (const TextureLoadLease &claim : record->second.claims)

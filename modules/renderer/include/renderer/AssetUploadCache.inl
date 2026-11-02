@@ -11,9 +11,18 @@ namespace mir
     {
         const auto found = mEntries.find(key);
         if (found != mEntries.end())
+        {
+            // A failure is remembered while the catalog stays the same, and a reload allows another attempt.
+            if (Retry(found->second))
+            {
+                found->second.mRequest = mAssets->RequestLease(key.asset, mDecoder);
+                mWaiting.push_back(key);
+            }
             return found->second.mView;
+        }
         Entry &entry = mEntries[key];
         entry.mLabel = label;
+        entry.mAttempt = Attempt();
         if (mAssets == nullptr)
             Fail(entry, "there is no asset service");
         else
@@ -30,15 +39,40 @@ namespace mir
     {
         const auto found = mEntries.find(key);
         if (found != mEntries.end())
+        {
+            if (Retry(found->second))
+            {
+                found->second.mInline = make();
+                if (found->second.mInline)
+                    mWaiting.push_back(key);
+                else
+                    Fail(found->second, "there is no data to upload");
+            }
             return found->second.mView;
+        }
         Entry &entry = mEntries[key];
         entry.mLabel = label;
+        entry.mAttempt = Attempt();
         entry.mInline = make();
         if (!entry.mInline)
             Fail(entry, "there is no data to upload");
         else
             mWaiting.push_back(key);
         return entry.mView;
+    }
+
+    template <class Decoded, class Handle, class View, Handle View::*Member>
+    bool AssetUploadCache<Decoded, Handle, View, Member>::Retry(Entry &entry)
+    {
+        if (entry.mView.phase != AssetUploadPhase::Failed || mAssets == nullptr || entry.mAttempt == Attempt())
+            return false;
+        // The failed attempt held nothing. The claims on the record stay valid and see the new attempt.
+        entry.mAttempt = Attempt();
+        entry.mView.phase = AssetUploadPhase::Decoding;
+        HandleOf(entry) = Handle{};
+        entry.mBytes = 0;
+        entry.mInline.reset();
+        return true;
     }
 
     template <class Decoded, class Handle, class View, Handle View::*Member>
@@ -217,6 +251,8 @@ namespace mir
             if (state == UploadState::Failed)
                 RetireEntry(entry);
             HandleOf(entry) = Handle{};
+            // the resource is gone, its footprint must not count toward the target
+            entry.mBytes = 0;
             Fail(entry, state == UploadState::Failed ? "the GPU upload failed" : "its GPU resource was released");
         }
     }
@@ -227,9 +263,9 @@ namespace mir
         uint64_t need = mResidency ? mResidency->Excess(mCategory) : 0;
         if (mCap)
         {
-            const uint64_t used = HeldBytes() + (mRetiring ? mRetiring() : 0);
-            if (used > *mCap)
-                need = std::max(need, used - *mCap);
+            const uint64_t held = HeldBytes();
+            if (held > *mCap)
+                need = std::max(need, held - *mCap);
         }
         if (need == 0)
             return;

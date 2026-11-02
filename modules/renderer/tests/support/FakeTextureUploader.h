@@ -43,6 +43,9 @@ namespace mir::test
         {
             if (TextureState(handle) == TextureUploadState::Stale)
                 return false;
+            // retired memory stays occupied until the frame that last used it completes
+            if (mEntries.at(handle.mIndex).mState != TextureUploadState::Pending)
+                mDeferred.push_back(mEntries.at(handle.mIndex).mBytes);
             mEntries.erase(handle.mIndex);
             mRetired.push_back(handle);
             return true;
@@ -51,6 +54,14 @@ namespace mir::test
         {
             return TextureState(handle) == TextureUploadState::Stale ? 0 : mEntries.at(handle.mIndex).mBytes;
         }
+        uint64_t TextureRetiringBytes() const override
+        {
+            uint64_t bytes = 0;
+            for (const uint64_t deferred : mDeferred)
+                bytes += deferred;
+            return bytes;
+        }
+        void CompleteFrame() { mDeferred.clear(); }
         void Begin(TextureHandle handle) { mEntries.at(handle.mIndex).mState = TextureUploadState::Uploading; }
         void CopyAll(TextureHandle handle) { mEntries.at(handle.mIndex).mSource = {}; }
         void Complete(TextureHandle handle) { mEntries.at(handle.mIndex).mState = TextureUploadState::Ready; }
@@ -60,6 +71,7 @@ namespace mir::test
         uint64_t mQueued = 0;
         std::unordered_map<uint32_t, Entry> mEntries;
         std::vector<TextureHandle> mRetired;
+        std::vector<uint64_t> mDeferred;
     private:
         uint32_t mNext = 0;
     };

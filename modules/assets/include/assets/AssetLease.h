@@ -39,6 +39,9 @@ namespace mir
             // what the result is made from, zero when unknown, and the decoder that made it
             uint64_t mContent = 0;
             const void *mDescriptor = nullptr;
+            // The catalog generation whose queued count includes this record while it is in flight. A request that
+            // attaches after a reload moves it, so the count stays right when the decode finishes.
+            uint32_t mWaitGeneration = 0;
         };
     }
 

@@ -257,6 +257,13 @@ fault the gate exists to prevent. A resource that never settles keeps the loadin
 screen up, the window still closes, and a run bounded by `--frames` ends with an
 error log instead of hanging. The editor's Play is never gated.
 
+The wait is not a gameplay frame. The game UI is suspended (`GameUIModule::SetSuspended`),
+so the HUD and the pause menu run no screen and nothing the overlay hides can be
+clicked. Requests made while it waits are dropped with a warning and the ones made
+before it are kept (`RequestQueue::Hold` and `Restore`), so a click or a script
+during loading never replays as pause, restart or quit on the first gameplay frame.
+The window still polls its events and closes.
+
 ## State
 
 *As of 2026-10-24.* The loop runs, the scheduler ticks, scripts drive entities,

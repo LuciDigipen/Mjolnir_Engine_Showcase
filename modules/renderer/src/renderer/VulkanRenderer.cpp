@@ -723,6 +723,11 @@ namespace mir
         return mMaterialStore->CreateMaterial(desc, *mResources, vk::kHdrColorFormat);
     }
 
+    bool VulkanRenderer::MaterialSlotsExhausted() const
+    {
+        return mMaterialStore->SlotsExhausted();
+    }
+
     bool VulkanRenderer::UpdateMaterialRecord(MaterialHandle handle, std::span<const std::byte> bytes)
     {
         return mMaterialStore->UpdateRecord(handle, bytes);

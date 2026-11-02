@@ -323,3 +323,19 @@ TEST_CASE("Common upload cache protects independent claims and cancels the last 
     held.Reset();
     CHECK(f.uploader.MeshState(ready) == UploadState::Stale);
 }
+
+TEST_CASE("A failed upload no longer holds its footprint", "[renderer][mesh-load]")
+{
+    Fixture f({ { "tri", std::string(kTriangle) } });
+    const MeshLoad &load = f.tracker.Request(Id("tri"), "tri");
+    f.tracker.Retain(Id("tri"));
+    f.Frame();
+    REQUIRE(load.phase == MeshLoadPhase::Uploading);
+    CHECK(f.tracker.HeldBytes() > 0);
+    f.uploader.Fail(load.mesh);
+    f.Frame();
+    REQUIRE(load.phase == MeshLoadPhase::Failed);
+    CHECK(f.uploader.retired.size() == 1);
+    // the memory is gone, so it must not count toward the target or evict other records
+    CHECK(f.tracker.HeldBytes() == 0);
+}

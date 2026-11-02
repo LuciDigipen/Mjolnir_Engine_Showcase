@@ -859,3 +859,95 @@ TEST_CASE("A dependency's content is part of its dependent's identity", "[assets
     assets.CommitReload();
     CHECK(service.ContentOf(Id("bundle"), kBundleDecoder) != content);
 }
+
+TEST_CASE("A request after an identical cook shares the decode still in flight", "[assets][async][content]")
+{
+    ResetCounters();
+    Cooked cooked;
+    cooked.Add("blocker", "block");
+    cooked.Add("greeting", "hello");
+    cooked.Find("greeting").cookedFile = "greeting-00000000000000aa.blob";
+    cooked.Write();
+    AssetsModule assets(cooked.dir);
+    JobExecutor jobs(1);
+    AsyncAssetService service(assets, jobs, 1);
+    auto blocker = service.RequestLease(Id("blocker"), kGatedDecoder);
+    const auto deadline = std::chrono::steady_clock::now() + 10s;
+    while (!gStarted && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(1ms);
+    REQUIRE(gStarted);
+    // queued behind the blocker, so still in flight when the reload lands
+    auto old = service.RequestLease(Id("greeting"), kTextDecoder);
+    cooked.Write();
+    assets.BeginReload();
+    assets.CommitReload();
+    auto current = service.RequestLease(Id("greeting"), kTextDecoder);
+    gRelease = true;
+    REQUIRE(DrainUntilIdle(service));
+    REQUIRE(old.Acquire());
+    REQUIRE(current.Acquire());
+    CHECK(old.Acquire() == current.Acquire());
+    CHECK(gDecodes == 1);
+}
+
+TEST_CASE("Releasing one claim on a shared in-flight decode does not cancel it for the other",
+    "[assets][async][content]")
+{
+    ResetCounters();
+    Cooked cooked;
+    cooked.Add("blocker", "block");
+    cooked.Add("greeting", "hello");
+    cooked.Find("greeting").cookedFile = "greeting-00000000000000aa.blob";
+    cooked.Write();
+    AssetsModule assets(cooked.dir);
+    JobExecutor jobs(1);
+    AsyncAssetService service(assets, jobs, 1);
+    auto blocker = service.RequestLease(Id("blocker"), kGatedDecoder);
+    const auto deadline = std::chrono::steady_clock::now() + 10s;
+    while (!gStarted && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(1ms);
+    REQUIRE(gStarted);
+    auto old = service.RequestLease(Id("greeting"), kTextDecoder);
+    cooked.Write();
+    assets.BeginReload();
+    assets.CommitReload();
+    auto current = service.RequestLease(Id("greeting"), kTextDecoder);
+    // the claim made before the reload goes, the one made after still needs the result
+    old.Reset();
+    gRelease = true;
+    REQUIRE(DrainUntilIdle(service));
+    REQUIRE(current.Acquire());
+    CHECK(current.Acquire()->value == "hello");
+    CHECK(service.Idle());
+}
+
+TEST_CASE("A decode in flight is not shared when the content changed", "[assets][async][content]")
+{
+    ResetCounters();
+    Cooked cooked;
+    cooked.Add("blocker", "block");
+    cooked.Add("greeting", "hello");
+    cooked.Find("greeting").cookedFile = "greeting-00000000000000aa.blob";
+    cooked.Write();
+    AssetsModule assets(cooked.dir);
+    JobExecutor jobs(1);
+    AsyncAssetService service(assets, jobs, 1);
+    auto blocker = service.RequestLease(Id("blocker"), kGatedDecoder);
+    const auto deadline = std::chrono::steady_clock::now() + 10s;
+    while (!gStarted && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(1ms);
+    REQUIRE(gStarted);
+    auto old = service.RequestLease(Id("greeting"), kTextDecoder);
+    cooked.Find("greeting").bytes = MakeBlob(kTextTag, 1, "bye");
+    cooked.Find("greeting").cookedFile = "greeting-00000000000000bb.blob";
+    cooked.Write();
+    assets.BeginReload();
+    assets.CommitReload();
+    auto current = service.RequestLease(Id("greeting"), kTextDecoder);
+    gRelease = true;
+    REQUIRE(DrainUntilIdle(service));
+    REQUIRE(old.Acquire());
+    REQUIRE(current.Acquire());
+    CHECK(old.Acquire()->value == "hello");
+    CHECK(current.Acquire()->value == "bye");
+}

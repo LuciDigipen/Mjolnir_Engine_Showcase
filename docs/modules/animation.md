@@ -101,10 +101,17 @@ it does not silently render a partial model.
 decode and every base color texture has settled. A material or texture blob that
 is missing or does not parse logs an error with the model and asset IDs. The
 primitive then gets the renderer's `ErrorTexture()`. A `CreateMaterial` that
-returns null logs an error, and the primitive gets `ErrorMaterial()`. In every
+returns null because the renderer cannot make the material logs an error, and the
+primitive gets `ErrorMaterial()`. A material table with no free slot is only a
+wait: the model stays unpublished, queues no mesh, and asks again on later frames
+while the released slots come back. After `SetMaterialWait`, five seconds by
+default, the primitive takes the error material like any other failure. In every
 case the primitive's tint becomes magenta too, because the ray tracer reads
-only the tint. A failed texture logs once per preparation and is retried on the next
-reload. A cooked `TextureAsset`
+only the tint. A failed texture is remembered while the catalog stays the same, so nothing
+retries in a loop, and a reload tries it again although the files are the same.
+A model that published with an error appearance is prepared again by a reload,
+the old one keeps drawing until its replacement is ready. A model that loaded
+without one keeps what it has. A cooked `TextureAsset`
 supplies its own format, color space and complete mip chain, so `CreateTexture`
 uploads that chain instead of generating one. A failed `CreateMesh` still fails
 the whole model, since there is nothing to draw.

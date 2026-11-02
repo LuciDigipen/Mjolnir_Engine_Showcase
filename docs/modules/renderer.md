@@ -147,7 +147,8 @@ the entity's names, so a packed id the World hands out again starts unresolved.
 Each resolve system holds World-local bindings into a renderer-owned mesh cache
 shared with prefab previews. Scene unload releases those bindings without
 destroying resources used by another World. Ready unused meshes remain cached
-under a 256 MiB target per revision, `SetBudget` evicts unused meshes in use order.
+under the renderer-wide residency target described below, and `SetBudget` evicts
+unused meshes in use order. Terrain retires its own meshes on scene unload.
 Active bindings are protected. Builtin meshes and per-World materials are released
 with their World. Removing the last entity using a mesh drops that World's claim.
 
@@ -161,11 +162,14 @@ ordinary scene unload does not call it.
 
 `ITextureUploader` exposes `QueueTexture`, `TextureState`, `TextureFootprint` and
 `RetireTexture`. `TextureLoads(service)` returns the renderer's shared texture
-cache for that catalog revision. A `TextureLoadLease` retains one consumer's
+cache, shared across catalog revisions. A `TextureLoadLease` retains one consumer's
 claim, independently of scene and prefab lifetimes. Mesh and texture trackers
 specialize the same `AssetUploadCache` lifecycle, decoding, uploading, ready or
-failed. Ready unused entries have an adjustable 256 MiB target per cache,
+failed. Ready unused entries are retained under the renderer-wide residency target,
 active claims are protected, and abandoning the last unfinished claim cancels it.
+A failed record is remembered while the catalog stays the same, so nothing retries
+in a loop, and a request after a reload tries it again although the files are the
+same. A failed upload holds no footprint, its bytes are zero once its handle is gone.
 
 The texture decoder reads cooked pixels and prepares missing mips on a worker.
 `PrepareTextureUpload` preserves supplied mip chains and filters generated RGB
@@ -209,11 +213,15 @@ variant differ in front face and are two records. A record owns the
 `TextureLoadLease` claims that keep its textures valid, a `MaterialLease` is one
 consumer, and an unused record stays until the renderer is over its residency
 target because it pins textures. Releasing is selective. `Trim` frees an unused
-record only when that gives something back, oldest first: it holds the last claim
+record only when that gives something back, oldest first, and counts the total
+overage once however it is freed, texture bytes and table bytes alike: it holds the last claim
 on a texture, alone or together with the other unused records that share it, or
 its record bytes put the material category over its limit. A record that frees
-nothing is kept, and a material table with no free slot makes `Acquire` release
-every unused record once and try again. `RecordBytes` counts the bytes a record
+nothing is kept. A material table with no free slot is a wait, not a failure.
+`Acquire` reports `Waiting`, releases every unused record, and the slots come back
+only when those releases' frames complete, so the caller asks again on a later
+frame. `MaterialSlotsExhausted` tells that apart from a material the renderer could
+not make, which is `Failed` at once. `RecordBytes` counts the bytes a record
 holds in the shared material table, and `PinnedTextureBytes` the texture bytes
 only unused records keep alive. A pipeline and a descriptor set have no byte query
 in Vulkan, so a model material, which has no record bytes, is counted as the
@@ -224,10 +232,13 @@ textures and materials. The target is the project's `rendering.residencyMiB`, 51
 default, and a value that is not a positive number up to 65536 keeps the default. Each cache reports the bytes it holds, and each of the mesh and texture
 categories reports the retiring bytes the GPU still reads, a retired texture in
 the texture category and a retired mesh, its BLAS and its transfer buffers in the
-mesh category. Both count against the total target and their own limit until the
-frame that last used them completes. A cache that has
-dropped its last claim asks `Excess` and releases its own unused records,
-oldest first, until it has freed that much. Active claims are never released, so
+mesh category. Retiring memory still occupies the device, so `Used` counts it, but
+it is already scheduled for release, so `Excess` counts only what is held beyond the
+total target and the category limits. A cache that drops its last claim therefore
+does not evict more to cover memory that is already leaving, and releasing every
+claim of a scene at once keeps what fits the target. A cache that has dropped its
+last claim asks `Excess` and releases its own unused records, oldest first, until it
+has freed that much. Active claims are never released, so
 the renderer can stay over the target while the work set is larger than it.
 `SetBudget` on a cache is a separate cap for that cache alone, and no cache has a
 default budget of its own. Eviction is per category, each cache releases its own

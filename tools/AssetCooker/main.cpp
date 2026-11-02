@@ -71,6 +71,8 @@ namespace
         std::vector<std::filesystem::path> changed;
         std::filesystem::path importSource, packageRoot, targetDirectory;
         bool force = false;
+        // --clean deletes the cooked files the current manifest no longer names, see Clean
+        bool clean = false;
         // --migrate-ids reports, or with --apply performs, the move to .meta guids and rewrites the JSON
         // under each --rewrite-dir
         bool migrateIds = false;
@@ -289,6 +291,8 @@ namespace
                 options.targetDirectory = value();
             else if (arg == "--force")
                 options.force = true;
+            else if (arg == "--clean")
+                options.clean = true;
             else if (arg == "--migrate-ids")
                 options.migrateIds = true;
             else if (arg == "--apply")
@@ -302,6 +306,12 @@ namespace
             throw std::runtime_error("--source-dir requires a following --id-root");
         if (pendingMove)
             throw std::runtime_error("--move-model requires a following --move-to");
+        if (options.clean)
+        {
+            if (options.out.empty())
+                throw std::runtime_error("--clean needs --out");
+            return options;
+        }
         if (options.roots.empty() || (options.out.empty() && !options.migrateIds))
             throw std::runtime_error("source roots and output are required");
         return options;
@@ -557,6 +567,36 @@ namespace
         }
         const auto movedEntry = destination / source.filename();
         return LogicalPath(root, movedEntry);
+    }
+
+    // Deletes the cooked files the current manifest does not name, and the previous manifest. A normal cook only
+    // adds files, because an engine or editor that loaded an earlier manifest may still be reading what it names,
+    // so this is for when none is running. It never runs by itself, and it refuses without a valid manifest so a
+    // wrong directory loses nothing.
+    int Clean(const Options &options)
+    {
+        if (!std::filesystem::is_directory(options.out))
+            throw std::runtime_error("output directory does not exist: " + options.out.string());
+        OutputLock lock(options.out);
+        const auto manifest = mir::AssetManifest::LoadFile(options.out / mir::kAssetManifestFileName);
+        if (!manifest)
+            throw std::runtime_error("no valid manifest in " + options.out.string() + ", nothing was deleted");
+        std::unordered_set<std::string> kept{ std::string(mir::kAssetManifestFileName) };
+        for (const auto &entry : manifest->Entries())
+            kept.insert(std::string(manifest->PathOf(entry)));
+        size_t removed = 0;
+        uint64_t bytes = 0;
+        for (const auto &item : std::filesystem::directory_iterator(options.out))
+        {
+            if (!item.is_regular_file() || item.path().extension() != ".blob" ||
+                kept.contains(item.path().filename().string()))
+                continue;
+            bytes += item.file_size();
+            std::filesystem::remove(item.path());
+            ++removed;
+        }
+        MIR_LOG_INFO("AssetCooker: cleaned {} file(s), {} bytes, {} assets kept", removed, bytes, manifest->Count());
+        return 0;
     }
 
     int Cook(Options options)
@@ -1206,8 +1246,8 @@ namespace
         cache.erase("requiresFullCook");
         PublishText(cachePath, cache.dump(2) + "\n");
 
-        // Background loads may still read older cooked files. Delete them only during a clean with all
-        // engine and editor readers stopped.
+        // Background loads may still read older cooked files, so a cook only adds. --clean deletes them, with
+        // every engine and editor reader stopped.
         const bool changed = std::any_of(resultModels.begin(), resultModels.end(), [](const Json &v) {
             const std::string status = v.value("status", "");
             return status == "cooked" || status == "removed";
@@ -1240,7 +1280,7 @@ int main(int argc, char **argv)
             mir::FlushLog();
             return 0;
         }
-        const int result = Cook(options);
+        const int result = options.clean ? Clean(options) : Cook(options);
         mir::FlushLog();
         return result;
     }

@@ -58,6 +58,7 @@ namespace mir
         // Builtin shapes are small, so they are created in place.
         virtual MeshHandle CreateMesh(std::span<const Vertex> vertices, std::span<const uint32_t> indices) = 0;
         virtual MaterialHandle CreateMaterial(const MaterialDesc &desc) = 0;
+        virtual bool MaterialSlotsExhausted() const { return false; }
         virtual MaterialHandle ErrorMaterial() const = 0;
         // Releases the listed handles only, the others stay valid.
         virtual void ReleaseModelResources(std::span<const MeshHandle> meshes,

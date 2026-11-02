@@ -117,7 +117,12 @@ namespace mir
             size_t mConsumers = 0;
             uint64_t mBytes = 0;
             uint64_t mLastUse = 0;
+            // the catalog revision of the last attempt, a failed record tries again when it changed
+            uint32_t mAttempt = 0;
         };
+        uint32_t Attempt() const { return mAssets != nullptr ? mAssets->Revision() : 0; }
+        // True when a failed entry may try again, and resets it for the attempt
+        bool Retry(Entry &entry);
         static Handle &HandleOf(Entry &entry) { return entry.mView.*Member; }
         static const Handle &HandleOf(const Entry &entry) { return entry.mView.*Member; }
         void RetireEntry(const Entry &entry);

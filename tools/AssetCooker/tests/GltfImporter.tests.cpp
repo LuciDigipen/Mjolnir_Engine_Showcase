@@ -515,6 +515,70 @@ TEST_CASE("Cooker publishes atomically and retains one fallback manifest generat
     CHECK(LoadModelResources(stillValid, test::PathId(*updated, "assets/flag.gltf"), loaded, error));
 }
 
+TEST_CASE("An explicit clean deletes what the manifest no longer names and nothing else", "[gltf][cooker]")
+{
+    Fixture f;
+    const auto out = fs::path(f.root.string() + "-clean-cooked");
+    std::vector<std::string> args{ "--source-dir", f.root.string(), "--id-root", "assets", "--out", out.string() };
+    const std::vector<std::string> cleanArgs{ "--clean", "--out", out.string() };
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, args, true) == 0);
+    auto manifest = AssetManifest::LoadFile(out / "manifest.blob");
+    REQUIRE(manifest);
+    AssetCache cache(&*manifest, out);
+    ModelResources model;
+    std::string error;
+    REQUIRE(LoadModelResources(cache, test::PathId(*manifest, "assets/flag.gltf"), model, error));
+    const auto oldClip = model.model->animations.back();
+    const auto oldPath = std::string(manifest->PathOf(*manifest->Find(oldClip)));
+    auto j = f.Read();
+    j["animations"].erase(1);
+    f.Write(j);
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, args, true) == 0);
+    auto updated = AssetManifest::LoadFile(out / "manifest.blob");
+    REQUIRE(updated);
+
+    // normal cooking keeps the old files and a fallback manifest, a running reader may still use them
+    REQUIRE(fs::exists(out / oldPath));
+    REQUIRE(fs::exists(out / "manifest.previous.blob"));
+    const auto bytesOfManifest = ReadBytes(out / "manifest.blob");
+
+    // another file the clean has no business with
+    REQUIRE(WriteBytes(out / "keep.txt", std::vector<std::byte>(4, std::byte{ 1 })));
+
+    REQUIRE(LaunchProcess(GLTF_COOKER_EXE, cleanArgs, true) == 0);
+    CHECK_FALSE(fs::exists(out / oldPath));
+    CHECK_FALSE(fs::exists(out / "manifest.previous.blob"));
+    CHECK(ReadBytes(out / "manifest.blob") == bytesOfManifest);
+    CHECK(fs::exists(out / "keep.txt"));
+    for (const AssetManifestEntry &entry : updated->Entries())
+        CHECK(fs::exists(out / std::string(updated->PathOf(entry))));
+    // what the current manifest names still loads
+    AssetCache after(&*updated, out);
+    ModelResources loaded;
+    CHECK(LoadModelResources(after, test::PathId(*updated, "assets/flag.gltf"), loaded, error));
+
+    // cleaning again has nothing left to delete
+    CHECK(LaunchProcess(GLTF_COOKER_EXE, cleanArgs, true) == 0);
+}
+
+TEST_CASE("An explicit clean refuses a directory without a valid manifest and deletes nothing", "[gltf][cooker]")
+{
+    Fixture f;
+    const auto out = fs::path(f.root.string() + "-clean-wrong");
+    fs::create_directories(out);
+    const std::vector<std::string> cleanArgs{ "--clean", "--out", out.string() };
+    const std::vector<std::byte> bytes(16, std::byte{ 7 });
+    REQUIRE(WriteBytes(out / "0123456789abcdef-0123456789abcdef.blob", bytes));
+    CHECK(LaunchProcess(GLTF_COOKER_EXE, cleanArgs, true) != 0);
+    CHECK(fs::exists(out / "0123456789abcdef-0123456789abcdef.blob"));
+
+    // a corrupt manifest is no manifest
+    REQUIRE(WriteBytes(out / "manifest.blob", bytes));
+    CHECK(LaunchProcess(GLTF_COOKER_EXE, cleanArgs, true) != 0);
+    CHECK(fs::exists(out / "0123456789abcdef-0123456789abcdef.blob"));
+    CHECK(LaunchProcess(GLTF_COOKER_EXE, std::vector<std::string>{ "--clean" }, true) != 0);
+}
+
 TEST_CASE("Cooker ids match the engine's logical paths for any root spelling", "[cooker][identity]")
 {
     Fixture f;

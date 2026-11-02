@@ -26,6 +26,11 @@ namespace mir
 {
     class IMeshResolveHost;
 
+    // Ready: the record exists. Waiting: the material table has no free slot, the unused records were released
+    // and their slots come back when their frames complete, so ask again later. Failed: the renderer could not
+    // make the material.
+    enum class MaterialAcquire : uint8_t { Ready, Waiting, Failed };
+
     // A material description compared and hashed by value, owning the bytes a MaterialDesc only views.
     struct MaterialValueKey
     {
@@ -63,7 +68,8 @@ namespace mir
 
         // Returns zero on creation failure. New materials retain the supplied texture claims, which must
         // cover every referenced texture.
-        uint64_t Acquire(const MaterialDesc &desc, std::vector<TextureLoadLease> claims);
+        uint64_t Acquire(const MaterialDesc &desc, std::vector<TextureLoadLease> claims,
+            MaterialAcquire *status = nullptr);
         void Retain(uint64_t id);
         void Drop(uint64_t id);
         MaterialHandle Find(uint64_t id) const;

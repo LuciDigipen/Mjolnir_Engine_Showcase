@@ -386,13 +386,25 @@ namespace mir
     {
         SceneLoadGroup &group = mWorld.Resource<SceneLoadGroup>();
         mSceneGated = true;
+        // The game UI stays off while the scene prepares, so nothing it draws can be clicked, and what is requested
+        // meanwhile is dropped. A request made before the wait is kept.
+        mGameUI.SetSuspended(true);
+        RequestQueue &requests = mWorld.Resource<RequestQueue>();
+        RequestQueue::Held held = requests.Hold();
+        const auto finish = [&]
+        {
+            mSceneGated = false;
+            mGameUI.SetSuspended(false);
+            if (const size_t dropped = requests.Restore(std::move(held)); dropped != 0)
+                MIR_LOG_WARN("Dropped {} request(s) made while the scene was loading", dropped);
+        };
         uint64_t frames = 0;
         // Wait for resources without starting gameplay. Frame-limited runs must still terminate.
         while (!group.Ready())
         {
             if (mWindow.Get().ShouldClose())
             {
-                mSceneGated = false;
+                finish();
                 return false;
             }
             mWindow.Get().PollEvents();
@@ -407,11 +419,11 @@ namespace mir
             {
                 MIR_LOG_ERROR("The scene was still not ready after {} loading frames, gameplay did not start", frames);
                 mWindow.Get().RequestClose();
-                mSceneGated = false;
+                finish();
                 return false;
             }
         }
-        mSceneGated = false;
+        finish();
         MIR_LOG_INFO("Scene ready after {} loading frames", frames);
         return true;
     }

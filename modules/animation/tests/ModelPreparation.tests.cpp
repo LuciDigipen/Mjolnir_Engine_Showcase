@@ -445,26 +445,6 @@ TEST_CASE("A reload with the same content is the same entry and changed content 
     }
 }
 
-TEST_CASE("A failed entry is prepared again by the next claim", "[animation][model-library]")
-{
-    LibraryFixture f;
-    const ModelLibrary::Claim claim = f.mLibrary.Acquire(kModel, &f.mService, "model");
-    for (int frame = 0; frame < 40 && claim->failure.empty(); ++frame)
-    {
-        f.mService.DrainCompletions();
-        f.mLibrary.Advance();
-        for (const auto &[index, texture] : std::vector(f.mTextures.mEntries.begin(), f.mTextures.mEntries.end()))
-            f.mTextures.Complete(TextureHandle{ index, 1 });
-        for (const auto &[index, mesh] : std::vector(f.mHost.uploader.meshes.begin(), f.mHost.uploader.meshes.end()))
-            f.mHost.uploader.Fail(MeshHandle{ index, 1 });
-    }
-    REQUIRE_FALSE(claim->failure.empty());
-    const ModelLibrary::Claim retry = f.mLibrary.Acquire(kModel, &f.mService, "model");
-    CHECK(retry != claim);
-    f.Settle(retry);
-    CHECK(retry->ready);
-}
-
 TEST_CASE("The renderer releasing its resources empties every entry", "[animation][model-library]")
 {
     LibraryFixture f;
@@ -736,4 +716,145 @@ TEST_CASE("The model's own record is shared with the prepared model and counted 
     const uint64_t modelBytes = ModelRecordDecoder().sizeBytes(*claim->ready->resources->model);
     CHECK(modelBytes > sizeof(ModelAsset));
     CHECK(f.mService.DecodedBytes() >= modelBytes);
+}
+
+TEST_CASE("A texture that failed to upload is tried again by the next reload", "[animation][model-library]")
+{
+    LibraryFixture f;
+    // the upload cannot be queued, so the texture record fails and the model draws magenta
+    f.mTextures.mReject = true;
+    const ModelLibrary::Claim before = f.mLibrary.Acquire(kModel, &f.mService, "model");
+    f.Settle(before);
+    REQUIRE(before->ready);
+    REQUIRE(before->ready->meshes.at(kMesh.value)[0].factor == glm::vec4(1, 0, 1, 1));
+    f.mTextures.mReject = false;
+
+    SECTION("within the revision the failure is remembered")
+    {
+        const ModelLibrary::Claim again = f.mLibrary.Acquire(kModel, &f.mService, "model");
+        CHECK(again == before);
+        f.Settle(again);
+        CHECK(f.mTextures.mQueued == 0);
+    }
+    SECTION("an identical cook")
+    {
+        f.Write();
+        f.Reload();
+        const ModelLibrary::Claim after = f.mLibrary.Acquire(kModel, &f.mService, "model");
+        CHECK(after != before);
+        f.Settle(after);
+        REQUIRE(after->ready);
+        CHECK(f.mTextures.mQueued == 1);
+        CHECK(after->ready->meshes.at(kMesh.value)[0].factor == glm::vec4(0.25f, 0.5f, 0.75f, 1));
+    }
+    SECTION("a cook that changes only the mesh")
+    {
+        f.Write(true, 1);
+        f.Reload();
+        const ModelLibrary::Claim after = f.mLibrary.Acquire(kModel, &f.mService, "model");
+        f.Settle(after);
+        REQUIRE(after->ready);
+        CHECK(f.mTextures.mQueued == 1);
+        CHECK(after->ready->meshes.at(kMesh.value)[0].factor == glm::vec4(0.25f, 0.5f, 0.75f, 1));
+    }
+}
+
+TEST_CASE("A model that failed is remembered within a revision and tried again after a reload",
+    "[animation][model-library]")
+{
+    LibraryFixture f;
+    const ModelLibrary::Claim claim = f.mLibrary.Acquire(kModel, &f.mService, "model");
+    for (int frame = 0; frame < 40 && claim->failure.empty(); ++frame)
+    {
+        f.mService.DrainCompletions();
+        f.mLibrary.Advance();
+        for (const auto &[index, texture] : std::vector(f.mTextures.mEntries.begin(), f.mTextures.mEntries.end()))
+            f.mTextures.Complete(TextureHandle{ index, 1 });
+        for (const auto &[index, mesh] : std::vector(f.mHost.uploader.meshes.begin(), f.mHost.uploader.meshes.end()))
+            f.mHost.uploader.Fail(MeshHandle{ index, 1 });
+    }
+    REQUIRE_FALSE(claim->failure.empty());
+
+    // another World asking in the same revision gets the failure, not another attempt
+    CHECK(f.mLibrary.Acquire(kModel, &f.mService, "model") == claim);
+    // a reload allows another attempt although the files are the same
+    f.Write();
+    f.Reload();
+    const ModelLibrary::Claim retry = f.mLibrary.Acquire(kModel, &f.mService, "model");
+    CHECK(retry != claim);
+    f.Settle(retry);
+    CHECK(retry->ready);
+}
+
+TEST_CASE("A full material table makes the model wait for the slots instead of taking the error material",
+    "[animation][model-preparation]")
+{
+    LibraryFixture f;
+    f.mHost.materialLimit = 2;
+    // the first model's records are all unused once its claim goes, and they hold both slots
+    {
+        const ModelLibrary::Claim first = f.mLibrary.Acquire(kModel, &f.mService, "model");
+        f.Settle(first);
+        REQUIRE(first->ready);
+    }
+    REQUIRE(f.mHost.createdMaterials.size() == 2);
+
+    // a changed texture needs two materials of its own
+    f.Write(true, 0, 1);
+    f.Reload();
+    const ModelLibrary::Claim second = f.mLibrary.Acquire(kModel, &f.mService, "model");
+    f.Settle(second);
+    // the unused records were released, and the slots stay taken until their frame completes
+    CHECK_FALSE(second->ready);
+    CHECK(second->failure.empty());
+    CHECK(f.mHost.releasedMaterials.size() == 2);
+    CHECK(f.mHost.createdMaterials.size() == 2);
+    // no mesh was queued for a model that cannot be built yet
+    CHECK(f.mHost.uploader.queued == 1);
+
+    f.mHost.CompleteFrame();
+    f.Settle(second);
+    REQUIRE(second->ready);
+    CHECK(f.mHost.createdMaterials.size() == 4);
+    // real materials, not the error material, and the texture's own color
+    CHECK(second->ready->meshes.at(kMesh.value)[0].material != f.mHost.ErrorMaterial());
+    CHECK(second->ready->meshes.at(kMesh.value)[0].factor == glm::vec4(0.25f, 0.5f, 0.75f, 1));
+    CHECK_FALSE(second->ready->degraded);
+}
+
+TEST_CASE("A material table that stays full past the wait gives the primitive the error material",
+    "[animation][model-preparation]")
+{
+    Fixture f;
+    f.mPreparation.SetMaterialWait(std::chrono::milliseconds(0));
+    f.mHost.materialLimit = 0;
+    f.QueueTexture();
+    f.mTextures.Complete(TextureHandle{ 0, 1 });
+    for (int frame = 0; frame < 4 && f.mPreparation.GetState() != ModelPreparation::State::Meshes; ++frame)
+        f.Frame();
+    REQUIRE(f.mPreparation.GetState() == ModelPreparation::State::Meshes);
+    f.mHost.uploader.Complete(MeshHandle{ 0, 1 });
+    REQUIRE(f.Frame() == ModelPreparation::State::Ready);
+    const auto model = f.mPreparation.Take();
+    REQUIRE(model);
+    const PreparedPrimitive &primitive = model->meshes.at(kMesh.value)[0];
+    CHECK(primitive.material == f.mHost.ErrorMaterial());
+    CHECK(primitive.mirrored == f.mHost.ErrorMaterial());
+    CHECK(primitive.factor == glm::vec4(1, 0, 1, 1));
+    CHECK(model->degraded);
+}
+
+TEST_CASE("A material the renderer cannot make takes the error material at once", "[animation][model-preparation]")
+{
+    Fixture f;
+    f.mHost.rejectMaterials = true;
+    f.QueueTexture();
+    f.mTextures.Complete(TextureHandle{ 0, 1 });
+    for (int frame = 0; frame < 4 && f.mPreparation.GetState() != ModelPreparation::State::Meshes; ++frame)
+        f.Frame();
+    // no wait, the default wait is seconds long
+    REQUIRE(f.mPreparation.GetState() == ModelPreparation::State::Meshes);
+    f.mHost.uploader.Complete(MeshHandle{ 0, 1 });
+    REQUIRE(f.Frame() == ModelPreparation::State::Ready);
+    CHECK(f.mPreparation.Take()->meshes.at(kMesh.value)[0].material == f.mHost.ErrorMaterial());
 }

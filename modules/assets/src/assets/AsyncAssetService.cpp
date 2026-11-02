@@ -152,6 +152,33 @@ namespace mir
                     record.mState = AssetLoadState::Ready;
                     return { index, mGeneration };
                 }
+        // A decode of the same content that is still running serves this request too. Releasing either claim
+        // cancels nothing the other needs, the record counts both.
+        if (content != 0)
+        {
+            std::erase_if(mInFlight, [](const InFlight &item)
+                {
+                    const auto record = item.record.lock();
+                    return !record || record->mState != AssetLoadState::Queued;
+                });
+            for (const InFlight &item : mInFlight)
+                if (item.key == key && item.content == content && item.type == type)
+                    if (auto running = item.record.lock(); running && !running->mCancelled.load())
+                    {
+                        running->mPinned |= pinned;
+                        running->mLastUse = ++mUseSerial;
+                        if (running->mWaitGeneration != mGeneration)
+                        {
+                            running->mWaitGeneration = mGeneration;
+                            ++mQueuedCount;
+                        }
+                        mSlots[index].record = std::move(running);
+                        return { index, mGeneration };
+                    }
+        }
+        mSlots[index].record->mWaitGeneration = mGeneration;
+        if (content != 0)
+            mInFlight.push_back({ key, content, type, mSlots[index].record });
         ++mQueuedCount;
 
         std::vector<AssetId> closure;
@@ -198,7 +225,7 @@ namespace mir
             if (job->record->mCancelled.load())
             {
                 job->record->mState = AssetLoadState::Stale;
-                if (job->generation == mGeneration)
+                if (job->record->mWaitGeneration == mGeneration)
                     --mQueuedCount;
                 continue;
             }
@@ -316,10 +343,10 @@ namespace mir
             // A missing manifest entry produces a completion without dispatching a worker.
             if (item.record->mDispatched)
                 --mActiveJobs;
-            if (item.generation == mGeneration)
+            if (item.record->mWaitGeneration == mGeneration)
                 --mQueuedCount;
             auto &record = *item.record;
-            if (record.mCancelled.load() || (item.generation != mGeneration && record.mConsumers == 0))
+            if (record.mCancelled.load() || (record.mWaitGeneration != mGeneration && record.mConsumers == 0))
             {
                 record.mState = AssetLoadState::Stale;
                 continue;
@@ -407,7 +434,7 @@ namespace mir
                 if (!job->record->mCancelled.load())
                     return false;
                 job->record->mState = AssetLoadState::Stale;
-                if (job->generation == mGeneration)
+                if (job->record->mWaitGeneration == mGeneration)
                     --mQueuedCount;
                 return true;
             });

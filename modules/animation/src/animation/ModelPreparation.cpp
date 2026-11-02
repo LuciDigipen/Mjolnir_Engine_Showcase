@@ -272,7 +272,17 @@ namespace mir
     {
         auto model = std::make_unique<PreparedModel>();
         model->resources = mLoaded;
-        std::vector<MeshSlot> slots;
+        // The meshes are queued after every material exists, so a wait for a free slot queues no upload.
+        struct MeshRequest
+        {
+            uint64_t key = 0;
+            size_t index = 0;
+            size_t primitive = 0;
+            std::shared_ptr<const DecodedMesh> upload;
+        };
+        std::vector<MeshRequest> requests;
+        bool slotsFull = false;
+        const bool report = !mReported;
         try
         {
             const ModelResources &resources = *mLoaded;
@@ -295,8 +305,12 @@ namespace mir
                         if (materialRead)
                             material = *found->second;
                         else
-                            MIR_LOG_ERROR("Model {:016x}: material {:016x} is unreadable, using error texture",
-                                mId.value, p.material.value);
+                        {
+                            model->degraded = true;
+                            if (report)
+                                MIR_LOG_ERROR("Model {:016x}: material {:016x} is unreadable, using error texture",
+                                    mId.value, p.material.value);
+                        }
                     }
                     if (materialRead && material.baseColorTexture != p.baseColorTexture)
                         throw std::runtime_error("mesh/material texture reference mismatch");
@@ -322,19 +336,28 @@ namespace mir
                         }
                         else
                         {
-                            MIR_LOG_ERROR("Model {:016x}: texture {:016x} did not load, using error texture",
-                                mId.value, material.baseColorTexture.value);
+                            model->degraded = true;
+                            if (report)
+                                MIR_LOG_ERROR("Model {:016x}: texture {:016x} did not load, using error texture",
+                                    mId.value, material.baseColorTexture.value);
                             desc.baseColorTexture = mErrorTexture;
                         }
                     }
 
                     // Both face directions need their own texture claim.
+                    bool failed = false;
                     const auto acquire = [&](const MaterialDesc &variant)
                     {
                         std::vector<TextureLoadLease> claims;
                         if (!claimedTexture.IsNull())
                             claims.emplace_back(mTracker, mTextureKeys.at(claimedTexture.value));
-                        MaterialLease lease(mMaterials, mMaterials->Acquire(variant, std::move(claims)));
+                        MaterialAcquire status = MaterialAcquire::Failed;
+                        MaterialLease lease(mMaterials, mMaterials->Acquire(variant, std::move(claims), &status));
+                        // a table that stayed full past the wait is a failure like any other
+                        if (status == MaterialAcquire::Waiting && mGaveUpWaiting)
+                            status = MaterialAcquire::Failed;
+                        slotsFull = slotsFull || status == MaterialAcquire::Waiting;
+                        failed = failed || status == MaterialAcquire::Failed;
                         const MaterialHandle handle = lease.Get();
                         model->materialClaims.push_back(std::move(lease));
                         return handle;
@@ -343,11 +366,15 @@ namespace mir
                     gpu.material = acquire(desc);
                     desc.frontFace = VK_FRONT_FACE_CLOCKWISE;
                     gpu.mirrored = acquire(desc);
-                    const bool materialFailed = gpu.material.IsNull() || gpu.mirrored.IsNull();
+                    if (slotsFull)
+                        break;
+                    const bool materialFailed = failed || gpu.material.IsNull() || gpu.mirrored.IsNull();
                     if (materialFailed)
                     {
-                        MIR_LOG_ERROR("Model {:016x}: '{}' material creation failed, using error material", mId.value,
-                            desc.shaderName);
+                        model->degraded = true;
+                        if (report)
+                            MIR_LOG_ERROR("Model {:016x}: '{}' material creation failed, using error material",
+                                mId.value, desc.shaderName);
                         if (gpu.material.IsNull())
                             gpu.material = mHost.ErrorMaterial();
                         if (gpu.mirrored.IsNull())
@@ -359,18 +386,40 @@ namespace mir
                         : material.baseColor;
                     gpu.transparent = !materialFailed && material.alpha == MaterialAlpha::Blend;
                     primitives.push_back(gpu);
-
-                    const uint64_t content = ContentOf(AssetId{ key });
-                    const ContentIdentity identity = (content >> 63) != 0 ? ContentIdentity::ForRevision(mRevision)
-                                                                          : ContentIdentity::ForContent(content);
-                    const GpuRecordKey recordKey{ AssetId{ key }, static_cast<uint32_t>(index), identity,
-                        MeshUploadOptions{ .rayTracing = true } };
-                    const AssetId record = mMeshTracker->Request(recordKey,
-                        [&upload] { return upload; },
-                        std::format("{} mesh {:016x}.{}", mLabel, key, index));
-                    model->meshClaims.emplace_back(mMeshTracker, record);
-                    slots.push_back({ key, primitives.size() - 1 });
+                    requests.push_back({ key, index, primitives.size() - 1, upload });
                 }
+                if (slotsFull)
+                    break;
+            }
+            if (slotsFull)
+            {
+                // Nothing is lost by trying again on a later frame: the records made so far stay in the cache.
+                const auto now = std::chrono::steady_clock::now();
+                if (!mWaitingForSlots)
+                {
+                    mWaitingForSlots = true;
+                    mWaitingSince = now;
+                }
+                mReported = true;
+                if (now - mWaitingSince >= mMaterialWait)
+                {
+                    MIR_LOG_ERROR("Model {:016x}: the material table stayed full, using error materials", mId.value);
+                    mGaveUpWaiting = true;
+                    Build();
+                }
+                return;
+            }
+            for (const MeshRequest &request : requests)
+            {
+                // The mesh blob alone decides the vertices, so an unchanged mesh keeps its record across a reload.
+                const uint64_t content = ContentOf(AssetId{ request.key });
+                const ContentIdentity identity = (content >> 63) != 0 ? ContentIdentity::ForRevision(mRevision)
+                                                                      : ContentIdentity::ForContent(content);
+                const GpuRecordKey recordKey{ AssetId{ request.key }, static_cast<uint32_t>(request.index), identity,
+                    MeshUploadOptions{ .rayTracing = true } };
+                const AssetId record = mMeshTracker->Request(recordKey, [&request] { return request.upload; },
+                    std::format("{} mesh {:016x}.{}", mLabel, request.key, request.index));
+                model->meshClaims.emplace_back(mMeshTracker, record);
             }
         }
         catch (const std::exception &exception)
@@ -378,6 +427,9 @@ namespace mir
             Fail(exception.what());
             return;
         }
+        std::vector<MeshSlot> slots;
+        for (const MeshRequest &request : requests)
+            slots.push_back({ request.key, request.primitive });
         for (auto &[key, claim] : mTextureClaims)
             model->textures.push_back(std::move(claim));
         mTextureClaims.clear();

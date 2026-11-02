@@ -21,13 +21,21 @@ namespace mir
         // Texture changes must also create a new prepared model.
         const uint64_t content = UploadContent(assets, id, ModelIdentityTags());
         const Key key{ id.value, content, assets };
+        const uint32_t revision = assets != nullptr ? assets->Revision() : 0;
         if (const auto found = mEntries.find(key); found != mEntries.end())
-            if (Claim claim = found->second.lock(); claim && claim->failure.empty())
-                return claim;
+            if (Claim claim = found->second.lock())
+            {
+                // A failure, or a model that shows an error appearance, is remembered while the catalog stays the
+                // same so nothing retries in a loop. A reload allows another attempt, the files may be the same.
+                const bool unsettled = !claim->failure.empty() || (claim->ready && claim->ready->degraded);
+                if (!unsettled || claim->revision == revision)
+                    return claim;
+            }
 
         auto entry = std::make_shared<Entry>();
         entry->asset = id;
         entry->content = content;
+        entry->revision = revision;
         entry->pending = std::make_unique<ModelPreparation>(mHost, mTextures, mErrorTexture, assets, id, label);
         mEntries[key] = entry;
         return entry;

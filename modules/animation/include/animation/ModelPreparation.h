@@ -16,6 +16,7 @@
 #include <renderer/ITextureUploader.h>
 #include <renderer/TextureLoadTracker.h>
 
+#include <chrono>
 #include <memory>
 #include <span>
 #include <string>
@@ -40,6 +41,7 @@ namespace mir
         std::vector<TextureLoadLease> textures;
         std::vector<MaterialLease> materialClaims;
         std::vector<ModelMeshLease> meshClaims;
+        bool degraded = false;
     };
 
     // Texture changes also require rebuilding the prepared model.
@@ -59,6 +61,9 @@ namespace mir
         State GetState() const { return mState; }
         std::unique_ptr<PreparedModel> Take();
         const std::string &Error() const { return mError; }
+
+        // how long material will wait to load
+        void SetMaterialWait(std::chrono::milliseconds wait) { mMaterialWait = wait; }
 
     private:
         void Fail(std::string reason);
@@ -109,6 +114,12 @@ namespace mir
             size_t primitive = 0;
         };
         std::vector<MeshSlot> mMeshSlots;
+        std::chrono::milliseconds mMaterialWait{ 5000 };
+        std::chrono::steady_clock::time_point mWaitingSince;
+        bool mWaitingForSlots = false;
+        bool mGaveUpWaiting = false;
+        // the build reports an unreadable material or an unloaded texture once, however many frames it takes
+        bool mReported = false;
         std::string mError;
         State mState = State::Loading;
     };

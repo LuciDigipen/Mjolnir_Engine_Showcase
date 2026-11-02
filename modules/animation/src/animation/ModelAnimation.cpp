@@ -32,7 +32,13 @@ namespace mir
         }
 
         // Count allocated capacity, shared data is counted by its owning record.
-        uint64_t StringBytes(const std::string &value) { return value.capacity(); }
+        // A string that fits its inline buffer owns nothing, the buffer is part of the object that holds it.
+        uint64_t StringBytes(const std::string &value)
+        {
+            const char *object = reinterpret_cast<const char *>(&value);
+            const bool inline_ = value.data() >= object && value.data() < object + sizeof(value);
+            return inline_ ? 0 : value.capacity() + 1;
+        }
         template <class T> uint64_t VectorBytes(const std::vector<T> &values) { return values.capacity() * sizeof(T); }
 
         uint64_t NodeBytes(const ModelNode &node)

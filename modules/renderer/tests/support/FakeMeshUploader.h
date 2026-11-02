@@ -38,9 +38,9 @@ namespace mir::test
                 return MeshHandle{};
             ++queued;
             const uint32_t index = mNext++;
-            meshes[index] = Mesh{MeshUploadState::Pending, source.vertices.size(), source.indices.size(), options,
-                std::move(source.keepalive)};
-            return MeshHandle{index, 1};
+            meshes[index] = Mesh{ MeshUploadState::Pending, source.vertices.size(), source.indices.size(), options,
+                std::move(source.keepalive) };
+            return MeshHandle{ index, 1 };
         }
 
         MeshUploadState MeshState(MeshHandle handle) const override
@@ -55,6 +55,10 @@ namespace mir::test
             if (found == meshes.end() || handle.mGeneration != 1)
                 return false;
             retired.push_back(handle);
+            // a mesh the GPU may have used stays occupied until its last frame completes
+            if (found->second.state != MeshUploadState::Pending)
+                deferred.push_back(MeshFootprint(uint32_t(found->second.vertices), uint32_t(found->second.indices),
+                    found->second.options));
             meshes.erase(found);
             return true;
         }
@@ -81,9 +85,12 @@ namespace mir::test
                     stats.uploadingBytes += bytes;
                 }
             }
-            stats.retiring = retiringCount;
-            stats.retiringBytes = retiringBytes;
-            stats.retiringMeshBytes = retiringBytes;
+            uint64_t deferredBytes = 0;
+            for (const uint64_t bytes : deferred)
+                deferredBytes += bytes;
+            stats.retiring = retiringCount + deferred.size();
+            stats.retiringBytes = retiringBytes + deferredBytes;
+            stats.retiringMeshBytes = retiringBytes + deferredBytes;
             return stats;
         }
 
@@ -106,6 +113,8 @@ namespace mir::test
             mesh.keepalive.reset();
         }
 
+        void CompleteFrame() { deferred.clear(); }
+
         // What a scene release does to every handle under the owner: they read Stale afterwards.
         void ReleaseAll() { meshes.clear(); }
 
@@ -119,6 +128,8 @@ namespace mir::test
 
         std::map<uint32_t, Mesh> meshes;
         std::vector<MeshHandle> retired;
+        // bytes of retired meshes still in use by a frame in flight
+        std::vector<uint64_t> deferred;
         uint64_t queued = 0;
         // QueueMesh returns a null handle while set
         bool rejectQueue = false;

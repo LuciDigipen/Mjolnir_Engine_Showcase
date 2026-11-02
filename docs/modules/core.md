@@ -486,6 +486,10 @@ Missing: parallelism, dependency ordering, change detection, observers (several
 listeners for one component event), and row migration when a script component's
 layout changes.
 
+**A request queue can be held.** `Hold` takes what is pending and `Restore` drops
+everything pushed since and brings the held requests back, so a span such as a scene
+load can discard what was asked during it without losing what was asked before.
+
 **A scene load is ready when its resources are, not when assets are idle.**
 `SceneLoadGroup` is a World resource that `CoreModule` restarts at every
 `SceneLoad`. Each frame the systems that prepare resources report how many

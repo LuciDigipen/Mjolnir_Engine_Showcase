@@ -51,7 +51,7 @@ namespace
     }
 }
 
-TEST_CASE("Residency counts held and retiring bytes against the total target and category limits",
+TEST_CASE("Residency occupies retiring bytes but only asks to free what is held beyond the target and limits",
     "[renderer][residency]")
 {
     GpuResidency residency;
@@ -67,11 +67,21 @@ TEST_CASE("Residency counts held and retiring bytes against the total target and
 
     SECTION("a total over the target is every category's excess")
     {
-        residency.SetTotalTarget(400);
+        residency.SetTotalTarget(350);
+        CHECK(residency.TotalExcess() == 50);
         CHECK(residency.Excess(GpuCategory::Mesh) == 50);
         CHECK(residency.Excess(GpuCategory::Texture) == 50);
-        // retiring bytes count until the GPU releases them
+        // the retiring bytes are already on their way out, so they do not change what is asked
         retiring = 0;
+        CHECK(residency.Excess(GpuCategory::Mesh) == 50);
+        retiring = 500;
+        CHECK(residency.Excess(GpuCategory::Mesh) == 50);
+        CHECK(residency.Used(GpuCategory::Mesh) == 600);
+    }
+    SECTION("memory that is only retiring asks for nothing")
+    {
+        residency.SetTotalTarget(400);
+        CHECK(residency.UsedTotal() == 450);
         CHECK(residency.Excess(GpuCategory::Mesh) == 0);
     }
     SECTION("a category limit applies to that category alone")
@@ -366,7 +376,8 @@ TEST_CASE("Records that share a texture go together when nothing else claims it"
     CHECK(f.mCache->Size() == 0);
 }
 
-TEST_CASE("A full material table makes room from the unused records", "[renderer][material-records]")
+TEST_CASE("A full material table is waited out, not failed, until the released slots come back",
+    "[renderer][material-records]")
 {
     test::FakeMeshResolveHost host;
     const auto cache = host.MaterialRecords();
@@ -378,15 +389,44 @@ TEST_CASE("A full material table makes room from the unused records", "[renderer
     MaterialLease(cache, cache->Acquire(desc, {})).Reset();
     REQUIRE(cache->Size() == 2);
 
+    // the table is full: the unused record is released, but its slot is held until its frame completes
     desc.shaderName = "three";
-    const uint64_t id = cache->Acquire(desc, {});
+    MaterialAcquire status = MaterialAcquire::Ready;
+    CHECK(cache->Acquire(desc, {}, &status) == 0);
+    CHECK(status == MaterialAcquire::Waiting);
+    CHECK(cache->Size() == 1);
+    CHECK(host.releasedMaterials.size() == 1);
+    // still waiting on the next ask in the same frame, nothing more to release
+    CHECK(cache->Acquire(desc, {}, &status) == 0);
+    CHECK(status == MaterialAcquire::Waiting);
+
+    // a later frame: the slot is back
+    host.CompleteFrame();
+    const uint64_t id = cache->Acquire(desc, {}, &status);
+    CHECK(status == MaterialAcquire::Ready);
     CHECK(id != 0);
-    CHECK(cache->Size() == 2);
     CHECK_FALSE(keep.Get().IsNull());
 
+    // with every slot claimed there is nothing to release, so it keeps waiting
     MaterialLease third(cache, id);
     desc.shaderName = "four";
-    CHECK(cache->Acquire(desc, {}) == 0);
+    CHECK(cache->Acquire(desc, {}, &status) == 0);
+    CHECK(status == MaterialAcquire::Waiting);
+}
+
+TEST_CASE("A material the renderer cannot make is a failure, not a wait", "[renderer][material-records]")
+{
+    test::FakeMeshResolveHost host;
+    const auto cache = host.MaterialRecords();
+    host.rejectMaterials = true;
+    MaterialDesc desc;
+    desc.shaderName = "broken";
+    MaterialLease keepable(cache, cache->Acquire(MaterialDesc{ .shaderName = "other" }, {}));
+    MaterialAcquire status = MaterialAcquire::Ready;
+    CHECK(cache->Acquire(desc, {}, &status) == 0);
+    CHECK(status == MaterialAcquire::Failed);
+    // nothing was released on its account
+    CHECK(host.releasedMaterials.empty());
 }
 
 TEST_CASE("Record bytes in the shared table are counted and released oldest first over their category limit",
@@ -427,4 +467,57 @@ TEST_CASE("Releasing the renderer's materials leaves leases pointing at nothing"
     CHECK(lease.Get().IsNull());
     lease.Reset();
     CHECK(host.releasedMaterials.empty());
+}
+
+TEST_CASE("Releasing every claim at once keeps what fits the target and does not evict for retiring bytes",
+    "[renderer][residency]")
+{
+    test::FakeMeshResolveHost host;
+    const auto tracker = host.ModelMeshes(nullptr);
+    // a triangle holds 3 * 64 + 3 * 4 = 204 bytes, five of them fit
+    host.Residency().SetTotalTarget(5 * 204);
+    std::vector<ModelMeshLease> leases;
+    for (uint32_t part = 0; part < 10; ++part)
+    {
+        const AssetId id = tracker->Request(KeyOf(part), [] { return Triangle(); }, "mesh");
+        leases.emplace_back(tracker, id);
+    }
+    tracker->Update();
+    for (const ModelMeshLease &lease : leases)
+        Finish(host, *tracker, lease.Get()->mesh);
+    REQUIRE(tracker->HeldBytes() == 10 * 204);
+
+    // a scene unload drops every claim in one frame, the retired memory stays in use until the frame completes
+    leases.clear();
+    CHECK(tracker->HeldBytes() == 5 * 204);
+    CHECK(host.uploader.retired.size() == 5);
+    // it is occupied until then, but already on its way out and not a reason to evict more
+    CHECK(host.Residency().Retiring(GpuCategory::Mesh) == 5 * 204);
+    host.CompleteFrame();
+    CHECK(host.Residency().Retiring(GpuCategory::Mesh) == 0);
+    CHECK(tracker->HeldBytes() == 5 * 204);
+}
+
+TEST_CASE("One total overage is freed once across texture and record bytes", "[renderer][material-records]")
+{
+    MaterialFixture f;
+    const TextureHandle texture = f.ReadyTexture(kTexture);
+    // the older record pins a texture, the newer holds 48 bytes of table and no texture
+    const uint64_t textured = f.Material("a", texture, kTexture);
+    std::vector<std::byte> bytes(40, std::byte{ 1 });
+    MaterialDesc recordDesc;
+    recordDesc.shaderName = "surface";
+    recordDesc.record = bytes;
+    const uint64_t recorded = f.mCache->Acquire(recordDesc, {});
+    MaterialLease(f.mCache, textured).Reset();
+    MaterialLease(f.mCache, recorded).Reset();
+    REQUIRE(f.mCache->Size() == 2);
+
+    uint64_t other = 100;
+    f.mHost.Residency().AddHolder(GpuCategory::Mesh, [&] { return other; });
+    f.mHost.Residency().SetTotalTarget(f.mHost.Residency().UsedTotal() - 1);
+    f.mCache->Trim();
+    // the textured record alone covers a one byte overage
+    CHECK(f.mCache->Size() == 1);
+    CHECK(f.mCache->RecordBytes() == 48);
 }

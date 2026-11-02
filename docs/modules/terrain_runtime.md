@@ -62,7 +62,7 @@ SceneLoad      -> Refresh(force)            after an Unload, CollectTerrainScene
                                             keepLoaded) for the whole spec; after Stop's restore, almost nothing
 PlayBegin      -> Refresh(force), BeginPlay adopt a ready switch, then Play pins what is loaded; a switch in progress
                                             waits for Stop
-SceneUnload    -> Unload                    meshes forgotten, collision pieces removed, TerrainWorld emptied
+SceneUnload    -> Unload                    meshes retired, collision pieces removed, TerrainWorld emptied
 FixedUpdate    -> TerrainRuntime::BeforeStep  as a PhysicsStepGate before each step: install pieces, update needs,
                                             hold or resume each dynamic body, restrict its contacts
 Render         -> TerrainRuntime::Prepare   per viewport: select, SetInterest; then request every viewport's meshes
@@ -171,11 +171,14 @@ shape.
 
 ## Rules
 
-**Terrain meshes do not survive `ReleaseSceneResources`.** It frees every mesh,
-queued and retiring ones too, and only a scene change runs it now. The terrain
-`SceneUnload` function, `Unload`, forgets every handle; whether it runs before
-or after the renderer's free does not matter, since handles are generational and
-a stale one is skipped. Stop keeps the meshes, because they are keyed by
+**Terrain retires its own meshes when the scene unloads.** A scene unload no longer
+calls `ReleaseSceneResources`, which would free resources a prefab preview still
+uses, so nothing else frees them. The terrain `SceneUnload` function, `Unload`,
+retires every mesh it holds with `RetireMesh`, freed after their last frame
+without a wait, and then forgets its handles. `ReleaseSceneResources` frees every
+mesh too, queued and retiring ones included, and only an explicit full release
+runs it; whether it runs before or after `Unload` does not matter, since handles
+are generational and a stale one is skipped. Stop keeps the meshes, because they are keyed by
 release and the restored scene names the same ones. Dropping terrain while the scene
 stays retires its meshes with `RetireMesh` (a release swap, a change of the
 `rayTracing` setting, or a mesh nobody wanted or drew for

@@ -227,6 +227,7 @@ namespace mir
         TextureHandle ErrorTexture() const;
 
         MaterialHandle CreateMaterial(const MaterialDesc &desc) override;
+        bool MaterialSlotsExhausted() const override;
 
         bool DestroyMaterial(MaterialHandle handle);
 

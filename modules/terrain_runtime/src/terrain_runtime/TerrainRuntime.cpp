@@ -386,7 +386,12 @@ namespace mir
         if (!Bound())
             return;
         if (mMeshes)
+        {
+            // The terrain's meshes are its own to retire. The renderer is not asked to free everything on a scene
+            // unload, prefab previews still use it.
+            mMeshes->RetireAll();
             mMeshes->Forget();
+        }
         for (ViewState &view : mViews)
             view.draws.clear();
     }

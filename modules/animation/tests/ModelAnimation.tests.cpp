@@ -373,3 +373,15 @@ TEST_CASE("A record reports every dynamic allocation it owns", "[animation][asse
     clip.tracks[0].values.assign(3000, 0.0f);
     CHECK(ClipRecordDecoder().sizeBytes(clip) - clipBefore >= 4000 * sizeof(float));
 }
+
+TEST_CASE("A record does not count a string's inline buffer twice", "[animation][assets]")
+{
+    ModelAsset model;
+    model.nodes.resize(1000);
+    const uint64_t owned = sizeof(ModelAsset) + model.nodes.capacity() * sizeof(ModelNode);
+    CHECK(ModelRecordDecoder().sizeBytes(model) == owned);
+    // a string that outgrew its inline buffer is counted once, by its heap block
+    model.nodes[0].key = std::string(500, 'k');
+    CHECK(ModelRecordDecoder().sizeBytes(model) >= owned + 500);
+    CHECK(ModelRecordDecoder().sizeBytes(model) <= owned + 600);
+}

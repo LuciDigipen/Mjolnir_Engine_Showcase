@@ -96,7 +96,8 @@ namespace mir
             return std::static_pointer_cast<const T>(AcquireErased(request, typeid(T)));
         }
 
-        // Makes finished loads visible, and a state changes nowhere else. Call once a frame, before
+        // Makes finished loads visible. A request for content that is already decoded and alive is ready when it is
+        // made, nothing else changes a state. Call once a frame, before
         // anything reads State.
         void DrainCompletions();
 
@@ -193,6 +194,17 @@ namespace mir
         std::vector<uint32_t> mFreeSlots;
         std::unordered_map<DedupKey, uint32_t, DedupKeyHash> mDedup;
         std::vector<Carried> mCarried;
+
+        // A decode that has not finished, found by a request for the same asset, decoder and known content so
+        // it is shared across a reload instead of read and decoded twice.
+        struct InFlight
+        {
+            DedupKey key;
+            uint64_t content = 0;
+            std::type_index type = typeid(void);
+            std::weak_ptr<detail::AssetLoadRecord> record;
+        };
+        std::vector<InFlight> mInFlight;
         struct Allocation
         {
             std::weak_ptr<const void> value;

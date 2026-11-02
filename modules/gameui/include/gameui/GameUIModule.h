@@ -33,14 +33,16 @@ namespace mir
         using Screen = std::function<void(UIContext &ui, float dt)>;
         [[nodiscard]] Registration AddScreen(Screen screen);
 
-        // one frame of game UI: BeginFrame, every screen, EndFrame
         void RunFrame(const UIRect &area, const UIPointer &pointer);
+        void SetSuspended(bool suspended) { mSuspended = suspended; }
+        bool Suspended() const { return mSuspended; }
 
     private:
         World &mWorld;
         UIContext mUI;
         RegistrationList<Screen> mScreens;
         float mFrameDt = 0.0f;
+        bool mSuspended = false;
 
         // last: unregisters before anything above is destroyed
         Registration mFrameBegin;

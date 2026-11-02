@@ -118,6 +118,8 @@ namespace mir::vk
         // registered before the batch rebuilds pipelines and RT hit groups.
         bool ReloadSurfaceMaterialCatalog(std::string *error = nullptr);
 
+        // No free slot: released materials give theirs back when their frames complete
+        bool SlotsExhausted() const { return mFreeIndices.empty() && mMaterials.size() >= kMaxMaterials; }
         const GpuMaterial *FindMaterial(MaterialHandle handle) const;
         // What a draw with `handle` uses: the material; else the default for a null handle and the error
         // material for a stale one; null only when both are gone.

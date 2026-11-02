@@ -55,6 +55,22 @@ namespace mir
 
         bool Empty() const { return mPending.empty() && !mOpenProject.has_value(); }
 
+        // What was pending when a span of time began, kept apart so what is pushed during it can be told from it.
+        struct Held
+        {
+            std::vector<Request> requests;
+            std::optional<std::string> openProject;
+        };
+        Held Hold() { return { std::exchange(mPending, {}), std::exchange(mOpenProject, std::nullopt) }; }
+        // Drops everything pushed since Hold and brings back what was held. Returns how many were dropped.
+        size_t Restore(Held held)
+        {
+            const size_t dropped = mPending.size() + (mOpenProject.has_value() ? 1 : 0);
+            mPending = std::move(held.requests);
+            mOpenProject = std::move(held.openProject);
+            return dropped;
+        }
+
         // a game directory to switch to; the last one pushed in a frame wins
         void PushOpenProject(std::string dir) { mOpenProject = std::move(dir); }
         std::optional<std::string> TakeOpenProject() { return std::exchange(mOpenProject, std::nullopt); }
