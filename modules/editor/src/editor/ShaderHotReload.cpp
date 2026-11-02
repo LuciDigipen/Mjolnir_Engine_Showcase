@@ -431,7 +431,7 @@ namespace mir
                 for (size_t stage = 0; stage < stages.size(); ++stage)
                 {
                     ShaderManifestOutput output;
-                    output.type = type;
+                    output.type = "surface";
                     output.frontend = frontend;
                     output.output = stem + "." + entries[stage] + ".spv";
                     output.reflection = output.output + ".reflection.json";

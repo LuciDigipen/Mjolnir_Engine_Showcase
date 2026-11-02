@@ -9,6 +9,8 @@
 #include <core/fs/FileIO.h>
 #include <jobs/BackgroundJobQueue.h>
 #include <jobs/JobExecutor.h>
+#include <renderer/MaterialReflection.h>
+#include <renderer/ShaderReload.h>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -329,4 +331,103 @@ TEST_CASE("Watcher cancels queued compilation without waiting for unrelated shar
     restarted.Initialize(fixture.root, fixture.shaders, fixture.Backend(), fixture.jobs);
     REQUIRE(mir::WriteText(fixture.include, "float Value() { return 3.0; }\n"));
     REQUIRE(Pump(restarted, [&] { return fixture.commits == 1; }));
+}
+
+TEST_CASE("Watcher compiles real manifest frontends and owns new material layout outputs", "[editor][shader][watcher]")
+{
+    const auto frontend = GENERATE(std::string("mesh"), std::string("terrain"));
+    CAPTURE(frontend);
+    Fixture fixture;
+    fixture.Seed();
+    std::string error;
+    const auto production = mir::LoadShaderManifest(MIR_EDITOR_SHADER_MANIFEST, &error);
+    INFO(error);
+    REQUIRE(production);
+    fixture.manifest.frontendTemplates = production->frontendTemplates;
+    fixture.manifest.commonArguments = production->commonArguments;
+    const auto content = fixture.root / "content";
+    std::filesystem::create_directories(content);
+    fixture.manifest.assetRoots = {{content, "custom"}};
+    const auto definition = mir::ReadText(production->workingDirectory / "assets/materials/default.slang");
+    REQUIRE(definition);
+    const auto shader = content / "material.slang";
+    REQUIRE(mir::WriteText(shader, *definition));
+    mir::ShaderGenerationStore store(fixture.shaders);
+    uint64_t generation;
+    REQUIRE(store.BeginPublish(&generation));
+    const auto manifestText = mir::SerializeShaderManifest(fixture.manifest);
+    REQUIRE(store.StageFile("shader_manifest.json", std::as_bytes(std::span(manifestText.data(), manifestText.size()))));
+    REQUIRE(store.Finish());
+    REQUIRE(store.PublishPointer());
+    store.Unlock();
+
+    std::map<std::string, uint64_t> accepted, pending;
+    const auto seedBytes = mir::ReadBytes(store.GenerationPath(generation) / "probe.spv");
+    REQUIRE(seedBytes);
+    accepted["probe.spv"] = mir::HashShaderContent(*seedBytes);
+    auto backend = fixture.Backend();
+    backend.prepare = [&](const auto &directory, std::string *diagnostic)
+    {
+        const auto manifest = mir::LoadShaderManifest(directory / "shader_manifest.json", diagnostic);
+        if (!manifest) return false;
+        pending.clear();
+        std::vector<std::string> managed;
+        for (const auto &output : manifest->outputs)
+        {
+            const auto bytes = mir::ReadBytes(directory / std::filesystem::u8path(output.output));
+            if (!bytes) return false;
+            pending[output.output] = mir::HashShaderContent(*bytes);
+            // Runtime pipelines own non-layout outputs; use the renderer's
+            // metadata rule for reflection-only layouts and real coverage check.
+            if (output.entry != "layoutMain" || output.type == "surface") managed.push_back(output.output);
+        }
+        const auto coverage = mir::ValidateShaderOwnerCoverage(managed, accepted, pending);
+        if (!coverage.compatible) *diagnostic = coverage.differences.front();
+        return coverage.compatible;
+    };
+    backend.commit = [&] { accepted = pending; ++fixture.commits; };
+    mir::ShaderHotReload watcher;
+    watcher.Initialize(fixture.root, fixture.shaders, std::move(backend), fixture.jobs);
+    REQUIRE(watcher.Enabled());
+    const auto material = nlohmann::json{{"version", 1}, {"shader", {{"file", "material.slang"}, {"type", "DefaultMaterial"}}},
+        {"frontends", {frontend}}, {"parameters", nlohmann::json::object()}};
+    REQUIRE(mir::WriteText(content / "new.material.json", material.dump()));
+    const auto publish = [&](int expectedCommits)
+    {
+        REQUIRE(Pump(watcher, [&] { return fixture.commits == expectedCommits || !watcher.LastDiagnostic().empty(); }));
+        INFO(watcher.LastDiagnostic());
+        REQUIRE(fixture.commits == expectedCommits);
+    };
+    const auto layout = [&]() -> mir::MaterialLayout
+    {
+        const auto directory = store.GenerationPath(*store.CurrentId());
+        const auto manifest = mir::LoadShaderManifest(directory / "shader_manifest.json");
+        REQUIRE(manifest);
+        std::optional<mir::MaterialLayout> result;
+        for (const auto &output : manifest->outputs)
+        {
+            if (output.frontend != frontend) continue;
+            CHECK(output.type == "surface");
+            CHECK(output.specialize == (output.entry == "vertexMain" ? "" : "DefaultMaterial"));
+            if (output.entry != "layoutMain") continue;
+            const auto reflection = mir::ReadText(directory / std::filesystem::u8path(output.reflection));
+            REQUIRE(reflection);
+            result = mir::ParseMaterialLayout(*reflection, &error);
+            INFO(error);
+            REQUIRE(result);
+        }
+        REQUIRE(result);
+        return *result;
+    };
+    publish(1);
+    const auto before = layout();
+    auto changed = *definition;
+    const auto field = changed.find("float4 surfaceParams;");
+    REQUIRE(field != std::string::npos);
+    changed.insert(field, "float4 reloadField;\n    ");
+    REQUIRE(mir::WriteText(shader, changed));
+    publish(2);
+    const auto after = layout();
+    CHECK(after.size > before.size);
+    CHECK(after.fields.size() == before.fields.size() + 1);
 }
