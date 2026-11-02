@@ -288,6 +288,62 @@ class Rerun(unittest.TestCase):
         self.assertFalse(staging.exists())
 
 
+class InteriorObjects(unittest.TestCase):
+    def test_props_in_interior_groups_are_objects(self):
+        for path in ('/geo/int_01/misc_model_5/ch_crate/geo/crateShape',
+                     '/geo/side_extension_01_a/side_extension_01_a_int/crate_265/misc_model_5/ch_crate/geo/crateShape',
+                     '/geo/geo_interior_01/misc_model_2/furniture_chair/geo/chairShape',
+                     '/geo/int_2floor/misc_model_2/furniture_chair/geo/chairShape',
+                     '/geo/INT_01/misc_model_2/furniture_chair/geo/chairShape'):
+            self.assertTrue(eb.is_interior_object(path), path)
+
+    def test_the_building_itself_stays(self):
+        for path in ('/geo/ext_01/misc_model_5/ch_crate/geo/crateShape',  # outside
+                     '/geo/int_01/patch_31_216',  # authored, not a prop
+                     '/interior',
+                     '/geo/int_01/misc_model_5/uk_metal_frame_warehouse_01/geo/frameShape',
+                     '/geo/int_01/misc_model_5/mout_catwalk_support_brace/geo/braceShape',
+                     '/geo/int_01/misc_model_5/building_elevator_shaft_cap/geo/capShape',
+                     # A prop's name is not an interior group.
+                     '/geo/ext_01/uk_stairs_int_wood_worn/misc_model_5/ch_crate/geo/crateShape',
+                     '/geo/misc_model_5/int_01/geo/crateShape'):
+            self.assertFalse(eb.is_interior_object(path), path)
+
+    def test_fixtures_named_like_structure_are_objects(self):
+        for asset in ('lm_light_int_wall_sconce_01_off', 'ee_clock_wall_mounted', 'ee_mirror_wall_mounted_decorative_tall'):
+            self.assertTrue(eb.is_interior_object(f'/geo/int_01/misc_model_5/{asset}/geo/shape'), asset)
+
+    def build(self, root):
+        stage = build_district(root)
+        barn = f'{SET}/barn_01'
+        add_box(stage, f'{barn}/geo/int_01/crate_a/misc_model_1/ch_crate/geo/crateShape', (0.0, 0.0, 2.0), (2.0, 2.0, 2.0))
+        add_box(stage, f'{barn}/geo/int_01/beam_a/misc_model_2/steel_beam/geo/beamShape', (0.0, 0.0, 3.0), (2.0, 2.0, 2.0))
+        add_box(stage, f'{barn}/geo/ext_01/crate_b/misc_model_1/ch_crate/geo/crateShape', (0.0, 0.0, 4.0), (2.0, 2.0, 2.0))
+        stage.GetRootLayer().Save()
+
+    def export(self, keep):
+        with tempfile.TemporaryDirectory() as temp:
+            root, game = Path(temp) / 'caldera', Path(temp) / 'game'
+            self.build(root)
+            scene = game / 'scenes/default'
+            (scene / 'entities').mkdir(parents=True)
+            (scene / 'scene.json').write_text(json.dumps({'entities': [], 'name': 'default', 'nextId': 1}))
+            report = eb.export(root, game, keep_interior_objects=keep)
+            barn = next(p for p in report['placed'] if p['name'] == 'barn_01')
+            return report, report['models'][barn['model']]
+
+    def test_export_leaves_out_only_the_interior_crate(self):
+        report, entry = self.export(False)
+        # Shell, inner box, near LOD's two boxes, the beam and the outside crate; 12 triangles a box.
+        self.assertEqual(entry['near_triangles'], 6 * 12)
+        self.assertFalse(report['keep_interior_objects'])
+
+    def test_flag_keeps_the_interior_crate(self):
+        report, entry = self.export(True)
+        self.assertEqual(entry['near_triangles'], 7 * 12)
+        self.assertTrue(report['keep_interior_objects'])
+
+
 class Parts(unittest.TestCase):
     def test_merge_splits_only_between_meshes_at_the_vertex_limit(self):
         def mesh(vertices):

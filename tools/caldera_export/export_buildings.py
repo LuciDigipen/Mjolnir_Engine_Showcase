@@ -8,7 +8,9 @@ Writes one <game>/assets/models/airfield/<model>.glb per distinct building, plus
 <game>/source/buildings_export_report.json. Entities from an earlier run are replaced.
 
 Geometry is not simplified: every non-guide triangle of the authored modelLod variants is kept, with
-its authored normals where it has them. Each .glb has one glTF scene per LOD. Meshes the two LODs
+its authored normals where it has them. The exception is whole props in Caldera's interior groups,
+which are left out because ray tracing cannot fit them on the target GPU; --keep-interior-objects
+keeps them. Each .glb has one glTF scene per LOD. Meshes the two LODs
 share are stored once, and each part is one vertex-colored primitive, because every model primitive
 takes two of the renderer's 1024 materials. The dataset ships no textures and no displayColor values,
 so a triangle's color comes from its material's name.
@@ -35,6 +37,14 @@ MIN_HEIGHT = 3.0
 AGGREGATE_FOOTPRINT = 100.0  # meters; a wider group is a neighborhood, so its children are the buildings
 # Fences, plants, junk and paved lots are not buildings.
 EXCLUDED = re.compile(r'fenc|foliage|(^|_)tree|palm|audio|scrapyard|parking|_ground(_\d+)?$|(^|_)road|sidewalk|garden|^worldspawn')
+PROP_INSTANCE = 'misc_model'  # the group that places a prop asset; the next path part names the asset
+# Caldera's own interior groups: int_01, side_extension_01_a_int, geo_interior_01.
+INTERIOR_GROUP = re.compile(r'(.*_)?int(_\d+[a-z]?|_2floor)?|(.*_)?interior(_\d+)?')
+# Assets in those groups that are the building, not an object in it.
+STRUCTURE_ASSET = re.compile(r'^building_|wall|floor|ceiling|roof|beam|column|pillar|stair|door|window|frame|girder|truss|support|'
+                             r'catwalk|railing|handrail|foundation|slab|ladder|corrug|brick|concrete|elevator')
+# Objects whose names read like structure.
+FIXTURE_ASSET = re.compile(r'light|lamp|sconce|mounted|clock|mirror|tarp|sidewalk')
 LOD_VARIANT_SET = 'modelLod'
 FAR_LOD = 1  # authored lod2 and lod3 save under 5% more in this district, for the memory of another copy
 MAX_GLB_BYTES = 0xffffffff
@@ -262,14 +272,29 @@ def read_mesh(prim, mesh, points, counts, inverse, units):
     }
 
 
-def read_building(stage, path):
+def is_interior_object(relative_path):
+    """Whether a mesh, by its path under the building, is a prop placed in an authored interior group."""
+    parts = relative_path.strip('/').split('/')
+    instance = next((i for i, part in enumerate(parts) if part.startswith(PROP_INSTANCE)), None)
+    if instance is None or instance + 1 >= len(parts):
+        return False
+    if not any(INTERIOR_GROUP.fullmatch(group.lower()) for group in parts[:instance]):
+        return False
+    asset = parts[instance + 1].lower()
+    return bool(FIXTURE_ASSET.search(asset)) or not STRUCTURE_ASSET.search(asset)
+
+
+def read_building(stage, path, keep_interior_objects=True):
     """Each mesh of a building, by its path under the building, as (triangles, points) and its reader."""
     units = UsdGeom.GetStageMetersPerUnit(stage)
     inverse = np.linalg.inv(np.array(UsdGeom.XformCache(0).GetLocalToWorldTransform(stage.GetPrimAtPath(path))))
     parts = {}
     for prim, mesh, points, counts in mesh_prims(stage, path):
+        key = str(prim.GetPath())[len(path):]
+        if not keep_interior_objects and is_interior_object(key):
+            continue
         size = (int((counts - 2).sum()), len(points))
-        parts[str(prim.GetPath())[len(path):]] = (size, (prim, mesh, points, counts, inverse, units))
+        parts[key] = (size, (prim, mesh, points, counts, inverse, units))
     return parts
 
 
@@ -353,9 +378,10 @@ def glb_bytes(shared, near_only, far_only):
             struct.pack('<I4s', len(body), b'BIN\0') + bytes(body))
 
 
-def export_model(near_stage, far_stage, path):
+def export_model(near_stage, far_stage, path, keep_interior_objects=False):
     """(glb bytes, report entry). A mesh unchanged between the stages is shared by both LODs."""
-    near, far = read_building(near_stage, path), read_building(far_stage, path)
+    near = read_building(near_stage, path, keep_interior_objects)
+    far = read_building(far_stage, path, keep_interior_objects)
     same = {key for key in near if key in far and near[key][0] == far[key][0]}
     shared = merge([read_mesh(*near[key][1]) for key in sorted(same)])
     near_only = merge([read_mesh(*near[key][1]) for key in sorted(near.keys() - same)])
@@ -439,7 +465,7 @@ def model_identity(stage, path):
     return triangles, meshes, *np.round(low, 1).tolist(), *np.round(high, 1).tolist()
 
 
-def export(root, game_dir, log=None):
+def export(root, game_dir, log=None, keep_interior_objects=False):
     """Run the export; returns the report. Raises ExportError, leaving what is there, on failure."""
     path = Path(root) / et.RUNWAY_LAYER
     if not path.exists():
@@ -477,7 +503,7 @@ def export(root, game_dir, log=None):
         if len(logical) > NAME_CAPACITY:
             logical = f'models/airfield/b{number:03d}.glb'
         model['logical'] = logical
-        data, entries[logical] = export_model(stage, far_stage, model['path'])
+        data, entries[logical] = export_model(stage, far_stage, model['path'], keep_interior_objects)
         et.write_atomic(staging / Path(logical).name, data)
         if log:
             log(f"{number + 1}/{len(models)} {logical}: {entries[logical]['near_triangles']} near, {entries[logical]['far_triangles']} far, "
@@ -487,6 +513,7 @@ def export(root, game_dir, log=None):
     report = {
         'caldera_commit': commit,
         'caldera_commit_is_pinned': commit == et.PINNED_COMMIT,
+        'keep_interior_objects': keep_interior_objects,
         'placed': [{'name': name, 'model': model['logical'], 'position': [float(v) for v in position], 'yaw_degrees': yaw}
                    for name, model, (position, yaw) in placed],
         'models': entries,
@@ -510,9 +537,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--caldera-root', required=True)
     parser.add_argument('--game-dir', required=True)
+    parser.add_argument('--keep-interior-objects', action='store_true')
     args = parser.parse_args()
     try:
-        report = export(args.caldera_root, args.game_dir, log=lambda text: print(text, flush=True))
+        report = export(args.caldera_root, args.game_dir, log=lambda text: print(text, flush=True),
+                        keep_interior_objects=args.keep_interior_objects)
     except et.ExportError as e:
         print(f'export failed: {e}', file=sys.stderr)
         return 1

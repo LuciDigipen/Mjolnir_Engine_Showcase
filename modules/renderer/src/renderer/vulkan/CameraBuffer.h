@@ -19,6 +19,7 @@
 
 #include <volk.h>
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -101,5 +102,7 @@ namespace mir::vk
 
         // One Halton(2,3) index per view slot, advanced once per applyJitter=true WriteView call.
         uint32_t mJitterIndex[kMaxViewsPerFrame]{};
+
+        std::chrono::steady_clock::time_point mShaderTimeStart = std::chrono::steady_clock::now();
     };
 }
