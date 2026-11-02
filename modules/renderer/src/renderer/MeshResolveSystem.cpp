@@ -8,96 +8,30 @@
  */
 #include <renderer/MeshResolveSystem.h>
 
-#include <assets/AssetBlob.h>
-#include <assets/AssetCache.h>
 #include <assets/AssetId.h>
 #include <assets/AssetResolver.h>
 #include <core/ecs/Query.h>
+#include <core/ecs/SceneLoadGroup.h>
 #include <core/ecs/TypeId.h>
 #include <core/ecs/World.h>
 #include <core/log/Log.h>
+#include <renderer/MeshAssetDecoder.h>
 #include <renderer/Shapes.h>
-#include <renderer/SurfaceMaterialLibrary.h>
-#include <renderer/VulkanRenderer.h>
+#include <renderer/IMeshResolveHost.h>
 #include <renderer/components/MeshRenderer.h>
 
-#include <serial/JsonFile.h>
-
-#include <glm/common.hpp>
-
 #include <algorithm>
-#include <limits>
 #include <span>
 #include <utility>
+#include <unordered_set>
 #include <vector>
 
 namespace mir
 {
-    namespace
-    {
-        // MeshData from a mesh JSON asset
-        std::optional<MeshData> ParseMeshAsset(std::string_view text, std::string_view assetPath)
-        {
-            const std::optional<nlohmann::json> json = ParseJson(text, assetPath);
-            if (!json)
-                return std::nullopt;
-
-            MeshData mesh;
-            try
-            {
-                for (const auto &v : json->value("vertices", nlohmann::json::array()))
-                {
-                    Vertex vertex{};
-                    const auto &p = v.at("position");
-                    const auto &c = v.at("color");
-                    const auto &n = v.at("normal");
-                    vertex.pos = glm::vec3(p.at(0).get<float>(), p.at(1).get<float>(), p.at(2).get<float>());
-                    vertex.color = glm::vec3(c.at(0).get<float>(), c.at(1).get<float>(), c.at(2).get<float>());
-                    vertex.normal = glm::vec3(n.at(0).get<float>(), n.at(1).get<float>(), n.at(2).get<float>());
-                    mesh.vertices.push_back(vertex);
-                }
-                mesh.indices = json->value("indices", std::vector<uint32_t>{});
-            }
-            catch (const nlohmann::json::exception &exception)
-            {
-                MIR_LOG_ERROR("MeshResolveSystem: '{}' is not a valid mesh: {}", assetPath, exception.what());
-                return std::nullopt;
-            }
-
-            // an index past the vertices would read out of bounds on the GPU
-            for (const uint32_t index : mesh.indices)
-            {
-                if (index >= mesh.vertices.size())
-                {
-                    MIR_LOG_ERROR("MeshResolveSystem: '{}' has index {} past its {} vertices", assetPath, index,
-                        mesh.vertices.size());
-                    return std::nullopt;
-                }
-            }
-            return mesh;
-        }
-
-        MeshBounds ComputeMeshBounds(std::span<const Vertex> vertices)
-        {
-            glm::vec3 min(std::numeric_limits<float>::max());
-            glm::vec3 max(std::numeric_limits<float>::lowest());
-
-            for (const Vertex &vertex : vertices)
-            {
-                min = glm::min(min, vertex.pos);
-                max = glm::max(max, vertex.pos);
-            }
-
-            if (vertices.empty())
-                min = max = glm::vec3(0.0f);
-
-            return MeshBounds{ min, max };
-        }
-    }
-
-    MeshResolveSystem::MeshResolveSystem(VulkanRenderer &renderer, SurfaceMaterialLibrary *materials,
-        AssetCache *assets, const AssetResolver &resolver)
-        : mRenderer(renderer), mSurfaceMaterials(materials), mAssets(assets), mResolver(resolver)
+    MeshResolveSystem::MeshResolveSystem(IMeshResolveHost &renderer, AsyncAssetService *assets,
+        const AssetResolver &resolver, SurfaceMaterialLibrary *materials)
+        : mRenderer(renderer), mResolver(resolver), mAssets(assets), mTracker(renderer.MeshLoads(assets)),
+          mSurfaceMaterials(materials)
     {
         if (mSurfaceMaterials != nullptr)
         {
@@ -123,7 +57,7 @@ namespace mir
         for (const auto &[name, cached] : mMeshes)
             if (!cached.mMesh.IsNull())
                 meshes.push_back(cached.mMesh);
-        // A borrowed surface handle belongs to the library, which may still draw it.
+        // Asset meshes belong to the shared cache, this World owns only its builtin meshes and materials.
         for (const auto &[name, cached] : mMaterials)
             if (!cached.mBorrowed && !cached.mMaterial.IsNull())
                 materials.push_back(cached.mMaterial);
@@ -137,7 +71,7 @@ namespace mir
         }
     }
 
-    void MeshResolveSystem::CommitReload(AssetCache *assets)
+    void MeshResolveSystem::CommitReload()
     {
         std::vector<MeshHandle> meshes;
         for (const auto &[name, cached] : mMeshes)
@@ -148,8 +82,8 @@ namespace mir
         mRenderer.ReleaseModelResources(meshes, {}, {});
 
         // materials come from shaders, not the asset cache, so they stay
-        mAssets = assets;
         mMeshes.clear();
+        mTracker = mRenderer.MeshLoads(mAssets);
         mResolved.clear();
     }
 
@@ -192,7 +126,7 @@ namespace mir
 
         CachedMesh &cached = mMeshes[meshName];
 
-        // Primitives (Shapes.h) generate their own geometry under a reserved name - no asset file, so no asset-cache lookup.
+        // Primitives (Shapes.h) generate their own geometry under a reserved name - no asset file, so no load.
         if (const std::optional<MeshData> builtin = MakeBuiltinMesh(meshName))
         {
             cached.mMesh = mRenderer.CreateMesh(builtin->vertices, builtin->indices);
@@ -208,20 +142,32 @@ namespace mir
             return cached;
         }
 
-        const std::string name = mResolver.PathOf(id);
-        const AssetBlobView *blob = mAssets != nullptr ? mAssets->Load(id) : nullptr;
-        if (blob == nullptr)
-        {
-            MIR_LOG_ERROR("MeshResolveSystem: could not load '{}'", name);
-            return cached;
-        }
-
-        if (const std::optional<MeshData> mesh = ParseMeshAsset(AsStringView(*blob), name))
-        {
-            cached.mMesh = mRenderer.CreateMesh(mesh->vertices, mesh->indices);
-            cached.mBounds = ComputeMeshBounds(mesh->vertices);
-        }
+        cached.mAsset = id;
+        const UploadKey key{ id, UploadContent(mAssets, id) };
+        mTracker->Request(key, mResolver.PathOf(id));
+        cached.mLease = MeshLoadLease(mTracker, key);
         return cached;
+    }
+
+    MeshResolveSystem::MeshView MeshResolveSystem::ViewOf(const CachedMesh &cached) const
+    {
+        if (cached.mAsset.IsNull())
+            return MeshView{ cached.mMesh, cached.mBounds };
+
+        const MeshLoad *load = cached.mLease.Get();
+        if (load == nullptr)
+            return MeshView{};
+        // the draw path skips a mesh that is not Ready, so the queued handle goes on at once
+        return MeshView{ load->mesh,
+            load->phase == MeshLoadPhase::Ready ? std::optional<MeshBounds>(load->bounds) : std::nullopt };
+    }
+
+    bool MeshResolveSystem::Failed(const CachedMesh &cached)
+    {
+        if (cached.mAsset.IsNull())
+            return true;
+        const MeshLoad *load = cached.mLease.Get();
+        return load == nullptr || load->phase == MeshLoadPhase::Failed;
     }
 
     MaterialHandle MeshResolveSystem::ResolveMaterial(const std::string &shaderName, ResolvedNames &resolved)
@@ -238,7 +184,8 @@ namespace mir
             return it->second.mMaterial;
         }
 
-        const SurfaceMaterialRegistration *const surface = FindMeshSurface(shaderName);
+        const SurfaceMaterialRegistration *const surface = mSurfaceMaterials != nullptr
+            ? mSurfaceMaterials->FindMeshSurface(shaderName) : nullptr;
         if (mSurfaceMaterials != nullptr && surface != nullptr)
         {
             const std::string logicalPath = surface->asset;
@@ -272,14 +219,6 @@ namespace mir
         return mMaterials.emplace(shaderName, CachedMaterial{ .mMaterial = material }).first->second.mMaterial;
     }
 
-    const SurfaceMaterialRegistration *MeshResolveSystem::FindMeshSurface(std::string_view shaderName) const
-    {
-        for (const SurfaceMaterialRegistration &registration : mRenderer.SurfaceMaterials().materials)
-            if (registration.frontend == "mesh" && registration.stem == shaderName)
-                return &registration;
-        return nullptr;
-    }
-
     void MeshResolveSystem::PublishUses()
     {
         if (mSurfaceMaterials == nullptr || mUseOwner == 0)
@@ -309,6 +248,9 @@ namespace mir
     {
         if (mSurfaceMaterials == nullptr)
             return;
+        // Scene unload releases this owner, while the resolver is reused by the next scene.
+        if (mUseOwner == 0)
+            mUseOwner = mSurfaceMaterials->AddMaterialUseOwner();
         const uint64_t generation = mSurfaceMaterials->Generation();
         if (generation == mLibraryGeneration)
             return;
@@ -325,6 +267,7 @@ namespace mir
     {
         World &world = context.world;
 
+        mTracker->Update();
         RebindSurfaceMaterials();
 
         std::vector<Entity> staleBounds;
@@ -340,20 +283,36 @@ namespace mir
             });
 
         std::vector<std::pair<Entity, std::optional<MeshBounds>>> pendingBounds;
+        std::unordered_set<std::string> usedMeshes;
+        std::unordered_set<std::string> usedShaders;
 
+        uint32_t required = 0, settled = 0;
         world.GetOrCreateQuery<MeshRenderer>().ForEach(
             [&](Entity entity, MeshRenderer &meshRenderer)
             {
                 ResolvedNames &resolved = mResolved[PackEntity(entity)];
                 const std::string_view meshName = meshRenderer.meshName;
                 const std::string_view shaderName = meshRenderer.materialShader;
+                usedMeshes.emplace(meshName);
+                usedShaders.emplace(shaderName);
 
                 if (resolved.mMesh != meshName)
                 {
                     resolved.mMesh = meshName;
-                    const CachedMesh *cached = meshName.empty() ? nullptr : &ResolveMesh(resolved.mMesh);
-                    meshRenderer.mesh = cached != nullptr ? cached->mMesh : MeshHandle{};
-                    pendingBounds.emplace_back(entity, cached != nullptr ? cached->mBounds : std::nullopt);
+                    // a name changed while the old mesh loads leaves that load to the tracker, other entities may use it
+                    const MeshView view = meshName.empty() ? MeshView{} : ViewOf(ResolveMesh(resolved.mMesh));
+                    meshRenderer.mesh = view.mMesh;
+                    pendingBounds.emplace_back(entity, view.mBounds);
+                }
+                else if (!meshName.empty() && !world.Has<MeshBounds>(entity))
+                {
+                    const auto cached = mMeshes.find(resolved.mMesh);
+                    if (cached != mMeshes.end())
+                    {
+                        const MeshView view = ViewOf(cached->second);
+                        meshRenderer.mesh = view.mMesh;
+                        pendingBounds.emplace_back(entity, view.mBounds);
+                    }
                 }
 
                 if (resolved.mShader != shaderName)
@@ -362,13 +321,42 @@ namespace mir
                     resolved.mSurface = false;
                     resolved.mSurfacePath.clear();
                     resolved.mSurfaceAsset = kNullAssetId;
-                    meshRenderer.material = shaderName.empty()
-                        ? MaterialHandle{}
-                        : ResolveMaterial(resolved.mShader, resolved);
+                    meshRenderer.material = shaderName.empty() ? MaterialHandle{} : ResolveMaterial(resolved.mShader, resolved);
+                }
+
+                if (!meshName.empty())
+                {
+                    ++required;
+                    const auto cached = mMeshes.find(resolved.mMesh);
+                    if (world.Has<MeshBounds>(entity) || (cached != mMeshes.end() && Failed(cached->second)))
+                        ++settled;
                 }
             });
-
         PublishUses();
+
+        if (SceneLoadGroup *group = world.TryResource<SceneLoadGroup>())
+            group->Report(this, required, settled);
+
+        std::vector<MeshHandle> releasedMeshes;
+        std::vector<MaterialHandle> releasedMaterials;
+        std::erase_if(mMeshes, [&](const auto &item)
+            {
+                if (usedMeshes.contains(item.first))
+                    return false;
+                if (item.second.mAsset.IsNull() && !item.second.mMesh.IsNull())
+                    releasedMeshes.push_back(item.second.mMesh);
+                return true;
+            });
+        std::erase_if(mMaterials, [&](const auto &item)
+            {
+                if (usedShaders.contains(item.first))
+                    return false;
+                if (!item.second.mBorrowed && !item.second.mMaterial.IsNull())
+                    releasedMaterials.push_back(item.second.mMaterial);
+                return true;
+            });
+        if (!releasedMeshes.empty() || !releasedMaterials.empty())
+            mRenderer.ReleaseModelResources(releasedMeshes, releasedMaterials, {});
 
         for (const Entity entity : staleBounds)
         {

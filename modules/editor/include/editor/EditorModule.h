@@ -31,6 +31,7 @@ namespace mir
 {
     class AssetResolver;
     class AssetsModule;
+    class AsyncAssetService;
     class ParticleEditorPanel;
     class ImGuiModule;
     class JobExecutor;
@@ -38,6 +39,7 @@ namespace mir
     class PrefabModule;
     class RendererModule;
     class SceneModule;
+    class ModelLibrary;
     class WindowModule;
 
     class EditorModule
@@ -45,8 +47,9 @@ namespace mir
     public:
         // enableLayout false: the editor is built in but the window is the game (--no-editor)
         EditorModule(ModuleContext context, ImGuiModule &imgui, WindowModule &window, RendererModule &renderer,
-            SceneModule &scene, PrefabModule &prefab, AssetsModule &assets, const AssetResolver &resolver,
-            const GameProject &project, JobExecutor &jobs, bool enableLayout);
+            SceneModule &scene, PrefabModule &prefab, AssetsModule &assets, AsyncAssetService *assetService,
+            const AssetResolver &resolver, const GameProject &project, JobExecutor &jobs, bool enableLayout,
+            std::shared_ptr<ModelLibrary> models);
         ~EditorModule();
 
         EditorModule(const EditorModule &) = delete;
@@ -130,8 +133,6 @@ namespace mir
         Registration mSceneSaved;
         Registration mPlayBegin;
         Registration mPlayEnd;
-        Registration mReloadPrepare;
         Registration mReloadCommit;
-        Registration mReloadAbort;
     };
 }

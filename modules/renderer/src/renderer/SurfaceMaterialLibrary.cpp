@@ -434,6 +434,14 @@ namespace mir
         mValidator = std::move(validator);
     }
 
+    const SurfaceMaterialRegistration *SurfaceMaterialLibrary::FindMeshSurface(std::string_view shaderName) const
+    {
+        if (mRenderer == nullptr) return nullptr;
+        for (const SurfaceMaterialRegistration &registration : mRenderer->SurfaceMaterials().materials)
+            if (registration.frontend == "mesh" && registration.stem == shaderName) return &registration;
+        return nullptr;
+    }
+
     void SurfaceMaterialLibrary::NotifyShaderCommit() noexcept
     {
         ++mSchemaEpoch;

@@ -27,9 +27,11 @@ namespace mir
 {
     class AssetCache;
     class AssetResolver;
+    class AsyncAssetService;
     struct LoadedScene;
     class PrefabAuthoringAdapter;
     class SurfaceMaterialLibrary;
+    class ModelLibrary;
     class VulkanRenderer;
     class World;
 
@@ -48,8 +50,9 @@ namespace mir
         PrefabWorkspace &operator=(PrefabWorkspace &&) = delete;
 
         // Null renderer skips preview mesh and model systems; null assets still permits built-in meshes.
-        void BindResolveSystems(VulkanRenderer *renderer, SurfaceMaterialLibrary *materials, AssetCache *assets,
-            const AssetResolver &resolver);
+        // models is the App's library of prepared models, the previews take their models from it with the scene.
+        void BindResolveSystems(VulkanRenderer *renderer, SurfaceMaterialLibrary *materials,
+            AsyncAssetService *assetService, const AssetResolver &resolver, std::shared_ptr<ModelLibrary> models);
 
         // Focuses an open document, or creates its preview World and one instance.
         bool Open(PrefabId id);
@@ -80,13 +83,8 @@ namespace mir
         // Runs each preview's transform, mesh-resolve and model systems once.
         void Update(float dt, double elapsed, uint64_t frame);
 
-        // Prepares every open preview before App replaces the shared asset cache.
-        bool PrepareReload(AssetCache &assets, std::string &error);
-        void CommitReload(AssetCache *assets);
-        void DiscardPreparedReload();
-
-        // After App released the scene's GPU resources.
-        void ResetResolve();
+        // Starts background replacement of every open preview's models, the old ones keep drawing.
+        void CommitReload();
 
         // Invalidate History save points without clearing undo/redo or marking a disk write.
         void InvalidateExternalSavePoints(const std::function<void(PrefabId)> &invalidate);
@@ -110,7 +108,8 @@ namespace mir
         std::optional<PrefabId> mActive;
         VulkanRenderer *mRenderer = nullptr;
         SurfaceMaterialLibrary *mSurfaceMaterials = nullptr;
-        AssetCache *mAssets = nullptr;
+        AsyncAssetService *mAssetService = nullptr;
+        std::shared_ptr<ModelLibrary> mModels;
         const AssetResolver *mResolver = nullptr;
     };
 }

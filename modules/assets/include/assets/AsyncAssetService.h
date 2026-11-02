@@ -1,7 +1,7 @@
 /**
  * @file AsyncAssetService.h
  * @author sumin.park
- * @brief Reads and decodes cooked assets on a background lane, and hands the results to the main thread.
+ * @brief Loads assets on workers and makes finished results available on the main thread.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -10,9 +10,11 @@
 
 #include "assets/AssetDecoder.h"
 #include "assets/AssetId.h"
+#include "assets/AssetLease.h"
 
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <span>
@@ -23,18 +25,10 @@
 
 namespace mir
 {
+    class AssetManifest;
     class AssetsModule;
     class BackgroundJobQueue;
     class JobExecutor;
-
-    // Where a request is. Stale means it predates CancelAll or a reload, or was never made.
-    enum class AssetLoadState : uint8_t
-    {
-        Stale,
-        Queued,
-        Ready,
-        Failed
-    };
 
     struct AssetRequest
     {
@@ -59,18 +53,40 @@ namespace mir
         template <class T>
         AssetRequest Request(AssetId id, const AssetDecoder<T> &decoder)
         {
-            return RequestErased(id, &decoder, typeid(T), decoder.dependencyTags,
-                [decode = decoder.decode](const AssetBlobView &root, const AssetDependencies &dependencies,
-                    std::string &error) -> std::shared_ptr<const void>
-                {
-                    auto value = std::make_shared<T>();
-                    if (!decode(root, dependencies, *value, error))
-                        return nullptr;
-                    return value;
-                });
+            return RequestErased(id, &decoder, typeid(T), decoder.dependencyTags, MakeDecode(decoder), true);
         }
 
+        // Independent claims share one decode. Leases and borrowed results may outlive the service.
+        template <class T>
+        AssetLease<T> RequestLease(AssetId id, const AssetDecoder<T> &decoder)
+        {
+            const AssetRequest request = RequestErased(id, &decoder, typeid(T), decoder.dependencyTags,
+                MakeDecode(decoder), false);
+            return AssetLease<T>(mSlots[request.index].record);
+        }
+
+        // Drops unused lease-managed entries. Outstanding borrowers remain valid.
+        std::size_t EvictUnused();
+        uint32_t Revision() const;
+        uint64_t DecodedBytes() const;
+        // Active claims and borrowers can exceed this target, only unused entries are evicted.
+        void SetDecodedBudget(uint64_t bytes);
+
         AssetLoadState State(AssetRequest request) const;
+
+        // Equal values allow decoded data to be reused after a reload. Zero means the files have no known
+        // hash, so reuse is unsafe.
+        template <class T>
+        uint64_t ContentOf(AssetId id, const AssetDecoder<T> &decoder) const
+        {
+            return ContentOfTags(id, decoder.dependencyTags);
+        }
+        uint64_t ContentOfTags(AssetId id, std::span<const uint32_t> tags) const;
+        // Keep this manifest when loading spans frames, so a reload cannot change which files the load
+        // refers to.
+        std::shared_ptr<const AssetManifest> CatalogSnapshot() const;
+
+        const std::string &FailureReason(AssetRequest request) const;
 
         // The decoded result, or null unless the request is Ready and was made for this T. It stays
         // valid while the caller holds it, even past CancelAll.
@@ -80,32 +96,52 @@ namespace mir
             return std::static_pointer_cast<const T>(AcquireErased(request, typeid(T)));
         }
 
-        // Makes finished loads visible, and a state changes nowhere else. Call once a frame, before
+        // Makes finished loads visible. A request for content that is already decoded and alive is ready when it is
+        // made, nothing else changes a state. Call once a frame, before
         // anything reads State.
         void DrainCompletions();
 
-        // Drops every request and result, cancels loads that have not started and waits for the
-        // ones running. Every earlier handle reports Stale afterwards.
+        // Invalidates requests without waiting. Queued callbacks skip cancelled records,
+        // running workers finish safely. Only service destruction waits for workers.
         void CancelAll();
 
         // True when no request is waiting for a result
         bool Idle() const;
 
     private:
-        using ErasedDecode = std::function<std::shared_ptr<const void>(
+        struct DecodedResult
+        {
+            std::shared_ptr<const void> value;
+            uint64_t bytes = 0;
+        };
+        using ErasedDecode = std::function<DecodedResult(
             const AssetBlobView &root, const AssetDependencies &dependencies, std::string &error)>;
+
+        template <class T> static ErasedDecode MakeDecode(const AssetDecoder<T> &decoder)
+        {
+            return [decode = decoder.decode, size = decoder.sizeBytes](const AssetBlobView &root,
+                const AssetDependencies &dependencies, std::string &error) -> DecodedResult
+                {
+                    auto value = std::make_shared<T>();
+                    if (!decode(root, dependencies, *value, error))
+                        return {};
+                    return { value, size ? size(*value) : sizeof(T) };
+                };
+        }
 
         struct Completions;
         struct Job;
 
         struct Slot
         {
-            Slot(AssetId assetId, std::type_index assetType) : id(assetId), type(assetType) {}
+            Slot(AssetId assetId, std::type_index assetType)
+                : id(assetId), record(std::make_shared<detail::AssetLoadRecord>(assetType)) {}
 
             AssetId id;
-            std::type_index type;
-            AssetLoadState state = AssetLoadState::Queued;
-            std::shared_ptr<const void> result;
+            std::shared_ptr<detail::AssetLoadRecord> record;
+            // what the result was made from, zero when unknown
+            uint64_t content = 0;
+            const void *descriptor = nullptr;
         };
 
         struct DedupKey
@@ -123,24 +159,59 @@ namespace mir
             }
         };
 
+        // Weak references allow reuse while another owner still holds the decoded data.
+        struct Carried
+        {
+            DedupKey key;
+            uint64_t content = 0;
+            std::type_index type = typeid(void);
+            std::weak_ptr<const void> result;
+            uint64_t bytes = 0;
+        };
+
         AssetRequest RequestErased(AssetId id, const void *descriptor, std::type_index type,
-            std::span<const uint32_t> dependencyTags, ErasedDecode decode);
+            std::span<const uint32_t> dependencyTags, ErasedDecode decode, bool pinned);
         std::shared_ptr<const void> AcquireErased(AssetRequest request, std::type_index type) const;
         static void RunJob(Job &job) noexcept;
-        // CancelAll when a reload was committed since the last call
+        // Existing leases keep their data when a reload changes future requests.
         void SyncReloadEpoch();
+        void TrimDecoded();
+        void DispatchPending();
 
         AssetsModule &mAssets;
         JobExecutor &mJobs;
         std::size_t mConcurrency;
         std::unique_ptr<BackgroundJobQueue> mQueue;
         std::shared_ptr<Completions> mCompletions;
+        std::deque<std::unique_ptr<Job>> mPending;
+        std::size_t mActiveJobs = 0;
 
         // starts at 1 so a default AssetRequest is Stale
         uint32_t mGeneration = 1;
         uint32_t mSeenReloadEpoch;
         std::size_t mQueuedCount = 0;
         std::vector<Slot> mSlots;
+        std::vector<uint32_t> mFreeSlots;
         std::unordered_map<DedupKey, uint32_t, DedupKeyHash> mDedup;
+        std::vector<Carried> mCarried;
+
+        // A decode that has not finished, found by a request for the same asset, decoder and known content so
+        // it is shared across a reload instead of read and decoded twice.
+        struct InFlight
+        {
+            DedupKey key;
+            uint64_t content = 0;
+            std::type_index type = typeid(void);
+            std::weak_ptr<detail::AssetLoadRecord> record;
+        };
+        std::vector<InFlight> mInFlight;
+        struct Allocation
+        {
+            std::weak_ptr<const void> value;
+            uint64_t bytes;
+        };
+        std::vector<Allocation> mAllocations;
+        uint64_t mDecodedBudget = 64ull * 1024 * 1024;
+        uint64_t mUseSerial = 0;
     };
 }

@@ -11,11 +11,13 @@
 #include <core/ecs/ModuleContext.h>
 #include <core/Registration.h>
 
+#include <memory>
 #include <string>
 
 namespace mir
 {
-    class AssetsModule;
+    class AsyncAssetService;
+    class ModelLibrary;
     class ModelSystem;
     class AssetResolver;
     class VulkanRenderer;
@@ -24,23 +26,25 @@ namespace mir
     class AnimationModule
     {
     public:
-        AnimationModule(ModuleContext context, VulkanRenderer &renderer, AssetsModule &assets,
+        AnimationModule(ModuleContext context, VulkanRenderer &renderer, AsyncAssetService *assets,
             const AssetResolver &resolver, JobExecutor *jobs = nullptr);
 
         AnimationModule(const AnimationModule &) = delete;
         AnimationModule &operator=(const AnimationModule &) = delete;
 
         ModelSystem &Models() { return *mModels; }
+        // Shared by the scene and prefab previews.
+        const std::shared_ptr<ModelLibrary> &Library() { return mLibrary; }
 
     private:
+        // Must release model claims before the renderer is destroyed.
+        std::shared_ptr<ModelLibrary> mLibrary;
         // owned by the scheduler, which outlives this module
         ModelSystem *mModels = nullptr;
 
         // last: they unregister before anything above is destroyed
         Registration mHooks;
         Registration mSceneUnload;
-        Registration mReloadPrepare;
         Registration mReloadCommit;
-        Registration mReloadAbort;
     };
 }

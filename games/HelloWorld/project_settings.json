@@ -33,7 +33,7 @@
         }
       },
       "DepthOfField": {
-        "enabled": true,
+        "enabled": false,
         "params": {}
       },
       "Film": {
@@ -45,13 +45,13 @@
         "params": {}
       },
       "HDR": {
-        "enabled": true,
+        "enabled": false,
         "params": {
           "tonemapOperator": "aces"
         }
       },
       "MotionBlur": {
-        "enabled": true,
+        "enabled": false,
         "params": {}
       }
     }

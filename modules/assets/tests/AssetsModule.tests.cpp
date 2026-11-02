@@ -58,6 +58,22 @@ TEST_CASE("A build with no manifest starts with an empty cache", "[assets][modul
     CHECK_FALSE(assets.HadManifest());
 }
 
+TEST_CASE("A retained manifest snapshot remains valid across catalog replacement", "[assets][module]")
+{
+    const CookedDir dir;
+    const mir::AssetId oldId{ 123 };
+    const mir::AssetManifestSourceEntry entry{ { oldId, 1, 1 }, "old.blob", "old", {} };
+    dir.WriteManifest(mir::BuildAssetManifestBlob(std::span(&entry, 1)));
+    mir::AssetsModule assets(dir.path);
+    const auto snapshot = assets.ManifestSnapshot();
+    dir.WriteManifest(mir::BuildAssetManifestBlob({}));
+    assets.BeginReload();
+    assets.CommitReload();
+    CHECK(assets.Manifest().Find(oldId) == nullptr);
+    REQUIRE(snapshot->Find(oldId));
+    CHECK(snapshot->PathOf(*snapshot->Find(oldId)) == "old.blob");
+}
+
 TEST_CASE("A corrupt manifest fails startup as build output", "[assets][module]")
 {
     const CookedDir dir;

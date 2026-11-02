@@ -167,7 +167,8 @@ namespace mir
 
     EditorModule::EditorModule(ModuleContext context, ImGuiModule &imgui, WindowModule &window,
         RendererModule &renderer, SceneModule &scene, PrefabModule &prefab, AssetsModule &assets,
-        const AssetResolver &resolver, const GameProject &project, JobExecutor &jobs, bool enableLayout)
+        AsyncAssetService *assetService, const AssetResolver &resolver, const GameProject &project, JobExecutor &jobs,
+        bool enableLayout, std::shared_ptr<ModelLibrary> models)
         : mWorld(context.world), mRenderer(renderer), mScene(scene), mPrefab(prefab), mResolver(resolver),
           mProject(project), mAssets(&assets),
           mEnableLayout(enableLayout), mProjectMenu(BuildProjectMenu()),
@@ -196,8 +197,8 @@ namespace mir
         mEditor.SetAuthoringBackend(&mPrefabAuthoring);
         mEditor.SetAuthoredEntities(&mPrefabAuthoring);
         mMaterialEditor = std::make_unique<MaterialEditor>();
-        mPrefabWorkspace.BindResolveSystems(&renderer.Renderer(), &renderer.SurfaceMaterials(), &assets.Cache(),
-            resolver);
+        mPrefabWorkspace.BindResolveSystems(&renderer.Renderer(), &renderer.SurfaceMaterials(), assetService,
+            resolver, std::move(models));
         context.scheduler.AddSystem<PrefabPreviewSystem>(SystemPhase::LateUpdate,
             SystemOrder{SystemOrder::kNormal}, mPrefabWorkspace,
             prefab.Coordinator(), mEditor, [this] { RefreshPrefabHistory(); });
@@ -215,12 +216,11 @@ namespace mir
                 RefreshPrefabHistory();
             });
 
-        // after the renderer's: it freed every upload, the previews' too
+        // Scene-local editor work ends here, independent prefab Worlds retain their resources.
         mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &)
             {
                 mEditor.CancelSnapToTerrain();
                 mParticleEditor->OnHidden(mWorld);
-                mPrefabWorkspace.ResetResolve();
             });
 
         // every handle the undo history holds dies with the scene it came from
@@ -288,22 +288,11 @@ namespace mir
                 mAudioBeforePlay.reset();
             });
 
-        // the previews' models stage from the candidate too
-        mReloadPrepare = context.scheduler.AddStage(Stage::ReloadPrepare, [this, &assets](SystemContext &)
+        mReloadCommit = context.scheduler.AddStage(Stage::ReloadCommit, [this](SystemContext &)
             {
-                std::string error;
-                if (!mPrefabWorkspace.PrepareReload(assets.Candidate(), error))
-                    throw std::runtime_error("new preview model resources were rejected: " + error);
-            });
-        mReloadCommit = context.scheduler.AddStage(Stage::ReloadCommit, [this, &assets](SystemContext &)
-            {
-                mPrefabWorkspace.CommitReload(&assets.Cache());
+                mPrefabWorkspace.CommitReload();
                 mImport.MarkApplied();
                 MIR_LOG_INFO("Applied imported assets at an Edit frame boundary");
-            });
-        mReloadAbort = context.scheduler.AddStage(Stage::ReloadAbort, [this](SystemContext &)
-            {
-                mPrefabWorkspace.DiscardPreparedReload();
             });
 
         mDrawer = imgui.AddDrawer(DrawerGroup::Tools, [this, &window, &assets]
@@ -382,9 +371,7 @@ namespace mir
 
     EditorModule::~EditorModule()
     {
-        mReloadAbort.Reset();
         mReloadCommit.Reset();
-        mReloadPrepare.Reset();
         mPlayEnd.Reset();
         mPlayBegin.Reset();
         mSceneSaved.Reset();

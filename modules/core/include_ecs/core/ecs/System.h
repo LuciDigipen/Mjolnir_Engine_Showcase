@@ -105,6 +105,9 @@ namespace mir
         // Once, at teardown. Runs in the same order as OnStart.
         virtual void OnStop(SystemContext &) {}
 
+        // Runs before OnStart, resource preparation only, no gameplay.
+        virtual void OnLoadingUpdate(SystemContext &) {}
+
     protected:
         ISystem() = default;
     };

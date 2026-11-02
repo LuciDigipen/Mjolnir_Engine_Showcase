@@ -11,6 +11,7 @@
 #include <renderer/Material.h>
 #include <renderer/MaterialRecordTable.h>
 #include <renderer/MaterialReflection.h>
+#include <renderer/MeshStreaming.h>
 #include <renderer/SurfaceMaterialCatalog.h>
 
 #include "VulkanConstants.h"
@@ -112,6 +113,8 @@ namespace mir::vk
         // After BeginFrame's wait, before recording: publishes staged record bytes,
         // then refreshes this frame slot's record-reference rows.
         void PublishRecords(uint64_t completedFrame, uint64_t frame, uint32_t frameIndex);
+        // Publishes replacement sets after texture readiness, old sets survive their submitted frames.
+        void RefreshTextures(ResourceStore &resources, uint64_t completed, uint64_t lastUse);
         // Every material but the default and error ones, which move to slots 0 and 1; returns how many were released.
         std::size_t ReleaseMaterials();
 
@@ -126,6 +129,8 @@ namespace mir::vk
         // registered before the batch rebuilds pipelines and RT hit groups.
         bool ReloadSurfaceMaterialCatalog(std::string *error = nullptr);
 
+        // No free slot: released materials give theirs back when their frames complete
+        bool SlotsExhausted() const { return mFreeIndices.empty() && mMaterials.size() >= kMaxMaterials; }
         const GpuMaterial *FindMaterial(MaterialHandle handle) const;
         // What a draw with `handle` uses: the material; else the default for a null handle and the error
         // material for a stale one; null only when both are gone.
@@ -207,6 +212,8 @@ namespace mir::vk
         uint32_t mRecordRefFrameStride = 0;
 
         std::vector<GpuMaterial> mMaterials;
+        std::vector<MaterialHandle> mTextureWaiting;
+        FrameRetireList<VkDescriptorSet> mRetiredTextureSets;
         std::vector<uint32_t> mFreeIndices;
 
         MaterialHandle mDefaultMaterial;

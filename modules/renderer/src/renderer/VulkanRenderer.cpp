@@ -547,8 +547,12 @@ namespace mir
         DiscardPreparedShaderReload();
         if (mDevice->Handle() != VK_NULL_HANDLE)
         {
+            ReleaseCachedMaterials();
+            ReleaseCachedMeshes();
+            ReleaseCachedTextures();
             mDevice->WaitIdle();
 
+            CollectReleasedResources(UINT64_MAX);
             mFrameSync->Shutdown();
 
             mMeshUploads->Shutdown(*mRayTracer);
@@ -630,10 +634,9 @@ namespace mir
         return mMeshUploads->FrameBytes();
     }
 
-    MeshHandle VulkanRenderer::QueueMesh(std::vector<Vertex> vertices, std::vector<uint32_t> indices,
-        const MeshUploadOptions &options)
+    MeshHandle VulkanRenderer::QueueMesh(MeshUploadSource source, const MeshUploadOptions &options)
     {
-        return mMeshUploads->Queue(*mResources, *mRayTracer, std::move(vertices), std::move(indices), options);
+        return mMeshUploads->Queue(*mResources, *mRayTracer, std::move(source), options);
     }
 
     MeshUploadState VulkanRenderer::MeshState(MeshHandle handle) const
@@ -670,6 +673,7 @@ namespace mir
     {
         MeshStreamingStats stats;
         mMeshUploads->FillStats(stats);
+        stats.textureAllocatedBytes = mResources->TextureAllocatedBytes();
         stats.deviceWaits = mDevice->DeviceWaits();
         stats.queueWaits = mDevice->QueueWaits();
         stats.skippedDraws = mSkippedDraws;
@@ -682,6 +686,33 @@ namespace mir
         return mResources->CreateTexture(desc);
     }
 
+    TextureHandle VulkanRenderer::QueueTexture(TextureUploadSource source)
+    {
+        return mMeshUploads->QueueTexture(*mResources, std::move(source));
+    }
+
+    TextureUploadState VulkanRenderer::TextureState(TextureHandle handle) const
+    {
+        const auto *texture = mResources->FindTextureSlot(handle);
+        return texture ? texture->mState : TextureUploadState::Stale;
+    }
+
+    bool VulkanRenderer::RetireTexture(TextureHandle handle)
+    {
+        return mMeshUploads->RetireTexture(*mResources, handle, mFrameSync->LastIssuedValue());
+    }
+
+    uint64_t VulkanRenderer::TextureFootprint(TextureHandle handle) const
+    {
+        const auto *texture = mResources->FindTextureSlot(handle);
+        return texture ? texture->mBytes : 0;
+    }
+
+    uint64_t VulkanRenderer::TextureRetiringBytes() const
+    {
+        return MeshStreaming().retiringTextureBytes;
+    }
+
     TextureHandle VulkanRenderer::ErrorTexture() const
     {
         return mResources->ErrorTexture();
@@ -690,6 +721,11 @@ namespace mir
     MaterialHandle VulkanRenderer::CreateMaterial(const MaterialDesc &desc)
     {
         return mMaterialStore->CreateMaterial(desc, *mResources, vk::kHdrColorFormat);
+    }
+
+    bool VulkanRenderer::MaterialSlotsExhausted() const
+    {
+        return mMaterialStore->SlotsExhausted();
     }
 
     bool VulkanRenderer::UpdateMaterialRecord(MaterialHandle handle, std::span<const std::byte> bytes)
@@ -794,12 +830,17 @@ namespace mir
 
     void VulkanRenderer::ReleaseSceneResources()
     {
+        ReleaseCachedMaterials();
+        ReleaseCachedMeshes();
+        ReleaseCachedTextures();
         if (mFxSystem) mFxSystem->ClearScene();
         if (mDevice->Handle() == VK_NULL_HANDLE)
             return;
 
         // in-flight frames may still use them
         mDevice->WaitIdle();
+        // Drain retired handles before the stores can reuse scene slots.
+        CollectReleasedResources(UINT64_MAX);
 
         mMeshUploads->Clear(*mRayTracer);
         mRasterSurfaces->Shutdown();
@@ -825,18 +866,22 @@ namespace mir
         if (mDevice->Handle() == VK_NULL_HANDLE)
             return;
 
-        mDevice->WaitIdle();
-        mMeshUploads->Collect(*mResources, *mRayTracer, mFrameSync->LastIssuedValue());
-
-        // Stale handles, the built-in materials and the default textures are skipped.
         for (const MeshHandle handle : meshes)
-            DestroyMeshAndBlas(handle);
-
-        for (const MaterialHandle handle : materials)
-            mMaterialStore->DestroyMaterial(handle);
-
+            RetireMesh(handle);
         for (const TextureHandle handle : textures)
-            mResources->DestroyTexture(handle);
+            RetireTexture(handle);
+        if (!materials.empty())
+            mReleasedResources.Push(mFrameSync->LastIssuedValue(), 0,
+                ReleasedResources{ { materials.begin(), materials.end() } });
+    }
+
+    void VulkanRenderer::CollectReleasedResources(uint64_t completed)
+    {
+        mReleasedResources.Collect(completed, [this](ReleasedResources &resources)
+            {
+                for (const MaterialHandle handle : resources.materials)
+                    mMaterialStore->DestroyMaterial(handle);
+            });
     }
 
     bool VulkanRenderer::InitImGuiVulkanBackend()

@@ -119,6 +119,8 @@ namespace mir
         void AbortReload();
 
         uint64_t Generation() const { return mGeneration; }
+        // Registration lookup stays here so mesh resolvers only need IMeshResolveHost.
+        const SurfaceMaterialRegistration *FindMeshSurface(std::string_view shaderName) const;
 
         // A shader generation was committed, so every surface record may have a
         // new layout. Cheap and non-throwing: the next Acquire or preview adopts

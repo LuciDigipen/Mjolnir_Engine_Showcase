@@ -512,6 +512,28 @@ TEST_CASE("Forgetting drops every mesh without retiring any", "[terrain][gpu]")
     CHECK(h.residency.Stats().heldBytes == 0);
 }
 
+TEST_CASE("Unloading retires every resident mesh to the renderer before it forgets them", "[terrain][gpu]")
+{
+    const Release a(0x127, {0.0, 0.0, 0.0});
+    const Payloads payloads{&a};
+    Harness h(GpuSettings(uint64_t(1) << 30, uint64_t(1) << 30));
+    const TerrainPayloadKey tile = a.Tile({1, 3});
+    h.Request({&a.instance, 1}, {{tile, Demand::Visible, 1.0f}}, payloads.streamer);
+    h.BuildAll();
+    h.Request({&a.instance, 1}, {{tile, Demand::Visible, 1.0f}}, payloads.streamer);
+    h.uploader.Frame();
+    h.uploader.Frame();
+    h.residency.Install();
+    REQUIRE(h.residency.Ready(tile));
+
+    // what TerrainRuntime does on a scene unload
+    h.residency.RetireAll();
+    h.residency.Forget();
+    CHECK(h.residency.State(tile) == TerrainMeshState::Absent);
+    CHECK(h.uploader.retired.size() == 1);
+    CHECK(h.residency.Stats().heldBytes == 0);
+}
+
 TEST_CASE("A refined Region stays drawn until every child's GPU mesh is ready", "[terrain][gpu][selection]")
 {
     const Release a(0x127, {1000.5, -20.0, -2000.25});

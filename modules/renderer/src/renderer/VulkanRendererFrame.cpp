@@ -410,7 +410,9 @@ namespace mir
             }
             mModelDescriptors->ResetFrame(mFrameSync->Index());
             mMeshUploads->Collect(*mResources, *mRayTracer, mFrameSync->CompletedValue());
+            CollectReleasedResources(mFrameSync->CompletedValue());
             mMeshUploads->Record(frame->cmd, frame->signalValue, *mResources, *mRayTracer);
+            mMaterialStore->RefreshTextures(*mResources, mFrameSync->CompletedValue(), frame->signalValue);
 
             if (mMaterialTable != nullptr)
             {

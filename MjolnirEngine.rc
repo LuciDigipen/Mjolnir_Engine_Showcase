@@ -1,0 +1,2 @@
+// GLFW loads a resource with this exact name as its window class icon.
+GLFW_ICON ICON "branding/mjolnir.ico"

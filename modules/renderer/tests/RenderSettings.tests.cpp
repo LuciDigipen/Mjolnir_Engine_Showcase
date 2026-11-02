@@ -454,3 +454,36 @@ TEST_CASE("Invalid SSGI settings cannot overwrite project settings even when dis
         CHECK(file.Read() == before);
     }
 }
+
+TEST_CASE("The residency target defaults to 512 MiB, reads from the rendering section and rejects bad values",
+    "[renderer][residency]")
+{
+    TempSettingsFile file{ "residency.json" };
+    file.Write(R"({"rendering":{"rayTracing":true}})");
+    auto loaded = mir::RenderSettings::LoadFile(file.mPath);
+    REQUIRE(loaded);
+    CHECK(loaded->ResidencyBytes() == uint64_t(512) * 1024 * 1024);
+
+    file.Write(R"({"rendering":{"residencyMiB":128}})");
+    loaded = mir::RenderSettings::LoadFile(file.mPath);
+    REQUIRE(loaded);
+    CHECK(loaded->ResidencyBytes() == uint64_t(128) * 1024 * 1024);
+
+    for (const char *value : { "0", "-1", "\"8\"", "null", "70000" })
+    {
+        file.Write(std::string(R"({"rendering":{"rayTracing":true,"residencyMiB":)") + value + "}}");
+        loaded = mir::RenderSettings::LoadFile(file.mPath);
+        REQUIRE(loaded);
+        CHECK(loaded->rayTracing);
+        CHECK(loaded->residencyMiB == mir::RenderSettings::kDefaultResidencyMiB);
+    }
+
+    mir::RenderSettings saved;
+    saved.residencyMiB = 256.0;
+    REQUIRE(saved.SaveFile(file.mPath));
+    loaded = mir::RenderSettings::LoadFile(file.mPath);
+    REQUIRE(loaded);
+    CHECK(*loaded == saved);
+    saved.residencyMiB = 0.0;
+    CHECK_FALSE(saved.SaveFile(file.mPath));
+}

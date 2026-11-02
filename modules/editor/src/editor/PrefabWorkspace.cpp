@@ -63,11 +63,12 @@ namespace mir
     }
 
     void PrefabWorkspace::BindResolveSystems(VulkanRenderer *renderer, SurfaceMaterialLibrary *materials,
-        AssetCache *assets, const AssetResolver &resolver)
+        AsyncAssetService *assetService, const AssetResolver &resolver, std::shared_ptr<ModelLibrary> models)
     {
         mRenderer = renderer;
         mSurfaceMaterials = materials;
-        mAssets = assets;
+        mModels = std::move(models);
+        mAssetService = assetService;
         mResolver = &resolver;
     }
 
@@ -116,11 +117,11 @@ namespace mir
         if (mRenderer != nullptr)
         {
             preview->mMesh = &preview->mScheduler.AddSystem<MeshResolveSystem>(SystemPhase::PostUpdate,
-                SystemOrder{SystemOrder::kNormal}, *mRenderer, mSurfaceMaterials,
-                mAssets, *mResolver);
-            preview->mModel = &preview->mScheduler.AddSystem<ModelSystem>(SystemPhase::PostUpdate,
                 SystemOrder{SystemOrder::kNormal}, *mRenderer,
-                mAssets, *mResolver);
+                mAssetService, *mResolver, mSurfaceMaterials);
+            preview->mModel = &preview->mScheduler.AddSystem<ModelSystem>(SystemPhase::PostUpdate,
+                SystemOrder{SystemOrder::kNormal}, mModels,
+                mAssetService, *mResolver);
         }
 
         SystemContext context{ world, preview->mCommands };
@@ -272,55 +273,15 @@ namespace mir
         }
     }
 
-    bool PrefabWorkspace::PrepareReload(AssetCache &assets, std::string &error)
+    void PrefabWorkspace::CommitReload()
     {
-        DiscardPreparedReload();
-        for (const auto &[id, document] : mDocuments)
-        {
-            (void)id;
-            if (document->mModel != nullptr && !document->mModel->PrepareReload(assets, error))
-            {
-                DiscardPreparedReload();
-                return false;
-            }
-        }
-        return true;
-    }
-
-    void PrefabWorkspace::CommitReload(AssetCache *assets)
-    {
-        mAssets = assets;
         for (const auto &[id, document] : mDocuments)
         {
             (void)id;
             if (document->mModel != nullptr)
-                document->mModel->CommitReload(assets);
+                document->mModel->CommitReload();
             if (document->mMesh != nullptr)
-                document->mMesh->CommitReload(assets);
-            document->mWorld.Resource<ModelDrawItems>().items.clear();
-            document->mWorld.Resource<ModelMorphOverrides>().instances.clear();
-        }
-    }
-
-    void PrefabWorkspace::DiscardPreparedReload()
-    {
-        for (const auto &[id, document] : mDocuments)
-        {
-            (void)id;
-            if (document->mModel != nullptr)
-                document->mModel->DiscardPreparedReload();
-        }
-    }
-
-    void PrefabWorkspace::ResetResolve()
-    {
-        for (auto &[id, document] : mDocuments)
-        {
-            (void)id;
-            if (document->mMesh != nullptr)
-                document->mMesh->Reset();
-            if (document->mModel != nullptr)
-                document->mModel->Reset();
+                document->mMesh->CommitReload();
             document->mWorld.Resource<ModelDrawItems>().items.clear();
             document->mWorld.Resource<ModelMorphOverrides>().instances.clear();
         }

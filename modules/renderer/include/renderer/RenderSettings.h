@@ -62,10 +62,14 @@ namespace mir
     {
         static constexpr double kDefaultUploadMiBPerFrame = double(kDefaultFrameBytes) / (1024.0 * 1024.0);
         static constexpr double kMaxUploadMiBPerFrame = 1024.0;
+        static constexpr double kDefaultResidencyMiB = 512.0;
+        static constexpr double kMaxResidencyMiB = 65536.0;
 
         bool rayTracing = false;
         // Streamed mesh bytes the renderer uploads per frame.
         double uploadMiBPerFrame = kDefaultUploadMiBPerFrame;
+        // Memory target for cached GPU resources. Resources still in use may exceed it.
+        double residencyMiB = kDefaultResidencyMiB;
         DdgiSettings ddgi;
         SsgiSettings ssgi;
 
@@ -73,6 +77,8 @@ namespace mir
 
         static bool ValidUploadMiBPerFrame(double mib);
         uint64_t UploadFrameBytes() const;
+        static bool ValidResidencyMiB(double mib);
+        uint64_t ResidencyBytes() const;
 
         // nullopt if the file is missing or unreadable; a file with no
         // "rendering" section loads as defaults.

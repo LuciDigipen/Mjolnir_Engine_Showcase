@@ -13,6 +13,7 @@
 #include "ResourceStore.h"
 #include <renderer/Mesh.h>
 #include <renderer/MeshStreaming.h>
+#include <renderer/TextureUpload.h>
 
 #include <volk.h>
 
@@ -50,8 +51,10 @@ namespace mir::vk
         // With the device idle.
         void Shutdown(RayTracer &rayTracer);
 
-        MeshHandle Queue(ResourceStore &resources, const RayTracer &rayTracer, std::vector<Vertex> vertices,
-                         std::vector<uint32_t> indices, const MeshUploadOptions &options);
+        MeshHandle Queue(ResourceStore &resources, const RayTracer &rayTracer, MeshUploadSource source,
+                         const MeshUploadOptions &options);
+        TextureHandle QueueTexture(ResourceStore &resources, TextureUploadSource source);
+        bool RetireTexture(ResourceStore &resources, TextureHandle texture, uint64_t lastUse);
         uint64_t Footprint(const RayTracer &rayTracer, uint32_t vertexCount, uint32_t indexCount,
                            const MeshUploadOptions &options) const;
         // Freed once lastUse completes; a mesh not recorded yet is canceled at once. False for a stale handle.
@@ -71,8 +74,7 @@ namespace mir::vk
         struct Queued
         {
             MeshHandle mesh;
-            std::vector<Vertex> vertices;
-            std::vector<uint32_t> indices;
+            MeshUploadSource source;
             bool blas = false;
         };
 
@@ -80,7 +82,18 @@ namespace mir::vk
         {
             RayTracer::MeshBlas blas;
             std::vector<std::pair<VkBuffer, VmaAllocation>> buffers;
+            std::vector<GpuTexture> textures;
         };
+
+        struct QueuedTexture
+        {
+            TextureHandle mHandle;
+            TextureUploadSource mSource;
+            uint64_t mRemaining = 0;
+        };
+        struct TextureFinish { TextureHandle mHandle; uint64_t mFrame; };
+        void RecordTexture(VkCommandBuffer cmd, uint64_t frame, ResourceStore &resources,
+            const MeshUploadQueue::Admitted &band);
 
         // Replaces the ring when nothing is queued or in flight.
         bool Configure(const MeshStreamingDesc &desc);
@@ -94,9 +107,14 @@ namespace mir::vk
         std::byte *mStagingMapped = nullptr;
         // By mesh slot.
         std::unordered_map<uint32_t, Queued> mQueued;
+        std::unordered_map<uint32_t, QueuedTexture> mTextures;
+        std::unordered_map<uint32_t, TextureFinish> mTextureFinishes;
         FrameRetireList<Garbage> mRetired;
+        FrameRetireList<Garbage> mRetiredTextures;
 
         uint64_t mQueuedCount = 0;
+        uint64_t mTextureQueuedCount = 0;
+        uint64_t mTextureUploadedCount = 0;
         uint64_t mUploaded = 0;
         uint64_t mCanceled = 0;
         uint64_t mRetiredCount = 0;

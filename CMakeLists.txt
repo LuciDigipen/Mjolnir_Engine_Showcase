@@ -29,6 +29,7 @@ include(cmake/Shaders.cmake)
 include(cmake/Assets.cmake)
 include(cmake/Fonts.cmake)
 include(cmake/Branding.cmake)
+include(cmake/Player.cmake)
 
 option(BUILD_TESTING "Build unit tests (per module, run via ctest)" ON)
 
@@ -101,6 +102,12 @@ add_subdirectory(tools/TerrainTool)
 add_executable(MjolnirEngine WIN32)
 target_sources(MjolnirEngine PRIVATE main.cpp)
 engine_target_utf8(MjolnirEngine)
+if(ENGINE_PLATFORM STREQUAL "Windows")
+    target_sources(MjolnirEngine PRIVATE MjolnirEngine.rc)
+    set_source_files_properties(MjolnirEngine.rc PROPERTIES
+        INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
+        OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/branding/mjolnir.ico")
+endif()
 
 foreach(surface_shader default model unlit error)
     engine_add_shaders(MjolnirEngine
@@ -226,6 +233,8 @@ engine_add_shaders(MjolnirEngine
 
 if(BUILD_TESTING)
     add_subdirectory(tools/ParticleGpuCheck)
+    add_subdirectory(tools/TextureGpuCheck)
+    add_subdirectory(tools/ModelWorldsGpuCheck)
 endif()
 
 engine_add_shaders(MjolnirEngine
@@ -378,7 +387,14 @@ engine_cook_assets(MjolnirEngine
     OUT_DIR ${CMAKE_BINARY_DIR}/cooked_assets)
 
 engine_copy_fonts(MjolnirEngine SOURCE_DIR fonts)
-engine_copy_branding(MjolnirEngine SOURCE_DIR branding)
+# The master logo and the icon compiled into the exe aren't read at runtime
+engine_copy_branding(MjolnirEngine SOURCE_DIR branding EXCLUDE mjolnir-logo.png mjolnir.ico)
+engine_write_player_info(MjolnirEngine)
+
+# A build without the editor is the player; `cmake --install` turns it into a template
+if(NOT MJOLNIR_WITH_EDITOR)
+    engine_install_player(MjolnirEngine)
+endif()
 
 add_custom_target(MjolnirEngine_copy_games
     ${game_copy_commands}

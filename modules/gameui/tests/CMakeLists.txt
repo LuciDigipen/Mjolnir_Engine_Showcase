@@ -1,4 +1,5 @@
 ﻿engine_add_module_tests(gameui
+    GameUIModule.tests.cpp
     UIActiveDevice.tests.cpp
     UIDrawList.tests.cpp
     UIFocus.tests.cpp
