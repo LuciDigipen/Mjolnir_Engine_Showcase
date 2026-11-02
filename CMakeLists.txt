@@ -248,6 +248,8 @@ engine_add_shaders(MjolnirEngine
     ENTRIES rayGenMain:raygeneration missMain:miss closestHitMain:closesthit shadowMissMain:miss
             anyHitMain:anyhit shadowAnyHitMain:anyhit)
 
+include(cmake/GameContent.cmake)
+
 # Every games/*/ with a game.json is a game; its assetsRoot gets cooked
 file(GLOB game_manifests CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/games/*/game.json")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${game_manifests})
@@ -260,9 +262,17 @@ set(terrain_package_commands "")
 foreach(manifest IN LISTS game_manifests)
     get_filename_component(game_dir "${manifest}" DIRECTORY)
     get_filename_component(game_name "${game_dir}" NAME)
-    list(APPEND game_names "${game_name}")
 
     file(READ "${manifest}" game_json)
+
+    # A game whose large files were left out of the clone is not a game on this machine.
+    game_content_present("${game_dir}" "${game_json}" game_has_content)
+    if(NOT game_has_content)
+        message(STATUS "Skipping game ${game_name}: its LFS content is not here; see games/${game_name}/README.md")
+        continue()
+    endif()
+    list(APPEND game_names "${game_name}")
+
     string(JSON game_json_length ERROR_VARIABLE game_json_error LENGTH "${game_json}")
     if(game_json_error)
         message(WARNING "${manifest} is not valid JSON (${game_json_error}), cooking its default assets root")

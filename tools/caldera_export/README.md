@@ -1,6 +1,6 @@
 # Caldera export
 
-Turns the Caldera USD dataset into what `games/CalderaDemo` needs. The engine and `TerrainTool` never link OpenUSD; USD stays in these scripts. See `docs/terrain/caldera-import-plan.md` for the reasoning and measurements.
+Turns the Caldera USD dataset into what `games/CalderaDemo` needs. The engine and `TerrainTool` never link OpenUSD; USD stays in these scripts.
 
 ## Environment
 
@@ -17,12 +17,12 @@ Run the scripts without `-I`, because they import `export_terrain` from their ow
 
 Run from the repository root. `--caldera-root` is the dataset's checkout.
 
-| Script | Command | Writes |
-|---|---|---|
-| Terrain | `python tools/caldera_export/export_terrain.py --caldera-root <dir> --game-dir games/CalderaDemo [--sea-level 0]` | `source/caldera.heights`, the terrain recipe, a report |
-| Runway | `python tools/caldera_export/export_runway.py --caldera-root <dir> --game-dir games/CalderaDemo` | `assets/models/runway.glb`, a report |
+| Script    | Command                                                                                                                       | Writes                                                                   |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Terrain   | `python tools/caldera_export/export_terrain.py --caldera-root <dir> --game-dir games/CalderaDemo [--sea-level 0]`             | `source/caldera.heights`, the terrain recipe, a report                   |
+| Runway    | `python tools/caldera_export/export_runway.py --caldera-root <dir> --game-dir games/CalderaDemo`                              | `assets/models/runway.glb`, a report                                     |
 | Buildings | `python tools/caldera_export/export_buildings.py --caldera-root <dir> --game-dir games/CalderaDemo [--keep-interior-objects]` | `assets/models/airfield/*.glb`, the LOD script, scene entities, a report |
-| Ocean | `python tools/caldera_export/export_ocean.py --game-dir games/CalderaDemo [--sea-level 1.2] [--cell 8]` | `assets/meshes/ocean.mesh.json`, a report |
+| Ocean     | `python tools/caldera_export/export_ocean.py --game-dir games/CalderaDemo [--sea-level 1.2] [--cell 8]`                       | `assets/meshes/ocean.mesh.json`, a report                                |
 
 Run terrain first: the ocean reads its heights and needs no USD. Then build, which bakes terrain when the heights changed and cooks the models.
 
