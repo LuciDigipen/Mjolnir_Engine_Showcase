@@ -337,8 +337,8 @@ namespace mir
                 MaterialEditorContext materialContext;
                 materialContext.mMaterials = &mRenderer.SurfaceMaterials();
                 materialContext.mCatalog = &mRenderer.Renderer().SurfaceMaterials();
-                materialContext.mReimportMaterial = [this](std::string_view logicalPath)
-                { return mImport.ReimportMaterial(logicalPath); };
+                materialContext.mReimportMaterial = [this](std::string_view logicalPath, bool force)
+                { return mImport.ReimportMaterial(logicalPath, force); };
                 materialContext.mMaterialCookRevision = [this](std::string_view logicalPath)
                 { return mImport.MaterialCookRevision(logicalPath); };
                 materialContext.mMaterialCookFailureRevision = [this](std::string_view logicalPath)

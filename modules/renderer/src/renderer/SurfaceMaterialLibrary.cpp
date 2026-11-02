@@ -521,12 +521,136 @@ namespace mir
         mValidator = std::move(validator);
     }
 
-    const SurfaceMaterialRegistration *SurfaceMaterialLibrary::FindMeshSurface(std::string_view shaderName) const
+    SurfaceMaterialLookup SurfaceMaterialLibrary::LookupMeshSurface(std::string_view reference) const
     {
-        if (mHost == nullptr) return nullptr;
+        SurfaceMaterialLookup lookup;
+        if (mHost == nullptr)
+        {
+            lookup.status = SurfaceMaterialLookupStatus::Missing;
+            lookup.error = "the material library is not bound";
+            return lookup;
+        }
+
+        const bool explicitAsset = reference.ends_with(".material.json");
+        std::size_t matches = 0;
         for (const SurfaceMaterialRegistration &registration : mHost->MaterialCatalog().materials)
-            if (registration.frontend == "mesh" && registration.stem == shaderName) return &registration;
-        return nullptr;
+        {
+            if (registration.frontend != "mesh")
+                continue;
+            if (explicitAsset ? registration.asset == reference : registration.stem == reference)
+            {
+                if (matches == 0)
+                    lookup.registration = &registration;
+                ++matches;
+            }
+        }
+
+        if (matches == 1)
+        {
+            lookup.status = SurfaceMaterialLookupStatus::Found;
+            return lookup;
+        }
+        if (matches == 0)
+        {
+            if (explicitAsset)
+            {
+                lookup.status = SurfaceMaterialLookupStatus::Missing;
+                lookup.error = "no mesh surface material is registered for asset '" + std::string(reference) + "'";
+            }
+            return lookup;
+        }
+
+        lookup.status = SurfaceMaterialLookupStatus::Ambiguous;
+        lookup.registration = nullptr;
+        lookup.error = "shader '" + std::string(reference) + "' names " + std::to_string(matches) +
+            " surface materials; use its .material.json asset path";
+        return lookup;
+    }
+
+    SurfaceMaterialPublication SurfaceMaterialLibrary::Publication(std::string_view logicalPath) const
+    {
+        SurfaceMaterialPublication publication;
+        if (mAssets != nullptr)
+            publication.revision = mAssets->Revision();
+
+        std::vector<std::string> keys;
+        for (const SurfaceMaterialUse &use : mActive)
+            if (use.logicalPath == logicalPath)
+                keys.push_back(MaterialKey(use.logicalPath, use.frontend));
+        if (keys.empty())
+        {
+            for (const auto &[key, entry] : mEntries)
+                if (entry.binding && entry.logicalPath == logicalPath)
+                    keys.push_back(key);
+        }
+        if (keys.empty())
+        {
+            publication.status = SurfaceMaterialPublicationStatus::Inactive;
+            return publication;
+        }
+
+        bool pending = false;
+        uint64_t current = 0;
+        for (const std::string &key : keys)
+        {
+            const auto found = mEntries.find(key);
+            if (found == mEntries.end())
+            {
+                pending = true;
+                continue;
+            }
+            const Entry &entry = found->second;
+            if (current == 0)
+                current = CurrentIdentity(entry.asset);
+            if (const auto load = mLoads.find(key);
+                load != mLoads.end() && load->second.failed)
+            {
+                publication.content = current;
+                publication.status = SurfaceMaterialPublicationStatus::Failed;
+                publication.error = load->second.error;
+                return publication;
+            }
+            if (!entry.binding)
+            {
+                if (entry.failed)
+                {
+                    publication.content = current;
+                    publication.status = SurfaceMaterialPublicationStatus::Failed;
+                    publication.error = entry.error;
+                    return publication;
+                }
+                pending = true;
+                continue;
+            }
+
+            if (mLoads.contains(key))
+            {
+                pending = true;
+                continue;
+            }
+            if (entry.attemptFailed)
+            {
+                if (entry.attemptContent == current)
+                {
+                    publication.content = current;
+                    publication.status = SurfaceMaterialPublicationStatus::Failed;
+                    publication.error = entry.attemptError;
+                    return publication;
+                }
+                pending = true;
+                continue;
+            }
+            if (entry.acceptedContent != current)
+            {
+                pending = true;
+                continue;
+            }
+        }
+
+        publication.content = current;
+        publication.status = pending ? SurfaceMaterialPublicationStatus::Pending
+                                     : SurfaceMaterialPublicationStatus::Published;
+        return publication;
     }
 
     void SurfaceMaterialLibrary::NotifyShaderCommit() noexcept
@@ -707,6 +831,9 @@ namespace mir
         mLoads.erase(key);
         entry.failed = false;
         entry.error.clear();
+        entry.attemptFailed = false;
+        entry.attemptError.clear();
+        entry.attemptContent = 0;
 
         Load load;
         load.identity = CurrentIdentity(entry.asset);
@@ -992,6 +1119,9 @@ namespace mir
             entry.acceptedContent = 0;
         }
         entry.attemptRevision = load.revision;
+        entry.attemptFailed = true;
+        entry.attemptError = error;
+        entry.attemptContent = load.identity;
         mLoads.erase(MaterialKey(entry.logicalPath, entry.frontend));
         ++mGeneration;
     }
@@ -1021,6 +1151,9 @@ namespace mir
         entry.mSchemaEpoch = mSchemaEpoch;
         entry.failed = false;
         entry.error.clear();
+        entry.attemptFailed = false;
+        entry.attemptError.clear();
+        entry.attemptContent = 0;
         entry.acceptedContent = load.identity;
         entry.acceptedRevision = load.revision;
         std::vector<TextureLoadLease> claims;
@@ -1315,6 +1448,9 @@ namespace mir
                 entry.acceptedRevision = mAssets->Revision();
                 entry.failed = false;
                 entry.error.clear();
+                entry.attemptFailed = false;
+                entry.attemptError.clear();
+                entry.attemptContent = 0;
                 continue;
             }
             const auto load = mLoads.find(key);

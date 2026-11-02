@@ -9,6 +9,7 @@
 #include <renderer/MeshResolveSystem.h>
 
 #include <assets/AssetId.h>
+#include <assets/AssetPath.h>
 #include <assets/AssetResolver.h>
 #include <core/ecs/Query.h>
 #include <core/ecs/SceneLoadGroup.h>
@@ -170,6 +171,40 @@ namespace mir
         return load == nullptr || load->phase == MeshLoadPhase::Failed;
     }
 
+    SurfaceMaterialLookup MeshResolveSystem::LookupSurfaceMaterial(std::string_view reference) const
+    {
+        if (mSurfaceMaterials == nullptr)
+            return SurfaceMaterialLookup{};
+        if (!reference.ends_with(".material.json"))
+            return mSurfaceMaterials->LookupMeshSurface(reference);
+
+        std::string error;
+        AssetId id = mResolver.Resolve(reference, &error);
+        if (id.IsNull())
+        {
+            const AssetPathResult normalized = NormalizeAssetPath(reference);
+            if (normalized.Ok())
+                id = mResolver.ResolveFull(normalized.path);
+        }
+        if (id.IsNull())
+        {
+            SurfaceMaterialLookup lookup;
+            lookup.status = SurfaceMaterialLookupStatus::Missing;
+            lookup.error = "explicit material '" + std::string(reference) + "' is not a cooked asset";
+            if (!error.empty())
+                lookup.error += ": " + error;
+            return lookup;
+        }
+        SurfaceMaterialLookup lookup = mSurfaceMaterials->LookupMeshSurface(mResolver.PathOf(id));
+        if (lookup.status == SurfaceMaterialLookupStatus::NotSurface)
+        {
+            lookup.status = SurfaceMaterialLookupStatus::Missing;
+            lookup.error = "the explicit material '" + std::string(reference) +
+                "' declares no mesh surface registration";
+        }
+        return lookup;
+    }
+
     MaterialHandle MeshResolveSystem::ResolveMaterial(const std::string &shaderName, ResolvedNames &resolved)
     {
         resolved.mSurface = false;
@@ -184,11 +219,10 @@ namespace mir
             return it->second.mMaterial;
         }
 
-        const SurfaceMaterialRegistration *const surface = mSurfaceMaterials != nullptr
-            ? mSurfaceMaterials->FindMeshSurface(shaderName) : nullptr;
-        if (mSurfaceMaterials != nullptr && surface != nullptr)
+        const SurfaceMaterialLookup surface = LookupSurfaceMaterial(shaderName);
+        if (surface.status == SurfaceMaterialLookupStatus::Found)
         {
-            const std::string logicalPath = surface->asset;
+            const std::string logicalPath = surface.registration->asset;
             const AssetId asset = mResolver.ResolveFull(logicalPath);
             const SurfaceMaterialResolution resolution = mSurfaceMaterials->Resolve(logicalPath, asset, "mesh");
             if (resolution.status == SurfaceMaterialStatus::Ready && resolution.binding)
@@ -222,6 +256,12 @@ namespace mir
             // Retried when the library generation moves; an error material
             // would hide that the authored surface failed.
             MIR_LOG_ERROR("MeshResolveSystem: surface material '{}': {}", shaderName, resolution.error);
+            return mRenderer.ErrorMaterial();
+        }
+        if (surface.status == SurfaceMaterialLookupStatus::Ambiguous ||
+            surface.status == SurfaceMaterialLookupStatus::Missing)
+        {
+            MIR_LOG_ERROR("MeshResolveSystem: material '{}': {}", shaderName, surface.error);
             return mRenderer.ErrorMaterial();
         }
 
@@ -272,10 +312,10 @@ namespace mir
         mLibraryGeneration = generation;
 
         // The library replaced or migrated the shared handles, so every borrowed
-        // cache entry and resolved shader name is stale.
+        // cache entry and resolved material is stale.
         std::erase_if(mMaterials, [](const auto &entry) { return entry.second.mBorrowed; });
         for (auto &[entity, names] : mResolved)
-            names.mShader.clear();
+            names.mMaterialInvalidated = true;
     }
 
     void MeshResolveSystem::OnUpdate(SystemContext &context)
@@ -332,9 +372,10 @@ namespace mir
                     }
                 }
 
-                if (resolved.mShader != shaderName)
+                if (resolved.mShader != shaderName || resolved.mMaterialInvalidated)
                 {
                     resolved.mShader = shaderName;
+                    resolved.mMaterialInvalidated = false;
                     resolved.mSurface = false;
                     resolved.mSurfacePath.clear();
                     resolved.mSurfaceAsset = kNullAssetId;

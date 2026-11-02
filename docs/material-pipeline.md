@@ -127,28 +127,44 @@ declares stays in the source, stays reported as unsupported and is projected out
 only when the record is packed. Previewed values never move the baseline.
 
 One asset is one shared material across its fronts. An ordinary `MeshRenderer`
-whose `materialShader` is a registered `mesh` stem borrows the library's handle;
-the main scene and every Prefab preview resolver contribute their own active
-uses, and the library merges them with the terrain's instead of one owner
-replacing another. A pending edit publishes every valid frontend of the asset in
-one batch: each frontend keeps its own layout and `TextureRef` rows, the overlay
-is filtered to the names it declares, every record is validated and copied
-before any is committed, and the commit itself does not allocate. A frontend
-that joins later merges the peer's current same-name, same-kind numeric values
-into its parameters before packing, so a value the other frontend rejects fails
-the acquisition instead of publishing the cooked baseline; a cook candidate is
-built from the cooked baseline only, and a failed cached entry retries on its
-next acquisition. Shared finite, macro and parallax bounds apply to both
-frontends, while the terrain UV phase divisor stays terrain-only. Revert queues
-the accepted numeric values so a generation event cannot strand the GPU on the
-dirty value.
+whose `materialShader` names an explicit `.material.json` asset path, or a
+registered `mesh` stem that only one recipe uses, borrows the library's handle.
+A stem shared by several recipes is ambiguous and resolves to the error material
+instead of the first registration. The main scene and every Prefab preview
+resolver contribute their own active uses, and the library merges them with the
+terrain's instead of one owner replacing another. A pending edit publishes every
+valid frontend of the asset in one batch: each frontend keeps its own layout and
+`TextureRef` rows, the overlay is filtered to the names it declares, every record
+is validated and copied before any is committed, and the commit itself does not
+allocate. A frontend that joins later merges the peer's current same-name,
+same-kind numeric values into its parameters before packing, so a value the other
+frontend rejects fails the acquisition instead of publishing the cooked baseline;
+a cook candidate is built from the cooked baseline only, and a failed cached entry
+retries on its next acquisition. Shared finite, macro and parallax bounds apply
+to both frontends, while the terrain UV phase divisor stays terrain-only. Revert
+queues the accepted numeric values so a generation event cannot strand the GPU on
+the dirty value.
+
+`SurfaceMaterialLibrary::Publication` reports the actual async publication of
+one asset, separately from `Resolve`'s last-good draw binding and from the
+library's global generation. It is `Published` only when every active frontend
+accepted the current asset content, `Pending` while a replacement is in flight,
+`Failed` with the failed attempt's diagnostic, and `Inactive` when the scene
+draws none of the asset.
 
 Save writes only changed `parameters` and `textures.<role>.path` members through
 `UpdateJsonFile`; unknown keys and the other texture fields stay. A successful
 write queues one finite `--material` batch, and the ordinary Edit reload
-publishes the new record. A failed batch keeps the last-good material and the
-draft. Texture replacement changes only the source path, so packing, colour
-space, resolution and mip generation are unchanged. Play is read-only.
+publishes the new record. The draft moves its accepted baseline only after that
+asset's publication is `Published`, or when the material is inactive; a pending
+or failed replacement keeps the previous baseline, the visible failure and the
+retry state. An unchanged retry after a renderer publication failure uses the
+importer's existing force-reimport path once per Save, so it actually starts a
+new replacement instead of claiming the already-applied recipe. Unchanged
+content that was accepted confirms reuse without creating another pipeline.
+A failed batch keeps the last-good material and the draft. Texture replacement
+changes only the source path, so packing, colour space, resolution and mip
+generation are unchanged. Play is read-only.
 ## Material types
 
 A material file defines only the surface function:

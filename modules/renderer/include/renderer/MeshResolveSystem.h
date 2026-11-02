@@ -87,6 +87,10 @@ namespace mir
         {
             std::string mMesh;
             std::string mShader;
+            // A new record, or a library generation that replaced or migrated the
+            // shared handles, must resolve the material even when the authored name
+            // is empty and therefore unchanged.
+            bool mMaterialInvalidated = true;
             bool mSurface = false;
             std::string mSurfacePath;
             AssetId mSurfaceAsset;
@@ -104,6 +108,7 @@ namespace mir
         MeshView ViewOf(const CachedMesh &cached) const;
         // A failure is as final as a ready mesh, the scene stops waiting for it
         static bool Failed(const CachedMesh &cached);
+        SurfaceMaterialLookup LookupSurfaceMaterial(std::string_view reference) const;
         MaterialHandle ResolveMaterial(const std::string &shaderName, ResolvedNames &resolved);
         void PublishUses();
         void RebindSurfaceMaterials();

@@ -68,6 +68,29 @@ namespace mir
         std::string error;
     };
 
+    enum class SurfaceMaterialPublicationStatus : uint8_t { Inactive, Pending, Published, Failed };
+
+    // The renderer's current publication of one asset, separate from the last-good draw binding Resolve returns
+    // and from the library's global generation. Published means every active frontend accepted the current asset
+    // content; Inactive means the scene draws none of it.
+    struct SurfaceMaterialPublication
+    {
+        SurfaceMaterialPublicationStatus status = SurfaceMaterialPublicationStatus::Inactive;
+        uint64_t content = 0;
+        uint32_t revision = 0;
+        std::string error;
+    };
+
+    // Exact asset or unique-stem lookup. A stem shared by several recipes is ambiguous, never first-match.
+    enum class SurfaceMaterialLookupStatus : uint8_t { NotSurface, Found, Ambiguous, Missing };
+
+    struct SurfaceMaterialLookup
+    {
+        SurfaceMaterialLookupStatus status = SurfaceMaterialLookupStatus::NotSurface;
+        const SurfaceMaterialRegistration *registration = nullptr;
+        std::string error;
+    };
+
     // Decodes a committed record into the resolved parameters, the terrain
     // metadata and the layout revision. The handle in `binding` is copied
     // through unchanged, so the caller keeps the live material.
@@ -148,8 +171,12 @@ namespace mir
         const std::vector<SurfaceMaterialUse> &ActiveMaterials() const { return mActive; }
 
         uint64_t Generation() const { return mGeneration; }
-        // Registration lookup stays here so mesh resolvers only need IMeshResolveHost.
-        const SurfaceMaterialRegistration *FindMeshSurface(std::string_view shaderName) const;
+        // Registration lookup stays here so mesh resolvers only need IMeshResolveHost. The reference is an
+        // exact .material.json asset path or a shader stem; a shared stem is reported as ambiguous.
+        SurfaceMaterialLookup LookupMeshSurface(std::string_view reference) const;
+
+        // The actual async publication of one asset. It never changes the last-good binding or generation.
+        SurfaceMaterialPublication Publication(std::string_view logicalPath) const;
 
         // A shader generation was committed, so every surface record may have a
         // new layout. Cheap and non-throwing: the next Resolve or preview adopts
@@ -197,6 +224,9 @@ namespace mir
             uint64_t mSchemaEpoch = 0;
             bool failed = false;
             uint32_t attemptRevision = 0;
+            bool attemptFailed = false;
+            std::string attemptError;
+            uint64_t attemptContent = 0;
             uint64_t acceptedContent = 0;
             uint32_t acceptedRevision = 0;
         };

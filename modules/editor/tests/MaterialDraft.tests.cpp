@@ -179,7 +179,7 @@ TEST_CASE("A material save then cook moves the baseline; failure keeps the draft
     CHECK(patch.size() == 1);
     CHECK(patch.at("amount") == 5.0f);
 
-    mir::MaterialDraftMarkSaved(draft, 1, 10, true);
+    mir::MaterialDraftMarkSaved(draft, 1);
     CHECK(draft.mCooking);
     CHECK(mir::MaterialDraftDirty(draft));
 
@@ -195,9 +195,10 @@ TEST_CASE("A material save then cook moves the baseline; failure keeps the draft
     CHECK(Field(draft, "color")->mComponents[0] == 0.1f);
 
     Field(draft, "amount")->mComponents[0] = 6.0f;
-    mir::MaterialDraftMarkSaved(draft, 1, 10, true);
+    mir::MaterialDraftMarkSaved(draft, 1);
     CHECK_FALSE(mir::MaterialDraftCooked(draft, false, "the cook failed"));
     CHECK_FALSE(draft.mCooking);
+    CHECK_FALSE(mir::MaterialDraftNeedsForcedReimport(draft));
     CHECK(mir::MaterialDraftDirty(draft));
     CHECK(Field(draft, "amount")->mComponents[0] == 6.0f);
     CHECK(draft.mStatusIsError);
@@ -532,26 +533,93 @@ TEST_CASE("A clean draft refreshes from an external cook without replaying clean
     CHECK_FALSE(nlohmann::json::parse(*overlay).contains("count"));
 }
 
-TEST_CASE("A material cook waits for the matching apply and reports late failure", "[editor][material]")
+TEST_CASE("A material cook waits for per-asset publication even without a prior binding", "[editor][material]")
 {
     mir::MaterialDraft draft = TestDraft();
     Field(draft, "amount")->mComponents[0] = 5.0f;
-    mir::MaterialDraftMarkSaved(draft, 7, 10, true);
+    mir::MaterialDraftMarkSaved(draft, 7);
 
-    CHECK(mir::ResolveMaterialCook(draft, true, false, {}, true, 6, std::nullopt, 11) == mir::MaterialCookOutcome::Waiting);
-    CHECK(mir::ResolveMaterialCook(draft, true, false, {}, true, 7, std::nullopt, 10) == mir::MaterialCookOutcome::Waiting);
-    CHECK(mir::ResolveMaterialCook(draft, true, false, {}, true, 7, std::nullopt, 11) == mir::MaterialCookOutcome::Applied);
-    CHECK(mir::ResolveMaterialCook(draft, true, false, {}, false, 7, std::nullopt, 10) == mir::MaterialCookOutcome::Applied);
-    CHECK(mir::ResolveMaterialCook(draft, false, false, {}, true, 7, std::nullopt, 11) == mir::MaterialCookOutcome::Waiting);
-    CHECK(mir::ResolveMaterialCook(draft, true, true, "older batch failed", true, 7, 6, 11) ==
-        mir::MaterialCookOutcome::Waiting);
-    CHECK(mir::ResolveMaterialCook(draft, true, true, "late apply failed", true, 7, 7, 11) ==
-        mir::MaterialCookOutcome::Failed);
+    CHECK(mir::ResolveMaterialCook(draft, true, false, {}, 6, std::nullopt,
+              mir::MaterialPublicationState::Published, {}) == mir::MaterialCookOutcome::Waiting);
+    CHECK(mir::ResolveMaterialCook(draft, true, false, {}, 7, std::nullopt,
+              mir::MaterialPublicationState::Pending, {}) == mir::MaterialCookOutcome::Waiting);
+    CHECK(mir::ResolveMaterialCook(draft, true, false, {}, 7, std::nullopt,
+              mir::MaterialPublicationState::Published, {}) == mir::MaterialCookOutcome::Applied);
+    CHECK(mir::ResolveMaterialCook(draft, true, false, {}, 7, std::nullopt,
+              mir::MaterialPublicationState::Inactive, {}) == mir::MaterialCookOutcome::Applied);
+    CHECK(mir::ResolveMaterialCook(draft, false, false, {}, 7, std::nullopt,
+              mir::MaterialPublicationState::Pending, {}) == mir::MaterialCookOutcome::Waiting);
+    CHECK(mir::ResolveMaterialCook(draft, true, true, "older batch failed", 7, 6,
+              mir::MaterialPublicationState::Pending, {}) == mir::MaterialCookOutcome::Waiting);
+    CHECK(mir::ResolveMaterialCook(draft, true, true, "late apply failed", 7, 7,
+              mir::MaterialPublicationState::Published, {}) == mir::MaterialCookOutcome::Failed);
+    CHECK(mir::ResolveMaterialCook(draft, true, false, {}, 7, std::nullopt,
+              mir::MaterialPublicationState::Failed, "its texture did not load") == mir::MaterialCookOutcome::Failed);
+    CHECK(mir::ResolveMaterialCook(draft, true, false, {}, 7, std::nullopt,
+              mir::MaterialPublicationState::Inactive, {}) == mir::MaterialCookOutcome::Applied);
 
     CHECK_FALSE(mir::MaterialDraftCooked(draft, false, "late apply failed"));
     CHECK(draft.mApplyFailed);
     CHECK(mir::MaterialDraftDirty(draft));
     CHECK(Field(draft, "amount")->mComponents[0] == 5.0f);
+}
+
+TEST_CASE("A target waits or rejects before creating a draft from unaccepted cooked values",
+    "[editor][material]")
+{
+    CHECK(mir::DecideMaterialTargetGate(mir::MaterialPublicationState::Pending) ==
+        mir::MaterialTargetGate::WaitForPublication);
+    CHECK(mir::DecideMaterialTargetGate(mir::MaterialPublicationState::Failed) == mir::MaterialTargetGate::Rejected);
+    CHECK(mir::DecideMaterialTargetGate(mir::MaterialPublicationState::Published) ==
+        mir::MaterialTargetGate::AcceptCooked);
+    CHECK(mir::DecideMaterialTargetGate(mir::MaterialPublicationState::Inactive) ==
+        mir::MaterialTargetGate::AcceptCooked);
+}
+
+TEST_CASE("A failed publication keeps the accepted baseline and a retry moves it", "[editor][material]")
+{
+    mir::MaterialDraft draft = TestDraft();
+    Field(draft, "amount")->mComponents[0] = 5.0f;
+    mir::MaterialDraftMarkSaved(draft, 4);
+
+    REQUIRE(mir::ResolveMaterialCook(draft, true, false, {}, 4, std::nullopt,
+        mir::MaterialPublicationState::Failed, "its texture did not load", nullptr) == mir::MaterialCookOutcome::Failed);
+    CHECK_FALSE(mir::MaterialDraftCooked(draft, false, "its texture did not load", true, true));
+    CHECK(draft.mApplyFailed);
+    CHECK(draft.mApplyFailureFromPublication);
+    CHECK(mir::MaterialDraftNeedsForcedReimport(draft));
+    CHECK(mir::MaterialDraftNeedsSave(draft));
+    CHECK(Field(draft, "amount")->mComponents[0] == 5.0f);
+    CHECK(draft.mBaselineFields[0].mComponents[0] == 1.0f);
+
+    mir::MaterialDraftMarkSaved(draft, 5);
+    CHECK_FALSE(draft.mApplyFailureFromPublication);
+    CHECK_FALSE(mir::MaterialDraftNeedsForcedReimport(draft));
+    CHECK(mir::ResolveMaterialCook(draft, true, false, {}, 5, std::nullopt,
+              mir::MaterialPublicationState::Pending, {}) == mir::MaterialCookOutcome::Waiting);
+    CHECK(mir::ResolveMaterialCook(draft, true, false, {}, 5, std::nullopt,
+              mir::MaterialPublicationState::Published, {}) == mir::MaterialCookOutcome::Applied);
+    CHECK(mir::MaterialDraftCooked(draft, true, {}, true));
+    CHECK(draft.mBaselineFields[0].mComponents[0] == 5.0f);
+    CHECK_FALSE(draft.mApplyFailed);
+}
+
+TEST_CASE("An inactive material settles without claiming a renderer publication", "[editor][material]")
+{
+    mir::MaterialDraft draft = TestDraft();
+    Field(draft, "amount")->mComponents[0] = 5.0f;
+    mir::MaterialDraftMarkSaved(draft, 4);
+
+    CHECK(mir::ResolveMaterialCook(draft, true, false, {}, 4, std::nullopt,
+              mir::MaterialPublicationState::Inactive, {}) == mir::MaterialCookOutcome::Applied);
+    CHECK(mir::MaterialDraftCooked(draft, true, {}, false));
+    CHECK(draft.mStatus.find("not active") != std::string::npos);
+    CHECK(draft.mStatus.find("applied") == std::string::npos);
+    CHECK(draft.mBaselineFields[0].mComponents[0] == 5.0f);
+
+    Field(draft, "amount")->mComponents[0] = 6.0f;
+    CHECK(mir::MaterialDraftCooked(draft, true, {}, false));
+    CHECK(draft.mStatus.find("newer edits") != std::string::npos);
 }
 
 TEST_CASE("A revert publishes the accepted baseline after a generation change", "[editor][material]")
@@ -680,7 +748,7 @@ TEST_CASE("A failed source write can be repaired from the accepted baseline", "[
     CHECK(nlohmann::json::parse(first.mParametersJson).at("amount") == 5.0f);
     CHECK(first.mTextures.at("baseColor") == "textures/missing.png");
     REQUIRE(mir::SaveMaterialRecipe(path, first.mParametersJson, first.mTextures, &error));
-    mir::MaterialDraftMarkSaved(*draft, 1, 10, true);
+    mir::MaterialDraftMarkSaved(*draft, 1);
     REQUIRE_FALSE(mir::MaterialDraftCooked(*draft, false, "late apply failed"));
     CHECK(draft->mApplyFailed);
 
@@ -703,7 +771,7 @@ TEST_CASE("A failed source write can be repaired from the accepted baseline", "[
     CHECK(saved->at("resolution") == 1024);
     CHECK(saved->at("futureRoot").at("kept") == true);
 
-    mir::MaterialDraftMarkSaved(*draft, 2, 11, true);
+    mir::MaterialDraftMarkSaved(*draft, 2);
     CHECK(mir::MaterialDraftCooked(*draft, true, {}));
     CHECK_FALSE(mir::MaterialDraftNeedsSave(*draft));
     CHECK_FALSE(draft->mApplyFailed);
@@ -719,7 +787,7 @@ TEST_CASE("Unchanged retry and memory-only Revert keep pending source repair", "
         [](const mir::MaterialTextureSource &texture) { return texture.mRole == "baseColor"; });
     REQUIRE(base != draft.mTextures.end());
     base->mPath = "textures/missing.png";
-    mir::MaterialDraftMarkSaved(draft, 1, 10, true);
+    mir::MaterialDraftMarkSaved(draft, 1);
     REQUIRE_FALSE(mir::MaterialDraftCooked(draft, false, "late apply failed"));
 
     const mir::MaterialDraftSavePatch unchanged = mir::MaterialDraftSavePatchFor(draft);

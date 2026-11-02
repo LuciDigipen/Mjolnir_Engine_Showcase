@@ -82,11 +82,10 @@ namespace mir
         bool mCooking = false;
         bool mSchemaStale = false;
         bool mApplyFailed = false;
+        // The last failure came from renderer publication, so an unchanged retry
+        // must force the existing import/apply path to run again.
+        bool mApplyFailureFromPublication = false;
         uint64_t mSavedRequestSequence = 0;
-        uint64_t mSavedGeneration = 0;
-        bool mSavedActive = false;
-        uint64_t mFailedSourceSignature = 0;
-        uint64_t mGeneration = 0;
         uint64_t mSourceSignature = 0;
         uint64_t mAcceptedRevision = 0;
         std::string mStatus;
@@ -119,6 +118,23 @@ namespace mir
         Waiting,
         Applied,
         Failed,
+    };
+
+    // The renderer's per-asset publication, separate from the draw-ready last-good
+    // binding and from the library's global generation.
+    enum class MaterialPublicationState : uint8_t
+    {
+        Inactive,
+        Pending,
+        Published,
+        Failed,
+    };
+
+    enum class MaterialTargetGate : uint8_t
+    {
+        AcceptCooked,
+        WaitForPublication,
+        Rejected,
     };
 
     enum class MaterialAcceptedRefresh
@@ -178,6 +194,9 @@ namespace mir
     // True while the draft differs from the accepted baseline or the source has
     // a written value the runtime has not accepted.
     bool MaterialDraftNeedsSave(const MaterialDraft &draft);
+    // A renderer-published failure needs the importer's forced reimport even when
+    // the saved source is unchanged.
+    bool MaterialDraftNeedsForcedReimport(const MaterialDraft &draft);
     // Normal edits patch the accepted baseline; a failed apply patches the last
     // written source values, so restoring accepted values is an explicit repair.
     MaterialDraftSavePatch MaterialDraftSavePatchFor(const MaterialDraft &draft);
@@ -185,12 +204,18 @@ namespace mir
     // Restores the accepted values in memory and keeps the numeric baseline
     // values queued until a preview publishes them.
     void MaterialDraftRevert(MaterialDraft &draft);
-    void MaterialDraftMarkSaved(MaterialDraft &draft, uint64_t requestSequence, uint64_t generation, bool active);
-    bool MaterialDraftCooked(MaterialDraft &draft, bool success, const std::string &diagnostic);
+    void MaterialDraftMarkSaved(MaterialDraft &draft, uint64_t requestSequence);
+    bool MaterialDraftCooked(MaterialDraft &draft, bool success, const std::string &diagnostic,
+        bool published = true, bool publicationFailure = false);
+
+    // A newly cooked CPU blob becomes the accepted baseline only once the renderer published it, or when the
+    // scene draws none of this asset. A pending or failed replacement keeps the previous baseline.
+    MaterialTargetGate DecideMaterialTargetGate(MaterialPublicationState publication);
 
     MaterialCookOutcome ResolveMaterialCook(const MaterialDraft &draft, bool hasModel, bool failed,
-        const std::string &diagnostic, bool requiresRendererApply, std::optional<uint64_t> cookRevision,
-        std::optional<uint64_t> failureRevision, uint64_t generation, std::string *message = nullptr);
+        const std::string &diagnostic, std::optional<uint64_t> cookRevision,
+        std::optional<uint64_t> failureRevision, MaterialPublicationState publication,
+        const std::string &publicationError, std::string *message = nullptr);
 
     // The partial numeric overlay to publish: dirty fields plus the baseline
     // values of fields this draft previewed before. Empty when the record is

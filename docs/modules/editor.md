@@ -260,10 +260,17 @@ builds one control per reflected field, keeps one draft per normalized project
 and logical asset path, previews only dirty numeric fields through
 `SurfaceMaterialLibrary::PreviewParameters`, and saves only changed recipe
 fields through `UpdateJsonFile`. Its accepted baseline is the cooked
-`SurfaceMaterialAsset`, not raw source text; a cook's apply identity and the
-renderer generation decide when the baseline moves. The renderer replaces the
-shared material asynchronously: the binding changes when the replacement
-publishes, and a failed replacement retains the previous accepted material. A
+`SurfaceMaterialAsset`, not raw source text. The cooked apply identity decides
+when a cook exists, but the baseline moves only after
+`SurfaceMaterialLibrary::Publication` reports that asset's current content as
+`Published`; an unrelated asset, a preview or a shader commit cannot stand in
+for it. A pending replacement, and a failed one with its diagnostic, keep the
+previous accepted baseline and the dirty retry state, and an inactive material
+settles without claiming a GPU publication. A first selection with no accepted
+draft waits for publication or shows the failure instead of creating a clean
+draft from unaccepted cooked bytes. A no-change retry after a renderer
+publication failure requests the importer's forced reimport once per Save, so it
+re-enters the real replacement path instead of reporting GPU success. A
 shader-only field addition
 fills the new control from the validated catalog or typed default and a deleted
 field stays authored, reported as unsupported and preserved on save, so the

@@ -555,6 +555,11 @@ namespace mir
         return MaterialDraftDirty(draft) || draft.mApplyFailed;
     }
 
+    bool MaterialDraftNeedsForcedReimport(const MaterialDraft &draft)
+    {
+        return draft.mApplyFailed && draft.mApplyFailureFromPublication;
+    }
+
     MaterialDraftSavePatch MaterialDraftSavePatchFor(const MaterialDraft &draft)
     {
         MaterialDraftSavePatch patch;
@@ -634,26 +639,26 @@ namespace mir
         draft.mPreviewedParameters.clear();
     }
 
-    void MaterialDraftMarkSaved(MaterialDraft &draft, uint64_t requestSequence, uint64_t generation, bool active)
+    void MaterialDraftMarkSaved(MaterialDraft &draft, uint64_t requestSequence)
     {
         draft.mSavedFields = draft.mFields;
         draft.mSavedTextures = draft.mTextures;
         draft.mSavedRequestSequence = requestSequence;
-        draft.mSavedGeneration = generation;
-        draft.mSavedActive = active;
         draft.mCooking = true;
         draft.mApplyFailed = false;
+        draft.mApplyFailureFromPublication = false;
         draft.mStatusIsError = false;
         draft.mStatus = "Saved; waiting for the material cook.";
     }
 
-    bool MaterialDraftCooked(MaterialDraft &draft, bool success, const std::string &diagnostic)
+    bool MaterialDraftCooked(MaterialDraft &draft, bool success, const std::string &diagnostic, bool published,
+        bool publicationFailure)
     {
         draft.mCooking = false;
         if (!success)
         {
             draft.mApplyFailed = true;
-            draft.mFailedSourceSignature = draft.mSourceSignature;
+            draft.mApplyFailureFromPublication = publicationFailure;
             draft.mStatusIsError = true;
             draft.mStatus = diagnostic.empty() ? "The material cook failed; the last good material is unchanged."
                                                : diagnostic;
@@ -661,6 +666,7 @@ namespace mir
         }
 
         draft.mApplyFailed = false;
+        draft.mApplyFailureFromPublication = false;
         if (!draft.mSavedFields.empty())
             draft.mBaselineFields = draft.mSavedFields;
         for (MaterialTextureSource &texture : draft.mTextures)
@@ -670,13 +676,33 @@ namespace mir
                 texture.mBaselinePath = saved->mPath;
         }
         draft.mStatusIsError = false;
-        draft.mStatus = MaterialDraftDirty(draft) ? "Saved; newer edits are not saved yet." : "Saved and applied.";
+        if (!published)
+            draft.mStatus = MaterialDraftDirty(draft) ? "Saved; newer edits are not saved yet."
+                                                      : "Saved; the material is not active in this scene.";
+        else
+            draft.mStatus = MaterialDraftDirty(draft) ? "Saved; newer edits are not saved yet." : "Saved and applied.";
         return true;
     }
 
+    MaterialTargetGate DecideMaterialTargetGate(MaterialPublicationState publication)
+    {
+        switch (publication)
+        {
+        case MaterialPublicationState::Pending:
+            return MaterialTargetGate::WaitForPublication;
+        case MaterialPublicationState::Failed:
+            return MaterialTargetGate::Rejected;
+        case MaterialPublicationState::Published:
+        case MaterialPublicationState::Inactive:
+            break;
+        }
+        return MaterialTargetGate::AcceptCooked;
+    }
+
     MaterialCookOutcome ResolveMaterialCook(const MaterialDraft &draft, bool hasModel, bool failed,
-        const std::string &diagnostic, bool requiresRendererApply, std::optional<uint64_t> cookRevision,
-        std::optional<uint64_t> failureRevision, uint64_t generation, std::string *message)
+        const std::string &diagnostic, std::optional<uint64_t> cookRevision,
+        std::optional<uint64_t> failureRevision, MaterialPublicationState publication,
+        const std::string &publicationError, std::string *message)
     {
         const auto setMessage = [&](std::string value)
         {
@@ -704,10 +730,22 @@ namespace mir
             setMessage("Waiting for this save's material cook.");
             return MaterialCookOutcome::Waiting;
         }
-        if (requiresRendererApply && draft.mSavedActive && generation <= draft.mSavedGeneration)
+        if (publication == MaterialPublicationState::Pending)
         {
-            setMessage("Waiting for the renderer to apply the material cook.");
+            setMessage("Waiting for the renderer to publish the material cook.");
             return MaterialCookOutcome::Waiting;
+        }
+        if (publication == MaterialPublicationState::Failed)
+        {
+            setMessage(publicationError.empty()
+                    ? "The renderer rejected the material publication; the last good material is unchanged."
+                    : "The renderer rejected the material publication: " + publicationError);
+            return MaterialCookOutcome::Failed;
+        }
+        if (publication == MaterialPublicationState::Inactive)
+        {
+            setMessage("Saved; the material is not drawn by the renderer.");
+            return MaterialCookOutcome::Applied;
         }
         setMessage({});
         return MaterialCookOutcome::Applied;

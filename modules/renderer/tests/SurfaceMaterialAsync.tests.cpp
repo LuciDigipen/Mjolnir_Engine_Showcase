@@ -15,7 +15,9 @@
 #include <assets/ModelAsset.h>
 #include <core/fs/FileIO.h>
 #include <core/ecs/CommandBuffer.h>
+#include <core/ecs/ComponentFieldChanges.h>
 #include <core/ecs/SceneLoadGroup.h>
+#include <core/ecs/TypeId.h>
 #include <core/ecs/World.h>
 #include <jobs/JobExecutor.h>
 #include <renderer/MeshResolveSystem.h>
@@ -27,11 +29,13 @@
 #include "support/FakeTextureUploader.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <algorithm>
 #include <cstring>
 #include <format>
 #include <cstdio>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -95,13 +99,14 @@ namespace
         return material;
     }
 
-    SurfaceMaterialRegistration MakeSurfaceRegistration(std::string frontend, std::string stem)
+    SurfaceMaterialRegistration MakeSurfaceRegistration(std::string frontend, std::string stem,
+        std::string asset = kLogicalPath)
     {
         SurfaceMaterialRegistration registration;
         registration.stem = std::move(stem);
         registration.type = "TestMaterial";
         registration.frontend = std::move(frontend);
-        registration.asset = kLogicalPath;
+        registration.asset = std::move(asset);
         registration.shader = "assets/test.slang";
         registration.parametersJson = R"({"tint":0.5})";
         registration.reflectionFile = "test.layout.reflection.json";
@@ -221,6 +226,114 @@ namespace
         test::FakeSurfaceMaterialHost mHost;
         SurfaceMaterialLibrary mLibrary;
         uint64_t mOwner = 0;
+    };
+
+    // Several cooked material assets in one manifest, so tests can move one asset's
+    // content without moving another's.
+    struct MaterialCookedDir : test::CookedDir
+    {
+        void Set(const std::string &logicalPath, const SurfaceMaterialAsset &material)
+        {
+            Entry &entry = mEntries[logicalPath];
+            entry.file = std::format("material-{:016x}.blob", ++mSerial);
+            REQUIRE(WriteBytes(Path() / entry.file, BuildTypedAsset(material)));
+            Publish();
+        }
+
+        void Publish()
+        {
+            std::vector<AssetManifestSourceEntry> entries;
+            entries.reserve(mEntries.size());
+            for (const auto &[logicalPath, entry] : mEntries)
+                entries.push_back({ { MakeAssetId(logicalPath), kSurfaceMaterialAssetTypeTag,
+                                        kSurfaceMaterialAssetContentVersion },
+                    entry.file, logicalPath, {} });
+            REQUIRE(WriteBytes(Path() / kAssetManifestFileName, BuildAssetManifestBlob(entries)));
+        }
+
+        struct Entry
+        {
+            std::string file;
+        };
+
+        std::map<std::string, Entry> mEntries;
+        uint64_t mSerial = 0;
+    };
+
+    struct MultiFixture : MaterialCookedDir
+    {
+        explicit MultiFixture(bool reverseCatalogOrder = false)
+            : mAssets(Path()), mJobs(0), mService(mAssets, mJobs, 1)
+        {
+            mHost.schemaLayout = TintLayout();
+            const std::string first = "assets/one.material.json";
+            const std::string second = "assets/two.material.json";
+            const auto add = [&](const std::string &asset)
+            {
+                mHost.catalog.materials.push_back(MakeSurfaceRegistration("mesh", "shared_stem", asset));
+            };
+            if (reverseCatalogOrder)
+            {
+                add(second);
+                add(first);
+            }
+            else
+            {
+                add(first);
+                add(second);
+            }
+            mLibrary.Bind(&mService, mHost, mUploader);
+        }
+
+        void Cook(const std::string &logicalPath, const SurfaceMaterialAsset &material)
+        {
+            Set(logicalPath, material);
+            mAssets.BeginReload();
+            mAssets.CommitReload();
+        }
+
+        void Frame()
+        {
+            mService.DrainCompletions();
+            mLibrary.Advance();
+        }
+
+        void Use(const std::string &logicalPath, std::string_view frontend = "mesh")
+        {
+            if (mOwner == 0)
+                mOwner = mLibrary.AddMaterialUseOwner();
+            const std::string key = logicalPath + "|" + std::string(frontend);
+            mUses[key] = SurfaceMaterialUse{ logicalPath, MakeAssetId(logicalPath), std::string(frontend) };
+            std::vector<SurfaceMaterialUse> uses;
+            for (const auto &[stored, use] : mUses)
+                uses.push_back(use);
+            mLibrary.SetMaterialUses(mOwner, uses);
+        }
+
+        SurfaceMaterialResolution ResolveAsset(const std::string &logicalPath, std::string_view frontend = "mesh")
+        {
+            return mLibrary.Resolve(logicalPath, MakeAssetId(logicalPath), frontend);
+        }
+
+        SurfaceMaterialResolution Settle(const std::string &logicalPath, std::string_view frontend = "mesh")
+        {
+            SurfaceMaterialResolution resolution = ResolveAsset(logicalPath, frontend);
+            for (int frame = 0; frame < 64 && resolution.status == SurfaceMaterialStatus::Pending; ++frame)
+            {
+                Frame();
+                resolution = ResolveAsset(logicalPath, frontend);
+            }
+            return resolution;
+        }
+
+        AssetsModule mAssets;
+        JobExecutor mJobs;
+        AsyncAssetService mService;
+        test::FakeTextureUploader mUploader;
+        test::FakeSurfaceMaterialHost mHost;
+        SurfaceMaterialLibrary mLibrary;
+        uint64_t mOwner = 0;
+        std::map<std::string, SurfaceMaterialUse> mUses;
     };
 }
 
@@ -483,6 +596,9 @@ TEST_CASE("A failed texture keeps the whole first load failed", "[renderer][mate
     const SurfaceMaterialResolution failed = f.Settle();
     CHECK(failed.status == SurfaceMaterialStatus::Failed);
     CHECK(f.mHost.createdMaterials.empty());
+    const SurfaceMaterialPublication publication = f.mLibrary.Publication(kLogicalPath);
+    CHECK(publication.status == SurfaceMaterialPublicationStatus::Failed);
+    CHECK_FALSE(publication.error.empty());
 }
 
 TEST_CASE("Removing the final material use releases its texture claim", "[renderer][material][async]")
@@ -578,6 +694,357 @@ TEST_CASE("Existing owners still guard replaced resources after a library reset"
     CHECK(f.mHost.releasedMaterials.empty());
     f.mLibrary.AcknowledgeGeneration(secondOwner, f.mLibrary.Generation());
     CHECK(f.mHost.releasedMaterials == std::vector<MaterialHandle>{ previous });
+}
+
+TEST_CASE("A material publication is per asset and unchanged content confirms reuse",
+    "[renderer][material][async][publication]")
+{
+    MultiFixture f;
+    const std::string one = "assets/one.material.json";
+    const std::string two = "assets/two.material.json";
+    f.Cook(one, TestMaterial(R"({"tint":0.25})"));
+    f.Cook(two, TestMaterial(R"({"tint":0.75})"));
+    f.Use(one);
+    f.Use(two);
+    REQUIRE(f.Settle(one).status == SurfaceMaterialStatus::Ready);
+    REQUIRE(f.Settle(two).status == SurfaceMaterialStatus::Ready);
+    CHECK(f.mLibrary.Publication(one).status == SurfaceMaterialPublicationStatus::Published);
+    CHECK(f.mLibrary.Publication(two).status == SurfaceMaterialPublicationStatus::Published);
+    CHECK(f.mLibrary.Publication("assets/unused.material.json").status ==
+        SurfaceMaterialPublicationStatus::Inactive);
+
+    const std::size_t created = f.mHost.createdMaterials.size();
+    f.Cook(one, TestMaterial(R"({"tint":0.5})"));
+    f.mLibrary.CommitReload();
+    CHECK(f.mLibrary.Publication(one).status == SurfaceMaterialPublicationStatus::Pending);
+    CHECK(f.mLibrary.Publication(two).status == SurfaceMaterialPublicationStatus::Published);
+
+    f.mLibrary.NotifyShaderCommit();
+    CHECK(f.mLibrary.Publication(one).status == SurfaceMaterialPublicationStatus::Pending);
+    CHECK(f.mLibrary.Publication(two).status == SurfaceMaterialPublicationStatus::Published);
+
+    f.Frame();
+    CHECK(f.mLibrary.Publication(one).status == SurfaceMaterialPublicationStatus::Published);
+    REQUIRE(f.mHost.createdMaterials.size() == created + 1);
+
+    f.mAssets.BeginReload();
+    f.mAssets.CommitReload();
+    f.mLibrary.CommitReload();
+    CHECK(f.mLibrary.Publication(one).status == SurfaceMaterialPublicationStatus::Published);
+    CHECK(f.mLibrary.Publication(two).status == SurfaceMaterialPublicationStatus::Published);
+    CHECK(f.mHost.createdMaterials.size() == created + 1);
+}
+
+TEST_CASE("A failed replacement reports its publication while the last good binding stays ready",
+    "[renderer][material][async][publication]")
+{
+    Fixture f;
+    f.Cook(TestMaterial(R"({"tint":0.25})"));
+    f.Use({ "mesh" });
+    const SurfaceMaterialResolution initial = f.Settle();
+    REQUIRE(initial.binding);
+    const MaterialHandle first = initial.binding->material;
+    CHECK(f.mLibrary.Publication(kLogicalPath).status == SurfaceMaterialPublicationStatus::Published);
+
+    f.mHost.rejectMaterials = true;
+    f.Cook(TestMaterial(R"({"tint":0.75})"));
+    f.mLibrary.CommitReload();
+    CHECK(f.mLibrary.Publication(kLogicalPath).status == SurfaceMaterialPublicationStatus::Pending);
+    f.Frame();
+    const SurfaceMaterialPublication failed = f.mLibrary.Publication(kLogicalPath);
+    CHECK(failed.status == SurfaceMaterialPublicationStatus::Failed);
+    CHECK_FALSE(failed.error.empty());
+    const SurfaceMaterialResolution during = f.Resolve();
+    REQUIRE(during.binding);
+    CHECK(during.binding->material == first);
+
+    f.mHost.rejectMaterials = false;
+    f.mLibrary.CommitReload();
+    f.Frame();
+    CHECK(f.mLibrary.Publication(kLogicalPath).status == SurfaceMaterialPublicationStatus::Published);
+    const SurfaceMaterialResolution repaired = f.Resolve();
+    REQUIRE(repaired.binding);
+    CHECK(repaired.binding->material != first);
+}
+
+TEST_CASE("A late schema failure keeps the last good binding and reports its publication",
+    "[renderer][material][async][publication]")
+{
+    Fixture f;
+    f.Cook(TestMaterial(R"({"tint":0.25})"));
+    f.Use({ "mesh" });
+    const SurfaceMaterialResolution initial = f.Settle();
+    REQUIRE(initial.binding);
+    const MaterialHandle first = initial.binding->material;
+
+    f.mHost.schemaLayout = std::nullopt;
+    f.Cook(TestMaterial(R"({"tint":0.75})"));
+    f.mLibrary.CommitReload();
+    f.Frame();
+    const SurfaceMaterialPublication publication = f.mLibrary.Publication(kLogicalPath);
+    CHECK(publication.status == SurfaceMaterialPublicationStatus::Failed);
+    CHECK(publication.error.find("schema") != std::string::npos);
+    const SurfaceMaterialResolution after = f.Resolve();
+    REQUIRE(after.binding);
+    CHECK(after.binding->material == first);
+}
+
+TEST_CASE("A failed first load publishes a failure instead of staying pending",
+    "[renderer][material][async][publication]")
+{
+    Fixture f;
+    f.CookBroken();
+    f.Use({ "mesh" });
+    REQUIRE(f.Resolve().status == SurfaceMaterialStatus::Pending);
+    const SurfaceMaterialResolution failed = f.Settle();
+    REQUIRE(failed.status == SurfaceMaterialStatus::Failed);
+    const SurfaceMaterialPublication publication = f.mLibrary.Publication(kLogicalPath);
+    CHECK(publication.status == SurfaceMaterialPublicationStatus::Failed);
+    CHECK(publication.error == failed.error);
+}
+
+TEST_CASE("A material name cleared while the library republishes clears the draw binding and use",
+    "[renderer][material][async][rebind]")
+{
+    Fixture f;
+    f.Cook(TestMaterial(R"({"tint":0.25})"));
+    AssetResolver resolver(f.mAssets, "assets");
+    test::FakeMeshResolveHost meshHost;
+    World world;
+    CommandBuffer commands;
+    SystemContext context{ world, commands, 0.0f, 0.0, 0 };
+    MeshResolveSystem system(meshHost, &f.mService, resolver, &f.mLibrary);
+    MeshRenderer mesh;
+    std::snprintf(mesh.meshName, sizeof(mesh.meshName), "%s", "Cube");
+    std::snprintf(mesh.materialShader, sizeof(mesh.materialShader), "%s", "test_mesh");
+    const Entity entity = world.CreateEntity();
+    world.AddComponent<MeshRenderer>(entity, mesh);
+
+    MaterialHandle accepted;
+    for (int frame = 0; frame < 16; ++frame)
+    {
+        f.mService.DrainCompletions();
+        system.OnUpdate(context);
+        const MaterialHandle current = world.GetComponent<MeshRenderer>(entity)->material;
+        if (!current.IsNull() && current != meshHost.ErrorMaterial())
+        {
+            accepted = current;
+            break;
+        }
+    }
+    REQUIRE_FALSE(accepted.IsNull());
+    REQUIRE(f.mLibrary.IsActiveAsset(kLogicalPath));
+
+    f.Cook(TestMaterial(R"({"tint":0.75})"));
+    f.mLibrary.CommitReload();
+    std::snprintf(world.GetComponent<MeshRenderer>(entity)->materialShader,
+        sizeof(MeshRenderer::materialShader), "%s", "");
+    f.mService.DrainCompletions();
+    system.OnUpdate(context);
+
+    CHECK(world.GetComponent<MeshRenderer>(entity)->material.IsNull());
+    CHECK(std::none_of(f.mLibrary.ActiveMaterials().begin(), f.mLibrary.ActiveMaterials().end(),
+        [](const SurfaceMaterialUse &use) { return use.logicalPath == kLogicalPath; }));
+
+    for (int frame = 0; frame < 4; ++frame)
+    {
+        f.mService.DrainCompletions();
+        system.OnUpdate(context);
+    }
+    CHECK_FALSE(f.mLibrary.IsActiveAsset(kLogicalPath));
+    CHECK(std::find(f.mHost.releasedMaterials.begin(), f.mHost.releasedMaterials.end(), accepted) !=
+        f.mHost.releasedMaterials.end());
+}
+
+TEST_CASE("A system reload with an empty material name clears the stale draw handle",
+    "[renderer][material][async][rebind]")
+{
+    Fixture f;
+    f.Cook(TestMaterial(R"({"tint":0.25})"));
+    AssetResolver resolver(f.mAssets, "assets");
+    test::FakeMeshResolveHost meshHost;
+    World world;
+    CommandBuffer commands;
+    SystemContext context{ world, commands, 0.0f, 0.0, 0 };
+    MeshResolveSystem system(meshHost, &f.mService, resolver, &f.mLibrary);
+    MeshRenderer mesh;
+    std::snprintf(mesh.meshName, sizeof(mesh.meshName), "%s", "Cube");
+    std::snprintf(mesh.materialShader, sizeof(mesh.materialShader), "%s", "test_mesh");
+    const Entity entity = world.CreateEntity();
+    world.AddComponent<MeshRenderer>(entity, mesh);
+
+    MaterialHandle accepted;
+    for (int frame = 0; frame < 16; ++frame)
+    {
+        f.mService.DrainCompletions();
+        system.OnUpdate(context);
+        const MaterialHandle current = world.GetComponent<MeshRenderer>(entity)->material;
+        if (!current.IsNull() && current != meshHost.ErrorMaterial())
+        {
+            accepted = current;
+            break;
+        }
+    }
+    REQUIRE_FALSE(accepted.IsNull());
+
+    f.Cook(TestMaterial(R"({"tint":0.75})"));
+    f.mLibrary.CommitReload();
+    system.CommitReload();
+    std::snprintf(world.GetComponent<MeshRenderer>(entity)->materialShader,
+        sizeof(MeshRenderer::materialShader), "%s", "");
+    f.mService.DrainCompletions();
+    system.OnUpdate(context);
+
+    CHECK(world.GetComponent<MeshRenderer>(entity)->material.IsNull());
+    CHECK(std::none_of(f.mLibrary.ActiveMaterials().begin(), f.mLibrary.ActiveMaterials().end(),
+        [](const SurfaceMaterialUse &use) { return use.logicalPath == kLogicalPath; }));
+
+    for (int frame = 0; frame < 4; ++frame)
+    {
+        f.mService.DrainCompletions();
+        system.OnUpdate(context);
+    }
+    CHECK(std::find(f.mHost.releasedMaterials.begin(), f.mHost.releasedMaterials.end(), accepted) !=
+        f.mHost.releasedMaterials.end());
+}
+
+TEST_CASE("A field-change reset with an empty material name clears the stale draw handle",
+    "[renderer][material][async][rebind]")
+{
+    Fixture f;
+    f.Cook(TestMaterial(R"({"tint":0.25})"));
+    AssetResolver resolver(f.mAssets, "assets");
+    test::FakeMeshResolveHost meshHost;
+    World world;
+    ComponentFieldListeners &listeners = world.EmplaceResource<ComponentFieldListeners>();
+    CommandBuffer commands;
+    SystemContext context{ world, commands, 0.0f, 0.0, 0 };
+    MeshResolveSystem system(meshHost, &f.mService, resolver, &f.mLibrary);
+    system.OnStart(context);
+    MeshRenderer mesh;
+    std::snprintf(mesh.meshName, sizeof(mesh.meshName), "%s", "Cube");
+    std::snprintf(mesh.materialShader, sizeof(mesh.materialShader), "%s", "test_mesh");
+    const Entity entity = world.CreateEntity();
+    world.AddComponent<MeshRenderer>(entity, mesh);
+
+    MaterialHandle accepted;
+    for (int frame = 0; frame < 16; ++frame)
+    {
+        f.mService.DrainCompletions();
+        system.OnUpdate(context);
+        const MaterialHandle current = world.GetComponent<MeshRenderer>(entity)->material;
+        if (!current.IsNull() && current != meshHost.ErrorMaterial())
+        {
+            accepted = current;
+            break;
+        }
+    }
+    REQUIRE_FALSE(accepted.IsNull());
+
+    const ComponentFieldChange change{ entity, TypeIdOf<MeshRenderer>(), { "materialShader" } };
+    listeners.NotifyBeforeChange(world, std::span(&change, 1));
+    std::snprintf(world.GetComponent<MeshRenderer>(entity)->materialShader,
+        sizeof(MeshRenderer::materialShader), "%s", "");
+    f.mService.DrainCompletions();
+    system.OnUpdate(context);
+
+    CHECK(world.GetComponent<MeshRenderer>(entity)->material.IsNull());
+    CHECK(std::none_of(f.mLibrary.ActiveMaterials().begin(), f.mLibrary.ActiveMaterials().end(),
+        [](const SurfaceMaterialUse &use) { return use.logicalPath == kLogicalPath; }));
+    system.OnStop(context);
+}
+
+TEST_CASE("Two recipes sharing one shader stem bind through their explicit material assets",
+    "[renderer][material][async][identity]")
+{
+    MultiFixture f;
+    const std::string one = "assets/one.material.json";
+    const std::string two = "assets/two.material.json";
+    f.Cook(one, TestMaterial(R"({"tint":0.25})"));
+    f.Cook(two, TestMaterial(R"({"tint":0.75})"));
+    AssetResolver resolver(f.mAssets, "assets");
+    test::FakeMeshResolveHost meshHost;
+    World world;
+    CommandBuffer commands;
+    SystemContext context{ world, commands, 0.0f, 0.0, 0 };
+    MeshResolveSystem system(meshHost, &f.mService, resolver, &f.mLibrary);
+    MeshRenderer firstMesh;
+    std::snprintf(firstMesh.meshName, sizeof(firstMesh.meshName), "%s", "Cube");
+    std::snprintf(firstMesh.materialShader, sizeof(firstMesh.materialShader), "%s", "one.material.json");
+    MeshRenderer secondMesh = firstMesh;
+    std::snprintf(secondMesh.materialShader, sizeof(secondMesh.materialShader), "%s", two.c_str());
+    const Entity first = world.CreateEntity();
+    const Entity second = world.CreateEntity();
+    world.AddComponent<MeshRenderer>(first, firstMesh);
+    world.AddComponent<MeshRenderer>(second, secondMesh);
+
+    for (int frame = 0; frame < 16; ++frame)
+    {
+        f.mService.DrainCompletions();
+        system.OnUpdate(context);
+    }
+    const MaterialHandle firstHandle = world.GetComponent<MeshRenderer>(first)->material;
+    const MaterialHandle secondHandle = world.GetComponent<MeshRenderer>(second)->material;
+    REQUIRE_FALSE(firstHandle.IsNull());
+    REQUIRE_FALSE(secondHandle.IsNull());
+    CHECK(firstHandle != meshHost.ErrorMaterial());
+    CHECK(secondHandle != meshHost.ErrorMaterial());
+    CHECK(firstHandle != secondHandle);
+
+    const SurfaceMaterialResolution firstBinding = f.ResolveAsset(one);
+    const SurfaceMaterialResolution secondBinding = f.ResolveAsset(two);
+    REQUIRE(firstBinding.binding);
+    REQUIRE(secondBinding.binding);
+    CHECK(firstBinding.binding->material == firstHandle);
+    CHECK(secondBinding.binding->material == secondHandle);
+    CHECK(f.mLibrary.Publication(one).status == SurfaceMaterialPublicationStatus::Published);
+    CHECK(f.mLibrary.Publication(two).status == SurfaceMaterialPublicationStatus::Published);
+    system.ReleaseResources();
+}
+
+TEST_CASE("An ambiguous shared shader stem fails instead of taking the first recipe",
+    "[renderer][material][async][identity]")
+{
+    const bool reverse = GENERATE(false, true);
+    CAPTURE(reverse);
+    MultiFixture f(reverse);
+    f.Cook("assets/one.material.json", TestMaterial(R"({"tint":0.25})"));
+    f.Cook("assets/two.material.json", TestMaterial(R"({"tint":0.75})"));
+    AssetResolver resolver(f.mAssets, "assets");
+    test::FakeMeshResolveHost meshHost;
+    World world;
+    CommandBuffer commands;
+    SystemContext context{ world, commands, 0.0f, 0.0, 0 };
+    MeshResolveSystem system(meshHost, &f.mService, resolver, &f.mLibrary);
+    MeshRenderer ambiguous;
+    std::snprintf(ambiguous.meshName, sizeof(ambiguous.meshName), "%s", "Cube");
+    std::snprintf(ambiguous.materialShader, sizeof(ambiguous.materialShader), "%s", "shared_stem");
+    MeshRenderer raw = ambiguous;
+    std::snprintf(raw.materialShader, sizeof(raw.materialShader), "%s", "legacy_raw");
+    MeshRenderer missing = ambiguous;
+    std::snprintf(missing.materialShader, sizeof(missing.materialShader), "%s", "missing.material.json");
+    const Entity ambiguousEntity = world.CreateEntity();
+    const Entity rawEntity = world.CreateEntity();
+    const Entity missingEntity = world.CreateEntity();
+    world.AddComponent<MeshRenderer>(ambiguousEntity, ambiguous);
+    world.AddComponent<MeshRenderer>(rawEntity, raw);
+    world.AddComponent<MeshRenderer>(missingEntity, missing);
+
+    for (int frame = 0; frame < 8; ++frame)
+    {
+        f.mService.DrainCompletions();
+        system.OnUpdate(context);
+    }
+
+    CHECK(world.GetComponent<MeshRenderer>(ambiguousEntity)->material == meshHost.ErrorMaterial());
+    CHECK(world.GetComponent<MeshRenderer>(missingEntity)->material == meshHost.ErrorMaterial());
+    CHECK_FALSE(world.GetComponent<MeshRenderer>(rawEntity)->material.IsNull());
+    CHECK(world.GetComponent<MeshRenderer>(rawEntity)->material != meshHost.ErrorMaterial());
+    CHECK(std::none_of(meshHost.createdMaterials.begin(), meshHost.createdMaterials.end(),
+        [](const MaterialDesc &desc) { return desc.shaderName == "shared_stem"; }));
+    CHECK(std::any_of(meshHost.createdMaterials.begin(), meshHost.createdMaterials.end(),
+        [](const MaterialDesc &desc) { return desc.shaderName == "legacy_raw"; }));
+    system.ReleaseResources();
 }
 
 TEST_CASE("Numeric preview publishes both frontends and a rejected overlay keeps their bytes",
