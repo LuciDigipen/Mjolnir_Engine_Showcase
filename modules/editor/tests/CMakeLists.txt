@@ -19,7 +19,13 @@ engine_add_module_tests(editor
     PrefabWorkspace.tests.cpp
     SnapToTerrain.tests.cpp
     ViewPie.tests.cpp
+    ShaderHotReload.tests.cpp
 )
 
 # editor links scene privately; the tests build scenes for the scene ops and prefab previews
-target_link_libraries(engine_editor_tests PRIVATE mir::scene mir::particles imgui::imgui nlohmann_json::nlohmann_json)
+target_link_libraries(engine_editor_tests PRIVATE mir::jobs mir::scene mir::particles imgui::imgui nlohmann_json::nlohmann_json)
+file(TO_CMAKE_PATH "${SLANGC_EXECUTABLE}" MIR_EDITOR_SLANGC_PATH)
+target_compile_definitions(engine_editor_tests PRIVATE MIR_EDITOR_SLANGC="${MIR_EDITOR_SLANGC_PATH}")
+
+file(TO_CMAKE_PATH "${CMAKE_BINARY_DIR}/shader_build/shader_manifest.json" MIR_EDITOR_MANIFEST_PATH)
+target_compile_definitions(engine_editor_tests PRIVATE MIR_EDITOR_SHADER_MANIFEST="${MIR_EDITOR_MANIFEST_PATH}")

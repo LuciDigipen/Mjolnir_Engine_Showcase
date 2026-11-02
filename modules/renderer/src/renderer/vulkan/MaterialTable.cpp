@@ -181,8 +181,11 @@ namespace mir::vk
             return kNullMaterialRecord;
 
         const MaterialRecordId id = mRecords->Create(bytes, alignment);
-        if (!id.IsNull())
-            UploadWrites();
+        if (!id.IsNull() && !UploadWrites())
+        {
+            mRecords->Release(id);
+            return kNullMaterialRecord;
+        }
         return id;
     }
 
@@ -220,19 +223,20 @@ namespace mir::vk
         return mChanges;
     }
 
-    void MaterialTable::UploadWrites()
+    bool MaterialTable::UploadWrites()
     {
         const std::span<const MaterialRecordTable::Write> writes = mRecords->Writes();
         if (writes.empty() || mRecordMapped == nullptr)
-            return;
+            return writes.empty();
 
         for (const MaterialRecordTable::Write &write : writes)
             std::memcpy(mRecordMapped + write.mOffset, write.mBytes.data(), write.mBytes.size());
 
-        vmaFlushAllocation(mDevice->Allocator(), mRecordAllocation, 0, VK_WHOLE_SIZE);
+        const bool uploaded = vmaFlushAllocation(mDevice->Allocator(), mRecordAllocation, 0, VK_WHOLE_SIZE) == VK_SUCCESS;
         // Consumed exactly once: a later Create must not replay ranges that an
         // in-flight frame may already read.
         mRecords->ClearWrites();
+        return uploaded;
     }
 
     void MaterialTable::Sync(uint32_t frame, ResourceStore &resources)

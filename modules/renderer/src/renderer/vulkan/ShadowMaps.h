@@ -19,6 +19,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <span>
 
 VK_DEFINE_HANDLE(VmaAllocation)
@@ -32,6 +33,10 @@ namespace mir::vk
     {
     public:
         bool Initialize(Device &device);
+        bool PrepareShaderReload(std::string *error = nullptr);
+        void CommitShaderReload();
+        void DiscardShaderReload();
+
         void Shutdown();
 
         // The spans are borrowed until the next frame records its passes.
@@ -48,6 +53,12 @@ namespace mir::vk
 
         VkDescriptorSetLayout SetLayout() const { return mSetLayout; }
         VkDescriptorSet Set(uint32_t frame) const { return mSets[frame]; }
+
+        bool BuildPipelines(VkPipeline &outDepth, VkPipeline &outPoint);
+
+        VkPipeline mReloadDepthPipeline = VK_NULL_HANDLE;
+        VkPipeline mReloadPointPipeline = VK_NULL_HANDLE;
+        bool mReloadPrepared = false;
 
     private:
         constexpr static uint32_t kMaxSpotShadows = VulkanRenderer::kMaxSpotShadows;

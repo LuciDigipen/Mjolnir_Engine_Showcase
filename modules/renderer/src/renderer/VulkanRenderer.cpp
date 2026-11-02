@@ -31,8 +31,13 @@
 #include "vulkan/Ddgi.h"
 #endif
 
+#include <core/fs/FileIO.h>
+#include <core/fs/Paths.h>
 #include <core/log/Log.h>
 #include <core/log/SetupError.h>
+
+#include <string>
+#include <utility>
 
 namespace mir
 {
@@ -112,6 +117,10 @@ namespace mir
 
         mWindow = desc.window;
 
+        ShaderGenerationStore generationStore(ExecutableDir() / "shaders");
+        if (const auto current = generationStore.ReadCurrent(generationStore.Root()))
+            SetShaderRootOverride(generationStore.GenerationPath(current->mId));
+
         if (!mDevice->Initialize(desc))
             return false;
 
@@ -168,7 +177,349 @@ namespace mir
             mCameraBuffer->SetLayout()))
             return false;
 
-        return mDebugDraw->Initialize(*mDevice, mSwapchain->Format());
+        if (!mDebugDraw->Initialize(*mDevice, mSwapchain->Format()))
+            return false;
+        InitializeShaderLibrary();
+        return true;
+    }
+
+    namespace
+    {
+        std::string ShaderOutputName(std::string_view path)
+        {
+            return std::filesystem::path(path).filename().string();
+        }
+
+        const ShaderManifestOutput *FindManifestOutput(const ShaderManifest &manifest, std::string_view name)
+        {
+            return manifest.Find(name);
+        }
+
+        void AddOutputs(std::vector<std::string> &outputs, std::string_view stem,
+            std::initializer_list<std::string_view> entries)
+        {
+            for (const std::string_view entry : entries)
+            {
+                outputs.push_back(std::string(stem) + "." + std::string(entry) + ".spv");
+            }
+        }
+    }
+
+    void VulkanRenderer::RegisterShaderConsumers(ShaderLibrary &library,
+        const SurfaceMaterialCatalog *catalog)
+    {
+        library.Clear();
+
+        std::vector<std::string> materialVertex;
+        std::vector<std::string> materialFragment;
+        for (const char *stem : { "default", "unlit", "error", "model", "sky" })
+        {
+            materialVertex.push_back(std::string(stem) + ".vertexMain.spv");
+            materialFragment.push_back(std::string(stem) + ".fragmentMain.spv");
+        }
+        std::vector<std::string> surfaceClosestHit;
+        const SurfaceMaterialCatalog *materials = catalog != nullptr ? catalog :
+            &mMaterialStore->SurfaceMaterials();
+        for (const SurfaceMaterialRegistration &registration : materials->materials)
+        {
+            materialVertex.push_back(registration.stem + ".vertexMain.spv");
+            materialFragment.push_back(registration.stem + ".fragmentMain.spv");
+            surfaceClosestHit.push_back(registration.stem + ".closestHitSurface.spv");
+        }
+        library.Register("MaterialStore.vertex", std::move(materialVertex), { "vertex" });
+        library.Register("MaterialStore.fragment", std::move(materialFragment), { "fragment" });
+
+        std::vector<std::string> bloom;
+        AddOutputs(bloom, "bloom", { "vertexMain", "brightpassMain", "downsampleMain", "upsampleMain" });
+        library.Register("Bloom", std::move(bloom), { "vertex", "fragment" });
+
+        std::vector<std::string> dof;
+        AddOutputs(dof, "depthOfField", { "vertexMain", "cocMain", "nearBlurMain", "farBlurMain", "compositeMain" });
+        library.Register("DepthOfField", std::move(dof), { "vertex", "fragment" });
+
+        std::vector<std::string> fxaa;
+        AddOutputs(fxaa, "fxaa", { "vertexMain", "fragmentMain" });
+        library.Register("Fxaa", std::move(fxaa), { "vertex", "fragment" });
+
+        std::vector<std::string> motionBlur;
+        AddOutputs(motionBlur, "motionBlur", { "vertexMain", "compositeMain" });
+        library.Register("MotionBlur", std::move(motionBlur), { "vertex", "fragment" });
+
+        std::vector<std::string> tonemap;
+        AddOutputs(tonemap, "tonemap", { "vertexMain", "fragmentMain" });
+        library.Register("PostProcess", std::move(tonemap), { "vertex", "fragment" });
+
+        std::vector<std::string> velocity;
+        AddOutputs(velocity, "velocity", { "vertexMain", "fragmentMain" });
+        library.Register("VelocityPass", std::move(velocity), { "vertex", "fragment" });
+
+        library.Register("ShadowMaps.depth", { "shadowDepth.vertexMain.spv" }, { "vertex" });
+        library.Register("ShadowMaps.distance",
+            { "shadowDistance.vertexMain.spv", "shadowDistance.fragmentMain.spv" }, { "vertex", "fragment" });
+
+        library.Register("RayTracer.raygen", { "raytrace.rayGenMain.spv" }, { "raygeneration" });
+        library.Register("RayTracer.miss", { "raytrace.missMain.spv", "raytrace.shadowMissMain.spv" },
+            { "miss" });
+        std::vector<std::string> rayHit{ "raytrace.closestHitMain.spv" };
+        rayHit.insert(rayHit.end(), surfaceClosestHit.begin(), surfaceClosestHit.end());
+        library.Register("RayTracer.closesthit", std::move(rayHit), { "closesthit" });
+        library.Register("RayTracer.anyhit", { "raytrace.anyHitMain.spv", "raytrace.shadowAnyHitMain.spv" },
+            { "anyhit" });
+    }
+
+    bool VulkanRenderer::LoadAcceptedShaderSignatures(std::string *error)
+    {
+        const std::optional<ShaderManifest> manifest =
+            LoadShaderManifest(ShaderPath("shader_manifest.json"), error);
+        if (!manifest)
+            return false;
+        if (!mShaderLibrary.ValidateCoverage(*manifest, error))
+            return false;
+
+        mAcceptedShaderHashes.clear();
+        for (const ShaderManifestOutput &output : manifest->outputs)
+        {
+            const std::string name = ShaderOutputName(output.output);
+            const auto bytes = ReadBytes(ShaderPath(name));
+            if (!bytes)
+            {
+                if (error != nullptr) *error = "shader output is missing: " + name;
+                return false;
+            }
+            mAcceptedShaderHashes[name] = HashShaderContent(*bytes);
+        }
+
+        for (const std::string &name : mShaderLibrary.Outputs())
+        {
+            const ShaderManifestOutput *output = FindManifestOutput(*manifest, name);
+            if (output == nullptr)
+            {
+                if (error != nullptr)
+                    *error = "manifest output is missing for '" + name + "'";
+                return false;
+            }
+            const std::optional<std::vector<std::byte>> spirv = ReadBytes(ShaderPath(name));
+            if (!spirv)
+            {
+                if (error != nullptr)
+                    *error = "accepted shader output is missing for '" + name + "'";
+                return false;
+            }
+            const auto abi = ParseSpirvAbi(*spirv, output->entry, error);
+            if (!abi)
+                return false;
+            if (abi->stage != output->stage)
+            {
+                if (error != nullptr)
+                    *error = "'" + name + "' compiles as " + abi->stage + " but the manifest says " +
+                        output->stage;
+                return false;
+            }
+            mAcceptedSpirvAbi[name] = *abi;
+        }
+        return true;
+    }
+
+    void VulkanRenderer::InitializeShaderLibrary()
+    {
+        RegisterShaderConsumers(mShaderLibrary, nullptr);
+        std::string error;
+        mShaderReloadReady = LoadAcceptedShaderSignatures(&error);
+        if (!mShaderReloadReady)
+            MIR_LOG_WARN("Shader hot reload is unavailable: {}", error);
+    }
+
+    bool VulkanRenderer::PrepareShaderReload(const std::filesystem::path &generationDirectory,
+        std::string *error)
+    {
+        if (!mShaderReloadReady)
+        {
+            if (error != nullptr)
+                *error = "shader hot reload is unavailable";
+            return false;
+        }
+        if (mShaderReloadPrepared)
+        {
+            if (error != nullptr)
+                *error = "a shader reload is already prepared";
+            return false;
+        }
+
+        struct RootScope
+        {
+            std::filesystem::path previous;
+            ~RootScope() { SetShaderRootOverride(std::move(previous)); }
+        } rootScope{ShaderRootOverride()};
+        try
+        {
+        SetShaderRootOverride(generationDirectory);
+
+        const auto fail = [&](std::string message)
+            {
+                if (error != nullptr)
+                    *error = std::move(message);
+                mPendingShaderReload.DiscardAll();
+                return false;
+            };
+
+        std::string manifestError;
+        const std::optional<ShaderManifest> manifest =
+            LoadShaderManifest(ShaderPath("shader_manifest.json"), &manifestError);
+        if (!manifest)
+            return fail(manifestError);
+
+        std::string catalogError;
+        const std::optional<SurfaceMaterialCatalog> candidateCatalog =
+            LoadSurfaceMaterialCatalog(&catalogError);
+        if (!candidateCatalog)
+            return fail(catalogError);
+        mPendingCatalog = *candidateCatalog;
+
+        ShaderLibrary candidateLibrary;
+        RegisterShaderConsumers(candidateLibrary, &mPendingCatalog);
+        std::string coverageError;
+        if (!candidateLibrary.ValidateCoverage(*manifest, &coverageError))
+            return fail(coverageError);
+
+        std::map<std::string, uint64_t> candidateHashes;
+        std::vector<std::string> managed = candidateLibrary.Outputs();
+        for (const ShaderManifestOutput &output : manifest->outputs)
+        {
+            const std::string name = ShaderOutputName(output.output);
+            const auto bytes = ReadBytes(ShaderPath(name));
+            if (!bytes) return fail("shader output is missing: " + name);
+            candidateHashes[name] = HashShaderContent(*bytes);
+            if (output.type == "surface" && output.entry == "layoutMain")
+                managed.push_back(name); // Reflection-only output, no runtime pipeline.
+        }
+        const ShaderCompatibility ownership = ValidateShaderOwnerCoverage(managed, mAcceptedShaderHashes,
+            candidateHashes);
+        if (!ownership.compatible)
+            return fail(ownership.differences.front());
+
+        std::map<std::string, ShaderSpirvAbi> candidates;
+        for (const std::string &name : candidateLibrary.Outputs())
+        {
+            const ShaderManifestOutput *output = FindManifestOutput(*manifest, name);
+            if (output == nullptr)
+                return fail("manifest output is missing for '" + name + "'");
+
+            const std::optional<std::vector<std::byte>> spirv = ReadBytes(ShaderPath(name));
+            if (!spirv || !ValidateSpirvModule(*spirv, error))
+                return fail("shader output is missing: " + name);
+            const auto abi = ParseSpirvAbi(*spirv, output->entry, error);
+            if (!abi)
+                return fail("shader output has no usable ABI: " + name);
+            if (abi->stage != output->stage)
+                return fail("'" + name + "' compiles as " + abi->stage + " but the manifest says " +
+                    output->stage);
+
+            const auto accepted = mAcceptedSpirvAbi.find(name);
+            if (accepted != mAcceptedSpirvAbi.end())
+            {
+                const ShaderCompatibility compatibility = CompareSpirvAbi(accepted->second, *abi);
+                if (!compatibility.compatible)
+                {
+                    std::string message = "a restart is required for '" + name + "'";
+                    for (const std::string &difference : compatibility.differences)
+                        message += "; " + difference;
+                    return fail(message);
+                }
+            }
+            candidates[name] = *abi;
+        }
+
+        mDevice->WaitIdle();
+        ++mShaderReloadStats.mDeviceIdles;
+
+        mPendingShaderReload.Clear();
+        mPendingShaderReload.AddStage("materials",
+            [&](std::string &stageError)
+            { return mMaterialStore->PrepareShaderReload(mPendingCatalog, &stageError); },
+            [&] { mMaterialStore->CommitShaderReload(); },
+            [&] { mMaterialStore->DiscardShaderReload(); });
+        mPendingShaderReload.AddStage("shadows",
+            [&](std::string &stageError) { return mShadowMaps->PrepareShaderReload(&stageError); },
+            [&] { mShadowMaps->CommitShaderReload(); },
+            [&] { mShadowMaps->DiscardShaderReload(); });
+        mPendingShaderReload.AddStage("post",
+            [&](std::string &stageError) { return mPostProcessing->PrepareShaderReload(&stageError); },
+            [&] { mPostProcessing->CommitShaderReload(); },
+            [&] { mPostProcessing->DiscardShaderReload(); });
+        if (mDevice->RayTracingSupported())
+        {
+            mPendingShaderReload.AddStage("raytracing",
+                [&](std::string &stageError)
+                { return mRayTracer->PrepareShaderReload(mPendingCatalog.materials, &stageError); },
+                [&] { mRayTracer->CommitShaderReload(); },
+                [&] { mRayTracer->DiscardShaderReload(); });
+        }
+
+        std::string prepareError;
+        if (!mPendingShaderReload.PrepareAll(&prepareError))
+            return fail(prepareError);
+
+        mPendingShaderLibrary = std::move(candidateLibrary);
+        mPendingSpirvAbi = std::move(candidates);
+        mPendingShaderHashes = std::move(candidateHashes);
+        mPendingShaderRoot = generationDirectory;
+        mShaderReloadPrepared = true;
+        return true;
+        }
+        catch (const std::exception &exception)
+        {
+            mPendingShaderReload.DiscardAll();
+            if (error != nullptr)
+                *error = std::string("shader preparation failed: ") + exception.what();
+            return false;
+        }
+    }
+
+    void VulkanRenderer::CommitPreparedShaderReload()
+    {
+        if (!mShaderReloadPrepared)
+            return;
+        mPendingShaderReload.CommitAll();
+        mAcceptedSpirvAbi = std::move(mPendingSpirvAbi);
+        mAcceptedShaderHashes = std::move(mPendingShaderHashes);
+        mShaderLibrary = std::move(mPendingShaderLibrary);
+        SetShaderRootOverride(std::move(mPendingShaderRoot));
+        mShaderReloadPrepared = false;
+        mPendingShaderRoot.clear();
+        ++mShaderReloadStats.mGeneration;
+        try
+        {
+            MIR_LOG_INFO("Shader generation {} committed ({} device idles)",
+                mShaderReloadStats.mGeneration, mShaderReloadStats.mDeviceIdles);
+            if (mShaderReloadListener)
+                mShaderReloadListener();
+        }
+        catch (...)
+        {
+        }
+    }
+
+    void VulkanRenderer::DiscardPreparedShaderReload()
+    {
+        if (!mShaderReloadPrepared)
+            return;
+        mPendingShaderReload.DiscardAll();
+        mShaderReloadPrepared = false;
+        mPendingSpirvAbi.clear();
+        mPendingShaderHashes.clear();
+        mPendingShaderLibrary.Clear();
+    }
+
+    bool VulkanRenderer::ReloadShaders(std::string *error)
+    {
+        if (!PrepareShaderReload(ShaderPath(""), error))
+            return false;
+        CommitPreparedShaderReload();
+        return true;
+    }
+    void VulkanRenderer::SetShaderReloadListener(std::function<void()> listener)
+    {
+        mShaderReloadListener = std::move(listener);
     }
 
     bool VulkanRenderer::RecreateSwapchain()
@@ -193,6 +544,7 @@ namespace mir
 
     void VulkanRenderer::Shutdown()
     {
+        DiscardPreparedShaderReload();
         if (mDevice->Handle() != VK_NULL_HANDLE)
         {
             mDevice->WaitIdle();

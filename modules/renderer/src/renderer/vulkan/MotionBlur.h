@@ -16,6 +16,7 @@
 #include <volk.h>
 
 #include <cstdint>
+#include <string>
 
 VK_DEFINE_HANDLE(VmaAllocation)
 
@@ -29,6 +30,10 @@ namespace mir::vk
         bool Initialize(Device &device, VkExtent2D extent);
         void Shutdown();
 
+        bool PrepareShaderReload(std::string *error = nullptr);
+        void CommitShaderReload();
+        void DiscardShaderReload();
+
         bool Resize(VkExtent2D extent);
 
         void SetParams(float shutterStrength, uint32_t sampleCount)
@@ -41,6 +46,9 @@ namespace mir::vk
             VkExtent2D extent);
 
         VkImageView OutputView(uint32_t frame) const { return mOutputViews[frame]; }
+
+        VkPipeline mReloadPipeline = VK_NULL_HANDLE;
+        bool mReloadPrepared = false;
 
     private:
         bool CreateImages(VkExtent2D extent);

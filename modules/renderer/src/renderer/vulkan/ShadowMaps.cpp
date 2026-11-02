@@ -406,10 +406,6 @@ namespace mir::vk
             vkUpdateDescriptorSets(mDevice->Handle(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
         }
 
-        VkShaderModule vertModule = CreateShaderModule(mDevice->Handle(), ShaderPath("shadowDepth.vertexMain.spv"));
-        if (vertModule == VK_NULL_HANDLE)
-            return false;
-
         const VkPushConstantRange pushConstantRange{
             .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
             .offset = 0,
@@ -423,170 +419,11 @@ namespace mir::vk
         if (vkCreatePipelineLayout(mDevice->Handle(), &layoutInfo, nullptr, &mDepthPipelineLayout) != VK_SUCCESS)
         {
             MIR_LOG_CRITICAL("Initialize: vkCreatePipelineLayout failed");
-            vkDestroyShaderModule(mDevice->Handle(), vertModule, nullptr);
             return false;
         }
 
-        const VkPipelineShaderStageCreateInfo stage{
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-            .stage = VK_SHADER_STAGE_VERTEX_BIT,
-            .module = vertModule,
-            .pName = "vertexMain" };
-
-        const VkVertexInputBindingDescription vertexBinding{
-            .binding = 0,
-            .stride = sizeof(Vertex),
-            .inputRate = VK_VERTEX_INPUT_RATE_VERTEX };
-
-        const VkVertexInputAttributeDescription positionAttribute{
-            .location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = offsetof(Vertex, pos) };
-
-        const VkPipelineVertexInputStateCreateInfo vertexInput{
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-            .vertexBindingDescriptionCount = 1,
-            .pVertexBindingDescriptions = &vertexBinding,
-            .vertexAttributeDescriptionCount = 1,
-            .pVertexAttributeDescriptions = &positionAttribute };
-
-        const VkPipelineInputAssemblyStateCreateInfo inputAssembly{
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
-            .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
-            .primitiveRestartEnable = VK_FALSE };
-
-        const VkPipelineViewportStateCreateInfo viewportState{
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
-            .viewportCount = 1,
-            .pViewports = nullptr,
-            .scissorCount = 1,
-            .pScissors = nullptr };
-
-        const VkPipelineRasterizationStateCreateInfo rasterizer{
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-            .depthClampEnable = VK_FALSE,
-            .rasterizerDiscardEnable = VK_FALSE,
-            .polygonMode = VK_POLYGON_MODE_FILL,
-            .cullMode = VK_CULL_MODE_NONE,
-            .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
-            .depthBiasEnable = VK_TRUE,
-            .depthBiasConstantFactor = 1.25f,
-            .depthBiasSlopeFactor = 1.75f,
-            .lineWidth = 1.0f };
-
-        const VkPipelineMultisampleStateCreateInfo multisample{
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-            .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
-            .sampleShadingEnable = VK_FALSE };
-
-        const VkPipelineDepthStencilStateCreateInfo depthStencil{
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
-            .depthTestEnable = VK_TRUE,
-            .depthWriteEnable = VK_TRUE,
-            .depthCompareOp = VK_COMPARE_OP_LESS,
-            .depthBoundsTestEnable = VK_FALSE,
-            .stencilTestEnable = VK_FALSE };
-
-        const VkDynamicState dynamicStates[]{ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
-        const VkPipelineDynamicStateCreateInfo dynamicState{
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-            .dynamicStateCount = 2,
-            .pDynamicStates = dynamicStates };
-
-        const VkPipelineRenderingCreateInfo renderingInfo{
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-            .colorAttachmentCount = 0,
-            .depthAttachmentFormat = kDepthFormat };
-
-        const VkGraphicsPipelineCreateInfo pipelineInfo{
-            .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-            .pNext = &renderingInfo,
-            .stageCount = 1,
-            .pStages = &stage,
-            .pVertexInputState = &vertexInput,
-            .pInputAssemblyState = &inputAssembly,
-            .pViewportState = &viewportState,
-            .pRasterizationState = &rasterizer,
-            .pMultisampleState = &multisample,
-            .pDepthStencilState = &depthStencil,
-            .pDynamicState = &dynamicState,
-            .layout = mDepthPipelineLayout,
-            .renderPass = VK_NULL_HANDLE,
-            .subpass = 0 };
-
-        const VkResult pipelineResult = vkCreateGraphicsPipelines(
-            mDevice->Handle(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &mDepthPipeline);
-
-        vkDestroyShaderModule(mDevice->Handle(), vertModule, nullptr);
-
-        if (pipelineResult != VK_SUCCESS)
-        {
-            MIR_LOG_CRITICAL("Initialize: vkCreateGraphicsPipelines failed: {}",
-                static_cast<int>(pipelineResult));
+        if (!BuildPipelines(mDepthPipeline, mPointPipeline))
             return false;
-        }
-
-        VkShaderModule distanceVertModule = CreateShaderModule(mDevice->Handle(), ShaderPath("shadowDistance.vertexMain.spv"));
-        VkShaderModule distanceFragModule = CreateShaderModule(mDevice->Handle(), ShaderPath("shadowDistance.fragmentMain.spv"));
-        if (distanceVertModule == VK_NULL_HANDLE || distanceFragModule == VK_NULL_HANDLE)
-        {
-            if (distanceVertModule != VK_NULL_HANDLE)
-                vkDestroyShaderModule(mDevice->Handle(), distanceVertModule, nullptr);
-            if (distanceFragModule != VK_NULL_HANDLE)
-                vkDestroyShaderModule(mDevice->Handle(), distanceFragModule, nullptr);
-            return false;
-        }
-
-        const std::array<VkPipelineShaderStageCreateInfo, 2> distanceStages{ {
-            { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-             .stage = VK_SHADER_STAGE_VERTEX_BIT, .module = distanceVertModule, .pName = "vertexMain" },
-            { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-             .stage = VK_SHADER_STAGE_FRAGMENT_BIT, .module = distanceFragModule, .pName = "fragmentMain" } } };
-
-        const VkPipelineColorBlendAttachmentState distanceBlendAttachment{
-            .blendEnable = VK_FALSE,
-            .colorWriteMask = VK_COLOR_COMPONENT_R_BIT };
-
-        const VkPipelineColorBlendStateCreateInfo distanceColorBlend{
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-            .attachmentCount = 1,
-            .pAttachments = &distanceBlendAttachment };
-
-        constexpr VkFormat kPointShadowColorFormat = VK_FORMAT_R32_SFLOAT;
-        const VkPipelineRenderingCreateInfo distanceRenderingInfo{
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-            .colorAttachmentCount = 1,
-            .pColorAttachmentFormats = &kPointShadowColorFormat,
-            .depthAttachmentFormat = kDepthFormat };
-
-        const VkGraphicsPipelineCreateInfo distancePipelineInfo{
-            .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-            .pNext = &distanceRenderingInfo,
-            .stageCount = static_cast<uint32_t>(distanceStages.size()),
-            .pStages = distanceStages.data(),
-            .pVertexInputState = &vertexInput,
-            .pInputAssemblyState = &inputAssembly,
-            .pViewportState = &viewportState,
-            .pRasterizationState = &rasterizer,
-            .pMultisampleState = &multisample,
-            .pDepthStencilState = &depthStencil,
-            .pColorBlendState = &distanceColorBlend,
-            .pDynamicState = &dynamicState,
-            .layout = mDepthPipelineLayout,
-            .renderPass = VK_NULL_HANDLE,
-            .subpass = 0 };
-
-        const VkResult distancePipelineResult = vkCreateGraphicsPipelines(
-            mDevice->Handle(), VK_NULL_HANDLE, 1, &distancePipelineInfo, nullptr, &mPointPipeline);
-
-        vkDestroyShaderModule(mDevice->Handle(), distanceVertModule, nullptr);
-        vkDestroyShaderModule(mDevice->Handle(), distanceFragModule, nullptr);
-
-        if (distancePipelineResult != VK_SUCCESS)
-        {
-            MIR_LOG_CRITICAL("Initialize: vkCreateGraphicsPipelines (Point) failed: {}",
-                static_cast<int>(distancePipelineResult));
-            return false;
-        }
-
         return true;
     }
 
@@ -945,5 +782,227 @@ namespace mir::vk
             sizeof(glm::mat4) * info.spotShadowBase, sizeof(glm::mat4) * kMaxSpotShadows);
 
         return info;
+    }
+
+    bool ShadowMaps::BuildPipelines(VkPipeline &outDepth, VkPipeline &outPoint)
+    {
+        outDepth = VK_NULL_HANDLE;
+        outPoint = VK_NULL_HANDLE;
+
+        VkShaderModule vertModule = CreateShaderModule(mDevice->Handle(), ShaderPath("shadowDepth.vertexMain.spv"));
+        if (vertModule == VK_NULL_HANDLE)
+            return false;
+
+        const VkPipelineShaderStageCreateInfo stage{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = VK_SHADER_STAGE_VERTEX_BIT,
+            .module = vertModule,
+            .pName = "vertexMain" };
+
+        const VkVertexInputBindingDescription vertexBinding{
+            .binding = 0,
+            .stride = sizeof(Vertex),
+            .inputRate = VK_VERTEX_INPUT_RATE_VERTEX };
+
+        const VkVertexInputAttributeDescription positionAttribute{
+            .location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = offsetof(Vertex, pos) };
+
+        const VkPipelineVertexInputStateCreateInfo vertexInput{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+            .vertexBindingDescriptionCount = 1,
+            .pVertexBindingDescriptions = &vertexBinding,
+            .vertexAttributeDescriptionCount = 1,
+            .pVertexAttributeDescriptions = &positionAttribute };
+
+        const VkPipelineInputAssemblyStateCreateInfo inputAssembly{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+            .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+            .primitiveRestartEnable = VK_FALSE };
+
+        const VkPipelineViewportStateCreateInfo viewportState{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+            .viewportCount = 1,
+            .pViewports = nullptr,
+            .scissorCount = 1,
+            .pScissors = nullptr };
+
+        const VkPipelineRasterizationStateCreateInfo rasterizer{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+            .depthClampEnable = VK_FALSE,
+            .rasterizerDiscardEnable = VK_FALSE,
+            .polygonMode = VK_POLYGON_MODE_FILL,
+            .cullMode = VK_CULL_MODE_NONE,
+            .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+            .depthBiasEnable = VK_TRUE,
+            .depthBiasConstantFactor = 1.25f,
+            .depthBiasSlopeFactor = 1.75f,
+            .lineWidth = 1.0f };
+
+        const VkPipelineMultisampleStateCreateInfo multisample{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+            .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+            .sampleShadingEnable = VK_FALSE };
+
+        const VkPipelineDepthStencilStateCreateInfo depthStencil{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+            .depthTestEnable = VK_TRUE,
+            .depthWriteEnable = VK_TRUE,
+            .depthCompareOp = VK_COMPARE_OP_LESS,
+            .depthBoundsTestEnable = VK_FALSE,
+            .stencilTestEnable = VK_FALSE };
+
+        const VkDynamicState dynamicStates[]{ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+        const VkPipelineDynamicStateCreateInfo dynamicState{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+            .dynamicStateCount = 2,
+            .pDynamicStates = dynamicStates };
+
+        const VkPipelineRenderingCreateInfo renderingInfo{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+            .colorAttachmentCount = 0,
+            .depthAttachmentFormat = kDepthFormat };
+
+        const VkGraphicsPipelineCreateInfo pipelineInfo{
+            .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+            .pNext = &renderingInfo,
+            .stageCount = 1,
+            .pStages = &stage,
+            .pVertexInputState = &vertexInput,
+            .pInputAssemblyState = &inputAssembly,
+            .pViewportState = &viewportState,
+            .pRasterizationState = &rasterizer,
+            .pMultisampleState = &multisample,
+            .pDepthStencilState = &depthStencil,
+            .pDynamicState = &dynamicState,
+            .layout = mDepthPipelineLayout,
+            .renderPass = VK_NULL_HANDLE,
+            .subpass = 0 };
+
+        const VkResult pipelineResult = vkCreateGraphicsPipelines(
+            mDevice->Handle(), VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &outDepth);
+
+        vkDestroyShaderModule(mDevice->Handle(), vertModule, nullptr);
+
+        if (pipelineResult != VK_SUCCESS)
+        {
+            MIR_LOG_CRITICAL("Initialize: vkCreateGraphicsPipelines failed: {}",
+                static_cast<int>(pipelineResult));
+            return false;
+        }
+
+        VkShaderModule distanceVertModule = CreateShaderModule(mDevice->Handle(), ShaderPath("shadowDistance.vertexMain.spv"));
+        VkShaderModule distanceFragModule = CreateShaderModule(mDevice->Handle(), ShaderPath("shadowDistance.fragmentMain.spv"));
+        if (distanceVertModule == VK_NULL_HANDLE || distanceFragModule == VK_NULL_HANDLE)
+        {
+            if (distanceVertModule != VK_NULL_HANDLE)
+                vkDestroyShaderModule(mDevice->Handle(), distanceVertModule, nullptr);
+            if (distanceFragModule != VK_NULL_HANDLE)
+                vkDestroyShaderModule(mDevice->Handle(), distanceFragModule, nullptr);
+            return false;
+        }
+
+        const std::array<VkPipelineShaderStageCreateInfo, 2> distanceStages{ {
+            { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+             .stage = VK_SHADER_STAGE_VERTEX_BIT, .module = distanceVertModule, .pName = "vertexMain" },
+            { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+             .stage = VK_SHADER_STAGE_FRAGMENT_BIT, .module = distanceFragModule, .pName = "fragmentMain" } } };
+
+        const VkPipelineColorBlendAttachmentState distanceBlendAttachment{
+            .blendEnable = VK_FALSE,
+            .colorWriteMask = VK_COLOR_COMPONENT_R_BIT };
+
+        const VkPipelineColorBlendStateCreateInfo distanceColorBlend{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+            .attachmentCount = 1,
+            .pAttachments = &distanceBlendAttachment };
+
+        constexpr VkFormat kPointShadowColorFormat = VK_FORMAT_R32_SFLOAT;
+        const VkPipelineRenderingCreateInfo distanceRenderingInfo{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+            .colorAttachmentCount = 1,
+            .pColorAttachmentFormats = &kPointShadowColorFormat,
+            .depthAttachmentFormat = kDepthFormat };
+
+        const VkGraphicsPipelineCreateInfo distancePipelineInfo{
+            .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+            .pNext = &distanceRenderingInfo,
+            .stageCount = static_cast<uint32_t>(distanceStages.size()),
+            .pStages = distanceStages.data(),
+            .pVertexInputState = &vertexInput,
+            .pInputAssemblyState = &inputAssembly,
+            .pViewportState = &viewportState,
+            .pRasterizationState = &rasterizer,
+            .pMultisampleState = &multisample,
+            .pDepthStencilState = &depthStencil,
+            .pColorBlendState = &distanceColorBlend,
+            .pDynamicState = &dynamicState,
+            .layout = mDepthPipelineLayout,
+            .renderPass = VK_NULL_HANDLE,
+            .subpass = 0 };
+
+        const VkResult distancePipelineResult = vkCreateGraphicsPipelines(
+            mDevice->Handle(), VK_NULL_HANDLE, 1, &distancePipelineInfo, nullptr, &outPoint);
+
+        vkDestroyShaderModule(mDevice->Handle(), distanceVertModule, nullptr);
+        vkDestroyShaderModule(mDevice->Handle(), distanceFragModule, nullptr);
+
+        if (distancePipelineResult != VK_SUCCESS)
+        {
+            MIR_LOG_CRITICAL("Initialize: vkCreateGraphicsPipelines (Point) failed: {}",
+                static_cast<int>(distancePipelineResult));
+            return false;
+        }
+
+        if (outDepth == VK_NULL_HANDLE || outPoint == VK_NULL_HANDLE)
+        {
+            if (outDepth != VK_NULL_HANDLE)
+                vkDestroyPipeline(mDevice->Handle(), outDepth, nullptr);
+            if (outPoint != VK_NULL_HANDLE)
+                vkDestroyPipeline(mDevice->Handle(), outPoint, nullptr);
+            outDepth = VK_NULL_HANDLE;
+            outPoint = VK_NULL_HANDLE;
+            return false;
+        }
+        return true;
+    }
+
+    bool ShadowMaps::PrepareShaderReload(std::string *error)
+    {
+        DiscardShaderReload();
+        if (!BuildPipelines(mReloadDepthPipeline, mReloadPointPipeline))
+        {
+            DiscardShaderReload();
+            if (error != nullptr)
+                *error = "a shadow pipeline could not be created";
+            return false;
+        }
+        mReloadPrepared = true;
+        return true;
+    }
+
+    void ShadowMaps::CommitShaderReload()
+    {
+        if (!mReloadPrepared)
+            return;
+        if (mDepthPipeline != VK_NULL_HANDLE)
+            vkDestroyPipeline(mDevice->Handle(), mDepthPipeline, nullptr);
+        if (mPointPipeline != VK_NULL_HANDLE)
+            vkDestroyPipeline(mDevice->Handle(), mPointPipeline, nullptr);
+        mDepthPipeline = mReloadDepthPipeline;
+        mPointPipeline = mReloadPointPipeline;
+        mReloadDepthPipeline = VK_NULL_HANDLE;
+        mReloadPointPipeline = VK_NULL_HANDLE;
+        mReloadPrepared = false;
+    }
+
+    void ShadowMaps::DiscardShaderReload()
+    {
+        if (mReloadDepthPipeline != VK_NULL_HANDLE)
+            vkDestroyPipeline(mDevice->Handle(), mReloadDepthPipeline, nullptr);
+        if (mReloadPointPipeline != VK_NULL_HANDLE)
+            vkDestroyPipeline(mDevice->Handle(), mReloadPointPipeline, nullptr);
+        mReloadDepthPipeline = VK_NULL_HANDLE;
+        mReloadPointPipeline = VK_NULL_HANDLE;
+        mReloadPrepared = false;
     }
 }

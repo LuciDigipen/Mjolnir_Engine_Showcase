@@ -58,6 +58,11 @@ namespace mir::vk
         bool DlssAvailable() const;
         void ResetHistory();
 
+        // The caller idles the device first. Every effect builds its candidate
+        // pipelines before any old pipeline is destroyed.
+        bool PrepareShaderReload(std::string *error = nullptr);
+        void CommitShaderReload();
+        void DiscardShaderReload();
         // T0 experiment only, nullopt disables it without reallocating in-flight images.
 
         struct RasterInputs

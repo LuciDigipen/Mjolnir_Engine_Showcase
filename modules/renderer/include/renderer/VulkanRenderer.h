@@ -20,6 +20,10 @@
 #include <core/Registration.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/RtxgiConfig.h>
+#include <renderer/ShaderLibrary.h>
+#include <renderer/ShaderGeneration.h>
+#include <renderer/ShaderReload.h>
+#include <renderer/SurfaceMaterialCatalog.h>
 #include <renderer/Texture.h>
 #include <renderer/components/Sky.h>
 
@@ -36,9 +40,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <vector>
 
 struct ImDrawData;
@@ -226,6 +233,29 @@ namespace mir
         // Stable shared-table rows for a material record's TextureRef fields.
         uint32_t MaterialSamplerRow(const SamplerDesc &desc);
         const SurfaceMaterialCatalog &SurfaceMaterials() const;
+        struct ShaderReloadStats
+        {
+            uint32_t mDeviceIdles = 0;
+            uint64_t mGeneration = 0;
+        };
+
+        // Development-only hot reload of every registered shader call site.
+        // Files are already published beside the exe; this validates the whole
+        // batch, builds all replacement pipelines off to the side and swaps them
+        // after one device idle. Failure leaves the previous generation live.
+        bool ReloadShaders(std::string *error = nullptr);
+        // Publication protocol: read the candidate generation, validate and
+        // build every GPU candidate off to the side, then let the caller promote
+        // the generation pointer before the no-fail commit.
+        bool PrepareShaderReload(const std::filesystem::path &generationDirectory,
+            std::string *error = nullptr);
+        void CommitPreparedShaderReload();
+        void DiscardPreparedShaderReload();
+        bool ShaderReloadPrepared() const { return mShaderReloadPrepared; }
+        bool ShaderReloadAvailable() const { return mShaderReloadReady; }
+        const ShaderReloadStats &ReloadStats() const { return mShaderReloadStats; }
+        // Runs after a successful publication, whether or not a panel is open.
+        void SetShaderReloadListener(std::function<void()> listener);
 
         void CaptureNextFrame(const std::filesystem::path &path);
 
@@ -353,6 +383,10 @@ namespace mir
         uint32_t WriteCameraData(const RenderView &view, uint32_t viewIndex, bool applyJitter = false,
             glm::vec2 *outJitter = nullptr);
 
+        void RegisterShaderConsumers(ShaderLibrary &library, const SurfaceMaterialCatalog *catalog);
+        bool LoadAcceptedShaderSignatures(std::string *error);
+        void InitializeShaderLibrary();
+
     private:
         glm::vec4 mClearColor{ 0.02f, 0.02f, 0.02f, 1.0f };
 
@@ -400,5 +434,18 @@ namespace mir
         std::unique_ptr<vk::MeshUploader> mMeshUploads;
 
         uint64_t mSkippedDraws = 0;
+
+        ShaderLibrary mShaderLibrary;
+        std::map<std::string, ShaderSpirvAbi> mAcceptedSpirvAbi;
+        std::map<std::string, uint64_t> mAcceptedShaderHashes, mPendingShaderHashes;
+        ShaderReloadTransaction mPendingShaderReload;
+        ShaderLibrary mPendingShaderLibrary;
+        std::map<std::string, ShaderSpirvAbi> mPendingSpirvAbi;
+        std::filesystem::path mPendingShaderRoot;
+        SurfaceMaterialCatalog mPendingCatalog;
+        bool mShaderReloadPrepared = false;
+        ShaderReloadStats mShaderReloadStats;
+        std::function<void()> mShaderReloadListener;
+        bool mShaderReloadReady = false;
     };
 }

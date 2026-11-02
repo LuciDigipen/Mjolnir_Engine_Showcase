@@ -15,6 +15,7 @@
 #include <volk.h>
 
 #include <cstdint>
+#include <string>
 
 namespace mir::vk
 {
@@ -32,6 +33,10 @@ namespace mir::vk
     {
     public:
         bool Initialize(Device &device, VkFormat swapchainFormat);
+        bool PrepareShaderReload(std::string *error = nullptr);
+        void CommitShaderReload();
+        void DiscardShaderReload();
+
         void Shutdown();
 
         void SetParams(float exposure, int tonemapOperator)
@@ -57,7 +62,13 @@ namespace mir::vk
         void Record(VkCommandBuffer cmd, uint32_t frame, VkImageView source, VkImageView bloom,
             float bloomIntensity, FilmGrain grain, VkExtent2D extent);
 
+        VkPipeline mReloadPipeline = VK_NULL_HANDLE;
+        bool mReloadPrepared = false;
+        VkFormat mSwapchainFormat = VK_FORMAT_UNDEFINED;
+
     private:
+        VkPipeline BuildPipeline();
+
         Device *mDevice = nullptr;
 
         VkSampler mSampler = VK_NULL_HANDLE;

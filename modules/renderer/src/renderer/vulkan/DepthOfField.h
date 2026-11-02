@@ -16,6 +16,7 @@
 #include <volk.h>
 
 #include <cstdint>
+#include <string>
 
 VK_DEFINE_HANDLE(VmaAllocation)
 
@@ -28,6 +29,10 @@ namespace mir::vk
     public:
         bool Initialize(Device &device, VkExtent2D extent);
         void Shutdown();
+
+        bool PrepareShaderReload(std::string *error = nullptr);
+        void CommitShaderReload();
+        void DiscardShaderReload();
 
         bool Resize(VkExtent2D extent);
 
@@ -42,6 +47,20 @@ namespace mir::vk
             bool isLinearDepth, float nearClip, float farClip, VkExtent2D extent) const;
 
         VkImageView OutputView(uint32_t frame) const { return mOutputViews[frame]; }
+
+        struct ReloadCandidate
+        {
+            VkPipeline mCoc = VK_NULL_HANDLE;
+            VkPipeline mNearBlur = VK_NULL_HANDLE;
+            VkPipeline mFarBlur = VK_NULL_HANDLE;
+            VkPipeline mComposite = VK_NULL_HANDLE;
+        };
+
+        bool BuildReloadCandidate(ReloadCandidate &candidate, std::string *error);
+        void DestroyCandidate(ReloadCandidate &candidate);
+
+        ReloadCandidate mReloadCandidate;
+        bool mReloadPrepared = false;
 
     private:
         bool CreateImages(VkExtent2D extent);
