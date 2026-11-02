@@ -28,6 +28,7 @@
 #include <format>
 #include <iterator>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 namespace mir
@@ -227,6 +228,17 @@ namespace mir
         return parameters;
     }
 
+    namespace
+    {
+        void SetShadingValuesFromRecord(SurfaceMaterialBinding &binding, const MaterialLayout &layout,
+            std::span<const std::byte> record)
+        {
+            binding.tilePeriodMeters = SurfaceMaterialTilePeriodFromRecord(layout, record);
+            binding.macro = SurfaceMaterialMacroParametersFromRecord(layout, record);
+            binding.parallax = SurfaceMaterialParallaxParametersFromRecord(layout, record);
+        }
+    }
+
     bool ValidateSurfaceMaterialMacroParameters(const SurfaceMaterialMacroParameters &parameters, std::string *error)
     {
         if (parameters.periodMeters)
@@ -294,6 +306,67 @@ namespace mir
         return true;
     }
 
+    std::optional<SurfaceMaterialSchemaAdoption> AdoptSurfaceMaterialRecord(
+        const SurfaceMaterialBinding &binding, const MaterialLayout &layout, std::span<const std::byte> record,
+        std::string *error)
+    {
+        std::string localError;
+        std::string &reported = error != nullptr ? *error : localError;
+        const std::optional<std::string> parameters = MaterialRecordParameters(layout, record, &reported);
+        if (!parameters)
+            return std::nullopt;
+
+        SurfaceMaterialSchemaAdoption adoption;
+        adoption.binding = binding;
+        adoption.layout = layout;
+        adoption.parametersJson = *parameters;
+        adoption.revision = MaterialLayoutRevision(layout);
+        SetShadingValuesFromRecord(adoption.binding, layout, record);
+        return adoption;
+    }
+
+    bool ValidateSurfaceMaterialParameterOverlay(std::span<const MaterialLayout> layouts,
+        std::string_view parametersJson, std::string *error)
+    {
+        Json overlay;
+        try
+        {
+            overlay = Json::parse(parametersJson);
+        }
+        catch (const Json::exception &exception)
+        {
+            SetParameterError(error, std::string("material parameters are not JSON: ") + exception.what());
+            return false;
+        }
+        if (!overlay.is_object())
+        {
+            SetParameterError(error, "material parameters and overrides must be JSON objects");
+            return false;
+        }
+        for (const auto &[name, value] : overlay.items())
+        {
+            bool known = false;
+            for (const MaterialLayout &layout : layouts)
+                for (const MaterialFieldLayout &field : layout.fields)
+                {
+                    if (field.name != name)
+                        continue;
+                    if (field.kind == MaterialFieldKind::TextureRef)
+                    {
+                        SetParameterError(error, "material texture '" + name + "' is edited through the source recipe");
+                        return false;
+                    }
+                    known = true;
+                }
+            if (!known)
+            {
+                SetParameterError(error, "material parameter '" + name + "' is not in the reflected layout");
+                return false;
+            }
+        }
+        return true;
+    }
+
     void BuildSurfaceMacroTexture(uint32_t size, std::vector<std::byte> &rgba)
     {
         const uint32_t resolution = std::max(size, 4u);
@@ -348,6 +421,9 @@ namespace mir
         mTextures.clear();
         mActive.clear();
         mActiveKeys.clear();
+        mTerrainUses.clear();
+        for (auto &[owner, uses] : mUseOwners)
+            uses.clear();
         for (TextureHandle &texture : mDefaults)
             texture = kNullTexture;
         ++mGeneration;
@@ -358,9 +434,53 @@ namespace mir
         mValidator = std::move(validator);
     }
 
-    void SurfaceMaterialLibrary::SetRecordValidator(MaterialRecordValidator validator)
+    void SurfaceMaterialLibrary::NotifyShaderCommit() noexcept
+    {
+        ++mSchemaEpoch;
+        ++mGeneration;
+    }
+
+    bool SurfaceMaterialLibrary::ValidateRecord(std::string_view frontend, const MaterialLayout &layout,
+        std::span<const std::byte> bytes, std::string &error) const
+    {
+        SurfaceMaterialBinding binding;
+        binding.tilePeriodMeters = SurfaceMaterialTilePeriodFromRecord(layout, bytes);
+        binding.macro = SurfaceMaterialMacroParametersFromRecord(layout, bytes);
+        binding.parallax = SurfaceMaterialParallaxParametersFromRecord(layout, bytes);
+
+        // The shared numeric bounds hold for every frontend, so a mesh-only
+        // material cannot publish a non-finite or out-of-range value either.
+        if (binding.tilePeriodMeters)
+        {
+            const double period = *binding.tilePeriodMeters;
+            if (!std::isfinite(period) || !(period > 0.0))
+            {
+                SetParameterError(&error, "tileSizeMeters must be a positive finite period");
+                return false;
+            }
+        }
+        if (binding.macro && !ValidateSurfaceMaterialMacroParameters(*binding.macro, &error))
+            return false;
+        if (binding.parallax && !ValidateSurfaceMaterialParallaxParameters(*binding.parallax, &error))
+            return false;
+
+        // The terrain consumer adds the UV-phase divisibility rule on top.
+        if (frontend != "terrain" || !mValidator)
+            return true;
+        return mValidator(binding, error);
+    }
+
+    void SurfaceMaterialLibrary::SetRecordValidator(SurfaceMaterialRecordValidator validator)
     {
         mRecordValidator = std::move(validator);
+    }
+
+    bool SurfaceMaterialLibrary::ValidateRecordForPublication(std::string_view frontend,
+        const MaterialLayout &layout, std::span<const std::byte> bytes, std::string &error) const
+    {
+        if (!ValidateRecord(frontend, layout, bytes, error))
+            return false;
+        return !mRecordValidator || mRecordValidator(layout, bytes, error);
     }
 
     void SurfaceMaterialLibrary::ReleaseRetired()
@@ -373,26 +493,62 @@ namespace mir
         mRetiredMaterials.clear();
     }
 
-    void SurfaceMaterialLibrary::SetActiveMaterials(std::span<const SurfaceMaterialUse> uses)
+    void SurfaceMaterialLibrary::RebuildActiveMaterials()
     {
         // Terrain resolves bindings before it calls this, so a schema-replaced
         // handle is no longer the one any instance will draw next.
         ReleaseRetired();
         mActive.clear();
         mActiveKeys.clear();
-        for (const SurfaceMaterialUse &use : uses)
+        const auto add = [this](const SurfaceMaterialUse &use)
         {
             const std::string key = MaterialKey(use.logicalPath, use.frontend);
             if (mActiveKeys.insert(key).second)
+            {
                 mActive.push_back(use);
-            else
-                for (SurfaceMaterialUse &existing : mActive)
-                    if (MaterialKey(existing.logicalPath, existing.frontend) == key)
-                    {
-                        existing.required = existing.required || use.required;
-                        break;
-                    }
-        }
+                return;
+            }
+            for (SurfaceMaterialUse &existing : mActive)
+                if (MaterialKey(existing.logicalPath, existing.frontend) == key)
+                {
+                    existing.required = existing.required || use.required;
+                    break;
+                }
+        };
+        for (const SurfaceMaterialUse &use : mTerrainUses)
+            add(use);
+        for (const auto &[owner, uses] : mUseOwners)
+            for (const SurfaceMaterialUse &use : uses)
+                add(use);
+    }
+
+    void SurfaceMaterialLibrary::SetActiveMaterials(std::span<const SurfaceMaterialUse> uses)
+    {
+        mTerrainUses.assign(uses.begin(), uses.end());
+        RebuildActiveMaterials();
+    }
+
+    uint64_t SurfaceMaterialLibrary::AddMaterialUseOwner()
+    {
+        const uint64_t owner = mNextUseOwner++;
+        mUseOwners.emplace(owner, std::vector<SurfaceMaterialUse>{});
+        return owner;
+    }
+
+    void SurfaceMaterialLibrary::SetMaterialUses(uint64_t owner, std::span<const SurfaceMaterialUse> uses)
+    {
+        const auto found = mUseOwners.find(owner);
+        if (found == mUseOwners.end())
+            return;
+        found->second.assign(uses.begin(), uses.end());
+        RebuildActiveMaterials();
+    }
+
+    void SurfaceMaterialLibrary::RemoveMaterialUseOwner(uint64_t owner)
+    {
+        if (mUseOwners.erase(owner) == 0)
+            return;
+        RebuildActiveMaterials();
     }
 
     void SurfaceMaterialLibrary::Bind(AssetCache &assets, VulkanRenderer &renderer)
@@ -429,6 +585,7 @@ namespace mir
         candidate->mAssets = &candidateAssets;
         candidate->mRenderer = &renderer;
         candidate->mGeneration = mGeneration + 1;
+        candidate->mSchemaEpoch = mSchemaEpoch;
         candidate->mValidator = mValidator;
         candidate->mRecordValidator = mRecordValidator;
 
@@ -439,7 +596,8 @@ namespace mir
             staged.logicalPath = use.logicalPath;
             staged.asset = use.asset;
             staged.frontend = use.frontend;
-            if (candidate->CreateFromAsset(use.logicalPath, use.asset, use.frontend, staged, staged.error).IsNull())
+            if (candidate->CreateFromAsset(use.logicalPath, use.asset, use.frontend, staged, nullptr,
+                    std::span<const std::byte>{}, staged.error).IsNull())
             {
                 if (use.required)
                 {
@@ -571,7 +729,8 @@ namespace mir
     }
 
     MaterialHandle SurfaceMaterialLibrary::CreateFromAsset(std::string_view logicalPath, AssetId asset,
-        std::string_view frontend, Entry &entry, std::string &error)
+        std::string_view frontend, Entry &entry, const MaterialLayout *peerLayout,
+        std::span<const std::byte> peerRecord, std::string &error)
     {
         if (mAssets == nullptr || mRenderer == nullptr)
         {
@@ -647,20 +806,32 @@ namespace mir
                 parameters[field.name] = Json{{"image", texture.mIndex}};
         }
 
+        if (peerLayout != nullptr && !peerRecord.empty())
+        {
+            // A later frontend joins the numeric values already live on its peer;
+            // its own TextureRef rows stay those the cooker resolved.
+            const std::optional<std::string> merged =
+                MergePeerNumericParameters(layout, parameters.dump(), *peerLayout, peerRecord, &error);
+            if (!merged)
+                return kNullMaterial;
+            parameters = Json::parse(*merged);
+        }
+
         entry.layout = layout;
-        entry.parametersJson = parameters.dump();
+        entry.mSchemaEpoch = mSchemaEpoch;
+        const std::optional<std::string> complete = CompleteMaterialParameters(layout, parameters.dump(),
+            registration->parametersJson, &error);
+        if (!complete)
+            return kNullMaterial;
+        entry.parametersJson = *complete;
         entry.schemaRevision = schema->revision;
-        const std::optional<std::vector<std::byte>> record = PackMaterialRecord(layout, parameters.dump(), &error);
+        const std::optional<std::vector<std::byte>> record = PackMaterialRecord(layout, *complete, &error);
         if (!record)
             return kNullMaterial;
 
         SurfaceMaterialBinding binding;
-        binding.tilePeriodMeters = SurfaceMaterialTilePeriodFromRecord(layout, *record);
-        binding.macro = SurfaceMaterialMacroParametersFromRecord(layout, *record);
-        binding.parallax = SurfaceMaterialParallaxParametersFromRecord(layout, *record);
-        if (mValidator && !mValidator(binding, error))
-            return kNullMaterial;
-        if (mRecordValidator && !mRecordValidator(layout, *record, error))
+        SetShadingValuesFromRecord(binding, layout, *record);
+        if (!ValidateRecordForPublication(frontend, layout, *record, error))
             return kNullMaterial;
 
         MaterialDesc desc;
@@ -686,20 +857,34 @@ namespace mir
         const auto found = mEntries.find(key);
         if (found != mEntries.end())
         {
-            if (!found->second.binding)
+            if (found->second.binding && found->second.mSchemaEpoch != mSchemaEpoch)
             {
-                if (error != nullptr)
-                    *error = found->second.error;
-                return std::nullopt;
+                std::string adoptError;
+                if (!AdoptAcceptedRecord(found->second, adoptError))
+                {
+                    if (error != nullptr)
+                        *error = adoptError;
+                    return std::nullopt;
+                }
             }
-            return found->second.binding;
+            if (found->second.binding)
+                return found->second.binding;
+
+            // A failed entry retries here: consumers call Acquire only when they
+            // re-resolve, so a repaired or newly cooked asset recovers.
+            mEntries.erase(found);
         }
+
+        std::optional<MaterialRecordSnapshot> peer;
+        if (const Entry *const peerEntry = FindPeerEntry(asset, frontend); peerEntry != nullptr)
+            peer = mRenderer->MaterialRecord(peerEntry->binding->material);
 
         Entry entry;
         entry.logicalPath = std::string(logicalPath);
         entry.asset = asset;
         entry.frontend = std::string(frontend);
-        CreateFromAsset(logicalPath, asset, frontend, entry, entry.error);
+        CreateFromAsset(logicalPath, asset, frontend, entry, peer ? &peer->mLayout : nullptr,
+            peer ? std::span<const std::byte>(peer->mBytes) : std::span<const std::byte>{}, entry.error);
         const auto [stored, inserted] = mEntries.emplace(key, std::move(entry));
         (void)inserted;
         if (!stored->second.binding)
@@ -708,13 +893,33 @@ namespace mir
                 *error = stored->second.error;
             return std::nullopt;
         }
+
+        // A new binding is a new library state: instances and the panel must
+        // re-resolve so a late frontend joins the preview that is already live.
+        ++mGeneration;
         return stored->second.binding;
+    }
+
+    SurfaceMaterialLibrary::Entry *SurfaceMaterialLibrary::FindPeerEntry(AssetId asset, std::string_view frontend)
+    {
+        for (auto &[key, candidate] : mEntries)
+            if (candidate.binding && candidate.asset == asset && candidate.frontend != frontend)
+                return &candidate;
+        return nullptr;
     }
 
     bool SurfaceMaterialLibrary::IsActive(std::string_view logicalPath, std::string_view frontend) const
     {
         const auto found = mEntries.find(MaterialKey(logicalPath, frontend));
         return found != mEntries.end() && found->second.binding.has_value();
+    }
+
+    bool SurfaceMaterialLibrary::IsActiveAsset(std::string_view logicalPath) const
+    {
+        for (const auto &[key, entry] : mEntries)
+            if (entry.binding && entry.logicalPath == logicalPath)
+                return true;
+        return false;
     }
 
     std::optional<SurfaceMaterialSchema> SurfaceMaterialLibrary::CurrentSchema(std::string_view logicalPath,
@@ -737,22 +942,43 @@ namespace mir
         return LoadSurfaceMaterialSchema(*registration, error);
     }
 
-    void SurfaceMaterialLibrary::DestroyCandidate(Entry &candidate)
+    bool SurfaceMaterialLibrary::AdoptAcceptedRecord(Entry &entry, std::string &error)
     {
-        if (mRenderer != nullptr && candidate.binding)
+        if (mRenderer == nullptr || !entry.binding)
         {
-            const std::array<MaterialHandle, 1> materials{ candidate.binding->material };
-            mRenderer->ReleaseModelResources(std::span<const MeshHandle>{}, materials,
-                std::span<const TextureHandle>{});
-            candidate.binding.reset();
+            SetError(error, "the material library is not bound");
+            return false;
         }
+        const std::optional<MaterialRecordSnapshot> snapshot = mRenderer->MaterialRecord(entry.binding->material);
+        if (!snapshot)
+        {
+            SetError(error, "the committed material record is unavailable");
+            return false;
+        }
+        std::string adoptionError;
+        const std::optional<SurfaceMaterialSchemaAdoption> adopted =
+            AdoptSurfaceMaterialRecord(*entry.binding, snapshot->mLayout, snapshot->mBytes, &adoptionError);
+        if (!adopted)
+        {
+            SetError(error, adoptionError);
+            return false;
+        }
+        if (!ValidateRecordForPublication(entry.frontend, adopted->layout, snapshot->mBytes, error))
+            return false;
+
+        entry.binding = adopted->binding;
+        entry.layout = adopted->layout;
+        entry.parametersJson = adopted->parametersJson;
+        entry.schemaRevision = adopted->revision;
+        entry.mSchemaEpoch = mSchemaEpoch;
+        return true;
     }
 
     bool SurfaceMaterialLibrary::PrepareSchemaCandidate(const Entry &entry, Entry &candidate, bool &changed,
         std::string &error)
     {
         changed = false;
-        if (mRenderer == nullptr || mAssets == nullptr)
+        if (mRenderer == nullptr)
         {
             SetError(error, "the material library is not bound");
             return false;
@@ -767,104 +993,154 @@ namespace mir
         const std::optional<SurfaceMaterialSchema> schema = LoadSurfaceMaterialSchema(*registration, &error);
         if (!schema)
             return false;
-        if (schema->revision == entry.schemaRevision)
+        if (schema->revision == entry.schemaRevision && entry.mSchemaEpoch == mSchemaEpoch)
             return true;
 
-        Entry replacement;
-        replacement.logicalPath = entry.logicalPath;
-        replacement.asset = entry.asset;
-        replacement.frontend = entry.frontend;
-        if (CreateFromAsset(entry.logicalPath, entry.asset, entry.frontend, replacement, error).IsNull())
+        Entry adopted = entry;
+        if (!AdoptAcceptedRecord(adopted, error))
+            return false;
+        if (adopted.layout.fields.empty() || adopted.schemaRevision != schema->revision)
         {
-            DestroyCandidate(replacement);
+            SetError(error, "the compiled material schema has no committed shader generation yet; "
+                            "the preview waits for the shader reload");
             return false;
         }
-        candidate = std::move(replacement);
+        candidate = std::move(adopted);
         changed = true;
         return true;
     }
 
-    bool SurfaceMaterialLibrary::PreviewParameters(std::string_view logicalPath, std::string_view frontend,
+    bool SurfaceMaterialLibrary::PreviewParameters(std::string_view logicalPath, std::string_view,
         std::string_view parametersJson, std::string *error)
     {
         std::string localError;
         std::string &reported = error != nullptr ? *error : localError;
 
-        const auto found = mEntries.find(MaterialKey(logicalPath, frontend));
-        if (found == mEntries.end() || !found->second.binding)
-        {
-            SetError(reported, "the material is not active in this scene");
-            return false;
-        }
-        Entry &entry = found->second;
         if (mRenderer == nullptr)
         {
             SetError(reported, "the material library is not bound");
             return false;
         }
+        const std::string assetPath(logicalPath);
 
-        std::string overlayError;
-        Entry staged;
-        bool schemaChanged = false;
-        if (!PrepareSchemaCandidate(entry, staged, schemaChanged, overlayError))
+        struct StagedTarget
         {
-            SetError(reported, std::move(overlayError));
+            std::string mKey;
+            Entry mEntry;
+            std::string mResolvedJson;
+            std::vector<std::byte> mBytes;
+            SurfaceMaterialBinding mBinding;
+            bool mChanged = false;
+            bool mSchemaChanged = false;
+        };
+
+        // Every valid frontend of one asset previews together. Nothing here
+        // touches a cached entry: a later rejection must leave every frontend on
+        // the bytes, metadata and generation it had.
+        std::vector<StagedTarget> staged;
+        std::vector<MaterialLayout> layouts;
+        for (auto &[key, sibling] : mEntries)
+        {
+            if (!sibling.binding || sibling.logicalPath != assetPath)
+                continue;
+
+            const std::optional<MaterialRecordSnapshot> snapshot =
+                mRenderer->MaterialRecord(sibling.binding->material);
+            if (!snapshot)
+            {
+                SetError(reported, "the committed material record is unavailable");
+                return false;
+            }
+            const std::optional<std::string> current =
+                MaterialRecordParameters(snapshot->mLayout, snapshot->mBytes, &reported);
+            if (!current)
+                return false;
+
+            StagedTarget target;
+            target.mKey = key;
+            target.mEntry = sibling;
+            target.mEntry.layout = snapshot->mLayout;
+            target.mEntry.parametersJson = *current;
+
+            Entry adopted;
+            bool schemaChanged = false;
+            if (!PrepareSchemaCandidate(target.mEntry, adopted, schemaChanged, reported))
+                return false;
+            if (schemaChanged)
+                target.mEntry = std::move(adopted);
+            target.mSchemaChanged = schemaChanged;
+
+            target.mBytes = snapshot->mBytes;
+            layouts.push_back(target.mEntry.layout);
+            staged.push_back(std::move(target));
+        }
+        if (staged.empty())
+        {
+            SetError(reported, "the material is not active in this scene");
             return false;
         }
-        Entry &target = schemaChanged ? staged : entry;
-        const std::optional<std::string> resolved =
-            OverlayMaterialParameters(target.layout, target.parametersJson, parametersJson, &overlayError);
-        if (!resolved)
-        {
-            if (schemaChanged)
-                DestroyCandidate(staged);
-            SetError(reported, std::move(overlayError));
+        if (!ValidateSurfaceMaterialParameterOverlay(layouts, parametersJson, &reported))
             return false;
-        }
-        const std::optional<std::vector<std::byte>> record =
-            PackMaterialRecord(target.layout, *resolved, &overlayError);
-        if (!record)
+
+        for (StagedTarget &target : staged)
         {
-            if (schemaChanged)
-                DestroyCandidate(staged);
-            SetError(reported, std::move(overlayError));
-            return false;
+            std::optional<std::string> filtered =
+                FilterMaterialParameterOverlay(target.mEntry.layout, parametersJson, &reported);
+            if (!filtered)
+                return false;
+            std::optional<std::string> resolved = OverlayMaterialParameters(target.mEntry.layout,
+                target.mEntry.parametersJson, *filtered, &reported);
+            if (!resolved)
+                return false;
+            std::optional<std::vector<std::byte>> record =
+                PackMaterialRecord(target.mEntry.layout, *resolved, &reported);
+            if (!record)
+                return false;
+            if (!ValidateRecordForPublication(target.mEntry.frontend, target.mEntry.layout, *record, reported))
+                return false;
+
+            SurfaceMaterialBinding candidate = *target.mEntry.binding;
+            SetShadingValuesFromRecord(candidate, target.mEntry.layout, *record);
+            target.mChanged = target.mSchemaChanged || *record != target.mBytes;
+            target.mResolvedJson = std::move(*resolved);
+            target.mBytes = std::move(*record);
+            target.mBinding = candidate;
         }
 
-        SurfaceMaterialBinding candidate = *target.binding;
-        candidate.tilePeriodMeters = SurfaceMaterialTilePeriodFromRecord(target.layout, *record);
-        candidate.macro = SurfaceMaterialMacroParametersFromRecord(target.layout, *record);
-        candidate.parallax = SurfaceMaterialParallaxParametersFromRecord(target.layout, *record);
-        if (mValidator && !mValidator(candidate, overlayError))
+        bool changed = false;
+        std::vector<MaterialRecordUpdate> updates;
+        updates.reserve(staged.size());
+        std::vector<Entry *> entries;
+        entries.reserve(staged.size());
+        for (StagedTarget &target : staged)
         {
-            if (schemaChanged)
-                DestroyCandidate(staged);
-            SetError(reported, std::move(overlayError));
+            changed |= target.mChanged;
+            if (target.mChanged)
+                updates.push_back(MaterialRecordUpdate{
+                    .mMaterial = target.mEntry.binding->material, .mBytes = target.mBytes });
+            const auto entry = mEntries.find(target.mKey);
+            if (entry == mEntries.end())
+            {
+                SetError(reported, "the material entry moved while the preview was staged");
+                return false;
+            }
+            entries.push_back(&entry->second);
+            target.mEntry.binding = target.mBinding;
+            target.mEntry.parametersJson = std::move(target.mResolvedJson);
+        }
+        if (!changed)
+            return true;
+
+        // Every candidate validated and copied; the commit itself does not
+        // allocate, and only then does any cached metadata move.
+        if (!mRenderer->PrepareMaterialRecords(updates, &reported))
             return false;
-        }
-        if (mRecordValidator && !mRecordValidator(target.layout, *record, overlayError))
-        {
-            if (schemaChanged)
-                DestroyCandidate(staged);
-            SetError(reported, std::move(overlayError));
-            return false;
-        }
-        if (!mRenderer->UpdateMaterialRecord(target.binding->material, *record))
-        {
-            if (schemaChanged)
-                DestroyCandidate(staged);
-            SetError(reported, "the shared material record could not be updated");
-            return false;
-        }
-        if (schemaChanged)
-        {
-            if (entry.binding)
-                mRetiredMaterials.push_back(entry.binding->material);
-            entry = std::move(staged);
-            ++mGeneration;
-        }
-        entry.binding = candidate;
-        entry.parametersJson = *resolved;
+        mRenderer->CommitMaterialRecords();
+
+        static_assert(std::is_nothrow_move_assignable_v<Entry>);
+        for (std::size_t i = 0; i < staged.size(); ++i)
+            *entries[i] = std::move(staged[i].mEntry);
+        ++mGeneration;
         return true;
     }
 }

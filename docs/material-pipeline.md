@@ -109,9 +109,36 @@ material enters a finite `--material` batch; an edited dependency enters a
 The Material panel builds its controls from the compiled reflection and keeps
 one draft per normalized project and logical asset path. Numeric edits publish
 the packed record through `SurfaceMaterialLibrary::PreviewParameters`; the
-library overlays the values on the resolved parameters, runs the consumer
+library overlays the values on the adopted parameters, runs the consumer
 validator and updates the shared record table without creating a pipeline.
 Raster and RT read the same record, so every use of the asset previews together.
+
+A reflection revision the panel has not seen yet is adopted from the committed
+generation, not rebuilt from the cooked asset: `VulkanRenderer::MaterialRecord`
+returns the accepted layout and authoritative bytes of the live handle, and the
+library decodes them into its cached parameters and its tile/macro/parallax
+metadata. The cooked recipe stays the panel baseline; a field the new layout adds
+takes the catalog's validated value, then the typed default, so a shader-only
+field addition or deletion needs no recook. A recipe key the new layout no longer
+declares stays in the source, stays reported as unsupported and is projected out
+only when the record is packed. Previewed values never move the baseline.
+
+One asset is one shared material across its fronts. An ordinary `MeshRenderer`
+whose `materialShader` is a registered `mesh` stem borrows the library's handle;
+the main scene and every Prefab preview resolver contribute their own active
+uses, and the library merges them with the terrain's instead of one owner
+replacing another. A pending edit publishes every valid frontend of the asset in
+one batch: each frontend keeps its own layout and `TextureRef` rows, the overlay
+is filtered to the names it declares, every record is validated and copied
+before any is committed, and the commit itself does not allocate. A frontend
+that joins later merges the peer's current same-name, same-kind numeric values
+into its parameters before packing, so a value the other frontend rejects fails
+the acquisition instead of publishing the cooked baseline; a cook candidate is
+built from the cooked baseline only, and a failed cached entry retries on its
+next acquisition. Shared finite, macro and parallax bounds apply to both
+frontends, while the terrain UV phase divisor stays terrain-only. Revert queues
+the accepted numeric values so a generation event cannot strand the GPU on the
+dirty value.
 
 Save writes only changed `parameters` and `textures.<role>.path` members through
 `UpdateJsonFile`; unknown keys and the other texture fields stay. A successful
@@ -199,7 +226,9 @@ candidate off to the side. One device idle is taken and all candidates are
 swapped only after every owner succeeds; otherwise the old generation stays
 live. Material records migrate by field name: same-name compatible values are
 preserved, new fields use the material's packed defaults and a changed type
-rejects the transaction.
+rejects the transaction. The commit notifies the surface library without
+allocating; it bumps its generation and adopts the committed layout and bytes the
+next time the library is used, with no panel open.
 
 ## Default
 

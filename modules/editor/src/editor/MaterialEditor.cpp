@@ -274,6 +274,19 @@ namespace mir
             return false;
         }
 
+        // A shader-only field addition or deletion needs no recook: fields the
+        // cooked recipe lacks take the validated catalog or typed default, and
+        // keys the new layout dropped stay authored and reported as unsupported.
+        const std::optional<std::string> complete = MergeMaterialParameterDefaults(schema->layout,
+            cooked.parametersJson, registration->parametersJson, &error);
+        if (!complete)
+        {
+            mState = pending ? TargetState::Loading : TargetState::Invalid;
+            mLoadError = "The material parameters do not fit the compiled reflection: " + error;
+            return false;
+        }
+        cooked.parametersJson = *complete;
+
         mRecipe = RecipeFromCooked(cooked, *source);
         mLayout = schema->layout;
         mFrontends = mRecipe.frontends;
@@ -378,6 +391,17 @@ namespace mir
                 draft->mStatus = "Waiting for the material cook to accept the current source.";
                 continue;
             }
+            const std::optional<std::string> complete = MergeMaterialParameterDefaults(schema->layout,
+                cooked.parametersJson, registration->parametersJson, &error);
+            if (!complete)
+            {
+                draft->mSchemaStale = true;
+                draft->mStatusIsError = true;
+                draft->mStatus = "The material parameters do not fit the compiled reflection: " + error;
+                continue;
+            }
+            cooked.parametersJson = *complete;
+
             const uint64_t acceptedRevision = MaterialAcceptedRevision(cooked.shaderType, cooked.parametersJson,
                 cooked.textures, cooked.frontends);
             const MaterialAcceptedRefresh decision =
@@ -475,7 +499,7 @@ namespace mir
         {
             if (draft->mSchemaStale || draft->mCooking)
                 continue;
-            const bool active = context.mMaterials->IsActive(draft->mLogicalPath, draft->mFrontend);
+            const bool active = context.mMaterials->IsActiveAsset(draft->mLogicalPath);
             const std::optional<std::string> parameters =
                 MaterialDraftPreviewParameters(*draft, editing, active, generation);
             if (!parameters)
@@ -547,7 +571,7 @@ namespace mir
         const bool dirty = MaterialDraftDirty(*draft);
         const bool needsSave = MaterialDraftNeedsSave(*draft);
         const bool active = context.mMaterials != nullptr &&
-            context.mMaterials->IsActive(draft->mLogicalPath, draft->mFrontend);
+            context.mMaterials->IsActiveAsset(draft->mLogicalPath);
         const bool blockedByPreview = active && !draft->mPreviewError.empty();
         ImGui::BeginDisabled(!editing || draft->mCooking || draft->mSchemaStale || !needsSave ||
             !MaterialDraftFinite(*draft) || blockedByPreview);
@@ -717,7 +741,7 @@ namespace mir
             draft->mStatus = "The current source or reflection could not be accepted; fix it before saving.";
             return;
         }
-        if (context.mMaterials != nullptr && context.mMaterials->IsActive(draft->mLogicalPath, draft->mFrontend) &&
+        if (context.mMaterials != nullptr && context.mMaterials->IsActiveAsset(draft->mLogicalPath) &&
             !draft->mPreviewError.empty())
         {
             draft->mStatusIsError = true;
@@ -755,7 +779,7 @@ namespace mir
         draft->mSourceSignature = FileSignature(*source);
         mSourceSignature = draft->mSourceSignature;
         const bool active = context.mMaterials != nullptr &&
-            context.mMaterials->IsActive(draft->mLogicalPath, draft->mFrontend);
+            context.mMaterials->IsActiveAsset(draft->mLogicalPath);
         const uint64_t generation = context.mMaterials != nullptr ? context.mMaterials->Generation() : 0;
         const uint64_t request = context.mReimportMaterial ? context.mReimportMaterial(draft->mLogicalPath) : 0;
         MaterialDraftMarkSaved(*draft, request, generation, active);

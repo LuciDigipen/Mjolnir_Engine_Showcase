@@ -91,4 +91,13 @@ namespace mir
         // registration with shaderName.
         std::string surfaceAsset;
     };
+
+    // One record write of a batch: the live handle and the bytes it holds once
+    // every update of the batch has validated. The bytes must outlive the
+    // prepare call, which copies them.
+    struct MaterialRecordUpdate
+    {
+        MaterialHandle mMaterial;
+        std::span<const std::byte> mBytes;
+    };
 }

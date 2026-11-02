@@ -17,6 +17,7 @@
 #include <core/ecs/World.h>
 #include <core/log/Log.h>
 #include <renderer/Shapes.h>
+#include <renderer/SurfaceMaterialLibrary.h>
 #include <renderer/VulkanRenderer.h>
 #include <renderer/components/MeshRenderer.h>
 
@@ -24,6 +25,7 @@
 
 #include <glm/common.hpp>
 
+#include <algorithm>
 #include <limits>
 #include <span>
 #include <utility>
@@ -93,15 +95,25 @@ namespace mir
         }
     }
 
-    MeshResolveSystem::MeshResolveSystem(VulkanRenderer &renderer, AssetCache *assets, const AssetResolver &resolver)
-        : mRenderer(renderer), mAssets(assets), mResolver(resolver)
-    {}
+    MeshResolveSystem::MeshResolveSystem(VulkanRenderer &renderer, SurfaceMaterialLibrary *materials,
+        AssetCache *assets, const AssetResolver &resolver)
+        : mRenderer(renderer), mSurfaceMaterials(materials), mAssets(assets), mResolver(resolver)
+    {
+        if (mSurfaceMaterials != nullptr)
+        {
+            mUseOwner = mSurfaceMaterials->AddMaterialUseOwner();
+            mLibraryGeneration = mSurfaceMaterials->Generation();
+        }
+    }
 
     void MeshResolveSystem::Reset()
     {
         mMeshes.clear();
         mMaterials.clear();
         mResolved.clear();
+        mUses.clear();
+        if (mSurfaceMaterials != nullptr && mUseOwner != 0)
+            mSurfaceMaterials->SetMaterialUses(mUseOwner, {});
     }
 
     void MeshResolveSystem::ReleaseResources()
@@ -111,12 +123,18 @@ namespace mir
         for (const auto &[name, cached] : mMeshes)
             if (!cached.mMesh.IsNull())
                 meshes.push_back(cached.mMesh);
-        for (const auto &[name, material] : mMaterials)
-            if (!material.IsNull())
-                materials.push_back(material);
+        // A borrowed surface handle belongs to the library, which may still draw it.
+        for (const auto &[name, cached] : mMaterials)
+            if (!cached.mBorrowed && !cached.mMaterial.IsNull())
+                materials.push_back(cached.mMaterial);
         if (!meshes.empty() || !materials.empty())
             mRenderer.ReleaseModelResources(meshes, materials, {});
         Reset();
+        if (mSurfaceMaterials != nullptr && mUseOwner != 0)
+        {
+            mSurfaceMaterials->RemoveMaterialUseOwner(mUseOwner);
+            mUseOwner = 0;
+        }
     }
 
     void MeshResolveSystem::CommitReload(AssetCache *assets)
@@ -206,10 +224,43 @@ namespace mir
         return cached;
     }
 
-    MaterialHandle MeshResolveSystem::ResolveMaterial(const std::string &shaderName)
+    MaterialHandle MeshResolveSystem::ResolveMaterial(const std::string &shaderName, ResolvedNames &resolved)
     {
+        resolved.mSurface = false;
+        resolved.mSurfacePath.clear();
+        resolved.mSurfaceAsset = kNullAssetId;
+
         if (const auto it = mMaterials.find(shaderName); it != mMaterials.end())
-            return it->second;
+        {
+            resolved.mSurface = it->second.mBorrowed;
+            resolved.mSurfacePath = it->second.mSurfacePath;
+            resolved.mSurfaceAsset = it->second.mSurfaceAsset;
+            return it->second.mMaterial;
+        }
+
+        const SurfaceMaterialRegistration *const surface = FindMeshSurface(shaderName);
+        if (mSurfaceMaterials != nullptr && surface != nullptr)
+        {
+            const std::string logicalPath = surface->asset;
+            const AssetId asset = mResolver.ResolveFull(logicalPath);
+            std::string error;
+            const std::optional<SurfaceMaterialBinding> binding =
+                mSurfaceMaterials->Acquire(logicalPath, asset, "mesh", &error);
+            if (binding)
+            {
+                resolved.mSurface = true;
+                resolved.mSurfacePath = logicalPath;
+                resolved.mSurfaceAsset = asset;
+                return mMaterials
+                    .emplace(shaderName, CachedMaterial{ .mMaterial = binding->material, .mBorrowed = true,
+                                                        .mSurfacePath = logicalPath, .mSurfaceAsset = asset })
+                    .first->second.mMaterial;
+            }
+            // Retried when the library generation moves; an error material
+            // would hide that the authored surface failed.
+            MIR_LOG_ERROR("MeshResolveSystem: surface material '{}': {}", shaderName, error);
+            return mRenderer.ErrorMaterial();
+        }
 
         // Null would draw the default grey, which hides that the authored shader failed.
         MaterialHandle material = mRenderer.CreateMaterial(MaterialDesc{ .shaderName = shaderName });
@@ -218,12 +269,63 @@ namespace mir
             MIR_LOG_ERROR("MeshResolveSystem: material '{}' failed, using error material", shaderName);
             material = mRenderer.ErrorMaterial();
         }
-        return mMaterials.emplace(shaderName, material).first->second;
+        return mMaterials.emplace(shaderName, CachedMaterial{ .mMaterial = material }).first->second.mMaterial;
+    }
+
+    const SurfaceMaterialRegistration *MeshResolveSystem::FindMeshSurface(std::string_view shaderName) const
+    {
+        for (const SurfaceMaterialRegistration &registration : mRenderer.SurfaceMaterials().materials)
+            if (registration.frontend == "mesh" && registration.stem == shaderName)
+                return &registration;
+        return nullptr;
+    }
+
+    void MeshResolveSystem::PublishUses()
+    {
+        if (mSurfaceMaterials == nullptr || mUseOwner == 0)
+            return;
+
+        // Only assets a live renderer still draws: a deleted entity or a
+        // reassigned materialShader must not keep an asset required for cooks.
+        std::map<std::string, SurfaceMaterialUse> live;
+        for (const auto &[packed, names] : mResolved)
+            if (names.mSurface)
+                live.emplace(names.mSurfacePath, SurfaceMaterialUse{ .logicalPath = names.mSurfacePath,
+                                                                     .asset = names.mSurfaceAsset,
+                                                                     .frontend = "mesh",
+                                                                     .required = true });
+        if (live == mUses)
+            return;
+        mUses = std::move(live);
+
+        std::vector<SurfaceMaterialUse> uses;
+        uses.reserve(mUses.size());
+        for (const auto &[logicalPath, use] : mUses)
+            uses.push_back(use);
+        mSurfaceMaterials->SetMaterialUses(mUseOwner, uses);
+    }
+
+    void MeshResolveSystem::RebindSurfaceMaterials()
+    {
+        if (mSurfaceMaterials == nullptr)
+            return;
+        const uint64_t generation = mSurfaceMaterials->Generation();
+        if (generation == mLibraryGeneration)
+            return;
+        mLibraryGeneration = generation;
+
+        // The library replaced or migrated the shared handles, so every borrowed
+        // cache entry and resolved shader name is stale.
+        std::erase_if(mMaterials, [](const auto &entry) { return entry.second.mBorrowed; });
+        for (auto &[entity, names] : mResolved)
+            names.mShader.clear();
     }
 
     void MeshResolveSystem::OnUpdate(SystemContext &context)
     {
         World &world = context.world;
+
+        RebindSurfaceMaterials();
 
         std::vector<Entity> staleBounds;
         std::erase_if(mResolved,
@@ -257,9 +359,16 @@ namespace mir
                 if (resolved.mShader != shaderName)
                 {
                     resolved.mShader = shaderName;
-                    meshRenderer.material = shaderName.empty() ? MaterialHandle{} : ResolveMaterial(resolved.mShader);
+                    resolved.mSurface = false;
+                    resolved.mSurfacePath.clear();
+                    resolved.mSurfaceAsset = kNullAssetId;
+                    meshRenderer.material = shaderName.empty()
+                        ? MaterialHandle{}
+                        : ResolveMaterial(resolved.mShader, resolved);
                 }
             });
+
+        PublishUses();
 
         for (const Entity entity : staleBounds)
         {

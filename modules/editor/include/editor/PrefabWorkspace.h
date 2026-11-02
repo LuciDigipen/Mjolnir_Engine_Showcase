@@ -29,6 +29,7 @@ namespace mir
     class AssetResolver;
     struct LoadedScene;
     class PrefabAuthoringAdapter;
+    class SurfaceMaterialLibrary;
     class VulkanRenderer;
     class World;
 
@@ -47,7 +48,8 @@ namespace mir
         PrefabWorkspace &operator=(PrefabWorkspace &&) = delete;
 
         // Null renderer skips preview mesh and model systems; null assets still permits built-in meshes.
-        void BindResolveSystems(VulkanRenderer *renderer, AssetCache *assets, const AssetResolver &resolver);
+        void BindResolveSystems(VulkanRenderer *renderer, SurfaceMaterialLibrary *materials, AssetCache *assets,
+            const AssetResolver &resolver);
 
         // Focuses an open document, or creates its preview World and one instance.
         bool Open(PrefabId id);
@@ -107,6 +109,7 @@ namespace mir
         std::vector<PrefabId> mOpenOrder;
         std::optional<PrefabId> mActive;
         VulkanRenderer *mRenderer = nullptr;
+        SurfaceMaterialLibrary *mSurfaceMaterials = nullptr;
         AssetCache *mAssets = nullptr;
         const AssetResolver *mResolver = nullptr;
     };

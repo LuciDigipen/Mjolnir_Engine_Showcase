@@ -96,6 +96,9 @@ namespace mir
         std::vector<std::string> mPreviewedFields;
         uint64_t mPreviewedGeneration = 0;
         bool mPreviewedActive = false;
+        // Baseline values a Revert must publish even after a generation event
+        // cleared the preview bookkeeping.
+        std::string mPendingRestoreJson;
     };
 
     struct MaterialDraftRefresh
@@ -179,6 +182,8 @@ namespace mir
     // written source values, so restoring accepted values is an explicit repair.
     MaterialDraftSavePatch MaterialDraftSavePatchFor(const MaterialDraft &draft);
 
+    // Restores the accepted values in memory and keeps the numeric baseline
+    // values queued until a preview publishes them.
     void MaterialDraftRevert(MaterialDraft &draft);
     void MaterialDraftMarkSaved(MaterialDraft &draft, uint64_t requestSequence, uint64_t generation, bool active);
     bool MaterialDraftCooked(MaterialDraft &draft, bool success, const std::string &diagnostic);

@@ -252,12 +252,22 @@ are compiled through `SurfaceTerrainForward.slang` and `SurfaceTerrainRt.slang`;
 `ReloadPrepare`, swaps it in `ReloadCommit`, and retires the old
 materials/textures through `ReleaseModelResources`. Its
 `CurrentSchema` re-reads the registration reflection independently of any
-watcher. `PreviewParameters` stages a schema replacement as a candidate,
-overlays dirty numeric values on the accepted parameters, runs the consumer and
-record validators, updates the candidate record through `UpdateMaterialRecord`,
-and only then publishes it and bumps generation; a failure destroys the
-candidate and keeps the previous material, record and preview. Numeric edits
-create no pipeline. See `docs/material-pipeline.md`.
+watcher. `PreviewParameters` adopts the committed generation's layout and
+authoritative bytes through `VulkanRenderer::MaterialRecord` (a
+generation-checked `MaterialRecordSnapshot`), overlays dirty numeric values on
+the adopted parameters of every valid frontend of that asset, runs the shared
+numeric bounds plus the frontend's own consumer validator, prepares the whole
+batch through `PrepareMaterialRecords` and commits it without allocating; every
+frontend is staged before the first accepted mutation, so a failure keeps all
+previous bytes, metadata and the generation. `ValidateRecord` applies the finite,
+macro and parallax bounds to mesh and terrain alike and adds the terrain UV
+phase rule only for terrain, and ValidateRecordForPublication adds the caller's record callback once per proposed record. Mesh owners publish only the assets their live renderers still draw. Numeric and schema previews create no
+pipeline and never destroy the live handle. A committed shader generation calls
+the allocation-free `NotifyShaderCommit`, so cached metadata and generation
+refresh the next time the library is used, with no panel open.
+`MeshResolveSystem` borrows the library handle for a registered `mesh` stem and
+re-resolves only when the library generation moves, so a cook or shader commit
+rebinds the mesh draws without a second pipeline. See `docs/material-pipeline.md`.
 
 **Shader hot reload is transactional.** `ShaderLibrary` registers every live
 callsite (MaterialStore, RayTracer, ShadowMaps and the five post-process
@@ -269,6 +279,12 @@ pipelines and every post-process candidate off to the side, then takes one
 device idle and swaps them only after all owners succeeded. Any failure
 disposes candidates and keeps the previous generation. Surface records migrate
 by name from current record bytes; a changed field type rejects the batch.
+`RendererModule` connects the surface library's consumer validator to
+`MaterialStore` through `MaterialRecordValidator` and its commit notification to
+`SetShaderReloadListener`. Migrated candidate records
+and numeric updates validate their packed values before publication, so a
+new shader field cannot bypass terrain period constraints. A rejected candidate
+keeps the live records and pipelines.
 `ShaderGenerationStore` publishes complete immutable SPV/reflection/depfile/catalog
 generations behind an atomic pointer. The build-only `ShaderPublisher` and editor
 watcher validate precompile content snapshots and parent lineage under the same

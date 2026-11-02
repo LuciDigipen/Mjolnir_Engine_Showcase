@@ -384,6 +384,83 @@ TEST_CASE("A schema refresh reports removed and retyped dirty fields and adds ne
     CHECK(find("uv") == nullptr);
 }
 
+TEST_CASE("A shader-only schema change keeps cooked baselines and unsaved values", "[editor][material]")
+{
+    mir::MaterialDraft draft = TestDraft();
+    Field(draft, "amount")->mComponents[0] = 5.0f;
+
+    mir::MaterialLayout changed = TestLayout();
+    changed.fields = {
+        {.name = "color", .kind = mir::MaterialFieldKind::Float3, .offset = 0, .size = 12},
+        {.name = "amount", .kind = mir::MaterialFieldKind::Float, .offset = 16, .size = 4},
+        {.name = "count", .kind = mir::MaterialFieldKind::Int, .offset = 20, .size = 4},
+        {.name = "index", .kind = mir::MaterialFieldKind::Uint, .offset = 24, .size = 4},
+        {.name = "flag", .kind = mir::MaterialFieldKind::Bool, .offset = 28, .size = 4},
+        {.name = "tint", .kind = mir::MaterialFieldKind::Float4, .offset = 32, .size = 16},
+        {.name = "emissive", .kind = mir::MaterialFieldKind::Float, .offset = 48, .size = 4},
+        {.name = "albedo", .kind = mir::MaterialFieldKind::TextureRef, .offset = 56, .size = 8},
+        {.name = "macroTextureRef", .kind = mir::MaterialFieldKind::TextureRef, .offset = 64, .size = 4},
+    };
+    changed.size = 80;
+
+    mir::MaterialRecipe recipe = TestRecipe();
+    recipe.parametersJson = R"({
+        "amount": 1.0, "count": 2, "index": 3, "flag": true,
+        "color": [0.1, 0.2, 0.3], "tint": [1.0, 1.0, 1.0, 1.0], "uv": [1.0, 2.0],
+        "retired": 7.0
+    })";
+    const std::optional<std::string> merged =
+        mir::MergeMaterialParameterDefaults(changed, recipe.parametersJson, R"({"emissive": 0.25})");
+    REQUIRE(merged);
+    recipe.parametersJson = *merged;
+    const nlohmann::json authored = nlohmann::json::parse(recipe.parametersJson);
+    CHECK(authored.at("retired") == 7.0);
+    CHECK(authored.at("uv") == nlohmann::json::array({1.0, 2.0}));
+    CHECK(authored.at("emissive") == 0.25f);
+
+    std::string error;
+    const std::optional<mir::MaterialDraftRefresh> refresh =
+        mir::RefreshMaterialDraft(draft, recipe, changed, "changed", &error);
+    INFO(error);
+    REQUIRE(refresh);
+    CHECK(refresh->mMessages.empty());
+
+    CHECK(Field(draft, "amount")->mComponents[0] == 5.0f);
+    CHECK(Field(draft, "color")->mComponents[0] == 0.1f);
+    CHECK(Field(draft, "emissive")->mComponents[0] == 0.25f);
+    CHECK(Field(draft, "uv") == nullptr);
+    CHECK(mir::MaterialDraftDirty(draft));
+    CHECK(std::find(draft.mUnsupported.begin(), draft.mUnsupported.end(),
+              std::string("parameter 'uv' is not reflected; the recipe value is preserved")) !=
+        draft.mUnsupported.end());
+    CHECK(std::find(draft.mUnsupported.begin(), draft.mUnsupported.end(),
+              std::string("parameter 'retired' is not reflected; the recipe value is preserved")) !=
+        draft.mUnsupported.end());
+
+    const nlohmann::json saved = nlohmann::json::parse(mir::MaterialDraftSavePatchFor(draft).mParametersJson);
+    CHECK_FALSE(saved.contains("retired"));
+    CHECK_FALSE(saved.contains("uv"));
+    CHECK(saved.at("amount") == 5.0f);
+
+    const auto baseline = [&](std::string_view name) -> const mir::MaterialDraftField *
+    {
+        const auto found = std::find_if(draft.mBaselineFields.begin(), draft.mBaselineFields.end(),
+            [&](const mir::MaterialDraftField &field) { return field.mLayout.name == name; });
+        return found != draft.mBaselineFields.end() ? &*found : nullptr;
+    };
+    REQUIRE(baseline("amount") != nullptr);
+    REQUIRE(baseline("emissive") != nullptr);
+    CHECK(baseline("amount")->mComponents[0] == 1.0f);
+    CHECK(baseline("emissive")->mComponents[0] == 0.25f);
+
+    const std::optional<std::string> overlay = mir::MaterialDraftPreviewParameters(draft, true, true, 1);
+    REQUIRE(overlay);
+    CHECK(nlohmann::json::parse(*overlay).at("amount") == 5.0f);
+    CHECK_FALSE(nlohmann::json::parse(*overlay).contains("emissive"));
+    CHECK(nlohmann::json::parse(mir::MaterialDraftBaselineParametersJson(draft)) ==
+          nlohmann::json::parse(R"({"amount": 1.0})"));
+}
+
 TEST_CASE("A clean draft refreshes from an external cook without replaying clean values", "[editor][material]")
 {
     mir::MaterialDraft first = TestDraft();
@@ -433,6 +510,31 @@ TEST_CASE("A material cook waits for the matching apply and reports late failure
     CHECK(draft.mApplyFailed);
     CHECK(mir::MaterialDraftDirty(draft));
     CHECK(Field(draft, "amount")->mComponents[0] == 5.0f);
+}
+
+TEST_CASE("A revert publishes the accepted baseline after a generation change", "[editor][material]")
+{
+    mir::MaterialDraft draft = TestDraft();
+    Field(draft, "amount")->mComponents[0] = 5.0f;
+
+    const std::optional<std::string> live = mir::MaterialDraftPreviewParameters(draft, true, true, 4);
+    REQUIRE(live);
+    mir::MaterialDraftPreviewed(draft, 4, *live);
+
+    mir::MaterialDraftRevert(draft);
+    CHECK_FALSE(mir::MaterialDraftDirty(draft));
+
+    // The library generation moved and cleared the preview bookkeeping first.
+    const std::optional<std::string> restore = mir::MaterialDraftPreviewParameters(draft, true, true, 7);
+    REQUIRE(restore);
+    CHECK(nlohmann::json::parse(*restore).at("amount") == 1.0f);
+    mir::MaterialDraftPreviewed(draft, 7, *restore);
+    CHECK_FALSE(mir::MaterialDraftPreviewParameters(draft, true, true, 7).has_value());
+
+    Field(draft, "amount")->mComponents[0] = 6.0f;
+    const std::optional<std::string> dirty = mir::MaterialDraftPreviewParameters(draft, true, true, 8);
+    REQUIRE(dirty);
+    CHECK(nlohmann::json::parse(*dirty).at("amount") == 6.0f);
 }
 
 TEST_CASE("An ordinary revert leaves the recipe untouched and restores the accepted value", "[editor][material]")

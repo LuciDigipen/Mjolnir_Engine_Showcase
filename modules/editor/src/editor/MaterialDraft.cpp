@@ -608,6 +608,15 @@ namespace mir
 
     void MaterialDraftRevert(MaterialDraft &draft)
     {
+        Json restore = Json::object();
+        for (const MaterialDraftField &field : draft.mFields)
+        {
+            const MaterialDraftField *baseline = BaselineField(draft, field.mLayout.name);
+            if (baseline == nullptr || (*baseline == field))
+                continue;
+            restore[field.mLayout.name] = FieldJsonValue(*baseline);
+        }
+
         draft.mFields = draft.mBaselineFields;
         for (MaterialTextureSource &texture : draft.mTextures)
             texture.mPath = texture.mBaselinePath;
@@ -615,6 +624,14 @@ namespace mir
         draft.mStatus = draft.mApplyFailed
             ? "Reverted in memory; the source still has an unapplied write. Save to repair it."
             : "Reverted to the accepted values.";
+        if (restore.empty())
+            return;
+
+        // A generation or schema refresh can clear the preview bookkeeping before
+        // the next preview tick, so the baseline values travel with the draft.
+        draft.mPendingRestoreJson = restore.dump();
+        draft.mPreviewedActive = false;
+        draft.mPreviewedParameters.clear();
     }
 
     void MaterialDraftMarkSaved(MaterialDraft &draft, uint64_t requestSequence, uint64_t generation, bool active)
@@ -699,6 +716,13 @@ namespace mir
     std::string MaterialDraftPreviewOverlay(const MaterialDraft &draft)
     {
         Json overlay = Json::object();
+        if (!draft.mPendingRestoreJson.empty())
+        {
+            const Json restore = Json::parse(draft.mPendingRestoreJson);
+            if (restore.is_object())
+                for (const auto &[name, value] : restore.items())
+                    overlay[name] = value;
+        }
         for (const MaterialDraftField &field : draft.mFields)
         {
             const MaterialDraftField *baseline = BaselineField(draft, field.mLayout.name);
@@ -745,6 +769,7 @@ namespace mir
                 draft.mPreviewedFields.push_back(field.mLayout.name);
         }
         draft.mPreviewError.clear();
+        draft.mPendingRestoreJson.clear();
     }
 
     void MaterialDraftPreviewRejected(MaterialDraft &draft, uint64_t generation, std::string_view overlayJson,
@@ -763,6 +788,7 @@ namespace mir
         draft.mPreviewedGeneration = 0;
         draft.mPreviewedActive = false;
         draft.mPreviewError.clear();
+        draft.mPendingRestoreJson.clear();
     }
 
     bool MaterialFieldIsColor(std::string_view name)

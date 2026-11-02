@@ -196,7 +196,8 @@ namespace mir
         mEditor.SetAuthoringBackend(&mPrefabAuthoring);
         mEditor.SetAuthoredEntities(&mPrefabAuthoring);
         mMaterialEditor = std::make_unique<MaterialEditor>();
-        mPrefabWorkspace.BindResolveSystems(&renderer.Renderer(), &assets.Cache(), resolver);
+        mPrefabWorkspace.BindResolveSystems(&renderer.Renderer(), &renderer.SurfaceMaterials(), &assets.Cache(),
+            resolver);
         context.scheduler.AddSystem<PrefabPreviewSystem>(SystemPhase::LateUpdate,
             SystemOrder{SystemOrder::kNormal}, mPrefabWorkspace,
             prefab.Coordinator(), mEditor, [this] { RefreshPrefabHistory(); });

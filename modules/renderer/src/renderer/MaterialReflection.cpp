@@ -119,6 +119,31 @@ namespace mir
             return std::nullopt;
         }
 
+        nlohmann::json TypeDefault(MaterialFieldKind kind, uint32_t size)
+        {
+            switch (kind)
+            {
+            case MaterialFieldKind::Float:
+                return 0.0f;
+            case MaterialFieldKind::Float2:
+                return nlohmann::json::array({ 0.0f, 0.0f });
+            case MaterialFieldKind::Float3:
+                return nlohmann::json::array({ 0.0f, 0.0f, 0.0f });
+            case MaterialFieldKind::Float4:
+                return nlohmann::json::array({ 0.0f, 0.0f, 0.0f, 0.0f });
+            case MaterialFieldKind::Uint:
+            case MaterialFieldKind::Int:
+                return 0;
+            case MaterialFieldKind::Bool:
+                return false;
+            case MaterialFieldKind::TextureRef:
+                if (size == 8)
+                    return nlohmann::json{ { "image", 0 }, { "sampler", 0 } };
+                return nlohmann::json{ { "image", 0 } };
+            }
+            return nullptr;
+        }
+
         std::optional<MaterialFieldLayout> ReadField(const nlohmann::json &field, std::string *error)
         {
             if (!field.is_object() || !field.contains("name") || !field.at("name").is_string() ||
@@ -538,6 +563,218 @@ namespace mir
         }
     }
 
+    std::optional<std::string> MergeMaterialParameterDefaults(const MaterialLayout &layout,
+        std::string_view parametersJson, std::string_view catalogDefaultsJson, std::string *error)
+    {
+        nlohmann::json parameters;
+        nlohmann::json catalogDefaults;
+        try
+        {
+            parameters = nlohmann::json::parse(parametersJson);
+            catalogDefaults = nlohmann::json::parse(catalogDefaultsJson);
+        }
+        catch (const nlohmann::json::exception &exception)
+        {
+            SetError(error, std::string("material parameters are not JSON: ") + exception.what());
+            return std::nullopt;
+        }
+        if (!parameters.is_object() || !catalogDefaults.is_object())
+        {
+            SetError(error, "material parameters and catalog defaults must be JSON objects");
+            return std::nullopt;
+        }
+
+        for (const MaterialFieldLayout &field : layout.fields)
+        {
+            if (parameters.contains(field.name))
+                continue;
+            if (catalogDefaults.contains(field.name))
+                parameters[field.name] = catalogDefaults.at(field.name);
+            else
+                parameters[field.name] = TypeDefault(field.kind, field.size);
+        }
+        return parameters.dump();
+    }
+
+    std::optional<std::string> CompleteMaterialParameters(const MaterialLayout &layout,
+        std::string_view parametersJson, std::string_view catalogDefaultsJson, std::string *error)
+    {
+        const std::optional<std::string> merged =
+            MergeMaterialParameterDefaults(layout, parametersJson, catalogDefaultsJson, error);
+        if (!merged)
+            return std::nullopt;
+
+        const nlohmann::json authored = nlohmann::json::parse(*merged);
+        nlohmann::json completed = nlohmann::json::object();
+        for (const MaterialFieldLayout &field : layout.fields)
+            completed[field.name] = authored.at(field.name);
+        return completed.dump();
+    }
+
+    std::optional<std::string> MaterialRecordParameters(const MaterialLayout &layout,
+        std::span<const std::byte> record, std::string *error)
+    {
+        if (layout.size == 0 || record.size() < layout.size)
+        {
+            SetError(error, "material record does not cover its layout");
+            return std::nullopt;
+        }
+
+        nlohmann::json parameters = nlohmann::json::object();
+        for (const MaterialFieldLayout &field : layout.fields)
+        {
+            // Every read below uses the kind's own storage, so a layout whose
+            // declared size disagrees with its kind must not be decoded.
+            const bool storage = field.kind == MaterialFieldKind::TextureRef
+                ? field.size == 4 || field.size == 8
+                : field.size == ExpectedSize(field.kind);
+            if (!storage || field.offset > record.size() || field.size > record.size() - field.offset)
+            {
+                SetError(error, "material field '" + field.name + "' does not fit the record");
+                return std::nullopt;
+            }
+            const std::byte *const source = record.data() + field.offset;
+            switch (field.kind)
+            {
+            case MaterialFieldKind::Float:
+            {
+                float value = 0.0f;
+                std::memcpy(&value, source, sizeof(value));
+                parameters[field.name] = value;
+                break;
+            }
+            case MaterialFieldKind::Float2:
+            case MaterialFieldKind::Float3:
+            case MaterialFieldKind::Float4:
+            {
+                const uint32_t count = static_cast<uint32_t>(field.kind == MaterialFieldKind::Float2 ? 2
+                    : field.kind == MaterialFieldKind::Float3 ? 3
+                                                              : 4);
+                nlohmann::json value = nlohmann::json::array();
+                for (uint32_t i = 0; i < count; ++i)
+                {
+                    float component = 0.0f;
+                    std::memcpy(&component, source + i * sizeof(float), sizeof(component));
+                    value.push_back(component);
+                }
+                parameters[field.name] = std::move(value);
+                break;
+            }
+            case MaterialFieldKind::Uint:
+            {
+                uint32_t value = 0;
+                std::memcpy(&value, source, sizeof(value));
+                parameters[field.name] = value;
+                break;
+            }
+            case MaterialFieldKind::Int:
+            {
+                int32_t value = 0;
+                std::memcpy(&value, source, sizeof(value));
+                parameters[field.name] = value;
+                break;
+            }
+            case MaterialFieldKind::Bool:
+            {
+                uint32_t value = 0;
+                std::memcpy(&value, source, sizeof(value));
+                parameters[field.name] = value != 0;
+                break;
+            }
+            case MaterialFieldKind::TextureRef:
+            {
+                uint32_t image = 0;
+                std::memcpy(&image, source, sizeof(image));
+                nlohmann::json value{ { "image", image } };
+                if (field.size == 8)
+                {
+                    uint32_t sampler = 0;
+                    std::memcpy(&sampler, source + sizeof(uint32_t), sizeof(sampler));
+                    value["sampler"] = sampler;
+                }
+                parameters[field.name] = std::move(value);
+                break;
+            }
+            }
+        }
+        return parameters.dump();
+    }
+
+    std::optional<std::string> FilterMaterialParameterOverlay(const MaterialLayout &layout,
+        std::string_view overlayJson, std::string *error)
+    {
+        nlohmann::json overlay;
+        try
+        {
+            overlay = nlohmann::json::parse(overlayJson);
+        }
+        catch (const nlohmann::json::exception &exception)
+        {
+            SetError(error, std::string("material parameter overlay is not JSON: ") + exception.what());
+            return std::nullopt;
+        }
+        if (!overlay.is_object())
+        {
+            SetError(error, "material parameter overlay must be a JSON object");
+            return std::nullopt;
+        }
+
+        nlohmann::json filtered = nlohmann::json::object();
+        for (const MaterialFieldLayout &field : layout.fields)
+        {
+            const auto authored = overlay.find(field.name);
+            if (authored != overlay.end())
+                filtered[field.name] = *authored;
+        }
+        return filtered.dump();
+    }
+
+    std::optional<std::string> MergePeerNumericParameters(const MaterialLayout &layout,
+        std::string_view parametersJson, const MaterialLayout &peerLayout,
+        std::span<const std::byte> peerRecord, std::string *error)
+    {
+        if (peerLayout.size == 0 || peerRecord.size() < peerLayout.size)
+        {
+            SetError(error, "the peer material record does not cover its layout");
+            return std::nullopt;
+        }
+        const std::optional<std::string> peerParameters = MaterialRecordParameters(peerLayout, peerRecord, error);
+        if (!peerParameters)
+            return std::nullopt;
+
+        nlohmann::json parameters;
+        nlohmann::json peer;
+        try
+        {
+            parameters = nlohmann::json::parse(parametersJson);
+            peer = nlohmann::json::parse(*peerParameters);
+        }
+        catch (const nlohmann::json::exception &exception)
+        {
+            SetError(error, std::string("material parameters are not JSON: ") + exception.what());
+            return std::nullopt;
+        }
+        if (!parameters.is_object())
+        {
+            SetError(error, "material parameters must be a JSON object");
+            return std::nullopt;
+        }
+
+        for (const MaterialFieldLayout &field : layout.fields)
+        {
+            if (field.kind == MaterialFieldKind::TextureRef)
+                continue;
+            for (const MaterialFieldLayout &peerField : peerLayout.fields)
+            {
+                if (peerField.name != field.name || peerField.kind != field.kind ||
+                    peerField.size != field.size || !peer.contains(peerField.name))
+                    continue;
+                parameters[field.name] = peer.at(peerField.name);
+                break;
+            }
+        }
+        return parameters.dump();
+    }
     std::string MaterialLayoutRevision(const MaterialLayout &layout)
     {
         uint64_t hash = 1469598103934665603ull;

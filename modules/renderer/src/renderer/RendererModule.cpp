@@ -44,6 +44,14 @@ namespace mir
         RegisterRendererEntityTypes();
         RegisterRendererPostEffects();
         mSurfaceMaterials.Bind(assets.Cache(), mRenderer);
+        // A committed shader generation may have migrated every surface
+        // record, so the library's cached metadata refreshes without a panel.
+        mRenderer.SetShaderReloadListener([this] { mSurfaceMaterials.NotifyShaderCommit(); });
+        mRenderer.SetMaterialRecordValidator([this](std::string_view frontend, const MaterialLayout &layout,
+            std::span<const std::byte> bytes, std::string &error)
+            {
+                return mSurfaceMaterials.ValidateRecord(frontend, layout, bytes, error);
+            });
 
         context.world.EmplaceResource<ViewDrawSources>();
         // physics fills it while a view shows colliders
@@ -60,7 +68,7 @@ namespace mir
 
         // a WorldTransform reader
         mMeshes = &context.scheduler.AddSystem<MeshResolveSystem>(SystemPhase::LateUpdate,
-            SystemOrder{SystemOrder::kNormal}, mRenderer, &assets.Cache(),
+            SystemOrder{SystemOrder::kNormal}, mRenderer, &mSurfaceMaterials, &assets.Cache(),
             *settings.mResolver);
         mActiveCamera = &context.scheduler.AddSystem<ActiveCameraSystem>(SystemPhase::Render,
             SystemOrder{SystemOrder::kEarly});
@@ -123,6 +131,12 @@ namespace mir
         mSceneLoad.Reset();
         mSceneUnload.Reset();
         mHooks.Reset();
+        // The scheduler outlives this module, so the resolver must stop
+        // reaching the library before the library object goes away.
+        if (mMeshes != nullptr)
+            mMeshes->DetachSurfaceMaterials();
+        mRenderer.SetShaderReloadListener({});
+        mRenderer.SetMaterialRecordValidator({});
         mRenderer.Shutdown();
     }
 }

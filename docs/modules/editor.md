@@ -257,8 +257,14 @@ and logical asset path, previews only dirty numeric fields through
 `SurfaceMaterialLibrary::PreviewParameters`, and saves only changed recipe
 fields through `UpdateJsonFile`. Its accepted baseline is the cooked
 `SurfaceMaterialAsset`, not raw source text; a cook's apply identity and the
-renderer generation decide when the baseline moves. Ordinary Revert is
-memory-only. Play disables the controls.
+renderer generation decide when the baseline moves. A shader-only field addition
+fills the new control from the validated catalog or typed default and a deleted
+field stays authored, reported as unsupported and preserved on save, so the
+panel opens without a recook. A draft is previewed while any frontend of its
+asset is active, and the published batch covers the mesh and terrain records of
+that asset together. Ordinary Revert is
+memory-only and queues the accepted numeric values until they are published. Play
+disables the controls.
 
 Clicking an entity in `Hierarchy`, or clicking it directly in the scene
 viewport (`Editor::UpdateViewportPicking`, a ray/AABB test against every
