@@ -18,10 +18,10 @@
 namespace mir
 {
     TerrainRuntimeModule::TerrainRuntimeModule(ModuleContext context, RendererModule &renderer,
-        const GameProject &project, JobExecutor &jobs)
+        const GameProject &project, const AssetResolver &resolver, JobExecutor &jobs)
         : mRuntime(std::make_unique<TerrainRuntime>())
     {
-        mRuntime->Bind(context.world, renderer.Renderer(), renderer.SurfaceMaterials(), project, jobs);
+        mRuntime->Bind(context.world, renderer.Renderer(), renderer.SurfaceMaterials(), project, resolver, jobs);
 
         // before any system runs: every mode installs finished work, and Edit picks up scene edits
         mFrameBegin = context.scheduler.AddFrameSlot(FrameSlot::FrameBegin, [this](SystemContext &frame)

@@ -576,4 +576,105 @@ namespace mir::vk
         drawFullscreen(mOutputImages[frame], mOutputViews[frame], extent, mCompositePipeline,
             mCompositePipelineLayout, mCompositeSets[frame], &compositePush, sizeof(compositePush));
     }
+
+    bool DepthOfField::BuildReloadCandidate(ReloadCandidate &candidate, std::string *error)
+    {
+        VkShaderModule vertModule = CreateShaderModule(mDevice->Handle(), ShaderPath("depthOfField.vertexMain.spv"));
+        VkShaderModule cocModule = CreateShaderModule(mDevice->Handle(), ShaderPath("depthOfField.cocMain.spv"));
+        VkShaderModule nearModule = CreateShaderModule(mDevice->Handle(), ShaderPath("depthOfField.nearBlurMain.spv"));
+        VkShaderModule farModule = CreateShaderModule(mDevice->Handle(), ShaderPath("depthOfField.farBlurMain.spv"));
+        VkShaderModule compositeModule =
+            CreateShaderModule(mDevice->Handle(), ShaderPath("depthOfField.compositeMain.spv"));
+        if (vertModule == VK_NULL_HANDLE || cocModule == VK_NULL_HANDLE || nearModule == VK_NULL_HANDLE ||
+            farModule == VK_NULL_HANDLE || compositeModule == VK_NULL_HANDLE)
+        {
+            for (VkShaderModule module : { vertModule, cocModule, nearModule, farModule, compositeModule })
+                if (module != VK_NULL_HANDLE)
+                    vkDestroyShaderModule(mDevice->Handle(), module, nullptr);
+            if (error != nullptr)
+                *error = "a depth-of-field shader module is missing";
+            return false;
+        }
+
+        const VkPipelineColorBlendAttachmentState overwriteBlend{
+            .blendEnable = VK_FALSE,
+            .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                              VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT };
+        const auto makePipeline = [&](VkShaderModule fragModule, const char *fragEntry,
+            VkPipelineLayout layout, const char *debugName, VkPipeline &outPipeline)
+            {
+                const FullscreenPipelineDesc desc{
+                    .vertModule = vertModule,
+                    .fragModule = fragModule,
+                    .fragEntry = fragEntry,
+                    .layout = layout,
+                    .blendAttachment = &overwriteBlend,
+                    .colorFormat = kHdrColorFormat };
+                return CreateFullscreenPipeline(*mDevice, desc, debugName, outPipeline);
+            };
+
+        bool ok = makePipeline(cocModule, "cocMain", mCocPipelineLayout,
+            "DepthOfField CoC pipeline", candidate.mCoc);
+        if (ok)
+            ok = makePipeline(nearModule, "nearBlurMain", mBlurPipelineLayout,
+                "DepthOfField near-blur pipeline", candidate.mNearBlur);
+        if (ok)
+            ok = makePipeline(farModule, "farBlurMain", mBlurPipelineLayout,
+                "DepthOfField far-blur pipeline", candidate.mFarBlur);
+        if (ok)
+            ok = makePipeline(compositeModule, "compositeMain", mCompositePipelineLayout,
+                "DepthOfField composite pipeline", candidate.mComposite);
+
+        for (VkShaderModule module : { vertModule, cocModule, nearModule, farModule, compositeModule })
+            vkDestroyShaderModule(mDevice->Handle(), module, nullptr);
+        if (!ok && error != nullptr)
+            *error = "a depth-of-field pipeline could not be created";
+        return ok;
+    }
+
+    void DepthOfField::DestroyCandidate(ReloadCandidate &candidate)
+    {
+        if (mDevice == nullptr)
+            return;
+        for (VkPipeline *pipeline : { &candidate.mCoc, &candidate.mNearBlur, &candidate.mFarBlur,
+                 &candidate.mComposite })
+        {
+            if (*pipeline != VK_NULL_HANDLE)
+                vkDestroyPipeline(mDevice->Handle(), *pipeline, nullptr);
+            *pipeline = VK_NULL_HANDLE;
+        }
+    }
+
+    bool DepthOfField::PrepareShaderReload(std::string *error)
+    {
+        DiscardShaderReload();
+        if (!BuildReloadCandidate(mReloadCandidate, error))
+        {
+            DiscardShaderReload();
+            return false;
+        }
+        mReloadPrepared = true;
+        return true;
+    }
+
+    void DepthOfField::CommitShaderReload()
+    {
+        if (!mReloadPrepared)
+            return;
+        for (VkPipeline *pipeline : { &mCocPipeline, &mNearBlurPipeline, &mFarBlurPipeline, &mCompositePipeline })
+            if (*pipeline != VK_NULL_HANDLE)
+                vkDestroyPipeline(mDevice->Handle(), *pipeline, nullptr);
+        mCocPipeline = mReloadCandidate.mCoc;
+        mNearBlurPipeline = mReloadCandidate.mNearBlur;
+        mFarBlurPipeline = mReloadCandidate.mFarBlur;
+        mCompositePipeline = mReloadCandidate.mComposite;
+        mReloadCandidate = {};
+        mReloadPrepared = false;
+    }
+
+    void DepthOfField::DiscardShaderReload()
+    {
+        DestroyCandidate(mReloadCandidate);
+        mReloadPrepared = false;
+    }
 }

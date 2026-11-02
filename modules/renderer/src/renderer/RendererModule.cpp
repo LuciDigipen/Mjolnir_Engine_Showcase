@@ -20,6 +20,7 @@
 #include <assets/AssetsModule.h>
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/World.h>
+#include <core/log/Assert.h>
 #include <core/log/SetupError.h>
 
 #include <stdexcept>
@@ -55,10 +56,12 @@ namespace mir
         context.world.EmplaceResource<PostProcessingSettings>(
             PostProcessingSettings::LoadFile(settings.mProjectSettingsPath).value_or(PostProcessingSettings{}));
 
+        MIR_ASSERT(settings.mResolver != nullptr, "RendererModule: settings.mResolver is required");
+
         // a WorldTransform reader
         mMeshes = &context.scheduler.AddSystem<MeshResolveSystem>(SystemPhase::LateUpdate,
             SystemOrder{SystemOrder::kNormal}, mRenderer, &assets.Cache(),
-            settings.mAssetIdRoot);
+            *settings.mResolver);
         mActiveCamera = &context.scheduler.AddSystem<ActiveCameraSystem>(SystemPhase::Render,
             SystemOrder{SystemOrder::kEarly});
         mRenderSystem = &context.scheduler.AddSystem<RenderSystem>(SystemPhase::Render,

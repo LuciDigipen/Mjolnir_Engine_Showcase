@@ -11,7 +11,7 @@
 #include <assets/AssetBlob.h>
 #include <assets/AssetCache.h>
 #include <assets/AssetId.h>
-#include <assets/AssetPath.h>
+#include <assets/AssetResolver.h>
 #include <core/ecs/Query.h>
 #include <core/ecs/TypeId.h>
 #include <core/ecs/World.h>
@@ -93,8 +93,8 @@ namespace mir
         }
     }
 
-    MeshResolveSystem::MeshResolveSystem(VulkanRenderer &renderer, AssetCache *assets, std::string assetIdRoot)
-        : mRenderer(renderer), mAssets(assets), mAssetIdRoot(std::move(assetIdRoot))
+    MeshResolveSystem::MeshResolveSystem(VulkanRenderer &renderer, AssetCache *assets, const AssetResolver &resolver)
+        : mRenderer(renderer), mAssets(assets), mResolver(resolver)
     {}
 
     void MeshResolveSystem::Reset()
@@ -137,31 +137,22 @@ namespace mir
 
     void MeshResolveSystem::OnStart(SystemContext &context)
     {
-        if (EntityChangeListeners *listeners = context.world.TryResource<EntityChangeListeners>())
-            listeners->AddBeforeRemove(&MeshResolveSystem::OnBeforeRemove, this);
+        if (ComponentFieldListeners *listeners = context.world.TryResource<ComponentFieldListeners>())
+            listeners->AddBeforeChange(&MeshResolveSystem::OnBeforeFieldChange, this);
     }
 
     void MeshResolveSystem::OnStop(SystemContext &context)
     {
-        if (EntityChangeListeners *listeners = context.world.TryResource<EntityChangeListeners>())
-            listeners->RemoveBeforeRemove(&MeshResolveSystem::OnBeforeRemove, this);
+        if (ComponentFieldListeners *listeners = context.world.TryResource<ComponentFieldListeners>())
+            listeners->RemoveBeforeChange(&MeshResolveSystem::OnBeforeFieldChange, this);
     }
 
-    void MeshResolveSystem::OnBeforeRemove(World &, const EntityChangeSet &changes, void *user)
+    void MeshResolveSystem::OnBeforeFieldChange(World &, std::span<const ComponentFieldChange> changes, void *user)
     {
         auto *self = static_cast<MeshResolveSystem *>(user);
         const TypeId meshType = TypeIdOf<MeshRenderer>();
 
-        for (Entity entity : changes.mRemovedEntities)
-            self->mResolved.erase(PackEntity(entity));
-
-        for (const EntityComponentRef &component : changes.mRemovedComponents)
-        {
-            if (component.mType == meshType)
-                self->mResolved.erase(PackEntity(component.mEntity));
-        }
-
-        for (const EntityComponentChange &change : changes.mChangedComponents)
+        for (const ComponentFieldChange &change : changes)
         {
             if (!(change.mType == meshType))
                 continue;
@@ -191,21 +182,23 @@ namespace mir
             return cached;
         }
 
-        const AssetPathResult logical = MakeLogicalAssetPath(mAssetIdRoot, meshName);
-        if (!logical.Ok())
+        std::string reason;
+        const AssetId id = mResolver.Resolve(meshName, &reason);
+        if (id.IsNull())
         {
-            MIR_LOG_ERROR("MeshResolveSystem: mesh '{}': {}", meshName, Describe(logical.error));
+            MIR_LOG_ERROR("MeshResolveSystem: mesh '{}': {}", meshName, reason);
             return cached;
         }
 
-        const AssetBlobView *blob = mAssets != nullptr ? mAssets->Load(MakeAssetId(logical.path)) : nullptr;
+        const std::string name = mResolver.PathOf(id);
+        const AssetBlobView *blob = mAssets != nullptr ? mAssets->Load(id) : nullptr;
         if (blob == nullptr)
         {
-            MIR_LOG_ERROR("MeshResolveSystem: could not load '{}'", logical.path);
+            MIR_LOG_ERROR("MeshResolveSystem: could not load '{}'", name);
             return cached;
         }
 
-        if (const std::optional<MeshData> mesh = ParseMeshAsset(AsStringView(*blob), logical.path))
+        if (const std::optional<MeshData> mesh = ParseMeshAsset(AsStringView(*blob), name))
         {
             cached.mMesh = mRenderer.CreateMesh(mesh->vertices, mesh->indices);
             cached.mBounds = ComputeMeshBounds(mesh->vertices);

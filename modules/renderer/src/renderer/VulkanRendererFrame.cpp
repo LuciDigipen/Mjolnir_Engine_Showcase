@@ -103,7 +103,7 @@ namespace mir
                 const DrawItem &item = view.items[draw];
                 const vk::GpuMaterial *const material = mMaterialStore->FindOrDefault(item.material);
                 if (material == nullptr) continue;
-                const bool transparent = item.transparent || material->mDescription.alphaMode == MaterialAlphaMode::Blend;
+                const bool transparent = item.transparent || material->mDesc.alphaMode == MaterialAlphaMode::Blend;
                 if ((filter == RasterPass::Opaque || surfaces) && transparent) continue;
                 if (filter == RasterPass::Transparent && !transparent) continue;
                 const vk::GpuMesh *const mesh = mResources->FindMesh(item.mesh);

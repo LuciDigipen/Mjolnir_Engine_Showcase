@@ -14,7 +14,9 @@
 #endif
 
 #include <renderer/MaterialReflection.h>
+#include <renderer/SurfaceMaterialTexture.h>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <nlohmann/json.hpp>
@@ -110,6 +112,71 @@ TEST_CASE("The default surface record matches the compiled Slang layout", "[rend
     CHECK(roughness == 0.4924790605f);
 }
 
+TEST_CASE("The terrain sand material reflects macro and parallax fields", "[renderer][material][reflection]")
+{
+    const std::filesystem::path directory =
+        std::filesystem::path(MIR_RENDERER_TEST_DIR) / "terrain_material_layout";
+    std::filesystem::create_directories(directory);
+    const std::filesystem::path reflectionPath = directory / "icelandicSand.layout.reflection.json";
+    const std::filesystem::path spirvPath = directory / "icelandicSand.layout.spv";
+    std::filesystem::remove(reflectionPath);
+    std::filesystem::remove(spirvPath);
+
+    const std::string common = " -target spirv -profile spirv_1_5 -fvk-use-entrypoint-name "
+        "-matrix-layout-column-major -fvk-use-gl-layout -g -O0 ";
+    const std::string layoutCommand = Quote(MIR_SLANGC_EXECUTABLE) + " " + Quote(MIR_SURFACE_LAYOUT_SLANG) +
+        " " + Quote(MIR_TERRAIN_MATERIAL_SLANG) + common +
+        "-entry layoutMain -stage compute -specialize IcelandicSandMaterial -reflection-json " +
+        Quote(reflectionPath) + " -o " + Quote(spirvPath);
+    REQUIRE(Run(layoutCommand, MIR_SLANGC_EXECUTABLE) == 0);
+
+    const std::string fragmentCommand = Quote(MIR_SLANGC_EXECUTABLE) + " " + Quote(MIR_TERRAIN_FORWARD_SLANG) +
+        " " + Quote(MIR_TERRAIN_MATERIAL_SLANG) + common +
+        "-entry fragmentMain -stage fragment -specialize IcelandicSandMaterial -o " +
+        Quote(directory / "icelandicSand.fragmentMain.spv");
+    REQUIRE(Run(fragmentCommand, MIR_SLANGC_EXECUTABLE) == 0);
+
+    const std::string rayCommand = Quote(MIR_SLANGC_EXECUTABLE) + " " + Quote(MIR_TERRAIN_RT_SLANG) +
+        " " + Quote(MIR_TERRAIN_MATERIAL_SLANG) + common +
+        "-entry closestHitSurface -stage closesthit -specialize IcelandicSandMaterial -o " +
+        Quote(directory / "icelandicSand.closestHitSurface.spv");
+    REQUIRE(Run(rayCommand, MIR_SLANGC_EXECUTABLE) == 0);
+
+    std::ifstream reflectionFile(reflectionPath);
+    const std::string reflectionJson{ std::istreambuf_iterator<char>(reflectionFile),
+        std::istreambuf_iterator<char>() };
+    std::string error;
+    const auto layout = mir::ParseMaterialLayout(reflectionJson, &error);
+    INFO(error);
+    REQUIRE(layout.has_value());
+
+    std::ifstream materialFile(MIR_TERRAIN_MATERIAL_JSON);
+    nlohmann::json material;
+    materialFile >> material;
+    nlohmann::json parameters = material.at("parameters");
+    for (const mir::MaterialFieldLayout &field : layout->fields)
+        if (field.kind == mir::MaterialFieldKind::TextureRef)
+            parameters[field.name] = nlohmann::json{{"image", 0}, {"sampler", 0}};
+
+    const auto record = mir::PackMaterialRecord(*layout, parameters.dump(), &error);
+    INFO(error);
+    REQUIRE(record.has_value());
+
+    const auto macro = mir::SurfaceMaterialMacroParametersFromRecord(*layout, *record);
+    REQUIRE(macro);
+    REQUIRE(macro->periodMeters);
+    CHECK(*macro->periodMeters == 64.0);
+    CHECK(macro->strength == Catch::Approx(0.35));
+
+    const auto parallax = mir::SurfaceMaterialParallaxParametersFromRecord(*layout, *record);
+    REQUIRE(parallax);
+    CHECK(parallax->enabled);
+    CHECK_FALSE(parallax->rayTracedEnabled);
+    CHECK(parallax->heightMeters == Catch::Approx(0.057));
+    CHECK(parallax->reference == Catch::Approx(0.455));
+    CHECK(parallax->steps == 24);
+}
+
 TEST_CASE("The shader manifest covers legacy and namespaced surface outputs", "[renderer][material][manifest]")
 {
     std::ifstream manifestFile(MIR_SHADER_MANIFEST);
@@ -121,6 +188,25 @@ TEST_CASE("The shader manifest covers legacy and namespaced surface outputs", "[
     CHECK(manifest.at("workingDirectory").is_string());
     CHECK(manifest.at("commonArguments").is_array());
     CHECK(manifest.at("frontendTemplates").is_array());
+    REQUIRE_FALSE(manifest.at("frontendTemplates").empty());
+    const nlohmann::json &meshTemplate = manifest.at("frontendTemplates")[0];
+    CHECK(meshTemplate.at("frontend") == "mesh");
+    const auto &placeholders = meshTemplate.at("placeholders");
+    CHECK(std::find(placeholders.begin(), placeholders.end(), "{materialSource}") != placeholders.end());
+    CHECK(std::find(placeholders.begin(), placeholders.end(), "{type}") != placeholders.end());
+    CHECK(std::find(placeholders.begin(), placeholders.end(), "{stem}") != placeholders.end());
+    for (const char *stage : { "vertex", "fragment", "raytracing", "layout" })
+    {
+        const auto &arguments = meshTemplate.at(stage);
+        CHECK(std::find(arguments.begin(), arguments.end(), "-fvk-use-gl-layout") != arguments.end());
+        CHECK(std::find(arguments.begin(), arguments.end(), "{materialSource}") != arguments.end());
+        const auto frontend = std::filesystem::u8path(arguments.at(0).get<std::string>());
+        CHECK(frontend.is_absolute());
+        CHECK(std::filesystem::is_regular_file(frontend));
+    }
+    CHECK(std::filesystem::u8path(meshTemplate.at("vertex")[0].get<std::string>()).filename() == "SurfaceForward.slang");
+    CHECK(std::filesystem::u8path(meshTemplate.at("raytracing")[0].get<std::string>()).filename() == "SurfaceRt.slang");
+    CHECK(std::filesystem::u8path(meshTemplate.at("layout")[0].get<std::string>()).filename() == "SurfaceLayout.slang");
     REQUIRE(manifest.at("outputs").is_array());
 
     const std::string defaultStem =

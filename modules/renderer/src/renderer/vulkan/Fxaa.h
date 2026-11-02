@@ -18,6 +18,7 @@
 #include <volk.h>
 
 #include <cstdint>
+#include <string>
 
 namespace mir::vk
 {
@@ -36,12 +37,19 @@ namespace mir::vk
         bool HasIntermediate() const { return mIntermediate[0].image != VK_NULL_HANDLE; }
 
         // Recreates the intermediate at the new swapchain extent, if it exists.
+        bool PrepareShaderReload(std::string *error = nullptr);
+        void CommitShaderReload();
+        void DiscardShaderReload();
+
         bool Resize(VkExtent2D extent);
 
         VkImage IntermediateImage(uint32_t frame) const { return mIntermediate[frame].image; }
         VkImageView IntermediateView(uint32_t frame) const { return mIntermediate[frame].view; }
 
         void Record(VkCommandBuffer cmd, uint32_t frame, VkImageView source, FilmGrain grain, VkExtent2D extent);
+
+        VkPipeline mReloadPipeline = VK_NULL_HANDLE;
+        bool mReloadPrepared = false;
 
     private:
         Device *mDevice = nullptr;

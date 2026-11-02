@@ -11,6 +11,7 @@
 
 #include "Prompt.h"
 #include <assets/AssetIdRoot.h>
+#include <assets/AssetSettings.h>
 #include <core/EngineVersion.h>
 #include <core/ecs/EngineMode.h>
 #include <core/ecs/Requests.h>
@@ -55,6 +56,15 @@ namespace mir
             append("entities", probe.mMissingEntities);
             append("instances", probe.mMissingInstances);
             return files;
+        }
+
+        std::unique_ptr<AsyncAssetService> MakeAssetService(
+            AssetsModule &assets, JobExecutor &jobs, const std::filesystem::path &projectSettingsPath)
+        {
+            if (!assets.HadManifest())
+                return nullptr;
+            return std::make_unique<AsyncAssetService>(
+                assets, jobs, AssetSettings::LoadFile(projectSettingsPath).loadThreads);
         }
 
         std::filesystem::path PrefabSourceDir(const GameProject &project)
@@ -118,24 +128,26 @@ namespace mir
           mJobs(mDesc.mWorkerThreads),
           mCore(Context(), mCommands),
           mAssets(CookedAssetsDir()),
-          mParticles(Context(), mAssets, mProject.mAssetIdRoot),
+          mAssetService(MakeAssetService(mAssets, mJobs, mProject.mProjectSettingsPath)),
+          mResolver(mAssets, mProject.mAssetIdRoot),
+          mParticles(Context(), mAssets, mResolver),
           mScene(Context(), mProject.mSceneDir),
           mPrefab(Context(), mScene, PrefabSourceDir(mProject), kHasEditor ? nullptr : &mAssets),
           mGameUI(Context()),
-          mGameShell(Context(), mGameUI, mAssets,
+          mGameShell(Context(), mGameUI, mAssets, mResolver,
               GameShellSettings{ .mUIDemo = mDesc.mUIDemo, .mQuitStopsPlay = mDesc.mEnableEditorLayout }),
           mWindow(MakeWindowDesc(mDesc)),
           mRenderer(Context(), mWindow.Get(), mAssets,
               RendererModuleSettings{ .mAppName = mDesc.mAppName,
                                       .mEnableValidation = mDesc.mEnableValidation,
                                       .mProjectSettingsPath = mProject.mProjectSettingsPath,
-                                      .mAssetIdRoot = mProject.mAssetIdRoot }),
+                                      .mResolver = &mResolver }),
           mParticlesGpu(mRenderer.Renderer()),
           mInput(Context(), mWindow.Get(), mProject.mProjectSettingsPath),
-          mAnimation(Context(), mRenderer.Renderer(), mAssets, mProject.mAssetIdRoot, &mJobs),
+          mAnimation(Context(), mRenderer.Renderer(), mAssets, mResolver, &mJobs),
           mImGui(Context(), mWindow, mRenderer),
     #if MIR_WITH_EDITOR
-        mEditor(Context(), mImGui, mWindow, mRenderer, mScene, mPrefab, mAssets, mProject,
+        mEditor(Context(), mImGui, mWindow, mRenderer, mScene, mPrefab, mAssets, mResolver, mProject, mJobs,
             mDesc.mEnableEditorLayout),
     #endif
           mCamera(Context()),
@@ -145,7 +157,7 @@ namespace mir
     #endif
           mPhysics(Context(), mProject.mProjectSettingsPath, &mJobs),
           mTerrainData(Context()),
-          mScript(Context(), mAssets, mProject.mAssetIdRoot),
+          mScript(Context(), mAssets, mResolver),
           mParticlesRuntime(Context(), mParticles, mParticlesGpu, mRenderer.Rendering()),
           mParticlesScript(mScript),
     #if MIR_WITH_AUDIO
@@ -155,7 +167,7 @@ namespace mir
           mPhysicsScript(mScript),
           mRendererScript(mScript),
           mTerrainScript(mScript),
-          mTerrain(Context(), mRenderer, mProject, mJobs),
+          mTerrain(Context(), mRenderer, mProject, mResolver, mJobs),
           mGameUIImGui(Context(), mImGui, mWindow, mGameUI),
           mFixedTimestep{ .mStep = mDesc.mFixedDeltaSeconds, .mMaxSteps = mDesc.mMaxFixedSteps }
     {
@@ -424,6 +436,28 @@ namespace mir
         mRenderer.Renderer().RequestSwapchainRecreate();
     }
 
+    bool App::HasUnsavedMaterialDrafts() const
+    {
+#if MIR_WITH_EDITOR
+        return mEditor.HasUnsavedMaterialDrafts();
+#else
+        return false;
+#endif
+    }
+
+    bool App::ConfirmEditorExit()
+    {
+        if (!HasUnsavedMaterialDrafts())
+            return true;
+        if (mDesc.mNonInteractive || mDesc.mMaxFrames != 0)
+        {
+            MIR_LOG_WARN("Closing with unsaved material drafts in a bounded run; they are not saved automatically.");
+            return true;
+        }
+        return AskYesNo("Unsaved material drafts",
+            "Close and discard the unsaved material drafts? They are never saved automatically.", false);
+    }
+
     void App::UnloadCurrentScene()
     {
         mScene.Unload();
@@ -547,8 +581,16 @@ namespace mir
 
         auto previous = std::chrono::steady_clock::now();
 
-        while (!mWindow.Get().ShouldClose())
+        while (true)
         {
+            if (mWindow.Get().ShouldClose())
+            {
+                if (!mProjectToOpen.has_value() && !ConfirmEditorExit())
+                    mWindow.Get().CancelClose();
+                else
+                    break;
+            }
+
             mWindow.Get().PollEvents();
 
             const auto now = std::chrono::steady_clock::now();
@@ -558,6 +600,8 @@ namespace mir
 
             // nothing is drawn or running yet, so a transition frees nothing in use
             ApplyRequests();
+            if (mAssetService)
+                mAssetService->DrainCompletions();
 
             SystemContext frameContext = MakeContext(dt);
             mScheduler.RunFrameSlot(FrameSlot::FrameBegin, frameContext);

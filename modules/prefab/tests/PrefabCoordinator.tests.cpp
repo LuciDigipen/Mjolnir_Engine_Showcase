@@ -8,9 +8,9 @@
  */
 #include <prefab/PrefabCoordinator.h>
 
+#include <core/ecs/ComponentFieldChanges.h>
 #include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/EngineMode.h>
-#include <core/ecs/EntityChanges.h>
 #include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/World.h>
 #include <core/ecs/components/Transform.h>
@@ -47,13 +47,13 @@ namespace
     using mir::AddInstanceComponent;
     using mir::CommandBuffer;
     using mir::CompiledPrefab;
+    using mir::ComponentFieldChange;
+    using mir::ComponentFieldListeners;
     using mir::ComponentOps;
     using mir::ComponentRegistry;
     using mir::CreateSceneEntity;
     using mir::EngineMode;
     using mir::Entity;
-    using mir::EntityChangeListeners;
-    using mir::EntityChangeSet;
     using mir::FieldDesc;
     using mir::FieldKind;
     using mir::FindInstanceFieldPatch;
@@ -264,7 +264,7 @@ namespace
             RuntimeOps();
 
             mWorld.EmplaceResource<mir::EngineModeState>();
-            mWorld.EmplaceResource<EntityChangeListeners>();
+            mWorld.EmplaceResource<ComponentFieldListeners>();
             mCoordinator = &mWorld.EmplaceResource<PrefabCoordinator>();
 
             mDocument = Document();
@@ -334,7 +334,7 @@ namespace
             RuntimeOps();
 
             mWorld.EmplaceResource<mir::EngineModeState>();
-            mWorld.EmplaceResource<EntityChangeListeners>();
+            mWorld.EmplaceResource<ComponentFieldListeners>();
 
             mDocument = Document();
             REQUIRE(mir::WritePrefabFile(mPrefabs.mPath / "instance.prefab", mDocument));
@@ -452,7 +452,7 @@ namespace
             ExtraOps();
 
             mWorld.EmplaceResource<mir::EngineModeState>();
-            mWorld.EmplaceResource<EntityChangeListeners>();
+            mWorld.EmplaceResource<ComponentFieldListeners>();
             mCoordinator = &mWorld.EmplaceResource<PrefabCoordinator>();
 
             mInner = NestedInnerDocument();
@@ -767,26 +767,15 @@ TEST_CASE("Deleting a source node clears references and marks the scene dirty", 
 
 TEST_CASE("Deleting a source node unregisters its ordinary descendants", "[prefab][coordinator]")
 {
-    struct Recorder
-    {
-        std::vector<Entity> mRemoved;
-    };
-
-    static Recorder recorder;
-    recorder = Recorder{};
-    const auto before = [](World &, const EntityChangeSet &changes, void *user)
-        {
-            auto &state = *static_cast<Recorder *>(user);
-            for (Entity entity : changes.mRemovedEntities)
-                state.mRemoved.push_back(entity);
-        };
-
     Fixture fixture;
-    fixture.mWorld.Resource<EntityChangeListeners>().AddBeforeRemove(+before, &recorder);
+    std::vector<Entity> removedEntities;
+    const mir::Registration hooks = fixture.mWorld.SetComponentHooks<CoordRuntimeComponent>({
+        .onRemove = [&removedEntities](World &, Entity entity) { removedEntities.push_back(entity); } });
 
     const StableId removed = fixture.Binding(fixture.mRoot, SceneNodeAddress{ 3 });
     const Entity member = fixture.mScene.mEntities.at(removed);
     const Entity child = CreateSceneEntity(fixture.mWorld, fixture.mScene, member);
+    fixture.mWorld.AddComponent<CoordRuntimeComponent>(child, CoordRuntimeComponent{});
 
     StableId childId = kNullStableId;
     for (const auto &[id, entity] : fixture.mScene.mEntities)
@@ -802,7 +791,7 @@ TEST_CASE("Deleting a source node unregisters its ordinary descendants", "[prefa
 
     CHECK_FALSE(fixture.mWorld.IsAlive(child));
     CHECK_FALSE(fixture.mScene.mEntities.contains(childId));
-    CHECK(std::find(recorder.mRemoved.begin(), recorder.mRemoved.end(), child) != recorder.mRemoved.end());
+    CHECK(std::find(removedEntities.begin(), removedEntities.end(), child) != removedEntities.end());
     for (const auto &[id, entity] : fixture.mScene.mEntities)
     {
         (void)id;
@@ -891,23 +880,23 @@ TEST_CASE("Listeners see the old values before the commit and the new values aft
     {
         std::vector<std::string> mCalls;
         std::vector<float> mValues;
-        EntityChangeSet mBefore;
-        EntityChangeSet mAfter;
+        std::vector<ComponentFieldChange> mBefore;
+        std::vector<ComponentFieldChange> mAfter;
     };
 
     static Recorder recorder;
     recorder = Recorder{};
 
-    const auto beforeFirst = [](World &, const EntityChangeSet &, void *user)
+    const auto beforeFirst = [](World &, std::span<const ComponentFieldChange>, void *user)
         {
             static_cast<Recorder *>(user)->mCalls.push_back("before1");
         };
-    const auto beforeSecond = [](World &world, const EntityChangeSet &changes, void *user)
+    const auto beforeSecond = [](World &world, std::span<const ComponentFieldChange> changes, void *user)
         {
             auto &state = *static_cast<Recorder *>(user);
             state.mCalls.push_back("before2");
-            state.mBefore = changes;
-            for (const mir::EntityComponentChange &change : changes.mChangedComponents)
+            state.mBefore.assign(changes.begin(), changes.end());
+            for (const ComponentFieldChange &change : changes)
             {
                 if (!(change.mType == DataOps().mType))
                     continue;
@@ -917,16 +906,16 @@ TEST_CASE("Listeners see the old values before the commit and the new values aft
                 state.mValues.push_back(value);
             }
         };
-    const auto afterFirst = [](World &, const EntityChangeSet &, void *user)
+    const auto afterFirst = [](World &, std::span<const ComponentFieldChange>, void *user)
         {
             static_cast<Recorder *>(user)->mCalls.push_back("after1");
         };
-    const auto afterSecond = [](World &world, const EntityChangeSet &changes, void *user)
+    const auto afterSecond = [](World &world, std::span<const ComponentFieldChange> changes, void *user)
         {
             auto &state = *static_cast<Recorder *>(user);
             state.mCalls.push_back("after2");
-            state.mAfter = changes;
-            for (const mir::EntityComponentChange &change : changes.mChangedComponents)
+            state.mAfter.assign(changes.begin(), changes.end());
+            for (const ComponentFieldChange &change : changes)
             {
                 if (!(change.mType == DataOps().mType))
                     continue;
@@ -938,9 +927,9 @@ TEST_CASE("Listeners see the old values before the commit and the new values aft
         };
 
     Fixture fixture;
-    EntityChangeListeners &listeners = fixture.mWorld.Resource<EntityChangeListeners>();
-    listeners.AddBeforeRemove(+beforeFirst, &recorder);
-    listeners.AddBeforeRemove(+beforeSecond, &recorder);
+    ComponentFieldListeners &listeners = fixture.mWorld.Resource<ComponentFieldListeners>();
+    listeners.AddBeforeChange(+beforeFirst, &recorder);
+    listeners.AddBeforeChange(+beforeSecond, &recorder);
     listeners.AddAfterChange(+afterFirst, &recorder);
     listeners.AddAfterChange(+afterSecond, &recorder);
 
@@ -958,30 +947,28 @@ TEST_CASE("Listeners see the old values before the commit and the new values aft
     CHECK(recorder.mValues.at(0) == 1.0f);
     CHECK(recorder.mValues.at(1) == 19.0f);
 
-    REQUIRE_FALSE(recorder.mBefore.mChangedComponents.empty());
-    REQUIRE_FALSE(recorder.mAfter.mChangedComponents.empty());
+    REQUIRE_FALSE(recorder.mBefore.empty());
+    REQUIRE_FALSE(recorder.mAfter.empty());
 
     CHECK(world.GetComponent<CoordRuntimeComponent>(second)->mRuntimeOnly == 42.0f);
     CHECK(world.GetComponent<CoordRuntimeComponent>(second)->mAuthored == 23.0f);
 }
 
-TEST_CASE("Component additions and removals reach the change set", "[prefab][coordinator]")
+TEST_CASE("Component additions and removals reach the component hooks, not the field listeners", "[prefab][coordinator]")
 {
-    struct Recorder
-    {
-        EntityChangeSet mAfter;
-    };
-
-    static Recorder recorder;
-    recorder = Recorder{};
-
-    const auto after = [](World &, const EntityChangeSet &changes, void *user)
-        {
-            static_cast<Recorder *>(user)->mAfter = changes;
-        };
+    static int fieldCalls;
+    fieldCalls = 0;
+    const auto count = [](World &, std::span<const ComponentFieldChange>, void *) { ++fieldCalls; };
 
     Fixture fixture;
-    fixture.mWorld.Resource<EntityChangeListeners>().AddAfterChange(after, &recorder);
+    fixture.mWorld.Resource<ComponentFieldListeners>().AddBeforeChange(+count);
+    fixture.mWorld.Resource<ComponentFieldListeners>().AddAfterChange(+count);
+
+    std::vector<Entity> added;
+    std::vector<Entity> removed;
+    const mir::Registration hooks = fixture.mWorld.SetComponentHooks<CoordRuntimeComponent>({
+        .onAdd = [&added](World &, Entity entity) { added.push_back(entity); },
+        .onRemove = [&removed](World &, Entity entity) { removed.push_back(entity); } });
 
     const Entity second = fixture.Member(fixture.mRoot, SceneNodeAddress{ 2 });
     const Entity third = fixture.Member(fixture.mRoot, SceneNodeAddress{ 3 });
@@ -990,29 +977,21 @@ TEST_CASE("Component additions and removals reach the change set", "[prefab][coo
     REQUIRE(secondNode != nullptr);
     std::erase_if(secondNode->mComponents, [](const PrefabComponentInstance &component)
         {
-            return component.mType == "PrefabCoordinatorTestData";
+            return component.mType == "CoordRuntimeComponent";
         });
 
     PrefabNode *thirdNode = FindNode(fixture.mDocument, 3);
     REQUIRE(thirdNode != nullptr);
-    thirdNode->mComponents.push_back(PrefabComponentInstance{
-        "PrefabCoordinatorTestExtra", json{ { "value", 5.0 }, { "link", nullptr } } });
+    thirdNode->mComponents.push_back(PrefabComponentInstance{ "CoordRuntimeComponent", json{ { "authored", 5.0 } } });
 
     REQUIRE(fixture.mCoordinator->SetDocument(fixture.mDocument));
     fixture.Commit();
 
-    bool removedData = false;
-    for (const mir::EntityComponentRef &entry : recorder.mAfter.mRemovedComponents)
-        removedData = removedData || (entry.mEntity == second && entry.mType == DataOps().mType);
-
-    bool addedExtra = false;
-    for (const mir::EntityComponentRef &entry : recorder.mAfter.mAddedComponents)
-        addedExtra = addedExtra || (entry.mEntity == third && entry.mType == ExtraOps().mType);
-
-    CHECK(removedData);
-    CHECK(addedExtra);
-    CHECK_FALSE(DataOps().Has(fixture.mWorld, second));
-    CHECK(ExtraOps().Has(fixture.mWorld, third));
+    CHECK(removed == std::vector<Entity>{ second });
+    CHECK(added == std::vector<Entity>{ third });
+    CHECK(fieldCalls == 0);
+    CHECK_FALSE(fixture.mWorld.Has<CoordRuntimeComponent>(second));
+    CHECK(fixture.mWorld.Has<CoordRuntimeComponent>(third));
 }
 
 TEST_CASE("A frozen coordinator publishes nothing", "[prefab][coordinator]")
@@ -1265,7 +1244,7 @@ TEST_CASE("An outer prefab compiles once its missing inner prefab arrives", "[pr
 
     World world;
     world.EmplaceResource<mir::EngineModeState>();
-    world.EmplaceResource<EntityChangeListeners>();
+    world.EmplaceResource<ComponentFieldListeners>();
     PrefabCoordinator &coordinator = world.EmplaceResource<PrefabCoordinator>();
     CommandBuffer commands;
     SystemContext context{ world, commands };

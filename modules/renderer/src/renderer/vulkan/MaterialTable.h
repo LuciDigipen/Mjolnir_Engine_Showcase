@@ -67,7 +67,7 @@ namespace mir::vk
         bool CreateLayout();
         bool CreatePool();
         bool CreateRecordBuffer();
-        void UploadWrites();
+        bool UploadWrites();
         void Clear();
 
         Device *mDevice = nullptr;

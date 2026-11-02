@@ -10,7 +10,9 @@
 
 #include <project/GameProject.h>
 #include <animation/AnimationModule.h>
+#include <assets/AssetResolver.h>
 #include <assets/AssetsModule.h>
+#include <assets/AsyncAssetService.h>
 #ifndef MIR_WITH_AUDIO
 #error "MIR_WITH_AUDIO is set by linking mir::app"
 #endif
@@ -142,6 +144,9 @@ namespace mir
         // Never null; empty until a build or import cooks something
         AssetCache *Assets() { return &mAssets.Cache(); }
 
+        // The background asset loader. Null when there was no manifest at startup, for the whole session
+        AsyncAssetService *AssetService() { return mAssetService.get(); }
+
         // The scene currently in the World
         LoadedScene &Scene() { return mScene.Scene(); }
 
@@ -206,6 +211,12 @@ namespace mir
         // what the editor, the game shell and the import asked for last frame
         void ApplyRequests();
 
+        // True when the editor has material drafts that are not accepted yet.
+        bool HasUnsavedMaterialDrafts() const;
+
+        // One guard for OS close, Alt+F4, the custom title bar and Request::Quit.
+        bool ConfirmEditorExit();
+
         // destroys the scene's entities, then the SceneUnload stage frees what they held
         void UnloadCurrentScene();
 
@@ -246,8 +257,8 @@ namespace mir
     #endif
 
         // Startup order, which is dependency order: a module after every module it uses,
-        // a bridge after script and its library. C++ destroys them in reverse. Within a
-        // phase, systems run in this order too
+        // a bridge after script and its library. C++ destroys them in reverse. Systems with
+        // equal orders in a phase run in this order too, but nothing may rely on it
         AppDesc mDesc;
         GameProject mProject;
         StartupSplash mSplash;
@@ -260,6 +271,8 @@ namespace mir
 
         CoreModule mCore;
         AssetsModule mAssets;
+        std::unique_ptr<AsyncAssetService> mAssetService;
+        AssetResolver mResolver;
         ParticlesModule mParticles;
         SceneModule mScene;
         PrefabModule mPrefab;

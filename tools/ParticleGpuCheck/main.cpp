@@ -78,13 +78,18 @@ int main(int argc, char **argv)
         auto manifest = mir::AssetManifest::LoadFile(mir::ExecutableDir() / "particle_gpu_cooked" / mir::kAssetManifestFileName);
         Require(manifest.has_value(), "Missing cooked manifest");
         mir::AssetCache cache(&*manifest, mir::ExecutableDir() / "particle_gpu_cooked");
-        auto cookedEmitter = mir::LoadParticleEmitterAsset(cache,
-            mir::MakeAssetId("assets/exhaust.emitter.json"));
+        // the cooker names each asset by a guid, so an emitter is found by its path in the manifest
+        const auto idOf = [&manifest](std::string_view path)
+        {
+            const mir::AssetManifestEntry *entry = manifest->FindByPath(path);
+            return entry != nullptr ? entry->id : mir::kNullAssetId;
+        };
+        auto cookedEmitter = mir::LoadParticleEmitterAsset(cache, idOf("assets/exhaust.emitter.json"));
         Require(cookedEmitter.mEmitter.has_value(), "Missing cooked exhaust script");
         mir::ParticleSubmission input;
         input.scriptKey = cookedEmitter.mEmitter->script.value;
         input.scriptCode = cookedEmitter.mEmitter->scriptCode;
-        auto accelerated = mir::LoadParticleEmitterAsset(cache, mir::MakeAssetId("assets/accelerated.emitter.json"));
+        auto accelerated = mir::LoadParticleEmitterAsset(cache, idOf("assets/accelerated.emitter.json"));
         Require(accelerated.mEmitter.has_value(), "Missing alternate cooked script");
         Require(accelerated.mEmitter->script != cookedEmitter.mEmitter->script, "Changed stack reused old script identity");
         input.generation = 1;
@@ -347,7 +352,7 @@ int main(int argc, char **argv)
                 "Float-world GPU submissions must reject remote unsupported origins");
         }
         // Exercise cooked variation, wind, lifetime curves, flipbooks and texture replacement.
-        const auto advanced = mir::LoadParticleEmitterAsset(cache, mir::MakeAssetId("assets/advanced.emitter.json"));
+        const auto advanced = mir::LoadParticleEmitterAsset(cache, idOf("assets/advanced.emitter.json"));
         Require(advanced.mEmitter.has_value(), "Missing advanced cooked GPU script");
         sample.scriptKey = advanced.mEmitter->script.value;
         sample.scriptCode = advanced.mEmitter->scriptCode;

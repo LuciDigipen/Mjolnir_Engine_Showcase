@@ -1,10 +1,11 @@
-engine_add_module_tests(terrain
+engine_add_module_tests(terrain NO_SYSTEM_TIES
     TerrainAreaSamples.tests.cpp
     TerrainAssetPath.tests.cpp
     TerrainCollider.tests.cpp
     TerrainCollision.tests.cpp
     TerrainCollisionResidency.tests.cpp
     TerrainCollisionResidencyJolt.tests.cpp
+    TerrainGround.tests.cpp
     TerrainHeightQuery.tests.cpp
     TerrainIdentity.tests.cpp
     TerrainLayout.tests.cpp

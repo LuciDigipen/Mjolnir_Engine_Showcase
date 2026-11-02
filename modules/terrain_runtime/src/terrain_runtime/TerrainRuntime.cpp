@@ -8,6 +8,9 @@
  */
 #include <terrain_runtime/TerrainRuntime.h>
 
+#include <terrain_runtime/TerrainGroundBridge.h>
+
+#include <assets/AssetResolver.h>
 #include <core/ecs/EngineMode.h>
 #include <core/ecs/Query.h>
 #include <core/ecs/World.h>
@@ -54,6 +57,31 @@ namespace mir
         double MiB(uint64_t bytes)
         {
             return double(bytes) / (1024.0 * 1024.0);
+        }
+
+        bool ValidateSurfaceMaterialParameters(const SurfaceMaterialBinding &binding, std::string &error)
+        {
+            if (binding.tilePeriodMeters && !TerrainMaterialTilePeriodSupported(*binding.tilePeriodMeters))
+            {
+                error = std::format("tileSizeMeters {} is not a supported divisor of the terrain UV period",
+                                    *binding.tilePeriodMeters);
+                return false;
+            }
+            if (binding.macro)
+            {
+                if (!ValidateSurfaceMaterialMacroParameters(*binding.macro, &error))
+                    return false;
+                if (binding.macro->periodMeters &&
+                    !TerrainMaterialTilePeriodSupported(*binding.macro->periodMeters))
+                {
+                    error = std::format("macroPeriodMeters {} is not a supported divisor of the terrain UV period",
+                                        *binding.macro->periodMeters);
+                    return false;
+                }
+            }
+            if (binding.parallax && !ValidateSurfaceMaterialParallaxParameters(*binding.parallax, &error))
+                return false;
+            return true;
         }
 
         uint64_t ReleaseFootprint(const TerrainIndex &index)
@@ -165,6 +193,7 @@ namespace mir
 
     TerrainRuntime::~TerrainRuntime()
     {
+        mGround.reset();
         // Finish runtime-owned builds before their collaborators die, but keep the
         // shared lane open for a streamer that outlives or replaces this runtime.
         if (mPool) mPool->WaitIdle();
@@ -179,23 +208,19 @@ namespace mir
     }
 
     void TerrainRuntime::Bind(World &world, VulkanRenderer &renderer, SurfaceMaterialLibrary &materials,
-                              const GameProject &project, JobExecutor &jobs)
+                              const GameProject &project, const AssetResolver &resolver, JobExecutor &jobs)
     {
         mWorld = &world;
         mRenderer = &renderer;
         mSurfaceMaterials = &materials;
         mSurfaceMaterials->SetMaterialValidator([](const SurfaceMaterialBinding &binding, std::string &error)
             {
-                if (binding.tilePeriodMeters && !TerrainMaterialTilePeriodSupported(*binding.tilePeriodMeters))
-                {
-                    error = std::format("tileSizeMeters {} is not a supported divisor of the terrain UV period",
-                                        *binding.tilePeriodMeters);
-                    return false;
-                }
-                return true;
+                return ValidateSurfaceMaterialParameters(binding, error);
             });
+        mResolver = &resolver;
         mAssetIdRoot = project.mAssetIdRoot;
         mReleasesRoot = TerrainReleasesRoot(project.mRootDir);
+        mGround = std::make_unique<TerrainGroundBridge>(world);
         ViewDrawSources *sources = world.TryResource<ViewDrawSources>();
         if (!sources)
             sources = &world.EmplaceResource<ViewDrawSources>();
@@ -306,7 +331,8 @@ namespace mir
         if (mSwitch)
             mSwitch->Resume();
 
-        TerrainSceneSpec spec = CollectTerrainScene(*mWorld, mAssetIdRoot);
+        TerrainSceneSpec spec = CollectTerrainScene(*mWorld, mAssetIdRoot,
+                                                    [this](std::string_view path) { return mResolver->ResolveFull(path); });
         if (spec == mPendingSpec)
             mPendingAge += dt;
         else
@@ -384,6 +410,8 @@ namespace mir
         mGuards.clear();
         mResources.clear();
         mWorld->Resource<TerrainWorld>() = TerrainWorld{};
+        if (mGround)
+            mGround->Invalidate();
         mSpec = {};
         mPendingSpec = {};
         mTagSpec = {};
@@ -421,6 +449,8 @@ namespace mir
         if (next.SameDerivedState(current))
         {
             current = std::move(next);
+            if (mGround)
+                mGround->Invalidate();
             return;
         }
 
@@ -444,6 +474,8 @@ namespace mir
 
         mResources = Build(next);
         current = std::move(next);
+        if (mGround)
+            mGround->Invalidate();
         ApplyResidencies();
         for (const Leaving &left : leaving)
             LogAdoption(*left.adoption, left.from, left.cpu, left.gpu, left.pieces);
@@ -617,11 +649,11 @@ namespace mir
                                instance.materialPath, error));
             return;
         }
-        if (binding->tilePeriodMeters && !TerrainMaterialTilePeriodSupported(*binding->tilePeriodMeters))
+        std::string parameterError;
+        if (!ValidateSurfaceMaterialParameters(*binding, parameterError))
         {
-            Report(std::format("Terrain instance material '{}': tileSizeMeters {} is not a positive period that "
-                               "divides the terrain UV period; keeping the diagnostic material",
-                               instance.materialPath, *binding->tilePeriodMeters));
+            Report(std::format("Terrain instance material '{}': {}; keeping the diagnostic material",
+                               instance.materialPath, parameterError));
             return;
         }
         instance.material = binding->material;

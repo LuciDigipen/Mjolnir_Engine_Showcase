@@ -21,7 +21,10 @@ namespace mir
     void History::Submit(std::unique_ptr<ICommand> command, bool discrete)
     {
         if (command)
+        {
+            ++mSubmissions;
             mQueue.push_back({ std::move(command), discrete });
+        }
     }
 
     void History::Flush(World &world, ISceneOps &scene)

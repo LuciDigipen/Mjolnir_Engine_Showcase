@@ -162,6 +162,128 @@ struct MaterialContext
     }
 };
 
+// Hue rotation around the neutral axis; zero degrees returns the input.
+float3 SurfaceHueShift(float3 color, float degrees)
+{
+    if (!isfinite(degrees) || degrees == 0.0)
+        return color;
+    const float radians = degrees * 0.017453292519943295;
+    const float3 axis = float3(0.5773502691896258, 0.5773502691896258, 0.5773502691896258);
+    const float cosine = cos(radians);
+    const float sine = sin(radians);
+    const float3 rotated = color * cosine + cross(axis, color) * sine + axis * dot(axis, color) * (1.0 - cosine);
+    return max(rotated, float3(0.0));
+}
+
+float SurfaceParallaxFade(float distance, float fadeStartMeters, float fadeEndMeters)
+{
+    if (!isfinite(distance) || !isfinite(fadeStartMeters) || !isfinite(fadeEndMeters) ||
+        !(fadeEndMeters > fadeStartMeters))
+        return 0.0;
+    return 1.0 - smoothstep(fadeStartMeters, fadeEndMeters, distance);
+}
+
+// The macro sample is in its own repeat, so raster gradients and the RT
+// footprint must use the macro period rather than the detail-tile period.
+MaterialContext SurfaceMacroContext(MaterialContext context, float tileSizeMeters, float macroPeriodMeters)
+{
+    const float scale = tileSizeMeters / max(macroPeriodMeters, 0.001);
+    context.uvDx *= scale;
+    context.uvDy *= scale;
+    context.uvDensity *= scale;
+    return context;
+}
+
+// Marches the height texture in tangent space before any surface sampling. The
+// ray is centered on the authored reference height, so a constant height above
+// or below it yields the opposite signed intersection without quantization.
+// The raster path reuses the caller's uvDx/uvDy, so SampleGrad keeps the
+// original derivatives; the RT path uses MaterialContext's explicit level of
+// detail. Fade scales the found offset continuously, and maxDistance clamps it.
+float2 SurfaceParallaxUv(SurfaceInput input, MaterialContext context, TextureRef heightTexture,
+    float2 uv, float tileSizeMeters, float heightMeters, float reference, float maxDistanceMeters,
+    float fadeStartMeters, float fadeEndMeters, uint maxSteps, bool rayTracedEnabled)
+{
+    if (maxSteps == 0 || !(tileSizeMeters > 0.001) || !isfinite(tileSizeMeters) || !(heightMeters > 0.0) ||
+        !isfinite(heightMeters) || !isfinite(reference) || !isfinite(maxDistanceMeters) ||
+        !(maxDistanceMeters > 0.0))
+        return uv;
+    if (context.rayTraced && !rayTracedEnabled)
+        return uv;
+
+    const float fade = SurfaceParallaxFade(input.viewDistance, fadeStartMeters, fadeEndMeters);
+    if (!(fade > 0.0))
+        return uv;
+
+    const float3 normal = SafeNormalize(input.normalWS, float3(0.0, 1.0, 0.0));
+    const float3 tangent = SafeNormalize(input.tangentWS, float3(1.0, 0.0, 0.0));
+    const float3 bitangent = input.bitangentSign * cross(normal, tangent);
+    const float3 viewDirection = SafeNormalize(input.viewDirWS, float3(0.0, 0.0, -1.0));
+    const float3 viewTangent = float3(dot(viewDirection, tangent), dot(viewDirection, bitangent),
+        dot(viewDirection, normal));
+    if (!(viewTangent.z > 0.0))
+        return uv;
+
+    // Fade the offset to zero as the view reaches the horizon instead of
+    // switching at a threshold; the search direction stays bounded below.
+    const float incidenceFade = smoothstep(0.0, 0.05, viewTangent.z);
+    if (!(incidenceFade > 0.0))
+        return uv;
+
+    // Bounds the horizontal offset at grazing angles instead of letting it
+    // diverge, which keeps every step finite and the march stable.
+    float2 rayDirection = viewTangent.xy / max(viewTangent.z, 0.15);
+    const float rayLength = length(rayDirection);
+    if (!isfinite(rayLength))
+        return uv;
+    if (rayLength > 8.0)
+        rayDirection *= 8.0 / rayLength;
+
+    const uint steps = min(maxSteps, 128u);
+    const float uvPerMeter = 1.0 / tileSizeMeters;
+    const float clampedReference = saturate(reference);
+    const float maximumOffsetUv = maxDistanceMeters * uvPerMeter;
+
+    // A signed height s in meters is the ray's height relative to the reference
+    // plane: the surface at uv + dir*s*fade is at (packed - reference)*H. Searching
+    // from +H down to -H visits the highest/visible surface first; the full range
+    // always contains a crossing because packed is in [0, 1] and the reference is
+    // clamped to that range.
+    float previousS = heightMeters;
+    float2 previousUv = uv + rayDirection * ((previousS * fade) * uvPerMeter);
+    float previousSurface = (context.Sample(heightTexture, previousUv, context.uvDx, context.uvDy).g -
+                                clampedReference) * heightMeters;
+    float previousGap = previousSurface - previousS;
+
+    for (uint index = 1; index <= steps; ++index)
+    {
+        const float currentS = heightMeters - 2.0 * heightMeters * float(index) / float(steps);
+        const float2 currentUv = uv + rayDirection * ((currentS * fade) * uvPerMeter);
+        const float currentSurface = (context.Sample(heightTexture, currentUv, context.uvDx, context.uvDy).g -
+                                         clampedReference) * heightMeters;
+        const float currentGap = currentSurface - currentS;
+        if (!isfinite(currentGap))
+            return uv;
+        if (previousGap <= 0.0 && currentGap >= 0.0)
+        {
+            const float denominator = currentGap - previousGap;
+            const float fraction = denominator > 1e-12 ? saturate(-previousGap / denominator) : 0.0;
+            float intersection = lerp(previousS, currentS, fraction);
+            if (abs(intersection) < 1e-7)
+                intersection = 0.0;
+            float2 offsetUv = rayDirection * (intersection * fade * uvPerMeter);
+            const float offsetLength = length(offsetUv);
+            if (offsetLength > maximumOffsetUv)
+                offsetUv *= maximumOffsetUv / offsetLength;
+            return uv + offsetUv * incidenceFade;
+        }
+        previousS = currentS;
+        previousGap = currentGap;
+    }
+
+    return uv;
+}
+
 interface IMaterial
 {
     SurfaceOutput Evaluate(SurfaceInput input, MaterialContext context);

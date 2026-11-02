@@ -26,6 +26,7 @@
 namespace mir
 {
     class AssetCache;
+    class AssetResolver;
     struct LoadedScene;
     class PrefabAuthoringAdapter;
     class VulkanRenderer;
@@ -46,7 +47,7 @@ namespace mir
         PrefabWorkspace &operator=(PrefabWorkspace &&) = delete;
 
         // Null renderer skips preview mesh and model systems; null assets still permits built-in meshes.
-        void BindResolveSystems(VulkanRenderer *renderer, AssetCache *assets, std::string assetIdRoot);
+        void BindResolveSystems(VulkanRenderer *renderer, AssetCache *assets, const AssetResolver &resolver);
 
         // Focuses an open document, or creates its preview World and one instance.
         bool Open(PrefabId id);
@@ -107,6 +108,6 @@ namespace mir
         std::optional<PrefabId> mActive;
         VulkanRenderer *mRenderer = nullptr;
         AssetCache *mAssets = nullptr;
-        std::string mAssetIdRoot;
+        const AssetResolver *mResolver = nullptr;
     };
 }

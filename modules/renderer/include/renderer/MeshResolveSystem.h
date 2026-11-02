@@ -8,7 +8,7 @@
  */
 #pragma once
 
-#include <core/ecs/EntityChanges.h>
+#include <core/ecs/ComponentFieldChanges.h>
 #include <core/ecs/System.h>
 #include <renderer/Material.h>
 #include <renderer/Mesh.h>
@@ -16,6 +16,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -23,13 +24,14 @@
 namespace mir
 {
     class AssetCache;
+    class AssetResolver;
     class VulkanRenderer;
 
     // Resolves resources every frame
     class MeshResolveSystem final : public ISystem
     {
     public:
-        MeshResolveSystem(VulkanRenderer &renderer, AssetCache *assets, std::string assetIdRoot);
+        MeshResolveSystem(VulkanRenderer &renderer, AssetCache *assets, const AssetResolver &resolver);
 
         // Call at ReleaseSceneResources
         void Reset();
@@ -46,7 +48,8 @@ namespace mir
         void OnStop(SystemContext &context) override;
 
     private:
-        static void OnBeforeRemove(World &world, const EntityChangeSet &changes, void *user);
+        // a renamed mesh or shader resolves again; a removal is Forget's
+        static void OnBeforeFieldChange(World &world, std::span<const ComponentFieldChange> changes, void *user);
 
         struct CachedMesh
         {
@@ -66,7 +69,7 @@ namespace mir
 
         VulkanRenderer &mRenderer;
         AssetCache *mAssets;
-        std::string mAssetIdRoot;
+        const AssetResolver &mResolver;
 
         std::unordered_map<std::string, CachedMesh> mMeshes;         // by meshName
         std::unordered_map<std::string, MaterialHandle> mMaterials;  // by materialShader

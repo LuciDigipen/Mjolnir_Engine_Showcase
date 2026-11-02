@@ -9,6 +9,7 @@
 #include <editor/AssetImportManager.h>
 
 #include <assets/AssetIdRoot.h>
+#include <assets/AssetMeta.h>
 #include <assets/AssetPath.h>
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
@@ -48,6 +49,8 @@ namespace mir
         bool IsMaterial(const std::filesystem::path &path) { return LowerFilename(path).ends_with(".material.json"); }
         bool IsWatched(const std::filesystem::path &path)
         {
+            if (IsAssetToolingFile(path))
+                return false;
             if (IsMaterial(path))
                 return true;
             auto ext = path.extension().string();
@@ -174,7 +177,7 @@ namespace mir
         for (const auto &entry : std::filesystem::recursive_directory_iterator(mSourceAssetRoot, ec))
         {
             std::error_code entryEc;
-            if (entry.is_regular_file(entryEc) && entry.path().filename() != ".gitkeep")
+            if (entry.is_regular_file(entryEc) && !IsAssetToolingFile(entry.path()))
                 return true;
         }
         return false;
@@ -240,7 +243,12 @@ namespace mir
                 for (const auto &model : mQueued.models)
                     SetStatus(model, AssetImportStatus::Canceled);
                 for (const auto &material : mQueued.materials)
+                {
                     SetStatus(material, AssetImportStatus::Canceled);
+                    const auto sequence = mQueued.materialSequences.find(material);
+                    if (sequence != mQueued.materialSequences.end())
+                        mMaterialFailureRevision[material] = sequence->second;
+                }
                 for (const auto &model : mQueued.removals)
                     SetStatus(model, AssetImportStatus::Canceled);
                 for (const auto &[model, destination] : mQueued.moves)
@@ -394,7 +402,12 @@ namespace mir
             for (const auto &model : mRunning.models)
                 SetStatus(model, AssetImportStatus::Failed, "could not start AssetCooker");
             for (const auto &material : mRunning.materials)
+            {
                 SetStatus(material, AssetImportStatus::Failed, "could not start AssetCooker");
+                const auto sequence = mRunning.materialSequences.find(material);
+                if (sequence != mRunning.materialSequences.end())
+                    mMaterialFailureRevision[material] = sequence->second;
+            }
             mRunning.Clear();
             return;
         }
@@ -413,7 +426,12 @@ namespace mir
             for (const auto &model : mRunning.models)
                 SetStatus(model, AssetImportStatus::Canceled);
             for (const auto &material : mRunning.materials)
+            {
                 SetStatus(material, AssetImportStatus::Canceled);
+                const auto sequence = mRunning.materialSequences.find(material);
+                if (sequence != mRunning.materialSequences.end())
+                    mMaterialFailureRevision[material] = sequence->second;
+            }
             for (const auto &model : mRunning.removals)
                 SetStatus(model, AssetImportStatus::Canceled);
             for (const auto &[model, destination] : mRunning.moves)
@@ -431,7 +449,12 @@ namespace mir
                     for (const auto &model : mRunning.models)
                         SetStatus(model, AssetImportStatus::Failed, message);
                     for (const auto &material : mRunning.materials)
+                    {
                         SetStatus(material, AssetImportStatus::Failed, message);
+                        const auto sequence = mRunning.materialSequences.find(material);
+                        if (sequence != mRunning.materialSequences.end())
+                            mMaterialFailureRevision[material] = sequence->second;
+                    }
                     mView.mLastError = message;
                     MIR_LOG_ERROR("Asset import failed: {}", message);
                 }
@@ -451,11 +474,43 @@ namespace mir
                         SetStatus(path, mRunningStale           ? AssetImportStatus::Queued
                                         : status == "missing"   ? AssetImportStatus::Missing
                                         : status == "unchanged" ? AssetImportStatus::UpToDate
-                                                                : (editing ? AssetImportStatus::Applied
+                                                                : (editing ? AssetImportStatus::WaitingForApply
                                                                            : AssetImportStatus::WaitingForStop));
                     }
                     // a full cook replaces a missing manifest, so it applies even when no model changed
                     mPendingApply |= cooked || mRunning.fullCook;
+                }
+
+                if (!mRunningStale)
+                {
+                    for (const std::string &material : mRunning.materials)
+                    {
+                        const auto sequence = mRunning.materialSequences.find(material);
+                        const uint64_t revision = sequence != mRunning.materialSequences.end() ? sequence->second : 0;
+                        const auto status = mStatus.find(material);
+                        if (status == mStatus.end())
+                            continue;
+                        if (status->second == AssetImportStatus::WaitingForApply ||
+                            status->second == AssetImportStatus::WaitingForStop)
+                        {
+                            mPendingApplyRevision[material] = revision;
+                        }
+                        else if (status->second == AssetImportStatus::UpToDate)
+                        {
+                            if (mMaterialFailureRevision.contains(material))
+                            {
+                                SetStatus(material, AssetImportStatus::WaitingForApply);
+                                mPendingApplyRevision[material] = revision;
+                                mPendingApply = true;
+                            }
+                            else
+                                mMaterialCookRevision[material] = revision;
+                        }
+                        else if (status->second == AssetImportStatus::Failed ||
+                                 status->second == AssetImportStatus::Missing ||
+                                 status->second == AssetImportStatus::Canceled)
+                            mMaterialFailureRevision[material] = revision;
+                    }
                 }
             }
             catch (const std::exception &error)
@@ -463,7 +518,12 @@ namespace mir
                 for (const auto &model : mRunning.models)
                     SetStatus(model, AssetImportStatus::Failed, error.what());
                 for (const auto &material : mRunning.materials)
+                {
                     SetStatus(material, AssetImportStatus::Failed, error.what());
+                    const auto sequence = mRunning.materialSequences.find(material);
+                    if (sequence != mRunning.materialSequences.end())
+                        mMaterialFailureRevision[material] = sequence->second;
+                }
             }
         }
         if (mRunningStale)
@@ -471,6 +531,8 @@ namespace mir
             mQueued.models.insert(mRunning.models.begin(), mRunning.models.end());
             mQueued.materials.insert(mRunning.materials.begin(), mRunning.materials.end());
             mQueued.changed.insert(mRunning.changed.begin(), mRunning.changed.end());
+            for (const auto &[material, revision] : mRunning.materialSequences)
+                mQueued.materialSequences[material] = std::max(mQueued.materialSequences[material], revision);
             mQueued.fullCook |= mRunning.fullCook;
         }
         if (!mRunning.importSource.empty() || !mRunning.moves.empty())
@@ -646,16 +708,27 @@ namespace mir
     {
         mPendingApply = false;
         for (auto &[path, status] : mStatus)
-            if (status == AssetImportStatus::WaitingForStop)
+            if (status == AssetImportStatus::WaitingForApply || status == AssetImportStatus::WaitingForStop)
                 status = AssetImportStatus::Applied;
+        for (const auto &[path, revision] : mPendingApplyRevision)
+        {
+            mMaterialCookRevision[path] = revision;
+            mMaterialFailureRevision.erase(path);
+        }
+        if (!mPendingApplyRevision.empty())
+            ++mApplySequence;
+        mPendingApplyRevision.clear();
         RefreshView();
     }
     void AssetImportManager::MarkApplyFailed(std::string diagnostic)
     {
         mPendingApply = false;
         for (auto &[path, status] : mStatus)
-            if (status == AssetImportStatus::Applied || status == AssetImportStatus::WaitingForStop)
+            if (status == AssetImportStatus::WaitingForApply || status == AssetImportStatus::WaitingForStop)
                 SetStatus(path, AssetImportStatus::Failed, diagnostic);
+        for (const auto &[path, revision] : mPendingApplyRevision)
+            mMaterialFailureRevision[path] = revision;
+        mPendingApplyRevision.clear();
         RefreshView();
     }
 
@@ -663,5 +736,29 @@ namespace mir
     {
         SetStatus(model, AssetImportStatus::Failed, std::move(diagnostic));
         RefreshView();
+    }
+
+    uint64_t AssetImportManager::ReimportMaterial(std::string_view logicalPath)
+    {
+        const uint64_t revision = ++mMaterialRequestSequence;
+        mQueued.materialSequences[std::string(logicalPath)] = revision;
+
+        AssetImportAction action;
+        action.mKind = AssetImportActionKind::Reimport;
+        action.mModelPath = std::string(logicalPath);
+        Handle(action);
+        return revision;
+    }
+
+    std::optional<uint64_t> AssetImportManager::MaterialCookRevision(std::string_view logicalPath) const
+    {
+        const auto found = mMaterialCookRevision.find(std::string(logicalPath));
+        return found != mMaterialCookRevision.end() ? std::optional<uint64_t>(found->second) : std::nullopt;
+    }
+
+    std::optional<uint64_t> AssetImportManager::MaterialCookFailureRevision(std::string_view logicalPath) const
+    {
+        const auto found = mMaterialFailureRevision.find(std::string(logicalPath));
+        return found != mMaterialFailureRevision.end() ? std::optional<uint64_t>(found->second) : std::nullopt;
     }
 } // namespace mir

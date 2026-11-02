@@ -275,7 +275,8 @@ a reconfigure to join the glob; editing an existing one does not.
 ```cpp
 if (AssetCache *cache = app.Assets())
 {
-    if (const AssetBlobView *blob = cache->Load(MakeAssetId("assets/foo.txt")))
+    // resolver is the App's AssetResolver, which a module is handed by reference
+    if (const AssetBlobView *blob = cache->Load(resolver.ResolveFull("assets/foo.txt")))
         Use(blob->content);
 }
 ```
@@ -294,7 +295,7 @@ engine_cook_assets(MjolnirEngine
 ```
 
 `SOURCE_ROOTS` has to be **relative to the repository root**. An absolute path is
-rejected, because the root string is hashed into every asset id.
+rejected, because the root string is part of every logical path.
 
 For a typed asset, add a type tag and a content version in `AssetBlob.h`, teach
 `tools/AssetCooker/main.cpp` to recognise the extension and emit that tag, then
@@ -325,7 +326,7 @@ games/mygame/
 `assetsRoot` and `sceneDir` are relative to the game directory, and default to
 the values above. Input bindings save to `project_settings.json` next to
 `game.json`. Scene files name meshes and scripts relative to `assetsRoot`, so
-`meshes/cube.mesh.json` loads the asset whose id is the hash of
+`meshes/cube.mesh.json` loads the asset whose logical path is
 `games/mygame/assets/meshes/cube.mesh.json`.
 
 Build. The root CMakeLists globs for `game.json`, so the build re-runs configure,

@@ -318,4 +318,64 @@ namespace mir::vk
         vkCmdEndRendering(cmd);
         ShaderReadOnlyBarrier(cmd, mOutputImages[frame]);
     }
+
+    bool MotionBlur::PrepareShaderReload(std::string *error)
+    {
+        DiscardShaderReload();
+        VkShaderModule vertModule = CreateShaderModule(mDevice->Handle(), ShaderPath("motionBlur.vertexMain.spv"));
+        VkShaderModule fragModule = CreateShaderModule(mDevice->Handle(), ShaderPath("motionBlur.compositeMain.spv"));
+        if (vertModule == VK_NULL_HANDLE || fragModule == VK_NULL_HANDLE)
+        {
+            if (vertModule != VK_NULL_HANDLE)
+                vkDestroyShaderModule(mDevice->Handle(), vertModule, nullptr);
+            if (fragModule != VK_NULL_HANDLE)
+                vkDestroyShaderModule(mDevice->Handle(), fragModule, nullptr);
+            if (error != nullptr)
+                *error = "a motion blur shader module is missing";
+            return false;
+        }
+
+        const VkPipelineColorBlendAttachmentState overwriteBlend{
+            .blendEnable = VK_FALSE,
+            .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                              VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT };
+        const FullscreenPipelineDesc desc{
+            .vertModule = vertModule,
+            .fragModule = fragModule,
+            .fragEntry = "compositeMain",
+            .layout = mPipelineLayout,
+            .blendAttachment = &overwriteBlend,
+            .colorFormat = kHdrColorFormat };
+        const bool ok = CreateFullscreenPipeline(*mDevice, desc, "MotionBlur composite pipeline", mReloadPipeline);
+        vkDestroyShaderModule(mDevice->Handle(), vertModule, nullptr);
+        vkDestroyShaderModule(mDevice->Handle(), fragModule, nullptr);
+        if (!ok)
+        {
+            mReloadPipeline = VK_NULL_HANDLE;
+            if (error != nullptr)
+                *error = "the motion blur pipeline could not be created";
+            return false;
+        }
+        mReloadPrepared = true;
+        return true;
+    }
+
+    void MotionBlur::CommitShaderReload()
+    {
+        if (!mReloadPrepared)
+            return;
+        if (mPipeline != VK_NULL_HANDLE)
+            vkDestroyPipeline(mDevice->Handle(), mPipeline, nullptr);
+        mPipeline = mReloadPipeline;
+        mReloadPipeline = VK_NULL_HANDLE;
+        mReloadPrepared = false;
+    }
+
+    void MotionBlur::DiscardShaderReload()
+    {
+        if (mReloadPipeline != VK_NULL_HANDLE)
+            vkDestroyPipeline(mDevice->Handle(), mReloadPipeline, nullptr);
+        mReloadPipeline = VK_NULL_HANDLE;
+        mReloadPrepared = false;
+    }
 }

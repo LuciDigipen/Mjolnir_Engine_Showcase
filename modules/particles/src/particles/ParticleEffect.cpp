@@ -481,7 +481,8 @@ namespace mir
             return true;
         }
 
-        ParticleEffectResult ParseSystem(std::string_view text, bool source, std::string_view assetIdRoot)
+        ParticleEffectResult ParseSystem(std::string_view text, bool source, std::string_view assetIdRoot,
+            const AssetIdOfPath &idOf)
         {
             const Json value = Json::parse(text, nullptr, false);
             if (!KnownFields(value, source ? std::initializer_list<std::string_view>{ "version", "emitters", "placements", "parameters" } :
@@ -523,7 +524,10 @@ namespace mir
                     const auto logical = MakeLogicalAssetPath(assetIdRoot, path);
                     if (!relative.Ok() || !logical.Ok() || !relative.path.ends_with(".emitter.json"))
                         return Invalid<ParticleEffectResult>("particle emitter must be an .emitter.json inside the game's asset root");
-                    effect.emitters.push_back(MakeAssetId(logical.path));
+                    const AssetId emitterId = idOf ? idOf(logical.path) : MakeAssetId(logical.path);
+                    if (emitterId.IsNull())
+                        return Invalid<ParticleEffectResult>("particle emitter does not exist: " + logical.path);
+                    effect.emitters.push_back(emitterId);
                     result.mEmitterPaths.push_back(relative.path);
                 }
                 else
@@ -556,7 +560,8 @@ namespace mir
             return result;
         }
 
-        ParticleEmitterAssetResult ParseEmitter(std::string_view text, bool source, std::string_view assetIdRoot)
+        ParticleEmitterAssetResult ParseEmitter(std::string_view text, bool source, std::string_view assetIdRoot,
+            const AssetIdOfPath &idOf)
         {
             const Json value = Json::parse(text, nullptr, false);
             if (!KnownFields(value, source ? std::initializer_list<std::string_view>{"version", "target", "lifetime", "spawnRate", "capacity", "texture", "renderer", "spawnBehaviors", "updateBehaviors", "localOffset", "startDelay", "spawnPerMeter", "burst", "seed", "inheritVelocity", "teleportDistance", "followEmitter", "quality"} :
@@ -632,7 +637,9 @@ namespace mir
                 const auto logical = MakeLogicalAssetPath(assetIdRoot, path);
                 if (!relative.Ok() || !logical.Ok())
                     return Invalid<ParticleEmitterAssetResult>("particle texture must be inside the game's asset root");
-                emitter.texture = MakeAssetId(logical.path);
+                emitter.texture = idOf ? idOf(logical.path) : MakeAssetId(logical.path);
+                if (emitter.texture.IsNull())
+                    return Invalid<ParticleEmitterAssetResult>("particle texture does not exist: " + logical.path);
                 result.mTexturePath = relative.path;
             }
             else
@@ -1035,9 +1042,10 @@ void computeMain(uint3 id : SV_DispatchThreadID)
         return true;
     }
 
-    ParticleEffectResult ReadParticleEffectSource(std::string_view text, std::string_view assetIdRoot)
+    ParticleEffectResult ReadParticleEffectSource(std::string_view text, std::string_view assetIdRoot,
+        const AssetIdOfPath &idOf)
     {
-        return ParseSystem(text, true, assetIdRoot);
+        return ParseSystem(text, true, assetIdRoot, idOf);
     }
 
     std::vector<std::byte> BuildParticleEffectAsset(const ParticleEffect &effect)
@@ -1065,7 +1073,7 @@ void computeMain(uint3 id : SV_DispatchThreadID)
     {
         if (blob.header.typeTag != kParticleEffectTypeTag || blob.header.contentVersion != kParticleEffectContentVersion)
             return Invalid<ParticleEffectResult>("unsupported particle system type or content version");
-        return ParseSystem(AsStringView(blob), false, {});
+        return ParseSystem(AsStringView(blob), false, {}, {});
     }
 
     ParticleEffectResult LoadParticleEffect(AssetCache &cache, AssetId id)
@@ -1083,9 +1091,10 @@ void computeMain(uint3 id : SV_DispatchThreadID)
         return result;
     }
 
-    ParticleEmitterAssetResult ReadParticleEmitterSource(std::string_view text, std::string_view assetIdRoot)
+    ParticleEmitterAssetResult ReadParticleEmitterSource(std::string_view text, std::string_view assetIdRoot,
+        const AssetIdOfPath &idOf)
     {
-        return ParseEmitter(text, true, assetIdRoot);
+        return ParseEmitter(text, true, assetIdRoot, idOf);
     }
 
     std::vector<std::byte> BuildParticleEmitterAsset(const ParticleEmitterAsset &emitter)
@@ -1100,7 +1109,7 @@ void computeMain(uint3 id : SV_DispatchThreadID)
     {
         if (blob.header.typeTag != kParticleEmitterTypeTag || blob.header.contentVersion != kParticleEmitterContentVersion)
             return Invalid<ParticleEmitterAssetResult>("unsupported particle emitter type or content version");
-        return ParseEmitter(AsStringView(blob), false, {});
+        return ParseEmitter(AsStringView(blob), false, {}, {});
     }
 
     ParticleEmitterAssetResult LoadParticleEmitterAsset(AssetCache &cache, AssetId id)

@@ -16,6 +16,7 @@
 #include <editor/BackgroundImage.h>
 #include <editor/EditorCamera.h>
 #include <editor/EditorPreferences.h>
+#include <editor/SnapToTerrain.h>
 #include <editor/ViewPie.h>
 #include <editor/history/History.h>
 #include <editor/panels/AssetImportPanel.h>
@@ -124,6 +125,7 @@ namespace mir
         ContentBrowserAction mContentBrowser;
         EditorDocumentAction mDocument;
         bool mSaveActiveDocument = false;
+        bool mToggleMaterialEditor = false;
     };
 
     class Editor
@@ -150,9 +152,12 @@ namespace mir
             std::span<const ProjectMenuEntry> projects, std::string_view currentProject,
             World &activeWorld, World &sceneWorld, const EditorDocuments &documents,
             const AssetImportView &assetImport, const VulkanRenderer &renderer,
-            const ContentBrowserView &contentBrowser);
+            const ContentBrowserView &contentBrowser, bool materialPanelVisible,
+            bool materialDraftsUnsaved, float dt);
 
         VkRect2D SceneViewportRect() const { return mSceneViewportRect; }
+
+        const std::string &ContentBrowserSelection() const { return mContentBrowserPanel.SelectedPath(); }
 
         void UpdateCamera(float dt);
 
@@ -179,6 +184,9 @@ namespace mir
 
         void ClearHistory() { mHistory.Clear(); }
 
+        // Scene, Play and document transitions cancel a pending snap.
+        void CancelSnapToTerrain() { mSnapToTerrain.Cancel("The scene changed."); }
+
         // true while the scene has changes since its last save, shown as the title bar's *
         bool IsSceneUnsaved() const { return mHistory.IsUnsaved(); }
 
@@ -204,7 +212,7 @@ namespace mir
     private:
         void DrawTitleBar();
         void DrawOpenProjectMenu(std::span<const ProjectMenuEntry> projects, std::string_view currentProject);
-        void DrawOpenProjectConfirm(EditorActions &actions);
+        void DrawOpenProjectConfirm(EditorActions &actions, bool materialDraftsUnsaved);
         void DrawViewportGizmo(const EngineModeState &mode, World &world, EditorActions &actions,
             bool prefabDocument);
         void BeginGizmoDrag(World &world, std::span<const Entity> selected);
@@ -220,8 +228,14 @@ namespace mir
         void UpdateViewPie(const EngineModeState &mode);
         void DrawViewPie(std::optional<ViewPieItem> hovered);
         void DrawDebugViewMenu(const EngineModeState &mode);
-        void DrawNewProjectModal(EditorActions &actions, std::span<const ProjectMenuEntry> projects);
+        void DrawNewProjectModal(EditorActions &actions, std::span<const ProjectMenuEntry> projects,
+            bool materialDraftsUnsaved);
         void DrawEditMenu();
+        // Retries a pending snap outside any panel's Draw; it only reads the World until an edit is ready.
+        void PollSnapToTerrain(World &world, DocumentId document, const EngineModeState &mode, float dt);
+        void StartSnapToTerrain(World &world, DocumentId document);
+        void FinishSnapToTerrain(World &world, DocumentId document, const GroundQuery *ground, bool editing,
+            bool transitionRequested);
         void UpdateHistoryShortcuts(EditorActions &actions, const EngineModeState &mode);
 
         // Each document keeps its own camera; a document opened first focuses on its root.
@@ -273,6 +287,8 @@ namespace mir
         bool mShownDocumentKnown = false;
 
         History mHistory;
+        SnapToTerrainSession mSnapToTerrain;
+        std::size_t mSnapFrameSubmissions = 0;
         ISceneOps *mSceneOps = nullptr;
         IAuthoredEntities *mAuthoredEntities = nullptr;
         IEditorAudio *mAudio = nullptr;

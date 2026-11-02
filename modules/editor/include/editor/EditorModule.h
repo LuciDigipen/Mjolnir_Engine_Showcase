@@ -15,6 +15,7 @@
 #include <editor/PrefabAuthoringAdapter.h>
 #include <editor/PrefabPlayMarks.h>
 #include <editor/PrefabWorkspace.h>
+#include <editor/ShaderHotReload.h>
 #include <editor/WorldSceneOps.h>
 
 #include <core/ecs/ModuleContext.h>
@@ -28,9 +29,12 @@
 
 namespace mir
 {
+    class AssetResolver;
     class AssetsModule;
     class ParticleEditorPanel;
     class ImGuiModule;
+    class JobExecutor;
+    class MaterialEditor;
     class PrefabModule;
     class RendererModule;
     class SceneModule;
@@ -41,8 +45,8 @@ namespace mir
     public:
         // enableLayout false: the editor is built in but the window is the game (--no-editor)
         EditorModule(ModuleContext context, ImGuiModule &imgui, WindowModule &window, RendererModule &renderer,
-            SceneModule &scene, PrefabModule &prefab, AssetsModule &assets, const GameProject &project,
-            bool enableLayout);
+            SceneModule &scene, PrefabModule &prefab, AssetsModule &assets, const AssetResolver &resolver,
+            const GameProject &project, JobExecutor &jobs, bool enableLayout);
         ~EditorModule();
 
         EditorModule(const EditorModule &) = delete;
@@ -52,6 +56,7 @@ namespace mir
         const Editor &Get() const { return mEditor; }
         AssetImportManager &Import() { return mImport; }
         bool LayoutEnabled() const { return mEnableLayout; }
+        bool HasUnsavedMaterialDrafts() const;
 
         // set once the audio is built, null leaves out the Audio settings and the soundtrack picker
         void SetAudio(IEditorAudio *audio)
@@ -85,19 +90,24 @@ namespace mir
         RendererModule &mRenderer;
         SceneModule &mScene;
         PrefabModule &mPrefab;
+        const AssetResolver &mResolver;
         GameProject mProject;
+        AssetsModule *mAssets = nullptr;
         bool mEnableLayout;
         float mFrameDt = 0.0f;
         std::vector<ProjectMenuEntry> mProjectMenu;
 
         AssetImportManager mImport;
         ContentBrowserWatcher mContentBrowser;
-        
+        ShaderHotReload mShaderHotReload;
+        // before mSceneOps and mEditor: they die after them, once Shutdown stopped the editor using them
         PrefabAuthoringAdapter mPrefabAuthoring;
         PrefabWorkspace mPrefabWorkspace;
         WorldSceneOps mSceneOps;
         Editor mEditor;
         std::unique_ptr<ParticleEditorPanel> mParticleEditor;
+        std::unique_ptr<MaterialEditor> mMaterialEditor;
+        bool mShowMaterialEditor = false;
 
         // Stop puts the World back as it was at Play, so it puts this back too
         bool mUnsavedBeforePlay = false;

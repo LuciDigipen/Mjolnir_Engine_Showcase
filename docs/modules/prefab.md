@@ -145,6 +145,10 @@ for the next unfrozen commit.
 scene or Play snapshot. Successful document edits propagate to bound instances
 through the shared coordinator at the Edit safe point.
 
+**A Prefab lists the Prefabs it nests.** The cooked manifest entry carries one
+dependency per nested Prefab, and a cook fails when a nested Prefab is not
+cooked.
+
 **A game build reads cooked Prefabs only.** Without the editor, the registry is
 filled by `LoadCooked` from the cooked manifest; the build removes the copied
 `prefabs` source folder next to the executable, so no source path is reachable.

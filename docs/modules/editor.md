@@ -82,6 +82,17 @@ Prefab. The Hierarchy's Create Prefab turns a scene subtree into a new document,
 and dropping a Prefab row from the Content Browser into the Hierarchy or the
 scene viewport places a linked instance.
 
+The Transform header's Inspector menu offers **Snap to Terrain** on the Scene
+tab in Edit. `SnapToTerrainActionFor` disables it with a reason when there is no
+terrain coverage or the active document is a Prefab page. A request fills the
+bottom footprint from a `GroundQuery` probe, fits a plane, samples a second
+tilted footprint, and then submits one `Snap to Terrain` position+rotation
+command through `AuthoredEdit`. Sampling retries outside the panel's `Draw`;
+the session cancels on timeout, selection/document/Play changes, or a Transform,
+parent or terrain revision change. At the commit boundary it revalidates that
+context and refuses to queue its command when this frame submitted another edit
+or requested a scene, Play or document transition.
+
 `DrawLayout(true)` builds the dockspace once. It splits into left, right and
 bottom with `DockBuilderSplitNode`, keeps the centre undocked through
 `ImGuiDockNodeFlags_PassthruCentralNode`, docks `Hierarchy`, `Inspector` and
@@ -178,7 +189,8 @@ EditorActions DrawLayout(bool enableLayout, InputMap &inputMap, RenderSettings &
                          std::span<const ProjectMenuEntry> projects, std::string_view currentProject,
                          World &activeWorld, World &sceneWorld, const EditorDocuments &documents,
                          const AssetImportView &assetImport, const VulkanRenderer &renderer,
-                         const ContentBrowserView &contentBrowser);
+                         const ContentBrowserView &contentBrowser, bool materialPanelVisible,
+                         bool materialDraftsUnsaved, float dt);
 
 VkRect2D SceneViewportRect() const;
 bool IsInitialized() const;
@@ -190,12 +202,13 @@ EditorCamera &SceneCamera();
 | Type | Header | Role |
 |---|---|---|
 | `EditorModule` | `editor/EditorModule.h` | The editor's module: its ImGui drawer, `FrameBegin` work and stage functions |
-| `AssetImportManager`, `ContentBrowserWatcher` | `editor/AssetImportManager.h`, `editor/ContentBrowserWatcher.h` | The import queue and the cooker child; the content browser's disk poll |
+| `AssetImportManager`, `ContentBrowserWatcher` | `editor/AssetImportManager.h`, `editor/ContentBrowserWatcher.h` | The import queue and the cooker child; the content browser's disk poll, which hides `.meta` and other tooling files and moves a `.meta` with its file |
+| `ShaderHotReload` | `editor/ShaderHotReload.h` | Development-only manifest/depfile watcher, direct-slangc batches, staged publication and revision cancellation; runs in Edit and Play |
 | `WorldSceneOps` | `editor/WorldSceneOps.h` | The `ISceneOps` the history uses, on the World and its `LoadedScene` |
 | `CreateGameProject` | `editor/CreateGameProject.h` | Writes a new game directory; the scene through `scene`'s own save |
 | `SceneMenuAction` | `editor/Editor.h` | `None`/`New`/`Save`/`Load`/`Play`/`TogglePause`/`Stop` |
 | `ProjectMenuEntry` | `editor/Editor.h` | `{mDir, mName}` for one game in Open Project |
-| `EditorActions` | `editor/Editor.h` | `{mScene, mOpenProject, mCreateProjectName, mAssetImport, mContentBrowser, mDocument, mSaveActiveDocument}`, what the menus and toolbar asked for this frame |
+| `EditorActions` | `editor/Editor.h` | `{mScene, mOpenProject, mCreateProjectName, mAssetImport, mContentBrowser, mDocument, mSaveActiveDocument, mToggleMaterialEditor}`, what the menus and toolbar asked for this frame |
 | `EditorDocuments`, `EditorDocumentTab`, `EditorDocumentAction`, `EditorDocumentActionKind` | `editor/Editor.h` | The Scene tab plus every open Prefab tab; `Activate` and `Close` requests, and `SaveActiveDocument` |
 | `IAuthoredEntities`, `AuthoredAction`, `AuthoredKey`, `AuthoredFieldState`, `AuthoredComponentState` | `editor/history/AuthoredView.h` | The editor's view of Prefab-instance overrides, without a Prefab type |
 | `MakeDocumentEntityCommand` | `editor/history/DocumentNodeCommands.h` | Create, delete and reparent nodes of the active Prefab document as one command each |
@@ -210,6 +223,9 @@ EditorCamera &SceneCamera();
 | `IsBaselineComponent`, `AddMissingBaseline` | `editor/EntityBaseline.h` | The components every editor-created entity has: `Transform`, `WorldTransform`, `Name` |
 | `EditorCamera` | `editor/EditorCamera.h` | Free-fly scene camera, `WorldPosition` + yaw/pitch (`Pose()`, `Translate`, `FocusOn`, `Cut`/`TakeCut`), outside the `World` |
 | `widgets::*` | `editor/EditorWidgets.h` | The editor's UE5-style ImGui widgets: `CategoryHeader`, `BeginPropertyGrid`/`PropertyRow`/`EndPropertyGrid`, `AxisDragN` (X/Y/Z/W colour-tagged fields), `SearchBox`, `ToolbarButton`, `IconTextButton`, `PushRowSelectionColors`, `MatchesFilter`. Colours come from `EditorTheme` |
+| `MaterialDraft`, `MaterialDraftStore`, `RefreshMaterialDraft`, `ResolveMaterialCook` | `editor/MaterialDraft.h` | Per-asset reflected values, accepted cooked baseline migration, dirty-only preview overlays and request-scoped cook state |
+| `MaterialRecipe`, `SaveMaterialRecipe`, `MaterialSourceFile` | `editor/MaterialRecipe.h` | Reads an authored `.material.json` and writes only changed parameter and texture-path fields |
+| `MaterialEditor` (private) | `src/editor/MaterialEditor.h` | The Material window, its reflected controls, target selection, cook feedback and Save/Revert wiring |
 | `Selection` | `editor/Selection.h` | `{mSelected, mAnchor}` (a `vector<Entity>`, ordered by selection - `.back()` is primary - and the shift-click range start), the `World` resource `Hierarchy` and viewport picking write and `Inspector`/the gizmo read |
 
 `LogPanel`, in `src/editor/panels/LogPanel.cpp`, renders `core`'s `LogHistory`
@@ -233,6 +249,16 @@ see [app.md](app.md) for `ContentBrowserWatcher`, which actually watches the
 disk and carries out the mutations). This closes #152: the panel never caches a stale listing, so
 a file added, removed or renamed outside the editor shows up on the watcher's
 next poll with no restart.
+
+The Material window (Project > Material) follows a `.material.json` selected in
+the Content Browser, or the selected entity's reflected `materialPath`. It
+builds one control per reflected field, keeps one draft per normalized project
+and logical asset path, previews only dirty numeric fields through
+`SurfaceMaterialLibrary::PreviewParameters`, and saves only changed recipe
+fields through `UpdateJsonFile`. Its accepted baseline is the cooked
+`SurfaceMaterialAsset`, not raw source text; a cook's apply identity and the
+renderer generation decide when the baseline moves. Ordinary Revert is
+memory-only. Play disables the controls.
 
 Clicking an entity in `Hierarchy`, or clicking it directly in the scene
 viewport (`Editor::UpdateViewportPicking`, a ray/AABB test against every
@@ -575,6 +601,17 @@ or the dialog themselves. History needs neither, and its tests are in
    deleted, not everything recursively under a deleted folder.
 
 ## Changed
+
+*2026-10-28* — **A reflected Material window with per-asset drafts.** Was:
+shared surface materials could only be changed by editing `.material.json` by
+hand. Now: Project > Material follows the Content Browser's material selection
+or an entity's reflected `materialPath`, builds controls from the compiled
+reflection, previews dirty numeric values in the shared raster/RT record, and
+keeps a per-project/asset draft whose accepted baseline is the cooked asset.
+Save writes only changed fields and queues a finite material cook; Revert is
+memory-only; Play is read-only. Schema changes migrate compatible dirty fields
+and report removed/retyped ones. Project open, New Project, window close and
+quit ask before discarding unsaved drafts.
 
 *2026-10-28* — **Audio: a soundtrack event picker and an Audio section in
 Project Settings (#305).** Was: a `Soundtrack`'s event and bank were typed by

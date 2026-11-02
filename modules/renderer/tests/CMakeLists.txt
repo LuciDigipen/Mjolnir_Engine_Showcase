@@ -28,6 +28,9 @@ engine_add_module_tests(renderer
     RenderSettings.tests.cpp
     RenderSystem.tests.cpp
     RtInstanceLayout.tests.cpp
+    ShaderLibrary.tests.cpp
+    ShaderCompiler.tests.cpp
+    ShaderReload.tests.cpp
     Shapes.tests.cpp
     TextureMips.tests.cpp
     ViewSubmission.tests.cpp
@@ -39,8 +42,16 @@ file(TO_CMAKE_PATH "${CMAKE_SOURCE_DIR}/assets/shaders/SurfaceLayout.slang" MIR_
 file(TO_CMAKE_PATH "${CMAKE_SOURCE_DIR}/assets/materials/default.slang" MIR_DEFAULT_MATERIAL_SLANG_PATH)
 file(TO_CMAKE_PATH "${CMAKE_SOURCE_DIR}/assets/materials/default.material.json"
     MIR_DEFAULT_MATERIAL_JSON_PATH)
-file(TO_CMAKE_PATH "${CMAKE_BINARY_DIR}/shaders/shader_manifest.json" MIR_SHADER_MANIFEST_PATH)
-file(TO_CMAKE_PATH "${CMAKE_BINARY_DIR}/shaders/surface_materials.json" MIR_SURFACE_CATALOG_PATH)
+file(TO_CMAKE_PATH "${CMAKE_SOURCE_DIR}/games/TerrainCheck/assets/materials/icelandicSand.slang"
+    MIR_TERRAIN_MATERIAL_SLANG_PATH)
+file(TO_CMAKE_PATH "${CMAKE_SOURCE_DIR}/games/TerrainCheck/assets/materials/icelandicSand.material.json"
+    MIR_TERRAIN_MATERIAL_JSON_PATH)
+file(TO_CMAKE_PATH "${CMAKE_SOURCE_DIR}/assets/shaders/SurfaceTerrainForward.slang"
+    MIR_TERRAIN_FORWARD_SLANG_PATH)
+file(TO_CMAKE_PATH "${CMAKE_SOURCE_DIR}/assets/shaders/SurfaceTerrainRt.slang"
+    MIR_TERRAIN_RT_SLANG_PATH)
+file(TO_CMAKE_PATH "${CMAKE_BINARY_DIR}/shader_build/shader_manifest.json" MIR_SHADER_MANIFEST_PATH)
+file(TO_CMAKE_PATH "${CMAKE_BINARY_DIR}/shader_build/surface_materials.json" MIR_SURFACE_CATALOG_PATH)
 file(TO_CMAKE_PATH "${CMAKE_CURRENT_BINARY_DIR}" MIR_RENDERER_TEST_DIR_PATH)
 target_compile_definitions(engine_renderer_tests PRIVATE
     MIR_SLANGC_EXECUTABLE="${MIR_SLANGC_EXECUTABLE_PATH}"
@@ -48,6 +59,10 @@ target_compile_definitions(engine_renderer_tests PRIVATE
     MIR_SURFACE_LAYOUT_SLANG="${MIR_SURFACE_LAYOUT_SLANG_PATH}"
     MIR_DEFAULT_MATERIAL_SLANG="${MIR_DEFAULT_MATERIAL_SLANG_PATH}"
     MIR_DEFAULT_MATERIAL_JSON="${MIR_DEFAULT_MATERIAL_JSON_PATH}"
+    MIR_TERRAIN_MATERIAL_SLANG="${MIR_TERRAIN_MATERIAL_SLANG_PATH}"
+    MIR_TERRAIN_MATERIAL_JSON="${MIR_TERRAIN_MATERIAL_JSON_PATH}"
+    MIR_TERRAIN_FORWARD_SLANG="${MIR_TERRAIN_FORWARD_SLANG_PATH}"
+    MIR_TERRAIN_RT_SLANG="${MIR_TERRAIN_RT_SLANG_PATH}"
     MIR_SHADER_MANIFEST="${MIR_SHADER_MANIFEST_PATH}"
     MIR_SURFACE_CATALOG="${MIR_SURFACE_CATALOG_PATH}"
     MIR_RENDERER_TEST_DIR="${MIR_RENDERER_TEST_DIR_PATH}"

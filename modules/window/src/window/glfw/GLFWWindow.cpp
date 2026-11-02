@@ -258,6 +258,11 @@ namespace mir
     {
         glfwSetWindowShouldClose(mHandle, GLFW_TRUE);
     }
+
+    void GLFWWindow::CancelClose()
+    {
+        glfwSetWindowShouldClose(mHandle, GLFW_FALSE);
+    }
     void GLFWWindow::Show()
     {
         glfwShowWindow(mHandle);

@@ -66,6 +66,7 @@ namespace mir
     {
     public:
         ContentBrowserAction Draw(const ContentBrowserView &view);
+        const std::string &SelectedPath() const { return mSelectedPath; }
 
     private:
         void DrawEntries(const ContentBrowserView &view, ContentBrowserAction &action);

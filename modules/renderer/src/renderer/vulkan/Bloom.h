@@ -15,6 +15,7 @@
 #include <volk.h>
 
 #include <cstdint>
+#include <string>
 
 VK_DEFINE_HANDLE(VmaAllocation)
 
@@ -43,7 +44,20 @@ namespace mir::vk
 
         VkImageView OutputView(uint32_t frame) const { return mMipViews[frame][0]; }
 
+        bool PrepareShaderReload(std::string *error = nullptr);
+        void CommitShaderReload();
+        void DiscardShaderReload();
+
     private:
+        struct ReloadCandidate
+        {
+            VkPipeline mExtract = VK_NULL_HANDLE;
+            VkPipeline mDownsample = VK_NULL_HANDLE;
+            VkPipeline mUpsample = VK_NULL_HANDLE;
+        };
+
+        bool BuildReloadCandidate(ReloadCandidate &candidate, std::string *error);
+        void DestroyCandidate(ReloadCandidate &candidate);
         bool CreateMipChain(VkExtent2D extent);
         void DestroyMipChain();
         bool CreatePipelines();
@@ -78,5 +92,8 @@ namespace mir::vk
         float mThreshold = 1.0f;
         float mIntensity = 0.5f;
         float mRadius = 1.0f;
+
+        ReloadCandidate mReloadCandidate;
+        bool mReloadPrepared = false;
     };
 }

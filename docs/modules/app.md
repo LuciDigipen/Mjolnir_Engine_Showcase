@@ -23,7 +23,7 @@ it belongs.
 mDesc, mProject          the checks before anything is built: game directories, project_settings.json
 mSplash                  shown until the first view has loaded and the window opens
 mCommands, mWorld, mScheduler
-CoreModule, AssetsModule, ParticlesModule, SceneModule, PrefabModule
+CoreModule, AssetsModule, AsyncAssetService (only when a manifest exists), AssetResolver, ParticlesModule, SceneModule, PrefabModule
 GameUIModule, GameShellModule    before ImGui, whose shutdown frees their textures' GPU side
 WindowModule, RendererModule, ParticlesGpuModule, InputModule, AnimationModule, ImGuiModule, EditorModule (editor builds)
 CameraModule, AudioModule, PhysicsModule, TerrainModule
@@ -46,10 +46,14 @@ closes the splash, so a game's simulation and audio do not run while hidden. A
 
 ```
 Start(scheduler)                       systems cache their queries
-while not ShouldClose:
+while true:
+    if ShouldClose:                    OS close, Alt+F4, title bar or Request::Quit
+        unless a confirmed project switch or an interactive discard confirmation
+        permits exit: CancelClose and continue
     PollEvents                         close flag and size refresh here
     dt = min(elapsed, mMaxDeltaSeconds)
     ApplyRequests                      last frame's transitions, and a game to switch to
+    AsyncAssetService::DrainCompletions  background asset loads that finished become visible
     RunFrameSlot(FrameBegin)           script reload poll, terrain installs and Edit refresh, import and content browser polls
     ImGuiModule::RunUI                 Tools drawers (the editor), then Game drawers (the game UI)
     fixedSteps = FixedTimestep::Advance(dt)  every mode; FixedUpdate systems check IsSimulating
@@ -150,8 +154,10 @@ It also declares `ClearErrorReport`, `ErrorReportPath`, `CrashDumpPath` and
 `mAppName` stays caller-set even though each game has its own title — it is the
 Vulkan instance name, engine-level, and nothing user-facing ever sees it.
 
-Accessors: `GetWorld()`, `Systems()`, `Splash()`, `Assets()`, `Scene()`,
-`Project()` and `ProjectToOpen()`. `Renderer()` is marked a temporary seam,
+Accessors: `GetWorld()`, `Systems()`, `Splash()`, `Assets()`, `AssetService()`,
+`Scene()`, `Project()` and `ProjectToOpen()`. `AssetService()` is null when there
+was no manifest at startup, and it stays null for the session even if an import
+cooks the first assets. `Renderer()` is marked a temporary seam,
 because `Renderer.h` is still an empty abstraction placeholder.
 
 `ToggleFullscreen()` switches the window between windowed and fullscreen and
@@ -278,6 +284,20 @@ through `mSwitchProjectTo`. All of them fail on a crash or a logged error.
    cheap for a large scene.
 
 ## Changed
+
+*2026-10-31* — **`App` owns an `AssetResolver`.** Was: `App` passed `mAssetIdRoot` to
+the particles, animation, script and renderer modules. Now: it builds one
+`AssetResolver` after `AssetsModule` and passes it by reference to those modules,
+the game shell and the editor, so a path is looked up the same way everywhere
+and a reload is seen without telling each holder. Because those modules only
+needed the root to turn a path into an id.
+
+*2026-10-31* — **`App` owns an `AsyncAssetService`.** Was: assets loaded only
+through the cache on the calling thread. Now: the service is built right after
+`AssetsModule` and before the modules that will use it, sized by
+`assets.loadThreads`, and drained once a frame after `ApplyRequests`. It is
+destroyed before the job executor and the assets by member order. Because a
+request for an asset has to run on the executor `App` already owns.
 
 *2026-10-30* — **An empty scene over a corrupt `scene.json` is untitled (#291).**
 Was: the empty scene stayed bound to the game's scene directory, so the next
@@ -515,7 +535,9 @@ one would have meant reaching into `core` for every process-wide singleton.
 *2026-09-14* — **`AppDesc::mMaxFrames`.** Was: `Run` ended only when someone
 closed the window, so nothing could drive the engine unattended. Now: after
 `mMaxFrames` frames `Run` calls `Window::RequestClose`, the same exit as the
-close button. `main.cpp`'s `--frames` sets it for the `smoke.<game>` tests.
+close button. The loop checks `ShouldClose` before polling and asks the editor
+for unsaved material drafts; a confirmed project switch (`mProjectToOpen`) and
+bounded or non-interactive runs skip that prompt and never save automatically. `main.cpp`'s `--frames` sets it for the `smoke.<game>` tests.
 
 *2026-09-12* — **`NewScene`/`SaveScene`/`LoadScene` refuse while Play is
 running.** Was: nothing stopped any of the three from running mid-Play — Save

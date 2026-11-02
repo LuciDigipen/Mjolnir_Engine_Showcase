@@ -11,6 +11,7 @@
 #include <editor/Editor.h>
 
 #include <core/ecs/ComponentGizmo.h>
+#include <core/ecs/GroundQuery.h>
 #include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/Query.h>
 #include <core/ecs/TransformHierarchy.h>
@@ -624,7 +625,7 @@ namespace mir
         ImGui::EndMenu();
     }
 
-    void Editor::DrawOpenProjectConfirm(EditorActions &actions)
+    void Editor::DrawOpenProjectConfirm(EditorActions &actions, bool materialDraftsUnsaved)
     {
         constexpr const char *kPopupId = "Open Project##Confirm";
 
@@ -643,6 +644,8 @@ namespace mir
         ImGui::Text("Open \"%s\"?", mPendingProject.mName.c_str());
         ImGui::TextDisabled("The editor restarts with this game.");
         ImGui::TextDisabled("Unsaved changes to the current scene will be lost.");
+        if (materialDraftsUnsaved)
+            ImGui::TextDisabled("Unsaved material drafts will be discarded, never saved automatically.");
         ImGui::Spacing();
 
         if (ImGui::Button("Open"))
@@ -1216,7 +1219,8 @@ namespace mir
         drawList->PopClipRect();
     }
 
-    void Editor::DrawNewProjectModal(EditorActions &actions, std::span<const ProjectMenuEntry> projects)
+    void Editor::DrawNewProjectModal(EditorActions &actions, std::span<const ProjectMenuEntry> projects,
+        bool materialDraftsUnsaved)
     {
         constexpr const char *kPopupId = "New Project";
 
@@ -1236,6 +1240,8 @@ namespace mir
 
         ImGui::InputTextWithHint("Name", "Project name...", mNewProjectName, sizeof(mNewProjectName));
         ImGui::Checkbox("Ray Tracing", &mNewProjectRayTracing);
+        if (materialDraftsUnsaved)
+            ImGui::TextDisabled("Unsaved material drafts will be discarded, never saved automatically.");
         ImGui::Spacing();
 
         const std::string_view name(mNewProjectName);
@@ -1271,11 +1277,20 @@ namespace mir
         PostProcessingSettings &postProcessingSettings, const EngineModeState &mode,
         std::span<const ProjectMenuEntry> projects, std::string_view currentProject, World &activeWorld,
         World &sceneWorld, const EditorDocuments &documents, const AssetImportView &assetImport,
-        const VulkanRenderer &renderer, const ContentBrowserView &contentBrowser)
+        const VulkanRenderer &renderer, const ContentBrowserView &contentBrowser, bool materialPanelVisible,
+        bool materialDraftsUnsaved, float dt)
     {
         EditorActions actions;
 
         const bool documentTab = documents.mActive != kSceneDocument;
+        GroundQuery *ground = activeWorld.TryResource<GroundQuery>();
+        mSnapFrameSubmissions = mHistory.SubmissionCount();
+        PollSnapToTerrain(activeWorld, documents.mActive, mode, dt);
+        SnapToTerrainAction snap = SnapToTerrainActionFor(activeWorld, documents.mActive, ground);
+        snap.mWaiting = mSnapToTerrain.Active();
+        if (snap.mWaiting)
+            snap.mStatus = mSnapToTerrain.Status();
+        bool snapRequested = false;
 
         if (mThemePending)
         {
@@ -1390,7 +1405,7 @@ namespace mir
 
             if (ImGui::Begin("Inspector"))
             {
-                mInspectorPanel.Draw(activeWorld, assetImport, mHistory, mAuthoredEntities);
+                snapRequested |= mInspectorPanel.Draw(activeWorld, assetImport, mHistory, mAuthoredEntities, snap);
                 if (!documentTab && mode.mMode == EngineMode::Edit)
                 {
                     const auto &selection = activeWorld.Resource<Selection>().mSelected;
@@ -1479,6 +1494,8 @@ namespace mir
                     ImGui::MenuItem("Asset Import", nullptr, &mShowAssetImport);
                     ImGui::MenuItem("Particles", nullptr, &mShowParticles);
                     ImGui::MenuItem("Content Browser", nullptr, &mShowContentBrowser);
+                    if (ImGui::MenuItem("Material", nullptr, materialPanelVisible))
+                        actions.mToggleMaterialEditor = true;
                     ImGui::Separator();
                     ImGui::MenuItem("Preferences", nullptr, &mShowPreferences);
                     ImGui::EndMenu();
@@ -1498,8 +1515,8 @@ namespace mir
             }
             pushedColors = pushPanelAlpha();
 
-            DrawOpenProjectConfirm(actions);
-            DrawNewProjectModal(actions, projects);
+            DrawOpenProjectConfirm(actions, materialDraftsUnsaved);
+            DrawNewProjectModal(actions, projects, materialDraftsUnsaved);
 
             if (mShowStyleEditor)
             {
@@ -1597,7 +1614,16 @@ namespace mir
             mSceneViewportRect = VkRect2D{};
         }
 
-        
+        const bool snapTransitionRequested =
+            actions.mScene == SceneMenuAction::New || actions.mScene == SceneMenuAction::Load ||
+            actions.mScene == SceneMenuAction::Play || actions.mScene == SceneMenuAction::Stop ||
+            !actions.mOpenProject.empty() || !actions.mCreateProjectName.empty() ||
+            actions.mDocument.mKind != EditorDocumentActionKind::None;
+        if (snapRequested)
+            StartSnapToTerrain(activeWorld, documents.mActive);
+        FinishSnapToTerrain(activeWorld, documents.mActive, ground, mode.mMode == EngineMode::Edit,
+                            snapTransitionRequested);
+
         if (mSceneOps != nullptr)
             mHistory.Flush(sceneWorld, *mSceneOps);
 
@@ -1625,6 +1651,74 @@ namespace mir
 
         if (ImGui::MenuItem((redo + "###Redo").c_str(), "Ctrl+Y", false, mHistory.CanRedo()))
             mHistory.RequestRedo();
+    }
+
+    void Editor::PollSnapToTerrain(World &world, DocumentId document, const EngineModeState &mode, float dt)
+    {
+        if (!mSnapToTerrain.Active())
+            return;
+        GroundQuery *ground = world.TryResource<GroundQuery>();
+        if (ground == nullptr)
+        {
+            mSnapToTerrain.Cancel("The scene has no terrain.");
+            return;
+        }
+        mSnapToTerrain.Update(world, document, *ground, dt, mode.mMode == EngineMode::Edit);
+    }
+
+    void Editor::StartSnapToTerrain(World &world, DocumentId document)
+    {
+        GroundQuery *ground = world.TryResource<GroundQuery>();
+        if (ground == nullptr)
+        {
+            MIR_LOG_WARN("Snap to Terrain: the scene has no terrain.");
+            return;
+        }
+        const SnapToTerrainAction action = mSnapToTerrain.Begin(world, document, *ground);
+        if (!action.mEnabled)
+            MIR_LOG_WARN("Snap to Terrain: {}", action.mReason);
+    }
+
+    void Editor::FinishSnapToTerrain(World &world, DocumentId document, const GroundQuery *ground, bool editing,
+                                     bool transitionRequested)
+    {
+        if (transitionRequested && mSnapToTerrain.Active())
+            mSnapToTerrain.Cancel("The scene changed before the snap committed.");
+
+        const std::string failure = mSnapToTerrain.TakeFailure();
+        if (!failure.empty())
+            MIR_LOG_WARN("Snap to Terrain: {}", failure);
+
+        if (mSnapToTerrain.CurrentState() != SnapToTerrainSession::State::Ready)
+            return;
+        if (ground == nullptr)
+        {
+            mSnapToTerrain.Cancel("The scene has no terrain.");
+            MIR_LOG_WARN("Snap to Terrain: {}", mSnapToTerrain.TakeFailure());
+            return;
+        }
+
+        const SnapToTerrainCommit commit{mSnapFrameSubmissions, mHistory.SubmissionCount(), transitionRequested};
+        const std::optional<SnapToTerrainEdit> edit =
+            mSnapToTerrain.TakeEdit(world, document, *ground, editing, commit);
+        if (!edit)
+        {
+            const std::string refused = mSnapToTerrain.TakeFailure();
+            if (!refused.empty())
+                MIR_LOG_WARN("Snap to Terrain: {}", refused);
+            return;
+        }
+
+        const Entity entity = mSnapToTerrain.Target();
+        std::unique_ptr<ICommand> command = MakeSnapToTerrainCommand(entity, *edit, mAuthoredEntities);
+        if (!command)
+        {
+            MIR_LOG_ERROR("Snap to Terrain: the Transform edit could not be built.");
+            return;
+        }
+        mHistory.Submit(std::move(command), true);
+        MIR_LOG_INFO("Snap to Terrain: {} samples, {:.3f} m residual, source spacing {:.3f} m", edit->mSamples,
+                     edit->mResidual, edit->mSourceSpacing);
     }
 
     void Editor::DrawDebugViewMenu(const EngineModeState &mode)

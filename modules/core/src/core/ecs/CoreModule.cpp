@@ -8,10 +8,10 @@
  */
 #include "core/ecs/CoreModule.h"
 
+#include "core/ecs/ComponentFieldChanges.h"
 #include "core/ecs/ComponentRegistry.h"
 #include "core/ecs/DeferredAccess.h"
 #include "core/ecs/EngineMode.h"
-#include "core/ecs/EntityChanges.h"
 #include "core/ecs/Requests.h"
 #include "core/ecs/SystemScheduler.h"
 #include "core/ecs/TransformHierarchy.h"
@@ -24,7 +24,7 @@ namespace mir
         RegisterCoreComponents();
 
         context.world.EmplaceResource<EngineModeState>();
-        context.world.EmplaceResource<EntityChangeListeners>();
+        context.world.EmplaceResource<ComponentFieldListeners>();
         context.world.EmplaceResource<FrameCommands>(FrameCommands{ &commands });
         context.world.EmplaceResource<RequestQueue>();
 

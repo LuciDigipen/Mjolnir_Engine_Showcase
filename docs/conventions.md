@@ -112,7 +112,9 @@ Systems cache their queries in `OnStart`.
 Ordering between systems is a phase and a `SystemOrder`, never registration order.
 Inside a phase the lowest order runs first, and equal orders are unspecified. Two
 systems that depend on each other get different orders, and a system with no
-dependency passes `SystemOrder::kNormal`.
+dependency passes `SystemOrder::kNormal`. Every test suite also runs with equal
+orders reversed and shuffled, and a new constraint goes in the table in
+[core.md](modules/core.md).
 
 Read-only components are `const T` in the query. Queries then carry the access
 information a parallel scheduler will need.

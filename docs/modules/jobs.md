@@ -96,3 +96,7 @@ collaborators die, then releases its share of the lane. It does not close the
 lane: a retained streamer can finish outstanding reads and post new work. The
 last consumer closes the lane; the app-owned executor outlives the World and
 modules. Scene unload uses existing cancellation tickets to discard stale results.
+
+`AsyncAssetService` in `assets` is the other lane consumer. It reads and decodes
+cooked assets on a lane capped by `assets.loadThreads`. A closed lane stays
+closed, so `CancelAll` replaces the lane after `CloseAndWait`.

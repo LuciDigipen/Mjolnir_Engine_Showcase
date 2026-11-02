@@ -8,6 +8,7 @@
  */
 #include <editor/ContentBrowserWatcher.h>
 
+#include <assets/AssetMeta.h>
 #include <assets/AssetPath.h>
 #include <core/log/Log.h>
 #include <core/log/SetupError.h>
@@ -102,6 +103,8 @@ namespace mir
             const std::filesystem::path relative = entry.path().lexically_relative(mRoot);
             if (relative.empty())
                 continue;
+            if (!entry.is_directory() && IsAssetToolingFile(entry.path()))
+                continue;
 
             ContentBrowserEntryView view;
             view.mRelativePath = relative.generic_string();
@@ -138,6 +141,8 @@ namespace mir
         {
             mView.mLastRenamedFrom = removed.front().generic_string();
             mView.mLastRenamedTo = added.front().generic_string();
+            // renamed outside the editor, so its .meta is still under the old name
+            MoveAssetMeta(mRoot / removed.front(), mRoot / added.front());
         }
 
         if (mWatchInitialized)
@@ -237,7 +242,9 @@ namespace mir
         {
             mView.mLastError = "could not rename '" + targetRelative + "': " + error.message();
             MIR_LOG_ERROR("Content browser: could not rename '{}': {}", source.string(), error.message());
+            return;
         }
+        MoveAssetMeta(source, destination);
     }
 
     void ContentBrowserWatcher::DeleteEntry(const std::string &targetRelative)
@@ -249,7 +256,9 @@ namespace mir
         {
             mView.mLastError = "could not delete '" + targetRelative + "': " + error.message();
             MIR_LOG_ERROR("Content browser: could not delete '{}': {}", target.string(), error.message());
+            return;
         }
+        RemoveAssetMeta(target);
     }
 
     std::optional<std::string> ContentBrowserWatcher::AssetLogicalPath(const std::string &relativePath) const

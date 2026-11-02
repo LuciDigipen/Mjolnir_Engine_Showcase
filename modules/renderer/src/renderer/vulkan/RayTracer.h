@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 #include <vector>
 
 VK_DEFINE_HANDLE(VmaAllocation)
@@ -61,6 +62,17 @@ namespace mir::vk
 
         // Recreates the output images at the swapchain's new extent; the caller idles the device first.
         bool Resize(VkExtent2D extent);
+
+        // Shader reload builds a whole replacement pipeline and SBT off to the
+        // side. Descriptor sets, images, TLAS and BLAS stay untouched.
+        bool PrepareShaderReload(std::span<const SurfaceMaterialRegistration> candidateMaterials,
+            std::string *error = nullptr);
+        void CommitShaderReload();
+        void DiscardShaderReload();
+        bool ShaderReloadPrepared() const { return mReloadPrepared; }
+        // The caller idles the device first. Keeps SBT group order aligned with
+        // the surface catalog the material store just reloaded.
+        void SetSurfaceMaterials(std::span<const SurfaceMaterialRegistration> materials);
 
         struct MeshBlas
         {
@@ -223,5 +235,22 @@ namespace mir::vk
         std::byte *mInstanceInfoMapped[kFramesInFlight]{};
 
         std::vector<MeshBlas> mBlases;
+
+        struct ShaderReloadCandidate
+        {
+            VkPipeline mPipeline = VK_NULL_HANDLE;
+            VkBuffer mSbtBuffer = VK_NULL_HANDLE;
+            VmaAllocation mSbtAllocation = VK_NULL_HANDLE;
+            VkStridedDeviceAddressRegionKHR mRaygenRegion{};
+            VkStridedDeviceAddressRegionKHR mMissRegion{};
+            VkStridedDeviceAddressRegionKHR mHitRegion{};
+            VkStridedDeviceAddressRegionKHR mCallableRegion{};
+            bool mValid = false;
+        };
+
+        bool BuildShaderReloadBundle(ShaderReloadCandidate &candidate, std::string *error);
+        std::vector<SurfaceMaterialRegistration> mReloadSurfaceMaterials;
+        ShaderReloadCandidate mReloadCandidate;
+        bool mReloadPrepared = false;
     };
 }

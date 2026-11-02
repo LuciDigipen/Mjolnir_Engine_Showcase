@@ -30,7 +30,7 @@ handler.
 A module is a class whose constructor takes a `ModuleContext`, the `World` and
 the `SystemScheduler`, plus the other modules it needs. It registers its parts
 there and frees them in its destructor. `CoreModule` is the first: core's
-components, `EngineModeState`, `EntityChangeListeners`, `FrameCommands`, the
+components, `EngineModeState`, `ComponentFieldListeners`, `FrameCommands`, the
 `RequestQueue` and `TransformPropagateSystem`.
 
 Everything a module registers comes back as a `Registration`, a move-only token
@@ -87,9 +87,15 @@ Resources are not components and carry none of the POD constraints. Nothing ever
 relocates one, so a resource may own heap memory and have a destructor.
 
 ```cpp
-world.EmplaceResource<EntityChangeListeners>();
-EntityChangeListeners *listeners = world.TryResource<EntityChangeListeners>();
+world.EmplaceResource<ComponentFieldListeners>();
+ComponentFieldListeners *listeners = world.TryResource<ComponentFieldListeners>();
 ```
+
+`GroundQuery` is a World resource for consumers that cannot link terrain.
+`Bind` registers an `IGroundQuerySource` through a `Registration`; `Sample`
+answers at the finest source spacing, `Probe` reports coverage and source
+spacing from layout metadata without loading payloads, and `Revision` moves when
+the binding or the terrain behind it changes so a pending consumer can cancel.
 
 ### Access by name
 
@@ -117,6 +123,7 @@ const ComponentOps &health = ComponentRegistry::Instance().RegisterRuntime("Heal
 | `Archetype`, `ComponentColumn` | `ecs/Archetype.h` | Rows sharing a signature; one type's data in one |
 | `World` | `ecs/World.h` | Owns entities, archetypes, resources and the scene graph |
 | `ComponentHooks` | `ecs/World.h` | One OnAdd and one OnRemove per component type, per `World` |
+| `ComponentFieldListeners`, `ComponentFieldChange` | `ecs/ComponentFieldChanges.h` | Callbacks before and after a commit writes reflected fields; which fields it wrote |
 | `HierarchyIndex` | `ecs/HierarchyIndex.h` | The scene graph and the root order, read through `World::HierarchyIndex()` |
 | `SetParent`, `MoveToLastSibling` | `ecs/TransformHierarchy.h` | Reparent or reorder, keeping the world pose by default; move to the end of the siblings |
 | `CanSetParent`, `CanSetParentAll` | `ecs/TransformHierarchy.h` | The checks `SetParent` makes, without changing anything; for one entity or a list |
@@ -128,6 +135,7 @@ const ComponentOps &health = ComponentRegistry::Instance().RegisterRuntime("Heal
 | `ComponentRegistry`, `FieldDesc` | `ecs/ComponentRegistry.h`, `ecs/ComponentFields.h` | Name to erased ops; one named, typed value |
 | `CommandBuffer` | `ecs/CommandBuffer.h` | Deferred structural changes |
 | `ISystem`, `SystemScheduler` | `ecs/System.h`, `ecs/SystemScheduler.h` | Per-frame work, and running it by phase; stage and frame-slot lists |
+| `SystemTies`, `SystemTiesFromEnvironment` | `ecs/SystemScheduler.h` | How equal orders are arranged: registration order, or reversed or shuffled for tests; read from `MIR_SYSTEM_TIES` |
 | `Stage`, `FrameSlot` | `ecs/System.h` | The transitions App runs, and the host work slots of a frame |
 | `Registration` | `Registration.h` (base) | Move-only token that undoes a registration when it dies |
 | `RegistrationList<F>` | `RegistrationList.h` (base) | Functions run in registration order, each added through a token: stages, frame slots, drawers, Lua bindings, screens |
@@ -202,6 +210,12 @@ ends with the destroy. Neither kind may set or clear hooks, because that
 could resize the hook slots or destroy the running hook. World counts the hooks
 that are running, so setting hooks or dropping a hook token asserts inside one,
 and in Release it logs an error and does nothing.
+
+**Hooks own structure; `ComponentFieldListeners` owns field writes.** A commit
+that writes reflected fields, today only `PrefabCoordinator`'s, notifies the
+listeners once before and once after, with the fields it wrote per component.
+Its adds, removes and destroys go through `World`, so they reach the owners'
+hooks and are not in the payload. Inspector and undo writes notify nobody.
 
 **`DestroyEntity` is bottom-up.** Children are destroyed fully first, last
 child first. Each child stays linked until its own removal, so its hooks still
@@ -337,6 +351,34 @@ an order from 0 to 100, with the borders `kEarly` (10), `kNormal` (50) and `kLat
 order. Equal orders are unspecified, so a system that needs another first takes a
 different order.
 
+`MIR_SYSTEM_TIES` checks that nothing relies on a tie. `reverse` runs every set
+of equal orders in reverse registration order and `shuffle` in a seeded random
+one, whose seed the first scheduler logs; `shuffle:<seed>` repeats it. A test
+executable has no log, so there the line goes to stderr. Every test executable
+runs whole under both, as `<target>.ties-reverse` and `<target>.ties-shuffle`,
+except the suites that never run a scheduler and say `NO_SYSTEM_TIES`
+(`core_base`, `terrain`). In Debug, `Start` logs each phase's resolved order, one
+line per phase.
+
+These are the constraints the orders carry:
+
+| Phase | Earlier | Later | Why |
+|---|---|---|---|
+| `PreUpdate` | `PrefabSystem` (`kEarly - 5`) | `ScriptResolveSystem`, `ScriptSystem` | It commits at the Edit safe point, so a `ScriptRef` a publish adds resolves and runs the same frame |
+| `PreUpdate` | `InputSystem` (`kEarly`) | `ScriptSystem` (`kNormal`) | Scripts read this frame's `InputState` |
+| `PreUpdate` | `ScriptResolveSystem` (`kEarly`) | `ScriptSystem` (`kNormal`) | A `ScriptRef` made last frame runs this frame |
+| `FixedUpdate` | `ScriptFixedSystem` (`kEarly`) | `PhysicsSystem` (`kNormal`) | What `OnFixedUpdate` sets acts on the same step |
+| `LateUpdate` | `CameraControllerSystem` (`kEarly`) | `AudioListenerSystem`, `AudioEmitterSystem` (`kNormal`) | It moves the camera after `Propagate` and refreshes its `WorldTransform`, which a listener on the camera reads |
+| `LateUpdate` | `AudioEmitterSystem`, `AudioListenerSystem`, `SoundtrackSystem` (`kNormal`) | `AudioRenderSystem` (`kLate`) | The render sends Wwise this frame's positions |
+| `LateUpdate` | `ParticleUpdateSystem` (70) | `ParticleSubmitSystem` (80) | Submit uploads what the update simulated this frame |
+| `Render` | `ActiveCameraSystem` (`kEarly`) | `RenderSystem` (`kNormal`) | The frame renders through the camera picked this frame |
+| `PostUpdate`, in a prefab preview's own scheduler | `TransformPropagateSystem` (`kEarly`) | `ModelSystem` (`kNormal`) | `ModelSystem` reads the preview's `WorldTransform` |
+
+`physics_script`'s `SystemOrder.tests.cpp` pins the `InputSystem`,
+`ScriptResolveSystem` and `ScriptFixedSystem` rows by building the input, script
+and physics modules. No test target links the modules of the other rows
+together, or they need Vulkan or Wwise to build.
+
 **A registration list changes only between runs.** Every `RegistrationList`
 (stages, frame slots, ImGui drawers, Lua bindings, game UI screens) asserts on
 an add or a removal while it runs, because either could move the running
@@ -464,6 +506,25 @@ layout changes.
    `World::AddComponent` directly, rather than it being convention.
 
 ## Changed
+
+*2026-10-31* — **Equal orders can be reversed or shuffled (#310).** Was: equal
+orders ran in registration order, and nothing checked that no system relied on
+it. One did: `AudioListenerSystem` read a controlled camera's pose after
+`CameraControllerSystem` moved it only because `CameraModule` is built before
+`AudioModule`. Now: `MIR_SYSTEM_TIES` reverses or shuffles ties, every suite runs
+under both, Debug logs each phase's order at `Start`, the Rules list the real
+constraints, and `CameraControllerSystem` runs at `kEarly`. Because: a constraint
+nobody wrote down breaks the first time module order changes.
+
+*2026-10-31* — **`EntityChangeListeners` is `ComponentFieldListeners`.** Was:
+one payload of removed and added entities and components plus changed fields,
+in `EntityChanges.h`, with a `BeforeRemove` phase. `ScriptSystem` and
+`MeshResolveSystem` released bindings from it on removal as well as on a
+renamed script, mesh or shader. Now: `ComponentFieldChanges.h` carries only
+`ComponentFieldChange`s, the phases are `BeforeChange` and `AfterChange`, and
+removal cleanup is the `ScriptRef` and `MeshRenderer` OnRemove hooks alone.
+Because: the hooks already fire on every remove and destroy the coordinator
+makes, so two mechanisms did the same job.
 
 *2026-10-25* — **`FieldDesc::Constrain` (#219).** Was: a field's enum names and
 clamp were read only by the Inspector's widgets. Now: `Constrain` applies them

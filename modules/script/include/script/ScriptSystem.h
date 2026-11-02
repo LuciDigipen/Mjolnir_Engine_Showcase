@@ -11,9 +11,11 @@
 
 #include <script/components/ScriptRef.h>
 
-#include <core/ecs/EntityChanges.h>
+#include <core/ecs/ComponentFieldChanges.h>
 #include <core/ecs/Query.h>
 #include <core/ecs/System.h>
+
+#include <span>
 
 namespace mir
 {
@@ -42,7 +44,8 @@ namespace mir
         void StopAllScripts(SystemContext &context);
 
     private:
-        static void OnBeforeRemove(World &world, const EntityChangeSet &changes, void *user);
+        // a ScriptRef removal is the OnRemove hook's; this handles a renamed script
+        static void OnBeforeFieldChange(World &world, std::span<const ComponentFieldChange> changes, void *user);
         void ReleaseScript(World &world, Entity entity);
 
         IScriptHost &mHost;

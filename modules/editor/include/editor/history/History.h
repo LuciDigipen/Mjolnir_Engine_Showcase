@@ -36,8 +36,8 @@ namespace mir
 
         // Discrete commands cannot merge with edits before or after them.
         void Submit(std::unique_ptr<ICommand> command, bool discrete = false);
-        void RequestUndo() { --mPending; }
-        void RequestRedo() { ++mPending; }
+        void RequestUndo() { --mPending; ++mSubmissions; }
+        void RequestRedo() { ++mPending; ++mSubmissions; }
 
        
         void EndStep() { mEndStep = true; }
@@ -65,6 +65,8 @@ namespace mir
         std::string RedoName() const;
 
         std::size_t StepCount() const { return mSteps.size(); }
+        // Includes queued undo and redo requests.
+        std::size_t SubmissionCount() const { return mSubmissions; }
         std::size_t Cursor() const { return mCursor; }
         std::size_t UsedBytes() const { return mUsed; }
         const EntityIds &Ids() const { return mIds; }
@@ -123,6 +125,7 @@ namespace mir
         std::size_t mUsed = 0;
         std::size_t mBudget;
         uint64_t mNextSerial = 1;
+        std::size_t mSubmissions = 0;
 
         //serials only go up, so a serial dropped from history never matches again
         std::map<DocumentId, DocumentState> mDocuments;

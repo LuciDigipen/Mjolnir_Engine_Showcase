@@ -1,8 +1,7 @@
 # Surface material pipeline
 
-*State as of 2026-10-31.* Shared GPU tables, reflected surface materials,
-default PBR lighting, versioned packed textures and the terrain frontend/runtime
-binding are implemented. POM and macro variation are later work.
+*State as of 2026-10-31.* Shared surface materials and terrain rendering include
+periodic macro variation and distance-faded parallax occlusion.
 
 ## Source contract
 
@@ -105,6 +104,21 @@ material enters a finite `--material` batch; an edited dependency enters a
 `--changed` batch. A completed material-only batch still goes through the same
 `PendingApply` path, so it is applied in Edit and waits for Stop during Play.
 
+## Editor drafts
+
+The Material panel builds its controls from the compiled reflection and keeps
+one draft per normalized project and logical asset path. Numeric edits publish
+the packed record through `SurfaceMaterialLibrary::PreviewParameters`; the
+library overlays the values on the resolved parameters, runs the consumer
+validator and updates the shared record table without creating a pipeline.
+Raster and RT read the same record, so every use of the asset previews together.
+
+Save writes only changed `parameters` and `textures.<role>.path` members through
+`UpdateJsonFile`; unknown keys and the other texture fields stay. A successful
+write queues one finite `--material` batch, and the ordinary Edit reload
+publishes the new record. A failed batch keeps the last-good material and the
+draft. Texture replacement changes only the source path, so packing, colour
+space, resolution and mip generation are unchanged. Play is read-only.
 ## Material types
 
 A material file defines only the surface function:
@@ -164,6 +178,34 @@ field sizes, non-overlapping offsets, duplicate names, record bounds, JSON types
 finite floats and uint/int ranges. A malformed catalog, reflection or authored
 parameter object returns a bounded error instead of throwing through renderer
 startup. Missing fields remain an explicit failure.
+
+## Development hot reload
+
+The editor watcher reads only `shaders/shader_manifest.json` for the slangc
+path, working directory and argument arrays. It follows each output's depfile,
+coalesces saves, cancels a batch when a newer source revision exists and runs a
+finite direct-slangc batch without CMake, vcvars or generated wrappers. A new
+`.material.json` expands the shared mesh frontend template and is added to
+`surface_materials.json`; the material store reloads the catalog so the new stem
+gets raster and RT hit groups. See ADR 0007 (local ADR).
+
+SPV, reflection, depfile and catalog files are staged as temporary siblings and
+published only after every compile succeeds. The publisher retains per-file
+backups and old stamps until the GPU transaction commits, so a rejected reload
+restores the old files byte for byte. Stamps carry a source fingerprint and the
+build-side publisher refuses to overwrite an output whose accepted fingerprint
+is newer, so an older build copy cannot roll back a live reload. A non-editor
+build links no watcher and reads no source, compiler or development path.
+
+The reload transaction validates the whole batch first: SPIR-V magic and
+entry-point stage, descriptor arrays, push ranges, UBO/SSBO member offsets and
+strides, vertex/fragment interfaces including `SV_TARGET`. It then builds every
+material, ray-tracing (whole pipeline and SBT), shadow and post-process
+candidate off to the side. One device idle is taken and all candidates are
+swapped only after every owner succeeds; otherwise the old generation stays
+live. Material records migrate by field name: same-name compatible values are
+preserved, new fields use the material's packed defaults and a changed type
+rejects the transaction.
 
 ## Default
 
@@ -248,3 +290,55 @@ A cook reload stages a complete candidate material generation before the active
 one is touched. Abort disposes only the candidate; commit swaps it and retires
 the previous material and texture batch. See
 ADR 0004 (local ADR).
+
+## Macro variation and parallax
+
+A terrain material may add a reflected `TextureRef macro` plus
+`macroPeriodMeters`, `macroStrength`, `macroHueShiftDegrees` and
+`macroRoughnessContrast`. The macro texture is generated once by the renderer:
+it is deterministic, tileable, low-frequency and shared by every material.
+`uv0 / macroPeriodMeters` drives the extra sample; the period follows the same
+strict packed-float divisibility rule as `tileSizeMeters`, and an authored zero
+strength reproduces the ADR 0004 shading exactly.
+
+Reflected `parallaxEnabled`, `parallaxRtEnabled`, `parallaxHeightMeters`,
+`parallaxReference`, `parallaxDistanceMeters`, `parallaxSteps`,
+`parallaxFadeStartMeters` and `parallaxFadeEndMeters` drive a shared
+`SurfaceParallaxUv` intersection before the surface is sampled. It searches the
+signed height range around the reference from high to low, so constant heights
+above and below it produce opposite signed offsets independently of the step
+count and a multicrossing profile takes the visible/frontmost crossing; the
+fade scales that offset continuously and the distance bound clamps it. It uses the
+original raster UV derivatives with `SampleGrad` and explicit `SampleLevel` in
+ray tracing; RT parallax is off unless `parallaxRtEnabled` is true. The height
+uses the stored displacement offset by the reference, not a renormalized range.
+`SurfaceMacroContext` rescales raster gradients and RT footprint to the macro
+period for the extra macro sample. Bounds are consumer-validated before the
+material is published. See
+ADR 0005 (local ADR).
+
+## Integration with current pipeline owners
+
+Transactional reload covers material, shadow, post-processing and camera RT
+pipelines registered by this implementation. Current master also has SSGI/DDGI,
+debug-drawing, composition and particle pipeline owners without replacement
+callbacks. Their manifest outputs are content-pinned: changing, adding or
+removing one rejects the entire live reload with a restart-required diagnostic.
+Unchanged outputs do not block a supported material or post-process edit.
+Reflection-only material layout outputs participate in record migration rather
+than this pipeline-owner restriction. RTXGI SDK binaries retain their separately
+packaged shader path and are not watched as Slang outputs.
+
+### Shader compilation scheduling
+
+The editor borrows App's shared JobExecutor and owns a BackgroundJobQueue with
+concurrency one for shader compilation. Each batch compiles its affected outputs
+sequentially; it does not create a separate worker pool. The engine's worker count
+also controls this lane: zero workers executes compilation inline. Compilation
+results and exceptions use BackgroundJobQueue::Submit and its standard future;
+the watcher has no separate task-completion wrapper or completion flag. Results
+cross back to the main-thread FrameBegin callback before publication and
+GPU prepare/commit; pipeline replacement still waits for device idle. Shutdown
+cancels queued shader work, signals active compiler cancellation, and waits only
+for this lane before removing its owned artifacts. Other consumers of the shared
+executor remain available.

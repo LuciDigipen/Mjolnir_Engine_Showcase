@@ -13,15 +13,21 @@
 #include <editor/CreateGameProject.h>
 #include <editor/IdeSettings.h>
 
+#include "MaterialEditor.h"
+
 #include <animation/ModelPlayer.h>
 #include <assets/AssetId.h>
 #include <assets/AssetIdRoot.h>
 #include <assets/AssetPath.h>
+#include <assets/AssetResolver.h>
 #include <assets/AssetsModule.h>
+#include <assets/ModelAsset.h>
+#include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/EngineMode.h>
 #include <core/ecs/Requests.h>
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/World.h>
+#include <editor/Selection.h>
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
 #include <core/log/SetupError.h>
@@ -39,8 +45,10 @@
 #include <scene/SceneModule.h>
 #include <window/WindowModule.h>
 
+#include <cstring>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -73,6 +81,40 @@ namespace mir
 
         DocumentId DocumentOf(PrefabId id) { return DocumentId{ id.mHigh, id.mLow }; }
 
+        bool IsMaterialContentPath(std::string_view path) { return path.ends_with(".material.json"); }
+
+        // The selected entity's authored material binding, when a component
+        // exposes one by the documented name. The editor never includes terrain.
+        std::optional<std::string> SelectedEntityMaterial(World &world, std::string_view assetIdRoot)
+        {
+            Selection *selection = world.TryResource<Selection>();
+            if (!selection)
+                return std::nullopt;
+            const Entity entity = selection->Primary();
+            if (entity.IsNull())
+                return std::nullopt;
+
+            for (const ComponentOps *ops : ComponentRegistry::Instance().All())
+            {
+                const FieldDesc *field = ops->FindField("materialPath");
+                if (field == nullptr || field->mKind != FieldKind::String || !ops->Has(world, entity))
+                    continue;
+                const void *component = ops->GetComponent(world, entity);
+                if (component == nullptr)
+                    continue;
+
+                char value[kFieldStringCapacity]{};
+                field->Read(component, value);
+                const std::string relative(value, strnlen(value, sizeof(value)));
+                if (!IsMaterialContentPath(relative))
+                    continue;
+                const AssetPathResult logical = MakeLogicalAssetPath(assetIdRoot, relative);
+                if (logical.Ok())
+                    return logical.path;
+            }
+            return std::nullopt;
+        }
+
         // Edit only: runs the open previews after PrefabSystem committed their documents, before Render
         class PrefabPreviewSystem final : public ISystem
         {
@@ -103,20 +145,21 @@ namespace mir
             std::function<void()> mRefreshHistory;
         };
 
-        // true while a scene entity plays the model
-        bool IsModelReferenced(World &world, const std::string &assetIdRoot, AssetId model)
+        // true while a scene entity plays the model, by its id or, when it has none, by its name
+        bool IsModelReferenced(World &world, const std::string &assetIdRoot, AssetId model, std::string_view logicalPath)
         {
             bool referenced = false;
             world.GetOrCreateQuery<const ModelPlayer>().ForEach([&](Entity, const ModelPlayer &player)
                 {
-                    AssetId played = player.ModelAsset();
-                    if (played.IsNull() && !player.ModelName().empty())
+                    if (!player.ModelAsset().IsNull())
                     {
-                        const AssetPathResult logical = MakeLogicalAssetPath(assetIdRoot, player.ModelName());
-                        if (logical.Ok())
-                            played = MakeAssetId(logical.path);
+                        referenced |= !model.IsNull() && player.ModelAsset() == model;
+                        return;
                     }
-                    referenced |= played == model;
+                    if (player.ModelName().empty() || logicalPath.empty())
+                        return;
+                    const AssetPathResult named = MakeLogicalAssetPath(assetIdRoot, player.ModelName());
+                    referenced |= named.Ok() && named.path == logicalPath;
                 });
             return referenced;
         }
@@ -124,8 +167,9 @@ namespace mir
 
     EditorModule::EditorModule(ModuleContext context, ImGuiModule &imgui, WindowModule &window,
         RendererModule &renderer, SceneModule &scene, PrefabModule &prefab, AssetsModule &assets,
-        const GameProject &project, bool enableLayout)
-        : mWorld(context.world), mRenderer(renderer), mScene(scene), mPrefab(prefab), mProject(project),
+        const AssetResolver &resolver, const GameProject &project, JobExecutor &jobs, bool enableLayout)
+        : mWorld(context.world), mRenderer(renderer), mScene(scene), mPrefab(prefab), mResolver(resolver),
+          mProject(project), mAssets(&assets),
           mEnableLayout(enableLayout), mProjectMenu(BuildProjectMenu()),
           mPrefabAuthoring(context.world, prefab.Coordinator(), mProject.mRootDir, prefab.SourceDir()),
           mPrefabWorkspace(prefab.Coordinator(), mPrefabAuthoring),
@@ -134,6 +178,7 @@ namespace mir
         mImport.Initialize(mProject);
         mParticleEditor = std::make_unique<ParticleEditorPanel>(mImport.SourceAssetRoot(),mProject.mAssetIdRoot);
         mContentBrowser.Initialize(mProject);
+        mShaderHotReload.Initialize(mProject.mRootDir, &renderer.Renderer(), jobs);
 
         // The first frames run without assets; the import swaps them in once cooked
         if (!assets.HadManifest() && mImport.SourceHasAssets())
@@ -150,7 +195,8 @@ namespace mir
         }
         mEditor.SetAuthoringBackend(&mPrefabAuthoring);
         mEditor.SetAuthoredEntities(&mPrefabAuthoring);
-        mPrefabWorkspace.BindResolveSystems(&renderer.Renderer(), &assets.Cache(), mProject.mAssetIdRoot);
+        mMaterialEditor = std::make_unique<MaterialEditor>();
+        mPrefabWorkspace.BindResolveSystems(&renderer.Renderer(), &assets.Cache(), resolver);
         context.scheduler.AddSystem<PrefabPreviewSystem>(SystemPhase::LateUpdate,
             SystemOrder{SystemOrder::kNormal}, mPrefabWorkspace,
             prefab.Coordinator(), mEditor, [this] { RefreshPrefabHistory(); });
@@ -159,6 +205,7 @@ namespace mir
             {
                 mFrameDt = frame.dt;
                 mImport.Update(IsEditing(mWorld));
+                mShaderHotReload.Update();
                 if (mImport.PendingApply() && IsEditing(mWorld))
                     mWorld.Resource<RequestQueue>().Push(Request::ApplyImportedAssets);
                 mContentBrowser.Update();
@@ -170,6 +217,7 @@ namespace mir
         // after the renderer's: it freed every upload, the previews' too
         mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &)
             {
+                mEditor.CancelSnapToTerrain();
                 mParticleEditor->OnHidden(mWorld);
                 mPrefabWorkspace.ResetResolve();
             });
@@ -178,6 +226,7 @@ namespace mir
         mSceneLoad = context.scheduler.AddStage(Stage::SceneLoad, [this, &scene](SystemContext &)
             {
                 const SceneLoadResult &load = scene.LastLoad();
+                mEditor.CancelSnapToTerrain();
                 mEditor.ClearHistory();
                 if (load.cause != SceneLoadCause::FromSnapshot)
                 {
@@ -222,6 +271,7 @@ namespace mir
                 mPrefabMarksBeforePlay = CapturePrefabPlayMarks(documents,
                     [this](DocumentId document) { return mEditor.IsDocumentUnsaved(document); });
 
+                mEditor.CancelSnapToTerrain();
                 mEditor.ClearHistory();
                 mPrefabBeforePlay = mPrefabWorkspace.ActiveDocument();
                 mPrefabWorkspace.ActivateScene();
@@ -265,7 +315,8 @@ namespace mir
                     mWorld.Resource<RenderSettings>(), mWorld.Resource<PostProcessingSettings>(),
                     mWorld.Resource<EngineModeState>(), mProjectMenu, mProject.mDir,
                     preview != nullptr ? *preview : mWorld, mWorld, MakeEditorDocuments(), mImport.View(),
-                    mRenderer.Renderer(), MakeContentBrowserView());
+                    mRenderer.Renderer(), MakeContentBrowserView(), mShowMaterialEditor,
+                    mMaterialEditor->HasUnsavedDrafts(), mFrameDt);
                 if (const std::string particlePath = mEditor.TakeParticleOpenRequest();
                     !particlePath.empty() && IsEditing(mWorld))
                 {
@@ -284,6 +335,46 @@ namespace mir
                     mParticleEditor->CanRedoDraft());
                 mPrefabWorkspace.CloseMissingDocuments();
                 ApplyActions(actions);
+
+                std::optional<std::string> selectedMaterial;
+                const std::string &selectedContent = mEditor.ContentBrowserSelection();
+                if (IsMaterialContentPath(selectedContent))
+                    selectedMaterial = mContentBrowser.AssetLogicalPath(selectedContent);
+                if (!selectedMaterial)
+                    selectedMaterial = SelectedEntityMaterial(mWorld, mProject.mAssetIdRoot);
+                mMaterialEditor->Select(selectedMaterial);
+
+                MaterialEditorContext materialContext;
+                materialContext.mMaterials = &mRenderer.SurfaceMaterials();
+                materialContext.mCatalog = &mRenderer.Renderer().SurfaceMaterials();
+                materialContext.mReimportMaterial = [this](std::string_view logicalPath)
+                { return mImport.ReimportMaterial(logicalPath); };
+                materialContext.mMaterialCookRevision = [this](std::string_view logicalPath)
+                { return mImport.MaterialCookRevision(logicalPath); };
+                materialContext.mMaterialCookFailureRevision = [this](std::string_view logicalPath)
+                { return mImport.MaterialCookFailureRevision(logicalPath); };
+                materialContext.mLoadCooked = [this](std::string_view logicalPath, MaterialCookedView &view,
+                                                  std::string &error)
+                {
+                    SurfaceMaterialAsset asset;
+                    if (mAssets == nullptr ||
+                        !LoadTypedAsset(mAssets->Cache(), mResolver.ResolveFull(logicalPath), asset, error))
+                        return false;
+                    view.shaderType = asset.shaderType;
+                    view.parametersJson = asset.parametersJson;
+                    view.frontends = asset.frontends;
+                    view.resolution = asset.resolution;
+                    view.textures.clear();
+                    for (const SurfaceMaterialTexture &texture : asset.textures)
+                        view.textures.push_back({texture.role, texture.path,
+                            texture.colorSpace == TextureColorSpace::Srgb ? "srgb" : "linear"});
+                    return true;
+                };
+                materialContext.mSourceAssetRoot = mImport.SourceAssetRoot();
+                materialContext.mAssetIdRoot = mProject.mAssetIdRoot;
+                materialContext.mProjectKey = mProject.mDir;
+                mMaterialEditor->Draw(mEnableLayout ? &mShowMaterialEditor : nullptr,
+                    mEnableLayout && IsEditing(mWorld), mImport.View(), materialContext);
                 FeedViewport();
             });
     }
@@ -303,6 +394,12 @@ namespace mir
         mEditor.Shutdown();
         // stops a running cooker
         mImport.Shutdown();
+        mShaderHotReload.Shutdown();
+    }
+
+    bool EditorModule::HasUnsavedMaterialDrafts() const
+    {
+        return mMaterialEditor != nullptr && mMaterialEditor->HasUnsavedDrafts();
     }
 
     void EditorModule::FeedViewport()
@@ -338,6 +435,9 @@ namespace mir
 
     void EditorModule::ApplyActions(const EditorActions &actions)
     {
+        if (actions.mToggleMaterialEditor)
+            mShowMaterialEditor = !mShowMaterialEditor;
+
         RequestQueue &requests = mWorld.Resource<RequestQueue>();
         switch (actions.mScene)
         {
@@ -366,11 +466,12 @@ namespace mir
         bool assetActionAccepted = true;
         if (actions.mAssetImport.mKind == AssetImportActionKind::Remove)
         {
-            AssetId target = MakeAssetId(actions.mAssetImport.mModelPath);
+            AssetId target = mResolver.ResolveFull(actions.mAssetImport.mModelPath);
             for (const auto &model : mImport.View().mModels)
                 if (model.mPath == actions.mAssetImport.mModelPath && model.mAssetId != 0)
                     target = AssetId{ model.mAssetId };
-            assetActionAccepted = !IsModelReferenced(mWorld, mProject.mAssetIdRoot, target);
+            assetActionAccepted =
+                !IsModelReferenced(mWorld, mProject.mAssetIdRoot, target, actions.mAssetImport.mModelPath);
             if (!assetActionAccepted)
                 mImport.Reject(actions.mAssetImport.mModelPath,
                     "cannot remove this asset while a scene entity references it");
@@ -413,7 +514,8 @@ namespace mir
                     mContentBrowser.AssetLogicalPath(actions.mContentBrowser.mTargetPath);
                     logical.has_value())
                 {
-                    contentBrowserActionAccepted = !IsModelReferenced(mWorld, mProject.mAssetIdRoot, MakeAssetId(*logical));
+                    contentBrowserActionAccepted =
+                        !IsModelReferenced(mWorld, mProject.mAssetIdRoot, mResolver.ResolveFull(*logical), *logical);
                     if (!contentBrowserActionAccepted)
                         mContentBrowser.Reject(actions.mContentBrowser.mTargetPath,
                             "cannot delete this asset while a scene entity references it");
