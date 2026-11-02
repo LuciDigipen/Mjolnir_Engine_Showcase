@@ -296,6 +296,7 @@ namespace mir
         std::filesystem::path mPreferencesPath;
         EditorPreferences mPreferences;
         BackgroundImage mBackground;
+        EditorImage mMenuBarLogo;
         bool mSrgbOutput = true;
         // applied at the next DrawLayout, before any style is pushed
         bool mThemePending = false;
