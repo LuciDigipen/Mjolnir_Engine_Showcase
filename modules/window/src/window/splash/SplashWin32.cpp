@@ -51,6 +51,11 @@ namespace mir
         constexpr wchar_t kArtworkCredit[] = L"\"Wanderer\" by deadsoftie";
         constexpr wchar_t kArtworkCopyright[] = L"(c) deadsoftie";
 
+        constexpr wchar_t kIconResource[] = L"GLFW_ICON";
+
+        constexpr char kLogoFile[] = "mjolnir-logo-splash.png";
+        constexpr int kLogoSize = 280;
+
         // Bottom strip: status text + progress bar + version/copyright.
         // Scaled 2x alongside SplashScreen::kWidth/kHeight (640x360 -> 1280x720).
         constexpr int kStripHeight = 200;
@@ -112,7 +117,8 @@ namespace mir
             }
         };
 
-        HBITMAP LoadArtworkBitmap(const std::filesystem::path &path, int targetWidth, int targetHeight)
+        HBITMAP LoadBitmapScaled(const std::filesystem::path &path, int targetWidth, int targetHeight,
+                                 const WICPixelFormatGUID &pixelFormat)
         {
             IWICImagingFactory *factory = nullptr;
             if (FAILED(::CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
@@ -154,7 +160,7 @@ namespace mir
             hr = factory->CreateFormatConverter(&converter);
             if (SUCCEEDED(hr))
             {
-                hr = converter->Initialize(scaler, GUID_WICPixelFormat32bppBGR,
+                hr = converter->Initialize(scaler, pixelFormat,
                                             WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom);
             }
             scaler->Release();
@@ -198,6 +204,25 @@ namespace mir
             return bitmap;
         }
 
+        // A memory DC with a bitmap selected, for blitting from.
+        struct ScopedBitmapDc
+        {
+            HDC mDc;
+            HGDIOBJ mPrevBitmap;
+
+            ScopedBitmapDc(HDC target, HBITMAP bitmap)
+                : mDc(::CreateCompatibleDC(target)), mPrevBitmap(::SelectObject(mDc, bitmap))
+            {
+            }
+            ~ScopedBitmapDc()
+            {
+                ::SelectObject(mDc, mPrevBitmap);
+                ::DeleteDC(mDc);
+            }
+            ScopedBitmapDc(const ScopedBitmapDc &) = delete;
+            ScopedBitmapDc &operator=(const ScopedBitmapDc &) = delete;
+        };
+
         void DrawSplash(HWND hwnd, HDC dc, const PaintState &state)
         {
             RECT client{};
@@ -216,26 +241,41 @@ namespace mir
                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                 CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
             static HBITMAP artBitmap = [] {
-                HBITMAP bmp = LoadArtworkBitmap(BrandingPath(kArtworkFile),
-                                                 SplashScreen::kWidth, SplashScreen::kHeight - kStripHeight);
+                HBITMAP bmp = LoadBitmapScaled(BrandingPath(kArtworkFile),
+                                                SplashScreen::kWidth, SplashScreen::kHeight - kStripHeight,
+                                                GUID_WICPixelFormat32bppBGR);
                 if (bmp == nullptr)
                     MIR_LOG_WARN("Splash: could not load branding artwork, using placeholder fill");
+                return bmp;
+            }();
+            // Premultiplied, as AlphaBlend requires.
+            static HBITMAP logoBitmap = [] {
+                HBITMAP bmp = LoadBitmapScaled(BrandingPath(kLogoFile), kLogoSize, kLogoSize,
+                                                GUID_WICPixelFormat32bppPBGRA);
+                if (bmp == nullptr)
+                    MIR_LOG_WARN("Splash: could not load the engine logo");
                 return bmp;
             }();
 
             RECT artRect{0, 0, client.right, client.bottom - kStripHeight};
             if (artBitmap != nullptr)
             {
-                HDC memDc = ::CreateCompatibleDC(dc);
-                HGDIOBJ prevBitmap = ::SelectObject(memDc, artBitmap);
+                ScopedBitmapDc art(dc, artBitmap);
                 ::BitBlt(dc, artRect.left, artRect.top, artRect.right - artRect.left,
-                         artRect.bottom - artRect.top, memDc, 0, 0, SRCCOPY);
-                ::SelectObject(memDc, prevBitmap);
-                ::DeleteDC(memDc);
+                         artRect.bottom - artRect.top, art.mDc, 0, 0, SRCCOPY);
             }
             else
             {
                 ::FillRect(dc, &artRect, artBrush);
+            }
+
+            // Engine logo, centered in the artwork.
+            if (logoBitmap != nullptr)
+            {
+                ScopedBitmapDc logo(dc, logoBitmap);
+                const BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+                ::AlphaBlend(dc, (artRect.right - kLogoSize) / 2, (artRect.bottom - kLogoSize) / 2,
+                             kLogoSize, kLogoSize, logo.mDc, 0, 0, kLogoSize, kLogoSize, blend);
             }
 
             RECT stripRect{0, artRect.bottom, client.right, client.bottom};
@@ -243,13 +283,16 @@ namespace mir
 
             ::SetBkMode(dc, TRANSPARENT);
 
-            // Engine name, centered in the artwork placeholder.
+            // Engine name in the logo's place, so a missing logo still identifies the engine.
             HGDIOBJ prevFont = ::SelectObject(dc, nameFont);
-            ::SetTextColor(dc, RGB(230, 230, 235));
-            RECT nameRect = artRect;
-            const std::wstring engineName = Utf8ToWide(state.mEngineName);
-            ::DrawTextW(dc, engineName.c_str(), -1, &nameRect,
-                        DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            if (logoBitmap == nullptr)
+            {
+                ::SetTextColor(dc, RGB(230, 230, 235));
+                RECT nameRect = artRect;
+                const std::wstring engineName = Utf8ToWide(state.mEngineName);
+                ::DrawTextW(dc, engineName.c_str(), -1, &nameRect,
+                            DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            }
 
             // Status text, top-left of the bottom strip.
             ::SelectObject(dc, smallFont);
@@ -322,8 +365,14 @@ namespace mir
                 // skip the default erase so there is no white flash first.
                 return 1;
             case kUpdateMessage:
-                ::InvalidateRect(hwnd, nullptr, FALSE);
+            {
+                // Only the strip changes; repainting the artwork would make the logo flicker.
+                RECT stripRect{};
+                ::GetClientRect(hwnd, &stripRect);
+                stripRect.top = stripRect.bottom - kStripHeight;
+                ::InvalidateRect(hwnd, &stripRect, FALSE);
                 return 0;
+            }
             case WM_DESTROY:
                 // Ends this thread's GetMessageW loop in Close().
                 ::PostQuitMessage(0);
@@ -341,6 +390,7 @@ namespace mir
                 wc.cbSize = sizeof(wc);
                 wc.lpfnWndProc = &SplashWndProc;
                 wc.hInstance = ::GetModuleHandleW(nullptr);
+                wc.hIcon = ::LoadIconW(wc.hInstance, kIconResource);
                 wc.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
                 wc.lpszClassName = kClassName;
                 wc.hbrBackground = ::CreateSolidBrush(RGB(18, 18, 22));

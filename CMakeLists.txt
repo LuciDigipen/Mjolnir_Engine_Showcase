@@ -102,6 +102,12 @@ add_subdirectory(tools/TerrainTool)
 add_executable(MjolnirEngine WIN32)
 target_sources(MjolnirEngine PRIVATE main.cpp)
 engine_target_utf8(MjolnirEngine)
+if(ENGINE_PLATFORM STREQUAL "Windows")
+    target_sources(MjolnirEngine PRIVATE MjolnirEngine.rc)
+    set_source_files_properties(MjolnirEngine.rc PROPERTIES
+        INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
+        OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/branding/mjolnir.ico")
+endif()
 
 foreach(surface_shader default model unlit error)
     engine_add_shaders(MjolnirEngine
@@ -379,7 +385,12 @@ engine_cook_assets(MjolnirEngine
     OUT_DIR ${CMAKE_BINARY_DIR}/cooked_assets)
 
 engine_copy_fonts(MjolnirEngine SOURCE_DIR fonts)
-engine_copy_branding(MjolnirEngine SOURCE_DIR branding)
+# The master logo and the icon compiled into the exe aren't read at runtime
+set(branding_build_only mjolnir-logo.png mjolnir.ico)
+if(NOT MJOLNIR_WITH_EDITOR)
+    list(APPEND branding_build_only mjolnir-logo-menubar.png)
+endif()
+engine_copy_branding(MjolnirEngine SOURCE_DIR branding EXCLUDE ${branding_build_only})
 engine_write_player_info(MjolnirEngine)
 
 # A build without the editor is the player; `cmake --install` turns it into a template
