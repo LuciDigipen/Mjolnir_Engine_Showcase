@@ -386,11 +386,7 @@ engine_cook_assets(MjolnirEngine
 
 engine_copy_fonts(MjolnirEngine SOURCE_DIR fonts)
 # The master logo and the icon compiled into the exe aren't read at runtime
-set(branding_build_only mjolnir-logo.png mjolnir.ico)
-if(NOT MJOLNIR_WITH_EDITOR)
-    list(APPEND branding_build_only mjolnir-logo-menubar.png)
-endif()
-engine_copy_branding(MjolnirEngine SOURCE_DIR branding EXCLUDE ${branding_build_only})
+engine_copy_branding(MjolnirEngine SOURCE_DIR branding EXCLUDE mjolnir-logo.png mjolnir.ico)
 engine_write_player_info(MjolnirEngine)
 
 # A build without the editor is the player; `cmake --install` turns it into a template

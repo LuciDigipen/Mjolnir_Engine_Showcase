@@ -45,7 +45,6 @@ target_sources(engine_editor PRIVATE
     src/editor/CreateGameProject.cpp
     src/editor/Editor.cpp
     src/editor/EditorCamera.cpp
-    src/editor/EditorImage.cpp
     src/editor/EditorModule.cpp
     src/editor/EditorPreferences.cpp
     src/editor/EditorWidgets.cpp
