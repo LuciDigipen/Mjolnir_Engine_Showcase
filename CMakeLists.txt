@@ -29,6 +29,7 @@ include(cmake/Shaders.cmake)
 include(cmake/Assets.cmake)
 include(cmake/Fonts.cmake)
 include(cmake/Branding.cmake)
+include(cmake/Player.cmake)
 
 option(BUILD_TESTING "Build unit tests (per module, run via ctest)" ON)
 
@@ -386,6 +387,12 @@ engine_cook_assets(MjolnirEngine
 engine_copy_fonts(MjolnirEngine SOURCE_DIR fonts)
 # The master logo and the icon compiled into the exe aren't read at runtime
 engine_copy_branding(MjolnirEngine SOURCE_DIR branding EXCLUDE mjolnir-logo.png mjolnir.ico)
+engine_write_player_info(MjolnirEngine)
+
+# A build without the editor is the player; `cmake --install` turns it into a template
+if(NOT MJOLNIR_WITH_EDITOR)
+    engine_install_player(MjolnirEngine)
+endif()
 
 add_custom_target(MjolnirEngine_copy_games
     ${game_copy_commands}
