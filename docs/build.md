@@ -209,6 +209,45 @@ included: the engine version, commit, configuration, and whether the editor,
 large world, audio, DLSS and RTXGI were built in. Comparing the editor's copy
 with a template's tells whether the two came from the same engine.
 
+## Packaging a game
+
+`MjolnirBuild` puts one game and a player template together into a folder of
+its own:
+
+```
+cmake --build --preset windows-msvc-debug --target MjolnirBuild
+builds/windows-msvc-debug/tools/MjolnirBuild/MjolnirBuild.exe --game games/HelloWorld --player builds/player/release --out builds/player-out/HelloWorld --result builds/player-out/HelloWorld.json
+```
+
+It copies the template, then cooks the engine's `assets/` and the game's
+`assetsRoot` into `cooked/` under the same id roots the CMake cook uses, so the
+ids match the editor's. From the source tree, never a build folder's copy, it
+copies what the game reads raw: `game.json`, `project_settings.json`,
+`terrain_streaming.json`, the `sceneDir` scene, the assets folder without
+`prefabs/`, and the SoundBanks. The copied `game.json` is unchanged, so its
+`sceneDir` and `soundBanksRoot` must be relative paths inside the game folder.
+Each `*.terrain.json` gets the release that
+`TerrainTool package` finds current, which the last engine build published, so
+build the engine after editing a recipe. A game with no SoundBanks or terrain
+skips those steps.
+
+The build happens in `<out>.tmp` and replaces `<out>` only when every step
+succeeds, so a failed build leaves the previous one where it was; the previous
+build waits in `<out>.old` during the swap. `<out>`, `<out>.tmp` and
+`<out>.old` must lie outside the checkout or under its `builds/`, outside any
+CMake build folder and the template. `<out>` must be missing, empty, or a
+previous build, which holds `mjolnir_build.json`, and `<out>.tmp` and
+`<out>.old` must be missing or previous builds. A folder so deep that a file in
+it would pass 259 characters is refused too: the engine cannot open such a path.
+
+`--result` gets a JSON report, a failed build's included: the status, each
+step's status and time, warnings, the error, the asset count and the size. The
+exit code is 0 when built, 1 when the build failed, 2 for bad arguments. The
+editor finds the tool through `buildTool` in `asset_workspace.json`.
+
+The output has no `engine.json` yet, so start it with
+`MjolnirEngine.exe --game games/<name>`.
+
 ## Builds without proprietary SDKs and daily CI
 
 `MIR_WITH_AUDIO` defaults to `ON`. Local builds with audio require the Wwise
