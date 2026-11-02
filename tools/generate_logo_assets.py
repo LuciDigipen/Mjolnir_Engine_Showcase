@@ -15,8 +15,6 @@ SPLASH_SIZE = 512
 SPLASH_LOGO_FRACTION = 0.84
 SPLASH_SHADOW_COLOR = (8, 10, 14)
 SPLASH_SHADOW_OPACITY = 0.75
-# Close to the drawn height: the menu bar texture has no mips to minify with.
-MENU_BAR_HEIGHT = 36
 
 
 def white_with_alpha(alpha):
@@ -66,10 +64,6 @@ def main():
     cropped = alpha.crop(alpha.getbbox())
 
     make_splash_logo(cropped).save(BRANDING / "mjolnir-logo-splash.png")
-
-    menu_width = round(cropped.width * MENU_BAR_HEIGHT / cropped.height)
-    white_with_alpha(cropped.resize((menu_width, MENU_BAR_HEIGHT), Image.LANCZOS)).save(
-        BRANDING / "mjolnir-logo-menubar.png")
 
     frames = [make_icon_frame(cropped, size) for size in ICON_SIZES]
     frames[-1].save(BRANDING / "mjolnir.ico", format="ICO", append_images=frames[:-1],

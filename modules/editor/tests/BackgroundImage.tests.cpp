@@ -132,29 +132,6 @@ TEST_CASE("Uploaded background textures survive owner destruction until backend 
     CHECK(probe.mUserTextures == 0);
 }
 
-TEST_CASE("Editor images report their size only while loaded", "[editor][background]")
-{
-    const std::filesystem::path directory =
-        std::filesystem::temp_directory_path() / "mir_background_image_tests";
-    std::filesystem::create_directories(directory);
-    const std::filesystem::path imagePath = directory / "pixel.bmp";
-    WriteOnePixelBmp(imagePath);
-
-    ImGui::CreateContext();
-    {
-        mir::EditorImage image;
-        CHECK(image.Size() == glm::vec2(0.0f, 0.0f));
-
-        std::string error;
-        REQUIRE(image.Load(imagePath, error));
-        CHECK(image.Size() == glm::vec2(1.0f, 1.0f));
-
-        image.Clear();
-        CHECK(image.Size() == glm::vec2(0.0f, 0.0f));
-    }
-    ImGui::DestroyContext();
-}
-
 TEST_CASE("Never-uploaded background textures are safe when their owner dies after the context", "[editor][background]")
 {
     const std::filesystem::path directory =
