@@ -136,7 +136,7 @@ namespace mir
         mGameShell(Context(), mGameUI, mAssets, mResolver,
             GameShellSettings{ .mUIDemo = mDesc.mUIDemo, .mQuitStopsPlay = mDesc.mEnableEditorLayout }),
         mWindow(MakeWindowDesc(mDesc)),
-        mRenderer(Context(), mWindow.Get(), mAssets,
+        mRenderer(Context(), mWindow.Get(),
             RendererModuleSettings{ .mAppName = mDesc.mAppName,
                                     .mEnableValidation = mDesc.mEnableValidation,
                                     .mProjectSettingsPath = mProject.mProjectSettingsPath,

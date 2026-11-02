@@ -49,11 +49,10 @@ namespace mir
         void Reject(const std::string &model, std::string diagnostic);
 
         // Queues one authored .material.json for a finite cook batch and returns
-        // the request identity the apply ack must match.
-        uint64_t ReimportMaterial(std::string_view logicalPath);
-        // The last request identity whose cook output the runtime actually
-        // accepted. A finished cook that is still waiting for the renderer is
-        // not acknowledged.
+        // the request identity the apply ack must match. force re-cooks and
+        // re-applies unchanged content, for a retry after renderer publication failed.
+        uint64_t ReimportMaterial(std::string_view logicalPath, bool force = false);
+        // The last request included in a committed cooked catalog.
         std::optional<uint64_t> MaterialCookRevision(std::string_view logicalPath) const;
         std::optional<uint64_t> MaterialCookFailureRevision(std::string_view logicalPath) const;
         uint64_t ApplySequence() const { return mApplySequence; }

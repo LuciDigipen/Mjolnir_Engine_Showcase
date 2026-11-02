@@ -14,10 +14,12 @@
 #include <renderer/Material.h>
 #include <renderer/Mesh.h>
 #include <renderer/MeshLoadTracker.h>
+#include <renderer/SurfaceMaterialLibrary.h>
 #include <renderer/components/MeshBounds.h>
 
 #include <cstdint>
 #include <optional>
+#include <map>
 #include <span>
 #include <string>
 #include <string_view>
@@ -35,7 +37,8 @@ namespace mir
     {
     public:
         // assets may be null, and every mesh asset then fails to load.
-        MeshResolveSystem(IMeshResolveHost &renderer, AsyncAssetService *assets, const AssetResolver &resolver);
+        MeshResolveSystem(IMeshResolveHost &renderer, AsyncAssetService *assets, const AssetResolver &resolver,
+            SurfaceMaterialLibrary *materials = nullptr);
 
         // Call at ReleaseSceneResources
         void Reset();
@@ -46,6 +49,9 @@ namespace mir
         // Frees this system's uploads while other Worlds keep rendering.
         void ReleaseResources();
         void CommitReload();
+
+        // The shared library is owned by RendererModule and stops before the scheduler.
+        void DetachSurfaceMaterials() { mSurfaceMaterials = nullptr; mUseOwner = 0; }
 
         void OnStart(SystemContext &context) override;
         void OnUpdate(SystemContext &context) override;
@@ -66,11 +72,28 @@ namespace mir
             MeshLoadLease mLease;
         };
 
+        struct CachedMaterial
+        {
+            MaterialHandle mMaterial;
+            // A shared surface handle the library owns and may replace.
+            bool mBorrowed = false;
+            std::string mSurfacePath;
+            AssetId mSurfaceAsset;
+            SurfaceMaterialStatus mSurfaceStatus = SurfaceMaterialStatus::Ready;
+        };
+
         // the names an entity's handles were last resolved from
         struct ResolvedNames
         {
             std::string mMesh;
             std::string mShader;
+            // A new record, or a library generation that replaced or migrated the
+            // shared handles, must resolve the material even when the authored name
+            // is empty and therefore unchanged.
+            bool mMaterialInvalidated = true;
+            bool mSurface = false;
+            std::string mSurfacePath;
+            AssetId mSurfaceAsset;
         };
 
         // The handle and bounds an entity of this mesh shows now. The handle is null until the upload is queued
@@ -85,15 +108,22 @@ namespace mir
         MeshView ViewOf(const CachedMesh &cached) const;
         // A failure is as final as a ready mesh, the scene stops waiting for it
         static bool Failed(const CachedMesh &cached);
-        MaterialHandle ResolveMaterial(const std::string &shaderName);
+        SurfaceMaterialLookup LookupSurfaceMaterial(std::string_view reference) const;
+        MaterialHandle ResolveMaterial(const std::string &shaderName, ResolvedNames &resolved);
+        void PublishUses();
+        void RebindSurfaceMaterials();
 
         IMeshResolveHost &mRenderer;
         const AssetResolver &mResolver;
         AsyncAssetService *mAssets;
         std::shared_ptr<MeshLoadTracker> mTracker;
+        SurfaceMaterialLibrary *mSurfaceMaterials = nullptr;
+        uint64_t mUseOwner = 0;
+        uint64_t mLibraryGeneration = 0;
 
         std::unordered_map<std::string, CachedMesh> mMeshes;         // by meshName
-        std::unordered_map<std::string, MaterialHandle> mMaterials;  // by materialShader
+        std::unordered_map<std::string, CachedMaterial> mMaterials;  // by materialShader
         std::unordered_map<uint64_t, ResolvedNames> mResolved;       // by PackEntity
+        std::map<std::string, SurfaceMaterialUse> mUses;
     };
 }

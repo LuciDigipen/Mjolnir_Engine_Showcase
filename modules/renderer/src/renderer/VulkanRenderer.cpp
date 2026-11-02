@@ -733,6 +733,40 @@ namespace mir
         return mMaterialStore->UpdateRecord(handle, bytes);
     }
 
+    bool VulkanRenderer::PrepareMaterialRecords(std::span<const MaterialRecordUpdate> updates, std::string *error)
+    {
+        return mMaterialStore->PrepareRecordBatch(updates, error);
+    }
+
+    void VulkanRenderer::CommitMaterialRecords()
+    {
+        mMaterialStore->CommitRecordBatch();
+    }
+
+    void VulkanRenderer::DiscardMaterialRecords()
+    {
+        mMaterialStore->DiscardRecordBatch();
+    }
+
+    std::optional<MaterialRecordSnapshot> VulkanRenderer::MaterialRecord(MaterialHandle handle) const
+    {
+        if (mMaterialStore == nullptr)
+            return std::nullopt;
+
+        MaterialRecordSnapshot snapshot;
+        snapshot.mMaterial = handle;
+        std::span<const std::byte> bytes;
+        if (!mMaterialStore->AcceptedRecord(handle, snapshot.mLayout, bytes))
+            return std::nullopt;
+        snapshot.mBytes.assign(bytes.begin(), bytes.end());
+        return snapshot;
+    }
+
+    void VulkanRenderer::SetMaterialRecordValidator(MaterialRecordValidator validator)
+    {
+        mMaterialStore->SetRecordValidator(std::move(validator));
+    }
+
     uint32_t VulkanRenderer::MaterialRecordOffset(MaterialHandle handle) const
     {
         const vk::GpuMaterial *const material = mMaterialStore->FindMaterial(handle);
@@ -805,6 +839,8 @@ namespace mir
 
         // in-flight frames may still use them
         mDevice->WaitIdle();
+        // Drain retired handles before the stores can reuse scene slots.
+        CollectReleasedResources(UINT64_MAX);
 
         mMeshUploads->Clear(*mRayTracer);
         mRasterSurfaces->Shutdown();

@@ -10,8 +10,12 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <nlohmann/json.hpp>
+
 #include <cstring>
+#include <span>
 #include <utility>
+#include <vector>
 
 using namespace mir;
 
@@ -189,6 +193,168 @@ TEST_CASE("Material packing rejects wrong JSON types and out-of-range numbers", 
     CHECK(PackMaterialRecord(*layout,
         R"({"flag":false,"index":0,"count":2147483647,"value":3.5})")
               .has_value());
+}
+
+TEST_CASE("A shader-only schema change completes missing values and drops deleted keys",
+    "[renderer][material][reflection]")
+{
+    const auto layout = ParseMaterialLayout(kReflection);
+    REQUIRE(layout.has_value());
+
+    std::string error;
+    const auto completed = CompleteMaterialParameters(*layout,
+        R"({"amount": 1.5, "retired": [1.0, 2.0]})", R"({"color": [2.0, 3.0, 4.0], "texture": {"image": 9}})",
+        &error);
+    INFO(error);
+    REQUIRE(completed.has_value());
+
+    const nlohmann::json parameters = nlohmann::json::parse(*completed);
+    CHECK(parameters.size() == 3);
+    CHECK(parameters.at("amount") == 1.5f);
+    CHECK(parameters.at("color") == nlohmann::json::array({ 2.0f, 3.0f, 4.0f }));
+    CHECK(parameters.at("texture").at("image") == 9);
+    CHECK_FALSE(parameters.contains("retired"));
+
+    const auto bytes = PackMaterialRecord(*layout, *completed, &error);
+    INFO(error);
+    REQUIRE(bytes.has_value());
+    uint32_t image = 0;
+    std::memcpy(&image, bytes->data() + 28, sizeof(image));
+    CHECK(image == 9);
+}
+
+TEST_CASE("Completion falls back to the typed default when nothing authored a field",
+    "[renderer][material][reflection]")
+{
+    const auto layout = ParseMaterialLayout(kReflection);
+    REQUIRE(layout.has_value());
+
+    const auto completed = CompleteMaterialParameters(*layout, "{}", "{}");
+    REQUIRE(completed.has_value());
+    const nlohmann::json parameters = nlohmann::json::parse(*completed);
+    CHECK(parameters.at("amount") == 0.0f);
+    CHECK(parameters.at("color") == nlohmann::json::array({ 0.0f, 0.0f, 0.0f }));
+    CHECK(parameters.at("texture").at("image") == 0);
+    CHECK(PackMaterialRecord(*layout, *completed).has_value());
+
+    CHECK_FALSE(CompleteMaterialParameters(*layout, "[]", "{}").has_value());
+    CHECK_FALSE(CompleteMaterialParameters(*layout, "{}", "[]").has_value());
+}
+
+TEST_CASE("A packed record decodes back to parameters by field name", "[renderer][material][reflection]")
+{
+    const auto layout = ParseMaterialLayout(kReflection);
+    REQUIRE(layout.has_value());
+    const auto bytes = PackMaterialRecord(*layout,
+        R"({"amount": 1.5, "color": [2.0, 3.0, 4.0], "texture": {"image": 7}})", nullptr);
+    REQUIRE(bytes.has_value());
+
+    std::string error;
+    const auto parameters = MaterialRecordParameters(*layout, *bytes, &error);
+    INFO(error);
+    REQUIRE(parameters.has_value());
+    CHECK(nlohmann::json::parse(*parameters) ==
+          nlohmann::json::parse(R"({"amount": 1.5, "color": [2.0, 3.0, 4.0], "texture": {"image": 7}})"));
+
+    CHECK_FALSE(MaterialRecordParameters(*layout, std::span<const std::byte>(*bytes).first(4)).has_value());
+}
+
+TEST_CASE("Record decoding rejects storage that disagrees with the field kind", "[renderer][material][reflection]")
+{
+    std::vector<std::byte> record(16);
+    std::string error;
+
+    MaterialLayout narrow;
+    narrow.fields.push_back({.name = "tail", .kind = MaterialFieldKind::Float4, .offset = 12, .size = 4});
+    narrow.size = 16;
+    CHECK_FALSE(MaterialRecordParameters(narrow, record, &error).has_value());
+    CHECK(error.find("does not fit the record") != std::string::npos);
+
+    MaterialLayout wideTexture;
+    wideTexture.fields.push_back({.name = "albedo", .kind = MaterialFieldKind::TextureRef, .offset = 0, .size = 12});
+    wideTexture.size = 16;
+    CHECK_FALSE(MaterialRecordParameters(wideTexture, record, &error).has_value());
+
+    MaterialLayout emptyLayout;
+    emptyLayout.size = 16;
+    CHECK_FALSE(MaterialRecordParameters(emptyLayout, std::span<const std::byte>{}, &error).has_value());
+
+    MaterialLayout cover;
+    cover.fields.push_back({.name = "amount", .kind = MaterialFieldKind::Float, .offset = 0, .size = 4});
+    cover.size = 16;
+    CHECK_FALSE(MaterialRecordParameters(cover, std::span<const std::byte>(record).first(8), &error).has_value());
+    CHECK(MaterialRecordParameters(cover, record, &error).has_value());
+}
+
+TEST_CASE("A peer record donates numeric values but not its texture rows", "[renderer][material][reflection]")
+{
+    MaterialLayout mesh;
+    mesh.fields = {
+        {.name = "amount", .kind = MaterialFieldKind::Float, .offset = 0, .size = 4},
+        {.name = "albedo", .kind = MaterialFieldKind::TextureRef, .offset = 8, .size = 8},
+        {.name = "color", .kind = MaterialFieldKind::Float3, .offset = 16, .size = 12},
+    };
+    mesh.size = 32;
+    const char *ownJson = R"({"amount": 0, "albedo": {"image": 2, "sampler": 1}, "color": [0, 0, 0]})";
+    const auto own = PackMaterialRecord(mesh, ownJson);
+    REQUIRE(own);
+
+    MaterialLayout terrain;
+    terrain.fields = {
+        {.name = "color", .kind = MaterialFieldKind::Float3, .offset = 0, .size = 12},
+        {.name = "amount", .kind = MaterialFieldKind::Float, .offset = 16, .size = 4},
+        {.name = "albedo", .kind = MaterialFieldKind::TextureRef, .offset = 20, .size = 4},
+        {.name = "tileSizeMeters", .kind = MaterialFieldKind::Float, .offset = 24, .size = 4},
+    };
+    terrain.size = 32;
+    const auto peer = PackMaterialRecord(terrain,
+        R"({"color": [1, 0.5, 0.25], "amount": 3, "albedo": {"image": 9}, "tileSizeMeters": 2})");
+    REQUIRE(peer);
+
+    std::string error;
+    const auto merged = MergePeerNumericParameters(mesh, ownJson, terrain, *peer, &error);
+    INFO(error);
+    REQUIRE(merged);
+    const nlohmann::json values = nlohmann::json::parse(*merged);
+    CHECK(values.at("amount").get<double>() == 3.0);
+    CHECK(values.at("color") == nlohmann::json::array({ 1.0f, 0.5f, 0.25f }));
+    CHECK(values.at("albedo").at("image") == 2);
+    CHECK(values.at("albedo").at("sampler") == 1);
+    CHECK_FALSE(values.contains("tileSizeMeters"));
+
+    MaterialLayout retyped = terrain;
+    retyped.fields[1].kind = MaterialFieldKind::Uint;
+    const auto retypedPeer = PackMaterialRecord(retyped,
+        R"({"color": [1, 0.5, 0.25], "amount": 3, "albedo": {"image": 9}, "tileSizeMeters": 2})");
+    REQUIRE(retypedPeer);
+    const auto kept = MergePeerNumericParameters(mesh, ownJson, retyped, *retypedPeer, &error);
+    REQUIRE(kept);
+    const nlohmann::json keptValues = nlohmann::json::parse(*kept);
+    CHECK(keptValues.at("amount").get<double>() == 0.0);
+    CHECK(keptValues.at("color") == nlohmann::json::array({ 1.0f, 0.5f, 0.25f }));
+    CHECK_FALSE(MergePeerNumericParameters(mesh, ownJson, terrain,
+                    std::span<const std::byte>(*peer).first(8), &error)
+                    .has_value());
+}
+TEST_CASE("A shared overlay keeps only the fields one frontend reflects", "[renderer][material][reflection]")
+{
+    const auto layout = ParseMaterialLayout(kReflection);
+    REQUIRE(layout.has_value());
+
+    std::optional<std::string> filtered = FilterMaterialParameterOverlay(*layout,
+        R"({"amount": 2.5, "tileSizeMeters": 4, "color": [1, 2, 3]})");
+    REQUIRE(filtered);
+    nlohmann::json values = nlohmann::json::parse(*filtered);
+    CHECK(values.size() == 2);
+    CHECK(values.at("amount") == 2.5f);
+    CHECK_FALSE(values.contains("tileSizeMeters"));
+
+    const auto merged = OverlayMaterialParameters(*layout, R"({"amount": 1, "color": [0, 0, 0], "texture": {"image": 4}})",
+        *filtered);
+    REQUIRE(merged);
+    CHECK(nlohmann::json::parse(*merged).at("amount") == 2.5f);
+    CHECK(FilterMaterialParameterOverlay(*layout, "{}").value() == "{}");
+    CHECK_FALSE(FilterMaterialParameterOverlay(*layout, "[]").has_value());
 }
 
 TEST_CASE("Parameter overlays keep resolved texture rows", "[renderer][material][reflection]")

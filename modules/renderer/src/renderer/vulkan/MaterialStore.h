@@ -99,6 +99,17 @@ namespace mir::vk
         bool DestroyMaterial(MaterialHandle handle);
         // Raw record bytes for this material; published at the next frame.
         bool UpdateRecord(MaterialHandle handle, std::span<const std::byte> bytes);
+        // All-or-none writes: Prepare validates every update and copies its bytes
+        // off to the side; Commit moves the prepared bytes in without allocating,
+        // so no frontend is left changed by a later failure.
+        bool PrepareRecordBatch(std::span<const MaterialRecordUpdate> updates, std::string *error = nullptr);
+        void CommitRecordBatch();
+        void DiscardRecordBatch();
+        bool RecordBatchPrepared() const { return mRecordBatchPrepared; }
+        // The generation-checked accepted layout of a live surface material and
+        // the authoritative bytes a draw reads. The store keeps the handle.
+        bool AcceptedRecord(MaterialHandle handle, MaterialLayout &layout, std::span<const std::byte> &bytes) const;
+        void SetRecordValidator(MaterialRecordValidator validator);
         // After BeginFrame's wait, before recording: publishes staged record bytes,
         // then refreshes this frame slot's record-reference rows.
         void PublishRecords(uint64_t completedFrame, uint64_t frame, uint32_t frameIndex);
@@ -181,6 +192,7 @@ namespace mir::vk
         Device *mDevice = nullptr;
         MaterialTable *mTable = nullptr;
         SurfaceMaterialCatalog mSurfaceMaterials;
+        MaterialRecordValidator mRecordValidator;
         VkFormat mColorFormat = VK_FORMAT_UNDEFINED;
 
         VkPipelineLayout mPipelineLayout = VK_NULL_HANDLE;
@@ -207,7 +219,16 @@ namespace mir::vk
         MaterialHandle mDefaultMaterial;
         MaterialHandle mErrorMaterial;
 
+        struct PreparedRecord
+        {
+            MaterialHandle mHandle;
+            MaterialRecordId mRecordId;
+            std::vector<std::byte> mBytes;
+        };
+
         std::vector<ReloadEntry> mReloadEntries;
+        std::vector<PreparedRecord> mPreparedRecords;
+        bool mRecordBatchPrepared = false;
         SurfaceMaterialCatalog mReloadCatalog;
         bool mReloadCatalogStaged = false;
         VkPipeline mReloadSkyPipeline = VK_NULL_HANDLE;

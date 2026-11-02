@@ -17,7 +17,6 @@
 #include <renderer/ViewDrawSource.h>
 #include <renderer/components/MeshRenderer.h>
 
-#include <assets/AssetsModule.h>
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/World.h>
 #include <core/log/Assert.h>
@@ -27,7 +26,7 @@
 
 namespace mir
 {
-    RendererModule::RendererModule(ModuleContext context, const ISurfaceProvider &surface, AssetsModule &assets,
+    RendererModule::RendererModule(ModuleContext context, const ISurfaceProvider &surface,
         const RendererModuleSettings &settings)
     {
         if (!mRenderer.Initialize(
@@ -43,7 +42,15 @@ namespace mir
         RegisterRendererComponents();
         RegisterRendererEntityTypes();
         RegisterRendererPostEffects();
-        mSurfaceMaterials.Bind(assets.Cache(), mRenderer);
+        mSurfaceMaterials.Bind(settings.mAssetService, mRenderer);
+        // A committed shader generation may have migrated every surface
+        // record, so the library's cached metadata refreshes without a panel.
+        mRenderer.SetShaderReloadListener([this] { mSurfaceMaterials.NotifyShaderCommit(); });
+        mRenderer.SetMaterialRecordValidator([this](std::string_view frontend, const MaterialLayout &layout,
+            std::span<const std::byte> bytes, std::string &error)
+            {
+                return mSurfaceMaterials.ValidateRecord(frontend, layout, bytes, error);
+            });
 
         context.world.EmplaceResource<ViewDrawSources>();
         // physics fills it while a view shows colliders
@@ -62,7 +69,7 @@ namespace mir
         // a WorldTransform reader
         mMeshes = &context.scheduler.AddSystem<MeshResolveSystem>(SystemPhase::LateUpdate,
             SystemOrder{SystemOrder::kNormal}, mRenderer, settings.mAssetService,
-            *settings.mResolver);
+            *settings.mResolver, &mSurfaceMaterials);
         mActiveCamera = &context.scheduler.AddSystem<ActiveCameraSystem>(SystemPhase::Render,
             SystemOrder{SystemOrder::kEarly});
         mRenderSystem = &context.scheduler.AddSystem<RenderSystem>(SystemPhase::Render,
@@ -77,7 +84,10 @@ namespace mir
         mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &)
             {
                 mMeshes->ReleaseResources();
-                mSurfaceMaterials.Reset();
+                mSurfaceMaterials.SetActiveMaterials({});
+                // Independent Prefab Worlds keep their shared handles and preview values.
+                if (mSurfaceMaterials.ActiveMaterials().empty())
+                    mSurfaceMaterials.Reset();
                 mRenderer.ResetHistory();
             });
 
@@ -96,20 +106,15 @@ namespace mir
             });
         mPlayEnd = context.scheduler.AddStage(Stage::PlayEnd, [this](SystemContext &) { mActiveCamera->Reset(); });
 
-        mReloadPrepare = context.scheduler.AddStage(Stage::ReloadPrepare, [this, &assets](SystemContext &)
+        mFrameBegin = context.scheduler.AddFrameSlot(FrameSlot::FrameBegin, [this](SystemContext &)
             {
-                std::string error;
-                if (!mSurfaceMaterials.PrepareReload(assets.Candidate(), mRenderer, &error))
-                    throw std::runtime_error(error);
+                mSurfaceMaterials.Advance();
             });
-        mReloadAbort = context.scheduler.AddStage(Stage::ReloadAbort, [this](SystemContext &)
-            {
-                mSurfaceMaterials.AbortReload();
-            });
-        mReloadCommit = context.scheduler.AddStage(Stage::ReloadCommit, [this, &assets](SystemContext &)
+
+        mReloadCommit = context.scheduler.AddStage(Stage::ReloadCommit, [this](SystemContext &)
             {
                 mMeshes->CommitReload();
-                mSurfaceMaterials.CommitReload(assets.Cache());
+                mSurfaceMaterials.CommitReload();
             });
     }
 
@@ -118,12 +123,17 @@ namespace mir
     {
         mReloadCommit.Reset();
         mPlayEnd.Reset();
-        mReloadAbort.Reset();
-        mReloadPrepare.Reset();
+        mFrameBegin.Reset();
         mPlayBegin.Reset();
         mSceneLoad.Reset();
         mSceneUnload.Reset();
         mHooks.Reset();
+        // The scheduler outlives this module, so the resolver must stop
+        // reaching the library before the library object goes away.
+        if (mMeshes != nullptr)
+            mMeshes->DetachSurfaceMaterials();
+        mRenderer.SetShaderReloadListener({});
+        mRenderer.SetMaterialRecordValidator({});
         mRenderer.Shutdown();
     }
 }

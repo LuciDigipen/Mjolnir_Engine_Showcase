@@ -121,9 +121,19 @@ their geometry on the spot. Entities also get a `MeshRenderer` outside
 a load: from Duplicate, Paste, Add Component and Inspector edits. A load-time pass
 would leave their handles stale or null, so this runs every frame. It remembers
 the `meshName` and `materialShader` each entity was last resolved from, keyed by
-`PackEntity`. It resolves again only when one of them changes. Handles and
-`MeshBounds` come from caches keyed by name, so renderers naming the same mesh
-share one upload.
+`PackEntity`. It resolves again when one of them changes, and a library
+generation explicitly invalidates every cached material because the authored
+name may be empty and therefore unchanged. A new or forgotten resolution record
+starts invalid too, so a `CommitReload` that drops the cache cannot leave an
+empty authored name pointing at an old runtime handle. Handles and `MeshBounds` come from
+caches keyed by name, so renderers naming the same mesh share one upload.
+
+A `materialShader` that ends in `.material.json` names that exact recipe, either
+assets-root-relative or as its canonical path, resolved through `AssetResolver`
+and the cooked manifest. Any other value is a shader stem and stays compatible
+with the legacy raw shader path when no mesh registration uses it. A stem shared
+by more than one mesh recipe is ambiguous and resolves to the error material;
+it never takes the first registration or falls through to `CreateMaterial`.
 
 A mesh asset loads in the background. The first entity to use a name asks
 `AsyncAssetService` to read and decode it on a worker, where `DecodeMeshAsset`
@@ -363,16 +373,39 @@ reflection, never from a C++ field mirror. RT allocates a primary/shadow SBT
 record pair per catalog entry; a surface instance's even base offset is
 `2 + 2*i`, so primary and shadow rays both stay in bounds. Terrain registrations
 are compiled through `SurfaceTerrainForward.slang` and `SurfaceTerrainRt.slang`;
-`SurfaceMaterialLibrary` stages a complete candidate generation in
-`ReloadPrepare`, swaps it in `ReloadCommit`, and retires the old
-materials/textures through `ReleaseModelResources`. Its
-`CurrentSchema` re-reads the registration reflection independently of any
-watcher. `PreviewParameters` stages a schema replacement as a candidate,
-overlays dirty numeric values on the accepted parameters, runs the consumer and
-record validators, updates the candidate record through `UpdateMaterialRecord`,
-and only then publishes it and bumps generation; a failure destroys the
-candidate and keeps the previous material, record and preview. Numeric edits
-create no pipeline. See `docs/material-pipeline.md`.
+`SurfaceMaterialLibrary` requests the cooked payload and its textures through
+`AsyncAssetService` and the shared `TextureLoadTracker`. `Advance` publishes only
+validated records, keeps a live material while its replacement is pending or
+failed, and publishes every ready frontend of one asset together. `CommitReload`
+starts asynchronous replacements after the catalog commits. Replaced handles and
+their texture claims are retired only after every active mesh and terrain owner
+acknowledges the replacing generation; a failed replacement is remembered until
+the next reload. `Publication` reports one asset's actual async outcome
+(`Inactive`, `Pending`, `Published` or `Failed` with its diagnostic) and the
+content identity it accepted. It is independent of `Resolve`'s last-good draw
+binding and of the global generation, so an unrelated asset or a shader commit
+cannot make a pending or failed replacement look applied. Its `CurrentSchema`
+re-reads the registration reflection independently of any watcher.
+`PreviewParameters` adopts the committed
+generation's layout and
+authoritative bytes through `VulkanRenderer::MaterialRecord` (a
+generation-checked `MaterialRecordSnapshot`), overlays dirty numeric values on
+the adopted parameters of every valid frontend of that asset, runs the shared
+numeric bounds plus the frontend's own consumer validator, prepares the whole
+batch through `PrepareMaterialRecords` and commits it without allocating; every
+frontend is staged before the first accepted mutation, so a failure keeps all
+previous bytes, metadata and the generation. `ValidateRecord` applies the finite,
+macro and parallax bounds to mesh and terrain alike and adds the terrain UV
+phase rule only for terrain, and ValidateRecordForPublication adds the caller's record callback once per proposed record. Mesh owners publish only the assets their live renderers still draw. Numeric and schema previews create no
+pipeline and never destroy the live handle. A committed shader generation calls
+the allocation-free `NotifyShaderCommit`, so cached metadata and generation
+refresh the next time the library is used, with no panel open.
+`MeshResolveSystem` borrows the library handle for an explicit `.material.json`
+asset path or a unique `mesh` stem, and re-resolves with an explicit
+invalidation when the library generation moves, so a cook, preview or shader
+commit rebinds the mesh draws without a second pipeline. A shared stem fails
+with an actionable error instead of selecting one recipe. See
+`docs/material-pipeline.md`.
 
 **Shader hot reload is transactional.** `ShaderLibrary` registers every live
 callsite (MaterialStore, RayTracer, ShadowMaps and the five post-process
@@ -384,6 +417,12 @@ pipelines and every post-process candidate off to the side, then takes one
 device idle and swaps them only after all owners succeeded. Any failure
 disposes candidates and keeps the previous generation. Surface records migrate
 by name from current record bytes; a changed field type rejects the batch.
+`RendererModule` connects the surface library's consumer validator to
+`MaterialStore` through `MaterialRecordValidator` and its commit notification to
+`SetShaderReloadListener`. Migrated candidate records
+and numeric updates validate their packed values before publication, so a
+new shader field cannot bypass terrain period constraints. A rejected candidate
+keeps the live records and pipelines.
 `ShaderGenerationStore` publishes complete immutable SPV/reflection/depfile/catalog
 generations behind an atomic pointer. The build-only `ShaderPublisher` and editor
 watcher validate precompile content snapshots and parent lineage under the same
@@ -1176,9 +1215,12 @@ workers and a shared fake, `FakeMeshUploader` for the uploads and
 each load, and `MeshResolveSystem` for what an entity sees, including renames
 during a load, bounds appearing on Ready, shared meshes, removal, and the first
 cook of a game that started without a manifest reaching a scene and a preview.
-`CookedMeshDir.h` writes the cooked blobs they read. `TextureLoadTracker` tests
-use `FakeTextureUploader` to control staging, completion, cancellation and
-independent claims across reloads. `MeshStreaming` also checks texture row-band
+`CookedMeshDir.h` writes the cooked blobs they read. `SurfaceMaterialAsync`
+covers pending/failed loads, per-asset publication and unchanged-content reuse,
+replacement failure with the last-good binding, explicit recipe identity for
+shared stems, ambiguous-stem failure and clearing a material name during a
+library replacement. `TextureLoadTracker` tests use `FakeTextureUploader` to
+control staging, completion, cancellation and independent claims across reloads. `MeshStreaming` also checks texture row-band
 admission, fairness, ring bounds, CPU mip filtering and supplied mip preservation.
 The unit tests do not reach
 `MeshUploader::Record`, `Forget` and `Clear`, where the renderer drops the data

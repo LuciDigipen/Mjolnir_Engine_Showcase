@@ -10,6 +10,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -45,6 +46,9 @@ namespace mir
         uint32_t size = 0;
     };
 
+    using MaterialRecordValidator = std::function<bool(std::string_view frontend,
+        const MaterialLayout &, std::span<const std::byte>, std::string &)>;
+
     // Reads the typed StructuredBuffer witness's resultType.fields. A raw
     // ByteAddressBuffer.Load<M> reflection has no fields, so callers must
     // compile SurfaceLayout.slang and pass that JSON.
@@ -57,6 +61,38 @@ namespace mir
     // Packs a .material.json "parameters" object by reflected field name.
     std::optional<std::vector<std::byte>> PackMaterialRecord(const MaterialLayout &layout,
         std::string_view parametersJson, std::string *error = nullptr);
+
+    // Resolves a parameters object against one reflected layout: a field the
+    // object already holds keeps its value, a field it lacks takes the catalog's
+    // authored value and then the typed default, and a key the layout no longer
+    // declares is dropped so a shader-only field deletion cannot fail packing.
+    std::optional<std::string> CompleteMaterialParameters(const MaterialLayout &layout,
+        std::string_view parametersJson, std::string_view catalogDefaultsJson,
+        std::string *error = nullptr);
+
+    // The same defaults without projecting away authored keys. A viewer keeps
+    // reporting keys the layout no longer declares while the packed record uses
+    // CompleteMaterialParameters.
+    std::optional<std::string> MergeMaterialParameterDefaults(const MaterialLayout &layout,
+        std::string_view parametersJson, std::string_view catalogDefaultsJson,
+        std::string *error = nullptr);
+
+    // The parameters object a packed record holds for its layout, TextureRef
+    // image/sampler rows included. Nullopt for a record that does not cover it.
+    std::optional<std::string> MaterialRecordParameters(const MaterialLayout &layout,
+        std::span<const std::byte> record, std::string *error = nullptr);
+
+    // Keeps only the overlay keys this layout declares, so one asset's fronts
+    // each receive the fields they reflect.
+    std::optional<std::string> FilterMaterialParameterOverlay(const MaterialLayout &layout,
+        std::string_view overlayJson, std::string *error = nullptr);
+
+    // Copies same-name, same-kind, same-size numeric values from a peer record
+    // into one parameters object of this layout. TextureRef rows and fields the
+    // peer lacks keep their own values.
+    std::optional<std::string> MergePeerNumericParameters(const MaterialLayout &layout,
+        std::string_view parametersJson, const MaterialLayout &peerLayout,
+        std::span<const std::byte> peerRecord, std::string *error = nullptr);
 
     // Overlays reflected numeric fields from a second parameters object onto
     // one already resolved by CreateFromAsset. TextureRef rows and fields the

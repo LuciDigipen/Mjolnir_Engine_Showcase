@@ -197,7 +197,8 @@ namespace mir
         mEditor.SetAuthoringBackend(&mPrefabAuthoring);
         mEditor.SetAuthoredEntities(&mPrefabAuthoring);
         mMaterialEditor = std::make_unique<MaterialEditor>();
-        mPrefabWorkspace.BindResolveSystems(&renderer.Renderer(), assetService, resolver, std::move(models));
+        mPrefabWorkspace.BindResolveSystems(&renderer.Renderer(), &renderer.SurfaceMaterials(), assetService,
+            resolver, std::move(models));
         context.scheduler.AddSystem<PrefabPreviewSystem>(SystemPhase::LateUpdate,
             SystemOrder{SystemOrder::kNormal}, mPrefabWorkspace,
             prefab.Coordinator(), mEditor, [this] { RefreshPrefabHistory(); });
@@ -336,8 +337,8 @@ namespace mir
                 MaterialEditorContext materialContext;
                 materialContext.mMaterials = &mRenderer.SurfaceMaterials();
                 materialContext.mCatalog = &mRenderer.Renderer().SurfaceMaterials();
-                materialContext.mReimportMaterial = [this](std::string_view logicalPath)
-                { return mImport.ReimportMaterial(logicalPath); };
+                materialContext.mReimportMaterial = [this](std::string_view logicalPath, bool force)
+                { return mImport.ReimportMaterial(logicalPath, force); };
                 materialContext.mMaterialCookRevision = [this](std::string_view logicalPath)
                 { return mImport.MaterialCookRevision(logicalPath); };
                 materialContext.mMaterialCookFailureRevision = [this](std::string_view logicalPath)

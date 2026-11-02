@@ -22,7 +22,6 @@
 #include <core/fs/Paths.h>
 #include <core/fs/FileIO.h>
 
-#include <nlohmann/json.hpp>
 #include <core/log/Log.h>
 
 #include <vk_mem_alloc.h>
@@ -44,61 +43,18 @@ namespace mir::vk
         constexpr std::string_view kModelShaderName = "model";
         constexpr uint32_t kRecordRefBinding = 2;
 
-        nlohmann::json FieldDefault(MaterialFieldKind kind, uint32_t size)
-        {
-            switch (kind)
-            {
-            case MaterialFieldKind::Float: return 0.0f;
-            case MaterialFieldKind::Float2: return nlohmann::json::array({ 0.0f, 0.0f });
-            case MaterialFieldKind::Float3: return nlohmann::json::array({ 0.0f, 0.0f, 0.0f });
-            case MaterialFieldKind::Float4: return nlohmann::json::array({ 0.0f, 0.0f, 0.0f, 0.0f });
-            case MaterialFieldKind::Uint:
-            case MaterialFieldKind::Int: return 0;
-            case MaterialFieldKind::Bool: return false;
-            case MaterialFieldKind::TextureRef:
-            {
-                nlohmann::json value{ { "image", 0 } };
-                if (size == 8)
-                    value["sampler"] = 0;
-                return value;
-            }
-            }
-            return nullptr;
-        }
-
         std::optional<std::vector<std::byte>> BuildMigrationDefaults(const MaterialLayout &candidateLayout,
-            const MaterialLayout &acceptedLayout, bool hasAccepted, std::string_view parametersJson,
-            std::string *error)
+            std::string_view parametersJson, std::string *error)
         {
-            nlohmann::json parameters;
-            try
-            {
-                parameters = nlohmann::json::parse(parametersJson);
-            }
-            catch (const std::exception &)
-            {
-                parameters = nlohmann::json::object();
-            }
-            if (!parameters.is_object())
-                parameters = nlohmann::json::object();
-
-            nlohmann::json defaults = nlohmann::json::object();
-            for (const MaterialFieldLayout &field : candidateLayout.fields)
-            {
-                bool existed = false;
-                if (hasAccepted)
-                {
-                    for (const MaterialFieldLayout &accepted : acceptedLayout.fields)
-                        if (accepted.name == field.name)
-                            existed = true;
-                }
-                if (!existed && parameters.contains(field.name))
-                    defaults[field.name] = parameters.at(field.name);
-                else
-                    defaults[field.name] = FieldDefault(field.kind, field.size);
-            }
-            return PackMaterialRecord(candidateLayout, defaults.dump(), error);
+            // A field the accepted layout lacks takes the catalog's authored
+            // value, then the typed default; names it already holds are ignored.
+            const std::optional<std::string> defaults =
+                CompleteMaterialParameters(candidateLayout, "{}", parametersJson, error);
+            if (!defaults)
+                return std::nullopt;
+            return PackMaterialRecord(candidateLayout, *defaults, error);
         }
+
         std::optional<MaterialLayout> LoadLayout(const SurfaceMaterialRegistration &registration,
             std::string *error)
         {
@@ -871,11 +827,113 @@ namespace mir::vk
         GpuMaterial *const material = const_cast<GpuMaterial *>(FindMaterial(handle));
         if (material == nullptr || mTable == nullptr || material->mRecordId.IsNull())
             return false;
+        if (material->mSurfaceMaterial && mRecordValidator)
+        {
+            const auto *registration = mSurfaceMaterials.Find(material->mDesc.shaderName, material->mDesc.surfaceAsset);
+            std::string error;
+            if (registration == nullptr || !material->mHasAcceptedLayout ||
+                !mRecordValidator(registration->frontend, material->mAcceptedLayout, bytes, error))
+                return false;
+        }
+        std::vector<std::byte> current(bytes.begin(), bytes.end());
         if (!mTable->UpdateRecord(material->mRecordId, bytes))
             return false;
 
-        material->mCurrentRecordBytes.assign(bytes.begin(), bytes.end());
+        material->mCurrentRecordBytes = std::move(current);
         return true;
+    }
+
+    bool MaterialStore::AcceptedRecord(MaterialHandle handle, MaterialLayout &layout,
+        std::span<const std::byte> &bytes) const
+    {
+        const GpuMaterial *const material = FindMaterial(handle);
+        if (material == nullptr || !material->mSurfaceMaterial || !material->mHasAcceptedLayout ||
+            material->mCurrentRecordBytes.empty())
+            return false;
+        layout = material->mAcceptedLayout;
+        bytes = material->mCurrentRecordBytes;
+        return true;
+    }
+
+    bool MaterialStore::PrepareRecordBatch(std::span<const MaterialRecordUpdate> updates, std::string *error)
+    {
+        DiscardRecordBatch();
+        if (mTable == nullptr)
+        {
+            if (error != nullptr)
+                *error = "the shared material tables are unavailable";
+            return false;
+        }
+
+        mPreparedRecords.reserve(updates.size());
+        for (const MaterialRecordUpdate &update : updates)
+        {
+            const GpuMaterial *const material = FindMaterial(update.mMaterial);
+            if (material == nullptr || material->mRecordId.IsNull() || !material->mSurfaceMaterial ||
+                !material->mHasAcceptedLayout)
+            {
+                if (error != nullptr)
+                    *error = "a material record update names a material that has no shared record";
+                DiscardRecordBatch();
+                return false;
+            }
+            if (update.mBytes.size() != material->mAcceptedLayout.size)
+            {
+                if (error != nullptr)
+                    *error = "a material record update does not cover its accepted layout";
+                DiscardRecordBatch();
+                return false;
+            }
+            if (mRecordValidator)
+            {
+                const SurfaceMaterialRegistration *const registration =
+                    mSurfaceMaterials.Find(material->mDesc.shaderName, material->mDesc.surfaceAsset);
+                std::string validationError;
+                if (registration == nullptr ||
+                    !mRecordValidator(registration->frontend, material->mAcceptedLayout, update.mBytes, validationError))
+                {
+                    if (error != nullptr)
+                        *error = registration == nullptr ? "a material record update lost its surface registration" :
+                            std::move(validationError);
+                    DiscardRecordBatch();
+                    return false;
+                }
+            }
+            mPreparedRecords.push_back(PreparedRecord{ .mHandle = update.mMaterial,
+                .mRecordId = material->mRecordId,
+                .mBytes = std::vector<std::byte>(update.mBytes.begin(), update.mBytes.end()) });
+        }
+        mRecordBatchPrepared = true;
+        return true;
+    }
+
+    void MaterialStore::CommitRecordBatch()
+    {
+        if (!mRecordBatchPrepared)
+            return;
+
+        for (PreparedRecord &prepared : mPreparedRecords)
+        {
+            const GpuMaterial *const found = FindMaterial(prepared.mHandle);
+            if (found == nullptr || found->mRecordId != prepared.mRecordId)
+                continue;
+            mTable->UpdateRecord(prepared.mRecordId, prepared.mBytes);
+            GpuMaterial *const material = const_cast<GpuMaterial *>(found);
+            material->mCurrentRecordBytes = std::move(prepared.mBytes);
+        }
+        mPreparedRecords.clear();
+        mRecordBatchPrepared = false;
+    }
+
+    void MaterialStore::DiscardRecordBatch()
+    {
+        mPreparedRecords.clear();
+        mRecordBatchPrepared = false;
+    }
+
+    void MaterialStore::SetRecordValidator(MaterialRecordValidator validator)
+    {
+        mRecordValidator = std::move(validator);
     }
 
     void MaterialStore::PublishRecords(uint64_t completedFrame, uint64_t frame, uint32_t frameIndex)
@@ -948,8 +1006,8 @@ namespace mir::vk
                 *error = candidateError;
             return false;
         }
-        const auto defaults = BuildMigrationDefaults(*candidateLayout, material.mAcceptedLayout,
-            material.mHasAcceptedLayout, registration->parametersJson, &candidateError);
+        const auto defaults = BuildMigrationDefaults(*candidateLayout, registration->parametersJson,
+            &candidateError);
         if (!defaults)
         {
             if (error != nullptr)
@@ -967,6 +1025,14 @@ namespace mir::vk
         {
             if (error != nullptr)
                 *error = material.mDesc.shaderName + ": " + migrated.error;
+            return false;
+        }
+
+        if (mRecordValidator &&
+            !mRecordValidator(registration->frontend, *candidateLayout, migrated.bytes, candidateError))
+        {
+            if (error != nullptr)
+                *error = material.mDesc.shaderName + ": " + candidateError;
             return false;
         }
 

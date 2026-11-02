@@ -37,9 +37,10 @@ namespace mir
         // actually names. Empty means "no mesh", same as mesh.IsNull().
         char meshName[kFieldStringCapacity] = {};
 
-        // Shader name for CreateMaterial (MaterialDesc::shaderName). Empty
-        // resolves to the renderer's default material, same as
-        // material.IsNull() today.
+        // A shader stem for CreateMaterial (MaterialDesc::shaderName), or an
+        // explicit .material.json asset path (assets-root relative or canonical)
+        // when a registered mesh recipe should be borrowed. A stem shared by more
+        // than one recipe is an error. Empty clears the material.
         char materialShader[kFieldStringCapacity] = {};
     };
 

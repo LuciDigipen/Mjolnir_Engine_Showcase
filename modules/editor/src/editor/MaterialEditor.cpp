@@ -76,6 +76,28 @@ namespace mir
             return found != textures.end() ? &*found : nullptr;
         }
 
+        MaterialPublicationState PublicationState(const SurfaceMaterialLibrary *library, std::string_view logicalPath,
+            std::string *error)
+        {
+            if (library == nullptr)
+                return MaterialPublicationState::Inactive;
+            const SurfaceMaterialPublication publication = library->Publication(logicalPath);
+            if (error != nullptr)
+                *error = publication.error;
+            switch (publication.status)
+            {
+            case SurfaceMaterialPublicationStatus::Pending:
+                return MaterialPublicationState::Pending;
+            case SurfaceMaterialPublicationStatus::Published:
+                return MaterialPublicationState::Published;
+            case SurfaceMaterialPublicationStatus::Failed:
+                return MaterialPublicationState::Failed;
+            case SurfaceMaterialPublicationStatus::Inactive:
+                break;
+            }
+            return MaterialPublicationState::Inactive;
+        }
+
         const char *ImportStatusText(AssetImportStatus status)
         {
             switch (status)
@@ -274,12 +296,24 @@ namespace mir
             return false;
         }
 
+        // A shader-only field addition or deletion needs no recook: fields the
+        // cooked recipe lacks take the validated catalog or typed default, and
+        // keys the new layout dropped stay authored and reported as unsupported.
+        const std::optional<std::string> complete = MergeMaterialParameterDefaults(schema->layout,
+            cooked.parametersJson, registration->parametersJson, &error);
+        if (!complete)
+        {
+            mState = pending ? TargetState::Loading : TargetState::Invalid;
+            mLoadError = "The material parameters do not fit the compiled reflection: " + error;
+            return false;
+        }
+        cooked.parametersJson = *complete;
+
         mRecipe = RecipeFromCooked(cooked, *source);
         mLayout = schema->layout;
         mFrontends = mRecipe.frontends;
         mFrontendOverride = frontend;
         mSourceSignature = FileSignature(*source);
-        const uint64_t generation = context.mMaterials != nullptr ? context.mMaterials->Generation() : 0;
         const uint64_t acceptedRevision = MaterialAcceptedRevision(cooked.shaderType, cooked.parametersJson,
             cooked.textures, cooked.frontends);
 
@@ -294,8 +328,25 @@ namespace mir
             mState = TargetState::Ready;
             return true;
         }
+
+        std::string publicationError;
+        const MaterialPublicationState publication =
+            PublicationState(context.mMaterials, logicalPath, &publicationError);
+        const MaterialTargetGate gate = DecideMaterialTargetGate(publication);
         if (existing != nullptr)
         {
+            if (gate != MaterialTargetGate::AcceptCooked)
+            {
+                if (gate == MaterialTargetGate::Rejected && !existing->mApplyFailed)
+                {
+                    existing->mStatusIsError = true;
+                    existing->mStatus = publicationError.empty()
+                        ? "The renderer rejected the material publication; the last good material is unchanged."
+                        : "The renderer rejected the material publication: " + publicationError;
+                }
+                mState = TargetState::Ready;
+                return true;
+            }
             std::string refreshError;
             const std::optional<MaterialDraftRefresh> refresh =
                 RefreshMaterialDraft(*existing, mRecipe, mLayout, frontend, schema->revision, &refreshError);
@@ -306,13 +357,24 @@ namespace mir
                 return false;
             }
             existing->mSourceSignature = mSourceSignature;
-            existing->mGeneration = generation;
             existing->mAcceptedRevision = acceptedRevision;
             existing->mSchemaRevision = schema->revision;
             existing->mSchemaStale = false;
             existing->mApplyFailed = false;
+            existing->mApplyFailureFromPublication = false;
             mState = TargetState::Ready;
             return true;
+        }
+
+        if (gate != MaterialTargetGate::AcceptCooked)
+        {
+            mState = gate == MaterialTargetGate::Rejected ? TargetState::Invalid : TargetState::Loading;
+            mLoadError = gate == MaterialTargetGate::Rejected
+                ? (publicationError.empty()
+                          ? "The renderer rejected the material publication; the last good material is unchanged."
+                          : "The renderer rejected the material publication: " + publicationError)
+                : "Waiting for the renderer to publish the material cook.";
+            return false;
         }
 
         std::optional<MaterialDraft> draft = BuildMaterialDraft(mActiveIdentity, logicalPath, context.mProjectKey,
@@ -324,7 +386,6 @@ namespace mir
             return false;
         }
         draft->mSourceSignature = mSourceSignature;
-        draft->mGeneration = generation;
         draft->mAcceptedRevision = acceptedRevision;
         draft->mSchemaRevision = schema->revision;
         mDrafts.Put(std::move(*draft));
@@ -378,6 +439,32 @@ namespace mir
                 draft->mStatus = "Waiting for the material cook to accept the current source.";
                 continue;
             }
+            const std::optional<std::string> complete = MergeMaterialParameterDefaults(schema->layout,
+                cooked.parametersJson, registration->parametersJson, &error);
+            if (!complete)
+            {
+                draft->mSchemaStale = true;
+                draft->mStatusIsError = true;
+                draft->mStatus = "The material parameters do not fit the compiled reflection: " + error;
+                continue;
+            }
+            cooked.parametersJson = *complete;
+
+            std::string publicationError;
+            const MaterialPublicationState publication =
+                PublicationState(context.mMaterials, draft->mLogicalPath, &publicationError);
+            if (DecideMaterialTargetGate(publication) != MaterialTargetGate::AcceptCooked)
+            {
+                if (publication == MaterialPublicationState::Failed && !draft->mCooking && !draft->mApplyFailed)
+                {
+                    draft->mStatusIsError = true;
+                    draft->mStatus = publicationError.empty()
+                        ? "The renderer rejected the material publication; the last good material is unchanged."
+                        : "The renderer rejected the material publication: " + publicationError;
+                }
+                continue;
+            }
+
             const uint64_t acceptedRevision = MaterialAcceptedRevision(cooked.shaderType, cooked.parametersJson,
                 cooked.textures, cooked.frontends);
             const MaterialAcceptedRefresh decision =
@@ -406,7 +493,6 @@ namespace mir
 
             const bool acceptedChanged = acceptedRevision != draft->mAcceptedRevision;
             draft->mSourceSignature = signature;
-            draft->mGeneration = context.mMaterials != nullptr ? context.mMaterials->Generation() : 0;
             draft->mAcceptedRevision = acceptedRevision;
             draft->mSchemaRevision = schema->revision;
             draft->mSchemaStale = false;
@@ -431,31 +517,31 @@ namespace mir
                 continue;
             const AssetImportModelView *model = FindImport(import, draft->mLogicalPath);
             const bool failed = model != nullptr && ImportFailed(model->mStatus);
-            const bool requiresApply = model != nullptr &&
-                (model->mStatus == AssetImportStatus::WaitingForApply ||
-                    model->mStatus == AssetImportStatus::Applied);
             const std::string diagnostic = model == nullptr
                 ? std::string()
                 : (model->mDiagnostic.empty()
                           ? "The material cook did not apply; the last good material is unchanged."
                           : "The material cook failed: " + model->mDiagnostic);
-            const uint64_t generation = context.mMaterials != nullptr ? context.mMaterials->Generation() : 0;
+            std::string publicationError;
+            const MaterialPublicationState publication =
+                PublicationState(context.mMaterials, draft->mLogicalPath, &publicationError);
             std::string message;
             const MaterialCookOutcome outcome = ResolveMaterialCook(*draft, model != nullptr, failed, diagnostic,
-                requiresApply,
                 context.mMaterialCookRevision ? context.mMaterialCookRevision(draft->mLogicalPath)
                                                : std::optional<uint64_t>{},
                 context.mMaterialCookFailureRevision
                     ? context.mMaterialCookFailureRevision(draft->mLogicalPath)
                     : std::optional<uint64_t>{},
-                generation, &message);
+                publication, publicationError, &message);
             if (outcome == MaterialCookOutcome::Applied)
             {
-                MaterialDraftCooked(*draft, true, {});
+                MaterialDraftCooked(*draft, true, {}, publication == MaterialPublicationState::Published);
             }
             else if (outcome == MaterialCookOutcome::Failed)
             {
-                MaterialDraftCooked(*draft, false, message);
+                const bool publicationFailure =
+                    !failed && publication == MaterialPublicationState::Failed;
+                MaterialDraftCooked(*draft, false, message, true, publicationFailure);
             }
             else
             {
@@ -470,12 +556,12 @@ namespace mir
         if (!editing || context.mMaterials == nullptr)
             return;
 
-        const uint64_t generation = context.mMaterials->Generation();
         for (MaterialDraft *draft : mDrafts.All())
         {
             if (draft->mSchemaStale || draft->mCooking)
                 continue;
-            const bool active = context.mMaterials->IsActive(draft->mLogicalPath, draft->mFrontend);
+            const uint64_t generation = context.mMaterials->Generation();
+            const bool active = context.mMaterials->IsActiveAsset(draft->mLogicalPath);
             const std::optional<std::string> parameters =
                 MaterialDraftPreviewParameters(*draft, editing, active, generation);
             if (!parameters)
@@ -483,7 +569,7 @@ namespace mir
 
             std::string error;
             if (context.mMaterials->PreviewParameters(draft->mLogicalPath, draft->mFrontend, *parameters, &error))
-                MaterialDraftPreviewed(*draft, generation, *parameters);
+                MaterialDraftPreviewed(*draft, context.mMaterials->Generation(), *parameters);
             else
                 MaterialDraftPreviewRejected(*draft, generation, *parameters, error);
         }
@@ -547,7 +633,7 @@ namespace mir
         const bool dirty = MaterialDraftDirty(*draft);
         const bool needsSave = MaterialDraftNeedsSave(*draft);
         const bool active = context.mMaterials != nullptr &&
-            context.mMaterials->IsActive(draft->mLogicalPath, draft->mFrontend);
+            context.mMaterials->IsActiveAsset(draft->mLogicalPath);
         const bool blockedByPreview = active && !draft->mPreviewError.empty();
         ImGui::BeginDisabled(!editing || draft->mCooking || draft->mSchemaStale || !needsSave ||
             !MaterialDraftFinite(*draft) || blockedByPreview);
@@ -717,7 +803,7 @@ namespace mir
             draft->mStatus = "The current source or reflection could not be accepted; fix it before saving.";
             return;
         }
-        if (context.mMaterials != nullptr && context.mMaterials->IsActive(draft->mLogicalPath, draft->mFrontend) &&
+        if (context.mMaterials != nullptr && context.mMaterials->IsActiveAsset(draft->mLogicalPath) &&
             !draft->mPreviewError.empty())
         {
             draft->mStatusIsError = true;
@@ -752,13 +838,12 @@ namespace mir
         }
 
         const bool retriedUnchanged = patch.Empty();
+        const bool forceReimport = MaterialDraftNeedsForcedReimport(*draft);
         draft->mSourceSignature = FileSignature(*source);
         mSourceSignature = draft->mSourceSignature;
-        const bool active = context.mMaterials != nullptr &&
-            context.mMaterials->IsActive(draft->mLogicalPath, draft->mFrontend);
-        const uint64_t generation = context.mMaterials != nullptr ? context.mMaterials->Generation() : 0;
-        const uint64_t request = context.mReimportMaterial ? context.mReimportMaterial(draft->mLogicalPath) : 0;
-        MaterialDraftMarkSaved(*draft, request, generation, active);
+        const uint64_t request = context.mReimportMaterial
+            ? context.mReimportMaterial(draft->mLogicalPath, forceReimport) : 0;
+        MaterialDraftMarkSaved(*draft, request);
         if (retriedUnchanged)
             draft->mStatus = "Retrying the last written material values.";
         if (!context.mReimportMaterial)

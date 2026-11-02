@@ -62,10 +62,11 @@ namespace mir
             Close(mDocuments.begin()->first);
     }
 
-    void PrefabWorkspace::BindResolveSystems(VulkanRenderer *renderer,
+    void PrefabWorkspace::BindResolveSystems(VulkanRenderer *renderer, SurfaceMaterialLibrary *materials,
         AsyncAssetService *assetService, const AssetResolver &resolver, std::shared_ptr<ModelLibrary> models)
     {
         mRenderer = renderer;
+        mSurfaceMaterials = materials;
         mModels = std::move(models);
         mAssetService = assetService;
         mResolver = &resolver;
@@ -117,7 +118,7 @@ namespace mir
         {
             preview->mMesh = &preview->mScheduler.AddSystem<MeshResolveSystem>(SystemPhase::PostUpdate,
                 SystemOrder{SystemOrder::kNormal}, *mRenderer,
-                mAssetService, *mResolver);
+                mAssetService, *mResolver, mSurfaceMaterials);
             preview->mModel = &preview->mScheduler.AddSystem<ModelSystem>(SystemPhase::PostUpdate,
                 SystemOrder{SystemOrder::kNormal}, mModels,
                 mAssetService, *mResolver);

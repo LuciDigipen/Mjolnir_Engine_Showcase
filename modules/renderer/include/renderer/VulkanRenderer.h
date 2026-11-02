@@ -87,6 +87,10 @@ namespace mir
         bool enableValidation;
     };
 
+    // A generation-checked copy of one live surface material's accepted layout
+    // and the authoritative bytes its draws read. The handle stays owned by the
+    // renderer; a consumer may use it and must not destroy it.
+
     // One draw in the fixed Scene world, built by RenderSystem from a
     // WorldTransform + MeshRenderer pair or by ModelSystem. BuildViewDrawItems
     // (renderer/ViewSubmission.h) turns it into a DrawItem per viewport.
@@ -234,6 +238,15 @@ namespace mir
         // Raw reflected bytes for one material's record, published at the next
         // BeginFrame. False without shared material tables, or for a stale handle.
         bool UpdateMaterialRecord(MaterialHandle handle, std::span<const std::byte> bytes);
+        // All-or-none record writes for one asset's fronts: nothing changes
+        // until every update validated and its bytes were copied.
+        bool PrepareMaterialRecords(std::span<const MaterialRecordUpdate> updates, std::string *error = nullptr);
+        void CommitMaterialRecords();
+        void DiscardMaterialRecords();
+        // The accepted record of a live surface material, or nullopt for a stale
+        // handle, a material that is not a surface one, or no shared tables.
+        std::optional<MaterialRecordSnapshot> MaterialRecord(MaterialHandle handle) const;
+        void SetMaterialRecordValidator(MaterialRecordValidator validator);
         uint32_t MaterialRecordOffset(MaterialHandle handle) const;
 
         MaterialHandle ErrorMaterial() const override;

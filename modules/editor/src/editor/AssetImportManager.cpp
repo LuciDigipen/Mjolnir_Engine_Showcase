@@ -738,13 +738,13 @@ namespace mir
         RefreshView();
     }
 
-    uint64_t AssetImportManager::ReimportMaterial(std::string_view logicalPath)
+    uint64_t AssetImportManager::ReimportMaterial(std::string_view logicalPath, bool force)
     {
         const uint64_t revision = ++mMaterialRequestSequence;
         mQueued.materialSequences[std::string(logicalPath)] = revision;
 
         AssetImportAction action;
-        action.mKind = AssetImportActionKind::Reimport;
+        action.mKind = force ? AssetImportActionKind::ForceReimport : AssetImportActionKind::Reimport;
         action.mModelPath = std::string(logicalPath);
         Handle(action);
         return revision;
