@@ -221,7 +221,7 @@ namespace mir::vk
         {
             Garbage garbage;
             garbage.textures.push_back(texture);
-            mRetired.Push(lastUse, texture.mBytes, std::move(garbage));
+            mRetiredTextures.Push(lastUse, texture.mBytes, std::move(garbage));
         }
         return true;
     }
@@ -297,6 +297,7 @@ namespace mir::vk
                 return true;
             });
         mRetired.Collect(completed, [&](Garbage &garbage) { Free(rayTracer, garbage); });
+        mRetiredTextures.Collect(completed, [&](Garbage &garbage) { Free(rayTracer, garbage); });
     }
 
     void MeshUploader::Record(VkCommandBuffer cmd, uint64_t frame, ResourceStore &resources, RayTracer &rayTracer)
@@ -436,6 +437,7 @@ namespace mir::vk
         mTextures.clear();
         mTextureFinishes.clear();
         mRetired.ReleaseAll([&](Garbage &garbage) { Free(rayTracer, garbage); });
+        mRetiredTextures.ReleaseAll([&](Garbage &garbage) { Free(rayTracer, garbage); });
     }
 
     void MeshUploader::Free(RayTracer &rayTracer, Garbage &garbage)
@@ -457,8 +459,10 @@ namespace mir::vk
         stats.pendingBytes = mQueue.PendingBytes();
         stats.uploading = mQueue.Uploading();
         stats.uploadingBytes = mQueue.UploadingBytes();
-        stats.retiring = mRetired.Size();
-        stats.retiringBytes = mRetired.Bytes();
+        stats.retiring = mRetired.Size() + mRetiredTextures.Size();
+        stats.retiringMeshBytes = mRetired.Bytes();
+        stats.retiringTextureBytes = mRetiredTextures.Bytes();
+        stats.retiringBytes = stats.retiringMeshBytes + stats.retiringTextureBytes;
         stats.stagingUsedBytes = mQueue.StagingUsed();
         stats.queued = mQueuedCount;
         stats.uploaded = mUploaded;

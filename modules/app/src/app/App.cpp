@@ -40,9 +40,6 @@ namespace mir
 {
     namespace
     {
-        // Longest a standalone game holds its simulation for resources that never settle.
-        constexpr double kSceneGateTimeoutSeconds = 30.0;
-
         size_t MissingFileCount(const SceneProbe &probe)
         {
             return probe.mMissingEntities.size() + probe.mMissingInstances.size();
@@ -385,36 +382,39 @@ namespace mir
         SetPlayState(mWorld, IsPaused(mWorld) ? PlayState::Running : PlayState::Paused);
     }
 
-    void App::UpdateSceneGate()
+    bool App::AwaitSceneResources()
     {
-        if (!mGateScenes)
-            return;
         SceneLoadGroup &group = mWorld.Resource<SceneLoadGroup>();
-        if (!group.Ready())
+        mSceneGated = true;
+        uint64_t frames = 0;
+        // No timeout: gameplay must never start with unresolved resources. A resource that never settles keeps
+        // the loading screen up, the window still closes, and a bounded run ends instead of hanging.
+        while (!group.Ready())
         {
-            if (!mSceneGated && IsPlaying(mWorld))
+            if (mWindow.Get().ShouldClose())
             {
-                mSceneGated = true;
-                mGateStartedAt = mElapsed;
-                mGateStartFrame = mFrame;
+                mSceneGated = false;
+                return false;
             }
-            if (mSceneGated && IsSimulating(mWorld))
-                SetPlayState(mWorld, PlayState::Paused);
-            // a resource that never settles must not hold the game forever
-            if (mSceneGated && mElapsed - mGateStartedAt > kSceneGateTimeoutSeconds)
+            mWindow.Get().PollEvents();
+            if (mAssetService)
+                mAssetService->DrainCompletions();
+            mImGui.RunUI();
+            SystemContext context = MakeContext(0.0f);
+            mScheduler.UpdateLoading(context);
+            group.EndFrame();
+            ++frames;
+            if (!group.Ready() && mDesc.mMaxFrames != 0 && frames >= mDesc.mMaxFrames)
             {
-                MIR_LOG_ERROR("The scene is still not ready after {} seconds, starting it anyway",
-                    kSceneGateTimeoutSeconds);
-                group.ForceReady();
+                MIR_LOG_ERROR("The scene was still not ready after {} loading frames, gameplay did not start", frames);
+                mWindow.Get().RequestClose();
+                mSceneGated = false;
+                return false;
             }
-            return;
         }
-        if (!mSceneGated)
-            return;
         mSceneGated = false;
-        if (IsPaused(mWorld))
-            SetPlayState(mWorld, PlayState::Running);
-        MIR_LOG_INFO("Scene ready after {} frames", mFrame - mGateStartFrame);
+        MIR_LOG_INFO("Scene ready after {} loading frames", frames);
+        return true;
     }
 
     void App::DrawLoadingOverlay()
@@ -592,6 +592,10 @@ namespace mir
 
     void App::Run()
     {
+        // Resources prepare before any gameplay system starts
+        if (mGateScenes && !mWorld.Resource<SceneLoadGroup>().Ready() && !AwaitSceneResources())
+            return;
+
         SystemContext startContext = MakeContext(0.0f);
         mScheduler.Start(startContext);
 
@@ -618,7 +622,16 @@ namespace mir
             ApplyRequests();
             if (mAssetService)
                 mAssetService->DrainCompletions();
-            UpdateSceneGate();
+
+            // a scene loaded mid-game waits the same way, this frame's gameplay does not run
+            if (mGateScenes && !mWorld.Resource<SceneLoadGroup>().Ready())
+            {
+                mElapsed -= dt;
+                if (!AwaitSceneResources())
+                    break;
+                previous = std::chrono::steady_clock::now();
+                continue;
+            }
 
             SystemContext frameContext = MakeContext(dt);
             mScheduler.RunFrameSlot(FrameSlot::FrameBegin, frameContext);

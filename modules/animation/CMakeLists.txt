@@ -3,6 +3,7 @@ target_sources(engine_animation PRIVATE
     src/animation/AnimationModule.cpp
     src/animation/ModelAnimation.cpp
     src/animation/ModelEvaluation.cpp
+    src/animation/ModelLibrary.cpp
     src/animation/ModelPreparation.cpp
     src/animation/ModelSystem.cpp
 )

@@ -110,7 +110,8 @@ uploads that chain instead of generating one. A failed `CreateMesh` still fails
 the whole model, since there is nothing to draw.
 
 **A model is prepared in the background and published whole.** `ModelSystem`
-claims each referenced model through a `ModelPreparation`, which claims the
+claims each referenced model from the renderer-wide `ModelLibrary`, which runs a
+`ModelPreparation` for it, and that claims the
 model's CPU records and one `TextureLoadLease` per base color texture, and never
 waits on either. When every texture is ready or failed it claims the renderer's
 shared material records, queues the primitives through the shared mesh upload
@@ -122,10 +123,16 @@ then switches that model when its replacement is usable. A replacement that
 fails leaves the old model in place and logs a warning, and a failed texture
 publishes the magenta error appearance like an initial load. Playback, poses
 and deformations stay with the entity. A `PreparedModel` only holds claims on
-renderer-owned records, so Worlds that prepare the same model share its meshes,
-materials, textures and CPU records, and dropping the model releases the claims,
-not the GPU memory. The renderer keeps unused records under its residency
-target.
+renderer-owned records. The library keys an entry by the model and its decoded
+content, so the scene and every prefab preview that show a model hold one entry and
+one prepared model, and a World keeps only its playback clock, poses, morph
+overrides and deformations. A reload claims the entry for the new content, which is
+the same entry when nothing changed and another one that replaces it when it is
+ready. The last World to drop an entry frees the prepared model, and the renderer
+keeps the unused records under its residency target. A failed entry is prepared
+again by the next claim. The vertices a mesh uploads are converted by the worker
+that decodes the model, `ModelResources::gpuMeshes`, so the main thread only
+queues them, and the decoded model reports its real size to the asset service.
 
 ## State
 

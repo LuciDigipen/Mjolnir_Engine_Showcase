@@ -56,8 +56,8 @@ namespace mir
     class MaterialRecordCache
     {
     public:
-        explicit MaterialRecordCache(IMeshResolveHost &host) : mHost(host) {}
-        ~MaterialRecordCache() = default;
+        explicit MaterialRecordCache(IMeshResolveHost &host);
+        ~MaterialRecordCache();
         MaterialRecordCache(const MaterialRecordCache &) = delete;
         MaterialRecordCache &operator=(const MaterialRecordCache &) = delete;
 
@@ -68,9 +68,15 @@ namespace mir
         void Drop(uint64_t id);
         MaterialHandle Find(uint64_t id) const;
 
-        // Releases unused records while the renderer is over its residency target.
+        // Releases unused records while the renderer is over its residency target, and only those whose release
+        // helps: the ones that hold the last claim on a texture, or the record bytes of an over-full category.
         void Trim();
+        // Releases every unused record. Acquire does it before giving up on a full material table.
         void EvictUnused();
+        // The GPU bytes the records hold in the shared material table, and the texture bytes that only unused
+        // records keep alive, which is what Trim can give back.
+        uint64_t RecordBytes() const;
+        uint64_t PinnedTextureBytes() const;
         // Forgets every record without releasing handles, the renderer destroyed them.
         void Reset();
         size_t Size() const { return mRecords.size(); }
@@ -83,10 +89,13 @@ namespace mir
             std::vector<TextureLoadLease> claims;
             size_t consumers = 0;
             uint64_t lastUse = 0;
+            uint64_t recordBytes = 0;
         };
         void Evict(std::unordered_map<uint64_t, Record>::iterator record);
 
         IMeshResolveHost &mHost;
+        std::shared_ptr<GpuResidency> mResidency;
+        uint32_t mHolder = 0;
         std::unordered_map<uint64_t, Record> mRecords;
         std::unordered_map<MaterialValueKey, uint64_t, MaterialValueKeyHash> mIds;
         uint64_t mNextId = 1;

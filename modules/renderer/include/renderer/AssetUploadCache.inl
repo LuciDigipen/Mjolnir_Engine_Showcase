@@ -51,6 +51,20 @@ namespace mir
     }
 
     template <class Decoded, class Handle, class View, Handle View::*Member>
+    uint64_t AssetUploadCache<Decoded, Handle, View, Member>::BytesOf(UploadKey key) const
+    {
+        const auto found = mEntries.find(key);
+        return found == mEntries.end() ? 0 : found->second.mBytes;
+    }
+
+    template <class Decoded, class Handle, class View, Handle View::*Member>
+    size_t AssetUploadCache<Decoded, Handle, View, Member>::ConsumersOf(UploadKey key) const
+    {
+        const auto found = mEntries.find(key);
+        return found == mEntries.end() ? 0 : found->second.mConsumers;
+    }
+
+    template <class Decoded, class Handle, class View, Handle View::*Member>
     const View *AssetUploadCache<Decoded, Handle, View, Member>::Find(UploadKey key) const
     {
         const auto found = mEntries.find(key);

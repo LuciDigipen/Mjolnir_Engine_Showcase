@@ -83,6 +83,7 @@ namespace mir::test
             }
             stats.retiring = retiringCount;
             stats.retiringBytes = retiringBytes;
+            stats.retiringMeshBytes = retiringBytes;
             return stats;
         }
 

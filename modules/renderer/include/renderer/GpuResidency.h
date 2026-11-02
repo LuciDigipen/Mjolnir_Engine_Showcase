@@ -19,7 +19,7 @@
 
 namespace mir
 {
-    enum class GpuCategory : uint8_t { Mesh, Texture, Count };
+    enum class GpuCategory : uint8_t { Mesh, Texture, Material, Count };
 
     class GpuResidency
     {

@@ -49,6 +49,8 @@ namespace mir
 
         void OnStart(SystemContext &context) override;
         void OnUpdate(SystemContext &context) override;
+        // The same resolve, so a scene's meshes load before its gameplay starts
+        void OnLoadingUpdate(SystemContext &context) override { OnUpdate(context); }
         void OnStop(SystemContext &context) override;
 
     private:

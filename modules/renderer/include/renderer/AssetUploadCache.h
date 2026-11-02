@@ -105,6 +105,9 @@ namespace mir
         // A cap for this cache alone, beside the renderer-wide residency target.
         void SetBudget(uint64_t bytes) { mCap = bytes; Trim(); }
         uint64_t HeldBytes() const;
+        // What one record holds on the GPU and how many claims hold it, zero for an unknown record.
+        uint64_t BytesOf(UploadKey key) const;
+        size_t ConsumersOf(UploadKey key) const;
         bool Empty() const { return mEntries.empty(); }
 
     private:
@@ -157,6 +160,11 @@ namespace mir
         AssetUploadLease &operator=(AssetUploadLease &&other) noexcept;
         void Reset();
         const typename Cache::ViewType *Get() const { return mCache ? mCache->Find(mId) : nullptr; }
+        // The record this claim holds, to tell whether two claims are on the same one.
+        const Cache *CacheOf() const { return mCache.get(); }
+        UploadKey Key() const { return mId; }
+        uint64_t Bytes() const { return mCache ? mCache->BytesOf(mId) : 0; }
+        size_t Consumers() const { return mCache ? mCache->ConsumersOf(mId) : 0; }
     private:
         std::shared_ptr<Cache> mCache;
         UploadKey mId;

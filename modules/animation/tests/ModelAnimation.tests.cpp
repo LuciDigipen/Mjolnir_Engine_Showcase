@@ -246,6 +246,11 @@ TEST_CASE("Model resources decode from a root blob and its dependency blobs", "[
     CHECK(resources.model.nodes.size() == 1);
     CHECK(resources.meshes.contains(set.mesh.value));
     CHECK(resources.clips.size() == 1);
+    // the worker converted the vertices for upload, nothing is left for the main thread
+    REQUIRE(resources.gpuMeshes.at(set.mesh.value).size() == 1);
+    REQUIRE(resources.gpuMeshes.at(set.mesh.value)[0] != nullptr);
+    CHECK(resources.gpuMeshes.at(set.mesh.value)[0]->vertices.size() == 3);
+    CHECK(resources.gpuMeshes.at(set.mesh.value)[0]->indices.size() == 3);
 }
 
 TEST_CASE("Model resources fail when a dependency blob is not available", "[animation][assets]")

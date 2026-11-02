@@ -6,6 +6,7 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
+#include <animation/ModelLibrary.h>
 #include <animation/ModelPreparation.h>
 
 #include <assets/AssetsModule.h>
@@ -324,4 +325,140 @@ TEST_CASE("A reload with unchanged content republishes from the existing records
         // the old model still draws its own mesh until it is released
         CHECK(before->meshes.at(kMesh.value)[0].mesh == mesh);
     }
+}
+
+namespace
+{
+    // The renderer-wide library with one World's worth of fakes behind it
+    struct LibraryFixture : CookedModel
+    {
+        LibraryFixture() : mAssets(Path()), mJobs(0), mService(mAssets, mJobs, 1), mLibrary(mHost, mTextures, kError) {}
+
+        // Steps frames, finishing every upload the fakes hold, until the entry settles
+        void Settle(const ModelLibrary::Claim &claim)
+        {
+            for (int frame = 0; frame < 16 && !claim->ready && claim->failure.empty(); ++frame)
+            {
+                mService.DrainCompletions();
+                mLibrary.Advance();
+                for (const auto &[index, texture] : std::vector(mTextures.mEntries.begin(), mTextures.mEntries.end()))
+                    if (texture.mState != TextureUploadState::Ready)
+                        mTextures.Complete(TextureHandle{ index, 1 });
+                for (const auto &[index, mesh] : std::vector(mHost.uploader.meshes.begin(), mHost.uploader.meshes.end()))
+                    if (mesh.state != MeshUploadState::Ready)
+                    {
+                        if (mesh.state == MeshUploadState::Pending)
+                            mHost.uploader.Record(MeshHandle{ index, 1 });
+                        mHost.uploader.Complete(MeshHandle{ index, 1 });
+                    }
+            }
+        }
+
+        void Reload()
+        {
+            mAssets.BeginReload();
+            mAssets.CommitReload();
+        }
+
+        AssetsModule mAssets;
+        JobExecutor mJobs;
+        AsyncAssetService mService;
+        test::FakeMeshResolveHost mHost;
+        test::FakeTextureUploader mTextures;
+        ModelLibrary mLibrary;
+    };
+}
+
+TEST_CASE("Worlds that ask for one model share one prepared model", "[animation][model-library]")
+{
+    LibraryFixture f;
+    const ModelLibrary::Claim first = f.mLibrary.Acquire(kModel, &f.mService, "model");
+    const ModelLibrary::Claim second = f.mLibrary.Acquire(kModel, &f.mService, "model");
+    CHECK(first == second);
+    f.Settle(first);
+    REQUIRE(first->ready);
+    CHECK(second->ready == first->ready);
+    CHECK(f.mHost.uploader.queued == 1);
+    CHECK(f.mTextures.mQueued == 1);
+    CHECK(f.mHost.createdMaterials.size() == 2);
+}
+
+TEST_CASE("The last claim frees the prepared model and the records stay for the next one", "[animation][model-library]")
+{
+    LibraryFixture f;
+    {
+        const ModelLibrary::Claim claim = f.mLibrary.Acquire(kModel, &f.mService, "model");
+        f.Settle(claim);
+        REQUIRE(claim->ready);
+    }
+    // nothing holds the entry, the renderer still holds its GPU records
+    CHECK(f.mHost.releasedMaterials.empty());
+    const ModelLibrary::Claim again = f.mLibrary.Acquire(kModel, &f.mService, "model");
+    f.Settle(again);
+    REQUIRE(again->ready);
+    CHECK(f.mHost.uploader.queued == 1);
+    CHECK(f.mHost.createdMaterials.size() == 2);
+}
+
+TEST_CASE("A reload with the same content is the same entry and changed content is another", "[animation][model-library]")
+{
+    LibraryFixture f;
+    const ModelLibrary::Claim before = f.mLibrary.Acquire(kModel, &f.mService, "model");
+    f.Settle(before);
+    REQUIRE(before->ready);
+
+    SECTION("an identical cook")
+    {
+        f.Write();
+        f.Reload();
+        CHECK(f.mLibrary.Acquire(kModel, &f.mService, "model") == before);
+    }
+    SECTION("a cook that changes a mesh")
+    {
+        f.Write(true, 1);
+        f.Reload();
+        const ModelLibrary::Claim after = f.mLibrary.Acquire(kModel, &f.mService, "model");
+        REQUIRE(after != before);
+        CHECK(after->content != before->content);
+        f.Settle(after);
+        REQUIRE(after->ready);
+        // the old model still draws its own mesh while the new one is ready
+        CHECK(before->ready);
+        CHECK(after->ready->meshes.at(kMesh.value)[0].mesh != before->ready->meshes.at(kMesh.value)[0].mesh);
+        CHECK(after->ready->meshes.at(kMesh.value)[0].material == before->ready->meshes.at(kMesh.value)[0].material);
+    }
+}
+
+TEST_CASE("A failed entry is prepared again by the next claim", "[animation][model-library]")
+{
+    LibraryFixture f;
+    const ModelLibrary::Claim claim = f.mLibrary.Acquire(kModel, &f.mService, "model");
+    // the mesh upload fails, which fails the model
+    for (int frame = 0; frame < 16 && claim->failure.empty(); ++frame)
+    {
+        f.mService.DrainCompletions();
+        f.mLibrary.Advance();
+        for (const auto &[index, texture] : std::vector(f.mTextures.mEntries.begin(), f.mTextures.mEntries.end()))
+            f.mTextures.Complete(TextureHandle{ index, 1 });
+        for (const auto &[index, mesh] : std::vector(f.mHost.uploader.meshes.begin(), f.mHost.uploader.meshes.end()))
+            f.mHost.uploader.Fail(MeshHandle{ index, 1 });
+    }
+    REQUIRE_FALSE(claim->failure.empty());
+    const ModelLibrary::Claim retry = f.mLibrary.Acquire(kModel, &f.mService, "model");
+    CHECK(retry != claim);
+    f.Settle(retry);
+    CHECK(retry->ready);
+}
+
+TEST_CASE("The renderer releasing its resources empties every entry", "[animation][model-library]")
+{
+    LibraryFixture f;
+    const ModelLibrary::Claim claim = f.mLibrary.Acquire(kModel, &f.mService, "model");
+    f.Settle(claim);
+    REQUIRE(claim->ready);
+    f.mLibrary.ReleaseAll();
+    CHECK_FALSE(claim->ready);
+    CHECK_FALSE(claim->failure.empty());
+    // a later claim starts from nothing
+    CHECK(f.mLibrary.Acquire(kModel, &f.mService, "model") != claim);
 }

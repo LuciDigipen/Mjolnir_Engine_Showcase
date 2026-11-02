@@ -49,6 +49,9 @@ namespace mir::test
 
         MaterialHandle CreateMaterial(const MaterialDesc &desc) override
         {
+            // a full material table refuses until some are released
+            if (createdMaterials.size() - releasedMaterials.size() >= materialLimit)
+                return MaterialHandle{};
             createdMaterials.push_back(desc);
             return MaterialHandle{ mNextMaterial++, 1 };
         }
@@ -71,6 +74,7 @@ namespace mir::test
         std::vector<MeshHandle> releasedMeshes;
         std::vector<MaterialHandle> releasedMaterials;
         std::vector<MaterialDesc> createdMaterials;
+        std::size_t materialLimit = SIZE_MAX;
 
     private:
         uint32_t mNextSync = 0;

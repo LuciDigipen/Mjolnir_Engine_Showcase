@@ -12,6 +12,8 @@
 
 #include <algorithm>
 #include <bit>
+#include <map>
+#include <tuple>
 #include <functional>
 #include <span>
 
@@ -90,11 +92,19 @@ namespace mir
         MaterialValueKey key = MaterialValueKey::Of(desc);
         if (const auto found = mIds.find(key); found != mIds.end())
             return found->second;
-        const MaterialHandle handle = mHost.CreateMaterial(desc);
+        MaterialHandle handle = mHost.CreateMaterial(desc);
+        if (handle.IsNull() && !mRecords.empty())
+        {
+            // The material table is a fixed number of slots, unused records hold some of them
+            EvictUnused();
+            handle = mHost.CreateMaterial(desc);
+        }
         if (handle.IsNull())
             return 0;
         const uint64_t id = mNextId++;
         Record &record = mRecords[id];
+        record.recordBytes = key.record.empty() ? 0
+            : (key.record.size() + key.recordAlignment - 1) / key.recordAlignment * key.recordAlignment;
         record.handle = handle;
         record.claims = std::move(claims);
         record.key = key;
@@ -129,12 +139,119 @@ namespace mir
         return found == mRecords.end() ? MaterialHandle{} : found->second.handle;
     }
 
+    MaterialRecordCache::MaterialRecordCache(IMeshResolveHost &host)
+        : mHost(host), mResidency(host.SharedResidency())
+    {
+        mHolder = mResidency->AddHolder(GpuCategory::Material, [this] { return RecordBytes(); });
+    }
+
+    MaterialRecordCache::~MaterialRecordCache()
+    {
+        mResidency->RemoveHolder(mHolder);
+    }
+
+    uint64_t MaterialRecordCache::RecordBytes() const
+    {
+        uint64_t bytes = 0;
+        for (const auto &[id, record] : mRecords)
+            bytes += record.recordBytes;
+        return bytes;
+    }
+
+    namespace
+    {
+        // One texture as the claims of the unused records see it. It frees only when every claim on it is one.
+        struct PinnedTexture
+        {
+            uint64_t bytes = 0;
+            size_t claims = 0;
+            size_t unused = 0;
+        };
+        using TextureId = std::tuple<const void *, uint64_t, uint64_t>;
+        TextureId IdOf(const TextureLoadLease &claim)
+        {
+            return { claim.CacheOf(), claim.Key().asset.value, claim.Key().content };
+        }
+    }
+
+    uint64_t MaterialRecordCache::PinnedTextureBytes() const
+    {
+        std::map<TextureId, PinnedTexture> textures;
+        for (const auto &[id, record] : mRecords)
+            for (const TextureLoadLease &claim : record.claims)
+            {
+                PinnedTexture &texture = textures[IdOf(claim)];
+                texture.bytes = claim.Bytes();
+                texture.claims = claim.Consumers();
+                texture.unused += record.consumers == 0 ? 1 : 0;
+            }
+        uint64_t bytes = 0;
+        for (const auto &[id, texture] : textures)
+            if (texture.unused == texture.claims)
+                bytes += texture.bytes;
+        return bytes;
+    }
+
     void MaterialRecordCache::Trim()
     {
-        GpuResidency &residency = mHost.Residency();
-        if (residency.Excess(GpuCategory::Texture) == 0 && residency.Excess(GpuCategory::Mesh) == 0)
+        GpuResidency &residency = *mResidency;
+        const uint64_t textureNeed = residency.Excess(GpuCategory::Texture);
+        const uint64_t recordNeed = residency.Excess(GpuCategory::Material);
+        if (textureNeed == 0 && recordNeed == 0)
             return;
-        EvictUnused();
+
+        // Unused records, oldest first. A record is released only if that gives something back.
+        std::vector<std::pair<uint64_t, uint64_t>> unused;
+        std::map<TextureId, PinnedTexture> textures;
+        for (const auto &[id, record] : mRecords)
+        {
+            if (record.consumers != 0)
+            {
+                for (const TextureLoadLease &claim : record.claims)
+                    textures[IdOf(claim)].claims = claim.Consumers();
+                continue;
+            }
+            unused.emplace_back(record.lastUse, id);
+            for (const TextureLoadLease &claim : record.claims)
+            {
+                PinnedTexture &texture = textures[IdOf(claim)];
+                texture.bytes = claim.Bytes();
+                texture.claims = claim.Consumers();
+                ++texture.unused;
+            }
+        }
+        std::sort(unused.begin(), unused.end());
+
+        uint64_t freedTexture = 0, freedRecord = 0;
+        for (const auto &[serial, id] : unused)
+        {
+            if (freedTexture >= textureNeed && freedRecord >= recordNeed)
+                break;
+            const auto record = mRecords.find(id);
+            uint64_t texturesFreed = 0;
+            bool helps = freedRecord < recordNeed && record->second.recordBytes > 0;
+            if (freedTexture < textureNeed)
+                for (const TextureLoadLease &claim : record->second.claims)
+                {
+                    PinnedTexture &texture = textures[IdOf(claim)];
+                    // every claim left on the texture belongs to an unused record still to go
+                    if (texture.unused == texture.claims)
+                        helps = true;
+                }
+            if (!helps)
+                continue;
+            for (const TextureLoadLease &claim : record->second.claims)
+            {
+                PinnedTexture &texture = textures[IdOf(claim)];
+                --texture.unused;
+                --texture.claims;
+                if (texture.claims == 0)
+                    texturesFreed += texture.bytes;
+            }
+            freedTexture += texturesFreed;
+            freedRecord += record->second.recordBytes;
+            Evict(record);
+        }
     }
 
     void MaterialRecordCache::EvictUnused()

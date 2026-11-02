@@ -49,7 +49,7 @@ namespace mir
                     view.height = source.desc.height;
                     view.levels = static_cast<uint32_t>(source.desc.mips.size()) + 1;
                 },
-            {}, uploader.SharedResidency(), GpuCategory::Texture)
+            [&uploader] { return uploader.TextureRetiringBytes(); }, uploader.SharedResidency(), GpuCategory::Texture)
     {}
 
     std::shared_ptr<TextureLoadTracker> ITextureUploader::TextureLoads(AsyncAssetService *assets)

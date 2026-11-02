@@ -208,17 +208,36 @@ from different Worlds or models share one GPU material. A normal and a mirrored
 variant differ in front face and are two records. A record owns the
 `TextureLoadLease` claims that keep its textures valid, a `MaterialLease` is one
 consumer, and an unused record stays until the renderer is over its residency
-target because it pins textures.
+target because it pins textures. Releasing is selective. `Trim` frees an unused
+record only when that gives something back, oldest first: it holds the last claim
+on a texture, alone or together with the other unused records that share it, or
+its record bytes put the material category over its limit. A record that frees
+nothing is kept, and a material table with no free slot makes `Acquire` release
+every unused record once and try again. `RecordBytes` counts the bytes a record
+holds in the shared material table, and `PinnedTextureBytes` the texture bytes
+only unused records keep alive. A pipeline and a descriptor set have no byte query
+in Vulkan, so a model material, which has no record bytes, is counted as the
+textures it pins and the slot it holds, not as a size of its own.
 
-`GpuResidency` holds one total target and optional category limits for meshes
-and textures. The target is the project's `rendering.residencyMiB`, 512 by
-default, and a value that is not a positive number up to 65536 keeps the default. Each cache reports the bytes it holds, and the
-mesh cache reports retiring bytes that the GPU still reads. A cache that has
+`GpuResidency` holds one total target and optional category limits for meshes,
+textures and materials. The target is the project's `rendering.residencyMiB`, 512 by
+default, and a value that is not a positive number up to 65536 keeps the default. Each cache reports the bytes it holds, and each of the mesh and texture
+categories reports the retiring bytes the GPU still reads, a retired texture in
+the texture category and a retired mesh, its BLAS and its transfer buffers in the
+mesh category. Both count against the total target and their own limit until the
+frame that last used them completes. A cache that has
 dropped its last claim asks `Excess` and releases its own unused records,
 oldest first, until it has freed that much. Active claims are never released, so
 the renderer can stay over the target while the work set is larger than it.
 `SetBudget` on a cache is a separate cap for that cache alone, and no cache has a
-default budget of its own.
+default budget of its own. Eviction is per category, each cache releases its own
+oldest unused records and none looks across categories for the oldest overall, so
+a recently used mesh can stay while an older texture goes. That is the policy, not
+an oversight.
+
+`Services()` is a slot for objects above the renderer that Worlds share, such as
+the animation module's `ModelLibrary`. The renderer stores them without knowing the
+type and calls `ReleaseAll` on each when it destroys the resources they name.
 
 At `ReloadCommit` the module calls `CommitReload`. It retires the meshes that are
 still queued or uploading, frees the ready ones, and forgets every entity's names,
@@ -1692,6 +1711,12 @@ materials per World, and the mesh and texture caches each held a 256 MiB budget
 per catalog revision. Now `ModelMeshTracker` queues model primitives through the
 shared transfer ring, `MaterialRecordCache` shares materials by value and holds
 their texture claims, and `GpuResidency` is the one target they all answer to.
+
+*2026-11-01* — **Residency counts retiring memory by category and materials selectively.**
+Was: one retiring figure, attributed to meshes, and a pressure that released every
+unused material. Now: textures and meshes report their own retiring bytes, a
+material category counts its table bytes, and `Trim` releases only the records that
+give something back. `Services()` lets modules above the renderer share objects.
 
 *2026-10-18* — **`PostProcessingSettings` and `PostEffectRegistry` (#207).**
 Was: no post-processing concept existed. Now: `PostProcessingSettings`

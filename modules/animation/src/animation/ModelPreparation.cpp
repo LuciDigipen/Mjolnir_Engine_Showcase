@@ -145,7 +145,9 @@ namespace mir
                 for (size_t index = 0; index < mesh.primitives.size(); ++index)
                 {
                     const MeshPrimitive &p = mesh.primitives[index];
-                    if (p.vertices.empty() || p.indices.empty())
+                    // converted by the worker that decoded the model, nothing to draw fails the model
+                    const std::shared_ptr<const DecodedMesh> upload = resources.gpuMeshes.at(key).at(index);
+                    if (!upload)
                         throw std::runtime_error("GPU mesh creation failed");
                     MaterialAsset material;
                     bool materialRead = true;
@@ -229,17 +231,7 @@ namespace mir
                     const GpuRecordKey recordKey{ AssetId{ key }, static_cast<uint32_t>(index), identity,
                         MeshUploadOptions{ .rayTracing = true } };
                     const AssetId record = mMeshTracker->Request(recordKey,
-                        [&p]
-                        {
-                            auto decoded = std::make_shared<DecodedMesh>();
-                            decoded->vertices.reserve(p.vertices.size());
-                            for (const auto &v : p.vertices)
-                                decoded->vertices.push_back(
-                                    { v.position, glm::vec3(v.color), v.normal, v.uv, v.color.a, v.tangent });
-                            decoded->indices = p.indices;
-                            decoded->bounds = ComputeMeshBounds(decoded->vertices);
-                            return std::shared_ptr<const DecodedMesh>(std::move(decoded));
-                        },
+                        [&upload] { return upload; },
                         std::format("{} mesh {:016x}.{}", mLabel, key, index));
                     model->meshClaims.emplace_back(mMeshTracker, record);
                     slots.push_back({ key, primitives.size() - 1 });

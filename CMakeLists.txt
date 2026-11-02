@@ -226,6 +226,7 @@ engine_add_shaders(MjolnirEngine
 if(BUILD_TESTING)
     add_subdirectory(tools/ParticleGpuCheck)
     add_subdirectory(tools/TextureGpuCheck)
+    add_subdirectory(tools/ModelWorldsGpuCheck)
 endif()
 
 engine_add_shaders(MjolnirEngine

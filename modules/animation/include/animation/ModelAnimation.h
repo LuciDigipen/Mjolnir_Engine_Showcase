@@ -10,6 +10,9 @@
 #include <assets/AssetCache.h>
 #include <assets/AssetDecoder.h>
 #include <assets/ModelAsset.h>
+#include <renderer/MeshAssetDecoder.h>
+#include <memory>
+#include <vector>
 #include <unordered_map>
 
 namespace mir
@@ -18,6 +21,9 @@ namespace mir
     {
         ModelAsset model;
         std::unordered_map<uint64_t, MeshAsset> meshes;
+        // Each primitive as the renderer uploads it, made by the worker that decoded the model so the main thread
+        // never converts a vertex. Parallel to meshes[key].primitives, null for a primitive with nothing to draw.
+        std::unordered_map<uint64_t, std::vector<std::shared_ptr<const DecodedMesh>>> gpuMeshes;
         // Materials the meshes name, an unreadable one is absent and its primitives take the error appearance.
         std::unordered_map<uint64_t, MaterialAsset> materials;
         std::unordered_map<uint64_t, SkeletonAsset> skeletons;

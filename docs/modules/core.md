@@ -496,7 +496,10 @@ after `Begin` only learns the work, and the group is ready once a full report
 shows nothing unsettled. Progress never decreases, so a dependency closure that
 grows does not walk the bar back. It stays ready until the next load, it ignores
 global asset activity, and a World with no group, such as a preview, is never
-held. A World that never began reads as ready.
+held. A World that never began reads as ready. A system that prepares resources
+overrides `ISystem::OnLoadingUpdate`, and `SystemScheduler::UpdateLoading` runs
+those alone, in phase order, so `App` can prepare a scene before any gameplay
+system has started.
 
 ## Backlog
 
@@ -522,7 +525,7 @@ held. A World that never began reads as ready.
 *2026-11-01* — **Scene readiness (`SceneLoadGroup`).** Was: a standalone game
 started simulating the frame the scene loaded, with meshes and models still
 queued, so they appeared as they finished. Now: resource systems report their
-bindings and `App` keeps a standalone game paused until they settle, see `app`.
+bindings and `App` prepares them before it starts a standalone game's gameplay, see `app`.
 
 *2026-10-31* — **Equal orders can be reversed or shuffled (#310).** Was: equal
 orders ran in registration order, and nothing checked that no system relied on

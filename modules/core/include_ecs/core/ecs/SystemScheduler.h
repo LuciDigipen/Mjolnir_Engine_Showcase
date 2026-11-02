@@ -125,6 +125,18 @@ namespace mir
             }
         }
 
+        // One tick of the resource preparation systems alone, in phase and order, for a scene that is waiting for
+        // its resources. Gameplay systems do not run and need not have started.
+        void UpdateLoading(SystemContext &context)
+        {
+            for (std::size_t phase = 0; phase < kPhaseCount; ++phase)
+            {
+                for (const Entry &entry : mPhases[phase])
+                    entry.system->OnLoadingUpdate(context);
+                context.commands.Flush(context.world);
+            }
+        }
+
         // every phase once, FixedUpdate included, all with context.dt
         // for tests and callers without a fixed clock; App passes its substeps
         void Update(SystemContext &context) { Update(context, 1, context.dt); }

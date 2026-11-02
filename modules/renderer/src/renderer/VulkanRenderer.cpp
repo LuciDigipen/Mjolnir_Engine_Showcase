@@ -195,6 +195,7 @@ namespace mir
     {
         if (mDevice->Handle() != VK_NULL_HANDLE)
         {
+            mServices.Clear();
             ReleaseCachedMaterials();
             ReleaseCachedMeshes();
             ReleaseCachedTextures();
@@ -356,6 +357,11 @@ namespace mir
         return texture ? texture->mBytes : 0;
     }
 
+    uint64_t VulkanRenderer::TextureRetiringBytes() const
+    {
+        return MeshStreaming().retiringTextureBytes;
+    }
+
     TextureHandle VulkanRenderer::ErrorTexture() const
     {
         return mResources->ErrorTexture();
@@ -434,6 +440,7 @@ namespace mir
 
     void VulkanRenderer::ReleaseSceneResources()
     {
+        mServices.ReleaseAll();
         ReleaseCachedMaterials();
         ReleaseCachedMeshes();
         ReleaseCachedTextures();

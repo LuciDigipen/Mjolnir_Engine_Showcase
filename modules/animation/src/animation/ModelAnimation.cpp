@@ -16,6 +16,46 @@
 
 namespace mir
 {
+    namespace
+    {
+        std::shared_ptr<const DecodedMesh> ToUpload(const MeshPrimitive &primitive)
+        {
+            if (primitive.vertices.empty() || primitive.indices.empty())
+                return nullptr;
+            auto decoded = std::make_shared<DecodedMesh>();
+            decoded->vertices.reserve(primitive.vertices.size());
+            for (const auto &v : primitive.vertices)
+                decoded->vertices.push_back({ v.position, glm::vec3(v.color), v.normal, v.uv, v.color.a, v.tangent });
+            decoded->indices = primitive.indices;
+            decoded->bounds = ComputeMeshBounds(decoded->vertices);
+            return decoded;
+        }
+
+        uint64_t PrimitiveBytes(const MeshPrimitive &p)
+        {
+            return p.vertices.capacity() * sizeof(AssetVertex) + p.indices.capacity() * sizeof(uint32_t) +
+                p.influenceRanges.capacity() * sizeof(InfluenceRange) + p.influences.capacity() * sizeof(JointInfluence) +
+                p.morphTargets.capacity() * sizeof(MorphTarget);
+        }
+
+        uint64_t ModelResourcesBytes(const ModelResources &resources)
+        {
+            uint64_t bytes = sizeof(resources);
+            for (const auto &[key, mesh] : resources.meshes)
+                for (const MeshPrimitive &primitive : mesh.primitives)
+                    bytes += PrimitiveBytes(primitive);
+            for (const auto &[key, uploads] : resources.gpuMeshes)
+                for (const auto &upload : uploads)
+                    if (upload)
+                        bytes += DecodedMeshBytes(*upload);
+            for (const AnimationClipAsset &clip : resources.clips)
+                for (const AnimationTrack &track : clip.tracks)
+                    bytes += (track.times.capacity() + track.values.capacity()) * sizeof(float);
+            return bytes + resources.skeletons.size() * sizeof(SkeletonAsset) +
+                resources.materials.size() * sizeof(MaterialAsset);
+        }
+    }
+
     bool DecodeModelResources(const AssetBlobView &root, const AssetDependencies &dependencies, ModelResources &result,
                               std::string &error)
     {
@@ -47,6 +87,9 @@ namespace mir
                             blob != nullptr && ReadTypedAsset(*blob, material, ignored))
                             data.materials.emplace(primitive.material.value, std::move(material));
                     }
+                auto &uploads = data.gpuMeshes[node.mesh.value];
+                for (const auto &primitive : mesh.primitives)
+                    uploads.push_back(ToUpload(primitive));
                 data.meshes.emplace(node.mesh.value, std::move(mesh));
             }
         for (const auto &skin : data.model.skins)
@@ -127,7 +170,7 @@ namespace mir
     const AssetDecoder<ModelResources> &ModelResourcesDecoder()
     {
         static constexpr uint32_t kTags[]{ kMeshAssetTypeTag, kSkeletonAssetTypeTag, kAnimationAssetTypeTag, kMaterialAssetTypeTag };
-        static constexpr AssetDecoder<ModelResources> kDecoder{ DecodeModelResources, kTags };
+        static constexpr AssetDecoder<ModelResources> kDecoder{ DecodeModelResources, kTags, ModelResourcesBytes };
         return kDecoder;
     }
     std::vector<float> SampleAnimationTrack(const AnimationTrack &t, float time)

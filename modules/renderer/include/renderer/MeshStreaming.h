@@ -68,7 +68,10 @@ namespace mir
         uint64_t uploadingBytes = 0;
         // Retired and kept until every frame that may have used them has completed.
         size_t retiring = 0;
+        // All of it, and the share a texture or a mesh, its BLAS and its transfer buffers account for.
         uint64_t retiringBytes = 0;
+        uint64_t retiringMeshBytes = 0;
+        uint64_t retiringTextureBytes = 0;
         uint64_t stagingUsedBytes = 0;
         uint64_t queued = 0;
         uint64_t uploaded = 0;

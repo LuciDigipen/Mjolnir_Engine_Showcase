@@ -35,22 +35,20 @@ namespace mir
         mCurrentPoses.clear();
     }
 
-    void ModelSystem::Prepare(Entry &entry, AssetId id)
-    {
-        entry.failure.clear();
-        entry.pending = std::make_unique<ModelPreparation>(mRenderer, mRenderer, mRenderer.ErrorTexture(), mAssets, id,
-            mResolver.PathOf(id));
-    }
+    ModelSystem::ModelSystem(VulkanRenderer &renderer, AsyncAssetService *assets, const AssetResolver &resolver,
+        JobExecutor *jobs)
+        : mRenderer(renderer), mAssets(assets), mResolver(resolver), mJobs(jobs),
+          mLibrary(renderer.Services().GetOrCreate<ModelLibrary>([&renderer]
+              { return std::make_shared<ModelLibrary>(renderer, renderer, renderer.ErrorTexture()); }))
+    {}
 
     const PreparedModel *ModelSystem::Load(AssetId id)
     {
         auto found = mModels.find(id.value);
         if (found == mModels.end())
-        {
-            found = mModels.emplace(id.value, Entry{}).first;
-            Prepare(found->second, id);
-        }
-        const Entry &entry = found->second;
+            found = mModels.emplace(id.value,
+                WorldModel{ mLibrary->Acquire(id, mAssets, mResolver.PathOf(id)), nullptr }).first;
+        const ModelLibrary::Entry &entry = *found->second.current;
         if (entry.ready)
             return entry.ready.get();
         if (!entry.failure.empty())
@@ -60,34 +58,103 @@ namespace mir
 
     void ModelSystem::AdvancePreparations()
     {
-        for (auto &[id, entry] : mModels)
+        mLibrary->Advance();
+        for (auto &[id, model] : mModels)
         {
-            if (!entry.pending)
+            if (!model.next)
                 continue;
-            const ModelPreparation::State state = entry.pending->Advance();
-            if (state == ModelPreparation::State::Ready)
+            const ModelLibrary::Entry &next = *model.next;
+            if (next.ready)
             {
-                entry.ready = entry.pending->Take();
-                entry.pending.reset();
+                model.current = std::move(model.next);
+                model.next.reset();
             }
-            else if (state == ModelPreparation::State::Failed)
+            else if (!next.failure.empty())
             {
-                if (entry.ready)
+                // an unusable replacement keeps the model that draws, and replaces a failure with its own
+                if (model.current->ready)
                     MIR_LOG_WARN("Model {:016x}: replacement was rejected, keeping the previous one: {}", id,
-                        entry.pending->Error());
+                        next.failure);
                 else
-                    entry.failure = entry.pending->Error();
-                entry.pending.reset();
+                    model.current = std::move(model.next);
+                model.next.reset();
             }
         }
     }
 
     void ModelSystem::CommitReload()
     {
-        for (auto &[id, entry] : mModels)
-            Prepare(entry, AssetId{ id });
+        for (auto &[id, model] : mModels)
+        {
+            ModelLibrary::Claim claim = mLibrary->Acquire(AssetId{ id }, mAssets, mResolver.PathOf(AssetId{ id }));
+            // the same content is the same entry, nothing to replace
+            if (claim != model.current)
+                model.next = std::move(claim);
+            else
+                model.next.reset();
+        }
         mFailed.clear();
         mRequestedModels.clear();
+    }
+
+    ModelSystem::Binding ModelSystem::Bind(ModelPlayer &player, uint64_t packed, AssetId &id, std::string &path,
+        const PreparedModel *&model)
+    {
+        id = player.ModelAsset();
+        if (id.IsNull())
+        {
+            std::string reason;
+            id = mResolver.Resolve(player.ModelName(), &reason);
+            if (id.IsNull())
+            {
+                if (mFailed.insert(packed).second)
+                    MIR_LOG_ERROR("Model '{}': {}", player.ModelName(), reason);
+                mRequestedModels[packed] = 0;
+                return Binding::Failed;
+            }
+        }
+        path = mResolver.PathOf(id);
+        if (mRequestedModels[packed] != id.value)
+        {
+            mRequestedModels[packed] = id.value;
+            mFailed.erase(packed);
+        }
+        if (mFailed.contains(packed))
+            return Binding::Failed;
+        try
+        {
+            model = Load(id);
+            return model != nullptr ? Binding::Ready : Binding::Pending;
+        }
+        catch (const std::exception &e)
+        {
+            MIR_LOG_ERROR("Model '{}': {}", path, e.what());
+            mFailed.insert(packed);
+            return Binding::Failed;
+        }
+    }
+
+    void ModelSystem::OnLoadingUpdate(SystemContext &context)
+    {
+        AdvancePreparations();
+        uint32_t required = 0, settled = 0;
+        std::unordered_set<uint64_t> alive;
+        context.world.GetOrCreateQuery<ModelPlayer>().ForEach(
+            [&](Entity entity, ModelPlayer &player)
+            {
+                alive.insert(PackEntity(entity));
+                if (player.ModelName().empty() && player.ModelAsset().IsNull())
+                    return;
+                ++required;
+                AssetId id;
+                std::string path;
+                const PreparedModel *model = nullptr;
+                if (Bind(player, PackEntity(entity), id, path, model) != Binding::Pending)
+                    ++settled;
+            });
+        std::erase_if(mFailed, [&](auto key) { return !alive.contains(key); });
+        if (SceneLoadGroup *group = context.world.TryResource<SceneLoadGroup>())
+            group->Report(this, required, settled);
     }
 
     void ModelSystem::Forget(World &world, Entity entity)
@@ -129,40 +196,17 @@ namespace mir
                     if (player.ModelName().empty() && player.ModelAsset().IsNull())
                         return;
                     ++required;
-                    AssetId id = player.ModelAsset();
-                    if (id.IsNull())
-                    {
-                        std::string reason;
-                        id = mResolver.Resolve(player.ModelName(), &reason);
-                        if (id.IsNull())
-                        {
-                            if (mFailed.insert(packed).second)
-                                MIR_LOG_ERROR("Model '{}': {}", player.ModelName(), reason);
-                            mRequestedModels[packed] = 0;
-                            ++settled;
-                            return;
-                        }
-                    }
-                    const std::string path = mResolver.PathOf(id);
-                    if (mRequestedModels[packed] != id.value)
-                    {
-                        mRequestedModels[packed] = id.value;
-                        mFailed.erase(packed);
-                    }
-                    if (mFailed.contains(packed))
-                    {
+                    AssetId id;
+                    std::string path;
+                    const PreparedModel *data = nullptr;
+                    const Binding binding = Bind(player, packed, id, path, data);
+                    // hidden until the first preparation settles
+                    if (binding != Binding::Pending)
                         ++settled;
+                    if (binding != Binding::Ready)
                         return;
-                    }
-                    bool counted = false;
                     try
                     {
-                        const PreparedModel *data = Load(id);
-                        // hidden until the first preparation settles
-                        if (data == nullptr)
-                            return;
-                        ++settled;
-                        counted = true;
                         if (player.ModelAsset().IsNull())
                             player.SetModelAsset(id);
                         if (player.IsPlaying() && IsSimulating(context.world))
@@ -202,8 +246,6 @@ namespace mir
                     {
                         MIR_LOG_ERROR("Model '{}': {}", path, e.what());
                         mFailed.insert(packed);
-                        if (!counted)
-                            ++settled;
                     }
                 });
             if (SceneLoadGroup *group = context.world.TryResource<SceneLoadGroup>())

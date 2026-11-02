@@ -22,6 +22,7 @@
 #include <core/Registration.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/RtxgiConfig.h>
+#include <renderer/RendererServices.h>
 #include <renderer/Texture.h>
 #include <renderer/components/Sky.h>
 
@@ -215,6 +216,7 @@ namespace mir
         TextureUploadState TextureState(TextureHandle handle) const override;
         bool RetireTexture(TextureHandle handle) override;
         uint64_t TextureFootprint(TextureHandle handle) const override;
+        uint64_t TextureRetiringBytes() const override;
 
         TextureHandle ErrorTexture() const;
 
@@ -262,6 +264,8 @@ namespace mir
         uint64_t UploadFrameBudget() const override;
         // One target for the mesh and texture caches together.
         std::shared_ptr<GpuResidency> SharedResidency() override { return mResidency; }
+        // Objects above the renderer that Worlds share, released with the resources they name.
+        RendererServices &Services() { return mServices; }
         MeshHandle QueueMesh(MeshUploadSource source, const MeshUploadOptions &options) override;
         MeshUploadState MeshState(MeshHandle handle) const override;
         bool RetireMesh(MeshHandle handle) override;
@@ -368,6 +372,7 @@ namespace mir
         };
         FrameRetireList<ReleasedResources> mReleasedResources;
         std::shared_ptr<GpuResidency> mResidency = std::make_shared<GpuResidency>();
+        RendererServices mServices;
         glm::vec4 mClearColor{ 0.02f, 0.02f, 0.02f, 1.0f };
 
         bool mSkyVisible = false;
