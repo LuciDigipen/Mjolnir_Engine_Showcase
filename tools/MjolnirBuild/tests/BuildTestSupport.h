@@ -57,19 +57,20 @@ namespace mir::build::test
     inline void MakePlayerTemplate(const fs::path &dir, bool editor = false)
     {
         Touch(dir / "MjolnirEngine.exe");
+        Touch(dir / "MjolnirErrorReporter.exe");
         Touch(dir / "player_info.json", editor ? "{ \"version\": 1, \"editor\": true }" : "{ \"version\": 1, \"editor\": false }");
         Touch(dir / "fonts" / "Inter.ttf");
     }
 
     // A checkout with one engine asset and two games: Demo has assets, sound banks, a Prefab
-    // folder and a second scene; Quiet has a scene and nothing else
+    // folder, a second scene and an IDE setting; Quiet has a scene and nothing else
     inline void MakeCheckout(const fs::path &root)
     {
         Touch(root / "assets" / "engine.txt");
 
         const fs::path demo = root / "games" / "Demo";
         Touch(demo / "game.json", R"({ "name": "Demo", "assetsRoot": "assets", "sceneDir": "scenes/default" })");
-        Touch(demo / "project_settings.json", "{}");
+        Touch(demo / "project_settings.json", R"({ "ide": { "path": "C:/Code.exe" }, "rendering": { "rayTracing": true } })");
         Touch(demo / "terrain_streaming.json", "{}");
         Touch(demo / "terrain_streaming.local.json", "{}");
         Touch(demo / "scenes" / "default" / "scene.json", R"({ "entities": [] })");

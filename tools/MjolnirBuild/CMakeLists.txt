@@ -14,7 +14,9 @@ engine_target_utf8(MjolnirBuild)
 target_link_libraries(MjolnirBuild PRIVATE mjolnir_build mir::core)
 target_compile_definitions(MjolnirBuild PRIVATE
     MJOLNIR_BUILD_ASSET_COOKER="$<TARGET_FILE:AssetCooker>"
-    MJOLNIR_BUILD_TERRAIN_TOOL="$<TARGET_FILE:TerrainTool>")
+    MJOLNIR_BUILD_TERRAIN_TOOL="$<TARGET_FILE:TerrainTool>"
+    # the engine built beside it, which a template is compared with
+    MJOLNIR_BUILD_EDITOR_INFO="$<TARGET_FILE_DIR:MjolnirEngine>/player_info.json")
 add_dependencies(MjolnirBuild AssetCooker TerrainTool)
 
 if(BUILD_TESTING)
