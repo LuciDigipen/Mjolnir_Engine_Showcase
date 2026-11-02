@@ -178,6 +178,37 @@ A module that starts linking `mir::editor` unconditionally fails this
 configure, because the target does not exist, so the separation cannot erode
 without someone noticing.
 
+## A player template
+
+A game build folder holds every game, their cooked assets and the build's own
+leftovers. `cmake --install` copies out only what the player itself needs, so a
+build tool can add one game to it:
+
+```
+cmake --build --preset windows-msvc-game-release
+cmake --install builds/windows-msvc-game-release --prefix builds/player/release
+```
+
+The template holds `MjolnirEngine.exe`, `MjolnirErrorReporter.exe`, the DLLs
+they import, the current shader generation (plus `shaders/rtxgi/` with RTXGI),
+`fonts/`, `branding/`, `player_info.json`, and `nvngx_dlssd.dll` with DLSS. It
+has no `games/`, `cooked/` or `engine.json`, which belong to a game. The debug
+tree installs the same way, with the debug DLLs. Only the game presets have
+install rules.
+
+Install into an empty folder: `cmake --install` never removes what an earlier
+install left there.
+
+DLLs are found from the executables' imports rather than
+`$<TARGET_RUNTIME_DLLS>`, because LuaJIT is linked through pkg-config and its
+target names no DLL. Windows system DLLs and the MSVC runtime are left out, so a
+machine without Visual Studio needs the Visual C++ Redistributable.
+
+Every build writes `player_info.json` next to `MjolnirEngine`, the editor's
+included: the engine version, commit, configuration, and whether the editor,
+large world, audio, DLSS and RTXGI were built in. Comparing the editor's copy
+with a template's tells whether the two came from the same engine.
+
 ## Builds without proprietary SDKs and daily CI
 
 `MIR_WITH_AUDIO` defaults to `ON`. Local builds with audio require the Wwise
