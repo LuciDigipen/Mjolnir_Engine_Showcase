@@ -352,13 +352,6 @@ namespace mir
                 MIR_LOG_WARN("Editor background image '{}': {}", mPreferences.backgroundFile, error);
         }
 
-        {
-            const std::filesystem::path logoPath = BrandingPath("mjolnir-logo-menubar.png");
-            std::string error;
-            if (!mMenuBarLogo.Load(logoPath, error))
-                MIR_LOG_WARN("Editor menu bar logo '{}': {}", logoPath.string(), error);
-        }
-
         mSceneOps = &sceneOps;
         mInitialized = true;
         return true;
@@ -1308,7 +1301,6 @@ namespace mir
         if (enableLayout)
         {
             mBackground.CollectRetired();
-            mMenuBarLogo.CollectRetired();
 
             // Panels go translucent so the image shows; the title and menu bars keep the theme.
             const bool showBackground = mPreferences.backgroundEnabled && mBackground.HasImage();
@@ -1471,20 +1463,6 @@ namespace mir
             ImGui::PopStyleColor(pushedColors);
             if (ImGui::BeginMainMenuBar())
             {
-                if (mMenuBarLogo.HasImage())
-                {
-                    constexpr float kLogoInsetDip = 3.0f;
-                    const glm::vec2 logoTexels = mMenuBarLogo.Size();
-                    const float logoHeight =
-                        std::round(ImGui::GetFrameHeight() - 2.0f * kLogoInsetDip * mWindow->ContentScale());
-                    const glm::vec2 logoSize(std::round(logoHeight * logoTexels.x / logoTexels.y), logoHeight);
-                    // Whole pixels: the texture has no mips, and a fractional position would blur it further.
-                    const glm::vec2 logoMin(std::round(ImGui::GetCursorScreenPos().x),
-                        std::round(ImGui::GetWindowPos().y + (ImGui::GetWindowHeight() - logoHeight) * 0.5f));
-                    mMenuBarLogo.AddTo(*ImGui::GetWindowDrawList(), logoMin, logoMin + logoSize);
-                    // Reserves the width only: a taller item would shift the menus beside it.
-                    ImGui::Dummy(ImVec2(logoSize.x, 0.0f));
-                }
                 if (ImGui::BeginMenu("File"))
                 {
                     ImGui::BeginDisabled(mode.mMode == EngineMode::Play);
