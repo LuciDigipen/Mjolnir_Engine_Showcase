@@ -440,7 +440,9 @@ namespace mir::vk
         std::vector<std::string> shaderFiles;
         for (const char *entry : kLegacyEntryPoints)
             shaderFiles.push_back(std::format("raytrace.{}.spv", entry));
-        for (const SurfaceMaterialRegistration &material : mSurfaceMaterials)
+        const std::vector<SurfaceMaterialRegistration> &surfaceMaterials =
+            mSurfaceMaterials;
+        for (const SurfaceMaterialRegistration &material : surfaceMaterials)
         {
             entryPoints.push_back("closestHitSurface");
             stageFlags.push_back(VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR);
@@ -448,11 +450,28 @@ namespace mir::vk
         }
 
         std::vector<VkShaderModule> modules(shaderFiles.size(), VK_NULL_HANDLE);
+        struct ModuleScope
+        {
+            VkDevice device;
+            std::vector<VkShaderModule> &modules;
+            ~ModuleScope()
+            {
+                for (VkShaderModule &module : modules)
+                    if (module != VK_NULL_HANDLE)
+                    {
+                        vkDestroyShaderModule(device, module, nullptr);
+                        module = VK_NULL_HANDLE;
+                    }
+            }
+        } moduleScope{mDevice->Handle(), modules};
         const auto destroyModules = [&]
             {
-                for (VkShaderModule module : modules)
+                for (VkShaderModule &module : modules)
                     if (module != VK_NULL_HANDLE)
+                    {
                         vkDestroyShaderModule(mDevice->Handle(), module, nullptr);
+                        module = VK_NULL_HANDLE;
+                    }
             };
 
         for (size_t i = 0; i < modules.size(); ++i)
@@ -629,7 +648,7 @@ namespace mir::vk
         // base offset makes TraceRay's 0/1 record offset address both records.
         std::vector<VkRayTracingShaderGroupCreateInfoKHR> groups{
             generalGroup(0), generalGroup(1), generalGroup(2), hitGroup(3, 4), hitGroup(VK_SHADER_UNUSED_KHR, 5) };
-        for (size_t i = 0; i < mSurfaceMaterials.size(); ++i)
+        for (size_t i = 0; i < surfaceMaterials.size(); ++i)
         {
             groups.push_back(hitGroup(static_cast<uint32_t>(6 + i), 4));
             groups.push_back(hitGroup(VK_SHADER_UNUSED_KHR, 5));
@@ -1170,6 +1189,225 @@ namespace mir::vk
         outBlas.mAddress = vkGetAccelerationStructureDeviceAddressKHR(mDevice->Handle(), &addressInfo);
 
         return true;
+    }
+
+    bool RayTracer::BuildShaderReloadBundle(ShaderReloadCandidate &candidate, std::string *error)
+    {
+        constexpr std::array<const char *, 6> kLegacyEntryPoints{
+            "rayGenMain", "missMain", "shadowMissMain", "closestHitMain", "anyHitMain", "shadowAnyHitMain" };
+        constexpr std::array<VkShaderStageFlagBits, 6> kLegacyStages{
+            VK_SHADER_STAGE_RAYGEN_BIT_KHR, VK_SHADER_STAGE_MISS_BIT_KHR, VK_SHADER_STAGE_MISS_BIT_KHR,
+            VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, VK_SHADER_STAGE_ANY_HIT_BIT_KHR, VK_SHADER_STAGE_ANY_HIT_BIT_KHR };
+
+        std::vector<std::string> entryPoints(kLegacyEntryPoints.begin(), kLegacyEntryPoints.end());
+        std::vector<VkShaderStageFlagBits> stageFlags(kLegacyStages.begin(), kLegacyStages.end());
+        std::vector<std::string> shaderFiles;
+        for (const char *entry : kLegacyEntryPoints)
+            shaderFiles.push_back(std::format("raytrace.{}.spv", entry));
+        const std::vector<SurfaceMaterialRegistration> &surfaceMaterials =
+            mReloadSurfaceMaterials;
+        for (const SurfaceMaterialRegistration &material : surfaceMaterials)
+        {
+            entryPoints.push_back("closestHitSurface");
+            stageFlags.push_back(VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR);
+            shaderFiles.push_back(std::format("{}.closestHitSurface.spv", material.stem));
+        }
+
+        std::vector<VkShaderModule> modules(shaderFiles.size(), VK_NULL_HANDLE);
+        const auto destroyModules = [&]
+            {
+                for (VkShaderModule &module : modules)
+                    if (module != VK_NULL_HANDLE)
+                    {
+                        vkDestroyShaderModule(mDevice->Handle(), module, nullptr);
+                        module = VK_NULL_HANDLE;
+                    }
+            };
+        struct ModuleScope
+        {
+            const decltype(destroyModules) &destroy;
+            ~ModuleScope() { destroy(); }
+        } moduleScope{destroyModules};
+        for (size_t i = 0; i < modules.size(); ++i)
+        {
+            modules[i] = CreateShaderModule(mDevice->Handle(), ShaderPath(shaderFiles[i]));
+            if (modules[i] == VK_NULL_HANDLE)
+            {
+                if (error != nullptr)
+                    *error = "missing RT shader '" + shaderFiles[i] + "'";
+                destroyModules();
+                return false;
+            }
+        }
+
+        std::vector<VkPipelineShaderStageCreateInfo> stages(entryPoints.size());
+        for (size_t i = 0; i < stages.size(); ++i)
+            stages[i] = { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                         .stage = stageFlags[i],
+                         .module = modules[i],
+                         .pName = entryPoints[i].c_str() };
+
+        const auto generalGroup = [](uint32_t shader)
+            {
+                return VkRayTracingShaderGroupCreateInfoKHR{
+                    .sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR,
+                    .type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR,
+                    .generalShader = shader,
+                    .closestHitShader = VK_SHADER_UNUSED_KHR,
+                    .anyHitShader = VK_SHADER_UNUSED_KHR,
+                    .intersectionShader = VK_SHADER_UNUSED_KHR };
+            };
+        const auto hitGroup = [](uint32_t closestHit, uint32_t anyHit)
+            {
+                return VkRayTracingShaderGroupCreateInfoKHR{
+                    .sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR,
+                    .type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR,
+                    .generalShader = VK_SHADER_UNUSED_KHR,
+                    .closestHitShader = closestHit,
+                    .anyHitShader = anyHit,
+                    .intersectionShader = VK_SHADER_UNUSED_KHR };
+            };
+
+        std::vector<VkRayTracingShaderGroupCreateInfoKHR> groups{
+            generalGroup(0), generalGroup(1), generalGroup(2), hitGroup(3, 4), hitGroup(VK_SHADER_UNUSED_KHR, 5) };
+        for (size_t i = 0; i < surfaceMaterials.size(); ++i)
+        {
+            groups.push_back(hitGroup(static_cast<uint32_t>(6 + i), 4));
+            groups.push_back(hitGroup(VK_SHADER_UNUSED_KHR, 5));
+        }
+
+        const VkRayTracingPipelineCreateInfoKHR pipelineInfo{
+            .sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR,
+            .stageCount = static_cast<uint32_t>(stages.size()),
+            .pStages = stages.data(),
+            .groupCount = static_cast<uint32_t>(groups.size()),
+            .pGroups = groups.data(),
+            .maxPipelineRayRecursionDepth = 2,
+            .layout = mPipelineLayout };
+
+        const uint32_t groupCount = static_cast<uint32_t>(groups.size());
+        const uint32_t handleSize = mDevice->RtProperties().shaderGroupHandleSize;
+        const uint32_t handleSizeAligned = AlignUp(handleSize, mDevice->RtProperties().shaderGroupHandleAlignment);
+        const VkDeviceSize regionSize = AlignUp(handleSizeAligned, mDevice->RtProperties().shaderGroupBaseAlignment);
+        const VkDeviceSize sbtSize = regionSize * groupCount;
+        std::vector<std::byte> handles(static_cast<size_t>(handleSize) * groupCount);
+
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        const VkResult pipelineResult = vkCreateRayTracingPipelinesKHR(
+            mDevice->Handle(), VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline);
+        destroyModules();
+        if (pipelineResult != VK_SUCCESS)
+        {
+            if (error != nullptr)
+                *error = "vkCreateRayTracingPipelinesKHR failed";
+            return false;
+        }
+
+        if (vkGetRayTracingShaderGroupHandlesKHR(mDevice->Handle(), pipeline, 0, groupCount,
+            handles.size(), handles.data()) != VK_SUCCESS)
+        {
+            vkDestroyPipeline(mDevice->Handle(), pipeline, nullptr);
+            if (error != nullptr)
+                *error = "vkGetRayTracingShaderGroupHandlesKHR failed";
+            return false;
+        }
+
+        const VkBufferCreateInfo sbtBufferInfo{
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = sbtSize,
+            .usage = VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE };
+        const VmaAllocationCreateInfo sbtAllocInfo{
+            .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                     VMA_ALLOCATION_CREATE_MAPPED_BIT,
+            .usage = VMA_MEMORY_USAGE_AUTO };
+
+        VmaAllocationInfo sbtInfo{};
+        if (vmaCreateBufferWithAlignment(mDevice->Allocator(), &sbtBufferInfo, &sbtAllocInfo,
+            mDevice->RtProperties().shaderGroupBaseAlignment, &candidate.mSbtBuffer,
+            &candidate.mSbtAllocation, &sbtInfo) != VK_SUCCESS)
+        {
+            vkDestroyPipeline(mDevice->Handle(), pipeline, nullptr);
+            if (error != nullptr)
+                *error = "SBT buffer allocation failed";
+            return false;
+        }
+
+        std::byte *const sbtMapped = static_cast<std::byte *>(sbtInfo.pMappedData);
+        for (uint32_t i = 0; i < groupCount; ++i)
+            std::memcpy(sbtMapped + i * regionSize, handles.data() + i * handleSize, handleSize);
+        if (vmaFlushAllocation(mDevice->Allocator(), candidate.mSbtAllocation, 0, VK_WHOLE_SIZE) != VK_SUCCESS)
+        {
+            vmaDestroyBuffer(mDevice->Allocator(), candidate.mSbtBuffer, candidate.mSbtAllocation);
+            candidate.mSbtBuffer = VK_NULL_HANDLE;
+            candidate.mSbtAllocation = VK_NULL_HANDLE;
+            vkDestroyPipeline(mDevice->Handle(), pipeline, nullptr);
+            if (error != nullptr)
+                *error = "candidate SBT flush failed";
+            return false;
+        }
+
+        const VkDeviceAddress sbtBase = GetBufferAddress(mDevice->Handle(), candidate.mSbtBuffer);
+        candidate.mRaygenRegion = { .deviceAddress = sbtBase, .stride = regionSize, .size = regionSize };
+        candidate.mMissRegion = { .deviceAddress = sbtBase + regionSize, .stride = regionSize,
+            .size = 2 * regionSize };
+        candidate.mHitRegion = { .deviceAddress = sbtBase + 3 * regionSize, .stride = regionSize,
+            .size = static_cast<VkDeviceSize>(groupCount - 3) * regionSize };
+        candidate.mCallableRegion = {};
+        candidate.mPipeline = pipeline;
+        candidate.mValid = true;
+        return true;
+    }
+
+    void RayTracer::SetSurfaceMaterials(std::span<const SurfaceMaterialRegistration> materials)
+    {
+        mSurfaceMaterials.assign(materials.begin(), materials.end());
+    }
+
+    bool RayTracer::PrepareShaderReload(std::span<const SurfaceMaterialRegistration> candidateMaterials,
+        std::string *error)
+    {
+        DiscardShaderReload();
+        mReloadSurfaceMaterials.assign(candidateMaterials.begin(), candidateMaterials.end());
+        if (mPipeline == VK_NULL_HANDLE || !BuildShaderReloadBundle(mReloadCandidate, error))
+        {
+            DiscardShaderReload();
+            return false;
+        }
+        mReloadPrepared = true;
+        return true;
+    }
+
+    void RayTracer::CommitShaderReload()
+    {
+        if (!mReloadPrepared)
+            return;
+        if (mPipeline != VK_NULL_HANDLE)
+            vkDestroyPipeline(mDevice->Handle(), mPipeline, nullptr);
+        if (mSbtBuffer != VK_NULL_HANDLE)
+            vmaDestroyBuffer(mDevice->Allocator(), mSbtBuffer, mSbtAllocation);
+
+        mSurfaceMaterials = std::move(mReloadSurfaceMaterials);
+        mPipeline = mReloadCandidate.mPipeline;
+        mSbtBuffer = mReloadCandidate.mSbtBuffer;
+        mSbtAllocation = mReloadCandidate.mSbtAllocation;
+        mSbtRaygenRegion = mReloadCandidate.mRaygenRegion;
+        mSbtMissRegion = mReloadCandidate.mMissRegion;
+        mSbtHitRegion = mReloadCandidate.mHitRegion;
+        mSbtCallableRegion = mReloadCandidate.mCallableRegion;
+        mReloadCandidate = {};
+        mReloadPrepared = false;
+    }
+
+    void RayTracer::DiscardShaderReload()
+    {
+        if (mReloadCandidate.mPipeline != VK_NULL_HANDLE)
+            vkDestroyPipeline(mDevice->Handle(), mReloadCandidate.mPipeline, nullptr);
+        if (mReloadCandidate.mSbtBuffer != VK_NULL_HANDLE)
+            vmaDestroyBuffer(mDevice->Allocator(), mReloadCandidate.mSbtBuffer, mReloadCandidate.mSbtAllocation);
+        mReloadCandidate = {};
+        mReloadSurfaceMaterials.clear();
+        mReloadPrepared = false;
     }
 
     RayTracer::PreparedScene RayTracer::PrepareScene(VkCommandBuffer cmd, uint32_t frame,

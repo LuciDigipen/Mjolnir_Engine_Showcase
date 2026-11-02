@@ -483,4 +483,116 @@ namespace mir::vk
             ShaderReadOnlyBarrier(cmd, mMipImages[frame][level]);
         }
     }
+    bool Bloom::BuildReloadCandidate(ReloadCandidate &candidate, std::string *error)
+    {
+        VkShaderModule vertModule = CreateShaderModule(mDevice->Handle(), ShaderPath("bloom.vertexMain.spv"));
+        VkShaderModule extractModule = CreateShaderModule(mDevice->Handle(), ShaderPath("bloom.brightpassMain.spv"));
+        VkShaderModule downsampleModule = CreateShaderModule(mDevice->Handle(), ShaderPath("bloom.downsampleMain.spv"));
+        VkShaderModule upsampleModule = CreateShaderModule(mDevice->Handle(), ShaderPath("bloom.upsampleMain.spv"));
+        if (vertModule == VK_NULL_HANDLE || extractModule == VK_NULL_HANDLE ||
+            downsampleModule == VK_NULL_HANDLE || upsampleModule == VK_NULL_HANDLE)
+        {
+            if (vertModule != VK_NULL_HANDLE)
+                vkDestroyShaderModule(mDevice->Handle(), vertModule, nullptr);
+            if (extractModule != VK_NULL_HANDLE)
+                vkDestroyShaderModule(mDevice->Handle(), extractModule, nullptr);
+            if (downsampleModule != VK_NULL_HANDLE)
+                vkDestroyShaderModule(mDevice->Handle(), downsampleModule, nullptr);
+            if (upsampleModule != VK_NULL_HANDLE)
+                vkDestroyShaderModule(mDevice->Handle(), upsampleModule, nullptr);
+            if (error != nullptr)
+                *error = "a bloom shader module is missing";
+            return false;
+        }
+
+        const VkPipelineColorBlendAttachmentState overwriteBlend{
+            .blendEnable = VK_FALSE,
+            .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                              VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT };
+        const VkPipelineColorBlendAttachmentState additiveBlend{
+            .blendEnable = VK_TRUE,
+            .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
+            .dstColorBlendFactor = VK_BLEND_FACTOR_ONE,
+            .colorBlendOp = VK_BLEND_OP_ADD,
+            .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+            .dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+            .alphaBlendOp = VK_BLEND_OP_ADD,
+            .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                              VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT };
+
+        const auto makePipeline = [&](VkShaderModule fragModule, const char *fragEntry,
+            const VkPipelineColorBlendAttachmentState &blendAttachment, const char *debugName,
+            VkPipeline &outPipeline)
+            {
+                const FullscreenPipelineDesc desc{
+                    .vertModule = vertModule,
+                    .fragModule = fragModule,
+                    .fragEntry = fragEntry,
+                    .layout = mPipelineLayout,
+                    .blendAttachment = &blendAttachment,
+                    .colorFormat = kHdrColorFormat };
+                return CreateFullscreenPipeline(*mDevice, desc, debugName, outPipeline);
+            };
+
+        bool ok = makePipeline(extractModule, "brightpassMain", overwriteBlend, "Bloom extract pipeline",
+            candidate.mExtract);
+        if (ok)
+            ok = makePipeline(downsampleModule, "downsampleMain", overwriteBlend,
+                "Bloom downsample pipeline", candidate.mDownsample);
+        if (ok)
+            ok = makePipeline(upsampleModule, "upsampleMain", additiveBlend,
+                "Bloom upsample pipeline", candidate.mUpsample);
+
+        vkDestroyShaderModule(mDevice->Handle(), vertModule, nullptr);
+        vkDestroyShaderModule(mDevice->Handle(), extractModule, nullptr);
+        vkDestroyShaderModule(mDevice->Handle(), downsampleModule, nullptr);
+        vkDestroyShaderModule(mDevice->Handle(), upsampleModule, nullptr);
+        if (!ok && error != nullptr)
+            *error = "a bloom pipeline could not be created";
+        return ok;
+    }
+
+    void Bloom::DestroyCandidate(ReloadCandidate &candidate)
+    {
+        if (mDevice == nullptr)
+            return;
+        for (VkPipeline *pipeline : { &candidate.mExtract, &candidate.mDownsample, &candidate.mUpsample })
+        {
+            if (*pipeline != VK_NULL_HANDLE)
+                vkDestroyPipeline(mDevice->Handle(), *pipeline, nullptr);
+            *pipeline = VK_NULL_HANDLE;
+        }
+    }
+
+    bool Bloom::PrepareShaderReload(std::string *error)
+    {
+        DiscardShaderReload();
+        if (!BuildReloadCandidate(mReloadCandidate, error))
+        {
+            DiscardShaderReload();
+            return false;
+        }
+        mReloadPrepared = true;
+        return true;
+    }
+
+    void Bloom::CommitShaderReload()
+    {
+        if (!mReloadPrepared)
+            return;
+        for (VkPipeline *pipeline : { &mExtractPipeline, &mDownsamplePipeline, &mUpsamplePipeline })
+            if (*pipeline != VK_NULL_HANDLE)
+                vkDestroyPipeline(mDevice->Handle(), *pipeline, nullptr);
+        mExtractPipeline = mReloadCandidate.mExtract;
+        mDownsamplePipeline = mReloadCandidate.mDownsample;
+        mUpsamplePipeline = mReloadCandidate.mUpsample;
+        mReloadCandidate = {};
+        mReloadPrepared = false;
+    }
+
+    void Bloom::DiscardShaderReload()
+    {
+        DestroyCandidate(mReloadCandidate);
+        mReloadPrepared = false;
+    }
 }

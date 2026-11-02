@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.26)
+project(ShaderPublicationFixture LANGUAGES CXX)
+include("${MIR_REPO_ROOT}/cmake/Shaders.cmake")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/fixture.cpp" "int main() { return 0; }\n")
+add_executable(publication_fixture "${CMAKE_CURRENT_BINARY_DIR}/fixture.cpp")
+engine_add_shaders(publication_fixture SOURCE "${FIXTURE_SOURCE}" ENTRIES "probeMain:compute")
+engine_write_shader_manifest(publication_fixture)

@@ -13,6 +13,7 @@
         "vulkan-memory-allocator",
         "catch2",
         "nlohmann-json",
+        "spirv-reflect",
         "joltphysics",
         "luajit",
         {

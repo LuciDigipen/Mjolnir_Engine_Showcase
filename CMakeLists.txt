@@ -94,6 +94,7 @@ add_subdirectory(modules/terrain_script)
 add_subdirectory(modules/window)
 
 add_subdirectory(tools/AssetCooker)
+add_subdirectory(tools/ShaderPublisher)
 add_subdirectory(tools/ErrorReporter)
 add_subdirectory(tools/TerrainTool)
 
@@ -369,6 +370,10 @@ if(TARGET engine_renderer_tests)
         endif()
     endforeach()
 endif()
+# The ABI fixtures read real legacy reflections too.
+if(TARGET engine_renderer_tests AND TARGET MjolnirEngine_shaders_raytrace)
+    add_dependencies(engine_renderer_tests MjolnirEngine_shaders_raytrace)
+endif()
 
 engine_cook_assets(MjolnirEngine
     SOURCE_ROOTS assets/ ${game_asset_roots}
@@ -431,6 +436,13 @@ target_link_libraries(MjolnirEngine PRIVATE
 # They need a GPU; skip them with `ctest -LE smoke`.
 # --non-interactive: a broken scene fails at once instead of waiting on its prompt until the timeout.
 if(BUILD_TESTING)
+    add_executable(shader_compiler_driver tools/tests/ShaderCompilerDriver.cpp)
+    add_test(NAME shader_publication_fixture
+        COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_SOURCE_DIR}/tools/tests/ShaderPublicationFixture.ps1"
+            -Repository "${CMAKE_SOURCE_DIR}" -BuildDirectory "${CMAKE_BINARY_DIR}"
+            -Publisher "$<TARGET_FILE:ShaderPublisher>" -Compiler "$<TARGET_FILE:shader_compiler_driver>"
+            -CxxCompiler "${CMAKE_CXX_COMPILER}" -MakeProgram "${CMAKE_MAKE_PROGRAM}")
     add_test(NAME surface_material_discovery
         COMMAND "${CMAKE_COMMAND}" -DSLANGC_EXECUTABLE=${SLANGC_EXECUTABLE}
                 -P "${CMAKE_SOURCE_DIR}/tools/tests/SurfaceMaterialDiscovery.cmake")

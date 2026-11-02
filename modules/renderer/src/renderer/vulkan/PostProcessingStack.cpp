@@ -131,8 +131,7 @@ namespace mir::vk
     #endif
     }
 
-    bool PostProcessingStack::DlssAvailable() const
-    {
+    bool PostProcessingStack::DlssAvailable() const    {
     #if MIR_WITH_DLSS
         return mDlssReady;
     #else
@@ -305,5 +304,51 @@ namespace mir::vk
             mFxaa.Record(cmd, frame, mFxaa.IntermediateView(frame), grain, extent);
         else
             mPostProcess.Record(cmd, frame, color, mBloom.OutputView(frame), mBloomEnabled ? mBloom.Intensity() : 0.0f, grain, extent);
+    }
+
+    bool PostProcessingStack::PrepareShaderReload(std::string *error)
+    {
+        DiscardShaderReload();
+        const auto fail = [&](const char *name)
+            {
+                if (error != nullptr)
+                    *error = std::string(name) + " shader reload failed";
+                DiscardShaderReload();
+                return false;
+            };
+
+        if (!mPostProcess.PrepareShaderReload(error))
+            return fail("tonemap");
+        if (!mFxaa.PrepareShaderReload(error))
+            return fail("FXAA");
+        if (!mBloom.PrepareShaderReload(error))
+            return fail("bloom");
+        if (!mDepthOfField.PrepareShaderReload(error))
+            return fail("depth of field");
+        if (!mVelocityPass.PrepareShaderReload(error))
+            return fail("velocity");
+        if (!mMotionBlur.PrepareShaderReload(error))
+            return fail("motion blur");
+        return true;
+    }
+
+    void PostProcessingStack::CommitShaderReload()
+    {
+        mPostProcess.CommitShaderReload();
+        mFxaa.CommitShaderReload();
+        mBloom.CommitShaderReload();
+        mDepthOfField.CommitShaderReload();
+        mVelocityPass.CommitShaderReload();
+        mMotionBlur.CommitShaderReload();
+    }
+
+    void PostProcessingStack::DiscardShaderReload()
+    {
+        mPostProcess.DiscardShaderReload();
+        mFxaa.DiscardShaderReload();
+        mBloom.DiscardShaderReload();
+        mDepthOfField.DiscardShaderReload();
+        mVelocityPass.DiscardShaderReload();
+        mMotionBlur.DiscardShaderReload();
     }
 }

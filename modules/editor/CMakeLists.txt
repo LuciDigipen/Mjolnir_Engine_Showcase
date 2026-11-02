@@ -20,7 +20,8 @@ target_link_libraries(engine_editor
            mir::physics_layers
            # PrefabWorkspace.h and PrefabAuthoringAdapter.h take prefab types
            mir::prefab
-    PRIVATE mir::particles
+    PRIVATE mir::jobs
+            mir::particles
             mir::animation
             mir::assets
             mir::editortheme
@@ -52,6 +53,7 @@ target_sources(engine_editor PRIVATE
     src/editor/PrefabAuthoringAdapter.cpp
     src/editor/PrefabPlayMarks.cpp
     src/editor/PrefabWorkspace.cpp
+    src/editor/ShaderHotReload.cpp
     src/editor/SnapToTerrain.cpp
     src/editor/ViewPie.cpp
     src/editor/history/ActiveCameraEdit.cpp

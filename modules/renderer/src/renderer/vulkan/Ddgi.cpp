@@ -232,7 +232,8 @@ namespace mir::vk
                 "DDGIProbeClassificationCS", "DDGIProbeRelocationResetCS", "DDGIProbeClassificationResetCS" };
             for (size_t i = 0; i < mCompute.size(); ++i)
             {
-                const auto path = ShaderPath(std::string("rtxgi/") + names[i] + ".spv");
+                // SDK binaries are packaged separately and are not part of the Slang generation manifest.
+                const auto path = ExecutableDir() / "shaders" / "rtxgi" / (std::string(names[i]) + ".spv");
                 std::error_code error;
                 if (!std::filesystem::is_regular_file(path, error)) return false;
                 const VkShaderModule module = CreateShaderModule(mDevice->Handle(), path);

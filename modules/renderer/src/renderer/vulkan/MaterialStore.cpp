@@ -17,8 +17,12 @@
 #include "VulkanPushConstants.h"
 
 #include <renderer/MaterialResolution.h>
+#include <renderer/ShaderLibrary.h>
 
 #include <core/fs/Paths.h>
+#include <core/fs/FileIO.h>
+
+#include <nlohmann/json.hpp>
 #include <core/log/Log.h>
 
 #include <vk_mem_alloc.h>
@@ -28,6 +32,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -38,6 +43,75 @@ namespace mir::vk
     {
         constexpr std::string_view kModelShaderName = "model";
         constexpr uint32_t kRecordRefBinding = 2;
+
+        nlohmann::json FieldDefault(MaterialFieldKind kind, uint32_t size)
+        {
+            switch (kind)
+            {
+            case MaterialFieldKind::Float: return 0.0f;
+            case MaterialFieldKind::Float2: return nlohmann::json::array({ 0.0f, 0.0f });
+            case MaterialFieldKind::Float3: return nlohmann::json::array({ 0.0f, 0.0f, 0.0f });
+            case MaterialFieldKind::Float4: return nlohmann::json::array({ 0.0f, 0.0f, 0.0f, 0.0f });
+            case MaterialFieldKind::Uint:
+            case MaterialFieldKind::Int: return 0;
+            case MaterialFieldKind::Bool: return false;
+            case MaterialFieldKind::TextureRef:
+            {
+                nlohmann::json value{ { "image", 0 } };
+                if (size == 8)
+                    value["sampler"] = 0;
+                return value;
+            }
+            }
+            return nullptr;
+        }
+
+        std::optional<std::vector<std::byte>> BuildMigrationDefaults(const MaterialLayout &candidateLayout,
+            const MaterialLayout &acceptedLayout, bool hasAccepted, std::string_view parametersJson,
+            std::string *error)
+        {
+            nlohmann::json parameters;
+            try
+            {
+                parameters = nlohmann::json::parse(parametersJson);
+            }
+            catch (const std::exception &)
+            {
+                parameters = nlohmann::json::object();
+            }
+            if (!parameters.is_object())
+                parameters = nlohmann::json::object();
+
+            nlohmann::json defaults = nlohmann::json::object();
+            for (const MaterialFieldLayout &field : candidateLayout.fields)
+            {
+                bool existed = false;
+                if (hasAccepted)
+                {
+                    for (const MaterialFieldLayout &accepted : acceptedLayout.fields)
+                        if (accepted.name == field.name)
+                            existed = true;
+                }
+                if (!existed && parameters.contains(field.name))
+                    defaults[field.name] = parameters.at(field.name);
+                else
+                    defaults[field.name] = FieldDefault(field.kind, field.size);
+            }
+            return PackMaterialRecord(candidateLayout, defaults.dump(), error);
+        }
+        std::optional<MaterialLayout> LoadLayout(const SurfaceMaterialRegistration &registration,
+            std::string *error)
+        {
+            const std::filesystem::path path = ShaderPath(registration.reflectionFile);
+            const std::optional<std::string> text = ReadText(path);
+            if (!text)
+            {
+                if (error != nullptr)
+                    *error = "material reflection is missing: " + path.string();
+                return std::nullopt;
+            }
+            return ParseMaterialLayout(*text, error);
+        }
     }
 
     bool MaterialStore::Initialize(Device &device, ResourceStore &resources, MaterialTable *table,
@@ -45,6 +119,7 @@ namespace mir::vk
     {
         mDevice = &device;
         mTable = table;
+        mColorFormat = colorFormat;
 
         std::string catalogError;
         const auto catalog = LoadSurfaceMaterialCatalog(&catalogError);
@@ -64,7 +139,7 @@ namespace mir::vk
         if (!CreatePipelineLayout(sharedLayouts))
             return false;
 
-        if (!CreateSkyPipeline(sharedLayouts[0], colorFormat))
+        if (!CreateSkyPipeline(sharedLayouts[0]))
             return false;
 
         if (mTable != nullptr && !CreateRecordRefBuffer())
@@ -378,7 +453,7 @@ namespace mir::vk
         return CreateGraphicsPipeline(state, colorFormat, surfaces);
     }
 
-    bool MaterialStore::CreateSkyPipeline(VkDescriptorSetLayout cameraSetLayout, VkFormat colorFormat)
+    bool MaterialStore::CreateSkyPipeline(VkDescriptorSetLayout cameraSetLayout)
     {
         const VkPipelineLayoutCreateInfo layoutInfo{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
@@ -391,6 +466,16 @@ namespace mir::vk
             return false;
         }
 
+        mSkyPipeline = BuildSkyPipeline();
+        if (mSkyPipeline == VK_NULL_HANDLE)
+            return false;
+
+        mDevice->NameObject(VK_OBJECT_TYPE_PIPELINE, reinterpret_cast<uint64_t>(mSkyPipeline), "Sky pipeline");
+        return true;
+    }
+
+    VkPipeline MaterialStore::BuildSkyPipeline()
+    {
         // No vertex input: the shader builds a fullscreen triangle. Depth GEQUAL
         // with no write passes only where nothing drew, at the reverse-Z clear of 0.
         const PipelineState state{
@@ -419,12 +504,7 @@ namespace mir::vk
                 .stencilTestEnable = VK_FALSE },
             .layout = mSkyPipelineLayout };
 
-        mSkyPipeline = CreateGraphicsPipeline(state, colorFormat);
-        if (mSkyPipeline == VK_NULL_HANDLE)
-            return false;
-
-        mDevice->NameObject(VK_OBJECT_TYPE_PIPELINE, reinterpret_cast<uint64_t>(mSkyPipeline), "Sky pipeline");
-        return true;
+        return CreateGraphicsPipeline(state, mColorFormat);
     }
 
     MaterialHandle MaterialStore::CreateMaterial(MaterialDesc desc, ResourceStore &resources, VkFormat colorFormat)
@@ -503,7 +583,8 @@ namespace mir::vk
         material.mBaseColorSlot = resources.TextureSlot(baseColorHandle);
         material.mSamplerSlot = samplerSlot;
         material.mError = desc.shaderName == "error";
-        material.mDescription = desc;
+        material.mDesc = desc;
+        material.mDesc.record = {};
 
         const auto rollback = [&]
             {
@@ -556,6 +637,17 @@ namespace mir::vk
                 material.mRecordBytes = *packed;
                 record = material.mRecordBytes;
             }
+
+            std::string layoutError;
+            const auto layout = LoadLayout(*registration, &layoutError);
+            if (!layout)
+            {
+                MIR_LOG_CRITICAL("CreateMaterial: {}", layoutError);
+                rollback();
+                return kNullMaterial;
+            }
+            material.mAcceptedLayout = *layout;
+            material.mHasAcceptedLayout = true;
         }
 
         VkDescriptorBufferInfo recordRefInfo{};
@@ -570,6 +662,7 @@ namespace mir::vk
             }
 
             material.mRecordOffset = mTable->RecordOffset(material.mRecordId);
+            material.mCurrentRecordBytes.assign(record.begin(), record.end());
             recordRefInfo = VkDescriptorBufferInfo{
                 .buffer = mRecordRefBuffer,
                 .offset = 0,
@@ -624,10 +717,14 @@ namespace mir::vk
     {
         const VkDeviceSize bytes = VkDeviceSize{ kFramesInFlight } * mRecordRefFrameStride;
         VmaAllocationInfo info{};
-        if (!CreateBuffer(mDevice->Allocator(), bytes,
-            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-            VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
-            mRecordRefBuffer, mRecordRefAllocation, &info))
+        const VkBufferCreateInfo bufferInfo{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = bytes, .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, .sharingMode = VK_SHARING_MODE_EXCLUSIVE};
+        const VmaAllocationCreateInfo allocationInfo{
+            .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
+            .usage = VMA_MEMORY_USAGE_AUTO,
+            .requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT};
+        if (vmaCreateBuffer(mDevice->Allocator(), &bufferInfo, &allocationInfo,
+            &mRecordRefBuffer, &mRecordRefAllocation, &info) != VK_SUCCESS)
         {
             MIR_LOG_CRITICAL("CreateRecordRefBuffer: allocation failed");
             return false;
@@ -702,7 +799,7 @@ namespace mir::vk
                         return slot && (slot->mState == TextureUploadState::Pending ||
                             slot->mState == TextureUploadState::Uploading);
                     };
-                if (pending(material.mDescription.baseColorTexture) || pending(material.mDescription.normalTexture))
+                if (pending(material.mDesc.baseColorTexture) || pending(material.mDesc.normalTexture))
                     return false;
                 VkDescriptorSet replacement = VK_NULL_HANDLE;
                 const VkDescriptorSetAllocateInfo allocation{ .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -724,8 +821,8 @@ namespace mir::vk
                             return requested;
                         return requested.IsNull() ? fallback : resources.ErrorTexture();
                     };
-                const TextureHandle base = resolve(material.mDescription.baseColorTexture, resources.DefaultWhiteTexture());
-                const TextureHandle normal = resolve(material.mDescription.normalTexture, resources.DefaultNormalTexture());
+                const TextureHandle base = resolve(material.mDesc.baseColorTexture, resources.DefaultWhiteTexture());
+                const TextureHandle normal = resolve(material.mDesc.normalTexture, resources.DefaultNormalTexture());
                 const std::array<VkDescriptorImageInfo, 2> images{ {
                     { material.mSampler, resources.FindTexture(base)->mView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
                     { material.mSampler, resources.FindTexture(normal)->mView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } } };
@@ -771,11 +868,14 @@ namespace mir::vk
 
     bool MaterialStore::UpdateRecord(MaterialHandle handle, std::span<const std::byte> bytes)
     {
-        const GpuMaterial *const material = FindMaterial(handle);
+        GpuMaterial *const material = const_cast<GpuMaterial *>(FindMaterial(handle));
         if (material == nullptr || mTable == nullptr || material->mRecordId.IsNull())
             return false;
+        if (!mTable->UpdateRecord(material->mRecordId, bytes))
+            return false;
 
-        return mTable->UpdateRecord(material->mRecordId, bytes);
+        material->mCurrentRecordBytes.assign(bytes.begin(), bytes.end());
+        return true;
     }
 
     void MaterialStore::PublishRecords(uint64_t completedFrame, uint64_t frame, uint32_t frameIndex)
@@ -796,6 +896,221 @@ namespace mir::vk
         }
 
         RefreshRecordRefs(frameIndex);
+    }
+
+    bool MaterialStore::PrepareMaterialReloadEntry(GpuMaterial &material, ReloadEntry &entry,
+        std::string *error)
+    {
+        if (material.mPipeline == VK_NULL_HANDLE)
+            return true;
+
+        entry.mIndex = material.mMaterialIndex;
+        entry.mPipeline = BuildPipeline(material.mDesc, mColorFormat);
+        if (entry.mPipeline == VK_NULL_HANDLE)
+        {
+            if (error != nullptr)
+                *error = "could not rebuild the pipeline for '" + material.mDesc.shaderName + "'";
+            return false;
+        }
+
+        if (mTable == nullptr || material.mRecordId.IsNull())
+            return true;
+
+        if (!material.mSurfaceMaterial)
+        {
+            entry.mRecordId = material.mRecordId;
+            return true;
+        }
+
+        const SurfaceMaterialCatalog &catalog = mReloadCatalogStaged ? mReloadCatalog : mSurfaceMaterials;
+        const SurfaceMaterialRegistration *const registration =
+            catalog.Find(material.mDesc.shaderName, material.mDesc.surfaceAsset);
+        if (registration == nullptr)
+        {
+            if (error != nullptr)
+                *error = "surface material '" + material.mDesc.shaderName + "' lost its registration";
+            return false;
+        }
+        const uint32_t registrationIndex = catalog.IndexOf(registration);
+        if (registrationIndex == UINT32_MAX)
+        {
+            if (error != nullptr)
+                *error = "surface material registration is stale";
+            return false;
+        }
+        entry.mRayTracingSbtOffset = SurfaceMaterialCatalog::HitGroupRecordOffset(registrationIndex);
+
+        std::string candidateError;
+        auto candidateLayout = LoadLayout(*registration, &candidateError);
+        if (!candidateLayout)
+        {
+            if (error != nullptr)
+                *error = candidateError;
+            return false;
+        }
+        const auto defaults = BuildMigrationDefaults(*candidateLayout, material.mAcceptedLayout,
+            material.mHasAcceptedLayout, registration->parametersJson, &candidateError);
+        if (!defaults)
+        {
+            if (error != nullptr)
+                *error = "could not pack defaults for '" + material.mDesc.shaderName + "': " + candidateError;
+            return false;
+        }
+
+        const MaterialLayout empty;
+        MaterialMigration migrated = MigrateMaterialRecord(
+            material.mHasAcceptedLayout ? material.mAcceptedLayout : empty, *candidateLayout,
+            material.mHasAcceptedLayout ? std::span<const std::byte>(material.mCurrentRecordBytes) :
+                                          std::span<const std::byte>(),
+            *defaults);
+        if (!migrated.ok)
+        {
+            if (error != nullptr)
+                *error = material.mDesc.shaderName + ": " + migrated.error;
+            return false;
+        }
+
+        entry.mRecordId = mTable->CreateRecord(migrated.bytes, material.mDesc.recordAlignment);
+        if (entry.mRecordId.IsNull())
+        {
+            if (error != nullptr)
+                *error = "material record table is full for '" + material.mDesc.shaderName + "'";
+            return false;
+        }
+        entry.mRecordOffset = mTable->RecordOffset(entry.mRecordId);
+        entry.mRecordBytes = std::move(migrated.bytes);
+        entry.mLayout = std::move(*candidateLayout);
+        entry.mHasLayout = true;
+        return true;
+    }
+
+    bool MaterialStore::ReloadSurfaceMaterialCatalog(std::string *error)
+    {
+        std::string catalogError;
+        const auto catalog = LoadSurfaceMaterialCatalog(&catalogError);
+        if (!catalog)
+        {
+            if (error != nullptr)
+                *error = catalogError;
+            return false;
+        }
+        mSurfaceMaterials = *catalog;
+        return true;
+    }
+
+    bool MaterialStore::PrepareShaderReload(const SurfaceMaterialCatalog &candidateCatalog,
+        std::string *error)
+    {
+        DiscardShaderReload();
+        mReloadCatalog = candidateCatalog;
+        mReloadCatalogStaged = true;
+        mReloadEntries.reserve(mMaterials.size());
+        for (GpuMaterial &material : mMaterials)
+        {
+            ReloadEntry &entry = mReloadEntries.emplace_back();
+            if (!PrepareMaterialReloadEntry(material, entry, error))
+            {
+                DiscardShaderReload();
+                return false;
+            }
+        }
+
+        mReloadSkyPipeline = BuildSkyPipeline();
+        if (mReloadSkyPipeline == VK_NULL_HANDLE)
+        {
+            if (error != nullptr)
+                *error = "could not rebuild the sky pipeline";
+            DiscardShaderReload();
+            return false;
+        }
+        mReloadPrepared = true;
+        return true;
+    }
+
+    void MaterialStore::CommitShaderReload()
+    {
+        if (!mReloadPrepared)
+            return;
+
+        for (ReloadEntry &entry : mReloadEntries)
+        {
+            if (entry.mIndex >= mMaterials.size())
+                continue;
+            GpuMaterial &material = mMaterials[entry.mIndex];
+            if (entry.mPipeline != VK_NULL_HANDLE)
+            {
+                if (material.mPipeline != VK_NULL_HANDLE)
+                    vkDestroyPipeline(mDevice->Handle(), material.mPipeline, nullptr);
+                material.mPipeline = entry.mPipeline;
+                entry.mPipeline = VK_NULL_HANDLE;
+            }
+            if (!entry.mRecordId.IsNull() && entry.mRecordId != material.mRecordId)
+            {
+                if (!material.mRecordId.IsNull())
+                    mTable->ReleaseRecord(material.mRecordId);
+                material.mRecordId = entry.mRecordId;
+                material.mRecordOffset = entry.mRecordOffset;
+                material.mCurrentRecordBytes = std::move(entry.mRecordBytes);
+                material.mAcceptedLayout = std::move(entry.mLayout);
+                material.mHasAcceptedLayout = entry.mHasLayout;
+                entry.mRecordId = kNullMaterialRecord;
+            }
+            if (entry.mRayTracingSbtOffset != UINT32_MAX)
+                material.mRayTracingSbtOffset = entry.mRayTracingSbtOffset;
+        }
+
+        if (mReloadSkyPipeline != VK_NULL_HANDLE)
+        {
+            if (mSkyPipeline != VK_NULL_HANDLE)
+                vkDestroyPipeline(mDevice->Handle(), mSkyPipeline, nullptr);
+            mSkyPipeline = mReloadSkyPipeline;
+            mReloadSkyPipeline = VK_NULL_HANDLE;
+            mDevice->NameObject(VK_OBJECT_TYPE_PIPELINE, reinterpret_cast<uint64_t>(mSkyPipeline),
+                "Sky pipeline");
+        }
+
+        mReloadEntries.clear();
+        if (mReloadCatalogStaged)
+        {
+            mSurfaceMaterials = std::move(mReloadCatalog);
+            mReloadCatalogStaged = false;
+        }
+        mReloadPrepared = false;
+        if (mTable != nullptr)
+            for (uint32_t frame = 0; frame < kFramesInFlight; ++frame)
+                RefreshRecordRefs(frame);
+    }
+
+    void MaterialStore::DiscardShaderReload()
+    {
+        DiscardReloadEntries();
+        if (mReloadSkyPipeline != VK_NULL_HANDLE)
+        {
+            vkDestroyPipeline(mDevice->Handle(), mReloadSkyPipeline, nullptr);
+            mReloadSkyPipeline = VK_NULL_HANDLE;
+        }
+        mReloadPrepared = false;
+        mReloadCatalogStaged = false;
+        mReloadCatalog = {};
+    }
+
+    void MaterialStore::DiscardReloadEntries()
+    {
+        for (ReloadEntry &entry : mReloadEntries)
+        {
+            if (entry.mPipeline != VK_NULL_HANDLE)
+                vkDestroyPipeline(mDevice->Handle(), entry.mPipeline, nullptr);
+            if (mTable != nullptr && !entry.mRecordId.IsNull())
+            {
+                bool kept = false;
+                for (const GpuMaterial &material : mMaterials)
+                    if (material.mRecordId == entry.mRecordId)
+                        kept = true;
+                if (!kept)
+                    mTable->ReleaseRecord(entry.mRecordId);
+            }
+        }
+        mReloadEntries.clear();
     }
 
     std::size_t MaterialStore::ReleaseMaterials()
@@ -873,7 +1188,7 @@ namespace mir::vk
     {
         const auto *material = FindOrDefault(handle);
         if (!material) return false;
-        const auto &desc = material->mDescription;
+        const auto &desc = material->mDesc;
         // Generic surface materials only compile the single-target SurfaceForward
         // frontend; there is no <stem>Surface multi-target variant for SSGI.
         if (desc.surfaceMaterial) return false;
@@ -886,7 +1201,7 @@ namespace mir::vk
         const auto *resolved = FindOrDefault(handle);
         if (!resolved) return VK_NULL_HANDLE;
         auto &material = mMaterials[size_t(resolved - mMaterials.data())];
-        const auto &desc = material.mDescription;
+        const auto &desc = material.mDesc;
         if (desc.alphaMode == MaterialAlphaMode::Blend || !SupportsSurfaceInputs(handle)) return VK_NULL_HANDLE;
         if (!material.mSurfaceTried)
         {

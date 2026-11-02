@@ -345,7 +345,7 @@ authored frontFace/mirror/flip flags. Direct PBR applies `NdotL` once and the
 specular guide uses `F0/roughness²/NoV`; RT uses SBT hit group 2 for surface
 materials, while groups 0 and 1 stay on `raytrace.slang`'s legacy paths.
 `shaders/shader_manifest.json` is the single source of the compile commands,
-reflections and depfiles for both the build and the future reload path; the
+reflections and depfiles for both the build and the reload path; the
 build-generated `shaders/surface_materials.json` is the runtime registration
 catalog. Records are packed from each entry's authored parameters and typed
 reflection, never from a C++ field mirror. RT allocates a primary/shadow SBT
@@ -362,6 +362,23 @@ record validators, updates the candidate record through `UpdateMaterialRecord`,
 and only then publishes it and bumps generation; a failure destroys the
 candidate and keeps the previous material, record and preview. Numeric edits
 create no pipeline. See `docs/material-pipeline.md`.
+
+**Shader hot reload is transactional.** `ShaderLibrary` registers every live
+callsite (MaterialStore, RayTracer, ShadowMaps and the five post-process
+passes), proves manifest coverage, validates SPIR-V entry-point stages and
+compares reflected descriptor arrays, push ranges, UBO/SSBO member ABI and
+stage interfaces. `VulkanRenderer::ReloadShaders` builds material and sky
+pipelines, migrated records, the whole ray-tracing pipeline and SBT, shadow
+pipelines and every post-process candidate off to the side, then takes one
+device idle and swaps them only after all owners succeeded. Any failure
+disposes candidates and keeps the previous generation. Surface records migrate
+by name from current record bytes; a changed field type rejects the batch.
+`ShaderGenerationStore` publishes complete immutable SPV/reflection/depfile/catalog
+generations behind an atomic pointer. The build-only `ShaderPublisher` and editor
+watcher validate precompile content snapshots and parent lineage under the same
+writer lock. `ShaderCompiler` owns bounded, cancellable compiler processes and
+stabilizes newly discovered include dependencies before accepting artifacts. See
+ADR 0007 (local ADR).
 
 **Vulkan 1.4 with `dynamicRendering`, `synchronization2`, `timelineSemaphore` and
 `shaderDrawParameters`.** A device missing any of them is rejected during

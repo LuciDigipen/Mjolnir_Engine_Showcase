@@ -207,6 +207,7 @@ EditorCamera &SceneCamera();
 |---|---|---|
 | `EditorModule` | `editor/EditorModule.h` | The editor's module: its ImGui drawer, `FrameBegin` work and stage functions |
 | `AssetImportManager`, `ContentBrowserWatcher` | `editor/AssetImportManager.h`, `editor/ContentBrowserWatcher.h` | The import queue and the cooker child; the content browser's disk poll, which hides `.meta` and other tooling files and moves a `.meta` with its file |
+| `ShaderHotReload` | `editor/ShaderHotReload.h` | Development-only manifest/depfile watcher, direct-slangc batches, staged publication and revision cancellation; runs in Edit and Play |
 | `WorldSceneOps` | `editor/WorldSceneOps.h` | The `ISceneOps` the history uses, on the World and its `LoadedScene` |
 | `CreateGameProject` | `editor/CreateGameProject.h` | Writes a new game directory; the scene through `scene`'s own save |
 | `SceneMenuAction` | `editor/Editor.h` | `None`/`New`/`Save`/`Load`/`Play`/`TogglePause`/`Stop` |

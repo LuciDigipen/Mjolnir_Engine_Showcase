@@ -167,8 +167,8 @@ namespace mir
 
     EditorModule::EditorModule(ModuleContext context, ImGuiModule &imgui, WindowModule &window,
         RendererModule &renderer, SceneModule &scene, PrefabModule &prefab, AssetsModule &assets,
-        AsyncAssetService *assetService, const AssetResolver &resolver, const GameProject &project, bool enableLayout,
-        std::shared_ptr<ModelLibrary> models)
+        AsyncAssetService *assetService, const AssetResolver &resolver, const GameProject &project, JobExecutor &jobs,
+        bool enableLayout, std::shared_ptr<ModelLibrary> models)
         : mWorld(context.world), mRenderer(renderer), mScene(scene), mPrefab(prefab), mResolver(resolver),
           mProject(project), mAssets(&assets),
           mEnableLayout(enableLayout), mProjectMenu(BuildProjectMenu()),
@@ -179,6 +179,7 @@ namespace mir
         mImport.Initialize(mProject);
         mParticleEditor = std::make_unique<ParticleEditorPanel>(mImport.SourceAssetRoot(),mProject.mAssetIdRoot);
         mContentBrowser.Initialize(mProject);
+        mShaderHotReload.Initialize(mProject.mRootDir, &renderer.Renderer(), jobs);
 
         // The first frames run without assets; the import swaps them in once cooked
         if (!assets.HadManifest() && mImport.SourceHasAssets())
@@ -205,6 +206,7 @@ namespace mir
             {
                 mFrameDt = frame.dt;
                 mImport.Update(IsEditing(mWorld));
+                mShaderHotReload.Update();
                 if (mImport.PendingApply() && IsEditing(mWorld))
                     mWorld.Resource<RequestQueue>().Push(Request::ApplyImportedAssets);
                 mContentBrowser.Update();
@@ -379,6 +381,7 @@ namespace mir
         mEditor.Shutdown();
         // stops a running cooker
         mImport.Shutdown();
+        mShaderHotReload.Shutdown();
     }
 
     bool EditorModule::HasUnsavedMaterialDrafts() const

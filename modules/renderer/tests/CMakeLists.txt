@@ -33,6 +33,9 @@ engine_add_module_tests(renderer
     RenderSettings.tests.cpp
     RenderSystem.tests.cpp
     RtInstanceLayout.tests.cpp
+    ShaderLibrary.tests.cpp
+    ShaderCompiler.tests.cpp
+    ShaderReload.tests.cpp
     Shapes.tests.cpp
     TextureMips.tests.cpp
     ViewSubmission.tests.cpp
@@ -52,8 +55,8 @@ file(TO_CMAKE_PATH "${CMAKE_SOURCE_DIR}/assets/shaders/SurfaceTerrainForward.sla
     MIR_TERRAIN_FORWARD_SLANG_PATH)
 file(TO_CMAKE_PATH "${CMAKE_SOURCE_DIR}/assets/shaders/SurfaceTerrainRt.slang"
     MIR_TERRAIN_RT_SLANG_PATH)
-file(TO_CMAKE_PATH "${CMAKE_BINARY_DIR}/shaders/shader_manifest.json" MIR_SHADER_MANIFEST_PATH)
-file(TO_CMAKE_PATH "${CMAKE_BINARY_DIR}/shaders/surface_materials.json" MIR_SURFACE_CATALOG_PATH)
+file(TO_CMAKE_PATH "${CMAKE_BINARY_DIR}/shader_build/shader_manifest.json" MIR_SHADER_MANIFEST_PATH)
+file(TO_CMAKE_PATH "${CMAKE_BINARY_DIR}/shader_build/surface_materials.json" MIR_SURFACE_CATALOG_PATH)
 file(TO_CMAKE_PATH "${CMAKE_CURRENT_BINARY_DIR}" MIR_RENDERER_TEST_DIR_PATH)
 target_compile_definitions(engine_renderer_tests PRIVATE
     MIR_SLANGC_EXECUTABLE="${MIR_SLANGC_EXECUTABLE_PATH}"

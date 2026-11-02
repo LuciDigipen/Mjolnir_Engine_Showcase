@@ -16,6 +16,7 @@ find_package(volk CONFIG REQUIRED)
 find_package(VulkanMemoryAllocator CONFIG REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+find_package(unofficial-spirv-reflect CONFIG REQUIRED)
 find_package(Stb REQUIRED)
 target_include_directories(engine_renderer PRIVATE ${Stb_INCLUDE_DIR})
 
@@ -27,6 +28,7 @@ target_link_libraries(engine_renderer
             nlohmann_json::nlohmann_json
     PRIVATE GPUOpen::VulkanMemoryAllocator
             imgui::imgui
+            unofficial::spirv-reflect
             mir::serial
 )
 
@@ -50,7 +52,9 @@ target_sources(engine_renderer PRIVATE
 engine_target_vulkan_platform_defines(engine_renderer)
 
 # makes VMA compatible with volk
+target_include_directories(engine_renderer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/renderer/spirv_compat)
 target_compile_definitions(engine_renderer PRIVATE
+    SPIRV_REFLECT_USE_SYSTEM_SPIRV_H=1
     VMA_STATIC_VULKAN_FUNCTIONS=0
     VMA_DYNAMIC_VULKAN_FUNCTIONS=1
     VMA_VULKAN_VERSION=1004000
@@ -84,6 +88,10 @@ target_sources(engine_renderer PRIVATE
     src/renderer/RendererCapabilities.cpp
     src/renderer/RendererModule.cpp
     src/renderer/RenderSettings.cpp
+    src/renderer/ShaderCompiler.cpp
+    src/renderer/ShaderGeneration.cpp
+    src/renderer/ShaderLibrary.cpp
+    src/renderer/ShaderReload.cpp
     src/renderer/Shapes.cpp
     src/renderer/TextureTable.cpp
     src/renderer/ViewSubmission.cpp

@@ -10,6 +10,7 @@
 
 #include <renderer/Material.h>
 #include <renderer/MaterialRecordTable.h>
+#include <renderer/MaterialReflection.h>
 #include <renderer/MeshStreaming.h>
 #include <renderer/SurfaceMaterialCatalog.h>
 
@@ -60,7 +61,14 @@ namespace mir::vk
         // Backing bytes for a record packed from the catalog at creation.
         std::vector<std::byte> mRecordBytes;
 
-        MaterialDesc mDescription;
+        // Replayable recipe: everything CreateMaterial received, minus the
+        // borrowed record span, so a reload can rebuild the same pipeline.
+        MaterialDesc mDesc;
+        MaterialLayout mAcceptedLayout;
+        bool mHasAcceptedLayout = false;
+        // Authoritative current values: an explicit desc.record or the latest
+        // UpdateRecord, never the stale initial catalog bytes.
+        std::vector<std::byte> mCurrentRecordBytes;
         VkPipeline mSurfacePipeline = VK_NULL_HANDLE;
         bool mSurfaceTried = false;
     };
@@ -99,6 +107,17 @@ namespace mir::vk
         // Every material but the default and error ones, which move to slots 0 and 1; returns how many were released.
         std::size_t ReleaseMaterials();
 
+        // All-or-none shader reload. Prepare builds every replacement pipeline
+        // and migrated record off to the side; only Commit swaps them. The
+        // caller idles the device before Prepare and again before Commit.
+        bool PrepareShaderReload(const SurfaceMaterialCatalog &candidateCatalog, std::string *error = nullptr);
+        void CommitShaderReload();
+        void DiscardShaderReload();
+        bool ShaderReloadPrepared() const { return mReloadPrepared; }
+        // Reloads surface_materials.json so a newly compiled material is
+        // registered before the batch rebuilds pipelines and RT hit groups.
+        bool ReloadSurfaceMaterialCatalog(std::string *error = nullptr);
+
         const GpuMaterial *FindMaterial(MaterialHandle handle) const;
         // What a draw with `handle` uses: the material; else the default for a null handle and the error
         // material for a stale one; null only when both are gone.
@@ -131,7 +150,8 @@ namespace mir::vk
 
         VkPipeline CreateGraphicsPipeline(const PipelineState &state, VkFormat colorFormat, bool surfaces = false);
         VkPipeline BuildPipeline(const MaterialDesc &desc, VkFormat colorFormat, bool surfaces = false);
-        bool CreateSkyPipeline(VkDescriptorSetLayout cameraSetLayout, VkFormat colorFormat);
+        VkPipeline BuildSkyPipeline();
+        bool CreateSkyPipeline(VkDescriptorSetLayout cameraSetLayout);
         bool CreateRecordRefBuffer();
         void DestroyRecordRefBuffer();
         void WriteRecordRef(uint32_t frame, uint32_t material);
@@ -141,9 +161,25 @@ namespace mir::vk
         void FreeMaterial(GpuMaterial &material);
         void DestroyMaterials();
 
+        struct ReloadEntry
+        {
+            uint32_t mIndex = 0;
+            VkPipeline mPipeline = VK_NULL_HANDLE;
+            MaterialRecordId mRecordId;
+            uint32_t mRecordOffset = kInvalidMaterialRecordOffset;
+            std::vector<std::byte> mRecordBytes;
+            MaterialLayout mLayout;
+            bool mHasLayout = false;
+            uint32_t mRayTracingSbtOffset = UINT32_MAX;
+        };
+
+        bool PrepareMaterialReloadEntry(GpuMaterial &material, ReloadEntry &entry, std::string *error);
+        void DiscardReloadEntries();
+
         Device *mDevice = nullptr;
         MaterialTable *mTable = nullptr;
         SurfaceMaterialCatalog mSurfaceMaterials;
+        VkFormat mColorFormat = VK_FORMAT_UNDEFINED;
 
         VkPipelineLayout mPipelineLayout = VK_NULL_HANDLE;
 
@@ -168,5 +204,11 @@ namespace mir::vk
 
         MaterialHandle mDefaultMaterial;
         MaterialHandle mErrorMaterial;
+
+        std::vector<ReloadEntry> mReloadEntries;
+        SurfaceMaterialCatalog mReloadCatalog;
+        bool mReloadCatalogStaged = false;
+        VkPipeline mReloadSkyPipeline = VK_NULL_HANDLE;
+        bool mReloadPrepared = false;
     };
 }

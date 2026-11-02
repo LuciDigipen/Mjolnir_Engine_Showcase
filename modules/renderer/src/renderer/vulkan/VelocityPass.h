@@ -19,6 +19,7 @@
 #include <volk.h>
 
 #include <cstdint>
+#include <string>
 #include <span>
 
 VK_DEFINE_HANDLE(VmaAllocation)
@@ -34,6 +35,10 @@ namespace mir::vk
         bool Initialize(Device &device, VkDescriptorSetLayout cameraSetLayout, VkExtent2D extent);
         void Shutdown();
 
+        bool PrepareShaderReload(std::string *error = nullptr);
+        void CommitShaderReload();
+        void DiscardShaderReload();
+
         bool Resize(VkExtent2D extent);
 
         void Record(VkCommandBuffer cmd, uint32_t frame, std::span<const RenderView> views,
@@ -42,11 +47,17 @@ namespace mir::vk
 
         VkImageView OutputView(uint32_t frame) const { return mOutputViews[frame]; }
 
+        VkPipeline mReloadPipeline = VK_NULL_HANDLE;
+        VkPipelineLayout mReloadLayout = VK_NULL_HANDLE;
+        bool mReloadPrepared = false;
+        bool BuildPipeline(VkPipelineLayout &outLayout, VkPipeline &outPipeline);
+
     private:
         bool CreateImages(VkExtent2D extent);
         void DestroyImages();
 
         Device *mDevice = nullptr;
+        VkDescriptorSetLayout mCameraSetLayout = VK_NULL_HANDLE;
 
         VkPipelineLayout mPipelineLayout = VK_NULL_HANDLE;
         VkPipeline mPipeline = VK_NULL_HANDLE;

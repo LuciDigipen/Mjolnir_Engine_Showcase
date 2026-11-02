@@ -173,6 +173,34 @@ finite floats and uint/int ranges. A malformed catalog, reflection or authored
 parameter object returns a bounded error instead of throwing through renderer
 startup. Missing fields remain an explicit failure.
 
+## Development hot reload
+
+The editor watcher reads only `shaders/shader_manifest.json` for the slangc
+path, working directory and argument arrays. It follows each output's depfile,
+coalesces saves, cancels a batch when a newer source revision exists and runs a
+finite direct-slangc batch without CMake, vcvars or generated wrappers. A new
+`.material.json` expands the shared mesh frontend template and is added to
+`surface_materials.json`; the material store reloads the catalog so the new stem
+gets raster and RT hit groups. See ADR 0007 (local ADR).
+
+SPV, reflection, depfile and catalog files are staged as temporary siblings and
+published only after every compile succeeds. The publisher retains per-file
+backups and old stamps until the GPU transaction commits, so a rejected reload
+restores the old files byte for byte. Stamps carry a source fingerprint and the
+build-side publisher refuses to overwrite an output whose accepted fingerprint
+is newer, so an older build copy cannot roll back a live reload. A non-editor
+build links no watcher and reads no source, compiler or development path.
+
+The reload transaction validates the whole batch first: SPIR-V magic and
+entry-point stage, descriptor arrays, push ranges, UBO/SSBO member offsets and
+strides, vertex/fragment interfaces including `SV_TARGET`. It then builds every
+material, ray-tracing (whole pipeline and SBT), shadow and post-process
+candidate off to the side. One device idle is taken and all candidates are
+swapped only after every owner succeeds; otherwise the old generation stays
+live. Material records migrate by field name: same-name compatible values are
+preserved, new fields use the material's packed defaults and a changed type
+rejects the transaction.
+
 ## Default
 
 `assets/materials/default.slang` is the default opaque material: albedo 0.5,
@@ -282,3 +310,29 @@ uses the stored displacement offset by the reference, not a renormalized range.
 period for the extra macro sample. Bounds are consumer-validated before the
 material is published. See
 ADR 0005 (local ADR).
+
+## Integration with current pipeline owners
+
+Transactional reload covers material, shadow, post-processing and camera RT
+pipelines registered by this implementation. Current master also has SSGI/DDGI,
+debug-drawing, composition and particle pipeline owners without replacement
+callbacks. Their manifest outputs are content-pinned: changing, adding or
+removing one rejects the entire live reload with a restart-required diagnostic.
+Unchanged outputs do not block a supported material or post-process edit.
+Reflection-only material layout outputs participate in record migration rather
+than this pipeline-owner restriction. RTXGI SDK binaries retain their separately
+packaged shader path and are not watched as Slang outputs.
+
+### Shader compilation scheduling
+
+The editor borrows App's shared JobExecutor and owns a BackgroundJobQueue with
+concurrency one for shader compilation. Each batch compiles its affected outputs
+sequentially; it does not create a separate worker pool. The engine's worker count
+also controls this lane: zero workers executes compilation inline. Compilation
+results and exceptions use BackgroundJobQueue::Submit and its standard future;
+the watcher has no separate task-completion wrapper or completion flag. Results
+cross back to the main-thread FrameBegin callback before publication and
+GPU prepare/commit; pipeline replacement still waits for device idle. Shutdown
+cancels queued shader work, signals active compiler cancellation, and waits only
+for this lane before removing its owned artifacts. Other consumers of the shared
+executor remain available.

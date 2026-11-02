@@ -9,7 +9,10 @@
 #pragma once
 #include <cstddef>
 #include <functional>
+#include <future>
 #include <memory>
+#include <type_traits>
+#include <utility>
 
 namespace mir
 {
@@ -26,6 +29,18 @@ namespace mir
         BackgroundJobQueue &operator=(const BackgroundJobQueue &) = delete;
         // After CloseAndWait, posts are dropped. Zero executor workers runs inline.
         void Post(std::function<void()> function);
+        // Results and exceptions return through the future. Cancelling a queued
+        // task (or submitting after close) makes it ready with broken_promise.
+        // Waiting rules are the same as Post; zero workers executes inline.
+        template <class Function>
+        auto Submit(Function &&function)
+        {
+            using Result = std::invoke_result_t<std::decay_t<Function> &>;
+            auto task = std::make_shared<std::packaged_task<Result()>>(std::forward<Function>(function));
+            auto result = task->get_future();
+            Post([task = std::move(task)] { (*task)(); });
+            return result;
+        }
         // Cancel callbacks not yet started and wait only for this lane's running
         // callbacks. The shared executor and other consumers remain available.
         void CloseAndWait();
