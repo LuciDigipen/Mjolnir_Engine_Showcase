@@ -31,23 +31,23 @@ namespace mir
 
     uint64_t TerrainGpuUploader::Footprint(uint32_t vertices, uint32_t indices) const
     {
-        return mRenderer.MeshFootprint(vertices, indices, mOptions);
+        return mUploader.MeshFootprint(vertices, indices, mOptions);
     }
 
     uint64_t TerrainGpuUploader::QueuedBytes() const
     {
-        return mRenderer.MeshStreaming().pendingBytes;
+        return mUploader.MeshStreaming().pendingBytes;
     }
 
     uint64_t TerrainGpuUploader::FrameBudgetBytes() const
     {
-        return mRenderer.UploadFrameBudget();
+        return mUploader.UploadFrameBudget();
     }
 
     TerrainGpuMeshId TerrainGpuUploader::Upload(TerrainMeshData &&mesh)
     {
-        const MeshHandle handle =
-            mRenderer.QueueMesh(MakeTerrainVertices(mesh.vertices, mesh.origin), std::move(mesh.indices), mOptions);
+        const MeshHandle handle = mUploader.QueueMesh(
+            MeshUploadSource::Own(MakeTerrainVertices(mesh.vertices, mesh.origin), std::move(mesh.indices)), mOptions);
         if (handle.IsNull())
             return 0;
         return (uint64_t(handle.mGeneration) << 32) | handle.mIndex;
@@ -55,7 +55,7 @@ namespace mir
 
     TerrainGpuMeshState TerrainGpuUploader::State(TerrainGpuMeshId mesh) const
     {
-        switch (mRenderer.MeshState(Handle(mesh)))
+        switch (mUploader.MeshState(Handle(mesh)))
         {
         case MeshUploadState::Ready:
             return TerrainGpuMeshState::Ready;
@@ -71,12 +71,12 @@ namespace mir
 
     void TerrainGpuUploader::Retire(TerrainGpuMeshId mesh)
     {
-        mRenderer.RetireMesh(Handle(mesh));
+        mUploader.RetireMesh(Handle(mesh));
     }
 
     uint64_t TerrainGpuUploader::RetiringBytes() const
     {
-        return mRenderer.MeshStreaming().retiringBytes;
+        return mUploader.MeshStreaming().retiringBytes;
     }
 
     MeshHandle TerrainGpuUploader::Handle(TerrainGpuMeshId mesh)

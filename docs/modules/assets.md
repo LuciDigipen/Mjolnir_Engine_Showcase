@@ -47,7 +47,7 @@ if (AssetCache *cache = app.Assets())
 | `AssetManifest` | `assets/AssetManifest.h` | id to type tag, content version, cooked file, logical path and direct dependencies, over a shared path table and edge table. `FindByPath`, `Dependencies`, `Closure` |
 | `AssetCache` | `assets/AssetCache.h` | `Load`, `Get`, `Invalidate`, `ResolvedPath` |
 | `AssetsModule` | `assets/AssetsModule.h` | The manifest and cache, loaded at startup, and the reload candidate. `ReloadEpoch` counts committed reloads |
-| `AsyncAssetService`, `AssetRequest`, `AssetLoadState` | `assets/AsyncAssetService.h` | Reads and decodes assets on a background lane, `Request`, `State`, `Acquire`, `DrainCompletions`, `CancelAll`, `Idle` |
+| `AsyncAssetService`, `AssetRequest`, `AssetLoadState` | `assets/AsyncAssetService.h` | Reads and decodes assets on a background lane, `Request`, `State`, `Acquire`, `FailureReason`, `DrainCompletions`, `CancelAll`, `Idle` |
 | `AssetDecoder`, `AssetDependencies` | `assets/AssetDecoder.h` | A decode function with the type tags of the dependencies it reads, and the lookup it gets over the blobs already read |
 | `AssetResolver` | `assets/AssetResolver.h` | `Resolve` turns a path inside the game's assets folder into an `AssetId` through the manifest, `ResolveFull` does the same for an engine asset's full path, `PathOf` gives the path for a message |
 | `AssetSettings` | `assets/AssetSettings.h` | The `assets` section of `project_settings.json`, `loadThreads` |
@@ -68,8 +68,38 @@ made, the root and the dependencies of those types are copied into one job, and
 the worker reads each file, checks its header against its manifest entry and
 calls the decoder. A result is a `shared_ptr<const T>`, so a holder keeps its
 data past `CancelAll`. `DrainCompletions` runs once a frame before the systems
-update, and it is the only place a request changes state. The cache stays as it
-was, and nothing moves onto the service until a consumer asks for it.
+update, and it is the only place a finished decode becomes visible. A request for
+content that is already decoded and alive is ready as soon as it is made. The cache stays as it
+was. `MeshResolveSystem` is the first consumer, and it never calls `CancelAll`: a
+result nobody claims can stay decoded within the service's cache budget, and a
+later request can reuse it.
+
+Consumers can use `RequestLease<T>` to obtain a move-only `AssetLease<T>`.
+Independent leases share a decode, releasing one never invalidates another.
+The last release cancels unfinished work through a job token, without waiting.
+The service admits jobs from its own pending queue, so cancellation does not
+require closing the executor lane. Shutdown joins running jobs.
+
+`ManifestSnapshot()` retains an immutable catalog across replacement. A reload
+invalidates observer `AssetRequest` handles, while existing leases retain their
+old revision and new leases resolve against the new catalog. Completions carry
+their record identity, so a late result cannot populate a recycled slot.
+
+`SetDecodedBudget` controls an unused decoded-cache target (64 MiB initially).
+Active leases are protected, unused results are evicted in request-use order.
+`AssetDecoder::sizeBytes` describes owned allocations for variable-sized results,
+otherwise accounting uses `sizeof(T)`. `DecodedBytes` includes borrowed payloads
+after their cache entries are evicted. A borrower remains valid across eviction.
+`EvictUnused` explicitly removes all unclaimed lease-managed entries. Observer
+requests pin their records until reset and should not be used for evictable work.
+
+Cooked blob filenames include their content hash. Publication retains older blob
+files for delayed readers across multiple cooks. Storage reclamation is the
+explicit `AssetCooker --clean --out <dir>`, run with every engine and editor
+reader stopped: current and previous manifests alone do not establish that older
+files are unused. It deletes the `.blob` files the current manifest does not name,
+and the previous manifest, leaves every other file alone, and refuses a directory
+without a valid manifest. Nothing deletes online.
 
 `assets.loadThreads` in `project_settings.json` is how many loads run at once,
 2 by default and 1 to 32. A value outside that range keeps the default and logs
@@ -154,12 +184,13 @@ asset under another decoder is a separate load.
 
 **The service remembers a failed load too.** It logs the failure once at the
 drain, and asking again returns the same failed handle without reading anything,
-until `CancelAll` or a reload.
+until `CancelAll` or a reload. `FailureReason` returns why, because the log line
+carries only the id and a caller that knows the asset's name logs it with the
+reason.
 
-**`CancelAll` and a committed reload make every earlier handle `Stale`.** The
-service sees a reload through `ReloadEpoch` at its next drain or request. Loads
-that have not started are dropped, running ones finish and their results are
-discarded.
+**`CancelAll` invalidates requests without waiting for running workers.** A
+committed reload makes observer handles stale, but preserves claimed leases to
+older revisions. The service sees a reload at its next drain or request.
 
 **With no workers a load runs inside `Request`.** Its result still waits for the
 next drain, so a state changes at the same point in both modes.
@@ -182,6 +213,23 @@ version 2 because it now carries format, color space and every mip above 0.
 packs its six image roles into three cooked textures. The full cook leaves the
 source images out, and a partial material cook drops an older standalone
 manifest entry for them.
+
+## Content identity
+
+A cooked blob is named `<id>-<fnv hash>.blob`, so its manifest path carries what
+its bytes are. `AssetManifest::EntryContent` folds an entry's id, type, version and
+that hash into one value, and `ClosureContent` folds a root and the dependencies a
+decoder reads, in closure order. `AsyncAssetService::ContentOf` answers for a
+request, and zero means the name carried no hash, so the content cannot be
+known. The service remembers every decoded
+result of known content for as long as anything holds it, so the next request for
+the same asset, decoder and content adopts it without reading or decoding again,
+across a reload and after the service evicted its own copy. Two holders of one
+mesh therefore hold one decoded mesh. A decode that is still running is shared the
+same way: a request for the same asset, decoder and known content after a reload
+joins it instead of starting a second one, and releasing one claim cancels nothing
+the other needs. A request whose content changed, a dependency included, decodes
+as before.
 
 ## State
 
@@ -220,6 +268,12 @@ logical paths for any root spelling").
    emitters by path, which the cooker turns into guids through the `.meta` files.
 
 ## Changed
+
+*2026-11-01* — **Decoded results survive a reload when their content is unchanged.**
+Was: a committed reload dropped every unclaimed result and decoded again, whatever
+the cook changed. Now: a result is kept by decoded content, derived from the
+content hash in the blob file name, and adopted by the next request for the same
+asset and decoder, see Content identity.
 
 *2026-10-31* — **Ids come from `.meta` guids.** Was: an id was a hash of the source
 path, a glTF kept its identity in `<source>.import.json` with an alias for every path

@@ -162,6 +162,9 @@ namespace mir
             mWarnedNoActiveCamera = false;
         }
 
+        // A frame with no scene, so uploads advance and the loading UI shows while a scene waits for its resources
+        void OnLoadingUpdate(SystemContext &) override { mRenderer.DrawFrame({}); }
+
         void OnUpdate(SystemContext &context) override
         {
             const RenderSettings &renderSettings = context.world.Resource<RenderSettings>();

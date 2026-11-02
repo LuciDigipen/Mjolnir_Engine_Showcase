@@ -46,5 +46,7 @@ namespace mir
         AssetDecodeFunction<T> decode = nullptr;
         // Type tags of the dependencies to load. Empty means the root alone.
         std::span<const uint32_t> dependencyTags;
+        // Owned decoded bytes, including dynamic allocations. Supply for variable-sized results.
+        uint64_t (*sizeBytes)(const T &) = nullptr;
     };
 }

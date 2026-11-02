@@ -683,9 +683,10 @@ read them has completed.
 **Release switches and scene exit.** Mesh keys carry the release, so a swap's
 `RetireReleases` drops the old release's builds, retires its uploads (a
 pending one is canceled) and nothing of it becomes ready afterwards; the next
-release's units are other keys. A scene change or Stop forgets every mesh before
-`ReleaseSceneResources`, which waits once and frees them with everything else;
-mesh handle generations move on there, so no kept handle can name a new mesh.
+release's units are other keys. A scene change retires every mesh the terrain holds, and Stop keeps
+them. `ReleaseSceneResources`, an explicit full release that waits once and frees
+everything else, also moves the mesh handle generations on, so no kept handle can
+name a new mesh.
 
 **Ray tracing.** Terrain meshes get a BLAS only while the project's
 `rendering.rayTracing` is on and the device supports it; turning it either way

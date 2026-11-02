@@ -53,6 +53,7 @@ namespace mir
         context.world.EmplaceResource<RenderSettings>(renderSettings);
         // The game's play-time upload budget.
         mRenderer.SetUploadFrameBudget(renderSettings.UploadFrameBytes());
+        mRenderer.SharedResidency()->SetTotalTarget(renderSettings.ResidencyBytes());
         context.world.EmplaceResource<PostProcessingSettings>(
             PostProcessingSettings::LoadFile(settings.mProjectSettingsPath).value_or(PostProcessingSettings{}));
 
@@ -60,7 +61,7 @@ namespace mir
 
         // a WorldTransform reader
         mMeshes = &context.scheduler.AddSystem<MeshResolveSystem>(SystemPhase::LateUpdate,
-            SystemOrder{SystemOrder::kNormal}, mRenderer, &assets.Cache(),
+            SystemOrder{SystemOrder::kNormal}, mRenderer, settings.mAssetService,
             *settings.mResolver);
         mActiveCamera = &context.scheduler.AddSystem<ActiveCameraSystem>(SystemPhase::Render,
             SystemOrder{SystemOrder::kEarly});
@@ -75,9 +76,9 @@ namespace mir
         // no scene entity holds a mesh or material handle now
         mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &)
             {
-                mMeshes->Reset();
+                mMeshes->ReleaseResources();
                 mSurfaceMaterials.Reset();
-                mRenderer.ReleaseSceneResources();
+                mRenderer.ResetHistory();
             });
 
         // a cut: the history of the scene before says nothing about this one
@@ -107,7 +108,7 @@ namespace mir
             });
         mReloadCommit = context.scheduler.AddStage(Stage::ReloadCommit, [this, &assets](SystemContext &)
             {
-                mMeshes->CommitReload(&assets.Cache());
+                mMeshes->CommitReload();
                 mSurfaceMaterials.CommitReload(assets.Cache());
             });
     }

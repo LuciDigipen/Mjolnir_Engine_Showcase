@@ -9,11 +9,15 @@
 #pragma once
 
 #include <renderer/Mesh.h>
+#include <renderer/Texture.h>
+#include <renderer/UploadState.h>
 
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -39,18 +43,18 @@ namespace mir
         bool rayTracing = false;
     };
 
-    enum class MeshUploadState : uint8_t
+    // keepalive must protect the spans until the renderer copies them into staging memory.
+    struct MeshUploadSource
     {
-        // Null, retired, released, or not a mesh.
-        Stale,
-        // Queued; nothing recorded yet.
-        Pending,
-        // Recorded in a frame the GPU has not finished.
-        Uploading,
-        Ready,
-        // Its buffers could not be allocated; retire it.
-        Failed,
+        std::span<const Vertex> vertices;
+        std::span<const uint32_t> indices;
+        std::shared_ptr<const void> keepalive;
+
+        // A source that owns these vectors.
+        static MeshUploadSource Own(std::vector<Vertex> vertices, std::vector<uint32_t> indices);
     };
+
+    using MeshUploadState = UploadState;
 
     struct MeshStreamingStats
     {
@@ -62,7 +66,10 @@ namespace mir
         uint64_t uploadingBytes = 0;
         // Retired and kept until every frame that may have used them has completed.
         size_t retiring = 0;
+        // All of it, and the share a texture or a mesh, its BLAS and its transfer buffers account for.
         uint64_t retiringBytes = 0;
+        uint64_t retiringMeshBytes = 0;
+        uint64_t retiringTextureBytes = 0;
         uint64_t stagingUsedBytes = 0;
         uint64_t queued = 0;
         uint64_t uploaded = 0;
@@ -71,6 +78,10 @@ namespace mir
         uint64_t retired = 0;
         uint64_t failed = 0;
         uint64_t uploadedBytes = 0;
+        uint64_t textureQueued = 0;
+        uint64_t textureUploaded = 0;
+        uint64_t textureSourceBytes = 0;
+        uint64_t textureAllocatedBytes = 0;
         uint64_t blasBuilt = 0;
         uint64_t blasBytes = 0;
         uint64_t lastFrameBytes = 0;
@@ -133,6 +144,11 @@ namespace mir
             MeshHandle mesh;
             uint64_t stagingBytes = 0;
             uint64_t gpuBytes = 0;
+            TextureHandle texture;
+            uint32_t mip = 0;
+            uint32_t firstRow = 0;
+            uint32_t rowCount = 0;
+            uint64_t rowBytes = 0;
         };
 
         struct Admitted
@@ -145,9 +161,11 @@ namespace mir
         void Push(const Item &item);
         // False once the mesh was admitted.
         bool Cancel(MeshHandle mesh);
+        bool Cancel(TextureHandle texture);
         std::vector<Admitted> Admit(uint64_t frame);
         // Meshes admitted for frames at or below completed, oldest first; their staging space comes back.
         std::vector<MeshHandle> Complete(uint64_t completed);
+        std::vector<Item> CompleteUploads(uint64_t completed);
         // Changes the per-frame budget from the next Admit.
         void SetFrameBytes(uint64_t frameBytes);
         // Everything queued or in flight is forgotten.

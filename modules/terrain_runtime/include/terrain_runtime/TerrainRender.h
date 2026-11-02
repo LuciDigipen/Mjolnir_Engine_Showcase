@@ -8,6 +8,7 @@
  */
 #pragma once
 
+#include <renderer/IMeshUploader.h>
 #include <renderer/Mesh.h>
 #include <renderer/MeshStreaming.h>
 #include <renderer/VulkanRenderer.h>
@@ -41,7 +42,7 @@ namespace mir
     class TerrainGpuUploader final : public TerrainMeshUploader
     {
     public:
-      explicit TerrainGpuUploader(VulkanRenderer &renderer) : mRenderer(renderer) {}
+      explicit TerrainGpuUploader(IMeshUploader &uploader) : mUploader(uploader) {}
 
       // For meshes queued from now on.
       void SetRayTracing(bool rayTracing)
@@ -64,7 +65,7 @@ namespace mir
       static MeshHandle Handle(TerrainGpuMeshId mesh);
 
     private:
-      VulkanRenderer &mRenderer;
+      IMeshUploader &mUploader;
       MeshUploadOptions mOptions;
     };
 

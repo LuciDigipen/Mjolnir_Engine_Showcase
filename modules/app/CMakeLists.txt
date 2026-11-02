@@ -32,6 +32,9 @@ target_link_libraries(engine_app
     PRIVATE mir::serial
 )
 
+# the loading overlay draws with ImGui, no ImGui type reaches App.h
+target_link_libraries(engine_app PRIVATE imgui::imgui)
+
 # App's yes/no prompts
 find_package(tinyfiledialogs CONFIG REQUIRED)
 target_link_libraries(engine_app PRIVATE tinyfiledialogs::tinyfiledialogs)

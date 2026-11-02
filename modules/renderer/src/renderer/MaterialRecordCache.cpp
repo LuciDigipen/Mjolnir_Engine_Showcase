@@ -1,0 +1,328 @@
+/**
+ * @file MaterialRecordCache.cpp
+ * @author sumin.park
+ * @brief Value-keyed shared material records, texture claims and pressure eviction.
+ *
+ * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
+ *
+ */
+#include "renderer/MaterialRecordCache.h"
+
+#include <renderer/IMeshResolveHost.h>
+
+#include <algorithm>
+#include <bit>
+#include <map>
+#include <tuple>
+#include <functional>
+#include <span>
+
+namespace mir
+{
+    namespace
+    {
+        // Floats compare by bit pattern so a key and its hash agree.
+        bool SameFloat(float a, float b) { return std::bit_cast<uint32_t>(a) == std::bit_cast<uint32_t>(b); }
+    }
+
+    MaterialValueKey MaterialValueKey::Of(const MaterialDesc &desc)
+    {
+        MaterialValueKey key;
+        key.shaderName = desc.shaderName;
+        key.cullMode = desc.cullMode;
+        key.polygonMode = desc.polygonMode;
+        key.topology = desc.topology;
+        key.frontFace = desc.frontFace;
+        key.baseColorTexture = desc.baseColorTexture;
+        key.normalTexture = desc.normalTexture;
+        key.sampler = desc.sampler;
+        key.alphaMode = desc.alphaMode;
+        key.alphaCutoff = desc.alphaCutoff;
+        key.record.assign(desc.record.begin(), desc.record.end());
+        key.recordAlignment = desc.recordAlignment;
+        key.surfaceMaterial = desc.surfaceMaterial;
+        key.surfaceAsset = desc.surfaceAsset;
+        return key;
+    }
+
+    bool MaterialValueKey::operator==(const MaterialValueKey &other) const
+    {
+        return shaderName == other.shaderName && cullMode == other.cullMode && polygonMode == other.polygonMode &&
+            topology == other.topology && frontFace == other.frontFace &&
+            baseColorTexture == other.baseColorTexture && normalTexture == other.normalTexture &&
+            sampler.magFilter == other.sampler.magFilter && sampler.minFilter == other.sampler.minFilter &&
+            sampler.mipmapMode == other.sampler.mipmapMode && sampler.addressModeU == other.sampler.addressModeU &&
+            sampler.addressModeV == other.sampler.addressModeV && sampler.useMips == other.sampler.useMips &&
+            SameFloat(sampler.maxAnisotropy, other.sampler.maxAnisotropy) && alphaMode == other.alphaMode &&
+            SameFloat(alphaCutoff, other.alphaCutoff) && record == other.record &&
+            recordAlignment == other.recordAlignment && surfaceMaterial == other.surfaceMaterial &&
+            surfaceAsset == other.surfaceAsset;
+    }
+
+    size_t MaterialValueKeyHash::operator()(const MaterialValueKey &key) const
+    {
+        size_t hash = std::hash<std::string>{}(key.shaderName);
+        const auto mix = [&hash](uint64_t value)
+            {
+                hash ^= std::hash<uint64_t>{}(value)+ 0x9E3779B97F4A7C15ull + (hash << 6) + (hash >> 2);
+            };
+        mix(key.cullMode);
+        mix(key.polygonMode);
+        mix(key.topology);
+        mix(key.frontFace);
+        mix((uint64_t(key.baseColorTexture.mIndex) << 32) | key.baseColorTexture.mGeneration);
+        mix((uint64_t(key.normalTexture.mIndex) << 32) | key.normalTexture.mGeneration);
+        mix(key.sampler.magFilter);
+        mix(key.sampler.minFilter);
+        mix(key.sampler.mipmapMode);
+        mix(key.sampler.addressModeU);
+        mix(key.sampler.addressModeV);
+        mix(key.sampler.useMips);
+        mix(std::bit_cast<uint32_t>(key.sampler.maxAnisotropy));
+        mix(static_cast<uint64_t>(key.alphaMode));
+        mix(std::bit_cast<uint32_t>(key.alphaCutoff));
+        for (const std::byte byte : key.record)
+            mix(static_cast<uint64_t>(byte));
+        mix(key.recordAlignment);
+        mix(key.surfaceMaterial);
+        mix(std::hash<std::string>{}(key.surfaceAsset));
+        return hash;
+    }
+
+    uint64_t MaterialRecordCache::Acquire(const MaterialDesc &desc, std::vector<TextureLoadLease> claims,
+        MaterialAcquire *status)
+    {
+        const auto report = [status](MaterialAcquire result) { if (status != nullptr) *status = result; };
+        MaterialValueKey key = MaterialValueKey::Of(desc);
+        if (const auto found = mIds.find(key); found != mIds.end())
+        {
+            report(MaterialAcquire::Ready);
+            return found->second;
+        }
+        const MaterialHandle handle = mHost.CreateMaterial(desc);
+        if (handle.IsNull())
+        {
+            if (!mHost.MaterialSlotsExhausted())
+            {
+                report(MaterialAcquire::Failed);
+                return 0;
+            }
+            // The table is a fixed number of slots, and the unused records hold some. Releasing them frees their
+            // slots only when their frames complete, so the caller waits and asks again on a later frame.
+            EvictUnused();
+            report(MaterialAcquire::Waiting);
+            return 0;
+        }
+        report(MaterialAcquire::Ready);
+        const uint64_t id = mNextId++;
+        Record &record = mRecords[id];
+        // The table treats an alignment of zero as its default, so the footprint must not divide by it.
+        const uint32_t alignment = key.recordAlignment != 0 ? key.recordAlignment : MaterialValueKey{}.recordAlignment;
+        record.recordBytes = key.record.empty() ? 0 : (key.record.size() + alignment - 1) / alignment * alignment;
+        record.handle = handle;
+        record.claims = std::move(claims);
+        record.key = key;
+        mIds.emplace(std::move(key), id);
+        return id;
+    }
+
+    void MaterialRecordCache::Retain(uint64_t id)
+    {
+        if (const auto found = mRecords.find(id); found != mRecords.end())
+        {
+            ++found->second.consumers;
+            found->second.lastUse = ++mUseSerial;
+        }
+    }
+
+    void MaterialRecordCache::Drop(uint64_t id)
+    {
+        const auto found = mRecords.find(id);
+        if (found == mRecords.end() || found->second.consumers == 0)
+            return;
+        if (--found->second.consumers == 0)
+        {
+            found->second.lastUse = ++mUseSerial;
+            Trim();
+        }
+    }
+
+    MaterialHandle MaterialRecordCache::Find(uint64_t id) const
+    {
+        const auto found = mRecords.find(id);
+        return found == mRecords.end() ? MaterialHandle{} : found->second.handle;
+    }
+
+    MaterialRecordCache::MaterialRecordCache(IMeshResolveHost &host)
+        : mHost(host), mResidency(host.SharedResidency())
+    {
+        mHolder = mResidency->AddHolder(GpuCategory::Material, [this] { return RecordBytes(); });
+    }
+
+    MaterialRecordCache::~MaterialRecordCache()
+    {
+        mResidency->RemoveHolder(mHolder);
+    }
+
+    uint64_t MaterialRecordCache::RecordBytes() const
+    {
+        uint64_t bytes = 0;
+        for (const auto &[id, record] : mRecords)
+            bytes += record.recordBytes;
+        return bytes;
+    }
+
+    namespace
+    {
+        // A texture can be freed only when no active consumer needs it.
+        struct PinnedTexture
+        {
+            uint64_t bytes = 0;
+            size_t claims = 0;
+            size_t unused = 0;
+        };
+        using TextureId = std::tuple<const void *, uint64_t, uint64_t>;
+        TextureId IdOf(const TextureLoadLease &claim)
+        {
+            return { claim.CacheOf(), claim.Key().asset.value, claim.Key().content };
+        }
+    }
+
+    uint64_t MaterialRecordCache::PinnedTextureBytes() const
+    {
+        std::map<TextureId, PinnedTexture> textures;
+        for (const auto &[id, record] : mRecords)
+            for (const TextureLoadLease &claim : record.claims)
+            {
+                PinnedTexture &texture = textures[IdOf(claim)];
+                texture.bytes = claim.Bytes();
+                texture.claims = claim.Consumers();
+                texture.unused += record.consumers == 0 ? 1 : 0;
+            }
+        uint64_t bytes = 0;
+        for (const auto &[id, texture] : textures)
+            if (texture.unused == texture.claims)
+                bytes += texture.bytes;
+        return bytes;
+    }
+
+    void MaterialRecordCache::Trim()
+    {
+        GpuResidency &residency = *mResidency;
+        // The total overage is one amount however it is freed, texture bytes and table bytes both count toward
+        // it once. A category limit is separate and only its own kind of bytes can satisfy it.
+        const uint64_t totalNeed = residency.TotalExcess();
+        const uint64_t textureNeed = residency.CategoryExcess(GpuCategory::Texture);
+        const uint64_t recordNeed = residency.CategoryExcess(GpuCategory::Material);
+        if (totalNeed == 0 && textureNeed == 0 && recordNeed == 0)
+            return;
+
+        // Unused records, oldest first. A record is released only if that gives something back.
+        std::vector<std::pair<uint64_t, uint64_t>> unused;
+        std::map<TextureId, PinnedTexture> textures;
+        for (const auto &[id, record] : mRecords)
+        {
+            if (record.consumers != 0)
+            {
+                for (const TextureLoadLease &claim : record.claims)
+                    textures[IdOf(claim)].claims = claim.Consumers();
+                continue;
+            }
+            unused.emplace_back(record.lastUse, id);
+            for (const TextureLoadLease &claim : record.claims)
+            {
+                PinnedTexture &texture = textures[IdOf(claim)];
+                texture.bytes = claim.Bytes();
+                texture.claims = claim.Consumers();
+                ++texture.unused;
+            }
+        }
+        std::sort(unused.begin(), unused.end());
+
+        uint64_t freedTexture = 0, freedRecord = 0;
+        for (const auto &[serial, id] : unused)
+        {
+            const bool totalUnmet = freedTexture + freedRecord < totalNeed;
+            const bool textureUnmet = freedTexture < textureNeed;
+            const bool recordUnmet = freedRecord < recordNeed;
+            if (!totalUnmet && !textureUnmet && !recordUnmet)
+                break;
+            const auto record = mRecords.find(id);
+            uint64_t texturesFreed = 0;
+            bool freesTexture = false;
+            for (const TextureLoadLease &claim : record->second.claims)
+            {
+                PinnedTexture &texture = textures[IdOf(claim)];
+                // every claim left on the texture belongs to an unused record still to go
+                if (texture.unused == texture.claims)
+                    freesTexture = true;
+            }
+            const bool freesRecord = record->second.recordBytes > 0;
+            const bool helps = ((freesTexture || freesRecord) && totalUnmet) || (freesTexture && textureUnmet) ||
+                (freesRecord && recordUnmet);
+            if (!helps)
+                continue;
+            for (const TextureLoadLease &claim : record->second.claims)
+            {
+                PinnedTexture &texture = textures[IdOf(claim)];
+                --texture.unused;
+                --texture.claims;
+                if (texture.claims == 0)
+                    texturesFreed += texture.bytes;
+            }
+            freedTexture += texturesFreed;
+            freedRecord += record->second.recordBytes;
+            Evict(record);
+        }
+    }
+
+    void MaterialRecordCache::EvictUnused()
+    {
+        std::vector<std::pair<uint64_t, uint64_t>> unused;
+        for (const auto &[id, record] : mRecords)
+            if (record.consumers == 0)
+                unused.emplace_back(record.lastUse, id);
+        std::sort(unused.begin(), unused.end());
+        for (const auto &[serial, id] : unused)
+            Evict(mRecords.find(id));
+    }
+
+    void MaterialRecordCache::Evict(std::unordered_map<uint64_t, Record>::iterator record)
+    {
+        const MaterialHandle handle = record->second.handle;
+        mIds.erase(record->second.key);
+        // Release texture claims after removing the material record.
+        std::vector<TextureLoadLease> claims = std::move(record->second.claims);
+        mRecords.erase(record);
+        mHost.ReleaseModelResources({}, std::span(&handle, 1), {});
+        claims.clear();
+    }
+
+    void MaterialRecordCache::Reset()
+    {
+        std::unordered_map<uint64_t, Record> records = std::move(mRecords);
+        mRecords.clear();
+        mIds.clear();
+        records.clear();
+    }
+
+    MaterialLease &MaterialLease::operator=(MaterialLease &&other) noexcept
+    {
+        if (this != &other)
+        {
+            Reset();
+            mCache = std::move(other.mCache);
+            mId = other.mId;
+            other.mId = 0;
+        }
+        return *this;
+    }
+
+    void MaterialLease::Reset()
+    {
+        if (mCache && mId != 0)
+            mCache->Drop(mId);
+        mCache.reset();
+        mId = 0;
+    }
+}

@@ -1,5 +1,9 @@
 # editor
 
+Prefab preview Worlds retain their mesh and model resources across main-scene
+unload. Closing a document releases only its claims and resources. The former
+global renderer cleanup and preview resolve reset are not part of scene unload.
+
 The Slate editor shell — dockspace, default panel layout, the File, Edit, Project
 and Debug menus — drawn into the ImGui context `imguiruntime` owns. It owns no
 part of that context's lifetime: no `CreateContext`, no fonts, no backend. See

@@ -21,6 +21,7 @@ namespace mir
 {
     class ActiveCameraSystem;
     class AssetResolver;
+    class AsyncAssetService;
     class AssetsModule;
     class MeshResolveSystem;
     class RenderSystem;
@@ -34,6 +35,8 @@ namespace mir
         std::filesystem::path mProjectSettingsPath;
         // looks up the names a MeshRenderer holds, required
         const AssetResolver *mResolver = nullptr;
+        // loads mesh assets in the background, null disables mesh asset loading
+        AsyncAssetService *mAssetService = nullptr;
     };
 
     class RendererModule

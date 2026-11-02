@@ -28,7 +28,7 @@ than a stack cutting its last rows away to fit. A larger area is never scaled
 up.
 
 `GameUIModule` owns the `UIContext` and the screens drawn into it, each a
-function registered with `AddScreen`. `RunFrame(area, pointer)` is one frame:
+function registered with `AddScreen`. `SetSuspended(true)` makes `RunFrame` return without running a screen or reading the pointer, for a scene that is still preparing its resources. `RunFrame(area, pointer)` is one frame:
 `BeginFrame`, every screen in registration order, `EndFrame`. A backend bridge
 calls it; today that is `gameui_imgui`, which runs it in the ImGui frame's
 `Game` drawer group. The area comes from the `GameUIArea` World resource, which

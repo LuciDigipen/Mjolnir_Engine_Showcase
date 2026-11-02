@@ -8,6 +8,7 @@ engine_add_module_tests(renderer
     DepthOfFieldEffect.tests.cpp
     DescriptorLayoutLimits.tests.cpp
     FilmEffect.tests.cpp
+    GpuRecords.tests.cpp
     Material.tests.cpp
     MaterialRecordTable.tests.cpp
     MaterialReflection.tests.cpp
@@ -15,6 +16,10 @@ engine_add_module_tests(renderer
     SurfaceMaterialCatalog.tests.cpp
     SurfaceMaterialLibrary.tests.cpp
     SurfaceMaterialLayout.tests.cpp
+    MeshAssetDecoder.tests.cpp
+    MeshLoadTracker.tests.cpp
+    TextureLoadTracker.tests.cpp
+    MeshResolveSystem.tests.cpp
     MeshStreaming.tests.cpp
     FogEffect.tests.cpp
     HdrEffect.tests.cpp
@@ -67,3 +72,6 @@ target_compile_definitions(engine_renderer_tests PRIVATE
     MIR_SURFACE_CATALOG="${MIR_SURFACE_CATALOG_PATH}"
     MIR_RENDERER_TEST_DIR="${MIR_RENDERER_TEST_DIR_PATH}"
     MIR_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
+
+# the mesh load tests build a JobExecutor
+target_link_libraries(engine_renderer_tests PRIVATE mir::jobs)

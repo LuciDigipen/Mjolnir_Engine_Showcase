@@ -12,6 +12,8 @@
 #include <core/math/WorldCoordinates.h>
 #include <core/platform/Surface.h>
 #include <renderer/DebugView.h>
+#include <renderer/IMeshResolveHost.h>
+#include <renderer/ITextureUploader.h>
 #include <renderer/Material.h>
 #include <renderer/Mesh.h>
 #include <renderer/MeshStreaming.h>
@@ -197,7 +199,7 @@ namespace mir
         float fovYDegrees = 0.0f;
     };
 
-    class VulkanRenderer
+    class VulkanRenderer : public IMeshResolveHost, public ITextureUploader
     {
     public:
         VulkanRenderer();
@@ -211,15 +213,21 @@ namespace mir
 
         // abstraction from imgui
         void SetImGuiDrawData(ImDrawData *drawData);
-        MeshHandle CreateMesh(std::span<const Vertex> vertices, std::span<const uint32_t> indices);
+        MeshHandle CreateMesh(std::span<const Vertex> vertices, std::span<const uint32_t> indices) override;
 
         bool DestroyMesh(MeshHandle handle);
 
         TextureHandle CreateTexture(const TextureDesc &desc);
+        TextureHandle QueueTexture(TextureUploadSource source) override;
+        TextureUploadState TextureState(TextureHandle handle) const override;
+        bool RetireTexture(TextureHandle handle) override;
+        uint64_t TextureFootprint(TextureHandle handle) const override;
+        uint64_t TextureRetiringBytes() const override;
 
         TextureHandle ErrorTexture() const;
 
-        MaterialHandle CreateMaterial(const MaterialDesc &desc);
+        MaterialHandle CreateMaterial(const MaterialDesc &desc) override;
+        bool MaterialSlotsExhausted() const override;
 
         bool DestroyMaterial(MaterialHandle handle);
 
@@ -228,7 +236,7 @@ namespace mir
         bool UpdateMaterialRecord(MaterialHandle handle, std::span<const std::byte> bytes);
         uint32_t MaterialRecordOffset(MaterialHandle handle) const;
 
-        MaterialHandle ErrorMaterial() const;
+        MaterialHandle ErrorMaterial() const override;
 
         // Stable shared-table rows for a material record's TextureRef fields.
         uint32_t MaterialSamplerRow(const SamplerDesc &desc);
@@ -271,7 +279,7 @@ namespace mir
         // prepared. Handles not present in these spans remain valid.
         void ReleaseModelResources(std::span<const MeshHandle> meshes,
             std::span<const MaterialHandle> materials,
-            std::span<const TextureHandle> textures);
+            std::span<const TextureHandle> textures) override;
 
         // Asynchronous meshes (renderer/MeshStreaming.h), none of which waits on the GPU: a queued mesh is copied
         // through the persistent staging ring at the start of a frame, within the per-frame byte budget, and is
@@ -282,15 +290,14 @@ namespace mir
         bool RequestStagingBytes(uint64_t bytes);
         // The GPU bytes one frame may write, shared by every consumer.
         bool SetUploadFrameBudget(uint64_t bytes);
-        uint64_t UploadFrameBudget() const;
-        MeshHandle QueueMesh(std::vector<Vertex> vertices, std::vector<uint32_t> indices,
-            const MeshUploadOptions &options);
-        MeshUploadState MeshState(MeshHandle handle) const;
-        // The handle goes stale at once; false when it already was.
-        bool RetireMesh(MeshHandle handle);
-        // GPU bytes a queued mesh of this size holds, BLAS included.
-        uint64_t MeshFootprint(uint32_t vertexCount, uint32_t indexCount, const MeshUploadOptions &options) const;
-        MeshStreamingStats MeshStreaming() const;
+        uint64_t UploadFrameBudget() const override;
+        std::shared_ptr<GpuResidency> SharedResidency() override { return mResidency; }
+        MeshHandle QueueMesh(MeshUploadSource source, const MeshUploadOptions &options) override;
+        MeshUploadState MeshState(MeshHandle handle) const override;
+        bool RetireMesh(MeshHandle handle) override;
+        uint64_t MeshFootprint(uint32_t vertexCount, uint32_t indexCount,
+            const MeshUploadOptions &options) const override;
+        MeshStreamingStats MeshStreaming() const override;
 
         VkExtent2D SwapchainExtent() const;
 
@@ -368,6 +375,7 @@ namespace mir
         std::optional<vk::FrameContext> BeginFrame();
         // No wait: the caller idles the device first. False for a null or stale handle.
         bool DestroyMeshAndBlas(MeshHandle handle);
+        void CollectReleasedResources(uint64_t completed);
 
         void RecordRtFrame(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views);
 
@@ -388,6 +396,12 @@ namespace mir
         void InitializeShaderLibrary();
 
     private:
+        struct ReleasedResources
+        {
+            std::vector<MaterialHandle> materials;
+        };
+        FrameRetireList<ReleasedResources> mReleasedResources;
+        std::shared_ptr<GpuResidency> mResidency = std::make_shared<GpuResidency>();
         glm::vec4 mClearColor{ 0.02f, 0.02f, 0.02f, 1.0f };
 
         bool mSkyVisible = false;

@@ -33,6 +33,7 @@ engine_add_module_tests(core
     Transform.tests.cpp
     TransformHierarchy.tests.cpp
     Resources.tests.cpp
+    SceneLoadGroup.tests.cpp
     ComponentHooks.tests.cpp
     Entity.tests.cpp
     ComponentFieldChanges.tests.cpp
