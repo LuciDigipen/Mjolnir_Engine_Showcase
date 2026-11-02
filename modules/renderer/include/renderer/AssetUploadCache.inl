@@ -21,6 +21,7 @@ namespace mir
             return found->second.mView;
         }
         Entry &entry = mEntries[key];
+        entry.mKey = key;
         entry.mLabel = label;
         entry.mAttempt = Attempt();
         if (mAssets == nullptr)
@@ -51,6 +52,7 @@ namespace mir
             return found->second.mView;
         }
         Entry &entry = mEntries[key];
+        entry.mKey = key;
         entry.mLabel = label;
         entry.mAttempt = Attempt();
         entry.mInline = make();
@@ -149,6 +151,12 @@ namespace mir
                     changed.push_back(key);
                 return entry.mView.phase == AssetUploadPhase::Ready || entry.mView.phase == AssetUploadPhase::Failed;
             });
+        // New allocations can put the cache over its target while no lease is released, so trim here as well.
+        if (!changed.empty())
+        {
+            Trim();
+            std::erase_if(changed, [this](const UploadKey &key) { return !mEntries.contains(key); });
+        }
         return changed;
     }
 
@@ -226,14 +234,14 @@ namespace mir
     void AssetUploadCache<Decoded, Handle, View, Member>::Publish(Entry &entry,
         const std::shared_ptr<const Decoded> &decoded)
     {
-        const Handle handle = mQueue(decoded);
+        const Handle handle = mQueue(entry.mKey, decoded);
         if (handle.IsNull())
         {
             Fail(entry, "the upload could not be queued");
             return;
         }
         HandleOf(entry) = handle;
-        entry.mBytes = mFootprint(handle, *decoded);
+        entry.mBytes = mFootprint(entry.mKey, handle, *decoded);
         mMetadata(entry.mView, *decoded);
         entry.mView.phase = AssetUploadPhase::Uploading;
     }

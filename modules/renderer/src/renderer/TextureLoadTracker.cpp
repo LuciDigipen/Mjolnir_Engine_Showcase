@@ -38,11 +38,11 @@ namespace mir
 
     TextureLoadTracker::TextureLoadTracker(ITextureUploader &uploader, AsyncAssetService *assets)
         : Base(assets, kTextureDecoder,
-            [&uploader](std::shared_ptr<const TextureUploadSource> source)
+            [&uploader](UploadKey, std::shared_ptr<const TextureUploadSource> source)
                 { return uploader.QueueTexture({ source->desc, source }); },
             [&uploader](TextureHandle handle) { return uploader.TextureState(handle); },
             [&uploader](TextureHandle handle) { uploader.RetireTexture(handle); },
-            [&uploader](TextureHandle handle, const TextureUploadSource &) { return uploader.TextureFootprint(handle); },
+            [&uploader](UploadKey, TextureHandle handle, const TextureUploadSource &) { return uploader.TextureFootprint(handle); },
             [](TextureLoad &view, const TextureUploadSource &source)
                 {
                     view.width = source.desc.width;

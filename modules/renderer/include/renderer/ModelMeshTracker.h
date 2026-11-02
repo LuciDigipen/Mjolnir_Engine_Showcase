@@ -62,6 +62,8 @@ namespace mir
 
     private:
         std::unordered_map<GpuRecordKey, uint64_t, GpuRecordKeyHash> mIds;
+        // The options the record was keyed with, read when its upload is queued.
+        std::unordered_map<uint64_t, MeshUploadOptions> mOptions;
     };
     using ModelMeshLease = AssetUploadLease<ModelMeshTracker>;
 }

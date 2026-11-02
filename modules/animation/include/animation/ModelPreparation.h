@@ -33,13 +33,13 @@ namespace mir
         bool transparent = false;
     };
 
-    // Read-only once ready. Member order releases meshes and materials before their textures.
+    // Read-only once ready. Members release in reverse order.
     struct PreparedModel
     {
         std::shared_ptr<const ModelResources> resources;
         std::unordered_map<uint64_t, std::vector<PreparedPrimitive>> meshes;
-        std::vector<TextureLoadLease> textures;
         std::vector<MaterialLease> materialClaims;
+        std::vector<TextureLoadLease> textures;
         std::vector<ModelMeshLease> meshClaims;
         bool degraded = false;
     };

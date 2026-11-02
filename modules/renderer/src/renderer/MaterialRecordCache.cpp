@@ -63,7 +63,9 @@ namespace mir
     {
         size_t hash = std::hash<std::string>{}(key.shaderName);
         const auto mix = [&hash](uint64_t value)
-            { hash ^= std::hash<uint64_t>{}(value) + 0x9E3779B97F4A7C15ull + (hash << 6) + (hash >> 2); };
+            {
+                hash ^= std::hash<uint64_t>{}(value)+ 0x9E3779B97F4A7C15ull + (hash << 6) + (hash >> 2);
+            };
         mix(key.cullMode);
         mix(key.polygonMode);
         mix(key.topology);
@@ -114,8 +116,9 @@ namespace mir
         report(MaterialAcquire::Ready);
         const uint64_t id = mNextId++;
         Record &record = mRecords[id];
-        record.recordBytes = key.record.empty() ? 0
-            : (key.record.size() + key.recordAlignment - 1) / key.recordAlignment * key.recordAlignment;
+        // The table treats an alignment of zero as its default, so the footprint must not divide by it.
+        const uint32_t alignment = key.recordAlignment != 0 ? key.recordAlignment : MaterialValueKey{}.recordAlignment;
+        record.recordBytes = key.record.empty() ? 0 : (key.record.size() + alignment - 1) / alignment * alignment;
         record.handle = handle;
         record.claims = std::move(claims);
         record.key = key;

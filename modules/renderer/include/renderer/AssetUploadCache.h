@@ -60,10 +60,10 @@ namespace mir
     public:
         using ViewType = View;
         using HandleType = Handle;
-        using Queue = std::function<Handle(std::shared_ptr<const Decoded>)>;
+        using Queue = std::function<Handle(UploadKey, std::shared_ptr<const Decoded>)>;
         using State = std::function<UploadState(Handle)>;
         using Retire = std::function<void(Handle)>;
-        using Footprint = std::function<uint64_t(Handle, const Decoded &)>;
+        using Footprint = std::function<uint64_t(UploadKey, Handle, const Decoded &)>;
         using Metadata = std::function<void(View &, const Decoded &)>;
         AssetUploadCache(AsyncAssetService *assets, const AssetDecoder<Decoded> &decoder,
             Queue queue, State state, Retire retire, Footprint footprint, Metadata metadata,
@@ -109,6 +109,7 @@ namespace mir
     private:
         struct Entry
         {
+            UploadKey mKey;
             View mView;
             AssetLease<Decoded> mRequest;
             // Data that did not come from the asset service, dropped once queued.

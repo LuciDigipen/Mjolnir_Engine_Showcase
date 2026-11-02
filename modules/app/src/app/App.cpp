@@ -399,7 +399,10 @@ namespace mir
                 MIR_LOG_WARN("Dropped {} request(s) made while the scene was loading", dropped);
         };
         uint64_t frames = 0;
-        // Wait for resources without starting gameplay. Frame-limited runs must still terminate.
+        // Wait for resources without starting gameplay. Background I/O sets the pace, so a limited run is bound
+        // by time and not by its frame limit.
+        constexpr std::chrono::seconds kLoadingTimeout{ 60 };
+        const auto loadingStart = std::chrono::steady_clock::now();
         while (!group.Ready())
         {
             if (mWindow.Get().ShouldClose())
@@ -415,9 +418,11 @@ namespace mir
             mScheduler.UpdateLoading(context);
             group.EndFrame();
             ++frames;
-            if (!group.Ready() && mDesc.mMaxFrames != 0 && frames >= mDesc.mMaxFrames)
+            if (!group.Ready() && mDesc.mMaxFrames != 0 &&
+                std::chrono::steady_clock::now() - loadingStart >= kLoadingTimeout)
             {
-                MIR_LOG_ERROR("The scene was still not ready after {} loading frames, gameplay did not start", frames);
+                MIR_LOG_ERROR("The scene was still not ready after {} loading frames and {} seconds, gameplay did not start",
+                    frames, kLoadingTimeout.count());
                 mWindow.Get().RequestClose();
                 finish();
                 return false;

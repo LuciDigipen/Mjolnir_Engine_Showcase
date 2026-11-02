@@ -289,11 +289,11 @@ TEST_CASE("Common upload cache protects independent claims and cancels the last 
     };
     using Cache = AssetUploadCache<DecodedMesh, MeshHandle, View, &View::handle>;
     auto cache = std::make_shared<Cache>(&f.service, kMeshAssetDecoder,
-        [&f](std::shared_ptr<const DecodedMesh> mesh)
+        [&f](UploadKey, std::shared_ptr<const DecodedMesh> mesh)
             { return f.uploader.QueueMesh({ mesh->vertices, mesh->indices, mesh }, {}); },
         [&f](MeshHandle handle) { return f.uploader.MeshState(handle); },
         [&f](MeshHandle handle) { f.uploader.RetireMesh(handle); },
-        [](MeshHandle, const DecodedMesh &) { return uint64_t(200); },
+        [](UploadKey, MeshHandle, const DecodedMesh &) { return uint64_t(200); },
         [](View &view, const DecodedMesh &mesh) { view.bounds = mesh.bounds; });
     cache->Request(Id("tri"), "tri");
     AssetUploadLease<Cache> first(cache, Id("tri"));
