@@ -1,7 +1,7 @@
 /**
  * @file AssetsModule.cpp
  * @author sumin.park
- * @brief Owns the cooked asset manifest and cache, and swaps in a new cook.
+ * @brief Module in charge of assets control.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *

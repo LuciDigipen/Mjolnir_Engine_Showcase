@@ -48,7 +48,6 @@ namespace
             : cooked(meshes), assets(cooked.Path()), jobs(0), service(assets, jobs, 1), tracker(uploader, &service)
         {}
 
-        // One drain and one update, as a frame does
         std::vector<AssetId> Frame()
         {
             service.DrainCompletions();
@@ -79,7 +78,6 @@ TEST_CASE("A mesh goes from decoding to ready one step per frame", "[renderer][m
     CHECK(load.phase == MeshLoadPhase::Decoding);
     CHECK(load.mesh.IsNull());
 
-    // the decode ran inline but its result is not visible before the drain
     CHECK(f.tracker.Update().empty());
     CHECK(load.phase == MeshLoadPhase::Decoding);
 
@@ -100,7 +98,6 @@ TEST_CASE("A mesh goes from decoding to ready one step per frame", "[renderer][m
     CHECK(load.bounds.mLocalMin == glm::vec3(0.0f));
     CHECK(load.bounds.mLocalMax == glm::vec3(1.0f, 1.0f, 0.0f));
 
-    // a finished load costs nothing and reports nothing
     CHECK(f.Frame().empty());
 }
 
@@ -111,7 +108,6 @@ TEST_CASE("The decoded data is shared with the uploader until it is copied", "[r
     f.Frame();
     REQUIRE(load.phase == MeshLoadPhase::Uploading);
 
-    // the service slot and the uploader both hold the one decode
     CHECK(f.uploader.meshes.at(load.mesh.mIndex).keepalive != nullptr);
     f.uploader.Record(load.mesh);
     CHECK(f.uploader.meshes.at(load.mesh.mIndex).keepalive == nullptr);
@@ -264,7 +260,6 @@ TEST_CASE("A load still decoding when released leaves nothing to retire", "[rend
     CHECK(f.uploader.retired.empty());
     CHECK(f.tracker.Find(Id("tri")) == nullptr);
 
-    // the finished decode arrives for a load nobody follows
     CHECK(f.Frame().empty());
     CHECK(f.uploader.queued == 0);
 }

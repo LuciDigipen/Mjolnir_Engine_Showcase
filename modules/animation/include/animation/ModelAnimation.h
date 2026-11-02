@@ -17,20 +17,17 @@
 
 namespace mir
 {
-    // A mesh asset and each of its primitives as the renderer uploads it. The worker that decoded the mesh made the
-    // uploads, so the main thread never converts a vertex. uploads is parallel to asset.primitives and null for
-    // a primitive with nothing to draw.
+    // uploads matches asset.primitives by index. Empty primitives have a null upload.
     struct MeshRecord
     {
         MeshAsset asset;
         std::vector<std::shared_ptr<const DecodedMesh>> uploads;
     };
 
-    // What a model evaluates from. Every dependency is a record of its own that other models share, only the
-    // model's node table is its own.
+    // CPU data shared by models and kept alive for animation.
     struct ModelResources
     {
-        // The model's own record, shared like the others so the asset service accounts for it once
+        // Shared with the asset service so its memory is counted once.
         std::shared_ptr<const ModelAsset> model;
         std::unordered_map<uint64_t, std::shared_ptr<const MeshRecord>> meshes;
         std::unordered_map<uint64_t, std::shared_ptr<const SkeletonAsset>> skeletons;
@@ -46,14 +43,11 @@ namespace mir
         glm::mat4 world{1};
         std::vector<float> weights;
     };
-    // Reads the model and every record it names through cache, one record per asset.
     bool LoadModelResources(AssetCache &cache, AssetId id, ModelResources &result, std::string &error);
-    // The same from blobs already read, a record that is missing fails with "no cooked blob".
     bool DecodeModelResources(const AssetBlobView &root, const AssetDependencies &dependencies, ModelResources &result,
                               std::string &error);
 
-    // One decoder for each record kind, each reads its own blob alone so the asset service shares the result
-    // between every model that names it.
+    // Each decoder reads one asset, allowing models to share dependencies.
     const AssetDecoder<ModelAsset> &ModelRecordDecoder();
     const AssetDecoder<MeshRecord> &MeshRecordDecoder();
     const AssetDecoder<SkeletonAsset> &SkeletonRecordDecoder();
@@ -64,10 +58,8 @@ namespace mir
     {
         std::vector<AssetId> meshes, skeletons, clips;
     };
-    // The records a model names directly, each once. The materials come from the meshes, see MaterialsOf.
     ModelDependencies DependenciesOf(const ModelAsset &model);
     std::vector<AssetId> MaterialsOf(const MeshAsset &mesh);
-    // Checks the records against each other and the model, so a model that cannot be evaluated never publishes.
     bool ValidateModelResources(const ModelResources &resources, std::string &error);
     std::vector<float> SampleAnimationTrack(const AnimationTrack &track, float time);
     // Reset to rest pose each sample; deterministic seeking and independent instances.

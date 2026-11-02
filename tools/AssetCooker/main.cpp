@@ -1206,9 +1206,8 @@ namespace
         cache.erase("requiresFullCook");
         PublishText(cachePath, cache.dump(2) + "\n");
 
-        // Blobs are content addressed. A running editor may still hold any older catalog,
-        // so publication never deletes an input a background reader can still need.
-        // Reclaim storage only during an offline clean with runtime readers stopped.
+        // Background loads may still read older cooked files. Delete them only during a clean with all
+        // engine and editor readers stopped.
         const bool changed = std::any_of(resultModels.begin(), resultModels.end(), [](const Json &v) {
             const std::string status = v.value("status", "");
             return status == "cooked" || status == "removed";

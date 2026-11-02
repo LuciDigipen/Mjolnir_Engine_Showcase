@@ -125,8 +125,7 @@ namespace mir
             }
         }
 
-        // One tick of the resource preparation systems alone, in phase and order, for a scene that is waiting for
-        // its resources. Gameplay systems do not run and need not have started.
+        // Runs resource preparation without starting gameplay systems.
         void UpdateLoading(SystemContext &context)
         {
             for (std::size_t phase = 0; phase < kPhaseCount; ++phase)

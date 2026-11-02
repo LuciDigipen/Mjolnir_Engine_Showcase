@@ -31,7 +31,7 @@ namespace mir
             return decoded;
         }
 
-        // Every owned allocation, by capacity. A shared allocation belongs to one record and is counted there.
+        // Count allocated capacity, shared data is counted by its owning record.
         uint64_t StringBytes(const std::string &value) { return value.capacity(); }
         template <class T> uint64_t VectorBytes(const std::vector<T> &values) { return values.capacity() * sizeof(T); }
 
@@ -248,7 +248,6 @@ namespace mir
         if (!ReadTypedAsset(root, *modelRecord, error))
             return false;
         data.model = std::move(modelRecord);
-        // a record the model needs, read from its own blob
         const auto read = [&](AssetId key, auto &out, std::string &problem)
         {
             const AssetBlobView *blob = dependencies.Find(key);

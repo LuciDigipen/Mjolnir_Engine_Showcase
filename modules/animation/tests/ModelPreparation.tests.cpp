@@ -92,7 +92,7 @@ namespace
             if (secondModel)
                 entries.push_back({ { kModel2, kModelAssetTypeTag, kModelAssetContentVersion }, model2File, "model-2",
                     modelEdges });
-            // a texture the catalog does not list, its material still names it
+            // a texture the manifest does not list, its material still names it
             if (!withTexture)
             {
                 entries.erase(entries.begin() + 3);
@@ -115,7 +115,6 @@ namespace
             return mPreparation.Advance();
         }
 
-        // Frames until the texture upload is queued
         void QueueTexture()
         {
             for (int frame = 0; frame < 16 && mTextures.mEntries.empty(); ++frame)
@@ -142,7 +141,6 @@ TEST_CASE("A model publishes after its texture and meshes are ready and uses bot
     f.mTextures.Begin(texture);
     f.mTextures.CopyAll(texture);
     f.mTextures.Complete(texture);
-    // the materials exist and the mesh upload is queued, the model waits for it
     REQUIRE(f.Frame() == ModelPreparation::State::Meshes);
     REQUIRE(f.mHost.createdMaterials.size() == 2);
     CHECK(f.mHost.createdMaterials[0].baseColorTexture == texture);
@@ -164,7 +162,6 @@ TEST_CASE("A model publishes after its texture and meshes are ready and uses bot
     CHECK(primitives[0].factor == glm::vec4(0.25f, 0.5f, 0.75f, 1));
     CHECK(f.mPreparation.Take() == nullptr);
 
-    // dropping the claims keeps the records for the next consumer
     model.reset();
     CHECK(f.mHost.releasedMaterials.empty());
     CHECK(f.mHost.uploader.retired.empty());
@@ -203,7 +200,6 @@ TEST_CASE("A second preparation of the same model shares the mesh and material r
     CHECK(second->meshes.at(kMesh.value)[0].mesh == first->meshes.at(kMesh.value)[0].mesh);
     CHECK(second->meshes.at(kMesh.value)[0].material == first->meshes.at(kMesh.value)[0].material);
 
-    // the records stay while either model holds them
     first.reset();
     f.mHost.MaterialRecords()->EvictUnused();
     CHECK(f.mHost.releasedMaterials.empty());
@@ -223,7 +219,6 @@ TEST_CASE("A failed mesh upload fails the model and drops its claims", "[animati
     CHECK(f.Frame() == ModelPreparation::State::Failed);
     CHECK(f.mPreparation.Error() == "GPU mesh creation failed");
     CHECK(f.mPreparation.Take() == nullptr);
-    // an unused failed record leaves the cache, the next request uploads again
     CHECK(f.mHost.uploader.retired.size() == 1);
 }
 
@@ -248,7 +243,6 @@ TEST_CASE("A missing texture blob settles as an error appearance", "[animation][
     Fixture f(false);
     for (int frame = 0; frame < 12 && f.mPreparation.GetState() != ModelPreparation::State::Meshes; ++frame)
         f.Frame();
-    // an unreachable texture is a texture failure, the model still publishes
     REQUIRE(f.mPreparation.GetState() == ModelPreparation::State::Meshes);
     f.mHost.uploader.Complete(MeshHandle{ 0, 1 });
     REQUIRE(f.Frame() == ModelPreparation::State::Ready);
@@ -320,7 +314,6 @@ TEST_CASE("A reload with unchanged content republishes from the existing records
         frames(after);
         REQUIRE(after.GetState() == ModelPreparation::State::Ready);
         const auto replacement = after.Take();
-        // the records the model names are the very ones it already holds
         CHECK(replacement->resources->meshes.at(kMesh.value) == resources->meshes.at(kMesh.value));
         CHECK(replacement->resources->materials.at(kMaterial.value) == resources->materials.at(kMaterial.value));
         CHECK(replacement->meshes.at(kMesh.value)[0].mesh == mesh);
@@ -341,7 +334,6 @@ TEST_CASE("A reload with unchanged content republishes from the existing records
             after.Advance();
         }
         REQUIRE(after.GetState() == ModelPreparation::State::Meshes);
-        // a new mesh upload, the texture and both materials are the same records
         CHECK(f.mHost.uploader.queued == 2);
         CHECK(f.mTextures.mQueued == 1);
         CHECK(f.mHost.createdMaterials.size() == 2);
@@ -350,7 +342,6 @@ TEST_CASE("A reload with unchanged content republishes from the existing records
         const auto replacement = after.Take();
         CHECK(replacement->meshes.at(kMesh.value)[0].mesh == MeshHandle{ 1, 1 });
         CHECK(replacement->meshes.at(kMesh.value)[0].material == before->meshes.at(kMesh.value)[0].material);
-        // the old model still draws its own mesh until it is released
         CHECK(before->meshes.at(kMesh.value)[0].mesh == mesh);
     }
 }
@@ -362,7 +353,6 @@ namespace
     {
         LibraryFixture() : mAssets(Path()), mJobs(0), mService(mAssets, mJobs, 1), mLibrary(mHost, mTextures, kError) {}
 
-        // Steps frames, finishing every upload the fakes hold, until the entry settles
         void Settle(const ModelLibrary::Claim &claim)
         {
             for (int frame = 0; frame < 40 && !claim->ready && claim->failure.empty(); ++frame)
@@ -419,7 +409,6 @@ TEST_CASE("The last claim frees the prepared model and the records stay for the 
         f.Settle(claim);
         REQUIRE(claim->ready);
     }
-    // nothing holds the entry, the renderer still holds its GPU records
     CHECK(f.mHost.releasedMaterials.empty());
     const ModelLibrary::Claim again = f.mLibrary.Acquire(kModel, &f.mService, "model");
     f.Settle(again);
@@ -450,7 +439,6 @@ TEST_CASE("A reload with the same content is the same entry and changed content 
         CHECK(after->content != before->content);
         f.Settle(after);
         REQUIRE(after->ready);
-        // the old model still draws its own mesh while the new one is ready
         CHECK(before->ready);
         CHECK(after->ready->meshes.at(kMesh.value)[0].mesh != before->ready->meshes.at(kMesh.value)[0].mesh);
         CHECK(after->ready->meshes.at(kMesh.value)[0].material == before->ready->meshes.at(kMesh.value)[0].material);
@@ -461,7 +449,6 @@ TEST_CASE("A failed entry is prepared again by the next claim", "[animation][mod
 {
     LibraryFixture f;
     const ModelLibrary::Claim claim = f.mLibrary.Acquire(kModel, &f.mService, "model");
-    // the mesh upload fails, which fails the model
     for (int frame = 0; frame < 40 && claim->failure.empty(); ++frame)
     {
         f.mService.DrainCompletions();
@@ -487,13 +474,11 @@ TEST_CASE("The renderer releasing its resources empties every entry", "[animatio
     f.mLibrary.ReleaseAll();
     CHECK_FALSE(claim->ready);
     CHECK_FALSE(claim->failure.empty());
-    // a later claim starts from nothing
     CHECK(f.mLibrary.Acquire(kModel, &f.mService, "model") != claim);
 }
 
 namespace
 {
-    // Drives a preparation to a state, or to the end of its frames
     void StepUntil(Fixture &f, ModelPreparation &preparation, ModelPreparation::State state, int limit = 40)
     {
         for (int frame = 0; frame < limit && preparation.GetState() != state; ++frame)
@@ -510,7 +495,7 @@ TEST_CASE("A reload that lands during preparation supersedes it instead of mixin
     SECTION("a mesh changed after the model was decoded")
     {
         Fixture f;
-        // the model is decoded under the first catalog, the mesh is still to be requested
+        // the model is decoded under the first manifest, the mesh is still to be requested
         StepUntil(f, f.mPreparation, ModelPreparation::State::Records);
         REQUIRE(f.mPreparation.GetState() == ModelPreparation::State::Records);
         f.Write(true, 1);
@@ -518,12 +503,11 @@ TEST_CASE("A reload that lands during preparation supersedes it instead of mixin
         f.mAssets.CommitReload();
         StepUntil(f, f.mPreparation, ModelPreparation::State::Superseded);
         CHECK(f.mPreparation.GetState() == ModelPreparation::State::Superseded);
-        // the old catalog's vertices were never queued under the new content's key
+        // the old manifest's vertices were never queued under the new content's key
         CHECK(f.mHost.uploader.queued == 0);
         CHECK(f.mHost.createdMaterials.empty());
         CHECK(f.mPreparation.Take() == nullptr);
 
-        // the claim for the new catalog is a preparation of its own and builds the new mesh
         ModelPreparation fresh(f.mHost, f.mTextures, kError, &f.mService, kModel, "model");
         f.mTextures.mQueued = 0;
         for (int frame = 0; frame < 40 && fresh.GetState() != ModelPreparation::State::Meshes; ++frame)
@@ -546,7 +530,6 @@ TEST_CASE("A reload that lands during preparation supersedes it instead of mixin
         f.mAssets.BeginReload();
         f.mAssets.CommitReload();
         StepUntil(f, f.mPreparation, ModelPreparation::State::Superseded);
-        // the texture the model was requested with is not used for the new catalog's model
         CHECK(f.mPreparation.GetState() == ModelPreparation::State::Superseded);
         CHECK(f.mHost.createdMaterials.empty());
         CHECK(f.mHost.uploader.queued == 0);
@@ -611,7 +594,6 @@ TEST_CASE("Two models that name one mesh share its decoded record and its upload
     REQUIRE(second.GetState() == ModelPreparation::State::Ready);
     const auto a = first.Take();
     const auto b = second.Take();
-    // one decoded mesh record, one converted upload, one GPU mesh
     CHECK(a->resources->meshes.at(kMesh.value) == b->resources->meshes.at(kMesh.value));
     CHECK(a->resources->materials.at(kMaterial.value) == b->resources->materials.at(kMaterial.value));
     CHECK(a->meshes.at(kMesh.value)[0].mesh == b->meshes.at(kMesh.value)[0].mesh);
@@ -662,19 +644,16 @@ TEST_CASE("A model nobody names any more is released while the scene stays open"
     REQUIRE(group.Ready());
     CHECK(library->LiveEntries() == 1);
 
-    // one entity still names the model
     world.DestroyEntity(first);
     frame();
     CHECK(library->LiveEntries() == 1);
 
-    // none does: the World's claim goes, the GPU records stay for the next scene under the residency target
     world.DestroyEntity(second);
     frame();
     CHECK(library->LiveEntries() == 0);
     CHECK(f.mHost.uploader.retired.empty());
     CHECK(f.mHost.releasedMaterials.empty());
 
-    // a model named again is claimed again without uploading it twice
     const Entity third = world.CreateEntity();
     world.AddComponent<ModelPlayer>(third, player);
     for (int step = 0; step < 40 && library->LiveEntries() == 0; ++step)
@@ -687,7 +666,6 @@ TEST_CASE("A model nobody names any more is released while the scene stays open"
 
 TEST_CASE("Clearing an entity's model selection releases the claim like deleting the entity", "[animation][model-system]")
 {
-    // the loading tick before gameplay starts and the frame update bind models in separate code
     const bool fullUpdate = GENERATE(false, true);
     INFO(std::string(fullUpdate ? "the frame update" : "the loading tick"));
     RegisterModelPlayer();
@@ -728,11 +706,9 @@ TEST_CASE("Clearing an entity's model selection releases the claim like deleting
     for (int step = 0; step < 40; ++step)
         frame();
     REQUIRE(library->LiveEntries() == 1);
-    // the frame update really evaluated the model, so it is the path that ran
     if (fullUpdate)
         REQUIRE(world.Resource<ModelDrawItems>().items.size() == 1);
 
-    // the entity stays and names nothing, by asset and by name
     ModelPlayer *held = world.GetComponent<ModelPlayer>(entity);
     REQUIRE(held != nullptr);
     held->SetModelAsset(AssetId{});
@@ -742,7 +718,6 @@ TEST_CASE("Clearing an entity's model selection releases the claim like deleting
     if (fullUpdate)
         CHECK(world.Resource<ModelDrawItems>().items.empty());
 
-    // and it can name the model again afterwards
     held->SetModelAsset(kModel);
     for (int step = 0; step < 40; ++step)
         frame();

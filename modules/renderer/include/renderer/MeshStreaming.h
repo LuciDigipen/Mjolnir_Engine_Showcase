@@ -43,9 +43,7 @@ namespace mir
         bool rayTracing = false;
     };
 
-    // Read-only mesh data for an upload, and whatever keeps it alive. The renderer copies it into staging when the
-    // upload is recorded and drops the keepalive right after, so a holder that shares the data (an asset cache)
-    // is the only owner left.
+    // keepalive must protect the spans until the renderer copies them into staging memory.
     struct MeshUploadSource
     {
         std::span<const Vertex> vertices;

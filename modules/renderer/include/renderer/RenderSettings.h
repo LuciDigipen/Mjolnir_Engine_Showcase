@@ -68,8 +68,7 @@ namespace mir
         bool rayTracing = false;
         // Streamed mesh bytes the renderer uploads per frame.
         double uploadMiBPerFrame = kDefaultUploadMiBPerFrame;
-        // The GPU memory meshes and textures may hold together before unused ones are released. Active ones
-        // are never released, so a scene larger than this still loads.
+        // Memory target for cached GPU resources. Resources still in use may exceed it.
         double residencyMiB = kDefaultResidencyMiB;
         DdgiSettings ddgi;
         SsgiSettings ssgi;

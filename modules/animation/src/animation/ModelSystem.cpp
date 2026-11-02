@@ -26,7 +26,7 @@ namespace mir
 {
     void ModelSystem::ReleaseResources()
     {
-        // Dropping the claims is the release, the renderer keeps unused records under its residency target.
+        // Unused GPU resources may stay cached after these claims are released.
         mModels.clear();
         mFailed.clear();
         mDeformations.clear();
@@ -77,7 +77,7 @@ namespace mir
             }
             else if (!next.failure.empty())
             {
-                // an unusable replacement keeps the model that draws, and replaces a failure with its own
+                // Keep the old model visible if its replacement fails.
                 if (model.current->ready)
                     MIR_LOG_WARN("Model {:016x}: replacement was rejected, keeping the previous one: {}", id,
                         next.failure);
@@ -93,14 +93,13 @@ namespace mir
         for (auto &[id, model] : mModels)
         {
             ModelLibrary::Claim claim = mLibrary->Acquire(AssetId{ id }, mAssets, mResolver.PathOf(AssetId{ id }));
-            // the same content is the same entry, nothing to replace
             if (claim == model.current)
                 model.next.reset();
             else if (model.current->ready)
                 model.next = std::move(claim);
             else
             {
-                // nothing is drawing from the old entry, it was still preparing or failed, so the new one takes over
+                // An unfinished model has no visible result to preserve.
                 model.current = std::move(claim);
                 model.next.reset();
             }
@@ -158,7 +157,6 @@ namespace mir
                 alive.insert(packed);
                 if (player.ModelName().empty() && player.ModelAsset().IsNull())
                 {
-                    // a cleared selection names no model, whatever it named before
                     mRequestedModels.erase(packed);
                     mFailed.erase(packed);
                     return;
@@ -205,7 +203,6 @@ namespace mir
         };
         struct Result { ModelEvaluationResult value; std::exception_ptr error; };
         std::vector<Input> inputs;
-        // The scene needs each model resolved: published, or failed in a way that will not change.
         uint32_t required = 0, settled = 0;
         {
             context.world.GetOrCreateQuery<ModelPlayer, const WorldTransform>().ForEach(
@@ -224,7 +221,6 @@ namespace mir
                     std::string path;
                     const PreparedModel *data = nullptr;
                     const Binding binding = Bind(player, packed, id, path, data);
-                    // hidden until the first preparation settles
                     if (binding != Binding::Pending)
                         ++settled;
                     if (binding != Binding::Ready)

@@ -49,7 +49,6 @@ namespace mir
 
         void OnStart(SystemContext &context) override;
         void OnUpdate(SystemContext &context) override;
-        // The same resolve, so a scene's meshes load before its gameplay starts
         void OnLoadingUpdate(SystemContext &context) override { OnUpdate(context); }
         void OnStop(SystemContext &context) override;
 
@@ -57,7 +56,6 @@ namespace mir
         // a renamed mesh or shader resolves again; a removal is Forget's
         static void OnBeforeFieldChange(World &world, std::span<const ComponentFieldChange> changes, void *user);
 
-        // What a mesh name stands for, a builtin shape or an asset loaded by mTracker
         struct CachedMesh
         {
             // builtin shapes only

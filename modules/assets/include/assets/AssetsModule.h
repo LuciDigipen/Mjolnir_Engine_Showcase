@@ -1,7 +1,7 @@
 /**
  * @file AssetsModule.h
  * @author sumin.park
- * @brief Owns the cooked asset manifest and cache, and swaps in a new cook.
+ * @brief Module in charge of assets control.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -21,30 +21,26 @@ namespace mir
     class AssetsModule
     {
     public:
-        // Loads the manifest now. Missing = no cooked assets (a build with no assets
-        // writes none); corrupt throws SetupError (BuildOutput)
         explicit AssetsModule(std::filesystem::path cookedDir);
 
         AssetsModule(const AssetsModule &) = delete;
         AssetsModule &operator=(const AssetsModule &) = delete;
 
-        // Never null, and the same object across a reload, so holders keep their pointer
         AssetCache &Cache() { return *mCache; }
         const AssetManifest &Manifest() const { return *mManifest; }
-        // A reader can retain a catalog while a later cook is committed.
+        // Keeps this manifest alive after a reload replaces it.
         std::shared_ptr<const AssetManifest> ManifestSnapshot() const { return mManifest; }
 
         // false when startup found no manifest
         bool HadManifest() const { return mHadManifest; }
 
-        // A reload: BeginReload, then holders prepare from Candidate(), then CommitReload
-        // swaps it in, or AbortReload drops it. BeginReload throws for a manifest it cannot parse
+        // Prepare replacements from Candidate() before applying the reload. An invalid manifest throws.
         void BeginReload();
         AssetCache &Candidate();
         void CommitReload();
         void AbortReload();
 
-        // Number of reloads committed so far, so a holder can tell its data is from an older cook
+        // Changes after each successful reload.
         uint32_t ReloadEpoch() const { return mReloadEpoch; }
 
     private:

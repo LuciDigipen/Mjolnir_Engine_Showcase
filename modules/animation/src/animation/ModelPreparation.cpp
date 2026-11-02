@@ -65,7 +65,7 @@ namespace mir
             Fail("there is no asset service");
             return;
         }
-        // Everything that follows is named by this catalog, whatever a reload does before the model is built.
+        // Keep the original file identities to avoid mixing data from different reloads.
         mCatalog = assets->CatalogSnapshot();
         mRevision = assets->Revision();
         mIdentity = assets->ContentOfTags(id, ModelIdentityTags());
@@ -89,10 +89,9 @@ namespace mir
 
     bool ModelPreparation::Current()
     {
-        // The same catalog needs no check, which is nearly every frame
         if (mService->Revision() == mRevision)
             return true;
-        // Known content decides, an input whose content is unknown can only be trusted within one revision.
+        // Without file hashes, a reload must be treated as changed data.
         const bool same = mIdentity != 0 ? mService->ContentOfTags(mId, ModelIdentityTags()) == mIdentity
                                          : mService->Revision() == mRevision;
         if (same)
@@ -113,14 +112,12 @@ namespace mir
 
     uint64_t ModelPreparation::ContentOf(AssetId id) const
     {
-        // from the catalog the model was requested under, never the current one
         const uint64_t content = mCatalog ? mCatalog->EntryContent(id) : 0;
         return content != 0 ? content : 0x8000000000000000ull | (uint64_t(mRevision) + 1);
     }
 
     namespace
     {
-        // A set of leases is settled when none waits, ready when none failed
         template <class Claims> bool Waiting(const Claims &claims)
         {
             for (const auto &claim : claims)
@@ -189,7 +186,7 @@ namespace mir
         }
         if (mState == State::Materials && !Waiting(mMaterialClaims))
         {
-            // an unreadable material is not the model's failure, its primitives take the error appearance
+            // An unreadable material uses the error appearance instead of failing the whole model.
             for (auto &claim : mMaterialClaims)
                 if (const auto material = claim.lease.Acquire())
                     mLoaded->materials.emplace(claim.id.value, material);
@@ -200,7 +197,6 @@ namespace mir
             else if (Current())
                 RequestTextures();
         }
-        // a preparation that waits on uploads must still notice a catalog that made it obsolete
         if ((mState == State::Textures || mState == State::Meshes) && !Current())
             return mState;
         if (mState == State::Textures)
@@ -287,7 +283,6 @@ namespace mir
                 for (size_t index = 0; index < mesh.primitives.size(); ++index)
                 {
                     const MeshPrimitive &p = mesh.primitives[index];
-                    // converted by the worker that decoded the model, nothing to draw fails the model
                     const std::shared_ptr<const DecodedMesh> upload = record->uploads.at(index);
                     if (!upload)
                         throw std::runtime_error("GPU mesh creation failed");
@@ -333,7 +328,7 @@ namespace mir
                         }
                     }
 
-                    // Both variants share the texture, each record keeps its own claim on it.
+                    // Both face directions need their own texture claim.
                     const auto acquire = [&](const MaterialDesc &variant)
                     {
                         std::vector<TextureLoadLease> claims;
@@ -365,8 +360,6 @@ namespace mir
                     gpu.transparent = !materialFailed && material.alpha == MaterialAlpha::Blend;
                     primitives.push_back(gpu);
 
-                    // A record is shared by every consumer that asks for the same bytes and options.
-                    // The mesh blob alone decides the vertices, so an unchanged mesh keeps its record across a reload.
                     const uint64_t content = ContentOf(AssetId{ key });
                     const ContentIdentity identity = (content >> 63) != 0 ? ContentIdentity::ForRevision(mRevision)
                                                                           : ContentIdentity::ForContent(content);

@@ -110,14 +110,12 @@ namespace
             scene(host, &service, resolver)
         {}
 
-        // One drain and one update, as a frame does
         void Frame()
         {
             service.DrainCompletions();
             scene.Update();
         }
 
-        // The frame that completes every upload the host has recorded
         void FinishUploads()
         {
             std::vector<MeshHandle> handles;
@@ -145,7 +143,6 @@ TEST_CASE("A mesh entity draws when its upload is queued and gains bounds when i
     Fixture f;
     const Entity entity = f.scene.Spawn("tri");
 
-    // the decode runs inside the first frame, its result shows after the next drain
     f.Frame();
     CHECK(f.scene.MeshOf(entity).IsNull());
     CHECK(f.scene.BoundsOf(entity) == nullptr);
@@ -170,7 +167,6 @@ TEST_CASE("An entity renamed while its first mesh loads ends up with the new mes
 
     f.scene.Rename(entity, "big");
     f.Frame();
-    // the old mesh still uploads for anyone who names it, the entity no longer takes it
     CHECK(f.host.uploader.queued == 1);
     CHECK(f.scene.MeshOf(entity).IsNull());
     CHECK(f.scene.BoundsOf(entity) == nullptr);
@@ -179,7 +175,6 @@ TEST_CASE("An entity renamed while its first mesh loads ends up with the new mes
     REQUIRE(f.host.uploader.queued == 2);
     const MeshHandle bigHandle = f.scene.MeshOf(entity);
     REQUIRE_FALSE(bigHandle.IsNull());
-    // the first upload was queued first, so it holds the lower index
     CHECK(bigHandle.mIndex == 1);
 
     f.FinishUploads();
@@ -206,7 +201,6 @@ TEST_CASE("Entities that name one mesh share one load and one set of bounds", "[
     CHECK(f.scene.BoundsOf(first) != nullptr);
     CHECK(f.scene.BoundsOf(second) != nullptr);
 
-    // one entity going away leaves the mesh to the other
     f.scene.world.DestroyEntity(first);
     f.Frame();
     CHECK(f.host.uploader.retired.empty());
@@ -249,21 +243,18 @@ TEST_CASE("Renaming between a loaded asset and a builtin shape swaps handle and 
     const MeshHandle loaded = f.scene.MeshOf(entity);
     REQUIRE(f.scene.BoundsOf(entity) != nullptr);
 
-    // a builtin needs no load, so it shows in the frame that renames it
     f.scene.Rename(entity, std::string(kCubeMeshName).c_str());
     f.Frame();
     CHECK(f.scene.MeshOf(entity).mGeneration == FakeMeshResolveHost::kSyncGeneration);
     REQUIRE(f.scene.BoundsOf(entity) != nullptr);
     CHECK(f.scene.BoundsOf(entity)->mLocalMax == ComputeMeshBounds(MakeCube().vertices).mLocalMax);
 
-    // the loaded mesh was kept, so going back needs no second upload
     f.scene.Rename(entity, "tri");
     f.Frame();
     CHECK(f.scene.MeshOf(entity) == loaded);
     CHECK(f.scene.BoundsOf(entity)->mLocalMax == glm::vec3(1.0f, 1.0f, 0.0f));
     CHECK(f.host.uploader.queued == 1);
 
-    // an empty name is no mesh
     f.scene.Rename(entity, "");
     f.Frame();
     CHECK(f.scene.MeshOf(entity).IsNull());
@@ -292,7 +283,6 @@ TEST_CASE("Releasing a World cancels unfinished meshes and retains unused ready 
     f.Frame();
     f.Frame();
     REQUIRE(f.host.uploader.queued == 2);
-    // only tri completes
     f.host.uploader.Record(MeshHandle{ 0, 1 });
     f.host.uploader.Complete(MeshHandle{ 0, 1 });
     f.Frame();
@@ -384,7 +374,6 @@ TEST_CASE("The first cook makes the meshes of a scene and a preview drawable wit
     REQUIRE(f.scene.MeshOf(sceneEntity).IsNull());
     REQUIRE(preview.MeshOf(previewEntity).IsNull());
 
-    // the import applies: the new manifest is swapped in, then every resolve system commits
     f.cooked.Cook(kMeshes);
     f.assets.BeginReload();
     f.assets.CommitReload();

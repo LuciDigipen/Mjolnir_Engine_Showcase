@@ -160,7 +160,7 @@ namespace mir
 
     namespace
     {
-        // One texture as the claims of the unused records see it. It frees only when every claim on it is one.
+        // A texture can be freed only when no active consumer needs it.
         struct PinnedTexture
         {
             uint64_t bytes = 0;
@@ -269,7 +269,7 @@ namespace mir
     {
         const MaterialHandle handle = record->second.handle;
         mIds.erase(record->second.key);
-        // The claims drop after the move out, so a texture can retire as its last material goes.
+        // Release texture claims after removing the material record.
         std::vector<TextureLoadLease> claims = std::move(record->second.claims);
         mRecords.erase(record);
         mHost.ReleaseModelResources({}, std::span(&handle, 1), {});

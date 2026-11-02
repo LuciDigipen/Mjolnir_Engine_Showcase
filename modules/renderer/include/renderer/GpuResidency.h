@@ -1,10 +1,7 @@
 /**
  * @file GpuResidency.h
  * @author sumin.park
- * @brief One renderer-wide GPU residency target with optional category limits.
- *
- * Caches report what they hold and ask how much they must free. Active claims are the caches' business,
- * this object only counts bytes. Allocations the GPU still uses count until they are released.
+ * @brief Tracks GPU memory use and targets for freeing unused resources.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *

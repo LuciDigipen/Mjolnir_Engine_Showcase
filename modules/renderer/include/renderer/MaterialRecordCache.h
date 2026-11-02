@@ -61,20 +61,18 @@ namespace mir
         MaterialRecordCache(const MaterialRecordCache &) = delete;
         MaterialRecordCache &operator=(const MaterialRecordCache &) = delete;
 
-        // The record's id, or zero when the renderer could not create the material. The claims move into a new
-        // record and are dropped when the record exists, they must cover every texture the description names.
+        // Returns zero on creation failure. New materials retain the supplied texture claims, which must
+        // cover every referenced texture.
         uint64_t Acquire(const MaterialDesc &desc, std::vector<TextureLoadLease> claims);
         void Retain(uint64_t id);
         void Drop(uint64_t id);
         MaterialHandle Find(uint64_t id) const;
 
-        // Releases unused records while the renderer is over its residency target, and only those whose release
-        // helps: the ones that hold the last claim on a texture, or the record bytes of an over-full category.
+        // Only evict unused materials when doing so helps reduce memory use.
         void Trim();
         // Releases every unused record. Acquire does it before giving up on a full material table.
         void EvictUnused();
-        // The GPU bytes the records hold in the shared material table, and the texture bytes that only unused
-        // records keep alive, which is what Trim can give back.
+        // Texture bytes count here only when unused materials are their last owners.
         uint64_t RecordBytes() const;
         uint64_t PinnedTextureBytes() const;
         // Forgets every record without releasing handles, the renderer destroyed them.

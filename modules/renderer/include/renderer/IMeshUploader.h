@@ -17,8 +17,7 @@
 
 namespace mir
 {
-    // Main thread only. A queued mesh is copied through the staging ring within the per-frame byte budget,
-    // is Ready once that frame completes, and a retired one is freed once every frame that may use it completes.
+    // Main thread only. Ready means the GPU has finished the copy. Destruction waits for submitted frames.
     class IMeshUploader
     {
     public:
@@ -27,7 +26,7 @@ namespace mir
         // Null when the mesh cannot be queued, and the source's keepalive is dropped once the data is copied
         virtual MeshHandle QueueMesh(MeshUploadSource source, const MeshUploadOptions &options) = 0;
         virtual MeshUploadState MeshState(MeshHandle handle) const = 0;
-        // The handle goes stale at once, false when it already was.
+        // Invalidates the handle immediately, returns false if it was already invalid.
         virtual bool RetireMesh(MeshHandle handle) = 0;
         // GPU bytes a queued mesh of this size holds, BLAS included.
         virtual uint64_t MeshFootprint(uint32_t vertexCount, uint32_t indexCount,

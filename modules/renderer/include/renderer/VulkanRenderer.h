@@ -289,9 +289,7 @@ namespace mir
         bool RequestStagingBytes(uint64_t bytes);
         // The GPU bytes one frame may write, shared by every consumer.
         bool SetUploadFrameBudget(uint64_t bytes);
-        // The IMeshUploader calls, see renderer/IMeshUploader.h.
         uint64_t UploadFrameBudget() const override;
-        // One target for the mesh and texture caches together.
         std::shared_ptr<GpuResidency> SharedResidency() override { return mResidency; }
         MeshHandle QueueMesh(MeshUploadSource source, const MeshUploadOptions &options) override;
         MeshUploadState MeshState(MeshHandle handle) const override;

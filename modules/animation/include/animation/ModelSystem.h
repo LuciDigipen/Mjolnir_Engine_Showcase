@@ -1,14 +1,7 @@
 /**
  * @file ModelSystem.h
  * @author Jackey Cen
- * @brief Turns ModelPlayer instances into GPU draws, in SystemPhase::LateUpdate.
- *
- * Claims each referenced model from the renderer-wide ModelLibrary, which prepares it in the
- * background, so loading never blocks a frame and Worlds share one prepared model. An entity draws
- * once its model is published, advances playback while the world is simulating, evaluates the pose
- * and fills the ModelDrawItems resource that RenderSystem draws. LateUpdate runs after Propagate,
- * so WorldTransform is current. A catalog reload claims replacements and keeps drawing the old
- * model until its replacement is usable.
+ * @brief Binds shared models to entities and evaluates their animation.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -34,8 +27,6 @@ namespace mir
             JobExecutor *jobs = nullptr);
         // Frees this World's models without releasing resources owned by other Worlds.
         void ReleaseResources();
-        // Prepares every loaded model again from the committed catalog. The old models keep drawing
-        // until each replacement is usable, and a replacement that fails leaves the old one in place.
         void CommitReload();
         void OnUpdate(SystemContext &context) override;
         // Resolves and prepares the scene's models without evaluating them, so a standalone game can wait for
@@ -49,21 +40,18 @@ namespace mir
         void Forget(World &world, Entity entity);
 
     private:
-        // What this World holds of a model: the claim it draws from and, during a reload, the claim that
-        // replaces it once usable.
+        // Keep drawing the current model while its replacement loads.
         struct WorldModel
         {
             ModelLibrary::Claim current;
             ModelLibrary::Claim next;
         };
-        // The published model, null while its first preparation runs. Throws when that preparation failed.
+        // Returns null while loading, throws on failure.
         const PreparedModel *Load(AssetId id);
         void AdvancePreparations();
-        // Drops the claim on every model no entity of this World names any more
         void PruneModels();
 
         enum class Binding : uint8_t { Pending, Ready, Failed };
-        // Resolves what a player names and asks for it. Failed is final until a reload.
         Binding Bind(ModelPlayer &player, uint64_t packed, AssetId &id, std::string &path, const PreparedModel *&model);
         std::shared_ptr<ModelLibrary> mLibrary;
         AsyncAssetService *mAssets;

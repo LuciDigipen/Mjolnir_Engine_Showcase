@@ -105,8 +105,7 @@ namespace mir
         // Once, at teardown. Runs in the same order as OnStart.
         virtual void OnStop(SystemContext &) {}
 
-        // A tick while a scene waits for its resources, before gameplay runs. Only a system that prepares
-        // resources overrides it, and it must neither simulate nor need OnStart to have run.
+        // Runs before OnStart, resource preparation only, no gameplay.
         virtual void OnLoadingUpdate(SystemContext &) {}
 
     protected:

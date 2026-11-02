@@ -22,24 +22,19 @@
 
 namespace mir
 {
-    // The synchronous creation and release a resolve system needs beside the asynchronous uploads.
     class IMeshResolveHost : public IMeshUploader
     {
     public:
-        // One GPU mesh cache shared across Worlds and catalog revisions, requests carry the decoded content so
-        // a changed asset never reuses an old record.
         std::shared_ptr<MeshLoadTracker> MeshLoads(AsyncAssetService *assets)
         {
             return mMeshCaches.Get(*this, assets, true);
         }
 
-        // One GPU record cache for primitives that arrive as memory, keyed by content like MeshLoads.
         std::shared_ptr<ModelMeshTracker> ModelMeshes(AsyncAssetService *assets)
         {
             return mModelMeshCaches.Get(*this, assets, true);
         }
 
-        // Materials shared by every World using this renderer, keyed by their resolved description.
         std::shared_ptr<MaterialRecordCache> MaterialRecords()
         {
             if (!mMaterialRecords)

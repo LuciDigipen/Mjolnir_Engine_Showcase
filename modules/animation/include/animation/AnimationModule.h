@@ -33,11 +33,11 @@ namespace mir
         AnimationModule &operator=(const AnimationModule &) = delete;
 
         ModelSystem &Models() { return *mModels; }
-        // The one library of prepared models, the scene's ModelSystem and every prefab preview take theirs from it
+        // Shared by the scene and prefab previews.
         const std::shared_ptr<ModelLibrary> &Library() { return mLibrary; }
 
     private:
-        // before the systems that take claims from it, and released with the scene so no claim outlives the renderer
+        // Must release model claims before the renderer is destroyed.
         std::shared_ptr<ModelLibrary> mLibrary;
         // owned by the scheduler, which outlives this module
         ModelSystem *mModels = nullptr;

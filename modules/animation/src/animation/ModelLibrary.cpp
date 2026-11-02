@@ -18,7 +18,7 @@ namespace mir
     {
         std::erase_if(mEntries, [](const auto &item) { return item.second.expired(); });
 
-        // the model, every record it names and the textures its materials name, so a changed texture is another entry
+        // Texture changes must also create a new prepared model.
         const uint64_t content = UploadContent(assets, id, ModelIdentityTags());
         const Key key{ id.value, content, assets };
         if (const auto found = mEntries.find(key); found != mEntries.end())
@@ -48,7 +48,7 @@ namespace mir
             }
             else if (state == ModelPreparation::State::Failed || state == ModelPreparation::State::Superseded)
             {
-                // a superseded entry is replaced by the claim for the new catalog, which every World takes at reload
+                // Reload hooks request a replacement for each World still using this model.
                 entry->failure = entry->pending->Error();
                 entry->pending.reset();
             }

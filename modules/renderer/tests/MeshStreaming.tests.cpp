@@ -264,7 +264,6 @@ TEST_CASE("Resetting one keepalive leaves another holder of the data alone", "[r
     MeshUploadSource source = MeshUploadSource::Own(std::vector<Vertex>(2), { 0, 1, 0 });
     const std::shared_ptr<const void> cache = source.keepalive;
 
-    // the renderer's copy into staging is done, it drops its reference
     source.keepalive.reset();
 
     CHECK(cache.use_count() == 1);

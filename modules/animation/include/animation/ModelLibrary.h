@@ -1,12 +1,7 @@
 /**
  * @file ModelLibrary.h
  * @author sumin.park
- * @brief Prepared models shared by every World that uses a renderer.
- *
- * A model is prepared once per decoded content, whoever asks. The App owns the one library, and the scene's
- * ModelSystem and every prefab preview's take claims from it. A World holds a claim on the prepared model
- * and keeps only playback, poses and deformations of its own. Dropping the last claim frees the prepared
- * model, and the renderer keeps its unused GPU records under the residency target.
+ * @brief Prepared models shared by scene and prefab Worlds.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -25,7 +20,7 @@ namespace mir
     class ModelLibrary
     {
     public:
-        // A model prepared for one content of one asset. Published whole or failed, never partly.
+        // Ready models are complete, callers never receive a partially prepared model.
         struct Entry
         {
             AssetId asset;
@@ -40,17 +35,14 @@ namespace mir
             : mHost(host), mTextures(textures), mErrorTexture(errorTexture)
         {}
 
-        // The claim for this model's current content, preparation starts when nobody holds it yet. The same
-        // content from another World is the same entry, changed content is another one.
+        // Worlds requesting the same asset and file contents share one entry.
         Claim Acquire(AssetId id, AsyncAssetService *assets, const std::string &label);
 
-        // Moves every entry in flight one step. Call once a frame, more calls only cost time.
         void Advance();
 
         // Drops every entry's model, for a renderer about to destroy the resources they name.
         void ReleaseAll();
 
-        // Entries a World still holds
         size_t LiveEntries() const;
 
     private:

@@ -1,12 +1,7 @@
 /**
  * @file SceneLoadGroup.h
  * @author sumin.park
- * @brief The resources a scene needs before it can run, reported by the systems that prepare them.
- *
- * A scene load starts a group. Each frame every system that prepares resources reports how many bindings
- * the scene requires and how many have settled, as a usable resource or a terminal failure. The group is
- * ready once a frame has been reported in full and nothing is left unsettled. It never looks at global
- * asset activity, so thumbnails and other Worlds do not delay it, and it stays ready until the next load.
+ * @brief Tracks whether a scene has the resources needed to start.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -22,7 +17,6 @@ namespace mir
     class SceneLoadGroup
     {
     public:
-        // A new scene load, nothing is known about its work yet.
         void Begin()
         {
             mReady = false;
@@ -44,12 +38,11 @@ namespace mir
             mReports.push_back({ source, required, settled });
         }
 
-        // After a frame's systems ran. Decides readiness from what was reported this frame.
         void EndFrame()
         {
             if (mReady)
                 return;
-            // The first frame after Begin enumerates the work, later frames can only add what scripts create.
+            // Allow one full frame to discover required resources.
             const bool wasDiscovered = mDiscovered;
             mDiscovered = true;
             uint64_t required = 0, settled = 0;
@@ -61,7 +54,7 @@ namespace mir
             mReports.clear();
             if (!wasDiscovered)
                 return;
-            // Progress only moves forward, work found late must not walk the bar back.
+            // Newly discovered resources must not move the progress bar backwards.
             const float fraction = required == 0 ? 1.0f : static_cast<float>(settled) / static_cast<float>(required);
             mProgress = std::max(mProgress, fraction);
             mReady = settled == required;
@@ -69,7 +62,6 @@ namespace mir
                 mProgress = 1.0f;
         }
 
-        // Ends the wait without the work, for a caller that gave up on it.
         void ForceReady()
         {
             mReady = true;
@@ -78,7 +70,7 @@ namespace mir
         }
 
         bool Ready() const { return mReady; }
-        // False until the work set is known, then the settled share of it. Never decreases within a load.
+        // False until the work set is known, then the finished share of it. Never decreases within a load.
         bool Discovered() const { return mDiscovered; }
         float Progress() const { return mProgress; }
 

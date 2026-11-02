@@ -48,7 +48,6 @@ namespace mir
                 frame.world.Resource<ModelMorphOverrides>().instances.clear();
             });
 
-        // the new cook's models prepare in the background while the old ones keep drawing
         mReloadCommit = context.scheduler.AddStage(Stage::ReloadCommit, [this](SystemContext &)
             {
                 mModels->CommitReload();

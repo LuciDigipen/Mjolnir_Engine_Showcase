@@ -139,7 +139,7 @@ namespace mir
         mSlots[index].record->mDescriptor = descriptor;
         mDedup.emplace(key, index);
 
-        // An unchanged result from an earlier catalog is adopted, nothing is read or decoded again.
+        // Reuse live decoded data when the files have not changed.
         if (content != 0)
             if (const auto carried = std::find_if(mCarried.begin(), mCarried.end(),
                     [&](const Carried &item) { return item.key == key && item.content == content && item.type == type; });
@@ -158,7 +158,7 @@ namespace mir
         if (manifest.Find(id) != nullptr)
             closure = dependencyTags.empty() ? std::vector<AssetId>{ id } : manifest.Closure(id, dependencyTags);
 
-        // a failure found here is published at the next drain like any other
+        // Even immediate failures wait for DrainCompletions, keeping request timing consistent.
         if (closure.empty())
         {
             mCompletions->Push({ index, mGeneration, nullptr, "it has no manifest entry", mSlots[index].record, id });
@@ -448,7 +448,7 @@ namespace mir
         if (mAssets.ReloadEpoch() == mSeenReloadEpoch)
             return;
         mSeenReloadEpoch = mAssets.ReloadEpoch();
-        // Existing leases retain their revision, new requests resolve against the new catalog.
+        // Existing leases keep their data, new requests use the new manifest.
         ++mGeneration;
         for (Slot &slot : mSlots)
             if (slot.record && slot.record->mConsumers == 0)

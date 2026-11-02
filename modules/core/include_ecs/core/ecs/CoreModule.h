@@ -26,7 +26,6 @@ namespace mir
         CoreModule &operator=(const CoreModule &) = delete;
 
     private:
-        // a scene load starts a new SceneLoadGroup
         Registration mSceneLoad;
     };
 }

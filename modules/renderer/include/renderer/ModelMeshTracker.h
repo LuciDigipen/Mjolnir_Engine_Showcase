@@ -1,10 +1,7 @@
 /**
  * @file ModelMeshTracker.h
  * @author sumin.park
- * @brief Shared GPU mesh records for primitives that arrive as memory, keyed by content and creation options.
- *
- * A model's primitives come from a typed mesh asset, not the raw mesh format MeshLoadTracker decodes, so the
- * caller supplies the vertices and this tracker only owns the queued upload, the claims and the residency.
+ * @brief Caches GPU mesh primitives by file identity and upload options.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -20,8 +17,7 @@
 
 namespace mir
 {
-    // What a record's bytes came from. Until blob content identity exists the catalog revision stands in, so
-    // a changed asset never reuses an old record. Equal values mean equal content.
+    // Use the file hash when known, otherwise the reload number prevents stale reuse.
     struct ContentIdentity
     {
         enum class Kind : uint8_t { Revision, Content };
@@ -33,7 +29,6 @@ namespace mir
         constexpr bool operator==(const ContentIdentity &) const = default;
     };
 
-    // The complete identity of one GPU mesh record.
     struct GpuRecordKey
     {
         // The cooked asset the record was made from, and the primitive within it.
@@ -62,12 +57,10 @@ namespace mir
 
         ModelMeshTracker(IMeshUploader &uploader, AsyncAssetService *assets);
 
-        // Queues the record's upload unless it exists, make runs only then. The result names the record for a
-        // ModelMeshLease.
+        // make runs only for a missing entry. The returned ID is for a ModelMeshLease.
         AssetId Request(const GpuRecordKey &key, const Make &make, const std::string &label);
 
     private:
-        // Collision-free, an id is the next number in the order keys first appear.
         std::unordered_map<GpuRecordKey, uint64_t, GpuRecordKeyHash> mIds;
     };
     using ModelMeshLease = AssetUploadLease<ModelMeshTracker>;

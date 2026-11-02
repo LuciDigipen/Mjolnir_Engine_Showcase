@@ -43,7 +43,6 @@ namespace
         return { kMeshAsset, part, ContentIdentity::ForRevision(revision), MeshUploadOptions{ .rayTracing = rayTracing } };
     }
 
-    // Records the upload and finishes it, as the frames would.
     void Finish(test::FakeMeshResolveHost &host, ModelMeshTracker &tracker, MeshHandle handle)
     {
         host.uploader.Record(handle);
@@ -101,7 +100,7 @@ TEST_CASE("A model mesh record uploads once for equal keys and splits on content
     const AssetId again = tracker->Request(KeyOf(0), make, "a");
     CHECK(first == again);
     CHECK(made == 1);
-    // another primitive, catalog revision or ray tracing option is another record
+    // another primitive, manifest revision or ray tracing option is another record
     const AssetId part = tracker->Request(KeyOf(1), make, "b");
     const AssetId revision = tracker->Request(KeyOf(0, 2), make, "c");
     const AssetId options = tracker->Request(KeyOf(0, 1, false), make, "d");
@@ -114,7 +113,6 @@ TEST_CASE("A model mesh record uploads once for equal keys and splits on content
     tracker->Update();
     REQUIRE(one.Get() != nullptr);
     CHECK(one.Get()->phase == AssetUploadPhase::Uploading);
-    // the source is the only owner of the vertices once the data is recorded
     CHECK(host.uploader.queued == 4);
     Finish(host, *tracker, one.Get()->mesh);
     CHECK(two.Get()->phase == AssetUploadPhase::Ready);
@@ -125,7 +123,6 @@ TEST_CASE("Unused mesh records leave oldest first when the renderer is over its 
 {
     test::FakeMeshResolveHost host;
     const auto tracker = host.ModelMeshes(nullptr);
-    // a triangle holds 3 * 64 + 3 * 4 bytes
     host.Residency().SetTotalTarget(300);
 
     const auto upload = [&](uint32_t part)
@@ -141,7 +138,6 @@ TEST_CASE("Unused mesh records leave oldest first when the renderer is over its 
         ModelMeshLease released = upload(1);
         CHECK(host.uploader.retired.empty());
     }
-    // the second record is unused and the total is over the target, the active one is protected
     CHECK(host.uploader.retired.size() == 1);
     CHECK(active.Get() != nullptr);
     CHECK(active.Get()->phase == AssetUploadPhase::Ready);
@@ -173,7 +169,6 @@ namespace
               mCache(mHost.MaterialRecords())
         {}
 
-        // A texture claim on a finished upload.
         TextureHandle ReadyTexture(AssetId id = kTexture)
         {
             const size_t before = mTextures.mEntries.size();
@@ -197,7 +192,6 @@ namespace
             return claims;
         }
 
-        // A model-like material that samples this texture
         uint64_t Material(const char *shader, TextureHandle texture, AssetId id = kTexture)
         {
             MaterialDesc desc;
@@ -206,7 +200,6 @@ namespace
             return mCache->Acquire(desc, Claims(id));
         }
 
-        // Over the target by this much, with something to hold it
         void Pressure(uint64_t bytes)
         {
             mHolderBytes = bytes;
@@ -262,7 +255,6 @@ TEST_CASE("Materials equal by value share one record and any resolved difference
         CHECK(differs([](MaterialDesc &d) { d.cullMode = VK_CULL_MODE_NONE; }));
         CHECK(differs([](MaterialDesc &d) { d.sampler.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE; }));
         CHECK(differs([](MaterialDesc &d) { d.shaderName = "default"; }));
-        // the same slot with another generation is another texture
         CHECK(differs([](MaterialDesc &d) { d.baseColorTexture = TextureHandle{ 4, 2 }; }));
         CHECK(differs([&](MaterialDesc &d) { bytesB[0] = std::byte{ 9 }; d.record = bytesB; }));
     }
@@ -295,7 +287,6 @@ TEST_CASE("A material record keeps its texture claim until the record is evicted
     f.mCache->Trim();
     CHECK(f.mCache->Size() == 0);
     CHECK(f.mHost.releasedMaterials.size() == 1);
-    // the last claim went with the record, so the texture left with it
     CHECK(f.mTextures.mRetired.size() == 1);
 }
 
@@ -390,11 +381,9 @@ TEST_CASE("A full material table makes room from the unused records", "[renderer
     desc.shaderName = "three";
     const uint64_t id = cache->Acquire(desc, {});
     CHECK(id != 0);
-    // the unused one made room, the claimed one stayed
     CHECK(cache->Size() == 2);
     CHECK_FALSE(keep.Get().IsNull());
 
-    // with every slot claimed there is nothing to release and the request fails
     MaterialLease third(cache, id);
     desc.shaderName = "four";
     CHECK(cache->Acquire(desc, {}) == 0);

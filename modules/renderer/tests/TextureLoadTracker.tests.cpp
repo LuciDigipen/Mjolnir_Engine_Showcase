@@ -34,7 +34,7 @@ namespace
             TextureAsset texture;
             texture.width = texture.height = 4;
             texture.rgba.assign(64, value);
-            // content-addressed like a cook, so the catalog knows what the bytes are
+            // content-addressed like a cook, so the manifest knows what the bytes are
             mFile = std::format("texture-{:016x}.blob", uint64_t(value));
             REQUIRE(WriteBytes(Path() / mFile, BuildTypedAsset(texture)));
             const AssetManifestSourceEntry entry{ { kTexture, kTextureAssetTypeTag, kTextureAssetContentVersion },
@@ -126,7 +126,6 @@ TEST_CASE("A new texture revision cannot invalidate a preview's old GPU claim", 
     f.Write(120);
     f.mAssets.BeginReload();
     f.mAssets.CommitReload();
-    // one cache serves every revision, the changed bytes are another key
     auto currentCache = f.mUploader.TextureLoads(&f.mService);
     REQUIRE(currentCache == f.mCache);
     const UploadKey newKey{ kTexture, UploadContent(&f.mService, kTexture) };
@@ -157,7 +156,6 @@ TEST_CASE("A texture whose content is unchanged keeps its GPU record across a re
     f.mUploader.Complete(handle);
     f.Frame();
     first.Reset();
-    // an identical cook, the unused record stays for the next consumer
     f.Write(80);
     f.mAssets.BeginReload();
     f.mAssets.CommitReload();

@@ -387,8 +387,7 @@ namespace mir
         SceneLoadGroup &group = mWorld.Resource<SceneLoadGroup>();
         mSceneGated = true;
         uint64_t frames = 0;
-        // No timeout: gameplay must never start with unresolved resources. A resource that never settles keeps
-        // the loading screen up, the window still closes, and a bounded run ends instead of hanging.
+        // Wait for resources without starting gameplay. Frame-limited runs must still terminate.
         while (!group.Ready())
         {
             if (mWindow.Get().ShouldClose())
@@ -427,7 +426,7 @@ namespace mir
         const ImVec2 min = viewport->Pos, max(min.x + viewport->Size.x, min.y + viewport->Size.y);
         draw->AddRectFilled(min, ImVec2(max.x, max.y), IM_COL32(0, 0, 0, 255));
 
-        // the bar waits for the work set, so it never walks backwards as more is found
+        // Do not show a percentage until the required resources are known.
         const char *status = group.Discovered() ? "Loading scene..." : "Preparing scene...";
         const float width = std::min(viewport->Size.x * 0.4f, 480.0f);
         const ImVec2 center(min.x + viewport->Size.x * 0.5f, min.y + viewport->Size.y * 0.5f);
@@ -592,7 +591,6 @@ namespace mir
 
     void App::Run()
     {
-        // Resources prepare before any gameplay system starts
         if (mGateScenes && !mWorld.Resource<SceneLoadGroup>().Ready() && !AwaitSceneResources())
             return;
 
@@ -623,7 +621,6 @@ namespace mir
             if (mAssetService)
                 mAssetService->DrainCompletions();
 
-            // a scene loaded mid-game waits the same way, this frame's gameplay does not run
             if (mGateScenes && !mWorld.Resource<SceneLoadGroup>().Ready())
             {
                 mElapsed -= dt;

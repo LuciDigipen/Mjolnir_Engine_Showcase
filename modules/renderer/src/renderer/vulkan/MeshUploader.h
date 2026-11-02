@@ -110,7 +110,6 @@ namespace mir::vk
         std::unordered_map<uint32_t, QueuedTexture> mTextures;
         std::unordered_map<uint32_t, TextureFinish> mTextureFinishes;
         FrameRetireList<Garbage> mRetired;
-        // textures retire apart from meshes so each category counts what it still holds
         FrameRetireList<Garbage> mRetiredTextures;
 
         uint64_t mQueuedCount = 0;

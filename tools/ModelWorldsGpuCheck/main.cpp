@@ -104,7 +104,6 @@ namespace
                 a->Frame();
             if (b)
                 b->Frame();
-            // a frame so queued uploads advance, nothing is drawn
             renderer.DrawFrame({});
         }
 
@@ -136,7 +135,6 @@ int main(int argc, char **argv)
         } shutdown{ renderer };
         Require(renderer.Initialize({ window.get(), "ModelWorldsGpuCheck", true }), "Renderer initialization failed");
 
-        // the model HelloWorld's scene shows
         const mir::AssetId model{ 0x574f8c6b27fedda9ull };
         // the App's one library, declared after the renderer so it goes first
         const auto library = std::make_shared<mir::ModelLibrary>(renderer, renderer, renderer.ErrorTexture());
@@ -156,17 +154,14 @@ int main(int argc, char **argv)
             throw std::runtime_error(std::string("Never drew: ") + what);
         };
 
-        // 1. both Worlds draw one model, and it was prepared once
         settle(scene.get(), preview.get(), "first load");
         const auto first = renderer.MeshStreaming();
         const size_t drawCount = scene->Draws();
         Require(drawCount == preview->Draws(), "The two Worlds draw different numbers of primitives");
         Require(first.queued == drawCount || first.queued > 0, "No mesh was queued");
-        // two Worlds sharing the model must not queue its meshes twice
         Require(first.queued <= drawCount, "The shared model's meshes were queued once per World");
         Require(first.textureQueued <= 1, "The shared model's texture was queued once per World");
 
-        // 2. the scene unloads, the preview keeps drawing every frame and nothing is queued again
         scene->mModels->ReleaseResources();
         scene.reset();
         for (int frame = 0; frame < 30; ++frame)
@@ -176,12 +171,10 @@ int main(int argc, char **argv)
         }
         Require(renderer.MeshStreaming().queued == first.queued, "A scene unload queued meshes again");
 
-        // 3. the scene loads again from the shared model, nothing uploads
         scene = std::make_unique<PreviewWorld>(renderer, library, rig.mService, rig.mResolver, model);
         settle(scene.get(), preview.get(), "scene reload");
         Require(renderer.MeshStreaming().queued == first.queued, "Reloading the scene uploaded the model again");
 
-        // 4. an identical cook republishes without a gap in either World
         rig.mAssets.BeginReload();
         rig.mAssets.CommitReload();
         scene->mModels->CommitReload();
@@ -193,7 +186,6 @@ int main(int argc, char **argv)
         }
         Require(renderer.MeshStreaming().queued == first.queued, "An identical cook uploaded the model again");
 
-        // 5. the preview closes, the scene goes on, and everything is released at the end
         preview->mModels->ReleaseResources();
         preview.reset();
         for (int frame = 0; frame < 30; ++frame)

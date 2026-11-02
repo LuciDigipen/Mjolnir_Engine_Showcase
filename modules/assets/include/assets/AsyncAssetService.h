@@ -1,7 +1,7 @@
 /**
  * @file AsyncAssetService.h
  * @author sumin.park
- * @brief Reads and decodes cooked assets on a background lane, and hands the results to the main thread.
+ * @brief Loads assets on workers and makes finished results available on the main thread.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -74,20 +74,18 @@ namespace mir
 
         AssetLoadState State(AssetRequest request) const;
 
-        // Identity of what a request for id with this decoder would decode, from the current catalog. Equal
-        // values mean equal results, across catalog revisions too. Zero when it cannot be known, such as a
-        // blob whose name carries no content hash, and then only the revision tells content apart.
+        // Equal values allow decoded data to be reused after a reload. Zero means the files have no known
+        // hash, so reuse is unsafe.
         template <class T>
         uint64_t ContentOf(AssetId id, const AssetDecoder<T> &decoder) const
         {
             return ContentOfTags(id, decoder.dependencyTags);
         }
         uint64_t ContentOfTags(AssetId id, std::span<const uint32_t> tags) const;
-        // The catalog requests are resolved against now. A holder that works across frames keeps it to know
-        // what its inputs were made from, a later reload does not change it.
+        // Keep this manifest when loading spans frames, so a reload cannot change which files the load
+        // refers to.
         std::shared_ptr<const AssetManifest> CatalogSnapshot() const;
 
-        // convert failure to printable string
         const std::string &FailureReason(AssetRequest request) const;
 
         // The decoded result, or null unless the request is Ready and was made for this T. It stays
@@ -160,8 +158,7 @@ namespace mir
             }
         };
 
-        // A decoded result that is still alive somewhere, found by the next request for the same asset, decoder
-        // and content so every holder shares one copy, across reloads and past eviction from this service.
+        // Weak references allow reuse while another owner still holds the decoded data.
         struct Carried
         {
             DedupKey key;
@@ -175,7 +172,7 @@ namespace mir
             std::span<const uint32_t> dependencyTags, ErasedDecode decode, bool pinned);
         std::shared_ptr<const void> AcquireErased(AssetRequest request, std::type_index type) const;
         static void RunJob(Job &job) noexcept;
-        // CancelAll when a reload was committed since the last call
+        // Existing leases keep their data when a reload changes future requests.
         void SyncReloadEpoch();
         void TrimDecoded();
         void DispatchPending();

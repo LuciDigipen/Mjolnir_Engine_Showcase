@@ -68,7 +68,6 @@ namespace mir
 
         // materials come from shaders, not the asset cache, so they stay
         mMeshes.clear();
-        // The tracker outlives the catalog, an unchanged mesh keeps its GPU record and a changed one has a new key.
         mTracker = mRenderer.MeshLoads(mAssets);
         mResolved.clear();
     }
@@ -128,7 +127,6 @@ namespace mir
             return cached;
         }
 
-        // the tracker reports a failed load once, and this entry remembers it
         cached.mAsset = id;
         const UploadKey key{ id, UploadContent(mAssets, id) };
         mTracker->Request(key, mResolver.PathOf(id));
@@ -151,7 +149,6 @@ namespace mir
 
     bool MeshResolveSystem::Failed(const CachedMesh &cached)
     {
-        // a builtin shape is made at once, and a name that did not resolve was logged and stays unresolved
         if (cached.mAsset.IsNull())
             return true;
         const MeshLoad *load = cached.mLease.Get();
@@ -177,7 +174,6 @@ namespace mir
     {
         World &world = context.world;
 
-        // the assets whose load moved a step since last frame
         mTracker->Update();
 
         std::vector<Entity> staleBounds;
@@ -216,7 +212,6 @@ namespace mir
                 }
                 else if (!meshName.empty() && !world.Has<MeshBounds>(entity))
                 {
-                    // the entity's mesh loaded a step, take its handle and bounds
                     const auto cached = mMeshes.find(resolved.mMesh);
                     if (cached != mMeshes.end())
                     {
@@ -232,7 +227,6 @@ namespace mir
                     meshRenderer.material = shaderName.empty() ? MaterialHandle{} : ResolveMaterial(resolved.mShader);
                 }
 
-                // The scene needs this binding resolved: bounds published, or a failure that will not change.
                 if (!meshName.empty())
                 {
                     ++required;

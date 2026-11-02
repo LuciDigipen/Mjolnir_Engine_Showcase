@@ -19,7 +19,6 @@
 
 namespace mir
 {
-    // A mesh asset ready to upload.
     struct DecodedMesh
     {
         std::vector<Vertex> vertices;
@@ -33,7 +32,8 @@ namespace mir
     bool DecodeMeshAsset(const AssetBlobView &root, const AssetDependencies &dependencies, DecodedMesh &out,
         std::string &error);
 
-    // The mesh asset's decoder, no dependencies. One shared descriptor so requests for a mesh dedupe.
+    // The mesh asset's decoder, no dependencies. One shared descriptor so requests for a mesh share one
+    // result.
     inline uint64_t DecodedMeshBytes(const DecodedMesh &mesh)
     {
         return sizeof(mesh) + mesh.vertices.capacity() * sizeof(Vertex) + mesh.indices.capacity() * sizeof(uint32_t);

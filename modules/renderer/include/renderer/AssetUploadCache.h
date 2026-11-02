@@ -1,7 +1,7 @@
 /**
  * @file AssetUploadCache.h
  * @author sumin.park
- * @brief Shared decode-to-upload lifecycle, consumer claims and unused GPU residency.
+ * @brief Shares GPU uploads and frees unused cached resources.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -25,9 +25,7 @@ namespace mir
 {
     enum class AssetUploadPhase : uint8_t { Decoding, Uploading, Ready, Failed };
 
-    // What an upload record was made from. Content is the decoded identity from the asset service, zero for a
-    // cache that lives for one catalog revision. A cache shared across revisions always passes content, so a
-    // changed asset never reuses an old record while an unchanged one keeps its GPU resource.
+    // Shared caches include file identity in the key, so changed files cannot reuse old GPU data.
     struct UploadKey
     {
         AssetId asset;
@@ -38,8 +36,8 @@ namespace mir
         bool operator==(const UploadKey &) const = default;
     };
 
-    // The content part of an UploadKey for a request to the service: the decoded content when the catalog knows it,
-    // else a value qualified by the catalog revision with the top bit set, which never equals known content.
+    // Use the file identity when available. Otherwise use the reload number, with the top bit marking the
+    // fallback.
     inline uint64_t UploadContent(AsyncAssetService *assets, AssetId id, std::span<const uint32_t> tags = {})
     {
         if (assets == nullptr)
@@ -91,8 +89,7 @@ namespace mir
         AssetUploadCache &operator=(const AssetUploadCache &) = delete;
 
         const View &Request(UploadKey key, const std::string &label);
-        // Requests a record from data already in memory. make runs only when the record is absent, the caller
-        // chooses key so it names the content and creation options. Use Request for cooked assets.
+        // make runs only for a missing entry. The key must include file identity and upload options.
         const View &RequestInline(UploadKey key, const std::function<std::shared_ptr<const Decoded>()> &make,
             const std::string &label);
         const View *Find(UploadKey key) const;
@@ -105,7 +102,6 @@ namespace mir
         // A cap for this cache alone, beside the renderer-wide residency target.
         void SetBudget(uint64_t bytes) { mCap = bytes; Trim(); }
         uint64_t HeldBytes() const;
-        // What one record holds on the GPU and how many claims hold it, zero for an unknown record.
         uint64_t BytesOf(UploadKey key) const;
         size_t ConsumersOf(UploadKey key) const;
         bool Empty() const { return mEntries.empty(); }
@@ -173,7 +169,7 @@ namespace mir
     template <class Cache> class AssetUploadRegistry
     {
     public:
-        // A cache shared across revisions keys its records by content, one per revision drops with its catalog.
+        // Sharing across reloads requires keys that identify the file contents.
         template <class Uploader>
         std::shared_ptr<Cache> Get(Uploader &uploader, AsyncAssetService *assets, bool sharedAcrossRevisions = false);
         template <class Retire> void Release(Retire retire);

@@ -372,7 +372,7 @@ namespace mir::vk
             }
             std::memcpy(target, queued.source.vertices.data(), vertexBytes);
             std::memcpy(target + vertexBytes, queued.source.indices.data(), indexBytes);
-            // Nothing reads the CPU data past this copy, a BLAS build reads the device buffers.
+            // CPU data can be released here, the acceleration structure build uses GPU buffers.
             queued.source.keepalive.reset();
             vmaFlushAllocation(mDevice->Allocator(), targetAllocation, entry.stagingOffset ? offset : 0,
                                vertexBytes + indexBytes);

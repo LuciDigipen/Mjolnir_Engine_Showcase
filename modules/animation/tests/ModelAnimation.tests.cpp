@@ -248,7 +248,6 @@ TEST_CASE("Model resources decode from a root blob and its dependency blobs", "[
     CHECK(resources.model->nodes.size() == 1);
     CHECK(resources.meshes.contains(set.mesh.value));
     CHECK(resources.clips.size() == 1);
-    // the worker converted the vertices for upload, nothing is left for the main thread
     const MeshRecord &mesh = *resources.meshes.at(set.mesh.value);
     REQUIRE(mesh.uploads.size() == 1);
     REQUIRE(mesh.uploads[0] != nullptr);
@@ -312,7 +311,6 @@ TEST_CASE("A model names each record once, and its materials come from its meshe
     const ModelDependencies needed = DependenciesOf(model);
     CHECK(needed.meshes == std::vector<AssetId>{ meshA, meshB });
     CHECK(needed.skeletons == std::vector<AssetId>{ skeleton });
-    // a clip is one record however often the model lists it
     CHECK(needed.clips == std::vector<AssetId>{ clip });
 
     MeshAsset mesh;
@@ -331,7 +329,6 @@ TEST_CASE("A record reports every dynamic allocation it owns", "[animation][asse
     small.asset.primitives.resize(1);
     small.asset.primitives[0].morphTargets.resize(2);
     MeshRecord large = small;
-    // the same two targets, each now carrying vertex data
     for (MorphTarget &target : large.asset.primitives[0].morphTargets)
     {
         target.positions.assign(1000, glm::vec3(1));
@@ -340,7 +337,6 @@ TEST_CASE("A record reports every dynamic allocation it owns", "[animation][asse
     }
     CHECK(bytes(large) - bytes(small) >= 2 * 3 * 1000 * sizeof(glm::vec3));
 
-    // the converted upload counts too
     MeshRecord uploaded = small;
     auto decoded = std::make_shared<DecodedMesh>();
     decoded->vertices.resize(100);
