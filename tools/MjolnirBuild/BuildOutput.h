@@ -38,7 +38,7 @@ namespace mir::build
         std::filesystem::path mPlayerDir;
     };
 
-    // Why out cannot hold a build, or nullopt when it can
+    // Why out, or the .tmp and .old folders a build deletes beside it, cannot be used, nullopt when they can
     std::optional<std::string> CheckOutputDir(const std::filesystem::path &out, const OutputRules &rules);
 
     // Why a file longestRelative characters below out could not be opened, or nullopt
@@ -48,6 +48,9 @@ namespace mir::build
 
     // <out>.tmp, beside out
     std::filesystem::path StagingDir(const std::filesystem::path &out);
+
+    // <out>.old, where the previous build waits while the new one moves in
+    std::filesystem::path PreviousDir(const std::filesystem::path &out);
 
     // An empty, marked staging folder for out, replacing one a failed build left. Throws std::runtime_error
     std::filesystem::path BeginStaging(const std::filesystem::path &out);

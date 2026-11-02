@@ -84,6 +84,29 @@ TEST_CASE("An output folder overlapping the player template is refused", "[build
     CHECK(CheckOutputDir(layout.mPlayer / "out", layout.Rules()));
 }
 
+TEST_CASE("A player template where the build stages or moves the previous build aside is refused", "[build-output]")
+{
+    Layout layout;
+    const fs::path out = layout.mSandbox.mRoot / "Demo";
+    CHECK(CheckOutputDir(out, { layout.mSource, StagingDir(out) }));
+    CHECK(CheckOutputDir(out, { layout.mSource, PreviousDir(out) }));
+    CHECK(CheckOutputDir(out, { layout.mSource, StagingDir(out) / "player" }));
+}
+
+TEST_CASE("A .tmp or .old folder a build did not make is refused", "[build-output]")
+{
+    Layout layout;
+    const fs::path out = layout.mSandbox.mRoot / "out";
+    for (const fs::path &dir : { StagingDir(out), PreviousDir(out) })
+    {
+        Touch(dir / "mine.txt");
+        CHECK(CheckOutputDir(out, layout.Rules()));
+
+        Touch(dir / kBuildMarkerFileName, "{}");
+        CHECK_FALSE(CheckOutputDir(out, layout.Rules()));
+    }
+}
+
 TEST_CASE("A non-empty output folder is accepted only when it holds a previous build", "[build-output]")
 {
     Layout layout;
@@ -149,7 +172,7 @@ TEST_CASE("Committing replaces the previous build", "[build-output]")
     CHECK(fs::exists(out / "new.txt"));
     CHECK_FALSE(fs::exists(out / "old.txt"));
     CHECK_FALSE(fs::exists(StagingDir(out)));
-    CHECK_FALSE(fs::exists(fs::path(out).concat(".old")));
+    CHECK_FALSE(fs::exists(PreviousDir(out)));
 }
 
 TEST_CASE("Committing creates a missing output folder", "[build-output]")

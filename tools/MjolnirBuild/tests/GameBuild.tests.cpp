@@ -157,6 +157,46 @@ TEST_CASE("An editor build is refused as the player template", "[game-build]")
     CHECK_FALSE(fs::exists(StagingDir(fixture.mOut)));
 }
 
+TEST_CASE("A previous build left in <out>.tmp or <out>.old is refused as the template and kept", "[game-build]")
+{
+    Fixture fixture;
+    const fs::path game = fixture.mCheckout / "games" / "Quiet";
+
+    for (const fs::path &player : { StagingDir(fixture.mOut), PreviousDir(fixture.mOut) })
+    {
+        INFO(PathText(player));
+        REQUIRE(RunGameBuild(Request(game, fixture.mPlayer, player)).mOk);
+
+        const BuildReport report = RunGameBuild(Request(game, player, fixture.mOut));
+        CHECK_FALSE(report.mOk);
+        CHECK(report.mError.find("player template") != std::string::npos);
+        CHECK(fs::exists(player / "MjolnirEngine.exe"));
+        CHECK_FALSE(fs::exists(fixture.mOut));
+    }
+}
+
+TEST_CASE("A game.json scene or SoundBank path that is not relative is refused", "[game-build]")
+{
+    Fixture fixture;
+    const fs::path game = fixture.mCheckout / "games" / "Demo";
+    const fs::path scenes = game / "scenes" / "default";
+
+    // Both point inside the game, as an absolute and a root-relative path
+    for (const std::string key : { "sceneDir", "soundBanksRoot" })
+    {
+        for (const std::string value : { scenes.generic_string(), "/" + scenes.relative_path().generic_string() })
+        {
+            INFO(key << " = " << value);
+            Touch(game / "game.json", nlohmann::json{ { "name", "Demo" }, { key, value } }.dump());
+
+            const BuildReport report = RunGameBuild(Request(game, fixture.mPlayer, fixture.mOut));
+            CHECK_FALSE(report.mOk);
+            CHECK(report.mError.find(key) != std::string::npos);
+            CHECK_FALSE(fs::exists(fixture.mOut));
+        }
+    }
+}
+
 TEST_CASE("A one-game cook holds the engine's and that game's assets with the editor's ids", "[game-build]")
 {
     Sandbox sandbox;

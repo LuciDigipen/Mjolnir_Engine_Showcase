@@ -101,13 +101,17 @@ int main(int argc, char **argv)
     {
         const auto values = Parse(argc, argv);
         const fs::path result = values.contains("--result") ? fs::path(values.find("--result")->second) : fs::path();
-        if (!result.empty() && IsWithin(NormalizedPath(result), NormalizedPath(values.find("--out")->second)))
-            throw UsageError("--result must not be inside --out");
+        const fs::path out = values.find("--out")->second;
+        for (const fs::path &dir : { NormalizedPath(out), StagingDir(out), PreviousDir(out) })
+        {
+            if (!result.empty() && IsWithin(NormalizedPath(result), dir))
+                throw UsageError("--result must not be inside --out or its .tmp and .old folders");
+        }
 
         BuildRequest request;
         request.mGameDir = values.find("--game")->second;
         request.mPlayerDir = values.find("--player")->second;
-        request.mOutDir = values.find("--out")->second;
+        request.mOutDir = out;
         request.mAssetCooker = MJOLNIR_BUILD_ASSET_COOKER;
         request.mTerrainTool = MJOLNIR_BUILD_TERRAIN_TOOL;
 

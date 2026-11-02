@@ -12,6 +12,7 @@
 
 #include <stdexcept>
 #include <system_error>
+#include <utility>
 
 namespace mir::build
 {
@@ -40,6 +41,32 @@ namespace mir::build
         return { reinterpret_cast<const char *>(text.data()), text.size() };
     }
 
+    namespace
+    {
+        std::optional<std::string> CheckLocation(const fs::path &dir, const std::string &name, const fs::path &source,
+            const fs::path &player)
+        {
+            if (dir == dir.root_path())
+                return name + " is a drive root";
+            if (IsWithin(source, dir))
+                return name + " holds the source tree";
+            if (IsWithin(dir, source) && !IsWithin(dir.parent_path(), source / "builds"))
+                return name + " is inside the source tree; use a folder under builds/ or outside the checkout";
+            if (IsWithin(dir, player) || IsWithin(player, dir))
+                return name + " overlaps the player template " + PathText(player);
+
+            std::error_code ec;
+            for (fs::path parent = dir;; parent = parent.parent_path())
+            {
+                if (fs::exists(parent / "CMakeCache.txt", ec))
+                    return name + " is inside the build folder " + PathText(parent) + "; use a folder of its own";
+                if (parent == parent.parent_path())
+                    break;
+            }
+            return std::nullopt;
+        }
+    }
+
     std::optional<std::string> CheckOutputDir(const fs::path &outDir, const OutputRules &rules)
     {
         if (outDir.empty())
@@ -48,29 +75,28 @@ namespace mir::build
         const fs::path out = NormalizedPath(outDir);
         const fs::path source = NormalizedPath(rules.mSourceRoot);
         const fs::path player = NormalizedPath(rules.mPlayerDir);
+        const fs::path staging = StagingDir(out);
+        const fs::path previous = PreviousDir(out);
 
-        if (out == out.root_path())
-            return PathText(out) + " is a drive root";
-        if (IsWithin(source, out))
-            return PathText(out) + " holds the source tree";
-        if (IsWithin(out, source) && !IsWithin(out.parent_path(), source / "builds"))
-            return PathText(out) + " is inside the source tree; use a folder under builds/ or outside the checkout";
-        if (IsWithin(out, player) || IsWithin(player, out))
-            return PathText(out) + " overlaps the player template " + PathText(player);
-
-        std::error_code ec;
-        for (fs::path dir = out;; dir = dir.parent_path())
+        
+        for (const auto &[dir, name] : { std::pair{ out, PathText(out) },
+                 std::pair{ staging, PathText(staging) + ", where the build is staged," },
+                 std::pair{ previous, PathText(previous) + ", where the previous build is moved aside," } })
         {
-            if (fs::exists(dir / "CMakeCache.txt", ec))
-                return PathText(out) + " is inside the build folder " + PathText(dir) + "; use a folder of its own";
-            if (dir == dir.parent_path())
-                break;
+            if (std::optional<std::string> problem = CheckLocation(dir, name, source, player))
+                return problem;
         }
 
+        std::error_code ec;
         if (fs::exists(out, ec) && !fs::is_directory(out, ec))
             return PathText(out) + " is a file";
         if (fs::is_directory(out, ec) && !fs::is_empty(out, ec) && !IsBuildDir(out))
             return PathText(out) + " is not empty and holds no previous build; empty it or pick another folder";
+        for (const fs::path &dir : { staging, previous })
+        {
+            if (fs::exists(dir, ec) && !IsBuildDir(dir))
+                return PathText(dir) + " already exists and is not a build; move or delete it";
+        }
 
         return std::nullopt;
     }
@@ -96,6 +122,13 @@ namespace mir::build
         fs::path staging = NormalizedPath(out);
         staging += ".tmp";
         return staging;
+    }
+
+    fs::path PreviousDir(const fs::path &out)
+    {
+        fs::path previous = NormalizedPath(out);
+        previous += ".old";
+        return previous;
     }
 
     fs::path BeginStaging(const fs::path &out)
@@ -124,8 +157,7 @@ namespace mir::build
     void CommitStaging(const fs::path &staging, const fs::path &outDir)
     {
         const fs::path out = NormalizedPath(outDir);
-        fs::path previous = out;
-        previous += ".old";
+        const fs::path previous = PreviousDir(out);
 
         std::error_code ec;
         if (fs::exists(previous, ec))

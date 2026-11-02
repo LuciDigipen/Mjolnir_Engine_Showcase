@@ -185,6 +185,17 @@ namespace mir::build
             inputs.mProject = LoadGameProject(inputs.mGameDir);
             inputs.mProject.mDir = "games/" + inputs.mDirName;
             ResolveAssetIdRoot(inputs.mProject);
+
+            // The package keeps this game.json, so a rooted path would still read from the checkout
+            const std::optional<Json> manifest = ReadJsonFile(inputs.mGameDir / kGameManifestFileName);
+            for (const std::string key : { "sceneDir", "soundBanksRoot" })
+            {
+                const std::string value = manifest ? manifest->value(key, std::string()) : std::string();
+                if (fs::path(value).has_root_path())
+                    throw BuildError("game.json's " + key + " \"" + value +
+                        "\" is not a relative path, so the packaged game would read it from this checkout; "
+                        "make it relative to the game folder");
+            }
             for (const fs::path &dir : { inputs.mProject.mSceneDir, inputs.mProject.mSoundBankDir })
             {
                 if (!IsWithin(dir, inputs.mGameDir))

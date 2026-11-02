@@ -224,17 +224,21 @@ It copies the template, then cooks the engine's `assets/` and the game's
 ids match the editor's. From the source tree, never a build folder's copy, it
 copies what the game reads raw: `game.json`, `project_settings.json`,
 `terrain_streaming.json`, the `sceneDir` scene, the assets folder without
-`prefabs/`, and the SoundBanks. Each `*.terrain.json` gets the release that
+`prefabs/`, and the SoundBanks. The copied `game.json` is unchanged, so its
+`sceneDir` and `soundBanksRoot` must be relative paths inside the game folder.
+Each `*.terrain.json` gets the release that
 `TerrainTool package` finds current, which the last engine build published, so
 build the engine after editing a recipe. A game with no SoundBanks or terrain
 skips those steps.
 
 The build happens in `<out>.tmp` and replaces `<out>` only when every step
-succeeds, so a failed build leaves the previous one where it was. `<out>` must
-lie outside the checkout or under its `builds/`, outside any CMake build folder
-and the template, and be missing, empty, or a previous build, which holds
-`mjolnir_build.json`. A folder so deep that a file in it would pass 259
-characters is refused too: the engine cannot open such a path.
+succeeds, so a failed build leaves the previous one where it was; the previous
+build waits in `<out>.old` during the swap. `<out>`, `<out>.tmp` and
+`<out>.old` must lie outside the checkout or under its `builds/`, outside any
+CMake build folder and the template. `<out>` must be missing, empty, or a
+previous build, which holds `mjolnir_build.json`, and `<out>.tmp` and
+`<out>.old` must be missing or previous builds. A folder so deep that a file in
+it would pass 259 characters is refused too: the engine cannot open such a path.
 
 `--result` gets a JSON report, a failed build's included: the status, each
 step's status and time, warnings, the error, the asset count and the size. The
