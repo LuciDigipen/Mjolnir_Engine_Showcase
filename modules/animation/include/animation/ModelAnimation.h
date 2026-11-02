@@ -17,17 +17,27 @@
 
 namespace mir
 {
+    // A mesh asset and each of its primitives as the renderer uploads it. The worker that decoded the mesh made the
+    // uploads, so the main thread never converts a vertex. uploads is parallel to asset.primitives and null for
+    // a primitive with nothing to draw.
+    struct MeshRecord
+    {
+        MeshAsset asset;
+        std::vector<std::shared_ptr<const DecodedMesh>> uploads;
+    };
+
+    // What a model evaluates from. Every dependency is a record of its own that other models share, only the
+    // model's node table is its own.
     struct ModelResources
     {
-        ModelAsset model;
-        std::unordered_map<uint64_t, MeshAsset> meshes;
-        // Each primitive as the renderer uploads it, made by the worker that decoded the model so the main thread
-        // never converts a vertex. Parallel to meshes[key].primitives, null for a primitive with nothing to draw.
-        std::unordered_map<uint64_t, std::vector<std::shared_ptr<const DecodedMesh>>> gpuMeshes;
+        // The model's own record, shared like the others so the asset service accounts for it once
+        std::shared_ptr<const ModelAsset> model;
+        std::unordered_map<uint64_t, std::shared_ptr<const MeshRecord>> meshes;
+        std::unordered_map<uint64_t, std::shared_ptr<const SkeletonAsset>> skeletons;
+        // in the order of model.animations
+        std::vector<std::shared_ptr<const AnimationClipAsset>> clips;
         // Materials the meshes name, an unreadable one is absent and its primitives take the error appearance.
-        std::unordered_map<uint64_t, MaterialAsset> materials;
-        std::unordered_map<uint64_t, SkeletonAsset> skeletons;
-        std::vector<AnimationClipAsset> clips;
+        std::unordered_map<uint64_t, std::shared_ptr<const MaterialAsset>> materials;
     };
     struct NodePose
     {
@@ -36,12 +46,29 @@ namespace mir
         glm::mat4 world{1};
         std::vector<float> weights;
     };
+    // Reads the model and every record it names through cache, one record per asset.
     bool LoadModelResources(AssetCache &cache, AssetId id, ModelResources &result, std::string &error);
-    // Reads the model from root and its meshes, skeletons and clips from dependencies
+    // The same from blobs already read, a record that is missing fails with "no cooked blob".
     bool DecodeModelResources(const AssetBlobView &root, const AssetDependencies &dependencies, ModelResources &result,
                               std::string &error);
-    // The dependency types DecodeModelResources reads, so textures are not loaded with a model
-    const AssetDecoder<ModelResources> &ModelResourcesDecoder();
+
+    // One decoder for each record kind, each reads its own blob alone so the asset service shares the result
+    // between every model that names it.
+    const AssetDecoder<ModelAsset> &ModelRecordDecoder();
+    const AssetDecoder<MeshRecord> &MeshRecordDecoder();
+    const AssetDecoder<SkeletonAsset> &SkeletonRecordDecoder();
+    const AssetDecoder<AnimationClipAsset> &ClipRecordDecoder();
+    const AssetDecoder<MaterialAsset> &MaterialRecordDecoder();
+
+    struct ModelDependencies
+    {
+        std::vector<AssetId> meshes, skeletons, clips;
+    };
+    // The records a model names directly, each once. The materials come from the meshes, see MaterialsOf.
+    ModelDependencies DependenciesOf(const ModelAsset &model);
+    std::vector<AssetId> MaterialsOf(const MeshAsset &mesh);
+    // Checks the records against each other and the model, so a model that cannot be evaluated never publishes.
+    bool ValidateModelResources(const ModelResources &resources, std::string &error);
     std::vector<float> SampleAnimationTrack(const AnimationTrack &track, float time);
     // Reset to rest pose each sample; deterministic seeking and independent instances.
     std::vector<NodePose> EvaluateModel(const ModelResources &model, uint32_t clip, float time, bool loop);

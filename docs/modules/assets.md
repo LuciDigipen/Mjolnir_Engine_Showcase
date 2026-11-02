@@ -217,9 +217,11 @@ its bytes are. `AssetManifest::EntryContent` folds an entry's id, type, version 
 that hash into one value, and `ClosureContent` folds a root and the dependencies a
 decoder reads, in closure order. `AsyncAssetService::ContentOf` answers for a
 request, and zero means the name carried no hash, so the content cannot be
-known. A reload keeps the decoded results of requests whose content is known and
-the next request for the same asset, decoder and content adopts one without
-reading or decoding again, if a borrower still holds it. A request whose content
+known. The service remembers every decoded
+result of known content for as long as anything holds it, so the next request for
+the same asset, decoder and content adopts it without reading or decoding again,
+across a reload and after the service evicted its own copy. Two holders of one
+mesh therefore hold one decoded mesh. A request whose content
 changed, a dependency included, decodes as before.
 
 ## State

@@ -148,7 +148,7 @@ namespace mir
         mImGui(Context(), mWindow, mRenderer),
     #if MIR_WITH_EDITOR
         mEditor(Context(), mImGui, mWindow, mRenderer, mScene, mPrefab, mAssets, mAssetService.get(), mResolver,
-            mProject, mDesc.mEnableEditorLayout),
+            mProject, mDesc.mEnableEditorLayout, mAnimation.Library()),
     #endif
         mCamera(Context()),
     #if MIR_WITH_AUDIO

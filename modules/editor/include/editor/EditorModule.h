@@ -37,6 +37,7 @@ namespace mir
     class PrefabModule;
     class RendererModule;
     class SceneModule;
+    class ModelLibrary;
     class WindowModule;
 
     class EditorModule
@@ -45,7 +46,8 @@ namespace mir
         // enableLayout false: the editor is built in but the window is the game (--no-editor)
         EditorModule(ModuleContext context, ImGuiModule &imgui, WindowModule &window, RendererModule &renderer,
             SceneModule &scene, PrefabModule &prefab, AssetsModule &assets, AsyncAssetService *assetService,
-            const AssetResolver &resolver, const GameProject &project, bool enableLayout);
+            const AssetResolver &resolver, const GameProject &project, bool enableLayout,
+            std::shared_ptr<ModelLibrary> models);
         ~EditorModule();
 
         EditorModule(const EditorModule &) = delete;

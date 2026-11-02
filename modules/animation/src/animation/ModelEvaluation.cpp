@@ -32,7 +32,7 @@ namespace mir
 
         auto pose = EvaluateModel(data, input.clip, input.time, input.loop);
         for (size_t i = 0; i < pose.size(); ++i)
-            if (auto weights = input.overrides.find(data.model.nodes[i].key); weights != input.overrides.end())
+            if (auto weights = input.overrides.find(data.model->nodes[i].key); weights != input.overrides.end())
             {
                 if (weights->second.size() != pose[i].weights.size())
                 {
@@ -44,10 +44,10 @@ namespace mir
                 pose[i].weights = weights->second;
             }
 
-        const auto visible = VisibleModelNodes(data.model, input.scene);
+        const auto visible = VisibleModelNodes(*data.model, input.scene);
         for (size_t i = 0; i < pose.size(); ++i)
         {
-            const auto &node = data.model.nodes[i];
+            const auto &node = data.model->nodes[i];
             if (!visible[i] || node.mesh.IsNull()) continue;
 
             const auto world = TryComposePose(input.world, glm::mat3(pose[i].world), glm::vec3(pose[i].world[3]));
@@ -62,9 +62,9 @@ namespace mir
             evaluated.normalMatrix = glm::inverseTranspose(world->linear);
             evaluated.mirrored = determinant < 0;
 
-            const auto matrices = SkinMatrices(data.model, pose, static_cast<uint32_t>(i));
+            const auto matrices = SkinMatrices(*data.model, pose, static_cast<uint32_t>(i));
             result.nodes.push_back(std::move(evaluated));
-            for (const auto &primitive : data.meshes.at(node.mesh.value).primitives)
+            for (const auto &primitive : data.meshes.at(node.mesh.value)->asset.primitives)
                 result.nodes.back().deformations.push_back(BuildDeformationData(primitive, pose[i].weights, matrices));
         }
     }

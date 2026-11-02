@@ -9,6 +9,7 @@
 #include <animation/AnimationModule.h>
 
 #include <animation/ModelPlayer.h>
+#include <animation/ModelLibrary.h>
 #include <animation/ModelSystem.h>
 
 #include <assets/AsyncAssetService.h>
@@ -30,8 +31,9 @@ namespace mir
         context.world.EmplaceResource<ModelMorphOverrides>();
 
         // a WorldTransform reader
+        mLibrary = std::make_shared<ModelLibrary>(renderer, renderer, renderer.ErrorTexture());
         mModels = &context.scheduler.AddSystem<ModelSystem>(SystemPhase::LateUpdate,
-            SystemOrder{SystemOrder::kNormal}, renderer, assets,
+            SystemOrder{SystemOrder::kNormal}, mLibrary, assets,
             resolver, jobs);
 
         mHooks = context.world.SetComponentHooks<ModelPlayer>({ .onRemove = [this](World &world, Entity entity)

@@ -31,72 +31,152 @@ namespace mir
             return decoded;
         }
 
-        uint64_t PrimitiveBytes(const MeshPrimitive &p)
+        // Every owned allocation, by capacity. A shared allocation belongs to one record and is counted there.
+        uint64_t StringBytes(const std::string &value) { return value.capacity(); }
+        template <class T> uint64_t VectorBytes(const std::vector<T> &values) { return values.capacity() * sizeof(T); }
+
+        uint64_t NodeBytes(const ModelNode &node)
         {
-            return p.vertices.capacity() * sizeof(AssetVertex) + p.indices.capacity() * sizeof(uint32_t) +
-                p.influenceRanges.capacity() * sizeof(InfluenceRange) + p.influences.capacity() * sizeof(JointInfluence) +
-                p.morphTargets.capacity() * sizeof(MorphTarget);
+            return StringBytes(node.key) + StringBytes(node.name) + VectorBytes(node.weights);
         }
 
-        uint64_t ModelResourcesBytes(const ModelResources &resources)
+        uint64_t PrimitiveBytes(const MeshPrimitive &p)
         {
-            uint64_t bytes = sizeof(resources);
-            for (const auto &[key, mesh] : resources.meshes)
-                for (const MeshPrimitive &primitive : mesh.primitives)
-                    bytes += PrimitiveBytes(primitive);
-            for (const auto &[key, uploads] : resources.gpuMeshes)
-                for (const auto &upload : uploads)
-                    if (upload)
-                        bytes += DecodedMeshBytes(*upload);
-            for (const AnimationClipAsset &clip : resources.clips)
-                for (const AnimationTrack &track : clip.tracks)
-                    bytes += (track.times.capacity() + track.values.capacity()) * sizeof(float);
-            return bytes + resources.skeletons.size() * sizeof(SkeletonAsset) +
-                resources.materials.size() * sizeof(MaterialAsset);
+            uint64_t bytes = VectorBytes(p.vertices) + VectorBytes(p.indices) + VectorBytes(p.influenceRanges) +
+                VectorBytes(p.influences) + VectorBytes(p.morphTargets);
+            for (const MorphTarget &target : p.morphTargets)
+                bytes += VectorBytes(target.positions) + VectorBytes(target.normals) + VectorBytes(target.tangents);
+            return bytes;
+        }
+
+        uint64_t ModelBytes(const ModelAsset &model)
+        {
+            uint64_t bytes = sizeof(model) + VectorBytes(model.nodes) + VectorBytes(model.scenes) +
+                VectorBytes(model.skins) + VectorBytes(model.animations);
+            for (const ModelNode &node : model.nodes)
+                bytes += NodeBytes(node);
+            for (const ModelScene &scene : model.scenes)
+                bytes += StringBytes(scene.name) + VectorBytes(scene.roots);
+            for (const SkinBinding &skin : model.skins)
+            {
+                bytes += VectorBytes(skin.jointKeys) + VectorBytes(skin.inverseBindMatrices);
+                for (const std::string &key : skin.jointKeys)
+                    bytes += StringBytes(key);
+            }
+            return bytes;
+        }
+
+        uint64_t SkeletonBytes(const SkeletonAsset &skeleton)
+        {
+            uint64_t bytes = sizeof(skeleton) + StringBytes(skeleton.name) + VectorBytes(skeleton.nodes) +
+                VectorBytes(skeleton.joints);
+            for (const ModelNode &node : skeleton.nodes)
+                bytes += NodeBytes(node);
+            return bytes;
+        }
+
+        uint64_t ClipBytes(const AnimationClipAsset &clip)
+        {
+            uint64_t bytes = sizeof(clip) + StringBytes(clip.name) + VectorBytes(clip.tracks);
+            for (const AnimationTrack &track : clip.tracks)
+                bytes += StringBytes(track.target) + VectorBytes(track.times) + VectorBytes(track.values);
+            return bytes;
+        }
+
+        uint64_t MeshRecordBytes(const MeshRecord &record)
+        {
+            uint64_t bytes = sizeof(record) + StringBytes(record.asset.name) + VectorBytes(record.asset.weights) +
+                VectorBytes(record.asset.primitives) + VectorBytes(record.uploads);
+            for (const MeshPrimitive &primitive : record.asset.primitives)
+                bytes += PrimitiveBytes(primitive);
+            for (const auto &upload : record.uploads)
+                if (upload)
+                    bytes += DecodedMeshBytes(*upload);
+            return bytes;
+        }
+
+        uint64_t MaterialBytes(const MaterialAsset &material) { return sizeof(material); }
+
+        template <class T>
+        bool DecodeTyped(const AssetBlobView &root, const AssetDependencies &, T &out, std::string &error)
+        {
+            return ReadTypedAsset(root, out, error);
+        }
+
+        bool DecodeMeshRecord(const AssetBlobView &root, const AssetDependencies &, MeshRecord &out, std::string &error)
+        {
+            if (!ReadTypedAsset(root, out.asset, error))
+                return false;
+            out.uploads.reserve(out.asset.primitives.size());
+            for (const MeshPrimitive &primitive : out.asset.primitives)
+                out.uploads.push_back(ToUpload(primitive));
+            return true;
         }
     }
 
-    bool DecodeModelResources(const AssetBlobView &root, const AssetDependencies &dependencies, ModelResources &result,
-                              std::string &error)
+    const AssetDecoder<ModelAsset> &ModelRecordDecoder()
     {
-        ModelResources data;
-        auto read = [&](AssetId key, auto &out)
+        static constexpr AssetDecoder<ModelAsset> kDecoder{ DecodeTyped<ModelAsset>, {}, ModelBytes };
+        return kDecoder;
+    }
+    const AssetDecoder<MeshRecord> &MeshRecordDecoder()
+    {
+        static constexpr AssetDecoder<MeshRecord> kDecoder{ DecodeMeshRecord, {}, MeshRecordBytes };
+        return kDecoder;
+    }
+    const AssetDecoder<SkeletonAsset> &SkeletonRecordDecoder()
+    {
+        static constexpr AssetDecoder<SkeletonAsset> kDecoder{ DecodeTyped<SkeletonAsset>, {}, SkeletonBytes };
+        return kDecoder;
+    }
+    const AssetDecoder<AnimationClipAsset> &ClipRecordDecoder()
+    {
+        static constexpr AssetDecoder<AnimationClipAsset> kDecoder{ DecodeTyped<AnimationClipAsset>, {}, ClipBytes };
+        return kDecoder;
+    }
+    const AssetDecoder<MaterialAsset> &MaterialRecordDecoder()
+    {
+        static constexpr AssetDecoder<MaterialAsset> kDecoder{ DecodeTyped<MaterialAsset>, {}, MaterialBytes };
+        return kDecoder;
+    }
+
+    ModelDependencies DependenciesOf(const ModelAsset &model)
+    {
+        ModelDependencies out;
+        const auto add = [](std::vector<AssetId> &ids, AssetId id)
         {
-            const AssetBlobView *blob = dependencies.Find(key);
-            if (blob == nullptr)
+            if (!id.IsNull() && std::find(ids.begin(), ids.end(), id) == ids.end())
+                ids.push_back(id);
+        };
+        for (const ModelNode &node : model.nodes)
+            add(out.meshes, node.mesh);
+        for (const SkinBinding &skin : model.skins)
+            add(out.skeletons, skin.skeleton);
+        for (const AssetId clip : model.animations)
+            add(out.clips, clip);
+        return out;
+    }
+
+    std::vector<AssetId> MaterialsOf(const MeshAsset &mesh)
+    {
+        std::vector<AssetId> ids;
+        for (const MeshPrimitive &primitive : mesh.primitives)
+            if (!primitive.material.IsNull() && std::find(ids.begin(), ids.end(), primitive.material) == ids.end())
+                ids.push_back(primitive.material);
+        return ids;
+    }
+
+    bool ValidateModelResources(const ModelResources &data, std::string &error)
+    {
+        for (const auto &skin : data.model->skins)
+        {
+            const auto found = data.skeletons.find(skin.skeleton.value);
+            if (found == data.skeletons.end())
             {
                 error = "no cooked blob";
                 return false;
             }
-            return ReadTypedAsset(*blob, out, error);
-        };
-        if (!ReadTypedAsset(root, data.model, error))
-            return false;
-        for (const auto &node : data.model.nodes)
-            if (!node.mesh.IsNull() && !data.meshes.contains(node.mesh.value))
-            {
-                MeshAsset mesh;
-                if (!read(node.mesh, mesh))
-                    return false;
-                for (const auto &primitive : mesh.primitives)
-                    if (!primitive.material.IsNull() && !data.materials.contains(primitive.material.value))
-                    {
-                        MaterialAsset material;
-                        std::string ignored;
-                        if (const AssetBlobView *blob = dependencies.Find(primitive.material);
-                            blob != nullptr && ReadTypedAsset(*blob, material, ignored))
-                            data.materials.emplace(primitive.material.value, std::move(material));
-                    }
-                auto &uploads = data.gpuMeshes[node.mesh.value];
-                for (const auto &primitive : mesh.primitives)
-                    uploads.push_back(ToUpload(primitive));
-                data.meshes.emplace(node.mesh.value, std::move(mesh));
-            }
-        for (const auto &skin : data.model.skins)
-        {
-            SkeletonAsset skeleton;
-            if (!read(skin.skeleton, skeleton))
-                return false;
+            const SkeletonAsset &skeleton = *found->second;
             if (skeleton.joints.size() != skin.jointKeys.size())
             {
                 error = "skeleton palette count mismatch";
@@ -108,12 +188,17 @@ namespace mir
                     error = "skeleton joint mapping mismatch";
                     return false;
                 }
-            data.skeletons.emplace(skin.skeleton.value, std::move(skeleton));
         }
-        for (const auto &node : data.model.nodes)
+        for (const auto &node : data.model->nodes)
             if (!node.mesh.IsNull())
             {
-                const auto &mesh = data.meshes.at(node.mesh.value);
+                const auto found = data.meshes.find(node.mesh.value);
+                if (found == data.meshes.end())
+                {
+                    error = "no cooked blob";
+                    return false;
+                }
+                const MeshAsset &mesh = found->second->asset;
                 if (node.weights.size() != mesh.weights.size())
                 {
                     error = "node morph weights mismatch";
@@ -128,31 +213,90 @@ namespace mir
                             return false;
                         }
                         for (auto influence : p.influences)
-                            if (influence.joint >= data.model.skins[node.skin].jointKeys.size())
+                            if (influence.joint >= data.model->skins[node.skin].jointKeys.size())
                             {
                                 error = "joint out of palette range";
                                 return false;
                             }
                     }
             }
-        for (auto animation : data.model.animations)
+        if (data.clips.size() != data.model->animations.size())
         {
-            AnimationClipAsset clip;
-            if (!read(animation, clip))
-                return false;
-            for (const auto &track : clip.tracks)
+            error = "no cooked blob";
+            return false;
+        }
+        for (const auto &clip : data.clips)
+            for (const auto &track : clip->tracks)
             {
-                auto node = std::find_if(data.model.nodes.begin(), data.model.nodes.end(),
+                auto node = std::find_if(data.model->nodes.begin(), data.model->nodes.end(),
                                          [&](const auto &n) { return n.key == track.target; });
-                if (node == data.model.nodes.end() ||
+                if (node == data.model->nodes.end() ||
                     (track.path == AnimationPath::Weights ? node->weights.size() != track.components : node->hasMatrix))
                 {
                     error = "incompatible animation target";
                     return false;
                 }
             }
+        return true;
+    }
+
+    bool DecodeModelResources(const AssetBlobView &root, const AssetDependencies &dependencies, ModelResources &result,
+                              std::string &error)
+    {
+        ModelResources data;
+        auto modelRecord = std::make_shared<ModelAsset>();
+        if (!ReadTypedAsset(root, *modelRecord, error))
+            return false;
+        data.model = std::move(modelRecord);
+        // a record the model needs, read from its own blob
+        const auto read = [&](AssetId key, auto &out, std::string &problem)
+        {
+            const AssetBlobView *blob = dependencies.Find(key);
+            if (blob == nullptr)
+            {
+                problem = "no cooked blob";
+                return false;
+            }
+            return ReadTypedAsset(*blob, out, problem);
+        };
+        const ModelDependencies needed = DependenciesOf(*data.model);
+        for (const AssetId id : needed.meshes)
+        {
+            auto record = std::make_shared<MeshRecord>();
+            const AssetBlobView *blob = dependencies.Find(id);
+            if (blob == nullptr)
+            {
+                error = "no cooked blob";
+                return false;
+            }
+            if (!DecodeMeshRecord(*blob, dependencies, *record, error))
+                return false;
+            for (const AssetId materialId : MaterialsOf(record->asset))
+                if (!data.materials.contains(materialId.value))
+                {
+                    auto material = std::make_shared<MaterialAsset>();
+                    std::string ignored;
+                    if (read(materialId, *material, ignored))
+                        data.materials.emplace(materialId.value, std::move(material));
+                }
+            data.meshes.emplace(id.value, std::move(record));
+        }
+        for (const AssetId id : needed.skeletons)
+        {
+            auto skeleton = std::make_shared<SkeletonAsset>();
+            if (!read(id, *skeleton, error))
+                return false;
+            data.skeletons.emplace(id.value, std::move(skeleton));
+        }
+        for (const AssetId id : data.model->animations)
+        {
+            auto clip = std::make_shared<AnimationClipAsset>();
+            if (!read(id, *clip, error))
+                return false;
             data.clips.push_back(std::move(clip));
         }
+        if (!ValidateModelResources(data, error))
+            return false;
         result = std::move(data);
         return true;
     }
@@ -166,12 +310,6 @@ namespace mir
         }
         const AssetDependencies dependencies([&cache](AssetId key) { return cache.Load(key); });
         return DecodeModelResources(*root, dependencies, result, error);
-    }
-    const AssetDecoder<ModelResources> &ModelResourcesDecoder()
-    {
-        static constexpr uint32_t kTags[]{ kMeshAssetTypeTag, kSkeletonAssetTypeTag, kAnimationAssetTypeTag, kMaterialAssetTypeTag };
-        static constexpr AssetDecoder<ModelResources> kDecoder{ DecodeModelResources, kTags, ModelResourcesBytes };
-        return kDecoder;
     }
     std::vector<float> SampleAnimationTrack(const AnimationTrack &t, float time)
     {
@@ -245,13 +383,13 @@ namespace mir
     }
     std::vector<NodePose> EvaluateModel(const ModelResources &data, uint32_t clipIndex, float time, bool loop)
     {
-        const auto &model = data.model;
+        const auto &model = *data.model;
         std::vector<NodePose> pose;
         for (const auto &n : model.nodes)
             pose.push_back({n.translation, n.scale, n.rotation, glm::mat4(1), n.weights});
         if (clipIndex < data.clips.size())
         {
-            const auto &clip = data.clips[clipIndex];
+            const auto &clip = *data.clips[clipIndex];
             if (loop && clip.duration > 0)
             {
                 time = std::fmod(time, clip.duration);

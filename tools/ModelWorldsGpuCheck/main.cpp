@@ -10,6 +10,7 @@
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
+#include <animation/ModelLibrary.h>
 #include <animation/ModelPlayer.h>
 #include <animation/ModelSystem.h>
 #include <assets/AssetResolver.h>
@@ -43,8 +44,8 @@ namespace
     // What PrefabWorkspace gives a preview: its own World, scheduler and the two resolve systems.
     struct PreviewWorld
     {
-        PreviewWorld(mir::VulkanRenderer &renderer, mir::AsyncAssetService &service, const mir::AssetResolver &resolver,
-            mir::AssetId model)
+        PreviewWorld(mir::VulkanRenderer &renderer, std::shared_ptr<mir::ModelLibrary> library,
+            mir::AsyncAssetService &service, const mir::AssetResolver &resolver, mir::AssetId model)
         {
             mWorld.EmplaceResource<mir::EngineModeState>();
             mWorld.EmplaceResource<mir::ComponentFieldListeners>();
@@ -55,7 +56,7 @@ namespace
             mScheduler.AddSystem<mir::MeshResolveSystem>(mir::SystemPhase::LateUpdate,
                 mir::SystemOrder{ mir::SystemOrder::kNormal }, renderer, &service, resolver);
             mModels = &mScheduler.AddSystem<mir::ModelSystem>(mir::SystemPhase::LateUpdate,
-                mir::SystemOrder{ mir::SystemOrder::kNormal }, renderer, &service, resolver);
+                mir::SystemOrder{ mir::SystemOrder::kNormal }, std::move(library), &service, resolver);
             mHooks = mWorld.SetComponentHooks<mir::ModelPlayer>({ .onRemove =
                 [this](mir::World &world, mir::Entity entity) { mModels->Forget(world, entity); } });
             mir::SystemContext context{ mWorld, mCommands };
@@ -137,11 +138,13 @@ int main(int argc, char **argv)
 
         // the model HelloWorld's scene shows
         const mir::AssetId model{ 0x574f8c6b27fedda9ull };
+        // the App's one library, declared after the renderer so it goes first
+        const auto library = std::make_shared<mir::ModelLibrary>(renderer, renderer, renderer.ErrorTexture());
         Rig rig(cooked);
         Require(rig.mAssets.Manifest().Find(model) != nullptr, "The cooked assets have no HelloWorld model");
 
-        auto scene = std::make_unique<PreviewWorld>(renderer, rig.mService, rig.mResolver, model);
-        auto preview = std::make_unique<PreviewWorld>(renderer, rig.mService, rig.mResolver, model);
+        auto scene = std::make_unique<PreviewWorld>(renderer, library, rig.mService, rig.mResolver, model);
+        auto preview = std::make_unique<PreviewWorld>(renderer, library, rig.mService, rig.mResolver, model);
         const auto settle = [&](PreviewWorld *a, PreviewWorld *b, const char *what)
         {
             for (int frame = 0; frame < 600; ++frame)
@@ -174,7 +177,7 @@ int main(int argc, char **argv)
         Require(renderer.MeshStreaming().queued == first.queued, "A scene unload queued meshes again");
 
         // 3. the scene loads again from the shared model, nothing uploads
-        scene = std::make_unique<PreviewWorld>(renderer, rig.mService, rig.mResolver, model);
+        scene = std::make_unique<PreviewWorld>(renderer, library, rig.mService, rig.mResolver, model);
         settle(scene.get(), preview.get(), "scene reload");
         Require(renderer.MeshStreaming().queued == first.queued, "Reloading the scene uploaded the model again");
 
@@ -202,6 +205,7 @@ int main(int argc, char **argv)
         scene.reset();
         for (int frame = 0; frame < 10; ++frame)
             rig.Step(renderer, nullptr, nullptr);
+        library->ReleaseAll();
         renderer.ReleaseSceneResources();
         MIR_LOG_INFO("Model worlds check passed with {} primitives", drawCount);
     }

@@ -7,7 +7,15 @@
  *
  */
 #include <animation/ModelLibrary.h>
+#include <animation/ModelPlayer.h>
 #include <animation/ModelPreparation.h>
+#include <animation/ModelSystem.h>
+#include <assets/AssetResolver.h>
+#include <core/ecs/CommandBuffer.h>
+#include <core/ecs/EngineMode.h>
+#include <core/ecs/TransformHierarchy.h>
+#include <core/ecs/SceneLoadGroup.h>
+#include <core/ecs/World.h>
 
 #include <assets/AssetsModule.h>
 #include <assets/ModelAsset.h>
@@ -19,6 +27,7 @@
 #include "support/FakeTextureUploader.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <format>
 
@@ -27,6 +36,7 @@ using namespace mir;
 namespace
 {
     const AssetId kModel = MakeAssetId("model");
+    const AssetId kModel2 = MakeAssetId("model-2");
     const AssetId kMesh = MakeAssetId("mesh");
     const AssetId kMaterial = MakeAssetId("material");
     const AssetId kTexture = MakeAssetId("texture");
@@ -36,8 +46,10 @@ namespace
     {
         explicit CookedModel(bool withTexture = true) { Write(withTexture); }
 
-        // Blob names carry a content hash like a cook's, a mesh variant changes the mesh blob alone.
-        void Write(bool withTexture = true, uint32_t meshVariant = 0)
+        // Blob names carry a content hash like a cook's, a variant changes that blob alone. A second model names
+        // the same mesh.
+        void Write(bool withTexture = true, uint32_t meshVariant = 0, uint32_t textureVariant = 0,
+            bool secondModel = false)
         {
             ModelAsset model;
             model.nodes.resize(1);
@@ -57,16 +69,19 @@ namespace
             material.baseColorTexture = kTexture;
             TextureAsset texture;
             texture.width = texture.height = 4;
-            texture.rgba.assign(64, 80);
+            texture.rgba.assign(64, static_cast<uint8_t>(80 + textureVariant));
 
             const std::string modelFile = "model-0000000000000011.blob",
                 meshFile = std::format("mesh-{:016x}.blob", 0x12 + meshVariant),
-                materialFile = "material-0000000000000013.blob", textureFile = "texture-0000000000000014.blob";
+                materialFile = "material-0000000000000013.blob",
+                textureFile = std::format("texture-{:016x}.blob", 0x14 + textureVariant),
+                model2File = "model2-0000000000000015.blob";
             const std::vector<std::pair<std::string, std::vector<std::byte>>> blobs{
                 { modelFile, BuildTypedAsset(model) }, { meshFile, BuildTypedAsset(mesh) },
                 { materialFile, BuildTypedAsset(material) }, { textureFile, BuildTypedAsset(texture) } };
             for (const auto &[file, bytes] : blobs)
                 REQUIRE(WriteBytes(Path() / file, bytes));
+            REQUIRE(WriteBytes(Path() / model2File, BuildTypedAsset(model)));
             const AssetId modelEdges[]{ kMesh }, meshEdges[]{ kMaterial }, materialEdges[]{ kTexture };
             std::vector<AssetManifestSourceEntry> entries{
                 { { kModel, kModelAssetTypeTag, kModelAssetContentVersion }, modelFile, "model", modelEdges },
@@ -74,11 +89,14 @@ namespace
                 { { kMaterial, kMaterialAssetTypeTag, kMaterialAssetContentVersion }, materialFile, "material",
                   materialEdges },
                 { { kTexture, kTextureAssetTypeTag, kTextureAssetContentVersion }, textureFile, "texture", {} } };
+            if (secondModel)
+                entries.push_back({ { kModel2, kModelAssetTypeTag, kModelAssetContentVersion }, model2File, "model-2",
+                    modelEdges });
             // a texture the catalog does not list, its material still names it
             if (!withTexture)
             {
-                entries.pop_back();
-                entries.back().dependencies = {};
+                entries.erase(entries.begin() + 3);
+                entries[2].dependencies = {};
             }
             REQUIRE(WriteBytes(Path() / kAssetManifestFileName, BuildAssetManifestBlob(entries)));
         }
@@ -100,7 +118,7 @@ namespace
         // Frames until the texture upload is queued
         void QueueTexture()
         {
-            for (int frame = 0; frame < 8 && mTextures.mEntries.empty(); ++frame)
+            for (int frame = 0; frame < 16 && mTextures.mEntries.empty(); ++frame)
                 Frame();
             REQUIRE(mTextures.mEntries.size() == 1);
         }
@@ -172,7 +190,7 @@ TEST_CASE("A second preparation of the same model shares the mesh and material r
     auto first = f.mPreparation.Take();
 
     ModelPreparation other(f.mHost, f.mTextures, kError, &f.mService, kModel, "model");
-    for (int frame = 0; frame < 8 && other.GetState() != ModelPreparation::State::Ready; ++frame)
+    for (int frame = 0; frame < 16 && other.GetState() != ModelPreparation::State::Ready; ++frame)
     {
         f.mService.DrainCompletions();
         other.Advance();
@@ -228,7 +246,7 @@ TEST_CASE("A failed texture publishes the magenta error appearance", "[animation
 TEST_CASE("A missing texture blob settles as an error appearance", "[animation][model-preparation]")
 {
     Fixture f(false);
-    for (int frame = 0; frame < 4 && f.mPreparation.GetState() != ModelPreparation::State::Meshes; ++frame)
+    for (int frame = 0; frame < 12 && f.mPreparation.GetState() != ModelPreparation::State::Meshes; ++frame)
         f.Frame();
     // an unreachable texture is a texture failure, the model still publishes
     REQUIRE(f.mPreparation.GetState() == ModelPreparation::State::Meshes);
@@ -258,7 +276,7 @@ TEST_CASE("Abandoning a preparation drops its texture claim", "[animation][model
     test::FakeTextureUploader textures;
     {
         ModelPreparation preparation(host, textures, kError, &service, kModel, "model");
-        for (int frame = 0; frame < 8 && textures.mEntries.empty(); ++frame)
+        for (int frame = 0; frame < 16 && textures.mEntries.empty(); ++frame)
         {
             service.DrainCompletions();
             preparation.Advance();
@@ -284,6 +302,14 @@ TEST_CASE("A reload with unchanged content republishes from the existing records
     REQUIRE(f.Frame() == ModelPreparation::State::Ready);
     const auto before = f.mPreparation.Take();
     const auto resources = before->resources;
+    const auto frames = [&](ModelPreparation &preparation)
+    {
+        for (int frame = 0; frame < 12 && preparation.GetState() != ModelPreparation::State::Ready; ++frame)
+        {
+            f.mService.DrainCompletions();
+            preparation.Advance();
+        }
+    };
 
     SECTION("an identical cook")
     {
@@ -291,10 +317,12 @@ TEST_CASE("A reload with unchanged content republishes from the existing records
         f.mAssets.BeginReload();
         f.mAssets.CommitReload();
         ModelPreparation after(f.mHost, f.mTextures, kError, &f.mService, kModel, "model");
-        // the decoded model is adopted, so nothing waits on the lane
-        REQUIRE(after.Advance() == ModelPreparation::State::Ready);
+        frames(after);
+        REQUIRE(after.GetState() == ModelPreparation::State::Ready);
         const auto replacement = after.Take();
-        CHECK(replacement->resources == resources);
+        // the records the model names are the very ones it already holds
+        CHECK(replacement->resources->meshes.at(kMesh.value) == resources->meshes.at(kMesh.value));
+        CHECK(replacement->resources->materials.at(kMaterial.value) == resources->materials.at(kMaterial.value));
         CHECK(replacement->meshes.at(kMesh.value)[0].mesh == mesh);
         CHECK(replacement->meshes.at(kMesh.value)[0].material == before->meshes.at(kMesh.value)[0].material);
         CHECK(f.mHost.uploader.queued == 1);
@@ -307,7 +335,7 @@ TEST_CASE("A reload with unchanged content republishes from the existing records
         f.mAssets.BeginReload();
         f.mAssets.CommitReload();
         ModelPreparation after(f.mHost, f.mTextures, kError, &f.mService, kModel, "model");
-        for (int frame = 0; frame < 8 && after.GetState() != ModelPreparation::State::Meshes; ++frame)
+        for (int frame = 0; frame < 16 && after.GetState() != ModelPreparation::State::Meshes; ++frame)
         {
             f.mService.DrainCompletions();
             after.Advance();
@@ -337,7 +365,7 @@ namespace
         // Steps frames, finishing every upload the fakes hold, until the entry settles
         void Settle(const ModelLibrary::Claim &claim)
         {
-            for (int frame = 0; frame < 16 && !claim->ready && claim->failure.empty(); ++frame)
+            for (int frame = 0; frame < 40 && !claim->ready && claim->failure.empty(); ++frame)
             {
                 mService.DrainCompletions();
                 mLibrary.Advance();
@@ -434,7 +462,7 @@ TEST_CASE("A failed entry is prepared again by the next claim", "[animation][mod
     LibraryFixture f;
     const ModelLibrary::Claim claim = f.mLibrary.Acquire(kModel, &f.mService, "model");
     // the mesh upload fails, which fails the model
-    for (int frame = 0; frame < 16 && claim->failure.empty(); ++frame)
+    for (int frame = 0; frame < 40 && claim->failure.empty(); ++frame)
     {
         f.mService.DrainCompletions();
         f.mLibrary.Advance();
@@ -461,4 +489,276 @@ TEST_CASE("The renderer releasing its resources empties every entry", "[animatio
     CHECK_FALSE(claim->failure.empty());
     // a later claim starts from nothing
     CHECK(f.mLibrary.Acquire(kModel, &f.mService, "model") != claim);
+}
+
+namespace
+{
+    // Drives a preparation to a state, or to the end of its frames
+    void StepUntil(Fixture &f, ModelPreparation &preparation, ModelPreparation::State state, int limit = 40)
+    {
+        for (int frame = 0; frame < limit && preparation.GetState() != state; ++frame)
+        {
+            f.mService.DrainCompletions();
+            preparation.Advance();
+        }
+    }
+}
+
+TEST_CASE("A reload that lands during preparation supersedes it instead of mixing two catalogs",
+    "[animation][model-preparation]")
+{
+    SECTION("a mesh changed after the model was decoded")
+    {
+        Fixture f;
+        // the model is decoded under the first catalog, the mesh is still to be requested
+        StepUntil(f, f.mPreparation, ModelPreparation::State::Records);
+        REQUIRE(f.mPreparation.GetState() == ModelPreparation::State::Records);
+        f.Write(true, 1);
+        f.mAssets.BeginReload();
+        f.mAssets.CommitReload();
+        StepUntil(f, f.mPreparation, ModelPreparation::State::Superseded);
+        CHECK(f.mPreparation.GetState() == ModelPreparation::State::Superseded);
+        // the old catalog's vertices were never queued under the new content's key
+        CHECK(f.mHost.uploader.queued == 0);
+        CHECK(f.mHost.createdMaterials.empty());
+        CHECK(f.mPreparation.Take() == nullptr);
+
+        // the claim for the new catalog is a preparation of its own and builds the new mesh
+        ModelPreparation fresh(f.mHost, f.mTextures, kError, &f.mService, kModel, "model");
+        f.mTextures.mQueued = 0;
+        for (int frame = 0; frame < 40 && fresh.GetState() != ModelPreparation::State::Meshes; ++frame)
+        {
+            f.mService.DrainCompletions();
+            fresh.Advance();
+            for (const auto &[index, texture] : std::vector(f.mTextures.mEntries.begin(), f.mTextures.mEntries.end()))
+                f.mTextures.Complete(TextureHandle{ index, 1 });
+        }
+        REQUIRE(fresh.GetState() == ModelPreparation::State::Meshes);
+        REQUIRE(f.mHost.uploader.queued == 1);
+        CHECK(f.mHost.uploader.meshes.begin()->second.vertices == 3);
+    }
+    SECTION("a texture changed while the textures were loading")
+    {
+        Fixture f;
+        StepUntil(f, f.mPreparation, ModelPreparation::State::Textures);
+        REQUIRE(f.mPreparation.GetState() == ModelPreparation::State::Textures);
+        f.Write(true, 0, 1);
+        f.mAssets.BeginReload();
+        f.mAssets.CommitReload();
+        StepUntil(f, f.mPreparation, ModelPreparation::State::Superseded);
+        // the texture the model was requested with is not used for the new catalog's model
+        CHECK(f.mPreparation.GetState() == ModelPreparation::State::Superseded);
+        CHECK(f.mHost.createdMaterials.empty());
+        CHECK(f.mHost.uploader.queued == 0);
+    }
+    SECTION("a reload that changes nothing the model names does not stop it")
+    {
+        Fixture f;
+        StepUntil(f, f.mPreparation, ModelPreparation::State::Records);
+        f.Write();
+        f.mAssets.BeginReload();
+        f.mAssets.CommitReload();
+        f.QueueTexture();
+        CHECK(f.mPreparation.GetState() != ModelPreparation::State::Superseded);
+        CHECK(f.mPreparation.GetState() != ModelPreparation::State::Failed);
+    }
+}
+
+TEST_CASE("The library gives a changed texture another entry although the model's records are the same",
+    "[animation][model-library]")
+{
+    LibraryFixture f;
+    const ModelLibrary::Claim before = f.mLibrary.Acquire(kModel, &f.mService, "model");
+    f.Settle(before);
+    REQUIRE(before->ready);
+    f.Write(true, 0, 1);
+    f.Reload();
+    const ModelLibrary::Claim after = f.mLibrary.Acquire(kModel, &f.mService, "model");
+    CHECK(after != before);
+    CHECK(after->content != before->content);
+}
+
+TEST_CASE("Two models that name one mesh share its decoded record and its upload", "[animation][model-preparation]")
+{
+    Fixture f;
+    f.Write(true, 0, 0, true);
+    f.mAssets.BeginReload();
+    f.mAssets.CommitReload();
+    ModelPreparation first(f.mHost, f.mTextures, kError, &f.mService, kModel, "model");
+    ModelPreparation second(f.mHost, f.mTextures, kError, &f.mService, kModel2, "model-2");
+    const auto settle = [&]
+    {
+        for (int frame = 0; frame < 60; ++frame)
+        {
+            f.mService.DrainCompletions();
+            first.Advance();
+            second.Advance();
+            for (const auto &[index, texture] : std::vector(f.mTextures.mEntries.begin(), f.mTextures.mEntries.end()))
+                f.mTextures.Complete(TextureHandle{ index, 1 });
+            for (const auto &[index, mesh] : std::vector(f.mHost.uploader.meshes.begin(), f.mHost.uploader.meshes.end()))
+                if (mesh.state != MeshUploadState::Ready)
+                {
+                    if (mesh.state == MeshUploadState::Pending)
+                        f.mHost.uploader.Record(MeshHandle{ index, 1 });
+                    f.mHost.uploader.Complete(MeshHandle{ index, 1 });
+                }
+            if (first.GetState() == ModelPreparation::State::Ready && second.GetState() == ModelPreparation::State::Ready)
+                return;
+        }
+    };
+    settle();
+    REQUIRE(first.GetState() == ModelPreparation::State::Ready);
+    REQUIRE(second.GetState() == ModelPreparation::State::Ready);
+    const auto a = first.Take();
+    const auto b = second.Take();
+    // one decoded mesh record, one converted upload, one GPU mesh
+    CHECK(a->resources->meshes.at(kMesh.value) == b->resources->meshes.at(kMesh.value));
+    CHECK(a->resources->materials.at(kMaterial.value) == b->resources->materials.at(kMaterial.value));
+    CHECK(a->meshes.at(kMesh.value)[0].mesh == b->meshes.at(kMesh.value)[0].mesh);
+    CHECK(f.mHost.uploader.queued == 1);
+}
+
+TEST_CASE("A model nobody names any more is released while the scene stays open", "[animation][model-system]")
+{
+    RegisterModelPlayer();
+    LibraryFixture f;
+    const auto library = std::make_shared<ModelLibrary>(f.mHost, f.mTextures, kError);
+    AssetResolver resolver(f.mAssets, "game");
+    ModelSystem system(library, &f.mService, resolver);
+    World world;
+    CommandBuffer commands;
+    world.EmplaceResource<SceneLoadGroup>();
+    SystemContext context{ world, commands, 0.016f, 0.0, 0 };
+
+    const auto frame = [&]
+    {
+        f.mService.DrainCompletions();
+        system.OnLoadingUpdate(context);
+        for (const auto &[index, texture] : std::vector(f.mTextures.mEntries.begin(), f.mTextures.mEntries.end()))
+            f.mTextures.Complete(TextureHandle{ index, 1 });
+        for (const auto &[index, mesh] : std::vector(f.mHost.uploader.meshes.begin(), f.mHost.uploader.meshes.end()))
+            if (mesh.state != MeshUploadState::Ready)
+            {
+                if (mesh.state == MeshUploadState::Pending)
+                    f.mHost.uploader.Record(MeshHandle{ index, 1 });
+                f.mHost.uploader.Complete(MeshHandle{ index, 1 });
+            }
+    };
+
+    const Entity first = world.CreateEntity();
+    ModelPlayer player;
+    player.SetModelAsset(kModel);
+    world.AddComponent<ModelPlayer>(first, player);
+    const Entity second = world.CreateEntity();
+    world.AddComponent<ModelPlayer>(second, player);
+
+    SceneLoadGroup &group = world.Resource<SceneLoadGroup>();
+    group.Begin();
+    for (int step = 0; step < 40 && !group.Ready(); ++step)
+    {
+        frame();
+        group.EndFrame();
+    }
+    REQUIRE(group.Ready());
+    CHECK(library->LiveEntries() == 1);
+
+    // one entity still names the model
+    world.DestroyEntity(first);
+    frame();
+    CHECK(library->LiveEntries() == 1);
+
+    // none does: the World's claim goes, the GPU records stay for the next scene under the residency target
+    world.DestroyEntity(second);
+    frame();
+    CHECK(library->LiveEntries() == 0);
+    CHECK(f.mHost.uploader.retired.empty());
+    CHECK(f.mHost.releasedMaterials.empty());
+
+    // a model named again is claimed again without uploading it twice
+    const Entity third = world.CreateEntity();
+    world.AddComponent<ModelPlayer>(third, player);
+    for (int step = 0; step < 40 && library->LiveEntries() == 0; ++step)
+        frame();
+    for (int step = 0; step < 20; ++step)
+        frame();
+    CHECK(library->LiveEntries() == 1);
+    CHECK(f.mHost.uploader.queued == 1);
+}
+
+TEST_CASE("Clearing an entity's model selection releases the claim like deleting the entity", "[animation][model-system]")
+{
+    // the loading tick before gameplay starts and the frame update bind models in separate code
+    const bool fullUpdate = GENERATE(false, true);
+    INFO(std::string(fullUpdate ? "the frame update" : "the loading tick"));
+    RegisterModelPlayer();
+    mir::RegisterCoreComponents();
+    LibraryFixture f;
+    const auto library = std::make_shared<ModelLibrary>(f.mHost, f.mTextures, kError);
+    AssetResolver resolver(f.mAssets, "game");
+    ModelSystem system(library, &f.mService, resolver);
+    World world;
+    CommandBuffer commands;
+    world.EmplaceResource<EngineModeState>();
+    world.EmplaceResource<ModelDrawItems>();
+    world.EmplaceResource<ModelMorphOverrides>();
+    SystemContext context{ world, commands, 0.016f, 0.0, 0 };
+    const auto frame = [&]
+    {
+        f.mService.DrainCompletions();
+        if (fullUpdate)
+            system.OnUpdate(context);
+        else
+            system.OnLoadingUpdate(context);
+        for (const auto &[index, texture] : std::vector(f.mTextures.mEntries.begin(), f.mTextures.mEntries.end()))
+            f.mTextures.Complete(TextureHandle{ index, 1 });
+        for (const auto &[index, mesh] : std::vector(f.mHost.uploader.meshes.begin(), f.mHost.uploader.meshes.end()))
+            if (mesh.state != MeshUploadState::Ready)
+            {
+                if (mesh.state == MeshUploadState::Pending)
+                    f.mHost.uploader.Record(MeshHandle{ index, 1 });
+                f.mHost.uploader.Complete(MeshHandle{ index, 1 });
+            }
+    };
+
+    const Entity entity = world.CreateEntity();
+    mir::AddTransform(world, entity);
+    ModelPlayer player;
+    player.SetModelAsset(kModel);
+    world.AddComponent<ModelPlayer>(entity, player);
+    for (int step = 0; step < 40; ++step)
+        frame();
+    REQUIRE(library->LiveEntries() == 1);
+    // the frame update really evaluated the model, so it is the path that ran
+    if (fullUpdate)
+        REQUIRE(world.Resource<ModelDrawItems>().items.size() == 1);
+
+    // the entity stays and names nothing, by asset and by name
+    ModelPlayer *held = world.GetComponent<ModelPlayer>(entity);
+    REQUIRE(held != nullptr);
+    held->SetModelAsset(AssetId{});
+    held->SetModelName("");
+    frame();
+    CHECK(library->LiveEntries() == 0);
+    if (fullUpdate)
+        CHECK(world.Resource<ModelDrawItems>().items.empty());
+
+    // and it can name the model again afterwards
+    held->SetModelAsset(kModel);
+    for (int step = 0; step < 40; ++step)
+        frame();
+    CHECK(library->LiveEntries() == 1);
+}
+
+TEST_CASE("The model's own record is shared with the prepared model and counted by the asset service",
+    "[animation][model-preparation]")
+{
+    LibraryFixture f;
+    const ModelLibrary::Claim claim = f.mLibrary.Acquire(kModel, &f.mService, "model");
+    f.Settle(claim);
+    REQUIRE(claim->ready);
+    // nothing but the prepared model holds the root record once the service lets its own copy go
+    f.mService.EvictUnused();
+    const uint64_t modelBytes = ModelRecordDecoder().sizeBytes(*claim->ready->resources->model);
+    CHECK(modelBytes > sizeof(ModelAsset));
+    CHECK(f.mService.DecodedBytes() >= modelBytes);
 }

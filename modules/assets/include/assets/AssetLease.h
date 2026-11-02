@@ -36,6 +36,9 @@ namespace mir
             std::atomic<bool> mCancelled{ false };
             uint64_t mBytes = 0;
             uint64_t mLastUse = 0;
+            // what the result is made from, zero when unknown, and the decoder that made it
+            uint64_t mContent = 0;
+            const void *mDescriptor = nullptr;
         };
     }
 

@@ -29,7 +29,8 @@ namespace mir
     class ModelSystem final : public ISystem
     {
     public:
-        ModelSystem(VulkanRenderer &renderer, AsyncAssetService *assets, const AssetResolver &resolver,
+        // library is the App's one library, every World's ModelSystem takes its models from it
+        ModelSystem(std::shared_ptr<ModelLibrary> library, AsyncAssetService *assets, const AssetResolver &resolver,
             JobExecutor *jobs = nullptr);
         // Frees this World's models without releasing resources owned by other Worlds.
         void ReleaseResources();
@@ -40,6 +41,8 @@ namespace mir
         // Resolves and prepares the scene's models without evaluating them, so a standalone game can wait for
         // them before its gameplay starts.
         void OnLoadingUpdate(SystemContext &context) override;
+        // Claims are dropped while the renderer the models name is still there
+        void OnStop(SystemContext &) override { ReleaseResources(); }
 
         // ModelPlayer's OnRemove: drops the entity's request, poses and morph overrides, so a
         // packed id the World hands out again starts fresh
@@ -56,15 +59,16 @@ namespace mir
         // The published model, null while its first preparation runs. Throws when that preparation failed.
         const PreparedModel *Load(AssetId id);
         void AdvancePreparations();
+        // Drops the claim on every model no entity of this World names any more
+        void PruneModels();
 
         enum class Binding : uint8_t { Pending, Ready, Failed };
         // Resolves what a player names and asks for it. Failed is final until a reload.
         Binding Bind(ModelPlayer &player, uint64_t packed, AssetId &id, std::string &path, const PreparedModel *&model);
-        VulkanRenderer &mRenderer;
+        std::shared_ptr<ModelLibrary> mLibrary;
         AsyncAssetService *mAssets;
         const AssetResolver &mResolver;
         JobExecutor *mJobs;
-        std::shared_ptr<ModelLibrary> mLibrary;
         std::unordered_map<uint64_t, WorldModel> mModels;
         std::unordered_set<uint64_t> mFailed;
         std::unordered_map<uint64_t, uint64_t> mRequestedModels;

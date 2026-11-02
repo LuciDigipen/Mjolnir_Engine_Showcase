@@ -101,11 +101,11 @@ TEST_CASE("glTF and GLB cook geometry texture skeleton and morph animation", "[g
         auto skeleton = Find<SkeletonAsset>(*out, kSkeletonAssetTypeTag);
         CHECK(skeleton.joints == std::vector<uint32_t>{1, 2});
         ModelResources data;
-        data.model = Find<ModelAsset>(*out, kModelAssetTypeTag);
-        data.clips.push_back(Find<AnimationClipAsset>(*out, kAnimationAssetTypeTag));
+        data.model = std::make_shared<ModelAsset>(Find<ModelAsset>(*out, kModelAssetTypeTag));
+        data.clips.push_back(std::make_shared<AnimationClipAsset>(Find<AnimationClipAsset>(*out, kAnimationAssetTypeTag)));
         auto pose = EvaluateModel(data, 0, 1, false);
         CHECK(pose[0].weights[0] == 1);
-        auto joints = SkinMatrices(data.model, pose, 0);
+        auto joints = SkinMatrices(*data.model, pose, 0);
         auto deformed = DeformPrimitive(p, pose[0].weights, joints);
         CHECK(deformed[5].position.x == Catch::Approx(std::cos(.65f) - std::sin(.65f)).margin(.0001));
         CHECK(deformed[5].position.y == Catch::Approx(1 + std::sin(.65f) + std::cos(.65f)).margin(.0001));
@@ -489,8 +489,8 @@ TEST_CASE("Cooker publishes atomically and retains one fallback manifest generat
     ModelResources model;
     std::string error;
     REQUIRE(LoadModelResources(cache, test::PathId(*manifest, "assets/flag.gltf"), model, error));
-    REQUIRE(model.model.animations.size() == 2);
-    auto oldClip = model.model.animations.back();
+    REQUIRE(model.model->animations.size() == 2);
+    auto oldClip = model.model->animations.back();
     auto oldPath = std::string(manifest->PathOf(*manifest->Find(oldClip)));
     auto j = f.Read();
     j["animations"].erase(1);

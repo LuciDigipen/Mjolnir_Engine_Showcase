@@ -235,10 +235,6 @@ oldest unused records and none looks across categories for the oldest overall, s
 a recently used mesh can stay while an older texture goes. That is the policy, not
 an oversight.
 
-`Services()` is a slot for objects above the renderer that Worlds share, such as
-the animation module's `ModelLibrary`. The renderer stores them without knowing the
-type and calls `ReleaseAll` on each when it destroys the resources they name.
-
 At `ReloadCommit` the module calls `CommitReload`. It retires the meshes that are
 still queued or uploading, frees the ready ones, and forgets every entity's names,
 so the next `LateUpdate` resolves every renderer again, including one
@@ -1716,7 +1712,7 @@ their texture claims, and `GpuResidency` is the one target they all answer to.
 Was: one retiring figure, attributed to meshes, and a pressure that released every
 unused material. Now: textures and meshes report their own retiring bytes, a
 material category counts its table bytes, and `Trim` releases only the records that
-give something back. `Services()` lets modules above the renderer share objects.
+give something back.
 
 *2026-10-18* — **`PostProcessingSettings` and `PostEffectRegistry` (#207).**
 Was: no post-processing concept existed. Now: `PostProcessingSettings`

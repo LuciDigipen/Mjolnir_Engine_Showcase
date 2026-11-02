@@ -25,6 +25,7 @@
 
 namespace mir
 {
+    class AssetManifest;
     class AssetsModule;
     class BackgroundJobQueue;
     class JobExecutor;
@@ -82,6 +83,9 @@ namespace mir
             return ContentOfTags(id, decoder.dependencyTags);
         }
         uint64_t ContentOfTags(AssetId id, std::span<const uint32_t> tags) const;
+        // The catalog requests are resolved against now. A holder that works across frames keeps it to know
+        // what its inputs were made from, a later reload does not change it.
+        std::shared_ptr<const AssetManifest> CatalogSnapshot() const;
 
         // convert failure to printable string
         const std::string &FailureReason(AssetRequest request) const;
@@ -156,7 +160,8 @@ namespace mir
             }
         };
 
-        // A result a reload left behind, adopted by the first request for the same decoded content.
+        // A decoded result that is still alive somewhere, found by the next request for the same asset, decoder
+        // and content so every holder shares one copy, across reloads and past eviction from this service.
         struct Carried
         {
             DedupKey key;

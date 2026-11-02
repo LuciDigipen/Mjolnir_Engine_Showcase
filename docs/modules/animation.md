@@ -110,7 +110,7 @@ uploads that chain instead of generating one. A failed `CreateMesh` still fails
 the whole model, since there is nothing to draw.
 
 **A model is prepared in the background and published whole.** `ModelSystem`
-claims each referenced model from the renderer-wide `ModelLibrary`, which runs a
+claims each referenced model from the App's `ModelLibrary`, which runs a
 `ModelPreparation` for it, and that claims the
 model's CPU records and one `TextureLoadLease` per base color texture, and never
 waits on either. When every texture is ready or failed it claims the renderer's
@@ -123,16 +123,36 @@ then switches that model when its replacement is usable. A replacement that
 fails leaves the old model in place and logs a warning, and a failed texture
 publishes the magenta error appearance like an initial load. Playback, poses
 and deformations stay with the entity. A `PreparedModel` only holds claims on
-renderer-owned records. The library keys an entry by the model and its decoded
-content, so the scene and every prefab preview that show a model hold one entry and
-one prepared model, and a World keeps only its playback clock, poses, morph
+renderer-owned records. `AnimationModule` owns the one library and the editor hands it to
+`PrefabWorkspace`, so the scene and every prefab preview take theirs from it. The
+library keys an entry by the model and the content of everything it names, its
+records and the textures its materials name, so the scene and every prefab preview
+that show a model hold one entry and one prepared model, and a World keeps only its playback clock, poses, morph
 overrides and deformations. A reload claims the entry for the new content, which is
 the same entry when nothing changed and another one that replaces it when it is
 ready. The last World to drop an entry frees the prepared model, and the renderer
 keeps the unused records under its residency target. A failed entry is prepared
-again by the next claim. The vertices a mesh uploads are converted by the worker
-that decodes the model, `ModelResources::gpuMeshes`, so the main thread only
-queues them, and the decoded model reports its real size to the asset service.
+again by the next claim. A World drops its claim on a
+model when no entity of it names the model any more, so a deleted or renamed model
+does not stay protected from eviction until the scene closes.
+
+A model is a set of records, not one decoded blob. The model, each mesh, each
+skeleton, each clip and each material is decoded by its own request, so two models
+that name one mesh hold one decoded `MeshRecord` and one converted upload, and the
+asset service shares it while anything holds it. The worker that decodes a mesh
+converts its vertices for upload, so the main thread only queues them. Each record
+reports every allocation it owns to the asset service, the morph target arrays and
+the skeleton and node tables included, and a shared allocation is counted in the
+record that owns it once. `ModelResources` is the assembled view a preparation
+validates and a World evaluates from.
+
+**A preparation belongs to the catalog it was requested under.** It keeps that
+catalog and the content of everything the model names, and names its mesh and
+texture records from it. When a reload would give any of them other content, the
+preparation stops as superseded and publishes nothing, so decoded data from one
+catalog never gets another catalog's key. The claim a reload takes for the new
+content is a preparation of its own. A reload that changes nothing the model names
+does not stop it.
 
 ## State
 

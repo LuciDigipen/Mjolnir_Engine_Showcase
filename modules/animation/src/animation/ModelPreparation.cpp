@@ -11,6 +11,7 @@
 #include <core/log/Log.h>
 #include <renderer/MeshAssetDecoder.h>
 
+#include <algorithm>
 #include <format>
 #include <stdexcept>
 
@@ -46,18 +47,29 @@ namespace mir
         }
     }
 
+    std::span<const uint32_t> ModelIdentityTags()
+    {
+        static constexpr uint32_t kTags[]{ kMeshAssetTypeTag, kSkeletonAssetTypeTag, kAnimationAssetTypeTag,
+            kMaterialAssetTypeTag, kTextureAssetTypeTag };
+        return kTags;
+    }
+
     ModelPreparation::ModelPreparation(IMeshResolveHost &host, ITextureUploader &textures, TextureHandle errorTexture,
         AsyncAssetService *assets, AssetId id, std::string label)
         : mHost(host), mErrorTexture(errorTexture), mId(id), mLabel(std::move(label)),
           mTracker(textures.TextureLoads(assets)), mMeshTracker(host.ModelMeshes(assets)),
-          mMaterials(host.MaterialRecords()), mService(assets), mRevision(assets != nullptr ? assets->Revision() : 0)
+          mMaterials(host.MaterialRecords()), mService(assets)
     {
         if (assets == nullptr)
         {
             Fail("there is no asset service");
             return;
         }
-        mResources = assets->RequestLease(id, ModelResourcesDecoder());
+        // Everything that follows is named by this catalog, whatever a reload does before the model is built.
+        mCatalog = assets->CatalogSnapshot();
+        mRevision = assets->Revision();
+        mIdentity = assets->ContentOfTags(id, ModelIdentityTags());
+        mRoot = assets->RequestLease(id, ModelRecordDecoder());
     }
 
     void ModelPreparation::Fail(std::string reason)
@@ -66,33 +78,131 @@ namespace mir
         mPrepared.reset();
         mMeshSlots.clear();
         mTextureClaims.clear();
-        mResources.Reset();
+        mRoot.Reset();
+        mMeshClaims.clear();
+        mSkeletonClaims.clear();
+        mClipClaims.clear();
+        mMaterialClaims.clear();
+        mLoaded.reset();
         mState = State::Failed;
+    }
+
+    bool ModelPreparation::Current()
+    {
+        // The same catalog needs no check, which is nearly every frame
+        if (mService->Revision() == mRevision)
+            return true;
+        // Known content decides, an input whose content is unknown can only be trusted within one revision.
+        const bool same = mIdentity != 0 ? mService->ContentOfTags(mId, ModelIdentityTags()) == mIdentity
+                                         : mService->Revision() == mRevision;
+        if (same)
+            return true;
+        mError = "the catalog changed what the model is made of while it was prepared";
+        mPrepared.reset();
+        mMeshSlots.clear();
+        mTextureClaims.clear();
+        mRoot.Reset();
+        mMeshClaims.clear();
+        mSkeletonClaims.clear();
+        mClipClaims.clear();
+        mMaterialClaims.clear();
+        mLoaded.reset();
+        mState = State::Superseded;
+        return false;
+    }
+
+    uint64_t ModelPreparation::ContentOf(AssetId id) const
+    {
+        // from the catalog the model was requested under, never the current one
+        const uint64_t content = mCatalog ? mCatalog->EntryContent(id) : 0;
+        return content != 0 ? content : 0x8000000000000000ull | (uint64_t(mRevision) + 1);
+    }
+
+    namespace
+    {
+        // A set of leases is settled when none waits, ready when none failed
+        template <class Claims> bool Waiting(const Claims &claims)
+        {
+            for (const auto &claim : claims)
+                if (claim.lease.State() == AssetLoadState::Queued)
+                    return true;
+            return false;
+        }
+
+        template <class Claims> bool FirstFailure(const Claims &claims, AssetId &id, std::string &reason)
+        {
+            for (const auto &claim : claims)
+            {
+                const AssetLoadState state = claim.lease.State();
+                if (state == AssetLoadState::Failed || state == AssetLoadState::Stale)
+                {
+                    id = claim.id;
+                    reason = state == AssetLoadState::Failed ? claim.lease.FailureReason()
+                                                             : "its decoded data is no longer available";
+                    return true;
+                }
+            }
+            return false;
+        }
     }
 
     ModelPreparation::State ModelPreparation::Advance()
     {
         if (mState == State::Loading)
         {
-            switch (mResources.State())
+            switch (mRoot.State())
             {
             case AssetLoadState::Queued:
                 return mState;
             case AssetLoadState::Ready:
-                mLoaded = mResources.Acquire();
-                if (!mLoaded)
+            {
+                const auto root = mRoot.Acquire();
+                if (!root)
+                {
                     Fail("its decoded data is missing");
-                else
-                    RequestTextures(*mLoaded);
+                    break;
+                }
+                mLoaded = std::make_shared<ModelResources>();
+                mLoaded->model = root;
+                mRoot.Reset();
+                if (Current())
+                    RequestRecords();
                 break;
+            }
             case AssetLoadState::Failed:
-                Fail(mResources.FailureReason());
+                Fail(mRoot.FailureReason());
                 break;
             case AssetLoadState::Stale:
                 Fail("its decoded data is no longer available");
                 break;
             }
         }
+        if (mState == State::Records)
+        {
+            AssetId id;
+            std::string reason;
+            if (FirstFailure(mMeshClaims, id, reason) || FirstFailure(mSkeletonClaims, id, reason) ||
+                FirstFailure(mClipClaims, id, reason))
+                Fail(std::format("record {:016x}: {}", id.value, reason));
+            else if (!Waiting(mMeshClaims) && !Waiting(mSkeletonClaims) && !Waiting(mClipClaims) && Current())
+                RequestMaterials();
+        }
+        if (mState == State::Materials && !Waiting(mMaterialClaims))
+        {
+            // an unreadable material is not the model's failure, its primitives take the error appearance
+            for (auto &claim : mMaterialClaims)
+                if (const auto material = claim.lease.Acquire())
+                    mLoaded->materials.emplace(claim.id.value, material);
+            mMaterialClaims.clear();
+            std::string error;
+            if (!ValidateModelResources(*mLoaded, error))
+                Fail(error);
+            else if (Current())
+                RequestTextures();
+        }
+        // a preparation that waits on uploads must still notice a catalog that made it obsolete
+        if ((mState == State::Textures || mState == State::Meshes) && !Current())
+            return mState;
         if (mState == State::Textures)
         {
             mTracker->Update();
@@ -104,18 +214,49 @@ namespace mir
         return mState;
     }
 
-    void ModelPreparation::RequestTextures(const ModelResources &resources)
+    void ModelPreparation::RequestRecords()
     {
-        mResources.Reset();
-        for (const auto &[key, material] : resources.materials)
+        const ModelDependencies needed = DependenciesOf(*mLoaded->model);
+        for (const AssetId id : needed.meshes)
+            mMeshClaims.push_back({ id, mService->RequestLease(id, MeshRecordDecoder()) });
+        for (const AssetId id : needed.skeletons)
+            mSkeletonClaims.push_back({ id, mService->RequestLease(id, SkeletonRecordDecoder()) });
+        // in the order of the model's animations, which is the order clips are indexed by
+        for (const AssetId id : mLoaded->model->animations)
+            mClipClaims.push_back({ id, mService->RequestLease(id, ClipRecordDecoder()) });
+        mState = State::Records;
+    }
+
+    void ModelPreparation::RequestMaterials()
+    {
+        for (const auto &claim : mMeshClaims)
+            mLoaded->meshes.emplace(claim.id.value, claim.lease.Acquire());
+        for (const auto &claim : mSkeletonClaims)
+            mLoaded->skeletons.emplace(claim.id.value, claim.lease.Acquire());
+        for (const auto &claim : mClipClaims)
+            mLoaded->clips.push_back(claim.lease.Acquire());
+        mMeshClaims.clear();
+        mSkeletonClaims.clear();
+        mClipClaims.clear();
+        for (const auto &[key, mesh] : mLoaded->meshes)
+            for (const AssetId material : MaterialsOf(mesh->asset))
+                if (std::none_of(mMaterialClaims.begin(), mMaterialClaims.end(),
+                        [&](const auto &claim) { return claim.id == material; }))
+                    mMaterialClaims.push_back({ material, mService->RequestLease(material, MaterialRecordDecoder()) });
+        mState = State::Materials;
+    }
+
+    void ModelPreparation::RequestTextures()
+    {
+        for (const auto &[key, material] : mLoaded->materials)
         {
-            const AssetId texture = material.baseColorTexture;
+            const AssetId texture = material->baseColorTexture;
             if (texture.IsNull() || mTextureClaims.contains(texture.value))
                 continue;
-            const UploadKey key{ texture, UploadContent(mService, texture) };
-            mTextureKeys.emplace(texture.value, key);
-            mTracker->Request(key, std::format("{} texture {:016x}", mLabel, texture.value));
-            mTextureClaims.emplace(texture.value, TextureLoadLease(mTracker, key));
+            const UploadKey uploadKey{ texture, ContentOf(texture) };
+            mTextureKeys.emplace(texture.value, uploadKey);
+            mTracker->Request(uploadKey, std::format("{} texture {:016x}", mLabel, texture.value));
+            mTextureClaims.emplace(texture.value, TextureLoadLease(mTracker, uploadKey));
         }
         mState = State::Textures;
     }
@@ -139,14 +280,15 @@ namespace mir
         try
         {
             const ModelResources &resources = *mLoaded;
-            for (const auto &[key, mesh] : resources.meshes)
+            for (const auto &[key, record] : resources.meshes)
             {
                 auto &primitives = model->meshes[key];
+                const MeshAsset &mesh = record->asset;
                 for (size_t index = 0; index < mesh.primitives.size(); ++index)
                 {
                     const MeshPrimitive &p = mesh.primitives[index];
                     // converted by the worker that decoded the model, nothing to draw fails the model
-                    const std::shared_ptr<const DecodedMesh> upload = resources.gpuMeshes.at(key).at(index);
+                    const std::shared_ptr<const DecodedMesh> upload = record->uploads.at(index);
                     if (!upload)
                         throw std::runtime_error("GPU mesh creation failed");
                     MaterialAsset material;
@@ -156,7 +298,7 @@ namespace mir
                         const auto found = resources.materials.find(p.material.value);
                         materialRead = found != resources.materials.end();
                         if (materialRead)
-                            material = found->second;
+                            material = *found->second;
                         else
                             MIR_LOG_ERROR("Model {:016x}: material {:016x} is unreadable, using error texture",
                                 mId.value, p.material.value);
@@ -225,7 +367,7 @@ namespace mir
 
                     // A record is shared by every consumer that asks for the same bytes and options.
                     // The mesh blob alone decides the vertices, so an unchanged mesh keeps its record across a reload.
-                    const uint64_t content = UploadContent(mService, AssetId{ key });
+                    const uint64_t content = ContentOf(AssetId{ key });
                     const ContentIdentity identity = (content >> 63) != 0 ? ContentIdentity::ForRevision(mRevision)
                                                                           : ContentIdentity::ForContent(content);
                     const GpuRecordKey recordKey{ AssetId{ key }, static_cast<uint32_t>(index), identity,

@@ -3,10 +3,15 @@
  * @author sumin.park
  * @brief Shared immutable model resources, prepared in the background without blocking a frame.
  *
- * A preparation claims a model's CPU records and its textures, then claims shared GPU material
+ * A preparation claims the model's record and then each record it names, the meshes, skeletons, clips
+ * and materials, as shared decoded records of their own. It claims the textures, then claims shared GPU material
  * records and queues shared mesh uploads once every texture has settled, and publishes after the
  * meshes are ready. The renderer owns the GPU records, a PreparedModel only holds claims on them.
  * Playback, poses and draw extraction stay with the ModelSystem that owns the entities.
+ *
+ * A preparation belongs to the catalog it was requested under. Its inputs are named by that catalog's content,
+ * and when a later catalog would give any of them other content the preparation stops as superseded rather
+ * than mix two catalogs.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -22,6 +27,7 @@
 #include <renderer/TextureLoadTracker.h>
 
 #include <memory>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -47,10 +53,13 @@ namespace mir
         std::vector<ModelMeshLease> meshClaims;
     };
 
+    // The asset types whose content decides what a model is: its records and the textures its materials name.
+    std::span<const uint32_t> ModelIdentityTags();
+
     class ModelPreparation
     {
     public:
-        enum class State : uint8_t { Loading, Textures, Meshes, Ready, Failed };
+        enum class State : uint8_t { Loading, Records, Materials, Textures, Meshes, Ready, Failed, Superseded };
 
         // assets may be null, the preparation then fails.
         ModelPreparation(IMeshResolveHost &host, ITextureUploader &textures, TextureHandle errorTexture,
@@ -65,10 +74,21 @@ namespace mir
 
     private:
         void Fail(std::string reason);
-        void RequestTextures(const ModelResources &resources);
+        // False, and Superseded, when a later catalog would give an input other content
+        bool Current();
+        uint64_t ContentOf(AssetId id) const;
+        void RequestRecords();
+        void RequestMaterials();
+        void RequestTextures();
         bool TexturesSettled() const;
         void Build();
         void AwaitMeshes();
+
+        template <class T> struct Claim
+        {
+            AssetId id;
+            AssetLease<T> lease;
+        };
 
         IMeshResolveHost &mHost;
         TextureHandle mErrorTexture;
@@ -78,9 +98,18 @@ namespace mir
         std::shared_ptr<ModelMeshTracker> mMeshTracker;
         std::shared_ptr<MaterialRecordCache> mMaterials;
         AsyncAssetService *mService;
+        // What the model was requested under: the catalog, its revision and the content of everything it names
+        std::shared_ptr<const AssetManifest> mCatalog;
         uint32_t mRevision = 0;
-        AssetLease<ModelResources> mResources;
-        std::shared_ptr<const ModelResources> mLoaded;
+        uint64_t mIdentity = 0;
+
+        AssetLease<ModelAsset> mRoot;
+        std::vector<Claim<MeshRecord>> mMeshClaims;
+        std::vector<Claim<SkeletonAsset>> mSkeletonClaims;
+        std::vector<Claim<AnimationClipAsset>> mClipClaims;
+        std::vector<Claim<MaterialAsset>> mMaterialClaims;
+        std::shared_ptr<ModelResources> mLoaded;
+
         std::unordered_map<uint64_t, TextureLoadLease> mTextureClaims;
         // The upload record each texture asset names, its content decides whether an old record is reused.
         std::unordered_map<uint64_t, UploadKey> mTextureKeys;

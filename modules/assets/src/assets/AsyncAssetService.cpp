@@ -135,6 +135,8 @@ namespace mir
         mSlots[index].record->mLastUse = ++mUseSerial;
         mSlots[index].content = content;
         mSlots[index].descriptor = descriptor;
+        mSlots[index].record->mContent = content;
+        mSlots[index].record->mDescriptor = descriptor;
         mDedup.emplace(key, index);
 
         // An unchanged result from an earlier catalog is adopted, nothing is read or decoded again.
@@ -148,7 +150,6 @@ namespace mir
                     record.mResult = std::move(result);
                     record.mBytes = carried->bytes;
                     record.mState = AssetLoadState::Ready;
-                    mCarried.erase(carried);
                     return { index, mGeneration };
                 }
         ++mQueuedCount;
@@ -329,6 +330,13 @@ namespace mir
                 record.mBytes = item.bytes;
                 mAllocations.push_back({ record.mResult, item.bytes });
                 record.mState = AssetLoadState::Ready;
+                if (record.mContent != 0)
+                {
+                    const DedupKey key{ item.id.value, record.mDescriptor };
+                    std::erase_if(mCarried, [&](const Carried &live)
+                        { return live.result.expired() || (live.key == key && live.content == record.mContent); });
+                    mCarried.push_back({ key, record.mContent, record.mType, record.mResult, item.bytes });
+                }
             }
             else
             {
@@ -368,6 +376,11 @@ namespace mir
     {
         const auto catalog = mAssets.ManifestSnapshot();
         return tags.empty() ? catalog->EntryContent(id) : catalog->ClosureContent(id, tags);
+    }
+
+    std::shared_ptr<const AssetManifest> AsyncAssetService::CatalogSnapshot() const
+    {
+        return mAssets.ManifestSnapshot();
     }
 
     uint32_t AsyncAssetService::Revision() const { return mAssets.ReloadEpoch(); }
@@ -437,11 +450,6 @@ namespace mir
         mSeenReloadEpoch = mAssets.ReloadEpoch();
         // Existing leases retain their revision, new requests resolve against the new catalog.
         ++mGeneration;
-        std::erase_if(mCarried, [](const Carried &item) { return item.result.expired(); });
-        for (const Slot &slot : mSlots)
-            if (slot.record && slot.content != 0 && slot.record->mState == AssetLoadState::Ready && slot.record->mResult)
-                mCarried.push_back({ DedupKey{ slot.id.value, slot.descriptor }, slot.content, slot.record->mType,
-                    slot.record->mResult, slot.record->mBytes });
         for (Slot &slot : mSlots)
             if (slot.record && slot.record->mConsumers == 0)
                 slot.record->mCancelled = true;

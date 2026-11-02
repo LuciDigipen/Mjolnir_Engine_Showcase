@@ -18,7 +18,8 @@ namespace mir
     {
         std::erase_if(mEntries, [](const auto &item) { return item.second.expired(); });
 
-        const uint64_t content = UploadContent(assets, id, ModelResourcesDecoder().dependencyTags);
+        // the model, every record it names and the textures its materials name, so a changed texture is another entry
+        const uint64_t content = UploadContent(assets, id, ModelIdentityTags());
         const Key key{ id.value, content, assets };
         if (const auto found = mEntries.find(key); found != mEntries.end())
             if (Claim claim = found->second.lock(); claim && claim->failure.empty())
@@ -45,12 +46,21 @@ namespace mir
                 entry->ready = std::shared_ptr<const PreparedModel>(entry->pending->Take());
                 entry->pending.reset();
             }
-            else if (state == ModelPreparation::State::Failed)
+            else if (state == ModelPreparation::State::Failed || state == ModelPreparation::State::Superseded)
             {
+                // a superseded entry is replaced by the claim for the new catalog, which every World takes at reload
                 entry->failure = entry->pending->Error();
                 entry->pending.reset();
             }
         }
+    }
+
+    size_t ModelLibrary::LiveEntries() const
+    {
+        size_t count = 0;
+        for (const auto &[key, weak] : mEntries)
+            count += weak.expired() ? 0 : 1;
+        return count;
     }
 
     void ModelLibrary::ReleaseAll()

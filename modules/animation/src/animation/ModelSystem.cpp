@@ -35,12 +35,18 @@ namespace mir
         mCurrentPoses.clear();
     }
 
-    ModelSystem::ModelSystem(VulkanRenderer &renderer, AsyncAssetService *assets, const AssetResolver &resolver,
-        JobExecutor *jobs)
-        : mRenderer(renderer), mAssets(assets), mResolver(resolver), mJobs(jobs),
-          mLibrary(renderer.Services().GetOrCreate<ModelLibrary>([&renderer]
-              { return std::make_shared<ModelLibrary>(renderer, renderer, renderer.ErrorTexture()); }))
+    ModelSystem::ModelSystem(std::shared_ptr<ModelLibrary> library, AsyncAssetService *assets,
+        const AssetResolver &resolver, JobExecutor *jobs)
+        : mLibrary(std::move(library)), mAssets(assets), mResolver(resolver), mJobs(jobs)
     {}
+
+    void ModelSystem::PruneModels()
+    {
+        std::unordered_set<uint64_t> named;
+        for (const auto &[entity, model] : mRequestedModels)
+            named.insert(model);
+        std::erase_if(mModels, [&](const auto &item) { return !named.contains(item.first); });
+    }
 
     const PreparedModel *ModelSystem::Load(AssetId id)
     {
@@ -88,10 +94,16 @@ namespace mir
         {
             ModelLibrary::Claim claim = mLibrary->Acquire(AssetId{ id }, mAssets, mResolver.PathOf(AssetId{ id }));
             // the same content is the same entry, nothing to replace
-            if (claim != model.current)
+            if (claim == model.current)
+                model.next.reset();
+            else if (model.current->ready)
                 model.next = std::move(claim);
             else
+            {
+                // nothing is drawing from the old entry, it was still preparing or failed, so the new one takes over
+                model.current = std::move(claim);
                 model.next.reset();
+            }
         }
         mFailed.clear();
         mRequestedModels.clear();
@@ -142,9 +154,15 @@ namespace mir
         context.world.GetOrCreateQuery<ModelPlayer>().ForEach(
             [&](Entity entity, ModelPlayer &player)
             {
-                alive.insert(PackEntity(entity));
+                const uint64_t packed = PackEntity(entity);
+                alive.insert(packed);
                 if (player.ModelName().empty() && player.ModelAsset().IsNull())
+                {
+                    // a cleared selection names no model, whatever it named before
+                    mRequestedModels.erase(packed);
+                    mFailed.erase(packed);
                     return;
+                }
                 ++required;
                 AssetId id;
                 std::string path;
@@ -153,6 +171,8 @@ namespace mir
                     ++settled;
             });
         std::erase_if(mFailed, [&](auto key) { return !alive.contains(key); });
+        std::erase_if(mRequestedModels, [&](const auto &entry) { return !alive.contains(entry.first); });
+        PruneModels();
         if (SceneLoadGroup *group = context.world.TryResource<SceneLoadGroup>())
             group->Report(this, required, settled);
     }
@@ -194,7 +214,11 @@ namespace mir
                     const auto packed = PackEntity(entity);
                     alive.insert(packed);
                     if (player.ModelName().empty() && player.ModelAsset().IsNull())
+                    {
+                        mRequestedModels.erase(packed);
+                        mFailed.erase(packed);
                         return;
+                    }
                     ++required;
                     AssetId id;
                     std::string path;
@@ -212,7 +236,7 @@ namespace mir
                         if (player.IsPlaying() && IsSimulating(context.world))
                             player.SetTime(player.Time() + context.dt * player.Speed());
                         uint32_t clip = uint32_t(player.Clip());
-                        const auto &animations = data->resources->model.animations;
+                        const auto &animations = data->resources->model->animations;
                         if (!player.AnimationAsset().IsNull())
                         {
                             const auto found = std::find(animations.begin(), animations.end(), player.AnimationAsset());
@@ -229,7 +253,7 @@ namespace mir
                         else if (clip < animations.size())
                             player.SetAnimationAsset(animations[clip]);
                         if (!player.Loops() && clip < data->resources->clips.size())
-                            player.SetTime(std::clamp(player.Time(), 0.0f, data->resources->clips[clip].duration));
+                            player.SetTime(std::clamp(player.Time(), 0.0f, data->resources->clips[clip]->duration));
                         ModelEvaluationInput sample;
                         sample.resources = data->resources.get();
                         sample.world = transform.Pose();
@@ -288,7 +312,7 @@ namespace mir
                 {
                     for (auto &node : result.value.nodes)
                     {
-                        const auto mesh = input.loaded->resources->model.nodes[node.index].mesh;
+                        const auto mesh = input.loaded->resources->model->nodes[node.index].mesh;
                         const auto &gpu = input.loaded->meshes.at(mesh.value);
                         const WorldPose *previous = nullptr;
                         if (auto entity = mPreviousPoses.find(input.entity); entity != mPreviousPoses.end())
@@ -319,6 +343,7 @@ namespace mir
             std::erase_if(overrides->instances, [&](const auto &p) { return !alive.contains(p.first); });
         std::erase_if(mFailed, [&](auto key) { return !alive.contains(key); });
         std::erase_if(mRequestedModels, [&](const auto &entry) { return !alive.contains(entry.first); });
+        PruneModels();
         std::swap(mPreviousPoses, mCurrentPoses);
     }
 } // namespace mir
