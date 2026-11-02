@@ -45,9 +45,12 @@ A surface material is one UTF-8 JSON object. Unknown root keys are preserved in
 The typed `SurfaceMaterialAsset` (tag `0x4d525355`, content version 1) is distinct
 from the legacy glTF `MaterialAsset`. It stores the source contract and packed
 texture asset ids in `albedoTexture`, `normalTexture` and `surfaceTexture`.
-The runtime material library resolves those ids into reflected `TextureRef`
-fields before creating the GPU material. The cooker preserves parameter JSON
-without interpreting reflected fields.
+The runtime material library requests that payload through
+`AsyncAssetService` and every cooked texture through the renderer's shared
+`TextureLoadTracker`, keyed by the asset's content. It injects the ready texture
+handles into the reflected `TextureRef` fields before creating the GPU material
+on the main thread. The cooker preserves parameter JSON without interpreting
+reflected fields.
 
 ## Packing
 
@@ -309,17 +312,23 @@ within the checked double arithmetic tolerance. The terrain material's `normalYU
 normal-map green channel. Region draw units use the coarse triangle's macro
 normal and UV density, which is the documented Region normal limitation.
 
-A cook reload stages a complete candidate material generation before the active
-one is touched. Abort disposes only the candidate; commit swaps it and retires
-the previous material and texture batch. See
+A cook reload commits the manifest, then the library starts asynchronous
+replacements for the live assets. The old material and its texture claims stay
+valid while a replacement decodes or uploads, and stay valid if it fails.
+Frontends of one asset are prepared, validated and created together; any failure
+keeps the whole previous generation. Superseded loads are dropped before they can
+publish, unchanged content reuses shared texture uploads, and a failed attempt is
+remembered until the next reload. Replaced handles are retired only after every
+active mesh and terrain owner acknowledges the replacing generation. See
 ADR 0004 (local ADR).
 
 ## Macro variation and parallax
 
 A terrain material may add a reflected `TextureRef macro` plus
 `macroPeriodMeters`, `macroStrength`, `macroHueShiftDegrees` and
-`macroRoughnessContrast`. The macro texture is generated once by the renderer:
-it is deterministic, tileable, low-frequency and shared by every material.
+`macroRoughnessContrast`. The macro texture is generated once through the
+renderer's shared texture upload cache: it is deterministic, tileable,
+low-frequency and shared by every material.
 `uv0 / macroPeriodMeters` drives the extra sample; the period follows the same
 strict packed-float divisibility rule as `tileSizeMeters`, and an authored zero
 strength reproduces the ADR 0004 shading exactly.

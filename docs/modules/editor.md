@@ -261,7 +261,10 @@ and logical asset path, previews only dirty numeric fields through
 `SurfaceMaterialLibrary::PreviewParameters`, and saves only changed recipe
 fields through `UpdateJsonFile`. Its accepted baseline is the cooked
 `SurfaceMaterialAsset`, not raw source text; a cook's apply identity and the
-renderer generation decide when the baseline moves. A shader-only field addition
+renderer generation decide when the baseline moves. The renderer replaces the
+shared material asynchronously: the binding changes when the replacement
+publishes, and a failed replacement retains the previous accepted material. A
+shader-only field addition
 fills the new control from the validated catalog or typed default and a deleted
 field stays authored, reported as unsupported and preserved on save, so the
 panel opens without a recook. A draft is previewed while any frontend of its

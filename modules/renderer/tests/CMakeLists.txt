@@ -15,6 +15,7 @@ engine_add_module_tests(renderer
     MaterialResolution.tests.cpp
     SurfaceMaterialCatalog.tests.cpp
     SurfaceMaterialLibrary.tests.cpp
+    SurfaceMaterialAsync.tests.cpp
     SurfaceMaterialLayout.tests.cpp
     MeshAssetDecoder.tests.cpp
     MeshLoadTracker.tests.cpp

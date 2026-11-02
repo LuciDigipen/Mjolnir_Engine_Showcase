@@ -22,7 +22,6 @@ namespace mir
     class ActiveCameraSystem;
     class AssetResolver;
     class AsyncAssetService;
-    class AssetsModule;
     class MeshResolveSystem;
     class RenderSystem;
 
@@ -44,7 +43,7 @@ namespace mir
     public:
         // throws SetupError (System) when Vulkan cannot start
         // surface is the window; the renderer never links window
-        RendererModule(ModuleContext context, const ISurfaceProvider &surface, AssetsModule &assets,
+        RendererModule(ModuleContext context, const ISurfaceProvider &surface,
             const RendererModuleSettings &settings);
         ~RendererModule();
 
@@ -71,8 +70,7 @@ namespace mir
         Registration mSceneLoad;
         Registration mPlayBegin;
         Registration mPlayEnd;
-        Registration mReloadPrepare;
-        Registration mReloadAbort;
+        Registration mFrameBegin;
         Registration mReloadCommit;
     };
 }

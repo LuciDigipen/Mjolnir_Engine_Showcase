@@ -190,22 +190,38 @@ namespace mir
         {
             const std::string logicalPath = surface->asset;
             const AssetId asset = mResolver.ResolveFull(logicalPath);
-            std::string error;
-            const std::optional<SurfaceMaterialBinding> binding =
-                mSurfaceMaterials->Acquire(logicalPath, asset, "mesh", &error);
-            if (binding)
+            const SurfaceMaterialResolution resolution = mSurfaceMaterials->Resolve(logicalPath, asset, "mesh");
+            if (resolution.status == SurfaceMaterialStatus::Ready && resolution.binding)
             {
                 resolved.mSurface = true;
                 resolved.mSurfacePath = logicalPath;
                 resolved.mSurfaceAsset = asset;
                 return mMaterials
-                    .emplace(shaderName, CachedMaterial{ .mMaterial = binding->material, .mBorrowed = true,
-                                                        .mSurfacePath = logicalPath, .mSurfaceAsset = asset })
+                    .emplace(shaderName, CachedMaterial{ .mMaterial = resolution.binding->material,
+                                                        .mBorrowed = true,
+                                                        .mSurfacePath = logicalPath,
+                                                        .mSurfaceAsset = asset,
+                                                        .mSurfaceStatus = SurfaceMaterialStatus::Ready })
+                    .first->second.mMaterial;
+            }
+            if (resolution.status == SurfaceMaterialStatus::Pending)
+            {
+                // The first load draws the engine placeholder; publication moves the library generation and
+                // resolves this shader again.
+                resolved.mSurface = true;
+                resolved.mSurfacePath = logicalPath;
+                resolved.mSurfaceAsset = asset;
+                return mMaterials
+                    .emplace(shaderName, CachedMaterial{ .mMaterial = mRenderer.ErrorMaterial(),
+                                                        .mBorrowed = true,
+                                                        .mSurfacePath = logicalPath,
+                                                        .mSurfaceAsset = asset,
+                                                        .mSurfaceStatus = SurfaceMaterialStatus::Pending })
                     .first->second.mMaterial;
             }
             // Retried when the library generation moves; an error material
             // would hide that the authored surface failed.
-            MIR_LOG_ERROR("MeshResolveSystem: surface material '{}': {}", shaderName, error);
+            MIR_LOG_ERROR("MeshResolveSystem: surface material '{}': {}", shaderName, resolution.error);
             return mRenderer.ErrorMaterial();
         }
 
@@ -231,8 +247,7 @@ namespace mir
             if (names.mSurface)
                 live.emplace(names.mSurfacePath, SurfaceMaterialUse{ .logicalPath = names.mSurfacePath,
                                                                      .asset = names.mSurfaceAsset,
-                                                                     .frontend = "mesh",
-                                                                     .required = true });
+                                                                     .frontend = "mesh" });
         if (live == mUses)
             return;
         mUses = std::move(live);
@@ -267,6 +282,8 @@ namespace mir
     {
         World &world = context.world;
 
+        if (mSurfaceMaterials != nullptr)
+            mSurfaceMaterials->Advance();
         mTracker->Update();
         RebindSurfaceMaterials();
 
@@ -328,7 +345,16 @@ namespace mir
                 {
                     ++required;
                     const auto cached = mMeshes.find(resolved.mMesh);
-                    if (world.Has<MeshBounds>(entity) || (cached != mMeshes.end() && Failed(cached->second)))
+                    const bool meshSettled =
+                        world.Has<MeshBounds>(entity) || (cached != mMeshes.end() && Failed(cached->second));
+                    bool materialPending = false;
+                    if (resolved.mSurface)
+                    {
+                        const auto material = mMaterials.find(resolved.mShader);
+                        materialPending = material != mMaterials.end() &&
+                            material->second.mSurfaceStatus == SurfaceMaterialStatus::Pending;
+                    }
+                    if (meshSettled && !materialPending)
                         ++settled;
                 }
             });
@@ -378,5 +404,7 @@ namespace mir
                 world.RemoveComponent<MeshBounds>(entity);
             }
         }
+        if (mSurfaceMaterials != nullptr && mUseOwner != 0)
+            mSurfaceMaterials->AcknowledgeGeneration(mUseOwner, mLibraryGeneration);
     }
 }

@@ -7,14 +7,16 @@
  *
  */
 #include <renderer/SurfaceMaterialLibrary.h>
+#include <renderer/SurfaceMaterialHost.h>
 #include <renderer/SurfaceMaterialTexture.h>
 
-#include <assets/AssetCache.h>
+#include <assets/AsyncAssetService.h>
 #include <assets/ModelAsset.h>
-#include <core/fs/FileIO.h>
-#include <core/fs/Paths.h>
+#include <core/log/Log.h>
+#include <renderer/ITextureUploader.h>
 #include <renderer/MaterialReflection.h>
 #include <renderer/SurfaceMaterialCatalog.h>
+#include <renderer/TextureUpload.h>
 #include <renderer/VulkanRenderer.h>
 
 #include <nlohmann/json.hpp>
@@ -27,6 +29,7 @@
 #include <cstring>
 #include <format>
 #include <iterator>
+#include <map>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -159,6 +162,65 @@ namespace mir
             const float bottom = c + (d - c) * sx;
             return top + (bottom - top) * sy;
         }
+
+        std::span<const uint32_t> SurfaceMaterialIdentityTags()
+        {
+            static constexpr uint32_t kTags[]{ kSurfaceMaterialAssetTypeTag, kTextureAssetTypeTag };
+            return kTags;
+        }
+
+        std::span<const uint32_t> TextureIdentityTags()
+        {
+            static constexpr uint32_t kTags[]{ kTextureAssetTypeTag };
+            return kTags;
+        }
+
+        bool DecodeSurfaceMaterial(const AssetBlobView &root, const AssetDependencies &, SurfaceMaterialAsset &out,
+            std::string &error)
+        {
+            return ReadTypedAsset(root, out, error);
+        }
+
+        uint64_t StringBytes(const std::string &value)
+        {
+            const char *object = reinterpret_cast<const char *>(&value);
+            const bool inline_ = value.data() >= object && value.data() < object + sizeof(value);
+            return inline_ ? 0 : value.capacity() + 1;
+        }
+
+        uint64_t SurfaceMaterialBytes(const SurfaceMaterialAsset &asset)
+        {
+            uint64_t bytes = sizeof(asset) + asset.frontends.capacity() * sizeof(std::string) +
+                asset.textures.capacity() * sizeof(SurfaceMaterialTexture);
+            bytes += StringBytes(asset.shaderFile) + StringBytes(asset.shaderType) +
+                StringBytes(asset.parametersJson) + StringBytes(asset.unknownJson);
+            for (const std::string &frontend : asset.frontends)
+                bytes += StringBytes(frontend);
+            for (const SurfaceMaterialTexture &texture : asset.textures)
+                bytes += StringBytes(texture.role) + StringBytes(texture.path);
+            return bytes;
+        }
+
+        const AssetDecoder<SurfaceMaterialAsset> kSurfaceMaterialDecoder{
+            DecodeSurfaceMaterial, {}, SurfaceMaterialBytes };
+
+        int FrontendRank(std::string_view frontend)
+        {
+            return frontend == "mesh" ? 0 : frontend == "terrain" ? 1 : 2;
+        }
+
+        void SetShadingValuesFromRecord(SurfaceMaterialBinding &binding, const MaterialLayout &layout,
+            std::span<const std::byte> record)
+        {
+            binding.tilePeriodMeters = SurfaceMaterialTilePeriodFromRecord(layout, record);
+            binding.macro = SurfaceMaterialMacroParametersFromRecord(layout, record);
+            binding.parallax = SurfaceMaterialParallaxParametersFromRecord(layout, record);
+        }
+    }
+
+    const AssetDecoder<SurfaceMaterialAsset> &SurfaceMaterialDecoder()
+    {
+        return kSurfaceMaterialDecoder;
     }
 
     std::optional<SurfaceTextureRole> SurfaceTextureRoleForField(std::string_view field)
@@ -226,17 +288,6 @@ namespace mir
         ReadFloat(layout, record, "parallaxFadeStartMeters", parameters.fadeStartMeters);
         ReadFloat(layout, record, "parallaxFadeEndMeters", parameters.fadeEndMeters);
         return parameters;
-    }
-
-    namespace
-    {
-        void SetShadingValuesFromRecord(SurfaceMaterialBinding &binding, const MaterialLayout &layout,
-            std::span<const std::byte> record)
-        {
-            binding.tilePeriodMeters = SurfaceMaterialTilePeriodFromRecord(layout, record);
-            binding.macro = SurfaceMaterialMacroParametersFromRecord(layout, record);
-            binding.parallax = SurfaceMaterialParallaxParametersFromRecord(layout, record);
-        }
     }
 
     bool ValidateSurfaceMaterialMacroParameters(const SurfaceMaterialMacroParameters &parameters, std::string *error)
@@ -395,38 +446,74 @@ namespace mir
         }
     }
 
-    void SurfaceMaterialLibrary::TakeResources(std::vector<MaterialHandle> &materials,
-        std::vector<TextureHandle> &textures) const
+    SurfaceMaterialLibrary::SurfaceMaterialLibrary() = default;
+
+    SurfaceMaterialLibrary::~SurfaceMaterialLibrary() = default;
+
+    std::string SurfaceMaterialLibrary::MaterialKey(std::string_view logicalPath, std::string_view frontend)
+    {
+        return mir::MaterialKey(logicalPath, frontend);
+    }
+
+    void SurfaceMaterialLibrary::TakeResources(std::vector<MaterialHandle> &materials) const
     {
         for (const auto &[key, entry] : mEntries)
-            if (entry.binding)
+            if (entry.binding && !entry.binding->material.IsNull())
                 materials.push_back(entry.binding->material);
-        for (const auto &[asset, texture] : mTextures)
-            textures.push_back(texture);
-        for (const TextureHandle texture : mDefaults)
-            if (!texture.IsNull())
-                textures.push_back(texture);
+        for (const RetiredResources &retired : mRetired)
+            materials.insert(materials.end(), retired.materials.begin(), retired.materials.end());
+        materials.insert(materials.end(), mUncommittedMaterials.begin(), mUncommittedMaterials.end());
     }
 
     void SurfaceMaterialLibrary::ReleaseAll()
     {
         std::vector<MaterialHandle> materials;
-        std::vector<TextureHandle> textures;
-        TakeResources(materials, textures);
-        materials.insert(materials.end(), mRetiredMaterials.begin(), mRetiredMaterials.end());
-        mRetiredMaterials.clear();
-        if (mRenderer != nullptr)
-            mRenderer->ReleaseModelResources(std::span<const MeshHandle>{}, materials, textures);
+        TakeResources(materials);
+        if (mHost != nullptr && !materials.empty())
+            mHost->ReleaseSurfaceResources({}, materials, {});
+        mRetired.clear();
+        mUncommittedMaterials.clear();
         mEntries.clear();
-        mTextures.clear();
+        mLoads.clear();
+        mBindingTextures.clear();
         mActive.clear();
         mActiveKeys.clear();
+        mUsagePublished = false;
         mTerrainUses.clear();
+        mTerrainAck = 0;
         for (auto &[owner, uses] : mUseOwners)
+        {
             uses.clear();
-        for (TextureHandle &texture : mDefaults)
-            texture = kNullTexture;
+            mOwnerAcks[owner] = mGeneration + 1;
+        }
         ++mGeneration;
+    }
+
+    void SurfaceMaterialLibrary::Bind(AsyncAssetService *assets, VulkanRenderer &renderer)
+    {
+        if (mHost != nullptr)
+            ReleaseAll();
+        mOwnedHost = MakeVulkanSurfaceMaterialHost(renderer);
+        mHost = mOwnedHost.get();
+        mAssets = assets;
+        mTextureLoads = renderer.TextureLoads(assets);
+        ++mGeneration;
+    }
+
+    void SurfaceMaterialLibrary::Bind(AsyncAssetService *assets, SurfaceMaterialHost &host, ITextureUploader &textures)
+    {
+        if (mHost != nullptr)
+            ReleaseAll();
+        mOwnedHost.reset();
+        mHost = &host;
+        mAssets = assets;
+        mTextureLoads = textures.TextureLoads(assets);
+        ++mGeneration;
+    }
+
+    void SurfaceMaterialLibrary::Reset()
+    {
+        ReleaseAll();
     }
 
     void SurfaceMaterialLibrary::SetMaterialValidator(SurfaceMaterialValidator validator)
@@ -436,8 +523,8 @@ namespace mir
 
     const SurfaceMaterialRegistration *SurfaceMaterialLibrary::FindMeshSurface(std::string_view shaderName) const
     {
-        if (mRenderer == nullptr) return nullptr;
-        for (const SurfaceMaterialRegistration &registration : mRenderer->SurfaceMaterials().materials)
+        if (mHost == nullptr) return nullptr;
+        for (const SurfaceMaterialRegistration &registration : mHost->MaterialCatalog().materials)
             if (registration.frontend == "mesh" && registration.stem == shaderName) return &registration;
         return nullptr;
     }
@@ -491,47 +578,60 @@ namespace mir
         return !mRecordValidator || mRecordValidator(layout, bytes, error);
     }
 
-    void SurfaceMaterialLibrary::ReleaseRetired()
+    void SurfaceMaterialLibrary::TryReleaseRetired()
     {
-        if (mRetiredMaterials.empty())
+        if (mRetired.empty() && mUncommittedMaterials.empty())
             return;
-        if (mRenderer != nullptr)
-            mRenderer->ReleaseModelResources(std::span<const MeshHandle>{}, mRetiredMaterials,
-                std::span<const TextureHandle>{});
-        mRetiredMaterials.clear();
+        const auto acknowledged = [this](uint64_t generation)
+        {
+            for (const auto &[owner, ack] : mOwnerAcks)
+                if (ack < generation)
+                    return false;
+            return mTerrainUses.empty() || mTerrainAck >= generation;
+        };
+        std::vector<MaterialHandle> materials;
+        for (auto it = mRetired.begin(); it != mRetired.end();)
+        {
+            if (!acknowledged(it->generation))
+            {
+                ++it;
+                continue;
+            }
+            materials.insert(materials.end(), it->materials.begin(), it->materials.end());
+            it = mRetired.erase(it);
+        }
+        if (mHost != nullptr && !materials.empty())
+            mHost->ReleaseSurfaceResources({}, materials, {});
+        if (mHost != nullptr && !mUncommittedMaterials.empty())
+        {
+            mHost->ReleaseSurfaceResources({}, mUncommittedMaterials, {});
+            mUncommittedMaterials.clear();
+        }
     }
 
     void SurfaceMaterialLibrary::RebuildActiveMaterials()
     {
         // Terrain resolves bindings before it calls this, so a schema-replaced
         // handle is no longer the one any instance will draw next.
-        ReleaseRetired();
         mActive.clear();
         mActiveKeys.clear();
         const auto add = [this](const SurfaceMaterialUse &use)
         {
             const std::string key = MaterialKey(use.logicalPath, use.frontend);
             if (mActiveKeys.insert(key).second)
-            {
                 mActive.push_back(use);
-                return;
-            }
-            for (SurfaceMaterialUse &existing : mActive)
-                if (MaterialKey(existing.logicalPath, existing.frontend) == key)
-                {
-                    existing.required = existing.required || use.required;
-                    break;
-                }
         };
         for (const SurfaceMaterialUse &use : mTerrainUses)
             add(use);
         for (const auto &[owner, uses] : mUseOwners)
             for (const SurfaceMaterialUse &use : uses)
                 add(use);
+        TryReleaseRetired();
     }
 
     void SurfaceMaterialLibrary::SetActiveMaterials(std::span<const SurfaceMaterialUse> uses)
     {
+        mUsagePublished = true;
         mTerrainUses.assign(uses.begin(), uses.end());
         RebuildActiveMaterials();
     }
@@ -540,6 +640,7 @@ namespace mir
     {
         const uint64_t owner = mNextUseOwner++;
         mUseOwners.emplace(owner, std::vector<SurfaceMaterialUse>{});
+        mOwnerAcks[owner] = mGeneration;
         return owner;
     }
 
@@ -548,6 +649,7 @@ namespace mir
         const auto found = mUseOwners.find(owner);
         if (found == mUseOwners.end())
             return;
+        mUsagePublished = true;
         found->second.assign(uses.begin(), uses.end());
         RebuildActiveMaterials();
     }
@@ -556,243 +658,258 @@ namespace mir
     {
         if (mUseOwners.erase(owner) == 0)
             return;
+        mOwnerAcks.erase(owner);
         RebuildActiveMaterials();
     }
 
-    void SurfaceMaterialLibrary::Bind(AssetCache &assets, VulkanRenderer &renderer)
+    void SurfaceMaterialLibrary::AcknowledgeGeneration(uint64_t owner, uint64_t generation)
     {
-        if (mRenderer != nullptr)
-            ReleaseAll();
-        mAssets = &assets;
-        mRenderer = &renderer;
-        ++mGeneration;
+        if (owner == 0)
+            mTerrainAck = std::max(mTerrainAck, generation);
+        else if (const auto found = mOwnerAcks.find(owner); found != mOwnerAcks.end())
+            found->second = std::max(found->second, generation);
+        TryReleaseRetired();
     }
 
-    void SurfaceMaterialLibrary::Invalidate()
+    uint64_t SurfaceMaterialLibrary::CurrentIdentity(AssetId asset) const
     {
-        ReleaseAll();
+        if (mAssets == nullptr)
+            return 0;
+        const uint64_t content = mAssets->ContentOfTags(asset, SurfaceMaterialIdentityTags());
+        return content != 0 ? content : 0x8000000000000000ull | (uint64_t(mAssets->Revision()) + 1);
     }
 
-    void SurfaceMaterialLibrary::Reset()
+    SurfaceMaterialLibrary::Entry &SurfaceMaterialLibrary::EnsureEntry(std::string_view logicalPath, AssetId asset,
+        std::string_view frontend)
     {
-        ReleaseAll();
-    }
-
-    bool SurfaceMaterialLibrary::PrepareReload(AssetCache &candidateAssets, VulkanRenderer &renderer,
-        std::string *error)
-    {
-        mCandidate.reset();
-        if (mRenderer == nullptr)
+        const std::string key = MaterialKey(logicalPath, frontend);
+        const auto [stored, inserted] = mEntries.try_emplace(key);
+        Entry &entry = stored->second;
+        if (inserted)
         {
-            if (error != nullptr)
-                *error = "the material library is not bound";
+            entry.logicalPath = std::string(logicalPath);
+            entry.asset = asset;
+            entry.frontend = std::string(frontend);
+        }
+        return entry;
+    }
+
+    bool SurfaceMaterialLibrary::StartLoad(Entry &entry)
+    {
+        if (mAssets == nullptr || mHost == nullptr)
+        {
+            entry.failed = true;
+            entry.error = "the material library is not bound to an asset service";
+            entry.attemptRevision = 0;
             return false;
         }
+        const std::string key = MaterialKey(entry.logicalPath, entry.frontend);
+        mLoads.erase(key);
+        entry.failed = false;
+        entry.error.clear();
 
-        auto candidate = std::make_unique<SurfaceMaterialLibrary>();
-        candidate->mAssets = &candidateAssets;
-        candidate->mRenderer = &renderer;
-        candidate->mGeneration = mGeneration + 1;
-        candidate->mSchemaEpoch = mSchemaEpoch;
-        candidate->mValidator = mValidator;
-        candidate->mRecordValidator = mRecordValidator;
-
-        for (const SurfaceMaterialUse &use : mActive)
-        {
-            const std::string key = MaterialKey(use.logicalPath, use.frontend);
-            Entry staged;
-            staged.logicalPath = use.logicalPath;
-            staged.asset = use.asset;
-            staged.frontend = use.frontend;
-            if (candidate->CreateFromAsset(use.logicalPath, use.asset, use.frontend, staged, nullptr,
-                    std::span<const std::byte>{}, staged.error).IsNull())
-            {
-                if (use.required)
-                {
-                    if (error != nullptr)
-                        *error = std::format("material '{}': {}", use.logicalPath, staged.error);
-                    candidate->ReleaseAll();
-                    return false;
-                }
-            }
-            candidate->mEntries.emplace(key, std::move(staged));
-        }
-        mCandidate = std::move(candidate);
+        Load load;
+        load.identity = CurrentIdentity(entry.asset);
+        load.revision = mAssets->Revision();
+        load.assetLease = mAssets->RequestLease(entry.asset, SurfaceMaterialDecoder());
+        mLoads.emplace(key, std::move(load));
         return true;
     }
 
-    void SurfaceMaterialLibrary::CommitReload(AssetCache &assets)
+    bool SurfaceMaterialLibrary::ParseLoad(Entry &entry, Load &load, std::string &error)
     {
-        if (!mCandidate)
-            return;
-
-        std::vector<MaterialHandle> oldMaterials;
-        std::vector<TextureHandle> oldTextures;
-        TakeResources(oldMaterials, oldTextures);
-
-        mEntries = std::move(mCandidate->mEntries);
-        mTextures = std::move(mCandidate->mTextures);
-        for (size_t i = 0; i < static_cast<size_t>(SurfaceTextureRole::Count); ++i)
-            mDefaults[i] = mCandidate->mDefaults[i];
-        mAssets = &assets;
-        mRenderer = mCandidate->mRenderer;
-        mGeneration = mCandidate->mGeneration;
-        mCandidate->mEntries.clear();
-        mCandidate->mTextures.clear();
-        for (TextureHandle &texture : mCandidate->mDefaults)
-            texture = kNullTexture;
-        mCandidate.reset();
-
-        mRenderer->ReleaseModelResources({}, oldMaterials, oldTextures);
-    }
-
-    void SurfaceMaterialLibrary::AbortReload()
-    {
-        if (!mCandidate)
-            return;
-        mCandidate->ReleaseAll();
-        mCandidate.reset();
-    }
-
-    TextureHandle SurfaceMaterialLibrary::DefaultTexture(SurfaceTextureRole role)
-    {
-        TextureHandle &cached = mDefaults[static_cast<size_t>(role)];
-        if (!cached.IsNull() || mRenderer == nullptr)
-            return cached;
-
-        const std::array<std::byte, 4> white{
-            std::byte{255}, std::byte{255}, std::byte{255}, std::byte{255}};
-        const std::array<std::byte, 4> flatNormal{
-            std::byte{128}, std::byte{128}, std::byte{255}, std::byte{255}};
-        const std::array<std::byte, 4> flatSurface{
-            std::byte{255}, std::byte{128}, std::byte{10}, std::byte{255}};
-
-        switch (role)
+        const auto asset = load.assetLease.Acquire();
+        if (!asset)
         {
-        case SurfaceTextureRole::Albedo:
-            cached = mRenderer->CreateTexture(
-                TextureDesc{.width = 1, .height = 1, .pixels = std::as_bytes(std::span(white)), .srgb = true});
-            break;
-        case SurfaceTextureRole::Normal:
-            cached = mRenderer->CreateTexture(
-                TextureDesc{.width = 1, .height = 1, .pixels = std::as_bytes(std::span(flatNormal)), .srgb = false});
-            break;
-        case SurfaceTextureRole::Surface:
-            cached = mRenderer->CreateTexture(
-                TextureDesc{.width = 1, .height = 1, .pixels = std::as_bytes(std::span(flatSurface)), .srgb = false});
-            break;
-        case SurfaceTextureRole::Macro:
-        {
-            constexpr uint32_t kMacroSize = 256;
-            std::vector<std::byte> pixels;
-            BuildSurfaceMacroTexture(kMacroSize, pixels);
-            cached = mRenderer->CreateTexture(TextureDesc{.width = kMacroSize,
-                                                          .height = kMacroSize,
-                                                          .pixels = std::as_bytes(std::span(pixels)),
-                                                          .srgb = false,
-                                                          .generateMips = true});
-            break;
+            error = "its decoded data is missing";
+            return false;
         }
-        case SurfaceTextureRole::Count:
-            break;
-        }
-        return cached;
-    }
-
-    TextureHandle SurfaceMaterialLibrary::EnsureTexture(SurfaceTextureRole role, AssetId asset, std::string &error)
-    {
-        if (asset.IsNull())
-            return DefaultTexture(role);
-        if (mAssets == nullptr || mRenderer == nullptr)
+        if (std::find(asset->frontends.begin(), asset->frontends.end(), entry.frontend) == asset->frontends.end())
         {
-            SetError(error, "the material library is not bound");
-            return kNullTexture;
-        }
-
-        const auto cached = mTextures.find(asset.value);
-        if (cached != mTextures.end())
-            return cached->second;
-
-        TextureAsset texture;
-        if (!LoadTypedAsset(*mAssets, asset, texture, error))
-            return kNullTexture;
-
-        TextureDesc desc{.width = texture.width,
-                         .height = texture.height,
-                         .pixels = std::as_bytes(std::span(texture.rgba)),
-                         .srgb = texture.format == TextureFormat::Rgba8Srgb,
-                         .generateMips = texture.mips.empty()};
-        for (const TextureMip &mip : texture.mips)
-            desc.mips.push_back({mip.width, mip.height,
-                std::as_bytes(std::span(texture.mipData).subspan(mip.offset, mip.length))});
-
-        const TextureHandle handle = mRenderer->CreateTexture(desc);
-        if (handle.IsNull())
-        {
-            SetError(error, "the packed texture could not be uploaded");
-            return kNullTexture;
-        }
-        mTextures.emplace(asset.value, handle);
-        return handle;
-    }
-
-    MaterialHandle SurfaceMaterialLibrary::CreateFromAsset(std::string_view logicalPath, AssetId asset,
-        std::string_view frontend, Entry &entry, const MaterialLayout *peerLayout,
-        std::span<const std::byte> peerRecord, std::string &error)
-    {
-        if (mAssets == nullptr || mRenderer == nullptr)
-        {
-            SetError(error, "the material library is not bound");
-            return kNullMaterial;
-        }
-
-        SurfaceMaterialAsset materialAsset;
-        if (!LoadTypedAsset(*mAssets, asset, materialAsset, error))
-            return kNullMaterial;
-        if (std::find(materialAsset.frontends.begin(), materialAsset.frontends.end(), frontend) ==
-            materialAsset.frontends.end())
-        {
-            SetError(error, "the material does not declare the requested frontend");
-            return kNullMaterial;
+            error = "the material does not declare the requested frontend";
+            return false;
         }
 
         const SurfaceMaterialRegistration *registration =
-            mRenderer->SurfaceMaterials().FindByAsset(logicalPath, frontend);
+            mHost->MaterialCatalog().FindByAsset(entry.logicalPath, entry.frontend);
         if (registration == nullptr)
         {
-            SetError(error, "no cooked surface material registration names this asset and frontend");
-            return kNullMaterial;
+            error = "no cooked surface material registration names this asset and frontend";
+            return false;
+        }
+        const std::optional<SurfaceMaterialSchema> schema = mHost->LoadSchema(*registration, &error);
+        if (!schema)
+            return false;
+
+        Json parameters;
+        try
+        {
+            parameters = Json::parse(asset->parametersJson);
+        }
+        catch (const std::exception &exception)
+        {
+            error = std::string("the material parameters are not JSON: ") + exception.what();
+            return false;
+        }
+        if (!parameters.is_object())
+        {
+            error = "the material parameters must be an object";
+            return false;
         }
 
-        const std::optional<SurfaceMaterialSchema> schema = LoadSurfaceMaterialSchema(*registration, &error);
+        if (mTextureLoads == nullptr)
+        {
+            error = "the texture uploader is not bound";
+            return false;
+        }
+        for (const MaterialFieldLayout &field : schema->layout.fields)
+        {
+            if (field.kind != MaterialFieldKind::TextureRef)
+                continue;
+            const std::optional<SurfaceTextureRole> role = SurfaceTextureRoleForField(field.name);
+            if (!role)
+            {
+                error = "the material texture field '" + field.name + "' has no packed role";
+                return false;
+            }
+            if (!EnsureTextureLoad(entry, load, *role, *asset, error))
+                return false;
+        }
+
+        load.materialAsset = asset;
+        load.parsed = true;
+        load.assetLease.Reset();
+        return true;
+    }
+
+    bool SurfaceMaterialLibrary::EnsureTextureLoad(Entry &entry, Load &load, SurfaceTextureRole role,
+        const SurfaceMaterialAsset &material, std::string &error)
+    {
+        const uint32_t index = static_cast<uint32_t>(role);
+        if (load.textures.contains(index))
+            return true;
+        if (mTextureLoads == nullptr)
+        {
+            error = "the texture uploader is not bound";
+            return false;
+        }
+
+        const AssetId textureAsset = AssetForRole(material, role);
+        if (!textureAsset.IsNull())
+        {
+            const UploadKey key{ textureAsset, UploadContent(mAssets, textureAsset, TextureIdentityTags()) };
+            mTextureLoads->Request(key, std::format("{} texture {:016x}", entry.logicalPath, textureAsset.value));
+            load.textures.emplace(index, TextureLoadLease(mTextureLoads, key));
+            return true;
+        }
+
+        const AssetId defaultAsset{ 0x4d52534400000000ull + index };
+        const UploadKey key{ defaultAsset, 1 };
+        mTextureLoads->RequestInline(key,
+            [role]() -> std::shared_ptr<const TextureUploadSource>
+            {
+                TextureDesc desc;
+                switch (role)
+                {
+                case SurfaceTextureRole::Albedo:
+                {
+                    static constexpr std::array<std::byte, 4> kWhite{
+                        std::byte{255}, std::byte{255}, std::byte{255}, std::byte{255} };
+                    desc = TextureDesc{ .width = 1, .height = 1, .pixels = std::as_bytes(std::span(kWhite)),
+                        .srgb = true };
+                    break;
+                }
+                case SurfaceTextureRole::Normal:
+                {
+                    static constexpr std::array<std::byte, 4> kFlatNormal{
+                        std::byte{128}, std::byte{128}, std::byte{255}, std::byte{255} };
+                    desc = TextureDesc{ .width = 1, .height = 1, .pixels = std::as_bytes(std::span(kFlatNormal)),
+                        .srgb = false };
+                    break;
+                }
+                case SurfaceTextureRole::Surface:
+                {
+                    static constexpr std::array<std::byte, 4> kFlatSurface{
+                        std::byte{255}, std::byte{128}, std::byte{10}, std::byte{255} };
+                    desc = TextureDesc{ .width = 1, .height = 1, .pixels = std::as_bytes(std::span(kFlatSurface)),
+                        .srgb = false };
+                    break;
+                }
+                case SurfaceTextureRole::Macro:
+                {
+                    constexpr uint32_t kMacroSize = 256;
+                    std::vector<std::byte> pixels;
+                    BuildSurfaceMacroTexture(kMacroSize, pixels);
+                    TextureDesc macro{ .width = kMacroSize, .height = kMacroSize,
+                        .pixels = std::as_bytes(std::span(pixels)), .srgb = false, .generateMips = true };
+                    TextureUploadSource source = PrepareTextureUpload(macro);
+                    if (source.desc.width == 0)
+                        return nullptr;
+                    return std::make_shared<const TextureUploadSource>(std::move(source));
+                }
+                case SurfaceTextureRole::Count:
+                    return nullptr;
+                }
+                TextureUploadSource source = PrepareTextureUpload(desc);
+                if (source.desc.width == 0)
+                    return nullptr;
+                return std::make_shared<const TextureUploadSource>(std::move(source));
+            },
+            std::format("{} default texture {}", entry.logicalPath, index));
+        load.textures.emplace(index, TextureLoadLease(mTextureLoads, key));
+        return true;
+    }
+
+    bool SurfaceMaterialLibrary::TexturesSettled(const Load &load) const
+    {
+        for (const auto &[role, claim] : load.textures)
+        {
+            const TextureLoad *view = claim.Get();
+            if (view == nullptr || (view->phase != AssetUploadPhase::Ready && view->phase != AssetUploadPhase::Failed))
+                return false;
+        }
+        return true;
+    }
+
+    bool SurfaceMaterialLibrary::BuildCandidateData(Entry &entry, Load &load, const MaterialLayout *peerLayout,
+        std::span<const std::byte> peerRecord, std::string &error)
+    {
+        const SurfaceMaterialRegistration *registration =
+            mHost->MaterialCatalog().FindByAsset(entry.logicalPath, entry.frontend);
+        if (registration == nullptr)
+        {
+            error = "no cooked surface material registration names this asset and frontend";
+            return false;
+        }
+        const std::optional<SurfaceMaterialSchema> schema = mHost->LoadSchema(*registration, &error);
         if (!schema)
-            return kNullMaterial;
+            return false;
         const MaterialLayout &layout = schema->layout;
 
         Json parameters;
         try
         {
-            parameters = Json::parse(materialAsset.parametersJson);
+            parameters = Json::parse(load.materialAsset->parametersJson);
         }
         catch (const std::exception &exception)
         {
-            SetError(error, std::string("the material parameters are not JSON: ") + exception.what());
-            return kNullMaterial;
+            error = std::string("the material parameters are not JSON: ") + exception.what();
+            return false;
         }
         if (!parameters.is_object())
         {
-            SetError(error, "the material parameters must be an object");
-            return kNullMaterial;
+            error = "the material parameters must be an object";
+            return false;
         }
 
-        const SamplerDesc sampler{.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
-                                  .useMips = true,
-                                  .maxAnisotropy = 4.0f};
-        const uint32_t samplerRow = mRenderer->MaterialSamplerRow(sampler);
+        const SamplerDesc sampler{ .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+                                   .useMips = true,
+                                   .maxAnisotropy = 4.0f };
+        const uint32_t samplerRow = mHost->MaterialSamplerRow(sampler);
         if (samplerRow == UINT32_MAX)
         {
-            SetError(error, "the material requires the shared sampler table");
-            return kNullMaterial;
+            error = "the material requires the shared sampler table";
+            return false;
         }
 
         for (const MaterialFieldLayout &field : layout.fields)
@@ -802,16 +919,31 @@ namespace mir
             const std::optional<SurfaceTextureRole> role = SurfaceTextureRoleForField(field.name);
             if (!role)
             {
-                SetError(error, "the material texture field '" + field.name + "' has no packed role");
-                return kNullMaterial;
+                error = "the material texture field '" + field.name + "' has no packed role";
+                return false;
             }
-            const TextureHandle texture = EnsureTexture(*role, AssetForRole(materialAsset, *role), error);
+            const auto found = load.textures.find(static_cast<uint32_t>(*role));
+            if (found == load.textures.end())
+            {
+                error = "the packed texture was not requested";
+                return false;
+            }
+            const TextureLoad *view = found->second.Get();
+            if (view == nullptr || view->phase != AssetUploadPhase::Ready)
+            {
+                error = "the packed texture did not load";
+                return false;
+            }
+            const TextureHandle texture = view->texture;
             if (texture.IsNull())
-                return kNullMaterial;
+            {
+                error = "the material texture could not be uploaded";
+                return false;
+            }
             if (field.size == 8)
-                parameters[field.name] = Json{{"image", texture.mIndex}, {"sampler", samplerRow}};
+                parameters[field.name] = Json{ { "image", texture.mIndex }, { "sampler", samplerRow } };
             else
-                parameters[field.name] = Json{{"image", texture.mIndex}};
+                parameters[field.name] = Json{ { "image", texture.mIndex } };
         }
 
         if (peerLayout != nullptr && !peerRecord.empty())
@@ -821,99 +953,453 @@ namespace mir
             const std::optional<std::string> merged =
                 MergePeerNumericParameters(layout, parameters.dump(), *peerLayout, peerRecord, &error);
             if (!merged)
-                return kNullMaterial;
+                return false;
             parameters = Json::parse(*merged);
         }
 
-        entry.layout = layout;
-        entry.mSchemaEpoch = mSchemaEpoch;
-        const std::optional<std::string> complete = CompleteMaterialParameters(layout, parameters.dump(),
-            registration->parametersJson, &error);
+        const std::optional<std::string> complete =
+            CompleteMaterialParameters(layout, parameters.dump(), registration->parametersJson, &error);
         if (!complete)
-            return kNullMaterial;
-        entry.parametersJson = *complete;
-        entry.schemaRevision = schema->revision;
+            return false;
         const std::optional<std::vector<std::byte>> record = PackMaterialRecord(layout, *complete, &error);
         if (!record)
-            return kNullMaterial;
+            return false;
 
         SurfaceMaterialBinding binding;
         SetShadingValuesFromRecord(binding, layout, *record);
-        if (!ValidateRecordForPublication(frontend, layout, *record, error))
-            return kNullMaterial;
+        if (!ValidateRecordForPublication(entry.frontend, layout, *record, error))
+            return false;
 
-        MaterialDesc desc;
-        desc.shaderName = registration->stem;
-        desc.surfaceMaterial = true;
-        desc.surfaceAsset = std::string(logicalPath);
-        desc.sampler = sampler;
-        desc.record = *record;
-        binding.material = mRenderer->CreateMaterial(desc);
-        if (binding.material.IsNull())
-        {
-            SetError(error, "the material pipeline or record could not be created");
-            return kNullMaterial;
-        }
-        entry.binding = binding;
-        return binding.material;
+        load.candidate = binding;
+        load.candidateLayout = layout;
+        load.candidateParametersJson = *complete;
+        load.candidateRevision = schema->revision;
+        load.candidateRecord = *record;
+        load.candidateBuilt = true;
+        return true;
     }
 
-    std::optional<SurfaceMaterialBinding> SurfaceMaterialLibrary::Acquire(std::string_view logicalPath,
-        AssetId asset, std::string_view frontend, std::string *error)
+    void SurfaceMaterialLibrary::FailLoad(Entry &entry, Load &load, std::string error)
     {
-        const std::string key = MaterialKey(logicalPath, frontend);
-        const auto found = mEntries.find(key);
-        if (found != mEntries.end())
+        const bool hadBinding = entry.binding.has_value();
+        if (hadBinding)
+            MIR_LOG_WARN("Surface material '{}' frontend '{}': replacement rejected, keeping the previous material: {}",
+                entry.logicalPath, entry.frontend, error);
+        else
         {
-            if (found->second.binding && found->second.mSchemaEpoch != mSchemaEpoch)
+            entry.error = error;
+            entry.failed = true;
+            entry.acceptedContent = 0;
+        }
+        entry.attemptRevision = load.revision;
+        mLoads.erase(MaterialKey(entry.logicalPath, entry.frontend));
+        ++mGeneration;
+    }
+
+    void SurfaceMaterialLibrary::PublishLoad(Entry &entry, Load &load, uint64_t generation)
+    {
+        const std::string key = MaterialKey(entry.logicalPath, entry.frontend);
+        RetiredResources retired;
+        retired.generation = generation;
+        if (entry.binding && !entry.binding->material.IsNull())
+            retired.materials.push_back(entry.binding->material);
+
+        const auto oldTextures = mBindingTextures.find(key);
+        if (oldTextures != mBindingTextures.end())
+        {
+            for (TextureLoadLease &claim : oldTextures->second)
+                retired.textures.push_back(std::move(claim));
+            mBindingTextures.erase(oldTextures);
+        }
+        if (!retired.materials.empty() || !retired.textures.empty())
+            mRetired.push_back(std::move(retired));
+
+        entry.binding = load.candidate;
+        entry.layout = load.candidateLayout;
+        entry.parametersJson = load.candidateParametersJson;
+        entry.schemaRevision = load.candidateRevision;
+        entry.mSchemaEpoch = mSchemaEpoch;
+        entry.failed = false;
+        entry.error.clear();
+        entry.acceptedContent = load.identity;
+        entry.acceptedRevision = load.revision;
+        std::vector<TextureLoadLease> claims;
+        claims.reserve(load.textures.size());
+        for (auto &[role, claim] : load.textures)
+            claims.push_back(std::move(claim));
+        mBindingTextures.emplace(key, std::move(claims));
+        mLoads.erase(key);
+    }
+
+    void SurfaceMaterialLibrary::PruneUnused()
+    {
+        if (!mUsagePublished)
+            return;
+        std::unordered_set<std::string> live;
+        for (const SurfaceMaterialUse &use : mActive)
+            live.insert(MaterialKey(use.logicalPath, use.frontend));
+
+        for (auto it = mEntries.begin(); it != mEntries.end();)
+        {
+            if (live.contains(it->first))
             {
-                std::string adoptError;
-                if (!AdoptAcceptedRecord(found->second, adoptError))
+                ++it;
+                continue;
+            }
+            Entry &entry = it->second;
+            RetiredResources retired;
+            retired.generation = mGeneration;
+            if (entry.binding && !entry.binding->material.IsNull())
+                retired.materials.push_back(entry.binding->material);
+            if (const auto textures = mBindingTextures.find(it->first); textures != mBindingTextures.end())
+            {
+                for (TextureLoadLease &claim : textures->second)
+                    retired.textures.push_back(std::move(claim));
+                mBindingTextures.erase(textures);
+            }
+            if (!retired.materials.empty() || !retired.textures.empty())
+                mRetired.push_back(std::move(retired));
+            mLoads.erase(it->first);
+            it = mEntries.erase(it);
+        }
+    }
+
+    void SurfaceMaterialLibrary::Advance()
+    {
+        if (mTextureLoads != nullptr)
+            mTextureLoads->Update();
+        if (mHost == nullptr)
+        {
+            TryReleaseRetired();
+            return;
+        }
+
+        PruneUnused();
+
+        std::map<uint64_t, std::vector<std::string>> groups;
+        for (auto &[key, load] : mLoads)
+        {
+            const auto entry = mEntries.find(key);
+            if (entry != mEntries.end())
+                groups[entry->second.asset.value].push_back(key);
+        }
+
+        for (auto &[asset, keys] : groups)
+        {
+            (void)asset;
+            bool pending = false;
+            std::string failure;
+            for (const std::string &key : keys)
+            {
+                Entry &entry = mEntries.at(key);
+                Load &load = mLoads.at(key);
+                if (load.failed)
                 {
-                    if (error != nullptr)
-                        *error = adoptError;
-                    return std::nullopt;
+                    if (failure.empty())
+                        failure = load.error;
+                    continue;
+                }
+                if (!load.parsed)
+                {
+                    const AssetLoadState state = load.assetLease.State();
+                    if (state == AssetLoadState::Queued)
+                    {
+                        pending = true;
+                        continue;
+                    }
+                    if (state != AssetLoadState::Ready)
+                    {
+                        load.failed = true;
+                        load.error = state == AssetLoadState::Failed ? load.assetLease.FailureReason()
+                                                                     : "its decoded data is no longer available";
+                        failure = load.error;
+                        continue;
+                    }
+                    std::string error;
+                    if (!ParseLoad(entry, load, error))
+                    {
+                        load.failed = true;
+                        load.error = std::move(error);
+                        failure = load.error;
+                        continue;
+                    }
+                }
+                if (load.failed)
+                {
+                    if (failure.empty())
+                        failure = load.error;
+                    continue;
+                }
+                if (!TexturesSettled(load))
+                {
+                    pending = true;
+                    continue;
+                }
+                for (const auto &[role, claim] : load.textures)
+                {
+                    const TextureLoad *view = claim.Get();
+                    if (view == nullptr || view->phase == AssetUploadPhase::Failed)
+                    {
+                        load.failed = true;
+                        load.error = "the packed texture did not load";
+                        failure = load.error;
+                        break;
+                    }
                 }
             }
-            if (found->second.binding)
-                return found->second.binding;
+            if (!failure.empty())
+            {
+                // One asset is one replacement transaction. No frontend of it may publish when another one
+                // fails, so every consumer keeps the old generation it already holds.
+                for (const std::string &key : keys)
+                {
+                    const auto found = mLoads.find(key);
+                    if (found == mLoads.end())
+                        continue;
+                    FailLoad(mEntries.at(key), found->second, failure);
+                }
+                continue;
+            }
+            if (pending)
+                continue;
 
-            // A failed entry retries here: consumers call Acquire only when they
-            // re-resolve, so a repaired or newly cooked asset recovers.
-            mEntries.erase(found);
+            std::vector<std::string> participants = keys;
+            std::sort(participants.begin(), participants.end(),
+                [&](const std::string &left, const std::string &right)
+                {
+                    return FrontendRank(mEntries.at(left).frontend) < FrontendRank(mEntries.at(right).frontend);
+                });
+
+            for (const std::string &key : participants)
+            {
+                Load &load = mLoads.at(key);
+                if (load.candidateBuilt)
+                    continue;
+                Entry &entry = mEntries.at(key);
+                const MaterialLayout *peerLayout = nullptr;
+                std::optional<MaterialRecordSnapshot> peerRecord;
+                for (const std::string &otherKey : participants)
+                {
+                    if (otherKey == key)
+                        continue;
+                    Load &otherLoad = mLoads.at(otherKey);
+                    if (otherLoad.candidateBuilt && !otherLoad.failed)
+                    {
+                        peerLayout = &otherLoad.candidateLayout;
+                        peerRecord.emplace();
+                        peerRecord->mLayout = otherLoad.candidateLayout;
+                        peerRecord->mBytes = otherLoad.candidateRecord;
+                        break;
+                    }
+                }
+                if (peerLayout == nullptr && participants.size() == 1)
+                {
+                    // A single frontend joining an asset whose peer is already live keeps the peer's numeric
+                    // values. A batch of frontends is a full replacement and starts from its new cooked values.
+                    for (auto &[otherKey, otherEntry] : mEntries)
+                    {
+                        if (otherKey == key || !otherEntry.binding || otherEntry.asset != entry.asset)
+                            continue;
+                        const auto snapshot = mHost->MaterialRecord(otherEntry.binding->material);
+                        if (snapshot)
+                        {
+                            peerRecord = snapshot;
+                            peerLayout = &peerRecord->mLayout;
+                        }
+                        break;
+                    }
+                }
+
+                std::string error;
+                const std::span<const std::byte> peerBytes =
+                    peerRecord ? std::span<const std::byte>(peerRecord->mBytes) : std::span<const std::byte>{};
+                if (!BuildCandidateData(entry, load, peerLayout, peerBytes, error))
+                {
+                    load.failed = true;
+                    load.error = std::move(error);
+                    failure = load.error;
+                }
+            }
+            if (failure.empty())
+            {
+                std::vector<MaterialHandle> created;
+                for (const std::string &key : participants)
+                {
+                    Load &load = mLoads.at(key);
+                    if (load.candidateCreated)
+                        continue;
+                    Entry &entry = mEntries.at(key);
+                    const SurfaceMaterialRegistration *registration =
+                        mHost->MaterialCatalog().FindByAsset(entry.logicalPath, entry.frontend);
+                    if (registration == nullptr)
+                    {
+                        load.failed = true;
+                        load.error = "no cooked surface material registration names this asset and frontend";
+                        failure = load.error;
+                        break;
+                    }
+                    const SamplerDesc sampler{ .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+                                               .useMips = true,
+                                               .maxAnisotropy = 4.0f };
+                    MaterialDesc desc;
+                    desc.shaderName = registration->stem;
+                    desc.surfaceMaterial = true;
+                    desc.surfaceAsset = entry.logicalPath;
+                    desc.sampler = sampler;
+                    desc.record = load.candidateRecord;
+                    const MaterialHandle material = mHost->CreateSurfaceMaterial(desc);
+                    if (material.IsNull())
+                    {
+                        load.failed = true;
+                        load.error = "the material pipeline or record could not be created";
+                        failure = load.error;
+                        break;
+                    }
+                    load.candidate.material = material;
+                    load.candidateCreated = true;
+                    created.push_back(material);
+                }
+                if (!failure.empty())
+                    mUncommittedMaterials.insert(mUncommittedMaterials.end(), created.begin(), created.end());
+            }
+
+            if (!failure.empty())
+            {
+                for (const std::string &key : keys)
+                {
+                    const auto found = mLoads.find(key);
+                    if (found == mLoads.end())
+                        continue;
+                    FailLoad(mEntries.at(key), found->second, failure);
+                }
+                continue;
+            }
+
+            const uint64_t generation = mGeneration + 1;
+            mGeneration = generation;
+            for (const std::string &key : keys)
+            {
+                const auto found = mLoads.find(key);
+                if (found == mLoads.end())
+                    continue;
+                PublishLoad(mEntries.at(key), found->second, generation);
+            }
         }
-
-        std::optional<MaterialRecordSnapshot> peer;
-        if (const Entry *const peerEntry = FindPeerEntry(asset, frontend); peerEntry != nullptr)
-            peer = mRenderer->MaterialRecord(peerEntry->binding->material);
-
-        Entry entry;
-        entry.logicalPath = std::string(logicalPath);
-        entry.asset = asset;
-        entry.frontend = std::string(frontend);
-        CreateFromAsset(logicalPath, asset, frontend, entry, peer ? &peer->mLayout : nullptr,
-            peer ? std::span<const std::byte>(peer->mBytes) : std::span<const std::byte>{}, entry.error);
-        const auto [stored, inserted] = mEntries.emplace(key, std::move(entry));
-        (void)inserted;
-        if (!stored->second.binding)
-        {
-            if (error != nullptr)
-                *error = stored->second.error;
-            return std::nullopt;
-        }
-
-        // A new binding is a new library state: instances and the panel must
-        // re-resolve so a late frontend joins the preview that is already live.
-        ++mGeneration;
-        return stored->second.binding;
+        TryReleaseRetired();
     }
 
-    SurfaceMaterialLibrary::Entry *SurfaceMaterialLibrary::FindPeerEntry(AssetId asset, std::string_view frontend)
+    void SurfaceMaterialLibrary::CommitReload()
     {
-        for (auto &[key, candidate] : mEntries)
-            if (candidate.binding && candidate.asset == asset && candidate.frontend != frontend)
-                return &candidate;
-        return nullptr;
+        if (mAssets == nullptr || mHost == nullptr)
+            return;
+
+        PruneUnused();
+        std::vector<std::string> keys;
+        keys.reserve(mActive.size());
+        for (const SurfaceMaterialUse &use : mActive)
+        {
+            Entry &entry = EnsureEntry(use.logicalPath, use.asset, use.frontend);
+            keys.push_back(MaterialKey(entry.logicalPath, entry.frontend));
+        }
+
+        for (const std::string &key : keys)
+        {
+            const auto found = mEntries.find(key);
+            if (found == mEntries.end())
+                continue;
+            Entry &entry = found->second;
+            const uint64_t identity = CurrentIdentity(entry.asset);
+            if (entry.binding && identity == entry.acceptedContent)
+            {
+                mLoads.erase(key);
+                entry.acceptedRevision = mAssets->Revision();
+                entry.failed = false;
+                entry.error.clear();
+                continue;
+            }
+            const auto load = mLoads.find(key);
+            if (load != mLoads.end() && !load->second.failed && load->second.identity == identity)
+                continue;
+            StartLoad(entry);
+        }
+        ++mGeneration;
+    }
+
+    SurfaceMaterialResolution SurfaceMaterialLibrary::Resolve(std::string_view logicalPath, AssetId asset,
+        std::string_view frontend)
+    {
+        SurfaceMaterialResolution resolution;
+        if (mHost == nullptr)
+        {
+            resolution.error = "the material library is not bound";
+            return resolution;
+        }
+        Entry &entry = EnsureEntry(logicalPath, asset, frontend);
+        const std::string key = MaterialKey(logicalPath, frontend);
+
+        if (entry.binding)
+        {
+            if (entry.mSchemaEpoch != mSchemaEpoch)
+            {
+                std::string error;
+                if (!AdoptAcceptedRecord(entry, error))
+                {
+                    resolution.error = std::move(error);
+                    return resolution;
+                }
+            }
+            if (mAssets != nullptr)
+            {
+                const uint32_t revision = mAssets->Revision();
+                if (entry.acceptedRevision != revision && entry.attemptRevision != revision)
+                {
+                    const uint64_t identity = CurrentIdentity(entry.asset);
+                    if (identity == entry.acceptedContent)
+                        entry.acceptedRevision = revision;
+                    else
+                    {
+                        const auto load = mLoads.find(key);
+                        if (load == mLoads.end())
+                            StartLoad(entry);
+                    }
+                }
+            }
+            resolution.status = SurfaceMaterialStatus::Ready;
+            resolution.binding = entry.binding;
+            return resolution;
+        }
+
+        if (mAssets == nullptr)
+        {
+            entry.failed = true;
+            entry.error = "there is no asset service";
+            resolution.status = SurfaceMaterialStatus::Failed;
+            resolution.error = entry.error;
+            return resolution;
+        }
+
+        const uint32_t revision = mAssets->Revision();
+        if (entry.failed && entry.attemptRevision == revision)
+        {
+            resolution.status = SurfaceMaterialStatus::Failed;
+            resolution.error = entry.error;
+            return resolution;
+        }
+
+        const auto load = mLoads.find(key);
+        if (load == mLoads.end() || load->second.failed)
+        {
+            if (load != mLoads.end())
+                mLoads.erase(load);
+            if (!StartLoad(entry))
+            {
+                resolution.status = SurfaceMaterialStatus::Failed;
+                resolution.error = entry.error;
+                return resolution;
+            }
+        }
+        resolution.status = SurfaceMaterialStatus::Pending;
+        return resolution;
     }
 
     bool SurfaceMaterialLibrary::IsActive(std::string_view logicalPath, std::string_view frontend) const
@@ -935,29 +1421,29 @@ namespace mir
     {
         std::string localError;
         std::string &reported = error != nullptr ? *error : localError;
-        if (mRenderer == nullptr)
+        if (mHost == nullptr)
         {
             SetError(reported, "the material library is not bound");
             return std::nullopt;
         }
         const SurfaceMaterialRegistration *registration =
-            mRenderer->SurfaceMaterials().FindByAsset(logicalPath, frontend);
+            mHost->MaterialCatalog().FindByAsset(logicalPath, frontend);
         if (registration == nullptr)
         {
             SetError(reported, "no cooked surface material registration names this asset and frontend");
             return std::nullopt;
         }
-        return LoadSurfaceMaterialSchema(*registration, error);
+        return mHost->LoadSchema(*registration, error);
     }
 
     bool SurfaceMaterialLibrary::AdoptAcceptedRecord(Entry &entry, std::string &error)
     {
-        if (mRenderer == nullptr || !entry.binding)
+        if (mHost == nullptr || !entry.binding)
         {
             SetError(error, "the material library is not bound");
             return false;
         }
-        const std::optional<MaterialRecordSnapshot> snapshot = mRenderer->MaterialRecord(entry.binding->material);
+        const std::optional<MaterialRecordSnapshot> snapshot = mHost->MaterialRecord(entry.binding->material);
         if (!snapshot)
         {
             SetError(error, "the committed material record is unavailable");
@@ -986,19 +1472,19 @@ namespace mir
         std::string &error)
     {
         changed = false;
-        if (mRenderer == nullptr)
+        if (mHost == nullptr)
         {
             SetError(error, "the material library is not bound");
             return false;
         }
         const SurfaceMaterialRegistration *registration =
-            mRenderer->SurfaceMaterials().FindByAsset(entry.logicalPath, entry.frontend);
+            mHost->MaterialCatalog().FindByAsset(entry.logicalPath, entry.frontend);
         if (registration == nullptr)
         {
             SetError(error, "no cooked surface material registration names this asset and frontend");
             return false;
         }
-        const std::optional<SurfaceMaterialSchema> schema = LoadSurfaceMaterialSchema(*registration, &error);
+        const std::optional<SurfaceMaterialSchema> schema = mHost->LoadSchema(*registration, &error);
         if (!schema)
             return false;
         if (schema->revision == entry.schemaRevision && entry.mSchemaEpoch == mSchemaEpoch)
@@ -1024,7 +1510,7 @@ namespace mir
         std::string localError;
         std::string &reported = error != nullptr ? *error : localError;
 
-        if (mRenderer == nullptr)
+        if (mHost == nullptr)
         {
             SetError(reported, "the material library is not bound");
             return false;
@@ -1053,7 +1539,7 @@ namespace mir
                 continue;
 
             const std::optional<MaterialRecordSnapshot> snapshot =
-                mRenderer->MaterialRecord(sibling.binding->material);
+                mHost->MaterialRecord(sibling.binding->material);
             if (!snapshot)
             {
                 SetError(reported, "the committed material record is unavailable");
@@ -1141,9 +1627,9 @@ namespace mir
 
         // Every candidate validated and copied; the commit itself does not
         // allocate, and only then does any cached metadata move.
-        if (!mRenderer->PrepareMaterialRecords(updates, &reported))
+        if (!mHost->PrepareMaterialRecords(updates, &reported))
             return false;
-        mRenderer->CommitMaterialRecords();
+        mHost->CommitMaterialRecords();
 
         static_assert(std::is_nothrow_move_assignable_v<Entry>);
         for (std::size_t i = 0; i < staged.size(); ++i)

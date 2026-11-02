@@ -79,6 +79,7 @@ namespace mir
             bool mBorrowed = false;
             std::string mSurfacePath;
             AssetId mSurfaceAsset;
+            SurfaceMaterialStatus mSurfaceStatus = SurfaceMaterialStatus::Ready;
         };
 
         // the names an entity's handles were last resolved from

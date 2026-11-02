@@ -462,7 +462,7 @@ TEST_CASE("A shader-only schema change keeps cooked baselines and unsaved values
 
     std::string error;
     const std::optional<mir::MaterialDraftRefresh> refresh =
-        mir::RefreshMaterialDraft(draft, recipe, changed, "changed", &error);
+        mir::RefreshMaterialDraft(draft, recipe, changed, "changed", "schema", &error);
     INFO(error);
     REQUIRE(refresh);
     CHECK(refresh->mMessages.empty());

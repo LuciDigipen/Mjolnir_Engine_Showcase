@@ -90,12 +90,6 @@ namespace mir
     // A generation-checked copy of one live surface material's accepted layout
     // and the authoritative bytes its draws read. The handle stays owned by the
     // renderer; a consumer may use it and must not destroy it.
-    struct MaterialRecordSnapshot
-    {
-        MaterialHandle mMaterial;
-        MaterialLayout mLayout;
-        std::vector<std::byte> mBytes;
-    };
 
     // One draw in the fixed Scene world, built by RenderSystem from a
     // WorldTransform + MeshRenderer pair or by ModelSystem. BuildViewDrawItems

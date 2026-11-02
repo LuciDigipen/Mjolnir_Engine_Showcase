@@ -363,11 +363,16 @@ reflection, never from a C++ field mirror. RT allocates a primary/shadow SBT
 record pair per catalog entry; a surface instance's even base offset is
 `2 + 2*i`, so primary and shadow rays both stay in bounds. Terrain registrations
 are compiled through `SurfaceTerrainForward.slang` and `SurfaceTerrainRt.slang`;
-`SurfaceMaterialLibrary` stages a complete candidate generation in
-`ReloadPrepare`, swaps it in `ReloadCommit`, and retires the old
-materials/textures through `ReleaseModelResources`. Its
-`CurrentSchema` re-reads the registration reflection independently of any
-watcher. `PreviewParameters` adopts the committed generation's layout and
+`SurfaceMaterialLibrary` requests the cooked payload and its textures through
+`AsyncAssetService` and the shared `TextureLoadTracker`. `Advance` publishes only
+validated records, keeps a live material while its replacement is pending or
+failed, and publishes every ready frontend of one asset together. `CommitReload`
+starts asynchronous replacements after the catalog commits. Replaced handles and
+their texture claims are retired only after every active mesh and terrain owner
+acknowledges the replacing generation; a failed replacement is remembered until
+the next reload. Its `CurrentSchema` re-reads the registration reflection
+independently of any watcher. `PreviewParameters` adopts the committed
+generation's layout and
 authoritative bytes through `VulkanRenderer::MaterialRecord` (a
 generation-checked `MaterialRecordSnapshot`), overlays dirty numeric values on
 the adopted parameters of every valid frontend of that asset, runs the shared

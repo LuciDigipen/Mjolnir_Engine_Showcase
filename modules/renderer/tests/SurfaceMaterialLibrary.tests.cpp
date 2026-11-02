@@ -243,20 +243,19 @@ TEST_CASE("Terrain and mesh owners merge their active material uses", "[renderer
     library.SetMaterialUses(mainOwner, std::vector<SurfaceMaterialUse>{
         { .logicalPath = "assets/materials/shared.material.json", .asset = meshAsset, .frontend = "mesh" } });
     library.SetMaterialUses(previewOwner, std::vector<SurfaceMaterialUse>{
-        { .logicalPath = "assets/materials/shared.material.json", .asset = meshAsset, .frontend = "mesh",
-          .required = true } });
+        { .logicalPath = "assets/materials/shared.material.json", .asset = meshAsset, .frontend = "mesh" } });
 
     REQUIRE(library.ActiveMaterials().size() == 2);
-    bool meshRequired = false;
+    bool meshPresent = false;
     bool terrainPresent = false;
     for (const SurfaceMaterialUse &use : library.ActiveMaterials())
     {
         if (use.frontend == "mesh")
-            meshRequired = use.required;
+            meshPresent = true;
         if (use.frontend == "terrain")
             terrainPresent = true;
     }
-    CHECK(meshRequired);
+    CHECK(meshPresent);
     CHECK(terrainPresent);
 
     library.RemoveMaterialUseOwner(previewOwner);
@@ -410,16 +409,13 @@ TEST_CASE("Replacing an owner's uses drops the assets no live consumer names", "
         { .logicalPath = "assets/materials/terrain.material.json", .asset = AssetId{ 3 }, .frontend = "terrain" } });
     const uint64_t owner = library.AddMaterialUseOwner();
     library.SetMaterialUses(owner, std::vector<SurfaceMaterialUse>{
-        { .logicalPath = "assets/materials/a.material.json", .asset = AssetId{ 1 }, .frontend = "mesh",
-          .required = true },
-        { .logicalPath = "assets/materials/b.material.json", .asset = AssetId{ 2 }, .frontend = "mesh",
-          .required = true } });
+        { .logicalPath = "assets/materials/a.material.json", .asset = AssetId{ 1 }, .frontend = "mesh" },
+        { .logicalPath = "assets/materials/b.material.json", .asset = AssetId{ 2 }, .frontend = "mesh" } });
     REQUIRE(library.ActiveMaterials().size() == 3);
 
     // A mesh entity switched to another asset: its former asset is no longer required.
     library.SetMaterialUses(owner, std::vector<SurfaceMaterialUse>{
-        { .logicalPath = "assets/materials/b.material.json", .asset = AssetId{ 2 }, .frontend = "mesh",
-          .required = true } });
+        { .logicalPath = "assets/materials/b.material.json", .asset = AssetId{ 2 }, .frontend = "mesh" } });
     REQUIRE(library.ActiveMaterials().size() == 2);
     for (const SurfaceMaterialUse &use : library.ActiveMaterials())
         CHECK(use.logicalPath != "assets/materials/a.material.json");

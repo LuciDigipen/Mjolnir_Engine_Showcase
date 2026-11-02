@@ -79,6 +79,7 @@ target_sources(engine_renderer PRIVATE
     src/renderer/MaterialReflection.cpp
     src/renderer/MaterialResolution.cpp
     src/renderer/SurfaceMaterialCatalog.cpp
+    src/renderer/SurfaceMaterialHost.cpp
     src/renderer/SurfaceMaterialLibrary.cpp
     src/renderer/MotionBlurEffect.cpp
     src/renderer/PostEffectRegistry.cpp

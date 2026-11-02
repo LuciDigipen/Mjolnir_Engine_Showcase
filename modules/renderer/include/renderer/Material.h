@@ -8,6 +8,7 @@
  */
 #pragma once
 
+#include <renderer/MaterialReflection.h>
 #include <renderer/Texture.h>
 
 #include <volk.h>
@@ -99,5 +100,15 @@ namespace mir
     {
         MaterialHandle mMaterial;
         std::span<const std::byte> mBytes;
+    };
+
+    // A generation-checked copy of one live surface material's accepted layout
+    // and the authoritative bytes its draws read. The handle stays owned by the
+    // renderer; a consumer may use it and must not destroy it.
+    struct MaterialRecordSnapshot
+    {
+        MaterialHandle mMaterial;
+        MaterialLayout mLayout;
+        std::vector<std::byte> mBytes;
     };
 }
