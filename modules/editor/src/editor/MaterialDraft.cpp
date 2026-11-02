@@ -745,7 +745,8 @@ namespace mir
             return std::nullopt;
         if (draft.mPreviewedGeneration != generation)
         {
-            draft.mPreviewedFields.clear();
+            // Another asset can advance the library generation. Keep the fields
+            // whose previewed values still need restoring when edits reach baseline.
             draft.mPreviewedParameters.clear();
             draft.mPreviewedGeneration = generation;
             draft.mPreviewedActive = false;

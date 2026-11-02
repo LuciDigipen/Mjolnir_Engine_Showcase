@@ -494,11 +494,11 @@ namespace mir
         if (!editing || context.mMaterials == nullptr)
             return;
 
-        const uint64_t generation = context.mMaterials->Generation();
         for (MaterialDraft *draft : mDrafts.All())
         {
             if (draft->mSchemaStale || draft->mCooking)
                 continue;
+            const uint64_t generation = context.mMaterials->Generation();
             const bool active = context.mMaterials->IsActiveAsset(draft->mLogicalPath);
             const std::optional<std::string> parameters =
                 MaterialDraftPreviewParameters(*draft, editing, active, generation);
@@ -507,7 +507,7 @@ namespace mir
 
             std::string error;
             if (context.mMaterials->PreviewParameters(draft->mLogicalPath, draft->mFrontend, *parameters, &error))
-                MaterialDraftPreviewed(*draft, generation, *parameters);
+                MaterialDraftPreviewed(*draft, context.mMaterials->Generation(), *parameters);
             else
                 MaterialDraftPreviewRejected(*draft, generation, *parameters, error);
         }

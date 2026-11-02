@@ -12,6 +12,7 @@
 #include <serial/JsonFile.h>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -219,6 +220,47 @@ TEST_CASE("A material preview is suppressed in Play and after the material leave
 
     CHECK_FALSE(mir::MaterialDraftPreviewParameters(draft, true, false, 2).has_value());
     CHECK(mir::MaterialDraftPreviewParameters(draft, true, true, 2).has_value());
+}
+
+TEST_CASE("Returning a previewed value to baseline restores the published material", "[editor][material]")
+{
+    const bool previewAnotherAsset = GENERATE(false, true);
+    CAPTURE(previewAnotherAsset);
+    mir::MaterialDraft draft = TestDraft();
+    mir::MaterialDraft peer = TestDraft();
+    peer.mIdentity = "games/Test|games/Test/assets/materials/peer.material.json";
+    peer.mLogicalPath = "games/Test/assets/materials/peer.material.json";
+    uint64_t generation = 10;
+    float published = 1.0f, peerPublished = 1.0f;
+    const auto publish = [&](mir::MaterialDraft &target, float &value)
+    {
+        const auto overlay = mir::MaterialDraftPreviewParameters(target, true, true, generation);
+        REQUIRE(overlay);
+        value = nlohmann::json::parse(*overlay).at("amount").get<float>();
+        ++generation; // Successful library publication advances its generation.
+        mir::MaterialDraftPreviewed(target, generation, *overlay);
+    };
+
+    Field(draft, "amount")->mComponents[0] = 2.0f;
+    publish(draft, published);
+    CHECK(published == 2.0f);
+    CHECK(draft.mPreviewedGeneration == generation);
+    CHECK_FALSE(mir::MaterialDraftPreviewParameters(draft, true, true, generation));
+    if (previewAnotherAsset)
+    {
+        Field(peer, "amount")->mComponents[0] = 3.0f;
+        publish(peer, peerPublished);
+        CHECK(peerPublished == 3.0f);
+        CHECK(draft.mPreviewedGeneration != generation);
+    }
+
+    Field(draft, "amount")->mComponents[0] = 1.0f;
+    CHECK_FALSE(mir::MaterialDraftDirty(draft));
+    publish(draft, published);
+    CHECK(published == 1.0f);
+    CHECK_FALSE(mir::MaterialDraftNeedsSave(draft));
+    CHECK_FALSE(mir::MaterialDraftPreviewParameters(draft, true, true, generation));
+    CHECK_FALSE(mir::MaterialDraftPreviewParameters(draft, true, true, ++generation));
 }
 
 TEST_CASE("A texture draft changes only the authored recipe path", "[editor][material]")
