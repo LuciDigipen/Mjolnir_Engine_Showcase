@@ -347,7 +347,7 @@ namespace mir::vk
         if (result != VK_SUCCESS)
         {
             MIR_LOG_CRITICAL("CreateGraphicsPipeline: vkCreateGraphicsPipelines failed for {}: {}",
-                shaderName, static_cast<int>(result));
+                state.shaderName, static_cast<int>(result));
             return VK_NULL_HANDLE;
         }
 
