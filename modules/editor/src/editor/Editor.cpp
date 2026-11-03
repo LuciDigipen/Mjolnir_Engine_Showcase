@@ -1479,6 +1479,9 @@ namespace mir
                     if (ImGui::MenuItem("New Project..."))
                         mNewProjectRequested = true;
                     DrawOpenProjectMenu(projects, currentProject);
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Build Settings..."))
+                        mShowBuildSettings = mFocusBuildSettings = true;
                     ImGui::EndMenu();
                 }
                 if (ImGui::BeginMenu("Edit"))
@@ -1552,6 +1555,20 @@ namespace mir
                 if (ImGui::Begin("Preferences", &mShowPreferences))
                     ApplyPreferencesRequest(mPreferencesPanel.Draw(mPreferences, mBackground.HasImage()));
                 ImGui::End();
+            }
+
+            if (mShowBuildSettings)
+            {
+                if (std::exchange(mFocusBuildSettings, false))
+                    ImGui::SetNextWindowFocus();
+                if (ImGui::Begin("Build Settings", &mShowBuildSettings) &&
+                    mBuildSettingsPanel.Draw(mPreferences, mBuildGame) && !mPreferences.SaveFile(mPreferencesPath))
+                    mBuildSettingsPanel.SetStatus("Save failed - see log.");
+                ImGui::End();
+            }
+            else
+            {
+                mBuildSettingsPanel.OnHidden();
             }
 
             if (mShowInputSettings)

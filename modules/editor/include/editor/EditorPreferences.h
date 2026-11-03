@@ -9,6 +9,7 @@
 #pragma once
 
 #include <filesystem>
+#include <map>
 #include <string>
 
 namespace mir
@@ -46,6 +47,14 @@ namespace mir
         float backgroundStrength = 0.2f;
         BackgroundFit backgroundFit = BackgroundFit::Cover;
         BackgroundPanels backgroundPanels = BackgroundPanels::Theme;
+
+        // File > Build Settings, kept here because paths differ per machine. Empty is the
+        // default under the checkout's builds/, and a relative path is from the checkout
+        std::string buildDevelopmentTemplate;
+        std::string buildReleaseTemplate;
+        // keyed by the game folder's absolute path, so each game builds into its own folder
+        std::map<std::string, std::string> buildOutputs;
+        bool buildRunAfter = false;
 
         // defaults for a missing file and for any missing or unusable field
         static EditorPreferences LoadFile(const std::filesystem::path &path);

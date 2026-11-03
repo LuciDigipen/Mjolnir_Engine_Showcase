@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cmath>
 #include <system_error>
+#include <utility>
 
 namespace mir
 {
@@ -42,6 +43,30 @@ namespace mir
                     value = static_cast<Enum>(i);
             }
         }
+
+        void ReadBuild(const json &root, EditorPreferences &prefs)
+        {
+            const auto build = root.find("build");
+            if (build == root.end() || !build->is_object())
+                return;
+
+            for (const auto &[key, value] : { std::pair{ "developmentTemplate", &prefs.buildDevelopmentTemplate },
+                     std::pair{ "releaseTemplate", &prefs.buildReleaseTemplate } })
+            {
+                if (const auto it = build->find(key); it != build->end() && it->is_string())
+                    *value = it->get<std::string>();
+            }
+            if (const auto it = build->find("outputs"); it != build->end() && it->is_object())
+            {
+                for (const auto &[game, output] : it->items())
+                {
+                    if (output.is_string() && !output.get<std::string>().empty())
+                        prefs.buildOutputs[game] = output.get<std::string>();
+                }
+            }
+            if (const auto it = build->find("runAfterBuild"); it != build->end() && it->is_boolean())
+                prefs.buildRunAfter = it->get<bool>();
+        }
     }
 
     EditorPreferences EditorPreferences::LoadFile(const std::filesystem::path &path)
@@ -60,6 +85,7 @@ namespace mir
         }
 
         ReadEnum(*root, "theme", kThemeNames, prefs.theme);
+        ReadBuild(*root, prefs);
 
         const auto background = root->find("background");
         if (background == root->end() || !background->is_object())
@@ -105,7 +131,12 @@ namespace mir
                           {"file", backgroundFile},
                           {"strength", backgroundStrength},
                           {"fit", kFitNames[static_cast<size_t>(backgroundFit)]},
-                          {"panels", kPanelsNames[static_cast<size_t>(backgroundPanels)]}}}};
+                          {"panels", kPanelsNames[static_cast<size_t>(backgroundPanels)]}}},
+                        {"build",
+                         {{"developmentTemplate", buildDevelopmentTemplate},
+                          {"releaseTemplate", buildReleaseTemplate},
+                          {"outputs", buildOutputs},
+                          {"runAfterBuild", buildRunAfter}}}};
         return WriteJsonFile(path, root);
     }
 

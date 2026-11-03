@@ -17,6 +17,7 @@
 #include <core/log/SetupError.h>
 #include <core/platform/Process.h>
 #include <project/GameProject.h>
+#include <project/PlayerInfo.h>
 #include <project/ProjectSettings.h>
 #include <serial/JsonFile.h>
 #include <terrain/TerrainStreamingSettings.h>
@@ -41,9 +42,6 @@ namespace mir::build
 
     namespace
     {
-        constexpr std::string_view kPlayerExecutable = "MjolnirEngine.exe";
-        constexpr std::string_view kPlayerInfoFileName = "player_info.json";
-
         // "cooked/" plus an id and a content hash, as AssetCooker names a blob
         constexpr std::size_t kCookedPathLength = 45;
 
@@ -53,14 +51,6 @@ namespace mir::build
         struct BuildError : std::runtime_error
         {
             using std::runtime_error::runtime_error;
-        };
-
-        // player_info.json's feature flags, each with the CMake option that sets it
-        constexpr std::pair<std::string_view, std::string_view> kFeatures[] = {
-            { "largeWorld", "MIR_LARGE_WORLD" },
-            { "audio", "MIR_WITH_AUDIO" },
-            { "dlss", "MIR_WITH_DLSS" },
-            { "rtxgi", "MIR_WITH_RTXGI" },
         };
 
         struct GameInputs
@@ -214,28 +204,13 @@ namespace mir::build
             return std::nullopt;
         }
 
-        std::optional<bool> Flag(const Json &info, std::string_view key)
-        {
-            const auto it = info.find(std::string(key));
-            if (it == info.end() || !it->is_boolean())
-                return std::nullopt;
-            return it->get<bool>();
-        }
-
-        std::string Text(const Json &info, std::string_view key)
-        {
-            const auto it = info.find(std::string(key));
-            return it != info.end() && it->is_string() ? it->get<std::string>() : "unknown";
-        }
-
         // Warns where the template was built differently from the editor the game is made in
-        void ComparePlayerInfo(const GameInputs &inputs, const fs::path &editorInfo, BuildReport &report)
+        void WarnAboutTemplate(const GameInputs &inputs, const fs::path &editorInfo, BuildReport &report)
         {
-            const Json &player = inputs.mPlayerInfo;
             std::error_code ec;
             const bool hasBanks = fs::is_directory(inputs.mProject.mSoundBankDir, ec) &&
                 !fs::is_empty(inputs.mProject.mSoundBankDir, ec);
-            const bool silent = hasBanks && Flag(player, "audio") == false;
+            const bool silent = hasBanks && PlayerInfoFlag(inputs.mPlayerInfo, "audio") == false;
             if (silent)
                 report.mWarnings.push_back("the game has SoundBanks, but the player template was built with "
                                            "MIR_WITH_AUDIO OFF, so the packaged game plays no sound");
@@ -250,21 +225,10 @@ namespace mir::build
                 return;
             }
 
-            const auto version = [](const Json &info) {
-                return Text(info, "engineVersion") + " at commit " + Text(info, "commit").substr(0, 10);
-            };
-            if (version(player) != version(*editor))
-                report.mWarnings.push_back("the player template is engine " + version(player) + ", the editor " +
-                    version(*editor) + "; build the template and the editor from the same commit");
-
-            for (const auto &[key, option] : kFeatures)
+            for (const PlayerInfoMismatch &mismatch : ComparePlayerInfo(inputs.mPlayerInfo, *editor))
             {
-                const std::optional<bool> ours = Flag(player, key);
-                const std::optional<bool> theirs = Flag(*editor, key);
-                if (!ours || !theirs || *ours == *theirs || (silent && key == "audio"))
-                    continue;
-                report.mWarnings.push_back("the player template was built with " + std::string(option) +
-                    (*ours ? " ON" : " OFF") + " and the editor with it " + (*theirs ? "ON" : "OFF"));
+                if (!(silent && mismatch.mKey == "audio"))
+                    report.mWarnings.push_back(mismatch.mMessage);
             }
         }
 
@@ -307,19 +271,9 @@ namespace mir::build
             }
 
             inputs.mPlayerDir = NormalizedPath(request.mPlayerDir);
-            const std::string install =
-                "; install one with cmake --install builds/windows-msvc-game-release --prefix <dir>";
-            if (!fs::is_directory(inputs.mPlayerDir, ec))
-                throw BuildError("the player template " + PathText(inputs.mPlayerDir) + " does not exist" + install);
-            if (!fs::is_regular_file(inputs.mPlayerDir / kPlayerExecutable, ec))
-                throw BuildError(PathText(inputs.mPlayerDir) + " has no " + std::string(kPlayerExecutable) + install);
-            const std::optional<Json> info = ReadJsonFile(inputs.mPlayerDir / kPlayerInfoFileName);
-            if (!info || !info->is_object())
-                throw BuildError(PathText(inputs.mPlayerDir) + " has no readable " + std::string(kPlayerInfoFileName) +
-                    ", so it is not a player template" + install);
-            if (info->value("editor", true))
-                throw BuildError(PathText(inputs.mPlayerDir) + " is an editor build, not a player" + install);
-            inputs.mPlayerInfo = *info;
+            if (const std::optional<std::string> problem = PlayerTemplateProblem(inputs.mPlayerDir, &inputs.mPlayerInfo))
+                throw BuildError(
+                    *problem + "; install one with cmake --install builds/windows-msvc-game-release --prefix <dir>");
 
             const std::string &name = inputs.mProject.mName;
             if (const std::optional<std::string> problem = ExeNameProblem(name))
@@ -329,7 +283,7 @@ namespace mir::build
             for (const fs::directory_entry &entry : fs::directory_iterator(inputs.mPlayerDir))
             {
                 const std::string file = PathText(entry.path().filename());
-                if (file != kPlayerExecutable && EqualsIgnoringCase(file, inputs.mExeName))
+                if (file != kPlayerExecutableFileName && EqualsIgnoringCase(file, inputs.mExeName))
                     throw BuildError("game.json's name \"" + name + "\" would make " + inputs.mExeName +
                         ", which the player template already holds; change it in game.json");
             }
@@ -358,7 +312,7 @@ namespace mir::build
                     report.mWarnings.push_back("the player template holds " + name + ", which it should not; not copied");
                     continue;
                 }
-                Copy(entry.path(), staging / (name == kPlayerExecutable ? inputs.mExeName : name));
+                Copy(entry.path(), staging / (name == kPlayerExecutableFileName ? inputs.mExeName : name));
             }
             return true;
         }
@@ -495,7 +449,7 @@ namespace mir::build
                 inputs = ResolveInputs(request);
                 report.mGame = inputs.mDirName;
                 report.mOutDir = inputs.mOutDir;
-                ComparePlayerInfo(inputs, request.mEditorInfo, report);
+                WarnAboutTemplate(inputs, request.mEditorInfo, report);
                 return true;
             });
 
