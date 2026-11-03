@@ -398,7 +398,7 @@ namespace mir
         // again. sceneDepth is the raster path's depth image, null on the ray-traced path.
         void RecordDebugViews(VkCommandBuffer cmd, uint32_t imageIndex, std::span<const RenderView> views,
             VkImage sceneDepth, VkImageView sceneDepthView);
-        enum class RasterPass { Scene, Opaque, Surface, Transparent };
+        enum class RasterPass { Scene, Opaque, Transparent };
         uint32_t RecordView(VkCommandBuffer cmd, const RenderView &view, uint32_t viewIndex,
             RasterPass pass = RasterPass::Scene, uint32_t cameraOffset = 0);
         uint32_t WriteCameraData(const RenderView &view, uint32_t viewIndex, bool applyJitter = false,

@@ -424,16 +424,18 @@ namespace mir
                         if (argument.find('{') != std::string::npos) throw std::runtime_error("unknown frontend placeholder");
                         return argument;
                     };
-                const std::array<const std::vector<std::string> *, 4> stages{
-                    &templateIt->vertex, &templateIt->fragment, &templateIt->raytracing, &templateIt->layout};
-                const std::array<std::string, 4> entries{"vertexMain", "fragmentMain", "closestHitSurface", "layout"};
-                const std::array<std::string, 4> kinds{"vertex", "fragment", "closesthit", "compute"};
+                const std::array<const std::vector<std::string> *, 5> stages{
+                    &templateIt->vertex, &templateIt->fragment, &templateIt->raytracing,
+                    &templateIt->layout, &templateIt->surfaceFragment};
+                const std::array<std::string, 5> entries{"vertexMain", "fragmentMain", "closestHitSurface", "layout", "fragmentMain"};
+                const std::array<std::string, 5> kinds{"vertex", "fragment", "closesthit", "compute", "fragment"};
                 for (size_t stage = 0; stage < stages.size(); ++stage)
                 {
+                    if (stages[stage]->empty()) continue;
                     ShaderManifestOutput output;
                     output.type = "surface";
                     output.frontend = frontend;
-                    output.output = stem + "." + entries[stage] + ".spv";
+                    output.output = stem + (stage == 4 ? ".surface." : ".") + entries[stage] + ".spv";
                     output.reflection = output.output + ".reflection.json";
                     output.depfile = output.output + ".d";
                     output.stage = kinds[stage];

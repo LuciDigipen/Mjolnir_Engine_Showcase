@@ -362,9 +362,12 @@ namespace mir
                     const auto placeholders = ReadStringArray(entry, "placeholders", error, "frontend template");
                     const auto vertex = ReadStringArray(entry, "vertex", error, "frontend template");
                     const auto fragment = ReadStringArray(entry, "fragment", error, "frontend template");
+                    std::optional<std::vector<std::string>> surfaceFragment{std::in_place};
+                    if (entry.contains("surfaceFragment"))
+                        surfaceFragment = ReadStringArray(entry, "surfaceFragment", error, "frontend template");
                     const auto raytracing = ReadStringArray(entry, "raytracing", error, "frontend template");
                     const auto layout = ReadStringArray(entry, "layout", error, "frontend template");
-                    if (!name || !placeholders || !vertex || !fragment || !raytracing || !layout)
+                    if (!name || !placeholders || !vertex || !fragment || !raytracing || !layout || !surfaceFragment)
                         return std::nullopt;
                     frontend.frontend = *name;
                     frontend.placeholders = *placeholders;
@@ -372,6 +375,7 @@ namespace mir
                     frontend.fragment = *fragment;
                     frontend.raytracing = *raytracing;
                     frontend.layout = *layout;
+                    frontend.surfaceFragment = std::move(*surfaceFragment);
                     manifest.frontendTemplates.push_back(std::move(frontend));
                 }
             }
@@ -415,7 +419,8 @@ namespace mir
         {
             templates.push_back({ { "frontend", frontend.frontend }, { "placeholders", frontend.placeholders },
                 { "vertex", frontend.vertex }, { "fragment", frontend.fragment },
-                { "raytracing", frontend.raytracing }, { "layout", frontend.layout } });
+                { "raytracing", frontend.raytracing }, { "layout", frontend.layout },
+                { "surfaceFragment", frontend.surfaceFragment } });
         }
         root["frontendTemplates"] = std::move(templates);
         return root.dump(2) + "\n";

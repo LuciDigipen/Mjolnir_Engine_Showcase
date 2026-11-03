@@ -302,11 +302,15 @@ DDGI keeps a single legacy hit-record pair, so a scene containing any
 surface-material instance (nonzero SBT offset) disables DDGI and falls back to
 the ordinary camera trace. Material-specialized DDGI pipelines are later work.
 
-SSGI replays the legacy multi-target `<material>Surface` variants only. Generic
-surface materials compile the single-target `SurfaceForward` frontend, so an
-opaque generic surface draw keeps the existing raster lighting instead of
-running the SSGI surface pass. Legacy default/model/unlit/error materials and
-their SSGI inputs are unchanged.
+SSGI writes HDR color and the four surface inputs in one opaque pass. Legacy
+materials use their `<material>Surface` variants. Generic mesh and terrain
+materials reuse the ordinary vertex shader and compile an extra
+`<stem>.surface.fragmentMain.spv` output from the same material type. The bounce
+source includes diffuse direct light and emission. The receiver stores
+albedo multiplied by AO in RGB and `1 - f0` in alpha. Only the diffuse GI term
+uses the alpha factor, so the ambient fallback matches ordinary PBR.
+If the pass or a required opaque pipeline is unavailable, the frame uses
+ordinary raster lighting.
 
 ## Terrain
 

@@ -792,20 +792,19 @@ fast motion and disocclusions can produce noise or flicker. It supports perspect
 cameras and non-overlapping viewports; other projections produce no GI estimate.
 Allocation/format limits and missing shaders retain ordinary raster lighting.
 
-When SSGI is requested in raster mode, `vk::RasterSurfaces` captures four
-per-frame RGBA16F inputs: camera-relative world normals/material kind, diffuse
-albedo, unfogged diffuse radiance, and direct lighting including specular.
-Ambient is excluded from the lighting inputs. Lit surfaces receive kind 1;
-unlit surfaces use kind 2 and supply their color as radiance; error surfaces
-use kind 3 and supply no bounce radiance. Cleared/unsupported pixels use kind 0.
-Transparent draws and sky are excluded.
+The opaque SSGI pass writes HDR color and four per-frame RGBA16F surface inputs
+with the same depth test and material evaluation. These inputs hold
+camera-relative world normals and material kind, the diffuse receiver,
+unfogged diffuse radiance, and direct lighting including specular. Generic PBR
+materials include their AO-scaled ambient baseline and emissive radiance in the
+bounce source. Lit surfaces use kind 1. Unlit surfaces use kind 2 and supply
+their color as radiance. Error surfaces use kind 3 and supply no bounce
+radiance. Sky and cleared pixels use kind 0. Blended draws follow composition.
 
-The depth-equal pass shares material vertex processing, alpha tests and model
-descriptor sets with the scene pass. Camera data is written once per view and
-reused by surface capture and motion blur. Images are allocated only while
-requested, capped at 256 MiB across frame slots, and released on disable, RT
-switch or scene unload. Unsupported opaque shaders, formats/limits or missing optional shaders
-retain existing raster rendering.
+Surface images are allocated on demand, capped at 256 MiB across frame slots
+and released on disable, RT switch or scene unload. If a required opaque
+pipeline is unavailable or the device cannot support five color attachments,
+the frame uses ordinary raster lighting.
 
 `vk::SsgiTrace` builds a conservative reversed-Z depth pyramid per viewport,
 then traces cosine-weighted hemisphere rays against visible depth. It writes

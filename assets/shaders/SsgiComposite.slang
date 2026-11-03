@@ -35,7 +35,11 @@ float4 fragmentMain(float4 position : SV_Position) : SV_Target
     if (depth <= 0 || !all(isfinite(point)) || !all(isfinite(irradiance))) discard;
     float confidence = saturate(irradiance.w) * min(pc.intensity, 1.0);
     // RGB already includes resolved confidence; do not multiply it by alpha again.
-    float3 indirect = ambientColor.rgb * (1 - confidence) + max(irradiance.rgb, float3(0)) * (pc.intensity / 3.14159265359);
-    float3 color = directInput.Load(int3(pixel, 0)).rgb + albedoInput.Load(int3(pixel, 0)).rgb * indirect;
+    const float3 ambientFallback = ambientColor.rgb * (1 - confidence);
+    const float3 giRadiance = max(irradiance.rgb, float3(0)) * (pc.intensity / 3.14159265359);
+    const float4 receiver = albedoInput.Load(int3(pixel, 0));
+    // rgb is albedo*AO; a is (1-f0), so only the diffuse GI term loses the
+    // specular share and the ambient fallback matches ordinary Pbr ambient.
+    float3 color = directInput.Load(int3(pixel, 0)).rgb + receiver.rgb * (ambientFallback + giRadiance * receiver.a);
     return float4(clamp(ApplyFog(color, length(point - cameraPos.xyz)), -65504.0, 65504.0), 1);
 }

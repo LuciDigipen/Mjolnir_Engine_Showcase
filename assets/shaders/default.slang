@@ -65,7 +65,9 @@ float4 fragmentMain(VSOutput input) : SV_Target
     float3 diffuse;
     float3 albedo = kDefaultAlbedo * input.tint;
     float3 direct = ShadeLitAndDiffuse(visibility, albedo, N, input.worldPos, float3(0), diffuse);
-    return MakeRasterSurface(N, 1, albedo, diffuse, direct);
+    float3 color = direct + albedo * ambientColor.rgb;
+    return MakeRasterSurface(float4(ApplyFog(color, length(cameraPos.xyz - input.worldPos)), 1.0),
+        N, 1, albedo, diffuse, direct);
 #else
     float3 color = ShadeLit(visibility, kDefaultAlbedo * input.tint, N, input.worldPos);
     color = ApplyFog(color, length(cameraPos.xyz - input.worldPos));
