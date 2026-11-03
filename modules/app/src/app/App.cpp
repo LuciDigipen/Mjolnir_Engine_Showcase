@@ -131,6 +131,74 @@ namespace mir
     {
     }
 
+    App::SimulationSystems::SimulationSystems(ModuleContext context, const GameProject &project, JobExecutor &jobs,
+        AssetsModule &assets, const AssetResolver &resolver, ParticlesModule &particles,
+        ParticlesGpuModule &particlesGpu, RenderSystem &rendering)
+        : physics(context, project.mProjectSettingsPath, &jobs),
+          terrainData(context),
+          script(context, assets, resolver),
+          particlesRuntime(context, particles, particlesGpu, rendering),
+          particlesScript(script),
+    #if MIR_WITH_AUDIO
+          audioScript(script),
+    #endif
+          inputScript(script),
+          physicsScript(script),
+          rendererScript(script),
+          terrainScript(script)
+    {
+    }
+
+    struct App::RuntimeSession
+    {
+        explicit RuntimeSession(App &app)
+            : state(app.mProject, app.mAssets, app.mResolver,
+                GameShellSettings{ .mUIDemo = app.mDesc.mUIDemo, .mQuitStopsPlay = app.mDesc.mEnableEditorLayout }),
+              rendering(app.mRenderer.BindWorld(state.Context(),
+                  RendererModuleSettings{ .mAppName = app.mDesc.mAppName,
+                                          .mEnableValidation = app.mDesc.mEnableValidation,
+                                          .mProjectSettingsPath = app.mProject.mProjectSettingsPath,
+                                          .mResolver = &app.mResolver,
+                                          .mAssetService = app.mAssetService.get(),
+                                          .mAdvanceSharedFrame = false })),
+              input(state.Context(), app.mWindow.Get(), app.mProject.mProjectSettingsPath),
+              animation(state.Context(), app.mRenderer.Renderer(), app.mAssetService.get(), app.mResolver, &app.mJobs),
+              camera(state.Context()),
+        #if MIR_WITH_AUDIO
+              audio(app.mAudio.BindWorld(state.Context())),
+        #endif
+              simulation(state.Context(), app.mProject, app.mJobs, app.mAssets, app.mResolver, state.particles,
+                  app.mParticlesGpu, rendering->Rendering()),
+              terrain(state.Context(), app.mRenderer, app.mProject, app.mResolver, app.mJobs)
+        {
+        #if MIR_WITH_AUDIO
+            state.gameShell.SetAudioOptions(&app.mAudioOptions);
+        #endif
+            state.scene.CopyFrom(app.mWorldState.world, app.mWorldState.scene.Scene(),
+                &app.mWorldState.prefab.Coordinator().Resolver());
+            SetEngineMode(state.world, EngineMode::Play);
+            SystemContext context = MakeContext(0.0f, 0.0, 0, 0.0f);
+            state.scheduler.RunStage(Stage::SceneLoad, context);
+            state.scheduler.RunStage(Stage::PlayBegin, context);
+        }
+
+        SystemContext MakeContext(float dt, double elapsed, uint64_t frame, float alpha)
+        {
+            return SystemContext{ state.world, state.commands, dt, elapsed, frame, alpha };
+        }
+
+        WorldState state;
+        std::unique_ptr<RendererModule::WorldBinding> rendering;
+        InputModule input;
+        AnimationModule animation;
+        CameraModule camera;
+    #if MIR_WITH_AUDIO
+        std::unique_ptr<AudioModule::WorldBinding> audio;
+    #endif
+        SimulationSystems simulation;
+        TerrainRuntimeModule terrain;
+    };
+
     App::App(const AppDesc &desc)
         : mDesc(Prepared(desc)),
         mProject(mDesc.mProject),
@@ -161,19 +229,9 @@ namespace mir
         mAudio(Context(), mProject.mSoundBankDir, mProject.mProjectSettingsPath,
             UserDataDir() / mProject.mName / "settings.json"),
     #endif
-        mPhysics(Context(), mProject.mProjectSettingsPath, &mJobs),
-        mTerrainData(Context()),
-        mScript(Context(), mAssets, mResolver),
-        mParticlesRuntime(Context(), mWorldState.particles, mParticlesGpu, mRenderer.Rendering()),
-        mParticlesScript(mScript),
-    #if MIR_WITH_AUDIO
-        mAudioScript(mScript),
-    #endif
-        mInputScript(mScript),
-        mPhysicsScript(mScript),
-        mRendererScript(mScript),
-        mTerrainScript(mScript),
-        mTerrain(Context(), mRenderer, mProject, mResolver, mJobs),
+        mSimulation(Context(), mProject, mJobs, mAssets, mResolver, mWorldState.particles,
+            mParticlesGpu, mRenderer.Rendering()),
+        mTerrain(Context(), mRenderer, mProject, mResolver, mJobs, false),
         mGameUIImGui(Context(), mImGui, mWindow, mWorldState.gameUI),
         mFixedTimestep{ .mStep = mDesc.mFixedDeltaSeconds, .mMaxSteps = mDesc.mMaxFixedSteps }
     {
@@ -209,6 +267,7 @@ namespace mir
     // modules before the scheduler, so a module's system pointers stay valid to the end
     App::~App()
     {
+        StopScene();
         SystemContext stopContext = MakeContext(0.0f);
         mWorldState.scheduler.Stop(stopContext);
         MIR_LOG_INFO("App shut down");
@@ -464,12 +523,27 @@ namespace mir
         if (IsPlaying(mWorldState.world))
             return;
 
-        // before the snapshot: the prefabs commit and freeze, so it holds what Play runs
-        RunStage(Stage::PlayBegin);
-        mWorldState.scene.CaptureForPlay(&mWorldState.prefab.Coordinator().Resolver());
-
+        // Commit prefab edits before copying the live authoring scene into Play.
+        PrefabCoordinator &prefabs = mWorldState.prefab.Coordinator();
+        prefabs.Commit(mWorldState.world);
+        prefabs.SetFrozen(true);
+    #if MIR_WITH_EDITOR
+        mEditor.PreparePlay();
+    #endif
+        mRuntime = std::make_unique<RuntimeSession>(*this);
+        if (mWorldState.scheduler.Started())
+        {
+            SystemContext start = MakeRuntimeContext(0.0f);
+            mRuntime->state.scheduler.Start(start);
+        }
         SetPlayState(mWorldState.world, PlayState::Running);
         SetEngineMode(mWorldState.world, EngineMode::Play);
+        mRenderer.ActivateWorld(mRuntime->rendering.get());
+        mGameUIImGui.ActivateWorld(&mRuntime->state.world, &mRuntime->state.gameUI);
+        mImGui.SetInputWorld(&mRuntime->state.world);
+    #if MIR_WITH_EDITOR
+        mEditor.SetPlayWorld(&mRuntime->state.world);
+    #endif
     }
 
     void App::StopScene()
@@ -477,16 +551,27 @@ namespace mir
         if (!IsPlaying(mWorldState.world))
             return;
 
-        // Play's entities fire their OnRemove as the restore destroys them; the GPU caches,
-        // keyed by asset, stay for the restored scene
-        RunStage(Stage::PlayEnd);
-        mWorldState.scene.RestoreFromPlay(&mWorldState.prefab.Coordinator().Resolver());
+        SystemContext runtimeContext = MakeRuntimeContext(0.0f);
+        mRuntime->state.scheduler.RunStage(Stage::PlayEnd, runtimeContext);
+        mRuntime->state.scene.Unload();
+        mRuntime->state.scheduler.RunStage(Stage::SceneUnload, runtimeContext);
+        mRuntime->state.scheduler.Stop(runtimeContext);
+
+    #if MIR_WITH_EDITOR
+        mEditor.SetPlayWorld(nullptr);
+    #endif
+        mGameUIImGui.ActivateWorld(nullptr, nullptr);
+        mImGui.SetInputWorld(nullptr);
+        mRenderer.ActivateWorld(nullptr);
+        mRuntime.reset();
+
+    #if MIR_WITH_EDITOR
+        mEditor.FinishPlay();
+    #endif
+        mWorldState.prefab.Coordinator().SetFrozen(false);
 
         SetEngineMode(mWorldState.world, EngineMode::Edit);
         SetPlayState(mWorldState.world, PlayState::Running);
-
-        // terrain starts checking a release published during Play
-        RunStage(Stage::SceneLoad);
     }
 
     void App::TogglePause()
@@ -494,22 +579,25 @@ namespace mir
         if (!IsPlaying(mWorldState.world))
             return;
 
-        SetPlayState(mWorldState.world, IsPaused(mWorldState.world) ? PlayState::Running : PlayState::Paused);
+        const PlayState state = IsPaused(mWorldState.world) ? PlayState::Running : PlayState::Paused;
+        SetPlayState(mWorldState.world, state);
+        SetPlayState(mRuntime->state.world, state);
     }
 
     bool App::AwaitSceneResources()
     {
-        SceneLoadGroup &group = mWorldState.world.Resource<SceneLoadGroup>();
+        WorldState &active = mRuntime ? mRuntime->state : mWorldState;
+        SceneLoadGroup &group = active.world.Resource<SceneLoadGroup>();
         mSceneGated = true;
         // The game UI stays off while the scene prepares, so nothing it draws can be clicked, and what is requested
         // meanwhile is dropped. A request made before the wait is kept.
-        mWorldState.gameUI.SetSuspended(true);
-        RequestQueue &requests = mWorldState.world.Resource<RequestQueue>();
+        active.gameUI.SetSuspended(true);
+        RequestQueue &requests = active.world.Resource<RequestQueue>();
         RequestQueue::Held held = requests.Hold();
         const auto finish = [&]
         {
             mSceneGated = false;
-            mWorldState.gameUI.SetSuspended(false);
+            active.gameUI.SetSuspended(false);
             if (const size_t dropped = requests.Restore(std::move(held)); dropped != 0)
                 MIR_LOG_WARN("Dropped {} request(s) made while the scene was loading", dropped);
         };
@@ -529,8 +617,8 @@ namespace mir
             if (mAssetService)
                 mAssetService->DrainCompletions();
             mImGui.RunUI();
-            SystemContext context = MakeContext(0.0f);
-            mWorldState.scheduler.UpdateLoading(context);
+            SystemContext context = mRuntime ? MakeRuntimeContext(0.0f) : MakeContext(0.0f);
+            active.scheduler.UpdateLoading(context);
             group.EndFrame();
             ++frames;
             if (!group.Ready() && mDesc.mMaxFrames != 0 &&
@@ -552,7 +640,8 @@ namespace mir
     {
         if (!mSceneGated)
             return;
-        const SceneLoadGroup &group = mWorldState.world.Resource<SceneLoadGroup>();
+        const WorldState &active = mRuntime ? mRuntime->state : mWorldState;
+        const SceneLoadGroup &group = active.world.Resource<SceneLoadGroup>();
         const ImGuiViewport *viewport = ImGui::GetMainViewport();
         ImDrawList *draw = ImGui::GetForegroundDrawList();
         const ImVec2 min = viewport->Pos, max(min.x + viewport->Size.x, min.y + viewport->Size.y);
@@ -586,7 +675,13 @@ namespace mir
                 OpenScene(scene->id, scene->saveCurrent);
         }
 
-        for (const Request request : queue.Take())
+        std::vector<Request> actions = queue.Take();
+        if (mRuntime)
+        {
+            std::vector<Request> runtimeActions = mRuntime->state.world.Resource<RequestQueue>().Take();
+            actions.insert(actions.end(), runtimeActions.begin(), runtimeActions.end());
+        }
+        for (const Request request : actions)
         {
             switch (request)
             {
@@ -731,13 +826,24 @@ namespace mir
         return SystemContext{ mWorldState.world, mWorldState.commands, dt, mElapsed, mFrame, mFixedTimestep.Alpha() };
     }
 
+    SystemContext App::MakeRuntimeContext(float dt)
+    {
+        return mRuntime->MakeContext(dt, mElapsed, mFrame, mFixedTimestep.Alpha());
+    }
+
     void App::Run()
     {
-        if (mGateScenes && !mWorldState.world.Resource<SceneLoadGroup>().Ready() && !AwaitSceneResources())
+        if (mGateScenes && !(mRuntime ? mRuntime->state.world : mWorldState.world).Resource<SceneLoadGroup>().Ready() &&
+            !AwaitSceneResources())
             return;
 
         SystemContext startContext = MakeContext(0.0f);
         mWorldState.scheduler.Start(startContext);
+        if (mRuntime)
+        {
+            SystemContext runtimeStart = MakeRuntimeContext(0.0f);
+            mRuntime->state.scheduler.Start(runtimeStart);
+        }
 
         auto previous = std::chrono::steady_clock::now();
 
@@ -763,7 +869,7 @@ namespace mir
             if (mAssetService)
                 mAssetService->DrainCompletions();
 
-            if (mGateScenes && !mWorldState.world.Resource<SceneLoadGroup>().Ready())
+            if (mGateScenes && !(mRuntime ? mRuntime->state.world : mWorldState.world).Resource<SceneLoadGroup>().Ready())
             {
                 mElapsed -= dt;
                 if (!AwaitSceneResources())
@@ -774,6 +880,11 @@ namespace mir
 
             SystemContext frameContext = MakeContext(dt);
             mWorldState.scheduler.RunFrameSlot(FrameSlot::FrameBegin, frameContext);
+            if (mRuntime)
+            {
+                SystemContext runtimeFrame = MakeRuntimeContext(dt);
+                mRuntime->state.scheduler.RunFrameSlot(FrameSlot::FrameBegin, runtimeFrame);
+            }
 
             mImGui.RunUI();
 
@@ -781,13 +892,14 @@ namespace mir
             // themselves, as ScriptSystem does
             const uint32_t fixedSteps = mFixedTimestep.Advance(dt);
 
-            SystemContext context = MakeContext(dt);
+            SystemContext context = mRuntime ? MakeRuntimeContext(dt) : MakeContext(dt);
             if (!mDesc.mCapturePath.empty() && mFrame + 1 == mDesc.mMaxFrames)
                 mRenderer.Renderer().CaptureNextFrame(mDesc.mCapturePath);
-            mWorldState.scheduler.Update(context, fixedSteps, mFixedTimestep.mStep);
-            mWorldState.world.Resource<SceneLoadGroup>().EndFrame();
+            WorldState &active = mRuntime ? mRuntime->state : mWorldState;
+            active.scheduler.Update(context, fixedSteps, mFixedTimestep.mStep);
+            active.world.Resource<SceneLoadGroup>().EndFrame();
 
-            if (mWorldState.world.Resource<InputState>().JustPressed(kToggleFullscreenAction))
+            if (active.world.Resource<InputState>().JustPressed(kToggleFullscreenAction))
                 ToggleFullscreen();
 
             ++mFrame;

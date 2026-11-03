@@ -31,8 +31,13 @@ namespace mir
         GameUIImGuiModule(const GameUIImGuiModule &) = delete;
         GameUIImGuiModule &operator=(const GameUIImGuiModule &) = delete;
 
+        void ActivateWorld(World *world, GameUIModule *gameUI);
+
     private:
-        GameUIModule &mGameUI;
+        World *mAuthoringWorld;
+        World *mActiveWorld;
+        GameUIModule &mAuthoringGameUI;
+        GameUIModule *mActiveGameUI;
         ImGuiUIBackend mBackend;
 
         // last: unregisters before the backend above is destroyed

@@ -25,7 +25,7 @@
 namespace mir
 {
     ImGuiModule::ImGuiModule(ModuleContext context, WindowModule &window, RendererModule &renderer)
-        : mContext(context), mRenderer(renderer)
+        : mContext(context), mInputWorld(&context.world), mRenderer(renderer)
     {
         if (mRuntime.Initialize(window.Get(), renderer.Renderer()))
             return;
@@ -60,7 +60,7 @@ namespace mir
             group.Run();
         mRenderer.Renderer().SetImGuiDrawData(mRuntime.EndFrame());
 
-        if (InputState *input = mContext.world.TryResource<InputState>())
+        if (InputState *input = mInputWorld->TryResource<InputState>())
         {
             const ImGuiIO &io = ImGui::GetIO();
             input->SetUiCapture(io.WantCaptureKeyboard, io.WantCaptureMouse);

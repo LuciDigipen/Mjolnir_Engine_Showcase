@@ -9,8 +9,11 @@ or at a transition, its module registers.
 
 ## Model
 
-`App(desc)` builds everything, `Run()` loops until the window closes, and the
-destructor stops the systems and lets the members die.
+`App(desc)` builds the authoring world and shared services. `PlayScene` creates a
+`RuntimeSession` with its own World, scheduler, scene, simulation modules and
+render binding. `Run()` updates the runtime scheduler during Play and the
+authoring scheduler during Edit. Stop unloads and destroys the runtime session,
+then returns to the same authoring World and editor history.
 
 The members are the modules, declared in dependency order: a module after every
 module it uses, and a bridge after `script` and its library. C++ builds them in
@@ -33,7 +36,7 @@ ScriptModule, ParticlesRuntimeModule, the six script bridges, TerrainRuntimeModu
 Between two module members a `SplashStep` sets the splash's status line, so the
 splash follows startup without the constructor body doing it.
 
-`Run` is a plain loop with no fixed timestep.
+`Run` advances a fixed timestep for the active World.
 
 ```
 Start(scheduler)                       systems cache their queries
@@ -45,10 +48,10 @@ while true:
     dt = min(elapsed, mMaxDeltaSeconds)
     ApplyRequests                      last frame's transitions, and a game to switch to
     AsyncAssetService::DrainCompletions  background asset loads that finished become visible
-    RunFrameSlot(FrameBegin)           script reload poll, terrain installs and Edit refresh, import and content browser polls
+    RunFrameSlot(FrameBegin)           authoring tools and shared services, plus runtime frame slots during Play
     ImGuiModule::RunUI                 Tools drawers (the editor), then Game drawers (the game UI)
     fixedSteps = FixedTimestep::Advance(dt)  every mode; FixedUpdate systems check IsSimulating
-    SystemScheduler::Update            PreUpdate, Update, FixedUpdate x fixedSteps, PostUpdate, Propagate, LateUpdate, Render
+    active SystemScheduler::Update     PreUpdate, Update, FixedUpdate x fixedSteps, PostUpdate, Propagate, LateUpdate, Render
     if ToggleFullscreen just pressed: ToggleFullscreen    F11; the swapchain follows next frame
     ++frame
     halfway through mMaxFrames, if mSwitchProjectTo: RequestOpenProject
@@ -88,23 +91,23 @@ what was built is torn down.
 
 ### Transitions
 
-`App` keeps what defines a transition: the scene commands, the Play snapshot and
-`EngineModeState`. Every other step is a stage function a module registered.
+`App` keeps what defines a transition: the authoring scene, the runtime session
+and `EngineModeState`. Scene commands use stages registered by modules.
 
 ```
 NewScene     SceneUnload stage, SceneModule::New, SceneLoad stage
 LoadScene    probe and prompt, SceneUnload, SceneModule::LoadFromDisk, SceneLoad
 SaveScene    prompt for an untitled scene, SceneModule::Bind, SceneModule::Save, SceneSaved stage
-PlayScene    PlayBegin stage, SceneModule::CaptureForPlay, Play mode
-StopScene    PlayEnd stage, SceneModule::RestoreFromPlay, Edit mode, SceneLoad stage
+PlayScene    commit authoring prefabs, copy the live scene into RuntimeSession, runtime SceneLoad and PlayBegin, Play mode
+StopScene    runtime PlayEnd, SceneUnload and scheduler Stop, destroy RuntimeSession, Edit mode
 asset swap   AssetsModule::BeginReload, ReloadPrepare stage, CommitReload, ReloadCommit stage
              (a veto: ReloadAbort stage, AbortReload)
 ```
 
-`StopScene` runs `PlayEnd` before the restore, so scripts get their `OnStop` in
-the World they ran in. Stop keeps the GPU caches: the restore fires `OnRemove`
-for every Play entity, which drops its per-entity state, and the caches are
-keyed by asset. A `ReloadPrepare` function vetoes the swap by throwing; `App`
+`StopScene` runs `PlayEnd` before unloading runtime entities, so scripts get
+their `OnStop` in the World they ran in. The authoring entities, unsaved edits
+and editor history remain in place. Window, GPU and asset services outlive the
+runtime session. A `ReloadPrepare` function vetoes the swap by throwing; `App`
 then runs `ReloadAbort`, so the holders that prepared before it drop their
 staging, aborts the reload and tells the import why.
 

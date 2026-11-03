@@ -117,6 +117,23 @@ namespace mir
         return restored;
     }
 
+    LoadedScene CopyWorld(World &source, const LoadedScene &scene, World &destination,
+        ScenePrefabResolver *resolver)
+    {
+        PlaySnapshot snapshot = CaptureWorld(source, scene, resolver);
+        try
+        {
+            LoadedScene copy = RestoreWorld(destination, snapshot, resolver);
+            DiscardSnapshot(snapshot);
+            return copy;
+        }
+        catch (...)
+        {
+            DiscardSnapshot(snapshot);
+            throw;
+        }
+    }
+
     void DiscardSnapshot(PlaySnapshot &snapshot)
     {
         if (snapshot.mDir.empty())

@@ -55,17 +55,16 @@ is optional: without one the record loads unchanged and nothing is materialized,
 which is what an editor's preview World and a test that only needs the record
 use.
 
-`PlaySnapshot` is `SaveScene`/`LoadScene` reused for a second purpose: a
-whole-World capture and restore around a Play session, rather than an
-author's save file. `CaptureWorld` builds a throwaway `LoadedScene` covering
+`PlaySnapshot` reuses `SaveScene`/`LoadScene` to copy a live authoring World
+into Play, including unsaved edits. `CaptureWorld` builds a throwaway `LoadedScene` covering
 every entity `World::ForEachAliveEntity` finds — not just ones some other
 `LoadedScene` tracks — and saves it to a scratch directory in the temp
 directory, named by the process id, so two copies of a game entering Play at
 once (a game build plays from its first frame) do not overwrite each other.
-`DiscardSnapshot` removes it; `App` calls it at shutdown. `RestoreWorld`
-destroys every entity currently alive, then `LoadScene`s that directory back,
-returning the fresh `LoadedScene` identity (new `Entity` handles) for the
-caller to adopt.
+`CopyWorld` captures the source, loads it into a separate World, and removes
+the scratch directory. `RestoreWorld` destroys every entity currently alive in
+its target, then loads the directory and returns a fresh `LoadedScene` with new
+`Entity` handles.
 
 `EntitySnapshot` is the same per-entity data, cut down to one entity and its
 descendants. Duplicate, undo of delete and prefabs build on it. `CaptureEntity`
@@ -105,14 +104,13 @@ around them.
 | `NewScene`, `AllocateStableId`, `CreateSceneEntity`, `DestroySceneEntity` | `scene/SceneAsset.h` | Authoring entry points |
 | `SaveScene`, `LoadScene`, `UnloadScene` | `scene/SceneIO.h` | Directory in, directory out, scoped destroy |
 | `ProbeScene`, `SceneProbe` | `scene/SceneIO.h` | What `LoadScene` would skip, found without a `World` |
-| `PlaySnapshot`, `CaptureWorld`, `RestoreWorld`, `DiscardSnapshot` | `scene/PlaySnapshot.h` | Whole-World capture/restore around a Play session, built on `SaveScene`/`LoadScene`; `DiscardSnapshot` removes its directory |
-| `SceneModule`, `SceneLoadResult`, `SceneLoadCause` | `scene/SceneModule.h` | The scene the World holds, its Play snapshot, and how it last got there |
+| `PlaySnapshot`, `CaptureWorld`, `RestoreWorld`, `CopyWorld`, `DiscardSnapshot` | `scene/PlaySnapshot.h` | Copy a live World into Play through a temporary scene directory |
+| `SceneModule`, `SceneLoadResult`, `SceneLoadCause` | `scene/SceneModule.h` | The scene each World holds and how it last got there |
 | `EntitySnapshot`, `SnapshotMembers`, `CaptureEntity`, `RestoreEntity`, `RestoreEntityAt`, `DuplicateSceneEntity` | `scene/EntitySnapshot.h` | One entity and its descendants as in-memory data, restored into new entities registered in a `LoadedScene`, under new `StableId`s or, for undo, their old ones |
 
-`SceneModule` holds the `LoadedScene`, the scene directory and the Play
-snapshot. Its commands replace the scene without unloading it first, because
+`SceneModule` holds the `LoadedScene` and the scene directory. Its commands replace the scene without unloading it first, because
 `App` runs `SceneUnload` between the two. Each command records a
-`SceneLoadResult`: from disk, new, or restored from the snapshot, and whether it
+`SceneLoadResult`: from disk, new, or copied into Play, and whether it
 is incomplete. `SceneLoad` stage functions read it through `LastLoad()`, and are
 its only readers.
 

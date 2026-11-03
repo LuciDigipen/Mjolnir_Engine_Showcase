@@ -1,7 +1,7 @@
 /**
  * @file SceneModule.h
  * @author sumin.park
- * @brief The scene the World holds, its Play snapshot and how it last got there.
+ * @brief The scene the World holds and how it last got there.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -26,7 +26,7 @@ namespace mir
     {
         FromDisk,
         New,
-        // Stop put the World back as it was at Play
+        // A scene was copied into another World
         FromSnapshot,
     };
 
@@ -70,18 +70,16 @@ namespace mir
         void New(std::string name, bool incomplete = false);
         void LoadFromDisk(ScenePrefabResolver *resolver, bool incomplete);
 
+        // Copies the live scene, including unsaved edits, into this module's World.
+        void CopyFrom(World &source, const LoadedScene &scene, ScenePrefabResolver *resolver);
+
         // false on I/O failure, or while the scene is unbound
         bool Save(const ScenePrefabResolver *resolver);
-
-        // Play keeps a snapshot; Stop destroys Play's entities and restores it
-        void CaptureForPlay(const ScenePrefabResolver *resolver);
-        void RestoreFromPlay(ScenePrefabResolver *resolver);
 
     private:
         World &mWorld;
         std::filesystem::path mSceneDir;
         LoadedScene mScene;
-        PlaySnapshot mSnapshot;
         SceneLoadResult mLastLoad;
         bool mBound = true;
     };

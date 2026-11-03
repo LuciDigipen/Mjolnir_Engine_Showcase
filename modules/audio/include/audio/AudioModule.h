@@ -14,6 +14,7 @@
 #include <core/Registration.h>
 
 #include <filesystem>
+#include <memory>
 
 namespace mir
 {
@@ -34,6 +35,23 @@ namespace mir
 
         // Writes the "audio" section of project_settings.json and keeps it as Defaults(); false when it cannot
         bool SaveDefaults(const AudioSettings &defaults);
+
+        class WorldBinding;
+        std::unique_ptr<WorldBinding> BindWorld(ModuleContext context);
+
+        class WorldBinding
+        {
+        public:
+            explicit WorldBinding(ModuleContext context);
+            ~WorldBinding();
+            WorldBinding(const WorldBinding &) = delete;
+            WorldBinding &operator=(const WorldBinding &) = delete;
+
+        private:
+            Registration mHooks;
+            Registration mSoundtrackHooks;
+            Registration mPlayEnd;
+        };
 
     private:
         std::filesystem::path mProjectSettingsPath;

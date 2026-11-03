@@ -1357,6 +1357,7 @@ namespace mir
 
             if (ImGui::Begin("Hierarchy"))
             {
+                ImGui::BeginDisabled(mode.mMode != EngineMode::Edit);
                 const EntityAction entityAction = mHierarchyPanel.Draw(activeWorld, mAuthoredEntities, documentTab);
                 if (!documentTab && entityAction.mKind == EntityActionKind::CreatePrefab)
                 {
@@ -1398,14 +1399,18 @@ namespace mir
                 else if (documentTab || entityAction.mKind != EntityActionKind::PlacePrefab ||
                     mode.mMode == EngineMode::Edit)
                 {
-                    mHistory.Submit(MakeEntityCommand(entityAction));
+                    if (mode.mMode == EngineMode::Edit)
+                        mHistory.Submit(MakeEntityCommand(entityAction));
                 }
+                ImGui::EndDisabled();
             }
             ImGui::End();
 
             if (ImGui::Begin("Inspector"))
             {
+                ImGui::BeginDisabled(mode.mMode != EngineMode::Edit);
                 snapRequested |= mInspectorPanel.Draw(activeWorld, assetImport, mHistory, mAuthoredEntities, snap);
+                ImGui::EndDisabled();
                 if (!documentTab && mode.mMode == EngineMode::Edit)
                 {
                     const auto &selection = activeWorld.Resource<Selection>().mSelected;
@@ -1454,7 +1459,8 @@ namespace mir
 
             UpdateViewportPicking(mode, activeWorld);
             FocusSelection(mode, activeWorld);
-            UpdateHistoryShortcuts(actions, mode);
+            if (mode.mMode == EngineMode::Edit)
+                UpdateHistoryShortcuts(actions, mode);
             DrawSelectionHighlights(mode, activeWorld);
             DrawComponentGizmos(mode, activeWorld);
             DrawViewportGizmo(mode, activeWorld, actions, documentTab);
@@ -1499,7 +1505,9 @@ namespace mir
                 }
                 if (ImGui::BeginMenu("Edit"))
                 {
+                    ImGui::BeginDisabled(mode.mMode != EngineMode::Edit);
                     DrawEditMenu();
+                    ImGui::EndDisabled();
                     ImGui::EndMenu();
                 }
                 if (ImGui::BeginMenu("Project"))
@@ -1717,7 +1725,7 @@ namespace mir
         FinishSnapToTerrain(activeWorld, documents.mActive, ground, mode.mMode == EngineMode::Edit,
                             snapTransitionRequested);
 
-        if (mSceneOps != nullptr)
+        if (mSceneOps != nullptr && mode.mMode == EngineMode::Edit)
             mHistory.Flush(sceneWorld, *mSceneOps);
 
         return actions;

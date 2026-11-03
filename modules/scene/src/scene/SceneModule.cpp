@@ -1,7 +1,7 @@
 /**
  * @file SceneModule.cpp
  * @author sumin.park
- * @brief The scene the World holds, its Play snapshot and how it last got there.
+ * @brief The scene the World holds and how it last got there.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -22,7 +22,7 @@ namespace mir
     {
     }
 
-    SceneModule::~SceneModule() { DiscardSnapshot(mSnapshot); }
+    SceneModule::~SceneModule() = default;
 
     void SceneModule::Unload() { UnloadScene(mWorld, mScene); }
 
@@ -42,6 +42,12 @@ namespace mir
         mBound = true;
     }
 
+    void SceneModule::CopyFrom(World &source, const LoadedScene &scene, ScenePrefabResolver *resolver)
+    {
+        mScene = CopyWorld(source, scene, mWorld, resolver);
+        mLastLoad = SceneLoadResult{ SceneLoadCause::FromSnapshot, false };
+    }
+
     bool SceneModule::Save(const ScenePrefabResolver *resolver)
     {
         if (!mBound)
@@ -56,14 +62,4 @@ namespace mir
         return true;
     }
 
-    void SceneModule::CaptureForPlay(const ScenePrefabResolver *resolver)
-    {
-        mSnapshot = CaptureWorld(mWorld, mScene, resolver);
-    }
-
-    void SceneModule::RestoreFromPlay(ScenePrefabResolver *resolver)
-    {
-        mScene = RestoreWorld(mWorld, mSnapshot, resolver);
-        mLastLoad = SceneLoadResult{ SceneLoadCause::FromSnapshot, false };
-    }
 }

@@ -272,37 +272,8 @@ namespace mir
                 }
                 mEditor.SetSceneUnsaved(false);
             });
-        // after PrefabModule's, which committed and froze the prefabs
-        mPlayBegin = context.scheduler.AddStage(Stage::PlayBegin, [this](SystemContext &)
-            {
-                mParticleEditor->OnHidden(mWorld);
-                PrefabCoordinator &prefabs = mPrefab.Coordinator();
-                if (prefabs.ConsumeSceneMaintenance() && !mEditor.IsSceneUnsaved())
-                    mEditor.SetSceneUnsaved(true);
-                mUnsavedBeforePlay = mEditor.IsSceneUnsaved();
-
-                std::vector<DocumentId> documents;
-                for (const PrefabId id : prefabs.DocumentIds())
-                    documents.push_back(DocumentOf(id));
-                RefreshPrefabHistory();
-                mPrefabMarksBeforePlay = CapturePrefabPlayMarks(documents,
-                    [this](DocumentId document) { return mEditor.IsDocumentUnsaved(document); });
-
-                mEditor.CancelSnapToTerrain();
-                mEditor.ClearHistory();
-                mPrefabBeforePlay = mPrefabWorkspace.ActiveDocument();
-                mPrefabWorkspace.ActivateScene();
-
-                
-                if (mAudio != nullptr && mEnableLayout)
-                    mAudioBeforePlay = mAudio->Live();
-            });
-        mPlayEnd = context.scheduler.AddStage(Stage::PlayEnd, [this](SystemContext &)
-            {
-                if (mAudio != nullptr && mAudioBeforePlay.has_value())
-                    mAudio->SetLive(*mAudioBeforePlay);
-                mAudioBeforePlay.reset();
-            });
+        mPlayBegin = context.scheduler.AddStage(Stage::PlayBegin, [this](SystemContext &) { PreparePlay(); });
+        mPlayEnd = context.scheduler.AddStage(Stage::PlayEnd, [this](SystemContext &) { FinishPlay(); });
 
         mReloadCommit = context.scheduler.AddStage(Stage::ReloadCommit, [this](SystemContext &)
             {
@@ -316,7 +287,7 @@ namespace mir
                 if (window.Get().Width() == 0 || window.Get().Height() == 0)
                     return;
 
-                World *preview = ActivePreviewWorld();
+                World *preview = mPlayWorld != nullptr ? mPlayWorld : ActivePreviewWorld();
                 const EditorActions actions = mEditor.DrawLayout(mEnableLayout, mWorld.Resource<InputMap>(),
                     mWorld.Resource<RenderSettings>(), mWorld.Resource<PostProcessingSettings>(),
                     mWorld.Resource<EngineModeState>(), mProjectMenu, mProject.mDir,
@@ -333,7 +304,7 @@ namespace mir
                 if (particleHistoryRequest < 0) mParticleEditor->RequestUndoDraft();
                 else if (particleHistoryRequest > 0) mParticleEditor->RequestRedoDraft();
                 if (mEnableLayout)
-                    mParticleEditor->Draw(mEditor.ParticleEditorVisible(),mWorld,assets.Cache(),mImport,mEditor.SceneCamera(),mFrameDt);
+                    mParticleEditor->Draw(IsEditing(mWorld) && mEditor.ParticleEditorVisible(),mWorld,assets.Cache(),mImport,mEditor.SceneCamera(),mFrameDt);
                 else mParticleEditor->OnHidden(mWorld);
                 if (const auto offsetEdit = mParticleEditor->TakeInstanceOffsetEdit())
                     mEditor.SubmitParticleEmitterOffset(mWorld, offsetEdit->mEntity, offsetEdit->mPlacementId, offsetEdit->mValue);
@@ -402,6 +373,39 @@ namespace mir
         mShaderHotReload.Shutdown();
     }
 
+    void EditorModule::PreparePlay()
+    {
+        mParticleEditor->OnHidden(mWorld);
+        PrefabCoordinator &prefabs = mPrefab.Coordinator();
+        if (prefabs.ConsumeSceneMaintenance() && !mEditor.IsSceneUnsaved())
+            mEditor.SetSceneUnsaved(true);
+        mUnsavedBeforePlay = mEditor.IsSceneUnsaved();
+
+        std::vector<DocumentId> documents;
+        for (const PrefabId id : prefabs.DocumentIds())
+            documents.push_back(DocumentOf(id));
+        RefreshPrefabHistory();
+        mPrefabMarksBeforePlay = CapturePrefabPlayMarks(documents,
+            [this](DocumentId document) { return mEditor.IsDocumentUnsaved(document); });
+
+        mEditor.CancelSnapToTerrain();
+        mPrefabBeforePlay = mPrefabWorkspace.ActiveDocument();
+        mPrefabWorkspace.ActivateScene();
+
+        if (mAudio != nullptr && mEnableLayout)
+            mAudioBeforePlay = mAudio->Live();
+    }
+
+    void EditorModule::FinishPlay()
+    {
+        if (mAudio != nullptr && mAudioBeforePlay.has_value())
+            mAudio->SetLive(*mAudioBeforePlay);
+        mAudioBeforePlay.reset();
+        if (mPrefabBeforePlay.has_value())
+            mPrefabWorkspace.Open(*mPrefabBeforePlay);
+        mPrefabBeforePlay.reset();
+    }
+
     bool EditorModule::HasUnsavedMaterialDrafts() const
     {
         return mMaterialEditor != nullptr && mMaterialEditor->HasUnsavedDrafts();
@@ -416,7 +420,7 @@ namespace mir
         rendering.SetViewportDebugView(0, mEnableLayout ? mEditor.SceneDebugView() : DebugViewSettings{});
 
         // the game UI draws later this frame, into the same scene viewport
-        GameUIArea &area = mWorld.Resource<GameUIArea>();
+        GameUIArea &area = (mPlayWorld != nullptr ? *mPlayWorld : mWorld).Resource<GameUIArea>();
         area.mSet = mEnableLayout;
         area.mRect = UIRect{ static_cast<float>(viewport.offset.x), static_cast<float>(viewport.offset.y),
                              static_cast<float>(viewport.extent.width), static_cast<float>(viewport.extent.height) };

@@ -110,6 +110,31 @@ namespace mir
         return true;
     }
 
+    std::unique_ptr<AudioModule::WorldBinding> AudioModule::BindWorld(ModuleContext context)
+    {
+        return std::make_unique<WorldBinding>(context);
+    }
+
+    AudioModule::WorldBinding::WorldBinding(ModuleContext context)
+    {
+        context.scheduler.AddSystem<AudioEmitterSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kNormal});
+        context.scheduler.AddSystem<AudioListenerSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kNormal});
+        context.scheduler.AddSystem<SoundtrackSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kNormal});
+        context.scheduler.AddSystem<AudioRenderSystem>(SystemPhase::LateUpdate, SystemOrder{SystemOrder::kLate});
+
+        mHooks = context.world.SetComponentHooks<AudioEmitter>({ .onRemove = &AudioEmitterSystem::OnEmitterRemoved });
+        mSoundtrackHooks =
+            context.world.SetComponentHooks<Soundtrack>({ .onRemove = &SoundtrackSystem::OnSoundtrackRemoved });
+        mPlayEnd = context.scheduler.AddStage(Stage::PlayEnd, &SoundtrackSystem::OnPlayEnd);
+    }
+
+    AudioModule::WorldBinding::~WorldBinding()
+    {
+        mPlayEnd.Reset();
+        mSoundtrackHooks.Reset();
+        mHooks.Reset();
+    }
+
     AudioModule::~AudioModule()
     {
         mPlayEnd.Reset();

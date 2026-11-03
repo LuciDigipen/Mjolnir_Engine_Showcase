@@ -63,6 +63,10 @@ namespace mir
         bool LayoutEnabled() const { return mEnableLayout; }
         bool HasUnsavedMaterialDrafts() const;
 
+        void SetPlayWorld(World *world) { mPlayWorld = world; }
+        void PreparePlay();
+        void FinishPlay();
+
         // set once the audio is built, null leaves out the Audio settings and the soundtrack picker
         void SetAudio(IEditorAudio *audio)
         {
@@ -106,6 +110,7 @@ namespace mir
         void FeedViewport();
 
         World &mWorld;
+        World *mPlayWorld = nullptr;
         RendererModule &mRenderer;
         SceneModule &mScene;
         PrefabModule &mPrefab;

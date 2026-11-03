@@ -52,6 +52,30 @@ namespace mir
                 return mSurfaceMaterials.ValidateRecord(frontend, layout, bytes, error);
             });
 
+        mWorldBinding = BindWorld(context, settings);
+        mActiveWorldBinding = mWorldBinding.get();
+    }
+
+    void RendererModule::ActivateWorld(WorldBinding *binding)
+    {
+        mActiveWorldBinding = binding != nullptr ? binding : mWorldBinding.get();
+        mRenderer.ResetHistory();
+    }
+
+    RenderSystem &RendererModule::Rendering() { return mActiveWorldBinding->Rendering(); }
+
+    MeshResolveSystem &RendererModule::Meshes() { return mActiveWorldBinding->Meshes(); }
+
+    std::unique_ptr<RendererModule::WorldBinding> RendererModule::BindWorld(ModuleContext context,
+        const RendererModuleSettings &settings)
+    {
+        return std::unique_ptr<WorldBinding>(new WorldBinding(context, mRenderer, mSurfaceMaterials, settings));
+    }
+
+    RendererModule::WorldBinding::WorldBinding(ModuleContext context, VulkanRenderer &renderer,
+        SurfaceMaterialLibrary &surfaceMaterials, const RendererModuleSettings &settings)
+        : mRenderer(renderer), mSurfaceMaterials(surfaceMaterials)
+    {
         context.world.EmplaceResource<ViewDrawSources>();
         // physics fills it while a view shows colliders
         context.world.EmplaceResource<DebugLines>();
@@ -106,10 +130,11 @@ namespace mir
             });
         mPlayEnd = context.scheduler.AddStage(Stage::PlayEnd, [this](SystemContext &) { mActiveCamera->Reset(); });
 
-        mFrameBegin = context.scheduler.AddFrameSlot(FrameSlot::FrameBegin, [this](SystemContext &)
-            {
-                mSurfaceMaterials.Advance();
-            });
+        if (settings.mAdvanceSharedFrame)
+            mFrameBegin = context.scheduler.AddFrameSlot(FrameSlot::FrameBegin, [this](SystemContext &)
+                {
+                    mSurfaceMaterials.Advance();
+                });
 
         mReloadCommit = context.scheduler.AddStage(Stage::ReloadCommit, [this](SystemContext &)
             {
@@ -118,8 +143,7 @@ namespace mir
             });
     }
 
-    // the tokens first, so nothing they reach runs on a renderer already shut down
-    RendererModule::~RendererModule()
+    RendererModule::WorldBinding::~WorldBinding()
     {
         mReloadCommit.Reset();
         mPlayEnd.Reset();
@@ -132,6 +156,11 @@ namespace mir
         // reaching the library before the library object goes away.
         if (mMeshes != nullptr)
             mMeshes->DetachSurfaceMaterials();
+    }
+
+    RendererModule::~RendererModule()
+    {
+        mWorldBinding.reset();
         mRenderer.SetShaderReloadListener({});
         mRenderer.SetMaterialRecordValidator({});
         mRenderer.Shutdown();

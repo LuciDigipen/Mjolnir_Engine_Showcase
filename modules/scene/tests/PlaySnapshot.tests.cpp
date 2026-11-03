@@ -1,8 +1,7 @@
 /**
  * @file PlaySnapshot.tests.cpp
  * @author Sumin Park
- * @brief CaptureWorld/RestoreWorld tests - the same World, mutated and
- *        restored in place, matching how App::PlayScene/StopScene use them.
+ * @brief World capture, copy and restore tests.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -73,6 +72,33 @@ TEST_CASE("RestoreWorld reverts a Transform mutated after CaptureWorld", "[scene
     const Transform *restoredTransform = world.GetComponent<Transform>(restoredEntity);
     REQUIRE(restoredTransform != nullptr);
     CHECK(restoredTransform->Position() == mir::WorldVec3(1.0, 2.0, 3.0));
+}
+
+TEST_CASE("CopyWorld seeds Play from unsaved edits and leaves authoring entities intact", "[scene]")
+{
+    mir::RegisterCoreComponents();
+
+    World authoring;
+    LoadedScene scene = NewScene("unsaved");
+    const Entity authored = CreateSceneEntity(authoring, scene);
+    AddTransform(authoring, authored, Transform{ glm::vec3(3.0f, 4.0f, 5.0f) });
+    scene.mDirty = true;
+
+    World runtime;
+    LoadedScene played = mir::CopyWorld(authoring, scene, runtime);
+    REQUIRE(played.mEntities.size() == 1);
+    CHECK(played.mDirty);
+    CHECK(played.mName == scene.mName);
+    CHECK(played.mNextId == scene.mNextId);
+    CHECK_FALSE(std::filesystem::exists(std::filesystem::temp_directory_path() /
+        ("mjolnir_play_snapshot_" + std::to_string(mir::CurrentProcessId()))));
+
+    const Entity running = played.mEntities.begin()->second;
+    runtime.GetComponent<Transform>(running)->SetPosition(glm::vec3(99.0f));
+    runtime.DestroyEntity(running);
+    CHECK(authoring.IsAlive(authored));
+    CHECK(authoring.GetComponent<Transform>(authored)->Position() == mir::WorldVec3(3.0, 4.0, 5.0));
+    CHECK(scene.mDirty);
 }
 
 TEST_CASE("RestoreWorld reverts a far root and its child exactly", "[scene]")

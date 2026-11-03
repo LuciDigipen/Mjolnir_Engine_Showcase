@@ -39,6 +39,10 @@ namespace mir
     LoadedScene RestoreWorld(World &world, const PlaySnapshot &snapshot,
         ScenePrefabResolver *resolver = nullptr);
 
+    // Seeds another World from the current scene without changing the source World.
+    LoadedScene CopyWorld(World &source, const LoadedScene &scene, World &destination,
+        ScenePrefabResolver *resolver = nullptr);
+
     // Removes the snapshot's directory, one per process, once it will not be
     // restored again; the snapshot is empty afterwards
     void DiscardSnapshot(PlaySnapshot &snapshot);

@@ -143,7 +143,7 @@ would.
 | `assets` | Cooked blobs, manifest, cache | [assets.md](modules/assets.md) |
 | `particles` | Cooked effect definitions, emitter handles and CPU playback lifecycle | [particles.md](modules/particles.md) |
 | `animation` | Model pose sampling and per-instance playback data | [animation.md](modules/animation.md) |
-| `scene` | Scene save and load, the scene the World holds, the Play snapshot | [scene.md](modules/scene.md) |
+| `scene` | Scene save and load, the scene each World holds, live scene copying for Play | [scene.md](modules/scene.md) |
 | `prefab` | Prefab source/cooked resources, compiled templates and scene instances | [prefab.md](modules/prefab.md) |
 | `serial` | JSON documents on disk | [serial.md](modules/serial.md) |
 | `script` | Lua embedding, ECS bindings, the script resolver | [script.md](modules/script.md) |
@@ -340,18 +340,18 @@ order, then flushes the command buffer.
 ```
 New / Load        SceneUnload  ->  scene replaced  ->  SceneLoad
 Save              written      ->  SceneSaved
-Play              PlayBegin    ->  snapshot  ->  Play mode
-Stop              PlayEnd  ->  restore the snapshot  ->  Edit mode  ->  SceneLoad
+  Play              commit authored prefabs  ->  copy live scene to runtime World  ->  runtime SceneLoad and PlayBegin
+  Stop              runtime PlayEnd and SceneUnload  ->  destroy runtime session  ->  Edit mode
 Asset reload      BeginReload  ->  ReloadPrepare  ->  CommitReload  ->  ReloadCommit
                                      (a veto)  ->  ReloadAbort  ->  AbortReload
 ```
 
 A `SceneLoad` function reads why the scene is there through
-`SceneModule::LastLoad()`: from disk, new, or restored from the Play snapshot,
+`SceneModule::LastLoad()`: from disk, new, or copied into a runtime World,
 and whether it is incomplete. A `ReloadPrepare` function vetoes the swap by
-throwing, and `ReloadAbort` then drops what every holder staged. Stop keeps the GPU caches, which are keyed by asset; per-entity state
-goes in the owning component's `OnRemove`, which the restore fires for every
-Play entity.
+throwing, and `ReloadAbort` then drops what every holder staged. Stop unloads
+the runtime entities, which fires their `OnRemove` hooks before the runtime
+modules and scheduler are destroyed.
 
 ### A file
 
@@ -512,8 +512,7 @@ A scene instance is the bridge back to `StableId`s. Its record binds each
 compiled address to one, and its patches hold only what the scene overrides.
 `PrefabCoordinator` binds that scene, and its `PrefabSystem` publishes compiled
 edits and nested dependency changes at the next Edit frame boundary. During
-Play it is frozen, so no template change can restructure entities the Play
-snapshot owns.
+Play it is frozen, so no template change can restructure runtime entities.
 
 An open Prefab document gets its own preview World and `LoadedScene`, so the
 editor can edit it without touching the scene. `PrefabAuthoring` records the

@@ -204,6 +204,7 @@ namespace mir
 
         // context is rebuilt per tick
         SystemContext MakeContext(float dt);
+        SystemContext MakeRuntimeContext(float dt);
 
         // what the editor, the game shell and the import asked for last frame
         void ApplyRequests();
@@ -316,20 +317,32 @@ namespace mir
         EditorAudioOptions mEditorAudio{ mAudio, mProject.mSoundBankDir };
     #endif
     #endif
-        PhysicsModule mPhysics;
-        TerrainModule mTerrainData;
-        ScriptModule mScript;
-        ParticlesRuntimeModule mParticlesRuntime;
-        ParticlesScriptModule mParticlesScript;
-    #if MIR_WITH_AUDIO
-        AudioScriptModule mAudioScript;
-    #endif
-        InputScriptModule mInputScript;
-        PhysicsScriptModule mPhysicsScript;
-        RendererScriptModule mRendererScript;
-        TerrainScriptModule mTerrainScript;
+        struct SimulationSystems
+        {
+            SimulationSystems(ModuleContext context, const GameProject &project, JobExecutor &jobs,
+                AssetsModule &assets, const AssetResolver &resolver, ParticlesModule &particles,
+                ParticlesGpuModule &particlesGpu, RenderSystem &rendering);
+
+            PhysicsModule physics;
+            TerrainModule terrainData;
+            ScriptModule script;
+            ParticlesRuntimeModule particlesRuntime;
+            ParticlesScriptModule particlesScript;
+        #if MIR_WITH_AUDIO
+            AudioScriptModule audioScript;
+        #endif
+            InputScriptModule inputScript;
+            PhysicsScriptModule physicsScript;
+            RendererScriptModule rendererScript;
+            TerrainScriptModule terrainScript;
+        };
+
+        SimulationSystems mSimulation;
         TerrainRuntimeModule mTerrain;
         GameUIImGuiModule mGameUIImGui;
+
+        struct RuntimeSession;
+        std::unique_ptr<RuntimeSession> mRuntime;
 
         std::optional<GameProject> mProjectToOpen;
         bool mSwitchHookFired = false;

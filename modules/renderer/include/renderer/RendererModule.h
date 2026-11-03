@@ -15,6 +15,7 @@
 #include <core/Registration.h>
 
 #include <filesystem>
+#include <memory>
 #include <string>
 
 namespace mir
@@ -36,6 +37,7 @@ namespace mir
         const AssetResolver *mResolver = nullptr;
         // loads mesh assets in the background, null disables mesh asset loading
         AsyncAssetService *mAssetService = nullptr;
+        bool mAdvanceSharedFrame = true;
     };
 
     class RendererModule
@@ -50,27 +52,53 @@ namespace mir
         RendererModule(const RendererModule &) = delete;
         RendererModule &operator=(const RendererModule &) = delete;
 
+        // Binds render resources and systems to an additional world using this device.
+        class WorldBinding;
+        std::unique_ptr<WorldBinding> BindWorld(ModuleContext context, const RendererModuleSettings &settings);
+        void ActivateWorld(WorldBinding *binding);
+
         VulkanRenderer &Renderer() { return mRenderer; }
-        RenderSystem &Rendering() { return *mRenderSystem; }
-        MeshResolveSystem &Meshes() { return *mMeshes; }
+        RenderSystem &Rendering();
+        MeshResolveSystem &Meshes();
         SurfaceMaterialLibrary &SurfaceMaterials() { return mSurfaceMaterials; }
+
+    public:
+        class WorldBinding
+        {
+            friend class RendererModule;
+            WorldBinding(ModuleContext context, VulkanRenderer &renderer, SurfaceMaterialLibrary &surfaceMaterials,
+                const RendererModuleSettings &settings);
+
+        public:
+            ~WorldBinding();
+            WorldBinding(const WorldBinding &) = delete;
+            WorldBinding &operator=(const WorldBinding &) = delete;
+            RenderSystem &Rendering() { return *mRenderSystem; }
+            MeshResolveSystem &Meshes() { return *mMeshes; }
+
+        private:
+            VulkanRenderer &mRenderer;
+            SurfaceMaterialLibrary &mSurfaceMaterials;
+
+            // owned by the scheduler, which outlives this module
+            MeshResolveSystem *mMeshes = nullptr;
+            ActiveCameraSystem *mActiveCamera = nullptr;
+            RenderSystem *mRenderSystem = nullptr;
+
+            // last: they unregister before the renderer above shuts down
+            Registration mHooks;
+            Registration mSceneUnload;
+            Registration mSceneLoad;
+            Registration mPlayBegin;
+            Registration mPlayEnd;
+            Registration mFrameBegin;
+            Registration mReloadCommit;
+        };
 
     private:
         VulkanRenderer mRenderer;
         SurfaceMaterialLibrary mSurfaceMaterials;
-
-        // owned by the scheduler, which outlives this module
-        MeshResolveSystem *mMeshes = nullptr;
-        ActiveCameraSystem *mActiveCamera = nullptr;
-        RenderSystem *mRenderSystem = nullptr;
-
-        // last: they unregister before the renderer above shuts down
-        Registration mHooks;
-        Registration mSceneUnload;
-        Registration mSceneLoad;
-        Registration mPlayBegin;
-        Registration mPlayEnd;
-        Registration mFrameBegin;
-        Registration mReloadCommit;
+        std::unique_ptr<WorldBinding> mWorldBinding;
+        WorldBinding *mActiveWorldBinding = nullptr;
     };
 }
