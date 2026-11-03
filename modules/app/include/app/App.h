@@ -145,7 +145,7 @@ namespace mir
         AsyncAssetService *AssetService() { return mAssetService.get(); }
 
         // The scene currently in the World
-        LoadedScene &Scene() { return mScene.Scene(); }
+        LoadedScene &Scene() { return mWorldState.scene.Scene(); }
 
         // The game currently open
         const GameProject &Project() const { return mProject; }
@@ -269,10 +269,17 @@ namespace mir
 
         struct WorldState
         {
+            explicit WorldState(const std::filesystem::path &sceneDir)
+                : scene(Context(), sceneDir)
+            {
+            }
+
             CommandBuffer commands;
             World world;
             SystemScheduler scheduler;
             CoreModule core{ ModuleContext{ world, scheduler }, commands };
+
+            SceneModule scene;
 
             ModuleContext Context() { return { world, scheduler }; }
         };
@@ -282,7 +289,6 @@ namespace mir
         std::unique_ptr<AsyncAssetService> mAssetService;
         AssetResolver mResolver;
         ParticlesModule mParticles;
-        SceneModule mScene;
         PrefabModule mPrefab;
         // before ImGuiModule: ImGui's shutdown frees the GPU side of the UI's textures,
         // so the textures must still be there
