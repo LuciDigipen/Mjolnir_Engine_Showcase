@@ -126,7 +126,9 @@ namespace mir::vk
         // Before the pool: frees each material's set into it.
         DestroyMaterials();
         mRetiredTextureSets.ReleaseAll([this](VkDescriptorSet &set)
-            { vkFreeDescriptorSets(mDevice->Handle(), mDescriptorPool, 1, &set); });
+            {
+                vkFreeDescriptorSets(mDevice->Handle(), mDescriptorPool, 1, &set);
+            });
         mTextureWaiting.clear();
         mDefaultMaterial = kNullMaterial;
         mErrorMaterial = kNullMaterial;
@@ -347,7 +349,7 @@ namespace mir::vk
         if (result != VK_SUCCESS)
         {
             MIR_LOG_CRITICAL("CreateGraphicsPipeline: vkCreateGraphicsPipelines failed for {}: {}",
-                shaderName, static_cast<int>(result));
+                state.shaderName, static_cast<int>(result));
             return VK_NULL_HANDLE;
         }
 
@@ -716,12 +718,12 @@ namespace mir::vk
     {
         const VkDeviceSize bytes = VkDeviceSize{ kFramesInFlight } * mRecordRefFrameStride;
         VmaAllocationInfo info{};
-        const VkBufferCreateInfo bufferInfo{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-            .size = bytes, .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, .sharingMode = VK_SHARING_MODE_EXCLUSIVE};
+        const VkBufferCreateInfo bufferInfo{ .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = bytes, .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, .sharingMode = VK_SHARING_MODE_EXCLUSIVE };
         const VmaAllocationCreateInfo allocationInfo{
             .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
             .usage = VMA_MEMORY_USAGE_AUTO,
-            .requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT};
+            .requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT };
         if (vmaCreateBuffer(mDevice->Allocator(), &bufferInfo, &allocationInfo,
             &mRecordRefBuffer, &mRecordRefAllocation, &info) != VK_SUCCESS)
         {
@@ -786,7 +788,9 @@ namespace mir::vk
     void MaterialStore::RefreshTextures(ResourceStore &resources, uint64_t completed, uint64_t lastUse)
     {
         mRetiredTextureSets.Collect(completed, [this](VkDescriptorSet &set)
-            { vkFreeDescriptorSets(mDevice->Handle(), mDescriptorPool, 1, &set); });
+            {
+                vkFreeDescriptorSets(mDevice->Handle(), mDescriptorPool, 1, &set);
+            });
         std::erase_if(mTextureWaiting, [&](MaterialHandle handle)
             {
                 if (FindMaterial(handle) == nullptr)
@@ -937,7 +941,7 @@ namespace mir::vk
                 {
                     if (error != nullptr)
                         *error = registration == nullptr ? "a material record update lost its surface registration" :
-                            std::move(validationError);
+                        std::move(validationError);
                     DiscardRecordBatch();
                     return false;
                 }
@@ -1075,7 +1079,7 @@ namespace mir::vk
         MaterialMigration migrated = MigrateMaterialRecord(
             material.mHasAcceptedLayout ? material.mAcceptedLayout : empty, *candidateLayout,
             material.mHasAcceptedLayout ? std::span<const std::byte>(material.mCurrentRecordBytes) :
-                                          std::span<const std::byte>(),
+            std::span<const std::byte>(),
             *defaults);
         if (!migrated.ok)
         {
@@ -1266,7 +1270,9 @@ namespace mir::vk
     {
         mTextureWaiting.clear();
         mRetiredTextureSets.ReleaseAll([this](VkDescriptorSet &set)
-            { vkFreeDescriptorSets(mDevice->Handle(), mDescriptorPool, 1, &set); });
+            {
+                vkFreeDescriptorSets(mDevice->Handle(), mDescriptorPool, 1, &set);
+            });
         const GpuMaterial *const defaultMaterial = FindMaterial(mDefaultMaterial);
         const GpuMaterial *const errorMaterial = FindMaterial(mErrorMaterial);
         if (defaultMaterial == nullptr || errorMaterial == nullptr)
