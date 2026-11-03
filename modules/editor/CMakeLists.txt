@@ -41,6 +41,7 @@ endif()
 target_sources(engine_editor PRIVATE
     src/editor/AssetImportManager.cpp
     src/editor/BackgroundImage.cpp
+    src/editor/BuildJob.cpp
     src/editor/BuildSettings.cpp
     src/editor/ContentBrowserWatcher.cpp
     src/editor/CreateGameProject.cpp

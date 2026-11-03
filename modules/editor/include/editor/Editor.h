@@ -128,6 +128,7 @@ namespace mir
         EditorDocumentAction mDocument;
         bool mSaveActiveDocument = false;
         bool mToggleMaterialEditor = false;
+        BuildAction mBuild;
     };
 
     class Editor
@@ -155,7 +156,7 @@ namespace mir
             World &activeWorld, World &sceneWorld, const EditorDocuments &documents,
             const AssetImportView &assetImport, const VulkanRenderer &renderer,
             const ContentBrowserView &contentBrowser, bool materialPanelVisible,
-            bool materialDraftsUnsaved, float dt);
+            bool materialDraftsUnsaved, const BuildJobView &build, float dt);
 
         VkRect2D SceneViewportRect() const { return mSceneViewportRect; }
 

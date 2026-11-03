@@ -1278,7 +1278,7 @@ namespace mir
         std::span<const ProjectMenuEntry> projects, std::string_view currentProject, World &activeWorld,
         World &sceneWorld, const EditorDocuments &documents, const AssetImportView &assetImport,
         const VulkanRenderer &renderer, const ContentBrowserView &contentBrowser, bool materialPanelVisible,
-        bool materialDraftsUnsaved, float dt)
+        bool materialDraftsUnsaved, const BuildJobView &build, float dt)
     {
         EditorActions actions;
 
@@ -1561,9 +1561,13 @@ namespace mir
             {
                 if (std::exchange(mFocusBuildSettings, false))
                     ImGui::SetNextWindowFocus();
-                if (ImGui::Begin("Build Settings", &mShowBuildSettings) &&
-                    mBuildSettingsPanel.Draw(mPreferences, mBuildGame) && !mPreferences.SaveFile(mPreferencesPath))
-                    mBuildSettingsPanel.SetStatus("Save failed - see log.");
+                if (ImGui::Begin("Build Settings", &mShowBuildSettings))
+                {
+                    const BuildSettingsRequest request = mBuildSettingsPanel.Draw(mPreferences, mBuildGame, build);
+                    if (request.mSavePreferences && !mPreferences.SaveFile(mPreferencesPath))
+                        mBuildSettingsPanel.SetStatus("Save failed - see log.");
+                    actions.mBuild = request.mBuild;
+                }
                 ImGui::End();
             }
             else

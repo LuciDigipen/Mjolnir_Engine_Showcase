@@ -1,7 +1,7 @@
 /**
  * @file BuildSettingsPanel.cpp
  * @author Quy Dong Ta
- * @brief The "Build Settings" window: profile, player template, output folder and Run after build.
+ * @brief The "Build Settings" window: profile, player template, output folder, Run after build, and Build.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -43,7 +43,8 @@ namespace mir
             std::string text = message;
             if (!text.empty())
                 text[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(text[0])));
-            text += '.';
+            if (!text.ends_with('.'))
+                text += '.';
 
             if (color)
                 ImGui::PushStyleColor(ImGuiCol_Text, *color);
@@ -124,11 +125,132 @@ namespace mir
             ImGui::TextDisabled("cmake --install adds to what the folder holds, so delete it first.");
     }
 
-    bool BuildSettingsPanel::Draw(EditorPreferences &preferences, const BuildGame &game)
+    void BuildSettingsPanel::DrawBuild(const BuildGame &game, const BuildJobView &build, BuildAction &action,
+        const std::filesystem::path &playerDir, const std::filesystem::path &outDir)
+    {
+        ImGui::SeparatorText("Build");
+        if (build.mRunning)
+        {
+            ImGui::Text("Building %s... %.0f s", game.mName.c_str(), build.mSeconds);
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel"))
+                action.mCommand = BuildCommand::Cancel;
+            ImGui::SetItemTooltip("Stops the build; the previous build stays as it was");
+            return;
+        }
+        if (build.mSaving)
+        {
+            ImGui::TextDisabled("Saving, then building...");
+            return;
+        }
+
+        const std::string blocked = !build.mBlocked.empty() ? build.mBlocked
+            : !mCheck.mProblem.empty()                       ? "Make the player template first"
+                                                             : std::string();
+        ImGui::BeginDisabled(!blocked.empty());
+        if (ImGui::Button("Build"))
+            action = { BuildCommand::Build, playerDir, outDir };
+        ImGui::EndDisabled();
+        if (blocked.empty())
+        {
+            ImGui::SetItemTooltip("Packages %s into the output folder", game.mName.c_str());
+        }
+        else
+        {
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("%s", blocked.c_str());
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", blocked.c_str());
+        }
+
+        DrawSavePrompt(build, action, playerDir, outDir);
+        if (build.mResult != nullptr)
+            DrawResult(*build.mResult, game);
+    }
+
+    void BuildSettingsPanel::DrawSavePrompt(const BuildJobView &build, BuildAction &action,
+        const std::filesystem::path &playerDir, const std::filesystem::path &outDir)
+    {
+        constexpr const char *kPopupId = "Save before building?";
+        if (!build.mAskSave.empty() && !ImGui::IsPopupOpen(kPopupId))
+            ImGui::OpenPopup(kPopupId);
+
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        if (!ImGui::BeginPopupModal(kPopupId, nullptr,
+                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings))
+            return;
+
+        ImGui::Text("Unsaved changes: %s.", build.mAskSave.c_str());
+        ImGui::TextDisabled("The build packages what is saved on disk.");
+        ImGui::Spacing();
+        if (ImGui::Button("Save and Build"))
+        {
+            action = { BuildCommand::SaveThenBuild, playerDir, outDir };
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape) || build.mAskSave.empty())
+        {
+            action.mCommand = BuildCommand::DeclineSave;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    void BuildSettingsPanel::DrawResult(const BuildResult &result, const BuildGame &game)
+    {
+        ImGui::Spacing();
+        switch (result.mOutcome)
+        {
+        case BuildOutcome::Succeeded:
+            ImGui::TextColored(EditorTheme::Color(ThemeColor::Success), "Built in %.1f s: %zu assets, %.1f MB.",
+                result.mSeconds, result.mAssets, static_cast<double>(result.mBytes) / 1e6);
+            ImGui::TextWrapped("%s starts it.", CheckoutPath(result.mExecutable, game.mSourceRoot).c_str());
+            break;
+        case BuildOutcome::Failed:
+            Line("build failed: " + result.mError, EditorTheme::Color(StatusColor::Danger));
+            break;
+        case BuildOutcome::Canceled:
+            ImGui::TextWrapped("Build canceled. %s is as it was.", CheckoutPath(result.mOutDir, game.mSourceRoot).c_str());
+            break;
+        case BuildOutcome::CanceledTooLate:
+            Line("too late to cancel: the new build is already in " + CheckoutPath(result.mOutDir, game.mSourceRoot),
+                EditorTheme::Color(StatusColor::Warning));
+            break;
+        }
+        for (const std::string &warning : result.mWarnings)
+            Line(warning, EditorTheme::Color(StatusColor::Warning));
+
+        if (result.mSteps.empty() || !ImGui::TreeNode("Log"))
+            return;
+        if (ImGui::BeginTable("##steps", 3, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg))
+        {
+            for (const BuildStepResult &step : result.mSteps)
+            {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(step.mName.c_str());
+                ImGui::TableNextColumn();
+                if (step.mStatus == "failed")
+                    ImGui::TextColored(EditorTheme::Color(StatusColor::Danger), "%s", step.mStatus.c_str());
+                else if (step.mStatus == "skipped")
+                    ImGui::TextDisabled("%s", step.mStatus.c_str());
+                else
+                    ImGui::TextUnformatted(step.mStatus.c_str());
+                ImGui::TableNextColumn();
+                ImGui::Text("%.2f s", step.mSeconds);
+            }
+            ImGui::EndTable();
+        }
+        ImGui::TreePop();
+    }
+
+    BuildSettingsRequest BuildSettingsPanel::Draw(EditorPreferences &preferences, const BuildGame &game,
+        const BuildJobView &build)
     {
         if (!mLoaded)
             Load(preferences, game);
-        bool save = false;
+        BuildSettingsRequest request;
 
         ImGui::SeparatorText("Profile");
         const char *profileNames[] = { "Development", "Release" };
@@ -160,9 +282,10 @@ namespace mir
         if (ImGui::IsItemDeactivatedAfterEdit())
         {
             TemplateText(preferences, mProfile) = mTemplatePath;
-            save = true;
+            request.mSavePreferences = true;
         }
-        DrawTemplateStatus(PlayerTemplateDir(preferences, game, mProfile), game);
+        const std::filesystem::path playerDir = PlayerTemplateDir(preferences, game, mProfile);
+        DrawTemplateStatus(playerDir, game);
 
         ImGui::SeparatorText("Output");
         const std::string outputHint = CheckoutPath(DefaultBuildOutput(game), game.mSourceRoot);
@@ -173,17 +296,19 @@ namespace mir
                 preferences.buildOutputs.erase(BuildOutputKey(game));
             else
                 preferences.buildOutputs[BuildOutputKey(game)] = mOutputPath;
-            save = true;
+            request.mSavePreferences = true;
         }
-        const std::filesystem::path exe = BuildOutputDir(preferences, game) / (game.mName + ".exe");
+        const std::filesystem::path outDir = BuildOutputDir(preferences, game);
         ImGui::TextWrapped("For this game only. %s will start the build.",
-            CheckoutPath(exe, game.mSourceRoot).c_str());
+            CheckoutPath(outDir / (game.mName + ".exe"), game.mSourceRoot).c_str());
 
-        save |= ImGui::Checkbox("Run after build", &preferences.buildRunAfter);
+        request.mSavePreferences |= ImGui::Checkbox("Run after build", &preferences.buildRunAfter);
         ImGui::SetItemTooltip("Starts the game once a build succeeds");
 
         if (!mStatusMessage.empty())
             ImGui::TextColored(EditorTheme::Color(StatusColor::Danger), "%s", mStatusMessage.c_str());
-        return save;
+
+        DrawBuild(game, build, request.mBuild, playerDir, outDir);
+        return request;
     }
 }
