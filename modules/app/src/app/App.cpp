@@ -25,6 +25,7 @@
 #include <prefab/PrefabCoordinator.h>
 #include <project/ProjectSettings.h>
 #include <scene/SceneIO.h>
+#include <serial/JsonFile.h>
 
 #include <imgui.h>
 
@@ -179,6 +180,7 @@ namespace mir
     #endif
     #if MIR_WITH_EDITOR
         mEditor.SetNonInteractive(mDesc.mNonInteractive);
+        mEditor.Get().SetSceneCatalog(mProject.mScenes, mProject.mStartupSceneId);
     #endif
 
         mSplash.screen.SetProgress("Loading scene...", 0.9f);
@@ -256,7 +258,7 @@ namespace mir
             if (!ConfirmBindUntitledScene())
             {
                 MIR_LOG_WARN("App::SaveScene: the untitled scene was not saved, '{}' is left as it is",
-                    mProject.mSceneDir.string());
+                    mScene.SceneDir().string());
                 return false;
             }
             mScene.Bind();
@@ -270,34 +272,139 @@ namespace mir
 
     bool App::LoadScene()
     {
+        return OpenScene(mOpenSceneId, false);
+    }
+
+    #if MIR_WITH_EDITOR
+    void App::CreateScene(const std::string &id, const std::string &path, bool saveCurrent)
+    {
+        namespace fs = std::filesystem;
+        const auto fail = [this](std::string message) {
+            MIR_LOG_WARN("Create Scene: {}", message);
+            mEditor.Get().SetSceneCreationError(std::move(message));
+        };
+        if (!IsEditing(mWorld))
+            return;
+        if (id.empty() || id.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") !=
+                std::string::npos)
+            return fail("Use letters, numbers, underscores or hyphens for the scene ID.");
+
+        const fs::path relative = fs::u8path(path).lexically_normal();
+        if (relative.empty() || relative == "." || relative.has_root_path() || *relative.begin() == "..")
+            return fail("Choose a folder inside the game directory.");
+
+        std::error_code ec;
+        const fs::path root = fs::canonical(mProject.mRootDir, ec);
+        if (ec)
+            return fail("Could not resolve the game directory.");
+        const fs::path directory = root / relative;
+        const fs::path resolved = fs::weakly_canonical(directory, ec).lexically_relative(root);
+        if (ec || resolved.empty() || resolved == "." || *resolved.begin() == "..")
+            return fail("Choose a folder inside the game directory.");
+
+        const fs::path manifestPath = root / kGameManifestFileName;
+        auto manifest = ReadJsonFile(manifestPath);
+        if (!manifest || !manifest->is_object())
+            return fail("Could not read game.json.");
+
+        if (!manifest->contains("scenes"))
+        {
+            const auto startup = mProject.mSceneDir.lexically_relative(mProject.mRootDir);
+            if (startup.empty() || startup == "." || *startup.begin() == "..")
+                return fail("Move the startup scene inside the game directory before registering more scenes.");
+            (*manifest)["startupScene"] = mProject.mStartupSceneId;
+            (*manifest)["scenes"] = nlohmann::json::array({
+                { { "id", mProject.mStartupSceneId }, { "path", startup.generic_string() } }
+            });
+        }
+        auto &scenes = (*manifest)["scenes"];
+        if (!scenes.is_array())
+            return fail("The scene catalog in game.json is invalid.");
+        for (const auto &entry : scenes)
+        {
+            if (!entry.is_object() || !entry.contains("id") || !entry["id"].is_string() ||
+                !entry.contains("path") || !entry["path"].is_string())
+                return fail("The scene catalog in game.json is invalid.");
+            if (entry["id"] == id)
+                return fail("That scene ID is already registered.");
+            if (fs::u8path(entry["path"].get<std::string>()).lexically_normal() == relative)
+                return fail("That folder is already registered.");
+        }
+
+        if (fs::exists(directory, ec) || ec)
+            return fail("Choose a new folder. Existing folders are kept intact.");
+        if (saveCurrent && !SaveScene())
+            return fail("Could not save the current scene.");
+        if (!fs::is_regular_file(SceneManifestPath(mProject.mSceneDir), ec))
+            return fail("Save the startup scene before creating another scene.");
+
+        fs::create_directories(directory.parent_path(), ec);
+        if (ec || !fs::create_directory(directory, ec))
+            return fail("Could not create the new scene folder.");
+
+        const auto utf8Path = relative.generic_u8string();
+        scenes.push_back({ { "id", id }, { "path", std::string(utf8Path.begin(), utf8Path.end()) } });
+        if (!mir::SaveScene(mWorld, directory, mir::NewScene(id), nullptr) ||
+            !WriteJsonFile(manifestPath, *manifest))
+        {
+            fs::remove(SceneManifestPath(directory), ec);
+            fs::remove(directory / "entities", ec);
+            fs::remove(directory, ec);
+            return fail("Could not write the new scene or update game.json.");
+        }
+
+        mProject.mScenes.push_back({ id, mProject.mRootDir / relative });
+        mEditor.Get().SetSceneCatalog(mProject.mScenes, mOpenSceneId);
+        OpenScene(id, false);
+    }
+    #endif
+
+    bool App::OpenScene(const std::string &id, bool saveCurrent)
+    {
         if (IsPlaying(mWorld))
         {
             MIR_LOG_WARN("App::LoadScene: ignored while Play is running (Stop first)");
             return false;
         }
 
-        if (!std::filesystem::exists(SceneManifestPath(mProject.mSceneDir)))
+        const auto target = std::ranges::find(mProject.mScenes, id, &ProjectScene::mId);
+        if (target == mProject.mScenes.end())
+            return false;
+        const auto &directory = target->mDirectory;
+        if (!std::filesystem::exists(SceneManifestPath(directory)))
         {
-            MIR_LOG_ERROR("App::LoadScene: no {} in '{}'", kSceneManifestFileName, mProject.mSceneDir.string());
+            MIR_LOG_ERROR("App::LoadScene: no {} in '{}'", kSceneManifestFileName, directory.string());
             return false;
         }
 
         // probed before unloading, so refusing keeps the current scene intact
-        const SceneProbe probe = ProbeScene(mProject.mSceneDir);
-        switch (ChooseSceneLoad(probe, false))
+        const SceneProbe probe = ProbeScene(directory);
+        const SceneLoadChoice choice = ChooseSceneLoad(probe, directory, false);
+        switch (choice)
         {
         case SceneLoadChoice::Refuse:
             MIR_LOG_WARN("App::LoadScene: kept the current scene over the broken one in '{}'",
-                mProject.mSceneDir.string());
+                directory.string());
             return false;
         case SceneLoadChoice::StartEmpty:
-            NewScene("untitled", true);
-            return true;
         case SceneLoadChoice::Load:
             break;
         }
 
-        ReplaceSceneFromDisk(!probe.Ok());
+        if (saveCurrent && !SaveScene())
+            return false;
+
+        UnloadCurrentScene();
+        mScene.SetSceneDir(directory);
+        mOpenSceneId = id;
+    #if MIR_WITH_EDITOR
+        mEditor.Get().SetOpenSceneId(id);
+    #endif
+        if (choice == SceneLoadChoice::StartEmpty)
+            mScene.New("untitled", true);
+        else
+            mScene.LoadFromDisk(&mPrefab.Coordinator().Resolver(), !probe.Ok());
+        RunStage(Stage::SceneLoad);
         return true;
     }
 
@@ -308,7 +415,7 @@ namespace mir
         RunStage(Stage::SceneLoad);
     }
 
-    App::SceneLoadChoice App::ChooseSceneLoad(const SceneProbe &probe, bool atStartup) const
+    App::SceneLoadChoice App::ChooseSceneLoad(const SceneProbe &probe, const std::filesystem::path &directory, bool atStartup) const
     {
         if (probe.Ok())
             return SceneLoadChoice::Load;
@@ -318,7 +425,7 @@ namespace mir
             return SceneLoadChoice::Refuse;
 
         const std::string refuse = atStartup ? "Choose No to quit." : "Choose No to keep the current scene.";
-        const std::string manifest = SceneManifestPath(mProject.mSceneDir).string();
+        const std::string manifest = SceneManifestPath(directory).string();
 
         if (!probe.mManifestError.empty())
         {
@@ -338,7 +445,7 @@ namespace mir
 
     bool App::ConfirmBindUntitledScene() const
     {
-        const std::string sceneDir = mProject.mSceneDir.string();
+        const std::string sceneDir = mScene.SceneDir().string();
         const std::string message = "This scene is untitled. It was started empty in place of the scene in " +
             sceneDir + ", which could not be read.\n\nSave it there? That replaces " +
             std::string(kSceneManifestFileName) + " and every entity and instance file in " + sceneDir +
@@ -464,6 +571,16 @@ namespace mir
         if (const std::optional<std::string> dir = queue.TakeOpenProject(); dir.has_value())
             RequestOpenProject(*dir);
 
+        if (const auto scene = queue.TakeOpenScene())
+        {
+        #if MIR_WITH_EDITOR
+            if (!scene->newScenePath.empty())
+                CreateScene(scene->id, scene->newScenePath, scene->saveCurrent);
+            else
+        #endif
+                OpenScene(scene->id, scene->saveCurrent);
+        }
+
         for (const Request request : queue.Take())
         {
             switch (request)
@@ -560,7 +677,7 @@ namespace mir
         }
 
         const SceneProbe probe = ProbeScene(mProject.mSceneDir);
-        switch (ChooseSceneLoad(probe, true))
+        switch (ChooseSceneLoad(probe, mScene.SceneDir(), true))
         {
         case SceneLoadChoice::StartEmpty:
             MIR_LOG_WARN("Starting with an untitled empty scene, the corrupt '{}' is left as it is", manifest.string());

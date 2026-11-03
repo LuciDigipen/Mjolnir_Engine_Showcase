@@ -237,12 +237,17 @@ namespace mir
         };
 
         // Asks what to do with a scene ProbeScene found broken; Refuse when nobody can answer
-        SceneLoadChoice ChooseSceneLoad(const SceneProbe &probe, bool atStartup) const;
+        SceneLoadChoice ChooseSceneLoad(const SceneProbe &probe, const std::filesystem::path &directory, bool atStartup) const;
 
         // Asks whether an untitled scene may replace the broken one in the scene directory
         bool ConfirmBindUntitledScene() const;
 
         // Unload and load, with no checks; incomplete when entity files are missing
+    #if MIR_WITH_EDITOR
+        void CreateScene(const std::string &id, const std::string &path, bool saveCurrent);
+    #endif
+        bool OpenScene(const std::string &id, bool saveCurrent);
+
         void ReplaceSceneFromDisk(bool incomplete);
 
         // the mSwitchProjectTo test hook
@@ -258,6 +263,7 @@ namespace mir
         // equal orders in a phase run in this order too, but nothing may rely on it
         AppDesc mDesc;
         GameProject mProject;
+        std::string mOpenSceneId = mProject.mStartupSceneId;
         StartupSplash mSplash;
         JobExecutor mJobs;
 

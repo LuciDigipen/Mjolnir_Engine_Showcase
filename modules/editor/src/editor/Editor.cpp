@@ -1461,18 +1461,31 @@ namespace mir
             UpdateViewPie(mode);
 
             ImGui::PopStyleColor(pushedColors);
+            bool showNewScene = false;
             if (ImGui::BeginMainMenuBar())
             {
                 if (ImGui::BeginMenu("File"))
                 {
                     ImGui::BeginDisabled(mode.mMode == EngineMode::Play);
 
-                    if (ImGui::MenuItem("New Scene"))
-                        actions.mScene = SceneMenuAction::New;
+                    if (ImGui::MenuItem("New Scene..."))
+                        showNewScene = true;
                     if (ImGui::MenuItem("Save Scene"))
                         actions.mScene = SceneMenuAction::Save;
-                    if (ImGui::MenuItem("Load Scene"))
-                        actions.mScene = SceneMenuAction::Load;
+                    if (ImGui::MenuItem("Reload Scene") && !mOpenSceneId.empty())
+                        mPendingSceneId = mOpenSceneId;
+                    if (ImGui::BeginMenu("Open Scene", !mSceneCatalog.empty()))
+                    {
+                        for (const ProjectScene &scene : mSceneCatalog)
+                        {
+                            const bool current = scene.mId == mOpenSceneId;
+                            ImGui::PushID(scene.mId.c_str());
+                            if (ImGui::MenuItem(scene.mId.c_str(), nullptr, current, !current))
+                                mPendingSceneId = scene.mId;
+                            ImGui::PopID();
+                        }
+                        ImGui::EndMenu();
+                    }
 
                     ImGui::EndDisabled();
                     ImGui::Separator();
@@ -1518,6 +1531,65 @@ namespace mir
             }
             pushedColors = pushPanelAlpha();
 
+            if (showNewScene || !mSceneCreationError.empty())
+                ImGui::OpenPopup("New Scene");
+            if (ImGui::BeginPopupModal("New Scene", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+            {
+                ImGui::InputText("Scene ID", mNewSceneId, sizeof(mNewSceneId));
+                ImGui::InputTextWithHint("Folder", "scenes/<scene ID>", mNewScenePath, sizeof(mNewScenePath));
+                ImGui::TextDisabled("Folder is relative to the game directory.");
+                if (!mSceneCreationError.empty())
+                    ImGui::TextWrapped("%s", mSceneCreationError.c_str());
+                ImGui::BeginDisabled(mNewSceneId[0] == '\0');
+                if (ImGui::Button("Create"))
+                {
+                    mPendingSceneId = mNewSceneId;
+                    mPendingScenePath = mNewScenePath[0] ? mNewScenePath : "scenes/" + mPendingSceneId;
+                    mSceneCreationError.clear();
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndDisabled();
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel"))
+                {
+                    mSceneCreationError.clear();
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            }
+            if (!mPendingSceneId.empty())
+            {
+                if (IsSceneUnsaved())
+                    ImGui::OpenPopup("Open Scene###OpenSceneConfirm");
+                else
+                    actions.mOpenScene = OpenSceneRequest{ std::exchange(mPendingSceneId, {}), false,
+                        std::exchange(mPendingScenePath, {}) };
+            }
+            if (ImGui::BeginPopupModal("Open Scene###OpenSceneConfirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+            {
+                ImGui::TextUnformatted("Save changes to the current scene before opening the selected scene?");
+                if (ImGui::Button("Save and Open"))
+                {
+                    actions.mOpenScene = OpenSceneRequest{ std::exchange(mPendingSceneId, {}), true,
+                        std::exchange(mPendingScenePath, {}) };
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Discard and Open"))
+                {
+                    actions.mOpenScene = OpenSceneRequest{ std::exchange(mPendingSceneId, {}), false,
+                        std::exchange(mPendingScenePath, {}) };
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel"))
+                {
+                    mPendingSceneId.clear();
+                    mPendingScenePath.clear();
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            }
             DrawOpenProjectConfirm(actions, materialDraftsUnsaved);
             DrawNewProjectModal(actions, projects, materialDraftsUnsaved);
 
@@ -1638,7 +1710,7 @@ namespace mir
         const bool snapTransitionRequested =
             actions.mScene == SceneMenuAction::New || actions.mScene == SceneMenuAction::Load ||
             actions.mScene == SceneMenuAction::Play || actions.mScene == SceneMenuAction::Stop ||
-            !actions.mOpenProject.empty() || !actions.mCreateProjectName.empty() ||
+            actions.mOpenScene.has_value() || !actions.mOpenProject.empty() || !actions.mCreateProjectName.empty() ||
             actions.mDocument.mKind != EditorDocumentActionKind::None;
         if (snapRequested)
             StartSnapToTerrain(activeWorld, documents.mActive);

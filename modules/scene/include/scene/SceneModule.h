@@ -15,6 +15,7 @@
 
 #include <filesystem>
 #include <string>
+#include <utility>
 
 namespace mir
 {
@@ -49,6 +50,8 @@ namespace mir
         // the same object for the module's life; commands replace its value
         LoadedScene &Scene() { return mScene; }
         const std::filesystem::path &SceneDir() const { return mSceneDir; }
+
+        void SetSceneDir(std::filesystem::path directory) { mSceneDir = std::move(directory); }
 
         // Every scene command sets it before its SceneLoad stage runs; stage functions
         // are its only readers

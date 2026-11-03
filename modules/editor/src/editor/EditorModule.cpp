@@ -530,6 +530,20 @@ namespace mir
                 mContentBrowser.Handle(actions.mContentBrowser);
         }
 
+        if (actions.mOpenScene)
+        {
+            if (actions.mOpenScene->saveCurrent)
+            {
+                mPrefabWorkspace.SaveScene(mScene.Scene(), UnsavedPrefabs(), MarkSavedPrefabs(), [&]
+                    {
+                        requests.PushOpenScene(*actions.mOpenScene);
+                        return true;
+                    });
+            }
+            else
+                requests.PushOpenScene(*actions.mOpenScene);
+        }
+
         if (!actions.mOpenProject.empty())
             requests.PushOpenProject(actions.mOpenProject);
 

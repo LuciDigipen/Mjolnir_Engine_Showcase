@@ -15,6 +15,8 @@
 #include <core/platform/Surface.h>
 #include <editor/BackgroundImage.h>
 #include <editor/BuildSettings.h>
+#include <core/ecs/Requests.h>
+#include <project/GameProject.h>
 #include <editor/EditorCamera.h>
 #include <editor/EditorPreferences.h>
 #include <editor/SnapToTerrain.h>
@@ -118,6 +120,7 @@ namespace mir
     {
         SceneMenuAction mScene = SceneMenuAction::None;
         std::string mOpenProject;
+        std::optional<OpenSceneRequest> mOpenScene;
 
         // non-empty mCreateProjectName requests CreateGameProject(name, RT),
         // then the same open-into-new-directory path as mOpenProject
@@ -213,6 +216,14 @@ namespace mir
         }
 
         // the game File > Build Settings is for
+        void SetSceneCatalog(std::vector<ProjectScene> scenes, std::string startupId)
+        {
+            mSceneCatalog = std::move(scenes);
+            mOpenSceneId = std::move(startupId);
+        }
+        void SetSceneCreationError(std::string message) { mSceneCreationError = std::move(message); }
+        void SetOpenSceneId(std::string id) { mOpenSceneId = std::move(id); }
+
         void SetBuildGame(BuildGame game) { mBuildGame = std::move(game); }
 
     private:
@@ -311,6 +322,13 @@ namespace mir
         bool mThemePending = false;
 
         // waiting on the confirm dialog
+        std::vector<ProjectScene> mSceneCatalog;
+        std::string mOpenSceneId;
+        std::string mPendingSceneId;
+        std::string mPendingScenePath;
+        std::string mSceneCreationError;
+        char mNewSceneId[128]{};
+        char mNewScenePath[512]{};
         ProjectMenuEntry mPendingProject;
         bool mOpenConfirmRequested = false;
 
