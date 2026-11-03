@@ -38,6 +38,7 @@
 #include <prefab/PrefabCoordinator.h>
 #include <prefab/PrefabModule.h>
 #include <prefab/PrefabSave.h>
+#include <project/PlayerInfo.h>
 #include <renderer/PostProcessingSettings.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/RenderSystem.h>
@@ -196,6 +197,8 @@ namespace mir
         }
         mEditor.SetAuthoringBackend(&mPrefabAuthoring);
         mEditor.SetAuthoredEntities(&mPrefabAuthoring);
+        mEditor.SetBuildGame(BuildGame{ ProjectRoot(), mProject.mRootDir.lexically_normal(), mProject.mName,
+            mProject.mProjectSettingsPath, ExecutableDir() / kPlayerInfoFileName });
         mMaterialEditor = std::make_unique<MaterialEditor>();
         mPrefabWorkspace.BindResolveSystems(&renderer.Renderer(), &renderer.SurfaceMaterials(), assetService,
             resolver, std::move(models));

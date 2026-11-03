@@ -5,6 +5,7 @@ engine_add_module_tests(editor
     Authoring.tests.cpp
     AuthoredEdit.tests.cpp
     BackgroundImage.tests.cpp
+    BuildSettings.tests.cpp
     ComponentCommands.tests.cpp
     ContentBrowserWatcher.tests.cpp
     DocumentNodeCommands.tests.cpp

@@ -274,6 +274,29 @@ exe with no `--game`, as a double-click does. All are labelled `smoke`:
 ctest --test-dir builds/windows-msvc-game-release -R "^smoke\.build\." --output-on-failure
 ```
 
+### Build Settings in the editor
+
+File > Build Settings... holds what a build from the editor uses:
+
+- **Profile.** Development packages the game-debug player, Release the
+  game-release one. It is the only build setting shared through git, as
+  `"build": { "profile": "development" }` in the game's
+  `project_settings.json`; a missing or unknown profile is Release.
+- **Player template**, one per profile, and the **output folder**, one per game.
+  Paths differ per machine, so they live in the editor preferences
+  (`%LOCALAPPDATA%/Mjolnir/editor/editor_preferences.json`) and never in
+  `project_settings.json`. Left empty, the template is
+  `builds/player/debug` or `builds/player/release` and the output is
+  `builds/player-out/<game>`; a relative path is from the checkout.
+- **Run after build**, also per machine.
+
+The panel shows the selected template's `player_info.json` and whether it
+matches the editor, with the same checks MjolnirBuild warns about
+(`modules/project/include/project/PlayerInfo.h`), plus a template built for the
+other profile. A missing, broken or mismatched template shows the
+`cmake --preset`, `cmake --build` and `cmake --install` commands that make it.
+The editor does not run them: building the player needs the MSVC environment.
+
 ## Builds without proprietary SDKs and daily CI
 
 `MIR_WITH_AUDIO` defaults to `ON`. Local builds with audio require the Wwise
