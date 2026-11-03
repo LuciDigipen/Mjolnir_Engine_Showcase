@@ -27,6 +27,8 @@ jobs:
         with:
           ref: master
           submodules: recursive
+          # AssetCooker requires the TerrainCheck texture contents, not LFS pointers.
+          lfs: true
 
       - name: Set up MSVC 2026 and vcpkg
         run: |
