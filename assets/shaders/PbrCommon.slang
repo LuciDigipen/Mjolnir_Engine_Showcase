@@ -54,14 +54,20 @@ float3 SpecularBrdf(float3 f0, float roughness, float3 N, float3 V, float3 L)
 // Direct lighting keeps the existing pi-scaled lightColor convention. D
 // already contains 1/pi, so the specular term is scaled back by pi; both
 // diffuse and specular receive the saturated cosine exactly once.
-float3 EvaluateDirectPbr(float3 diffuseAlbedo, float3 f0, float roughness, float3 N, float3 V, float3 L,
-    float3 lightColor)
+float3 EvaluateDiffusePbr(float3 diffuseAlbedo, float3 N, float3 L, float3 lightColor)
 {
     const float NdotL = saturate(dot(N, L));
     if (NdotL <= 0.0)
         return float3(0.0, 0.0, 0.0);
-    const float3 specular = SpecularBrdf(f0, roughness, N, V, L);
-    return (diffuseAlbedo + kPi * specular) * lightColor * NdotL;
+    return diffuseAlbedo * lightColor * NdotL;
+}
+
+float3 EvaluateSpecularPbr(float3 f0, float roughness, float3 N, float3 V, float3 L, float3 lightColor)
+{
+    const float NdotL = saturate(dot(N, L));
+    if (NdotL <= 0.0)
+        return float3(0.0, 0.0, 0.0);
+    return kPi * SpecularBrdf(f0, roughness, N, V, L) * lightColor * NdotL;
 }
 
 // Directional-albedo fit from Ray Tracing Gems, referenced by NVIDIA DLSS RR.
@@ -87,18 +93,34 @@ float3 SpecularAlbedoGuide(float3 f0, float squaredRoughness, float NoV)
     return saturate(reflectance * scale + bias);
 }
 
-float3 ShadePbr<V : IShadowVisibility>(V visibility, SurfaceOutput surface, float3 worldPos)
+// The components the raster MRT and the ordinary scene/RT total share.
+// ambientRadiance already carries AO; it is the baseline the SSGI composite
+// restores when a receiver has no GI confidence.
+struct PbrLighting
+{
+    float3 ambientRadiance;
+    float3 diffuseDirect;
+    float3 specularDirect;
+    float3 emissive;
+};
+
+PbrLighting EvaluatePbrLighting<V : IShadowVisibility>(V visibility, SurfaceOutput surface, float3 worldPos)
 {
     const float3 N = normalize(surface.normalWS);
     const float3 V = normalize(cameraPos.xyz - worldPos);
     const float3 f0 = surface.f0.xxx;
     const float3 diffuseAlbedo = surface.albedo * (1.0 - surface.f0);
 
-    float3 color = surface.albedo * surface.ao * ambientColor.rgb;
+    PbrLighting lighting;
+    lighting.ambientRadiance = surface.albedo * surface.ao * ambientColor.rgb;
+    lighting.diffuseDirect = float3(0.0, 0.0, 0.0);
+    lighting.specularDirect = float3(0.0, 0.0, 0.0);
+    lighting.emissive = surface.emissive;
 
     const float3 L = normalize(lightDirWS.xyz);
-    const float3 sun = EvaluateDirectPbr(diffuseAlbedo, f0, surface.roughness, N, V, L, lightColor.rgb);
-    color += sun * visibility.Sun(L);
+    const float sunVisibility = visibility.Sun(L);
+    lighting.diffuseDirect += EvaluateDiffusePbr(diffuseAlbedo, N, L, lightColor.rgb) * sunVisibility;
+    lighting.specularDirect += EvaluateSpecularPbr(f0, surface.roughness, N, V, L, lightColor.rgb) * sunVisibility;
 
     const int firstLight = int(lightingMeta.y);
     const int lightCount = int(lightingMeta.x);
@@ -116,11 +138,36 @@ float3 ShadePbr<V : IShadowVisibility>(V visibility, SurfaceOutput surface, floa
         if (atten <= 0.0)
             continue;
 
-        const float3 direct = EvaluateDirectPbr(diffuseAlbedo, f0, surface.roughness, N, V, Lp, light.color.rgb);
-        color += direct * atten * visibility.Local(light, Lp, dist);
+        const float localVisibility = atten * visibility.Local(light, Lp, dist);
+        lighting.diffuseDirect += EvaluateDiffusePbr(diffuseAlbedo, N, Lp, light.color.rgb) * localVisibility;
+        lighting.specularDirect +=
+            EvaluateSpecularPbr(f0, surface.roughness, N, V, Lp, light.color.rgb) * localVisibility;
     }
 
-    return color + surface.emissive;
+    return lighting;
+}
+
+// SSGI's bounce source: every non-specular outgoing radiance, including the
+// AO-scaled ambient baseline and emissive.
+float3 PbrDiffuseRadiance(PbrLighting lighting)
+{
+    return lighting.ambientRadiance + lighting.diffuseDirect + lighting.emissive;
+}
+
+// The raster direct target; the composite adds the receiver's albedo*AO*indirect.
+float3 PbrDirectLighting(PbrLighting lighting)
+{
+    return lighting.diffuseDirect + lighting.specularDirect + lighting.emissive;
+}
+
+float3 PbrTotalLighting(PbrLighting lighting)
+{
+    return lighting.ambientRadiance + lighting.diffuseDirect + lighting.specularDirect + lighting.emissive;
+}
+
+float3 ShadePbr<V : IShadowVisibility>(V visibility, SurfaceOutput surface, float3 worldPos)
+{
+    return PbrTotalLighting(EvaluatePbrLighting(visibility, surface, worldPos));
 }
 
 #endif

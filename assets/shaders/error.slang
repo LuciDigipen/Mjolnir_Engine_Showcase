@@ -52,7 +52,8 @@ VSOutput vertexMain(VSInput input)
 #ifdef MIR_SSGI_SURFACE
 RasterSurfaceOutput fragmentMain(VSOutput input)
 {
-    return MakeRasterSurface(RasterSurfaceFaceNormal(input.worldPos), 3, float3(0), float3(0), float3(1, 0, 1));
+    return MakeRasterSurface(float4(1.0, 0.0, 1.0, 1.0), RasterSurfaceFaceNormal(input.worldPos), 3,
+        float3(0), float3(0), float3(1, 0, 1));
 }
 #else
 float4 fragmentMain(VSOutput input) : SV_Target

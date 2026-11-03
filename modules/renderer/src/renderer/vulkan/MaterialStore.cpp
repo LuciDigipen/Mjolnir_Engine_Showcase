@@ -156,6 +156,12 @@ namespace mir::vk
             mSkyPipeline = VK_NULL_HANDLE;
         }
 
+        if (mSkySurfacePipeline != VK_NULL_HANDLE)
+        {
+            vkDestroyPipeline(mDevice->Handle(), mSkySurfacePipeline, nullptr);
+            mSkySurfacePipeline = VK_NULL_HANDLE;
+        }
+
         if (mSkyPipelineLayout != VK_NULL_HANDLE)
         {
             vkDestroyPipelineLayout(mDevice->Handle(), mSkyPipelineLayout, nullptr);
@@ -248,11 +254,14 @@ namespace mir::vk
         return true;
     }
 
-    VkPipeline MaterialStore::CreateGraphicsPipeline(const PipelineState &state, VkFormat colorFormat, bool surfaces)
+    VkPipeline MaterialStore::CreateGraphicsPipeline(std::string_view vertexStem, std::string_view fragmentStem,
+        const PipelineState &state,
+        std::span<const VkFormat> colorFormats, std::span<const VkPipelineColorBlendAttachmentState> blends)
     {
-        const std::string shaderName = std::string(state.shaderName) + (surfaces ? "Surface" : "");
-        VkShaderModule vertModule = CreateShaderModule(mDevice->Handle(), ShaderPath(shaderName + ".vertexMain.spv"));
-        VkShaderModule fragModule = CreateShaderModule(mDevice->Handle(), ShaderPath(shaderName + ".fragmentMain.spv"));
+        VkShaderModule vertModule = CreateShaderModule(mDevice->Handle(),
+            ShaderPath(std::string(vertexStem) + ".vertexMain.spv"));
+        VkShaderModule fragModule = CreateShaderModule(mDevice->Handle(),
+            ShaderPath(std::string(fragmentStem) + ".fragmentMain.spv"));
 
         if (vertModule == VK_NULL_HANDLE || fragModule == VK_NULL_HANDLE)
         {
@@ -290,12 +299,11 @@ namespace mir::vk
             .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
             .sampleShadingEnable = VK_FALSE };
 
-        const std::array surfaceBlends{ state.blend, state.blend, state.blend, state.blend };
         const VkPipelineColorBlendStateCreateInfo colorBlend{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
             .logicOpEnable = VK_FALSE,
-            .attachmentCount = surfaces ? kRasterSurfaceCount : 1,
-            .pAttachments = surfaces ? surfaceBlends.data() : &state.blend };
+            .attachmentCount = static_cast<uint32_t>(blends.size()),
+            .pAttachments = blends.data() };
 
         const VkDynamicState dynamicStates[]{
             VK_DYNAMIC_STATE_VIEWPORT,
@@ -306,11 +314,10 @@ namespace mir::vk
             .dynamicStateCount = 2,
             .pDynamicStates = dynamicStates };
 
-        constexpr std::array surfaceFormats{ kRasterSurfaceFormat, kRasterSurfaceFormat, kRasterSurfaceFormat, kRasterSurfaceFormat };
         const VkPipelineRenderingCreateInfo renderingInfo{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-            .colorAttachmentCount = surfaces ? kRasterSurfaceCount : 1,
-            .pColorAttachmentFormats = surfaces ? surfaceFormats.data() : &colorFormat,
+            .colorAttachmentCount = static_cast<uint32_t>(colorFormats.size()),
+            .pColorAttachmentFormats = colorFormats.data(),
             .depthAttachmentFormat = kDepthFormat };
 
         const VkGraphicsPipelineCreateInfo pipelineInfo{
@@ -347,7 +354,7 @@ namespace mir::vk
         return pipeline;
     }
 
-    VkPipeline MaterialStore::BuildPipeline(const MaterialDesc &desc, VkFormat colorFormat, bool surfaces)
+    VkPipeline MaterialStore::BuildPipeline(const MaterialDesc &desc, VkFormat colorFormat, PipelineTarget target)
     {
         const VkVertexInputBindingDescription vertexBinding{
             .binding = 0,
@@ -400,13 +407,26 @@ namespace mir::vk
             .depthStencil{
                 .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
                 .depthTestEnable = VK_TRUE,
-                .depthWriteEnable = blend || surfaces ? VK_FALSE : VK_TRUE,
-                .depthCompareOp = surfaces ? VK_COMPARE_OP_EQUAL : VK_COMPARE_OP_GREATER,
+                .depthWriteEnable = blend ? VK_FALSE : VK_TRUE,
+                .depthCompareOp = VK_COMPARE_OP_GREATER,
                 .depthBoundsTestEnable = VK_FALSE,
                 .stencilTestEnable = VK_FALSE },
             .layout = mPipelineLayout };
 
-        return CreateGraphicsPipeline(state, colorFormat, surfaces);
+        if (target == PipelineTarget::Color)
+            return CreateGraphicsPipeline(desc.shaderName, desc.shaderName, state,
+                std::span<const VkFormat>(&colorFormat, 1),
+                std::span<const VkPipelineColorBlendAttachmentState>(&state.blend, 1));
+
+        std::array<VkFormat, kRasterSurfaceCount + 1> formats;
+        formats.fill(kRasterSurfaceFormat);
+        formats[0] = colorFormat;
+        std::array<VkPipelineColorBlendAttachmentState, kRasterSurfaceCount + 1> blends;
+        blends.fill(state.blend);
+
+        const std::string stem = std::string(desc.shaderName);
+        const std::string fragmentStem = stem + (desc.surfaceMaterial ? ".surface" : "Surface");
+        return CreateGraphicsPipeline(desc.surfaceMaterial ? stem : fragmentStem, fragmentStem, state, formats, blends);
     }
 
     bool MaterialStore::CreateSkyPipeline(VkDescriptorSetLayout cameraSetLayout)
@@ -430,7 +450,7 @@ namespace mir::vk
         return true;
     }
 
-    VkPipeline MaterialStore::BuildSkyPipeline()
+    VkPipeline MaterialStore::BuildSkyPipeline(bool surfaces)
     {
         // No vertex input: the shader builds a fullscreen triangle. Depth GEQUAL
         // with no write passes only where nothing drew, at the reverse-Z clear of 0.
@@ -460,7 +480,30 @@ namespace mir::vk
                 .stencilTestEnable = VK_FALSE },
             .layout = mSkyPipelineLayout };
 
-        return CreateGraphicsPipeline(state, mColorFormat);
+        if (!surfaces)
+            return CreateGraphicsPipeline(state.shaderName, state.shaderName, state,
+                std::span<const VkFormat>(&mColorFormat, 1),
+                std::span<const VkPipelineColorBlendAttachmentState>(&state.blend, 1));
+
+        std::array<VkFormat, kRasterSurfaceCount + 1> formats;
+        formats.fill(kRasterSurfaceFormat);
+        formats[0] = mColorFormat;
+        std::array<VkPipelineColorBlendAttachmentState, kRasterSurfaceCount + 1> blends;
+        blends.fill(state.blend);
+        return CreateGraphicsPipeline("skySurface", "skySurface", state, formats, blends);
+    }
+
+    VkPipeline MaterialStore::SkySurfacePipeline()
+    {
+        if (!mSkySurfaceTried)
+        {
+            mSkySurfaceTried = true;
+            mSkySurfacePipeline = BuildSkyPipeline(true);
+            if (mSkySurfacePipeline != VK_NULL_HANDLE)
+                mDevice->NameObject(VK_OBJECT_TYPE_PIPELINE, reinterpret_cast<uint64_t>(mSkySurfacePipeline),
+                    "Sky surface pipeline");
+        }
+        return mSkySurfacePipeline;
     }
 
     MaterialHandle MaterialStore::CreateMaterial(MaterialDesc desc, ResourceStore &resources, VkFormat colorFormat)
@@ -971,6 +1014,19 @@ namespace mir::vk
             return false;
         }
 
+        // A material already used by the merged opaque pass takes the same
+        // replacement generation here, so it never mixes old and new modules.
+        if (material.mSurfacePipeline != VK_NULL_HANDLE)
+        {
+            entry.mSurfacePipeline = BuildPipeline(material.mDesc, mColorFormat, PipelineTarget::OpaqueSsgi);
+            if (entry.mSurfacePipeline == VK_NULL_HANDLE)
+            {
+                if (error != nullptr)
+                    *error = "could not rebuild the surface pipeline for '" + material.mDesc.shaderName + "'";
+                return false;
+            }
+        }
+
         if (mTable == nullptr || material.mRecordId.IsNull())
             return true;
 
@@ -1082,7 +1138,10 @@ namespace mir::vk
         }
 
         mReloadSkyPipeline = BuildSkyPipeline();
-        if (mReloadSkyPipeline == VK_NULL_HANDLE)
+        if (mSkySurfacePipeline != VK_NULL_HANDLE)
+            mReloadSkySurfacePipeline = BuildSkyPipeline(true);
+        if (mReloadSkyPipeline == VK_NULL_HANDLE ||
+            (mSkySurfacePipeline != VK_NULL_HANDLE && mReloadSkySurfacePipeline == VK_NULL_HANDLE))
         {
             if (error != nullptr)
                 *error = "could not rebuild the sky pipeline";
@@ -1110,6 +1169,13 @@ namespace mir::vk
                 material.mPipeline = entry.mPipeline;
                 entry.mPipeline = VK_NULL_HANDLE;
             }
+            if (entry.mSurfacePipeline != VK_NULL_HANDLE)
+            {
+                vkDestroyPipeline(mDevice->Handle(), material.mSurfacePipeline, nullptr);
+                material.mSurfacePipeline = entry.mSurfacePipeline;
+                entry.mSurfacePipeline = VK_NULL_HANDLE;
+            }
+            material.mSurfaceTried = material.mSurfacePipeline != VK_NULL_HANDLE;
             if (!entry.mRecordId.IsNull() && entry.mRecordId != material.mRecordId)
             {
                 if (!material.mRecordId.IsNull())
@@ -1134,7 +1200,17 @@ namespace mir::vk
             mDevice->NameObject(VK_OBJECT_TYPE_PIPELINE, reinterpret_cast<uint64_t>(mSkyPipeline),
                 "Sky pipeline");
         }
+        if (mReloadSkySurfacePipeline != VK_NULL_HANDLE)
+        {
+            if (mSkySurfacePipeline != VK_NULL_HANDLE)
+                vkDestroyPipeline(mDevice->Handle(), mSkySurfacePipeline, nullptr);
+            mSkySurfacePipeline = mReloadSkySurfacePipeline;
+            mReloadSkySurfacePipeline = VK_NULL_HANDLE;
+            mDevice->NameObject(VK_OBJECT_TYPE_PIPELINE, reinterpret_cast<uint64_t>(mSkySurfacePipeline),
+                "Sky surface pipeline");
+        }
 
+        mSkySurfaceTried = mSkySurfacePipeline != VK_NULL_HANDLE;
         mReloadEntries.clear();
         if (mReloadCatalogStaged)
         {
@@ -1155,6 +1231,11 @@ namespace mir::vk
             vkDestroyPipeline(mDevice->Handle(), mReloadSkyPipeline, nullptr);
             mReloadSkyPipeline = VK_NULL_HANDLE;
         }
+        if (mReloadSkySurfacePipeline != VK_NULL_HANDLE)
+        {
+            vkDestroyPipeline(mDevice->Handle(), mReloadSkySurfacePipeline, nullptr);
+            mReloadSkySurfacePipeline = VK_NULL_HANDLE;
+        }
         mReloadPrepared = false;
         mReloadCatalogStaged = false;
         mReloadCatalog = {};
@@ -1166,6 +1247,8 @@ namespace mir::vk
         {
             if (entry.mPipeline != VK_NULL_HANDLE)
                 vkDestroyPipeline(mDevice->Handle(), entry.mPipeline, nullptr);
+            if (entry.mSurfacePipeline != VK_NULL_HANDLE)
+                vkDestroyPipeline(mDevice->Handle(), entry.mSurfacePipeline, nullptr);
             if (mTable != nullptr && !entry.mRecordId.IsNull())
             {
                 bool kept = false;
@@ -1255,10 +1338,7 @@ namespace mir::vk
         const auto *material = FindOrDefault(handle);
         if (!material) return false;
         const auto &desc = material->mDesc;
-        // Generic surface materials only compile the single-target SurfaceForward
-        // frontend; there is no <stem>Surface multi-target variant for SSGI.
-        if (desc.surfaceMaterial) return false;
-        return desc.alphaMode == MaterialAlphaMode::Blend || desc.shaderName == "default" ||
+        return desc.surfaceMaterial || desc.alphaMode == MaterialAlphaMode::Blend || desc.shaderName == "default" ||
             desc.shaderName == "model" || desc.shaderName == "unlit" || desc.shaderName == "error";
     }
 
@@ -1272,7 +1352,7 @@ namespace mir::vk
         if (!material.mSurfaceTried)
         {
             material.mSurfaceTried = true;
-            material.mSurfacePipeline = BuildPipeline(desc, kRasterSurfaceFormat, true);
+            material.mSurfacePipeline = BuildPipeline(desc, mColorFormat, PipelineTarget::OpaqueSsgi);
         }
         return material.mSurfacePipeline;
     }
@@ -1285,5 +1365,8 @@ namespace mir::vk
             material.mSurfacePipeline = VK_NULL_HANDLE;
             material.mSurfaceTried = false;
         }
+        if (mSkySurfacePipeline) vkDestroyPipeline(mDevice->Handle(), mSkySurfacePipeline, nullptr);
+        mSkySurfacePipeline = VK_NULL_HANDLE;
+        mSkySurfaceTried = false;
     }
 }

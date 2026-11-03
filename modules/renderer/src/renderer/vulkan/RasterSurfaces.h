@@ -12,7 +12,6 @@
 #include "VulkanConstants.h"
 
 #include <array>
-#include <vector>
 
 namespace mir::vk
 {
@@ -31,9 +30,10 @@ namespace mir::vk
         static bool FitsBudget(VkExtent2D extent, const VkPhysicalDeviceLimits &limits);
         bool Active() const { return mImages[0][0].image != VK_NULL_HANDLE; }
         const Image2D &Image(RasterSurface surface, uint32_t frame) const { return mImages[frame][uint32_t(surface)]; }
-        std::vector<VkDescriptorSet> &ModelSets(uint32_t view) { return mModelSets[view]; }
-        void Begin(VkCommandBuffer cmd, uint32_t frame, VkImage depth, VkImageView depthView);
-        void End(VkCommandBuffer cmd, uint32_t frame, VkImage depth);
+        // Cleared to the background value; the depth image stays the pass's own attachment.
+        std::array<VkRenderingAttachmentInfo, kRasterSurfaceCount> Attachments(uint32_t frame) const;
+        void BeginOpaque(VkCommandBuffer cmd, uint32_t frame);
+        void EndOpaque(VkCommandBuffer cmd, uint32_t frame);
 
     private:
         bool Create();
@@ -42,6 +42,5 @@ namespace mir::vk
         VkExtent2D mExtent{};
         bool mRequested = false, mFailed = false;
         std::array<std::array<Image2D, kRasterSurfaceCount>, kFramesInFlight> mImages{};
-        std::array<std::vector<VkDescriptorSet>, kMaxViewsPerFrame> mModelSets;
     };
 }

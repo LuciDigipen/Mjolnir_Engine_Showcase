@@ -55,17 +55,19 @@ VSOutput vertexMain(VSInput input)
 [shader("fragment")]
 #ifdef MIR_SSGI_SURFACE
 RasterSurfaceOutput fragmentMain(VSOutput input)
-{
-    return MakeRasterSurface(RasterSurfaceFaceNormal(input.worldPos), 2, float3(0), input.color, input.color);
-}
 #else
 float4 fragmentMain(VSOutput input) : SV_Target
+#endif
 {
     float dist = length(cameraPos.xyz - input.worldPos);
     float clampedDist = clamp(dist, fogRange.x, fogRange.y);
     float fogFactor = clamp(1.0 - exp(-fogColor.a * (clampedDist - fogRange.x)), 0.0, 1.0);
     float3 color = lerp(input.color, fogColor.rgb, fogFactor);
 
+#ifdef MIR_SSGI_SURFACE
+    return MakeRasterSurface(float4(color, 1.0), RasterSurfaceFaceNormal(input.worldPos), 2, float3(0),
+        input.color, input.color);
+#else
     return float4(color, 1.0);
-}
 #endif
+}

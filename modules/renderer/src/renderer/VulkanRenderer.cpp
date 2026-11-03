@@ -217,6 +217,12 @@ namespace mir
             materialVertex.push_back(std::string(stem) + ".vertexMain.spv");
             materialFragment.push_back(std::string(stem) + ".fragmentMain.spv");
         }
+        // The merged opaque pass uses the built-in shaders' surface frontends.
+        for (const char *stem : { "default", "model", "unlit", "error", "sky" })
+        {
+            materialVertex.push_back(std::string(stem) + "Surface.vertexMain.spv");
+            materialFragment.push_back(std::string(stem) + "Surface.fragmentMain.spv");
+        }
         std::vector<std::string> surfaceClosestHit;
         const SurfaceMaterialCatalog *materials = catalog != nullptr ? catalog :
             &mMaterialStore->SurfaceMaterials();
@@ -224,6 +230,7 @@ namespace mir
         {
             materialVertex.push_back(registration.stem + ".vertexMain.spv");
             materialFragment.push_back(registration.stem + ".fragmentMain.spv");
+            materialFragment.push_back(registration.stem + ".surface.fragmentMain.spv");
             surfaceClosestHit.push_back(registration.stem + ".closestHitSurface.spv");
         }
         library.Register("MaterialStore.vertex", std::move(materialVertex), { "vertex" });

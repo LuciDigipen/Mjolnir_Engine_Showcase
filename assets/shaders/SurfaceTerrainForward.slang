@@ -11,6 +11,9 @@
 #include "ShadowMapCommon.slang"
 #include "PbrCommon.slang"
 #include "SurfaceCommon.slang"
+#ifdef MIR_SSGI_SURFACE
+#include "RasterSurfaceCommon.slang"
+#endif
 
 struct TerrainVSInput
 {
@@ -62,7 +65,11 @@ TerrainVSOutput vertexMain(TerrainVSInput input)
 }
 
 [shader("fragment")]
+#ifdef MIR_SSGI_SURFACE
+RasterSurfaceOutput fragmentMain<M : IMaterial>(TerrainVSOutput input, bool frontFace : SV_IsFrontFace)
+#else
 float4 fragmentMain<M : IMaterial>(TerrainVSOutput input, bool frontFace : SV_IsFrontFace) : SV_Target
+#endif
 {
     const M material = gSurfaceRecords.Load<M>(gMaterialRecordRef.offset);
     const float3 macroNormal = SafeNormalize(input.normal, float3(0.0, 1.0, 0.0));
@@ -83,6 +90,13 @@ float4 fragmentMain<M : IMaterial>(TerrainVSOutput input, bool frontFace : SV_Is
     visibility.worldPos = input.worldPos;
     visibility.geoN = GeometricNormal(input.worldPos, surface.normalWS);
 
+#ifdef MIR_SSGI_SURFACE
+    const PbrLighting lighting = EvaluatePbrLighting(visibility, surface, input.worldPos);
+    const float3 color = ApplyFog(PbrTotalLighting(lighting), length(cameraPos.xyz - input.worldPos));
+    return MakeRasterSurface(float4(color, 1.0), normalize(surface.normalWS), 1, surface.albedo * surface.ao,
+        PbrDiffuseRadiance(lighting), PbrDirectLighting(lighting), 1.0 - surface.f0);
+#else
     const float3 color = ShadePbr(visibility, surface, input.worldPos);
     return float4(ApplyFog(color, length(cameraPos.xyz - input.worldPos)), 1.0);
+#endif
 }

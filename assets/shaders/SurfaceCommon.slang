@@ -194,6 +194,9 @@ MaterialContext SurfaceMacroContext(MaterialContext context, float tileSizeMeter
     return context;
 }
 
+static const float kParallaxMinOffsetPixels = 0.5;
+static const uint kParallaxMinSteps = 8;
+
 // Marches the height texture in tangent space before any surface sampling. The
 // ray is centered on the authored reference height, so a constant height above
 // or below it yields the opposite signed intersection without quantization.
@@ -233,16 +236,33 @@ float2 SurfaceParallaxUv(SurfaceInput input, MaterialContext context, TextureRef
     // Bounds the horizontal offset at grazing angles instead of letting it
     // diverge, which keeps every step finite and the march stable.
     float2 rayDirection = viewTangent.xy / max(viewTangent.z, 0.15);
-    const float rayLength = length(rayDirection);
+    float rayLength = length(rayDirection);
     if (!isfinite(rayLength))
         return uv;
     if (rayLength > 8.0)
+    {
         rayDirection *= 8.0 / rayLength;
+        rayLength = 8.0;
+    }
 
-    const uint steps = min(maxSteps, 128u);
     const float uvPerMeter = 1.0 / tileSizeMeters;
     const float clampedReference = saturate(reference);
     const float maximumOffsetUv = maxDistanceMeters * uvPerMeter;
+
+    // Ray tracing and hosts without derivatives keep the material's step count.
+    const float uvPerPixel = max(length(context.uvDx), length(context.uvDy));
+    const bool footprintKnown = !context.rayTraced && isfinite(context.uvDx.x) && isfinite(context.uvDx.y) &&
+        isfinite(context.uvDy.x) && isfinite(context.uvDy.y) && isfinite(uvPerPixel) && uvPerPixel > 0.0;
+    const uint stepCap = min(maxSteps, 128u);
+    uint steps = stepCap;
+    if (footprintKnown)
+    {
+        const float visibleOffsetUv = min(rayLength * heightMeters * fade * uvPerMeter, maximumOffsetUv);
+        if (visibleOffsetUv * incidenceFade < kParallaxMinOffsetPixels * uvPerPixel)
+            return uv;
+        const float spanPixels = 2.0 * rayLength * heightMeters * fade * uvPerMeter / uvPerPixel;
+        steps = uint(min(max(ceil(spanPixels), float(kParallaxMinSteps)), float(stepCap)));
+    }
 
     // A signed height s in meters is the ray's height relative to the reference
     // plane: the surface at uv + dir*s*fade is at (packed - reference)*H. Searching

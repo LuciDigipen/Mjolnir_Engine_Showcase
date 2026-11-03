@@ -49,7 +49,7 @@ namespace mir
     uint32_t VulkanRenderer::RecordView(VkCommandBuffer cmd, const RenderView &view, uint32_t viewIndex,
         RasterPass pass, uint32_t cameraOffset)
     {
-        const bool surfaces = pass == RasterPass::Surface;
+        const bool surfaces = pass == RasterPass::Opaque;
         const VkRect2D rect = vk::ResolveViewRect(view.rect, mSwapchain->Extent());
 
         const VkViewport viewport{
@@ -62,12 +62,8 @@ namespace mir
         vkCmdSetViewport(cmd, 0, 1, &viewport);
         vkCmdSetScissor(cmd, 0, 1, &rect);
 
-        auto &modelSets = mRasterSurfaces->ModelSets(viewIndex);
         if (pass == RasterPass::Scene || pass == RasterPass::Opaque)
-        {
             cameraOffset = WriteCameraData(view, viewIndex);
-            if (mRasterSurfaces->Active()) modelSets.assign(view.items.size(), VK_NULL_HANDLE);
-        }
         const VkDescriptorSet cameraSet = mCameraBuffer->Set(mFrameSync->Index());
         const VkDescriptorSet shadowSet = mShadowMaps->Set(mFrameSync->Index());
         // Wireframe draws only lines, over the clear color; without line support it stays shaded
@@ -94,20 +90,18 @@ namespace mir
             uint32_t boundRecordRefOffset = UINT32_MAX;
 
             // no mesh/material batching yet, just draw per item
-            // EQUAL replay runs in reverse so the original GREATER winner owns depth ties.
-            for (size_t iteration = 0; iteration < drawCount; ++iteration)
+            for (size_t draw = 0; draw < drawCount; ++draw)
             {
-                const size_t draw = surfaces ? view.items.size() - 1 - iteration : iteration;
                 const DrawItem &item = view.items[draw];
                 const vk::GpuMaterial *const material = mMaterialStore->FindOrDefault(item.material);
                 if (material == nullptr) continue;
                 const bool transparent = item.transparent || material->mDesc.alphaMode == MaterialAlphaMode::Blend;
-                if ((filter == RasterPass::Opaque || surfaces) && transparent) continue;
+                if (filter == RasterPass::Opaque && transparent) continue;
                 if (filter == RasterPass::Transparent && !transparent) continue;
                 const vk::GpuMesh *const mesh = mResources->FindMesh(item.mesh);
                 if (mesh == nullptr)
                 {
-                    if (!surfaces && !item.mesh.IsNull())
+                    if (!item.mesh.IsNull())
                         ++mSkippedDraws;
                     continue;
                 }
@@ -116,19 +110,9 @@ namespace mir
                 if (!pipeline) continue;
                 if (material->mModelShader)
                 {
-                    if (surfaces)
-                    {
-                        if (!modelSets[draw]) continue;
-                        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->PipelineLayout(),
-                            2, 1, &modelSets[draw], 0, nullptr);
-                    }
-                    else
-                    {
-                        const VkDescriptorSet set = mModelDescriptors->Bind(cmd, mMaterialStore->PipelineLayout(),
-                            mFrameSync->Index(), item.deformation, material->mParameters);
-                        if (!set) continue;
-                        if (mRasterSurfaces->Active()) modelSets[draw] = set;
-                    }
+                    const VkDescriptorSet set = mModelDescriptors->Bind(cmd, mMaterialStore->PipelineLayout(),
+                        mFrameSync->Index(), item.deformation, material->mParameters);
+                    if (!set) continue;
                 }
 
                 if (pipeline != boundPipeline)
@@ -177,7 +161,8 @@ namespace mir
         const auto recordSky = [&]
         {
             if (!mSkyVisible || !shaded) return;
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->SkyPipeline());
+            const VkPipeline pipeline = surfaces ? mMaterialStore->SkySurfacePipeline() : mMaterialStore->SkyPipeline();
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mMaterialStore->SkyPipelineLayout(),
                 0, 1, &cameraSet, 1, &cameraOffset);
             vkCmdDraw(cmd, 3, 1, 0, 0);
@@ -217,6 +202,9 @@ namespace mir
             VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
             VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
 
+        const bool ssgi = mSsgiTrace->Active();
+        if (ssgi) mRasterSurfaces->BeginOpaque(cmd, frame);
+
         const VkRenderingAttachmentInfo hdrColorAttachment{
             .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
             .imageView = mSwapchain->HdrColorView(frame),
@@ -233,13 +221,21 @@ namespace mir
             .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
             .clearValue{ .depthStencil{ .depth = 0.0f } } }; // reverse-Z: 0 is the far end
 
+        std::array<VkRenderingAttachmentInfo, vk::kRasterSurfaceCount + 1> colorAttachments{};
+        colorAttachments[0] = hdrColorAttachment;
+        if (ssgi)
+        {
+            const auto surfaceAttachments = mRasterSurfaces->Attachments(frame);
+            std::copy(surfaceAttachments.begin(), surfaceAttachments.end(), colorAttachments.begin() + 1);
+        }
+
         const VkRenderingInfo renderingInfo{
             .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
             // The stored extent, never the window: re-deriving it invites drift.
             .renderArea{ .offset{ 0, 0 }, .extent = extent },
             .layerCount = 1,
-            .colorAttachmentCount = 1,
-            .pColorAttachments = &hdrColorAttachment,
+            .colorAttachmentCount = ssgi ? vk::kRasterSurfaceCount + 1 : 1,
+            .pColorAttachments = colorAttachments.data(),
             .pDepthAttachment = &depthAttachment };
 
         vkCmdBeginRendering(cmd, &renderingInfo);
@@ -252,22 +248,18 @@ namespace mir
         }
 
         const size_t viewCount = std::min<size_t>(views.size(), vk::kMaxViewsPerFrame);
-        const bool ssgi = mSsgiTrace->Active();
         std::array<uint32_t, vk::kMaxViewsPerFrame> cameraOffsets{};
         for (size_t i = 0; i < viewCount; ++i)
-            cameraOffsets[i] = RecordView(cmd, views[i], static_cast<uint32_t>(i), ssgi ? RasterPass::Opaque : RasterPass::Scene);
+            cameraOffsets[i] = RecordView(cmd, views[i], static_cast<uint32_t>(i),
+                ssgi ? RasterPass::Opaque : RasterPass::Scene);
 
         mDevice->EndLabel(cmd);
         vkCmdEndRendering(cmd);
 
-        if (mRasterSurfaces->Active())
+        if (ssgi) mRasterSurfaces->EndOpaque(cmd, frame);
+
+        if (ssgi)
         {
-            mDevice->BeginLabel(cmd, "Raster Surface Pass", { 0.5f, 0.8f, 0.3f, 1.0f });
-            mRasterSurfaces->Begin(cmd, frame, mSwapchain->DepthImage(frame), mSwapchain->DepthView(frame));
-            for (size_t i = viewCount; i-- > 0;)
-                RecordView(cmd, views[i], uint32_t(i), RasterPass::Surface, cameraOffsets[i]);
-            mRasterSurfaces->End(cmd, frame, mSwapchain->DepthImage(frame));
-            mDevice->EndLabel(cmd);
             mDevice->BeginLabel(cmd, "SSGI Trace", { 0.3f, 0.8f, 0.5f, 1.0f });
             mSsgiTrace->Record(cmd, frame, mSwapchain->DepthImage(frame), mSwapchain->DepthView(frame),
                 *mRasterSurfaces, mCameraBuffer->Set(frame), std::span(cameraOffsets).first(viewCount), mSsgiSettings);
@@ -289,7 +281,9 @@ namespace mir
             auto colorLoad = hdrColorAttachment; colorLoad.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
             auto depthLoad = depthAttachment; depthLoad.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
             auto transparentInfo = renderingInfo;
-            transparentInfo.pColorAttachments = &colorLoad; transparentInfo.pDepthAttachment = &depthLoad;
+            transparentInfo.colorAttachmentCount = 1;
+            transparentInfo.pColorAttachments = &colorLoad;
+            transparentInfo.pDepthAttachment = &depthLoad;
             vkCmdBeginRendering(cmd, &transparentInfo);
             mDevice->BeginLabel(cmd, "Transparent Pass", { 0.5f, 0.5f, 0.8f, 1.0f });
             for (size_t i = 0; i < viewCount; ++i)
@@ -442,7 +436,20 @@ namespace mir
         if (!frame)
             return;
 
-        mSsgiTrace->Configure(mRasterSurfaces->Active(), mSwapchain->Extent(), views, mSsgiSettings.halfResolution);
+        bool surfacePipelinesReady = mRasterSurfaces->Active();
+        if (surfacePipelinesReady && mSkyVisible)
+            surfacePipelinesReady = mMaterialStore->SkySurfacePipeline() != VK_NULL_HANDLE;
+        if (surfacePipelinesReady)
+            for (const auto &view : views)
+                for (const auto &item : view.items)
+                {
+                    const auto *material = mMaterialStore->FindOrDefault(item.material);
+                    if (!material || item.transparent || material->mDesc.alphaMode == MaterialAlphaMode::Blend)
+                        continue;
+                    if (mMaterialStore->SurfacePipeline(item.material) == VK_NULL_HANDLE)
+                        surfacePipelinesReady = false;
+                }
+        mSsgiTrace->Configure(surfacePipelinesReady, mSwapchain->Extent(), views, mSsgiSettings.halfResolution);
         mShadowMaps->RecordPasses(frame->cmd, mFrameSync->Index(), *mResources);
         RecordCommands(frame->cmd, frame->imageIndex, views);
         const bool submitted = mFrameSync->End(*mSwapchain, *frame);

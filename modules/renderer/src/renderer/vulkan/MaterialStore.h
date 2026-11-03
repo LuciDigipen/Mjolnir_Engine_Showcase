@@ -145,6 +145,8 @@ namespace mir::vk
         VkPipelineLayout PipelineLayout() const { return mPipelineLayout; }
 
         VkPipeline SkyPipeline() const { return mSkyPipeline; }
+        // Merged opaque pipeline for the sky, built on first use.
+        VkPipeline SkySurfacePipeline();
         VkPipelineLayout SkyPipelineLayout() const { return mSkyPipelineLayout; }
 
     private:
@@ -161,9 +163,14 @@ namespace mir::vk
             VkPipelineLayout layout = VK_NULL_HANDLE;
         };
 
-        VkPipeline CreateGraphicsPipeline(const PipelineState &state, VkFormat colorFormat, bool surfaces = false);
-        VkPipeline BuildPipeline(const MaterialDesc &desc, VkFormat colorFormat, bool surfaces = false);
-        VkPipeline BuildSkyPipeline();
+        enum class PipelineTarget { Color, OpaqueSsgi };
+
+        VkPipeline CreateGraphicsPipeline(std::string_view vertexStem, std::string_view fragmentStem,
+            const PipelineState &state,
+            std::span<const VkFormat> colorFormats, std::span<const VkPipelineColorBlendAttachmentState> blends);
+        VkPipeline BuildPipeline(const MaterialDesc &desc, VkFormat colorFormat,
+            PipelineTarget target = PipelineTarget::Color);
+        VkPipeline BuildSkyPipeline(bool surfaces = false);
         bool CreateSkyPipeline(VkDescriptorSetLayout cameraSetLayout);
         bool CreateRecordRefBuffer();
         void DestroyRecordRefBuffer();
@@ -178,6 +185,7 @@ namespace mir::vk
         {
             uint32_t mIndex = 0;
             VkPipeline mPipeline = VK_NULL_HANDLE;
+            VkPipeline mSurfacePipeline = VK_NULL_HANDLE;
             MaterialRecordId mRecordId;
             uint32_t mRecordOffset = kInvalidMaterialRecordOffset;
             std::vector<std::byte> mRecordBytes;
@@ -199,6 +207,8 @@ namespace mir::vk
 
         VkPipelineLayout mSkyPipelineLayout = VK_NULL_HANDLE;
         VkPipeline mSkyPipeline = VK_NULL_HANDLE;
+        VkPipeline mSkySurfacePipeline = VK_NULL_HANDLE;
+        bool mSkySurfaceTried = false;
 
         // set 0: binding 0 = base color, binding 1 = normal map,
         // binding 2 = this frame's record-reference row (dynamic).
@@ -232,6 +242,7 @@ namespace mir::vk
         SurfaceMaterialCatalog mReloadCatalog;
         bool mReloadCatalogStaged = false;
         VkPipeline mReloadSkyPipeline = VK_NULL_HANDLE;
+        VkPipeline mReloadSkySurfacePipeline = VK_NULL_HANDLE;
         bool mReloadPrepared = false;
     };
 }

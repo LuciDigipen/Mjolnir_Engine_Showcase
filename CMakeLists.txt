@@ -110,7 +110,7 @@ if(ENGINE_PLATFORM STREQUAL "Windows")
         OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/branding/mjolnir.ico")
 endif()
 
-foreach(surface_shader default model unlit error)
+foreach(surface_shader default model unlit error sky)
     engine_add_shaders(MjolnirEngine
         SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/${surface_shader}Surface.slang"
         ENTRIES vertexMain:vertex fragmentMain:fragment)

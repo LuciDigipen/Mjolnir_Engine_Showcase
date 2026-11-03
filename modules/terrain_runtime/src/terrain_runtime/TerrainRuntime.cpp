@@ -1176,6 +1176,7 @@ namespace mir
     {
         if (mFrameTime - view.loggedAt < kTerrainViewLogSeconds)
             return;
+        view.loggedAt = mFrameTime;
         const TerrainViewStats &s = view.selector->Stats();
         std::map<std::pair<TerrainUnitKind, uint32_t>, size_t> byLevel;
         for (const TerrainDrawUnit &unit : view.selector->Draws())
@@ -1194,7 +1195,6 @@ namespace mir
         if (summary == view.logged)
             return;
         view.logged = std::move(summary);
-        view.loggedAt = mFrameTime;
         const TerrainStreamingStats streaming = Streamer()->Stats();
         const MeshStreamingStats uploads = mRenderer->MeshStreaming();
         const glm::dvec3 eye(camera.pose.position.Meters());

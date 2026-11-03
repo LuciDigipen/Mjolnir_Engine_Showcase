@@ -153,8 +153,8 @@ TEST_CASE("Raster surface inputs respect attachment limits and the allocation bu
 {
     VkPhysicalDeviceLimits limits{};
     limits.maxFramebufferWidth = limits.maxFramebufferHeight = limits.maxImageDimension2D = 16384;
-    limits.maxColorAttachments = limits.maxFragmentOutputAttachments = 4;
-    limits.maxFragmentCombinedOutputResources = 7;
+    limits.maxColorAttachments = limits.maxFragmentOutputAttachments = 5;
+    limits.maxFragmentCombinedOutputResources = 8;
     const auto fits = [&](uint32_t width, uint32_t height)
         { return mir::vk::RasterSurfaces::FitsBudget({ width, height }, limits); };
     CHECK(fits(1920, 1080));
@@ -162,9 +162,9 @@ TEST_CASE("Raster surface inputs respect attachment limits and the allocation bu
     CHECK_FALSE(fits(3840, 2160));
     CHECK_FALSE(fits(0, 1080));
     CHECK_FALSE(fits(1920, 0));
-    SECTION("color attachment limit") { limits.maxColorAttachments = 3; CHECK_FALSE(fits(640, 360)); }
-    SECTION("fragment output limit") { limits.maxFragmentOutputAttachments = 3; CHECK_FALSE(fits(640, 360)); }
-    SECTION("combined resource limit") { limits.maxFragmentCombinedOutputResources = 6; CHECK_FALSE(fits(640, 360)); }
+    SECTION("color attachment limit") { limits.maxColorAttachments = 4; CHECK_FALSE(fits(640, 360)); }
+    SECTION("fragment output limit") { limits.maxFragmentOutputAttachments = 4; CHECK_FALSE(fits(640, 360)); }
+    SECTION("combined resource limit") { limits.maxFragmentCombinedOutputResources = 7; CHECK_FALSE(fits(640, 360)); }
     SECTION("framebuffer limit") { limits.maxFramebufferWidth = 639; CHECK_FALSE(fits(640, 360)); }
     SECTION("image limit") { limits.maxImageDimension2D = 639; CHECK_FALSE(fits(640, 360)); }
     SECTION("large dimensions cannot overflow the byte budget")
