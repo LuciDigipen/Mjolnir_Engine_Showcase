@@ -177,6 +177,9 @@ namespace mir
         mEditor.SetAudio(&mEditorAudio);
     #endif
     #endif
+    #if MIR_WITH_EDITOR
+        mEditor.SetNonInteractive(mDesc.mNonInteractive);
+    #endif
 
         mSplash.screen.SetProgress("Loading scene...", 0.9f);
         LoadProjectScene();

@@ -5,6 +5,7 @@ engine_add_module_tests(editor
     Authoring.tests.cpp
     AuthoredEdit.tests.cpp
     BackgroundImage.tests.cpp
+    BuildJob.tests.cpp
     BuildSettings.tests.cpp
     ComponentCommands.tests.cpp
     ContentBrowserWatcher.tests.cpp
@@ -30,3 +31,7 @@ target_compile_definitions(engine_editor_tests PRIVATE MIR_EDITOR_SLANGC="${MIR_
 
 file(TO_CMAKE_PATH "${CMAKE_BINARY_DIR}/shader_build/shader_manifest.json" MIR_EDITOR_MANIFEST_PATH)
 target_compile_definitions(engine_editor_tests PRIVATE MIR_EDITOR_SHADER_MANIFEST="${MIR_EDITOR_MANIFEST_PATH}")
+
+# BuildJob.tests run the real MjolnirBuild
+add_dependencies(engine_editor_tests MjolnirBuild)
+target_compile_definitions(engine_editor_tests PRIVATE MIR_EDITOR_BUILD_TOOL="$<TARGET_FILE:MjolnirBuild>")

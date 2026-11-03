@@ -297,6 +297,27 @@ other profile. A missing, broken or mismatched template shows the
 `cmake --preset`, `cmake --build` and `cmake --install` commands that make it.
 The editor does not run them: building the player needs the MSVC environment.
 
+**Build**, at the bottom of the window, runs MjolnirBuild (the `buildTool` in
+`asset_workspace.json`) with the template and output above. It runs in the
+background: the editor stays usable, the window shows the time so far and a
+Cancel button, and the result replaces it when the build ends. The result is
+the exe that starts the game, or MjolnirBuild's error, then its warnings and a
+Log of the steps and their times. The same lines go to the Output log. Build
+only packages; it does not start the game.
+
+The build reads the game from disk, so:
+
+- **Unsaved changes** to the scene or any Prefab ask Save and Build or Cancel.
+  Save writes every unsaved Prefab and the scene, and the build starts the frame
+  after, once the scene is written. If the save fails, nothing is built.
+  `--non-interactive` answers Cancel.
+- **Play, a running asset import, or an unusable template** disable Build; the
+  reason shows beside the button and in its tooltip.
+- **Cancel** stops MjolnirBuild and the AssetCooker or TerrainTool it runs. The
+  previous build stays where it was, put back if the stop came while
+  MjolnirBuild was swapping it out. A half-made `<out>.tmp` stays until the next
+  build removes it.
+
 ## Builds without proprietary SDKs and daily CI
 
 `MIR_WITH_AUDIO` defaults to `ON`. Local builds with audio require the Wwise
