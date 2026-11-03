@@ -269,31 +269,29 @@ namespace mir
 
         struct WorldState
         {
-            explicit WorldState(const std::filesystem::path &sceneDir)
-                : scene(Context(), sceneDir)
-            {
-            }
+            WorldState(const GameProject &project, AssetsModule &assets, const AssetResolver &resolver,
+                GameShellSettings shellSettings);
 
             CommandBuffer commands;
             World world;
             SystemScheduler scheduler;
             CoreModule core{ ModuleContext{ world, scheduler }, commands };
 
+            ParticlesModule particles;
             SceneModule scene;
+            PrefabModule prefab;
+            GameUIModule gameUI;
+            GameShellModule gameShell;
 
             ModuleContext Context() { return { world, scheduler }; }
         };
 
-        WorldState mWorldState;
         AssetsModule mAssets;
         std::unique_ptr<AsyncAssetService> mAssetService;
         AssetResolver mResolver;
-        ParticlesModule mParticles;
-        PrefabModule mPrefab;
         // before ImGuiModule: ImGui's shutdown frees the GPU side of the UI's textures,
         // so the textures must still be there
-        GameUIModule mGameUI;
-        GameShellModule mGameShell;
+        WorldState mWorldState;
         WindowModule mWindow;
         SplashStep mRendererStep{ mSplash, "Initializing renderer...", 0.2f };
         RendererModule mRenderer;
@@ -311,7 +309,7 @@ namespace mir
         CameraModule mCamera;
     #if MIR_WITH_AUDIO
         AudioModule mAudio;
-        // handed to mGameShell, built before it, once both are up
+        // handed to mWorldState.gameShell, built before it, once both are up
         GameAudioOptions mAudioOptions{ mAudio };
     #if MIR_WITH_EDITOR
         // handed to mEditor the same way

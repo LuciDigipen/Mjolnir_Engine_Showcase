@@ -121,6 +121,16 @@ namespace mir
                       .mProgress = 0.0f });
     }
 
+    App::WorldState::WorldState(const GameProject &project, AssetsModule &assets, const AssetResolver &resolver,
+        GameShellSettings shellSettings)
+        : particles(Context(), assets, resolver),
+          scene(Context(), project.mSceneDir),
+          prefab(Context(), scene, PrefabSourceDir(project), kHasEditor ? nullptr : &assets),
+          gameUI(Context()),
+          gameShell(Context(), gameUI, assets, resolver, shellSettings)
+    {
+    }
+
     App::App(const AppDesc &desc)
         : mDesc(Prepared(desc)),
         mProject(mDesc.mProject),
@@ -129,11 +139,7 @@ namespace mir
         mAssets(CookedAssetsDir()),
         mAssetService(MakeAssetService(mAssets, mJobs, mProject.mProjectSettingsPath)),
         mResolver(mAssets, mProject.mAssetIdRoot),
-        mParticles(Context(), mAssets, mResolver),
-        mScene(Context(), mProject.mSceneDir),
-        mPrefab(Context(), mScene, PrefabSourceDir(mProject), kHasEditor ? nullptr : &mAssets),
-        mGameUI(Context()),
-        mGameShell(Context(), mGameUI, mAssets, mResolver,
+        mWorldState(mProject, mAssets, mResolver,
             GameShellSettings{ .mUIDemo = mDesc.mUIDemo, .mQuitStopsPlay = mDesc.mEnableEditorLayout }),
         mWindow(MakeWindowDesc(mDesc)),
         mRenderer(Context(), mWindow.Get(),
@@ -147,7 +153,7 @@ namespace mir
         mAnimation(Context(), mRenderer.Renderer(), mAssetService.get(), mResolver, &mJobs),
         mImGui(Context(), mWindow, mRenderer),
     #if MIR_WITH_EDITOR
-        mEditor(Context(), mImGui, mWindow, mRenderer, mScene, mPrefab, mAssets, mAssetService.get(), mResolver,
+        mEditor(Context(), mImGui, mWindow, mRenderer, mWorldState.scene, mWorldState.prefab, mAssets, mAssetService.get(), mResolver,
             mProject, mJobs, mDesc.mEnableEditorLayout, mAnimation.Library()),
     #endif
         mCamera(Context()),
@@ -158,7 +164,7 @@ namespace mir
         mPhysics(Context(), mProject.mProjectSettingsPath, &mJobs),
         mTerrainData(Context()),
         mScript(Context(), mAssets, mResolver),
-        mParticlesRuntime(Context(), mParticles, mParticlesGpu, mRenderer.Rendering()),
+        mParticlesRuntime(Context(), mWorldState.particles, mParticlesGpu, mRenderer.Rendering()),
         mParticlesScript(mScript),
     #if MIR_WITH_AUDIO
         mAudioScript(mScript),
@@ -168,11 +174,11 @@ namespace mir
         mRendererScript(mScript),
         mTerrainScript(mScript),
         mTerrain(Context(), mRenderer, mProject, mResolver, mJobs),
-        mGameUIImGui(Context(), mImGui, mWindow, mGameUI),
+        mGameUIImGui(Context(), mImGui, mWindow, mWorldState.gameUI),
         mFixedTimestep{ .mStep = mDesc.mFixedDeltaSeconds, .mMaxSteps = mDesc.mMaxFixedSteps }
     {
     #if MIR_WITH_AUDIO
-        mGameShell.SetAudioOptions(&mAudioOptions);
+        mWorldState.gameShell.SetAudioOptions(&mAudioOptions);
     #if MIR_WITH_EDITOR
         mEditor.SetAudio(&mEditorAudio);
     #endif
@@ -240,7 +246,7 @@ namespace mir
         }
 
         UnloadCurrentScene();
-        mScene.New(std::move(name), incomplete);
+        mWorldState.scene.New(std::move(name), incomplete);
         RunStage(Stage::SceneLoad);
     }
 
@@ -252,18 +258,18 @@ namespace mir
             return false;
         }
 
-        if (!mScene.IsBound())
+        if (!mWorldState.scene.IsBound())
         {
             if (!ConfirmBindUntitledScene())
             {
                 MIR_LOG_WARN("App::SaveScene: the untitled scene was not saved, '{}' is left as it is",
-                    mScene.SceneDir().string());
+                    mWorldState.scene.SceneDir().string());
                 return false;
             }
-            mScene.Bind();
+            mWorldState.scene.Bind();
         }
 
-        const bool saved = mScene.Save(&mPrefab.Coordinator().Resolver());
+        const bool saved = mWorldState.scene.Save(&mWorldState.prefab.Coordinator().Resolver());
         if (saved)
             RunStage(Stage::SceneSaved);
         return saved;
@@ -394,15 +400,15 @@ namespace mir
             return false;
 
         UnloadCurrentScene();
-        mScene.SetSceneDir(directory);
+        mWorldState.scene.SetSceneDir(directory);
         mOpenSceneId = id;
     #if MIR_WITH_EDITOR
         mEditor.Get().SetOpenSceneId(id);
     #endif
         if (choice == SceneLoadChoice::StartEmpty)
-            mScene.New("untitled", true);
+            mWorldState.scene.New("untitled", true);
         else
-            mScene.LoadFromDisk(&mPrefab.Coordinator().Resolver(), !probe.Ok());
+            mWorldState.scene.LoadFromDisk(&mWorldState.prefab.Coordinator().Resolver(), !probe.Ok());
         RunStage(Stage::SceneLoad);
         return true;
     }
@@ -410,7 +416,7 @@ namespace mir
     void App::ReplaceSceneFromDisk(bool incomplete)
     {
         UnloadCurrentScene();
-        mScene.LoadFromDisk(&mPrefab.Coordinator().Resolver(), incomplete);
+        mWorldState.scene.LoadFromDisk(&mWorldState.prefab.Coordinator().Resolver(), incomplete);
         RunStage(Stage::SceneLoad);
     }
 
@@ -444,7 +450,7 @@ namespace mir
 
     bool App::ConfirmBindUntitledScene() const
     {
-        const std::string sceneDir = mScene.SceneDir().string();
+        const std::string sceneDir = mWorldState.scene.SceneDir().string();
         const std::string message = "This scene is untitled. It was started empty in place of the scene in " +
             sceneDir + ", which could not be read.\n\nSave it there? That replaces " +
             std::string(kSceneManifestFileName) + " and every entity and instance file in " + sceneDir +
@@ -460,7 +466,7 @@ namespace mir
 
         // before the snapshot: the prefabs commit and freeze, so it holds what Play runs
         RunStage(Stage::PlayBegin);
-        mScene.CaptureForPlay(&mPrefab.Coordinator().Resolver());
+        mWorldState.scene.CaptureForPlay(&mWorldState.prefab.Coordinator().Resolver());
 
         SetPlayState(mWorldState.world, PlayState::Running);
         SetEngineMode(mWorldState.world, EngineMode::Play);
@@ -474,7 +480,7 @@ namespace mir
         // Play's entities fire their OnRemove as the restore destroys them; the GPU caches,
         // keyed by asset, stay for the restored scene
         RunStage(Stage::PlayEnd);
-        mScene.RestoreFromPlay(&mPrefab.Coordinator().Resolver());
+        mWorldState.scene.RestoreFromPlay(&mWorldState.prefab.Coordinator().Resolver());
 
         SetEngineMode(mWorldState.world, EngineMode::Edit);
         SetPlayState(mWorldState.world, PlayState::Running);
@@ -497,13 +503,13 @@ namespace mir
         mSceneGated = true;
         // The game UI stays off while the scene prepares, so nothing it draws can be clicked, and what is requested
         // meanwhile is dropped. A request made before the wait is kept.
-        mGameUI.SetSuspended(true);
+        mWorldState.gameUI.SetSuspended(true);
         RequestQueue &requests = mWorldState.world.Resource<RequestQueue>();
         RequestQueue::Held held = requests.Hold();
         const auto finish = [&]
         {
             mSceneGated = false;
-            mGameUI.SetSuspended(false);
+            mWorldState.gameUI.SetSuspended(false);
             if (const size_t dropped = requests.Restore(std::move(held)); dropped != 0)
                 MIR_LOG_WARN("Dropped {} request(s) made while the scene was loading", dropped);
         };
@@ -652,7 +658,7 @@ namespace mir
 
     void App::UnloadCurrentScene()
     {
-        mScene.Unload();
+        mWorldState.scene.Unload();
         RunStage(Stage::SceneUnload);
     }
 
@@ -670,17 +676,17 @@ namespace mir
         if (!std::filesystem::exists(manifest, ec))
         {
             MIR_LOG_INFO("No {} in '{}', starting with an empty scene", kSceneManifestFileName, mProject.mSceneDir.string());
-            mScene.New("untitled");
+            mWorldState.scene.New("untitled");
             RunStage(Stage::SceneLoad);
             return;
         }
 
         const SceneProbe probe = ProbeScene(mProject.mSceneDir);
-        switch (ChooseSceneLoad(probe, mScene.SceneDir(), true))
+        switch (ChooseSceneLoad(probe, mWorldState.scene.SceneDir(), true))
         {
         case SceneLoadChoice::StartEmpty:
             MIR_LOG_WARN("Starting with an untitled empty scene, the corrupt '{}' is left as it is", manifest.string());
-            mScene.New("untitled", true);
+            mWorldState.scene.New("untitled", true);
             RunStage(Stage::SceneLoad);
             return;
         case SceneLoadChoice::Load:
