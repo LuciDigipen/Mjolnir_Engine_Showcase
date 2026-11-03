@@ -126,7 +126,6 @@ namespace mir
         mProject(mDesc.mProject),
         mSplash(mDesc),
         mJobs(mDesc.mWorkerThreads),
-        mCore(Context(), mCommands),
         mAssets(CookedAssetsDir()),
         mAssetService(MakeAssetService(mAssets, mJobs, mProject.mProjectSettingsPath)),
         mResolver(mAssets, mProject.mAssetIdRoot),
@@ -205,7 +204,7 @@ namespace mir
     App::~App()
     {
         SystemContext stopContext = MakeContext(0.0f);
-        mScheduler.Stop(stopContext);
+        mWorldState.scheduler.Stop(stopContext);
         MIR_LOG_INFO("App shut down");
     }
 
@@ -234,7 +233,7 @@ namespace mir
 
     void App::NewScene(std::string name, bool incomplete)
     {
-        if (IsPlaying(mWorld))
+        if (IsPlaying(mWorldState.world))
         {
             MIR_LOG_WARN("App::NewScene: ignored while Play is running (Stop first)");
             return;
@@ -247,7 +246,7 @@ namespace mir
 
     bool App::SaveScene()
     {
-        if (IsPlaying(mWorld))
+        if (IsPlaying(mWorldState.world))
         {
             MIR_LOG_WARN("App::SaveScene: ignored while Play is running (Stop first)");
             return false;
@@ -283,7 +282,7 @@ namespace mir
             MIR_LOG_WARN("Create Scene: {}", message);
             mEditor.Get().SetSceneCreationError(std::move(message));
         };
-        if (!IsEditing(mWorld))
+        if (!IsEditing(mWorldState.world))
             return;
         if (id.empty() || id.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") !=
                 std::string::npos)
@@ -344,7 +343,7 @@ namespace mir
 
         const auto utf8Path = relative.generic_u8string();
         scenes.push_back({ { "id", id }, { "path", std::string(utf8Path.begin(), utf8Path.end()) } });
-        if (!mir::SaveScene(mWorld, directory, mir::NewScene(id), nullptr) ||
+        if (!mir::SaveScene(mWorldState.world, directory, mir::NewScene(id), nullptr) ||
             !WriteJsonFile(manifestPath, *manifest))
         {
             fs::remove(SceneManifestPath(directory), ec);
@@ -361,7 +360,7 @@ namespace mir
 
     bool App::OpenScene(const std::string &id, bool saveCurrent)
     {
-        if (IsPlaying(mWorld))
+        if (IsPlaying(mWorldState.world))
         {
             MIR_LOG_WARN("App::LoadScene: ignored while Play is running (Stop first)");
             return false;
@@ -456,20 +455,20 @@ namespace mir
 
     void App::PlayScene()
     {
-        if (IsPlaying(mWorld))
+        if (IsPlaying(mWorldState.world))
             return;
 
         // before the snapshot: the prefabs commit and freeze, so it holds what Play runs
         RunStage(Stage::PlayBegin);
         mScene.CaptureForPlay(&mPrefab.Coordinator().Resolver());
 
-        SetPlayState(mWorld, PlayState::Running);
-        SetEngineMode(mWorld, EngineMode::Play);
+        SetPlayState(mWorldState.world, PlayState::Running);
+        SetEngineMode(mWorldState.world, EngineMode::Play);
     }
 
     void App::StopScene()
     {
-        if (!IsPlaying(mWorld))
+        if (!IsPlaying(mWorldState.world))
             return;
 
         // Play's entities fire their OnRemove as the restore destroys them; the GPU caches,
@@ -477,8 +476,8 @@ namespace mir
         RunStage(Stage::PlayEnd);
         mScene.RestoreFromPlay(&mPrefab.Coordinator().Resolver());
 
-        SetEngineMode(mWorld, EngineMode::Edit);
-        SetPlayState(mWorld, PlayState::Running);
+        SetEngineMode(mWorldState.world, EngineMode::Edit);
+        SetPlayState(mWorldState.world, PlayState::Running);
 
         // terrain starts checking a release published during Play
         RunStage(Stage::SceneLoad);
@@ -486,20 +485,20 @@ namespace mir
 
     void App::TogglePause()
     {
-        if (!IsPlaying(mWorld))
+        if (!IsPlaying(mWorldState.world))
             return;
 
-        SetPlayState(mWorld, IsPaused(mWorld) ? PlayState::Running : PlayState::Paused);
+        SetPlayState(mWorldState.world, IsPaused(mWorldState.world) ? PlayState::Running : PlayState::Paused);
     }
 
     bool App::AwaitSceneResources()
     {
-        SceneLoadGroup &group = mWorld.Resource<SceneLoadGroup>();
+        SceneLoadGroup &group = mWorldState.world.Resource<SceneLoadGroup>();
         mSceneGated = true;
         // The game UI stays off while the scene prepares, so nothing it draws can be clicked, and what is requested
         // meanwhile is dropped. A request made before the wait is kept.
         mGameUI.SetSuspended(true);
-        RequestQueue &requests = mWorld.Resource<RequestQueue>();
+        RequestQueue &requests = mWorldState.world.Resource<RequestQueue>();
         RequestQueue::Held held = requests.Hold();
         const auto finish = [&]
         {
@@ -525,7 +524,7 @@ namespace mir
                 mAssetService->DrainCompletions();
             mImGui.RunUI();
             SystemContext context = MakeContext(0.0f);
-            mScheduler.UpdateLoading(context);
+            mWorldState.scheduler.UpdateLoading(context);
             group.EndFrame();
             ++frames;
             if (!group.Ready() && mDesc.mMaxFrames != 0 &&
@@ -547,7 +546,7 @@ namespace mir
     {
         if (!mSceneGated)
             return;
-        const SceneLoadGroup &group = mWorld.Resource<SceneLoadGroup>();
+        const SceneLoadGroup &group = mWorldState.world.Resource<SceneLoadGroup>();
         const ImGuiViewport *viewport = ImGui::GetMainViewport();
         ImDrawList *draw = ImGui::GetForegroundDrawList();
         const ImVec2 min = viewport->Pos, max(min.x + viewport->Size.x, min.y + viewport->Size.y);
@@ -567,7 +566,7 @@ namespace mir
 
     void App::ApplyRequests()
     {
-        RequestQueue &queue = mWorld.Resource<RequestQueue>();
+        RequestQueue &queue = mWorldState.world.Resource<RequestQueue>();
         if (const std::optional<std::string> dir = queue.TakeOpenProject(); dir.has_value())
             RequestOpenProject(*dir);
 
@@ -592,11 +591,11 @@ namespace mir
                 StopScene();
                 break;
             case Request::Pause:
-                if (IsSimulating(mWorld))
+                if (IsSimulating(mWorldState.world))
                     TogglePause();
                 break;
             case Request::Resume:
-                if (IsPaused(mWorld))
+                if (IsPaused(mWorldState.world))
                     TogglePause();
                 break;
             case Request::NewScene:
@@ -611,7 +610,7 @@ namespace mir
             case Request::ApplyImportedAssets:
             #if MIR_WITH_EDITOR
                 // the import may have been applied or dropped since it asked
-                if (mEditor.Import().PendingApply() && IsEditing(mWorld))
+                if (mEditor.Import().PendingApply() && IsEditing(mWorldState.world))
                     ApplyImportedAssets();
             #endif
                 break;
@@ -660,7 +659,7 @@ namespace mir
     void App::RunStage(Stage stage)
     {
         SystemContext context = MakeContext(0.0f);
-        mScheduler.RunStage(stage, context);
+        mWorldState.scheduler.RunStage(stage, context);
     }
 
     void App::LoadProjectScene()
@@ -718,21 +717,21 @@ namespace mir
 
     ModuleContext App::Context()
     {
-        return ModuleContext{ mWorld, mScheduler };
+        return mWorldState.Context();
     }
 
     SystemContext App::MakeContext(float dt)
     {
-        return SystemContext{ mWorld, mCommands, dt, mElapsed, mFrame, mFixedTimestep.Alpha() };
+        return SystemContext{ mWorldState.world, mWorldState.commands, dt, mElapsed, mFrame, mFixedTimestep.Alpha() };
     }
 
     void App::Run()
     {
-        if (mGateScenes && !mWorld.Resource<SceneLoadGroup>().Ready() && !AwaitSceneResources())
+        if (mGateScenes && !mWorldState.world.Resource<SceneLoadGroup>().Ready() && !AwaitSceneResources())
             return;
 
         SystemContext startContext = MakeContext(0.0f);
-        mScheduler.Start(startContext);
+        mWorldState.scheduler.Start(startContext);
 
         auto previous = std::chrono::steady_clock::now();
 
@@ -758,7 +757,7 @@ namespace mir
             if (mAssetService)
                 mAssetService->DrainCompletions();
 
-            if (mGateScenes && !mWorld.Resource<SceneLoadGroup>().Ready())
+            if (mGateScenes && !mWorldState.world.Resource<SceneLoadGroup>().Ready())
             {
                 mElapsed -= dt;
                 if (!AwaitSceneResources())
@@ -768,7 +767,7 @@ namespace mir
             }
 
             SystemContext frameContext = MakeContext(dt);
-            mScheduler.RunFrameSlot(FrameSlot::FrameBegin, frameContext);
+            mWorldState.scheduler.RunFrameSlot(FrameSlot::FrameBegin, frameContext);
 
             mImGui.RunUI();
 
@@ -779,10 +778,10 @@ namespace mir
             SystemContext context = MakeContext(dt);
             if (!mDesc.mCapturePath.empty() && mFrame + 1 == mDesc.mMaxFrames)
                 mRenderer.Renderer().CaptureNextFrame(mDesc.mCapturePath);
-            mScheduler.Update(context, fixedSteps, mFixedTimestep.mStep);
-            mWorld.Resource<SceneLoadGroup>().EndFrame();
+            mWorldState.scheduler.Update(context, fixedSteps, mFixedTimestep.mStep);
+            mWorldState.world.Resource<SceneLoadGroup>().EndFrame();
 
-            if (mWorld.Resource<InputState>().JustPressed(kToggleFullscreenAction))
+            if (mWorldState.world.Resource<InputState>().JustPressed(kToggleFullscreenAction))
                 ToggleFullscreen();
 
             ++mFrame;

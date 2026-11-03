@@ -129,8 +129,8 @@ namespace mir
 
         void Run();
 
-        World &GetWorld() { return mWorld; }
-        SystemScheduler &Systems() { return mScheduler; }
+        World &GetWorld() { return mWorldState.world; }
+        SystemScheduler &Systems() { return mWorldState.scheduler; }
 
         // Temporary seam
         VulkanRenderer &Renderer() { return mRenderer.Renderer(); }
@@ -267,12 +267,17 @@ namespace mir
         StartupSplash mSplash;
         JobExecutor mJobs;
 
-        // before mWorld, so it is destroyed after it
-        CommandBuffer mCommands;
-        World mWorld;
-        SystemScheduler mScheduler;
+        struct WorldState
+        {
+            CommandBuffer commands;
+            World world;
+            SystemScheduler scheduler;
+            CoreModule core{ ModuleContext{ world, scheduler }, commands };
 
-        CoreModule mCore;
+            ModuleContext Context() { return { world, scheduler }; }
+        };
+
+        WorldState mWorldState;
         AssetsModule mAssets;
         std::unique_ptr<AsyncAssetService> mAssetService;
         AssetResolver mResolver;
