@@ -16,7 +16,9 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -82,6 +84,40 @@ namespace
         REQUIRE_FALSE(job.Running());
         REQUIRE(job.Result());
     }
+
+    // BuildProbe in place of MjolnirBuild, stopping at @p phase
+    BuildJobRequest ProbeRequest(const BuildSandbox &sandbox, std::string_view phase)
+    {
+        BuildJobRequest request = sandbox.Request();
+        request.mTool = MIR_EDITOR_BUILD_PROBE;
+        request.mGameDir = sandbox.mRoot / phase;
+        return request;
+    }
+
+    template <typename Reached>
+    void WaitUntil(Reached reached)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        while (!reached() && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        REQUIRE(reached());
+    }
+
+    void WritePreviousBuild(const BuildSandbox &sandbox)
+    {
+        BuildSandbox::Write(sandbox.Out() / "mjolnir_build.json", R"({ "version": 1 })");
+        BuildSandbox::Write(sandbox.Out() / "Demo.exe", "previous");
+        // made by an earlier build, so its marker is older than any this build writes
+        fs::last_write_time(sandbox.Out() / "mjolnir_build.json",
+            fs::file_time_type::clock::now() - std::chrono::hours(1));
+    }
+
+    fs::path PreviousDir(const BuildSandbox &sandbox)
+    {
+        fs::path previous = sandbox.Out();
+        previous += ".old";
+        return previous;
+    }
 }
 
 TEST_CASE("A build runs in the background and its report is read", "[build-job]")
@@ -128,6 +164,52 @@ TEST_CASE("Cancel stops the build and keeps the previous one", "[build-job]")
     INFO(job.Result()->mError);
     CHECK(job.Result()->mOutcome == BuildOutcome::Succeeded);
     CHECK(ReadText(sandbox.Out() / "Demo.exe") == "player");
+}
+
+TEST_CASE("Cancel after the new build moved in says the new build is there", "[build-job]")
+{
+    BuildSandbox sandbox;
+    SECTION("over a previous build") { WritePreviousBuild(sandbox); }
+    SECTION("with no previous build") {}
+
+    BuildJob job;
+    REQUIRE(job.Start(ProbeRequest(sandbox, "moved-in")));
+    WaitUntil([&] { return ReadText(sandbox.Out() / "Demo.exe") == "new"; });
+    job.Cancel();
+
+    REQUIRE(job.Result());
+    CHECK(job.Result()->mOutcome == BuildOutcome::CanceledTooLate);
+    CHECK(job.Result()->mOutDir == sandbox.Out());
+    CHECK(ReadText(sandbox.Out() / "Demo.exe") == "new");
+}
+
+TEST_CASE("Cancel mid-swap puts the previous build back, or says it could not", "[build-job]")
+{
+    BuildSandbox sandbox;
+    WritePreviousBuild(sandbox);
+    const fs::path previous = PreviousDir(sandbox);
+
+    BuildJob job;
+    REQUIRE(job.Start(ProbeRequest(sandbox, "mid-swap")));
+    WaitUntil([&] { return fs::exists(previous) && !fs::exists(sandbox.Out()); });
+
+    SECTION("put back")
+    {
+        job.Cancel();
+        REQUIRE(job.Result());
+        CHECK(job.Result()->mOutcome == BuildOutcome::Canceled);
+        CHECK(ReadText(sandbox.Out() / "Demo.exe") == "previous");
+    }
+    SECTION("held open, so it cannot move")
+    {
+        std::ifstream held(previous / "Demo.exe");
+        REQUIRE(held);
+        job.Cancel();
+        REQUIRE(job.Result());
+        CHECK(job.Result()->mOutcome == BuildOutcome::Failed);
+        CHECK(job.Result()->mError.find("could not be moved back") != std::string::npos);
+        CHECK_FALSE(fs::exists(sandbox.Out()));
+    }
 }
 
 TEST_CASE("A build that cannot start says why", "[build-job]")

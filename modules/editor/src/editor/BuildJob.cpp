@@ -54,6 +54,14 @@ namespace mir
             return it != json.end() && it->is_number() ? it->get<T>() : T{};
         }
 
+        // MjolnirBuild writes a new marker into every build, so a different time means a different build
+        std::optional<fs::file_time_type> MarkerTime(const fs::path &outDir)
+        {
+            std::error_code ec;
+            const fs::file_time_type time = fs::last_write_time(outDir / kBuildMarkerFileName, ec);
+            return ec ? std::nullopt : std::optional(time);
+        }
+
         void Log(const BuildResult &result)
         {
             for (const BuildStepResult &step : result.mSteps)
@@ -72,6 +80,9 @@ namespace mir
                 break;
             case BuildOutcome::Canceled:
                 MIR_LOG_INFO("Build canceled; {} is as it was", PathText(result.mOutDir));
+                break;
+            case BuildOutcome::CanceledTooLate:
+                MIR_LOG_WARN("Build: too late to cancel; the new build is already in {}", PathText(result.mOutDir));
                 break;
             }
         }
@@ -159,6 +170,7 @@ namespace mir
         mStarted = std::chrono::steady_clock::now();
         std::error_code ec;
         fs::remove(mRequest.mResultFile, ec);
+        mPreviousMarker = MarkerTime(mRequest.mOutDir);
 
         if (mRequest.mTool.empty() || !mProcess.Start(mRequest.mTool, BuildArguments(mRequest)))
         {
@@ -204,6 +216,17 @@ namespace mir
         BuildResult result;
         result.mOutcome = BuildOutcome::Canceled;
         result.mOutDir = mRequest.mOutDir;
+
+        // stopped between the swap and the report
+        const std::optional<fs::file_time_type> marker = MarkerTime(mRequest.mOutDir);
+        if (marker && marker != mPreviousMarker)
+            result.mOutcome = BuildOutcome::CanceledTooLate;
+        else if (!marker && mPreviousMarker)
+        {
+            result.mOutcome = BuildOutcome::Failed;
+            result.mError = "Cancel stopped MjolnirBuild while it swapped builds, and the previous build could not be "
+                            "moved back into " + PathText(mRequest.mOutDir) + "; see the log";
+        }
         Finish(std::move(result));
     }
 

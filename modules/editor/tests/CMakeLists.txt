@@ -32,6 +32,9 @@ target_compile_definitions(engine_editor_tests PRIVATE MIR_EDITOR_SLANGC="${MIR_
 file(TO_CMAKE_PATH "${CMAKE_BINARY_DIR}/shader_build/shader_manifest.json" MIR_EDITOR_MANIFEST_PATH)
 target_compile_definitions(engine_editor_tests PRIVATE MIR_EDITOR_SHADER_MANIFEST="${MIR_EDITOR_MANIFEST_PATH}")
 
-# BuildJob.tests run the real MjolnirBuild
-add_dependencies(engine_editor_tests MjolnirBuild)
-target_compile_definitions(engine_editor_tests PRIVATE MIR_EDITOR_BUILD_TOOL="$<TARGET_FILE:MjolnirBuild>")
+# BuildJob.tests run the real MjolnirBuild, and a probe that stops where a real build is too quick to cancel
+add_executable(engine_editor_build_probe BuildProbe.cpp)
+engine_target_utf8(engine_editor_build_probe)
+add_dependencies(engine_editor_tests MjolnirBuild engine_editor_build_probe)
+target_compile_definitions(engine_editor_tests PRIVATE MIR_EDITOR_BUILD_TOOL="$<TARGET_FILE:MjolnirBuild>"
+    MIR_EDITOR_BUILD_PROBE="$<TARGET_FILE:engine_editor_build_probe>")

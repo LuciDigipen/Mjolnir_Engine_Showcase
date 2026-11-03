@@ -315,8 +315,10 @@ The build reads the game from disk, so:
   reason shows beside the button and in its tooltip.
 - **Cancel** stops MjolnirBuild and the AssetCooker or TerrainTool it runs. The
   previous build stays where it was, put back if the stop came while
-  MjolnirBuild was swapping it out. A half-made `<out>.tmp` stays until the next
-  build removes it.
+  MjolnirBuild was swapping it out; if it cannot be put back, the result is a
+  failure that says so. A Cancel that comes after the new build moved in, but
+  before MjolnirBuild finished, says it was too late: the new build is in
+  `<out>`. A half-made `<out>.tmp` stays until the next build removes it.
 
 ## Builds without proprietary SDKs and daily CI
 

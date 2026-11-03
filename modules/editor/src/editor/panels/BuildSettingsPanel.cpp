@@ -213,6 +213,10 @@ namespace mir
         case BuildOutcome::Canceled:
             ImGui::TextWrapped("Build canceled. %s is as it was.", CheckoutPath(result.mOutDir, game.mSourceRoot).c_str());
             break;
+        case BuildOutcome::CanceledTooLate:
+            Line("too late to cancel: the new build is already in " + CheckoutPath(result.mOutDir, game.mSourceRoot),
+                EditorTheme::Color(StatusColor::Warning));
+            break;
         }
         for (const std::string &warning : result.mWarnings)
             Line(warning, EditorTheme::Color(StatusColor::Warning));

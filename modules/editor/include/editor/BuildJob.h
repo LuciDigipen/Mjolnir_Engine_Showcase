@@ -25,6 +25,8 @@ namespace mir
         Succeeded,
         Failed,
         Canceled,
+        // Cancel came after the new build moved into the output, before MjolnirBuild wrote its report
+        CanceledTooLate,
     };
 
     struct BuildStepResult
@@ -119,6 +121,8 @@ namespace mir
         ChildProcess mProcess;
         BuildJobRequest mRequest;
         std::chrono::steady_clock::time_point mStarted;
+        // the output's marker before the build, so Cancel can tell whether the new build moved in
+        std::optional<std::filesystem::file_time_type> mPreviousMarker;
         bool mRunning = false;
         std::optional<BuildResult> mResult;
     };
