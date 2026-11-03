@@ -270,6 +270,15 @@ namespace mir::build
                     throw BuildError("game.json names " + PathText(dir) + ", which is outside the game folder");
             }
 
+            for (const ProjectScene &scene : inputs.mProject.mScenes)
+            {
+                if (!IsWithin(scene.mDirectory, inputs.mGameDir))
+                    throw BuildError("scene " + scene.mId + " is outside the game folder");
+                if (manifest && manifest->contains("scenes") &&
+                    !fs::is_regular_file(scene.mDirectory / "scene.json", ec))
+                    throw BuildError("scene " + scene.mId + " has no scene.json in " + PathText(scene.mDirectory));
+            }
+
             inputs.mPlayerDir = NormalizedPath(request.mPlayerDir);
             if (const std::optional<std::string> problem = PlayerTemplateProblem(inputs.mPlayerDir, &inputs.mPlayerInfo))
                 throw BuildError(
@@ -356,7 +365,18 @@ namespace mir::build
             const GameProject &project = inputs.mProject;
             std::error_code ec;
 
-            Copy(inputs.mGameDir / kGameManifestFileName, gameOut / kGameManifestFileName);
+            Json manifest = ReadJsonFile(inputs.mGameDir / kGameManifestFileName).value();
+            if (manifest.contains("scenes") || fs::is_regular_file(project.mSceneDir / "scene.json", ec))
+            {
+                manifest["startupScene"] = project.mStartupSceneId;
+                manifest["scenes"] = Json::array();
+                for (const ProjectScene &scene : project.mScenes)
+                    manifest["scenes"].push_back({ { "id", scene.mId },
+                        { "path", PathText(scene.mDirectory.lexically_relative(inputs.mGameDir)) } });
+                manifest["sceneDir"] = PathText(project.mSceneDir.lexically_relative(inputs.mGameDir));
+            }
+            if (!WriteText(gameOut / kGameManifestFileName, manifest.dump(2) + "\n"))
+                throw BuildError("could not write packaged game.json");
             if (std::optional<Json> settings = ReadProjectSettings(project.mProjectSettingsPath))
             {
                 for (std::string_view section : kMachineSettingsSections)
@@ -367,10 +387,13 @@ namespace mir::build
             if (fs::is_regular_file(inputs.mGameDir / kTerrainStreamingSettingsFileName, ec))
                 Copy(inputs.mGameDir / kTerrainStreamingSettingsFileName, gameOut / kTerrainStreamingSettingsFileName);
 
-            if (fs::is_directory(project.mSceneDir, ec))
-                Copy(project.mSceneDir, gameOut / project.mSceneDir.lexically_relative(inputs.mGameDir));
-            else
-                report.mWarnings.push_back(PathText(project.mSceneDir) + " does not exist, so the game starts empty");
+            for (const ProjectScene &scene : project.mScenes)
+            {
+                if (fs::is_directory(scene.mDirectory, ec))
+                    Copy(scene.mDirectory, gameOut / scene.mDirectory.lexically_relative(inputs.mGameDir));
+                else
+                    report.mWarnings.push_back(PathText(scene.mDirectory) + " does not exist, so the game starts empty");
+            }
 
             if (fs::is_directory(project.mAssetsDir, ec))
             {

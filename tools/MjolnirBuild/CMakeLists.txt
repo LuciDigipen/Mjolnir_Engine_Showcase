@@ -26,7 +26,7 @@ if(BUILD_TESTING)
     )
     engine_target_utf8(mjolnir_build_tests)
     target_link_libraries(mjolnir_build_tests PRIVATE
-        mjolnir_build mir::assets mir::core nlohmann_json::nlohmann_json Catch2::Catch2WithMain)
+        mjolnir_build mir::assets mir::core mir::project nlohmann_json::nlohmann_json Catch2::Catch2WithMain)
     target_compile_definitions(mjolnir_build_tests PRIVATE
         MJOLNIR_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
         MJOLNIR_ENGINE_COOK_DIR="${CMAKE_BINARY_DIR}/cooked_assets"
