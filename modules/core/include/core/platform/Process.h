@@ -30,8 +30,9 @@ namespace mir
         ChildProcess(ChildProcess &&) noexcept;
         ChildProcess &operator=(ChildProcess &&) noexcept;
 
+        // With outputFile, the child's stdout and stderr replace that file's contents (Windows only)
         bool Start(const std::filesystem::path &program, std::span<const std::string> args,
-                   const std::filesystem::path &workingDirectory = {});
+                   const std::filesystem::path &workingDirectory = {}, const std::filesystem::path &outputFile = {});
         bool Running();
         std::optional<int> Poll();
         std::optional<int> Wait();
