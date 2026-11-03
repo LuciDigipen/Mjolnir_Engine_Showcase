@@ -1535,8 +1535,8 @@ namespace mir
                 ImGui::OpenPopup("New Scene");
             if (ImGui::BeginPopupModal("New Scene", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
             {
-                ImGui::InputText("Scene ID", mNewSceneId, sizeof(mNewSceneId));
-                ImGui::InputTextWithHint("Folder", "scenes/<scene ID>", mNewScenePath, sizeof(mNewScenePath));
+                ImGui::InputText("Scene Name", mNewSceneId, sizeof(mNewSceneId));
+                ImGui::InputTextWithHint("Folder", "scenes/<scene name>", mNewScenePath, sizeof(mNewScenePath));
                 ImGui::TextDisabled("Folder is relative to the game directory.");
                 if (!mSceneCreationError.empty())
                     ImGui::TextWrapped("%s", mSceneCreationError.c_str());

@@ -287,7 +287,7 @@ namespace mir
             return;
         if (id.empty() || id.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") !=
                 std::string::npos)
-            return fail("Use letters, numbers, underscores or hyphens for the scene ID.");
+            return fail("Use letters, numbers, underscores or hyphens for the scene name.");
 
         const fs::path relative = fs::u8path(path).lexically_normal();
         if (relative.empty() || relative == "." || relative.has_root_path() || *relative.begin() == "..")
@@ -326,7 +326,7 @@ namespace mir
                 !entry.contains("path") || !entry["path"].is_string())
                 return fail("The scene catalog in game.json is invalid.");
             if (entry["id"] == id)
-                return fail("That scene ID is already registered.");
+                return fail("That scene name is already registered.");
             if (fs::u8path(entry["path"].get<std::string>()).lexically_normal() == relative)
                 return fail("That folder is already registered.");
         }
