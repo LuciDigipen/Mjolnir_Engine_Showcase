@@ -24,7 +24,7 @@ cmake/                build helpers
   Assets.cmake          asset cooking
   Fonts.cmake           font copying
   Branding.cmake        icon and splash copying
-  Player.cmake          player template install rules, player_info.json
+  GameBuild.cmake       game build template install rules, game_build_info.json
 
 modules/              one static library each, mir::<name>
   core/                 ECS, logging, paths, file IO, the surface contract

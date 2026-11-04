@@ -1,4 +1,4 @@
-# cmake -P script run by engine_write_player_info (cmake/Player.cmake).
+# cmake -P script run by engine_write_game_build_info (cmake/GameBuild.cmake).
 # Takes OUT, GIT, SOURCE_DIR, ENGINE_VERSION, CONFIG and one true/false per
 # build option, and writes OUT only when its content changes.
 

@@ -2,7 +2,7 @@ engine_add_module(project)
 
 target_sources(engine_project PRIVATE
     src/project/GameProject.cpp
-    src/project/PlayerInfo.cpp
+    src/project/GameBuildInfo.cpp
     src/project/ProjectSettings.cpp
 )
 

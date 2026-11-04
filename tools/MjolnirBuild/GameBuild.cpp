@@ -1,7 +1,7 @@
 /**
  * @file GameBuild.cpp
  * @author Quy Dong Ta
- * @brief The build steps: check, template, cook, game data, sound banks, terrain, finish.
+ * @brief The build steps: check, game build, template, cook, game data, sound banks, terrain, finish.
  *        The output starts its game with no arguments, from <game name>.exe and engine.json.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
@@ -10,6 +10,7 @@
 #include "GameBuild.h"
 
 #include "BuildOutput.h"
+#include "GameBuildCompile.h"
 
 #include <assets/AssetIdRoot.h>
 #include <assets/AssetManifest.h>
@@ -17,7 +18,7 @@
 #include <core/log/SetupError.h>
 #include <core/platform/Process.h>
 #include <project/GameProject.h>
-#include <project/PlayerInfo.h>
+#include <project/GameBuildInfo.h>
 #include <project/ProjectSettings.h>
 #include <serial/JsonFile.h>
 #include <terrain/TerrainStreamingSettings.h>
@@ -59,11 +60,13 @@ namespace mir::build
             fs::path mGameDir;
             std::string mDirName;
             GameProject mProject;
-            fs::path mPlayerDir;
-            Json mPlayerInfo;
+            fs::path mGameBuildDir;
+            Json mGameBuildInfo;
             // MjolnirEngine.exe's name in the build
             std::string mExeName;
             fs::path mOutDir;
+            // below the output, without the template
+            std::size_t mLongestGamePath = 0;
         };
 
         template <typename Work>
@@ -210,9 +213,9 @@ namespace mir::build
             std::error_code ec;
             const bool hasBanks = fs::is_directory(inputs.mProject.mSoundBankDir, ec) &&
                 !fs::is_empty(inputs.mProject.mSoundBankDir, ec);
-            const bool silent = hasBanks && PlayerInfoFlag(inputs.mPlayerInfo, "audio") == false;
+            const bool silent = hasBanks && GameBuildInfoFlag(inputs.mGameBuildInfo, "audio") == false;
             if (silent)
-                report.mWarnings.push_back("the game has SoundBanks, but the player template was built with "
+                report.mWarnings.push_back("the game has SoundBanks, but the game build template was built with "
                                            "MIR_WITH_AUDIO OFF, so the packaged game plays no sound");
 
             if (editorInfo.empty())
@@ -221,18 +224,19 @@ namespace mir::build
             if (!editor || !editor->is_object())
             {
                 report.mWarnings.push_back("could not read the editor's " + PathText(editorInfo) +
-                    ", so the player template was not compared with it");
+                    ", so the game build template was not compared with it");
                 return;
             }
 
-            for (const PlayerInfoMismatch &mismatch : ComparePlayerInfo(inputs.mPlayerInfo, *editor))
+            for (const GameBuildInfoMismatch &mismatch : CompareGameBuildInfo(inputs.mGameBuildInfo, *editor))
             {
                 if (!(silent && mismatch.mKey == "audio"))
                     report.mWarnings.push_back(mismatch.mMessage);
             }
         }
 
-        GameInputs ResolveInputs(const BuildRequest &request)
+        // The game and the output folder, which need no template
+        GameInputs ResolveGame(const BuildRequest &request)
         {
             GameInputs inputs;
             std::error_code ec;
@@ -270,54 +274,65 @@ namespace mir::build
                     throw BuildError("game.json names " + PathText(dir) + ", which is outside the game folder");
             }
 
-            inputs.mPlayerDir = NormalizedPath(request.mPlayerDir);
-            if (const std::optional<std::string> problem = PlayerTemplateProblem(inputs.mPlayerDir, &inputs.mPlayerInfo))
-                throw BuildError(
-                    *problem + "; install one with cmake --install builds/windows-msvc-game-release --prefix <dir>");
-
             const std::string &name = inputs.mProject.mName;
             if (const std::optional<std::string> problem = ExeNameProblem(name))
                 throw BuildError("game.json's name \"" + name + "\" cannot name the exe: " + *problem +
                     "; change it in game.json");
             inputs.mExeName = name + ".exe";
-            for (const fs::directory_entry &entry : fs::directory_iterator(inputs.mPlayerDir))
-            {
-                const std::string file = PathText(entry.path().filename());
-                if (file != kPlayerExecutableFileName && EqualsIgnoringCase(file, inputs.mExeName))
-                    throw BuildError("game.json's name \"" + name + "\" would make " + inputs.mExeName +
-                        ", which the player template already holds; change it in game.json");
-            }
 
+            inputs.mGameBuildDir = NormalizedPath(request.mGameBuildDir);
             if (const std::optional<std::string> problem =
-                    CheckOutputDir(request.mOutDir, { inputs.mSourceRoot, inputs.mPlayerDir }))
+                    CheckOutputDir(request.mOutDir, { inputs.mSourceRoot, inputs.mGameBuildDir }))
                 throw BuildError(*problem);
             inputs.mOutDir = NormalizedPath(request.mOutDir);
 
             // The whole game folder, terrain releases included, lands under games/<name>/
-            const std::size_t longest = std::max({ LongestPath(inputs.mPlayerDir), inputs.mExeName.size(),
+            inputs.mLongestGamePath = std::max({ inputs.mExeName.size(),
                 ("games/" + inputs.mDirName + "/").size() + LongestPath(inputs.mGameDir), kCookedPathLength });
-            if (const std::optional<std::string> problem = CheckPathLength(inputs.mOutDir, longest))
+            if (const std::optional<std::string> problem = CheckPathLength(inputs.mOutDir, inputs.mLongestGamePath))
                 throw BuildError(*problem);
 
             return inputs;
         }
 
+        // In check, or on what the game build step installed
+        void CheckTemplate(GameInputs &inputs, const BuildRequest &request, BuildReport &report)
+        {
+            if (const std::optional<std::string> problem = GameBuildTemplateProblem(inputs.mGameBuildDir, &inputs.mGameBuildInfo))
+                throw BuildError(*problem + "; compile one with --game-build-preset windows-msvc-game-release, or install "
+                                            "one with cmake --install builds/windows-msvc-game-release --prefix <dir>");
+
+            for (const fs::directory_entry &entry : fs::directory_iterator(inputs.mGameBuildDir))
+            {
+                const std::string file = PathText(entry.path().filename());
+                if (file != kGameBuildExecutableFileName && EqualsIgnoringCase(file, inputs.mExeName))
+                    throw BuildError("game.json's name \"" + inputs.mProject.mName + "\" would make " +
+                        inputs.mExeName + ", which the game build template already holds; change it in game.json");
+            }
+
+            const std::size_t longest = std::max(LongestPath(inputs.mGameBuildDir), inputs.mLongestGamePath);
+            if (const std::optional<std::string> problem = CheckPathLength(inputs.mOutDir, longest))
+                throw BuildError(*problem);
+
+            WarnAboutTemplate(inputs, request.mEditorInfo, report);
+        }
+
         bool CopyTemplate(const GameInputs &inputs, const fs::path &staging, BuildReport &report)
         {
-            for (const fs::directory_entry &entry : fs::directory_iterator(inputs.mPlayerDir))
+            for (const fs::directory_entry &entry : fs::directory_iterator(inputs.mGameBuildDir))
             {
                 const std::string name = PathText(entry.path().filename());
                 if (std::find(std::begin(kNotTemplate), std::end(kNotTemplate), name) != std::end(kNotTemplate))
                 {
-                    report.mWarnings.push_back("the player template holds " + name + ", which it should not; not copied");
+                    report.mWarnings.push_back("the game build template holds " + name + ", which it should not; not copied");
                     continue;
                 }
-                Copy(entry.path(), staging / (name == kPlayerExecutableFileName ? inputs.mExeName : name));
+                Copy(entry.path(), staging / (name == kGameBuildExecutableFileName ? inputs.mExeName : name));
             }
             return true;
         }
 
-        // With no --game, the player starts the game engine.json names
+        // With no --game, the game build starts the game engine.json names
         void WriteEngineManifest(const GameInputs &inputs, const fs::path &staging)
         {
             const Json manifest = { { "defaultGame", "games/" + inputs.mDirName } };
@@ -375,7 +390,7 @@ namespace mir::build
             if (fs::is_directory(project.mAssetsDir, ec))
             {
                 const fs::path assetsOut = gameOut / project.mAssetsDir.lexically_relative(inputs.mGameDir);
-                // A player reads cooked Prefabs only
+                // A game build reads cooked Prefabs only
                 for (const fs::directory_entry &entry : fs::directory_iterator(project.mAssetsDir))
                 {
                     if (entry.path().filename() != "prefabs")
@@ -445,16 +460,35 @@ namespace mir::build
         try
         {
             GameInputs inputs;
+            GameBuildCompile gameBuild;
+            const bool compile = !request.mGameBuildPreset.empty();
             RunStep(report, "check", [&] {
-                inputs = ResolveInputs(request);
+                inputs = ResolveGame(request);
                 report.mGame = inputs.mDirName;
                 report.mOutDir = inputs.mOutDir;
-                WarnAboutTemplate(inputs, request.mEditorInfo, report);
+                if (!compile)
+                {
+                    CheckTemplate(inputs, request, report);
+                    return true;
+                }
+
+                // A bad output or template folder fails here, not after a compile
+                gameBuild = { inputs.mSourceRoot, request.mGameBuildPreset, inputs.mGameBuildDir, request.mEditorInfo };
+                if (const std::optional<std::string> problem = CheckGameBuildCompile(gameBuild, inputs.mOutDir))
+                    throw BuildError(*problem);
+                return true;
+            });
+            RunStep(report, "game build", [&] {
+                if (!compile)
+                    return false;
+                CompileGameBuild(gameBuild);
                 return true;
             });
 
             const fs::path gameOut = StagingDir(inputs.mOutDir) / "games" / inputs.mDirName;
             RunStep(report, "template", [&] {
+                if (compile)
+                    CheckTemplate(inputs, request, report);
                 staging = BeginStaging(inputs.mOutDir);
                 return CopyTemplate(inputs, staging, report);
             });

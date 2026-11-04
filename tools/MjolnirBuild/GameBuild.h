@@ -1,7 +1,8 @@
 /**
  * @file GameBuild.h
  * @author Quy Dong Ta
- * @brief Packages one game: a player template, the game's cook, and the files the game reads raw.
+ * @brief Packages one game: a game build template, compiled first when asked, the game's cook, and the files the
+ *        game reads raw.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -20,12 +21,15 @@ namespace mir::build
     {
         // <checkout>/games/<name>
         std::filesystem::path mGameDir;
-        std::filesystem::path mPlayerDir;
+        std::filesystem::path mGameBuildDir;
+        // Empty uses mGameBuildDir as it is; otherwise the game build step compiles this preset and installs it there
+        std::string mGameBuildPreset;
         std::filesystem::path mOutDir;
         std::filesystem::path mAssetCooker;
         std::filesystem::path mTerrainTool;
 
-        // The editor's player_info.json, which the template is compared with; empty skips the comparison
+        // The editor's game_build_info.json, which the template is compared with and a compiled game build takes its
+        // options from; empty skips both
         std::filesystem::path mEditorInfo;
     };
 

@@ -1,5 +1,5 @@
-# cmake -P script for the build.player test: installs the game build in BUILD_DIR
-# as a player template in PREFIX, replacing the one an earlier run left.
+# cmake -P script for the build.game_build test: installs the game build in BUILD_DIR
+# as a game build template in PREFIX, replacing the one an earlier run left.
 
 file(REMOVE_RECURSE "${PREFIX}")
 execute_process(COMMAND "${CMAKE_COMMAND}" --install "${BUILD_DIR}" --prefix "${PREFIX}"

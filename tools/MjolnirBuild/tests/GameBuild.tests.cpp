@@ -25,11 +25,11 @@ using namespace mir::build::test;
 
 namespace
 {
-    BuildRequest Request(const fs::path &gameDir, const fs::path &playerDir, const fs::path &outDir)
+    BuildRequest Request(const fs::path &gameDir, const fs::path &gameBuildDir, const fs::path &outDir)
     {
         BuildRequest request;
         request.mGameDir = gameDir;
-        request.mPlayerDir = playerDir;
+        request.mGameBuildDir = gameBuildDir;
         request.mOutDir = outDir;
         request.mAssetCooker = MJOLNIR_BUILD_ASSET_COOKER;
         request.mTerrainTool = MJOLNIR_BUILD_TERRAIN_TOOL;
@@ -56,8 +56,8 @@ namespace
         return nlohmann::json::parse(*text);
     }
 
-    // A release-like player_info.json; commit and the feature flags vary per test
-    std::string PlayerInfo(bool editor, std::string_view commit, bool largeWorld, bool audio)
+    // A release-like game_build_info.json; commit and the feature flags vary per test
+    std::string GameBuildInfo(bool editor, std::string_view commit, bool largeWorld, bool audio)
     {
         return nlohmann::json{ { "version", 1 }, { "engineVersion", "0.1.0" }, { "commit", std::string(commit) },
             { "editor", editor }, { "largeWorld", largeWorld }, { "audio", audio }, { "dlss", false },
@@ -69,24 +69,24 @@ namespace
     {
         Sandbox mSandbox;
         fs::path mCheckout = mSandbox.mRoot / "checkout";
-        fs::path mPlayer = mSandbox.mRoot / "player";
+        fs::path mGameBuildDir = mSandbox.mRoot / "game-build";
         fs::path mOut = mSandbox.mRoot / "out";
 
         Fixture()
         {
             MakeCheckout(mCheckout);
-            MakePlayerTemplate(mPlayer);
+            MakeGameBuildTemplate(mGameBuildDir);
         }
     };
 }
 
-TEST_CASE("A build holds the player template, the game's scene and data, and its cook", "[game-build]")
+TEST_CASE("A build holds the game build template, the game's scene and data, and its cook", "[game-build]")
 {
     Fixture fixture;
-    Touch(fixture.mPlayer / "logs" / "engine.log");
+    Touch(fixture.mGameBuildDir / "logs" / "engine.log");
 
     const BuildReport report =
-        RunGameBuild(Request(fixture.mCheckout / "games" / "Demo", fixture.mPlayer, fixture.mOut));
+        RunGameBuild(Request(fixture.mCheckout / "games" / "Demo", fixture.mGameBuildDir, fixture.mOut));
     INFO(report.mError);
     REQUIRE(report.mOk);
 
@@ -121,7 +121,7 @@ TEST_CASE("A build's settings leave out this machine's sections, and the source 
     const std::optional<std::string> before = ReadText(source);
 
     const BuildReport report =
-        RunGameBuild(Request(fixture.mCheckout / "games" / "Demo", fixture.mPlayer, fixture.mOut));
+        RunGameBuild(Request(fixture.mCheckout / "games" / "Demo", fixture.mGameBuildDir, fixture.mOut));
     INFO(report.mError);
     REQUIRE(report.mOk);
 
@@ -137,7 +137,7 @@ TEST_CASE("The exe takes game.json's name, and engine.json the game's folder", "
     const fs::path game = fixture.mCheckout / "games" / "Quiet";
     Touch(game / "game.json", R"({ "name": "Quiet Game" })");
 
-    const BuildReport report = RunGameBuild(Request(game, fixture.mPlayer, fixture.mOut));
+    const BuildReport report = RunGameBuild(Request(game, fixture.mGameBuildDir, fixture.mOut));
     INFO(report.mError);
     REQUIRE(report.mOk);
 
@@ -156,7 +156,7 @@ TEST_CASE("A game.json name that cannot name the exe is refused", "[game-build]"
         INFO(name);
         Touch(game / "game.json", nlohmann::json{ { "name", name } }.dump());
 
-        const BuildReport report = RunGameBuild(Request(game, fixture.mPlayer, fixture.mOut));
+        const BuildReport report = RunGameBuild(Request(game, fixture.mGameBuildDir, fixture.mOut));
         CHECK_FALSE(report.mOk);
         CHECK(report.mError.find("game.json's name") != std::string::npos);
         CHECK_FALSE(fs::exists(fixture.mOut));
@@ -168,19 +168,19 @@ TEST_CASE("A template built differently from the editor is warned about", "[game
     Fixture fixture;
     const fs::path game = fixture.mCheckout / "games" / "Demo";
     const fs::path editorInfo = fixture.mSandbox.mRoot / "editor_info.json";
-    Touch(editorInfo, PlayerInfo(true, "1111111111aaaa", true, true));
+    Touch(editorInfo, GameBuildInfo(true, "1111111111aaaa", true, true));
 
-    BuildRequest request = Request(game, fixture.mPlayer, fixture.mOut);
+    BuildRequest request = Request(game, fixture.mGameBuildDir, fixture.mOut);
     request.mEditorInfo = editorInfo;
 
-    Touch(fixture.mPlayer / "player_info.json", PlayerInfo(false, "1111111111aaaa", true, true));
+    Touch(fixture.mGameBuildDir / "game_build_info.json", GameBuildInfo(false, "1111111111aaaa", true, true));
     const BuildReport same = RunGameBuild(request);
     INFO(same.mError);
     REQUIRE(same.mOk);
     CHECK(same.mWarnings.empty());
 
     // Demo has SoundBanks, so a template without audio gets the one warning about that
-    Touch(fixture.mPlayer / "player_info.json", PlayerInfo(false, "2222222222bbbb", false, false));
+    Touch(fixture.mGameBuildDir / "game_build_info.json", GameBuildInfo(false, "2222222222bbbb", false, false));
     const BuildReport differs = RunGameBuild(request);
     REQUIRE(differs.mOk);
     CHECK(differs.mWarnings.size() == 3);
@@ -189,10 +189,10 @@ TEST_CASE("A template built differently from the editor is warned about", "[game
     CHECK(HasWarning(differs, "SoundBanks"));
 }
 
-TEST_CASE("An editor player_info.json that cannot be read is warned about", "[game-build]")
+TEST_CASE("An editor game_build_info.json that cannot be read is warned about", "[game-build]")
 {
     Fixture fixture;
-    BuildRequest request = Request(fixture.mCheckout / "games" / "Quiet", fixture.mPlayer, fixture.mOut);
+    BuildRequest request = Request(fixture.mCheckout / "games" / "Quiet", fixture.mGameBuildDir, fixture.mOut);
     request.mEditorInfo = fixture.mSandbox.mRoot / "missing.json";
 
     const BuildReport report = RunGameBuild(request);
@@ -206,7 +206,7 @@ TEST_CASE("A game without sound banks or terrain skips those steps", "[game-buil
     Fixture fixture;
 
     const BuildReport report =
-        RunGameBuild(Request(fixture.mCheckout / "games" / "Quiet", fixture.mPlayer, fixture.mOut));
+        RunGameBuild(Request(fixture.mCheckout / "games" / "Quiet", fixture.mGameBuildDir, fixture.mOut));
     INFO(report.mError);
     REQUIRE(report.mOk);
 
@@ -221,10 +221,10 @@ TEST_CASE("A failed cook leaves the previous build in place", "[game-build]")
 {
     Fixture fixture;
     const fs::path game = fixture.mCheckout / "games" / "Quiet";
-    REQUIRE(RunGameBuild(Request(game, fixture.mPlayer, fixture.mOut)).mOk);
+    REQUIRE(RunGameBuild(Request(game, fixture.mGameBuildDir, fixture.mOut)).mOk);
 
     // TerrainTool rejects AssetCooker's arguments, so the cook exits non-zero
-    BuildRequest request = Request(game, fixture.mPlayer, fixture.mOut);
+    BuildRequest request = Request(game, fixture.mGameBuildDir, fixture.mOut);
     request.mAssetCooker = request.mTerrainTool;
     Touch(game / "scenes" / "default" / "scene.json", R"({ "changed": true })");
     const BuildReport report = RunGameBuild(request);
@@ -243,10 +243,10 @@ TEST_CASE("A failed cook leaves the previous build in place", "[game-build]")
 TEST_CASE("A failed build's report carries its status, steps and error", "[game-build]")
 {
     Fixture fixture;
-    MakePlayerTemplate(fixture.mPlayer, true);
+    MakeGameBuildTemplate(fixture.mGameBuildDir, true);
 
     const BuildReport report =
-        RunGameBuild(Request(fixture.mCheckout / "games" / "Demo", fixture.mPlayer, fixture.mOut));
+        RunGameBuild(Request(fixture.mCheckout / "games" / "Demo", fixture.mGameBuildDir, fixture.mOut));
     const nlohmann::json json = nlohmann::json::parse(BuildReportJson(report));
 
     CHECK(json.at("status") == "failed");
@@ -255,13 +255,13 @@ TEST_CASE("A failed build's report carries its status, steps and error", "[game-
     CHECK_FALSE(json.at("error").get<std::string>().empty());
 }
 
-TEST_CASE("An editor build is refused as the player template", "[game-build]")
+TEST_CASE("An editor build is refused as the game build template", "[game-build]")
 {
     Fixture fixture;
-    MakePlayerTemplate(fixture.mPlayer, true);
+    MakeGameBuildTemplate(fixture.mGameBuildDir, true);
 
     const BuildReport report =
-        RunGameBuild(Request(fixture.mCheckout / "games" / "Demo", fixture.mPlayer, fixture.mOut));
+        RunGameBuild(Request(fixture.mCheckout / "games" / "Demo", fixture.mGameBuildDir, fixture.mOut));
 
     CHECK_FALSE(report.mOk);
     CHECK(report.mError.find("editor build") != std::string::npos);
@@ -275,16 +275,16 @@ TEST_CASE("A marked template in <out>.tmp or <out>.old is refused and kept", "[g
     const fs::path game = fixture.mCheckout / "games" / "Quiet";
 
     // The marker would let the build delete it, so only the output checks stand in the way
-    for (const fs::path &player : { StagingDir(fixture.mOut), PreviousDir(fixture.mOut) })
+    for (const fs::path &gameBuild : { StagingDir(fixture.mOut), PreviousDir(fixture.mOut) })
     {
-        INFO(PathText(player));
-        MakePlayerTemplate(player);
-        Touch(player / kBuildMarkerFileName, "{}");
+        INFO(PathText(gameBuild));
+        MakeGameBuildTemplate(gameBuild);
+        Touch(gameBuild / kBuildMarkerFileName, "{}");
 
-        const BuildReport report = RunGameBuild(Request(game, player, fixture.mOut));
+        const BuildReport report = RunGameBuild(Request(game, gameBuild, fixture.mOut));
         CHECK_FALSE(report.mOk);
-        CHECK(report.mError.find("player template") != std::string::npos);
-        CHECK(fs::exists(player / "MjolnirEngine.exe"));
+        CHECK(report.mError.find("game build template") != std::string::npos);
+        CHECK(fs::exists(gameBuild / "MjolnirEngine.exe"));
         CHECK_FALSE(fs::exists(fixture.mOut));
     }
 }
@@ -303,7 +303,7 @@ TEST_CASE("A game.json scene or SoundBank path that is not relative is refused",
             INFO(key << " = " << value);
             Touch(game / "game.json", nlohmann::json{ { "name", "Demo" }, { key, value } }.dump());
 
-            const BuildReport report = RunGameBuild(Request(game, fixture.mPlayer, fixture.mOut));
+            const BuildReport report = RunGameBuild(Request(game, fixture.mGameBuildDir, fixture.mOut));
             CHECK_FALSE(report.mOk);
             CHECK(report.mError.find(key) != std::string::npos);
             CHECK_FALSE(fs::exists(fixture.mOut));
@@ -314,12 +314,12 @@ TEST_CASE("A game.json scene or SoundBank path that is not relative is refused",
 TEST_CASE("A one-game cook holds the engine's and that game's assets with the editor's ids", "[game-build]")
 {
     Sandbox sandbox;
-    const fs::path player = sandbox.mRoot / "player";
+    const fs::path gameBuild = sandbox.mRoot / "game-build";
     const fs::path out = sandbox.mRoot / "out";
-    MakePlayerTemplate(player);
+    MakeGameBuildTemplate(gameBuild);
 
     const BuildReport report =
-        RunGameBuild(Request(fs::path(MJOLNIR_SOURCE_DIR) / "games" / "HelloWorld", player, out));
+        RunGameBuild(Request(fs::path(MJOLNIR_SOURCE_DIR) / "games" / "HelloWorld", gameBuild, out));
     INFO(report.mError);
     REQUIRE(report.mOk);
 

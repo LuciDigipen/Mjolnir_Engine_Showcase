@@ -1,7 +1,7 @@
 /**
  * @file BuildSettingsPanel.cpp
  * @author Quy Dong Ta
- * @brief The "Build Settings" window: profile, player template, output folder, Run after build, and Build.
+ * @brief The "Build Settings" window: profile, game build template, output folder, Run after build, and Build.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -9,7 +9,7 @@
 #include <editor/panels/BuildSettingsPanel.h>
 
 #include <editortheme/EditorTheme.h>
-#include <project/PlayerInfo.h>
+#include <project/GameBuildInfo.h>
 
 #include <imgui.h>
 
@@ -70,7 +70,7 @@ namespace mir
         const double now = ImGui::GetTime();
         if (dir != mCheckedDir || mProfile != mCheckedProfile || now - mCheckedAt > kRecheckSeconds)
         {
-            mCheck = CheckPlayerTemplate(dir, mProfile, game.mEditorInfo);
+            mCheck = CheckGameBuildTemplate(dir, mProfile, game.mEditorInfo);
             mCheckedDir = dir;
             mCheckedProfile = mProfile;
             mCheckedAt = now;
@@ -80,12 +80,12 @@ namespace mir
         {
             const auto it = mCheck.mInfo.find("config");
             const std::string config = it != mCheck.mInfo.end() && it->is_string() ? it->get<std::string>() : "unknown";
-            ImGui::Text("Engine %s, %s build", PlayerInfoVersion(mCheck.mInfo).c_str(), config.c_str());
+            ImGui::Text("Engine %s, %s build", GameBuildInfoVersion(mCheck.mInfo).c_str(), config.c_str());
 
             std::string features;
-            for (const PlayerFeature &feature : kPlayerFeatures)
+            for (const GameBuildFeature &feature : kGameBuildFeatures)
             {
-                const std::optional<bool> on = PlayerInfoFlag(mCheck.mInfo, feature.mKey);
+                const std::optional<bool> on = GameBuildInfoFlag(mCheck.mInfo, feature.mKey);
                 features += (features.empty() ? "" : ", ") + std::string(feature.mOption) +
                     (on ? (*on ? " ON" : " OFF") : " unknown");
             }
@@ -104,12 +104,12 @@ namespace mir
         if (mCheck.mProblem.empty() && mCheck.mWarnings.empty())
             return;
 
-        // building the player needs the MSVC environment, so the editor only shows how
+        // compiling the game build needs the MSVC environment, so the editor only shows how
         ImGui::Spacing();
         ImGui::TextWrapped("To make it, run these from a Developer Command Prompt for VS in %s:",
             game.mSourceRoot.string().c_str());
         std::string commands;
-        for (const std::string &command : PlayerInstallCommands(game.mSourceRoot, dir, mProfile))
+        for (const std::string &command : GameBuildInstallCommands(game.mSourceRoot, dir, mProfile))
             commands += (commands.empty() ? "" : "\n") + command;
         const ImGuiStyle &style = ImGui::GetStyle();
         const float wrap = ImGui::GetContentRegionAvail().x - style.FramePadding.x * 2.0f;
@@ -126,7 +126,7 @@ namespace mir
     }
 
     void BuildSettingsPanel::DrawBuild(const BuildGame &game, const BuildJobView &build, BuildAction &action,
-        const std::filesystem::path &playerDir, const std::filesystem::path &outDir)
+        const std::filesystem::path &gameBuildDir, const std::filesystem::path &outDir)
     {
         ImGui::SeparatorText("Build");
         if (build.mRunning)
@@ -145,11 +145,11 @@ namespace mir
         }
 
         const std::string blocked = !build.mBlocked.empty() ? build.mBlocked
-            : !mCheck.mProblem.empty()                       ? "Make the player template first"
+            : !mCheck.mProblem.empty()                       ? "Make the game build template first"
                                                              : std::string();
         ImGui::BeginDisabled(!blocked.empty());
         if (ImGui::Button("Build"))
-            action = { BuildCommand::Build, playerDir, outDir };
+            action = { BuildCommand::Build, gameBuildDir, outDir };
         ImGui::EndDisabled();
         if (blocked.empty())
         {
@@ -163,13 +163,13 @@ namespace mir
             ImGui::TextDisabled("%s", blocked.c_str());
         }
 
-        DrawSavePrompt(build, action, playerDir, outDir);
+        DrawSavePrompt(build, action, gameBuildDir, outDir);
         if (build.mResult != nullptr)
             DrawResult(*build.mResult, game);
     }
 
     void BuildSettingsPanel::DrawSavePrompt(const BuildJobView &build, BuildAction &action,
-        const std::filesystem::path &playerDir, const std::filesystem::path &outDir)
+        const std::filesystem::path &gameBuildDir, const std::filesystem::path &outDir)
     {
         constexpr const char *kPopupId = "Save before building?";
         if (!build.mAskSave.empty() && !ImGui::IsPopupOpen(kPopupId))
@@ -185,7 +185,7 @@ namespace mir
         ImGui::Spacing();
         if (ImGui::Button("Save and Build"))
         {
-            action = { BuildCommand::SaveThenBuild, playerDir, outDir };
+            action = { BuildCommand::SaveThenBuild, gameBuildDir, outDir };
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
@@ -269,23 +269,23 @@ namespace mir
                 mStatusMessage = "Profile not saved - see log.";
             }
         }
-        ImGui::TextDisabled(mProfile == BuildProfile::Development ? "Packages the game-debug player."
-                                                                  : "Packages the game-release player.");
+        ImGui::TextDisabled(mProfile == BuildProfile::Development ? "Packages the game-debug build."
+                                                                  : "Packages the game-release build.");
         ImGui::TextDisabled("Saved in project_settings.json, so the whole team builds the same way.");
 
-        ImGui::SeparatorText("Player template");
+        ImGui::SeparatorText("Game build template");
         ImGui::TextWrapped("Paths are saved for this user only. Empty is the default; a relative path is from the "
                            "checkout.");
         const std::string templateHint =
-            CheckoutPath(DefaultPlayerTemplate(game.mSourceRoot, mProfile), game.mSourceRoot);
+            CheckoutPath(DefaultGameBuildTemplate(game.mSourceRoot, mProfile), game.mSourceRoot);
         ImGui::InputTextWithHint("Template folder", templateHint.c_str(), mTemplatePath, sizeof(mTemplatePath));
         if (ImGui::IsItemDeactivatedAfterEdit())
         {
             TemplateText(preferences, mProfile) = mTemplatePath;
             request.mSavePreferences = true;
         }
-        const std::filesystem::path playerDir = PlayerTemplateDir(preferences, game, mProfile);
-        DrawTemplateStatus(playerDir, game);
+        const std::filesystem::path gameBuildDir = GameBuildTemplateDir(preferences, game, mProfile);
+        DrawTemplateStatus(gameBuildDir, game);
 
         ImGui::SeparatorText("Output");
         const std::string outputHint = CheckoutPath(DefaultBuildOutput(game), game.mSourceRoot);
@@ -308,7 +308,7 @@ namespace mir
         if (!mStatusMessage.empty())
             ImGui::TextColored(EditorTheme::Color(StatusColor::Danger), "%s", mStatusMessage.c_str());
 
-        DrawBuild(game, build, request.mBuild, playerDir, outDir);
+        DrawBuild(game, build, request.mBuild, gameBuildDir, outDir);
         return request;
     }
 }

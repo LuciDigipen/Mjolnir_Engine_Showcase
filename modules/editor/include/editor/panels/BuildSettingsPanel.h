@@ -1,7 +1,7 @@
 /**
  * @file BuildSettingsPanel.h
  * @author Quy Dong Ta
- * @brief The "Build Settings" window: profile, player template, output folder, Run after build, and Build.
+ * @brief The "Build Settings" window: profile, game build template, output folder, Run after build, and Build.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -31,7 +31,7 @@ namespace mir
     {
         BuildCommand mCommand = BuildCommand::None;
         // what Build packages with, resolved from the preferences
-        std::filesystem::path mPlayerDir;
+        std::filesystem::path mGameBuildDir;
         std::filesystem::path mOutDir;
     };
 
@@ -56,8 +56,8 @@ namespace mir
         void Load(EditorPreferences &preferences, const BuildGame &game);
         void DrawTemplateStatus(const std::filesystem::path &dir, const BuildGame &game);
         void DrawBuild(const BuildGame &game, const BuildJobView &build, BuildAction &action,
-            const std::filesystem::path &playerDir, const std::filesystem::path &outDir);
-        void DrawSavePrompt(const BuildJobView &build, BuildAction &action, const std::filesystem::path &playerDir,
+            const std::filesystem::path &gameBuildDir, const std::filesystem::path &outDir);
+        void DrawSavePrompt(const BuildJobView &build, BuildAction &action, const std::filesystem::path &gameBuildDir,
             const std::filesystem::path &outDir);
         void DrawResult(const BuildResult &result, const BuildGame &game);
 
@@ -71,6 +71,6 @@ namespace mir
         std::filesystem::path mCheckedDir;
         BuildProfile mCheckedProfile = BuildProfile::Release;
         double mCheckedAt = 0.0;
-        PlayerTemplateCheck mCheck;
+        GameBuildTemplateCheck mCheck;
     };
 }

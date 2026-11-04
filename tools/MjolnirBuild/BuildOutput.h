@@ -35,7 +35,7 @@ namespace mir::build
     {
         // The checkout holding assets/ and games/
         std::filesystem::path mSourceRoot;
-        std::filesystem::path mPlayerDir;
+        std::filesystem::path mGameBuildDir;
     };
 
     // Why out, or the .tmp and .old folders a build deletes beside it, cannot be used, nullopt when they can

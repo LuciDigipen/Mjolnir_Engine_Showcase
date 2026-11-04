@@ -44,7 +44,7 @@ namespace mir::build
     namespace
     {
         std::optional<std::string> CheckLocation(const fs::path &dir, const std::string &name, const fs::path &source,
-            const fs::path &player)
+            const fs::path &gameBuild)
         {
             if (dir == dir.root_path())
                 return name + " is a drive root";
@@ -52,8 +52,8 @@ namespace mir::build
                 return name + " holds the source tree";
             if (IsWithin(dir, source) && !IsWithin(dir.parent_path(), source / "builds"))
                 return name + " is inside the source tree; use a folder under builds/ or outside the checkout";
-            if (IsWithin(dir, player) || IsWithin(player, dir))
-                return name + " overlaps the player template " + PathText(player);
+            if (IsWithin(dir, gameBuild) || IsWithin(gameBuild, dir))
+                return name + " overlaps the game build template " + PathText(gameBuild);
 
             std::error_code ec;
             for (fs::path parent = dir;; parent = parent.parent_path())
@@ -74,7 +74,7 @@ namespace mir::build
 
         const fs::path out = NormalizedPath(outDir);
         const fs::path source = NormalizedPath(rules.mSourceRoot);
-        const fs::path player = NormalizedPath(rules.mPlayerDir);
+        const fs::path gameBuild = NormalizedPath(rules.mGameBuildDir);
         const fs::path staging = StagingDir(out);
         const fs::path previous = PreviousDir(out);
 
@@ -83,7 +83,7 @@ namespace mir::build
                  std::pair{ staging, PathText(staging) + ", where the build is staged," },
                  std::pair{ previous, PathText(previous) + ", where the previous build is moved aside," } })
         {
-            if (std::optional<std::string> problem = CheckLocation(dir, name, source, player))
+            if (std::optional<std::string> problem = CheckLocation(dir, name, source, gameBuild))
                 return problem;
         }
 
