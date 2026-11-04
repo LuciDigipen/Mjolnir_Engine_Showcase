@@ -40,7 +40,7 @@ namespace
         BuildGame Game() const
         {
             return BuildGame{ root, root / "games" / "Demo", "Demo Game", root / "games" / "Demo" / "project_settings.json",
-                root / "editor" / "player_info.json" };
+                root / "editor" / "game_build_info.json" };
         }
 
         void Write(const std::filesystem::path &path, const std::string &content) const
@@ -63,7 +63,7 @@ namespace
             { "editor", editor }, { "largeWorld", true }, { "audio", audio }, { "dlss", false }, { "rtxgi", false } };
     }
 
-    bool HasWarning(const PlayerTemplateCheck &check, std::string_view text)
+    bool HasWarning(const GameBuildTemplateCheck &check, std::string_view text)
     {
         for (const std::string &warning : check.mWarnings)
         {
@@ -120,15 +120,15 @@ TEST_CASE("Build paths default under the checkout's builds/ and resolve from it"
     const BuildGame game = checkout.Game();
     EditorPreferences preferences;
 
-    CHECK(PlayerTemplateDir(preferences, game, BuildProfile::Development) == checkout.root / "builds/player/debug");
-    CHECK(PlayerTemplateDir(preferences, game, BuildProfile::Release) == checkout.root / "builds/player/release");
-    CHECK(BuildOutputDir(preferences, game) == checkout.root / "builds/player-out/Demo");
-    CHECK(CheckoutPath(BuildOutputDir(preferences, game), checkout.root) == "builds/player-out/Demo");
+    CHECK(GameBuildTemplateDir(preferences, game, BuildProfile::Development) == checkout.root / "builds/game-build/debug");
+    CHECK(GameBuildTemplateDir(preferences, game, BuildProfile::Release) == checkout.root / "builds/game-build/release");
+    CHECK(BuildOutputDir(preferences, game) == checkout.root / "builds/game-build-out/Demo");
+    CHECK(CheckoutPath(BuildOutputDir(preferences, game), checkout.root) == "builds/game-build-out/Demo");
 
     preferences.buildReleaseTemplate = "templates/release";
-    CHECK(PlayerTemplateDir(preferences, game, BuildProfile::Release) ==
+    CHECK(GameBuildTemplateDir(preferences, game, BuildProfile::Release) ==
         (checkout.root / "templates/release").lexically_normal());
-    CHECK(PlayerTemplateDir(preferences, game, BuildProfile::Development) == checkout.root / "builds/player/debug");
+    CHECK(GameBuildTemplateDir(preferences, game, BuildProfile::Development) == checkout.root / "builds/game-build/debug");
 
     const std::filesystem::path elsewhere = (checkout.root.parent_path() / "Demo Build").lexically_normal();
     preferences.buildOutputs[BuildOutputKey(game)] = elsewhere.string();
@@ -138,7 +138,7 @@ TEST_CASE("Build paths default under the checkout's builds/ and resolve from it"
     // another game's folder is its own
     BuildGame other = game;
     other.mGameDir = checkout.root / "games" / "Other";
-    CHECK(BuildOutputDir(preferences, other) == checkout.root / "builds/player-out/Other");
+    CHECK(BuildOutputDir(preferences, other) == checkout.root / "builds/game-build-out/Other");
 }
 
 TEST_CASE("Build preferences survive a save and a load", "[build-settings]")
@@ -148,7 +148,7 @@ TEST_CASE("Build preferences survive a save and a load", "[build-settings]")
 
     EditorPreferences saved;
     saved.buildDevelopmentTemplate = "D:/Templates/debug";
-    saved.buildReleaseTemplate = "builds/player/shipping";
+    saved.buildReleaseTemplate = "builds/game-build/shipping";
     saved.buildOutputs[BuildOutputKey(checkout.Game())] = "D:/Builds/Demo";
     saved.buildRunAfter = true;
     REQUIRE(saved.SaveFile(path));
@@ -169,24 +169,24 @@ TEST_CASE("Build preferences survive a save and a load", "[build-settings]")
 TEST_CASE("A template that cannot be used says why, with the commands that make it", "[build-settings]")
 {
     TempCheckout checkout;
-    const std::filesystem::path dir = checkout.root / "builds" / "player" / "debug";
+    const std::filesystem::path dir = checkout.root / "builds" / "game-build" / "debug";
 
-    CHECK(CheckPlayerTemplate(dir, BuildProfile::Development, checkout.Game().mEditorInfo).mProblem.find(
+    CHECK(CheckGameBuildTemplate(dir, BuildProfile::Development, checkout.Game().mEditorInfo).mProblem.find(
               "does not exist") != std::string::npos);
 
     checkout.Write(dir / "MjolnirEngine.exe", "");
-    checkout.Write(dir / "player_info.json", Info(true, "1111111111aa", "Debug", true).dump());
-    CHECK(CheckPlayerTemplate(dir, BuildProfile::Development, checkout.Game().mEditorInfo).mProblem.find(
+    checkout.Write(dir / "game_build_info.json", Info(true, "1111111111aa", "Debug", true).dump());
+    CHECK(CheckGameBuildTemplate(dir, BuildProfile::Development, checkout.Game().mEditorInfo).mProblem.find(
               "editor build") != std::string::npos);
 
-    CHECK(PlayerInstallCommands(checkout.root, dir, BuildProfile::Development) ==
+    CHECK(GameBuildInstallCommands(checkout.root, dir, BuildProfile::Development) ==
         std::vector<std::string>{ "cmake --preset windows-msvc-game-debug",
             "cmake --build --preset windows-msvc-game-debug",
-            "cmake --install builds/windows-msvc-game-debug --prefix builds/player/debug" });
+            "cmake --install builds/windows-msvc-game-debug --prefix builds/game-build/debug" });
 
     // outside the checkout the path is absolute, and quoted for its space
     const std::filesystem::path outside = checkout.root.parent_path() / "My Templates" / "release";
-    CHECK(PlayerInstallCommands(checkout.root, outside, BuildProfile::Release).back() ==
+    CHECK(GameBuildInstallCommands(checkout.root, outside, BuildProfile::Release).back() ==
         "cmake --install builds/windows-msvc-game-release --prefix \"" + outside.generic_string() + "\"");
 }
 
@@ -194,25 +194,25 @@ TEST_CASE("A template is compared with the editor and the profile", "[build-sett
 {
     TempCheckout checkout;
     const BuildGame game = checkout.Game();
-    const std::filesystem::path dir = checkout.root / "builds" / "player" / "release";
+    const std::filesystem::path dir = checkout.root / "builds" / "game-build" / "release";
     checkout.Write(dir / "MjolnirEngine.exe", "");
-    checkout.Write(dir / "player_info.json", Info(false, "1111111111aa", "Release", true).dump());
+    checkout.Write(dir / "game_build_info.json", Info(false, "1111111111aa", "Release", true).dump());
 
     checkout.Write(game.mEditorInfo, Info(true, "1111111111aa", "Debug", true).dump());
-    const PlayerTemplateCheck same = CheckPlayerTemplate(dir, BuildProfile::Release, game.mEditorInfo);
+    const GameBuildTemplateCheck same = CheckGameBuildTemplate(dir, BuildProfile::Release, game.mEditorInfo);
     CHECK(same.mProblem.empty());
     CHECK(same.mWarnings.empty());
     CHECK(same.mInfo.at("commit") == "1111111111aa");
 
-    CHECK(HasWarning(CheckPlayerTemplate(dir, BuildProfile::Development, game.mEditorInfo), "Development profile"));
+    CHECK(HasWarning(CheckGameBuildTemplate(dir, BuildProfile::Development, game.mEditorInfo), "Development profile"));
 
     checkout.Write(game.mEditorInfo, Info(true, "2222222222bb", "Debug", false).dump());
-    const PlayerTemplateCheck differs = CheckPlayerTemplate(dir, BuildProfile::Release, game.mEditorInfo);
+    const GameBuildTemplateCheck differs = CheckGameBuildTemplate(dir, BuildProfile::Release, game.mEditorInfo);
     CHECK(differs.mProblem.empty());
     CHECK(differs.mWarnings.size() == 2);
     CHECK(HasWarning(differs, "same commit"));
     CHECK(HasWarning(differs, "MIR_WITH_AUDIO ON and the editor with it OFF"));
 
     std::filesystem::remove(game.mEditorInfo);
-    CHECK(HasWarning(CheckPlayerTemplate(dir, BuildProfile::Release, game.mEditorInfo), "not compared"));
+    CHECK(HasWarning(CheckGameBuildTemplate(dir, BuildProfile::Release, game.mEditorInfo), "not compared"));
 }

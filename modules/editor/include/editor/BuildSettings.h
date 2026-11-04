@@ -30,7 +30,7 @@ namespace mir
     std::string_view BuildProfileName(BuildProfile profile);
 
     
-    std::string_view PlayerPreset(BuildProfile profile);
+    std::string_view GameBuildPreset(BuildProfile profile);
 
     // project_settings.json's build.profile, Release when missing or unknown
     BuildProfile ReadBuildProfile(const std::filesystem::path &projectSettings);
@@ -47,13 +47,13 @@ namespace mir
         // game.json's name, which names the exe
         std::string mName;
         std::filesystem::path mProjectSettingsPath;
-        // the editor's player_info.json, which a template is compared with
+        // the editor's game_build_info.json, which a template is compared with
         std::filesystem::path mEditorInfo;
     };
 
-    // <checkout>/builds/player/debug or release
-    std::filesystem::path DefaultPlayerTemplate(const std::filesystem::path &sourceRoot, BuildProfile profile);
-    // <checkout>/builds/player-out/<game folder>
+    // <checkout>/builds/game-build/debug or release
+    std::filesystem::path DefaultGameBuildTemplate(const std::filesystem::path &sourceRoot, BuildProfile profile);
+    // <checkout>/builds/game-build-out/<game folder>
     std::filesystem::path DefaultBuildOutput(const BuildGame &game);
 
     
@@ -63,15 +63,15 @@ namespace mir
     std::string BuildOutputKey(const BuildGame &game);
 
     // The paths from @p preferences: empty is the default, and a relative path is from the checkout
-    std::filesystem::path PlayerTemplateDir(
+    std::filesystem::path GameBuildTemplateDir(
         const EditorPreferences &preferences, const BuildGame &game, BuildProfile profile);
     std::filesystem::path BuildOutputDir(const EditorPreferences &preferences, const BuildGame &game);
 
-    // Run from the checkout, they build the profile's player and install it into @p templateDir
-    std::vector<std::string> PlayerInstallCommands(
+    // Run from the checkout, they build the profile's game build and install it into @p templateDir
+    std::vector<std::string> GameBuildInstallCommands(
         const std::filesystem::path &sourceRoot, const std::filesystem::path &templateDir, BuildProfile profile);
 
-    struct PlayerTemplateCheck
+    struct GameBuildTemplateCheck
     {
 
         std::string mProblem;
@@ -81,6 +81,6 @@ namespace mir
         std::vector<std::string> mWarnings;
     };
 
-    PlayerTemplateCheck CheckPlayerTemplate(
+    GameBuildTemplateCheck CheckGameBuildTemplate(
         const std::filesystem::path &templateDir, BuildProfile profile, const std::filesystem::path &editorInfo);
 }

@@ -1,9 +1,9 @@
-# engine_write_player_info(<target>)
+# engine_write_game_build_info(<target>)
 #
-# Writes player_info.json next to <target> on every build: the engine version,
+# Writes game_build_info.json next to <target> on every build: the engine version,
 # commit, configuration and build options. A build tool compares the editor's
-# copy with a player template's to tell whether they came from the same engine.
-function(engine_write_player_info target)
+# copy with a game build template's to tell whether they came from the same engine.
+function(engine_write_game_build_info target)
     find_package(Git QUIET)
 
     set(flags "")
@@ -17,30 +17,30 @@ function(engine_write_player_info target)
 
     # A target with no OUTPUT runs every build, so the commit stays current without
     # a reconfigure; the script rewrites the file only when it changes.
-    add_custom_target(${target}_player_info
+    add_custom_target(${target}_game_build_info
         COMMAND "${CMAKE_COMMAND}"
-            "-DOUT=$<TARGET_FILE_DIR:${target}>/player_info.json"
+            "-DOUT=$<TARGET_FILE_DIR:${target}>/game_build_info.json"
             "-DGIT=${GIT_EXECUTABLE}"
             "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
             "-DENGINE_VERSION=${PROJECT_VERSION}"
             "-DCONFIG=${CMAKE_BUILD_TYPE}"
             ${flags}
-            -P "${CMAKE_SOURCE_DIR}/cmake/PlayerInfo.cmake"
-        COMMENT "Writing player_info.json next to ${target}"
+            -P "${CMAKE_SOURCE_DIR}/cmake/GameBuildInfo.cmake"
+        COMMENT "Writing game_build_info.json next to ${target}"
         VERBATIM)
-    add_dependencies(${target} ${target}_player_info)
+    add_dependencies(${target} ${target}_game_build_info)
 endfunction()
 
-# engine_install_player(<target>)
+# engine_install_game_build(<target>)
 #
-# Install rules for the player template:
+# Install rules for the game build template:
 #
-#   cmake --install builds/windows-msvc-game-release --prefix builds/player/release
+#   cmake --install builds/windows-msvc-game-release --prefix builds/game-build/release
 #
 # Installs <target> and MjolnirErrorReporter with the DLLs they import, the
-# current shader generation, fonts, branding and player_info.json. games/,
+# current shader generation, fonts, branding and game_build_info.json. games/,
 # cooked/ and engine.json depend on the game, so a build tool adds them.
-function(engine_install_player target)
+function(engine_install_game_build target)
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         set(vcpkg_bin "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin")
     else()
@@ -63,7 +63,7 @@ function(engine_install_player target)
 
     install(DIRECTORY "$<TARGET_FILE_DIR:${target}>/fonts" "$<TARGET_FILE_DIR:${target}>/branding"
         DESTINATION .)
-    install(FILES "$<TARGET_FILE_DIR:${target}>/player_info.json" DESTINATION .)
+    install(FILES "$<TARGET_FILE_DIR:${target}>/game_build_info.json" DESTINATION .)
 
     # Only the generation current.json points at; the build tree keeps every older one.
     install(CODE "set(_mir_shader_root \"$<TARGET_FILE_DIR:${target}>/shaders\")")
