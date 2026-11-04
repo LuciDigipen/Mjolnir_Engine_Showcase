@@ -19,6 +19,7 @@
 // RegisterUserTexture and UnregisterUserTexture
 #include <imgui_internal.h>
 
+#include <cfloat>
 #include <cstring>
 
 namespace mir
@@ -135,5 +136,16 @@ namespace mir
 
             drawList->PopClipRect();
         }
+    }
+
+    UISize ImGuiUIBackend::MeasureText(std::string_view text, float fontSize) const
+    {
+        if (ImGui::GetCurrentContext() == nullptr || ImGui::GetFont() == nullptr)
+            return EstimateTextSize(text, fontSize > 0.0f ? fontSize : 16.0f);
+
+        const float size = fontSize > 0.0f ? fontSize : ImGui::GetFontSize();
+        const ImVec2 measured =
+            ImGui::GetFont()->CalcTextSizeA(size, FLT_MAX, 0.0f, text.data(), text.data() + text.size());
+        return UISize{measured.x, measured.y};
     }
 } // namespace mir

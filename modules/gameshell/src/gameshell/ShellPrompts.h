@@ -17,20 +17,29 @@
 
 namespace mir::shell
 {
+    inline constexpr float kCapPadding = 6.0f;
+    inline constexpr float kCaptionGap = 6.0f;
 
-    inline float TextWidth(std::string_view text) { return 8.0f * static_cast<float>(text.size()); }
+    // as wide as its label and the padding round it, and never narrower than tall
+    inline float CapWidth(const UIContext &ui, std::string_view label, float height)
+    {
+        return std::max(height, ui.TextWidth(label) + 2.0f * kCapPadding);
+    }
 
+    // a line of text centred down @p rect from @p x
+    inline void DrawLine(UIContext &ui, const UIRect &rect, float x, std::string_view text, UIColor color)
+    {
+        const float height = ui.MeasureText(text).height;
+        ui.DrawList().Text(x, rect.y + (rect.height - height) * 0.5f, text, color, ui.Style().mFontSize);
+    }
 
-    inline float CapWidth(std::string_view label, float height) { return std::max(height, TextWidth(label) + 12.0f); }
-
-
+    // the label centred in the cap both ways
     inline void DrawCap(UIContext &ui, const UIRect &rect, const UIPrompt &prompt)
     {
         ui.DrawList().Rect(rect, UIColor{0.9f, 0.9f, 0.9f, 0.9f}, prompt.mGamepad ? rect.height * 0.5f : 3.0f);
-        ui.DrawList().Text(rect.x + 6.0f, rect.y + (rect.height - ui.Style().mTextHeight) * 0.5f, prompt.mLabel,
-                           UIColor{0.0f, 0.0f, 0.0f, 1.0f}, ui.Style().mFontSize);
+        const float x = rect.x + (rect.width - ui.TextWidth(prompt.mLabel)) * 0.5f;
+        DrawLine(ui, rect, x, prompt.mLabel, UIColor{0.0f, 0.0f, 0.0f, 1.0f});
     }
-
 
     inline void DrawPrompt(UIContext &ui, UIStack &strip, std::string_view action, std::string_view text)
     {
@@ -39,12 +48,11 @@ namespace mir::shell
             return;
 
         const UIRect bounds = strip.Bounds();
-        const float capWidth = CapWidth(prompt.mLabel, bounds.height);
-        UIStack parts = UIStack::Row(strip.Last(capWidth + 6.0f + TextWidth(text)), 6.0f);
+        const float capWidth = CapWidth(ui, prompt.mLabel, bounds.height);
+        UIStack parts = UIStack::Row(strip.Last(capWidth + kCaptionGap + ui.TextWidth(text)), kCaptionGap);
         DrawCap(ui, parts.Next(capWidth), prompt);
 
         const UIRect caption = parts.Rest();
-        ui.DrawList().Text(caption.x, caption.y + (caption.height - ui.Style().mTextHeight) * 0.5f, text,
-                           ui.Style().mTextColor, ui.Style().mFontSize);
+        DrawLine(ui, caption, caption.x, text, ui.Style().mTextColor);
     }
 } // namespace mir::shell

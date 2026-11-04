@@ -108,6 +108,7 @@ namespace mir
 
         float PointerX() const { return mPointerX; }
         float PointerY() const { return mPointerY; }
+        bool PointerMoved() const { return mPointerMoved; }
 
         size_t Collisions() const { return mCollisions; }
 

@@ -41,6 +41,26 @@ change goes to the audio at once, so the player hears it while adjusting.
 (Start) resumes from either screen. Escape is both, so it backs out a step at a
 time. The menu always opens on its main screen.
 
+**The Controls screen** works the same way, with focus on its first control:
+an Invert mouse Y toggle, an Invert gamepad Y toggle, Restore defaults and Back.
+It reads and writes through `IControlsOptions`; `App` sets them with
+`GameShellModule::SetControlsOptions` through `GameControlsOptions`, which hands
+each change to `InputModule::SetControls`. The input module applies it from its
+next update and saves it to the same per-user settings file as the audio, under
+`controls`. With no options set there is no Controls entry. Its entry sits
+between Audio and Quit.
+
+**The cursor** is the game's while it plays. `GameShell` calls
+`UIContext::HideCursor()` each frame in Play with the menu closed, unless the
+mouse is the active device and has moved within the last
+`GameShell::kCursorIdleSeconds` (2 seconds). It stays hidden while
+`CameraLookHold` is down, since a mouse turning the camera is not pointing. So
+a player on the gamepad or keyboard never sees it, a player who reaches for
+the mouse sees it at once and can click the HUD's Pause button, and it is
+always shown in the menu and outside Play. A pointer outside the game UI's
+area is never hidden, so in the editor the panels round the viewport keep
+their cursor.
+
 The screen reads and writes through `IAudioOptions`, never the audio module:
 `gameshell` builds without Wwise, and with no options set there is no Audio
 entry. `App` sets them with `GameShellModule::SetAudioOptions` once both are
@@ -77,6 +97,8 @@ and Quit as Stop in the editor or Quit in a game build.
 | `PauseMenu`, `PauseMenuAction` | `gameshell/PauseMenu.h` | Opens, closes, holds the input, and the Audio screen; `Open` for a button elsewhere |
 | `IAudioOptions`, `AudioChannel` | `gameshell/AudioOptions.h` | What the Audio screen reads and changes: each channel's volume and mute, and Restore defaults |
 | `GameShellModule::SetAudioOptions` | `gameshell/GameShellModule.h` | Gives the menu its Audio entry; null leaves it out |
+| `IControlsOptions`, `LookDevice` | `gameshell/ControlsOptions.h` | What the Controls screen reads and changes: each device's inverted Y, and Restore defaults |
+| `GameShellModule::SetControlsOptions` | `gameshell/GameShellModule.h` | Gives the menu its Controls entry; null leaves it out |
 | `GameHud` | `gameshell/GameHud.h` | The clock and the pointer-only Pause button; true on the frame it is clicked |
 
 `src/gameshell/ShellPrompts.h` draws a prompt, a key cap or pad pill with the
@@ -134,6 +156,13 @@ right is checked by running a game: Play in the editor, or `--no-editor`.
    before it opens. A game that binds those keys for itself sees them once.
 
 ## Changed
+
+*2026-11-04* — **The Controls screen and the hidden cursor.** Was: the menu
+had no controls options, and the OS cursor showed over the game in Play. Now: a
+Controls entry with Invert mouse Y and Invert gamepad Y, saved per user, and
+the cursor hidden in Play unless the mouse is in use. Because: the rubric asks
+for a vertical-look inversion option per device that sticks between sessions,
+and for the cursor to be invisible while it is not used for gameplay.
 
 *2026-10-28* — **The Audio screen.** Was: the menu had Resume, Restart and Quit
 only. Now: an Audio entry opens music and SFX volume and mute, Restore defaults

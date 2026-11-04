@@ -41,6 +41,14 @@ namespace mir
     {
         return x >= rect.x && x < rect.Right() && y >= rect.y && y < rect.Bottom();
     }
+
+    struct UISize
+    {
+        float width = 0.0f;
+        float height = 0.0f;
+
+        constexpr bool operator==(const UISize &) const = default;
+    };
     struct UIColor
     {
         float r = 1.0f;
@@ -98,7 +106,9 @@ namespace mir
         UIColor mPanelColor{0.0f, 0.0f, 0.0f, 0.6f};
         float mPanelRounding = 4.0f;
 
-        float mFontSize = 0.0f;
+        // in UI units, so text scales with the boxes it sits in. 0 is the backend's own size, which in the editor
+        // follows the monitor's DPI and not the UI's scale, so it can outgrow its boxes
+        float mFontSize = 16.0f;
 
 
         float mTextHeight = 16.0f;

@@ -58,7 +58,12 @@ namespace mir
         }
 
 
-        float TextWidth(std::string_view text) { return 8.0f * static_cast<float>(text.size()); }
+        // centred down its rect
+        void DrawLine(UIContext &ui, const UIRect &rect, float x, std::string_view text, UIColor color)
+        {
+            const float height = ui.MeasureText(text).height;
+            ui.DrawList().Text(x, rect.y + (rect.height - height) * 0.5f, text, color, ui.Style().mFontSize);
+        }
 
         void DrawPrompt(UIContext &ui, UIStack &strip, std::string_view action, std::string_view text)
         {
@@ -66,16 +71,15 @@ namespace mir
             if (prompt.mLabel.empty())
                 return;
 
-            const UIStyle &style = ui.Style();
-            const float capWidth = std::max(kPromptHeight, TextWidth(prompt.mLabel) + 12.0f);
-            UIStack parts = UIStack::Row(strip.Last(capWidth + 6.0f + TextWidth(text)), 6.0f);
+            const float labelWidth = ui.TextWidth(prompt.mLabel);
+            const float capWidth = std::max(kPromptHeight, labelWidth + 12.0f);
+            UIStack parts = UIStack::Row(strip.Last(capWidth + 6.0f + ui.TextWidth(text)), 6.0f);
             const UIRect cap = parts.Next(capWidth);
             const UIRect caption = parts.Rest();
 
             ui.DrawList().Rect(cap, UIColor{0.9f, 0.9f, 0.9f, 0.9f}, prompt.mGamepad ? kPromptHeight * 0.5f : 3.0f);
-            ui.DrawList().Text(cap.x + 6.0f, cap.y + 4.0f, prompt.mLabel, UIColor{0.0f, 0.0f, 0.0f, 1.0f},
-                               style.mFontSize);
-            ui.DrawList().Text(caption.x, caption.y + 4.0f, text, style.mTextColor, style.mFontSize);
+            DrawLine(ui, cap, cap.x + (cap.width - labelWidth) * 0.5f, prompt.mLabel, UIColor{0.0f, 0.0f, 0.0f, 1.0f});
+            DrawLine(ui, caption, caption.x, text, ui.Style().mTextColor);
         }
     } // namespace
 

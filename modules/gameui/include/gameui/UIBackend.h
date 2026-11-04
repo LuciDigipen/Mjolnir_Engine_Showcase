@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <span>
+#include <string_view>
 
 namespace mir
 {
@@ -27,6 +28,12 @@ namespace mir
         void (*release)(void *texture) = nullptr;
     };
 
+    // text's size with no font to ask: half the font size a character, one line the font size tall
+    inline UISize EstimateTextSize(std::string_view text, float fontSize)
+    {
+        return UISize{0.5f * fontSize * static_cast<float>(text.size()), fontSize};
+    }
+
     // gameui_imgui implements it over ImGui's background draw list
     class IUIBackend
     {
@@ -38,5 +45,8 @@ namespace mir
 
         // one frame's list, into area, over the scene, the list is in UI units, scale area pixels each
         virtual void Submit(const UIRect &area, float scale, const UIDrawList &list, const UITextures &textures) = 0;
+
+        // @p text's size in pixels drawn at @p fontSize pixels; 0 is the backend's own size
+        virtual UISize MeasureText(std::string_view text, float fontSize) const = 0;
     };
 }

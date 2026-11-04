@@ -83,9 +83,8 @@ namespace mir
 
         void DrawText(UIContext &ui, const UIRect &rect, float x, std::string_view text, UIColor color)
         {
-            const UIStyle &style = ui.Style();
-            const float height = style.mFontSize > 0.0f ? style.mFontSize : style.mTextHeight;
-            ui.DrawList().Text(x, rect.y + (rect.height - height) * 0.5f, text, color, style.mFontSize);
+            const float height = ui.MeasureText(text).height;
+            ui.DrawList().Text(x, rect.y + (rect.height - height) * 0.5f, text, color, ui.Style().mFontSize);
         }
 
         float Clamp01(float value) { return std::clamp(value, 0.0f, 1.0f); }

@@ -40,12 +40,23 @@ namespace mir
         // null = the menu has no Audio entry
         void SetAudioOptions(IAudioOptions *audio) { mMenu.SetAudioOptions(audio); }
 
+        bool ControlsScreenOpen() const { return mMenu.ControlsScreenOpen(); }
+
+        // null = the menu has no Controls entry
+        void SetControlsOptions(IControlsOptions *controls) { mMenu.SetControlsOptions(controls); }
+
         float PlaySeconds() const { return mPlaySeconds; }
 
+        // the mouse goes unused this long in play before its cursor is hidden
+        static constexpr float kCursorIdleSeconds = 2.0f;
+
     private:
+        void UpdateCursor(UIContext &ui, float dt);
+
         GameHud mHud;
         PauseMenu mMenu;
         float mPlaySeconds = 0.0f;
+        float mCursorIdleSeconds = 0.0f;
         bool mWasPlaying = false;
     };
 } // namespace mir

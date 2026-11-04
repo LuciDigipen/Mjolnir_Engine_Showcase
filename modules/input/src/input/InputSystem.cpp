@@ -10,6 +10,7 @@
 
 #include "input/InputSystem.h"
 
+#include <input/ControlsSettings.h>
 #include <input/InputMap.h>
 #include <input/InputState.h>
 
@@ -65,13 +66,23 @@ namespace mir
             return 0.0f;
         }
 
+        bool Inverted(const InputBinding &binding, const ControlsSettings &controls)
+        {
+            if (binding.device == DeviceKind::Mouse && binding.useMouseDelta)
+                return controls.mInvertMouseY && binding.channel == AxisChannel::Y;
+            if (binding.device == DeviceKind::Gamepad && binding.useGamepadAxis)
+                return controls.mInvertGamepadY && binding.gamepadAxis == GamepadAxis::RightY;
+            return false;
+        }
+
         // scale only applies to a digital source composited into an axis
         // (e.g. D:+1/A:-1) - an analog gamepad axis is already signed.
         float ReadAxisContribution(const InputBinding &binding, const RawInputSnapshot &raw, MouseDelta mouseDelta,
-                                    bool suppressKeyboard, bool suppressMouse)
+                                    bool suppressKeyboard, bool suppressMouse, const ControlsSettings &controls)
         {
             const float sourceValue = ReadBinding(binding, raw, mouseDelta, suppressKeyboard, suppressMouse);
-            return binding.useGamepadAxis ? sourceValue : sourceValue * binding.scale;
+            const float value = binding.useGamepadAxis ? sourceValue : sourceValue * binding.scale;
+            return Inverted(binding, controls) ? -value : value;
         }
 
         bool AnyKeyActive(const RawInputSnapshot &raw)
@@ -114,6 +125,10 @@ namespace mir
         const bool suppressKeyboard = state.UiCapturesKeyboard();
         const bool suppressMouse = state.UiCapturesMouse();
 
+        static const ControlsSettings kNoControls{};
+        const ControlsSettings *found = context.world.TryResource<ControlsSettings>();
+        const ControlsSettings &controls = found != nullptr ? *found : kNoControls;
+
         const bool mouseMoved = mHasLastMouse && (raw.mouseX != mLastMouseX || raw.mouseY != mLastMouseY);
         const MouseDelta mouseDelta = mHasLastMouse
             ? MouseDelta{ static_cast<float>(raw.mouseX - mLastMouseX), static_cast<float>(raw.mouseY - mLastMouseY) }
@@ -151,7 +166,7 @@ namespace mir
             {
                 float total = 0.0f;
                 for (const InputBinding &binding : action.bindings)
-                    total += ReadAxisContribution(binding, raw, mouseDelta, suppressKeyboard, suppressMouse);
+                    total += ReadAxisContribution(binding, raw, mouseDelta, suppressKeyboard, suppressMouse, controls);
 
                 value.x = std::clamp(total, -1.0f, 1.0f);
                 value.down = value.x != 0.0f;
@@ -166,7 +181,7 @@ namespace mir
                 for (const InputBinding &binding : action.bindings)
                 {
                     float &target = binding.channel == AxisChannel::Y ? totalY : totalX;
-                    target += ReadAxisContribution(binding, raw, mouseDelta, suppressKeyboard, suppressMouse);
+                    target += ReadAxisContribution(binding, raw, mouseDelta, suppressKeyboard, suppressMouse, controls);
                 }
 
                 const bool clamp = action.type == InputActionType::Axis2D;
