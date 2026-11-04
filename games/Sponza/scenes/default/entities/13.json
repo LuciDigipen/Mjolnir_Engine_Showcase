@@ -1,0 +1,35 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [-1.42, 0.28, 3.23],
+        "rotation": [0, 0, 0, 1],
+        "scale": [2.16, 0.52, 1.04]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [-1.42, 0.28, 3.23]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "Material Plinth"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "materialShader": "default",
+        "meshName": "builtin:cube",
+        "tint": [0.21, 0.29, 0.37, 1]
+      },
+      "type": "MeshRenderer"
+    }
+  ],
+  "id": 13,
+  "parent": 11,
+  "siblingIndex": 0
+}

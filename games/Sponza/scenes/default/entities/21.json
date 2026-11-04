@@ -1,0 +1,44 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [0.805, 0.31, 3.68],
+        "rotation": [0, 0, 0, 1],
+        "scale": [1.63, 0.14, 0.12]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [0.805, 0.31, 3.68]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "Front Rail"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "materialShader": "default",
+        "meshName": "builtin:cube",
+        "tint": [0.32, 0.48, 0.53, 1]
+      },
+      "type": "MeshRenderer"
+    },
+    {
+      "fields": {
+        "motion": 0,
+        "shape": 0,
+        "halfExtent": [0.5, 0.5, 0.5],
+        "friction": 0.65
+      },
+      "type": "RigidBody"
+    }
+  ],
+  "id": 21,
+  "parent": 12,
+  "siblingIndex": 4
+}
