@@ -23,7 +23,7 @@ add_library(terrain_bake STATIC
 target_include_directories(terrain_bake PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(terrain_bake
     PUBLIC mir::terrain mir::assets mir::core
-    PRIVATE nlohmann_json::nlohmann_json)
+    PRIVATE mir::jobs nlohmann_json::nlohmann_json)
 
 # The root CMakeLists runs its sync (and package without the editor) on every build.
 add_executable(TerrainTool main.cpp)

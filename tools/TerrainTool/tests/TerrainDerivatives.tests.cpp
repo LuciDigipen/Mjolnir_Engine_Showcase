@@ -59,6 +59,43 @@ namespace
         REQUIRE(handle);
         return std::move(*handle.value);
     }
+    void CheckSameDerivatives(const TerrainDerivatives &serial, const TerrainDerivatives &parallel)
+    {
+        REQUIRE(serial.layers.size() == parallel.layers.size());
+        for (size_t i = 0; i < serial.layers.size(); ++i)
+        {
+            CHECK(serial.layers[i].SampleSpacing() == parallel.layers[i].SampleSpacing());
+            CHECK(serial.layers[i].IntervalsPerTile() == parallel.layers[i].IntervalsPerTile());
+            CHECK(serial.layers[i].Bounds() == parallel.layers[i].Bounds());
+        }
+        REQUIRE(serial.payloads.size() == parallel.payloads.size());
+        for (size_t i = 0; i < serial.payloads.size(); ++i)
+        {
+            const auto &a = serial.payloads[i].record;
+            const auto &b = parallel.payloads[i].record;
+            CHECK(a.tile == b.tile);
+            CHECK(a.layer == b.layer);
+            CHECK(a.level == b.level);
+            CHECK(a.kind == b.kind);
+            CHECK(a.source == b.source);
+            CHECK(a.samplesPerSide == b.samplesPerSide);
+            CHECK(a.sampleSpacing == b.sampleSpacing);
+            CHECK(a.minHeight == b.minHeight);
+            CHECK(a.maxHeight == b.maxHeight);
+            CHECK(a.validExtent == b.validExtent);
+            CHECK(a.maxDeviation == b.maxDeviation);
+            CHECK(a.sourceChecksum == b.sourceChecksum);
+            CHECK(a.topologyHash == b.topologyHash);
+            CHECK(a.vertexCount == b.vertexCount);
+            CHECK(a.indexCount == b.indexCount);
+            CHECK(serial.payloads[i].bytes == parallel.payloads[i].bytes);
+        }
+        REQUIRE(serial.queryHeights.size() == parallel.queryHeights.size());
+        for (size_t i = 0; i < serial.queryHeights.size(); ++i)
+            CHECK(serial.queryHeights[i] == parallel.queryHeights[i]);
+        CHECK(serial.queryLayers == parallel.queryLayers);
+        CHECK(serial.queryErrors == parallel.queryErrors);
+    }
 }
 
 TEST_CASE("Derived LODs enclose flat plane ridge and oscillating final surfaces", "[terraintool][lod]")
@@ -438,4 +475,35 @@ TEST_CASE("Reduced derived layers fail validation without indexing missing layer
                               return d.field == field;
                           }));
     }
+}
+
+TEST_CASE("Serial and parallel tile workers derive identical payloads", "[terraintool][lod]")
+{
+    const auto recipe = Fixture();
+    TerrainReport report("bake", {check::kGenerate, check::kEncode});
+    auto tiles = BakeFinalHeights(recipe, report);
+    REQUIRE(tiles);
+    REQUIRE(tiles->size() > 1);
+    std::string serialError, parallelError;
+    const auto serial = BakeTerrainDerivatives(recipe, *tiles, serialError, nullptr, 0);
+    const auto parallel = BakeTerrainDerivatives(recipe, *tiles, parallelError, nullptr, 4);
+    REQUIRE(serial);
+    REQUIRE(parallel);
+    CheckSameDerivatives(*serial, *parallel);
+}
+
+TEST_CASE("Serial and parallel tile workers report the same failure", "[terraintool][lod]")
+{
+    auto recipe = Fixture(false);
+    recipe.layout = *TerrainLayout::Create(1, 16, {0, 0, 16, 16});
+    recipe.defaultSpacing = 3;
+    recipe.sourceRules.clear();
+    auto tile = TileHeights::Create({0, 0}, 5);
+    REQUIRE(tile);
+    const std::array<TileHeights, 1> tiles{std::move(*tile)};
+    std::string serialError, parallelError;
+    CHECK_FALSE(BakeTerrainDerivatives(recipe, tiles, serialError, nullptr, 0));
+    CHECK_FALSE(BakeTerrainDerivatives(recipe, tiles, parallelError, nullptr, 4));
+    CHECK_FALSE(serialError.empty());
+    CHECK(serialError == parallelError);
 }

@@ -11,10 +11,14 @@
 #include "TerrainFinalSurface.h"
 #include "TerrainProgress.h"
 #include <terrain/TileAddressing.h>
+#include <jobs/JobExecutor.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
+#include <cstddef>
 #include <map>
+#include <thread>
 #include <tuple>
 #include <format>
 #include <glm/geometric.hpp>
@@ -122,7 +126,8 @@ namespace mir::terrainbake
     }
     std::optional<TerrainDerivatives> BakeTerrainDerivatives(const TerrainRecipe &recipe,
                                                              std::span<const TileHeights> heights, std::string &error,
-                                                             const TerrainRegionSettings *regions)
+                                                             const TerrainRegionSettings *regions,
+                                                             std::optional<std::size_t> workers)
     {
         TerrainDerivatives result;
         result.layers.push_back(recipe.layout);
@@ -158,25 +163,35 @@ namespace mir::terrainbake
                 break;
             result.layers.push_back(*next);
         }
-        uint64_t tilesDone = 0;
-        for (const auto &tile : heights)
+        struct TileSlot
         {
-            TerrainProgressStep("derivatives: tiles", tilesDone++, heights.size());
+            std::vector<TerrainPayloadWrite> payloads;
+            std::vector<TileHeights> queryHeights;
+            std::vector<uint32_t> queryLayers;
+            std::vector<double> queryErrors;
+            std::string error;
+        };
+        std::vector<TileSlot> slots(heights.size());
+        const auto &layers = result.layers;
+        auto deriveTile = [&](std::size_t index)
+        {
+            const auto &tile = heights[index];
+            auto &slot = slots[index];
             const auto sourceLayout = final.Layout(tile);
-            auto found = std::find_if(result.layers.begin(), result.layers.end(),
+            auto found = std::find_if(layers.begin(), layers.end(),
                                       [&](const auto &v)
                                       {
                                           return v.SampleSpacing() == sourceLayout.SampleSpacing();
                                       });
-            if (found == result.layers.end())
+            if (found == layers.end())
             {
-                error = "source grid is missing from derivative layers";
-                return {};
+                slot.error = "source grid is missing from derivative layers";
+                return;
             }
-            const uint32_t sourceLayer = static_cast<uint32_t>(found - result.layers.begin());
-            for (uint32_t layer = sourceLayer; layer < result.layers.size(); ++layer)
+            const uint32_t sourceLayer = static_cast<uint32_t>(found - layers.begin());
+            for (uint32_t layer = sourceLayer; layer < layers.size(); ++layer)
             {
-                const auto &layout = result.layers[layer];
+                const auto &layout = layers[layer];
                 if (layer != sourceLayer && layout.SampleSpacing() > kTerrainInitialMaxLodSpacing)
                     break;
                 auto mesh = Mesh(final, tile, layout, layer, sourceLayer, true);
@@ -193,13 +208,13 @@ namespace mir::terrainbake
                     }
                     const auto extent = *layout.ValidExtent(tile.Tile());
                     const auto origin = mesh.origin.Meters();
-                    error = std::format(
+                    slot.error = std::format(
                         "tile ({}, {}) LOD {} m: actual float support [{},{}]..[{},{}], valid [{} ,{}]..[{},{}]; uncovered X/Z widths {} / {} m; topology/error cannot be enclosed",
                         tile.Tile().x, tile.Tile().z, layout.SampleSpacing(), minX, minZ, maxX, maxZ,
                         extent.minX - origin.x, extent.minZ - origin.z, extent.maxX - origin.x, extent.maxZ - origin.z,
                         std::max({0.0, minX - (extent.minX - origin.x), (extent.maxX - origin.x) - maxX}),
                         std::max({0.0, minZ - (extent.minZ - origin.z), (extent.maxZ - origin.z) - maxZ}));
-                    return {};
+                    return;
                 }
                 mesh.maxDeviation = *bound;
                 std::vector<glm::vec3> normals;
@@ -235,9 +250,9 @@ namespace mir::terrainbake
                 record.vertexCount = static_cast<uint32_t>(mesh.positions.size());
                 record.indexCount = static_cast<uint32_t>(mesh.indices.size());
                 record.kind = TerrainPayloadKind::LodHeight;
-                result.payloads.push_back({record, EncodeTerrainLod(mesh)});
+                slot.payloads.push_back({record, EncodeTerrainLod(mesh)});
                 record.kind = TerrainPayloadKind::Normal;
-                result.payloads.push_back({record, EncodeTerrainNormals(mesh, normals)});
+                slot.payloads.push_back({record, EncodeTerrainNormals(mesh, normals)});
                 if (layer == sourceLayer)
                     continue;
                 const int n = layout.IntervalsPerTile(), ratio = tile.IntervalsPerTile() / n;
@@ -251,13 +266,48 @@ namespace mir::terrainbake
                 auto queryBound = query ? TerrainRegularDeviation(sourceLayout, tile, layout, *query) : std::nullopt;
                 if (!query || !queryBound)
                 {
-                    error = "query derivative/error cannot be enclosed";
-                    return {};
+                    slot.error = "query derivative/error cannot be enclosed";
+                    return;
                 }
-                result.queryHeights.push_back(std::move(*query));
-                result.queryLayers.push_back(layer);
-                result.queryErrors.push_back(*queryBound);
+                slot.queryHeights.push_back(std::move(*query));
+                slot.queryLayers.push_back(layer);
+                slot.queryErrors.push_back(*queryBound);
             }
+        };
+        JobExecutor executor(workers.value_or(JobExecutor::DefaultWorkerCount()));
+        std::atomic<std::size_t> completed{0};
+        const auto caller = std::this_thread::get_id();
+        TerrainProgressStep("derivatives: tiles", 0, heights.size());
+        executor.ParallelFor(heights.size(), 1,
+                             [&](std::size_t begin, std::size_t end)
+                             {
+                                 for (std::size_t index = begin; index < end; ++index)
+                                 {
+                                     deriveTile(index);
+                                     const std::size_t done =
+                                         completed.fetch_add(1, std::memory_order_relaxed) + 1;
+                                     // The progress sink is not thread safe, so only the caller reports.
+                                     if (std::this_thread::get_id() == caller)
+                                         TerrainProgressStep("derivatives: tiles", done, heights.size());
+                                     if (!slots[index].error.empty())
+                                         break;
+                                 }
+                             });
+        TerrainProgressStep("derivatives: tiles", heights.size(), heights.size());
+        for (const auto &slot : slots)
+            if (!slot.error.empty())
+            {
+                error = slot.error;
+                return {};
+            }
+        for (auto &slot : slots)
+        {
+            for (auto &payload : slot.payloads)
+                result.payloads.push_back(std::move(payload));
+            for (auto &query : slot.queryHeights)
+                result.queryHeights.push_back(std::move(query));
+            result.queryLayers.insert(result.queryLayers.end(), slot.queryLayers.begin(), slot.queryLayers.end());
+            result.queryErrors.insert(result.queryErrors.end(), slot.queryErrors.begin(), slot.queryErrors.end());
         }
         if (regions && !(result.regions = BakeTerrainRegions(recipe, heights, *regions, error)))
             return {};
