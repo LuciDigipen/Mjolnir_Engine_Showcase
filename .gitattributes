@@ -13,5 +13,10 @@
 *.tindex binary
 *.tpack binary
 
-# LFS only for the TerrainCheck Icelandic sand source textures.
+# LFS for the TerrainCheck Icelandic sand source textures.
 games/TerrainCheck/assets/textures/icelandic_sand_and_rocks/*.jpg filter=lfs diff=lfs merge=lfs -text
+
+# Sponza source mesh buffers and textures.
+games/Sponza/**/*.bin filter=lfs diff=lfs merge=lfs -text
+games/Sponza/**/*.jpg filter=lfs diff=lfs merge=lfs -text
+games/Sponza/**/*.png filter=lfs diff=lfs merge=lfs -text
