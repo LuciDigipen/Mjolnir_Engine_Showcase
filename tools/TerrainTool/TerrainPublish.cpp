@@ -171,7 +171,7 @@ namespace mir::terrainbake
             const fs::path &root = request.releasesRoot;
 
             report.tiles.clear();
-            ValidateTerrainCandidate(candidate, {recipe, true}, report);
+            ValidateTerrainCandidate(candidate, {recipe, true, true}, report);
             if (faults.At(TerrainPublishStep::Candidate))
                 Fail(report, check::kCandidate, "", "test fault after the candidate check");
             const std::optional<TerrainCandidateManifest> manifest = ReadManifest(candidate);
@@ -331,7 +331,7 @@ namespace mir::terrainbake
             FlipMiddleByte(partial / install.files[1].name);
         // The copy has no candidate.json.
         TerrainReport copy("verify", {});
-        ValidateTerrainCandidate(partial, {recipe, false}, copy);
+        ValidateTerrainCandidate(partial, {recipe, false, true}, copy);
         for (const TerrainDiagnostic &d : copy.diagnostics)
             report.Add({std::string(check::kVerify), d.field, d.tiles, d.sample,
                         std::format("[{}] {}", d.check, d.message)});
@@ -347,8 +347,8 @@ namespace mir::terrainbake
             Fail(report, check::kVerify, "release.tindex", "the copied index names another asset or release");
         if (report.Status(check::kVerify) == CheckStatus::Failed)
             return abandon("the copy did not verify; its .partial directory was removed");
-        report.Ran(check::kVerify, std::format("{} tiles read back; {} files match {}", copy.tiles.size(),
-                                               copy.files.size(), install.recordedBy));
+        report.Ran(check::kVerify,
+                   std::format("{} files and the release index match {}", copy.files.size(), install.recordedBy));
 
         if (faults.At(TerrainPublishStep::Rename))
         {

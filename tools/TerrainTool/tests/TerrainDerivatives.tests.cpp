@@ -330,7 +330,7 @@ TEST_CASE("Tiny double regular grids keep plane deviation small", "[terraintool]
     CHECK_FALSE(TerrainRegularDeviation(*fine, *bad, *coarse, *query));
 }
 
-TEST_CASE("Resealed reordered normals fail validation and publication", "[terraintool][lod]")
+TEST_CASE("Resealed reordered normals fail validation", "[terraintool][lod]")
 {
     const auto recipe = Fixture();
     auto baked = Bake(recipe);
@@ -387,9 +387,6 @@ TEST_CASE("Resealed reordered normals fail validation and publication", "[terrai
     CHECK_FALSE(report.Ok());
     CHECK(report.Status(check::kPacks) == CheckStatus::Passed);
     CHECK(report.Status(check::kPayloads) == CheckStatus::Failed);
-    const auto published = RunTerrainPublish({candidate, scratch.path / "releases", {}});
-    CHECK_FALSE(published.Ok());
-    CHECK_FALSE(fs::exists(scratch.path / "releases"));
 }
 
 TEST_CASE("Reduced derived layers fail validation without indexing missing layers", "[terraintool][lod]")

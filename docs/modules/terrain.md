@@ -1146,24 +1146,29 @@ games/G/assets --source-path terrain/hills.terrain.json`. `--recipe` is the
   index's settings and must match byte for byte; a recipe-backed candidate
   must have one), and identity (manifest against index; with `--recipe`,
   fingerprint and layout).
-- **publish** validates the candidate (with `candidate.json`), takes the
-  asset's lock (`<asset>/.publish.lock`, opened exclusively; the OS drops it
-  if the process dies), removes `.partial` directories earlier publishes left,
-  copies only the files `candidate.json` lists into
+- **publish** validates the candidate's integrity (with `candidate.json`):
+  manifest, stray files, format, index, whole packs, the file sizes and
+  Fnv1a64 the manifest records, and identity. It does not decode payloads,
+  rederive Regions or check continuity; bake and `validate` check the contents.
+  It takes the asset's lock (`<asset>/.publish.lock`, opened exclusively; the
+  OS drops it if the process dies), removes `.partial` directories earlier
+  publishes left, copies only the files `candidate.json` lists into
   `<asset>/<releaseIdHex16>.partial/` (each checked against its recorded size
-  and Fnv1a64, then flushed to disk), validates the copy again and compares
-  checksums, renames it to `<asset>/<releaseIdHex16>/` (failing if that
-  exists), and only then replaces `current` (`current.tmp`, flushed, renamed
-  over it). Until that last rename the old `current` and every release are
-  untouched; a release that is renamed but never made current stays as an
-  unused directory. Another publisher of the same asset makes it fail at once.
+  and Fnv1a64, then flushed to disk), checks the copy's file checksums and
+  that its index names the same release, renames it to
+  `<asset>/<releaseIdHex16>/` (failing if that exists), and only then replaces
+  `current` (`current.tmp`, flushed, renamed over it). Until that last rename
+  the old `current` and every release are untouched; a release that is renamed
+  but never made current stays as an unused directory. Another publisher of
+  the same asset makes it fail at once.
 - **sync** is what the build runs for every recipe. Under the same lock it
   compares the recipe with the current release (pointer, index, source
   fingerprint, format and minor, content version, pack sizes) and stops there
   when they match. Otherwise it deletes its own old candidate (only a
-  directory holding nothing but candidate files), bakes, validates and
-  publishes. It waits up to 10 minutes for the lock, so Debug and Release
-  builds of one tree can run at once: the second finds the asset current.
+  directory holding nothing but candidate files), bakes and validates it, then
+  publishes it with the integrity checks above. It waits up to 10 minutes for
+  the lock, so Debug and Release builds of one tree can run at once: the
+  second finds the asset current.
 - **package** copies one asset from `--game-dir`'s releases to `--out`'s
   (`TerrainReleasesRoot` of each; neither may contain the other). Under the
   output asset's lock it stops when the output's `current` already names the
