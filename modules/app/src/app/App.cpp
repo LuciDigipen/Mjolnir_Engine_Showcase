@@ -61,6 +61,12 @@ namespace mir
             return files;
         }
 
+        // the player's own settings, audio and controls, one file per game
+        std::filesystem::path UserSettingsPath(const GameProject &project)
+        {
+            return UserDataDir() / project.mName / "settings.json";
+        }
+
         std::unique_ptr<AsyncAssetService> MakeAssetService(
             AssetsModule &assets, JobExecutor &jobs, const std::filesystem::path &projectSettingsPath)
         {
@@ -145,7 +151,7 @@ namespace mir
                                     .mResolver = &mResolver,
                                     .mAssetService = mAssetService.get() }),
         mParticlesGpu(mRenderer.Renderer()),
-        mInput(Context(), mWindow.Get(), mProject.mProjectSettingsPath),
+        mInput(Context(), mWindow.Get(), mProject.mProjectSettingsPath, UserSettingsPath(mProject)),
         mAnimation(Context(), mRenderer.Renderer(), mAssetService.get(), mResolver, &mJobs),
         mImGui(Context(), mWindow, mRenderer),
     #if MIR_WITH_EDITOR
@@ -155,7 +161,7 @@ namespace mir
         mCamera(Context()),
     #if MIR_WITH_AUDIO
         mAudio(Context(), mProject.mSoundBankDir, mProject.mProjectSettingsPath,
-            UserDataDir() / mProject.mName / "settings.json"),
+            UserSettingsPath(mProject)),
     #endif
         mPhysics(Context(), mProject.mProjectSettingsPath, &mJobs),
         mTerrainData(Context()),
@@ -173,6 +179,7 @@ namespace mir
         mGameUIImGui(Context(), mImGui, mWindow, mGameUI),
         mFixedTimestep{ .mStep = mDesc.mFixedDeltaSeconds, .mMaxSteps = mDesc.mMaxFixedSteps }
     {
+        mGameShell.SetControlsOptions(&mControlsOptions);
     #if MIR_WITH_AUDIO
         mGameShell.SetAudioOptions(&mAudioOptions);
     #if MIR_WITH_EDITOR

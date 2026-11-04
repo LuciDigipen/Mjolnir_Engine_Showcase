@@ -21,6 +21,7 @@
 #include <audio/AudioModule.h>
 #include <audio_script/AudioScriptModule.h>
 #endif
+#include <app/GameControlsOptions.h>
 #include <camera/CameraModule.h>
 #include <core/ecs/CommandBuffer.h>
 #include <core/ecs/CoreModule.h>
@@ -292,6 +293,8 @@ namespace mir
         ParticlesGpuModule mParticlesGpu;
         // before ImGui and the editor, which read input and models
         InputModule mInput;
+        // handed to mGameShell, built before it
+        GameControlsOptions mControlsOptions{ mInput };
         AnimationModule mAnimation;
         SplashStep mImGuiStep{ mSplash, "Initializing UI...", 0.4f };
         ImGuiModule mImGui;

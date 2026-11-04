@@ -14,6 +14,8 @@
 #include <imguiruntime/ImGuiModule.h>
 #include <window/WindowModule.h>
 
+#include <imgui.h>
+
 namespace mir
 {
     GameUIImGuiModule::GameUIImGuiModule(ModuleContext context, ImGuiModule &imgui, WindowModule &window,
@@ -36,6 +38,10 @@ namespace mir
                 const RawInputSnapshot &input = surface.RawInput();
                 mGameUI.RunFrame(area, UIPointer{ static_cast<float>(input.mouseX), static_cast<float>(input.mouseY),
                                                   input.IsDown(MouseButton::Left) });
+
+                // ImGui's GLFW backend sets the OS cursor from this every frame, so it is the only place to hide it
+                if (!mGameUI.Suspended() && mGameUI.Context().HidesCursor())
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_None);
             });
     }
 

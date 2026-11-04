@@ -63,8 +63,10 @@ namespace mir
 
             mHoldsInput = mHoldInput;
             mInput->SetGameInputHeld(mHoldsInput);
+            mHidesCursor = mHideCursor;
         }
         mHoldInput = false;
+        mHideCursor = false;
 
         mInput = nullptr;
         mInputMap = nullptr;
@@ -76,6 +78,12 @@ namespace mir
     {
         MIR_ASSERT(mInFrame, "UIContext::HoldInput outside BeginFrame/EndFrame");
         mHoldInput = mInFrame;
+    }
+
+    void UIContext::HideCursor()
+    {
+        MIR_ASSERT(mInFrame, "UIContext::HideCursor outside BeginFrame/EndFrame");
+        mHideCursor = mInFrame;
     }
 
     UIInteraction UIContext::Interact(UIId id, const UIRect &rect, const UIWidgetOptions &options)

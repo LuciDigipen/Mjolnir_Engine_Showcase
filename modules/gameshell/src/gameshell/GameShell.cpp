@@ -9,6 +9,8 @@
  */
 #include "gameshell/GameShell.h"
 
+#include <input/DefaultInputMap.h>
+
 namespace mir
 {
     GameShellAction GameShell::Draw(UIContext &ui, bool playing, float dt)
@@ -21,7 +23,10 @@ namespace mir
         }
 
         if (!mWasPlaying)
+        {
             mPlaySeconds = 0.0f;
+            mCursorIdleSeconds = kCursorIdleSeconds;
+        }
         mWasPlaying = true;
         if (!mMenu.IsOpen())
             mPlaySeconds += dt;
@@ -29,7 +34,10 @@ namespace mir
         if (mHud.Draw(ui, mPlaySeconds, !mMenu.IsOpen()))
             mMenu.Open();
 
-        switch (mMenu.Draw(ui, true))
+        const PauseMenuAction menuAction = mMenu.Draw(ui, true);
+        UpdateCursor(ui, dt);
+
+        switch (menuAction)
         {
         case PauseMenuAction::Opened:
             return GameShellAction::Pause;
@@ -44,5 +52,29 @@ namespace mir
             break;
         }
         return GameShellAction::None;
+    }
+
+    // Shown in the menu, and in play while the mouse is moving, so the HUD's Pause button can be found;
+    // hidden while it rests, while another device is in use, and while it looks the camera around
+    void GameShell::UpdateCursor(UIContext &ui, float dt)
+    {
+        if (mMenu.IsOpen())
+        {
+            mCursorIdleSeconds = 0.0f;
+            return;
+        }
+
+        const UIState &state = ui.State();
+        mCursorIdleSeconds = state.PointerMoved() ? 0.0f : mCursorIdleSeconds + dt;
+
+        // in the editor's viewport, a cursor over the panels around it is the editor's
+        if (!Contains(ui.Bounds(), state.PointerX(), state.PointerY()))
+            return;
+
+        const InputState *input = ui.Input();
+        const bool mouseInUse = input != nullptr && input->ActiveDevice() == DeviceKind::Mouse;
+        const bool looking = input != nullptr && input->ForGame(kCameraLookHoldAction).down;
+        if (!mouseInUse || looking || mCursorIdleSeconds >= kCursorIdleSeconds)
+            ui.HideCursor();
     }
 } // namespace mir

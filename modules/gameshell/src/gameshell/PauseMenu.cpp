@@ -1,8 +1,8 @@
 /**
  * @file PauseMenu.cpp
  * @author Quy Dong Ta
- * @brief The menu a game pauses into: Resume, Restart, Audio and Quit over a
- *        dimmed screen, and the Audio screen behind it, driven by gamepad,
+ * @brief The menu a game pauses into: Resume, Restart, Audio, Controls and Quit
+ *        over a dimmed screen, and the screens behind it, driven by gamepad,
  *        mouse or keyboard, built on gameui's public API alone.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
@@ -16,6 +16,7 @@
 #include <input/DefaultInputMap.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <format>
 #include <iterator>
@@ -38,9 +39,24 @@ namespace mir
         constexpr UIId kRestoreDefaults("audio_restore_defaults");
         constexpr UIId kAudioBack("audio_back");
 
-        constexpr UIId kMainColumn[] = {kResume, kRestart, kQuit};
-        constexpr UIId kMainColumnWithAudio[] = {kResume, kRestart, kAudio, kQuit};
+        constexpr UIId kControls("pause_controls");
+        constexpr UIId kInvertMouse("controls_invert_mouse");
+        constexpr UIId kInvertGamepad("controls_invert_gamepad");
+        constexpr UIId kControlsDefaults("controls_restore_defaults");
+        constexpr UIId kControlsBack("controls_back");
+
         constexpr UIId kAudioColumn[] = {kMusicVolume, kMusicMute, kSfxVolume, kSfxMute, kRestoreDefaults, kAudioBack};
+        constexpr UIId kControlsColumn[] = {kInvertMouse, kInvertGamepad, kControlsDefaults, kControlsBack};
+
+        // only the entries whose screens have options behind them
+        struct MainColumn
+        {
+            std::array<UIId, 5> mIds{};
+            size_t mCount = 0;
+
+            void Add(UIId id) { mIds[mCount++] = id; }
+            std::span<const UIId> Span() const { return {mIds.data(), mCount}; }
+        };
 
         struct ChannelRows
         {
@@ -149,11 +165,10 @@ namespace mir
             action = PauseMenuAction::Opened;
         }
 
-        // Escape is both, so it backs out of Audio a step at a time; Start alone resumes from anywhere
-        else if (mScreen == Screen::Audio && ui.CancelPressed())
+        // Escape is both, so it backs out of a screen a step at a time; Start alone resumes from anywhere
+        else if (mScreen != Screen::Main && ui.CancelPressed())
         {
-            mScreen = Screen::Main;
-            ui.State().SetFocus(kAudio);
+            BackToMain(ui);
         }
 
         else if (ui.PausePressed() || ui.CancelPressed())
@@ -168,6 +183,8 @@ namespace mir
 
         if (mScreen == Screen::Audio && mAudio != nullptr)
             DrawAudio(ui);
+        else if (mScreen == Screen::Controls && mControls != nullptr)
+            DrawControls(ui);
         else if (const PauseMenuAction chosen = DrawMain(ui); chosen != PauseMenuAction::None)
             action = chosen;
 
@@ -179,8 +196,15 @@ namespace mir
 
     PauseMenuAction PauseMenu::DrawMain(UIContext &ui)
     {
-        const std::span<const UIId> column = mAudio != nullptr ? std::span<const UIId>(kMainColumnWithAudio)
-                                                               : std::span<const UIId>(kMainColumn);
+        MainColumn entries;
+        entries.Add(kResume);
+        entries.Add(kRestart);
+        if (mAudio != nullptr)
+            entries.Add(kAudio);
+        if (mControls != nullptr)
+            entries.Add(kControls);
+        entries.Add(kQuit);
+        const std::span<const UIId> column = entries.Span();
 
         UIStack rows = UIStack::Column(Inset(CenteredPanel(ui, kWidth, column.size()), kPadding), kGap);
         Label(ui, UIId("pause_title"), rows.Next(kRow), "Paused");
@@ -195,6 +219,12 @@ namespace mir
         {
             mScreen = Screen::Audio;
             ui.State().SetFocus(kMusicVolume);
+        }
+        if (mControls != nullptr &&
+            Button(ui, kControls, rows.Next(kRow), "Controls", InColumn(column, kControls)).mClicked)
+        {
+            mScreen = Screen::Controls;
+            ui.State().SetFocus(kInvertMouse);
         }
         if (Button(ui, kQuit, rows.Next(kRow), "Quit", InColumn(column, kQuit)).mClicked)
             action = PauseMenuAction::Quit;
@@ -215,11 +245,43 @@ namespace mir
                 .mClicked)
             mAudio->RestoreDefaults();
         if (Button(ui, kAudioBack, rows.Next(kRow), "Back", InColumn(kAudioColumn, kAudioBack)).mClicked)
-        {
-            mScreen = Screen::Main;
-            ui.State().SetFocus(kAudio);
-        }
+            BackToMain(ui);
 
         DrawPrompts(ui, rows.Next(kPromptRow));
+    }
+
+    void PauseMenu::DrawControls(UIContext &ui)
+    {
+        UIStack rows =
+            UIStack::Column(Inset(CenteredPanel(ui, kAudioWidth, std::size(kControlsColumn)), kPadding), kGap);
+        Label(ui, UIId("controls_title"), rows.Next(kRow), "Controls");
+
+        bool invertMouse = mControls->InvertY(LookDevice::Mouse);
+        if (Toggle(ui, kInvertMouse, rows.Next(kRow), "Invert mouse Y", invertMouse,
+                   InColumn(kControlsColumn, kInvertMouse))
+                .mChanged)
+            mControls->SetInvertY(LookDevice::Mouse, invertMouse);
+
+        bool invertGamepad = mControls->InvertY(LookDevice::Gamepad);
+        if (Toggle(ui, kInvertGamepad, rows.Next(kRow), "Invert gamepad Y", invertGamepad,
+                   InColumn(kControlsColumn, kInvertGamepad))
+                .mChanged)
+            mControls->SetInvertY(LookDevice::Gamepad, invertGamepad);
+
+        if (Button(ui, kControlsDefaults, rows.Next(kRow), "Restore defaults",
+                   InColumn(kControlsColumn, kControlsDefaults))
+                .mClicked)
+            mControls->RestoreDefaults();
+        if (Button(ui, kControlsBack, rows.Next(kRow), "Back", InColumn(kControlsColumn, kControlsBack)).mClicked)
+            BackToMain(ui);
+
+        DrawPrompts(ui, rows.Next(kPromptRow));
+    }
+
+    // onto the entry the screen was opened from
+    void PauseMenu::BackToMain(UIContext &ui)
+    {
+        ui.State().SetFocus(mScreen == Screen::Controls ? kControls : kAudio);
+        mScreen = Screen::Main;
     }
 } // namespace mir

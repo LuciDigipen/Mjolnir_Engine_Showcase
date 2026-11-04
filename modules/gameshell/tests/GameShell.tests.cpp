@@ -50,6 +50,27 @@ namespace
     constexpr UIId kRestoreDefaults("audio_restore_defaults");
     constexpr UIId kAudioBack("audio_back");
 
+    constexpr UIId kControls("pause_controls");
+    constexpr UIId kInvertMouse("controls_invert_mouse");
+    constexpr UIId kInvertGamepad("controls_invert_gamepad");
+    constexpr UIId kControlsDefaults("controls_restore_defaults");
+    constexpr UIId kControlsBack("controls_back");
+
+    // the input module stood in for: what the screen set
+    class TestControlsOptions final : public IControlsOptions
+    {
+    public:
+        bool InvertY(LookDevice device) const override { return device == LookDevice::Mouse ? mMouse : mGamepad; }
+        void SetInvertY(LookDevice device, bool invert) override
+        {
+            (device == LookDevice::Mouse ? mMouse : mGamepad) = invert;
+        }
+        void RestoreDefaults() override { mMouse = mGamepad = false; }
+
+        bool mMouse = false;
+        bool mGamepad = false;
+    };
+
     struct TestChannel
     {
         float mVolume = 0.5f;
@@ -703,4 +724,208 @@ TEST_CASE("The Audio screen draws inside the editor's viewport and fullscreen, a
                 CHECK(f.TextAt(text).has_value());
         }
     }
+}
+
+TEST_CASE("Without controls options the menu has no Controls entry; with them it sits above Quit", "[gameshell]")
+{
+    Fixture f;
+    f.Frame();
+    f.Tap(Key::Escape);
+    REQUIRE(f.Shell().MenuOpen());
+    CHECK_FALSE(f.TextAt("Controls").has_value());
+
+    TestControlsOptions controls;
+    TestAudioOptions audio;
+    f.Shell().SetControlsOptions(&controls);
+    f.Shell().SetAudioOptions(&audio);
+    f.Frame();
+    CHECK(f.TextAt("Controls").has_value());
+
+    f.Tap(Key::Up);
+    CHECK(f.Focus() == kQuit);
+    f.Tap(Key::Up);
+    CHECK(f.Focus() == kControls);
+    f.Tap(Key::Up);
+    CHECK(f.Focus() == kAudio);
+}
+
+TEST_CASE("The Controls screen inverts each device's look, restores defaults and backs out by the gamepad alone",
+          "[gameshell]")
+{
+    Fixture f;
+    TestControlsOptions controls;
+    f.Shell().SetControlsOptions(&controls);
+    f.Frame();
+
+    CHECK(f.Tap(GamepadButton::Start) == GameShellAction::Pause);
+    f.Tap(GamepadButton::DpadUp);
+    CHECK(f.Focus() == kQuit);
+    f.Tap(GamepadButton::DpadUp);
+    CHECK(f.Focus() == kControls);
+
+    CHECK(f.Tap(GamepadButton::A) == GameShellAction::None);
+    REQUIRE(f.Shell().ControlsScreenOpen());
+    CHECK(f.Focus() == kInvertMouse);
+
+    f.Tap(GamepadButton::A);
+    CHECK(controls.mMouse);
+    CHECK_FALSE(controls.mGamepad);
+
+    f.Tap(GamepadButton::DpadDown);
+    CHECK(f.Focus() == kInvertGamepad);
+    f.Tap(GamepadButton::A);
+    CHECK(controls.mGamepad);
+
+    f.Tap(GamepadButton::DpadDown);
+    CHECK(f.Focus() == kControlsDefaults);
+    f.Tap(GamepadButton::A);
+    CHECK_FALSE(controls.mMouse);
+    CHECK_FALSE(controls.mGamepad);
+
+    f.Tap(GamepadButton::DpadDown);
+    CHECK(f.Focus() == kControlsBack);
+    f.Tap(GamepadButton::DpadDown);
+    CHECK(f.Focus() == kInvertMouse);
+
+    // B goes back a step, onto Controls, without resuming
+    CHECK(f.Tap(GamepadButton::B) == GameShellAction::None);
+    CHECK(f.Shell().MenuOpen());
+    CHECK_FALSE(f.Shell().ControlsScreenOpen());
+    CHECK(f.Focus() == kControls);
+}
+
+TEST_CASE("The Controls screen is used by the keyboard alone, and by the mouse alone in the editor's viewport",
+          "[gameshell]")
+{
+    SECTION("keyboard")
+    {
+        Fixture f;
+        TestControlsOptions controls;
+        f.Shell().SetControlsOptions(&controls);
+        f.Frame();
+
+        f.Tap(Key::Escape);
+        f.Tap(Key::Up);
+        f.Tap(Key::Up);
+        CHECK(f.Tap(Key::Enter) == GameShellAction::None);
+        REQUIRE(f.Shell().ControlsScreenOpen());
+
+        f.Tap(Key::Down);
+        f.Tap(Key::Enter);
+        CHECK(controls.mGamepad);
+
+        f.Tap(Key::Down);
+        f.Tap(Key::Down);
+        CHECK(f.Focus() == kControlsBack);
+        f.Tap(Key::Enter);
+        CHECK_FALSE(f.Shell().ControlsScreenOpen());
+        CHECK(f.Focus() == kControls);
+
+        // Escape backs out a step, then resumes
+        f.Tap(Key::Enter);
+        REQUIRE(f.Shell().ControlsScreenOpen());
+        CHECK(f.Tap(Key::Escape) == GameShellAction::None);
+        CHECK_FALSE(f.Shell().ControlsScreenOpen());
+        CHECK(f.Tap(Key::Escape) == GameShellAction::Resume);
+    }
+
+    SECTION("mouse")
+    {
+        Fixture f(kViewport);
+        TestControlsOptions controls;
+        f.Shell().SetControlsOptions(&controls);
+        f.Frame();
+
+        f.PointAt("Pause");
+        CHECK(f.Click() == GameShellAction::Pause);
+        f.PointAt("Controls");
+        f.Click();
+        REQUIRE(f.Shell().ControlsScreenOpen());
+
+        // the click drew the menu, so a frame for the screen to draw
+        f.Frame();
+        f.PointAt("Invert mouse Y");
+        f.Click();
+        CHECK(controls.mMouse);
+        f.PointAt("Back");
+        f.Click();
+        CHECK_FALSE(f.Shell().ControlsScreenOpen());
+        CHECK(f.Shell().MenuOpen());
+    }
+}
+
+TEST_CASE("In play the cursor hides unless the mouse is moving, and shows in the menu and outside Play",
+          "[gameshell][cursor]")
+{
+    Fixture f;
+    f.Frame(false);
+    CHECK_FALSE(f.UI().HidesCursor());
+
+    // Play starts with it hidden
+    f.Frame();
+    CHECK(f.UI().HidesCursor());
+
+    // moving the mouse brings it back, so the HUD's Pause button can be found
+    f.MoveTo(200.0f, 200.0f);
+    f.Frame();
+    CHECK(f.Input().ActiveDevice() == DeviceKind::Mouse);
+    CHECK_FALSE(f.UI().HidesCursor());
+
+    // at rest it hides again once the idle time is up
+    f.Frame(true, GameShell::kCursorIdleSeconds * 0.5f);
+    CHECK_FALSE(f.UI().HidesCursor());
+    f.Frame(true, GameShell::kCursorIdleSeconds * 0.5f);
+    CHECK(f.UI().HidesCursor());
+
+    // the menu shows it, however it was opened
+    f.Tap(Key::Escape);
+    REQUIRE(f.Shell().MenuOpen());
+    CHECK_FALSE(f.UI().HidesCursor());
+    f.Tap(Key::Escape);
+    REQUIRE_FALSE(f.Shell().MenuOpen());
+    CHECK(f.UI().HidesCursor());
+
+    // and so does leaving Play
+    f.Frame(false);
+    CHECK_FALSE(f.UI().HidesCursor());
+}
+
+TEST_CASE("The cursor hides while the gamepad is in use and while the mouse looks around", "[gameshell][cursor]")
+{
+    Fixture f;
+    f.Frame();
+    f.MoveTo(200.0f, 200.0f);
+    f.Frame();
+    REQUIRE_FALSE(f.UI().HidesCursor());
+
+    f.Flick(GamepadAxis::RightX, 1.0f);
+    CHECK(f.Input().ActiveDevice() == DeviceKind::Gamepad);
+    CHECK(f.UI().HidesCursor());
+
+    // the right button turns the camera, so a moving mouse is looking, not pointing
+    f.SetMouse(MouseButton::Right, true);
+    f.MoveTo(220.0f, 210.0f);
+    f.Frame();
+    CHECK(f.Input().ActiveDevice() == DeviceKind::Mouse);
+    CHECK(f.UI().HidesCursor());
+    f.SetMouse(MouseButton::Right, false);
+    f.MoveTo(240.0f, 220.0f);
+    f.Frame();
+    CHECK_FALSE(f.UI().HidesCursor());
+}
+
+TEST_CASE("In the editor's viewport the cursor is never hidden over the panels around it", "[gameshell][cursor]")
+{
+    Fixture f(kViewport);
+    f.Frame();
+
+    f.MoveTo(100.0f, 100.0f);
+    f.Frame(true, GameShell::kCursorIdleSeconds);
+    f.Frame(true, GameShell::kCursorIdleSeconds);
+    CHECK(f.UI().HidesCursor());
+
+    f.MoveTo(-50.0f, 100.0f);
+    f.Frame(true, GameShell::kCursorIdleSeconds);
+    f.Frame(true, GameShell::kCursorIdleSeconds);
+    CHECK_FALSE(f.UI().HidesCursor());
 }

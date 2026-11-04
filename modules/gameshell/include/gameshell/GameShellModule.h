@@ -41,6 +41,9 @@ namespace mir
         // The pause menu's Audio screen; set once the audio is built, null leaves it out
         void SetAudioOptions(IAudioOptions *audio) { mShell.SetAudioOptions(audio); }
 
+        // The pause menu's Controls screen; null leaves it out
+        void SetControlsOptions(IControlsOptions *controls) { mShell.SetControlsOptions(controls); }
+
     private:
         // what the player asked of the game, as requests App applies next frame
         void Apply(GameShellAction action);

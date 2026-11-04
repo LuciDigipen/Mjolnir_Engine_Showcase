@@ -101,6 +101,14 @@ driven by every device. That is the difference from
 for every reader, so a menu that set it would lock itself out of the very keys
 it is navigated by.
 
+A screen that wants the mouse cursor out of sight calls
+`UIContext::HideCursor()` in each frame it should be hidden, the same way:
+`EndFrame` latches it into `HidesCursor()`, and the first frame no screen calls
+it, the cursor is back. gameui names no OS cursor, so the bridge applies it:
+`gameui_imgui` sets `ImGuiMouseCursor_None` after the frame, because ImGui's
+GLFW backend sets the OS cursor from ImGui's own every frame and would undo a
+direct `glfwSetInputMode`. A suspended game UI hides nothing.
+
 Two things are decided by `InputState::ActiveDevice()`, the device that last
 spoke, and nothing else in gameui reads it. The first is whether the focus
 highlight is drawn. Under the mouse it is noise, since the pointer already
@@ -273,7 +281,7 @@ measuring pass, since nothing measures text yet.
 | `UIWidgetResult`, `UIDisplayOptions`; `Label`, `Button`, `Image`, `Bar`, `Toggle`, `Slider`; `Panel` | `gameui/UIWidgets.h` | The core widgets, in grey box or the style's art; `Panel` draws the style's panel and declares nothing |
 | `UIAnchor`, `UIAxis`, `UIStack`; `Inset`, `Anchor` | `gameui/UILayout.h` | Layout over rects: insets, anchoring to a point of a container, rows and columns cut from either end; `kUITopLeft` to `kUIBottomRight` |
 | `UIDemoScreen`, `UIDemoLayout` | `gameui/UIDemoScreen.h` | Every core widget on one screen, drawn by `App` under `--ui-demo`; `Layout(safeArea)` places it without drawing |
-| `UIContext`, `UIPrompt` | `gameui/UIContext.h` | `BeginFrame(area, InputState&, InputMap&, UIPointer)`/`EndFrame`, `Interact`, `Nav`, `CancelPressed`, `PausePressed`, `HoldInput`/`HoldsInput`, `FocusVisible`, `Prompt`, `Bounds`, `SafeArea`/`SetSafeAreaInsets`, `Scale`/`SetDesignSize`; owns the draw list, the state, the style, the textures and the safe-area insets |
+| `UIContext`, `UIPrompt` | `gameui/UIContext.h` | `BeginFrame(area, InputState&, InputMap&, UIPointer)`/`EndFrame`, `Interact`, `Nav`, `CancelPressed`, `PausePressed`, `HoldInput`/`HoldsInput`, `HideCursor`/`HidesCursor`, `FocusVisible`, `Prompt`, `Bounds`, `SafeArea`/`SetSafeAreaInsets`, `Scale`/`SetDesignSize`; owns the draw list, the state, the style, the textures and the safe-area insets |
 
 Coordinates passed to `UIDrawList` and to `Interact` are local: `(0, 0)` is the
 top-left of the area. Each command stores its clip already intersected with
@@ -558,6 +566,12 @@ looks right is verified by running `--ui-demo`.
    screen that needs them, as rows and columns waited for the demo screen.
 
 ## Changed
+
+*2026-11-04* — **A screen can hide the cursor.** Was: nothing in gameui could
+hide the OS cursor. Now: `UIContext::HideCursor()` and `HidesCursor()`, latched
+at `EndFrame` like `HoldInput`, and `UIState::PointerMoved()`. Default off, so
+existing screens are unchanged. Because the game shell hides the cursor in
+Play, and only the bridge may touch the OS cursor.
 
 *2026-10-24* — **Backend-free, with a module.** Was: `UIBackendImGui.cpp` lived
 here and gameui linked `imgui`, and `App` held the `UIContext`, chose the area

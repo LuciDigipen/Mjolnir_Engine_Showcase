@@ -93,6 +93,12 @@ namespace mir
 
         bool HoldsInput() const { return mHoldsInput; }
 
+        //the mouse cursor is hidden from the frame this is called in until a frame does not call it; the backend
+        //bridge applies it
+        void HideCursor();
+
+        bool HidesCursor() const { return mHidesCursor; }
+
         bool FocusVisible() const { return mState.FocusVisible(); }
 
         //only between BeginFrame and EndFrame
@@ -130,5 +136,7 @@ namespace mir
         bool mInFrame = false;
         bool mHoldInput = false;
         bool mHoldsInput = false;
+        bool mHideCursor = false;
+        bool mHidesCursor = false;
     };
 } // namespace mir
