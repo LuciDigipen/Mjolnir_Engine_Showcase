@@ -1,7 +1,7 @@
 /**
  * @file FakeCMake.cpp
  * @author Quy Dong Ta
- * @brief A test-only cmake.exe for the player step: configures, compiles and installs without a compiler,
+ * @brief A test-only cmake.exe for the game build step: configures, compiles and installs without a compiler,
  *        and appends each call to fake_cmake_calls.txt in the checkout. fake_cmake_fail.txt there names
  *        a phase to fail ("configure", "compile", "install") or "editor" to install an editor build.
  *
@@ -101,7 +101,7 @@ int main(int argc, char **argv)
         }
         Write(prefix / "MjolnirEngine.exe", "engine");
         Write(prefix / "MjolnirErrorReporter.exe", "reporter");
-        Write(prefix / "player_info.json", info + " }\n");
+        Write(prefix / "game_build_info.json", info + " }\n");
         Write(prefix / "fonts" / "Inter.ttf", "font");
         return 0;
     }

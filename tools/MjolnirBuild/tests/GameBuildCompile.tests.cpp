@@ -1,7 +1,7 @@
 /**
- * @file PlayerCompile.tests.cpp
+ * @file GameBuildCompile.tests.cpp
  * @author Quy Dong Ta
- * @brief Tests for the player step: its checks and batch file, and whole builds with a test-only cmake.exe.
+ * @brief Tests for the game build step: its checks and batch file, and whole builds with a test-only cmake.exe.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -10,9 +10,9 @@
 
 #include <BuildOutput.h>
 #include <GameBuild.h>
-#include <PlayerCompile.h>
+#include <GameBuildCompile.h>
 
-#include <project/PlayerInfo.h>
+#include <project/GameBuildInfo.h>
 
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -74,7 +74,7 @@ namespace
         return nlohmann::json::parse(*text);
     }
 
-    // Puts the test-only cmake.exe first on PATH, which the player step's cmd inherits
+    // Puts the test-only cmake.exe first on PATH, which the game build step's cmd inherits
     struct FakeCMakeOnPath
     {
         std::wstring mPath;
@@ -99,9 +99,9 @@ namespace
         Sandbox mSandbox;
         FakeCMakeOnPath mPath;
         fs::path mCheckout = mSandbox.mRoot / "checkout";
-        fs::path mPlayer = mSandbox.mRoot / "player";
+        fs::path mGameBuildDir = mSandbox.mRoot / "game-build";
         fs::path mOut = mSandbox.mRoot / "out";
-        fs::path mEditorInfo = mSandbox.mRoot / "editor" / "player_info.json";
+        fs::path mEditorInfo = mSandbox.mRoot / "editor" / "game_build_info.json";
         nlohmann::json mEditor = { { "version", 1 }, { "engineVersion", "0.1.0" }, { "commit", "fake" },
             { "editor", true }, { "largeWorld", false }, { "audio", true }, { "dlss", false }, { "rtxgi", true } };
 
@@ -116,8 +116,8 @@ namespace
         {
             BuildRequest request;
             request.mGameDir = mCheckout / "games" / "Demo";
-            request.mPlayerDir = mPlayer;
-            request.mPlayerPreset = kPreset;
+            request.mGameBuildDir = mGameBuildDir;
+            request.mGameBuildPreset = kPreset;
             request.mOutDir = mOut;
             request.mAssetCooker = MJOLNIR_BUILD_ASSET_COOKER;
             request.mTerrainTool = MJOLNIR_BUILD_TERRAIN_TOOL;
@@ -145,7 +145,7 @@ namespace
     };
 }
 
-TEST_CASE("A player preset must be a visible configure preset with a build preset of its own", "[player-compile]")
+TEST_CASE("A game build preset must be a visible configure preset with a build preset of its own", "[game-build-compile]")
 {
     Sandbox sandbox;
     WritePresets(sandbox.mRoot);
@@ -164,7 +164,7 @@ TEST_CASE("A player preset must be a visible configure preset with a build prese
     CHECK(Has(PresetProblem(sandbox.mRoot / "nowhere", kPreset), "no readable CMakePresets.json"));
 }
 
-TEST_CASE("CMakeUserPresets.json and the files it includes add presets", "[player-compile]")
+TEST_CASE("CMakeUserPresets.json and the files it includes add presets", "[game-build-compile]")
 {
     Sandbox sandbox;
     WritePresets(sandbox.mRoot);
@@ -180,29 +180,29 @@ TEST_CASE("CMakeUserPresets.json and the files it includes add presets", "[playe
     CHECK_FALSE(PresetProblem(sandbox.mRoot, kPreset));
 }
 
-TEST_CASE("Only a missing, empty or player template folder is replaced", "[player-compile]")
+TEST_CASE("Only a missing, empty or game build template folder is replaced", "[game-build-compile]")
 {
     Sandbox sandbox;
-    const fs::path player = sandbox.mRoot / "player";
-    CHECK_FALSE(PlayerDirProblem(player));
-    fs::create_directories(player);
-    CHECK_FALSE(PlayerDirProblem(player));
-    MakePlayerTemplate(player);
-    CHECK_FALSE(PlayerDirProblem(player));
+    const fs::path gameBuild = sandbox.mRoot / "game-build";
+    CHECK_FALSE(GameBuildDirProblem(gameBuild));
+    fs::create_directories(gameBuild);
+    CHECK_FALSE(GameBuildDirProblem(gameBuild));
+    MakeGameBuildTemplate(gameBuild);
+    CHECK_FALSE(GameBuildDirProblem(gameBuild));
 
     Touch(sandbox.mRoot / "cmake" / "CMakeCache.txt");
-    CHECK(Has(PlayerDirProblem(sandbox.mRoot / "cmake"), "CMake build folder"));
+    CHECK(Has(GameBuildDirProblem(sandbox.mRoot / "cmake"), "CMake build folder"));
     Touch(sandbox.mRoot / "game" / kBuildMarkerFileName, "{}");
-    CHECK(Has(PlayerDirProblem(sandbox.mRoot / "game"), "game build"));
-    MakePlayerTemplate(sandbox.mRoot / "editor", true);
-    CHECK(Has(PlayerDirProblem(sandbox.mRoot / "editor"), "not a player template"));
+    CHECK(Has(GameBuildDirProblem(sandbox.mRoot / "game"), "game build"));
+    MakeGameBuildTemplate(sandbox.mRoot / "editor", true);
+    CHECK(Has(GameBuildDirProblem(sandbox.mRoot / "editor"), "not a game build template"));
     Touch(sandbox.mRoot / "other" / "notes.txt");
-    CHECK(Has(PlayerDirProblem(sandbox.mRoot / "other"), "not a player template"));
+    CHECK(Has(GameBuildDirProblem(sandbox.mRoot / "other"), "not a game build template"));
     Touch(sandbox.mRoot / "file");
-    CHECK(Has(PlayerDirProblem(sandbox.mRoot / "file"), "is a file"));
+    CHECK(Has(GameBuildDirProblem(sandbox.mRoot / "file"), "is a file"));
 }
 
-TEST_CASE("The template and output stay out of the preset's build folder", "[player-compile]")
+TEST_CASE("The template and output stay out of the preset's build folder", "[game-build-compile]")
 {
     Sandbox sandbox;
     const fs::path checkout = sandbox.mRoot / "checkout";
@@ -210,24 +210,24 @@ TEST_CASE("The template and output stay out of the preset's build folder", "[pla
     WritePresets(checkout);
     const fs::path buildDir = PresetBuildDir(checkout, kPreset);
 
-    PlayerCompile compile{ checkout, std::string(kPreset), sandbox.mRoot / "player", {} };
-    CHECK_FALSE(CheckPlayerCompile(compile, out));
-    CHECK(Has(CheckPlayerCompile(compile, buildDir / "out"), "overlaps"));
+    GameBuildCompile compile{ checkout, std::string(kPreset), sandbox.mRoot / "game-build", {} };
+    CHECK_FALSE(CheckGameBuildCompile(compile, out));
+    CHECK(Has(CheckGameBuildCompile(compile, buildDir / "out"), "overlaps"));
 
-    for (const fs::path &player : { buildDir / "player", checkout / "builds" })
+    for (const fs::path &gameBuild : { buildDir / "game-build", checkout / "builds" })
     {
-        INFO(PathText(player));
-        compile.mPlayerDir = player;
-        CHECK(Has(CheckPlayerCompile(compile, out), "overlaps"));
+        INFO(PathText(gameBuild));
+        compile.mGameBuildDir = gameBuild;
+        CHECK(Has(CheckGameBuildCompile(compile, out), "overlaps"));
     }
 
     // the editor's own build folder
-    compile.mPlayerDir = sandbox.mRoot / "player";
-    compile.mEditorInfo = buildDir / "player_info.json";
-    CHECK(Has(CheckPlayerCompile(compile, out), "this MjolnirBuild"));
+    compile.mGameBuildDir = sandbox.mRoot / "game-build";
+    compile.mEditorInfo = buildDir / "game_build_info.json";
+    CHECK(Has(CheckGameBuildCompile(compile, out), "this MjolnirBuild"));
 }
 
-TEST_CASE("The build folder this MjolnirBuild runs from is refused", "[player-compile]")
+TEST_CASE("The build folder this MjolnirBuild runs from is refused", "[game-build-compile]")
 {
     const fs::path source = MJOLNIR_SOURCE_DIR;
     const fs::path binaryDir = fs::path(MJOLNIR_ENGINE_COOK_DIR).parent_path();
@@ -236,25 +236,25 @@ TEST_CASE("The build folder this MjolnirBuild runs from is refused", "[player-co
         SKIP("these tests were not built in a preset's folder");
 
     Sandbox sandbox;
-    CHECK(Has(CheckPlayerCompile({ source, preset, sandbox.mRoot / "player", {} }, sandbox.mRoot / "out"),
+    CHECK(Has(CheckGameBuildCompile({ source, preset, sandbox.mRoot / "game-build", {} }, sandbox.mRoot / "out"),
         "this MjolnirBuild"));
 }
 
-TEST_CASE("An install left beside the template is removed only when it is the player step's", "[player-compile]")
+TEST_CASE("An install left beside the template is removed only when it is the game build step's", "[game-build-compile]")
 {
     Sandbox sandbox;
     const fs::path checkout = sandbox.mRoot / "checkout";
     WritePresets(checkout);
-    const PlayerCompile compile{ checkout, std::string(kPreset), sandbox.mRoot / "player", {} };
-    const fs::path staging = PlayerStagingDir(compile.mPlayerDir);
+    const GameBuildCompile compile{ checkout, std::string(kPreset), sandbox.mRoot / "game-build", {} };
+    const fs::path staging = GameBuildStagingDir(compile.mGameBuildDir);
 
     Touch(staging / "notes.txt");
-    CHECK(Has(CheckPlayerCompile(compile, sandbox.mRoot / "out"), "installed there"));
-    Touch(staging / "mjolnir_player_install", "");
-    CHECK_FALSE(CheckPlayerCompile(compile, sandbox.mRoot / "out"));
+    CHECK(Has(CheckGameBuildCompile(compile, sandbox.mRoot / "out"), "installed there"));
+    Touch(staging / "mjolnir_game_build_install", "");
+    CHECK_FALSE(CheckGameBuildCompile(compile, sandbox.mRoot / "out"));
 }
 
-TEST_CASE("The player is configured with the editor's options", "[player-compile]")
+TEST_CASE("The game build is configured with the editor's options", "[game-build-compile]")
 {
     const nlohmann::json editor = { { "editor", true }, { "largeWorld", true }, { "audio", false }, { "dlss", false },
         { "rtxgi", true } };
@@ -264,7 +264,7 @@ TEST_CASE("The player is configured with the editor's options", "[player-compile
         std::vector<std::string>{ "-DMIR_WITH_AUDIO=ON" });
 }
 
-TEST_CASE("Configure runs again only when it never finished or the cache holds other values", "[player-compile]")
+TEST_CASE("Configure runs again only when it never finished or the cache holds other values", "[game-build-compile]")
 {
     Sandbox sandbox;
     const fs::path build = sandbox.mRoot / "build";
@@ -285,34 +285,34 @@ TEST_CASE("Configure runs again only when it never finished or the cache holds o
     CHECK(NeedsConfigure(build, std::vector<std::string>{ "-DMIR_WITH_DLSS=ON" }));
 }
 
-TEST_CASE("The batch file configures when asked, then compiles the player's two targets and installs", "[player-compile]")
+TEST_CASE("The batch file configures when asked, then compiles the game build's two targets and installs", "[game-build-compile]")
 {
-    PlayerScript script{ "C:/My Checkout/100%", "game-release", "C:/out/player.tmp",
+    GameBuildScript script{ "C:/My Checkout/100%", "game-release", "C:/out/game-build.tmp",
         std::vector<std::string>{ "-DMIR_WITH_AUDIO=ON", "-DMIR_WITH_DLSS=OFF" } };
-    const std::string text = PlayerScriptText(script);
+    const std::string text = GameBuildScriptText(script);
 
     CHECK(text.starts_with("@echo off\r\n"));
     CHECK(Has(text, "cd /d \"C:\\My Checkout\\100%%\" || exit /b 10\r\n"));
     CHECK(Has(text, "cmake --preset game-release -DMIR_WITH_AUDIO=ON -DMIR_WITH_DLSS=OFF || exit /b 11\r\n"));
     CHECK(Has(text, "cmake --build --preset game-release --target MjolnirEngine MjolnirErrorReporter || exit /b 12\r\n"));
-    CHECK(Has(text, "cmake --install \"builds\\game-release\" --prefix \"C:\\out\\player.tmp\" || exit /b 13\r\n"));
+    CHECK(Has(text, "cmake --install \"builds\\game-release\" --prefix \"C:\\out\\game-build.tmp\" || exit /b 13\r\n"));
     CHECK(text.find("cmake --preset") < text.find("cmake --build"));
     CHECK(text.find("cmake --build") < text.find("cmake --install"));
 
     script.mConfigure.reset();
-    CHECK_FALSE(Has(PlayerScriptText(script), "cmake --preset"));
+    CHECK_FALSE(Has(GameBuildScriptText(script), "cmake --preset"));
 }
 
-TEST_CASE("Without a player preset the player step is skipped and nothing compiles", "[player-compile]")
+TEST_CASE("Without a game build preset the game build step is skipped and nothing compiles", "[game-build-compile]")
 {
     Sandbox sandbox;
     const fs::path checkout = sandbox.mRoot / "checkout";
     MakeCheckout(checkout);
-    MakePlayerTemplate(sandbox.mRoot / "player");
+    MakeGameBuildTemplate(sandbox.mRoot / "game-build");
 
     BuildRequest request;
     request.mGameDir = checkout / "games" / "Quiet";
-    request.mPlayerDir = sandbox.mRoot / "player";
+    request.mGameBuildDir = sandbox.mRoot / "game-build";
     request.mOutDir = sandbox.mRoot / "out";
     request.mAssetCooker = MJOLNIR_BUILD_ASSET_COOKER;
     request.mTerrainTool = MJOLNIR_BUILD_TERRAIN_TOOL;
@@ -321,43 +321,43 @@ TEST_CASE("Without a player preset the player step is skipped and nothing compil
     REQUIRE(report.mOk);
 
     REQUIRE(report.mSteps.size() > 2);
-    CHECK(report.mSteps[1].mName == "player");
+    CHECK(report.mSteps[1].mName == "game build");
     CHECK(report.mSteps[1].mStatus == StepStatus::Skipped);
     CHECK_FALSE(fs::exists(checkout / "builds"));
 }
 
-TEST_CASE("The player step configures once, and installs a fresh template with the editor's options each build",
-    "[player-compile]")
+TEST_CASE("The game build step configures once, and installs a fresh template with the editor's options each build",
+    "[game-build-compile]")
 {
     CompileFixture fixture;
-    MakePlayerTemplate(fixture.mPlayer);
-    Touch(fixture.mPlayer / "shaders" / "generations" / "0000000000000001" / "stale.spv");
+    MakeGameBuildTemplate(fixture.mGameBuildDir);
+    Touch(fixture.mGameBuildDir / "shaders" / "generations" / "0000000000000001" / "stale.spv");
     // an install a killed build left
-    Touch(PlayerStagingDir(fixture.mPlayer) / "mjolnir_player_install", "");
-    Touch(PlayerStagingDir(fixture.mPlayer) / "MjolnirEngine.exe");
+    Touch(GameBuildStagingDir(fixture.mGameBuildDir) / "mjolnir_game_build_install", "");
+    Touch(GameBuildStagingDir(fixture.mGameBuildDir) / "MjolnirEngine.exe");
 
     const BuildReport first = RunGameBuild(fixture.Request());
     INFO(first.mError);
     REQUIRE(first.mOk);
     REQUIRE(first.mSteps.size() > 2);
-    CHECK(first.mSteps[1].mName == "player");
+    CHECK(first.mSteps[1].mName == "game build");
     CHECK(first.mSteps[1].mStatus == StepStatus::Succeeded);
     CHECK(first.mWarnings.empty());
     CHECK(fs::exists(fixture.mOut / "Demo.exe"));
-    CHECK_FALSE(fs::exists(fixture.mPlayer / "shaders"));
-    CHECK_FALSE(fs::exists(PlayerStagingDir(fixture.mPlayer)));
+    CHECK_FALSE(fs::exists(fixture.mGameBuildDir / "shaders"));
+    CHECK_FALSE(fs::exists(GameBuildStagingDir(fixture.mGameBuildDir)));
 
-    const nlohmann::json info = ReadJson(fixture.mPlayer / "player_info.json");
+    const nlohmann::json info = ReadJson(fixture.mGameBuildDir / "game_build_info.json");
     CHECK(info.at("editor") == false);
-    for (const PlayerFeature &feature : kPlayerFeatures)
+    for (const GameBuildFeature &feature : kGameBuildFeatures)
     {
         INFO(feature.mKey);
         CHECK(info.at(std::string(feature.mKey)) == fixture.mEditor.at(std::string(feature.mKey)));
     }
 
     // kept for running by hand, with what it printed
-    CHECK(fs::exists(fixture.BuildDir() / "mjolnir_player.bat"));
-    const std::optional<std::string> log = ReadText(fixture.BuildDir() / "mjolnir_player.log");
+    CHECK(fs::exists(fixture.BuildDir() / "mjolnir_game_build.bat"));
+    const std::optional<std::string> log = ReadText(fixture.BuildDir() / "mjolnir_game_build.log");
     REQUIRE(log);
     CHECK(Has(*log, "fake cmake --install"));
 
@@ -371,7 +371,7 @@ TEST_CASE("The player step configures once, and installs a fresh template with t
     CHECK(fixture.Calls("--install") == 2);
 }
 
-TEST_CASE("An editor option that changed configures the player again", "[player-compile]")
+TEST_CASE("An editor option that changed configures the game build again", "[game-build-compile]")
 {
     CompileFixture fixture;
     REQUIRE(RunGameBuild(fixture.Request()).mOk);
@@ -382,37 +382,37 @@ TEST_CASE("An editor option that changed configures the player again", "[player-
     INFO(report.mError);
     REQUIRE(report.mOk);
     CHECK(fixture.Calls("--preset") == 2);
-    CHECK(ReadJson(fixture.mPlayer / "player_info.json").at("dlss") == true);
+    CHECK(ReadJson(fixture.mGameBuildDir / "game_build_info.json").at("dlss") == true);
 }
 
 TEST_CASE("A failed compile keeps the previous template and build, and leaves no install beside them",
-    "[player-compile]")
+    "[game-build-compile]")
 {
     CompileFixture fixture;
     REQUIRE(RunGameBuild(fixture.Request()).mOk);
-    Touch(fixture.mPlayer / "kept.txt");
+    Touch(fixture.mGameBuildDir / "kept.txt");
 
     fixture.FailAt("compile");
     const BuildReport report = RunGameBuild(fixture.Request());
     CHECK_FALSE(report.mOk);
-    REQUIRE(FindStep(report, "player"));
-    CHECK(FindStep(report, "player")->mStatus == StepStatus::Failed);
-    CHECK(Has(report.mError, "compiling the player with game-release failed"));
-    CHECK(Has(report.mError, PathText(fixture.BuildDir() / "mjolnir_player.log")));
-    CHECK(Has(ReadText(fixture.BuildDir() / "mjolnir_player.log").value_or(""), "error C2065"));
+    REQUIRE(FindStep(report, "game build"));
+    CHECK(FindStep(report, "game build")->mStatus == StepStatus::Failed);
+    CHECK(Has(report.mError, "compiling the game build with game-release failed"));
+    CHECK(Has(report.mError, PathText(fixture.BuildDir() / "mjolnir_game_build.log")));
+    CHECK(Has(ReadText(fixture.BuildDir() / "mjolnir_game_build.log").value_or(""), "error C2065"));
 
-    CHECK(fs::exists(fixture.mPlayer / "kept.txt"));
-    CHECK(fs::exists(fixture.mPlayer / "MjolnirEngine.exe"));
-    CHECK_FALSE(fs::exists(PlayerStagingDir(fixture.mPlayer)));
+    CHECK(fs::exists(fixture.mGameBuildDir / "kept.txt"));
+    CHECK(fs::exists(fixture.mGameBuildDir / "MjolnirEngine.exe"));
+    CHECK_FALSE(fs::exists(GameBuildStagingDir(fixture.mGameBuildDir)));
     CHECK(IsBuildDir(fixture.mOut));
     CHECK(fs::exists(fixture.mOut / "Demo.exe"));
     CHECK_FALSE(fs::exists(StagingDir(fixture.mOut)));
 }
 
-TEST_CASE("A failed configure or install says which, and installs nothing", "[player-compile]")
+TEST_CASE("A failed configure or install says which, and installs nothing", "[game-build-compile]")
 {
     for (const auto &[phase, message] : { std::pair{ "configure", "configuring game-release failed" },
-             std::pair{ "install", "installing the player from" } })
+             std::pair{ "install", "installing the game build from" } })
     {
         INFO(phase);
         CompileFixture fixture;
@@ -421,13 +421,13 @@ TEST_CASE("A failed configure or install says which, and installs nothing", "[pl
         const BuildReport report = RunGameBuild(fixture.Request());
         CHECK_FALSE(report.mOk);
         CHECK(Has(report.mError, message));
-        CHECK_FALSE(fs::exists(fixture.mPlayer));
-        CHECK_FALSE(fs::exists(PlayerStagingDir(fixture.mPlayer)));
+        CHECK_FALSE(fs::exists(fixture.mGameBuildDir));
+        CHECK_FALSE(fs::exists(GameBuildStagingDir(fixture.mGameBuildDir)));
         CHECK_FALSE(fs::exists(fixture.mOut));
     }
 }
 
-TEST_CASE("A preset that installs an editor build keeps the previous template", "[player-compile]")
+TEST_CASE("A preset that installs an editor build keeps the previous template", "[game-build-compile]")
 {
     CompileFixture fixture;
     REQUIRE(RunGameBuild(fixture.Request()).mOk);
@@ -437,15 +437,15 @@ TEST_CASE("A preset that installs an editor build keeps the previous template", 
     CHECK_FALSE(report.mOk);
     CHECK(Has(report.mError, "editor build"));
     CHECK(Has(report.mError, "game preset"));
-    CHECK(ReadJson(fixture.mPlayer / "player_info.json").at("editor") == false);
-    CHECK_FALSE(fs::exists(PlayerStagingDir(fixture.mPlayer)));
+    CHECK(ReadJson(fixture.mGameBuildDir / "game_build_info.json").at("editor") == false);
+    CHECK_FALSE(fs::exists(GameBuildStagingDir(fixture.mGameBuildDir)));
 }
 
-TEST_CASE("A bad output folder or an unknown preset fails in check, before anything compiles", "[player-compile]")
+TEST_CASE("A bad output folder or an unknown preset fails in check, before anything compiles", "[game-build-compile]")
 {
     CompileFixture fixture;
     BuildRequest request = fixture.Request();
-    request.mPlayerPreset = "missing";
+    request.mGameBuildPreset = "missing";
     const BuildReport unknown = RunGameBuild(request);
     CHECK_FALSE(unknown.mOk);
     REQUIRE(unknown.mSteps.size() == 1);
@@ -462,23 +462,23 @@ TEST_CASE("A bad output folder or an unknown preset fails in check, before anyth
     CHECK_FALSE(fs::exists(fixture.BuildDir()));
 }
 
-TEST_CASE("A template folder that is a build folder, a game build or other files is refused and kept",
-    "[player-compile]")
+TEST_CASE("A template folder that is a build folder, a packaged game or other files is refused and kept",
+    "[game-build-compile]")
 {
     CompileFixture fixture;
     for (const auto &[name, file] : { std::pair{ "cmake", "CMakeCache.txt" }, std::pair{ "game", "mjolnir_build.json" },
              std::pair{ "other", "notes.txt" } })
     {
         INFO(name);
-        const fs::path player = fixture.mSandbox.mRoot / name;
-        Touch(player / file, "{}");
+        const fs::path gameBuild = fixture.mSandbox.mRoot / name;
+        Touch(gameBuild / file, "{}");
 
         BuildRequest request = fixture.Request();
-        request.mPlayerDir = player;
+        request.mGameBuildDir = gameBuild;
         const BuildReport report = RunGameBuild(request);
         CHECK_FALSE(report.mOk);
         CHECK(report.mSteps.size() == 1);
-        CHECK(fs::exists(player / file));
+        CHECK(fs::exists(gameBuild / file));
     }
     CHECK_FALSE(fs::exists(fixture.mCheckout / "fake_cmake_calls.txt"));
 }

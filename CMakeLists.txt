@@ -29,7 +29,7 @@ include(cmake/Shaders.cmake)
 include(cmake/Assets.cmake)
 include(cmake/Fonts.cmake)
 include(cmake/Branding.cmake)
-include(cmake/Player.cmake)
+include(cmake/GameBuild.cmake)
 
 option(BUILD_TESTING "Build unit tests (per module, run via ctest)" ON)
 
@@ -396,11 +396,11 @@ endif()
 engine_copy_fonts(MjolnirEngine SOURCE_DIR fonts)
 # The master logo and the icon compiled into the exe aren't read at runtime
 engine_copy_branding(MjolnirEngine SOURCE_DIR branding EXCLUDE mjolnir-logo.png mjolnir.ico)
-engine_write_player_info(MjolnirEngine)
+engine_write_game_build_info(MjolnirEngine)
 
-# A build without the editor is the player; `cmake --install` turns it into a template
+# A build without the editor is the game build; `cmake --install` turns it into a template
 if(NOT MJOLNIR_WITH_EDITOR)
-    engine_install_player(MjolnirEngine)
+    engine_install_game_build(MjolnirEngine)
 endif()
 
 add_custom_target(MjolnirEngine_copy_games
@@ -525,25 +525,25 @@ if(BUILD_TESTING)
             TIMEOUT 120)
     endif()
 
-    # A game build installs itself as a player template, packages every game with
+    # A game build installs itself as a game build template, packages every game with
     # MjolnirBuild, then starts each package as a double-click would: no --game.
     # The packages go outside this build folder, where MjolnirBuild refuses to write
     if(NOT MJOLNIR_WITH_EDITOR)
         get_filename_component(build_name "${CMAKE_BINARY_DIR}" NAME)
         set(package_dir "${CMAKE_SOURCE_DIR}/builds/smoke-build/${build_name}")
-        add_test(NAME build.player
-            COMMAND "${CMAKE_COMMAND}" "-DBUILD_DIR=${CMAKE_BINARY_DIR}" "-DPREFIX=${package_dir}/player"
-                    -P "${CMAKE_SOURCE_DIR}/tools/MjolnirBuild/tests/InstallPlayer.cmake")
-        set_tests_properties(build.player PROPERTIES
-            FIXTURES_SETUP build_player
+        add_test(NAME build.game_build
+            COMMAND "${CMAKE_COMMAND}" "-DBUILD_DIR=${CMAKE_BINARY_DIR}" "-DPREFIX=${package_dir}/game-build"
+                    -P "${CMAKE_SOURCE_DIR}/tools/MjolnirBuild/tests/InstallGameBuild.cmake")
+        set_tests_properties(build.game_build PROPERTIES
+            FIXTURES_SETUP build_game_build
             LABELS smoke
             TIMEOUT 300)
         foreach(game_name IN LISTS game_names)
             add_test(NAME build.package.${game_name}
-                COMMAND MjolnirBuild --game "${CMAKE_SOURCE_DIR}/games/${game_name}" --player "${package_dir}/player"
+                COMMAND MjolnirBuild --game "${CMAKE_SOURCE_DIR}/games/${game_name}" --game-build "${package_dir}/game-build"
                         --out "${package_dir}/${game_name}" --result "${package_dir}/${game_name}.json")
             set_tests_properties(build.package.${game_name} PROPERTIES
-                FIXTURES_REQUIRED build_player
+                FIXTURES_REQUIRED build_game_build
                 FIXTURES_SETUP build_${game_name}
                 LABELS smoke
                 TIMEOUT 600)

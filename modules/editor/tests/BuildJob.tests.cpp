@@ -28,7 +28,7 @@ namespace
 {
     namespace fs = std::filesystem;
 
-    // A checkout with one engine asset and a game, a player template, and room for the output
+    // A checkout with one engine asset and a game, a game build template, and room for the output
     struct BuildSandbox
     {
         fs::path mRoot;
@@ -42,8 +42,8 @@ namespace
             Write(Checkout() / "assets" / "engine.txt", "x");
             Write(Game() / "game.json", R"({ "name": "Demo" })");
             Write(Game() / "scenes" / "default" / "scene.json", R"({ "entities": [] })");
-            Write(Player() / "MjolnirEngine.exe", "player");
-            Write(Player() / "player_info.json", R"({ "version": 1, "editor": false })");
+            Write(GameBuildDir() / "MjolnirEngine.exe", "game-build");
+            Write(GameBuildDir() / "game_build_info.json", R"({ "version": 1, "editor": false })");
         }
 
         ~BuildSandbox()
@@ -57,12 +57,12 @@ namespace
 
         fs::path Checkout() const { return mRoot / "checkout"; }
         fs::path Game() const { return Checkout() / "games" / "Demo"; }
-        fs::path Player() const { return mRoot / "player"; }
+        fs::path GameBuildDir() const { return mRoot / "game-build"; }
         fs::path Out() const { return mRoot / "out"; }
 
         BuildJobRequest Request() const
         {
-            return BuildJobRequest{ MIR_EDITOR_BUILD_TOOL, Game(), Player(), Out(), mRoot / "result.json" };
+            return BuildJobRequest{ MIR_EDITOR_BUILD_TOOL, Game(), GameBuildDir(), Out(), mRoot / "result.json" };
         }
 
         static void Write(const fs::path &file, const std::string &text)
@@ -163,7 +163,7 @@ TEST_CASE("Cancel stops the build and keeps the previous one", "[build-job]")
     RunToEnd(job);
     INFO(job.Result()->mError);
     CHECK(job.Result()->mOutcome == BuildOutcome::Succeeded);
-    CHECK(ReadText(sandbox.Out() / "Demo.exe") == "player");
+    CHECK(ReadText(sandbox.Out() / "Demo.exe") == "game-build");
 }
 
 TEST_CASE("Cancel after the new build moved in says the new build is there", "[build-job]")
@@ -232,10 +232,10 @@ TEST_CASE("A build that cannot start says why", "[build-job]")
 
 TEST_CASE("MjolnirBuild gets the game, template, output and report paths", "[build-job]")
 {
-    const BuildJobRequest request{ "C:/tools/MjolnirBuild.exe", "C:/game/games/Demo", "C:/player", "C:/My Builds/Demo",
+    const BuildJobRequest request{ "C:/tools/MjolnirBuild.exe", "C:/game/games/Demo", "C:/game-build", "C:/My Builds/Demo",
         "C:/temp/result.json" };
-    CHECK(BuildArguments(request) == std::vector<std::string>{ "--game", "C:/game/games/Demo", "--player",
-        "C:/player", "--out", "C:/My Builds/Demo", "--result", "C:/temp/result.json" });
+    CHECK(BuildArguments(request) == std::vector<std::string>{ "--game", "C:/game/games/Demo", "--game-build",
+        "C:/game-build", "--out", "C:/My Builds/Demo", "--result", "C:/temp/result.json" });
 }
 
 TEST_CASE("The report decides the outcome, and a missing one says how MjolnirBuild exited", "[build-job]")

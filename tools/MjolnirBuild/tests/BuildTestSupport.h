@@ -1,7 +1,7 @@
 /**
  * @file BuildTestSupport.h
  * @author Quy Dong Ta
- * @brief Temporary folders, a fake checkout and a fake player template for the MjolnirBuild tests.
+ * @brief Temporary folders, a fake checkout and a fake game build template for the MjolnirBuild tests.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -54,11 +54,11 @@ namespace mir::build::test
         REQUIRE(WriteText(file, text));
     }
 
-    inline void MakePlayerTemplate(const fs::path &dir, bool editor = false)
+    inline void MakeGameBuildTemplate(const fs::path &dir, bool editor = false)
     {
         Touch(dir / "MjolnirEngine.exe");
         Touch(dir / "MjolnirErrorReporter.exe");
-        Touch(dir / "player_info.json", editor ? "{ \"version\": 1, \"editor\": true }" : "{ \"version\": 1, \"editor\": false }");
+        Touch(dir / "game_build_info.json", editor ? "{ \"version\": 1, \"editor\": true }" : "{ \"version\": 1, \"editor\": false }");
         Touch(dir / "fonts" / "Inter.ttf");
     }
 

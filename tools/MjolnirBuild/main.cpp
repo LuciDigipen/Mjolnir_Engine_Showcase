@@ -1,8 +1,8 @@
 /**
  * @file main.cpp
  * @author Quy Dong Ta
- * @brief MjolnirBuild command line: packages one game with a player template, compiled first with
- *        --player-preset, into a folder.
+ * @brief MjolnirBuild command line: packages one game with a game build template, compiled first with
+ *        --game-build-preset, into a folder.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -32,17 +32,17 @@ namespace
 
     constexpr const char *kUsage =
         "usage:\n"
-        "  MjolnirBuild --game <checkout>/games/<name> --player <template> --out <dir>\n"
-        "               [--player-preset <preset>] [--result <json>]\n"
-        "Cooks the game, then copies it with the player template into <dir>, where <dir>/<name>.exe\n"
+        "  MjolnirBuild --game <checkout>/games/<name> --game-build <template> --out <dir>\n"
+        "               [--game-build-preset <preset>] [--result <json>]\n"
+        "Cooks the game, then copies it with the game build template into <dir>, where <dir>/<name>.exe\n"
         "starts it. Built in <dir>.tmp and moved into place only when every step succeeds, and\n"
-        "compared with this build's player_info.json. <dir> must be empty, a previous build, or\n"
+        "compared with this build's game_build_info.json. <dir> must be empty, a previous build, or\n"
         "missing, and lie outside the checkout or under its builds/.\n"
-        "With --player-preset, the player is first compiled from the checkout with that CMake\n"
+        "With --game-build-preset, the game build is first compiled from the checkout with that CMake\n"
         "preset, e.g. windows-msvc-game-release, with this build's large world, audio, DLSS and\n"
         "RTXGI options, and installed fresh into <template>, which must then be missing, empty or\n"
-        "a player template. The commands are kept in builds/<preset>/mjolnir_player.bat and their\n"
-        "output in builds/<preset>/mjolnir_player.log. Run it from a Developer Command Prompt.\n"
+        "a game build template. The commands are kept in builds/<preset>/mjolnir_game_build.bat and their\n"
+        "output in builds/<preset>/mjolnir_game_build.log. Run it from a Developer Command Prompt.\n"
         "Without it, <template> is used as it is; make one with\n"
         "  cmake --install builds/windows-msvc-game-release --prefix <template>\n"
         "Exit 0: built; 1: the build failed; 2: bad arguments.\n";
@@ -54,7 +54,7 @@ namespace
 
     std::map<std::string, std::string, std::less<>> Parse(int argc, char **argv)
     {
-        constexpr std::string_view kAllowed[] = { "--game", "--player", "--out", "--player-preset", "--result" };
+        constexpr std::string_view kAllowed[] = { "--game", "--game-build", "--out", "--game-build-preset", "--result" };
 
         std::map<std::string, std::string, std::less<>> values;
         for (int i = 1; i < argc; ++i)
@@ -67,7 +67,7 @@ namespace
             if (!values.emplace(arg, argv[++i]).second)
                 throw UsageError(arg + " is given twice");
         }
-        for (std::string_view name : { "--game", "--player", "--out" })
+        for (std::string_view name : { "--game", "--game-build", "--out" })
         {
             if (!values.contains(name))
                 throw UsageError(std::string(name) + " is required");
@@ -120,12 +120,12 @@ int main(int argc, char **argv)
 
         BuildRequest request;
         request.mGameDir = values.find("--game")->second;
-        request.mPlayerDir = values.find("--player")->second;
-        if (const auto preset = values.find("--player-preset"); preset != values.end())
+        request.mGameBuildDir = values.find("--game-build")->second;
+        if (const auto preset = values.find("--game-build-preset"); preset != values.end())
         {
             if (preset->second.empty())
-                throw UsageError("--player-preset needs a preset name");
-            request.mPlayerPreset = preset->second;
+                throw UsageError("--game-build-preset needs a preset name");
+            request.mGameBuildPreset = preset->second;
         }
         request.mOutDir = out;
         request.mAssetCooker = MJOLNIR_BUILD_ASSET_COOKER;

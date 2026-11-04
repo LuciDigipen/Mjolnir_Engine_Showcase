@@ -1,20 +1,20 @@
 /**
- * @file PlayerCompile.cpp
+ * @file GameBuildCompile.cpp
  * @author Quy Dong Ta
- * @brief The player step: writes builds/<preset>/mjolnir_player.bat, runs it with its output in
- *        mjolnir_player.log, and swaps the fresh install into the template's place.
+ * @brief The game build step: writes builds/<preset>/mjolnir_game_build.bat, runs it with its output in
+ *        mjolnir_game_build.log, and swaps the fresh install into the template's place.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
-#include "PlayerCompile.h"
+#include "GameBuildCompile.h"
 
 #include "BuildOutput.h"
 
 #include <core/fs/FileIO.h>
 #include <core/fs/Paths.h>
 #include <core/platform/Process.h>
-#include <project/PlayerInfo.h>
+#include <project/GameBuildInfo.h>
 #include <serial/JsonFile.h>
 
 #include <algorithm>
@@ -33,11 +33,11 @@ namespace mir::build
     namespace
     {
         // Only what the template installs, not the tests and tools the preset also builds
-        constexpr std::string_view kPlayerTargets = "MjolnirEngine MjolnirErrorReporter";
-        constexpr std::string_view kScriptFileName = "mjolnir_player.bat";
-        constexpr std::string_view kLogFileName = "mjolnir_player.log";
+        constexpr std::string_view kGameBuildTargets = "MjolnirEngine MjolnirErrorReporter";
+        constexpr std::string_view kScriptFileName = "mjolnir_game_build.bat";
+        constexpr std::string_view kLogFileName = "mjolnir_game_build.log";
         // In an unfinished install, so the next compile knows the folder is its own to remove
-        constexpr std::string_view kStagingMarkerFileName = "mjolnir_player_install";
+        constexpr std::string_view kStagingMarkerFileName = "mjolnir_game_build_install";
 
         std::string_view Trim(std::string_view text)
         {
@@ -186,22 +186,22 @@ namespace mir::build
             }
         }
 
-        std::string FailureText(int exit, const PlayerCompile &compile, const fs::path &log)
+        std::string FailureText(int exit, const GameBuildCompile &compile, const fs::path &log)
         {
             std::string what;
             switch (exit)
             {
-            case kPlayerExitNoCheckout:
+            case kGameBuildExitNoCheckout:
                 what = "could not enter the checkout " + PathText(compile.mSourceRoot);
                 break;
-            case kPlayerExitConfigure:
+            case kGameBuildExitConfigure:
                 what = "configuring " + compile.mPreset + " failed";
                 break;
-            case kPlayerExitCompile:
-                what = "compiling the player with " + compile.mPreset + " failed";
+            case kGameBuildExitCompile:
+                what = "compiling the game build with " + compile.mPreset + " failed";
                 break;
-            case kPlayerExitInstall:
-                what = "installing the player from " + PathText(PresetBuildDir(compile.mSourceRoot, compile.mPreset)) +
+            case kGameBuildExitInstall:
+                what = "installing the game build from " + PathText(PresetBuildDir(compile.mSourceRoot, compile.mPreset)) +
                     " failed";
                 break;
             default:
@@ -220,9 +220,9 @@ namespace mir::build
         return sourceRoot / "builds" / FromText(preset);
     }
 
-    fs::path PlayerStagingDir(const fs::path &playerDir)
+    fs::path GameBuildStagingDir(const fs::path &gameBuildDir)
     {
-        fs::path staging = NormalizedPath(playerDir);
+        fs::path staging = NormalizedPath(gameBuildDir);
         staging += ".tmp";
         return staging;
     }
@@ -230,18 +230,18 @@ namespace mir::build
     std::optional<std::string> PresetProblem(const fs::path &sourceRoot, std::string_view preset)
     {
         if (preset.empty())
-            return "the player preset is empty";
+            return "the game build preset is empty";
         const bool plain = std::ranges::all_of(preset, [](unsigned char c) {
             return std::isalnum(c) != 0 || c == '-' || c == '_' || c == '.';
         });
         if (!plain || preset.starts_with('.'))
-            return "the player preset \"" + std::string(preset) + "\" may hold only letters, digits, '-', '_' and '.'";
+            return "the game build preset \"" + std::string(preset) + "\" may hold only letters, digits, '-', '_' and '.'";
 
         Presets presets;
         for (std::string_view file : { "CMakePresets.json", "CMakeUserPresets.json" })
             CollectPresets(sourceRoot / file, presets, 0);
         if (!presets.mFound)
-            return PathText(sourceRoot) + " has no readable CMakePresets.json, so the player cannot be compiled from it";
+            return PathText(sourceRoot) + " has no readable CMakePresets.json, so the game build cannot be compiled from it";
 
         const std::string name(preset);
         if (std::ranges::find(presets.mHidden, name) != presets.mHidden.end())
@@ -260,32 +260,32 @@ namespace mir::build
             return "the preset " + name + " has no build preset of the same name, which cmake --build --preset needs";
         if (build->second != name)
             return "the build preset " + name + " builds the configure preset " + build->second +
-                ", so the player would not compile in " + PathText(PresetBuildDir(sourceRoot, preset));
+                ", so the game build would not compile in " + PathText(PresetBuildDir(sourceRoot, preset));
         return std::nullopt;
     }
 
-    std::optional<std::string> PlayerDirProblem(const fs::path &dir)
+    std::optional<std::string> GameBuildDirProblem(const fs::path &dir)
     {
         std::error_code ec;
         if (!fs::exists(dir, ec))
             return std::nullopt;
         if (!fs::is_directory(dir, ec))
-            return PathText(dir) + " is a file, so the player cannot be installed there";
+            return PathText(dir) + " is a file, so the game build cannot be installed there";
         if (fs::is_empty(dir, ec))
             return std::nullopt;
         if (fs::exists(dir / "CMakeCache.txt", ec))
-            return PathText(dir) + " is a CMake build folder; pick another folder for the player template";
+            return PathText(dir) + " is a CMake build folder; pick another folder for the game build template";
         if (IsBuildDir(dir))
-            return PathText(dir) + " is a game build; pick another folder for the player template";
+            return PathText(dir) + " is a packaged game; pick another folder for the game build template";
 
-        const std::optional<Json> info = ReadJsonFile(dir / kPlayerInfoFileName);
-        if (!info || !info->is_object() || PlayerInfoFlag(*info, "editor") != false)
-            return PathText(dir) + " holds files that are not a player template, so a compile does not replace "
+        const std::optional<Json> info = ReadJsonFile(dir / kGameBuildInfoFileName);
+        if (!info || !info->is_object() || GameBuildInfoFlag(*info, "editor") != false)
+            return PathText(dir) + " holds files that are not a game build template, so a compile does not replace "
                 "it; empty it or pick another folder";
         return std::nullopt;
     }
 
-    std::optional<std::string> CheckPlayerCompile(const PlayerCompile &compile, const fs::path &outDir)
+    std::optional<std::string> CheckGameBuildCompile(const GameBuildCompile &compile, const fs::path &outDir)
     {
         if (std::optional<std::string> problem = PresetProblem(compile.mSourceRoot, compile.mPreset))
             return problem;
@@ -295,24 +295,24 @@ namespace mir::build
         {
             if (!own.empty() && IsWithin(NormalizedPath(own), buildDir))
                 return PathText(buildDir) + " is the build folder this MjolnirBuild and its editor come from; "
-                    "compiling the player there could rebuild them while they run, so use a game preset such as "
+                    "compiling the game build there could rebuild them while they run, so use a game preset such as "
                     "windows-msvc-game-release";
         }
-        for (const auto &[dir, what] : { std::pair{ NormalizedPath(compile.mPlayerDir), "the player template " },
+        for (const auto &[dir, what] : { std::pair{ NormalizedPath(compile.mGameBuildDir), "the game build template " },
                  std::pair{ NormalizedPath(outDir), "the output folder " } })
         {
             if (IsWithin(dir, buildDir) || IsWithin(buildDir, dir))
                 return what + PathText(dir) + " overlaps " + PathText(buildDir) +
-                    ", where the player compiles; use a folder of its own";
+                    ", where the game build compiles; use a folder of its own";
         }
 
-        if (std::optional<std::string> problem = PlayerDirProblem(compile.mPlayerDir))
+        if (std::optional<std::string> problem = GameBuildDirProblem(compile.mGameBuildDir))
             return problem;
-        const fs::path staging = PlayerStagingDir(compile.mPlayerDir);
+        const fs::path staging = GameBuildStagingDir(compile.mGameBuildDir);
         if (!IsOwnStaging(staging))
         {
-            if (std::optional<std::string> problem = PlayerDirProblem(staging))
-                return *problem + " (the player is installed there before it replaces the template)";
+            if (std::optional<std::string> problem = GameBuildDirProblem(staging))
+                return *problem + " (the game build is installed there before it replaces the template)";
         }
         return std::nullopt;
     }
@@ -320,9 +320,9 @@ namespace mir::build
     std::vector<std::string> FeatureDefines(const Json &editorInfo)
     {
         std::vector<std::string> defines;
-        for (const PlayerFeature &feature : kPlayerFeatures)
+        for (const GameBuildFeature &feature : kGameBuildFeatures)
         {
-            if (const std::optional<bool> on = PlayerInfoFlag(editorInfo, feature.mKey))
+            if (const std::optional<bool> on = GameBuildInfoFlag(editorInfo, feature.mKey))
                 defines.push_back("-D" + std::string(feature.mOption) + "=" + (*on ? "ON" : "OFF"));
         }
         return defines;
@@ -360,40 +360,40 @@ namespace mir::build
         return !fs::is_regular_file(buildDir / "build.ninja", ec) || !CacheMatches(buildDir / "CMakeCache.txt", defines);
     }
 
-    std::string PlayerScriptText(const PlayerScript &script)
+    std::string GameBuildScriptText(const GameBuildScript &script)
     {
         const auto exitWith = [](int code) { return " || exit /b " + std::to_string(code) + "\r\n"; };
 
         std::string text = "@echo off\r\nchcp 65001 >nul\r\n";
-        text += "cd /d \"" + BatchPath(script.mSourceRoot) + "\"" + exitWith(kPlayerExitNoCheckout);
+        text += "cd /d \"" + BatchPath(script.mSourceRoot) + "\"" + exitWith(kGameBuildExitNoCheckout);
         if (script.mConfigure)
         {
             text += "cmake --preset " + script.mPreset;
             for (const std::string &define : *script.mConfigure)
                 text += " " + define;
-            text += exitWith(kPlayerExitConfigure);
+            text += exitWith(kGameBuildExitConfigure);
         }
-        text += "cmake --build --preset " + script.mPreset + " --target " + std::string(kPlayerTargets) +
-            exitWith(kPlayerExitCompile);
+        text += "cmake --build --preset " + script.mPreset + " --target " + std::string(kGameBuildTargets) +
+            exitWith(kGameBuildExitCompile);
         text += "cmake --install \"builds\\" + script.mPreset + "\" --prefix \"" + BatchPath(script.mPrefix) + "\"" +
-            exitWith(kPlayerExitInstall);
+            exitWith(kGameBuildExitInstall);
         return text;
     }
 
-    void CompilePlayer(const PlayerCompile &compile)
+    void CompileGameBuild(const GameBuildCompile &compile)
     {
         if (std::optional<std::string> problem = PresetProblem(compile.mSourceRoot, compile.mPreset))
             throw std::runtime_error(*problem);
-        if (std::optional<std::string> problem = PlayerDirProblem(compile.mPlayerDir))
+        if (std::optional<std::string> problem = GameBuildDirProblem(compile.mGameBuildDir))
             throw std::runtime_error(*problem);
 
         // Installed beside the template first, so a failure leaves the previous one in place
-        const fs::path playerDir = NormalizedPath(compile.mPlayerDir);
-        const fs::path staging = PlayerStagingDir(playerDir);
+        const fs::path gameBuildDir = NormalizedPath(compile.mGameBuildDir);
+        const fs::path staging = GameBuildStagingDir(gameBuildDir);
         std::error_code ec;
         if (!IsOwnStaging(staging))
         {
-            if (std::optional<std::string> problem = PlayerDirProblem(staging))
+            if (std::optional<std::string> problem = GameBuildDirProblem(staging))
                 throw std::runtime_error(*problem);
         }
         fs::remove_all(staging, ec);
@@ -413,13 +413,13 @@ namespace mir::build
             }
 
             const fs::path buildDir = PresetBuildDir(compile.mSourceRoot, compile.mPreset);
-            PlayerScript script{ compile.mSourceRoot, compile.mPreset, staging, std::nullopt };
+            GameBuildScript script{ compile.mSourceRoot, compile.mPreset, staging, std::nullopt };
             if (NeedsConfigure(buildDir, defines))
                 script.mConfigure = defines;
 
             // Kept, so the same commands can be run again by hand
             fs::create_directories(buildDir, ec);
-            if (ec || !WriteText(buildDir / kScriptFileName, PlayerScriptText(script)))
+            if (ec || !WriteText(buildDir / kScriptFileName, GameBuildScriptText(script)))
                 throw std::runtime_error("could not write " + PathText(buildDir / kScriptFileName));
 
             const fs::path log = buildDir / kLogFileName;
@@ -427,15 +427,15 @@ namespace mir::build
             const std::vector<std::string> args = { "/d", "/c", ".\\" + std::string(kScriptFileName) };
             ChildProcess process;
             if (!process.Start(CommandShell(), args, buildDir, log))
-                throw std::runtime_error("could not start " + PathText(CommandShell()) + " to compile the player");
+                throw std::runtime_error("could not start " + PathText(CommandShell()) + " to compile the game build");
             const std::optional<int> exit = process.Wait();
             if (!exit)
                 throw std::runtime_error("lost track of " + std::string(kScriptFileName));
             if (*exit != 0)
                 throw std::runtime_error(FailureText(*exit, compile, log));
 
-            if (std::optional<std::string> problem = PlayerTemplateProblem(staging))
-                throw std::runtime_error(PathText(buildDir) + " installed no player: " + *problem +
+            if (std::optional<std::string> problem = GameBuildTemplateProblem(staging))
+                throw std::runtime_error(PathText(buildDir) + " installed no game build: " + *problem +
                     "; use a game preset such as windows-msvc-game-release");
         }
         catch (...)
@@ -445,13 +445,13 @@ namespace mir::build
         }
 
         fs::remove(staging / kStagingMarkerFileName, ec);
-        fs::remove_all(playerDir, ec);
+        fs::remove_all(gameBuildDir, ec);
         if (ec)
-            throw std::runtime_error("could not remove the previous player template " + PathText(playerDir) + ": " +
+            throw std::runtime_error("could not remove the previous game build template " + PathText(gameBuildDir) + ": " +
                 ec.message());
-        fs::create_directories(playerDir.parent_path(), ec);
-        fs::rename(staging, playerDir, ec);
+        fs::create_directories(gameBuildDir.parent_path(), ec);
+        fs::rename(staging, gameBuildDir, ec);
         if (ec)
-            throw std::runtime_error("could not move the new player into " + PathText(playerDir) + ": " + ec.message());
+            throw std::runtime_error("could not move the new game build into " + PathText(gameBuildDir) + ": " + ec.message());
     }
 }
