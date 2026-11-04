@@ -1,0 +1,63 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [
+          -432.0531638625518,
+          22.5552,
+          364.3002165242654
+        ],
+        "rotation": [
+          0.0,
+          0.9261966620119162,
+          0.0,
+          0.37704077137358005
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [
+          -432.0531638625518,
+          22.5552,
+          364.3002165242654
+        ]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "tent_mil_01_b_200"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "animationAsset": "",
+        "clip": 0,
+        "loop": false,
+        "modelAsset": "",
+        "modelName": "models/airfield/tent_mil_01_b.glb",
+        "playing": false,
+        "scene": 0,
+        "speed": 1.0,
+        "time": 0.0
+      },
+      "type": "ModelPlayer"
+    },
+    {
+      "fields": {
+        "scriptName": "airfield_lod"
+      },
+      "type": "ScriptRef"
+    }
+  ],
+  "id": 1062,
+  "parent": 0
+}

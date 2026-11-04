@@ -1,0 +1,63 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [
+          -120.66418357721022,
+          42.1132,
+          239.83718127857838
+        ],
+        "rotation": [
+          0.0,
+          0.9999999999999202,
+          0.0,
+          3.9947416358725856e-07
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [
+          -120.66418357721022,
+          42.1132,
+          239.83718127857838
+        ]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "vortac_station_01"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "animationAsset": "",
+        "clip": 0,
+        "loop": false,
+        "modelAsset": "",
+        "modelName": "models/airfield/vortac_station_01.glb",
+        "playing": false,
+        "scene": 0,
+        "speed": 1.0,
+        "time": 0.0
+      },
+      "type": "ModelPlayer"
+    },
+    {
+      "fields": {
+        "scriptName": "airfield_lod"
+      },
+      "type": "ScriptRef"
+    }
+  ],
+  "id": 1126,
+  "parent": 0
+}

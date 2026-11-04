@@ -93,6 +93,10 @@ namespace mir
                                std::vector<WorldDrawItem> &out) override;
         void AppendRayTracingDraws(size_t view, std::vector<WorldDrawItem> &out) override;
 
+        // Areas this frame's viewports chose but cannot draw as chosen yet; 0 with nothing to stream, nullopt
+        // while terrain waits for a viewport to ask for anything.
+        std::optional<size_t> AreasLoading() const;
+
         // Holds the dynamic bodies whose terrain collision is not ready, resumes the rest and tells each which
         // terrain pieces it may touch.
         void BeforeStep(World &world, PhysicsWorld &physics, float dt) override;

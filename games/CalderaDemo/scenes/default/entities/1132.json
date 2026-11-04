@@ -1,0 +1,63 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [
+          -96.18177855051879,
+          49.911,
+          703.4244233497245
+        ],
+        "rotation": [
+          0.0,
+          -0.9225518342373162,
+          0.0,
+          0.38587318272375876
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [
+          -96.18177855051879,
+          49.911,
+          703.4244233497245
+        ]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "house_1s_08"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "animationAsset": "",
+        "clip": 0,
+        "loop": false,
+        "modelAsset": "",
+        "modelName": "models/airfield/house_1s_08.glb",
+        "playing": false,
+        "scene": 0,
+        "speed": 1.0,
+        "time": 0.0
+      },
+      "type": "ModelPlayer"
+    },
+    {
+      "fields": {
+        "scriptName": "airfield_lod"
+      },
+      "type": "ScriptRef"
+    }
+  ],
+  "id": 1132,
+  "parent": 0
+}

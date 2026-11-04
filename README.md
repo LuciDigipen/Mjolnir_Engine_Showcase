@@ -105,8 +105,12 @@ tracked with Git LFS:
 games/TerrainCheck/assets/textures/icelandic_sand_and_rocks/*.jpg
 ```
 
-Only that directory is in LFS; every other image in the repository stays a
-regular Git object. The six committed maps are BaseColor, Normal,
+Sponza mesh buffers (`games/Sponza/**/*.bin`) and textures
+(`games/Sponza/**/*.jpg` and `games/Sponza/**/*.png`) also use LFS, along with
+`games/CalderaDemo`'s large files. A default fetch excludes the Caldera files
+(see below). Other images stay regular Git objects.
+
+The six committed TerrainCheck maps are BaseColor, Normal,
 Displacement, Roughness, Specular and AO. Bump, Cavity and Gloss are not used
 and are not included. The six JPEGs are byte-identical copies of the originals;
 nothing was re-encoded, cooked or migrated from history. `tcigfcgn.json` is the
@@ -135,7 +139,15 @@ https://www.fab.com/eula?lang=en.
 
 The organization's Git LFS quota could not be read because the account lacks
 the `admin:org` scope, so available storage and bandwidth are unconfirmed. This
-is not a verified quota pass. No LFS objects have been uploaded.
+is not a verified quota pass.
+
+### Caldera demo
+
+`games/CalderaDemo` keeps about 1.5 GiB in LFS: its models, heights, ocean mesh
+and a copy of the sand textures. `.lfsconfig` excludes them from a default
+fetch, so a clone holds pointers, and CMake leaves the game out, with a status
+message, until its `requiresContent` file is real. To opt in, see
+`games/CalderaDemo/README.md`.
 
 ## Third-party notices
 

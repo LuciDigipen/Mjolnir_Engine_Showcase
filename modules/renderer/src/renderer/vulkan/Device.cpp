@@ -803,6 +803,26 @@ namespace mir::vk
 
         return true;
     }
+    uint64_t Device::DeviceLocalFreeBytes() const
+    {
+        const VkPhysicalDeviceMemoryProperties *memory = nullptr;
+        vmaGetMemoryProperties(mAllocator, &memory);
+        VmaBudget budgets[VK_MAX_MEMORY_HEAPS]{};
+        vmaGetHeapBudgets(mAllocator, budgets);
+
+        uint32_t largest = 0;
+        VkDeviceSize largestSize = 0;
+        for (uint32_t heap = 0; heap < memory->memoryHeapCount; ++heap)
+            if ((memory->memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0 &&
+                memory->memoryHeaps[heap].size > largestSize)
+            {
+                largest = heap;
+                largestSize = memory->memoryHeaps[heap].size;
+            }
+        const VmaBudget &budget = budgets[largest];
+        return budget.budget > budget.usage ? budget.budget - budget.usage : 0;
+    }
+
     bool Device::CreateAllocator()
     {
         const VmaVulkanFunctions functions{

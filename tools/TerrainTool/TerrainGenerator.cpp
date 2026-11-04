@@ -8,6 +8,8 @@
  */
 #include "TerrainGenerator.h"
 
+#include "TerrainHeightSource.h"
+
 #include <algorithm>
 #include <cmath>
 #include <bit>
@@ -51,7 +53,8 @@ namespace mir::terrainbake
     }
 
     TerrainGenerator::TerrainGenerator(const TerrainRecipe &recipe)
-        : mLayout(recipe.layout), mFiltered(recipe.recipeVersion != 1), mRelief(recipe.relief),
+        : mLayout(recipe.layout), mFiltered(recipe.recipeVersion != 1), mHeightSource(recipe.heightSource),
+          mRelief(recipe.relief),
           mBroad(TermSeed(recipe.seed, 1), recipe.relief.broad.wavelength, recipe.relief.broad.octaves),
           mRidges(TermSeed(recipe.seed, 2), recipe.relief.ridges.wavelength, recipe.relief.ridges.octaves),
           mDetail(TermSeed(recipe.seed, 3), recipe.relief.detail.wavelength, recipe.relief.detail.octaves),
@@ -61,6 +64,8 @@ namespace mir::terrainbake
 
     double TerrainGenerator::Height(double x, double z) const
     {
+        if (mHeightSource)
+            return mHeightSource->Sample(x, z);
         const ReliefParameters &p = mRelief;
         double h = p.baseHeight + p.tiltX * x + p.tiltZ * z;
         if (p.broad.amplitude != 0.0)

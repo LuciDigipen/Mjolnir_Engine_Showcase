@@ -1,0 +1,16 @@
+{
+  "guid": "3ae8934034973b5b",
+  "importer": {
+    "next": 8,
+    "objects": {
+      "image:hash/5636920199662292764": "1",
+      "material:name/asphalt_painted_line_02": "5",
+      "material:name/cement_ground_patchwork_cracked": "3",
+      "material:name/concrete_brushed_spotty_01_rvl_bot": "2",
+      "material:name/concrete_edge_crease_seam_02": "4",
+      "mesh:name/runway": "6",
+      "node:name/runway": "7"
+    }
+  },
+  "version": 1
+}

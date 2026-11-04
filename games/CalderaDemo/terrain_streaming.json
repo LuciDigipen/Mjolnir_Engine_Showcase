@@ -1,0 +1,47 @@
+{
+  "cpu": {
+    "budgetMiB": 448
+  },
+  "io": {
+    "workerThreads": 2,
+    "maxInstallsPerFrame": 32
+  },
+  "retry": {
+    "maxAttempts": 3,
+    "firstDelaySeconds": 0.1,
+    "maxDelaySeconds": 2.0,
+    "failedHoldSeconds": 10.0
+  },
+  "residency": {
+    "mode": "Interest",
+    "queryLeaseSeconds": 2.0
+  },
+  "view": {
+    "refineErrorPixels": 1.0,
+    "mergeErrorPixels": 0.75,
+    "prefetchErrorPixels": 0.5,
+    "prefetchBudgetMiB": 384
+  },
+  "gpu": {
+    "budgetMiB": 2048,
+    "stagingMiB": 32,
+    "meshRetainSeconds": 4.0
+  },
+  "collision": {
+    "spacingsMeters": [
+      8.0,
+      4.0,
+      2.0,
+      1.0
+    ],
+    "maxErrorMeters": 0.1,
+    "pieceTiles": 2,
+    "seamOverlapMeters": 64.0,
+    "bodyToleranceMeters": 0.1,
+    "loadLatencySeconds": 0.1,
+    "latencyMarginSeconds": 0.25,
+    "prefetchSeconds": 1.0,
+    "budgetMiB": 64,
+    "retainSeconds": 4.0
+  }
+}

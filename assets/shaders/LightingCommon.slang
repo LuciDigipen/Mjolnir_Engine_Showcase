@@ -26,7 +26,8 @@ cbuffer CameraData
                          // shadow map, w = this view's first spot shadow matrix
     float4x4 prevViewProj;
     float4x4 sunShadowViewProj;
-    float4 jitterAndPad; // xy = this frame's sub-pixel jitter in pixels, ray tracing + Dlss only
+    float4 jitterAndPad; // xy = this frame's sub-pixel jitter in pixels, ray tracing + Dlss only;
+                         // z = shader time in seconds, wrapped at 3600
     float4 rayCone;      // x = one pixel's angular size; ray tracing material mip selection
 };
 

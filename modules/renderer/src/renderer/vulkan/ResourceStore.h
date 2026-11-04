@@ -44,6 +44,8 @@ namespace mir::vk
         VkBuffer mIndexBuffer = VK_NULL_HANDLE;
         VmaAllocation mIndexAllocation = VK_NULL_HANDLE;
         uint32_t mIndexCount = 0;
+        // Set while this mesh is owed a BLAS, which the first trace drawing it builds; queued meshes get theirs with the upload.
+        uint32_t mBlasVertexCount = 0;
         uint32_t mGeneration = 0; //< 0 = slot never filled
         GpuMeshState mState = GpuMeshState::Ready;
         // Buffers plus any BLAS; set for queued meshes.

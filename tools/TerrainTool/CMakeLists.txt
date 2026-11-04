@@ -8,8 +8,10 @@ add_library(terrain_bake STATIC
     TerrainDerivatives.cpp
     TerrainMixedContinuity.cpp
     TerrainGenerator.cpp
+    TerrainHeightSource.cpp
     TerrainNoise.cpp
     TerrainPackage.cpp
+    TerrainProgress.cpp
     TerrainPublish.cpp
     TerrainRecipe.cpp
     TerrainRegions.cpp
@@ -32,6 +34,7 @@ if(BUILD_TESTING)
     add_executable(terrain_tool_tests
         tests/TerrainBake.tests.cpp
         tests/TerrainGenerator.tests.cpp
+        tests/TerrainHeightmap.tests.cpp
         tests/TerrainDerivatives.tests.cpp
         tests/TerrainPackage.tests.cpp
         tests/TerrainPrecision.tests.cpp
