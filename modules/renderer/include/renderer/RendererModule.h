@@ -21,7 +21,7 @@ namespace mir
 {
     class ActiveCameraSystem;
     class AssetResolver;
-    class AssetsModule;
+    class AsyncAssetService;
     class MeshResolveSystem;
     class RenderSystem;
 
@@ -34,6 +34,8 @@ namespace mir
         std::filesystem::path mProjectSettingsPath;
         // looks up the names a MeshRenderer holds, required
         const AssetResolver *mResolver = nullptr;
+        // loads mesh assets in the background, null disables mesh asset loading
+        AsyncAssetService *mAssetService = nullptr;
     };
 
     class RendererModule
@@ -41,7 +43,7 @@ namespace mir
     public:
         // throws SetupError (System) when Vulkan cannot start
         // surface is the window; the renderer never links window
-        RendererModule(ModuleContext context, const ISurfaceProvider &surface, AssetsModule &assets,
+        RendererModule(ModuleContext context, const ISurfaceProvider &surface,
             const RendererModuleSettings &settings);
         ~RendererModule();
 
@@ -68,8 +70,7 @@ namespace mir
         Registration mSceneLoad;
         Registration mPlayBegin;
         Registration mPlayEnd;
-        Registration mReloadPrepare;
-        Registration mReloadAbort;
+        Registration mFrameBegin;
         Registration mReloadCommit;
     };
 }

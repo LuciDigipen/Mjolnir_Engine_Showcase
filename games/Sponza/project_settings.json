@@ -1,0 +1,74 @@
+{
+  "physicsLayers": {
+    "ignore": [],
+    "names": [
+      "Default"
+    ]
+  },
+  "postProcessing": {
+    "effects": {
+      "Anti-Aliasing": {
+        "enabled": true,
+        "params": {
+          "mode": "dlss",
+          "rtSampleCount": 4
+        }
+      },
+      "Bloom": {
+        "enabled": true,
+        "params": {}
+      },
+      "DepthOfField": {
+        "enabled": false,
+        "params": {}
+      },
+      "Film": {
+        "enabled": false,
+        "params": {}
+      },
+      "Fog": {
+        "enabled": false,
+        "params": {}
+      },
+      "HDR": {
+        "enabled": true,
+        "params": {
+          "exposure": 1.0,
+          "tonemapOperator": "aces"
+        }
+      },
+      "MotionBlur": {
+        "enabled": false,
+        "params": {}
+      }
+    }
+  },
+  "rendering": {
+    "ddgi": {
+      "enabled": true,
+      "intensity": 4.059999942779541,
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "probeCounts": [
+        8,
+        8,
+        8
+      ],
+      "probeSpacing": 2.0,
+      "probesPerFrame": 512,
+      "raysPerProbe": 256
+    },
+    "rayTracing": true,
+    "ssgi": {
+      "enabled": false,
+      "halfResolution": true,
+      "intensity": 1.0,
+      "maxTraceDistance": 10.0,
+      "quality": "medium",
+      "thickness": 0.10000000149011612
+    }
+  }
+}

@@ -41,7 +41,7 @@ namespace mir
     {
         SurfaceMaterialLibrary *mMaterials = nullptr;
         const SurfaceMaterialCatalog *mCatalog = nullptr;
-        std::function<uint64_t(std::string_view)> mReimportMaterial;
+        std::function<uint64_t(std::string_view, bool)> mReimportMaterial;
         std::function<std::optional<uint64_t>(std::string_view)> mMaterialCookRevision;
         std::function<std::optional<uint64_t>(std::string_view)> mMaterialCookFailureRevision;
         std::function<bool(std::string_view, MaterialCookedView &, std::string &)> mLoadCooked;

@@ -16,6 +16,7 @@
 #include "VulkanUtil.h"
 
 #include <core/log/Log.h>
+#include <renderer/TextureUpload.h>
 
 #include <vk_mem_alloc.h>
 
@@ -29,80 +30,6 @@
 
 namespace mir::vk
 {
-    namespace
-    {
-        uint32_t BuildMipChain(const TextureDesc &desc, std::vector<std::byte> &bytes,
-            std::vector<VkBufferImageCopy> &regions)
-        {
-            const auto toLinear = [](float v)
-                {
-                    return v <= 0.04045f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f);
-                };
-            const auto toSrgb = [](float v)
-                {
-                    return v <= 0.0031308f ? v * 12.92f : 1.055f * std::pow(v, 1.0f / 2.4f) - 0.055f;
-                };
-
-            bytes.assign(desc.pixels.begin(), desc.pixels.end());
-            std::vector<std::byte> level(desc.pixels.begin(), desc.pixels.end());
-
-            uint32_t width = desc.width;
-            uint32_t height = desc.height;
-            uint32_t mip = 0;
-            VkDeviceSize offset = 0;
-
-            for (;;)
-            {
-                regions.push_back(VkBufferImageCopy{
-                    .bufferOffset = offset,
-                    .imageSubresource{
-                        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                        .mipLevel = mip,
-                        .baseArrayLayer = 0,
-                        .layerCount = 1 },
-                    .imageExtent{ width, height, 1 } });
-
-                if (!desc.generateMips || (width == 1 && height == 1))
-                    break;
-
-                const uint32_t nextWidth = std::max(width / 2, 1u);
-                const uint32_t nextHeight = std::max(height / 2, 1u);
-                std::vector<std::byte> next(static_cast<size_t>(nextWidth) * nextHeight * 4);
-
-                for (uint32_t y = 0; y < nextHeight; ++y)
-                    for (uint32_t x = 0; x < nextWidth; ++x)
-                        for (uint32_t c = 0; c < 4; ++c)
-                        {
-                            float sum = 0.0f;
-                            uint32_t samples = 0;
-                            for (uint32_t sy = y * height / nextHeight; sy < (y + 1) * height / nextHeight; ++sy)
-                                for (uint32_t sx = x * width / nextWidth; sx < (x + 1) * width / nextWidth; ++sx)
-                                {
-                                    const float v =
-                                        std::to_integer<uint8_t>(level[(static_cast<size_t>(sy) * width + sx) * 4 + c]) / 255.0f;
-                                    sum += (c < 3 && desc.srgb) ? toLinear(v) : v;
-                                    ++samples;
-                                }
-
-                            float v = sum / static_cast<float>(samples);
-                            if (c < 3 && desc.srgb)
-                                v = toSrgb(v);
-                            next[(static_cast<size_t>(y) * nextWidth + x) * 4 + c] =
-                                static_cast<std::byte>(std::clamp<long>(std::lround(v * 255.0f), 0, 255));
-                        }
-
-                offset = bytes.size();
-                bytes.insert(bytes.end(), next.begin(), next.end());
-                level = std::move(next);
-                width = nextWidth;
-                height = nextHeight;
-                ++mip;
-            }
-
-            return mip + 1;
-        }
-    }
-
     bool ResourceStore::Initialize(Device &device)
     {
         mDevice = &device;
@@ -429,43 +356,30 @@ namespace mir::vk
             return kNullTexture;
         }
 
-        // One staging blob for every level, one copy region each.
-        std::vector<std::byte> pixels;
-        std::vector<VkBufferImageCopy> regions;
-        uint32_t levelCount = 0;
-        if (!desc.mips.empty())
+        const TextureUploadSource source = PrepareTextureUpload(desc);
+        if (source.desc.width == 0)
         {
-            if (!TextureMipLayoutValid(desc))
-            {
-                MIR_LOG_ERROR("CreateTexture: {}x{} supplied mips do not form a complete chain", desc.width,
-                    desc.height);
-                return kNullTexture;
-            }
-            pixels.assign(desc.pixels.begin(), desc.pixels.end());
-            levelCount = static_cast<uint32_t>(desc.mips.size()) + 1;
-            uint32_t width = desc.width, height = desc.height;
-            VkDeviceSize offset = 0;
-            for (uint32_t level = 0; level < levelCount; ++level)
-            {
-                regions.push_back(VkBufferImageCopy{
-                    .bufferOffset = offset,
-                    .imageSubresource{
-                        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                        .mipLevel = level,
-                        .baseArrayLayer = 0,
-                        .layerCount = 1 },
-                    .imageExtent{ width, height, 1 } });
-                if (level == levelCount - 1)
-                    break;
-                const auto &mip = desc.mips[level];
-                offset = pixels.size();
-                pixels.insert(pixels.end(), mip.pixels.begin(), mip.pixels.end());
-                width = mip.width;
-                height = mip.height;
-            }
+            MIR_LOG_ERROR("CreateTexture: invalid mip layout");
+            return kNullTexture;
         }
-        else
-            levelCount = BuildMipChain(desc, pixels, regions);
+        std::vector<std::byte> pixels(source.desc.pixels.begin(), source.desc.pixels.end());
+        std::vector<VkBufferImageCopy> regions;
+        const uint32_t levelCount = static_cast<uint32_t>(source.desc.mips.size()) + 1;
+        uint32_t width = desc.width, height = desc.height;
+        VkDeviceSize offset = 0;
+        for (uint32_t level = 0; level < levelCount; ++level)
+        {
+            regions.push_back(VkBufferImageCopy{ .bufferOffset = offset,
+                .imageSubresource{ VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1 },
+                .imageExtent{ width, height, 1 } });
+            if (level + 1 == levelCount)
+                break;
+            const auto &mip = source.desc.mips[level];
+            offset = pixels.size();
+            pixels.insert(pixels.end(), mip.pixels.begin(), mip.pixels.end());
+            width = mip.width;
+            height = mip.height;
+        }
 
         VkBuffer staging = VK_NULL_HANDLE;
         VmaAllocation stagingAllocation = VK_NULL_HANDLE;
@@ -477,34 +391,13 @@ namespace mir::vk
             return kNullTexture;
         }
 
-        GpuTexture texture{};
-        texture.mLevels = levelCount;
-        texture.mGeneration = 1;
-
-        const VkFormat format = desc.srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
-        const VkImageCreateInfo imageInfo{
-            .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-            .imageType = VK_IMAGE_TYPE_2D,
-            .format = format,
-            .extent{ desc.width, desc.height, 1 },
-            .mipLevels = levelCount,
-            .arrayLayers = 1,
-            .samples = VK_SAMPLE_COUNT_1_BIT,
-            .tiling = VK_IMAGE_TILING_OPTIMAL,
-            .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
-
-        const VmaAllocationCreateInfo allocInfo{ .usage = VMA_MEMORY_USAGE_AUTO };
-
-        if (vmaCreateImage(mDevice->Allocator(), &imageInfo, &allocInfo,
-            &texture.mImage, &texture.mAllocation, nullptr) != VK_SUCCESS)
+        const TextureHandle handle = ReserveTexture(desc, levelCount);
+        if (handle.IsNull())
         {
-            MIR_LOG_CRITICAL("CreateTexture: vmaCreateImage failed");
             vmaDestroyBuffer(mDevice->Allocator(), staging, stagingAllocation);
             return kNullTexture;
         }
-
+        GpuTexture &texture = *FindTextureSlot(handle);
         const bool uploaded = SubmitAndWait(*mDevice, [&](VkCommandBuffer cmd)
             {
                 ImageBarrier(cmd, texture.mImage, VK_IMAGE_ASPECT_COLOR_BIT,
@@ -526,10 +419,53 @@ namespace mir::vk
 
         if (!uploaded)
         {
-            FreeTexture(texture);
+            DestroyTexture(handle);
             return kNullTexture;
         }
 
+        MakeTextureReady(handle);
+
+        MIR_LOG_INFO("Texture {} uploaded: {}x{}, {} level(s), {} bytes",
+            handle.mIndex, desc.width, desc.height, levelCount, pixels.size());
+
+        return handle;
+    }
+
+    TextureHandle ResourceStore::ReserveTexture(const TextureDesc &desc, uint32_t levelCount)
+    {
+        if (desc.width == 0 || desc.height == 0 || levelCount == 0 ||
+            desc.width > mDevice->Properties().limits.maxImageDimension2D ||
+            desc.height > mDevice->Properties().limits.maxImageDimension2D)
+            return kNullTexture;
+        GpuTexture texture{};
+        texture.mLevels = levelCount;
+        texture.mState = TextureUploadState::Pending;
+
+        const VkFormat format = desc.srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+        const VkImageCreateInfo imageInfo{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .imageType = VK_IMAGE_TYPE_2D,
+            .format = format,
+            .extent{ desc.width, desc.height, 1 },
+            .mipLevels = levelCount,
+            .arrayLayers = 1,
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .tiling = VK_IMAGE_TILING_OPTIMAL,
+            .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
+
+        const VmaAllocationCreateInfo allocInfo{ .usage = VMA_MEMORY_USAGE_AUTO };
+        VmaAllocationInfo memory{};
+
+        if (vmaCreateImage(mDevice->Allocator(), &imageInfo, &allocInfo,
+            &texture.mImage, &texture.mAllocation, &memory) != VK_SUCCESS)
+        {
+            MIR_LOG_CRITICAL("CreateTexture: vmaCreateImage failed");
+            return kNullTexture;
+        }
+
+        texture.mBytes = memory.size;
         const VkImageViewCreateInfo viewInfo{
             .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
             .image = texture.mImage,
@@ -566,32 +502,50 @@ namespace mir::vk
         mDevice->NameObject(VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64_t>(texture.mImage),
             std::format("Texture {}", handle.mIndex).c_str());
 
-        MIR_LOG_INFO("Texture {} uploaded: {}x{}, {} level(s), {} bytes",
-            handle.mIndex, desc.width, desc.height, levelCount, pixels.size());
-
         return handle;
     }
 
-    void ResourceStore::FreeTexture(GpuTexture &texture)
+    GpuTexture *ResourceStore::FindTextureSlot(TextureHandle handle)
+    {
+        return mTextureTable.Contains(handle) ? &mTextures[handle.mIndex] : nullptr;
+    }
+
+    void ResourceStore::MakeTextureReady(TextureHandle handle)
+    {
+        if (GpuTexture *texture = FindTextureSlot(handle))
+        {
+            texture->mState = TextureUploadState::Ready;
+            ++mTextureTableVersion;
+        }
+    }
+
+    GpuTexture ResourceStore::TakeTexture(TextureHandle handle)
+    {
+        if (handle == mDefaultWhiteTexture || handle == mDefaultNormalTexture || handle == mErrorTexture ||
+            !mTextureTable.Contains(handle))
+            return {};
+        GpuTexture texture = mTextures[handle.mIndex];
+        mTextureTable.Remove(handle);
+        mTextures[handle.mIndex] = GpuTexture{};
+        mTextures[handle.mIndex].mGeneration = mTextureTable.Generation(handle.mIndex);
+        ++mTextureTableVersion;
+        return texture;
+    }
+
+    void ResourceStore::FreeTexture(Device &device, GpuTexture &texture)
     {
         if (texture.mView != VK_NULL_HANDLE)
-            vkDestroyImageView(mDevice->Handle(), texture.mView, nullptr);
+            vkDestroyImageView(device.Handle(), texture.mView, nullptr);
         if (texture.mImage != VK_NULL_HANDLE)
-            vmaDestroyImage(mDevice->Allocator(), texture.mImage, texture.mAllocation);
+            vmaDestroyImage(device.Allocator(), texture.mImage, texture.mAllocation);
     }
 
     bool ResourceStore::DestroyTexture(TextureHandle handle)
     {
-        if (handle == mDefaultWhiteTexture || handle == mDefaultNormalTexture || handle == mErrorTexture ||
-            FindTexture(handle) == nullptr)
+        GpuTexture texture = TakeTexture(handle);
+        if (texture.mImage == VK_NULL_HANDLE)
             return false;
-
-        GpuTexture &texture = mTextures[handle.mIndex];
         FreeTexture(texture);
-        mTextureTable.Remove(handle);
-        texture = GpuTexture{};
-        texture.mGeneration = mTextureTable.Generation(handle.mIndex);
-        ++mTextureTableVersion;
         return true;
     }
 
@@ -620,12 +574,24 @@ namespace mir::vk
     {
         if (!mTextureTable.Contains(handle))
             return nullptr;
-        return &mTextures[handle.mIndex];
+        const auto &texture = mTextures[handle.mIndex];
+        return texture.mState == TextureUploadState::Ready ? &texture : nullptr;
     }
 
     uint32_t ResourceStore::TextureSlot(TextureHandle handle) const
     {
-        return mTextureTable.Contains(handle) ? handle.mIndex : mDefaultWhiteTexture.mIndex;
+        if (!mTextureTable.Contains(handle))
+            return mDefaultWhiteTexture.mIndex;
+        return handle.mIndex;
+    }
+
+    uint64_t ResourceStore::TextureAllocatedBytes() const
+    {
+        uint64_t bytes = 0;
+        for (uint32_t index = 0; index < mTextures.size(); ++index)
+            if (mTextureTable.Contains({ index, mTextures[index].mGeneration }))
+                bytes += mTextures[index].mBytes;
+        return bytes;
     }
 
     VkImageView ResourceStore::ImageViewAt(uint32_t slot) const
@@ -634,7 +600,8 @@ namespace mir::vk
         {
             const TextureHandle handle{ slot, mTextures[slot].mGeneration };
             if (mTextureTable.Contains(handle) && mTextures[slot].mView != VK_NULL_HANDLE)
-                return mTextures[slot].mView;
+                return mTextures[slot].mState == TextureUploadState::Ready ? mTextures[slot].mView :
+                    (mErrorTexture.IsNull() ? VK_NULL_HANDLE : mTextures[mErrorTexture.mIndex].mView);
         }
         return mDefaultWhiteTexture.IsNull() ? VK_NULL_HANDLE : mTextures[mDefaultWhiteTexture.mIndex].mView;
     }

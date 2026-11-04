@@ -11,6 +11,7 @@
 #include <renderer/Material.h>
 #include <renderer/MaterialRecordTable.h>
 #include <renderer/MaterialReflection.h>
+#include <renderer/MeshStreaming.h>
 #include <renderer/SurfaceMaterialCatalog.h>
 
 #include "VulkanConstants.h"
@@ -98,9 +99,22 @@ namespace mir::vk
         bool DestroyMaterial(MaterialHandle handle);
         // Raw record bytes for this material; published at the next frame.
         bool UpdateRecord(MaterialHandle handle, std::span<const std::byte> bytes);
+        // All-or-none writes: Prepare validates every update and copies its bytes
+        // off to the side; Commit moves the prepared bytes in without allocating,
+        // so no frontend is left changed by a later failure.
+        bool PrepareRecordBatch(std::span<const MaterialRecordUpdate> updates, std::string *error = nullptr);
+        void CommitRecordBatch();
+        void DiscardRecordBatch();
+        bool RecordBatchPrepared() const { return mRecordBatchPrepared; }
+        // The generation-checked accepted layout of a live surface material and
+        // the authoritative bytes a draw reads. The store keeps the handle.
+        bool AcceptedRecord(MaterialHandle handle, MaterialLayout &layout, std::span<const std::byte> &bytes) const;
+        void SetRecordValidator(MaterialRecordValidator validator);
         // After BeginFrame's wait, before recording: publishes staged record bytes,
         // then refreshes this frame slot's record-reference rows.
         void PublishRecords(uint64_t completedFrame, uint64_t frame, uint32_t frameIndex);
+        // Publishes replacement sets after texture readiness, old sets survive their submitted frames.
+        void RefreshTextures(ResourceStore &resources, uint64_t completed, uint64_t lastUse);
         // Every material but the default and error ones, which move to slots 0 and 1; returns how many were released.
         std::size_t ReleaseMaterials();
 
@@ -115,6 +129,8 @@ namespace mir::vk
         // registered before the batch rebuilds pipelines and RT hit groups.
         bool ReloadSurfaceMaterialCatalog(std::string *error = nullptr);
 
+        // No free slot: released materials give theirs back when their frames complete
+        bool SlotsExhausted() const { return mFreeIndices.empty() && mMaterials.size() >= kMaxMaterials; }
         const GpuMaterial *FindMaterial(MaterialHandle handle) const;
         // What a draw with `handle` uses: the material; else the default for a null handle and the error
         // material for a stale one; null only when both are gone.
@@ -129,6 +145,8 @@ namespace mir::vk
         VkPipelineLayout PipelineLayout() const { return mPipelineLayout; }
 
         VkPipeline SkyPipeline() const { return mSkyPipeline; }
+        // Merged opaque pipeline for the sky, built on first use.
+        VkPipeline SkySurfacePipeline();
         VkPipelineLayout SkyPipelineLayout() const { return mSkyPipelineLayout; }
 
     private:
@@ -145,9 +163,14 @@ namespace mir::vk
             VkPipelineLayout layout = VK_NULL_HANDLE;
         };
 
-        VkPipeline CreateGraphicsPipeline(const PipelineState &state, VkFormat colorFormat, bool surfaces = false);
-        VkPipeline BuildPipeline(const MaterialDesc &desc, VkFormat colorFormat, bool surfaces = false);
-        VkPipeline BuildSkyPipeline();
+        enum class PipelineTarget { Color, OpaqueSsgi };
+
+        VkPipeline CreateGraphicsPipeline(std::string_view vertexStem, std::string_view fragmentStem,
+            const PipelineState &state,
+            std::span<const VkFormat> colorFormats, std::span<const VkPipelineColorBlendAttachmentState> blends);
+        VkPipeline BuildPipeline(const MaterialDesc &desc, VkFormat colorFormat,
+            PipelineTarget target = PipelineTarget::Color);
+        VkPipeline BuildSkyPipeline(bool surfaces = false);
         bool CreateSkyPipeline(VkDescriptorSetLayout cameraSetLayout);
         bool CreateRecordRefBuffer();
         void DestroyRecordRefBuffer();
@@ -162,6 +185,7 @@ namespace mir::vk
         {
             uint32_t mIndex = 0;
             VkPipeline mPipeline = VK_NULL_HANDLE;
+            VkPipeline mSurfacePipeline = VK_NULL_HANDLE;
             MaterialRecordId mRecordId;
             uint32_t mRecordOffset = kInvalidMaterialRecordOffset;
             std::vector<std::byte> mRecordBytes;
@@ -176,12 +200,15 @@ namespace mir::vk
         Device *mDevice = nullptr;
         MaterialTable *mTable = nullptr;
         SurfaceMaterialCatalog mSurfaceMaterials;
+        MaterialRecordValidator mRecordValidator;
         VkFormat mColorFormat = VK_FORMAT_UNDEFINED;
 
         VkPipelineLayout mPipelineLayout = VK_NULL_HANDLE;
 
         VkPipelineLayout mSkyPipelineLayout = VK_NULL_HANDLE;
         VkPipeline mSkyPipeline = VK_NULL_HANDLE;
+        VkPipeline mSkySurfacePipeline = VK_NULL_HANDLE;
+        bool mSkySurfaceTried = false;
 
         // set 0: binding 0 = base color, binding 1 = normal map,
         // binding 2 = this frame's record-reference row (dynamic).
@@ -195,15 +222,27 @@ namespace mir::vk
         uint32_t mRecordRefFrameStride = 0;
 
         std::vector<GpuMaterial> mMaterials;
+        std::vector<MaterialHandle> mTextureWaiting;
+        FrameRetireList<VkDescriptorSet> mRetiredTextureSets;
         std::vector<uint32_t> mFreeIndices;
 
         MaterialHandle mDefaultMaterial;
         MaterialHandle mErrorMaterial;
 
+        struct PreparedRecord
+        {
+            MaterialHandle mHandle;
+            MaterialRecordId mRecordId;
+            std::vector<std::byte> mBytes;
+        };
+
         std::vector<ReloadEntry> mReloadEntries;
+        std::vector<PreparedRecord> mPreparedRecords;
+        bool mRecordBatchPrepared = false;
         SurfaceMaterialCatalog mReloadCatalog;
         bool mReloadCatalogStaged = false;
         VkPipeline mReloadSkyPipeline = VK_NULL_HANDLE;
+        VkPipeline mReloadSkySurfacePipeline = VK_NULL_HANDLE;
         bool mReloadPrepared = false;
     };
 }

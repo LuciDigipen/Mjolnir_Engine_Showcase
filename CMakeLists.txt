@@ -29,6 +29,7 @@ include(cmake/Shaders.cmake)
 include(cmake/Assets.cmake)
 include(cmake/Fonts.cmake)
 include(cmake/Branding.cmake)
+include(cmake/Player.cmake)
 
 option(BUILD_TESTING "Build unit tests (per module, run via ctest)" ON)
 
@@ -97,12 +98,19 @@ add_subdirectory(tools/AssetCooker)
 add_subdirectory(tools/ShaderPublisher)
 add_subdirectory(tools/ErrorReporter)
 add_subdirectory(tools/TerrainTool)
+add_subdirectory(tools/MjolnirBuild)
 
 add_executable(MjolnirEngine WIN32)
 target_sources(MjolnirEngine PRIVATE main.cpp)
 engine_target_utf8(MjolnirEngine)
+if(ENGINE_PLATFORM STREQUAL "Windows")
+    target_sources(MjolnirEngine PRIVATE MjolnirEngine.rc)
+    set_source_files_properties(MjolnirEngine.rc PROPERTIES
+        INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
+        OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/branding/mjolnir.ico")
+endif()
 
-foreach(surface_shader default model unlit error)
+foreach(surface_shader default model unlit error sky)
     engine_add_shaders(MjolnirEngine
         SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/${surface_shader}Surface.slang"
         ENTRIES vertexMain:vertex fragmentMain:fragment)
@@ -144,7 +152,9 @@ if(MJOLNIR_WITH_EDITOR)
     file(TO_CMAKE_PATH "${CMAKE_SOURCE_DIR}" asset_workspace_source_root)
     file(GENERATE
         OUTPUT "$<TARGET_FILE_DIR:MjolnirEngine>/asset_workspace.json"
-        CONTENT "{\n  \"version\": 1,\n  \"sourceRoot\": \"${asset_workspace_source_root}\",\n  \"assetCooker\": \"$<TARGET_FILE:AssetCooker>\"\n}\n")
+        CONTENT "{\n  \"version\": 1,\n  \"sourceRoot\": \"${asset_workspace_source_root}\",\n  \"assetCooker\": \"$<TARGET_FILE:AssetCooker>\",\n  \"buildTool\": \"$<TARGET_FILE:MjolnirBuild>\"\n}\n")
+    # File > Build runs it
+    add_dependencies(MjolnirEngine MjolnirBuild)
 endif()
 
 if(MSVC)
@@ -226,6 +236,8 @@ engine_add_shaders(MjolnirEngine
 
 if(BUILD_TESTING)
     add_subdirectory(tools/ParticleGpuCheck)
+    add_subdirectory(tools/TextureGpuCheck)
+    add_subdirectory(tools/ModelWorldsGpuCheck)
 endif()
 
 engine_add_shaders(MjolnirEngine
@@ -386,9 +398,20 @@ endif()
 engine_cook_assets(MjolnirEngine
     SOURCE_ROOTS assets/ ${game_asset_roots}
     OUT_DIR ${CMAKE_BINARY_DIR}/cooked_assets)
+# They compare a one-game cook with this one
+if(TARGET mjolnir_build_tests)
+    add_dependencies(mjolnir_build_tests MjolnirEngine_cook_assets)
+endif()
 
 engine_copy_fonts(MjolnirEngine SOURCE_DIR fonts)
-engine_copy_branding(MjolnirEngine SOURCE_DIR branding)
+# The master logo and the icon compiled into the exe aren't read at runtime
+engine_copy_branding(MjolnirEngine SOURCE_DIR branding EXCLUDE mjolnir-logo.png mjolnir.ico)
+engine_write_player_info(MjolnirEngine)
+
+# A build without the editor is the player; `cmake --install` turns it into a template
+if(NOT MJOLNIR_WITH_EDITOR)
+    engine_install_player(MjolnirEngine)
+endif()
 
 add_custom_target(MjolnirEngine_copy_games
     ${game_copy_commands}
@@ -510,5 +533,37 @@ if(BUILD_TESTING)
         set_tests_properties(smoke.switch PROPERTIES
             LABELS smoke
             TIMEOUT 120)
+    endif()
+
+    # A game build installs itself as a player template, packages every game with
+    # MjolnirBuild, then starts each package as a double-click would: no --game.
+    # The packages go outside this build folder, where MjolnirBuild refuses to write
+    if(NOT MJOLNIR_WITH_EDITOR)
+        get_filename_component(build_name "${CMAKE_BINARY_DIR}" NAME)
+        set(package_dir "${CMAKE_SOURCE_DIR}/builds/smoke-build/${build_name}")
+        add_test(NAME build.player
+            COMMAND "${CMAKE_COMMAND}" "-DBUILD_DIR=${CMAKE_BINARY_DIR}" "-DPREFIX=${package_dir}/player"
+                    -P "${CMAKE_SOURCE_DIR}/tools/MjolnirBuild/tests/InstallPlayer.cmake")
+        set_tests_properties(build.player PROPERTIES
+            FIXTURES_SETUP build_player
+            LABELS smoke
+            TIMEOUT 300)
+        foreach(game_name IN LISTS game_names)
+            add_test(NAME build.package.${game_name}
+                COMMAND MjolnirBuild --game "${CMAKE_SOURCE_DIR}/games/${game_name}" --player "${package_dir}/player"
+                        --out "${package_dir}/${game_name}" --result "${package_dir}/${game_name}.json")
+            set_tests_properties(build.package.${game_name} PROPERTIES
+                FIXTURES_REQUIRED build_player
+                FIXTURES_SETUP build_${game_name}
+                LABELS smoke
+                TIMEOUT 600)
+            add_test(NAME smoke.build.${game_name}
+                COMMAND "${CMAKE_COMMAND}" "-DRESULT=${package_dir}/${game_name}.json"
+                        -P "${CMAKE_SOURCE_DIR}/tools/MjolnirBuild/tests/RunPackagedGame.cmake")
+            set_tests_properties(smoke.build.${game_name} PROPERTIES
+                FIXTURES_REQUIRED build_${game_name}
+                LABELS smoke
+                TIMEOUT 120)
+        endforeach()
     endif()
 endif()

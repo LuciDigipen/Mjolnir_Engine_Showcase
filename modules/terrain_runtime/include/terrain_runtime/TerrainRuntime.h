@@ -80,10 +80,10 @@ namespace mir
         // prewarmed lets its work go until Stop.
         void BeginPlay();
 
-        // Before ReleaseSceneResources frees every mesh; the next frame builds what it draws again.
+        // Retires every GPU mesh the terrain holds and forgets its builds; the next frame builds what it draws again.
         void ForgetMeshes();
 
-        // Before ReleaseSceneResources on scene unload.
+        // On scene unload. The terrain retires its own GPU meshes, nothing else frees them.
         void Unload();
 
         // Each viewport selects its own units, wants their payloads and draws what is ready.

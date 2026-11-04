@@ -122,27 +122,28 @@ namespace mir::vk
         return bytes;
     }
 
-    MeshHandle MeshUploader::Queue(ResourceStore &resources, const RayTracer &rayTracer, std::vector<Vertex> vertices,
-                                   std::vector<uint32_t> indices, const MeshUploadOptions &options)
+    MeshHandle MeshUploader::Queue(ResourceStore &resources, const RayTracer &rayTracer, MeshUploadSource source,
+                                   const MeshUploadOptions &options)
     {
         if (!Configured())
         {
             MIR_LOG_ERROR("QueueMesh: mesh streaming is not configured");
             return kNullMesh;
         }
-        if (vertices.empty() || indices.empty())
+        if (source.vertices.empty() || source.indices.empty())
         {
             MIR_LOG_ERROR("QueueMesh: vertices and indices must both be non-empty");
             return kNullMesh;
         }
 
         const bool blas = options.rayTracing && mDevice->RayTracingSupported();
-        const uint64_t staging = vertices.size() * sizeof(Vertex) + indices.size() * sizeof(uint32_t);
-        const uint64_t gpu = Footprint(rayTracer, uint32_t(vertices.size()), uint32_t(indices.size()), options);
+        const uint64_t staging = source.vertices.size() * sizeof(Vertex) + source.indices.size() * sizeof(uint32_t);
+        const uint64_t gpu =
+            Footprint(rayTracer, uint32_t(source.vertices.size()), uint32_t(source.indices.size()), options);
         const MeshHandle handle = resources.ReserveMesh();
         resources.FindMeshSlot(handle)->mBytes = gpu;
         mQueue.Push({handle, staging, gpu});
-        mQueued[handle.mIndex] = Queued{handle, std::move(vertices), std::move(indices), blas};
+        mQueued[handle.mIndex] = Queued{handle, std::move(source), blas};
         ++mQueuedCount;
         return handle;
     }
@@ -172,6 +173,100 @@ namespace mir::vk
         return true;
     }
 
+    TextureHandle MeshUploader::QueueTexture(ResourceStore &resources, TextureUploadSource source)
+    {
+        const auto &desc = source.desc;
+        const uint64_t texels = uint64_t(desc.width) * desc.height;
+        if (!Configured() || desc.width == 0 || desc.height == 0 || texels > SIZE_MAX / 4 ||
+            desc.pixels.size_bytes() != texels * 4 ||
+            (!desc.mips.empty() && !TextureMipLayoutValid(desc)) ||
+            (desc.generateMips && desc.mips.empty() && (desc.width > 1 || desc.height > 1)) ||
+            uint64_t(desc.width) * 4 > mQueue.Desc().stagingBytes)
+        {
+            MIR_LOG_ERROR("QueueTexture: invalid or unprepared pixels, mip chain or staging row size");
+            return kNullTexture;
+        }
+        const uint32_t levels = static_cast<uint32_t>(desc.mips.size()) + 1;
+        const TextureHandle handle = resources.ReserveTexture(desc, levels);
+        if (handle.IsNull())
+            return handle;
+        const uint64_t bytes = source.Bytes();
+        for (uint32_t level = 0; level < levels; ++level)
+        {
+            const uint32_t width = level == 0 ? desc.width : desc.mips[level - 1].width;
+            const uint32_t height = level == 0 ? desc.height : desc.mips[level - 1].height;
+            const uint64_t size = uint64_t(width) * height * 4;
+            mQueue.Push({ {}, size, size, handle, level, 0, height, uint64_t(width) * 4 });
+        }
+        mTextures.emplace(handle.mIndex, QueuedTexture{ handle, std::move(source), bytes });
+        ++mTextureQueuedCount;
+        return handle;
+    }
+
+    bool MeshUploader::RetireTexture(ResourceStore &resources, TextureHandle handle, uint64_t lastUse)
+    {
+        const auto *slot = resources.FindTextureSlot(handle);
+        if (slot == nullptr)
+            return false;
+        const bool pending = slot->mState == TextureUploadState::Pending;
+        GpuTexture texture = resources.TakeTexture(handle);
+        if (texture.mImage == VK_NULL_HANDLE)
+            return false;
+        mQueue.Cancel(handle);
+        mTextures.erase(handle.mIndex);
+        mTextureFinishes.erase(handle.mIndex);
+        if (pending)
+            resources.FreeTexture(texture);
+        else
+        {
+            Garbage garbage;
+            garbage.textures.push_back(texture);
+            mRetiredTextures.Push(lastUse, texture.mBytes, std::move(garbage));
+        }
+        return true;
+    }
+
+    void MeshUploader::RecordTexture(VkCommandBuffer cmd, uint64_t frame, ResourceStore &resources,
+        const MeshUploadQueue::Admitted &band)
+    {
+        const auto &item = band.item;
+        const auto found = mTextures.find(item.texture.mIndex);
+        auto *texture = resources.FindTextureSlot(item.texture);
+        if (found == mTextures.end() || found->second.mHandle != item.texture || texture == nullptr)
+            return;
+        auto &queued = found->second;
+        const auto &desc = queued.mSource.desc;
+        const auto pixels = item.mip == 0 ? desc.pixels : desc.mips[item.mip - 1].pixels;
+        const uint32_t width = item.mip == 0 ? desc.width : desc.mips[item.mip - 1].width;
+        const uint64_t offset = *band.stagingOffset;
+        std::memcpy(mStagingMapped + offset, pixels.data() + uint64_t(item.firstRow) * item.rowBytes,
+            static_cast<size_t>(item.stagingBytes));
+        vmaFlushAllocation(mDevice->Allocator(), mStagingAllocation, offset, item.stagingBytes);
+        if (texture->mState == TextureUploadState::Pending)
+        {
+            ImageBarrier(cmd, texture->mImage, VK_IMAGE_ASPECT_COLOR_BIT,
+                VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0, VK_PIPELINE_STAGE_2_COPY_BIT,
+                VK_ACCESS_2_TRANSFER_WRITE_BIT, texture->mLevels);
+            texture->mState = TextureUploadState::Uploading;
+        }
+        const VkBufferImageCopy region{ .bufferOffset = offset,
+            .imageSubresource{ VK_IMAGE_ASPECT_COLOR_BIT, item.mip, 0, 1 },
+            .imageOffset{ 0, static_cast<int32_t>(item.firstRow), 0 },
+            .imageExtent{ width, item.rowCount, 1 } };
+        vkCmdCopyBufferToImage(cmd, mStaging, texture->mImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        queued.mRemaining -= item.stagingBytes;
+        if (queued.mRemaining == 0)
+        {
+            ImageBarrier(cmd, texture->mImage, VK_IMAGE_ASPECT_COLOR_BIT,
+                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, texture->mLevels);
+            mTextureFinishes[item.texture.mIndex] = { item.texture, frame };
+            mTextures.erase(found);
+        }
+    }
+
     void MeshUploader::Forget(MeshHandle handle)
     {
         if (!mQueue.Cancel(handle))
@@ -182,15 +277,27 @@ namespace mir::vk
 
     void MeshUploader::Collect(ResourceStore &resources, RayTracer &rayTracer, uint64_t completed)
     {
-        for (const MeshHandle handle : mQueue.Complete(completed))
+        for (const auto &item : mQueue.CompleteUploads(completed))
         {
+            if (!item.texture.IsNull())
+                continue;
+            const MeshHandle handle = item.mesh;
             GpuMesh *const mesh = resources.FindMeshSlot(handle);
             if (mesh == nullptr || mesh->mState != GpuMeshState::Uploading)
                 continue;
             mesh->mState = GpuMeshState::Ready;
             ++mUploaded;
         }
+        std::erase_if(mTextureFinishes, [&](const auto &entry)
+            {
+                if (entry.second.mFrame > completed)
+                    return false;
+                resources.MakeTextureReady(entry.second.mHandle);
+                ++mTextureUploadedCount;
+                return true;
+            });
         mRetired.Collect(completed, [&](Garbage &garbage) { Free(rayTracer, garbage); });
+        mRetiredTextures.Collect(completed, [&](Garbage &garbage) { Free(rayTracer, garbage); });
     }
 
     void MeshUploader::Record(VkCommandBuffer cmd, uint64_t frame, ResourceStore &resources, RayTracer &rayTracer)
@@ -205,17 +312,24 @@ namespace mir::vk
         std::vector<RayTracer::MeshBlasBuild> builds;
         for (const MeshUploadQueue::Admitted &entry : admitted)
         {
+            if (!entry.item.texture.IsNull())
+            {
+                RecordTexture(cmd, frame, resources, entry);
+                continue;
+            }
             const MeshHandle handle = entry.item.mesh;
             const auto found = mQueued.find(handle.mIndex);
             GpuMesh *const mesh = resources.FindMeshSlot(handle);
             if (found == mQueued.end() || found->second.mesh != handle || mesh == nullptr ||
                 mesh->mState != GpuMeshState::Pending)
                 continue;
-            const Queued queued = std::move(found->second);
+            Queued queued = std::move(found->second);
             mQueued.erase(found);
 
-            const VkDeviceSize vertexBytes = queued.vertices.size() * sizeof(Vertex);
-            const VkDeviceSize indexBytes = queued.indices.size() * sizeof(uint32_t);
+            const uint32_t vertexCount = uint32_t(queued.source.vertices.size());
+            const uint32_t indexCount = uint32_t(queued.source.indices.size());
+            const VkDeviceSize vertexBytes = VkDeviceSize(vertexCount) * sizeof(Vertex);
+            const VkDeviceSize indexBytes = VkDeviceSize(indexCount) * sizeof(uint32_t);
             if (!resources.CreateMeshBuffers(*mesh, handle.mIndex, vertexBytes, indexBytes, queued.blas))
             {
                 MIR_LOG_ERROR("Mesh {}: device buffer allocation failed, the upload is dropped", handle.mIndex);
@@ -256,8 +370,10 @@ namespace mir::vk
                 targetAllocation = ownAllocation;
                 mRetired.Push(frame, vertexBytes + indexBytes, Garbage{{}, {{own, ownAllocation}}});
             }
-            std::memcpy(target, queued.vertices.data(), vertexBytes);
-            std::memcpy(target + vertexBytes, queued.indices.data(), indexBytes);
+            std::memcpy(target, queued.source.vertices.data(), vertexBytes);
+            std::memcpy(target + vertexBytes, queued.source.indices.data(), indexBytes);
+            // CPU data can be released here, the acceleration structure build uses GPU buffers.
+            queued.source.keepalive.reset();
             vmaFlushAllocation(mDevice->Allocator(), targetAllocation, entry.stagingOffset ? offset : 0,
                                vertexBytes + indexBytes);
 
@@ -266,11 +382,11 @@ namespace mir::vk
             const VkBufferCopy indexCopy{.srcOffset = offset + vertexBytes, .dstOffset = 0, .size = indexBytes};
             vkCmdCopyBuffer(cmd, source, mesh->mIndexBuffer, 1, &indexCopy);
 
-            mesh->mIndexCount = uint32_t(queued.indices.size());
+            mesh->mIndexCount = indexCount;
             mesh->mState = GpuMeshState::Uploading;
             mUploadedBytes += entry.item.gpuBytes;
             if (queued.blas)
-                builds.push_back({handle.mIndex, mesh, uint32_t(queued.vertices.size())});
+                builds.push_back({handle.mIndex, mesh, vertexCount});
         }
 
         if (!builds.empty())
@@ -318,7 +434,10 @@ namespace mir::vk
     {
         mQueue.Clear();
         mQueued.clear();
+        mTextures.clear();
+        mTextureFinishes.clear();
         mRetired.ReleaseAll([&](Garbage &garbage) { Free(rayTracer, garbage); });
+        mRetiredTextures.ReleaseAll([&](Garbage &garbage) { Free(rayTracer, garbage); });
     }
 
     void MeshUploader::Free(RayTracer &rayTracer, Garbage &garbage)
@@ -328,6 +447,9 @@ namespace mir::vk
         for (const auto &[buffer, allocation] : garbage.buffers)
             vmaDestroyBuffer(mDevice->Allocator(), buffer, allocation);
         garbage.buffers.clear();
+        for (auto &texture : garbage.textures)
+            ResourceStore::FreeTexture(*mDevice, texture);
+        garbage.textures.clear();
     }
 
     void MeshUploader::FillStats(MeshStreamingStats &stats) const
@@ -337,8 +459,10 @@ namespace mir::vk
         stats.pendingBytes = mQueue.PendingBytes();
         stats.uploading = mQueue.Uploading();
         stats.uploadingBytes = mQueue.UploadingBytes();
-        stats.retiring = mRetired.Size();
-        stats.retiringBytes = mRetired.Bytes();
+        stats.retiring = mRetired.Size() + mRetiredTextures.Size();
+        stats.retiringMeshBytes = mRetired.Bytes();
+        stats.retiringTextureBytes = mRetiredTextures.Bytes();
+        stats.retiringBytes = stats.retiringMeshBytes + stats.retiringTextureBytes;
         stats.stagingUsedBytes = mQueue.StagingUsed();
         stats.queued = mQueuedCount;
         stats.uploaded = mUploaded;
@@ -346,6 +470,10 @@ namespace mir::vk
         stats.retired = mRetiredCount;
         stats.failed = mFailed;
         stats.uploadedBytes = mUploadedBytes;
+        stats.textureQueued = mTextureQueuedCount;
+        stats.textureUploaded = mTextureUploadedCount;
+        for (const auto &[key, texture] : mTextures)
+            stats.textureSourceBytes += texture.mSource.Bytes();
         stats.blasBuilt = mBlasBuilt;
         stats.blasBytes = mBlasBytes;
         stats.lastFrameBytes = mQueue.LastFrameBytes();

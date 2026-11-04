@@ -144,7 +144,7 @@ namespace mir
         // Never null; empty until a build or import cooks something
         AssetCache *Assets() { return &mAssets.Cache(); }
 
-        // The background asset loader. Null when there was no manifest at startup, for the whole session
+        // The background asset loader, one for the whole session even when the first cook comes later
         AsyncAssetService *AssetService() { return mAssetService.get(); }
 
         // The scene currently in the World
@@ -210,6 +210,12 @@ namespace mir
 
         // what the editor, the game shell and the import asked for last frame
         void ApplyRequests();
+
+        // A standalone game starts no gameplay for a scene until its resources are ready. The window, the
+        // completions, the uploads and the loading UI keep running, and only the resource systems tick. False
+        // when the window closed, or a bounded run ran out of frames, before the scene was ready.
+        bool AwaitSceneResources();
+        void DrawLoadingOverlay();
 
         // True when the editor has material drafts that are not accepted yet.
         bool HasUnsavedMaterialDrafts() const;
@@ -327,5 +333,10 @@ namespace mir
         double mElapsed = 0.0;
         uint64_t mFrame = 0;
         FixedTimestep mFixedTimestep;
+
+        bool mGateScenes = false;
+        bool mSceneGated = false;
+        // last: it unregisters before anything it draws from is destroyed
+        Registration mLoadingDrawer;
     };
 } // namespace mir

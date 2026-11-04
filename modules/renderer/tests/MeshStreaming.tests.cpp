@@ -7,12 +7,17 @@
  *
  */
 #include <renderer/MeshStreaming.h>
+#include <renderer/TextureUpload.h>
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <glm/vec3.hpp>
+
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace mir;
@@ -234,4 +239,124 @@ TEST_CASE("Retired objects are released once every frame that may use them compl
     CHECK(released == std::vector<std::string>{"a", "b", "c"});
     CHECK(retired.Bytes() == 0);
     CHECK(retired.Size() == 0);
+}
+
+// These cover the source's own ownership only. The renderer's release points (MeshUploader Record, Forget and
+// Clear) need a device and have no unit test, the editor and game smoke runs reach them.
+TEST_CASE("MeshUploadSource::Own spans its data and frees it with the last keepalive", "[renderer][streaming]")
+{
+    std::vector<Vertex> vertices(3);
+    vertices[2].pos = glm::vec3(1.0f, 2.0f, 3.0f);
+    MeshUploadSource source = MeshUploadSource::Own(std::move(vertices), { 0, 1, 2 });
+
+    CHECK(source.vertices.size() == 3);
+    CHECK(source.indices.size() == 3);
+    CHECK(source.vertices[2].pos == glm::vec3(1.0f, 2.0f, 3.0f));
+    CHECK(source.keepalive.use_count() == 1);
+
+    const std::weak_ptr<const void> watcher = source.keepalive;
+    source.keepalive.reset();
+    CHECK(watcher.expired());
+}
+
+TEST_CASE("Resetting one keepalive leaves another holder of the data alone", "[renderer][streaming]")
+{
+    MeshUploadSource source = MeshUploadSource::Own(std::vector<Vertex>(2), { 0, 1, 0 });
+    const std::shared_ptr<const void> cache = source.keepalive;
+
+    source.keepalive.reset();
+
+    CHECK(cache.use_count() == 1);
+}
+
+TEST_CASE("A 4K texture streams bounded bands through a smaller ring", "[renderer][streaming][texture]")
+{
+    constexpr uint64_t mib = 1024 * 1024;
+    MeshUploadQueue queue({ 32 * mib, 4 * mib });
+    const TextureHandle texture{ 3, 1 };
+    queue.Push({ {}, 64 * mib, 64 * mib, texture, 0, 0, 4096, 4096 * 4 });
+    std::vector<bool> copied(4096);
+    uint64_t bytes = 0;
+    uint64_t frame = 1;
+    while (queue.Pending() != 0 && frame < 100)
+    {
+        queue.CompleteUploads(frame > 2 ? frame - 2 : 0);
+        const auto admitted = queue.Admit(frame++);
+        REQUIRE_FALSE(admitted.empty());
+        CHECK(queue.LastFrameBytes() <= 4 * mib);
+        CHECK(queue.StagingUsed() <= 32 * mib);
+        for (const auto &band : admitted)
+        {
+            REQUIRE(band.stagingOffset);
+            CHECK(*band.stagingOffset + band.item.stagingBytes <= 32 * mib);
+            for (uint32_t row = band.item.firstRow; row < band.item.firstRow + band.item.rowCount; ++row)
+            {
+                REQUIRE(row < copied.size());
+                CHECK_FALSE(copied[row]);
+                copied[row] = true;
+            }
+            bytes += band.item.stagingBytes;
+        }
+    }
+    CHECK(bytes == 64 * mib);
+    CHECK(queue.Pending() == 0);
+    queue.CompleteUploads(frame);
+    CHECK(queue.StagingUsed() == 0);
+    CHECK(queue.UploadingBytes() == 0);
+}
+
+TEST_CASE("Partial texture bands rotate behind waiting meshes and cancellation keeps recorded spans alive",
+    "[renderer][streaming][texture]")
+{
+    MeshUploadQueue queue({ 2048, 512 });
+    const TextureHandle texture{ 4, 1 };
+    queue.Push({ {}, 2048, 2048, texture, 0, 0, 8, 256 });
+    queue.Push({ Mesh(9), 256, 256 });
+    const auto first = queue.Admit(1);
+    REQUIRE(first.size() == 1);
+    CHECK(first[0].item.texture == texture);
+    const auto second = queue.Admit(2);
+    REQUIRE(second.size() == 2);
+    CHECK(second[0].item.mesh == Mesh(9));
+    CHECK(second[1].item.texture == texture);
+    CHECK(queue.Cancel(texture));
+    CHECK(queue.PendingBytes() == 0);
+    CHECK(queue.UploadingBytes() == 1024);
+    CHECK(queue.StagingUsed() != 0);
+    queue.CompleteUploads(2);
+    CHECK(queue.StagingUsed() == 0);
+}
+
+TEST_CASE("A texture row exceeding the budget still makes progress without exceeding the ring",
+    "[renderer][streaming][texture]")
+{
+    MeshUploadQueue queue({ 512, 64 });
+    queue.Push({ {}, 512, 512, TextureHandle{ 1, 1 }, 2, 0, 2, 256 });
+    const auto admitted = queue.Admit(1);
+    REQUIRE(admitted.size() == 1);
+    CHECK(admitted[0].item.rowCount == 1);
+    CHECK(admitted[0].item.mip == 2);
+    CHECK(admitted[0].item.stagingBytes == 256);
+    CHECK(queue.LastFrameBytes() == 256);
+}
+
+TEST_CASE("Prepared texture mips filter RGB in linear light and alpha linearly", "[renderer][texture]")
+{
+    const std::vector<std::byte> pixels(4, std::byte{ 0 });
+    std::vector<std::byte> image = pixels;
+    image.insert(image.end(), 4, std::byte{ 255 });
+    auto source = PrepareTextureUpload({ .width = 2, .height = 1, .pixels = image, .srgb = true, .generateMips = true });
+    REQUIRE(source.keepalive);
+    REQUIRE(source.desc.mips.size() == 1);
+    CHECK(std::to_integer<int>(source.desc.mips[0].pixels[0]) == 188);
+    CHECK(std::to_integer<int>(source.desc.mips[0].pixels[3]) == 128);
+    CHECK(source.Bytes() == 12);
+    const std::vector<std::byte> supplied(4, std::byte{ 42 });
+    TextureDesc desc{ .width = 2, .height = 1, .pixels = image, .generateMips = true };
+    desc.mips.push_back({ 1, 1, supplied });
+    source = PrepareTextureUpload(desc);
+    REQUIRE(source.desc.mips.size() == 1);
+    CHECK(source.desc.mips[0].pixels[0] == std::byte{ 42 });
+    CHECK(source.desc.mips[0].pixels[3] == std::byte{ 42 });
+    CHECK(PrepareTextureUpload({ .width = 2, .height = 2, .pixels = image }).desc.width == 0);
 }

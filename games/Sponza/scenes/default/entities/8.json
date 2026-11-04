@@ -1,0 +1,59 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [
+          9.0,
+          1.5,
+          4.5
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [
+          9.0,
+          1.5,
+          4.5
+        ]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "Point_8"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "areaSize": 0.5,
+        "color": [
+          1.0,
+          0.7,
+          0.4
+        ],
+        "intensity": 3.0,
+        "range": 6.0,
+        "spotAngleDegrees": 45.0,
+        "type": 1
+      },
+      "type": "Light"
+    }
+  ],
+  "id": 8,
+  "parent": 0,
+  "siblingIndex": 7
+}

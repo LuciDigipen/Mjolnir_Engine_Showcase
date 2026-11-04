@@ -1,4 +1,7 @@
 {
+  "build": {
+    "profile": "release"
+  },
   "ide": {
     "args": "--new-window {project} {file}",
     "path": "C:\\Users\\rahul\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe"
@@ -33,7 +36,7 @@
         }
       },
       "DepthOfField": {
-        "enabled": true,
+        "enabled": false,
         "params": {}
       },
       "Film": {
@@ -45,13 +48,13 @@
         "params": {}
       },
       "HDR": {
-        "enabled": true,
+        "enabled": false,
         "params": {
           "tonemapOperator": "aces"
         }
       },
       "MotionBlur": {
-        "enabled": true,
+        "enabled": false,
         "params": {}
       }
     }

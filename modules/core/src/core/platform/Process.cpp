@@ -120,8 +120,70 @@ namespace mir
     ChildProcess &ChildProcess::operator=(ChildProcess &&) noexcept = default;
 
 #if defined(_WIN32)
+    namespace
+    {
+        // stdin from NUL, stdout and stderr into one file, and no other handle inherited
+        struct RedirectedOutput
+        {
+            HANDLE input = INVALID_HANDLE_VALUE;
+            HANDLE output = INVALID_HANDLE_VALUE;
+            HANDLE inherited[2]{};
+            std::vector<std::byte> attributes;
+
+            RedirectedOutput() = default;
+            RedirectedOutput(const RedirectedOutput &) = delete;
+            RedirectedOutput &operator=(const RedirectedOutput &) = delete;
+
+            ~RedirectedOutput()
+            {
+                if (!attributes.empty())
+                    DeleteProcThreadAttributeList(List());
+                for (HANDLE handle : {input, output})
+                {
+                    if (handle != INVALID_HANDLE_VALUE)
+                        CloseHandle(handle);
+                }
+            }
+
+            LPPROC_THREAD_ATTRIBUTE_LIST List() { return reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributes.data()); }
+
+            bool Open(const std::filesystem::path &file, STARTUPINFOEXW &startup)
+            {
+                SECURITY_ATTRIBUTES inheritable{sizeof(inheritable), nullptr, TRUE};
+                output = CreateFileW(file.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                     &inheritable, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+                input = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &inheritable, OPEN_EXISTING,
+                                    FILE_ATTRIBUTE_NORMAL, nullptr);
+                if (output == INVALID_HANDLE_VALUE || input == INVALID_HANDLE_VALUE)
+                    return false;
+
+                SIZE_T size = 0;
+                InitializeProcThreadAttributeList(nullptr, 1, 0, &size);
+                attributes.resize(size);
+                if (!InitializeProcThreadAttributeList(List(), 1, 0, &size))
+                {
+                    attributes.clear();
+                    return false;
+                }
+                inherited[0] = input;
+                inherited[1] = output;
+                if (!UpdateProcThreadAttribute(List(), 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherited, sizeof(inherited),
+                                               nullptr, nullptr))
+                    return false;
+
+                startup.StartupInfo.cb = sizeof(startup);
+                startup.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
+                startup.StartupInfo.hStdInput = input;
+                startup.StartupInfo.hStdOutput = output;
+                startup.StartupInfo.hStdError = output;
+                startup.lpAttributeList = List();
+                return true;
+            }
+        };
+    } // namespace
+
     bool ChildProcess::Start(const std::filesystem::path &program, std::span<const std::string> args,
-                             const std::filesystem::path &workingDirectory)
+                             const std::filesystem::path &workingDirectory, const std::filesystem::path &outputFile)
     {
         if (mImpl->handle)
             return false;
@@ -133,13 +195,26 @@ namespace mir
             commandLine += std::filesystem::path(QuoteCommandLineArgument(arg)).wstring();
         }
 
-        STARTUPINFOW startup{};
-        startup.cb = sizeof(startup);
+        STARTUPINFOEXW startup{};
+        startup.StartupInfo.cb = sizeof(startup.StartupInfo);
+        // suspended until it is in the job, so it cannot start a grandchild outside it
+        DWORD flags = CREATE_NO_WINDOW | CREATE_SUSPENDED;
+        RedirectedOutput redirect;
+        if (!outputFile.empty())
+        {
+            if (!redirect.Open(outputFile, startup))
+            {
+                MIR_LOG_ERROR("ChildProcess: could not send the output of '{}' to '{}' (error {})", program.string(),
+                              outputFile.string(), GetLastError());
+                return false;
+            }
+            flags |= EXTENDED_STARTUPINFO_PRESENT;
+        }
+
         PROCESS_INFORMATION process{};
         const wchar_t *workingDirectoryValue = workingDirectory.empty() ? nullptr : workingDirectory.c_str();
-        // suspended until it is in the job, so it cannot start a grandchild outside it
-        if (!CreateProcessW(program.c_str(), commandLine.data(), nullptr, nullptr, FALSE,
-                            CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr, workingDirectoryValue, &startup, &process))
+        if (!CreateProcessW(program.c_str(), commandLine.data(), nullptr, nullptr, outputFile.empty() ? FALSE : TRUE,
+                            flags, nullptr, workingDirectoryValue, &startup.StartupInfo, &process))
         {
             MIR_LOG_ERROR("ChildProcess: could not start '{}' (error {})", program.string(), GetLastError());
             return false;
@@ -216,10 +291,17 @@ namespace mir
     }
 #elif defined(__linux__)
     bool ChildProcess::Start(const std::filesystem::path &program, std::span<const std::string> args,
-                             const std::filesystem::path &workingDirectory)
+                             const std::filesystem::path &workingDirectory, const std::filesystem::path &outputFile)
     {
         if (mImpl->pid > 0)
             return false;
+        // builds are Windows only
+        if (!outputFile.empty())
+        {
+            MIR_LOG_ERROR("ChildProcess: sending the output of '{}' to a file is only supported on Windows",
+                          program.string());
+            return false;
+        }
 
         const pid_t child = fork();
         if (child < 0)
@@ -287,7 +369,8 @@ namespace mir
         return stopped;
     }
 #else
-    bool ChildProcess::Start(const std::filesystem::path &, std::span<const std::string>, const std::filesystem::path &)
+    bool ChildProcess::Start(const std::filesystem::path &, std::span<const std::string>, const std::filesystem::path &,
+                             const std::filesystem::path &)
     {
         return false;
     }

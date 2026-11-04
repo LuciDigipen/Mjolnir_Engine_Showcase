@@ -162,6 +162,9 @@ namespace mir
             mWarnedNoActiveCamera = false;
         }
 
+        // A frame with no scene, so uploads advance and the loading UI shows while a scene waits for its resources
+        void OnLoadingUpdate(SystemContext &) override { mRenderer.DrawFrame({}); }
+
         void OnUpdate(SystemContext &context) override
         {
             const RenderSettings &renderSettings = context.world.Resource<RenderSettings>();
@@ -366,9 +369,15 @@ namespace mir
             if (const ModelDrawItems *models = source.TryResource<ModelDrawItems>())
                 mDrawItems.insert(mDrawItems.end(), models->items.begin(), models->items.end());
 
+            // A traced frame shadows by ray, so it records no shadow maps.
+            const bool traceable = mRenderer.RayTracingActive(renderSettings.rayTracing);
+            const bool wireframeOnly = mViewCameras.size() == 1 && mRenderer.WireframeAvailable() &&
+                mViewports[mViewCameras.front().viewport].mDebugView.shading == ViewportShading::Wireframe;
+            const bool traceFrame = traceable && mViewCameras.size() == 1 && !wireframeOnly;
+
             const bool haveDirectionalLight = haveSunLight || haveSky;
             mSunShadowItems.clear();
-            if (haveDirectionalLight && haveShadowCamera)
+            if (haveDirectionalLight && haveShadowCamera && !traceFrame)
             {
                 const glm::mat4 sunShadowViewProj = MakeOrthographicViewProjection(
                     -sunDirWS, VulkanRenderer::kSunShadowHalfExtent, VulkanRenderer::kSunShadowNearZ);
@@ -394,7 +403,7 @@ namespace mir
 
                 for (LightItem &item : mLightItems)
                 {
-                    if (item.shadowSlot < 0)
+                    if (item.shadowSlot < 0 || traceFrame)
                         continue;
                     const uint32_t slot = static_cast<uint32_t>(item.shadowSlot);
 
@@ -527,9 +536,6 @@ namespace mir
                 mWarnedSkippedItems = true;
             }
 
-            // Wireframe shows no shading, so it never pays for a trace
-            const bool wireframeOnly = mRenderViews.size() == 1 && mRenderer.WireframeAvailable() &&
-                mRenderViews.front().debugView.shading == ViewportShading::Wireframe;
             // leaving or entering it swaps paths; temporal effects must not blend across the switch
             if (wireframeOnly != mWasWireframeOnly)
             {
@@ -537,8 +543,7 @@ namespace mir
                 mWasWireframeOnly = wireframeOnly;
             }
 
-            const bool traceable = mRenderer.RayTracingActive(renderSettings.rayTracing);
-            if (traceable && mRenderViews.size() == 1 && !wireframeOnly)
+            if (traceFrame)
             {
                 mRayTracingItems.clear();
                 if (kRtxgiCompiledIn && renderSettings.ddgi.enabled)

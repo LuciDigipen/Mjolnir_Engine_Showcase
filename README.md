@@ -24,6 +24,7 @@ cmake/                build helpers
   Assets.cmake          asset cooking
   Fonts.cmake           font copying
   Branding.cmake        icon and splash copying
+  Player.cmake          player template install rules, player_info.json
 
 modules/              one static library each, mir::<name>
   core/                 ECS, logging, paths, file IO, the surface contract
@@ -50,7 +51,7 @@ games/                one directory per game — no C++
   EmptyScene/           a game with an empty scene, for the smoke test
   SoundtrackCheck/      a streamed soundtrack and an SFX loop, with saved Lua volumes and mutes
 
-tools/                AssetCooker, new_module.ps1, new_file.ps1, wwise/ (SoundtrackCheck's banks)
+tools/                AssetCooker, MjolnirBuild, new_module.ps1, new_file.ps1, wwise/ (SoundtrackCheck's banks)
 templates/            what the scaffolding scripts stamp out
 third_party/          imgui (submodule), imgui_config, IconFontCppHeaders
 assets/               engine source assets and shaders, cooked into the build tree
@@ -104,9 +105,12 @@ tracked with Git LFS:
 games/TerrainCheck/assets/textures/icelandic_sand_and_rocks/*.jpg
 ```
 
-Besides that directory, only `games/CalderaDemo`'s large files are in LFS, and
-a default fetch leaves those out (see below). Every other image in the
-repository stays a regular Git object. The six committed maps are BaseColor, Normal,
+Sponza mesh buffers (`games/Sponza/**/*.bin`) and textures
+(`games/Sponza/**/*.jpg` and `games/Sponza/**/*.png`) also use LFS, along with
+`games/CalderaDemo`'s large files. A default fetch excludes the Caldera files
+(see below). Other images stay regular Git objects.
+
+The six committed TerrainCheck maps are BaseColor, Normal,
 Displacement, Roughness, Specular and AO. Bump, Cavity and Gloss are not used
 and are not included. The six JPEGs are byte-identical copies of the originals;
 nothing was re-encoded, cooked or migrated from history. `tcigfcgn.json` is the

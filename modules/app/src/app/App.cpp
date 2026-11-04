@@ -15,6 +15,7 @@
 #include <core/EngineVersion.h>
 #include <core/ecs/EngineMode.h>
 #include <core/ecs/Requests.h>
+#include <core/ecs/SceneLoadGroup.h>
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
 #include <core/log/SetupError.h>
@@ -25,6 +26,8 @@
 #include <project/ProjectSettings.h>
 #include <scene/SceneIO.h>
 #include <terrain_runtime/TerrainRuntime.h>
+
+#include <imgui.h>
 
 #include <algorithm>
 #include <chrono>
@@ -61,8 +64,6 @@ namespace mir
         std::unique_ptr<AsyncAssetService> MakeAssetService(
             AssetsModule &assets, JobExecutor &jobs, const std::filesystem::path &projectSettingsPath)
         {
-            if (!assets.HadManifest())
-                return nullptr;
             return std::make_unique<AsyncAssetService>(
                 assets, jobs, AssetSettings::LoadFile(projectSettingsPath).loadThreads);
         }
@@ -123,53 +124,54 @@ namespace mir
 
     App::App(const AppDesc &desc)
         : mDesc(Prepared(desc)),
-          mProject(mDesc.mProject),
-          mSplash(mDesc),
-          mJobs(mDesc.mWorkerThreads),
-          mCore(Context(), mCommands),
-          mAssets(CookedAssetsDir()),
-          mAssetService(MakeAssetService(mAssets, mJobs, mProject.mProjectSettingsPath)),
-          mResolver(mAssets, mProject.mAssetIdRoot),
-          mParticles(Context(), mAssets, mResolver),
-          mScene(Context(), mProject.mSceneDir),
-          mPrefab(Context(), mScene, PrefabSourceDir(mProject), kHasEditor ? nullptr : &mAssets),
-          mGameUI(Context()),
-          mGameShell(Context(), mGameUI, mAssets, mResolver,
-              GameShellSettings{ .mUIDemo = mDesc.mUIDemo, .mQuitStopsPlay = mDesc.mEnableEditorLayout }),
-          mWindow(MakeWindowDesc(mDesc)),
-          mRenderer(Context(), mWindow.Get(), mAssets,
-              RendererModuleSettings{ .mAppName = mDesc.mAppName,
-                                      .mEnableValidation = mDesc.mEnableValidation,
-                                      .mProjectSettingsPath = mProject.mProjectSettingsPath,
-                                      .mResolver = &mResolver }),
-          mParticlesGpu(mRenderer.Renderer()),
-          mInput(Context(), mWindow.Get(), mProject.mProjectSettingsPath),
-          mAnimation(Context(), mRenderer.Renderer(), mAssets, mResolver, &mJobs),
-          mImGui(Context(), mWindow, mRenderer),
+        mProject(mDesc.mProject),
+        mSplash(mDesc),
+        mJobs(mDesc.mWorkerThreads),
+        mCore(Context(), mCommands),
+        mAssets(CookedAssetsDir()),
+        mAssetService(MakeAssetService(mAssets, mJobs, mProject.mProjectSettingsPath)),
+        mResolver(mAssets, mProject.mAssetIdRoot),
+        mParticles(Context(), mAssets, mResolver),
+        mScene(Context(), mProject.mSceneDir),
+        mPrefab(Context(), mScene, PrefabSourceDir(mProject), kHasEditor ? nullptr : &mAssets),
+        mGameUI(Context()),
+        mGameShell(Context(), mGameUI, mAssets, mResolver,
+            GameShellSettings{ .mUIDemo = mDesc.mUIDemo, .mQuitStopsPlay = mDesc.mEnableEditorLayout }),
+        mWindow(MakeWindowDesc(mDesc)),
+        mRenderer(Context(), mWindow.Get(),
+            RendererModuleSettings{ .mAppName = mDesc.mAppName,
+                                    .mEnableValidation = mDesc.mEnableValidation,
+                                    .mProjectSettingsPath = mProject.mProjectSettingsPath,
+                                    .mResolver = &mResolver,
+                                    .mAssetService = mAssetService.get() }),
+        mParticlesGpu(mRenderer.Renderer()),
+        mInput(Context(), mWindow.Get(), mProject.mProjectSettingsPath),
+        mAnimation(Context(), mRenderer.Renderer(), mAssetService.get(), mResolver, &mJobs),
+        mImGui(Context(), mWindow, mRenderer),
     #if MIR_WITH_EDITOR
-        mEditor(Context(), mImGui, mWindow, mRenderer, mScene, mPrefab, mAssets, mResolver, mProject, mJobs,
-            mDesc.mEnableEditorLayout),
+        mEditor(Context(), mImGui, mWindow, mRenderer, mScene, mPrefab, mAssets, mAssetService.get(), mResolver,
+            mProject, mJobs, mDesc.mEnableEditorLayout, mAnimation.Library()),
     #endif
-          mCamera(Context()),
+        mCamera(Context()),
     #if MIR_WITH_AUDIO
-          mAudio(Context(), mProject.mSoundBankDir, mProject.mProjectSettingsPath,
-              UserDataDir() / mProject.mName / "settings.json"),
+        mAudio(Context(), mProject.mSoundBankDir, mProject.mProjectSettingsPath,
+            UserDataDir() / mProject.mName / "settings.json"),
     #endif
-          mPhysics(Context(), mProject.mProjectSettingsPath, &mJobs),
-          mTerrainData(Context()),
-          mScript(Context(), mAssets, mResolver),
-          mParticlesRuntime(Context(), mParticles, mParticlesGpu, mRenderer.Rendering()),
-          mParticlesScript(mScript),
+        mPhysics(Context(), mProject.mProjectSettingsPath, &mJobs),
+        mTerrainData(Context()),
+        mScript(Context(), mAssets, mResolver),
+        mParticlesRuntime(Context(), mParticles, mParticlesGpu, mRenderer.Rendering()),
+        mParticlesScript(mScript),
     #if MIR_WITH_AUDIO
-          mAudioScript(mScript),
+        mAudioScript(mScript),
     #endif
-          mInputScript(mScript),
-          mPhysicsScript(mScript),
-          mRendererScript(mScript),
-          mTerrainScript(mScript),
-          mTerrain(Context(), mRenderer, mProject, mResolver, mJobs),
-          mGameUIImGui(Context(), mImGui, mWindow, mGameUI),
-          mFixedTimestep{ .mStep = mDesc.mFixedDeltaSeconds, .mMaxSteps = mDesc.mMaxFixedSteps }
+        mInputScript(mScript),
+        mPhysicsScript(mScript),
+        mRendererScript(mScript),
+        mTerrainScript(mScript),
+        mTerrain(Context(), mRenderer, mProject, mResolver, mJobs),
+        mGameUIImGui(Context(), mImGui, mWindow, mGameUI),
+        mFixedTimestep{ .mStep = mDesc.mFixedDeltaSeconds, .mMaxSteps = mDesc.mMaxFixedSteps }
     {
     #if MIR_WITH_AUDIO
         mGameShell.SetAudioOptions(&mAudioOptions);
@@ -177,9 +179,19 @@ namespace mir
         mEditor.SetAudio(&mEditorAudio);
     #endif
     #endif
+    #if MIR_WITH_EDITOR
+        mEditor.SetNonInteractive(mDesc.mNonInteractive);
+    #endif
 
         mSplash.screen.SetProgress("Loading scene...", 0.9f);
         LoadProjectScene();
+
+        // Gate scene resources now; RevealWindow starts gameplay after the first view loads.
+        if (!mDesc.mEnableEditorLayout)
+        {
+            mGateScenes = true;
+            mLoadingDrawer = mImGui.AddDrawer(DrawerGroup::Game, [this] { DrawLoadingOverlay(); });
+        }
 
         // every module is built, so a library that took the crash filter slot has done so
         ReclaimCrashHandler();
@@ -382,6 +394,79 @@ namespace mir
         SetPlayState(mWorld, IsPaused(mWorld) ? PlayState::Running : PlayState::Paused);
     }
 
+    bool App::AwaitSceneResources()
+    {
+        SceneLoadGroup &group = mWorld.Resource<SceneLoadGroup>();
+        mSceneGated = true;
+        // The game UI stays off while the scene prepares, so nothing it draws can be clicked, and what is requested
+        // meanwhile is dropped. A request made before the wait is kept.
+        mGameUI.SetSuspended(true);
+        RequestQueue &requests = mWorld.Resource<RequestQueue>();
+        RequestQueue::Held held = requests.Hold();
+        const auto finish = [&]
+        {
+            mSceneGated = false;
+            mGameUI.SetSuspended(false);
+            if (const size_t dropped = requests.Restore(std::move(held)); dropped != 0)
+                MIR_LOG_WARN("Dropped {} request(s) made while the scene was loading", dropped);
+        };
+        uint64_t frames = 0;
+        // Wait for resources without starting gameplay. Background I/O sets the pace, so a limited run is bound
+        // by time and not by its frame limit.
+        constexpr std::chrono::seconds kLoadingTimeout{ 60 };
+        const auto loadingStart = std::chrono::steady_clock::now();
+        while (!group.Ready())
+        {
+            if (mWindow.Get().ShouldClose())
+            {
+                finish();
+                return false;
+            }
+            mWindow.Get().PollEvents();
+            if (mAssetService)
+                mAssetService->DrainCompletions();
+            mImGui.RunUI();
+            SystemContext context = MakeContext(0.0f);
+            mScheduler.UpdateLoading(context);
+            group.EndFrame();
+            ++frames;
+            if (!group.Ready() && mDesc.mMaxFrames != 0 &&
+                std::chrono::steady_clock::now() - loadingStart >= kLoadingTimeout)
+            {
+                MIR_LOG_ERROR("The scene was still not ready after {} loading frames and {} seconds, gameplay did not start",
+                    frames, kLoadingTimeout.count());
+                mWindow.Get().RequestClose();
+                finish();
+                return false;
+            }
+        }
+        finish();
+        MIR_LOG_INFO("Scene ready after {} loading frames", frames);
+        return true;
+    }
+
+    void App::DrawLoadingOverlay()
+    {
+        if (!mSceneGated)
+            return;
+        const SceneLoadGroup &group = mWorld.Resource<SceneLoadGroup>();
+        const ImGuiViewport *viewport = ImGui::GetMainViewport();
+        ImDrawList *draw = ImGui::GetForegroundDrawList();
+        const ImVec2 min = viewport->Pos, max(min.x + viewport->Size.x, min.y + viewport->Size.y);
+        draw->AddRectFilled(min, ImVec2(max.x, max.y), IM_COL32(0, 0, 0, 255));
+
+        // Do not show a percentage until the required resources are known.
+        const char *status = group.Discovered() ? "Loading scene..." : "Preparing scene...";
+        const float width = std::min(viewport->Size.x * 0.4f, 480.0f);
+        const ImVec2 center(min.x + viewport->Size.x * 0.5f, min.y + viewport->Size.y * 0.5f);
+        const ImVec2 textSize = ImGui::CalcTextSize(status);
+        draw->AddText(ImVec2(center.x - textSize.x * 0.5f, center.y - 24.0f), IM_COL32(255, 255, 255, 255), status);
+        draw->AddRect(ImVec2(center.x - width * 0.5f, center.y), ImVec2(center.x + width * 0.5f, center.y + 8.0f),
+            IM_COL32(255, 255, 255, 255));
+        draw->AddRectFilled(ImVec2(center.x - width * 0.5f, center.y),
+            ImVec2(center.x - width * 0.5f + width * group.Progress(), center.y + 8.0f), IM_COL32(255, 255, 255, 255));
+    }
+
     void App::ApplyRequests()
     {
         RequestQueue &queue = mWorld.Resource<RequestQueue>();
@@ -438,11 +523,11 @@ namespace mir
 
     bool App::HasUnsavedMaterialDrafts() const
     {
-#if MIR_WITH_EDITOR
+    #if MIR_WITH_EDITOR
         return mEditor.HasUnsavedMaterialDrafts();
-#else
+    #else
         return false;
-#endif
+    #endif
     }
 
     bool App::ConfirmEditorExit()
@@ -576,6 +661,9 @@ namespace mir
 
     void App::Run()
     {
+        if (mGateScenes && !mWorld.Resource<SceneLoadGroup>().Ready() && !AwaitSceneResources())
+            return;
+
         SystemContext startContext = MakeContext(0.0f);
         mScheduler.Start(startContext);
 
@@ -603,6 +691,15 @@ namespace mir
             if (mAssetService)
                 mAssetService->DrainCompletions();
 
+            if (mGateScenes && !mWorld.Resource<SceneLoadGroup>().Ready())
+            {
+                mElapsed -= dt;
+                if (!AwaitSceneResources())
+                    break;
+                previous = std::chrono::steady_clock::now();
+                continue;
+            }
+
             SystemContext frameContext = MakeContext(dt);
             mScheduler.RunFrameSlot(FrameSlot::FrameBegin, frameContext);
 
@@ -616,6 +713,7 @@ namespace mir
             if (!mDesc.mCapturePath.empty() && mFrame + 1 == mDesc.mMaxFrames)
                 mRenderer.Renderer().CaptureNextFrame(mDesc.mCapturePath);
             mScheduler.Update(context, fixedSteps, mFixedTimestep.mStep);
+            mWorld.Resource<SceneLoadGroup>().EndFrame();
 
             if (mWorld.Resource<InputState>().JustPressed(kToggleFullscreenAction))
                 ToggleFullscreen();

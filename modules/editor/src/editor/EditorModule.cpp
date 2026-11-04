@@ -38,6 +38,7 @@
 #include <prefab/PrefabCoordinator.h>
 #include <prefab/PrefabModule.h>
 #include <prefab/PrefabSave.h>
+#include <project/PlayerInfo.h>
 #include <renderer/PostProcessingSettings.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/RenderSystem.h>
@@ -52,6 +53,8 @@
 #include <optional>
 #include <set>
 #include <stdexcept>
+#include <string>
+#include <system_error>
 #include <utility>
 
 namespace mir
@@ -167,7 +170,8 @@ namespace mir
 
     EditorModule::EditorModule(ModuleContext context, ImGuiModule &imgui, WindowModule &window,
         RendererModule &renderer, SceneModule &scene, PrefabModule &prefab, AssetsModule &assets,
-        const AssetResolver &resolver, const GameProject &project, JobExecutor &jobs, bool enableLayout)
+        AsyncAssetService *assetService, const AssetResolver &resolver, const GameProject &project, JobExecutor &jobs,
+        bool enableLayout, std::shared_ptr<ModelLibrary> models)
         : mWorld(context.world), mRenderer(renderer), mScene(scene), mPrefab(prefab), mResolver(resolver),
           mProject(project), mAssets(&assets),
           mEnableLayout(enableLayout), mProjectMenu(BuildProjectMenu()),
@@ -195,8 +199,12 @@ namespace mir
         }
         mEditor.SetAuthoringBackend(&mPrefabAuthoring);
         mEditor.SetAuthoredEntities(&mPrefabAuthoring);
+        mEditor.SetBuildGame(BuildGame{ ProjectRoot(), mProject.mRootDir.lexically_normal(), mProject.mName,
+            mProject.mProjectSettingsPath, ExecutableDir() / kPlayerInfoFileName });
+        mBuildTool = BuildToolPath();
         mMaterialEditor = std::make_unique<MaterialEditor>();
-        mPrefabWorkspace.BindResolveSystems(&renderer.Renderer(), &assets.Cache(), resolver);
+        mPrefabWorkspace.BindResolveSystems(&renderer.Renderer(), &renderer.SurfaceMaterials(), assetService,
+            resolver, std::move(models));
         context.scheduler.AddSystem<PrefabPreviewSystem>(SystemPhase::LateUpdate,
             SystemOrder{SystemOrder::kNormal}, mPrefabWorkspace,
             prefab.Coordinator(), mEditor, [this] { RefreshPrefabHistory(); });
@@ -212,14 +220,23 @@ namespace mir
                 if (mContentBrowser.ConsumePrefabSourceChange())
                     mPrefab.Rescan();
                 RefreshPrefabHistory();
+
+                mBuild.Update();
+                // the scene was written at the top of this frame, before this slot
+                if (std::exchange(mBuildAfterSave, false))
+                {
+                    if (UnsavedForBuild().empty())
+                        StartBuild(mPendingBuild);
+                    else
+                        mBuild.Fail("the save did not finish, so nothing was built; see the log");
+                }
             });
 
-        // after the renderer's: it freed every upload, the previews' too
+        // Scene-local editor work ends here, independent prefab Worlds retain their resources.
         mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &)
             {
                 mEditor.CancelSnapToTerrain();
                 mParticleEditor->OnHidden(mWorld);
-                mPrefabWorkspace.ResetResolve();
             });
 
         // every handle the undo history holds dies with the scene it came from
@@ -287,22 +304,11 @@ namespace mir
                 mAudioBeforePlay.reset();
             });
 
-        // the previews' models stage from the candidate too
-        mReloadPrepare = context.scheduler.AddStage(Stage::ReloadPrepare, [this, &assets](SystemContext &)
+        mReloadCommit = context.scheduler.AddStage(Stage::ReloadCommit, [this](SystemContext &)
             {
-                std::string error;
-                if (!mPrefabWorkspace.PrepareReload(assets.Candidate(), error))
-                    throw std::runtime_error("new preview model resources were rejected: " + error);
-            });
-        mReloadCommit = context.scheduler.AddStage(Stage::ReloadCommit, [this, &assets](SystemContext &)
-            {
-                mPrefabWorkspace.CommitReload(&assets.Cache());
+                mPrefabWorkspace.CommitReload();
                 mImport.MarkApplied();
                 MIR_LOG_INFO("Applied imported assets at an Edit frame boundary");
-            });
-        mReloadAbort = context.scheduler.AddStage(Stage::ReloadAbort, [this](SystemContext &)
-            {
-                mPrefabWorkspace.DiscardPreparedReload();
             });
 
         mDrawer = imgui.AddDrawer(DrawerGroup::Tools, [this, &window, &assets]
@@ -316,7 +322,7 @@ namespace mir
                     mWorld.Resource<EngineModeState>(), mProjectMenu, mProject.mDir,
                     preview != nullptr ? *preview : mWorld, mWorld, MakeEditorDocuments(), mImport.View(),
                     mRenderer.Renderer(), MakeContentBrowserView(), mShowMaterialEditor,
-                    mMaterialEditor->HasUnsavedDrafts(), mFrameDt);
+                    mMaterialEditor->HasUnsavedDrafts(), MakeBuildJobView(), mFrameDt);
                 if (const std::string particlePath = mEditor.TakeParticleOpenRequest();
                     !particlePath.empty() && IsEditing(mWorld))
                 {
@@ -347,8 +353,8 @@ namespace mir
                 MaterialEditorContext materialContext;
                 materialContext.mMaterials = &mRenderer.SurfaceMaterials();
                 materialContext.mCatalog = &mRenderer.Renderer().SurfaceMaterials();
-                materialContext.mReimportMaterial = [this](std::string_view logicalPath)
-                { return mImport.ReimportMaterial(logicalPath); };
+                materialContext.mReimportMaterial = [this](std::string_view logicalPath, bool force)
+                { return mImport.ReimportMaterial(logicalPath, force); };
                 materialContext.mMaterialCookRevision = [this](std::string_view logicalPath)
                 { return mImport.MaterialCookRevision(logicalPath); };
                 materialContext.mMaterialCookFailureRevision = [this](std::string_view logicalPath)
@@ -381,9 +387,7 @@ namespace mir
 
     EditorModule::~EditorModule()
     {
-        mReloadAbort.Reset();
         mReloadCommit.Reset();
-        mReloadPrepare.Reset();
         mPlayEnd.Reset();
         mPlayBegin.Reset();
         mSceneSaved.Reset();
@@ -392,8 +396,9 @@ namespace mir
         mDrawer.Reset();
         mFrameBegin.Reset();
         mEditor.Shutdown();
-        // stops a running cooker
+        // stops a running cooker and a running build
         mImport.Shutdown();
+        mBuild.Cancel();
         mShaderHotReload.Shutdown();
     }
 
@@ -557,6 +562,128 @@ namespace mir
 
         if (actions.mSaveActiveDocument)
             SaveActiveDocument();
+
+        ApplyBuildAction(actions.mBuild);
+    }
+
+    void EditorModule::ApplyBuildAction(const BuildAction &action)
+    {
+        switch (action.mCommand)
+        {
+        case BuildCommand::Build:
+            if (mBuild.Running() || mBuildAfterSave)
+                return;
+            if (const std::string blocked = BuildBlockedReason(); !blocked.empty())
+            {
+                MIR_LOG_WARN("Build: {}", blocked);
+                return;
+            }
+            if (const std::string unsaved = UnsavedForBuild(); !unsaved.empty())
+            {
+                if (mNonInteractive)
+                {
+                    MIR_LOG_WARN("Build: unsaved changes in {} (--non-interactive answers Cancel)", unsaved);
+                    return;
+                }
+                mPendingBuild = action;
+                mBuildAskSave = unsaved;
+                return;
+            }
+            StartBuild(action);
+            break;
+        case BuildCommand::SaveThenBuild:
+            mBuildAskSave.clear();
+            if (!SaveForBuild())
+            {
+                mBuild.Fail("the save failed, so nothing was built; see the log");
+                return;
+            }
+            mPendingBuild = action;
+            mBuildAfterSave = true;
+            break;
+        case BuildCommand::DeclineSave:
+            mBuildAskSave.clear();
+            break;
+        case BuildCommand::Cancel:
+            mBuild.Cancel();
+            break;
+        case BuildCommand::None:
+            break;
+        }
+    }
+
+    void EditorModule::StartBuild(const BuildAction &action)
+    {
+        if (const std::string blocked = BuildBlockedReason(); !blocked.empty())
+        {
+            mBuild.Fail(blocked);
+            return;
+        }
+
+        std::error_code ec;
+        const std::filesystem::path temp = std::filesystem::temp_directory_path(ec);
+        const std::filesystem::path result =
+            (ec ? ExecutableDir() : temp) / ("mjolnir-editor-build-" + std::to_string(CurrentProcessId()) + ".json");
+        mBuild.Start(BuildJobRequest{ mBuildTool, mProject.mRootDir, action.mPlayerDir, action.mOutDir, result });
+    }
+
+    std::string EditorModule::BuildBlockedReason() const
+    {
+        if (!IsEditing(mWorld))
+            return "Stop Play to build";
+        if (mImport.View().mProcessRunning)
+            return "Wait for the asset import to finish";
+        if (mBuildTool.empty())
+            return "asset_workspace.json names no MjolnirBuild; rebuild the editor";
+        return {};
+    }
+
+    std::string EditorModule::UnsavedForBuild() const
+    {
+        std::size_t prefabs = 0;
+        const PrefabWorkspace::PrefabUnsaved unsaved = UnsavedPrefabs();
+        for (const PrefabId id : mPrefab.Coordinator().DocumentIds())
+        {
+            if (unsaved(id))
+                ++prefabs;
+        }
+
+        std::string text = mEditor.IsSceneUnsaved() ? "the scene" : "";
+        if (prefabs > 0)
+            text += (text.empty() ? "" : " and ") + std::to_string(prefabs) + (prefabs == 1 ? " Prefab" : " Prefabs");
+        return text;
+    }
+
+    bool EditorModule::SaveForBuild()
+    {
+        bool saved = true;
+        const PrefabWorkspace::PrefabUnsaved unsaved = UnsavedPrefabs();
+        for (const PrefabId id : mPrefab.Coordinator().DocumentIds())
+        {
+            // an earlier save may have written it as a dependency
+            if (unsaved(id))
+                saved = mPrefabWorkspace.SavePrefab(id, unsaved, MarkSavedPrefabs()) && saved;
+        }
+        if (!saved || !mEditor.IsSceneUnsaved())
+            return saved;
+
+        return mPrefabWorkspace.SaveScene(mScene.Scene(), unsaved, MarkSavedPrefabs(), [this]
+            {
+                mWorld.Resource<RequestQueue>().Push(Request::SaveScene);
+                return true;
+            });
+    }
+
+    BuildJobView EditorModule::MakeBuildJobView() const
+    {
+        BuildJobView view;
+        view.mRunning = mBuild.Running();
+        view.mSaving = mBuildAfterSave;
+        view.mSeconds = mBuild.Seconds();
+        view.mBlocked = BuildBlockedReason();
+        view.mAskSave = mBuildAskSave;
+        view.mResult = mBuild.Result() ? &*mBuild.Result() : nullptr;
+        return view;
     }
 
     void EditorModule::SaveActiveDocument()

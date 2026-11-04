@@ -122,12 +122,14 @@ TEST_CASE("Cubic animation uses tangents and quaternion linear takes shortest pa
 TEST_CASE("Model seek loop and hierarchy evaluation are deterministic", "[animation]")
 {
     ModelResources r;
-    r.model.nodes.resize(2);
-    r.model.nodes[0].key = "root";
-    r.model.nodes[0].translation = {3, 0, 0};
-    r.model.nodes[1].key = "child";
-    r.model.nodes[1].parent = 0;
-    r.model.nodes[1].translation = {0, 2, 0};
+    ModelAsset asset;
+    asset.nodes.resize(2);
+    asset.nodes[0].key = "root";
+    asset.nodes[0].translation = {3, 0, 0};
+    asset.nodes[1].key = "child";
+    asset.nodes[1].parent = 0;
+    asset.nodes[1].translation = {0, 2, 0};
+    r.model = std::make_shared<ModelAsset>(asset);
     AnimationTrack t;
     t.target = "root";
     t.path = AnimationPath::Translation;
@@ -136,7 +138,7 @@ TEST_CASE("Model seek loop and hierarchy evaluation are deterministic", "[animat
     AnimationClipAsset clip;
     clip.duration = 2;
     clip.tracks = {t};
-    r.clips = {clip};
+    r.clips = { std::make_shared<AnimationClipAsset>(clip) };
     auto a = EvaluateModel(r, 0, 1, false), b = EvaluateModel(r, 0, 3, true), c = EvaluateModel(r, 0, 0, false);
     CHECK(a[1].world[3].x == 4);
     CHECK(a[1].world[3].y == 2);
@@ -243,9 +245,14 @@ TEST_CASE("Model resources decode from a root blob and its dependency blobs", "[
     std::string error;
     const AssetDependencies lookup = set.blobs.Lookup();
     REQUIRE(DecodeModelResources(set.blobs.views.at(set.model.value), lookup, resources, error));
-    CHECK(resources.model.nodes.size() == 1);
+    CHECK(resources.model->nodes.size() == 1);
     CHECK(resources.meshes.contains(set.mesh.value));
     CHECK(resources.clips.size() == 1);
+    const MeshRecord &mesh = *resources.meshes.at(set.mesh.value);
+    REQUIRE(mesh.uploads.size() == 1);
+    REQUIRE(mesh.uploads[0] != nullptr);
+    CHECK(mesh.uploads[0]->vertices.size() == 3);
+    CHECK(mesh.uploads[0]->indices.size() == 3);
 }
 
 TEST_CASE("Model resources fail when a dependency blob is not available", "[animation][assets]")
@@ -268,12 +275,113 @@ TEST_CASE("Model resources fail when a dependency blob is not available", "[anim
     CHECK(resources.meshes.empty());
 }
 
-TEST_CASE("The model decoder lists the geometry, skeleton and clip types", "[animation][assets]")
+TEST_CASE("Each record kind decodes its own blob alone and has one shared descriptor", "[animation][assets]")
 {
-    const AssetDecoder<ModelResources> &decoder = ModelResourcesDecoder();
-    CHECK(decoder.decode == &DecodeModelResources);
-    const std::vector<uint32_t> tags(decoder.dependencyTags.begin(), decoder.dependencyTags.end());
-    CHECK(tags == std::vector<uint32_t>{kMeshAssetTypeTag, kSkeletonAssetTypeTag, kAnimationAssetTypeTag});
-    // one descriptor for the whole process, so requests for a model deduplicate
-    CHECK(&ModelResourcesDecoder() == &decoder);
+    // no dependency types: a mesh shared by two models is one request and one decoded record
+    CHECK(ModelRecordDecoder().dependencyTags.empty());
+    CHECK(MeshRecordDecoder().dependencyTags.empty());
+    CHECK(SkeletonRecordDecoder().dependencyTags.empty());
+    CHECK(ClipRecordDecoder().dependencyTags.empty());
+    CHECK(MaterialRecordDecoder().dependencyTags.empty());
+    CHECK(&MeshRecordDecoder() == &MeshRecordDecoder());
+
+    ModelBlobs set;
+    MeshRecord record;
+    std::string error;
+    const AssetDependencies lookup = set.blobs.Lookup();
+    REQUIRE(MeshRecordDecoder().decode(set.blobs.views.at(set.mesh.value), lookup, record, error));
+    CHECK(record.asset.primitives.size() == 1);
+    REQUIRE(record.uploads.size() == 1);
+    CHECK(record.uploads[0] != nullptr);
+}
+
+TEST_CASE("A model names each record once, and its materials come from its meshes", "[animation][assets]")
+{
+    ModelAsset model;
+    model.nodes.resize(3);
+    const AssetId meshA = MakeAssetId("mesh-a"), meshB = MakeAssetId("mesh-b"), skeleton = MakeAssetId("skeleton"),
+        clip = MakeAssetId("clip");
+    model.nodes[0].mesh = meshA;
+    model.nodes[1].mesh = meshA;
+    model.nodes[2].mesh = meshB;
+    model.skins.resize(2);
+    model.skins[0].skeleton = skeleton;
+    model.skins[1].skeleton = skeleton;
+    model.animations = { clip, clip };
+    const ModelDependencies needed = DependenciesOf(model);
+    CHECK(needed.meshes == std::vector<AssetId>{ meshA, meshB });
+    CHECK(needed.skeletons == std::vector<AssetId>{ skeleton });
+    CHECK(needed.clips == std::vector<AssetId>{ clip });
+
+    MeshAsset mesh;
+    mesh.primitives.resize(3);
+    const AssetId material = MakeAssetId("material");
+    mesh.primitives[0].material = material;
+    mesh.primitives[2].material = material;
+    CHECK(MaterialsOf(mesh) == std::vector<AssetId>{ material });
+}
+
+TEST_CASE("A record reports every dynamic allocation it owns", "[animation][assets]")
+{
+    const auto bytes = [](const MeshRecord &record) { return MeshRecordDecoder().sizeBytes(record); };
+
+    MeshRecord small;
+    small.asset.primitives.resize(1);
+    small.asset.primitives[0].morphTargets.resize(2);
+    MeshRecord large = small;
+    for (MorphTarget &target : large.asset.primitives[0].morphTargets)
+    {
+        target.positions.assign(1000, glm::vec3(1));
+        target.normals.assign(1000, glm::vec3(1));
+        target.tangents.assign(1000, glm::vec3(1));
+    }
+    CHECK(bytes(large) - bytes(small) >= 2 * 3 * 1000 * sizeof(glm::vec3));
+
+    MeshRecord uploaded = small;
+    auto decoded = std::make_shared<DecodedMesh>();
+    decoded->vertices.resize(100);
+    decoded->indices.resize(300);
+    uploaded.uploads.push_back(decoded);
+    CHECK(bytes(uploaded) - bytes(small) >= 100 * sizeof(Vertex) + 300 * sizeof(uint32_t));
+
+    SkeletonAsset skeleton;
+    skeleton.nodes.resize(4);
+    const uint64_t before = SkeletonRecordDecoder().sizeBytes(skeleton);
+    for (ModelNode &node : skeleton.nodes)
+    {
+        node.key = std::string(500, 'k');
+        node.name = std::string(500, 'n');
+        node.weights.assign(64, 0.0f);
+    }
+    // each node's two strings and weights, less the small buffers they already had
+    CHECK(SkeletonRecordDecoder().sizeBytes(skeleton) - before >= 4 * (900 + 64 * sizeof(float)));
+
+    ModelAsset model;
+    model.nodes.resize(2);
+    model.skins.resize(1);
+    const uint64_t modelBefore = ModelRecordDecoder().sizeBytes(model);
+    model.skins[0].jointKeys.assign(10, std::string(200, 'j'));
+    model.skins[0].inverseBindMatrices.assign(10, glm::mat4(1));
+    model.nodes[0].key = std::string(300, 'x');
+    CHECK(ModelRecordDecoder().sizeBytes(model) - modelBefore >=
+        10 * 200 + 10 * sizeof(glm::mat4) + 300);
+
+    AnimationClipAsset clip;
+    clip.tracks.resize(1);
+    const uint64_t clipBefore = ClipRecordDecoder().sizeBytes(clip);
+    clip.tracks[0].times.assign(1000, 0.0f);
+    clip.tracks[0].values.assign(3000, 0.0f);
+    CHECK(ClipRecordDecoder().sizeBytes(clip) - clipBefore >= 4000 * sizeof(float));
+}
+
+TEST_CASE("A record does not count a string's inline buffer twice", "[animation][assets]")
+{
+    ModelAsset model;
+    model.nodes.resize(1000);
+    const uint64_t owned = sizeof(ModelAsset) + model.nodes.capacity() * sizeof(ModelNode);
+    CHECK(ModelRecordDecoder().sizeBytes(model) == owned);
+    // a string that outgrew its inline buffer is counted once, by its heap block
+    model.nodes[0].key = std::string(500, 'k');
+    CHECK(ModelRecordDecoder().sizeBytes(model) >= owned + 500);
+    CHECK(ModelRecordDecoder().sizeBytes(model) <= owned + 600);
 }

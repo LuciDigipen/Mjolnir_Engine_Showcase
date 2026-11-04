@@ -35,6 +35,32 @@ TEST_CASE("Quit applies after every other request", "[ecs][requests]")
     REQUIRE(queue.Take() == std::vector<Request>{ Request::SaveScene, Request::Stop, Request::Quit });
 }
 
+TEST_CASE("Requests made while held are dropped and the held ones come back", "[ecs][requests]")
+{
+    RequestQueue queue;
+    queue.Push(Request::SaveScene);
+    queue.PushOpenProject("games/Other");
+
+    RequestQueue::Held held = queue.Hold();
+    CHECK(queue.Empty());
+    // a click on a button, a project switch, anything made while the scene loads
+    queue.Push(Request::Pause);
+    queue.Push(Request::Quit);
+    queue.PushOpenProject("games/Wrong");
+
+    CHECK(queue.Restore(std::move(held)) == 3);
+    CHECK(queue.TakeOpenProject() == std::optional<std::string>("games/Other"));
+    CHECK(queue.Take() == std::vector<Request>{ Request::SaveScene });
+}
+
+TEST_CASE("Holding and restoring an empty queue changes nothing", "[ecs][requests]")
+{
+    RequestQueue queue;
+    RequestQueue::Held held = queue.Hold();
+    CHECK(queue.Restore(std::move(held)) == 0);
+    CHECK(queue.Empty());
+}
+
 TEST_CASE("A request pushed while applying waits for the next Take", "[ecs][requests]")
 {
     RequestQueue queue;

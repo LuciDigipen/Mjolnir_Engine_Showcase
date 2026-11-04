@@ -38,6 +38,13 @@ get_target_property(_volk_includes volk::volk_headers INTERFACE_INCLUDE_DIRECTOR
 find_file(VOLK_SOURCE volk.c PATHS ${_volk_includes} NO_DEFAULT_PATH REQUIRED)
 target_sources(engine_renderer PRIVATE
     ${VOLK_SOURCE}
+    src/renderer/MeshAssetDecoder.cpp
+    src/renderer/MeshLoadTracker.cpp
+    src/renderer/ModelMeshTracker.cpp
+    src/renderer/MaterialRecordCache.cpp
+    src/renderer/GpuResidency.cpp
+    src/renderer/TextureLoadTracker.cpp
+    src/renderer/TextureUpload.cpp
     src/renderer/vulkan/FxCompositionPass.cpp
 )
 
@@ -72,6 +79,7 @@ target_sources(engine_renderer PRIVATE
     src/renderer/MaterialReflection.cpp
     src/renderer/MaterialResolution.cpp
     src/renderer/SurfaceMaterialCatalog.cpp
+    src/renderer/SurfaceMaterialHost.cpp
     src/renderer/SurfaceMaterialLibrary.cpp
     src/renderer/MotionBlurEffect.cpp
     src/renderer/PostEffectRegistry.cpp

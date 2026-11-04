@@ -104,7 +104,9 @@ float4 fragmentMain(VSOutput input, bool front : SV_IsFrontFace) : SV_Target
 #ifdef MIR_SSGI_SURFACE
     float3 diffuse;
     float3 direct = ShadeLitAndDiffuse(visibility, color.rgb, normal, input.worldPos, float3(0), diffuse);
-    return MakeRasterSurface(normal, 1, color.rgb, diffuse, direct);
+    float3 lit = direct + color.rgb * ambientColor.rgb;
+    return MakeRasterSurface(float4(ApplyFog(lit, length(cameraPos.xyz - input.worldPos)), color.a),
+        normal, 1, color.rgb, diffuse, direct);
 #else
     const float3 lit = ShadeLit(visibility, color.rgb, normal, input.worldPos);
     return float4(ApplyFog(lit, length(cameraPos.xyz - input.worldPos)), color.a);

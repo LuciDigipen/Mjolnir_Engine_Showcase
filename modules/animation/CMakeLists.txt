@@ -3,6 +3,8 @@ target_sources(engine_animation PRIVATE
     src/animation/AnimationModule.cpp
     src/animation/ModelAnimation.cpp
     src/animation/ModelEvaluation.cpp
+    src/animation/ModelLibrary.cpp
+    src/animation/ModelPreparation.cpp
     src/animation/ModelSystem.cpp
 )
 target_link_libraries(engine_animation PUBLIC mir::assets mir::core mir::renderer)

@@ -1278,7 +1278,7 @@ namespace mir
         std::span<const ProjectMenuEntry> projects, std::string_view currentProject, World &activeWorld,
         World &sceneWorld, const EditorDocuments &documents, const AssetImportView &assetImport,
         const VulkanRenderer &renderer, const ContentBrowserView &contentBrowser, bool materialPanelVisible,
-        bool materialDraftsUnsaved, float dt)
+        bool materialDraftsUnsaved, const BuildJobView &build, float dt)
     {
         EditorActions actions;
 
@@ -1479,6 +1479,9 @@ namespace mir
                     if (ImGui::MenuItem("New Project..."))
                         mNewProjectRequested = true;
                     DrawOpenProjectMenu(projects, currentProject);
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Build Settings..."))
+                        mShowBuildSettings = mFocusBuildSettings = true;
                     ImGui::EndMenu();
                 }
                 if (ImGui::BeginMenu("Edit"))
@@ -1552,6 +1555,24 @@ namespace mir
                 if (ImGui::Begin("Preferences", &mShowPreferences))
                     ApplyPreferencesRequest(mPreferencesPanel.Draw(mPreferences, mBackground.HasImage()));
                 ImGui::End();
+            }
+
+            if (mShowBuildSettings)
+            {
+                if (std::exchange(mFocusBuildSettings, false))
+                    ImGui::SetNextWindowFocus();
+                if (ImGui::Begin("Build Settings", &mShowBuildSettings))
+                {
+                    const BuildSettingsRequest request = mBuildSettingsPanel.Draw(mPreferences, mBuildGame, build);
+                    if (request.mSavePreferences && !mPreferences.SaveFile(mPreferencesPath))
+                        mBuildSettingsPanel.SetStatus("Save failed - see log.");
+                    actions.mBuild = request.mBuild;
+                }
+                ImGui::End();
+            }
+            else
+            {
+                mBuildSettingsPanel.OnHidden();
             }
 
             if (mShowInputSettings)

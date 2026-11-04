@@ -486,6 +486,25 @@ Missing: parallelism, dependency ordering, change detection, observers (several
 listeners for one component event), and row migration when a script component's
 layout changes.
 
+**A request queue can be held.** `Hold` takes what is pending and `Restore` drops
+everything pushed since and brings the held requests back, so a span such as a scene
+load can discard what was asked during it without losing what was asked before.
+
+**A scene load is ready when its resources are, not when assets are idle.**
+`SceneLoadGroup` is a World resource that `CoreModule` restarts at every
+`SceneLoad`. Each frame the systems that prepare resources report how many
+bindings the scene requires and how many settled, `MeshResolveSystem` per mesh
+name and `ModelSystem` per model, where settled means a published resource or a
+failure that will not change. `EndFrame` decides after the frame: the first frame
+after `Begin` only learns the work, and the group is ready once a full report
+shows nothing unsettled. Progress never decreases, so a dependency closure that
+grows does not walk the bar back. It stays ready until the next load, it ignores
+global asset activity, and a World with no group, such as a preview, is never
+held. A World that never began reads as ready. A system that prepares resources
+overrides `ISystem::OnLoadingUpdate`, and `SystemScheduler::UpdateLoading` runs
+those alone, in phase order, so `App` can prepare a scene before any gameplay
+system has started.
+
 ## Backlog
 
 1. **Row migration for a changed script component.** Changing a script
@@ -506,6 +525,11 @@ layout changes.
    `World::AddComponent` directly, rather than it being convention.
 
 ## Changed
+
+*2026-11-01* — **Scene readiness (`SceneLoadGroup`).** Was: a standalone game
+started simulating the frame the scene loaded, with meshes and models still
+queued, so they appeared as they finished. Now: resource systems report their
+bindings and `App` prepares them before it starts a standalone game's gameplay, see `app`.
 
 *2026-10-31* — **Equal orders can be reversed or shuffled (#310).** Was: equal
 orders ran in registration order, and nothing checked that no system relied on

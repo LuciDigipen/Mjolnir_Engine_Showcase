@@ -155,9 +155,8 @@ It also declares `ClearErrorReport`, `ErrorReportPath`, `CrashDumpPath` and
 Vulkan instance name, engine-level, and nothing user-facing ever sees it.
 
 Accessors: `GetWorld()`, `Systems()`, `Splash()`, `Assets()`, `AssetService()`,
-`Scene()`, `Project()` and `ProjectToOpen()`. `AssetService()` is null when there
-was no manifest at startup, and it stays null for the session even if an import
-cooks the first assets. `Renderer()` is marked a temporary seam,
+`Scene()`, `Project()` and `ProjectToOpen()`. `AssetService()` is built even without a
+manifest, and it adopts the first cook an import applies through the reload epoch. `Renderer()` is marked a temporary seam,
 because `Renderer.h` is still an empty abstraction placeholder.
 
 `ToggleFullscreen()` switches the window between windowed and fullscreen and
@@ -253,6 +252,27 @@ left in `App` is the import's failure report in `ApplyImportedAssets`.
 
 **`NewScene`/`SaveScene`/`LoadScene` refuse while Play is running.** These can
 corrupt the current scene.
+
+**A standalone game starts no gameplay until its scene's resources are ready.**
+Without the editor layout `Run` waits for `SceneLoadGroup` before it calls
+`Start`, so no gameplay system has started, let alone run, while meshes and models
+prepare. `AwaitSceneResources` loops with the window events, the asset service's
+completions, the UI and `SystemScheduler::UpdateLoading`, which ticks only the
+systems that override `OnLoadingUpdate`: the mesh and model resolvers, which
+prepare, and the render system, which draws an empty frame so uploads advance. An
+overlay covers the screen with a bar that waits for the work set before it moves.
+A scene loaded mid-game waits the same way before the next frame of gameplay.
+There is no timeout, because starting gameplay with unresolved resources is the
+fault the gate exists to prevent. A resource that never settles keeps the loading
+screen up, the window still closes, and a run bounded by `--frames` ends with an
+error log instead of hanging. The editor's Play is never gated.
+
+The wait is not a gameplay frame. The game UI is suspended (`GameUIModule::SetSuspended`),
+so the HUD and the pause menu run no screen and nothing the overlay hides can be
+clicked. Requests made while it waits are dropped with a warning and the ones made
+before it are kept (`RequestQueue::Hold` and `Restore`), so a click or a script
+during loading never replays as pause, restart or quit on the first gameplay frame.
+The window still polls its events and closes.
 
 ## State
 

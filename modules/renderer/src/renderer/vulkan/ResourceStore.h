@@ -60,6 +60,8 @@ namespace mir::vk
         VkImageView mView = VK_NULL_HANDLE;
         uint32_t mLevels = 1;
         uint32_t mGeneration = 0; //< 0 = slot never filled
+        TextureUploadState mState = TextureUploadState::Ready;
+        uint64_t mBytes = 0;
     };
 
     // Destroy* and Release* do not wait: the caller idles the device first,
@@ -93,6 +95,12 @@ namespace mir::vk
         uint32_t HighestMeshGeneration() const;
 
         TextureHandle CreateTexture(const TextureDesc &desc);
+        TextureHandle ReserveTexture(const TextureDesc &desc, uint32_t levels);
+        GpuTexture *FindTextureSlot(TextureHandle handle);
+        GpuTexture TakeTexture(TextureHandle handle);
+        void FreeTexture(GpuTexture &texture) { FreeTexture(*mDevice, texture); }
+        static void FreeTexture(Device &device, GpuTexture &texture);
+        void MakeTextureReady(TextureHandle handle);
         // False when the handle is null, stale or a default texture.
         bool DestroyTexture(TextureHandle handle);
         // Every texture but the defaults; returns how many were released.
@@ -103,6 +111,7 @@ namespace mir::vk
         uint32_t TextureSlot(TextureHandle handle) const;
         VkImageView ImageViewAt(uint32_t slot) const;
         uint64_t TextureTableVersion() const { return mTextureTableVersion; }
+        uint64_t TextureAllocatedBytes() const;
 
         TextureHandle DefaultWhiteTexture() const { return mDefaultWhiteTexture; }
         TextureHandle DefaultNormalTexture() const { return mDefaultNormalTexture; }
@@ -119,7 +128,6 @@ namespace mir::vk
 
     private:
         bool CreateDefaultTextures();
-        void FreeTexture(GpuTexture &texture);
         void DestroyTextures();
         void DestroySamplers();
 

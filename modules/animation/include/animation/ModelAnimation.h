@@ -10,16 +10,31 @@
 #include <assets/AssetCache.h>
 #include <assets/AssetDecoder.h>
 #include <assets/ModelAsset.h>
+#include <renderer/MeshAssetDecoder.h>
+#include <memory>
+#include <vector>
 #include <unordered_map>
 
 namespace mir
 {
+    // uploads matches asset.primitives by index. Empty primitives have a null upload.
+    struct MeshRecord
+    {
+        MeshAsset asset;
+        std::vector<std::shared_ptr<const DecodedMesh>> uploads;
+    };
+
+    // CPU data shared by models and kept alive for animation.
     struct ModelResources
     {
-        ModelAsset model;
-        std::unordered_map<uint64_t, MeshAsset> meshes;
-        std::unordered_map<uint64_t, SkeletonAsset> skeletons;
-        std::vector<AnimationClipAsset> clips;
+        // Shared with the asset service so its memory is counted once.
+        std::shared_ptr<const ModelAsset> model;
+        std::unordered_map<uint64_t, std::shared_ptr<const MeshRecord>> meshes;
+        std::unordered_map<uint64_t, std::shared_ptr<const SkeletonAsset>> skeletons;
+        // in the order of model.animations
+        std::vector<std::shared_ptr<const AnimationClipAsset>> clips;
+        // Materials the meshes name, an unreadable one is absent and its primitives take the error appearance.
+        std::unordered_map<uint64_t, std::shared_ptr<const MaterialAsset>> materials;
     };
     struct NodePose
     {
@@ -29,11 +44,23 @@ namespace mir
         std::vector<float> weights;
     };
     bool LoadModelResources(AssetCache &cache, AssetId id, ModelResources &result, std::string &error);
-    // Reads the model from root and its meshes, skeletons and clips from dependencies
     bool DecodeModelResources(const AssetBlobView &root, const AssetDependencies &dependencies, ModelResources &result,
                               std::string &error);
-    // The dependency types DecodeModelResources reads, so materials and textures are not loaded with a model
-    const AssetDecoder<ModelResources> &ModelResourcesDecoder();
+
+    // Each decoder reads one asset, allowing models to share dependencies.
+    const AssetDecoder<ModelAsset> &ModelRecordDecoder();
+    const AssetDecoder<MeshRecord> &MeshRecordDecoder();
+    const AssetDecoder<SkeletonAsset> &SkeletonRecordDecoder();
+    const AssetDecoder<AnimationClipAsset> &ClipRecordDecoder();
+    const AssetDecoder<MaterialAsset> &MaterialRecordDecoder();
+
+    struct ModelDependencies
+    {
+        std::vector<AssetId> meshes, skeletons, clips;
+    };
+    ModelDependencies DependenciesOf(const ModelAsset &model);
+    std::vector<AssetId> MaterialsOf(const MeshAsset &mesh);
+    bool ValidateModelResources(const ModelResources &resources, std::string &error);
     std::vector<float> SampleAnimationTrack(const AnimationTrack &track, float time);
     // Reset to rest pose each sample; deterministic seeking and independent instances.
     std::vector<NodePose> EvaluateModel(const ModelResources &model, uint32_t clip, float time, bool loop);

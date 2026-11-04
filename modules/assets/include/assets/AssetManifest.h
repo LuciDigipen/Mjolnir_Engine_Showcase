@@ -82,6 +82,15 @@ namespace mir
         // The root is always kept, and an unknown root gives an empty result.
         std::vector<AssetId> Closure(AssetId root, std::span<const uint32_t> tags = {}) const;
 
+        // Hash from <id>-<hash>.blob, or zero when the filename has no hash.
+        uint64_t ContentHash(const AssetManifestEntry &entry) const;
+        // Includes the asset ID, type, version and file hash. Zero means unknown, valid hashes leave the
+        // top bit clear.
+        uint64_t EntryContent(AssetId id) const;
+        // Includes the requested asset and its dependencies. Zero if any file hash is unknown. Empty tags
+        // include all dependencies, use EntryContent for just one asset.
+        uint64_t ClosureContent(AssetId root, std::span<const uint32_t> tags = {}) const;
+
         std::size_t Count() const { return mEntries.size(); }
         std::span<const AssetManifestEntry> Entries() const { return mEntries; }
 

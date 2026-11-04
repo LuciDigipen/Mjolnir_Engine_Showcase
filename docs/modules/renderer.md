@@ -121,19 +121,144 @@ their geometry on the spot. Entities also get a `MeshRenderer` outside
 a load: from Duplicate, Paste, Add Component and Inspector edits. A load-time pass
 would leave their handles stale or null, so this runs every frame. It remembers
 the `meshName` and `materialShader` each entity was last resolved from, keyed by
-`PackEntity`. It resolves again only when one of them changes. Handles and
-`MeshBounds` come from caches keyed by name, so renderers naming the same mesh
-share one upload.
+`PackEntity`. It resolves again when one of them changes, and a library
+generation explicitly invalidates every cached material because the authored
+name may be empty and therefore unchanged. A new or forgotten resolution record
+starts invalid too, so a `CommitReload` that drops the cache cannot leave an
+empty authored name pointing at an old runtime handle. Handles and `MeshBounds` come from
+caches keyed by name, so renderers naming the same mesh share one upload.
+
+A `materialShader` that ends in `.material.json` names that exact recipe, either
+assets-root-relative or as its canonical path, resolved through `AssetResolver`
+and the cooked manifest. Any other value is a shader stem and stays compatible
+with the legacy raw shader path when no mesh registration uses it. A stem shared
+by more than one mesh recipe is ambiguous and resolves to the error material;
+it never takes the first registration or falls through to `CreateMaterial`.
+
+A mesh asset loads in the background. The first entity to use a name asks
+`AsyncAssetService` to read and decode it on a worker, where `DecodeMeshAsset`
+parses the JSON, checks the indices and computes the bounds. `MeshLoadTracker`
+follows each asset one step per frame. A finished decode is queued with
+`QueueMesh`, sharing the decoded data with the asset service and asking for a
+BLAS when the device supports one. The `MeshRenderer` takes the queued handle
+as soon as it exists, and the draw path skips the mesh until its upload is Ready.
+`MeshBounds` are added when the mesh is Ready, so picking and scripts never see
+bounds for a mesh that is not drawing. A builtin shape has no asset and resolves
+in the same frame. Changing `meshName` while a load is in flight resolves the
+entity to the new name and leaves the old load to the tracker, because other
+entities may share it. When the last World releases an unfinished load, its
+upload is cancelled. A decode failure or a failed upload logs once and the
+entity draws nothing, and a failed upload's handle is retired.
 
 A renderer whose names are both empty is never touched, so a handle set from code
 keeps its value. Clearing `meshName` nulls the mesh and removes `MeshBounds`.
 Removing the `MeshRenderer` removes `MeshBounds` too, and its OnRemove forgets
 the entity's names, so a packed id the World hands out again starts unresolved.
-`Reset()` empties the caches and runs at `SceneUnload`, before
-`ReleaseSceneResources`.
+Each resolve system holds World-local bindings into a renderer-owned mesh cache
+shared with prefab previews. Scene unload releases those bindings without
+destroying resources used by another World. Ready unused meshes remain cached
+under the renderer-wide residency target described below, and `SetBudget` evicts
+unused meshes in use order. Terrain retires its own meshes on scene unload.
+Active bindings are protected. Builtin meshes and per-World materials are released
+with their World. Removing the last entity using a mesh drops that World's claim.
 
-At `ReloadCommit` the module calls `CommitReload` with the new `AssetCache`. It frees the cached meshes and forgets every entity's names, so
-the next `LateUpdate` resolves every renderer from the new cache, including one
+`ReleaseModelResources` schedules mesh, material and texture retirement against
+the last issued GPU frame instead of waiting for the device. Collection runs
+after frame completion, shutdown drains all releases after waiting for the GPU.
+The global `ReleaseSceneResources` operation remains for explicit full cleanup,
+ordinary scene unload does not call it.
+
+### Shared texture uploads
+
+`ITextureUploader` exposes `QueueTexture`, `TextureState`, `TextureFootprint` and
+`RetireTexture`. `TextureLoads(service)` returns the renderer's shared texture
+cache, shared across catalog revisions. A `TextureLoadLease` retains one consumer's
+claim, independently of scene and prefab lifetimes. Mesh and texture trackers
+specialize the same `AssetUploadCache` lifecycle, decoding, uploading, ready or
+failed. Ready unused entries are retained under the renderer-wide residency target,
+active claims are protected, and abandoning the last unfinished claim cancels it.
+A failed record is remembered while the catalog stays the same, so nothing retries
+in a loop, and a request after a reload tries it again although the files are the
+same. A failed upload holds no footprint, its bytes are zero once its handle is gone.
+
+The texture decoder reads cooked pixels and prepares missing mips on a worker.
+`PrepareTextureUpload` preserves supplied mip chains and filters generated RGB
+in linear light, alpha stays linear. `QueueTexture` requires a prepared chain.
+The queued source retains its immutable pixels until the last staging copy,
+then drops its reference before GPU completion. CPU cache residency is separate,
+so the service may still retain the same allocation. Source and decoded byte
+counters describe overlapping ownership and must not be added together.
+
+Textures and meshes share one staging ring and transfer budget. A large mip is
+split into row bands, partial work rotates behind other queued work, and ring
+spans remain reserved until their submitting frame completes. Texture state
+becomes Ready only after its final upload frame completes. Retiring a partial
+texture cancels its remaining bands and defers GPU destruction until prior
+copies have finished. Pending image-table slots sample the error texture.
+Materials created with a pending texture acquire a replacement descriptor set
+when it becomes ready, the old set retires after its last possible frame.
+Model base color textures use these claims through `ModelPreparation`
+in the animation module.
+
+Model primitives arrive as memory from a typed mesh asset, not the raw format
+`MeshLoadTracker` decodes, so `ModelMeshes(service)` returns a `ModelMeshTracker`
+that reuses the same upload lifecycle with caller-supplied vertices. A record is
+named by a `GpuRecordKey`, the cooked asset and primitive, a `ContentIdentity` and
+the creation options. The key table gives each key a sequential id, so there is
+no hash collision to reason about.
+
+The mesh, model mesh and texture trackers are shared across catalog revisions,
+and an upload record is named by an `UploadKey`, the asset and the decoded
+content from `AsyncAssetService::ContentOf`. After a reload an unchanged asset
+asks for the same key and finds its GPU record, a changed asset has another key
+and uploads again while the old record serves whoever still holds it. A blob
+whose file name carries no content hash has unknown content, and its key is
+qualified by the catalog revision instead, so it is never assumed unchanged.
+`UploadContent` builds that value and keeps the top bit for the revision form. `MaterialRecords()` returns one
+`MaterialRecordCache` for the renderer. It keys a material by its complete
+resolved description compared by value, including the texture handle and
+generation, the sampler, render state and record bytes, so equal descriptions
+from different Worlds or models share one GPU material. A normal and a mirrored
+variant differ in front face and are two records. A record owns the
+`TextureLoadLease` claims that keep its textures valid, a `MaterialLease` is one
+consumer, and an unused record stays until the renderer is over its residency
+target because it pins textures. Releasing is selective. `Trim` frees an unused
+record only when that gives something back, oldest first, and counts the total
+overage once however it is freed, texture bytes and table bytes alike: it holds the last claim
+on a texture, alone or together with the other unused records that share it, or
+its record bytes put the material category over its limit. A record that frees
+nothing is kept. A material table with no free slot is a wait, not a failure.
+`Acquire` reports `Waiting`, releases every unused record, and the slots come back
+only when those releases' frames complete, so the caller asks again on a later
+frame. `MaterialSlotsExhausted` tells that apart from a material the renderer could
+not make, which is `Failed` at once. `RecordBytes` counts the bytes a record
+holds in the shared material table, and `PinnedTextureBytes` the texture bytes
+only unused records keep alive. A pipeline and a descriptor set have no byte query
+in Vulkan, so a model material, which has no record bytes, is counted as the
+textures it pins and the slot it holds, not as a size of its own.
+
+`GpuResidency` holds one total target and optional category limits for meshes,
+textures and materials. The target is the project's `rendering.residencyMiB`, 512 by
+default, and a value that is not a positive number up to 65536 keeps the default. Each cache reports the bytes it holds, and each of the mesh and texture
+categories reports the retiring bytes the GPU still reads, a retired texture in
+the texture category and a retired mesh, its BLAS and its transfer buffers in the
+mesh category. Retiring memory still occupies the device, so `Used` counts it, but
+it is already scheduled for release, so `Excess` counts only what is held beyond the
+total target and the category limits. A cache that drops its last claim therefore
+does not evict more to cover memory that is already leaving, and releasing every
+claim of a scene at once keeps what fits the target. A cache that has dropped its
+last claim asks `Excess` and releases its own unused records, oldest first, until it
+has freed that much. Active claims are never released, so
+the renderer can stay over the target while the work set is larger than it.
+`SetBudget` on a cache is a separate cap for that cache alone, and no cache has a
+default budget of its own. Eviction is per category, each cache releases its own
+oldest unused records and none looks across categories for the oldest overall, so
+a recently used mesh can stay while an older texture goes. That is the policy, not
+an oversight.
+
+At `ReloadCommit` the module calls `CommitReload`. It retires the meshes that are
+still queued or uploading, frees the ready ones, and forgets every entity's names,
+so the next `LateUpdate` resolves every renderer again, including one
 whose mesh failed before the import. That runs before `Render`, so no freed mesh
 is drawn. A mesh file that is not valid JSON, lacks a vertex field, or has an
 index past its vertices logs an error and resolves to no mesh.
@@ -163,7 +288,7 @@ void ResetHistory();                         // the next frame accumulates fresh
 bool RequestStagingBytes(uint64_t bytes);                    // grows the ring if idle; false keeps the current ring
 bool SetUploadFrameBudget(uint64_t bytes);                   // per-frame bytes, from the next frame; false for zero
 uint64_t UploadFrameBudget() const;                          // the budget now, shared by every consumer
-MeshHandle QueueMesh(std::vector<Vertex> vertices, std::vector<uint32_t> indices, const MeshUploadOptions &options);
+MeshHandle QueueMesh(MeshUploadSource source, const MeshUploadOptions &options);   // spans plus a keepalive
 MeshUploadState MeshState(MeshHandle handle) const;          // Stale, Pending, Uploading, Ready or Failed
 bool RetireMesh(MeshHandle handle);                          // stale at once, freed after its last frame
 uint64_t MeshFootprint(uint32_t vertexCount, uint32_t indexCount, const MeshUploadOptions &options) const;
@@ -223,7 +348,7 @@ void SetExternalCamera(ViewportId id, const glm::mat4 &cameraWorld, const Camera
 | `AntiAliasingMode`, `AntiAliasingParams`, `ClampAntiAliasingMode`, `ClampRtSampleCount` | `renderer/AntiAliasingEffect.h` | Off/Fxaa/Msaa/Dlss and `rtSampleCount`; the Post-Processing entry's json shape; the mode and sample-count enforcement `ResolvePostProcessing` applies every frame - see Rules |
 | `PostProcessingState`, `ResolvePostProcessing` | `renderer/PostProcessingState.h` | `PostProcessingSettings` and the viewing `Camera`'s lens resolved into the exact values `SetPostProcessing` applies: defaults for a missing entry, neutral values for a disabled one (fog density 0, exposure 1/None, bloom intensity 0, neutral film), negative lens values 0, motion blur's sample count at least 1, AA clamped. Pure, so it is unit-tested without a device |
 | `DlssConfig.h` | `renderer/DlssConfig.h` (generated) | `MIR_WITH_DLSS`/`kDlssCompiledIn` and the NGX project id |
-| `RenderSettings` | `renderer/RenderSettings.h` | Project Settings' `"rendering"` section (`rayTracing`, `uploadMiBPerFrame` and `ddgi`); `LoadFile`/`SaveFile`, a World resource `RendererModule` loads |
+| `RenderSettings` | `renderer/RenderSettings.h` | Project Settings' `"rendering"` section (`rayTracing`, `uploadMiBPerFrame`, `residencyMiB` and `ddgi`); `LoadFile`/`SaveFile`, a World resource `RendererModule` loads |
 
 ## Rules
 
@@ -248,16 +373,39 @@ reflection, never from a C++ field mirror. RT allocates a primary/shadow SBT
 record pair per catalog entry; a surface instance's even base offset is
 `2 + 2*i`, so primary and shadow rays both stay in bounds. Terrain registrations
 are compiled through `SurfaceTerrainForward.slang` and `SurfaceTerrainRt.slang`;
-`SurfaceMaterialLibrary` stages a complete candidate generation in
-`ReloadPrepare`, swaps it in `ReloadCommit`, and retires the old
-materials/textures through `ReleaseModelResources`. Its
-`CurrentSchema` re-reads the registration reflection independently of any
-watcher. `PreviewParameters` stages a schema replacement as a candidate,
-overlays dirty numeric values on the accepted parameters, runs the consumer and
-record validators, updates the candidate record through `UpdateMaterialRecord`,
-and only then publishes it and bumps generation; a failure destroys the
-candidate and keeps the previous material, record and preview. Numeric edits
-create no pipeline. See `docs/material-pipeline.md`.
+`SurfaceMaterialLibrary` requests the cooked payload and its textures through
+`AsyncAssetService` and the shared `TextureLoadTracker`. `Advance` publishes only
+validated records, keeps a live material while its replacement is pending or
+failed, and publishes every ready frontend of one asset together. `CommitReload`
+starts asynchronous replacements after the catalog commits. Replaced handles and
+their texture claims are retired only after every active mesh and terrain owner
+acknowledges the replacing generation; a failed replacement is remembered until
+the next reload. `Publication` reports one asset's actual async outcome
+(`Inactive`, `Pending`, `Published` or `Failed` with its diagnostic) and the
+content identity it accepted. It is independent of `Resolve`'s last-good draw
+binding and of the global generation, so an unrelated asset or a shader commit
+cannot make a pending or failed replacement look applied. Its `CurrentSchema`
+re-reads the registration reflection independently of any watcher.
+`PreviewParameters` adopts the committed
+generation's layout and
+authoritative bytes through `VulkanRenderer::MaterialRecord` (a
+generation-checked `MaterialRecordSnapshot`), overlays dirty numeric values on
+the adopted parameters of every valid frontend of that asset, runs the shared
+numeric bounds plus the frontend's own consumer validator, prepares the whole
+batch through `PrepareMaterialRecords` and commits it without allocating; every
+frontend is staged before the first accepted mutation, so a failure keeps all
+previous bytes, metadata and the generation. `ValidateRecord` applies the finite,
+macro and parallax bounds to mesh and terrain alike and adds the terrain UV
+phase rule only for terrain, and ValidateRecordForPublication adds the caller's record callback once per proposed record. Mesh owners publish only the assets their live renderers still draw. Numeric and schema previews create no
+pipeline and never destroy the live handle. A committed shader generation calls
+the allocation-free `NotifyShaderCommit`, so cached metadata and generation
+refresh the next time the library is used, with no panel open.
+`MeshResolveSystem` borrows the library handle for an explicit `.material.json`
+asset path or a unique `mesh` stem, and re-resolves with an explicit
+invalidation when the library generation moves, so a cook, preview or shader
+commit rebinds the mesh draws without a second pipeline. A shared stem fails
+with an actionable error instead of selecting one recipe. See
+`docs/material-pipeline.md`.
 
 **Shader hot reload is transactional.** `ShaderLibrary` registers every live
 callsite (MaterialStore, RayTracer, ShadowMaps and the five post-process
@@ -269,6 +417,12 @@ pipelines and every post-process candidate off to the side, then takes one
 device idle and swaps them only after all owners succeeded. Any failure
 disposes candidates and keeps the previous generation. Surface records migrate
 by name from current record bytes; a changed field type rejects the batch.
+`RendererModule` connects the surface library's consumer validator to
+`MaterialStore` through `MaterialRecordValidator` and its commit notification to
+`SetShaderReloadListener`. Migrated candidate records
+and numeric updates validate their packed values before publication, so a
+new shader field cannot bypass terrain period constraints. A rejected candidate
+keeps the live records and pipelines.
 `ShaderGenerationStore` publishes complete immutable SPV/reflection/depfile/catalog
 generations behind an atomic pointer. The build-only `ShaderPublisher` and editor
 watcher validate precompile content snapshots and parent lineage under the same
@@ -330,7 +484,11 @@ the submit and wait.
 
 **A queued mesh never waits: it uploads at the start of a frame and is Ready
 once that frame completes (#127).** `QueueMesh` reserves a slot (state
-Pending, no buffers) and keeps the vertex and index vectors. At the start of
+Pending, no buffers) and keeps the `MeshUploadSource`: read-only spans over the
+vertices and indices, and a `shared_ptr` that keeps them alive. `MeshUploadSource::Own`
+makes one that owns its vectors, and a caller that shares its data, such as the
+asset service, passes its own reference. The renderer drops the reference right
+after the staging copy, so only the sharing holder keeps the data. At the start of
 each recorded frame, after `FrameSync::Begin`'s wait, `MeshUploader` takes
 queued meshes in order while they fit `MeshStreamingDesc::frameBytes` (vertex
 and index bytes plus the acceleration structure, the first mesh of a frame
@@ -634,20 +792,19 @@ fast motion and disocclusions can produce noise or flicker. It supports perspect
 cameras and non-overlapping viewports; other projections produce no GI estimate.
 Allocation/format limits and missing shaders retain ordinary raster lighting.
 
-When SSGI is requested in raster mode, `vk::RasterSurfaces` captures four
-per-frame RGBA16F inputs: camera-relative world normals/material kind, diffuse
-albedo, unfogged diffuse radiance, and direct lighting including specular.
-Ambient is excluded from the lighting inputs. Lit surfaces receive kind 1;
-unlit surfaces use kind 2 and supply their color as radiance; error surfaces
-use kind 3 and supply no bounce radiance. Cleared/unsupported pixels use kind 0.
-Transparent draws and sky are excluded.
+The opaque SSGI pass writes HDR color and four per-frame RGBA16F surface inputs
+with the same depth test and material evaluation. These inputs hold
+camera-relative world normals and material kind, the diffuse receiver,
+unfogged diffuse radiance, and direct lighting including specular. Generic PBR
+materials include their AO-scaled ambient baseline and emissive radiance in the
+bounce source. Lit surfaces use kind 1. Unlit surfaces use kind 2 and supply
+their color as radiance. Error surfaces use kind 3 and supply no bounce
+radiance. Sky and cleared pixels use kind 0. Blended draws follow composition.
 
-The depth-equal pass shares material vertex processing, alpha tests and model
-descriptor sets with the scene pass. Camera data is written once per view and
-reused by surface capture and motion blur. Images are allocated only while
-requested, capped at 256 MiB across frame slots, and released on disable, RT
-switch or scene unload. Unsupported opaque shaders, formats/limits or missing optional shaders
-retain existing raster rendering.
+Surface images are allocated on demand, capped at 256 MiB across frame slots
+and released on disable, RT switch or scene unload. If a required opaque
+pipeline is unavailable or the device cannot support five color attachments,
+the frame uses ordinary raster lighting.
 
 `vk::SsgiTrace` builds a conservative reversed-Z depth pyramid per viewport,
 then traces cosine-weighted hemisphere rays against visible depth. It writes
@@ -871,9 +1028,9 @@ three built-ins, and drops every queued, uploading and retired mesh. The next
 and 1. The next `CreateTexture` reuses index 3, since the built-in textures
 keep 0 to 2. Every mesh slot's generation moves on (#127), so a mesh handle
 kept across the call misses instead of naming the next mesh in its slot;
-texture generations are not bumped, so a texture handle kept across the call
-names whatever is created next in its slot, with no error. `App` calls it only
-right after unloading a scene, when no `MeshRenderer` is left.
+texture slots are cleared too. Callers must release all claims before this
+explicit full cleanup. Ordinary scene unload releases its World-local claims
+instead, so prefab previews keep their resources.
 
 **`DestroyMesh`/`DestroyMaterial` free one handle at a time, unlike
 `ReleaseSceneResources`, and unlike it they *do* bump the slot's generation**
@@ -893,9 +1050,10 @@ stops drawing (`RecordView`'s existing null-mesh skip) or draws magenta (the
 error-material fallback), rather than crashing. `DestroyMaterial` additionally
 always refuses on the default and error materials. Draws fall back to them for
 the process lifetime, which is the same reason `ReleaseSceneResources` keeps
-them. Textures have no public per-handle
-destroy yet (see Backlog). Material lookups check the generation the same
-way mesh and texture lookups do.
+them. `RetireTexture` provides nonblocking per-handle texture retirement,
+invalidates the handle immediately and protects submitted work with the frame
+timeline. It refuses the built-in textures. Material lookups check the
+generation the same way mesh and texture lookups do.
 
 **`RenderSystem` runs in `Render` because `TransformPropagateSystem` runs in
 `Propagate`.** Placed any earlier, it would draw the previous frame's matrices.
@@ -1049,20 +1207,38 @@ back to the World's default camera in Play.
 submission, anti-aliasing's json shape, mode clamping and sample-count rounding
 (`AntiAliasingEffect.tests.cpp`) and the asynchronous mesh bookkeeping
 (`MeshStreaming`: staging ring, frame budget, cancellation, retirement by frame).
-None of the anti-aliasing passes themselves, nor their resource lifetimes, have
-an automated test.
-Everything that needs a device is verified by the smoke tests and
+The mesh loading path has three suites over the real `AsyncAssetService` with no
+workers and a shared fake, `FakeMeshUploader` for the uploads and
+`FakeMeshResolveHost` on top of it for the creation and release calls:
+`MeshAssetDecoder` for the parse and bounds, `MeshLoadTracker` for the phase of
+each load, and `MeshResolveSystem` for what an entity sees, including renames
+during a load, bounds appearing on Ready, shared meshes, removal, and the first
+cook of a game that started without a manifest reaching a scene and a preview.
+`CookedMeshDir.h` writes the cooked blobs they read. `SurfaceMaterialAsync`
+covers pending/failed loads, per-asset publication and unchanged-content reuse,
+replacement failure with the last-good binding, explicit recipe identity for
+shared stems, ambiguous-stem failure and clearing a material name during a
+library replacement. `TextureLoadTracker` tests use `FakeTextureUploader` to
+control staging, completion, cancellation and independent claims across reloads. `MeshStreaming` also checks texture row-band
+admission, fairness, ring bounds, CPU mip filtering and supplied mip preservation.
+The unit tests do not reach
+`MeshUploader::Record`, `Forget` and `Clear`, where the renderer drops the data
+reference after the staging copy, so those release points rely on the editor and
+game smoke runs. None of the anti-aliasing passes themselves, nor their resource
+lifetimes, have an automated test.
+`TextureGpuCheck` supplies device coverage for a 4K texture larger than the
+staging ring. It compares streamed pixels against synchronous upload, checks
+per-frame budget and mesh progress, verifies pending-material replacement,
+source release before Ready, partial cancellation and zero live allocations at
+shutdown. Run it through `ctest -R smoke.texture-gpu`, it is built only with
+`BUILD_TESTING=ON`. Other device behavior is verified by the smoke tests and
 `TerrainRenderProbe`.
 
 ## Backlog
 
-1. **Per-handle destroy for textures.** Meshes and materials have it
-   (`DestroyMesh`/`DestroyMaterial` — see Changed); textures still only go
-   away in bulk, via `ReleaseSceneResources` and `ReleaseModelResources`.
-   `ResourceStore::DestroyTexture` exists, but the public API does not expose
-   it. Lower
-   priority than meshes/materials were: nothing today creates or discards
-   textures at a rate that makes the gap felt.
+1. **Model resource preparation.** Migrate model dependency loading onto shared
+   CPU claims and queued GPU uploads, keeping per-entity pose and playback apart
+   from immutable model resources.
 2. **Draw-item sorting and batching.** There is one pipeline bind per item today,
    so a frame scales with the number of distinct materials rather than with draw
    count.
@@ -1121,6 +1297,29 @@ Everything that needs a device is verified by the smoke tests and
    raster/RT, and RT inherits that gap rather than fixing it.
 
 ## Changed
+
+*2026-10-31* — **Mesh assets load in the background, and the upload is an
+interface (#361).** Was: `MeshResolveSystem` read the blob, parsed the JSON and
+called the synchronous `CreateMesh` the first time an entity used a mesh name, so
+opening a scene with JSON meshes stalled the first frame. `QueueMesh` took
+vectors by value, and terrain's adapter was written against `VulkanRenderer`.
+Now: the parse runs in an `AssetDecoder` on an `AsyncAssetService` worker,
+`MeshLoadTracker` follows each load and queues the result, and `MeshBounds` are
+added once the mesh is Ready. `QueueMesh` takes a `MeshUploadSource`, and
+`VulkanRenderer` implements `IMeshUploader` (`QueueMesh`, `MeshState`,
+`RetireMesh`, `MeshFootprint`, `MeshStreaming`, `UploadFrameBudget`), so the
+tracker and terrain's adapter run against a `FakeMeshUploader` in tests.
+`MeshResolveSystem` takes the asset service in place of `AssetCache`, and
+`CommitReload` takes no argument. It also takes an `IMeshResolveHost`, which adds
+`CreateMesh`, `CreateMaterial`, `ErrorMaterial` and `ReleaseModelResources` to
+`IMeshUploader`, so its entity logic is tested without a device. The service now
+exists even for a game that starts without a manifest, so the first cook an
+editor applies reaches every mesh, and a failed load logs its asset name with the
+service's reason. Because: the service already decodes off the
+main thread and the upload ring already copies within a frame budget, and a
+shared source lets the renderer and the service hold one decode with no copy.
+Mesh resolve never cancels the service, so a decode still running at scene unload
+finishes and stays in the service until the next reload.
 
 *2026-10-31* — **The renderer owns the upload staging ring and budget (#359).**
 Was: terrain was the only user and configured the ring and the per-frame budget
@@ -1570,6 +1769,19 @@ migrates a project predating this (only `rendering.fog`, no
 `postProcessing.effects.Fog` yet) by seeding `Fog.enabled` from the legacy
 bool once; a project already saved under the new scheme is never
 overridden by a stale leftover flag. Because: issue #210.
+
+*2026-11-01* — **Shared model mesh and material records, one residency target.**
+Was: a model created its own meshes with a synchronous `CreateMesh` and its own
+materials per World, and the mesh and texture caches each held a 256 MiB budget
+per catalog revision. Now `ModelMeshTracker` queues model primitives through the
+shared transfer ring, `MaterialRecordCache` shares materials by value and holds
+their texture claims, and `GpuResidency` is the one target they all answer to.
+
+*2026-11-01* — **Residency counts retiring memory by category and materials selectively.**
+Was: one retiring figure, attributed to meshes, and a pressure that released every
+unused material. Now: textures and meshes report their own retiring bytes, a
+material category counts its table bytes, and `Trim` releases only the records that
+give something back.
 
 *2026-10-18* — **`PostProcessingSettings` and `PostEffectRegistry` (#207).**
 Was: no post-processing concept existed. Now: `PostProcessingSettings`

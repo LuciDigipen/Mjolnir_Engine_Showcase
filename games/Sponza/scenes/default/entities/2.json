@@ -1,0 +1,72 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [
+          -11.0,
+          1.8,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          -0.7071068,
+          0.0,
+          0.7071068
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [
+          -11.0,
+          1.8,
+          0.0
+        ]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "Camera"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "farZ": 100.0,
+        "fovYDegrees": 60.0,
+        "nearZ": 0.1
+      },
+      "type": "Camera"
+    },
+    {
+      "fields": {
+        "fastMultiplier": 4.0,
+        "lookAtTarget": false,
+        "lookSensitivity": 0.15,
+        "mode": 1,
+        "moveSpeed": 5.0,
+        "offset": [
+          0.0,
+          3.0,
+          7.0
+        ],
+        "offsetInTargetSpace": false,
+        "snapDistance": 50.0,
+        "stickLookRate": 120.0,
+        "stiffness": 4.0,
+        "target": 0
+      },
+      "type": "CameraController"
+    }
+  ],
+  "id": 2,
+  "parent": 0,
+  "siblingIndex": 1
+}

@@ -31,6 +31,8 @@ namespace mir
 
     void GameUIModule::RunFrame(const UIRect &area, const UIPointer &pointer)
     {
+        if (mSuspended)
+            return;
         mUI.BeginFrame(area, mWorld.Resource<InputState>(), mWorld.Resource<InputMap>(), pointer);
         mScreens.Run(mUI, mFrameDt);
         mUI.EndFrame();

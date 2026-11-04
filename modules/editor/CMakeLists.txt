@@ -41,6 +41,8 @@ endif()
 target_sources(engine_editor PRIVATE
     src/editor/AssetImportManager.cpp
     src/editor/BackgroundImage.cpp
+    src/editor/BuildJob.cpp
+    src/editor/BuildSettings.cpp
     src/editor/ContentBrowserWatcher.cpp
     src/editor/CreateGameProject.cpp
     src/editor/Editor.cpp
@@ -72,6 +74,7 @@ target_sources(engine_editor PRIVATE
     src/editor/MaterialRecipe.cpp
     src/editor/panels/HierarchyPanel.cpp
     src/editor/panels/AssetImportPanel.cpp
+    src/editor/panels/BuildSettingsPanel.cpp
     src/editor/panels/ContentBrowserPanel.cpp
     src/editor/panels/InputSettingsPanel.cpp
     src/editor/panels/InspectorPanel.cpp

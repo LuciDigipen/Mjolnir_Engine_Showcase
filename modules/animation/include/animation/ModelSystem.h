@@ -1,19 +1,14 @@
 /**
  * @file ModelSystem.h
  * @author Jackey Cen
- * @brief Turns ModelPlayer instances into GPU draws, in SystemPhase::LateUpdate.
- *
- * Loads each referenced model once through AssetCache, uploads its meshes,
- * materials and textures to the VulkanRenderer, advances playback while the
- * world is simulating, evaluates the pose and fills the ModelDrawItems resource
- * that RenderSystem draws. LateUpdate runs after Propagate, so WorldTransform
- * is current. PrepareReload/CommitReload swap GPU resources around an import.
+ * @brief Binds shared models to entities and evaluates their animation.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
 #pragma once
 #include <animation/ModelAnimation.h>
+#include <animation/ModelLibrary.h>
 #include <core/ecs/System.h>
 #include <renderer/VulkanRenderer.h>
 #include <unordered_set>
@@ -21,50 +16,48 @@
 namespace mir
 {
     class AssetResolver;
+    class ModelPlayer;
+    class AsyncAssetService;
     class JobExecutor;
     class ModelSystem final : public ISystem
     {
     public:
-        ModelSystem(VulkanRenderer &renderer, AssetCache *assets, const AssetResolver &resolver,
-            JobExecutor *jobs = nullptr)
-            : mRenderer(renderer), mAssets(assets), mResolver(resolver), mJobs(jobs)
-        {}
-        void Reset();
-        // Frees this World's uploads without releasing resources owned by other Worlds.
+        // library is the App's one library, every World's ModelSystem takes its models from it
+        ModelSystem(std::shared_ptr<ModelLibrary> library, AsyncAssetService *assets, const AssetResolver &resolver,
+            JobExecutor *jobs = nullptr);
+        // Frees this World's models without releasing resources owned by other Worlds.
         void ReleaseResources();
-        bool PrepareReload(AssetCache &assets, std::string &error);
-        void CommitReload(AssetCache *assets);
-        void DiscardPreparedReload();
+        void CommitReload();
         void OnUpdate(SystemContext &context) override;
+        // Resolves and prepares the scene's models without evaluating them, so a standalone game can wait for
+        // them before its gameplay starts.
+        void OnLoadingUpdate(SystemContext &context) override;
+        // Claims are dropped while the renderer the models name is still there
+        void OnStop(SystemContext &) override { ReleaseResources(); }
 
         // ModelPlayer's OnRemove: drops the entity's request, poses and morph overrides, so a
         // packed id the World hands out again starts fresh
         void Forget(World &world, Entity entity);
 
     private:
-        struct GpuPrimitive
+        // Keep drawing the current model while its replacement loads.
+        struct WorldModel
         {
-            MeshHandle mesh;
-            MaterialHandle material, mirrored;
-            glm::vec4 factor{ 1 };
-            bool transparent = false;
+            ModelLibrary::Claim current;
+            ModelLibrary::Claim next;
         };
-        struct Loaded
-        {
-            ModelResources resources;
-            std::unordered_map<uint64_t, std::vector<GpuPrimitive>> meshes;
-        };
-        Loaded &Load(AssetId id);
-        Loaded LoadInto(AssetCache &assets, AssetId id, std::unordered_map<uint64_t, TextureHandle> &textures);
-        void Release(std::unordered_map<uint64_t, Loaded> &models, std::unordered_map<uint64_t, TextureHandle> &textures);
-        VulkanRenderer &mRenderer;
-        AssetCache *mAssets;
+        // Returns null while loading, throws on failure.
+        const PreparedModel *Load(AssetId id);
+        void AdvancePreparations();
+        void PruneModels();
+
+        enum class Binding : uint8_t { Pending, Ready, Failed };
+        Binding Bind(ModelPlayer &player, uint64_t packed, AssetId &id, std::string &path, const PreparedModel *&model);
+        std::shared_ptr<ModelLibrary> mLibrary;
+        AsyncAssetService *mAssets;
         const AssetResolver &mResolver;
         JobExecutor *mJobs;
-        std::unordered_map<uint64_t, Loaded> mModels;
-        std::unordered_map<uint64_t, TextureHandle> mTextures;
-        std::unordered_map<uint64_t, Loaded> mPreparedModels;
-        std::unordered_map<uint64_t, TextureHandle> mPreparedTextures;
+        std::unordered_map<uint64_t, WorldModel> mModels;
         std::unordered_set<uint64_t> mFailed;
         std::unordered_map<uint64_t, uint64_t> mRequestedModels;
         std::vector<std::vector<glm::vec4>> mDeformations;

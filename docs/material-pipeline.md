@@ -45,9 +45,12 @@ A surface material is one UTF-8 JSON object. Unknown root keys are preserved in
 The typed `SurfaceMaterialAsset` (tag `0x4d525355`, content version 1) is distinct
 from the legacy glTF `MaterialAsset`. It stores the source contract and packed
 texture asset ids in `albedoTexture`, `normalTexture` and `surfaceTexture`.
-The runtime material library resolves those ids into reflected `TextureRef`
-fields before creating the GPU material. The cooker preserves parameter JSON
-without interpreting reflected fields.
+The runtime material library requests that payload through
+`AsyncAssetService` and every cooked texture through the renderer's shared
+`TextureLoadTracker`, keyed by the asset's content. It injects the ready texture
+handles into the reflected `TextureRef` fields before creating the GPU material
+on the main thread. The cooker preserves parameter JSON without interpreting
+reflected fields.
 
 ## Packing
 
@@ -109,16 +112,59 @@ material enters a finite `--material` batch; an edited dependency enters a
 The Material panel builds its controls from the compiled reflection and keeps
 one draft per normalized project and logical asset path. Numeric edits publish
 the packed record through `SurfaceMaterialLibrary::PreviewParameters`; the
-library overlays the values on the resolved parameters, runs the consumer
+library overlays the values on the adopted parameters, runs the consumer
 validator and updates the shared record table without creating a pipeline.
 Raster and RT read the same record, so every use of the asset previews together.
+
+A reflection revision the panel has not seen yet is adopted from the committed
+generation, not rebuilt from the cooked asset: `VulkanRenderer::MaterialRecord`
+returns the accepted layout and authoritative bytes of the live handle, and the
+library decodes them into its cached parameters and its tile/macro/parallax
+metadata. The cooked recipe stays the panel baseline; a field the new layout adds
+takes the catalog's validated value, then the typed default, so a shader-only
+field addition or deletion needs no recook. A recipe key the new layout no longer
+declares stays in the source, stays reported as unsupported and is projected out
+only when the record is packed. Previewed values never move the baseline.
+
+One asset is one shared material across its fronts. An ordinary `MeshRenderer`
+whose `materialShader` names an explicit `.material.json` asset path, or a
+registered `mesh` stem that only one recipe uses, borrows the library's handle.
+A stem shared by several recipes is ambiguous and resolves to the error material
+instead of the first registration. The main scene and every Prefab preview
+resolver contribute their own active uses, and the library merges them with the
+terrain's instead of one owner replacing another. A pending edit publishes every
+valid frontend of the asset in one batch: each frontend keeps its own layout and
+`TextureRef` rows, the overlay is filtered to the names it declares, every record
+is validated and copied before any is committed, and the commit itself does not
+allocate. A frontend that joins later merges the peer's current same-name,
+same-kind numeric values into its parameters before packing, so a value the other
+frontend rejects fails the acquisition instead of publishing the cooked baseline;
+a cook candidate is built from the cooked baseline only, and a failed cached entry
+retries on its next acquisition. Shared finite, macro and parallax bounds apply
+to both frontends, while the terrain UV phase divisor stays terrain-only. Revert
+queues the accepted numeric values so a generation event cannot strand the GPU on
+the dirty value.
+
+`SurfaceMaterialLibrary::Publication` reports the actual async publication of
+one asset, separately from `Resolve`'s last-good draw binding and from the
+library's global generation. It is `Published` only when every active frontend
+accepted the current asset content, `Pending` while a replacement is in flight,
+`Failed` with the failed attempt's diagnostic, and `Inactive` when the scene
+draws none of the asset.
 
 Save writes only changed `parameters` and `textures.<role>.path` members through
 `UpdateJsonFile`; unknown keys and the other texture fields stay. A successful
 write queues one finite `--material` batch, and the ordinary Edit reload
-publishes the new record. A failed batch keeps the last-good material and the
-draft. Texture replacement changes only the source path, so packing, colour
-space, resolution and mip generation are unchanged. Play is read-only.
+publishes the new record. The draft moves its accepted baseline only after that
+asset's publication is `Published`, or when the material is inactive; a pending
+or failed replacement keeps the previous baseline, the visible failure and the
+retry state. An unchanged retry after a renderer publication failure uses the
+importer's existing force-reimport path once per Save, so it actually starts a
+new replacement instead of claiming the already-applied recipe. Unchanged
+content that was accepted confirms reuse without creating another pipeline.
+A failed batch keeps the last-good material and the draft. Texture replacement
+changes only the source path, so packing, colour space, resolution and mip
+generation are unchanged. Play is read-only.
 ## Material types
 
 A material file defines only the surface function:
@@ -205,7 +251,9 @@ candidate off to the side. One device idle is taken and all candidates are
 swapped only after every owner succeeds; otherwise the old generation stays
 live. Material records migrate by field name: same-name compatible values are
 preserved, new fields use the material's packed defaults and a changed type
-rejects the transaction.
+rejects the transaction. The commit notifies the surface library without
+allocating; it bumps its generation and adopts the committed layout and bytes the
+next time the library is used, with no panel open.
 
 ## Default
 
@@ -260,11 +308,15 @@ DDGI keeps a single legacy hit-record pair, so a scene containing any
 surface-material instance (nonzero SBT offset) disables DDGI and falls back to
 the ordinary camera trace. Material-specialized DDGI pipelines are later work.
 
-SSGI replays the legacy multi-target `<material>Surface` variants only. Generic
-surface materials compile the single-target `SurfaceForward` frontend, so an
-opaque generic surface draw keeps the existing raster lighting instead of
-running the SSGI surface pass. Legacy default/model/unlit/error materials and
-their SSGI inputs are unchanged.
+SSGI writes HDR color and the four surface inputs in one opaque pass. Legacy
+materials use their `<material>Surface` variants. Generic mesh and terrain
+materials reuse the ordinary vertex shader and compile an extra
+`<stem>.surface.fragmentMain.spv` output from the same material type. The bounce
+source includes diffuse direct light and emission. The receiver stores
+albedo multiplied by AO in RGB and `1 - f0` in alpha. Only the diffuse GI term
+uses the alpha factor, so the ambient fallback matches ordinary PBR.
+If the pass or a required opaque pipeline is unavailable, the frame uses
+ordinary raster lighting.
 
 ## Terrain
 
@@ -286,17 +338,23 @@ within the checked double arithmetic tolerance. The terrain material's `normalYU
 normal-map green channel. Region draw units use the coarse triangle's macro
 normal and UV density, which is the documented Region normal limitation.
 
-A cook reload stages a complete candidate material generation before the active
-one is touched. Abort disposes only the candidate; commit swaps it and retires
-the previous material and texture batch. See
+A cook reload commits the manifest, then the library starts asynchronous
+replacements for the live assets. The old material and its texture claims stay
+valid while a replacement decodes or uploads, and stay valid if it fails.
+Frontends of one asset are prepared, validated and created together; any failure
+keeps the whole previous generation. Superseded loads are dropped before they can
+publish, unchanged content reuses shared texture uploads, and a failed attempt is
+remembered until the next reload. Replaced handles are retired only after every
+active mesh and terrain owner acknowledges the replacing generation. See
 ADR 0004 (local ADR).
 
 ## Macro variation and parallax
 
 A terrain material may add a reflected `TextureRef macro` plus
 `macroPeriodMeters`, `macroStrength`, `macroHueShiftDegrees` and
-`macroRoughnessContrast`. The macro texture is generated once by the renderer:
-it is deterministic, tileable, low-frequency and shared by every material.
+`macroRoughnessContrast`. The macro texture is generated once through the
+renderer's shared texture upload cache: it is deterministic, tileable,
+low-frequency and shared by every material.
 `uv0 / macroPeriodMeters` drives the extra sample; the period follows the same
 strict packed-float divisibility rule as `tileSizeMeters`, and an authored zero
 strength reproduces the ADR 0004 shading exactly.

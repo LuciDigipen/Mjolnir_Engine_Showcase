@@ -14,12 +14,14 @@
 #include <core/ecs/components/Transform.h>
 #include <core/platform/Surface.h>
 #include <editor/BackgroundImage.h>
+#include <editor/BuildSettings.h>
 #include <editor/EditorCamera.h>
 #include <editor/EditorPreferences.h>
 #include <editor/SnapToTerrain.h>
 #include <editor/ViewPie.h>
 #include <editor/history/History.h>
 #include <editor/panels/AssetImportPanel.h>
+#include <editor/panels/BuildSettingsPanel.h>
 #include <editor/panels/ContentBrowserPanel.h>
 #include <editor/panels/HierarchyPanel.h>
 #include <editor/panels/InputSettingsPanel.h>
@@ -126,6 +128,7 @@ namespace mir
         EditorDocumentAction mDocument;
         bool mSaveActiveDocument = false;
         bool mToggleMaterialEditor = false;
+        BuildAction mBuild;
     };
 
     class Editor
@@ -153,7 +156,7 @@ namespace mir
             World &activeWorld, World &sceneWorld, const EditorDocuments &documents,
             const AssetImportView &assetImport, const VulkanRenderer &renderer,
             const ContentBrowserView &contentBrowser, bool materialPanelVisible,
-            bool materialDraftsUnsaved, float dt);
+            bool materialDraftsUnsaved, const BuildJobView &build, float dt);
 
         VkRect2D SceneViewportRect() const { return mSceneViewportRect; }
 
@@ -209,6 +212,9 @@ namespace mir
             mInspectorPanel.SetAudio(audio);
         }
 
+        // the game File > Build Settings is for
+        void SetBuildGame(BuildGame game) { mBuildGame = std::move(game); }
+
     private:
         void DrawTitleBar();
         void DrawOpenProjectMenu(std::span<const ProjectMenuEntry> projects, std::string_view currentProject);
@@ -263,6 +269,8 @@ namespace mir
         bool mShowContentBrowser = false;
         bool mShowPreferences = false;
         bool mShowProfiler = false;
+        bool mShowBuildSettings = false;
+        bool mFocusBuildSettings = false;
         std::string mImGuiIniPath;
         std::filesystem::path mProjectSettingsPath;
         VkRect2D mSceneViewportRect{};
@@ -275,6 +283,8 @@ namespace mir
         InspectorPanel mInspectorPanel;
         ProjectSettingsPanel mProjectSettingsPanel;
         PreferencesPanel mPreferencesPanel;
+        BuildSettingsPanel mBuildSettingsPanel;
+        BuildGame mBuildGame;
         InputSettingsPanel mInputSettingsPanel;
         PostProcessingPanel mPostProcessingPanel;
         ProfilerPanel mProfilerPanel;

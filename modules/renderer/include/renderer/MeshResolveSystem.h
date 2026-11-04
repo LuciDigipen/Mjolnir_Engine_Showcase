@@ -8,14 +8,18 @@
  */
 #pragma once
 
+#include <assets/AssetId.h>
 #include <core/ecs/ComponentFieldChanges.h>
 #include <core/ecs/System.h>
 #include <renderer/Material.h>
 #include <renderer/Mesh.h>
+#include <renderer/MeshLoadTracker.h>
+#include <renderer/SurfaceMaterialLibrary.h>
 #include <renderer/components/MeshBounds.h>
 
 #include <cstdint>
 #include <optional>
+#include <map>
 #include <span>
 #include <string>
 #include <string_view>
@@ -23,15 +27,18 @@
 
 namespace mir
 {
-    class AssetCache;
     class AssetResolver;
-    class VulkanRenderer;
+    class AsyncAssetService;
+    class IMeshResolveHost;
 
-    // Resolves resources every frame
+    // Resolves resources every frame. A mesh asset loads in the background, its entities draw it the frame its
+    // upload completes and gain MeshBounds then. A builtin shape resolves in the same frame.
     class MeshResolveSystem final : public ISystem
     {
     public:
-        MeshResolveSystem(VulkanRenderer &renderer, AssetCache *assets, const AssetResolver &resolver);
+        // assets may be null, and every mesh asset then fails to load.
+        MeshResolveSystem(IMeshResolveHost &renderer, AsyncAssetService *assets, const AssetResolver &resolver,
+            SurfaceMaterialLibrary *materials = nullptr);
 
         // Call at ReleaseSceneResources
         void Reset();
@@ -41,10 +48,14 @@ namespace mir
 
         // Frees this system's uploads while other Worlds keep rendering.
         void ReleaseResources();
-        void CommitReload(AssetCache *assets);
+        void CommitReload();
+
+        // The shared library is owned by RendererModule and stops before the scheduler.
+        void DetachSurfaceMaterials() { mSurfaceMaterials = nullptr; mUseOwner = 0; }
 
         void OnStart(SystemContext &context) override;
         void OnUpdate(SystemContext &context) override;
+        void OnLoadingUpdate(SystemContext &context) override { OnUpdate(context); }
         void OnStop(SystemContext &context) override;
 
     private:
@@ -53,8 +64,22 @@ namespace mir
 
         struct CachedMesh
         {
+            // builtin shapes only
             MeshHandle mMesh;
             std::optional<MeshBounds> mBounds;
+            // non-null for a mesh asset
+            AssetId mAsset;
+            MeshLoadLease mLease;
+        };
+
+        struct CachedMaterial
+        {
+            MaterialHandle mMaterial;
+            // A shared surface handle the library owns and may replace.
+            bool mBorrowed = false;
+            std::string mSurfacePath;
+            AssetId mSurfaceAsset;
+            SurfaceMaterialStatus mSurfaceStatus = SurfaceMaterialStatus::Ready;
         };
 
         // the names an entity's handles were last resolved from
@@ -62,17 +87,43 @@ namespace mir
         {
             std::string mMesh;
             std::string mShader;
+            // A new record, or a library generation that replaced or migrated the
+            // shared handles, must resolve the material even when the authored name
+            // is empty and therefore unchanged.
+            bool mMaterialInvalidated = true;
+            bool mSurface = false;
+            std::string mSurfacePath;
+            AssetId mSurfaceAsset;
+        };
+
+        // The handle and bounds an entity of this mesh shows now. The handle is null until the upload is queued
+        // and bounds exist only once it draws.
+        struct MeshView
+        {
+            MeshHandle mMesh;
+            std::optional<MeshBounds> mBounds;
         };
 
         const CachedMesh &ResolveMesh(const std::string &meshName);
-        MaterialHandle ResolveMaterial(const std::string &shaderName);
+        MeshView ViewOf(const CachedMesh &cached) const;
+        // A failure is as final as a ready mesh, the scene stops waiting for it
+        static bool Failed(const CachedMesh &cached);
+        SurfaceMaterialLookup LookupSurfaceMaterial(std::string_view reference) const;
+        MaterialHandle ResolveMaterial(const std::string &shaderName, ResolvedNames &resolved);
+        void PublishUses();
+        void RebindSurfaceMaterials();
 
-        VulkanRenderer &mRenderer;
-        AssetCache *mAssets;
+        IMeshResolveHost &mRenderer;
         const AssetResolver &mResolver;
+        AsyncAssetService *mAssets;
+        std::shared_ptr<MeshLoadTracker> mTracker;
+        SurfaceMaterialLibrary *mSurfaceMaterials = nullptr;
+        uint64_t mUseOwner = 0;
+        uint64_t mLibraryGeneration = 0;
 
         std::unordered_map<std::string, CachedMesh> mMeshes;         // by meshName
-        std::unordered_map<std::string, MaterialHandle> mMaterials;  // by materialShader
+        std::unordered_map<std::string, CachedMaterial> mMaterials;  // by materialShader
         std::unordered_map<uint64_t, ResolvedNames> mResolved;       // by PackEntity
+        std::map<std::string, SurfaceMaterialUse> mUses;
     };
 }

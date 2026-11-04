@@ -42,8 +42,16 @@ VSOutput vertexMain(uint vertexId: SV_VertexID)
     return output;
 }
 
+#ifdef MIR_SSGI_SURFACE
+#include "RasterSurfaceCommon.slang"
+#endif
+
 [shader("fragment")]
+#ifdef MIR_SSGI_SURFACE
+RasterSurfaceOutput fragmentMain(VSOutput input)
+#else
 float4 fragmentMain(VSOutput input) : SV_Target
+#endif
 {
     AtmosphereParams params;
     params.rayleighCoeff = atmosphereScattering.xyz;
@@ -64,5 +72,16 @@ float4 fragmentMain(VSOutput input) : SV_Target
     float3 rayOrigin = float3(cameraWorldPos.x, params.planetRadius + cameraWorldPos.y, cameraWorldPos.z);
 
     float3 color = Atmosphere(rayDir, rayOrigin, normalize(lightDirWS.xyz), params);
-    return float4(color, 1.0);
+    const float4 hdrColor = float4(color, 1.0);
+#ifdef MIR_SSGI_SURFACE
+    RasterSurfaceOutput output;
+    output.color = hdrColor;
+    output.normalKind = float4(0.0);
+    output.albedo = float4(0.0);
+    output.diffuseRadiance = float4(0.0);
+    output.directLighting = float4(0.0);
+    return output;
+#else
+    return hdrColor;
+#endif
 }

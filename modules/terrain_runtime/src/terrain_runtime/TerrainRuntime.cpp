@@ -311,6 +311,13 @@ namespace mir
             if (mSwitch->StagingVersion() != mStagingVersion)
                 ApplyResidencies();
         }
+        // A completed material load moves the library generation outside Edit too.
+        if (mSurfaceMaterials != nullptr)
+        {
+            for (InstanceResources &resources : mResources)
+                ResolveBinding(resources);
+            mSurfaceMaterials->AcknowledgeGeneration(0, mSurfaceMaterials->Generation());
+        }
         if (mMeshes)
             mMeshes->Install();
         if (mCollision && streamer)
@@ -386,7 +393,12 @@ namespace mir
         if (!Bound())
             return;
         if (mMeshes)
+        {
+            // The terrain's meshes are its own to retire. The renderer is not asked to free everything on a scene
+            // unload, prefab previews still use it.
+            mMeshes->RetireAll();
             mMeshes->Forget();
+        }
         for (ViewState &view : mViews)
             view.draws.clear();
     }
@@ -604,8 +616,7 @@ namespace mir
         std::vector<SurfaceMaterialUse> uses;
         for (const InstanceResources &resources : mResources)
             if (!resources.materialLogicalPath.empty() && !resources.materialAsset.IsNull())
-                uses.push_back({resources.materialLogicalPath, resources.materialAsset, "terrain",
-                                !resources.material.IsNull()});
+                uses.push_back({resources.materialLogicalPath, resources.materialAsset, "terrain"});
         mSurfaceMaterials->SetActiveMaterials(uses);
     }
 
@@ -640,23 +651,24 @@ namespace mir
             return;
         }
 
-        std::string error;
-        const std::optional<SurfaceMaterialBinding> binding = mSurfaceMaterials->Acquire(
-            instance.materialLogicalPath, instance.materialAsset, "terrain", &error);
-        if (!binding)
+        const SurfaceMaterialResolution resolution = mSurfaceMaterials->Resolve(
+            instance.materialLogicalPath, instance.materialAsset, "terrain");
+        if (resolution.status == SurfaceMaterialStatus::Pending)
+            return;
+        if (resolution.status != SurfaceMaterialStatus::Ready || !resolution.binding)
         {
             Report(std::format("Terrain instance material '{}': {}; keeping the diagnostic material",
-                               instance.materialPath, error));
+                               instance.materialPath, resolution.error));
             return;
         }
         std::string parameterError;
-        if (!ValidateSurfaceMaterialParameters(*binding, parameterError))
+        if (!ValidateSurfaceMaterialParameters(*resolution.binding, parameterError))
         {
             Report(std::format("Terrain instance material '{}': {}; keeping the diagnostic material",
                                instance.materialPath, parameterError));
             return;
         }
-        instance.material = binding->material;
+        instance.material = resolution.binding->material;
     }
 
     bool TerrainRuntime::HasMeshPayloads(const TerrainInstanceState &instance)
@@ -1179,6 +1191,7 @@ namespace mir
     {
         if (mFrameTime - view.loggedAt < kTerrainViewLogSeconds)
             return;
+        view.loggedAt = mFrameTime;
         const TerrainViewStats &s = view.selector->Stats();
         std::map<std::pair<TerrainUnitKind, uint32_t>, size_t> byLevel;
         for (const TerrainDrawUnit &unit : view.selector->Draws())
@@ -1197,7 +1210,6 @@ namespace mir
         if (summary == view.logged)
             return;
         view.logged = std::move(summary);
-        view.loggedAt = mFrameTime;
         const TerrainStreamingStats streaming = Streamer()->Stats();
         const MeshStreamingStats uploads = mRenderer->MeshStreaming();
         const glm::dvec3 eye(camera.pose.position.Meters());

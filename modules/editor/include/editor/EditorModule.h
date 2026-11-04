@@ -9,6 +9,7 @@
 #pragma once
 
 #include <editor/AssetImportManager.h>
+#include <editor/BuildJob.h>
 #include <editor/ContentBrowserWatcher.h>
 #include <editor/Editor.h>
 #include <editor/EditorAudio.h>
@@ -22,6 +23,7 @@
 #include <core/Registration.h>
 #include <project/GameProject.h>
 
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
@@ -31,6 +33,7 @@ namespace mir
 {
     class AssetResolver;
     class AssetsModule;
+    class AsyncAssetService;
     class ParticleEditorPanel;
     class ImGuiModule;
     class JobExecutor;
@@ -38,6 +41,7 @@ namespace mir
     class PrefabModule;
     class RendererModule;
     class SceneModule;
+    class ModelLibrary;
     class WindowModule;
 
     class EditorModule
@@ -45,8 +49,9 @@ namespace mir
     public:
         // enableLayout false: the editor is built in but the window is the game (--no-editor)
         EditorModule(ModuleContext context, ImGuiModule &imgui, WindowModule &window, RendererModule &renderer,
-            SceneModule &scene, PrefabModule &prefab, AssetsModule &assets, const AssetResolver &resolver,
-            const GameProject &project, JobExecutor &jobs, bool enableLayout);
+            SceneModule &scene, PrefabModule &prefab, AssetsModule &assets, AsyncAssetService *assetService,
+            const AssetResolver &resolver, const GameProject &project, JobExecutor &jobs, bool enableLayout,
+            std::shared_ptr<ModelLibrary> models);
         ~EditorModule();
 
         EditorModule(const EditorModule &) = delete;
@@ -65,6 +70,9 @@ namespace mir
             mEditor.SetAudio(audio);
         }
 
+        // Build with unsaved changes takes Cancel without asking
+        void SetNonInteractive(bool nonInteractive) { mNonInteractive = nonInteractive; }
+
     private:
         // what the menus, toolbar and panels asked for this frame
         void ApplyActions(const EditorActions &actions);
@@ -82,6 +90,17 @@ namespace mir
         ContentBrowserView MakeContentBrowserView();
         PrefabWorkspace::PrefabUnsaved UnsavedPrefabs() const;
         PrefabWorkspace::PrefabSaved MarkSavedPrefabs();
+
+        // File > Build Settings' Build, which packages what is on disk
+        void ApplyBuildAction(const BuildAction &action);
+        void StartBuild(const BuildAction &action);
+        
+        std::string BuildBlockedReason() const;
+        // empty when everything is saved
+        std::string UnsavedForBuild() const;
+        // every unsaved Prefab, then the scene, which is written at the top of the next frame
+        bool SaveForBuild();
+        BuildJobView MakeBuildJobView() const;
 
         
         void FeedViewport();
@@ -120,6 +139,15 @@ namespace mir
         // Stop puts the volumes back too, so trying them in Play changes nothing for good
         std::optional<EditorAudioLevels> mAudioBeforePlay;
 
+        BuildJob mBuild;
+        std::filesystem::path mBuildTool;
+        // the build waiting on the Save prompt or on the save
+        BuildAction mPendingBuild;
+        // what is unsaved, while the Save prompt is up
+        std::string mBuildAskSave;
+        bool mBuildAfterSave = false;
+        bool mNonInteractive = false;
+
         
         void RefreshPrefabHistory();
 
@@ -130,8 +158,6 @@ namespace mir
         Registration mSceneSaved;
         Registration mPlayBegin;
         Registration mPlayEnd;
-        Registration mReloadPrepare;
         Registration mReloadCommit;
-        Registration mReloadAbort;
     };
 }

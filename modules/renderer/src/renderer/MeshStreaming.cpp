@@ -9,9 +9,22 @@
 #include <renderer/MeshStreaming.h>
 
 #include <algorithm>
+#include <utility>
 
 namespace mir
 {
+    MeshUploadSource MeshUploadSource::Own(std::vector<Vertex> vertices, std::vector<uint32_t> indices)
+    {
+        struct Payload
+        {
+            std::vector<Vertex> vertices;
+            std::vector<uint32_t> indices;
+        };
+
+        const auto payload = std::make_shared<const Payload>(Payload{std::move(vertices), std::move(indices)});
+        return MeshUploadSource{payload->vertices, payload->indices, payload};
+    }
+
     std::optional<uint64_t> StagingRing::Allocate(uint64_t bytes, uint64_t alignment, uint64_t frame)
     {
         if (bytes == 0 || bytes > mCapacity || alignment == 0)
@@ -62,7 +75,8 @@ namespace mir
     bool MeshUploadQueue::Cancel(MeshHandle mesh)
     {
         const auto it =
-            std::find_if(mPending.begin(), mPending.end(), [&](const Item &item) { return item.mesh == mesh; });
+            std::find_if(mPending.begin(), mPending.end(), [&](const Item &item)
+                { return item.texture.IsNull() && item.mesh == mesh; });
         if (it == mPending.end())
             return false;
         mPendingBytes -= it->gpuBytes;
@@ -77,7 +91,45 @@ namespace mir
         while (!mPending.empty())
         {
             const Item item = mPending.front();
-            if (used > 0 && used + item.gpuBytes > mDesc.frameBytes)
+            if (!item.texture.IsNull())
+            {
+                if (item.rowBytes == 0 || item.rowCount == 0 || item.rowBytes > mRing.Capacity() ||
+                    (used > 0 && (used >= mDesc.frameBytes || item.rowBytes > mDesc.frameBytes - used)))
+                    break;
+                const uint64_t budget = used < mDesc.frameBytes ? mDesc.frameBytes - used : 0;
+                uint32_t rows = static_cast<uint32_t>(std::min<uint64_t>(item.rowCount,
+                    std::min(mRing.Capacity() / item.rowBytes, std::max<uint64_t>(1, budget / item.rowBytes))));
+                std::optional<uint64_t> offset;
+                for (;;)
+                {
+                    offset = mRing.Allocate(uint64_t(rows) * item.rowBytes, kStagingAlignment, frame);
+                    if (offset || rows == 1)
+                        break;
+                    rows /= 2;
+                }
+                if (!offset)
+                    break;
+                Item band = item;
+                band.rowCount = rows;
+                band.stagingBytes = band.gpuBytes = uint64_t(rows) * item.rowBytes;
+                mPending.pop_front();
+                if (rows < item.rowCount)
+                {
+                    Item remainder = item;
+                    remainder.firstRow += rows;
+                    remainder.rowCount -= rows;
+                    remainder.stagingBytes -= band.stagingBytes;
+                    remainder.gpuBytes -= band.gpuBytes;
+                    mPending.push_back(remainder);
+                }
+                mPendingBytes -= band.gpuBytes;
+                mUploadingBytes += band.gpuBytes;
+                used += band.gpuBytes;
+                mInFlight.push_back({ band, frame });
+                admitted.push_back({ band, offset });
+                continue;
+            }
+            if (used > 0 && (used >= mDesc.frameBytes || item.gpuBytes > mDesc.frameBytes - used))
                 break;
             std::optional<uint64_t> offset;
             if (item.stagingBytes <= mRing.Capacity())
@@ -99,15 +151,38 @@ namespace mir
 
     std::vector<MeshHandle> MeshUploadQueue::Complete(uint64_t completed)
     {
-        mRing.Release(completed);
         std::vector<MeshHandle> done;
+        for (const Item &item : CompleteUploads(completed))
+            if (item.texture.IsNull())
+                done.push_back(item.mesh);
+        return done;
+    }
+
+    std::vector<MeshUploadQueue::Item> MeshUploadQueue::CompleteUploads(uint64_t completed)
+    {
+        mRing.Release(completed);
+        std::vector<Item> done;
         while (!mInFlight.empty() && mInFlight.front().frame <= completed)
         {
-            done.push_back(mInFlight.front().item.mesh);
+            done.push_back(mInFlight.front().item);
             mUploadingBytes -= mInFlight.front().item.gpuBytes;
             mInFlight.pop_front();
         }
         return done;
+    }
+
+    bool MeshUploadQueue::Cancel(TextureHandle texture)
+    {
+        bool cancelled = false;
+        std::erase_if(mPending, [&](const Item &item)
+            {
+                if (item.texture.IsNull() || item.texture != texture)
+                    return false;
+                mPendingBytes -= item.gpuBytes;
+                cancelled = true;
+                return true;
+            });
+        return cancelled;
     }
 
     void MeshUploadQueue::SetFrameBytes(uint64_t frameBytes)
