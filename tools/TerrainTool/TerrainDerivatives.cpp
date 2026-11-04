@@ -17,7 +17,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstddef>
-#include <map>
+#include <limits>
 #include <thread>
 #include <tuple>
 #include <format>
@@ -28,6 +28,8 @@ namespace mir::terrainbake
     namespace
     {
         using FinalSurface = TerrainFinalSurface;
+        // Marks a reference-grid point whose vertex id is not assigned yet.
+        constexpr uint32_t kUnassignedVertex = std::numeric_limits<uint32_t>::max();
         TerrainLodSurface Mesh(const FinalSurface &final, const TileHeights &source, const TerrainLayout &layout,
                                uint32_t layer, uint32_t sourceLayer, bool ring)
         {
@@ -43,19 +45,20 @@ namespace mir::terrainbake
             lod.origin = *TerrainLocalPosition::FromMeters({ref.SamplePosition(firstX), 0, ref.SamplePosition(firstZ)});
             const int ratio = ref.IntervalsPerTile() / layout.IntervalsPerTile();
             const int total = ref.IntervalsPerTile(), n = layout.IntervalsPerTile();
-            std::map<std::pair<int, int>, uint32_t> ids;
+            std::vector<uint32_t> ids(size_t(total + 1) * (total + 1), kUnassignedVertex);
             auto vertex = [&](int ix, int iz)
             {
-                auto [it, inserted] = ids.try_emplace({iz, ix}, static_cast<uint32_t>(lod.positions.size()));
-                if (inserted)
+                const size_t id = size_t(iz) * (total + 1) + ix;
+                if (ids[id] == kUnassignedVertex)
                 {
+                    ids[id] = static_cast<uint32_t>(lod.positions.size());
                     const double x = ref.SamplePosition(firstX + ix), z = ref.SamplePosition(firstZ + iz);
                     const bool edge = ix == 0 || iz == 0 || ix == total || iz == total;
                     const double h = ring && edge ? final.SharedHeight(x, z, source) : final.Height(source, x, z);
                     lod.positions.emplace_back(float(x - lod.origin.Meters().x), float(h),
                                                float(z - lod.origin.Meters().z));
                 }
-                return it->second;
+                return ids[id];
             };
             std::array<int, 4> edgeRatios{ratio, ratio, ratio, ratio};
             if (ring)
@@ -72,6 +75,7 @@ namespace mir::terrainbake
                 }
             }
             const auto extent = *ref.ValidExtent(lod.tile);
+            std::vector<std::array<uint32_t, 3>> triangles;
             for (int iz = 0; iz < n; ++iz)
                 for (int ix = 0; ix < n; ++ix)
                 {
@@ -81,7 +85,7 @@ namespace mir::terrainbake
                     if (gx1 <= extent.minX || gx0 >= extent.maxX || gz1 <= extent.minZ || gz0 >= extent.maxZ)
                         continue;
                     uint32_t a = vertex(x0, z0), b = vertex(x1, z0), c = vertex(x1, z1), d = vertex(x0, z1);
-                    std::vector<std::array<uint32_t, 3>> triangles{{a, d, c}, {a, c, b}};
+                    triangles.assign({{a, d, c}, {a, c, b}});
                     auto split = [&](uint32_t start, uint32_t end, int e, int from, int to, bool alongZ, int fixed)
                     {
                         uint32_t previous = start;
