@@ -70,8 +70,11 @@ int main(int argc, char **argv)
             if (args[i].starts_with("-D") && equals != std::string::npos)
                 cache += args[i].substr(2, equals - 2) + ":BOOL=" + args[i].substr(equals + 1) + "\n";
         }
-        Write(fs::path("builds") / args[1] / "CMakeCache.txt", cache);
-        Write(fs::path("builds") / args[1] / "build.ninja", "# fake\n");
+        // fake_cmake_binary_dir.txt stands in for a binaryDir other than builds/<preset>
+        const std::string binaryDir = Read("fake_cmake_binary_dir.txt");
+        const fs::path dir = binaryDir.empty() ? fs::path("builds") / args[1] : fs::path(binaryDir);
+        Write(dir / "CMakeCache.txt", cache);
+        Write(dir / "build.ninja", "# fake\n");
         return 0;
     }
 

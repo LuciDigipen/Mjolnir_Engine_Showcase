@@ -1,7 +1,7 @@
 /**
  * @file GameBuildCompile.cpp
  * @author Quy Dong Ta
- * @brief The game build step: writes builds/<preset>/mjolnir_game_build.bat, runs it with its output in
+ * @brief The game build step: writes mjolnir_game_build.bat into the preset's binaryDir, runs it with its output in
  *        mjolnir_game_build.log, and swaps the fresh install into the template's place.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
@@ -38,6 +38,8 @@ namespace mir::build
         constexpr std::string_view kLogFileName = "mjolnir_game_build.log";
         // In an unfinished install, so the next compile knows the folder is its own to remove
         constexpr std::string_view kStagingMarkerFileName = "mjolnir_game_build_install";
+        // In a previous template moved aside, for the same reason
+        constexpr std::string_view kPreviousMarkerFileName = "mjolnir_game_build_previous";
 
         std::string_view Trim(std::string_view text)
         {
@@ -105,10 +107,30 @@ namespace mir::build
             return text;
         }
 
-        bool IsOwnStaging(const fs::path &staging)
+        bool IsMarked(const fs::path &dir, std::string_view marker)
         {
             std::error_code ec;
-            return fs::is_regular_file(staging / kStagingMarkerFileName, ec);
+            return fs::is_regular_file(dir / marker, ec);
+        }
+
+        // The marker goes last, so a removal a locked file stopped still marks the folder as ours
+        void RemoveMarked(const fs::path &dir, std::string_view marker, std::error_code &ec)
+        {
+            std::vector<fs::path> entries;
+            for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
+            {
+                if (it->path().filename() != marker)
+                    entries.push_back(it->path());
+            }
+            if (ec && ec != std::errc::no_such_file_or_directory)
+                return;
+            for (const fs::path &entry : entries)
+            {
+                fs::remove_all(entry, ec);
+                if (ec)
+                    return;
+            }
+            fs::remove_all(dir, ec);
         }
 
         std::optional<fs::path> EnvironmentPath(const wchar_t *name)
@@ -129,10 +151,18 @@ namespace mir::build
             return EnvironmentPath(L"SystemRoot").value_or("C:\\Windows") / "System32" / "cmd.exe";
         }
 
+        struct ConfigurePreset
+        {
+            Json mJson;
+            // for ${fileDir}
+            fs::path mFileDir;
+        };
+
         struct Presets
         {
             std::vector<std::string> mConfigure;
             std::vector<std::string> mHidden;
+            std::map<std::string, ConfigurePreset, std::less<>> mByName;
             // build preset -> the configure preset it builds
             std::map<std::string, std::string, std::less<>> mBuild;
             bool mFound = false;
@@ -162,8 +192,10 @@ namespace mir::build
                 for (const Json &preset : *list)
                 {
                     const std::string name = preset.is_object() ? StringField(preset, "name") : std::string();
-                    if (!name.empty())
-                        (IsHidden(preset) ? presets.mHidden : presets.mConfigure).push_back(name);
+                    if (name.empty())
+                        continue;
+                    (IsHidden(preset) ? presets.mHidden : presets.mConfigure).push_back(name);
+                    presets.mByName.emplace(name, ConfigurePreset{ preset, file.parent_path() });
                 }
             }
             if (const auto list = json->find("buildPresets"); list != json->end() && list->is_array())
@@ -186,7 +218,88 @@ namespace mir::build
             }
         }
 
-        std::string FailureText(int exit, const GameBuildCompile &compile, const fs::path &log)
+        Presets LoadPresets(const fs::path &sourceRoot)
+        {
+            Presets presets;
+            for (std::string_view file : { "CMakePresets.json", "CMakeUserPresets.json" })
+                CollectPresets(sourceRoot / file, presets, 0);
+            return presets;
+        }
+
+        // The preset, or the first it inherits from depth first, that sets binaryDir
+        const ConfigurePreset *FindBinaryDir(const Presets &presets, std::string_view name, int depth)
+        {
+            const auto it = presets.mByName.find(name);
+            if (depth > 16 || it == presets.mByName.end())
+                return nullptr;
+            const Json &json = it->second.mJson;
+            if (const auto dir = json.find("binaryDir"); dir != json.end() && dir->is_string())
+                return &it->second;
+
+            const auto inherits = json.find("inherits");
+            if (inherits == json.end())
+                return nullptr;
+            const Json parents = inherits->is_array() ? *inherits : Json::array({ *inherits });
+            for (const Json &parent : parents)
+            {
+                if (!parent.is_string())
+                    continue;
+                if (const ConfigurePreset *found = FindBinaryDir(presets, parent.get_ref<const std::string &>(), depth + 1))
+                    return found;
+            }
+            return nullptr;
+        }
+
+        struct BuildDirResult
+        {
+            fs::path mDir;
+            std::string mProblem;
+        };
+
+        // Expands the macros a binaryDir usually holds; $env{} and the rest are refused, not guessed
+        BuildDirResult ResolveBuildDir(const Presets &presets, const fs::path &sourceRoot, const std::string &name)
+        {
+            const ConfigurePreset *owner = FindBinaryDir(presets, name, 0);
+            if (!owner)
+                return { {}, "the preset " + name + " sets no binaryDir, so its build folder is unknown" };
+
+            const fs::path source = NormalizedPath(sourceRoot);
+            const std::map<std::string, std::string, std::less<>> macros = {
+                { "sourceDir", source.generic_string() },
+                { "sourceParentDir", source.parent_path().generic_string() },
+                { "sourceDirName", PathText(source.filename()) },
+                { "presetName", name },
+                { "fileDir", NormalizedPath(owner->mFileDir).generic_string() },
+                { "hostSystemName", "Windows" },
+                { "dollar", "$" },
+            };
+
+            const std::string &text = owner->mJson.at("binaryDir").get_ref<const std::string &>();
+            std::string expanded;
+            for (std::size_t at = 0; at < text.size();)
+            {
+                const std::size_t dollar = text.find('$', at);
+                expanded += text.substr(at, dollar - at);
+                if (dollar == std::string::npos)
+                    break;
+                const std::size_t close = text.find('}', dollar);
+                const auto macro = text.compare(dollar, 2, "${") == 0 && close != std::string::npos
+                    ? macros.find(std::string_view(text).substr(dollar + 2, close - dollar - 2))
+                    : macros.end();
+                if (macro == macros.end())
+                    return { {}, "the preset " + name + "'s binaryDir \"" + text +
+                        "\" uses a macro MjolnirBuild does not expand; use ${sourceDir}, ${presetName} and the like" };
+                expanded += macro->second;
+                at = close + 1;
+            }
+
+            fs::path dir = FromText(expanded);
+            if (dir.is_relative())
+                dir = source / dir;
+            return { NormalizedPath(dir), {} };
+        }
+
+        std::string FailureText(int exit, const GameBuildCompile &compile, const fs::path &buildDir, const fs::path &log)
         {
             std::string what;
             switch (exit)
@@ -201,8 +314,7 @@ namespace mir::build
                 what = "compiling the game build with " + compile.mPreset + " failed";
                 break;
             case kGameBuildExitInstall:
-                what = "installing the game build from " + PathText(PresetBuildDir(compile.mSourceRoot, compile.mPreset)) +
-                    " failed";
+                what = "installing the game build from " + PathText(buildDir) + " failed";
                 break;
             default:
                 what = std::string(kScriptFileName) + " stopped with exit code " + std::to_string(exit);
@@ -215,9 +327,12 @@ namespace mir::build
         }
     }
 
-    fs::path PresetBuildDir(const fs::path &sourceRoot, std::string_view preset)
+    std::optional<fs::path> PresetBuildDir(const fs::path &sourceRoot, std::string_view preset)
     {
-        return sourceRoot / "builds" / FromText(preset);
+        BuildDirResult result = ResolveBuildDir(LoadPresets(sourceRoot), sourceRoot, std::string(preset));
+        if (!result.mProblem.empty())
+            return std::nullopt;
+        return std::move(result.mDir);
     }
 
     fs::path GameBuildStagingDir(const fs::path &gameBuildDir)
@@ -225,6 +340,13 @@ namespace mir::build
         fs::path staging = NormalizedPath(gameBuildDir);
         staging += ".tmp";
         return staging;
+    }
+
+    fs::path GameBuildPreviousDir(const fs::path &gameBuildDir)
+    {
+        fs::path previous = NormalizedPath(gameBuildDir);
+        previous += ".old";
+        return previous;
     }
 
     std::optional<std::string> PresetProblem(const fs::path &sourceRoot, std::string_view preset)
@@ -237,9 +359,7 @@ namespace mir::build
         if (!plain || preset.starts_with('.'))
             return "the game build preset \"" + std::string(preset) + "\" may hold only letters, digits, '-', '_' and '.'";
 
-        Presets presets;
-        for (std::string_view file : { "CMakePresets.json", "CMakeUserPresets.json" })
-            CollectPresets(sourceRoot / file, presets, 0);
+        const Presets presets = LoadPresets(sourceRoot);
         if (!presets.mFound)
             return PathText(sourceRoot) + " has no readable CMakePresets.json, so the game build cannot be compiled from it";
 
@@ -255,12 +375,16 @@ namespace mir::build
                 (known.empty() ? "none" : known);
         }
 
+        const BuildDirResult buildDir = ResolveBuildDir(presets, sourceRoot, name);
+        if (!buildDir.mProblem.empty())
+            return buildDir.mProblem;
+
         const auto build = presets.mBuild.find(name);
         if (build == presets.mBuild.end())
             return "the preset " + name + " has no build preset of the same name, which cmake --build --preset needs";
         if (build->second != name)
             return "the build preset " + name + " builds the configure preset " + build->second +
-                ", so the game build would not compile in " + PathText(PresetBuildDir(sourceRoot, preset));
+                ", so the game build would not compile in " + PathText(buildDir.mDir);
         return std::nullopt;
     }
 
@@ -290,7 +414,10 @@ namespace mir::build
         if (std::optional<std::string> problem = PresetProblem(compile.mSourceRoot, compile.mPreset))
             return problem;
 
-        const fs::path buildDir = NormalizedPath(PresetBuildDir(compile.mSourceRoot, compile.mPreset));
+        const std::optional<fs::path> found = PresetBuildDir(compile.mSourceRoot, compile.mPreset);
+        if (!found)
+            return "the build folder of the preset " + compile.mPreset + " is unknown";
+        const fs::path &buildDir = *found;
         for (const fs::path &own : { ExecutablePath(), compile.mEditorInfo })
         {
             if (!own.empty() && IsWithin(NormalizedPath(own), buildDir))
@@ -309,10 +436,16 @@ namespace mir::build
         if (std::optional<std::string> problem = GameBuildDirProblem(compile.mGameBuildDir))
             return problem;
         const fs::path staging = GameBuildStagingDir(compile.mGameBuildDir);
-        if (!IsOwnStaging(staging))
+        if (!IsMarked(staging, kStagingMarkerFileName))
         {
             if (std::optional<std::string> problem = GameBuildDirProblem(staging))
                 return *problem + " (the game build is installed there before it replaces the template)";
+        }
+        const fs::path previous = GameBuildPreviousDir(compile.mGameBuildDir);
+        if (!IsMarked(previous, kPreviousMarkerFileName))
+        {
+            if (std::optional<std::string> problem = GameBuildDirProblem(previous))
+                return *problem + " (the previous template is moved there while the new one replaces it)";
         }
         return std::nullopt;
     }
@@ -375,7 +508,7 @@ namespace mir::build
         }
         text += "cmake --build --preset " + script.mPreset + " --target " + std::string(kGameBuildTargets) +
             exitWith(kGameBuildExitCompile);
-        text += "cmake --install \"builds\\" + script.mPreset + "\" --prefix \"" + BatchPath(script.mPrefix) + "\"" +
+        text += "cmake --install \"" + BatchPath(script.mBuildDir) + "\" --prefix \"" + BatchPath(script.mPrefix) + "\"" +
             exitWith(kGameBuildExitInstall);
         return text;
     }
@@ -386,19 +519,31 @@ namespace mir::build
             throw std::runtime_error(*problem);
         if (std::optional<std::string> problem = GameBuildDirProblem(compile.mGameBuildDir))
             throw std::runtime_error(*problem);
+        const std::optional<fs::path> found = PresetBuildDir(compile.mSourceRoot, compile.mPreset);
+        if (!found)
+            throw std::runtime_error("the build folder of the preset " + compile.mPreset + " is unknown");
+        const fs::path &buildDir = *found;
 
         // Installed beside the template first, so a failure leaves the previous one in place
         const fs::path gameBuildDir = NormalizedPath(compile.mGameBuildDir);
         const fs::path staging = GameBuildStagingDir(gameBuildDir);
+        const fs::path previous = GameBuildPreviousDir(gameBuildDir);
         std::error_code ec;
-        if (!IsOwnStaging(staging))
+        for (const auto &[dir, marker] : { std::pair{ staging, kStagingMarkerFileName },
+                 std::pair{ previous, kPreviousMarkerFileName } })
         {
-            if (std::optional<std::string> problem = GameBuildDirProblem(staging))
-                throw std::runtime_error(*problem);
+            if (!IsMarked(dir, marker))
+            {
+                if (std::optional<std::string> problem = GameBuildDirProblem(dir))
+                    throw std::runtime_error(*problem);
+                fs::remove_all(dir, ec);
+            }
+            else
+                RemoveMarked(dir, marker, ec);
+            if (ec)
+                throw std::runtime_error("could not remove " + PathText(dir) + ", left by an earlier compile: " +
+                    ec.message());
         }
-        fs::remove_all(staging, ec);
-        if (ec)
-            throw std::runtime_error("could not remove the unfinished install " + PathText(staging) + ": " + ec.message());
         fs::create_directories(staging, ec);
         if (ec || !WriteText(staging / kStagingMarkerFileName, ""))
             throw std::runtime_error("could not create " + PathText(staging));
@@ -412,8 +557,7 @@ namespace mir::build
                     defines = FeatureDefines(*info);
             }
 
-            const fs::path buildDir = PresetBuildDir(compile.mSourceRoot, compile.mPreset);
-            GameBuildScript script{ compile.mSourceRoot, compile.mPreset, staging, std::nullopt };
+            GameBuildScript script{ compile.mSourceRoot, compile.mPreset, buildDir, staging, std::nullopt };
             if (NeedsConfigure(buildDir, defines))
                 script.mConfigure = defines;
 
@@ -432,7 +576,7 @@ namespace mir::build
             if (!exit)
                 throw std::runtime_error("lost track of " + std::string(kScriptFileName));
             if (*exit != 0)
-                throw std::runtime_error(FailureText(*exit, compile, log));
+                throw std::runtime_error(FailureText(*exit, compile, buildDir, log));
 
             if (std::optional<std::string> problem = GameBuildTemplateProblem(staging))
                 throw std::runtime_error(PathText(buildDir) + " installed no game build: " + *problem +
@@ -440,18 +584,47 @@ namespace mir::build
         }
         catch (...)
         {
-            fs::remove_all(staging, ec);
+            RemoveMarked(staging, kStagingMarkerFileName, ec);
             throw;
         }
 
-        fs::remove(staging / kStagingMarkerFileName, ec);
-        fs::remove_all(gameBuildDir, ec);
-        if (ec)
-            throw std::runtime_error("could not remove the previous game build template " + PathText(gameBuildDir) + ": " +
-                ec.message());
+        // Moved aside rather than deleted, so a locked file cannot leave the previous template half removed
+        std::error_code ignored;
+        bool movedAside = false;
+        if (fs::exists(gameBuildDir, ec))
+        {
+            fs::rename(gameBuildDir, previous, ec);
+            if (ec)
+            {
+                const std::string what = "could not move the previous game build template " + PathText(gameBuildDir) +
+                    " aside (" + ec.message() + "); is a game running from it?";
+                RemoveMarked(staging, kStagingMarkerFileName, ignored);
+                throw std::runtime_error(what);
+            }
+            movedAside = true;
+            WriteText(previous / kPreviousMarkerFileName, "");
+        }
+
         fs::create_directories(gameBuildDir.parent_path(), ec);
         fs::rename(staging, gameBuildDir, ec);
         if (ec)
-            throw std::runtime_error("could not move the new game build into " + PathText(gameBuildDir) + ": " + ec.message());
+        {
+            std::string what = "could not move the new game build into " + PathText(gameBuildDir) + ": " + ec.message();
+            if (movedAside)
+            {
+                fs::rename(previous, gameBuildDir, ignored);
+                if (ignored)
+                    what += "; the previous template is in " + PathText(previous);
+                else
+                    fs::remove(gameBuildDir / kPreviousMarkerFileName, ignored);
+            }
+            RemoveMarked(staging, kStagingMarkerFileName, ignored);
+            throw std::runtime_error(what);
+        }
+        fs::remove(gameBuildDir / kStagingMarkerFileName, ignored);
+
+        // a failure leaves it marked, for the next compile to remove
+        if (movedAside)
+            RemoveMarked(previous, kPreviousMarkerFileName, ignored);
     }
 }

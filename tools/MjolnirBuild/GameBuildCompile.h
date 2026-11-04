@@ -29,7 +29,7 @@ namespace mir::build
     {
         // The checkout, holding CMakePresets.json
         std::filesystem::path mSourceRoot;
-        // e.g. windows-msvc-game-release, which builds in <checkout>/builds/<preset>
+        // e.g. windows-msvc-game-release, which builds in its binaryDir
         std::string mPreset;
         // Replaced by a fresh install
         std::filesystem::path mGameBuildDir;
@@ -37,10 +37,14 @@ namespace mir::build
         std::filesystem::path mEditorInfo;
     };
 
-    std::filesystem::path PresetBuildDir(const std::filesystem::path &sourceRoot, std::string_view preset);
+    // The preset's binaryDir, or nullopt when it sets none or uses a macro other than ${sourceDir} and the like
+    std::optional<std::filesystem::path> PresetBuildDir(const std::filesystem::path &sourceRoot, std::string_view preset);
 
     // <template>.tmp, where the game build is installed before it replaces the template
     std::filesystem::path GameBuildStagingDir(const std::filesystem::path &gameBuildDir);
+
+    // <template>.old, where the previous template waits until the new one is in place
+    std::filesystem::path GameBuildPreviousDir(const std::filesystem::path &gameBuildDir);
 
     
     std::optional<std::string> PresetProblem(const std::filesystem::path &sourceRoot, std::string_view preset);
@@ -64,6 +68,7 @@ namespace mir::build
     {
         std::filesystem::path mSourceRoot;
         std::string mPreset;
+        std::filesystem::path mBuildDir;
         std::filesystem::path mPrefix;
         // nullopt skips configure
         std::optional<std::vector<std::string>> mConfigure;

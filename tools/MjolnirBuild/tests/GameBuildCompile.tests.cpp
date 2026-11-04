@@ -125,7 +125,7 @@ namespace
             return request;
         }
 
-        fs::path BuildDir() const { return PresetBuildDir(mCheckout, kPreset); }
+        fs::path BuildDir() const { return PresetBuildDir(mCheckout, kPreset).value(); }
 
         void FailAt(std::string_view phase) const { Touch(mCheckout / "fake_cmake_fail.txt", phase); }
 
@@ -172,7 +172,7 @@ TEST_CASE("CMakeUserPresets.json and the files it includes add presets", "[game-
         "configurePresets": [ { "name": "mine", "inherits": "game-release" } ],
         "buildPresets": [ { "name": "mine", "configurePreset": "mine" } ] })");
     Touch(sandbox.mRoot / "more" / "presets.json", R"({ "version": 6,
-        "configurePresets": [ { "name": "included" } ],
+        "configurePresets": [ { "name": "included", "binaryDir": "${sourceDir}/builds/included" } ],
         "buildPresets": [ { "name": "included", "configurePreset": "included" } ] })");
 
     CHECK_FALSE(PresetProblem(sandbox.mRoot, "mine"));
@@ -208,7 +208,7 @@ TEST_CASE("The template and output stay out of the preset's build folder", "[gam
     const fs::path checkout = sandbox.mRoot / "checkout";
     const fs::path out = sandbox.mRoot / "out";
     WritePresets(checkout);
-    const fs::path buildDir = PresetBuildDir(checkout, kPreset);
+    const fs::path buildDir = PresetBuildDir(checkout, kPreset).value();
 
     GameBuildCompile compile{ checkout, std::string(kPreset), sandbox.mRoot / "game-build", {} };
     CHECK_FALSE(CheckGameBuildCompile(compile, out));
@@ -232,7 +232,7 @@ TEST_CASE("The build folder this MjolnirBuild runs from is refused", "[game-buil
     const fs::path source = MJOLNIR_SOURCE_DIR;
     const fs::path binaryDir = fs::path(MJOLNIR_ENGINE_COOK_DIR).parent_path();
     const std::string preset = PathText(binaryDir.filename());
-    if (PresetProblem(source, preset) || NormalizedPath(PresetBuildDir(source, preset)) != NormalizedPath(binaryDir))
+    if (PresetProblem(source, preset) || PresetBuildDir(source, preset).value_or(fs::path()) != NormalizedPath(binaryDir))
         SKIP("these tests were not built in a preset's folder");
 
     Sandbox sandbox;
@@ -240,18 +240,64 @@ TEST_CASE("The build folder this MjolnirBuild runs from is refused", "[game-buil
         "this MjolnirBuild"));
 }
 
-TEST_CASE("An install left beside the template is removed only when it is the game build step's", "[game-build-compile]")
+TEST_CASE("A folder left beside the template is removed only when it is the game build step's", "[game-build-compile]")
 {
     Sandbox sandbox;
     const fs::path checkout = sandbox.mRoot / "checkout";
     WritePresets(checkout);
     const GameBuildCompile compile{ checkout, std::string(kPreset), sandbox.mRoot / "game-build", {} };
     const fs::path staging = GameBuildStagingDir(compile.mGameBuildDir);
+    const fs::path previous = GameBuildPreviousDir(compile.mGameBuildDir);
 
     Touch(staging / "notes.txt");
     CHECK(Has(CheckGameBuildCompile(compile, sandbox.mRoot / "out"), "installed there"));
     Touch(staging / "mjolnir_game_build_install", "");
     CHECK_FALSE(CheckGameBuildCompile(compile, sandbox.mRoot / "out"));
+
+    Touch(previous / "notes.txt");
+    CHECK(Has(CheckGameBuildCompile(compile, sandbox.mRoot / "out"), "moved there"));
+    Touch(previous / "mjolnir_game_build_previous", "");
+    CHECK_FALSE(CheckGameBuildCompile(compile, sandbox.mRoot / "out"));
+    fs::remove_all(previous);
+    MakeGameBuildTemplate(previous);
+    CHECK_FALSE(CheckGameBuildCompile(compile, sandbox.mRoot / "out"));
+}
+
+TEST_CASE("The build folder is the preset's binaryDir, and one MjolnirBuild cannot expand is refused",
+    "[game-build-compile]")
+{
+    Sandbox sandbox;
+    const fs::path root = sandbox.mRoot / "checkout";
+    Touch(root / "CMakePresets.json", R"({
+  "version": 6,
+  "configurePresets": [
+    { "name": "base", "hidden": true, "binaryDir": "${sourceDir}/out/${presetName}" },
+    { "name": "other", "hidden": true, "binaryDir": "${sourceDir}/other" },
+    { "name": "inherited", "inherits": [ "base", "other" ] },
+    { "name": "relative", "binaryDir": "rel/${presetName}" },
+    { "name": "parent", "binaryDir": "${sourceParentDir}/${sourceDirName}-${presetName}${dollar}" },
+    { "name": "env", "binaryDir": "$env{TEMP}/${presetName}" },
+    { "name": "generator", "binaryDir": "${sourceDir}/${generator}" },
+    { "name": "unset" }
+  ],
+  "buildPresets": [
+    { "name": "inherited", "configurePreset": "inherited" },
+    { "name": "env", "configurePreset": "env" },
+    { "name": "unset", "configurePreset": "unset" }
+  ]
+})");
+    const fs::path source = NormalizedPath(root);
+
+    CHECK(PresetBuildDir(root, "inherited") == source / "out" / "inherited");
+    CHECK(PresetBuildDir(root, "relative") == source / "rel" / "relative");
+    CHECK(PresetBuildDir(root, "parent") == source.parent_path() / "checkout-parent$");
+    CHECK_FALSE(PresetBuildDir(root, "env"));
+    CHECK_FALSE(PresetBuildDir(root, "generator"));
+    CHECK_FALSE(PresetBuildDir(root, "unset"));
+
+    CHECK_FALSE(PresetProblem(root, "inherited"));
+    CHECK(Has(PresetProblem(root, "env"), "does not expand"));
+    CHECK(Has(PresetProblem(root, "unset"), "sets no binaryDir"));
 }
 
 TEST_CASE("The game build is configured with the editor's options", "[game-build-compile]")
@@ -287,7 +333,8 @@ TEST_CASE("Configure runs again only when it never finished or the cache holds o
 
 TEST_CASE("The batch file configures when asked, then compiles the game build's two targets and installs", "[game-build-compile]")
 {
-    GameBuildScript script{ "C:/My Checkout/100%", "game-release", "C:/out/game-build.tmp",
+    GameBuildScript script{ "C:/My Checkout/100%", "game-release", "C:/My Checkout/100%/out/game-release",
+        "C:/out/game-build.tmp",
         std::vector<std::string>{ "-DMIR_WITH_AUDIO=ON", "-DMIR_WITH_DLSS=OFF" } };
     const std::string text = GameBuildScriptText(script);
 
@@ -295,7 +342,8 @@ TEST_CASE("The batch file configures when asked, then compiles the game build's 
     CHECK(Has(text, "cd /d \"C:\\My Checkout\\100%%\" || exit /b 10\r\n"));
     CHECK(Has(text, "cmake --preset game-release -DMIR_WITH_AUDIO=ON -DMIR_WITH_DLSS=OFF || exit /b 11\r\n"));
     CHECK(Has(text, "cmake --build --preset game-release --target MjolnirEngine MjolnirErrorReporter || exit /b 12\r\n"));
-    CHECK(Has(text, "cmake --install \"builds\\game-release\" --prefix \"C:\\out\\game-build.tmp\" || exit /b 13\r\n"));
+    CHECK(Has(text, "cmake --install \"C:\\My Checkout\\100%%\\out\\game-release\" --prefix \"C:\\out\\game-build.tmp\" "
+                    "|| exit /b 13\r\n"));
     CHECK(text.find("cmake --preset") < text.find("cmake --build"));
     CHECK(text.find("cmake --build") < text.find("cmake --install"));
 
@@ -481,4 +529,58 @@ TEST_CASE("A template folder that is a build folder, a packaged game or other fi
         CHECK(fs::exists(gameBuild / file));
     }
     CHECK_FALSE(fs::exists(fixture.mCheckout / "fake_cmake_calls.txt"));
+}
+
+TEST_CASE("A template with a locked file is kept whole, and the next compile replaces it", "[game-build-compile]")
+{
+    CompileFixture fixture;
+    REQUIRE(RunGameBuild(fixture.Request()).mOk);
+    Touch(fixture.mGameBuildDir / "kept.txt");
+    const fs::path out = fixture.mOut;
+    fs::remove_all(out);
+
+    {
+        // as a running game or a virus scan holds it
+        const HANDLE locked = CreateFileW((fixture.mGameBuildDir / "MjolnirEngine.exe").c_str(), GENERIC_READ,
+            FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        REQUIRE(locked != INVALID_HANDLE_VALUE);
+        const BuildReport report = RunGameBuild(fixture.Request());
+        CloseHandle(locked);
+
+        CHECK_FALSE(report.mOk);
+        CHECK(Has(report.mError, "aside"));
+        CHECK(fs::exists(fixture.mGameBuildDir / "kept.txt"));
+        CHECK(fs::exists(fixture.mGameBuildDir / "game_build_info.json"));
+        CHECK(fs::exists(fixture.mGameBuildDir / "MjolnirEngine.exe"));
+        CHECK_FALSE(fs::exists(GameBuildStagingDir(fixture.mGameBuildDir)));
+        CHECK_FALSE(fs::exists(GameBuildPreviousDir(fixture.mGameBuildDir)));
+    }
+
+    // what an earlier compile could not finish removing
+    MakeGameBuildTemplate(GameBuildPreviousDir(fixture.mGameBuildDir));
+    Touch(GameBuildPreviousDir(fixture.mGameBuildDir) / "mjolnir_game_build_previous", "");
+    REQUIRE(RunGameBuild(fixture.Request()).mOk);
+    CHECK_FALSE(fs::exists(fixture.mGameBuildDir / "kept.txt"));
+    CHECK_FALSE(fs::exists(fixture.mGameBuildDir / "mjolnir_game_build_install"));
+    CHECK_FALSE(fs::exists(GameBuildPreviousDir(fixture.mGameBuildDir)));
+}
+
+TEST_CASE("A preset with its own binaryDir is compiled and installed from there", "[game-build-compile]")
+{
+    CompileFixture fixture;
+    Touch(fixture.mCheckout / "CMakePresets.json", R"({
+  "version": 6,
+  "configurePresets": [ { "name": "game-release", "binaryDir": "${sourceDir}/out/custom" } ],
+  "buildPresets": [ { "name": "game-release", "configurePreset": "game-release" } ]
+})");
+    Touch(fixture.mCheckout / "fake_cmake_binary_dir.txt", "out/custom");
+
+    REQUIRE(fixture.BuildDir() == NormalizedPath(fixture.mCheckout / "out" / "custom"));
+    const BuildReport report = RunGameBuild(fixture.Request());
+    INFO(report.mError);
+    REQUIRE(report.mOk);
+    CHECK(fs::exists(fixture.BuildDir() / "mjolnir_game_build.bat"));
+    CHECK(fs::exists(fixture.BuildDir() / "mjolnir_game_build.log"));
+    CHECK_FALSE(fs::exists(fixture.mCheckout / "builds"));
+    CHECK(ReadJson(fixture.mGameBuildDir / "game_build_info.json").at("rtxgi") == true);
 }

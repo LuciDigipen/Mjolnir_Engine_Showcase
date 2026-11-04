@@ -286,34 +286,38 @@ builds/windows-msvc-debug/tools/MjolnirBuild/MjolnirBuild.exe --game games/Hello
 
 Run it from a Developer PowerShell or Developer Command Prompt: the step does
 not load the Visual Studio environment itself yet. It writes
-`builds/<preset>/mjolnir_game_build.bat` and runs it with `cmd /d /c`. The script:
+`mjolnir_game_build.bat` into the preset's build folder (its `binaryDir`, e.g.
+`builds/<preset>`) and runs it with `cmd /d /c`. The script:
 
 1. Configures with `cmake --preset <preset>`, passing `MIR_LARGE_WORLD`,
    `MIR_WITH_AUDIO`, `MIR_WITH_DLSS` and `MIR_WITH_RTXGI` as the editor's
    `game_build_info.json` records them. It skips this when
-   `builds/<preset>/CMakeCache.txt` already holds those values and the last
+   the build folder's `CMakeCache.txt` already holds those values and the last
    configure finished.
 2. Compiles only `MjolnirEngine` and `MjolnirErrorReporter`, with
    `cmake --build --preset <preset> --target ...`, not the tests and tools
    the preset also builds.
-3. Installs with `cmake --install builds/<preset> --prefix <template>.tmp`.
+3. Installs with `cmake --install <build folder> --prefix <template>.tmp`.
    That folder replaces `<template>` only after every phase succeeds, so a
    failed compile keeps the previous template and the previous build. The
+   previous template is moved to `<template>.old` first and deleted only once
+   the new one is in place, so a locked file cannot leave it half removed. The
    install is fresh every time, because `cmake --install` only adds files and
    would keep stale shader generations.
 
-The script stays in `builds/<preset>/`, so the same commands can be run by
-hand, and its output goes to `builds/<preset>/mjolnir_game_build.log`, replaced
+The script stays in the build folder, so the same commands can be run by
+hand, and its output goes to `mjolnir_game_build.log` beside it, replaced
 on each compile. A failure names the phase and the log.
 
 `check` makes sure of everything it can before the compile, so a bad folder
 fails in seconds: the game and output checks, a non-hidden configure preset
 and a build preset of that name in `CMakePresets.json`, `CMakeUserPresets.json`
-or a file they include, and a template folder that can be replaced. That is a
+or a file they include, a `binaryDir` it sets or inherits using only
+`${sourceDir}`, `${presetName}` and the other plain macros (not `$env{}`), and a template folder that can be replaced. That is a
 missing or empty folder, or a game build template (a `game_build_info.json` with
 `editor: false`); a CMake build folder, a packaged game or other files are
-refused and left alone. The template, the output and `builds/<preset>` must
-not overlap, and `builds/<preset>` must not be the folder this MjolnirBuild
+refused and left alone. The template, the output and the build folder must
+not overlap, and the build folder must not be the folder this MjolnirBuild
 was built in. The template checks (the exe, name conflicts, path length, the
 comparison with the editor) run on what was installed, in the `template` step.
 
