@@ -274,6 +274,52 @@ exe with no `--game`, as a double-click does. All are labelled `smoke`:
 ctest --test-dir builds/windows-msvc-game-release -R "^smoke\.build\." --output-on-failure
 ```
 
+### Compiling the player in the build
+
+With `--player-preset <preset>`, a `player` step between `check` and
+`template` compiles the player from the checkout and installs it as the
+template first, so no template has to be made by hand:
+
+```
+builds/windows-msvc-debug/tools/MjolnirBuild/MjolnirBuild.exe --game games/HelloWorld --player builds/player/release --player-preset windows-msvc-game-release --out builds/player-out/HelloWorld
+```
+
+Run it from a Developer PowerShell or Developer Command Prompt: the step does
+not load the Visual Studio environment itself yet. It writes
+`builds/<preset>/mjolnir_player.bat` and runs it with `cmd /d /c`. The script:
+
+1. Configures with `cmake --preset <preset>`, passing `MIR_LARGE_WORLD`,
+   `MIR_WITH_AUDIO`, `MIR_WITH_DLSS` and `MIR_WITH_RTXGI` as the editor's
+   `player_info.json` records them. It skips this when
+   `builds/<preset>/CMakeCache.txt` already holds those values and the last
+   configure finished.
+2. Compiles only `MjolnirEngine` and `MjolnirErrorReporter`, with
+   `cmake --build --preset <preset> --target ...`, not the tests and tools
+   the preset also builds.
+3. Installs with `cmake --install builds/<preset> --prefix <template>.tmp`.
+   That folder replaces `<template>` only after every phase succeeds, so a
+   failed compile keeps the previous template and the previous build. The
+   install is fresh every time, because `cmake --install` only adds files and
+   would keep stale shader generations.
+
+The script stays in `builds/<preset>/`, so the same commands can be run by
+hand, and its output goes to `builds/<preset>/mjolnir_player.log`, replaced
+on each compile. A failure names the phase and the log.
+
+`check` makes sure of everything it can before the compile, so a bad folder
+fails in seconds: the game and output checks, a non-hidden configure preset
+and a build preset of that name in `CMakePresets.json`, `CMakeUserPresets.json`
+or a file they include, and a template folder that can be replaced. That is a
+missing or empty folder, or a player template (a `player_info.json` with
+`editor: false`); a CMake build folder, a game build or other files are
+refused and left alone. The template, the output and `builds/<preset>` must
+not overlap, and `builds/<preset>` must not be the folder this MjolnirBuild
+was built in. The template checks (the exe, name conflicts, path length, the
+comparison with the editor) run on what was installed, in the `template` step.
+
+Without `--player-preset`, `player` is skipped and the template is used as it
+is.
+
 ### Build Settings in the editor
 
 File > Build Settings... holds what a build from the editor uses:
