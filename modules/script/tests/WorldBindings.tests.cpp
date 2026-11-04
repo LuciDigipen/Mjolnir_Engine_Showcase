@@ -10,6 +10,8 @@
 
 #include <core/ecs/CommandBuffer.h>
 #include <core/ecs/ComponentRegistry.h>
+#include <core/ecs/EngineMode.h>
+#include <core/ecs/Requests.h>
 #include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/World.h>
 #include <core/ecs/components/Transform.h>
@@ -22,6 +24,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <string>
 #include <string_view>
 
 namespace
@@ -39,7 +43,7 @@ namespace
     // process-wide (0022).
     const ComponentOps &ProbeOps()
     {
-        static const RuntimeFieldDecl fields[] = {{"blocked", FieldKind::Int}, {"ran", FieldKind::Int}};
+        static const RuntimeFieldDecl fields[] = { { "blocked", FieldKind::Int },{ "ran", FieldKind::Int } };
         return ComponentRegistry::Instance().RegisterRuntime("BindingsProbe", fields);
     }
 
@@ -71,6 +75,30 @@ return T
         probe.FindField(field)->Read(probe.GetComponent(world, entity), &value);
         return value;
     }
+}
+
+TEST_CASE("Lua requests scene travel from the running World", "[script]")
+{
+    World world;
+    CommandBuffer commands;
+    world.EmplaceResource<mir::EngineModeState>();
+    world.EmplaceResource<mir::RequestQueue>();
+    mir::SetEngineMode(world, mir::EngineMode::Play);
+
+    ScriptHost host;
+    REQUIRE(host.LoadScriptSource("travel_request", R"LUA(
+local T = {}
+function T.NewInstanceData() return {} end
+function T.OnStart(self, world, entity)
+    world:load_scene("newScene")
+end
+return T
+)LUA"));
+    const int32_t instance = host.CreateInstance("travel_request");
+    REQUIRE(instance != -1);
+    host.CallOnStart(world, commands, world.CreateEntity(), instance);
+    CHECK(world.Resource<mir::RequestQueue>().PopNextScene() == std::optional<std::string>("newScene"));
+    host.DestroyInstance(instance);
 }
 
 TEST_CASE("world:each rejects a tag term instead of aborting", "[script]")
@@ -111,10 +139,10 @@ namespace
     const ComponentOps &PositionProbeOps()
     {
         static const RuntimeFieldDecl fields[] = {
-            {"child", FieldKind::EntityRef}, {"world", FieldKind::WorldPosition},  {"scaleRead", FieldKind::WorldPosition},
-            {"rejected", FieldKind::Int},    {"nilOk", FieldKind::Int},    {"declared", FieldKind::Int},
-            {"posePos", FieldKind::WorldPosition},   {"col0", FieldKind::Vec3},    {"col1", FieldKind::Vec3},
-            {"col2", FieldKind::Vec3},
+            { "child", FieldKind::EntityRef },{ "world", FieldKind::WorldPosition },{ "scaleRead", FieldKind::WorldPosition },
+            { "rejected", FieldKind::Int },{ "nilOk", FieldKind::Int },{ "declared", FieldKind::Int },
+            { "posePos", FieldKind::WorldPosition },{ "col0", FieldKind::Vec3 },{ "col1", FieldKind::Vec3 },
+            { "col2", FieldKind::Vec3 },
         };
         return ComponentRegistry::Instance().RegisterRuntime("PositionProbe", fields);
     }
@@ -191,7 +219,7 @@ return T
 
     mir::WorldVec3 ReadProbeWorldVec3(const ComponentOps &probe, World &world, Entity entity, std::string_view field)
     {
-        mir::WorldVec3 value{-1.0};
+        mir::WorldVec3 value{ -1.0 };
         probe.FindField(field)->Read(probe.GetComponent(world, entity), &value);
         return value;
     }
@@ -216,13 +244,13 @@ TEST_CASE("world:get/set keep a far position exact and world_position resolves a
     const ComponentOps &probe = PositionProbeOps();
 
     const mir::WorldVec3 rootPosition = mir::WorldVec3(-150000.125, 350.5, 75000.5) + mir::WorldVec3(0.001, -0.002, 0.003);
-    const mir::WorldVec3 childLocal{0.5, 0.0, -0.25};
+    const mir::WorldVec3 childLocal{ 0.5, 0.0, -0.25 };
 
     World world;
     const Entity root = world.CreateEntity();
     const Entity child = world.CreateEntity();
-    mir::AddTransform(world, root, Transform{rootPosition});
-    mir::AddTransform(world, child, Transform{childLocal}, root);
+    mir::AddTransform(world, root, Transform{ rootPosition });
+    mir::AddTransform(world, child, Transform{ childLocal }, root);
     probe.AddDefault(world, root);
     probe.FindField("child")->Write(probe.GetComponent(world, root), &child);
 
@@ -274,11 +302,11 @@ TEST_CASE("world:set refuses a non-finite position and leaves the Transform unto
     mir::RegisterCoreComponents();
     const ComponentOps &probe = PositionProbeOps();
 
-    const mir::WorldVec3 position{150000.625, -20.0, -75000.25};
+    const mir::WorldVec3 position{ 150000.625, -20.0, -75000.25 };
 
     World world;
     const Entity entity = world.CreateEntity();
-    mir::AddTransform(world, entity, Transform{position});
+    mir::AddTransform(world, entity, Transform{ position });
     probe.AddDefault(world, entity);
     const uint32_t version = world.GetComponent<Transform>(entity)->Version();
 
@@ -302,8 +330,8 @@ TEST_CASE("world:world_pose hands a script the resolved position and linear part
     World world;
     const Entity root = world.CreateEntity();
     const Entity child = world.CreateEntity();
-    mir::AddTransform(world, root, Transform{rootPosition, turn, glm::vec3(2.0f)});
-    mir::AddTransform(world, child, Transform{mir::WorldVec3(1.0005, 0.0, 0.0)}, root);
+    mir::AddTransform(world, root, Transform{ rootPosition, turn, glm::vec3(2.0f) });
+    mir::AddTransform(world, child, Transform{ mir::WorldVec3(1.0005, 0.0, 0.0) }, root);
     probe.AddDefault(world, root);
     probe.FindField("child")->Write(probe.GetComponent(world, root), &child);
 
@@ -313,10 +341,10 @@ TEST_CASE("world:world_pose hands a script the resolved position and linear part
     CHECK(ReadProbeWorldVec3(probe, world, root, "posePos") == expected.position.Meters());
 
     // float linear widened to a Lua number and back is exact
-    const char *columns[] = {"col0", "col1", "col2"};
+    const char *columns[] = { "col0", "col1", "col2" };
     for (int c = 0; c < 3; ++c)
     {
-        glm::vec3 column{-1.0f};
+        glm::vec3 column{ -1.0f };
         probe.FindField(columns[c])->Read(probe.GetComponent(world, root), &column);
         CHECK(column == expected.linear[c]);
     }
@@ -330,20 +358,20 @@ namespace
         float radius = 1.0f;
     };
 
-    inline constexpr std::string_view kLimitsKindNames[] = {"First", "Second"};
+    inline constexpr std::string_view kLimitsKindNames[] = { "First", "Second" };
 
     inline constexpr mir::FieldDesc kLimitsProbeFields[] = {
-        {.mName = "kind", .mKind = FieldKind::Int, .mOffset = offsetof(LimitsProbe, kind),
-         .mWidget = mir::FieldWidget::Enum, .mEnumNames = kLimitsKindNames},
-        {.mName = "radius", .mKind = FieldKind::Float, .mOffset = offsetof(LimitsProbe, radius), .mClamped = true,
-         .mMin = 0.5f, .mMax = 2.0f},
+        { .mName = "kind", .mKind = FieldKind::Int, .mOffset = offsetof(LimitsProbe, kind),
+         .mWidget = mir::FieldWidget::Enum, .mEnumNames = kLimitsKindNames },
+        { .mName = "radius", .mKind = FieldKind::Float, .mOffset = offsetof(LimitsProbe, radius), .mClamped = true,
+         .mMin = 0.5f, .mMax = 2.0f },
     };
 
     const ComponentOps &LimitsResultsOps()
     {
         static const RuntimeFieldDecl fields[] = {
-            {"enumOutOfRange", FieldKind::Int}, {"enumNegative", FieldKind::Int}, {"enumInRange", FieldKind::Int},
-            {"nanRefused", FieldKind::Int},     {"clampedOk", FieldKind::Int},    {"spawned", FieldKind::EntityRef},
+            { "enumOutOfRange", FieldKind::Int },{ "enumNegative", FieldKind::Int },{ "enumInRange", FieldKind::Int },
+            { "nanRefused", FieldKind::Int },{ "clampedOk", FieldKind::Int },{ "spawned", FieldKind::EntityRef },
         };
         return ComponentRegistry::Instance().RegisterRuntime("LimitsResults", fields);
     }
@@ -372,7 +400,7 @@ return T
 
     const ComponentOps &RotationProbeOps()
     {
-        static const RuntimeFieldDecl fields[] = {{"normalized", FieldKind::Int}, {"refused", FieldKind::Int}};
+        static const RuntimeFieldDecl fields[] = { { "normalized", FieldKind::Int },{ "refused", FieldKind::Int } };
         return ComponentRegistry::Instance().RegisterRuntime("RotationProbe", fields);
     }
 
@@ -467,7 +495,7 @@ TEST_CASE("world:set refuses a zero-length or NaN rotation and leaves the Transf
 
     World world;
     const Entity entity = world.CreateEntity();
-    mir::AddTransform(world, entity, Transform{mir::WorldVec3(0.0), turn});
+    mir::AddTransform(world, entity, Transform{ mir::WorldVec3(0.0), turn });
     probe.AddDefault(world, entity);
     const uint32_t version = world.GetComponent<Transform>(entity)->Version();
 

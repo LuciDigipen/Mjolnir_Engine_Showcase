@@ -40,6 +40,7 @@ TEST_CASE("Requests made while held are dropped and the held ones come back", "[
     RequestQueue queue;
     queue.Push(Request::SaveScene);
     queue.PushOpenProject("games/Other");
+    queue.PushNextScene("second");
 
     RequestQueue::Held held = queue.Hold();
     CHECK(queue.Empty());
@@ -47,9 +48,11 @@ TEST_CASE("Requests made while held are dropped and the held ones come back", "[
     queue.Push(Request::Pause);
     queue.Push(Request::Quit);
     queue.PushOpenProject("games/Wrong");
+    queue.PushNextScene("wrong");
 
-    CHECK(queue.Restore(std::move(held)) == 3);
+    CHECK(queue.Restore(std::move(held)) == 4);
     CHECK(queue.TakeOpenProject() == std::optional<std::string>("games/Other"));
+    CHECK(queue.PopNextScene() == std::optional<std::string>("second"));
     CHECK(queue.Take() == std::vector<Request>{ Request::SaveScene });
 }
 

@@ -10,6 +10,7 @@
 
 #include <assets/AssetIdRoot.h>
 #include <core/ecs/EngineMode.h>
+#include <core/ecs/Requests.h>
 #include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/components/Transform.h>
 #include <core/log/Log.h>
@@ -53,8 +54,6 @@ TEST_CASE("Play and Stop keep the authored scene while replacing the runtime wor
         for (int cycle = 0; cycle < 3; ++cycle)
         {
             app.PlayScene();
-            if (cycle == 0)
-                app.Run();
             mir::World *runtime = app.RuntimeWorld();
             REQUIRE(runtime != nullptr);
             CHECK(runtime != &authored);
@@ -79,6 +78,18 @@ TEST_CASE("Play and Stop keep the authored scene while replacing the runtime wor
             CHECK(mir::IsPaused(*runtime));
             app.TogglePause();
             CHECK_FALSE(mir::IsPaused(*runtime));
+
+            if (cycle == 0)
+            {
+                runtime->Resource<mir::RequestQueue>().PushNextScene("newScene");
+                app.Run();
+                mir::World *destination = app.RuntimeWorld();
+                REQUIRE(destination != nullptr);
+                CHECK(destination != runtime);
+                size_t entities = 0;
+                destination->ForEachAliveEntity([&](mir::Entity) { ++entities; });
+                CHECK(entities == 1);
+            }
 
             app.StopScene();
             CHECK(app.RuntimeWorld() == nullptr);

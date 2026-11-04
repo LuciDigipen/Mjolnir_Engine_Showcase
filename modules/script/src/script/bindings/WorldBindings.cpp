@@ -13,6 +13,8 @@
 
 #include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/DeferredAccess.h>
+#include <core/ecs/EngineMode.h>
+#include <core/ecs/Requests.h>
 #include <core/ecs/RuntimeQuery.h>
 #include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/World.h>
@@ -664,6 +666,14 @@ namespace mir
             "add", &WorldAdd,
             "remove", &WorldRemove,
             "each", &WorldEach,
+            "load_scene", [](World &world, const std::string &id)
+            {
+                if (id.empty() || !world.HasResource<EngineModeState>() || !IsPlaying(world) ||
+                    !world.HasResource<RequestQueue>())
+                    return false;
+                world.Resource<RequestQueue>().PushNextScene(id);
+                return true;
+            },
             "declare", &WorldDeclare);
     }
 }

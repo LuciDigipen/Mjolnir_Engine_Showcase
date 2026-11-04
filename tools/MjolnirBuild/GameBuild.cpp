@@ -364,6 +364,9 @@ namespace mir::build
         {
             const GameProject &project = inputs.mProject;
             std::error_code ec;
+            fs::create_directories(gameOut, ec);
+            if (ec)
+                throw BuildError("could not create packaged game directory " + PathText(gameOut) + ": " + ec.message());
 
             Json manifest = ReadJsonFile(inputs.mGameDir / kGameManifestFileName).value();
             if (manifest.contains("scenes") || fs::is_regular_file(project.mSceneDir / "scene.json", ec))

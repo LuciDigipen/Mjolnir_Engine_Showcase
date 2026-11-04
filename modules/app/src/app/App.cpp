@@ -34,6 +34,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <exception>
 #include <filesystem>
 #include <string>
 #include <system_error>
@@ -152,7 +153,7 @@ namespace mir
 
     struct App::RuntimeSession
     {
-        explicit RuntimeSession(App &app)
+        explicit RuntimeSession(App &app, const std::filesystem::path *sceneDirectory = nullptr)
             : state(app.mProject, app.mAssets, app.mResolver,
                 GameShellSettings{ .mUIDemo = app.mDesc.mUIDemo, .mQuitStopsPlay = app.mDesc.mEnableEditorLayout }),
             rendering(app.mRenderer.BindWorld(state.Context(),
@@ -179,10 +180,24 @@ namespace mir
             state.world.EmplaceResource<Selection>();
         #endif
             state.prefab.Coordinator().CopyPrefabDefinitionsFrom(app.mWorldState.prefab.Coordinator());
-            state.scene.CopyFrom(app.mWorldState.world, app.mWorldState.scene.Scene(),
-                &app.mWorldState.prefab.Coordinator().Resolver(), &state.prefab.Coordinator().Resolver());
+            if (sceneDirectory != nullptr)
+            {
+                state.scene.SetSceneDir(*sceneDirectory);
+                state.scene.LoadFromDisk(&state.prefab.Coordinator().Resolver(), false);
+            }
+            else
+            {
+                state.scene.CopyFrom(app.mWorldState.world, app.mWorldState.scene.Scene(),
+                    &app.mWorldState.prefab.Coordinator().Resolver(), &state.prefab.Coordinator().Resolver());
+            }
             SetEngineMode(state.world, EngineMode::Play);
-            SystemContext context = MakeContext(0.0f, 0.0, 0, 0.0f);
+            if (sceneDirectory == nullptr)
+                Begin(0.0, 0);
+        }
+
+        void Begin(double elapsed, uint64_t frame)
+        {
+            SystemContext context = MakeContext(0.0f, elapsed, frame, 0.0f);
             state.scheduler.RunStage(Stage::SceneLoad, context);
             state.scheduler.RunStage(Stage::PlayBegin, context);
         }
@@ -583,6 +598,65 @@ namespace mir
         SetPlayState(mWorldState.world, PlayState::Running);
     }
 
+    bool App::MoveToScene(const std::string &id)
+    {
+        if (!mRuntime)
+            return false;
+
+        const auto target = std::ranges::find(mProject.mScenes, id, &ProjectScene::mId);
+        if (target == mProject.mScenes.end())
+        {
+            MIR_LOG_ERROR("Scene travel: unknown scene ID '{}'", id);
+            return false;
+        }
+
+        const SceneProbe probe = ProbeScene(target->mDirectory);
+        if (!probe.Ok())
+        {
+            MIR_LOG_ERROR("Scene travel: scene '{}' could not be prepared ({}, {} missing files)", id,
+                probe.mManifestError, MissingFileCount(probe));
+            return false;
+        }
+
+        std::unique_ptr<RuntimeSession> prepared;
+        try
+        {
+            prepared = std::make_unique<RuntimeSession>(*this, &target->mDirectory);
+        }
+        catch (const std::exception &error)
+        {
+            MIR_LOG_ERROR("Scene travel: scene '{}' could not be prepared ({})", id, error.what());
+            return false;
+        }
+
+        const PlayState playState = IsPaused(mRuntime->state.world) ? PlayState::Paused : PlayState::Running;
+        const bool started = mRuntime->state.scheduler.Started();
+        SystemContext oldContext = MakeRuntimeContext(0.0f);
+        if (started)
+            mRuntime->state.scheduler.RunStage(Stage::PlayEnd, oldContext);
+        mRuntime->state.scene.Unload();
+        mRuntime->state.scheduler.RunStage(Stage::SceneUnload, oldContext);
+        mRuntime->state.scheduler.Stop(oldContext);
+        mRuntime.reset();
+
+        mRuntime = std::move(prepared);
+        SetPlayState(mRuntime->state.world, playState);
+        mRuntime->Begin(mElapsed, mFrame);
+        if (started)
+        {
+            SystemContext start = MakeRuntimeContext(0.0f);
+            mRuntime->state.scheduler.Start(start);
+        }
+        mRenderer.ActivateWorld(mRuntime->rendering.get());
+        mGameUIImGui.ActivateWorld(&mRuntime->state.world, &mRuntime->state.gameUI);
+        mImGui.SetInputWorld(&mRuntime->state.world);
+    #if MIR_WITH_EDITOR
+        mEditor.SetPlayWorld(&mRuntime->state.world);
+    #endif
+        MIR_LOG_INFO("Scene travel: activated '{}'", id);
+        return true;
+    }
+
     void App::TogglePause()
     {
         if (!IsPlaying(mWorldState.world))
@@ -685,9 +759,12 @@ namespace mir
         }
 
         std::vector<Request> actions = queue.Take();
+        std::optional<std::string> nextScene;
         if (mRuntime)
         {
-            std::vector<Request> runtimeActions = mRuntime->state.world.Resource<RequestQueue>().Take();
+            RequestQueue &runtimeQueue = mRuntime->state.world.Resource<RequestQueue>();
+            nextScene = runtimeQueue.TakeNextScene();
+            std::vector<Request> runtimeActions = runtimeQueue.Take();
             actions.insert(actions.end(), runtimeActions.begin(), runtimeActions.end());
         }
         for (const Request request : actions)
@@ -729,6 +806,8 @@ namespace mir
                 break;
             }
         }
+        if (nextScene && mRuntime && !mWindow.Get().ShouldClose())
+            MoveToScene(*nextScene);
     }
 
     void App::ToggleFullscreen()
