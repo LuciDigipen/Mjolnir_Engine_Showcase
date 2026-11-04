@@ -291,9 +291,9 @@ not load the Visual Studio environment itself yet. It writes
 
 1. Configures with `cmake --preset <preset>`, passing `MIR_LARGE_WORLD`,
    `MIR_WITH_AUDIO`, `MIR_WITH_DLSS` and `MIR_WITH_RTXGI` as the editor's
-   `game_build_info.json` records them. It skips this when
-   the build folder's `CMakeCache.txt` already holds those values and the last
-   configure finished.
+   `game_build_info.json` records them. It configures on every compile, so a
+   preset whose settings changed, such as `CMAKE_BUILD_TYPE`, is never
+   packaged with the old ones.
 2. Compiles only `MjolnirEngine` and `MjolnirErrorReporter`, with
    `cmake --build --preset <preset> --target ...`, not the tests and tools
    the preset also builds.
@@ -316,9 +316,9 @@ or a file they include, a `binaryDir` it sets or inherits using only
 `${sourceDir}`, `${presetName}` and the other plain macros (not `$env{}`), and a template folder that can be replaced. That is a
 missing or empty folder, or a game build template (a `game_build_info.json` with
 `editor: false`); a CMake build folder, a packaged game or other files are
-refused and left alone. The template, the output and the build folder must
-not overlap, and the build folder must not be the folder this MjolnirBuild
-was built in. The template checks (the exe, name conflicts, path length, the
+refused and left alone. The build folder, the template and the output must
+not overlap, and neither may their `.tmp` and `.old` folders, and the build
+folder must not be the folder this MjolnirBuild was built in. The template checks (the exe, name conflicts, path length, the
 comparison with the editor) run on what was installed, in the `template` step.
 
 Without `--game-build-preset`, `game build` is skipped and the template is used as it

@@ -12,7 +12,6 @@
 
 #include <filesystem>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -58,20 +57,14 @@ namespace mir::build
     // -DMIR_WITH_AUDIO=ON and the like, for each option editorInfo records
     std::vector<std::string> FeatureDefines(const nlohmann::json &editorInfo);
 
-    // The cache holds every -DNAME=VALUE in defines; false when there is no cache
-    bool CacheMatches(const std::filesystem::path &cacheFile, std::span<const std::string> defines);
-
-    // No finished configure, or one with other values
-    bool NeedsConfigure(const std::filesystem::path &buildDir, std::span<const std::string> defines);
-
     struct GameBuildScript
     {
         std::filesystem::path mSourceRoot;
         std::string mPreset;
         std::filesystem::path mBuildDir;
         std::filesystem::path mPrefix;
-        // nullopt skips configure
-        std::optional<std::vector<std::string>> mConfigure;
+        // Configure runs every compile, so a changed preset is never packaged with the old settings
+        std::vector<std::string> mDefines;
     };
 
     // The batch file that configures, compiles and installs, exiting with kGameBuildExit*

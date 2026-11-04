@@ -18,6 +18,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -300,6 +301,86 @@ TEST_CASE("The build folder is the preset's binaryDir, and one MjolnirBuild cann
     CHECK(Has(PresetProblem(root, "unset"), "sets no binaryDir"));
 }
 
+TEST_CASE("A checkout path with non-ASCII characters expands as written", "[game-build-compile]")
+{
+    Sandbox sandbox;
+    const fs::path root = sandbox.mRoot / fs::path(u8"ch\u00e9ckout \u2713 \u65e5\u672c");
+    Touch(root / "CMakePresets.json", R"({
+  "version": 6,
+  "configurePresets": [
+    { "name": "game-release", "binaryDir": "${sourceDir}/builds/${presetName}" },
+    { "name": "parent", "binaryDir": "${sourceParentDir}/${sourceDirName}-out" },
+    { "name": "file", "binaryDir": "${fileDir}/file" }
+  ],
+  "buildPresets": [ { "name": "game-release", "configurePreset": "game-release" } ]
+})");
+    const fs::path source = NormalizedPath(root);
+
+    CHECK(PresetBuildDir(root, "game-release") == source / "builds" / "game-release");
+    CHECK(PresetBuildDir(root, "parent") == source.parent_path() / fs::path(u8"ch\u00e9ckout \u2713 \u65e5\u672c-out"));
+    CHECK(PresetBuildDir(root, "file") == source / "file");
+    CHECK_FALSE(PresetProblem(root, "game-release"));
+}
+
+TEST_CASE("No folder the game build step writes may overlap another", "[game-build-compile]")
+{
+    Sandbox sandbox;
+    const fs::path checkout = sandbox.mRoot / "checkout";
+    const fs::path gameBuild = sandbox.mRoot / "game-build";
+    const fs::path out = sandbox.mRoot / "out";
+    Touch(checkout / "CMakePresets.json", R"({
+  "version": 6,
+  "configurePresets": [
+    { "name": "ok", "binaryDir": "${sourceDir}/builds/${presetName}" },
+    { "name": "staging", "binaryDir": "${sourceParentDir}/game-build.tmp" },
+    { "name": "previous", "binaryDir": "${sourceParentDir}/game-build.old/build" },
+    { "name": "out-staging", "binaryDir": "${sourceParentDir}/out.tmp" },
+    { "name": "out-previous", "binaryDir": "${sourceParentDir}/out.old" }
+  ],
+  "buildPresets": [
+    { "name": "ok", "configurePreset": "ok" },
+    { "name": "staging", "configurePreset": "staging" },
+    { "name": "previous", "configurePreset": "previous" },
+    { "name": "out-staging", "configurePreset": "out-staging" },
+    { "name": "out-previous", "configurePreset": "out-previous" }
+  ]
+})");
+
+    CHECK_FALSE(CheckGameBuildCompile({ checkout, "ok", gameBuild, {} }, out));
+    for (const auto &[preset, folder] : { std::pair{ "staging", "the template's install folder" },
+             std::pair{ "previous", "the folder the previous template moves to" },
+             std::pair{ "out-staging", "the output's staging folder" },
+             std::pair{ "out-previous", "the folder the previous output moves to" } })
+    {
+        INFO(preset);
+        // a fresh build folder, which only the overlap check can catch
+        CHECK_FALSE(fs::exists(PresetBuildDir(checkout, preset).value()));
+        const std::optional<std::string> problem = CheckGameBuildCompile({ checkout, preset, gameBuild, {} }, out);
+        CHECK(Has(problem, "the preset's build folder"));
+        CHECK(Has(problem, folder));
+    }
+
+    // the template's folders and the output's
+    CHECK(Has(CheckGameBuildCompile({ checkout, "ok", gameBuild, {} }, sandbox.mRoot / "game-build.tmp"),
+        "the template's install folder"));
+    CHECK(Has(CheckGameBuildCompile({ checkout, "ok", gameBuild, {} }, sandbox.mRoot / "game-build.old" / "out"),
+        "the folder the previous template moves to"));
+    CHECK(Has(CheckGameBuildCompile({ checkout, "ok", sandbox.mRoot / "out.tmp", {} }, out), "the output's staging"));
+
+    // the compile refuses too, without the output folder to compare
+    std::string error;
+    try
+    {
+        CompileGameBuild({ checkout, "staging", gameBuild, {} });
+    }
+    catch (const std::runtime_error &e)
+    {
+        error = e.what();
+    }
+    CHECK(Has(error, "overlaps"));
+    CHECK_FALSE(fs::exists(GameBuildStagingDir(gameBuild)));
+}
+
 TEST_CASE("The game build is configured with the editor's options", "[game-build-compile]")
 {
     const nlohmann::json editor = { { "editor", true }, { "largeWorld", true }, { "audio", false }, { "dlss", false },
@@ -310,30 +391,9 @@ TEST_CASE("The game build is configured with the editor's options", "[game-build
         std::vector<std::string>{ "-DMIR_WITH_AUDIO=ON" });
 }
 
-TEST_CASE("Configure runs again only when it never finished or the cache holds other values", "[game-build-compile]")
+TEST_CASE("The batch file configures, then compiles the game build's two targets and installs", "[game-build-compile]")
 {
-    Sandbox sandbox;
-    const fs::path build = sandbox.mRoot / "build";
-    const fs::path cache = build / "CMakeCache.txt";
-    const std::vector<std::string> defines = { "-DMIR_WITH_AUDIO=ON", "-DMIR_WITH_DLSS=OFF" };
-    CHECK_FALSE(CacheMatches(cache, defines));
-    CHECK(NeedsConfigure(build, defines));
-
-    Touch(cache, "// comment\r\nMIR_WITH_DLSS_SDK:PATH=C:/sdk\r\nMIR_WITH_AUDIO:BOOL=TRUE\r\nMIR_WITH_DLSS:BOOL=OFF\r\n");
-    CHECK(CacheMatches(cache, defines));
-    CHECK(CacheMatches(cache, {}));
-    CHECK(NeedsConfigure(build, defines));
-    Touch(build / "build.ninja");
-    CHECK_FALSE(NeedsConfigure(build, defines));
-
-    CHECK_FALSE(CacheMatches(cache, std::vector<std::string>{ "-DMIR_WITH_DLSS=ON" }));
-    CHECK_FALSE(CacheMatches(cache, std::vector<std::string>{ "-DMIR_LARGE_WORLD=ON" }));
-    CHECK(NeedsConfigure(build, std::vector<std::string>{ "-DMIR_WITH_DLSS=ON" }));
-}
-
-TEST_CASE("The batch file configures when asked, then compiles the game build's two targets and installs", "[game-build-compile]")
-{
-    GameBuildScript script{ "C:/My Checkout/100%", "game-release", "C:/My Checkout/100%/out/game-release",
+    const GameBuildScript script{ "C:/My Checkout/100%", "game-release", "C:/My Checkout/100%/out/game-release",
         "C:/out/game-build.tmp",
         std::vector<std::string>{ "-DMIR_WITH_AUDIO=ON", "-DMIR_WITH_DLSS=OFF" } };
     const std::string text = GameBuildScriptText(script);
@@ -346,9 +406,6 @@ TEST_CASE("The batch file configures when asked, then compiles the game build's 
                     "|| exit /b 13\r\n"));
     CHECK(text.find("cmake --preset") < text.find("cmake --build"));
     CHECK(text.find("cmake --build") < text.find("cmake --install"));
-
-    script.mConfigure.reset();
-    CHECK_FALSE(Has(GameBuildScriptText(script), "cmake --preset"));
 }
 
 TEST_CASE("Without a game build preset the game build step is skipped and nothing compiles", "[game-build-compile]")
@@ -374,7 +431,7 @@ TEST_CASE("Without a game build preset the game build step is skipped and nothin
     CHECK_FALSE(fs::exists(checkout / "builds"));
 }
 
-TEST_CASE("The game build step configures once, and installs a fresh template with the editor's options each build",
+TEST_CASE("The game build step configures and installs a fresh template with the editor's options each build",
     "[game-build-compile]")
 {
     CompileFixture fixture;
@@ -413,8 +470,8 @@ TEST_CASE("The game build step configures once, and installs a fresh template wi
     INFO(second.mError);
     REQUIRE(second.mOk);
     CHECK(fixture.Calls("--preset game-release -DMIR_LARGE_WORLD=OFF -DMIR_WITH_AUDIO=ON -DMIR_WITH_DLSS=OFF "
-                        "-DMIR_WITH_RTXGI=ON") == 1);
-    CHECK(fixture.Calls("--preset") == 1);
+                        "-DMIR_WITH_RTXGI=ON") == 2);
+    CHECK(fixture.Calls("--preset") == 2);
     CHECK(fixture.Calls("--build --preset game-release --target MjolnirEngine MjolnirErrorReporter") == 2);
     CHECK(fixture.Calls("--install") == 2);
 }

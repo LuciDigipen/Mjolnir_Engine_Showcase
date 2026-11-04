@@ -41,58 +41,6 @@ namespace mir::build
         // In a previous template moved aside, for the same reason
         constexpr std::string_view kPreviousMarkerFileName = "mjolnir_game_build_previous";
 
-        std::string_view Trim(std::string_view text)
-        {
-            const std::size_t first = text.find_first_not_of(" \t\r\n");
-            if (first == std::string_view::npos)
-                return {};
-            return text.substr(first, text.find_last_not_of(" \t\r\n") - first + 1);
-        }
-
-        std::string Upper(std::string_view text)
-        {
-            std::string upper(text);
-            std::ranges::transform(upper, upper.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-            return upper;
-        }
-
-        // CMake's spellings of a boolean
-        std::optional<bool> CMakeBool(std::string_view value)
-        {
-            const std::string upper = Upper(Trim(value));
-            for (std::string_view on : { "ON", "TRUE", "YES", "Y", "1" })
-            {
-                if (upper == on)
-                    return true;
-            }
-            for (std::string_view off : { "OFF", "FALSE", "NO", "N", "0", "" })
-            {
-                if (upper == off)
-                    return false;
-            }
-            return std::nullopt;
-        }
-
-        // NAME:TYPE=VALUE in CMakeCache.txt
-        std::optional<std::string_view> CacheValue(std::string_view cache, std::string_view name)
-        {
-            while (!cache.empty())
-            {
-                const std::size_t end = cache.find('\n');
-                const std::string_view line = Trim(cache.substr(0, end));
-                cache = end == std::string_view::npos ? std::string_view() : cache.substr(end + 1);
-
-                if (line.size() > name.size() && line.starts_with(name) &&
-                    (line[name.size()] == ':' || line[name.size()] == '='))
-                {
-                    const std::size_t equals = line.find('=');
-                    if (equals != std::string_view::npos)
-                        return line.substr(equals + 1);
-                }
-            }
-            return std::nullopt;
-        }
-
         fs::path FromText(std::string_view text)
         {
             return fs::path(std::u8string(reinterpret_cast<const char8_t *>(text.data()), text.size()));
@@ -265,11 +213,11 @@ namespace mir::build
 
             const fs::path source = NormalizedPath(sourceRoot);
             const std::map<std::string, std::string, std::less<>> macros = {
-                { "sourceDir", source.generic_string() },
-                { "sourceParentDir", source.parent_path().generic_string() },
+                { "sourceDir", PathText(source) },
+                { "sourceParentDir", PathText(source.parent_path()) },
                 { "sourceDirName", PathText(source.filename()) },
                 { "presetName", name },
-                { "fileDir", NormalizedPath(owner->mFileDir).generic_string() },
+                { "fileDir", PathText(NormalizedPath(owner->mFileDir)) },
                 { "hostSystemName", "Windows" },
                 { "dollar", "$" },
             };
@@ -324,6 +272,44 @@ namespace mir::build
             if (!EnvironmentPath(L"VCToolsInstallDir"))
                 what += ". This is not a Developer Command Prompt, which the compile needs";
             return what;
+        }
+
+        // The build folder, the template with its .tmp and .old, and the output with its own: none may hold another
+        std::optional<std::string> OverlapProblem(const fs::path &buildDir, const fs::path &gameBuildDir,
+            const fs::path &outDir)
+        {
+            struct Folder
+            {
+                fs::path mDir;
+                std::string mWhat;
+                int mGroup;
+            };
+            const fs::path gameBuild = NormalizedPath(gameBuildDir);
+            std::vector<Folder> folders = {
+                { buildDir, "the preset's build folder ", 0 },
+                { gameBuild, "the game build template ", 1 },
+                { GameBuildStagingDir(gameBuild), "the template's install folder ", 1 },
+                { GameBuildPreviousDir(gameBuild), "the folder the previous template moves to ", 1 },
+            };
+            if (!outDir.empty())
+            {
+                folders.push_back({ NormalizedPath(outDir), "the output folder ", 2 });
+                folders.push_back({ StagingDir(outDir), "the output's staging folder ", 2 });
+                folders.push_back({ PreviousDir(outDir), "the folder the previous output moves to ", 2 });
+            }
+
+            for (std::size_t i = 0; i < folders.size(); ++i)
+            {
+                for (std::size_t j = i + 1; j < folders.size(); ++j)
+                {
+                    const Folder &a = folders[i];
+                    const Folder &b = folders[j];
+                    if (a.mGroup != b.mGroup && (IsWithin(a.mDir, b.mDir) || IsWithin(b.mDir, a.mDir)))
+                        return a.mWhat + PathText(a.mDir) + " overlaps " + b.mWhat + PathText(b.mDir) +
+                            "; give each a folder of its own";
+                }
+            }
+            return std::nullopt;
         }
     }
 
@@ -425,13 +411,8 @@ namespace mir::build
                     "compiling the game build there could rebuild them while they run, so use a game preset such as "
                     "windows-msvc-game-release";
         }
-        for (const auto &[dir, what] : { std::pair{ NormalizedPath(compile.mGameBuildDir), "the game build template " },
-                 std::pair{ NormalizedPath(outDir), "the output folder " } })
-        {
-            if (IsWithin(dir, buildDir) || IsWithin(buildDir, dir))
-                return what + PathText(dir) + " overlaps " + PathText(buildDir) +
-                    ", where the game build compiles; use a folder of its own";
-        }
+        if (std::optional<std::string> problem = OverlapProblem(buildDir, compile.mGameBuildDir, outDir))
+            return problem;
 
         if (std::optional<std::string> problem = GameBuildDirProblem(compile.mGameBuildDir))
             return problem;
@@ -461,51 +442,16 @@ namespace mir::build
         return defines;
     }
 
-    bool CacheMatches(const fs::path &cacheFile, std::span<const std::string> defines)
-    {
-        const std::optional<std::string> cache = ReadText(cacheFile);
-        if (!cache)
-            return false;
-
-        for (const std::string &define : defines)
-        {
-            const std::size_t equals = define.find('=');
-            if (!define.starts_with("-D") || equals == std::string::npos)
-                return false;
-            const std::string_view wanted = std::string_view(define).substr(equals + 1);
-            const std::optional<std::string_view> value =
-                CacheValue(*cache, std::string_view(define).substr(2, equals - 2));
-            if (!value)
-                return false;
-
-            const std::optional<bool> wantedOn = CMakeBool(wanted);
-            const std::optional<bool> valueOn = CMakeBool(*value);
-            if (wantedOn && valueOn ? *wantedOn != *valueOn : *value != wanted)
-                return false;
-        }
-        return true;
-    }
-
-    bool NeedsConfigure(const fs::path &buildDir, std::span<const std::string> defines)
-    {
-        // a configure that failed leaves a cache, but no build.ninja
-        std::error_code ec;
-        return !fs::is_regular_file(buildDir / "build.ninja", ec) || !CacheMatches(buildDir / "CMakeCache.txt", defines);
-    }
-
     std::string GameBuildScriptText(const GameBuildScript &script)
     {
         const auto exitWith = [](int code) { return " || exit /b " + std::to_string(code) + "\r\n"; };
 
         std::string text = "@echo off\r\nchcp 65001 >nul\r\n";
         text += "cd /d \"" + BatchPath(script.mSourceRoot) + "\"" + exitWith(kGameBuildExitNoCheckout);
-        if (script.mConfigure)
-        {
-            text += "cmake --preset " + script.mPreset;
-            for (const std::string &define : *script.mConfigure)
-                text += " " + define;
-            text += exitWith(kGameBuildExitConfigure);
-        }
+        text += "cmake --preset " + script.mPreset;
+        for (const std::string &define : script.mDefines)
+            text += " " + define;
+        text += exitWith(kGameBuildExitConfigure);
         text += "cmake --build --preset " + script.mPreset + " --target " + std::string(kGameBuildTargets) +
             exitWith(kGameBuildExitCompile);
         text += "cmake --install \"" + BatchPath(script.mBuildDir) + "\" --prefix \"" + BatchPath(script.mPrefix) + "\"" +
@@ -523,6 +469,8 @@ namespace mir::build
         if (!found)
             throw std::runtime_error("the build folder of the preset " + compile.mPreset + " is unknown");
         const fs::path &buildDir = *found;
+        if (std::optional<std::string> problem = OverlapProblem(buildDir, compile.mGameBuildDir, {}))
+            throw std::runtime_error(*problem);
 
         // Installed beside the template first, so a failure leaves the previous one in place
         const fs::path gameBuildDir = NormalizedPath(compile.mGameBuildDir);
@@ -557,9 +505,7 @@ namespace mir::build
                     defines = FeatureDefines(*info);
             }
 
-            GameBuildScript script{ compile.mSourceRoot, compile.mPreset, buildDir, staging, std::nullopt };
-            if (NeedsConfigure(buildDir, defines))
-                script.mConfigure = defines;
+            const GameBuildScript script{ compile.mSourceRoot, compile.mPreset, buildDir, staging, defines };
 
             // Kept, so the same commands can be run again by hand
             fs::create_directories(buildDir, ec);
