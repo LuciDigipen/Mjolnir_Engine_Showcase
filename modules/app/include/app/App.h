@@ -130,6 +130,7 @@ namespace mir
         void Run();
 
         World &GetWorld() { return mWorldState.world; }
+        World *RuntimeWorld();
         SystemScheduler &Systems() { return mWorldState.scheduler; }
 
         // Temporary seam

@@ -71,7 +71,8 @@ namespace mir
         void LoadFromDisk(ScenePrefabResolver *resolver, bool incomplete);
 
         // Copies the live scene, including unsaved edits, into this module's World.
-        void CopyFrom(World &source, const LoadedScene &scene, ScenePrefabResolver *resolver);
+        void CopyFrom(World &source, const LoadedScene &scene, const ScenePrefabResolver *sourceResolver,
+            ScenePrefabResolver *destinationResolver);
 
         // false on I/O failure, or while the scene is unbound
         bool Save(const ScenePrefabResolver *resolver);

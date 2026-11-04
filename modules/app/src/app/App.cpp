@@ -20,6 +20,9 @@
 #include <core/log/Log.h>
 #include <core/log/SetupError.h>
 #include <core/platform/CrashHandler.h>
+#if MIR_WITH_EDITOR
+#include <editor/Selection.h>
+#endif
 #include <input/DefaultInputMap.h>
 #include <input/InputState.h>
 #include <prefab/PrefabCoordinator.h>
@@ -124,58 +127,60 @@ namespace mir
     App::WorldState::WorldState(const GameProject &project, AssetsModule &assets, const AssetResolver &resolver,
         GameShellSettings shellSettings)
         : particles(Context(), assets, resolver),
-          scene(Context(), project.mSceneDir),
-          prefab(Context(), scene, PrefabSourceDir(project), kHasEditor ? nullptr : &assets),
-          gameUI(Context()),
-          gameShell(Context(), gameUI, assets, resolver, shellSettings)
-    {
-    }
+        scene(Context(), project.mSceneDir),
+        prefab(Context(), scene, PrefabSourceDir(project), kHasEditor ? nullptr : &assets),
+        gameUI(Context()),
+        gameShell(Context(), gameUI, assets, resolver, shellSettings)
+    {}
 
     App::SimulationSystems::SimulationSystems(ModuleContext context, const GameProject &project, JobExecutor &jobs,
         AssetsModule &assets, const AssetResolver &resolver, ParticlesModule &particles,
         ParticlesGpuModule &particlesGpu, RenderSystem &rendering)
         : physics(context, project.mProjectSettingsPath, &jobs),
-          terrainData(context),
-          script(context, assets, resolver),
-          particlesRuntime(context, particles, particlesGpu, rendering),
-          particlesScript(script),
+        terrainData(context),
+        script(context, assets, resolver),
+        particlesRuntime(context, particles, particlesGpu, rendering),
+        particlesScript(script),
     #if MIR_WITH_AUDIO
-          audioScript(script),
+        audioScript(script),
     #endif
-          inputScript(script),
-          physicsScript(script),
-          rendererScript(script),
-          terrainScript(script)
-    {
-    }
+        inputScript(script),
+        physicsScript(script),
+        rendererScript(script),
+        terrainScript(script)
+    {}
 
     struct App::RuntimeSession
     {
         explicit RuntimeSession(App &app)
             : state(app.mProject, app.mAssets, app.mResolver,
                 GameShellSettings{ .mUIDemo = app.mDesc.mUIDemo, .mQuitStopsPlay = app.mDesc.mEnableEditorLayout }),
-              rendering(app.mRenderer.BindWorld(state.Context(),
-                  RendererModuleSettings{ .mAppName = app.mDesc.mAppName,
-                                          .mEnableValidation = app.mDesc.mEnableValidation,
-                                          .mProjectSettingsPath = app.mProject.mProjectSettingsPath,
-                                          .mResolver = &app.mResolver,
-                                          .mAssetService = app.mAssetService.get(),
-                                          .mAdvanceSharedFrame = false })),
-              input(state.Context(), app.mWindow.Get(), app.mProject.mProjectSettingsPath),
-              animation(state.Context(), app.mRenderer.Renderer(), app.mAssetService.get(), app.mResolver, &app.mJobs),
-              camera(state.Context()),
+            rendering(app.mRenderer.BindWorld(state.Context(),
+                RendererModuleSettings{ .mAppName = app.mDesc.mAppName,
+                                        .mEnableValidation = app.mDesc.mEnableValidation,
+                                        .mProjectSettingsPath = app.mProject.mProjectSettingsPath,
+                                        .mResolver = &app.mResolver,
+                                        .mAssetService = app.mAssetService.get(),
+                                        .mAdvanceSharedFrame = false })),
+            input(state.Context(), app.mWindow.Get(), app.mProject.mProjectSettingsPath),
+            animation(state.Context(), app.mRenderer.Renderer(), app.mAssetService.get(), app.mResolver, &app.mJobs),
+            camera(state.Context()),
         #if MIR_WITH_AUDIO
-              audio(app.mAudio.BindWorld(state.Context())),
+            audio(app.mAudio.BindWorld(state.Context())),
         #endif
-              simulation(state.Context(), app.mProject, app.mJobs, app.mAssets, app.mResolver, state.particles,
-                  app.mParticlesGpu, rendering->Rendering()),
-              terrain(state.Context(), app.mRenderer, app.mProject, app.mResolver, app.mJobs)
+            simulation(state.Context(), app.mProject, app.mJobs, app.mAssets, app.mResolver, state.particles,
+                app.mParticlesGpu, rendering->Rendering()),
+            terrain(state.Context(), app.mRenderer, app.mProject, app.mResolver, app.mJobs)
         {
         #if MIR_WITH_AUDIO
             state.gameShell.SetAudioOptions(&app.mAudioOptions);
         #endif
+        #if MIR_WITH_EDITOR
+            state.world.EmplaceResource<Selection>();
+        #endif
+            state.prefab.Coordinator().CopyPrefabDefinitionsFrom(app.mWorldState.prefab.Coordinator());
             state.scene.CopyFrom(app.mWorldState.world, app.mWorldState.scene.Scene(),
-                &app.mWorldState.prefab.Coordinator().Resolver());
+                &app.mWorldState.prefab.Coordinator().Resolver(), &state.prefab.Coordinator().Resolver());
             SetEngineMode(state.world, EngineMode::Play);
             SystemContext context = MakeContext(0.0f, 0.0, 0, 0.0f);
             state.scheduler.RunStage(Stage::SceneLoad, context);
@@ -273,6 +278,8 @@ namespace mir
         MIR_LOG_INFO("App shut down");
     }
 
+    World *App::RuntimeWorld() { return mRuntime ? &mRuntime->state.world : nullptr; }
+
     bool App::RequestOpenProject(const std::string &requestedDir)
     {
         // validate before closing; not ResolveGameProject, which logs "Loading game"
@@ -339,18 +346,19 @@ namespace mir
         return OpenScene(mOpenSceneId, false);
     }
 
-    #if MIR_WITH_EDITOR
+#if MIR_WITH_EDITOR
     void App::CreateScene(const std::string &id, const std::string &path, bool saveCurrent)
     {
         namespace fs = std::filesystem;
-        const auto fail = [this](std::string message) {
-            MIR_LOG_WARN("Create Scene: {}", message);
-            mEditor.Get().SetSceneCreationError(std::move(message));
-        };
+        const auto fail = [this](std::string message)
+            {
+                MIR_LOG_WARN("Create Scene: {}", message);
+                mEditor.Get().SetSceneCreationError(std::move(message));
+            };
         if (!IsEditing(mWorldState.world))
             return;
         if (id.empty() || id.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") !=
-                std::string::npos)
+            std::string::npos)
             return fail("Use letters, numbers, underscores or hyphens for the scene name.");
 
         const fs::path relative = fs::u8path(path).lexically_normal();
@@ -378,8 +386,8 @@ namespace mir
                 return fail("Move the startup scene inside the game directory before registering more scenes.");
             (*manifest)["startupScene"] = mProject.mStartupSceneId;
             (*manifest)["scenes"] = nlohmann::json::array({
-                { { "id", mProject.mStartupSceneId }, { "path", startup.generic_string() } }
-            });
+                { { "id", mProject.mStartupSceneId },{ "path", startup.generic_string() } }
+                });
         }
         auto &scenes = (*manifest)["scenes"];
         if (!scenes.is_array())
@@ -407,7 +415,7 @@ namespace mir
             return fail("Could not create the new scene folder.");
 
         const auto utf8Path = relative.generic_u8string();
-        scenes.push_back({ { "id", id }, { "path", std::string(utf8Path.begin(), utf8Path.end()) } });
+        scenes.push_back({ { "id", id },{ "path", std::string(utf8Path.begin(), utf8Path.end()) } });
         if (!mir::SaveScene(mWorldState.world, directory, mir::NewScene(id), nullptr) ||
             !WriteJsonFile(manifestPath, *manifest))
         {
@@ -421,7 +429,7 @@ namespace mir
         mEditor.Get().SetSceneCatalog(mProject.mScenes, mOpenSceneId);
         OpenScene(id, false);
     }
-    #endif
+#endif
 
     bool App::OpenScene(const std::string &id, bool saveCurrent)
     {
@@ -552,7 +560,8 @@ namespace mir
             return;
 
         SystemContext runtimeContext = MakeRuntimeContext(0.0f);
-        mRuntime->state.scheduler.RunStage(Stage::PlayEnd, runtimeContext);
+        if (mRuntime->state.scheduler.Started())
+            mRuntime->state.scheduler.RunStage(Stage::PlayEnd, runtimeContext);
         mRuntime->state.scene.Unload();
         mRuntime->state.scheduler.RunStage(Stage::SceneUnload, runtimeContext);
         mRuntime->state.scheduler.Stop(runtimeContext);
@@ -595,12 +604,12 @@ namespace mir
         RequestQueue &requests = active.world.Resource<RequestQueue>();
         RequestQueue::Held held = requests.Hold();
         const auto finish = [&]
-        {
-            mSceneGated = false;
-            active.gameUI.SetSuspended(false);
-            if (const size_t dropped = requests.Restore(std::move(held)); dropped != 0)
-                MIR_LOG_WARN("Dropped {} request(s) made while the scene was loading", dropped);
-        };
+            {
+                mSceneGated = false;
+                active.gameUI.SetSuspended(false);
+                if (const size_t dropped = requests.Restore(std::move(held)); dropped != 0)
+                    MIR_LOG_WARN("Dropped {} request(s) made while the scene was loading", dropped);
+            };
         uint64_t frames = 0;
         // Wait for resources without starting gameplay. Background I/O sets the pace, so a limited run is bound
         // by time and not by its frame limit.
@@ -671,7 +680,7 @@ namespace mir
             if (!scene->newScenePath.empty())
                 CreateScene(scene->id, scene->newScenePath, scene->saveCurrent);
             else
-        #endif
+            #endif
                 OpenScene(scene->id, scene->saveCurrent);
         }
 

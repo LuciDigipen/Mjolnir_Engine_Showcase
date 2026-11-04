@@ -303,8 +303,8 @@ namespace mir
                 const int particleHistoryRequest = mEditor.TakeParticleHistoryRequest();
                 if (particleHistoryRequest < 0) mParticleEditor->RequestUndoDraft();
                 else if (particleHistoryRequest > 0) mParticleEditor->RequestRedoDraft();
-                if (mEnableLayout)
-                    mParticleEditor->Draw(IsEditing(mWorld) && mEditor.ParticleEditorVisible(),mWorld,assets.Cache(),mImport,mEditor.SceneCamera(),mFrameDt);
+                if (mEnableLayout && IsEditing(mWorld))
+                    mParticleEditor->Draw(mEditor.ParticleEditorVisible(),mWorld,assets.Cache(),mImport,mEditor.SceneCamera(),mFrameDt);
                 else mParticleEditor->OnHidden(mWorld);
                 if (const auto offsetEdit = mParticleEditor->TakeInstanceOffsetEdit())
                     mEditor.SubmitParticleEmitterOffset(mWorld, offsetEdit->mEntity, offsetEdit->mPlacementId, offsetEdit->mValue);

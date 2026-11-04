@@ -9,7 +9,7 @@
 #include "scene/PlaySnapshot.h"
 
 #include "core/ecs/World.h"
-#include "core/log/Log.h"
+#include "core/log/SetupError.h"
 #include "core/platform/Process.h"
 #include "scene/SceneIO.h"
 
@@ -85,7 +85,12 @@ namespace mir
             });
 
         if (!SaveScene(world, snapshot.mDir, copy, resolver))
-            MIR_LOG_ERROR("CaptureWorld: failed to write Play snapshot to '{}'", snapshot.mDir.string());
+        {
+            std::filesystem::remove_all(snapshot.mDir, ec);
+            throw SetupError(ErrorCategory::System, "Could not copy the live scene into Play", snapshot.mDir,
+                "the temporary scene could not be written",
+                "Check free space and write permissions on the temporary directory.");
+        }
 
         return snapshot;
     }
@@ -118,12 +123,12 @@ namespace mir
     }
 
     LoadedScene CopyWorld(World &source, const LoadedScene &scene, World &destination,
-        ScenePrefabResolver *resolver)
+        const ScenePrefabResolver *sourceResolver, ScenePrefabResolver *destinationResolver)
     {
-        PlaySnapshot snapshot = CaptureWorld(source, scene, resolver);
+        PlaySnapshot snapshot = CaptureWorld(source, scene, sourceResolver);
         try
         {
-            LoadedScene copy = RestoreWorld(destination, snapshot, resolver);
+            LoadedScene copy = RestoreWorld(destination, snapshot, destinationResolver);
             DiscardSnapshot(snapshot);
             return copy;
         }

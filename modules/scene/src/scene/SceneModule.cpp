@@ -42,9 +42,10 @@ namespace mir
         mBound = true;
     }
 
-    void SceneModule::CopyFrom(World &source, const LoadedScene &scene, ScenePrefabResolver *resolver)
+    void SceneModule::CopyFrom(World &source, const LoadedScene &scene,
+        const ScenePrefabResolver *sourceResolver, ScenePrefabResolver *destinationResolver)
     {
-        mScene = CopyWorld(source, scene, mWorld, resolver);
+        mScene = CopyWorld(source, scene, mWorld, sourceResolver, destinationResolver);
         mLastLoad = SceneLoadResult{ SceneLoadCause::FromSnapshot, false };
     }
 

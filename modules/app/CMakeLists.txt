@@ -63,3 +63,7 @@ if(MIR_WITH_AUDIO)
         target_sources(engine_app PRIVATE src/app/EditorAudioOptions.cpp)
     endif()
 endif()
+
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()
