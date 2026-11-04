@@ -1,0 +1,31 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [0.0, 0.0, 0.0],
+        "rotation": [0.0, 0.0, 0.0, 1.0],
+        "scale": [1.0, 1.0, 1.0]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {},
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "recipePath": "terrain/caldera.terrain.json",
+        "materialPath": "materials/calderaGround.material.json"
+      },
+      "type": "TerrainInstance"
+    },
+    {
+      "fields": {
+        "name": "Terrain"
+      },
+      "type": "Name"
+    }
+  ],
+  "id": 1,
+  "parent": 0
+}

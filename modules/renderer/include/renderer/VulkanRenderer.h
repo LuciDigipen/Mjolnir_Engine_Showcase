@@ -322,7 +322,8 @@ namespace mir
 
         bool RayTracingSupported() const;
 
-        // Whether a frame with Ray Tracing requested actually goes down the TraceFrame path -
+        // Whether a frame with Ray Tracing requested actually goes down the TraceFrame path, which a scene
+        // too large to trace turns off -
         // the one flag AA mode clamping and the panel must agree with dispatch on.
         bool RayTracingActive(bool requested) const;
 
@@ -384,6 +385,10 @@ namespace mir
     private:
         FxDeviceContext FxDevice() const;
         bool RecreateSwapchain();
+        // The BLAS of every CreateMesh mesh these views draw that does not have one yet. Waits on the GPU.
+        // False builds nothing and turns tracing off until the scene is released: they would not fit in memory.
+        bool BuildOwedBlases(std::span<const RenderView> views);
+
         // Shared prelude of DrawFrame and TraceFrame; nullopt skips the frame.
         std::optional<vk::FrameContext> BeginFrame();
         // No wait: the caller idles the device first. False for a null or stale handle.
@@ -445,6 +450,8 @@ namespace mir
         bool mGiWasShading = false;
         // views[0]'s camera on the last TraceFrame.
         uint64_t mTracedHistoryId = 0;
+        // This scene's BLASes do not fit in device memory, so it draws raster.
+        bool mRayTracingOutOfMemory = false;
 
         // Every screen-space effect between the scene/trace pass and the swapchain.
         std::unique_ptr<vk::PostProcessingStack> mPostProcessing;

@@ -1,0 +1,17 @@
+{
+  "caldera_commit": "03feaa1886c0a39bc50ca0df86c321f74ed4eee6",
+  "caldera_commit_is_pinned": true,
+  "degenerate_dropped": 133,
+  "down_facing_dropped": 1,
+  "entity_position": [
+    -568.734,
+    22.555,
+    561.128
+  ],
+  "triangles": {
+    "asphalt_painted_line_02": 388,
+    "cement_ground_patchwork_cracked": 119,
+    "concrete_brushed_spotty_01_rvl_bot": 3871,
+    "concrete_edge_crease_seam_02": 56
+  }
+}

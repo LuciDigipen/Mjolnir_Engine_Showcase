@@ -82,6 +82,8 @@ namespace mir::vk
 
         GpuMesh mesh{};
         mesh.mIndexCount = static_cast<uint32_t>(indices.size());
+        if (mDevice->RayTracingSupported())
+            mesh.mBlasVertexCount = static_cast<uint32_t>(vertices.size());
 
         // Ray tracing reads both buffers through device addresses to build the BLAS.
         VkBufferUsageFlags extraUsage = 0;

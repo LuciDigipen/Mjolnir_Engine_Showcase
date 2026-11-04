@@ -8,6 +8,8 @@
  */
 #pragma once
 
+#include <cstdint>
+
 namespace mir
 {
     // What the physical device reports, before the renderer decides which paths they unlock.
@@ -32,4 +34,14 @@ namespace mir
     };
 
     RendererCapabilities ResolveRendererCapabilities(const RendererFeatureSupport &support);
+
+    // Left free after a scene's BLASes for what tracing allocates next: its images and terrain's own BLASes.
+    inline constexpr uint64_t kRayTracingHeadroomBytes = 1024ull * 1024ull * 1024ull;
+
+    // Whether building these BLASes leaves device memory for the rest of the frame. scratch is only held
+    // during a build, one at a time, so the largest counts.
+    constexpr bool RayTracingSceneFits(uint64_t blasBytes, uint64_t largestScratchBytes, uint64_t freeBytes)
+    {
+        return blasBytes + largestScratchBytes + kRayTracingHeadroomBytes <= freeBytes;
+    }
 }

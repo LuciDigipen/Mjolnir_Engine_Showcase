@@ -1,0 +1,1887 @@
+{
+  "caldera_commit": "03feaa1886c0a39bc50ca0df86c321f74ed4eee6",
+  "caldera_commit_is_pinned": true,
+  "excluded_by_name": [
+    "/world/map_airfield/airfield_audio/airfield_audio_puddles",
+    "/world/map_airfield/building_set_a/airfield_fencing_01",
+    "/world/map_airfield/building_set_a/airfield_ground_hangar_back_01/worldspawn",
+    "/world/map_airfield/building_set_a/airfield_grounds/lm_foliage_tree_palm_coconut_dry_lrg_01",
+    "/world/map_airfield/building_set_a/airfield_grounds/lm_foliage_tree_palm_coconut_dry_lrg_01_10195",
+    "/world/map_airfield/building_set_a/airfield_grounds/lm_foliage_tree_palm_coconut_dry_lrg_01_10373",
+    "/world/map_airfield/building_set_a/airfield_grounds/lm_foliage_tree_palm_coconut_dry_lrg_01_2902",
+    "/world/map_airfield/building_set_a/airfield_grounds/lm_foliage_tree_palm_coconut_dry_lrg_01_3027",
+    "/world/map_airfield/building_set_a/airfield_grounds/lm_foliage_tree_palm_coconut_dry_lrg_01_5400",
+    "/world/map_airfield/building_set_a/airfield_grounds/lm_foliage_tree_palm_coconut_dry_lrg_01_6659",
+    "/world/map_airfield/building_set_a/airfield_grounds/lm_foliage_tree_palm_coconut_dry_lrg_01_6955",
+    "/world/map_airfield/building_set_a/airfield_grounds/lm_foliage_tree_palm_coconut_dry_lrg_01_8745",
+    "/world/map_airfield/building_set_a/airfield_grounds/lm_foliage_tree_palm_coconut_dry_lrg_01_8758",
+    "/world/map_airfield/building_set_a/airfield_grounds/lm_foliage_tree_palm_coconut_dry_lrg_01_9301",
+    "/world/map_airfield/building_set_a/airfield_grounds/lm_foliage_tree_palm_coconut_dry_lrg_01_9303",
+    "/world/map_airfield/building_set_a/airfield_grounds/lm_foliage_tree_palm_coconut_dry_lrg_01_9305",
+    "/world/map_airfield/building_set_a/airfield_grounds/lm_foliage_tree_palm_coconut_dry_lrg_01_9414",
+    "/world/map_airfield/building_set_a/airfield_grounds/lm_foliage_tree_palm_coconut_dry_lrg_01_9418",
+    "/world/map_airfield/building_set_a/airfield_scrapyard_test",
+    "/world/map_airfield/building_set_a/staff_parking_02",
+    "/world/map_airfield/building_set_a/storage_parking_01",
+    "/world/map_airfield/building_set_d/residential_area_wip_airfield/gazebo_park_ground_01",
+    "/world/map_airfield/building_set_d/residential_area_wip_airfield/map_airfield_stair_garden_01",
+    "/world/map_airfield/building_set_d/residential_area_wip_airfield/map_airfield_step_garden_01",
+    "/world/map_airfield/building_set_e/motel_ground_01"
+  ],
+  "keep_interior_objects": false,
+  "models": {
+    "models/airfield/administration_01.glb": {
+      "far_triangles": 587277,
+      "near_triangles": 809728,
+      "primitives": 3,
+      "stored_triangles": 896449,
+      "stored_vertices": 743086
+    },
+    "models/airfield/administration_02.glb": {
+      "far_triangles": 98360,
+      "near_triangles": 121801,
+      "primitives": 3,
+      "stored_triangles": 127814,
+      "stored_vertices": 111751
+    },
+    "models/airfield/ammo_dump_01.glb": {
+      "far_triangles": 167139,
+      "near_triangles": 474346,
+      "primitives": 3,
+      "stored_triangles": 493119,
+      "stored_vertices": 390681
+    },
+    "models/airfield/apartment_2s_02.glb": {
+      "far_triangles": 440967,
+      "near_triangles": 724090,
+      "primitives": 3,
+      "stored_triangles": 785116,
+      "stored_vertices": 594619
+    },
+    "models/airfield/barracks_01.glb": {
+      "far_triangles": 182997,
+      "near_triangles": 324449,
+      "primitives": 3,
+      "stored_triangles": 378719,
+      "stored_vertices": 309450
+    },
+    "models/airfield/bungalow_1s_01.glb": {
+      "far_triangles": 83760,
+      "near_triangles": 213237,
+      "primitives": 3,
+      "stored_triangles": 228915,
+      "stored_vertices": 190141
+    },
+    "models/airfield/bungalow_1s_02.glb": {
+      "far_triangles": 105030,
+      "near_triangles": 210197,
+      "primitives": 3,
+      "stored_triangles": 232028,
+      "stored_vertices": 187189
+    },
+    "models/airfield/bungalow_1s_03.glb": {
+      "far_triangles": 164527,
+      "near_triangles": 262898,
+      "primitives": 3,
+      "stored_triangles": 273411,
+      "stored_vertices": 220008
+    },
+    "models/airfield/bungalow_2s_02.glb": {
+      "far_triangles": 262375,
+      "near_triangles": 548360,
+      "primitives": 3,
+      "stored_triangles": 585247,
+      "stored_vertices": 484279
+    },
+    "models/airfield/control_tower_01.glb": {
+      "far_triangles": 708265,
+      "near_triangles": 1027488,
+      "primitives": 3,
+      "stored_triangles": 1080941,
+      "stored_vertices": 892898
+    },
+    "models/airfield/control_tower_02.glb": {
+      "far_triangles": 1195300,
+      "near_triangles": 1781836,
+      "primitives": 3,
+      "stored_triangles": 1914058,
+      "stored_vertices": 1670793
+    },
+    "models/airfield/depot_01.glb": {
+      "far_triangles": 45623,
+      "near_triangles": 74305,
+      "primitives": 3,
+      "stored_triangles": 77370,
+      "stored_vertices": 50348
+    },
+    "models/airfield/firestation_02.glb": {
+      "far_triangles": 1090763,
+      "near_triangles": 3100172,
+      "primitives": 3,
+      "stored_triangles": 3232007,
+      "stored_vertices": 2211762
+    },
+    "models/airfield/garage_02.glb": {
+      "far_triangles": 74619,
+      "near_triangles": 96154,
+      "primitives": 3,
+      "stored_triangles": 101645,
+      "stored_vertices": 95336
+    },
+    "models/airfield/garage_04.glb": {
+      "far_triangles": 87333,
+      "near_triangles": 112504,
+      "primitives": 3,
+      "stored_triangles": 118423,
+      "stored_vertices": 110764
+    },
+    "models/airfield/gas_station_04.glb": {
+      "far_triangles": 273693,
+      "near_triangles": 300721,
+      "primitives": 3,
+      "stored_triangles": 310845,
+      "stored_vertices": 260280
+    },
+    "models/airfield/geo.glb": {
+      "far_triangles": 202256,
+      "near_triangles": 524022,
+      "primitives": 3,
+      "stored_triangles": 552946,
+      "stored_vertices": 413505
+    },
+    "models/airfield/hangar_01.glb": {
+      "far_triangles": 3042966,
+      "near_triangles": 4474206,
+      "primitives": 4,
+      "stored_triangles": 4686690,
+      "stored_vertices": 4535980
+    },
+    "models/airfield/hangar_02.glb": {
+      "far_triangles": 1840663,
+      "near_triangles": 2384758,
+      "primitives": 4,
+      "stored_triangles": 2489428,
+      "stored_vertices": 2166077
+    },
+    "models/airfield/hangar_04a.glb": {
+      "far_triangles": 461935,
+      "near_triangles": 659235,
+      "primitives": 3,
+      "stored_triangles": 692565,
+      "stored_vertices": 720711
+    },
+    "models/airfield/hangar_04b.glb": {
+      "far_triangles": 462017,
+      "near_triangles": 659711,
+      "primitives": 3,
+      "stored_triangles": 693123,
+      "stored_vertices": 721262
+    },
+    "models/airfield/hangar_04c.glb": {
+      "far_triangles": 465493,
+      "near_triangles": 662793,
+      "primitives": 3,
+      "stored_triangles": 696123,
+      "stored_vertices": 723439
+    },
+    "models/airfield/hangar_04d.glb": {
+      "far_triangles": 458177,
+      "near_triangles": 656808,
+      "primitives": 3,
+      "stored_triangles": 690140,
+      "stored_vertices": 719926
+    },
+    "models/airfield/hangar_04e.glb": {
+      "far_triangles": 458259,
+      "near_triangles": 657284,
+      "primitives": 3,
+      "stored_triangles": 690698,
+      "stored_vertices": 720648
+    },
+    "models/airfield/house_1s_01.glb": {
+      "far_triangles": 258730,
+      "near_triangles": 307976,
+      "primitives": 3,
+      "stored_triangles": 326446,
+      "stored_vertices": 255123
+    },
+    "models/airfield/house_1s_02.glb": {
+      "far_triangles": 250750,
+      "near_triangles": 293284,
+      "primitives": 3,
+      "stored_triangles": 310826,
+      "stored_vertices": 253915
+    },
+    "models/airfield/house_1s_05.glb": {
+      "far_triangles": 334094,
+      "near_triangles": 460666,
+      "primitives": 3,
+      "stored_triangles": 502334,
+      "stored_vertices": 442950
+    },
+    "models/airfield/house_1s_06.glb": {
+      "far_triangles": 106054,
+      "near_triangles": 156915,
+      "primitives": 3,
+      "stored_triangles": 161243,
+      "stored_vertices": 116782
+    },
+    "models/airfield/house_1s_08.glb": {
+      "far_triangles": 155066,
+      "near_triangles": 201365,
+      "primitives": 3,
+      "stored_triangles": 223159,
+      "stored_vertices": 148055
+    },
+    "models/airfield/house_1s_10.glb": {
+      "far_triangles": 162835,
+      "near_triangles": 184689,
+      "primitives": 3,
+      "stored_triangles": 192407,
+      "stored_vertices": 135058
+    },
+    "models/airfield/house_2s_01.glb": {
+      "far_triangles": 221547,
+      "near_triangles": 273395,
+      "primitives": 3,
+      "stored_triangles": 286792,
+      "stored_vertices": 232468
+    },
+    "models/airfield/house_2s_02.glb": {
+      "far_triangles": 447500,
+      "near_triangles": 530998,
+      "primitives": 3,
+      "stored_triangles": 551389,
+      "stored_vertices": 384821
+    },
+    "models/airfield/house_2s_03.glb": {
+      "far_triangles": 336590,
+      "near_triangles": 551949,
+      "primitives": 3,
+      "stored_triangles": 595627,
+      "stored_vertices": 491890
+    },
+    "models/airfield/house_2s_04.glb": {
+      "far_triangles": 490653,
+      "near_triangles": 677293,
+      "primitives": 3,
+      "stored_triangles": 699767,
+      "stored_vertices": 473767
+    },
+    "models/airfield/house_mountain_1s_01.glb": {
+      "far_triangles": 379392,
+      "near_triangles": 407405,
+      "primitives": 3,
+      "stored_triangles": 416466,
+      "stored_vertices": 282292
+    },
+    "models/airfield/house_mountain_1s_02.glb": {
+      "far_triangles": 343263,
+      "near_triangles": 365599,
+      "primitives": 3,
+      "stored_triangles": 368188,
+      "stored_vertices": 240382
+    },
+    "models/airfield/motel_01.glb": {
+      "far_triangles": 696884,
+      "near_triangles": 985668,
+      "primitives": 3,
+      "stored_triangles": 1101155,
+      "stored_vertices": 878089
+    },
+    "models/airfield/quonset_lg_01.glb": {
+      "far_triangles": 168014,
+      "near_triangles": 208350,
+      "primitives": 3,
+      "stored_triangles": 286630,
+      "stored_vertices": 196386
+    },
+    "models/airfield/quonset_sm_01.glb": {
+      "far_triangles": 100978,
+      "near_triangles": 121282,
+      "primitives": 3,
+      "stored_triangles": 163304,
+      "stored_vertices": 111877
+    },
+    "models/airfield/quonset_sm_01_a.glb": {
+      "far_triangles": 97085,
+      "near_triangles": 122873,
+      "primitives": 3,
+      "stored_triangles": 165595,
+      "stored_vertices": 114617
+    },
+    "models/airfield/quonset_sm_01_b.glb": {
+      "far_triangles": 94874,
+      "near_triangles": 118044,
+      "primitives": 3,
+      "stored_triangles": 160460,
+      "stored_vertices": 108635
+    },
+    "models/airfield/radio_tower_01.glb": {
+      "far_triangles": 125491,
+      "near_triangles": 323899,
+      "primitives": 3,
+      "stored_triangles": 340103,
+      "stored_vertices": 266854
+    },
+    "models/airfield/storage_tank_01b.glb": {
+      "far_triangles": 78718,
+      "near_triangles": 101390,
+      "primitives": 3,
+      "stored_triangles": 104078,
+      "stored_vertices": 99548
+    },
+    "models/airfield/tent_mil_01.glb": {
+      "far_triangles": 94914,
+      "near_triangles": 109550,
+      "primitives": 3,
+      "stored_triangles": 110248,
+      "stored_vertices": 61497
+    },
+    "models/airfield/tent_mil_01_a.glb": {
+      "far_triangles": 94914,
+      "near_triangles": 109550,
+      "primitives": 3,
+      "stored_triangles": 110248,
+      "stored_vertices": 61497
+    },
+    "models/airfield/tent_mil_01_b.glb": {
+      "far_triangles": 94914,
+      "near_triangles": 109550,
+      "primitives": 3,
+      "stored_triangles": 110248,
+      "stored_vertices": 61497
+    },
+    "models/airfield/tent_mil_01_c.glb": {
+      "far_triangles": 50270,
+      "near_triangles": 58976,
+      "primitives": 3,
+      "stored_triangles": 59392,
+      "stored_vertices": 45198
+    },
+    "models/airfield/tent_mil_02.glb": {
+      "far_triangles": 163100,
+      "near_triangles": 189476,
+      "primitives": 3,
+      "stored_triangles": 190680,
+      "stored_vertices": 105925
+    },
+    "models/airfield/tent_mil_02_a.glb": {
+      "far_triangles": 163100,
+      "near_triangles": 189476,
+      "primitives": 3,
+      "stored_triangles": 190680,
+      "stored_vertices": 105925
+    },
+    "models/airfield/tent_mil_03.glb": {
+      "far_triangles": 174168,
+      "near_triangles": 201150,
+      "primitives": 3,
+      "stored_triangles": 202485,
+      "stored_vertices": 113232
+    },
+    "models/airfield/tent_mil_03_b.glb": {
+      "far_triangles": 174212,
+      "near_triangles": 201786,
+      "primitives": 3,
+      "stored_triangles": 203157,
+      "stored_vertices": 113657
+    },
+    "models/airfield/terminal_01.glb": {
+      "far_triangles": 1688912,
+      "near_triangles": 2548410,
+      "primitives": 3,
+      "stored_triangles": 2786922,
+      "stored_vertices": 2240183
+    },
+    "models/airfield/vortac_station_01.glb": {
+      "far_triangles": 872125,
+      "near_triangles": 1103511,
+      "primitives": 3,
+      "stored_triangles": 1267320,
+      "stored_vertices": 1065236
+    },
+    "models/airfield/warehouse_lg_01.glb": {
+      "far_triangles": 202256,
+      "near_triangles": 524022,
+      "primitives": 3,
+      "stored_triangles": 552946,
+      "stored_vertices": 413179
+    },
+    "models/airfield/warehouse_sm_01.glb": {
+      "far_triangles": 345783,
+      "near_triangles": 490952,
+      "primitives": 3,
+      "stored_triangles": 539496,
+      "stored_vertices": 550698
+    },
+    "models/airfield/warehouse_sm_02.glb": {
+      "far_triangles": 145806,
+      "near_triangles": 177025,
+      "primitives": 3,
+      "stored_triangles": 201895,
+      "stored_vertices": 193390
+    },
+    "models/airfield/warehouse_sm_04.glb": {
+      "far_triangles": 58786,
+      "near_triangles": 75717,
+      "primitives": 3,
+      "stored_triangles": 81378,
+      "stored_vertices": 74472
+    },
+    "models/airfield/warehouse_sm_05.glb": {
+      "far_triangles": 217618,
+      "near_triangles": 259151,
+      "primitives": 3,
+      "stored_triangles": 267227,
+      "stored_vertices": 197892
+    },
+    "models/airfield/warehouse_sm_06.glb": {
+      "far_triangles": 54690,
+      "near_triangles": 62885,
+      "primitives": 3,
+      "stored_triangles": 68190,
+      "stored_vertices": 64265
+    },
+    "models/airfield/water_tank_01.glb": {
+      "far_triangles": 70363,
+      "near_triangles": 90110,
+      "primitives": 3,
+      "stored_triangles": 95738,
+      "stored_vertices": 89218
+    }
+  },
+  "not_upright": [],
+  "placed": [
+    {
+      "model": "models/airfield/administration_01.glb",
+      "name": "administration_01",
+      "position": [
+        -547.6215338914287,
+        21.9456,
+        439.95309497487017
+      ],
+      "yaw_degrees": 44.99998474121092
+    },
+    {
+      "model": "models/airfield/administration_02.glb",
+      "name": "administration_02",
+      "position": [
+        -474.6839336395243,
+        22.5552,
+        590.0131941823989
+      ],
+      "yaw_degrees": 44.99998474121092
+    },
+    {
+      "model": "models/airfield/administration_02.glb",
+      "name": "administration_02_261",
+      "position": [
+        -703.5187676404013,
+        25.4,
+        392.96835343148996
+      ],
+      "yaw_degrees": -135.00001525878906
+    },
+    {
+      "model": "models/airfield/administration_02.glb",
+      "name": "administration_02",
+      "position": [
+        -253.16756358585468,
+        22.522434000968932,
+        393.79691787620095
+      ],
+      "yaw_degrees": -89.99998474121095
+    },
+    {
+      "model": "models/airfield/geo.glb",
+      "name": "geo",
+      "position": [
+        -238.3148972091722,
+        21.969984000968932,
+        455.29031392069885
+      ],
+      "yaw_degrees": -179.99998474121097
+    },
+    {
+      "model": "models/airfield/garage_02.glb",
+      "name": "garage_02",
+      "position": [
+        -407.26014788115026,
+        18.846799999999998,
+        504.3954502801629
+      ],
+      "yaw_degrees": 44.99998474121092
+    },
+    {
+      "model": "models/airfield/storage_tank_01b.glb",
+      "name": "storage_tank_01b",
+      "position": [
+        -401.70137842306394,
+        22.6568,
+        538.4934842522536
+      ],
+      "yaw_degrees": -45.00001525878906
+    },
+    {
+      "model": "models/airfield/storage_tank_01b.glb",
+      "name": "storage_tank_01b_2828",
+      "position": [
+        -422.7421129112402,
+        22.6568,
+        517.4527385571012
+      ],
+      "yaw_degrees": 134.99998474121094
+    },
+    {
+      "model": "models/airfield/storage_tank_01b.glb",
+      "name": "storage_tank_01b_2829",
+      "position": [
+        -383.30980898914504,
+        22.6568,
+        520.1019246142745
+      ],
+      "yaw_degrees": -45.00001525878906
+    },
+    {
+      "model": "models/airfield/storage_tank_01b.glb",
+      "name": "storage_tank_01b_2830",
+      "position": [
+        -438.4845172909017,
+        22.6568,
+        575.2766035282116
+      ],
+      "yaw_degrees": -45.00001525878906
+    },
+    {
+      "model": "models/airfield/storage_tank_01b.glb",
+      "name": "storage_tank_01b_4342",
+      "position": [
+        -420.0929478569829,
+        22.6568,
+        556.8850438902326
+      ],
+      "yaw_degrees": -45.00001525878906
+    },
+    {
+      "model": "models/airfield/storage_tank_01b.glb",
+      "name": "storage_tank_01b_4429",
+      "position": [
+        -441.13368234515906,
+        22.6568,
+        535.8442981950802
+      ],
+      "yaw_degrees": 134.99998474121094
+    },
+    {
+      "model": "models/airfield/storage_tank_01b.glb",
+      "name": "storage_tank_01b_4430",
+      "position": [
+        -459.52525177907796,
+        22.6568,
+        554.2358578330594
+      ],
+      "yaw_degrees": 134.99998474121094
+    },
+    {
+      "model": "models/airfield/ammo_dump_01.glb",
+      "name": "ammo_dump_01",
+      "position": [
+        -806.6529644805295,
+        22.5044,
+        715.3546710224894
+      ],
+      "yaw_degrees": 17.997955322265607
+    },
+    {
+      "model": "models/airfield/barracks_01.glb",
+      "name": "barracks_01",
+      "position": [
+        -511.7813115583405,
+        22.472649999999998,
+        364.2764861874463
+      ],
+      "yaw_degrees": 134.99998474121094
+    },
+    {
+      "model": "models/airfield/barracks_01.glb",
+      "name": "barracks_01_1318",
+      "position": [
+        -704.300100583919,
+        22.57425,
+        583.1971186360231
+      ],
+      "yaw_degrees": -45.00001525878906
+    },
+    {
+      "model": "models/airfield/barracks_01.glb",
+      "name": "barracks_01_950",
+      "position": [
+        -498.0235555073856,
+        22.472649999999998,
+        350.48281644939567
+      ],
+      "yaw_degrees": -45.00001525878906
+    },
+    {
+      "model": "models/airfield/control_tower_01.glb",
+      "name": "control_tower_01",
+      "position": [
+        -688.8629814811561,
+        25.4,
+        362.2918024249886
+      ],
+      "yaw_degrees": -45.00001525878906
+    },
+    {
+      "model": "models/airfield/control_tower_02.glb",
+      "name": "control_tower_02",
+      "position": [
+        -579.6541622306627,
+        21.9456,
+        645.5560503359508
+      ],
+      "yaw_degrees": -135.00001525878906
+    },
+    {
+      "model": "models/airfield/firestation_02.glb",
+      "name": "firestation_02",
+      "position": [
+        -661.9941523801413,
+        22.352,
+        727.3212603898226
+      ],
+      "yaw_degrees": -135.00001525878906
+    },
+    {
+      "model": "models/airfield/garage_02.glb",
+      "name": "garage_02",
+      "position": [
+        -759.2682589985493,
+        18.9484,
+        623.3657896266607
+      ],
+      "yaw_degrees": -45.00001525878906
+    },
+    {
+      "model": "models/airfield/garage_02.glb",
+      "name": "garage_02_128",
+      "position": [
+        -784.7362721404409,
+        18.9484,
+        648.8337892034715
+      ],
+      "yaw_degrees": -45.00001525878906
+    },
+    {
+      "model": "models/airfield/garage_04.glb",
+      "name": "garage_04",
+      "position": [
+        -272.868818699616,
+        18.7452,
+        477.0057049014769
+      ],
+      "yaw_degrees": 89.99996948242186
+    },
+    {
+      "model": "models/airfield/gas_station_04.glb",
+      "name": "gas_station_04",
+      "position": [
+        -482.9059280759886,
+        22.053549999999998,
+        696.7420955550704
+      ],
+      "yaw_degrees": 46.49897766113281
+    },
+    {
+      "model": "models/airfield/hangar_01.glb",
+      "name": "hangar_01",
+      "position": [
+        -324.22149154521287,
+        22.5552,
+        424.0221757262323
+      ],
+      "yaw_degrees": -90.00019454956055
+    },
+    {
+      "model": "models/airfield/hangar_02.glb",
+      "name": "hangar_02",
+      "position": [
+        -654.2710857288032,
+        22.682199999999998,
+        553.140214722336
+      ],
+      "yaw_degrees": 44.99998474121092
+    },
+    {
+      "model": "models/airfield/hangar_04a.glb",
+      "name": "hangar_04a",
+      "position": [
+        -772.6470670853324,
+        22.567899999999998,
+        681.5740172050419
+      ],
+      "yaw_degrees": 44.99998474121092
+    },
+    {
+      "model": "models/airfield/hangar_04b.glb",
+      "name": "hangar_04b",
+      "position": [
+        -748.4003603313784,
+        22.567899999999998,
+        657.3273233656615
+      ],
+      "yaw_degrees": 44.99998474121092
+    },
+    {
+      "model": "models/airfield/hangar_04c.glb",
+      "name": "hangar_04c",
+      "position": [
+        -723.6507678704992,
+        22.567899999999998,
+        632.5777440872092
+      ],
+      "yaw_degrees": 44.99998474121092
+    },
+    {
+      "model": "models/airfield/hangar_04d.glb",
+      "name": "hangar_04d",
+      "position": [
+        -603.7822773696856,
+        22.5552,
+        504.9503782099252
+      ],
+      "yaw_degrees": 44.99998474121092
+    },
+    {
+      "model": "models/airfield/hangar_04e.glb",
+      "name": "hangar_04e",
+      "position": [
+        -582.9121543938279,
+        22.5552,
+        484.0802663501643
+      ],
+      "yaw_degrees": 44.99998474121092
+    },
+    {
+      "model": "models/airfield/quonset_lg_01.glb",
+      "name": "quonset_lg_01",
+      "position": [
+        -656.4263130268665,
+        25.450799999999997,
+        424.8303146905237
+      ],
+      "yaw_degrees": -45.00001525878906
+    },
+    {
+      "model": "models/airfield/quonset_lg_01.glb",
+      "name": "quonset_lg_01_326",
+      "position": [
+        -658.5097147300789,
+        25.450799999999997,
+        358.3045767907976
+      ],
+      "yaw_degrees": -135.00001525878906
+    },
+    {
+      "model": "models/airfield/quonset_lg_01.glb",
+      "name": "quonset_lg_01_334",
+      "position": [
+        -679.1283949141816,
+        25.450799999999997,
+        403.85243034577536
+      ],
+      "yaw_degrees": -45.00001525878906
+    },
+    {
+      "model": "models/airfield/quonset_sm_01.glb",
+      "name": "quonset_sm_01",
+      "position": [
+        -712.7504858467958,
+        25.5524,
+        448.96922814392394
+      ],
+      "yaw_degrees": -45.00001525878906
+    },
+    {
+      "model": "models/airfield/quonset_sm_01.glb",
+      "name": "quonset_sm_01_197",
+      "position": [
+        -567.0188719981085,
+        22.5552,
+        383.19787112388747
+      ],
+      "yaw_degrees": -45.00001525878906
+    },
+    {
+      "model": "models/airfield/quonset_sm_01.glb",
+      "name": "quonset_sm_01_272",
+      "position": [
+        -675.3926220094285,
+        25.450799999999997,
+        455.07581225525206
+      ],
+      "yaw_degrees": 44.99998474121092
+    },
+    {
+      "model": "models/airfield/quonset_sm_01.glb",
+      "name": "quonset_sm_01_277",
+      "position": [
+        -662.8921021598118,
+        25.450799999999997,
+        442.57529906381325
+      ],
+      "yaw_degrees": 44.99998474121092
+    },
+    {
+      "model": "models/airfield/quonset_sm_01.glb",
+      "name": "quonset_sm_01_310",
+      "position": [
+        -675.2848285245569,
+        25.450799999999997,
+        340.88287544843985
+      ],
+      "yaw_degrees": -135.00001525878906
+    },
+    {
+      "model": "models/airfield/quonset_sm_01.glb",
+      "name": "quonset_sm_01_311",
+      "position": [
+        -747.3783442276782,
+        25.5524,
+        414.34135131912353
+      ],
+      "yaw_degrees": -45.00001525878906
+    },
+    {
+      "model": "models/airfield/quonset_sm_01.glb",
+      "name": "quonset_sm_01_80",
+      "position": [
+        -577.651492413815,
+        22.5552,
+        372.5652450449031
+      ],
+      "yaw_degrees": -45.00001525878906
+    },
+    {
+      "model": "models/airfield/quonset_sm_01.glb",
+      "name": "quonset_sm_01_93",
+      "position": [
+        -587.9967447101783,
+        22.5552,
+        362.21998723832377
+      ],
+      "yaw_degrees": -45.00001525878906
+    },
+    {
+      "model": "models/airfield/quonset_sm_01_a.glb",
+      "name": "quonset_sm_01_a",
+      "position": [
+        -731.2857295444466,
+        25.5524,
+        430.4339745738025
+      ],
+      "yaw_degrees": -45.00001525878906
+    },
+    {
+      "model": "models/airfield/quonset_sm_01_a.glb",
+      "name": "quonset_sm_01_a_258",
+      "position": [
+        -657.1447505637832,
+        22.605999999999998,
+        488.8415801301755
+      ],
+      "yaw_degrees": 44.99998474121092
+    },
+    {
+      "model": "models/airfield/quonset_sm_01_a.glb",
+      "name": "quonset_sm_01_a_48",
+      "position": [
+        -592.1635958335445,
+        22.5552,
+        408.342581566437
+      ],
+      "yaw_degrees": -45.00001525878906
+    },
+    {
+      "model": "models/airfield/quonset_sm_01_a.glb",
+      "name": "quonset_sm_01_a_66",
+      "position": [
+        -602.7962162492511,
+        22.5552,
+        397.70995548745265
+      ],
+      "yaw_degrees": -45.00001525878906
+    },
+    {
+      "model": "models/airfield/quonset_sm_01_b.glb",
+      "name": "quonset_sm_01_b",
+      "position": [
+        -687.3184053142352,
+        25.450799999999997,
+        467.0015892080042
+      ],
+      "yaw_degrees": 44.99998474121092
+    },
+    {
+      "model": "models/airfield/radio_tower_01.glb",
+      "name": "radio_tower_01",
+      "position": [
+        -542.287233510873,
+        23.1394,
+        333.8962716056498
+      ],
+      "yaw_degrees": -135.00001525878906
+    },
+    {
+      "model": "models/airfield/tent_mil_01.glb",
+      "name": "tent_mil_01",
+      "position": [
+        -718.3258765538368,
+        22.5552,
+        770.0730131157545
+      ],
+      "yaw_degrees": 135.6989974975586
+    },
+    {
+      "model": "models/airfield/tent_mil_01.glb",
+      "name": "tent_mil_01_436",
+      "position": [
+        -684.5750177888929,
+        22.526365931510924,
+        770.0987044088887
+      ],
+      "yaw_degrees": 134.99998474121094
+    },
+    {
+      "model": "models/airfield/tent_mil_01.glb",
+      "name": "tent_mil_01_969",
+      "position": [
+        -568.0721740422462,
+        22.5552,
+        740.4827540356666
+      ],
+      "yaw_degrees": 134.99998474121094
+    },
+    {
+      "model": "models/airfield/tent_mil_01.glb",
+      "name": "tent_mil_01_980",
+      "position": [
+        -738.0596420634403,
+        22.282149999999998,
+        816.0506651214749
+      ],
+      "yaw_degrees": -44.30110931396486
+    },
+    {
+      "model": "models/airfield/tent_mil_01_a.glb",
+      "name": "tent_mil_01_a",
+      "position": [
+        -575.1665744885369,
+        22.5044,
+        733.3883498106686
+      ],
+      "yaw_degrees": 134.99998474121094
+    },
+    {
+      "model": "models/airfield/tent_mil_01_a.glb",
+      "name": "tent_mil_01_a_122",
+      "position": [
+        -726.1431875975451,
+        22.5552,
+        762.9022765212047
+      ],
+      "yaw_degrees": 135.6989974975586
+    },
+    {
+      "model": "models/airfield/tent_mil_01_a.glb",
+      "name": "tent_mil_01_a_123",
+      "position": [
+        -688.6894126115848,
+        22.5552,
+        783.8417268428296
+      ],
+      "yaw_degrees": -44.30110931396486
+    },
+    {
+      "model": "models/airfield/tent_mil_01_a.glb",
+      "name": "tent_mil_01_a_125",
+      "position": [
+        -667.6935836908483,
+        22.5552,
+        804.5142776401683
+      ],
+      "yaw_degrees": -44.30110931396486
+    },
+    {
+      "model": "models/airfield/tent_mil_01_b.glb",
+      "name": "tent_mil_01_b",
+      "position": [
+        -566.1785886258031,
+        22.5552,
+        720.004709930223
+      ],
+      "yaw_degrees": -135.00001525878906
+    },
+    {
+      "model": "models/airfield/tent_mil_01_b.glb",
+      "name": "tent_mil_01_b_108",
+      "position": [
+        -618.8831728730732,
+        22.733,
+        721.5602577887868
+      ],
+      "yaw_degrees": 134.99998474121094
+    },
+    {
+      "model": "models/airfield/tent_mil_01_b.glb",
+      "name": "tent_mil_01_b_124",
+      "position": [
+        -678.6135680706011,
+        22.5552,
+        794.4563922612934
+      ],
+      "yaw_degrees": -44.30110931396486
+    },
+    {
+      "model": "models/airfield/tent_mil_01_b.glb",
+      "name": "tent_mil_01_b_126",
+      "position": [
+        -745.2986210945153,
+        22.5171,
+        808.8404120460989
+      ],
+      "yaw_degrees": -44.30110931396486
+    },
+    {
+      "model": "models/airfield/tent_mil_01_b.glb",
+      "name": "tent_mil_01_b_146",
+      "position": [
+        -778.6643822464664,
+        22.5552,
+        738.5765399298317
+      ],
+      "yaw_degrees": 31.69700622558593
+    },
+    {
+      "model": "models/airfield/tent_mil_01_b.glb",
+      "name": "tent_mil_01_b_147",
+      "position": [
+        -799.5524571757162,
+        22.586949999999998,
+        735.5412077980794
+      ],
+      "yaw_degrees": -22.303054809570302
+    },
+    {
+      "model": "models/airfield/tent_mil_01_b.glb",
+      "name": "tent_mil_01_b_200",
+      "position": [
+        -432.0531638625518,
+        22.5552,
+        364.3002165242654
+      ],
+      "yaw_degrees": 135.6989974975586
+    },
+    {
+      "model": "models/airfield/tent_mil_01_b.glb",
+      "name": "tent_mil_01_b_202",
+      "position": [
+        -457.842835151055,
+        22.53615,
+        357.2347212895866
+      ],
+      "yaw_degrees": -44.30110931396486
+    },
+    {
+      "model": "models/airfield/tent_mil_01_b.glb",
+      "name": "tent_mil_01_b_445",
+      "position": [
+        -724.6817348873067,
+        22.5552,
+        781.8475566721721
+      ],
+      "yaw_degrees": -44.30110931396486
+    },
+    {
+      "model": "models/airfield/tent_mil_01_b.glb",
+      "name": "tent_mil_01_b_660",
+      "position": [
+        -409.43780905744535,
+        22.5552,
+        329.61002810807076
+      ],
+      "yaw_degrees": -44.30110931396486
+    },
+    {
+      "model": "models/airfield/tent_mil_01_b.glb",
+      "name": "tent_mil_01_b_97",
+      "position": [
+        -615.9570569067151,
+        22.5552,
+        739.9597290619123
+      ],
+      "yaw_degrees": -135.00001525878906
+    },
+    {
+      "model": "models/airfield/tent_mil_01_c.glb",
+      "name": "tent_mil_01_c",
+      "position": [
+        -406.2359929845485,
+        22.548849999999998,
+        314.6861061360656
+      ],
+      "yaw_degrees": 135.73599243164062
+    },
+    {
+      "model": "models/airfield/tent_mil_02.glb",
+      "name": "tent_mil_02",
+      "position": [
+        -571.8659779556207,
+        22.529799999999998,
+        760.245955216164
+      ],
+      "yaw_degrees": -45.00001525878906
+    },
+    {
+      "model": "models/airfield/tent_mil_02_a.glb",
+      "name": "tent_mil_02_a",
+      "position": [
+        -588.0979562294401,
+        22.5044,
+        722.4688898802764
+      ],
+      "yaw_degrees": 134.99998474121094
+    },
+    {
+      "model": "models/airfield/tent_mil_02_a.glb",
+      "name": "tent_mil_02_a_101",
+      "position": [
+        -545.3562545081801,
+        22.529799999999998,
+        732.5418721426312
+      ],
+      "yaw_degrees": -45.00001525878906
+    },
+    {
+      "model": "models/airfield/tent_mil_02_a.glb",
+      "name": "tent_mil_02_a_104",
+      "position": [
+        -609.7394975905822,
+        22.5806,
+        792.412328037807
+      ],
+      "yaw_degrees": 44.99998474121092
+    },
+    {
+      "model": "models/airfield/tent_mil_02_a.glb",
+      "name": "tent_mil_02_a_111",
+      "position": [
+        -693.442488929797,
+        22.5806,
+        814.961904261985
+      ],
+      "yaw_degrees": 86.38499450683591
+    },
+    {
+      "model": "models/airfield/tent_mil_02_a.glb",
+      "name": "tent_mil_02_a_1487",
+      "position": [
+        -744.746683094275,
+        22.5806,
+        772.7277438690164
+      ],
+      "yaw_degrees": -135.00001525878906
+    },
+    {
+      "model": "models/airfield/tent_mil_02_a.glb",
+      "name": "tent_mil_02_a_601",
+      "position": [
+        -437.5149452349506,
+        22.529799999999998,
+        335.1262350357484
+      ],
+      "yaw_degrees": -135.00001525878906
+    },
+    {
+      "model": "models/airfield/tent_mil_02_a.glb",
+      "name": "tent_mil_02_a_655",
+      "position": [
+        -410.9389498790723,
+        22.529799999999998,
+        345.34379160855195
+      ],
+      "yaw_degrees": 44.99998474121092
+    },
+    {
+      "model": "models/airfield/tent_mil_02_a.glb",
+      "name": "tent_mil_02_a_973",
+      "position": [
+        -626.3978771196007,
+        22.5806,
+        809.0257974253907
+      ],
+      "yaw_degrees": 44.99998474121092
+    },
+    {
+      "model": "models/airfield/tent_mil_03.glb",
+      "name": "tent_mil_03",
+      "position": [
+        -594.700617804659,
+        22.529799999999998,
+        782.3977328281387
+      ],
+      "yaw_degrees": -45.00001525878906
+    },
+    {
+      "model": "models/airfield/tent_mil_03.glb",
+      "name": "tent_mil_03_390",
+      "position": [
+        -715.5119937308717,
+        22.502428972053526,
+        746.085491302134
+      ],
+      "yaw_degrees": -135.00001525878906
+    },
+    {
+      "model": "models/airfield/tent_mil_03_b.glb",
+      "name": "tent_mil_03_b",
+      "position": [
+        -465.6906955539042,
+        22.529799999999998,
+        390.5721288212009
+      ],
+      "yaw_degrees": -45.00001525878906
+    },
+    {
+      "model": "models/airfield/tent_mil_03_b.glb",
+      "name": "tent_mil_03_b_118",
+      "position": [
+        -757.7439985166477,
+        22.529799999999998,
+        787.5297238072877
+      ],
+      "yaw_degrees": -135.00001525878906
+    },
+    {
+      "model": "models/airfield/tent_mil_03_b.glb",
+      "name": "tent_mil_03_b_120",
+      "position": [
+        -786.1449302773193,
+        22.529799999999998,
+        710.3753042454942
+      ],
+      "yaw_degrees": 48.996978759765604
+    },
+    {
+      "model": "models/airfield/terminal_01.glb",
+      "name": "terminal_01",
+      "position": [
+        -511.1258239849044,
+        22.2504,
+        631.3403231464982
+      ],
+      "yaw_degrees": 44.99998474121092
+    },
+    {
+      "model": "models/airfield/warehouse_lg_01.glb",
+      "name": "warehouse_lg_01",
+      "position": [
+        -437.92322789959434,
+        22.5806,
+        487.47214945393534
+      ],
+      "yaw_degrees": 44.99998474121092
+    },
+    {
+      "model": "models/airfield/warehouse_lg_01.glb",
+      "name": "warehouse_lg_01_1335",
+      "position": [
+        -684.3010786135096,
+        22.352,
+        614.780684739886
+      ],
+      "yaw_degrees": -135.00001525878906
+    },
+    {
+      "model": "models/airfield/warehouse_sm_01.glb",
+      "name": "warehouse_sm_01",
+      "position": [
+        -715.9474800520946,
+        22.5552,
+        535.4311332261698
+      ],
+      "yaw_degrees": -135.00001525878906
+    },
+    {
+      "model": "models/airfield/warehouse_sm_02.glb",
+      "name": "warehouse_sm_02",
+      "position": [
+        -681.3914458693764,
+        22.5552,
+        503.03037834417967
+      ],
+      "yaw_degrees": 134.99998474121094
+    },
+    {
+      "model": "models/airfield/warehouse_sm_04.glb",
+      "name": "warehouse_sm_04",
+      "position": [
+        -604.9514675779793,
+        22.148799999999998,
+        359.6336689601399
+      ],
+      "yaw_degrees": 44.99998474121092
+    },
+    {
+      "model": "models/airfield/warehouse_sm_04.glb",
+      "name": "warehouse_sm_04_915",
+      "position": [
+        -599.9764238103525,
+        22.148799999999998,
+        427.6860511705387
+      ],
+      "yaw_degrees": -135.00001525878906
+    },
+    {
+      "model": "models/airfield/warehouse_sm_05.glb",
+      "name": "warehouse_sm_05",
+      "position": [
+        -368.4823221417509,
+        22.352,
+        483.70423576719696
+      ],
+      "yaw_degrees": -89.00029754638675
+    },
+    {
+      "model": "models/airfield/warehouse_sm_05.glb",
+      "name": "warehouse_sm_05_756",
+      "position": [
+        -599.7070463731195,
+        22.3266,
+        541.2593504054439
+      ],
+      "yaw_degrees": -45.00001525878906
+    },
+    {
+      "model": "models/airfield/warehouse_sm_06.glb",
+      "name": "warehouse_sm_06",
+      "position": [
+        -540.7247611486556,
+        22.19325,
+        680.1120862573528
+      ],
+      "yaw_degrees": -135.00001525878906
+    },
+    {
+      "model": "models/airfield/bungalow_1s_01.glb",
+      "name": "bungalow_1s_01",
+      "position": [
+        -639.4742241741707,
+        20.6756,
+        175.54468844770918
+      ],
+      "yaw_degrees": 106.7990036010742
+    },
+    {
+      "model": "models/airfield/control_tower_01.glb",
+      "name": "control_tower_01",
+      "position": [
+        -451.6320260435319,
+        13.2842,
+        87.37874124266902
+      ],
+      "yaw_degrees": -67.10132598876955
+    },
+    {
+      "model": "models/airfield/house_1s_05.glb",
+      "name": "house_1s_05",
+      "position": [
+        -541.5687575038428,
+        19.3548,
+        125.43218427328301
+      ],
+      "yaw_degrees": -70.11912536621094
+    },
+    {
+      "model": "models/airfield/house_1s_06.glb",
+      "name": "house_1s_06",
+      "position": [
+        -577.2814540348488,
+        19.15795,
+        151.61502354065698
+      ],
+      "yaw_degrees": -67.0032424926758
+    },
+    {
+      "model": "models/airfield/house_1s_08.glb",
+      "name": "house_1s_08",
+      "position": [
+        -500.9104810846385,
+        17.526,
+        157.5915797236765
+      ],
+      "yaw_degrees": -158.3019943237305
+    },
+    {
+      "model": "models/airfield/house_1s_10.glb",
+      "name": "house_1s_10",
+      "position": [
+        -596.8153118533012,
+        18.541999999999998,
+        195.62185140251464
+      ],
+      "yaw_degrees": -79.70399093627931
+    },
+    {
+      "model": "models/airfield/house_2s_02.glb",
+      "name": "house_2s_02",
+      "position": [
+        -559.8525719890151,
+        18.8976,
+        174.33149809775657
+      ],
+      "yaw_degrees": 110.99702453613278
+    },
+    {
+      "model": "models/airfield/house_2s_04.glb",
+      "name": "house_2s_04",
+      "position": [
+        -704.0451247122583,
+        44.10075,
+        109.9809087643996
+      ],
+      "yaw_degrees": -0.7949676513671946
+    },
+    {
+      "model": "models/airfield/house_2s_04.glb",
+      "name": "house_2s_04_703",
+      "position": [
+        -565.4711759369028,
+        17.8816,
+        232.53306270896516
+      ],
+      "yaw_degrees": -105.2032356262207
+    },
+    {
+      "model": "models/airfield/house_2s_04.glb",
+      "name": "house_2s_04_81",
+      "position": [
+        -652.1505766867353,
+        15.1892,
+        215.51742747622563
+      ],
+      "yaw_degrees": -75.20283126831056
+    },
+    {
+      "model": "models/airfield/house_mountain_1s_01.glb",
+      "name": "house_mountain_1s_01",
+      "position": [
+        -615.8408556268615,
+        37.0332,
+        107.99431368127176
+      ],
+      "yaw_degrees": 126.79901885986328
+    },
+    {
+      "model": "models/airfield/house_mountain_1s_01.glb",
+      "name": "house_mountain_1s_01_482",
+      "position": [
+        -508.1000826956821,
+        18.9992,
+        202.90775677084812
+      ],
+      "yaw_degrees": 146.99597930908203
+    },
+    {
+      "model": "models/airfield/house_mountain_1s_01.glb",
+      "name": "house_mountain_1s_01_72",
+      "position": [
+        -735.915890186176,
+        18.9484,
+        187.57910925345396
+      ],
+      "yaw_degrees": 112.99701690673828
+    },
+    {
+      "model": "models/airfield/house_mountain_1s_02.glb",
+      "name": "house_mountain_1s_02",
+      "position": [
+        -657.8199764072356,
+        42.6212,
+        113.57104155273984
+      ],
+      "yaw_degrees": -165.00298881530765
+    },
+    {
+      "model": "models/airfield/house_2s_02.glb",
+      "name": "house_2s_02",
+      "position": [
+        -153.77793324707716,
+        35.9918,
+        67.58328857614953
+      ],
+      "yaw_degrees": 0.4950103759765549
+    },
+    {
+      "model": "models/airfield/house_2s_04.glb",
+      "name": "house_2s_04",
+      "position": [
+        -34.22811308043535,
+        61.5188,
+        82.14679426243192
+      ],
+      "yaw_degrees": -140.605938911438
+    },
+    {
+      "model": "models/airfield/house_mountain_1s_01.glb",
+      "name": "house_mountain_1s_01",
+      "position": [
+        -44.442429280233675,
+        62.1284,
+        59.55767639171683
+      ],
+      "yaw_degrees": 127.99799346923825
+    },
+    {
+      "model": "models/airfield/house_mountain_1s_01.glb",
+      "name": "house_mountain_1s_01_663",
+      "position": [
+        -39.13850753339251,
+        48.818799999999996,
+        126.8001978821344
+      ],
+      "yaw_degrees": 79.99899291992186
+    },
+    {
+      "model": "models/airfield/house_mountain_1s_02.glb",
+      "name": "house_mountain_1s_02",
+      "position": [
+        -80.43653303376549,
+        43.54499787597656,
+        78.58019518684837
+      ],
+      "yaw_degrees": -143.00597286224368
+    },
+    {
+      "model": "models/airfield/bungalow_1s_03.glb",
+      "name": "bungalow_1s_03",
+      "position": [
+        -46.32931297358051,
+        49.8602,
+        658.4967414394107
+      ],
+      "yaw_degrees": -52.57141876220704
+    },
+    {
+      "model": "models/airfield/apartment_2s_02.glb",
+      "name": "apartment_2s_02",
+      "position": [
+        -30.44729336601048,
+        54.70525,
+        490.09436708091187
+      ],
+      "yaw_degrees": -40.20005798339846
+    },
+    {
+      "model": "models/airfield/apartment_2s_02.glb",
+      "name": "apartment_2s_02_20",
+      "position": [
+        -76.30205212569437,
+        53.89245,
+        441.0123899179696
+      ],
+      "yaw_degrees": 179.9999542236328
+    },
+    {
+      "model": "models/airfield/bungalow_1s_02.glb",
+      "name": "bungalow_1s_02",
+      "position": [
+        -141.5114759508645,
+        41.92905,
+        444.247786842448
+      ],
+      "yaw_degrees": -90.00015258789062
+    },
+    {
+      "model": "models/airfield/bungalow_2s_02.glb",
+      "name": "bungalow_2s_02",
+      "position": [
+        -50.82066983129075,
+        49.26965,
+        312.879059299674
+      ],
+      "yaw_degrees": -90.00004577636719
+    },
+    {
+      "model": "models/airfield/depot_01.glb",
+      "name": "depot_01",
+      "position": [
+        -130.64072703307326,
+        47.14875,
+        372.38596600183496
+      ],
+      "yaw_degrees": -120.20077514648438
+    },
+    {
+      "model": "models/airfield/house_1s_01.glb",
+      "name": "house_1s_01",
+      "position": [
+        -105.20846669612271,
+        46.475649999999995,
+        370.0818761860084
+      ],
+      "yaw_degrees": -32.60203552246093
+    },
+    {
+      "model": "models/airfield/house_1s_01.glb",
+      "name": "house_1s_01_167",
+      "position": [
+        -40.33561300024754,
+        53.48605,
+        392.04121865328034
+      ],
+      "yaw_degrees": -179.9022372812033
+    },
+    {
+      "model": "models/airfield/house_1s_02.glb",
+      "name": "house_1s_02",
+      "position": [
+        -95.00983391381618,
+        47.999649999999995,
+        339.6841537311519
+      ],
+      "yaw_degrees": 46.99992370605467
+    },
+    {
+      "model": "models/airfield/house_1s_02.glb",
+      "name": "house_1s_02_14",
+      "position": [
+        -129.24094348381067,
+        46.475649999999995,
+        388.8817179899459
+      ],
+      "yaw_degrees": 62.99994659423829
+    },
+    {
+      "model": "models/airfield/house_1s_02.glb",
+      "name": "house_1s_02_21",
+      "position": [
+        -77.52121478604498,
+        53.48605,
+        394.27638894390674
+      ],
+      "yaw_degrees": 88.99698638916014
+    },
+    {
+      "model": "models/airfield/house_1s_05.glb",
+      "name": "house_1s_05",
+      "position": [
+        -138.51127924647096,
+        44.10075,
+        512.1772987121282
+      ],
+      "yaw_degrees": 14.38093566894531
+    },
+    {
+      "model": "models/airfield/house_2s_01.glb",
+      "name": "house_2s_01",
+      "position": [
+        -22.047637027505793,
+        53.48605,
+        422.1148332644378
+      ],
+      "yaw_degrees": -90.00004577636719
+    },
+    {
+      "model": "models/airfield/house_2s_03.glb",
+      "name": "house_2s_03",
+      "position": [
+        -33.6300558596729,
+        53.89245,
+        445.68602401069114
+      ],
+      "yaw_degrees": 0.9999694824218717
+    },
+    {
+      "model": "models/airfield/house_2s_03.glb",
+      "name": "house_2s_03_203",
+      "position": [
+        -66.34529498512079,
+        54.298849999999995,
+        494.65719787292124
+      ],
+      "yaw_degrees": -90.00004577636719
+    },
+    {
+      "model": "models/airfield/vortac_station_01.glb",
+      "name": "vortac_station_01",
+      "position": [
+        -120.66418357721022,
+        42.1132,
+        239.83718127857838
+      ],
+      "yaw_degrees": 179.9999542236328
+    },
+    {
+      "model": "models/airfield/house_1s_06.glb",
+      "name": "house_1s_06",
+      "position": [
+        -299.2431545430653,
+        37.592,
+        637.4839446744047
+      ],
+      "yaw_degrees": 100.99797821044922
+    },
+    {
+      "model": "models/airfield/house_mountain_1s_02.glb",
+      "name": "house_mountain_1s_02",
+      "position": [
+        -209.0084332482939,
+        40.19219787597656,
+        561.118396348824
+      ],
+      "yaw_degrees": 35.99497985839842
+    },
+    {
+      "model": "models/airfield/motel_01.glb",
+      "name": "motel_01",
+      "position": [
+        -299.91718900570135,
+        37.592,
+        596.43000205492
+      ],
+      "yaw_degrees": 98.99996185302734
+    },
+    {
+      "model": "models/airfield/bungalow_1s_01.glb",
+      "name": "bungalow_1s_01",
+      "position": [
+        -109.12305139583196,
+        48.666399999999996,
+        720.8953152516057
+      ],
+      "yaw_degrees": -170.40604782104492
+    },
+    {
+      "model": "models/airfield/house_1s_06.glb",
+      "name": "house_1s_06",
+      "position": [
+        -78.900707494703,
+        50.546,
+        679.4117492710944
+      ],
+      "yaw_degrees": 131.09500885009766
+    },
+    {
+      "model": "models/airfield/house_1s_08.glb",
+      "name": "house_1s_08",
+      "position": [
+        -96.18177855051879,
+        49.911,
+        703.4244233497245
+      ],
+      "yaw_degrees": -134.60408157110217
+    },
+    {
+      "model": "models/airfield/house_2s_04.glb",
+      "name": "house_2s_04",
+      "position": [
+        -37.15691517856946,
+        64.5668,
+        740.2619758645055
+      ],
+      "yaw_degrees": -57.004806518554695
+    },
+    {
+      "model": "models/airfield/house_mountain_1s_02.glb",
+      "name": "house_mountain_1s_02",
+      "position": [
+        -53.36898278780001,
+        65.92239787597656,
+        756.100442251876
+      ],
+      "yaw_degrees": -131.00686430931094
+    },
+    {
+      "model": "models/airfield/bungalow_1s_01.glb",
+      "name": "bungalow_1s_01",
+      "position": [
+        -330.87254526839996,
+        59.69,
+        765.71211888604
+      ],
+      "yaw_degrees": 91.12898254394531
+    },
+    {
+      "model": "models/airfield/bungalow_1s_03.glb",
+      "name": "bungalow_1s_03",
+      "position": [
+        -352.42424817999466,
+        59.334399999999995,
+        725.5946189232222
+      ],
+      "yaw_degrees": 178.9259567260742
+    },
+    {
+      "model": "models/airfield/bungalow_1s_03.glb",
+      "name": "bungalow_1s_03_864",
+      "position": [
+        -313.62848830554543,
+        51.8668,
+        803.9480786486707
+      ],
+      "yaw_degrees": -95.07409286499023
+    },
+    {
+      "model": "models/airfield/house_1s_06.glb",
+      "name": "house_1s_06",
+      "position": [
+        -304.1701079583293,
+        56.896,
+        770.5268083191849
+      ],
+      "yaw_degrees": -160.0050029754639
+    },
+    {
+      "model": "models/airfield/house_1s_10.glb",
+      "name": "house_1s_10",
+      "position": [
+        -285.02958838750857,
+        52.2224,
+        736.2491692251552
+      ],
+      "yaw_degrees": -109.00463867187501
+    },
+    {
+      "model": "models/airfield/warehouse_sm_05.glb",
+      "name": "warehouse_sm_05",
+      "position": [
+        -197.88823572637997,
+        45.9486,
+        722.9901994456876
+      ],
+      "yaw_degrees": 141.99796295166016
+    },
+    {
+      "model": "models/airfield/water_tank_01.glb",
+      "name": "water_tank_01",
+      "position": [
+        -178.11999395406391,
+        45.440599999999996,
+        734.4157915889507
+      ],
+      "yaw_degrees": 44.99998474121092
+    },
+    {
+      "model": "models/airfield/water_tank_01.glb",
+      "name": "water_tank_01_53",
+      "position": [
+        -158.52507899617837,
+        45.516799999999996,
+        749.0536142847354
+      ],
+      "yaw_degrees": 44.99998474121092
+    }
+  ]
+}

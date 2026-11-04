@@ -1,0 +1,19 @@
+{
+  "aliases": [
+    "games/CalderaDemo/assets/models/airfield/hangar_01.glb"
+  ],
+  "identityPath": "games/CalderaDemo/assets/models/airfield/hangar_01.glb",
+  "next": 10,
+  "objects": {
+    "material:name/building": "1",
+    "mesh:name/far": "5",
+    "mesh:name/near": "4",
+    "mesh:name/shared": "2",
+    "mesh:name/shared_1": "3",
+    "node:name/far": "9",
+    "node:name/near": "8",
+    "node:name/shared": "6",
+    "node:name/shared_1": "7"
+  },
+  "version": 2
+}

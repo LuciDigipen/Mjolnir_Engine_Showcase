@@ -11,6 +11,7 @@
 #include "TerrainRegions.h"
 
 #include "TerrainCandidate.h"
+#include "TerrainProgress.h"
 #include "TerrainSeams.h"
 
 #include <assets/AssetId.h>
@@ -222,8 +223,10 @@ namespace mir::terrainbake
                                          ref.SamplePosition(grid.EdgeTiles(0) * ref.IntervalsPerTile())};
 
             size_t readable = 0;
+            uint64_t regionsDone = 0;
             for (const TerrainTileRecord &record : index.regions)
             {
+                TerrainProgressStep("validate: regions", regionsDone++, index.regions.size());
                 const TerrainRegionCoord region{record.level, record.tile.x, record.tile.z};
                 const std::string &pack = packNames[record.pack];
                 TerrainRegionSummary summary{record.level,
@@ -436,8 +439,10 @@ namespace mir::terrainbake
         size_t decodedCount = 0;
         size_t missing = 0;
         size_t nonFinite = 0;
+        uint64_t recordsDone = 0;
         for (const TerrainTileRecord &record : index.tiles)
         {
+            TerrainProgressStep("validate: tiles", recordsDone++, index.tiles.size());
             const std::string &pack = packNames[record.pack];
             const auto *sourceRecord = index.Find(record.tile);
             TerrainTileSummary summary{record.tile,

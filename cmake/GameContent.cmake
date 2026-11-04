@@ -1,0 +1,21 @@
+# Whether a game's large files are here. A game.json may name one file, relative to the
+# game, as "requiresContent"; while that file is missing or still a Git LFS pointer the
+# game is left out of the build, since AssetCooker fails on pointers.
+function(game_content_present game_dir game_json out_var)
+    string(JSON required ERROR_VARIABLE no_requirement GET "${game_json}" requiresContent)
+    if(no_requirement)
+        set(${out_var} TRUE PARENT_SCOPE)
+        return()
+    endif()
+    set(path "${game_dir}/${required}")
+    if(NOT EXISTS "${path}")
+        set(${out_var} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    file(READ "${path}" head LIMIT 42)
+    if(head MATCHES "^version https://git-lfs")
+        set(${out_var} FALSE PARENT_SCOPE)
+    else()
+        set(${out_var} TRUE PARENT_SCOPE)
+    endif()
+endfunction()

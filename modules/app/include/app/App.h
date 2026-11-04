@@ -48,7 +48,10 @@
 #include <terrain/TerrainModule.h>
 #include <terrain_runtime/TerrainRuntimeModule.h>
 #include <terrain_script/TerrainScriptModule.h>
+#include <core/StartupGate.h>
 #include <window/Splash.h>
+
+#include <chrono>
 #include <window/WindowModule.h>
 #include <jobs/JobExecutor.h>
 
@@ -184,7 +187,7 @@ namespace mir
         void ToggleFullscreen();
 
     private:
-        // shown while App is built, closed by main or by its destructor
+        // shown while App is built and the first view loads, closed by RevealWindow or by its destructor
         struct StartupSplash
         {
             SplashScreen screen;
@@ -244,6 +247,12 @@ namespace mir
 
         // Unload and load, with no checks; incomplete when entity files are missing
         void ReplaceSceneFromDisk(bool incomplete);
+
+        // a frame's check of the first view's loading, until the window opens
+        void WaitForFirstView();
+
+        // what a game without an editor starts, the window, and the end of the splash
+        void RevealWindow();
 
         // the mSwitchProjectTo test hook
         void RunSwitchHook();
@@ -316,6 +325,9 @@ namespace mir
         TerrainRuntimeModule mTerrain;
         GameUIImGuiModule mGameUIImGui;
 
+        // set until the window opens; a bounded or hidden run does not wait
+        std::optional<StartupGate> mFirstView;
+        std::chrono::steady_clock::time_point mFirstViewStart;
         std::optional<GameProject> mProjectToOpen;
         bool mSwitchHookFired = false;
         double mElapsed = 0.0;

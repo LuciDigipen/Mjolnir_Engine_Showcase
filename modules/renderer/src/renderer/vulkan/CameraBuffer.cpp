@@ -52,7 +52,8 @@ namespace mir::vk
                                             // z = 1 if the Sun casts a shadow, w = this view's first spot shadow matrix
             glm::mat4 prevViewProj;         // last frame's viewProj for this view slot; this frame's own when there was none
             glm::mat4 sunShadowViewProj;
-            glm::vec4 jitterAndPad; // xy = this frame's sub-pixel jitter in pixels, ray tracing + Dlss only
+            glm::vec4 jitterAndPad; // xy = this frame's sub-pixel jitter in pixels, ray tracing + Dlss only;
+                                    // z = shader time in seconds, wrapped at kShaderTimeWrapSeconds
             glm::vec4 rayCone;      // x = one pixel's angular size at this view's projection
         };
 
@@ -63,6 +64,9 @@ namespace mir::vk
             glm::vec4 directionAndSpotCos; // xyz = normalized aim direction, w = cos(half-angle); -1 = no cone
             glm::vec4 color;               // rgb = color * intensity, w = shadowSlot (see LightItem::shadowSlot)
         };
+
+        // A material that animates uses whole cycles per wrap, so the wrap does not show.
+        constexpr double kShaderTimeWrapSeconds = 3600.0;
     }
 
     bool CameraBuffer::Initialize(Device &device)
@@ -277,6 +281,9 @@ namespace mir::vk
         if (outJitter != nullptr)
             *outJitter = jitter;
 
+        const std::chrono::duration<double> shaderElapsed = std::chrono::steady_clock::now() - mShaderTimeStart;
+        const float shaderTime = static_cast<float>(std::fmod(shaderElapsed.count(), kShaderTimeWrapSeconds));
+
         const CameraData data{
             .viewProj = view.viewProj,
             .lightDirWS = glm::vec4(mLightDirection, 0.0f),
@@ -296,7 +303,7 @@ namespace mir::vk
                 shadow.hasSunShadow ? 1.0f : 0.0f, static_cast<float>(shadow.spotShadowBase)),
             .prevViewProj = prevViewProj,
             .sunShadowViewProj = shadow.sunShadowViewProj,
-            .jitterAndPad = glm::vec4(jitter, 0.0f, 0.0f),
+            .jitterAndPad = glm::vec4(jitter, shaderTime, 0.0f),
             .rayCone = glm::vec4(CameraPixelAngularSize(view.fovYDegrees,
                 {viewExtent.width, viewExtent.height}), 0.0f, 0.0f, 0.0f) };
         const VkDeviceSize offset = static_cast<VkDeviceSize>(viewIndex) * mCameraAlignedSize;

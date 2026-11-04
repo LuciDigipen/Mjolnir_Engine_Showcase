@@ -8,6 +8,7 @@
  */
 #include "TerrainBake.h"
 #include "TerrainPackage.h"
+#include "TerrainProgress.h"
 #include "TerrainPublish.h"
 #include "TerrainReport.h"
 #include "TerrainSync.h"
@@ -279,6 +280,11 @@ int main(int argc, char **argv)
         return argc < 2 ? kExitUsage : 0;
     }
     const std::string command = argv[1];
+    // Flushed per line, so a pipe or a second terminal sees a long bake advance.
+    SetTerrainProgressSink([](std::string_view line) {
+        std::printf("TerrainTool: %.*s\n", static_cast<int>(line.size()), line.data());
+        std::fflush(stdout);
+    });
     try
     {
         if (command == "bake")

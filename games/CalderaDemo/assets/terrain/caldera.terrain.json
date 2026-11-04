@@ -1,0 +1,26 @@
+{
+  "recipeVersion": 2,
+  "generator": {
+    "id": "mir.heightmap",
+    "version": 1
+  },
+  "seed": 0,
+  "layout": {
+    "sampleSpacing": 1.0,
+    "intervalsPerTile": 256,
+    "bounds": {
+      "minX": -1792.0,
+      "minZ": -1792.0,
+      "maxX": 1792.0,
+      "maxZ": 1792.0
+    }
+  },
+  "parameters": {
+    "source": "../../source/caldera.heights",
+    "contentHash": "34f7a44d4da778ec"
+  },
+  "precision": {
+    "defaultSpacing": 1.0,
+    "tiles": []
+  }
+}

@@ -40,6 +40,16 @@ TEST_CASE("Shared material tables need every descriptor-indexing feature, not ra
     CHECK(ResolveRendererCapabilities(support).rayTracing);
 }
 
+TEST_CASE("A traced scene must leave headroom after its BLASes and the largest scratch", "[renderer]")
+{
+    constexpr uint64_t kMiB = 1024ull * 1024ull;
+    const uint64_t exact = 300 * kMiB + 40 * kMiB + kRayTracingHeadroomBytes;
+    CHECK(RayTracingSceneFits(300 * kMiB, 40 * kMiB, exact));
+    CHECK_FALSE(RayTracingSceneFits(300 * kMiB, 40 * kMiB, exact - 1));
+    CHECK(RayTracingSceneFits(0, 0, kRayTracingHeadroomBytes));
+    CHECK_FALSE(RayTracingSceneFits(0, 0, 0));
+}
+
 TEST_CASE("Sampler anisotropy capability carries its limit", "[renderer][material]")
 {
     RendererFeatureSupport support{ .samplerAnisotropy = false, .maxSamplerAnisotropy = 16.0f };

@@ -1,0 +1,11 @@
+{
+  "cell_m": 8.0,
+  "grid_cells_kept": 103605,
+  "grid_cells_total": 200704,
+  "inland_samples_below_sea_level": 923,
+  "json_bytes": 11405470,
+  "ocean_samples": 6474680,
+  "sea_level_m": 1.2,
+  "triangles": 209006,
+  "vertices": 105330
+}
