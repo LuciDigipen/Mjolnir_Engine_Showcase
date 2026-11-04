@@ -46,6 +46,29 @@ TEST_CASE("A stage runs its functions in registration order", "[ecs][stage]")
     REQUIRE(scheduler.FunctionCount(Stage::SceneUnload) == 0);
 }
 
+TEST_CASE("Lifecycle callbacks create entities under their scene instance", "[ecs][stage]")
+{
+    World world;
+    CommandBuffer commands;
+    SystemScheduler scheduler;
+    const auto current = AllocateSceneInstanceId();
+    const auto outgoing = AllocateSceneInstanceId();
+    world.SetActiveScene(current);
+    Entity spawned;
+    const Registration callback = scheduler.AddStage(Stage::SceneEnd, [&](SystemContext &context)
+        {
+            CHECK(context.sceneInstance == outgoing);
+            spawned = context.world.CreateEntity();
+            context.commands.Add(spawned, StageSpawned{ 3 });
+        });
+    SystemContext context{ world, commands };
+    context.sceneInstance = outgoing;
+    scheduler.RunStage(Stage::SceneEnd, context);
+    CHECK(world.EntityScene(spawned) == outgoing);
+    CHECK(world.ActiveScene() == current);
+    REQUIRE(world.GetComponent<StageSpawned>(spawned) != nullptr);
+}
+
 TEST_CASE("A stage flushes the commands its functions recorded", "[ecs][stage]")
 {
     World world;

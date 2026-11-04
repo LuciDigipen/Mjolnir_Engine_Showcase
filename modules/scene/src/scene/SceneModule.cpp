@@ -20,17 +20,25 @@ namespace mir
     SceneModule::SceneModule(ModuleContext context, std::filesystem::path sceneDir)
         : mWorld(context.world), mSceneDir(std::move(sceneDir)), mScene(NewScene("untitled"))
     {
+        mWorld.SetActiveScene(mScene.mInstanceId);
+        mLastLoad.instance = mScene.mInstanceId;
     }
 
     SceneModule::~SceneModule() = default;
 
-    void SceneModule::Unload() { UnloadScene(mWorld, mScene); }
+    void SceneModule::Unload()
+    {
+        UnloadScene(mWorld, mScene);
+        mWorld.ClearSceneResources(mScene.mInstanceId);
+        mWorld.SetActiveScene(kOwnedBySession);
+    }
 
     // a New over an unbound scene stays unbound, basically broken scene is on disk
     void SceneModule::New(std::string name, bool incomplete)
     {
         mScene = NewScene(std::move(name));
-        mLastLoad = SceneLoadResult{ SceneLoadCause::New, incomplete };
+        mLastLoad = SceneLoadResult{ SceneLoadCause::New, incomplete, mScene.mInstanceId };
+        mWorld.SetActiveScene(mScene.mInstanceId);
         if (incomplete)
             mBound = false;
     }
@@ -38,7 +46,8 @@ namespace mir
     void SceneModule::LoadFromDisk(ScenePrefabResolver *resolver, bool incomplete)
     {
         mScene = LoadScene(mWorld, mSceneDir, resolver);
-        mLastLoad = SceneLoadResult{ SceneLoadCause::FromDisk, incomplete };
+        mLastLoad = SceneLoadResult{ SceneLoadCause::FromDisk, incomplete, mScene.mInstanceId };
+        mWorld.SetActiveScene(mScene.mInstanceId);
         mBound = true;
     }
 
@@ -46,7 +55,17 @@ namespace mir
         const ScenePrefabResolver *sourceResolver, ScenePrefabResolver *destinationResolver)
     {
         mScene = CopyWorld(source, scene, mWorld, sourceResolver, destinationResolver);
-        mLastLoad = SceneLoadResult{ SceneLoadCause::FromSnapshot, false };
+        mLastLoad = SceneLoadResult{ SceneLoadCause::FromSnapshot, false, mScene.mInstanceId };
+        mWorld.SetActiveScene(mScene.mInstanceId);
+    }
+
+    void SceneModule::Adopt(LoadedScene scene, std::filesystem::path directory)
+    {
+        mScene = std::move(scene);
+        mSceneDir = std::move(directory);
+        mLastLoad = { SceneLoadCause::FromDisk, false, mScene.mInstanceId };
+        mWorld.SetActiveScene(mScene.mInstanceId);
+        mBound = true;
     }
 
     bool SceneModule::Save(const ScenePrefabResolver *resolver)

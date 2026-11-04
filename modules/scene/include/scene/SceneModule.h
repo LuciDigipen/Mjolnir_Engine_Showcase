@@ -35,6 +35,7 @@ namespace mir
         SceneLoadCause cause = SceneLoadCause::New;
         // missing entity files, or a corrupt scene replaced by an empty one
         bool incomplete = false;
+        SceneInstanceId instance = kOwnedBySession;
     };
 
     class SceneModule
@@ -69,6 +70,7 @@ namespace mir
         // binds; an incomplete New unbinds, and any other New keeps the binding
         void New(std::string name, bool incomplete = false);
         void LoadFromDisk(ScenePrefabResolver *resolver, bool incomplete);
+        void Adopt(LoadedScene scene, std::filesystem::path directory);
 
         // Copies the live scene, including unsaved edits, into this module's World.
         void CopyFrom(World &source, const LoadedScene &scene, const ScenePrefabResolver *sourceResolver,

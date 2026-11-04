@@ -100,6 +100,7 @@ LoadScene    probe and prompt, SceneUnload, SceneModule::LoadFromDisk, SceneLoad
 SaveScene    prompt for an untitled scene, SceneModule::Bind, SceneModule::Save, SceneSaved stage
 PlayScene    commit authoring prefabs, copy the live scene into RuntimeSession, runtime SceneLoad and PlayBegin, Play mode
 StopScene    runtime PlayEnd, SceneUnload and scheduler Stop, destroy RuntimeSession, Edit mode
+SwapScene    load the destination, SceneEnd and SceneUnload with sceneSwapped, SceneModule::Adopt, SceneLoad
 asset swap   AssetsModule::BeginReload, ReloadPrepare stage, CommitReload, ReloadCommit stage
              (a veto: ReloadAbort stage, AbortReload)
 ```

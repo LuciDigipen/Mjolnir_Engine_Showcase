@@ -42,6 +42,7 @@ namespace mir
         void OnStop(SystemContext &context) override;
 
         void StopAllScripts(SystemContext &context);
+        void StopSceneScripts(SystemContext &context);
 
     private:
         // a ScriptRef removal is the OnRemove hook's; this handles a renamed script

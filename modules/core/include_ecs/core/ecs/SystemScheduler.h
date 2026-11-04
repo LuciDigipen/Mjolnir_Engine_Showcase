@@ -166,6 +166,7 @@ namespace mir
         // registration order, then flush. A throw skips the rest and the flush
         void RunStage(Stage stage, SystemContext &context)
         {
+            const World::SceneScope scope(context.world, context.sceneInstance);
             mStages[static_cast<std::size_t>(stage)].Run(context);
             context.commands.Flush(context.world);
         }

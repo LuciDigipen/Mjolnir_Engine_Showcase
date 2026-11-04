@@ -77,7 +77,7 @@ return T
     }
 }
 
-TEST_CASE("Lua requests scene travel from the running World", "[script]")
+TEST_CASE("Lua requests a scene swap from the running World", "[script]")
 {
     World world;
     CommandBuffer commands;
@@ -86,7 +86,7 @@ TEST_CASE("Lua requests scene travel from the running World", "[script]")
     mir::SetEngineMode(world, mir::EngineMode::Play);
 
     ScriptHost host;
-    REQUIRE(host.LoadScriptSource("travel_request", R"LUA(
+    REQUIRE(host.LoadScriptSource("swap_request", R"LUA(
 local T = {}
 function T.NewInstanceData() return {} end
 function T.OnStart(self, world, entity)
@@ -94,10 +94,46 @@ function T.OnStart(self, world, entity)
 end
 return T
 )LUA"));
-    const int32_t instance = host.CreateInstance("travel_request");
+    const int32_t instance = host.CreateInstance("swap_request");
     REQUIRE(instance != -1);
     host.CallOnStart(world, commands, world.CreateEntity(), instance);
-    CHECK(world.Resource<mir::RequestQueue>().PopNextScene() == std::optional<std::string>("newScene"));
+    CHECK(world.Resource<mir::RequestQueue>().TakeNextScene() == std::optional<std::string>("newScene"));
+    host.DestroyInstance(instance);
+}
+
+TEST_CASE("Lua persistent entities retain instance and session data across scene changes", "[script][scene]")
+{
+    World world;
+    CommandBuffer commands;
+    world.EmplaceResource<mir::EngineModeState>();
+    world.EmplaceResource<mir::RequestQueue>();
+    mir::SetEngineMode(world, mir::EngineMode::Play);
+    world.SetActiveScene(mir::AllocateSceneInstanceId());
+    const Entity entity = world.CreateEntity();
+    ScriptHost host;
+    REQUIRE(host.LoadScriptSource("persistent_data", R"LUA(
+local T = {}
+function T.NewInstanceData() return { count = 0 } end
+function T.OnStart(self, world, entity)
+    self.count = 1
+    self.scene = world:scene_instance()
+    world:session_data().score = 42
+    world:persist(entity)
+end
+function T.OnUpdate(self, world, entity, dt)
+    if self.count == 1 and world:session_data().score == 42 and self.scene ~= world:scene_instance() then
+        world:load_scene("retained")
+    end
+end
+return T
+)LUA"));
+    const int32_t instance = host.CreateInstance("persistent_data");
+    REQUIRE(instance != -1);
+    host.CallOnStart(world, commands, entity, instance);
+    CHECK(world.EntityScene(entity) == mir::kOwnedBySession);
+    world.SetActiveScene(mir::AllocateSceneInstanceId());
+    host.CallOnUpdate(world, commands, entity, instance, 0.016f);
+    CHECK(world.Resource<mir::RequestQueue>().TakeNextScene() == std::optional<std::string>("retained"));
     host.DestroyInstance(instance);
 }
 

@@ -81,14 +81,25 @@ TEST_CASE("Play and Stop keep the authored scene while replacing the runtime wor
 
             if (cycle == 0)
             {
+                const mir::SceneInstanceId previousScene = runtime->ActiveScene();
+                runtime->EmplaceResource<int>(42);
+                runtime->EmplaceSceneResource<int>(previousScene, 7);
+                const mir::Entity persistent = runtime->CreateEntity();
+                REQUIRE(runtime->PersistEntity(persistent));
                 runtime->Resource<mir::RequestQueue>().PushNextScene("newScene");
                 app.Run();
                 mir::World *destination = app.RuntimeWorld();
                 REQUIRE(destination != nullptr);
-                CHECK(destination != runtime);
+                CHECK(destination == runtime);
+                CHECK(destination->ActiveScene() != previousScene);
+                CHECK(destination->IsAlive(persistent));
+                CHECK(destination->EntityScene(persistent) == mir::kOwnedBySession);
+                CHECK_FALSE(destination->IsAlive(spawned));
+                CHECK(destination->Resource<int>() == 42);
+                CHECK(destination->TrySceneResource<int>(previousScene) == nullptr);
                 size_t entities = 0;
                 destination->ForEachAliveEntity([&](mir::Entity) { ++entities; });
-                CHECK(entities == 1);
+                CHECK(entities == 2);
             }
 
             app.StopScene();

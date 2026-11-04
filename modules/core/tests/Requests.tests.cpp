@@ -52,7 +52,7 @@ TEST_CASE("Requests made while held are dropped and the held ones come back", "[
 
     CHECK(queue.Restore(std::move(held)) == 4);
     CHECK(queue.TakeOpenProject() == std::optional<std::string>("games/Other"));
-    CHECK(queue.PopNextScene() == std::optional<std::string>("second"));
+    CHECK(queue.TakeNextScene() == std::optional<std::string>("second"));
     CHECK(queue.Take() == std::vector<Request>{ Request::SaveScene });
 }
 

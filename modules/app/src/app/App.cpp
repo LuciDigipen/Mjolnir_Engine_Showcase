@@ -153,7 +153,7 @@ namespace mir
 
     struct App::RuntimeSession
     {
-        explicit RuntimeSession(App &app, const std::filesystem::path *sceneDirectory = nullptr)
+        explicit RuntimeSession(App &app)
             : state(app.mProject, app.mAssets, app.mResolver,
                 GameShellSettings{ .mUIDemo = app.mDesc.mUIDemo, .mQuitStopsPlay = app.mDesc.mEnableEditorLayout }),
             rendering(app.mRenderer.BindWorld(state.Context(),
@@ -180,19 +180,10 @@ namespace mir
             state.world.EmplaceResource<Selection>();
         #endif
             state.prefab.Coordinator().CopyPrefabDefinitionsFrom(app.mWorldState.prefab.Coordinator());
-            if (sceneDirectory != nullptr)
-            {
-                state.scene.SetSceneDir(*sceneDirectory);
-                state.scene.LoadFromDisk(&state.prefab.Coordinator().Resolver(), false);
-            }
-            else
-            {
-                state.scene.CopyFrom(app.mWorldState.world, app.mWorldState.scene.Scene(),
-                    &app.mWorldState.prefab.Coordinator().Resolver(), &state.prefab.Coordinator().Resolver());
-            }
+            state.scene.CopyFrom(app.mWorldState.world, app.mWorldState.scene.Scene(),
+                &app.mWorldState.prefab.Coordinator().Resolver(), &state.prefab.Coordinator().Resolver());
             SetEngineMode(state.world, EngineMode::Play);
-            if (sceneDirectory == nullptr)
-                Begin(0.0, 0);
+            Begin(0.0, 0);
         }
 
         void Begin(double elapsed, uint64_t frame)
@@ -204,7 +195,7 @@ namespace mir
 
         SystemContext MakeContext(float dt, double elapsed, uint64_t frame, float alpha)
         {
-            return SystemContext{ state.world, state.commands, dt, elapsed, frame, alpha };
+            return SystemContext{ state.world, state.commands, dt, elapsed, frame, alpha, state.scene.Scene().mInstanceId };
         }
 
         WorldState state;
@@ -598,7 +589,7 @@ namespace mir
         SetPlayState(mWorldState.world, PlayState::Running);
     }
 
-    bool App::MoveToScene(const std::string &id)
+    bool App::SwapScene(const std::string &id)
     {
         if (!mRuntime)
             return false;
@@ -606,54 +597,56 @@ namespace mir
         const auto target = std::ranges::find(mProject.mScenes, id, &ProjectScene::mId);
         if (target == mProject.mScenes.end())
         {
-            MIR_LOG_ERROR("Scene travel: unknown scene ID '{}'", id);
+            MIR_LOG_ERROR("Scene swap: unknown scene ID '{}'", id);
             return false;
         }
 
         const SceneProbe probe = ProbeScene(target->mDirectory);
         if (!probe.Ok())
         {
-            MIR_LOG_ERROR("Scene travel: scene '{}' could not be prepared ({}, {} missing files)", id,
+            MIR_LOG_ERROR("Scene swap: scene '{}' could not be prepared ({}, {} missing files)", id,
                 probe.mManifestError, MissingFileCount(probe));
             return false;
         }
 
-        std::unique_ptr<RuntimeSession> prepared;
+        World &world = mRuntime->state.world;
+        LoadedScene prepared;
         try
         {
-            prepared = std::make_unique<RuntimeSession>(*this, &target->mDirectory);
+            prepared = mir::LoadScene(world, target->mDirectory,
+                &mRuntime->state.prefab.Coordinator().Resolver(), prepared.mInstanceId);
+            if (!prepared.mComplete)
+            {
+                mir::UnloadScene(world, prepared);
+                world.ClearSceneResources(prepared.mInstanceId);
+                MIR_LOG_ERROR("Scene swap: scene '{}' could not be prepared completely", id);
+                return false;
+            }
         }
         catch (const std::exception &error)
         {
-            MIR_LOG_ERROR("Scene travel: scene '{}' could not be prepared ({})", id, error.what());
+            mir::UnloadScene(world, prepared);
+            world.ClearSceneResources(prepared.mInstanceId);
+            MIR_LOG_ERROR("Scene swap: scene '{}' could not be prepared ({})", id, error.what());
             return false;
         }
 
-        const PlayState playState = IsPaused(mRuntime->state.world) ? PlayState::Paused : PlayState::Running;
-        const bool started = mRuntime->state.scheduler.Started();
         SystemContext oldContext = MakeRuntimeContext(0.0f);
-        if (started)
-            mRuntime->state.scheduler.RunStage(Stage::PlayEnd, oldContext);
+        oldContext.sceneSwapped = true;
+        mRuntime->state.scheduler.RunStage(Stage::SceneEnd, oldContext);
         mRuntime->state.scene.Unload();
         mRuntime->state.scheduler.RunStage(Stage::SceneUnload, oldContext);
-        mRuntime->state.scheduler.Stop(oldContext);
-        mRuntime.reset();
-
-        mRuntime = std::move(prepared);
-        SetPlayState(mRuntime->state.world, playState);
-        mRuntime->Begin(mElapsed, mFrame);
-        if (started)
-        {
-            SystemContext start = MakeRuntimeContext(0.0f);
-            mRuntime->state.scheduler.Start(start);
-        }
+        mRuntime->state.scene.Adopt(std::move(prepared), target->mDirectory);
+        SystemContext loadedContext = MakeRuntimeContext(0.0f);
+        loadedContext.sceneSwapped = true;
+        mRuntime->state.scheduler.RunStage(Stage::SceneLoad, loadedContext);
         mRenderer.ActivateWorld(mRuntime->rendering.get());
         mGameUIImGui.ActivateWorld(&mRuntime->state.world, &mRuntime->state.gameUI);
         mImGui.SetInputWorld(&mRuntime->state.world);
     #if MIR_WITH_EDITOR
         mEditor.SetPlayWorld(&mRuntime->state.world);
     #endif
-        MIR_LOG_INFO("Scene travel: activated '{}'", id);
+        MIR_LOG_INFO("Scene swap: activated '{}'", id);
         return true;
     }
 
@@ -807,7 +800,7 @@ namespace mir
             }
         }
         if (nextScene && mRuntime && !mWindow.Get().ShouldClose())
-            MoveToScene(*nextScene);
+            SwapScene(*nextScene);
     }
 
     void App::ToggleFullscreen()
@@ -911,7 +904,8 @@ namespace mir
 
     SystemContext App::MakeContext(float dt)
     {
-        return SystemContext{ mWorldState.world, mWorldState.commands, dt, mElapsed, mFrame, mFixedTimestep.Alpha() };
+        return SystemContext{ mWorldState.world, mWorldState.commands, dt, mElapsed, mFrame,
+            mFixedTimestep.Alpha(), mWorldState.scene.Scene().mInstanceId };
     }
 
     SystemContext App::MakeRuntimeContext(float dt)

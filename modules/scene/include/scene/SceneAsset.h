@@ -71,6 +71,8 @@ namespace mir
 
     struct LoadedScene
     {
+        SceneInstanceId mInstanceId = AllocateSceneInstanceId();
+        bool mComplete = true;
         std::string mName;
 
         // map, not unordered_map - the manifest is written in key order, so a
@@ -105,6 +107,7 @@ namespace mir
     inline Entity CreateSceneEntity(World &world, LoadedScene &scene, Entity parent = kNullEntity)
     {
         Entity entity = world.CreateEntity();
+        world.SetEntityScene(entity, scene.mInstanceId);
         scene.mEntities[AllocateStableId(scene)] = entity;
         if (!parent.IsNull())
             SetParent(world, entity, parent);

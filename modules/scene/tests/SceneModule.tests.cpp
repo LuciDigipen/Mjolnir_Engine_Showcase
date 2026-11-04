@@ -10,6 +10,7 @@
 #include <scene/SceneModule.h>
 
 #include <core/ecs/SystemScheduler.h>
+#include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/World.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -74,6 +75,46 @@ namespace
         CHECK(ReadText(dir / "entities" / "1.json") == R"({"id":1,"parent":0,"components":[]})");
         CHECK(ReadText(dir / "instances" / "2.json") == R"({"prefab":"p","root":2})");
     }
+}
+
+TEST_CASE("Scene unload keeps session entities and other scene instances", "[scene]")
+{
+    World world;
+    SystemScheduler scheduler;
+    SceneModule scene({ world, scheduler }, {});
+    const mir::SceneInstanceId outgoing = scene.Scene().mInstanceId;
+    const mir::Entity parent = mir::CreateSceneEntity(world, scene.Scene());
+    const mir::Entity persistent = mir::CreateSceneEntity(world, scene.Scene(), parent);
+    const mir::Entity child = mir::CreateSceneEntity(world, scene.Scene(), persistent);
+    REQUIRE(world.PersistEntity(persistent));
+    const mir::Entity spawned = world.CreateEntity();
+    world.EmplaceResource<int>(23);
+    world.EmplaceSceneResource<int>(outgoing, 11);
+
+    const mir::SceneInstanceId destination = mir::AllocateSceneInstanceId();
+    world.EmplaceSceneResource<int>(destination, 17);
+    mir::Entity prepared;
+    {
+        const World::SceneScope scope(world, destination);
+        prepared = world.CreateEntity();
+    }
+    scene.Unload();
+    CHECK_FALSE(world.IsAlive(parent));
+    CHECK_FALSE(world.IsAlive(spawned));
+    CHECK(world.IsAlive(persistent));
+    CHECK(world.IsAlive(child));
+    CHECK(world.IsAlive(prepared));
+    CHECK(world.HierarchyIndex().ParentOf(persistent).IsNull());
+    CHECK(world.HierarchyIndex().ParentOf(child) == persistent);
+    CHECK(world.EntityScene(child) == mir::kOwnedBySession);
+    CHECK(world.EntityScene(prepared) == destination);
+    CHECK(world.TrySceneResource<int>(outgoing) == nullptr);
+    REQUIRE(world.TrySceneResource<int>(destination) != nullptr);
+    CHECK(*world.TrySceneResource<int>(destination) == 17);
+    CHECK(world.Resource<int>() == 23);
+    scene.New("again");
+    CHECK(scene.Scene().mInstanceId != outgoing);
+    CHECK(scene.LastLoad().instance == scene.Scene().mInstanceId);
 }
 
 TEST_CASE("An empty scene standing in for a broken one is unbound and does not save over it", "[scene]")

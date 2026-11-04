@@ -65,7 +65,12 @@ namespace mir
         const Stage resetStages[]{ Stage::SceneUnload, Stage::SceneLoad, Stage::PlayBegin, Stage::PlayEnd };
         for (size_t i = 0; i < 4; ++i)
             mStages[i] = context.scheduler.AddStage(resetStages[i],
-                [this](SystemContext &) { mParticles.Clear(); });
+                [this, stage = resetStages[i]](SystemContext &frame)
+                {
+                    if ((stage == Stage::SceneLoad || stage == Stage::SceneUnload) && frame.sceneSwapped)
+                        return;
+                    mParticles.Clear();
+                });
         mStages[4] = context.scheduler.AddStage(Stage::ReloadPrepare,
             [this, &assets](SystemContext &) { mParticles.PrepareReload(assets.Candidate()); });
         mStages[5] = context.scheduler.AddStage(Stage::ReloadCommit,

@@ -8,6 +8,7 @@
  */
 #include <renderer/RendererModule.h>
 
+
 #include <renderer/ActiveCamera.h>
 #include <renderer/ComponentRegistration.h>
 #include <renderer/MeshResolveSystem.h>
@@ -92,12 +93,12 @@ namespace mir
 
         // a WorldTransform reader
         mMeshes = &context.scheduler.AddSystem<MeshResolveSystem>(SystemPhase::LateUpdate,
-            SystemOrder{SystemOrder::kNormal}, mRenderer, settings.mAssetService,
+            SystemOrder{ SystemOrder::kNormal }, mRenderer, settings.mAssetService,
             *settings.mResolver, &mSurfaceMaterials);
         mActiveCamera = &context.scheduler.AddSystem<ActiveCameraSystem>(SystemPhase::Render,
-            SystemOrder{SystemOrder::kEarly});
+            SystemOrder{ SystemOrder::kEarly });
         mRenderSystem = &context.scheduler.AddSystem<RenderSystem>(SystemPhase::Render,
-            SystemOrder{SystemOrder::kNormal}, mRenderer);
+            SystemOrder{ SystemOrder::kNormal }, mRenderer);
 
         mHooks = context.world.SetComponentHooks<MeshRenderer>({ .onRemove = [this](World &, Entity entity)
             {
@@ -105,8 +106,9 @@ namespace mir
             } });
 
         // no scene entity holds a mesh or material handle now
-        mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &)
+        mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &frame)
             {
+                if (frame.sceneSwapped) return;
                 mMeshes->ReleaseResources();
                 mSurfaceMaterials.SetActiveMaterials({});
                 // Independent Prefab Worlds keep their shared handles and preview values.

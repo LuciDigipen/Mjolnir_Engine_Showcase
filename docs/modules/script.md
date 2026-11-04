@@ -93,10 +93,14 @@ each extends that same `World` usertype rather than adding one of its own. The
 host binds `Entity` and `World` when it builds its state, so every bridge's
 bindings run after them.
 
-`world:load_scene("sceneId")` queues replacement of the running Play scene with a
+`world:load_scene("sceneId")` queues a swap of the running Play scene to a
 scene registered in `game.json`. It returns `true` when the request is queued.
-The replacement runs at the next frame boundary. An unknown ID or a scene that
+The swap runs at the next frame boundary. An unknown ID or a scene that
 cannot be prepared leaves the current scene running and logs an error.
+`SceneEnd` stops only the outgoing scene's scripts. `world:persist(entity)`
+keeps an entity and its children across the swap, `world:scene_instance()`
+returns the active instance ID, and `world:session_data()` returns a table that
+survives swaps for the length of Play.
 
 The input half is `world:is_down/just_pressed/just_released/axis/axis2d` and
 `world:active_device`. Scripts are gameplay, so the action reads go through

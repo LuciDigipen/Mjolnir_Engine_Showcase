@@ -68,7 +68,7 @@ namespace mir
         const ScenePrefabResolver *resolver = nullptr);
 
     LoadedScene LoadScene(World &world, const std::filesystem::path &sceneDir,
-        ScenePrefabResolver *resolver = nullptr);
+        ScenePrefabResolver *resolver = nullptr, SceneInstanceId instance = kOwnedBySession);
 
     // Scene error checker
     struct SceneProbe

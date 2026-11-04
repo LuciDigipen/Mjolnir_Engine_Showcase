@@ -666,6 +666,20 @@ namespace mir
             "add", &WorldAdd,
             "remove", &WorldRemove,
             "each", &WorldEach,
+            "persist", [](World &world, Entity entity)
+            {
+                return world.HasResource<EngineModeState>() && IsPlaying(world) && world.PersistEntity(entity);
+            },
+            "scene_instance", [](World &world) { return world.ActiveScene(); },
+            "session_data", [](World &, sol::this_state state)
+            {
+                sol::state_view lua(state);
+                sol::optional<sol::table> data = lua.registry()["mir.sessionData"];
+                if (data) return *data;
+                sol::table created = lua.create_table();
+                lua.registry()["mir.sessionData"] = created;
+                return created;
+            },
             "load_scene", [](World &world, const std::string &id)
             {
                 if (id.empty() || !world.HasResource<EngineModeState>() || !IsPlaying(world) ||

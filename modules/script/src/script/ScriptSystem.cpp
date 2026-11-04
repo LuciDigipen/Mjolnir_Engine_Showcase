@@ -75,6 +75,20 @@ namespace mir
             });
     }
 
+    void ScriptSystem::StopSceneScripts(SystemContext &context)
+    {
+        if (mQuery == nullptr) return;
+        mQuery->ForEach([&](Entity entity, ScriptRef &ref)
+            {
+                if (context.world.EntityScene(entity) != context.sceneInstance ||
+                    ref.instanceRef < 0 || !ref.started)
+                    return;
+                RunIsolated(entity, "OnStop", [&]
+                    { mHost.CallOnStop(context.world, context.commands, entity, ref.instanceRef); });
+                ref.started = false;
+            });
+    }
+
     void ScriptSystem::OnStop(SystemContext &context)
     {
         StopAllScripts(context);

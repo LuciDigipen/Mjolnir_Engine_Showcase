@@ -210,8 +210,8 @@ namespace mir
         // what the editor, the game shell and the import asked for last frame
         void ApplyRequests();
 
-        // Prepares a registered scene in a separate runtime session, then switches at the frame boundary.
-        bool MoveToScene(const std::string &id);
+        // Loads a registered scene beside the running one, then swaps them at the frame boundary. False leaves the running scene.
+        bool SwapScene(const std::string &id);
 
         // A standalone game starts no gameplay for a scene until its resources are ready. The window, the
         // completions, the uploads and the loading UI keep running, and only the resource systems tick. False

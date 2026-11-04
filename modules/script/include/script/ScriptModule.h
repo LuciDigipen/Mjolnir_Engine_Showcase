@@ -47,6 +47,7 @@ namespace mir
         Registration mHooks;
         Registration mReloadPoll;
         Registration mPlayEnd;
+        Registration mSceneEnd;
         Registration mReloadCommit;
     };
 }

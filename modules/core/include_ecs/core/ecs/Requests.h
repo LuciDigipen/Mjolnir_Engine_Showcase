@@ -72,7 +72,7 @@ namespace mir
             std::vector<Request> requests;
             std::optional<std::string> openProject;
             std::optional<OpenSceneRequest> openScene;
-            std::optional<std::string> nextScenes;
+            std::optional<std::string> nextScene;
         };
         Held Hold()
         {

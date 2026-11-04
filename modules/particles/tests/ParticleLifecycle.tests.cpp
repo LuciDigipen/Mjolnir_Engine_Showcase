@@ -160,6 +160,7 @@ TEST_CASE("Particle save load and repeated play scene transitions never serializ
     auto scene = mir::NewScene("particle lifecycle");
     auto owner = test.System();
     scene.mEntities.emplace(mir::AllocateStableId(scene), owner);
+    test.world.SetEntityScene(owner, scene.mInstanceId);
     const auto dir = test.files.Root() / "scene";
     test.Tick();
     const auto old = test.Particles().Find(owner)->handle;
@@ -207,7 +208,7 @@ TEST_CASE("Particle system user overrides persist and update only the selected i
     const auto owner = test.System();
     auto &component = *test.world.GetComponent<mir::ParticleSystem>(owner);
     component.overrideParameters = true;
-    component.userParameters = {0.5f, 2};
+    component.userParameters = { 0.5f, 2 };
     test.Tick();
     REQUIRE(test.Particles().Find(owner));
     const auto handle = test.Particles().Find(owner)->handle;
@@ -221,16 +222,17 @@ TEST_CASE("Particle system user overrides persist and update only the selected i
     test.Tick();
     REQUIRE(test.Particles().Find(other));
     CHECK(test.Particles().Find(other)->parameters.spawnRateScale == 1);
-    REQUIRE(test.Particles().SetParameters(owner, {2, 3}));
+    REQUIRE(test.Particles().SetParameters(owner, { 2, 3 }));
     test.Tick();
     CHECK(test.Particles().Find(owner)->handle == handle);
     CHECK(test.Particles().Runtime().FindEmitter(emitter)->spawns == 2);
     CHECK(test.Particles().Find(other)->parameters.sizeScale == 1);
-    CHECK_FALSE(test.Particles().SetParameters(owner, {-1, 1}));
+    CHECK_FALSE(test.Particles().SetParameters(owner, { -1, 1 }));
     CHECK(test.Particles().Find(owner)->parameters.spawnRateScale == 2);
 
     auto scene = mir::NewScene("particle overrides");
     scene.mEntities.emplace(mir::AllocateStableId(scene), owner);
+    test.world.SetEntityScene(owner, scene.mInstanceId);
     const auto dir = test.files.Root() / "overrides-scene";
     REQUIRE(mir::SaveScene(test.world, dir, scene));
     mir::UnloadScene(test.world, scene);
@@ -264,13 +266,13 @@ TEST_CASE("Particle world resolves two emitter dependencies and retires both aft
     test.files.Write("effect.blob", mir::BuildParticleEffectAsset(definition));
     test.files.Write("secondary.blob", mir::BuildParticleEmitterAsset(second));
     const mir::AssetManifestSourceEntry entries[]{
-        {{mir::AssetId{901}, mir::kParticleScriptTypeTag, mir::kParticleScriptContentVersion}, "script.blob"},
-        {{mir::AssetId{902}, mir::kParticleScriptLayoutTypeTag, mir::kParticleScriptLayoutContentVersion}, "layout.blob"},
-        {{test.files.EffectId(), mir::kParticleEffectTypeTag, mir::kParticleEffectContentVersion}, "effect.blob",
-            "assets/effects/exhaust.particle.json"},
-        {{test.files.EmitterId(), mir::kParticleEmitterTypeTag, mir::kParticleEmitterContentVersion}, "emitter.blob"},
-        {{secondId, mir::kParticleEmitterTypeTag, mir::kParticleEmitterContentVersion}, "secondary.blob"},
-        {{test.files.TextureId(), mir::kTextureAssetTypeTag, mir::kTextureAssetContentVersion}, "texture.blob"}};
+        { { mir::AssetId{ 901 }, mir::kParticleScriptTypeTag, mir::kParticleScriptContentVersion }, "script.blob" },
+        { { mir::AssetId{ 902 }, mir::kParticleScriptLayoutTypeTag, mir::kParticleScriptLayoutContentVersion }, "layout.blob" },
+        { { test.files.EffectId(), mir::kParticleEffectTypeTag, mir::kParticleEffectContentVersion }, "effect.blob",
+            "assets/effects/exhaust.particle.json" },
+        { { test.files.EmitterId(), mir::kParticleEmitterTypeTag, mir::kParticleEmitterContentVersion }, "emitter.blob" },
+        { { secondId, mir::kParticleEmitterTypeTag, mir::kParticleEmitterContentVersion }, "secondary.blob" },
+        { { test.files.TextureId(), mir::kTextureAssetTypeTag, mir::kTextureAssetContentVersion }, "texture.blob" } };
     test.files.Write(mir::kAssetManifestFileName, mir::BuildAssetManifestBlob(entries));
     test.assets.BeginReload();
     test.StageEvent(mir::Stage::ReloadPrepare);
@@ -307,7 +309,7 @@ TEST_CASE("Inactive particle systems reconcile reflected user overrides while dr
     REQUIRE(test.Particles().Stop(owner));
     auto &component = *test.world.GetComponent<mir::ParticleSystem>(owner);
     component.overrideParameters = true;
-    component.userParameters = {0.5f, 2};
+    component.userParameters = { 0.5f, 2 };
     test.Tick();
     REQUIRE(test.Particles().Find(owner));
     CHECK(test.Particles().Find(owner)->parameters.sizeScale == 2);
@@ -355,18 +357,19 @@ TEST_CASE("Particle emitter offsets are hidden persisted fields that move only t
     const auto still = test.System();
     // The first emitter of the published effect is placement 1.
     test.world.GetComponent<mir::ParticleSystem>(moved)->offsetPlacementIds[0] = 1;
-    test.world.GetComponent<mir::ParticleSystem>(moved)->emitterOffsets[0] = {3, 0, 0};
+    test.world.GetComponent<mir::ParticleSystem>(moved)->emitterOffsets[0] = { 3, 0, 0 };
     test.Tick();
     REQUIRE(test.Particles().Find(moved));
     REQUIRE(test.Particles().Find(still));
     const auto position = [&](mir::Entity owner)
-    {
-        return test.Particles().Runtime().FindEmitter(test.Particles().Find(owner)->emitters[0])->attachmentPosition.Meters();
-    };
+        {
+            return test.Particles().Runtime().FindEmitter(test.Particles().Find(owner)->emitters[0])->attachmentPosition.Meters();
+        };
     CHECK(position(moved).x - position(still).x == 3);
 
     auto scene = mir::NewScene("particle offsets");
     scene.mEntities.emplace(mir::AllocateStableId(scene), moved);
+    test.world.SetEntityScene(moved, scene.mInstanceId);
     const auto dir = test.files.Root() / "offsets-scene";
     REQUIRE(mir::SaveScene(test.world, dir, scene));
     mir::UnloadScene(test.world, scene);
@@ -389,18 +392,18 @@ TEST_CASE("Per-entity offsets follow the placement id, not the emitter's positio
     auto second = definition.emitterDefinitions[0];
     definition.emitters.push_back(secondId);
     definition.emitterDefinitions.push_back(second);
-    definition.placementIds = {7, 3};
-    definition.placementOffsets = {{0, 0, 0}, {0, 0, 0}};
+    definition.placementIds = { 7, 3 };
+    definition.placementOffsets = { { 0, 0, 0 },{ 0, 0, 0 } };
     test.files.Write("effect.blob", mir::BuildParticleEffectAsset(definition));
     test.files.Write("secondary.blob", mir::BuildParticleEmitterAsset(second));
     const mir::AssetManifestSourceEntry entries[]{
-        {{mir::AssetId{901}, mir::kParticleScriptTypeTag, mir::kParticleScriptContentVersion}, "script.blob"},
-        {{mir::AssetId{902}, mir::kParticleScriptLayoutTypeTag, mir::kParticleScriptLayoutContentVersion}, "layout.blob"},
-        {{test.files.EffectId(), mir::kParticleEffectTypeTag, mir::kParticleEffectContentVersion}, "effect.blob",
-            "assets/effects/exhaust.particle.json"},
-        {{test.files.EmitterId(), mir::kParticleEmitterTypeTag, mir::kParticleEmitterContentVersion}, "emitter.blob"},
-        {{secondId, mir::kParticleEmitterTypeTag, mir::kParticleEmitterContentVersion}, "secondary.blob"},
-        {{test.files.TextureId(), mir::kTextureAssetTypeTag, mir::kTextureAssetContentVersion}, "texture.blob"}};
+        { { mir::AssetId{ 901 }, mir::kParticleScriptTypeTag, mir::kParticleScriptContentVersion }, "script.blob" },
+        { { mir::AssetId{ 902 }, mir::kParticleScriptLayoutTypeTag, mir::kParticleScriptLayoutContentVersion }, "layout.blob" },
+        { { test.files.EffectId(), mir::kParticleEffectTypeTag, mir::kParticleEffectContentVersion }, "effect.blob",
+            "assets/effects/exhaust.particle.json" },
+        { { test.files.EmitterId(), mir::kParticleEmitterTypeTag, mir::kParticleEmitterContentVersion }, "emitter.blob" },
+        { { secondId, mir::kParticleEmitterTypeTag, mir::kParticleEmitterContentVersion }, "secondary.blob" },
+        { { test.files.TextureId(), mir::kTextureAssetTypeTag, mir::kTextureAssetContentVersion }, "texture.blob" } };
     test.files.Write(mir::kAssetManifestFileName, mir::BuildAssetManifestBlob(entries));
     test.assets.BeginReload();
     test.StageEvent(mir::Stage::ReloadPrepare);
@@ -409,10 +412,10 @@ TEST_CASE("Per-entity offsets follow the placement id, not the emitter's positio
     const auto owner = test.System();
     auto &component = *test.world.GetComponent<mir::ParticleSystem>(owner);
     component.offsetPlacementIds[0] = 3;
-    component.emitterOffsets[0] = {0, 4, 0};
+    component.emitterOffsets[0] = { 0, 4, 0 };
     // A removed or unknown placement keeps its slot but moves nothing.
     component.offsetPlacementIds[1] = 99;
-    component.emitterOffsets[1] = {0, 9, 0};
+    component.emitterOffsets[1] = { 0, 9, 0 };
     test.Tick();
     REQUIRE(test.Particles().Find(owner));
     const auto &emitters = test.Particles().Find(owner)->emitters;

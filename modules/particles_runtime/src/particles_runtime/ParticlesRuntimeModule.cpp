@@ -24,7 +24,7 @@ namespace mir
     {
         ParticleRenderProperties RenderProperties(const ParticleRendererProperties &r)
         {
-            return {r.alignment, r.facing, r.blend, r.sort, r.softDistance, r.maxDistance, r.lit, r.fog, r.textured, r.stretch};
+            return { r.alignment, r.facing, r.blend, r.sort, r.softDistance, r.maxDistance, r.lit, r.fog, r.textured, r.stretch };
         }
     }
     std::vector<ParticleSubmission> BuildParticleRenderData(const ParticleRuntime &runtime, bool simulating)
@@ -62,7 +62,7 @@ namespace mir
             input.texturePixels = emitter.definition.texturePixels;
             if (advance)
                 for (const auto &birth : emitter.births)
-                    input.births.push_back({birth.fraction, birth.age, birth.sequence, 0});
+                    input.births.push_back({ birth.fraction, birth.age, birth.sequence, 0 });
             input.lifetime = emitter.definition.lifetime;
             input.size = emitter.definition.size * system->parameters.sizeScale;
             input.color = emitter.definition.color;
@@ -86,7 +86,7 @@ namespace mir
             input.texturePixels = emitter.definition.texturePixels;
             input.points.reserve(emitter.ribbon.points.size());
             for (const auto &point : emitter.ribbon.points)
-                input.points.push_back({point.position, point.textureDistance, point.ribbon, point.link, point.width, point.color});
+                input.points.push_back({ point.position, point.textureDistance, point.ribbon, point.link, point.width, point.color });
             result.push_back(std::move(input));
         }
         return result;
@@ -125,9 +125,14 @@ namespace mir
     }
     ParticlesRuntimeModule::ParticlesRuntimeModule(ModuleContext context, ParticlesModule &particles, ParticlesGpuModule &gpu, RenderSystem &rendering)
     {
-        context.scheduler.AddSystem<ParticleSubmitSystem>(SystemPhase::LateUpdate, SystemOrder{80}, particles.Particles(), gpu, rendering);
-        const Stage stages[]{Stage::SceneUnload, Stage::SceneLoad, Stage::PlayBegin, Stage::PlayEnd, Stage::ReloadCommit};
+        context.scheduler.AddSystem<ParticleSubmitSystem>(SystemPhase::LateUpdate, SystemOrder{ 80 }, particles.Particles(), gpu, rendering);
+        const Stage stages[]{ Stage::SceneUnload, Stage::SceneLoad, Stage::PlayBegin, Stage::PlayEnd, Stage::ReloadCommit };
         for (size_t i = 0; i < mStages.size(); ++i)
-            mStages[i] = context.scheduler.AddStage(stages[i], [&gpu](SystemContext &) { gpu.Clear(); });
+            mStages[i] = context.scheduler.AddStage(stages[i], [&gpu, stage = stages[i]](SystemContext &frame)
+                {
+                    if ((stage == Stage::SceneLoad || stage == Stage::SceneUnload) && frame.sceneSwapped)
+                        return;
+                    gpu.Clear();
+                });
     }
 }
