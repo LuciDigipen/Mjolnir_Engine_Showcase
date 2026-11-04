@@ -72,6 +72,11 @@ namespace mir
             mDesignHeight = height;
         }
 
+        //an area taller than this draws the UI larger in proportion, so it takes the same share of any display;
+        //0 never scales it up. From the next BeginFrame
+        void SetReferenceHeight(float height) { mReferenceHeight = height; }
+        float ReferenceHeight() const { return mReferenceHeight; }
+
         //the area in UI units, which screens lay out, draw and hit-test in
         UIRect Bounds() const { return UIRect{0.0f, 0.0f, mArea.width / mScale, mArea.height / mScale}; }
 
@@ -104,6 +109,11 @@ namespace mir
         //only between BeginFrame and EndFrame
         UIPrompt Prompt(std::string_view action) const;
 
+        //in UI units at the style's font size, measured by the backend's font at this frame's scale; an estimate
+        //without a backend
+        UISize MeasureText(std::string_view text) const;
+        float TextWidth(std::string_view text) const { return MeasureText(text).width; }
+
         UIStyle &Style() { return mStyle; }
         const UIStyle &Style() const { return mStyle; }
 
@@ -128,6 +138,7 @@ namespace mir
         //every screen the engine ships fits 640 x 480 at its own size
         float mDesignWidth = 640.0f;
         float mDesignHeight = 480.0f;
+        float mReferenceHeight = 720.0f;
         UIEdges mSafeAreaInsets;
         InputState *mInput = nullptr;
         const InputMap *mInputMap = nullptr;

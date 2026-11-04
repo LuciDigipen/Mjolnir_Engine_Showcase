@@ -929,3 +929,31 @@ TEST_CASE("In the editor's viewport the cursor is never hidden over the panels a
     f.Frame(true, GameShell::kCursorIdleSeconds);
     CHECK_FALSE(f.UI().HidesCursor());
 }
+
+TEST_CASE("The HUD sizes its button and key cap to their text, on any display", "[gameshell][text]")
+{
+    for (const UIRect area : {kFullscreen, kViewport, UIRect{0, 0, 3840, 2160}})
+    {
+        Fixture f(area);
+        f.Frame();
+        f.Tap(Key::Escape);
+        f.Tap(Key::Escape);
+        REQUIRE_FALSE(f.Shell().MenuOpen());
+
+        const std::optional<UIRect> label = f.TextAt("Escape");
+        const std::optional<UIRect> cap = f.FaceUnder("Escape");
+        const std::optional<UIRect> pause = f.TextAt("Pause");
+        REQUIRE(label.has_value());
+        REQUIRE(cap.has_value());
+        REQUIRE(pause.has_value());
+
+        // the label inside its cap, and the button's text clear of it
+        CHECK(label->x >= cap->x);
+        CHECK(label->x + f.UI().TextWidth("Escape") <= cap->Right() + 1e-3f);
+        CHECK(pause->x + f.UI().TextWidth("Pause") <= cap->x);
+
+        // and both centred down it
+        const float labelMiddle = label->y + f.UI().MeasureText("Escape").height * 0.5f;
+        CHECK(labelMiddle == Catch::Approx(cap->y + cap->height * 0.5f));
+    }
+}
