@@ -1,0 +1,59 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [
+          0.0,
+          7.0,
+          0.0
+        ],
+        "rotation": [
+          -0.7071068,
+          0.0,
+          0.0,
+          0.7071068
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [
+          0.0,
+          7.0,
+          0.0
+        ]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "Spot_Centre"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "areaSize": 0.5,
+        "color": [
+          0.6,
+          0.8,
+          1.0
+        ],
+        "intensity": 4.0,
+        "range": 10.0,
+        "spotAngleDegrees": 35.0,
+        "type": 2
+      },
+      "type": "Light"
+    }
+  ],
+  "id": 9,
+  "parent": 0,
+  "siblingIndex": 8
+}

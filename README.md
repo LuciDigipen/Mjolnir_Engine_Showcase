@@ -105,8 +105,7 @@ tracked with Git LFS:
 games/TerrainCheck/assets/textures/icelandic_sand_and_rocks/*.jpg
 ```
 
-Only that directory is in LFS; every other image in the repository stays a
-regular Git object. The six committed maps are BaseColor, Normal,
+Sponza mesh buffers (`games/Sponza/**/*.bin`) and textures (`games/Sponza/**/*.jpg` and `games/Sponza/**/*.png`) also use LFS. Other images stay regular Git objects. The six committed maps are BaseColor, Normal,
 Displacement, Roughness, Specular and AO. Bump, Cavity and Gloss are not used
 and are not included. The six JPEGs are byte-identical copies of the originals;
 nothing was re-encoded, cooked or migrated from history. `tcigfcgn.json` is the
