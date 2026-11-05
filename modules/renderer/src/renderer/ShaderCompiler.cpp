@@ -330,7 +330,10 @@ namespace mir
             artifact.cancelled = process.cancelled;
             artifact.diagnostic = process.diagnostic;
             if (!process.success)
+            {
+                artifact.diagnostic += "\nshader compiler exited with code " + std::to_string(process.exitCode);
                 return artifact;
+            }
             const auto spirv = ReadBytes(std::filesystem::u8path(artifact.output.output));
             const auto reflection = ReadText(std::filesystem::u8path(artifact.output.reflection));
             const auto depfile = ReadText(std::filesystem::u8path(artifact.output.depfile));

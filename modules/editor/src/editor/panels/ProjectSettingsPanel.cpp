@@ -12,6 +12,7 @@
 #include <core/log/SetupError.h>
 #include <physics_layers/PhysicsLayerSettings.h>
 #include <renderer/RtxgiConfig.h>
+#include <renderer/VulkanRenderer.h>
 
 #include <imgui.h>
 
@@ -54,13 +55,45 @@ namespace mir
             if (!kRtxgiCompiledIn)
                 ImGui::TextWrapped("GI is unavailable in this build. Settings can still be saved.");
             else
-                ImGui::TextWrapped("GI is available in this build.");
+                ImGui::TextWrapped("RTXGI is compiled into this build.");
+            if (mRenderer) ImGui::TextWrapped("Runtime: %s", mRenderer->GiStatus().c_str());
             if (!draftRenderSettings.rayTracing)
                 ImGui::TextWrapped("GI requires ray tracing. Raster rendering uses its existing lighting.");
             ImGui::InputScalarN("Volume center (world meters)", ImGuiDataType_Double, gi.origin.data(), 3,
                 nullptr, nullptr, "%.6f");
             ImGui::InputInt3("Probe counts (XYZ)", gi.probeCounts.data());
             ImGui::InputFloat("Probe spacing (meters)", &gi.probeSpacing);
+            ImGui::InputFloat("Bounds padding (meters)", &mGiPadding);
+            if (mRenderer)
+            {
+                // Keeps resident scene bounds fresh only while this section is drawn.
+                mGiSceneBoundsRequested = true;
+                const auto bounds = mRenderer->GetGiSceneBounds();
+                ImGui::BeginDisabled(!bounds);
+                if (ImGui::Button("Fit to resident scene bounds"))
+                {
+                    const char *error = gi.FitBounds(bounds->minimum, bounds->maximum, mGiPadding);
+                    mGiFitStatus = error ? error : "Fitted draft. Save to apply.";
+                    if (error)
+                    {
+                        auto alternative = gi;
+                        for (int attempt = 0; attempt < 16; ++attempt)
+                        {
+                            alternative.probeSpacing *= 1.25f;
+                            if (!alternative.FitBounds(bounds->minimum, bounds->maximum, mGiPadding))
+                            {
+                                mGiFitStatus += " Try spacing " + std::to_string(alternative.probeSpacing) + " m.";
+                                break;
+                            }
+                        }
+                    }
+                }
+                ImGui::EndDisabled();
+                ImGui::Checkbox("Show saved GI volume and probe grid", &mShowGiVolume);
+                ImGui::TextWrapped("GPU probe state: green active, gray inactive, yellow awaiting readback. Relocation and state arrive a few frames later.");
+                ImGui::TextWrapped("Fits loaded mesh bounds, including model transforms. Allow padding for animation and streamed geometry.");
+            }
+            if (!mGiFitStatus.empty()) ImGui::TextWrapped("%s", mGiFitStatus.c_str());
             constexpr int rayCounts[]{ 64, 128, 256, 512, 1024 };
             constexpr const char *rayLabels[]{ "64", "128", "256", "512", "1024" };
             int rayChoice = 0;
@@ -73,6 +106,10 @@ namespace mir
             ImGui::SliderFloat("GI intensity", &gi.intensity, 0.0f, 10.0f);
             if (gi.ValidationError() == nullptr)
             {
+                const auto extent = gi.Extent();
+                ImGui::Text("Coverage: %.1f x %.1f x %.1f m", extent[0], extent[1], extent[2]);
+                ImGui::Text("Full sweep: %llu frames", static_cast<unsigned long long>(
+                    (gi.ProbeCount() + gi.probesPerFrame - 1) / gi.probesPerFrame));
                 ImGui::Text("%llu probes, %llu rays/frame, %.1f MiB estimated",
                     static_cast<unsigned long long>(gi.ProbeCount()),
                     static_cast<unsigned long long>(uint64_t(gi.probesPerFrame) * gi.raysPerProbe),
@@ -356,8 +393,9 @@ namespace mir
     }
 
     void ProjectSettingsPanel::Draw(RenderSettings &renderSettings, const std::filesystem::path &savePath,
-        bool &showInputSettings, PhysicsLayerUpdate *layerUpdate, IEditorAudio *audio, bool editing)
+        bool &showInputSettings, PhysicsLayerUpdate *layerUpdate, IEditorAudio *audio, bool editing, const VulkanRenderer *renderer)
     {
+        mRenderer = renderer;
         if (!mDraftLoaded)
         {
             mDraftRenderSettings = renderSettings;

@@ -44,6 +44,8 @@ namespace mir
         std::vector<std::string> raytracing;
         std::vector<std::string> layout;
         std::vector<std::string> surfaceFragment;
+        std::vector<std::string> giRaytracing;
+        std::vector<std::string> probeRaytracing;
     };
 
     struct ShaderAssetRoot

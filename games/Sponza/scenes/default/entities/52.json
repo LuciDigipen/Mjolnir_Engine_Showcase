@@ -2,15 +2,32 @@
   "components": [
     {
       "fields": {
-        "position": [0.08, 0.45, -9.2],
-        "rotation": [0, -0.53729961, 0, 0.84339145],
-        "scale": [0.012, 0.012, 0.012]
+        "position": [
+          0.08,
+          0.45,
+          -9.2
+        ],
+        "rotation": [
+          0.0,
+          -0.53729963,
+          0.0,
+          0.8433915
+        ],
+        "scale": [
+          0.012,
+          0.012,
+          0.012
+        ]
       },
       "type": "Transform"
     },
     {
       "fields": {
-        "position": [0.08, 0.45, -9.2]
+        "position": [
+          0.08,
+          0.45,
+          -9.2
+        ]
       },
       "type": "WorldTransform"
     },
@@ -22,11 +39,15 @@
     },
     {
       "fields": {
-        "modelName": "models/Fox.glb",
+        "animationAsset": "21f380f211a4f66f",
         "clip": 0,
         "loop": true,
+        "modelAsset": "f28b5d1b1b7239f2",
+        "modelName": "models/Fox.glb",
         "playing": false,
-        "speed": 1
+        "scene": -1,
+        "speed": 1.0,
+        "time": 0.0
       },
       "type": "ModelPlayer"
     }

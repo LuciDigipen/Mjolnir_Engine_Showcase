@@ -443,6 +443,10 @@ namespace mir
         if (actions.mToggleMaterialEditor)
             mShowMaterialEditor = !mShowMaterialEditor;
 
+        mRenderer.Renderer().SetShowGiVolume(actions.mShowGiVolume);
+        if (actions.mRequestGiSceneBounds)
+            mRenderer.Renderer().RequestGiSceneBounds();
+
         RequestQueue &requests = mWorld.Resource<RequestQueue>();
         switch (actions.mScene)
         {

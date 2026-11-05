@@ -2,15 +2,32 @@
   "components": [
     {
       "fields": {
-        "position": [-0.54, 0.33, -2.79],
-        "rotation": [0, 0, 0, 1],
-        "scale": [0.86, 0.26, 0.12]
+        "position": [
+          -0.54,
+          0.33,
+          -2.79
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.86,
+          0.26,
+          0.12
+        ]
       },
       "type": "Transform"
     },
     {
       "fields": {
-        "position": [-0.54, 0.33, -2.79]
+        "position": [
+          -0.54,
+          0.33,
+          -2.79
+        ]
       },
       "type": "WorldTransform"
     },
@@ -24,16 +41,47 @@
       "fields": {
         "materialShader": "default",
         "meshName": "builtin:cube",
-        "tint": [0.23, 0.3, 0.36, 1]
+        "tint": [
+          0.23,
+          0.3,
+          0.36,
+          1.0
+        ]
       },
       "type": "MeshRenderer"
     },
     {
       "fields": {
+        "allowSleeping": true,
+        "axis": 1,
+        "detectStay": false,
+        "friction": 0.85,
+        "gravityFactor": 1.0,
+        "halfExtent": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "halfHeight": 1.0,
+        "interpolate": false,
+        "isTrigger": false,
+        "layer": 0,
+        "mass": 1.0,
         "motion": 0,
-        "shape": 0,
-        "halfExtent": [0.5, 0.5, 0.5],
-        "friction": 0.85
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "radius": 0.5,
+        "restitution": 0.0,
+        "rotationOffset": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "shape": 0
       },
       "type": "RigidBody"
     }

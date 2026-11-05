@@ -17,12 +17,12 @@
 namespace mir::vk
 {
     bool PostProcessingStack::Initialize(Device &device, VkFormat swapchainFormat, VkExtent2D extent,
-        VkDescriptorSetLayout cameraSetLayout)
+        VkDescriptorSetLayout cameraSetLayout, bool enableDlss)
     {
         mDevice = &device;
 
     #if MIR_WITH_DLSS
-        if (device.NgxSupported())
+        if (enableDlss && device.NgxSupported())
         {
             mDlssReady = mDlss.Initialize(device);
             if (!mDlssReady)
@@ -89,6 +89,10 @@ namespace mir::vk
         mMotionBlur.SetParams(state.shutterStrength, static_cast<uint32_t>(state.motionBlur.sampleCount));
 
         mAntiAliasingRtSampleCount = static_cast<uint32_t>(state.antiAliasing.rtSampleCount);
+    #if MIR_WITH_DLSS
+        // Preset edits must take effect even when the AA mode remains Dlss.
+        mDlss.SetOptions(state.antiAliasing.dlssRayReconstruction, state.antiAliasing.dlssRrPreset);
+    #endif
         const AntiAliasingMode mode = state.antiAliasing.mode;
         if (mode == mAntiAliasingMode)
             return;

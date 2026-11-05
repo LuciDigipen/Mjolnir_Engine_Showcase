@@ -2,15 +2,32 @@
   "components": [
     {
       "fields": {
-        "position": [-1.39, 1.30, 1.09],
-        "rotation": [0, 0, 0, 1],
-        "scale": [1, 1, 1]
+        "position": [
+          -1.39,
+          1.3,
+          1.09
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
       },
       "type": "Transform"
     },
     {
       "fields": {
-        "position": [-1.39, 1.30, 1.09]
+        "position": [
+          -1.39,
+          1.3,
+          1.09
+        ]
       },
       "type": "WorldTransform"
     },
@@ -22,8 +39,15 @@
     },
     {
       "fields": {
+        "animationAsset": "",
+        "clip": 0,
+        "loop": true,
+        "modelAsset": "7489a0c0d497d99f",
         "modelName": "models/glass-pair.gltf",
-        "playing": false
+        "playing": false,
+        "scene": -1,
+        "speed": 1.0,
+        "time": 0.0
       },
       "type": "ModelPlayer"
     }

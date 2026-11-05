@@ -118,7 +118,22 @@ void rayGenMain()
             payload.writeGuides = layer == 0 && pushData.aaMode == kAaModeDlss ? 1u : 0u;
             // After the layer budget, trace once for the opaque background.
             payload.skipBlend = layer == kMaxBlendLayers ? 1u : 0u;
+#ifdef MIR_DDGI
+            payload.materialGi = 0;
+#endif
             TraceRay(gTlas, RAY_FLAG_CULL_BACK_FACING_TRIANGLES, 0xFF, 0, 0, 0, ray, payload);
+#ifdef MIR_DDGI
+            if (payload.materialGi != 0)
+            {
+                const DDGIVolumeDescGPU volume = UnpackDDGIVolumeDescGPU(gVolumes[0]);
+                const float3 position = ray.Origin + payload.distance * ray.Direction;
+                const float weight = DDGIGetVolumeBlendWeight(position, volume) * pushData.giWeight;
+                const float3 irradiance = weight > 0.0 ?
+                    SampleProbeIrradiance(position, payload.giNormal, ray.Direction, volume) : float3(0.0);
+                const float3 indirect = payload.giDiffuse * irradiance * (pushData.giIntensity / 3.14159265359);
+                payload.color = ApplyFog(payload.color + (indirect - payload.giAmbient) * weight, payload.distance);
+            }
+#endif
 
             if (i == 0 && layer == 0)
             {

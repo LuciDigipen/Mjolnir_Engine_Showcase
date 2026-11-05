@@ -129,6 +129,9 @@ namespace mir
         bool mSaveActiveDocument = false;
         bool mToggleMaterialEditor = false;
         BuildAction mBuild;
+        // Project Settings GI overlay and Fit-to-bounds input for the renderer.
+        bool mShowGiVolume = false;
+        bool mRequestGiSceneBounds = false;
     };
 
     class Editor

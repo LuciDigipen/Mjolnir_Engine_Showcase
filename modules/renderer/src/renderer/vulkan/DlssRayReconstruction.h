@@ -3,7 +3,8 @@
  * @author Rahul Nair
  * @brief NVIDIA NGX DLSS Ray Reconstruction: denoise and anti-alias the
  *        ray-traced image in one pass, at native resolution (DLAA preset, no
- *        upscale ratio).
+ *        upscale ratio). With Ray Reconstruction disabled, uses native DLAA
+ *        through the separate DLSS Super Resolution feature.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
@@ -12,10 +13,12 @@
 
 #include "Image2D.h"
 #include "VulkanConstants.h"
+#include <renderer/AntiAliasingEffect.h>
 
 #include <glm/vec2.hpp>
 
 #include <volk.h>
+#include <chrono>
 
 struct NVSDK_NGX_Handle;
 struct NVSDK_NGX_Parameter;
@@ -35,6 +38,9 @@ namespace mir::vk
         // Record at the viewport rect's size. The caller idles the device before either.
         bool Activate(VkExtent2D extent);
         void Deactivate();
+        // Called before recording a frame. A changed feature/model releases the live
+        // feature after its GPU users finish; Record recreates it with fresh history.
+        void SetOptions(bool rayReconstruction, DlssRrPreset preset);
         bool IsActive() const { return mOutput[0].image != VK_NULL_HANDLE; }
 
         // Recreates the output images if active. The feature is sized by the rect, not the
@@ -74,6 +80,9 @@ namespace mir::vk
         NVSDK_NGX_Parameter *mParams = nullptr;
         NVSDK_NGX_Handle *mHandle = nullptr;
         bool mResetHistory = true;
+        DlssRrPreset mPreset = DlssRrPreset::E;
+        bool mRayReconstruction = true;
+        std::chrono::steady_clock::time_point mLastEvaluationTime{};
         VkExtent2D mFeatureExtent{};
         VkRect2D mLastRect{};
 

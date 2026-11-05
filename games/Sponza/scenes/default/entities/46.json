@@ -2,15 +2,32 @@
   "components": [
     {
       "fields": {
-        "position": [-0.55, 0.65, -2.94],
-        "rotation": [0, 0, 0, 1],
-        "scale": [0.42, 1.2, 0.38]
+        "position": [
+          -0.55,
+          0.65,
+          -2.94
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          0.42,
+          1.2,
+          0.38
+        ]
       },
       "type": "Transform"
     },
     {
       "fields": {
-        "position": [-0.55, 0.65, -2.94]
+        "position": [
+          -0.55,
+          0.65,
+          -2.94
+        ]
       },
       "type": "WorldTransform"
     },
@@ -24,7 +41,12 @@
       "fields": {
         "materialShader": "default",
         "meshName": "builtin:cylinder",
-        "tint": [0.16, 0.58, 0.61, 1]
+        "tint": [
+          0.16,
+          0.58,
+          0.61,
+          1.0
+        ]
       },
       "type": "MeshRenderer"
     }

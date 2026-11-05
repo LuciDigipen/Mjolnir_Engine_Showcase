@@ -44,7 +44,7 @@ namespace mir::vk
     public:
         // DLSS failing to initialize is not fatal: it just stops being offered.
         bool Initialize(Device &device, VkFormat swapchainFormat, VkExtent2D extent,
-            VkDescriptorSetLayout cameraSetLayout);
+            VkDescriptorSetLayout cameraSetLayout, bool enableDlss = true);
         void Shutdown();
         // The caller idles the device first. DLSS failing to resize is not fatal.
         bool Resize(VkExtent2D extent);

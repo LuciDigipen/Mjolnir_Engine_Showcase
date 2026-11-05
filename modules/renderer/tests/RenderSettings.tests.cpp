@@ -16,6 +16,37 @@
 #include <limits>
 #include <sstream>
 
+TEST_CASE("DDGI bounds fit covers asymmetric padded receivers without changing density", "[renderer][ddgi]")
+{
+    mir::DdgiSettings gi;
+    gi.probeSpacing = 2.0f;
+    REQUIRE(gi.FitBounds({-12.0, 1.0, -3.0}, {23.0, 10.0, 8.0}, 2.0) == nullptr);
+    const auto extent = gi.Extent();
+    CHECK(gi.origin == std::array<double, 3>{5.5, 5.5, 2.5});
+    CHECK(gi.probeSpacing == 2.0f);
+    CHECK(extent[0] >= 39.0);
+    CHECK(extent[1] >= 13.0);
+    CHECK(extent[2] >= 15.0);
+    CHECK(gi.ValidationError() == nullptr);
+}
+
+TEST_CASE("DDGI rejected bounds fits preserve the previous volume", "[renderer][ddgi]")
+{
+    mir::DdgiSettings gi;
+    const auto before = gi;
+    CHECK(gi.FitBounds({0, 0, 0}, {100000, 10, 10}, 2) != nullptr);
+    CHECK(gi == before);
+    CHECK(gi.FitBounds({2, 0, 0}, {1, 10, 10}, 2) != nullptr);
+    CHECK(gi == before);
+    CHECK(gi.FitBounds({0, 0, 0}, {10, 10, 10}, -1) != nullptr);
+    CHECK(gi == before);
+    CHECK(gi.FitBounds({0, 0, 0}, {10, std::numeric_limits<double>::infinity(), 10}, 1) != nullptr);
+    CHECK(gi == before);
+    // Valid axis counts but too many probes: reject the entire fit.
+    CHECK(gi.FitBounds({0, 0, 0}, {100, 100, 100}, 0) != nullptr);
+    CHECK(gi == before);
+}
+
 namespace
 {
     struct TempSettingsFile

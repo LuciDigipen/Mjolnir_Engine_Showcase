@@ -485,16 +485,28 @@ namespace mir
         std::optional<vk::RayTracer::GiShading> gi;
 #if MIR_WITH_RTXGI
         gi = mDdgi->Record(cmd, frame, view.cameraPosition, mCameraBuffer->Set(frame), cameraOffset,
-            scene, view.rayTracingSceneComplete);
+            scene, view.rayTracingSceneComplete, mShowGiVolume);
 #endif
         if (gi.has_value() != mGiWasShading)
         {
             mPostProcessing->ResetHistory();
             mGiWasShading = gi.has_value();
+            if (gi)
+            {
+                // The next scene update gathers bounds and logs them.
+                mLogGiSceneBounds = true;
+                RequestGiSceneBounds();
+            }
         }
         mDevice->BeginLabel(cmd, "Ray Trace Pass", { 0.0f, 1.0f, 1.0f, 1.0f });
+#if MIR_WITH_RTXGI
+        if (gi) mDdgi->CameraTimestamp(cmd, frame, true);
+#endif
         mRayTracer->RecordTrace(cmd, frame, rect, mCameraBuffer->Set(frame),
             cameraOffset, effectiveAaMode, mPostProcessing->RtSampleCount(), gi ? &*gi : nullptr);
+#if MIR_WITH_RTXGI
+        if (gi) mDdgi->CameraTimestamp(cmd, frame, false);
+#endif
         mDevice->EndLabel(cmd);
 
         const bool hasRect = rect.extent.width > 0 && rect.extent.height > 0;

@@ -16,6 +16,7 @@
 #include "VulkanUtil.h"
 
 #include <core/log/Log.h>
+#include <renderer/MeshAssetDecoder.h>
 #include <renderer/TextureUpload.h>
 
 #include <vk_mem_alloc.h>
@@ -81,6 +82,7 @@ namespace mir::vk
         vmaFlushAllocation(mDevice->Allocator(), stagingAllocation, 0, VK_WHOLE_SIZE);
 
         GpuMesh mesh{};
+        mesh.mBounds = ComputeMeshBounds(vertices);
         mesh.mIndexCount = static_cast<uint32_t>(indices.size());
         if (mDevice->RayTracingSupported())
             mesh.mBlasVertexCount = static_cast<uint32_t>(vertices.size());

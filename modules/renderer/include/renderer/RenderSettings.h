@@ -20,6 +20,12 @@ namespace mir
 {
     enum class SsgiQuality { Low, Medium, High };
 
+    struct GiProbeDebug
+    {
+        std::array<float, 3> offset{}; // Relocation in world metres, relative to the nominal position.
+        bool inactive = false;
+    };
+
     struct SsgiSettings
     {
         bool enabled = false;
@@ -56,6 +62,10 @@ namespace mir
         const char *ValidationError() const;
         uint64_t ProbeCount() const;
         uint64_t EstimatedBytes() const;
+        // Transactional: invalid bounds or an over-budget fit leave settings unchanged.
+        const char *FitBounds(const std::array<double, 3> &minimum,
+            const std::array<double, 3> &maximum, double padding);
+        std::array<double, 3> Extent() const;
     };
 
     struct RenderSettings
