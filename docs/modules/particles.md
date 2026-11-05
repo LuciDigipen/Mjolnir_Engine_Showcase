@@ -96,8 +96,14 @@ replaces its old instance, clearing the reference releases it immediately.
 
 Removing the component or its owner detaches the instance at its last world pose,
 stops emission and unpauses it for a bounded drain. No later access to the removed
-entity is required. SceneUnload, SceneLoad, PlayBegin and PlayEnd clear all
-instances and transient component state, preserving handle invalidation.
+entity is required. Detached effects retain their scene ownership. A partial
+SceneUnload destroys the outgoing scene instance's effects, including detached drains,
+while preserving effects owned by other loaded scenes and persistent entities.
+Live owners use their current ownership, so persisting an entity after its effect
+started also preserves that effect. Removed emitter generations disappear from
+the next GPU submission and their ranges retire through the existing GPU ordering.
+Full SceneUnload, SceneLoad, PlayBegin and PlayEnd clear all instances and
+transient component state, preserving handle invalidation.
 
 ReloadPrepare validates every unique live effect and its dependencies in the
 candidate cache without changing playback. Failure aborts the transaction,

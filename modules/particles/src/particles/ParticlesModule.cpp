@@ -68,7 +68,10 @@ namespace mir
                 [this, stage = resetStages[i]](SystemContext &frame)
                 {
                     if ((stage == Stage::SceneLoad || stage == Stage::SceneUnload) && frame.sceneSwapped)
+                    {
+                        if (stage == Stage::SceneUnload) mParticles.ClearScene(frame.sceneInstance);
                         return;
+                    }
                     mParticles.Clear();
                 });
         mStages[4] = context.scheduler.AddStage(Stage::ReloadPrepare,

@@ -80,7 +80,7 @@ namespace mir
     }
 
     ParticleHandle ParticleRuntime::Start(AssetId effectId, const ParticleEffect &effect,
-        WorldPose pose, Entity owner, const ParticleUserParameters *overrides, bool preview)
+        WorldPose pose, Entity owner, const ParticleUserParameters *overrides, bool preview, SceneInstanceId scene)
     {
         const auto parameters = overrides ? *overrides : effect.parameters;
         std::string error;
@@ -139,6 +139,7 @@ namespace mir
         instance.pose = pose;
         instance.tileOrigin = pose.position;
         instance.owner = owner;
+        instance.scene = scene;
         instance.parameters = parameters;
         instance.emitters.reserve(effect.emitters.size());
         const uint32_t index = mFree.back();
@@ -453,7 +454,7 @@ namespace mir
         return true;
     }
 
-    void ParticleRuntime::Detach(Entity owner)
+    void ParticleRuntime::Detach(Entity owner, std::optional<SceneInstanceId> scene)
     {
         if (owner.IsNull())
             return;
@@ -461,6 +462,7 @@ namespace mir
             if (!instance.handle.IsNull() && instance.owner == owner)
             {
                 Stop(instance.handle);
+                if (scene) instance.scene = *scene;
                 instance.owner = kNullEntity;
                 Pause(instance.handle, false);
             }

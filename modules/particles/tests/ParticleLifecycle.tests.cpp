@@ -202,6 +202,65 @@ TEST_CASE("Particle save load and repeated play scene transitions never serializ
     }
 }
 
+TEST_CASE("Partial scene unload destroys draining particles and preserves other scene effects", "[particles][scene]")
+{
+    mir::test::ParticleTestWorld test;
+    const auto outgoing = mir::AllocateSceneInstanceId();
+    const auto retained = mir::AllocateSceneInstanceId();
+    test.world.SetActiveScene(outgoing);
+    const auto owner = test.System();
+    test.world.SetActiveScene(retained);
+    const auto peer = test.System();
+    test.Tick();
+    REQUIRE(test.Particles().Find(owner));
+    REQUIRE(test.Particles().Find(peer));
+    const auto removedHandle = test.Particles().Find(owner)->handle;
+    const auto retainedHandle = test.Particles().Find(peer)->handle;
+    mir::SetPlayState(test.world, mir::PlayState::Paused);
+    test.world.DestroyEntity(owner);
+    REQUIRE(test.Particles().Runtime().Find(removedHandle));
+    CHECK(test.Particles().Runtime().Find(removedHandle)->owner.IsNull());
+    test.context.sceneInstance = outgoing;
+    test.context.sceneSwapped = true;
+    test.StageEvent(mir::Stage::SceneUnload);
+    CHECK_FALSE(test.Particles().Runtime().Find(removedHandle));
+    CHECK(test.Particles().Runtime().Find(retainedHandle));
+    CHECK(test.Particles().Runtime().Stats().active == 1);
+    for (const auto &emitter : test.Particles().Runtime().EmitterSlots())
+        if (!emitter.handle.IsNull()) CHECK(emitter.system == retainedHandle);
+    test.StageEvent(mir::Stage::SceneLoad);
+    CHECK(test.Particles().Runtime().Find(retainedHandle));
+}
+
+TEST_CASE("Scene particle cleanup respects persistence after an effect has started", "[particles][scene]")
+{
+    mir::test::ParticleTestWorld test;
+    const auto scene = mir::NewScene("particle ownership");
+    test.world.SetActiveScene(scene.mInstanceId);
+    const auto persistent = test.System();
+    const auto removed = test.System();
+    test.Tick();
+    REQUIRE(test.Particles().Find(persistent));
+    REQUIRE(test.Particles().Find(removed));
+    const auto kept = test.Particles().Find(persistent)->handle;
+    const auto orphan = test.Particles().Find(removed)->handle;
+    REQUIRE(test.world.PersistEntity(persistent));
+    test.world.DestroyEntity(removed);
+    mir::UnloadScene(test.world, scene);
+    test.context.sceneInstance = scene.mInstanceId;
+    test.context.sceneSwapped = true;
+    test.StageEvent(mir::Stage::SceneUnload);
+    CHECK(test.world.IsAlive(persistent));
+    CHECK(test.Particles().Runtime().Find(kept));
+    CHECK_FALSE(test.Particles().Runtime().Find(orphan));
+
+    test.world.RemoveComponent<mir::ParticleSystem>(persistent);
+    REQUIRE(test.Particles().Runtime().Find(kept));
+    CHECK(test.Particles().Runtime().Find(kept)->scene == mir::kOwnedBySession);
+    test.StageEvent(mir::Stage::SceneUnload);
+    CHECK(test.Particles().Runtime().Find(kept));
+}
+
 TEST_CASE("Particle system user overrides persist and update only the selected instance", "[particles]")
 {
     mir::test::ParticleTestWorld test;

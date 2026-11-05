@@ -12,10 +12,12 @@
 #include "particles/ParticleRibbon.h"
 
 #include <core/ecs/Entity.h>
+#include <core/ecs/SceneInstance.h>
 #include <core/ecs/components/WorldTransform.h>
 #include <core/math/WorldCoordinates.h>
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -52,6 +54,7 @@ namespace mir
         WorldPose pose;
         WorldPosition tileOrigin;
         Entity owner = kNullEntity;
+        SceneInstanceId scene = kOwnedBySession;
         ParticleExecutionState state = ParticleExecutionState::Active;
         bool paused = false;
         bool preview = false;
@@ -150,7 +153,8 @@ namespace mir
         ParticleRuntime &operator=(ParticleRuntime &&) = delete;
 
         ParticleHandle Start(AssetId effectId, const ParticleEffect &effect,
-            WorldPose pose = {}, Entity owner = kNullEntity, const ParticleUserParameters *overrides = nullptr, bool preview = false);
+            WorldPose pose = {}, Entity owner = kNullEntity, const ParticleUserParameters *overrides = nullptr,
+            bool preview = false, SceneInstanceId scene = kOwnedBySession);
         const ParticleSystemInstance *Find(ParticleHandle handle) const;
         const ParticleEmitterInstance *FindEmitter(ParticleEmitterHandle handle) const;
         bool Stop(ParticleHandle handle);
@@ -167,7 +171,7 @@ namespace mir
         bool SetParameters(ParticleHandle handle, const ParticleUserParameters &parameters);
         bool SetExecutionState(ParticleHandle handle, ParticleExecutionState state);
         bool Destroy(ParticleHandle handle);
-        void Detach(Entity owner);
+        void Detach(Entity owner, std::optional<SceneInstanceId> scene = std::nullopt);
         void Clear();
         // Fixed 60 Hz, at most four steps, no catch-up queue after a hitch.
         void Advance(float dt, bool previewsOnly = false);
