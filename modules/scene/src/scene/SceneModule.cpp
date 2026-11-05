@@ -25,6 +25,11 @@ namespace mir
         return found == additive.end() ? nullptr : &found->second;
     }
 
+    SceneEntry *SceneCollection::Find(SceneInstanceId instance)
+    {
+        return const_cast<SceneEntry *>(std::as_const(*this).Find(instance));
+    }
+
     std::vector<SceneInstanceId> SceneCollection::Instances() const
     {
         std::vector<SceneInstanceId> result;

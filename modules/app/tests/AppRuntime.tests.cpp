@@ -192,3 +192,42 @@ TEST_CASE("Play and Stop isolate authoring while scene swaps retain the runtime 
     std::error_code ec;
     std::filesystem::remove(logPath, ec);
 }
+
+TEST_CASE("An unknown scene swap keeps a pending additive load", "[app][smoke]")
+{
+    const std::filesystem::path logPath = std::filesystem::temp_directory_path() /
+        ("mjolnir_app_swap_test_" + std::to_string(mir::CurrentProcessId()) + ".log");
+    mir::InitLog({ .filePath = logPath.string() });
+
+    mir::GameProject project = mir::ResolveGameProject(
+        (std::filesystem::path(MIR_APP_TEST_ROOT) / "games/HelloWorld").string(), mir::ErrorCategory::Usage);
+    mir::ResolveAssetIdRoot(project);
+
+    mir::AppDesc desc;
+    desc.mProject = project;
+    desc.mHidden = true;
+    desc.mNonInteractive = true;
+    desc.mWorkerThreads = 1;
+    desc.mEnableEditorLayout = true;
+    desc.mMaxFrames = 120;
+
+    {
+        mir::App app(desc);
+        app.PlayScene();
+        REQUIRE(app.RuntimeWorld() != nullptr);
+
+        const mir::SceneInstanceId beacons = mir::AllocateSceneInstanceId();
+        auto &requests = app.RuntimeWorld()->Resource<mir::RequestQueue>();
+        requests.PushAdditiveScene({ "demo_beacons", beacons });
+        requests.PushNextScene("no_such_scene");
+        app.Run();
+
+        REQUIRE(app.RuntimeWorld() != nullptr);
+        CHECK(app.RuntimeWorld()->Resource<mir::SceneCollection>().Find(beacons) != nullptr);
+        app.StopScene();
+    }
+
+    mir::ShutdownLog();
+    std::error_code ec;
+    std::filesystem::remove(logPath, ec);
+}

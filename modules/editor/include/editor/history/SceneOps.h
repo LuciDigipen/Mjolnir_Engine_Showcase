@@ -9,6 +9,7 @@
 #pragma once
 
 #include <core/ecs/Entity.h>
+#include <core/ecs/SceneInstance.h>
 #include <core/math/WorldCoordinates.h>
 
 #include <cstdint>
@@ -25,6 +26,7 @@ namespace mir
         std::vector<Entity> mMembers; //root first, then its descendants
         std::vector<uint64_t> mStableIds; //per member, 0 for one outside the scene
         std::vector<std::string> mInstances; //App-private: records whose root is a member
+        SceneInstanceId mScene = kOwnedBySession; //the scene that owned the root, so undo restores it there
     };
 
     class ISceneOps

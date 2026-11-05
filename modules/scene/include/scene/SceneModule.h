@@ -51,6 +51,7 @@ namespace mir
         std::map<SceneInstanceId, SceneEntry> additive;
 
         const SceneEntry *Find(SceneInstanceId instance) const;
+        SceneEntry *Find(SceneInstanceId instance);
         std::vector<SceneInstanceId> Instances() const;
         Entity FindEntity(const World &world, SceneInstanceId instance, StableId stable) const;
     };

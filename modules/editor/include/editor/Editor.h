@@ -190,6 +190,20 @@ namespace mir
 
         void ClearHistory() { mHistory.Clear(); }
 
+        // Edits made during Play run on the runtime World through a history of their own, so they never reach the
+        // scene being authored, its unsaved mark or its undo steps. Stop discards them.
+        void BeginPlayEdits(ISceneOps &ops)
+        {
+            mPlaySceneOps = &ops;
+            mPlayHistory.Clear();
+        }
+        void EndPlayEdits()
+        {
+            mPlaySceneOps = nullptr;
+            mPlayHistory.Clear();
+        }
+        void ClearPlayHistory() { mPlayHistory.Clear(); }
+
         // Scene, Play and document transitions cancel a pending snap.
         void CancelSnapToTerrain() { mSnapToTerrain.Cancel("The scene changed."); }
 
@@ -308,10 +322,17 @@ namespace mir
         bool mShownDocumentKnown = false;
 
         History mHistory;
+        History mPlayHistory;
+        ISceneOps *mPlaySceneOps = nullptr;
         SnapToTerrainSession mSnapToTerrain;
         std::size_t mSnapFrameSubmissions = 0;
         ISceneOps *mSceneOps = nullptr;
         IAuthoredEntities *mAuthoredEntities = nullptr;
+
+        bool PlayEditing() const { return mPlaySceneOps != nullptr; }
+        History &ActiveHistory() { return PlayEditing() ? mPlayHistory : mHistory; }
+        // Play has no authored entities, its edits are not written back to a scene.
+        IAuthoredEntities *ActiveAuthored() const { return PlayEditing() ? nullptr : mAuthoredEntities; }
         IEditorAudio *mAudio = nullptr;
 
         std::filesystem::path mPreferencesPath;

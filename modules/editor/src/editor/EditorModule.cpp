@@ -177,7 +177,7 @@ namespace mir
           mEnableLayout(enableLayout), mProjectMenu(BuildProjectMenu()),
           mPrefabAuthoring(context.world, prefab.Coordinator(), mProject.mRootDir, prefab.SourceDir()),
           mPrefabWorkspace(prefab.Coordinator(), mPrefabAuthoring),
-          mSceneOps(context.world, scene.Scene(), mPrefabWorkspace, mProject.mRootDir)
+          mSceneOps(context.world, mPrefabWorkspace, mProject.mRootDir)
     {
         mImport.Initialize(mProject);
         mParticleEditor = std::make_unique<ParticleEditorPanel>(mImport.SourceAssetRoot(),mProject.mAssetIdRoot);
@@ -371,6 +371,19 @@ namespace mir
         mImport.Shutdown();
         mBuild.Cancel();
         mShaderHotReload.Shutdown();
+    }
+
+    void EditorModule::SetPlayWorld(World *world)
+    {
+        mPlayWorld = world;
+        if (world == nullptr)
+        {
+            mEditor.EndPlayEdits();
+            mPlaySceneOps.reset();
+            return;
+        }
+        mPlaySceneOps.emplace(*world, mPrefabWorkspace, mProject.mRootDir);
+        mEditor.BeginPlayEdits(*mPlaySceneOps);
     }
 
     void EditorModule::PreparePlay()

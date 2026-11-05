@@ -24,8 +24,11 @@
 #include <editor/Selection.h>
 #endif
 #include <input/DefaultInputMap.h>
+#include <input/InputMap.h>
 #include <input/InputState.h>
 #include <prefab/PrefabCoordinator.h>
+#include <renderer/PostProcessingSettings.h>
+#include <renderer/RenderSettings.h>
 #include <project/ProjectSettings.h>
 #include <scene/SceneIO.h>
 #include <serial/JsonFile.h>
@@ -179,13 +182,16 @@ namespace mir
         #if MIR_WITH_EDITOR
             state.world.EmplaceResource<Selection>();
         #endif
+            // Project settings have one owner, so a panel's edit and Save reach the running game at once.
+            state.world.ShareResourceFrom<InputMap>(app.mWorldState.world);
+            state.world.ShareResourceFrom<RenderSettings>(app.mWorldState.world);
+            state.world.ShareResourceFrom<PostProcessingSettings>(app.mWorldState.world);
             state.prefab.Coordinator().CopyPrefabDefinitionsFrom(app.mWorldState.prefab.Coordinator());
             state.scene.CopyFrom(app.mWorldState.world, app.mWorldState.scene.Scene(),
                 &app.mWorldState.prefab.Coordinator().Resolver(), &state.prefab.Coordinator().Resolver());
             state.scene.SetCatalogId(app.mOpenSceneId);
             state.scene.SetSceneDir(app.mWorldState.scene.SceneDir());
             SetEngineMode(state.world, EngineMode::Play);
-            Begin(0.0, 0);
         }
 
         void Begin(double elapsed, uint64_t frame)
@@ -267,8 +273,6 @@ namespace mir
         //without the editor there is no Play button
         if (!mDesc.mEnableEditorLayout)
         {
-            mGateScenes = true;
-            mLoadingDrawer = mImGui.AddDrawer(DrawerGroup::Game, [this] { DrawLoadingOverlay(); });
             PlayScene();
         }
 
@@ -548,11 +552,41 @@ namespace mir
     #if MIR_WITH_EDITOR
         mEditor.PreparePlay();
     #endif
-        mRuntime = std::make_unique<RuntimeSession>(*this);
-        if (mWorldState.scheduler.Started())
+        try
         {
-            SystemContext start = MakeRuntimeContext(0.0f);
-            mRuntime->state.scheduler.Start(start);
+            mRuntime = std::make_unique<RuntimeSession>(*this);
+            mRuntime->Begin(0.0, 0);
+            if (mWorldState.scheduler.Started())
+            {
+                SystemContext start = MakeRuntimeContext(0.0f);
+                mRuntime->state.scheduler.Start(start);
+            }
+        }
+        catch (const std::exception &error)
+        {
+            // A standalone game has nothing to fall back to. The editor stays open so the unsaved scene survives.
+            if (!mDesc.mEnableEditorLayout)
+                throw;
+            MIR_LOG_ERROR("Play could not start: {}", error.what());
+            mSceneLoader.Cancel();
+            if (mRuntime)
+            {
+                // The stages that already ran get their matching end, then the whole runtime World goes.
+                try
+                {
+                    StopRuntimeStages();
+                }
+                catch (const std::exception &stopError)
+                {
+                    MIR_LOG_ERROR("Play could not stop cleanly after a failed start: {}", stopError.what());
+                }
+                mRuntime.reset();
+            }
+        #if MIR_WITH_EDITOR
+            mEditor.FinishPlay();
+        #endif
+            prefabs.SetFrozen(false);
+            return;
         }
         SetPlayState(mWorldState.world, PlayState::Running);
         SetEngineMode(mWorldState.world, EngineMode::Play);
@@ -570,14 +604,7 @@ namespace mir
         if (!IsPlaying(mWorldState.world))
             return;
 
-        SystemContext runtimeContext = MakeRuntimeContext(0.0f);
-        if (mRuntime->state.scheduler.Started())
-            mRuntime->state.scheduler.RunStage(Stage::PlayEnd, runtimeContext);
-        const auto instances = mRuntime->state.scene.Scenes().Instances();
-        for (size_t i = 0; i < instances.size(); ++i)
-            UnloadRuntimeScene(instances[i], i + 1 != instances.size());
-        if (instances.empty()) mRuntime->state.scheduler.RunStage(Stage::SceneUnload, runtimeContext);
-        mRuntime->state.scheduler.Stop(runtimeContext);
+        StopRuntimeStages();
 
     #if MIR_WITH_EDITOR
         mEditor.SetPlayWorld(nullptr);
@@ -596,9 +623,20 @@ namespace mir
         SetPlayState(mWorldState.world, PlayState::Running);
     }
 
+    void App::StopRuntimeStages()
+    {
+        SystemContext runtimeContext = MakeRuntimeContext(0.0f);
+        if (mRuntime->state.scheduler.Started())
+            mRuntime->state.scheduler.RunStage(Stage::PlayEnd, runtimeContext);
+        const auto instances = mRuntime->state.scene.Scenes().Instances();
+        for (size_t i = 0; i < instances.size(); ++i)
+            UnloadRuntimeScene(instances[i], i + 1 != instances.size());
+        if (instances.empty()) mRuntime->state.scheduler.RunStage(Stage::SceneUnload, runtimeContext);
+        mRuntime->state.scheduler.Stop(runtimeContext);
+    }
+
     bool App::SwapScene(const std::string &id)
     {
-        mSceneLoader.Cancel();
         if (!mRuntime)
             return false;
 
@@ -745,6 +783,9 @@ namespace mir
         mRuntime->state.scheduler.RunStage(Stage::SceneEnd, context);
         mRuntime->state.scene.Remove(instance);
         mRuntime->state.scheduler.RunStage(Stage::SceneUnload, context);
+    #if MIR_WITH_EDITOR
+        mEditor.ClearPlayHistory();
+    #endif
         RefreshPrimaryScene();
         return true;
     }
@@ -866,6 +907,13 @@ namespace mir
             primaryScene = runtimeQueue.TakePrimaryScene();
             std::vector<Request> runtimeActions = runtimeQueue.Take();
             actions.insert(actions.end(), runtimeActions.begin(), runtimeActions.end());
+            // A Lua failure ends Play in the editor so it is fixed before it hides behind later frames. A
+            // standalone game has nowhere to return to, so it logs the error and keeps running.
+            if (mDesc.mEnableEditorLayout && mRuntime->simulation.script.Host().ErrorCount() != 0)
+            {
+                MIR_LOG_WARN("Play stopped: a script failed, see the error above");
+                actions.push_back(Request::Stop);
+            }
         }
         for (const Request request : actions)
         {

@@ -221,6 +221,9 @@ namespace mir
         bool SetPrimaryScene(SceneInstanceId instance);
         void RefreshPrimaryScene();
 
+        // PlayEnd, every scene's unload and the runtime systems' Stop, in the order Stop runs them.
+        void StopRuntimeStages();
+
         // A standalone game starts no gameplay for a scene until its resources are ready. The window, the
         // completions, the uploads and the loading UI keep running, and only the resource systems tick. False
         // when the window closed, or a bounded run ran out of frames, before the scene was ready.

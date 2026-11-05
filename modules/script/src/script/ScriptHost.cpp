@@ -85,6 +85,7 @@ namespace mir
             if (it == mLoadedScripts.end() || !it->second.is<sol::table>())
             {
                 MIR_LOG_ERROR("script: CreateInstance: '{}' is not a loaded script table", scriptName);
+                ++mErrors;
                 return -1;
             }
 
@@ -106,6 +107,7 @@ namespace mir
                 const sol::error err = result;
                 MIR_LOG_ERROR("script: '{}'.NewInstanceData() failed: {}; using an empty instance", scriptName,
                               err.what());
+                ++mErrors;
                 return mLua.create_table();
             }
 
@@ -114,6 +116,7 @@ namespace mir
             {
                 MIR_LOG_ERROR("script: '{}'.NewInstanceData() did not return a table; using an empty instance",
                               scriptName);
+                ++mErrors;
                 return mLua.create_table();
             }
 
@@ -141,11 +144,21 @@ namespace mir
                 return;
 
             const sol::protected_function fn = callback;
-            const sol::protected_function_result result = fn(it->second.data, std::forward<Args>(args)...);
-            if (!result.valid())
+            try
             {
-                const sol::error err = result;
-                MIR_LOG_ERROR("script: {} failed: {}", callbackName, err.what());
+                const sol::protected_function_result result = fn(it->second.data, std::forward<Args>(args)...);
+                if (!result.valid())
+                {
+                    const sol::error err = result;
+                    MIR_LOG_ERROR("script: {} failed: {}", callbackName, err.what());
+                    ++mErrors;
+                }
+            }
+            catch (...)
+            {
+                // the caller reports a C++ exception from a binding, it is still a script failure
+                ++mErrors;
+                throw;
             }
         }
 
@@ -155,6 +168,7 @@ namespace mir
         std::unordered_map<std::string, sol::object> mLoadedScripts;
         std::unordered_map<int32_t, ScriptInstance> mInstances;
         int32_t mNextInstanceRef = 0;
+        std::size_t mErrors = 0;
     };
 
     ScriptHost::ScriptHost() : mImpl(std::make_unique<ScriptHostImpl>())
@@ -162,6 +176,8 @@ namespace mir
     }
 
     ScriptHost::~ScriptHost() = default;
+
+    std::size_t ScriptHost::ErrorCount() const { return mImpl->mErrors; }
 
     Registration AddBindings(ScriptHost &host, LuaBindings bindings)
     {
@@ -180,6 +196,7 @@ namespace mir
         {
             const sol::error err = result;
             MIR_LOG_ERROR("script: failed to load '{}': {}", name, err.what());
+            ++mImpl->mErrors;
             return false;
         }
 

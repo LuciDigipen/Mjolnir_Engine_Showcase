@@ -193,3 +193,65 @@ TEST_CASE("A const world hands out const resources", "[ecs][resources]")
     CHECK(readOnly.Resource<Counter>().value == 11);
     CHECK(readOnly.TryResource<Settings>() == nullptr);
 }
+
+TEST_CASE("A referenced resource is the source World's value", "[resources]")
+{
+    World source;
+    World runtime;
+    source.EmplaceResource<Settings>(Settings{ "source", 1 });
+    runtime.EmplaceResource<Settings>(Settings{ "own", 2 });
+
+    runtime.ShareResourceFrom<Settings>(source);
+    CHECK(&runtime.Resource<Settings>() == &source.Resource<Settings>());
+
+    runtime.Resource<Settings>().level = 9;
+    CHECK(source.Resource<Settings>().level == 9);
+
+    source.Resource<Settings>().name = "edited";
+    CHECK(runtime.Resource<Settings>().name == "edited");
+}
+
+TEST_CASE("Resource references do not own the source value", "[ecs][resources]")
+{
+    int destructions = 0;
+    World source;
+    auto &value = source.EmplaceResource<Tracked>(&destructions, 3);
+    {
+        World runtime;
+        runtime.ShareResourceFrom<Tracked>(source);
+        CHECK(runtime.HasResource<const Tracked>());
+        CHECK(std::as_const(runtime).TryResource<Tracked>() == &value);
+        CHECK(runtime.RemoveResource<const Tracked>());
+        CHECK_FALSE(runtime.HasResource<Tracked>());
+        CHECK_FALSE(runtime.RemoveResource<Tracked>());
+        CHECK(destructions == 0);
+        runtime.ShareResourceFrom<Tracked>(source);
+    }
+    CHECK(destructions == 0);
+    CHECK(source.RemoveResource<Tracked>());
+    CHECK(destructions == 1);
+}
+
+TEST_CASE("An owned resource can replace a reference without changing its source", "[ecs][resources]")
+{
+    World source;
+    World runtime;
+    source.EmplaceResource<Counter>(7);
+    runtime.ShareResourceFrom<Counter>(source);
+    runtime.EmplaceResource<Counter>(11);
+    CHECK(runtime.Resource<Counter>().value == 11);
+    CHECK(source.Resource<Counter>().value == 7);
+    CHECK(runtime.RemoveResource<Counter>());
+    CHECK(runtime.TryResource<Counter>() == nullptr);
+}
+
+TEST_CASE("Sharing a resource from its own World preserves ownership", "[ecs][resources]")
+{
+    int destructions = 0;
+    World world;
+    auto &value = world.EmplaceResource<Tracked>(&destructions, 3);
+    CHECK(&world.ShareResourceFrom<Tracked>(world) == &value);
+    CHECK(destructions == 0);
+    CHECK(world.RemoveResource<Tracked>());
+    CHECK(destructions == 1);
+}
