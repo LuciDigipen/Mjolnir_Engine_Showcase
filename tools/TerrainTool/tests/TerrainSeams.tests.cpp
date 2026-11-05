@@ -197,24 +197,23 @@ TEST_CASE("Seam tolerance uses interpolation supports when a steep edge crosses 
     CHECK(TerrainSeamTolerance(1000.0, 0.0, 1.0) > SurfaceTolerance(0.0));
 }
 
-TEST_CASE("Discontinuous final candidate cannot replace a published release", "[terraintool][seams]")
+TEST_CASE("A discontinuous final candidate fails validation", "[terraintool][seams]")
 {
     ScratchDir scratch("seam_gate");
     const auto r = Recipe(SeamJson());
     TerrainReport good("good", {});
     auto tiles = BakeFinalHeights(r, good);
     REQUIRE(tiles);
-    const auto first = Write(scratch.path / "good", r, *tiles, good, kNonce);
+    Write(scratch.path / "good", r, *tiles, good, kNonce);
     const auto published = RunTerrainPublish({scratch.path / "good", scratch.path / "releases"});
     REQUIRE(published.Ok());
     TileAt(*tiles, {-1, -1}).Set(64, 31, TileAt(*tiles, {-1, -1}).At(64, 31) + 0.02f);
     TerrainReport bad("bad", {});
     bad.seams = good.seams;
     Write(scratch.path / "bad", r, std::move(*tiles), bad, kNonce + 1);
-    const auto rejected = RunTerrainPublish({scratch.path / "bad", scratch.path / "releases"});
+    const auto rejected = RunTerrainValidate({scratch.path / "bad", {}});
     CHECK_FALSE(rejected.Ok());
     CHECK(rejected.Status(check::kEdges) == CheckStatus::Failed);
-    CHECK(PeekTerrainCurrent(scratch.path / "releases", first.info.asset) == first.info.release);
 }
 
 TEST_CASE("Excessive continuous height adjustment warns and remains publishable", "[terraintool][seams]")

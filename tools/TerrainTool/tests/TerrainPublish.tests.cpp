@@ -53,6 +53,40 @@ namespace
         return names;
     }
 
+    void ResealNormalByte(const fs::path &dir)
+    {
+        std::vector<std::byte> index = ReadFile(dir / kTerrainIndexFileName);
+        const TerrainResult<TerrainIndex> parsed = ParseTerrainIndex(index);
+        REQUIRE(parsed);
+        const TerrainIndex &idx = *parsed.value;
+        const auto normal = std::find_if(idx.tiles.begin(), idx.tiles.end(),
+                                         [](const TerrainTileRecord &r)
+                                         {
+                                             return r.kind == TerrainPayloadKind::Normal;
+                                         });
+        REQUIRE(normal != idx.tiles.end());
+        const size_t t = static_cast<size_t>(normal - idx.tiles.begin());
+        const TerrainTileRecord &record = *normal;
+        const std::string pack = TerrainPackFileName(idx.packs[record.pack].chunk);
+
+        std::vector<std::byte> bytes = ReadFile(dir / pack);
+        const size_t at = static_cast<size_t>(record.offset + std::min<uint64_t>(80, record.length - 1));
+        bytes[at] ^= std::byte{0x01};
+        const uint64_t payload = Fnv1a64(std::span<const std::byte>(bytes).subspan(
+            static_cast<size_t>(record.offset), static_cast<size_t>(record.length)));
+        const size_t tileTable = kTerrainIndexHeaderSize + idx.packs.size() * kTerrainPackRecordSize;
+        StoreU64(index, tileTable + t * kTerrainTileRecordSize + 32, payload);
+        StoreU64(index, kTerrainIndexHeaderSize + record.pack * kTerrainPackRecordSize + 24, Fnv1a64(bytes));
+        std::vector<TerrainTileRecord> records = idx.tiles;
+        records[t].checksum = payload;
+        StoreU64(index, 112, TerrainRecordsHeightsHash(records, idx.regions));
+        const size_t body = index.size() - kTerrainIndexTrailerSize;
+        StoreU64(index, body, Fnv1a64(std::span<const std::byte>(index).first(body)));
+
+        WriteFile(dir / pack, bytes);
+        WriteFile(dir / kTerrainIndexFileName, index);
+    }
+
     std::string_view CheckOf(TerrainPublishStep step)
     {
         switch (step)
@@ -85,29 +119,17 @@ TEST_CASE("Publish copies only the release files and moves current last", "[terr
     for (const TerrainCheck &c : report.checks)
     {
         INFO(c.name << ": " << c.detail);
-        CHECK(c.status == (c.name == check::kRecipe ? CheckStatus::Skipped : CheckStatus::Passed));
+        const bool contents = c.name == check::kCoverage || c.name == check::kPayloads ||
+                              c.name == check::kFinite || c.name == check::kEdges || c.name == check::kCorners ||
+                              c.name == check::kRegions;
+        CHECK(c.status == ((c.name == check::kRecipe || contents) ? CheckStatus::Skipped : CheckStatus::Passed));
     }
     REQUIRE(report.publish);
     CHECK(report.publish->published);
     CHECK_FALSE(report.publish->previous);
     CHECK(report.publish->current == id);
     CHECK(report.release->release == id);
-    REQUIRE(report.tiles.size() == 24);
-    CHECK(std::count_if(report.tiles.begin(), report.tiles.end(),
-                        [](const auto &t)
-                        {
-                            return t.source;
-                        }) == 4);
-    CHECK(std::count_if(report.tiles.begin(), report.tiles.end(),
-                        [](const auto &t)
-                        {
-                            return t.kind == 1;
-                        }) == 8);
-    CHECK(std::count_if(report.tiles.begin(), report.tiles.end(),
-                        [](const auto &t)
-                        {
-                            return t.kind == 2;
-                        }) == 8);
+    REQUIRE(report.files.size() == 5);
 
     const fs::path assetDir = TerrainAssetReleasesDir(releases, ExampleAsset());
     std::vector<std::string> names{TerrainIdHex(id.value), "current"};
@@ -127,6 +149,34 @@ TEST_CASE("Publish copies only the release files and moves current last", "[terr
     REQUIRE(baked);
     CHECK(current.value->Info() == baked.value->Info());
     CHECK(ReadAllTiles(*current.value) == ReadAllTiles(*baked.value));
+}
+
+TEST_CASE("Publish reports content checks as skipped and installs the release", "[terraintool][publish]")
+{
+    ScratchDir scratch("publish_integrity");
+    const fs::path candidate = scratch.path / "candidate";
+    const fs::path releases = scratch.path / "releases";
+    const TerrainReleaseId id = BakeCandidate(candidate);
+
+    const TerrainReport report = Publish(candidate, releases);
+    REQUIRE(report.Ok());
+    CHECK(report.publish->published);
+    CHECK(PeekTerrainCurrent(releases, ExampleAsset()) == id);
+    for (std::string_view name : {check::kCoverage, check::kPayloads, check::kFinite, check::kEdges,
+                                  check::kCorners, check::kRegions})
+    {
+        INFO(name);
+        CHECK(report.Status(name) == CheckStatus::Skipped);
+        const auto checkIt = std::find_if(report.checks.begin(), report.checks.end(),
+                                          [&](const TerrainCheck &c)
+                                          {
+                                              return c.name == name;
+                                          });
+        REQUIRE(checkIt != report.checks.end());
+        CHECK(checkIt->detail.find("publish checks integrity") != std::string::npos);
+    }
+    CHECK(report.Status(check::kPacks) == CheckStatus::Passed);
+    CHECK(report.Status(check::kIdentity) == CheckStatus::Passed);
 }
 
 TEST_CASE("A fault at any publish step leaves the previous current release complete and readable",
@@ -274,6 +324,22 @@ TEST_CASE("Publish refuses a damaged candidate before touching the release tree"
         const TerrainReport report = Publish(candidate, releases);
         CHECK(report.Status(check::kCandidate) == CheckStatus::Failed);
     }
+    CHECK_FALSE(fs::exists(releases));
+}
+
+TEST_CASE("Publish refuses a pack changed under a resealed index", "[terraintool][publish]")
+{
+    ScratchDir scratch("publish_resealed");
+    const fs::path candidate = scratch.path / "candidate";
+    const fs::path releases = scratch.path / "releases";
+    BakeCandidate(candidate);
+    ResealNormalByte(candidate);
+
+    const TerrainReport report = Publish(candidate, releases);
+    CHECK_FALSE(report.Ok());
+    CHECK(report.Status(check::kPacks) == CheckStatus::Passed);
+    CHECK(report.Status(check::kIdentity) == CheckStatus::Failed);
+    CHECK(report.Status(check::kCopy) == CheckStatus::Skipped);
     CHECK_FALSE(fs::exists(releases));
 }
 
