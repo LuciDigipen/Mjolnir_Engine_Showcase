@@ -1,0 +1,18 @@
+{
+  "id": 30,
+  "parent": 0,
+  "components": [
+    {
+      "type": "Name",
+      "fields": {
+        "name": "SceneDemo/default"
+      }
+    },
+    {
+      "type": "ScriptRef",
+      "fields": {
+        "scriptName": "scene_demo"
+      }
+    }
+  ]
+}

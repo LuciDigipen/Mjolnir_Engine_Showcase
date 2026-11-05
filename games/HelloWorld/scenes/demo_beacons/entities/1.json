@@ -1,0 +1,62 @@
+{
+  "id": 1,
+  "parent": 0,
+  "components": [
+    {
+      "type": "Name",
+      "fields": {
+        "name": "Additive gold beacon"
+      }
+    },
+    {
+      "type": "Transform",
+      "fields": {
+        "position": [
+          0,
+          2,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          0.55,
+          0.55,
+          0.55
+        ]
+      }
+    },
+    {
+      "type": "WorldTransform",
+      "fields": {
+        "position": [
+          0,
+          2,
+          0
+        ]
+      }
+    },
+    {
+      "type": "MeshRenderer",
+      "fields": {
+        "meshName": "builtin:cube",
+        "materialShader": "default",
+        "tint": [
+          1,
+          0.75,
+          0.1,
+          1
+        ]
+      }
+    },
+    {
+      "type": "ScriptRef",
+      "fields": {
+        "scriptName": "scene_beacon"
+      }
+    }
+  ]
+}

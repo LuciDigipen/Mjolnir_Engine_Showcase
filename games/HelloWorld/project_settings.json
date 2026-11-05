@@ -2,6 +2,20 @@
   "build": {
     "profile": "release"
   },
+  "input": {
+    "actions": [
+      {
+        "name": "SceneDemoNext",
+        "type": "Button",
+        "bindings": [ { "device": "Keyboard", "key": "N" } ]
+      },
+      {
+        "name": "SceneDemoAdditive",
+        "type": "Button",
+        "bindings": [ { "device": "Keyboard", "key": "B" } ]
+      }
+    ]
+  },
   "ide": {
     "args": "--new-window {project} {file}",
     "path": "C:\\Users\\rahul\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe"

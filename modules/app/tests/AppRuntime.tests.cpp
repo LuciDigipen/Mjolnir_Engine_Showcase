@@ -155,13 +155,13 @@ TEST_CASE("Play and Stop isolate authoring while scene swaps retain the runtime 
                         }
                         else if (phase == 5 && scenes.Instances().size() == 1)
                         {
-                            requests.PushAdditiveScene({ "newScene", finalAdditive });
+                            requests.PushAdditiveScene({ "demo_beacons", finalAdditive });
                             phase = 6;
                         }
                         else if (phase == 6 && scenes.Instances().size() == 2 && scenes.Find(finalAdditive))
                             phase = 7;
                     });
-                runtime->Resource<mir::RequestQueue>().PushNextScene("newScene");
+                runtime->Resource<mir::RequestQueue>().PushNextScene("demo_gallery");
                 app.Run();
                 CHECK(phase == 7);
                 mir::World *destination = app.RuntimeWorld();
@@ -173,9 +173,10 @@ TEST_CASE("Play and Stop isolate authoring while scene swaps retain the runtime 
                 CHECK_FALSE(destination->IsAlive(spawned));
                 CHECK(destination->Resource<int>() == 42);
                 CHECK(destination->TrySceneResource<int>(previousScene) == nullptr);
-                size_t entities = 0;
-                destination->ForEachAliveEntity([&](mir::Entity) { ++entities; });
-                CHECK(entities == 3);
+                size_t sceneEntities = 0;
+                destination->ForEachAliveEntity([&](mir::Entity entity)
+                    { if (destination->EntityScene(entity) != mir::kOwnedBySession) ++sceneEntities; });
+                CHECK(sceneEntities == 3);
             }
 
             app.StopScene();

@@ -1,0 +1,52 @@
+{
+  "id": 2,
+  "parent": 0,
+  "components": [
+    {
+      "type": "Name",
+      "fields": {
+        "name": "Demo camera"
+      }
+    },
+    {
+      "type": "Transform",
+      "fields": {
+        "position": [
+          0,
+          3,
+          10
+        ],
+        "rotation": [
+          -0.145213,
+          0,
+          0,
+          0.9894
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    {
+      "type": "WorldTransform",
+      "fields": {
+        "position": [
+          0,
+          3,
+          10
+        ]
+      }
+    },
+    {
+      "type": "Camera",
+      "fields": {
+        "active": true,
+        "fovYDegrees": 60,
+        "nearZ": 0.1,
+        "farZ": 100
+      }
+    }
+  ]
+}

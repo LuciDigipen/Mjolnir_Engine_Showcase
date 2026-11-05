@@ -9,6 +9,18 @@
     {
       "id": "newScene",
       "path": "scenes/newScene"
+    },
+    {
+      "id": "demo_gallery",
+      "path": "scenes/demo_gallery"
+    },
+    {
+      "id": "demo_plaza",
+      "path": "scenes/demo_plaza"
+    },
+    {
+      "id": "demo_beacons",
+      "path": "scenes/demo_beacons"
     }
   ],
   "soundBanksRoot": "assets/audio/SoundBanks",
