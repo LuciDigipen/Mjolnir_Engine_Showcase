@@ -74,7 +74,7 @@ namespace mir::build
 
         std::optional<VisualStudio> FromInstall(const fs::path &install, std::string toolset)
         {
-            const fs::path vcvars = install / "VC" / "Auxiliary" / "Build" / "vcvars64.bat";
+            const fs::path vcvars = install / "VC" / "Auxiliary" / "Build" / kVcvarsFileName;
             std::error_code ec;
             if (!fs::is_regular_file(vcvars, ec))
                 return std::nullopt;

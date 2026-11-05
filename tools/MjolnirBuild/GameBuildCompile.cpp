@@ -463,7 +463,10 @@ namespace mir::build
         {
             // vcvars looks for vswhere on PATH, and says so in the log when it is missing
             text += "set \"PATH=%PATH%;%ProgramFiles(x86)%\\Microsoft Visual Studio\\Installer\"\r\n";
-            text += "call \"" + BatchPath(visualStudio.mVcvars) + "\"";
+            // call expands % a second time and doubles ^ in its line, so the folder is entered first and named only here
+            text += "cd /d \"" + BatchPath(visualStudio.mVcvars.parent_path()) + "\"" +
+                exitWith(kGameBuildExitVisualStudio);
+            text += "call .\\" + std::string(kVcvarsFileName);
             if (!visualStudio.mToolset.empty())
                 text += " -vcvars_ver=" + visualStudio.mToolset;
             text += exitWith(kGameBuildExitVisualStudio);
@@ -471,7 +474,7 @@ namespace mir::build
         text += "where /q cl" + exitWith(kGameBuildExitNoCompiler);
         text += "where /q cmake" + exitWith(kGameBuildExitNoCMake);
         text += "where /q ninja" + exitWith(kGameBuildExitNoCMake);
-        // after vcvars, which may change folder
+        // after vcvars, which leaves the script in its own folder
         text += "cd /d \"" + BatchPath(script.mSourceRoot) + "\"" + exitWith(kGameBuildExitNoCheckout);
         text += "cmake --preset " + script.mPreset;
         for (const std::string &define : script.mDefines)

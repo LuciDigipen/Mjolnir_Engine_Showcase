@@ -11,12 +11,16 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace mir::build
 {
+    inline constexpr std::string_view kVcvarsFileName = "vcvars64.bat";
+
     struct VisualStudio
     {
-        // Empty when this process already has a Developer environment, so nothing is loaded
+        // <install>/VC/Auxiliary/Build/vcvars64.bat; empty when this process already has a Developer environment, so
+        // nothing is loaded
         std::filesystem::path mVcvars;
         // e.g. 14.51.36231, the toolset a build folder was configured with; empty for vcvars' newest
         std::string mToolset;

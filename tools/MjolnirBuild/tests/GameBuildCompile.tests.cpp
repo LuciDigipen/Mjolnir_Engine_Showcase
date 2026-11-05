@@ -438,15 +438,38 @@ TEST_CASE("The batch file loads Visual Studio first, with the toolset the build 
     GameBuildScript script{ "C:/checkout", "game-release", "C:/checkout/builds/game-release", "C:/out/game-build.tmp",
         {}, { "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Auxiliary/Build/vcvars64.bat", "14.51.36231" } };
     std::string text = GameBuildScriptText(script);
-    CHECK(Has(text, "call \"C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Auxiliary\\Build\\vcvars64.bat\" "
-                    "-vcvars_ver=14.51.36231 || exit /b 14\r\n"));
+    CHECK(Has(text, "cd /d \"C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Auxiliary\\Build\" "
+                    "|| exit /b 14\r\n"));
+    CHECK(Has(text, "call .\\vcvars64.bat -vcvars_ver=14.51.36231 || exit /b 14\r\n"));
     CHECK(text.find("call ") < text.find("where /q cl"));
-    CHECK(text.find("call ") < text.find("cd /d"));
+    CHECK(text.find("call ") < text.find("cd /d \"C:\\checkout\""));
 
     script.mVisualStudio.mToolset.clear();
     text = GameBuildScriptText(script);
-    CHECK(Has(text, "vcvars64.bat\" || exit /b 14\r\n"));
+    CHECK(Has(text, "call .\\vcvars64.bat || exit /b 14\r\n"));
     CHECK_FALSE(Has(text, "-vcvars_ver"));
+}
+
+TEST_CASE("Visual Studio under a folder with % and ^ in its name is loaded as named", "[game-build-compile]")
+{
+    CompileFixture fixture;
+    const ScopedEnvironment plain(L"VCToolsInstallDir", std::nullopt);
+    // what %SDK% would expand to, were the path expanded twice
+    const ScopedEnvironment sdk(L"SDK", L"wrong");
+
+    const fs::path install = fixture.mSandbox.mRoot / "D 100%SDK%^x" / "Visual Studio";
+    const fs::path build = install / "VC" / "Auxiliary" / "Build";
+    Touch(build / "vcvars64.bat", "@echo %*> called.txt\r\n@exit /b 0\r\n");
+    const fs::path cl = install / "VC" / "Tools" / "MSVC" / "14.51.36231" / "bin" / "Hostx64" / "x64" / "cl.exe";
+    Touch(cl);
+    Touch(fixture.BuildDir() / "CMakeCache.txt", "CMAKE_CXX_COMPILER:FILEPATH=" + PathText(cl) + "\r\n");
+
+    const BuildReport report = RunGameBuild(fixture.Request());
+    INFO(report.mError);
+    INFO(ReadText(fixture.BuildDir() / "mjolnir_game_build.log").value_or(""));
+    REQUIRE(report.mOk);
+    CHECK(Has(ReadText(build / "called.txt").value_or(""), "-vcvars_ver=14.51.36231"));
+    CHECK(fixture.Calls("--install") == 1);
 }
 
 TEST_CASE("A missing compiler or CMake fails naming the Visual Studio component to install", "[game-build-compile]")
