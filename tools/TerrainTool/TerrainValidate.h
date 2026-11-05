@@ -22,6 +22,8 @@ namespace mir::terrainbake
         const TerrainRecipe *recipe = nullptr;
         // Published release directories have no candidate.json.
         bool requireManifest = true;
+        // Manifest, files, packs and identity; content checks stay with bake and validate.
+        bool integrityOnly = false;
     };
 
     // Reads only through TerrainReleaseHandle; writes nothing.

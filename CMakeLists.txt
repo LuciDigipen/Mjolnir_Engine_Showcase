@@ -441,7 +441,8 @@ if(terrain_sync_commands)
         ${terrain_package_commands}
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
         COMMENT "Publishing terrain recipes whose current release is out of date"
-        VERBATIM)
+        VERBATIM
+        USES_TERMINAL)
     add_dependencies(MjolnirEngine_sync_terrain TerrainTool)
     add_dependencies(MjolnirEngine MjolnirEngine_sync_terrain)
 endif()

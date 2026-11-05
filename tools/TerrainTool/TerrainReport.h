@@ -25,7 +25,7 @@
 namespace mir::terrainbake
 {
     // Bump when a command's behaviour or output changes. 2: publish, sync. 3: package.
-    inline constexpr uint32_t kTerrainToolVersion = 8;
+    inline constexpr uint32_t kTerrainToolVersion = 9;
     inline constexpr uint32_t kTerrainReportVersion = 6;
 
     // In report order.
