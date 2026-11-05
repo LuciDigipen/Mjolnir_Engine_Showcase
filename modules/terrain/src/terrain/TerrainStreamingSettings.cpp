@@ -23,9 +23,10 @@
 
 namespace mir
 {
+    using json = nlohmann::json;
+
     namespace
     {
-        using json = nlohmann::json;
         using Emit = std::function<void(std::string_view section, std::string_view key, std::string_view problem)>;
 
         constexpr double kBytesPerMiB = 1024.0 * 1024.0;
@@ -263,6 +264,11 @@ namespace mir
             std::set<std::string> mFlagged;
         };
 
+        std::string NotAnObject(const std::string &fileName)
+        {
+            return std::format("{}: not a JSON object", fileName);
+        }
+
         std::optional<TerrainResidencyMode> ParseMode(std::string_view text)
         {
             for (const TerrainResidencyMode mode :
@@ -296,44 +302,82 @@ namespace mir
         return problems;
     }
 
+    TerrainStreamingFiles ReadTerrainStreamingFiles(const std::filesystem::path &gameFile,
+                                                    const std::filesystem::path &localFile)
+    {
+        TerrainStreamingFiles files;
+        std::error_code ec;
+        files.gameFileFound = std::filesystem::is_regular_file(gameFile, ec);
+        files.localFileFound = std::filesystem::is_regular_file(localFile, ec);
+        files.gameName = gameFile.generic_string();
+        files.localName = localFile.generic_string();
+        if (!files.gameFileFound)
+        {
+            files.problems.push_back(
+                std::format("{}: missing; a game with terrain ships its streaming settings", files.gameName));
+            return files;
+        }
+
+        std::optional<json> game = ReadJsonFile(gameFile);
+        if (!game || !game->is_object())
+        {
+            files.problems.push_back(NotAnObject(files.gameName));
+            return files;
+        }
+        files.game = std::move(*game);
+        if (files.localFileFound)
+        {
+            // A broken file stays set, as null when unparsed, so every later merge fails on it too.
+            std::optional<json> local = ReadJsonFile(localFile);
+            files.local = local ? std::move(*local) : json(nullptr);
+            if (!files.local->is_object())
+                files.problems.push_back(NotAnObject(files.localName));
+        }
+        return files;
+    }
+
     TerrainStreamingSettingsLoad LoadTerrainStreamingSettings(const std::filesystem::path &gameFile,
                                                               const std::filesystem::path &localFile)
     {
+        const TerrainStreamingFiles files = ReadTerrainStreamingFiles(gameFile, localFile);
+        if (!files.problems.empty())
+        {
+            TerrainStreamingSettingsLoad load;
+            load.problems = files.problems;
+            load.gameFileFound = files.gameFileFound;
+            load.localFileFound = files.localFileFound;
+            return load;
+        }
+        TerrainStreamingSettingsLoad load =
+            ParseTerrainStreamingSettings(files.game, files.local ? &*files.local : nullptr, files.gameName,
+                                          files.localName);
+        load.gameFileFound = files.gameFileFound;
+        load.localFileFound = files.localFileFound;
+        return load;
+    }
+
+    TerrainStreamingSettingsLoad ParseTerrainStreamingSettings(const json &project, const json *local,
+                                                               std::string_view projectName,
+                                                               std::string_view localName)
+    {
         TerrainStreamingSettingsLoad load;
-        std::error_code ec;
-        load.gameFileFound = std::filesystem::is_regular_file(gameFile, ec);
-        load.localFileFound = std::filesystem::is_regular_file(localFile, ec);
-        const std::string gameName = gameFile.generic_string();
-        const std::string localName = localFile.generic_string();
-        if (!load.gameFileFound)
+        const std::string gameName(projectName);
+        if (!project.is_object())
         {
-            load.problems.push_back(
-                std::format("{}: missing; a game with terrain ships its streaming settings", gameName));
+            load.problems.push_back(NotAnObject(gameName));
+            return load;
+        }
+        if (local && !local->is_object())
+        {
+            load.problems.push_back(NotAnObject(std::string(localName)));
             return load;
         }
 
-        const std::optional<json> game = ReadJsonFile(gameFile);
-        if (!game || !game->is_object())
-        {
-            load.problems.push_back(std::format("{}: not a JSON object", gameName));
-            return load;
-        }
-        std::optional<json> local;
-        if (load.localFileFound)
-        {
-            local = ReadJsonFile(localFile);
-            if (!local || !local->is_object())
-            {
-                load.problems.push_back(std::format("{}: not a JSON object", localName));
-                return load;
-            }
-        }
-
-        json merged = *game;
+        json merged = project;
         if (local)
             Merge(merged, *local);
 
-        Reader reader(merged, local ? &*local : nullptr, gameName, localName, load.problems);
+        Reader reader(merged, local, gameName, std::string(localName), load.problems);
         for (auto it = merged.begin(); it != merged.end(); ++it)
             if (it.key() != "cpu" && it.key() != "io" && it.key() != "retry" && it.key() != "residency" &&
                 it.key() != "view" && it.key() != "gpu" && it.key() != "collision")

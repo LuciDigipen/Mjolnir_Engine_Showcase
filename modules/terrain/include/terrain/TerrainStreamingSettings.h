@@ -8,6 +8,8 @@
  */
 #pragma once
 
+#include <nlohmann/json.hpp>
+
 #include <cstdint>
 #include <filesystem>
 #include <limits>
@@ -135,6 +137,28 @@ namespace mir
         bool gameFileFound = false;
         bool localFileFound = false;
     };
+
+    // The two files as read, before any parsing. problems holds a missing file or one that is not a JSON object.
+    struct TerrainStreamingFiles
+    {
+        bool gameFileFound = false;
+        bool localFileFound = false;
+        // Null when the game file is missing or unreadable.
+        nlohmann::json game;
+        std::optional<nlohmann::json> local;
+        std::vector<std::string> problems;
+        std::string gameName;
+        std::string localName;
+    };
+
+    TerrainStreamingFiles ReadTerrainStreamingFiles(const std::filesystem::path &gameFile,
+                                                    const std::filesystem::path &localFile);
+
+    // Merges local over project key by key, then reads and validates the result. The found flags stay false.
+    TerrainStreamingSettingsLoad ParseTerrainStreamingSettings(const nlohmann::json &project,
+                                                               const nlohmann::json *local,
+                                                               std::string_view projectName,
+                                                               std::string_view localName);
 
     // The game file is required; the local file is optional and replaces values key by key.
     TerrainStreamingSettingsLoad LoadTerrainStreamingSettings(const std::filesystem::path &gameFile,
