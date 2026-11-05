@@ -8,6 +8,9 @@
  */
 #include <scene/SceneIO.h>
 #include <scene/SceneModule.h>
+#include <scene/SceneLoader.h>
+
+#include <jobs/JobExecutor.h>
 
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/TransformHierarchy.h>
@@ -16,10 +19,12 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <filesystem>
+#include <chrono>
 #include <fstream>
 #include <iterator>
 #include <string>
 #include <string_view>
+#include <thread>
 
 namespace
 {
@@ -115,6 +120,84 @@ TEST_CASE("Scene unload keeps session entities and other scene instances", "[sce
     scene.New("again");
     CHECK(scene.Scene().mInstanceId != outgoing);
     CHECK(scene.LastLoad().instance == scene.Scene().mInstanceId);
+}
+
+TEST_CASE("Prepared scene activation uses the captured files", "[scene][prepare]")
+{
+    TempSceneDir dir("prepared_files");
+    WriteText(dir.mPath / "scene.json", R"({"name":"captured","entities":[1],"nextId":2})");
+    WriteText(dir.mPath / "entities/1.json", R"({"id":1,"components":[]})");
+    const mir::PreparedScene prepared = mir::PrepareScene(dir.mPath);
+    REQUIRE(prepared.probe.Ok());
+    REQUIRE_FALSE(prepared.cancelled);
+    std::filesystem::remove_all(dir.mPath);
+
+    World world;
+    const auto previous = mir::AllocateSceneInstanceId();
+    world.SetActiveScene(previous);
+    const auto loaded = mir::LoadPreparedScene(world, prepared);
+    CHECK(loaded.mComplete);
+    CHECK(loaded.mName == "captured");
+    REQUIRE(loaded.mEntities.size() == 1);
+    CHECK(world.EntityScene(loaded.mEntities.at(1)) == loaded.mInstanceId);
+    CHECK(world.ActiveScene() == previous);
+}
+
+TEST_CASE("A cancelled preparation never materializes entities", "[scene][prepare]")
+{
+    std::stop_source stop;
+    stop.request_stop();
+    const auto prepared = mir::PrepareScene({}, stop.get_token());
+    CHECK(prepared.cancelled);
+    World world;
+    const auto loaded = mir::LoadPreparedScene(world, prepared);
+    CHECK_FALSE(loaded.mComplete);
+    CHECK(loaded.mEntities.empty());
+}
+
+TEST_CASE("Scene loader discards cancelled and stale ready results", "[scene][prepare]")
+{
+    TempSceneDir dir("loader_cancel");
+    WriteText(dir.mPath / "scene.json", R"({"name":"scene","entities":[]})");
+    mir::JobExecutor jobs(0);
+    mir::SceneLoader loader(jobs);
+    const auto first = mir::AllocateSceneInstanceId();
+    const auto second = mir::AllocateSceneInstanceId();
+    loader.Request("cancelled", dir.mPath, first);
+    loader.Cancel();
+    CHECK_FALSE(loader.Pending());
+    CHECK_FALSE(loader.TakeReady(first).has_value());
+
+    loader.Request("stale", dir.mPath, first);
+    CHECK_FALSE(loader.TakeReady(second).has_value());
+    CHECK_FALSE(loader.Pending());
+    loader.Request("latest", dir.mPath, second);
+    const auto completed = loader.TakeReady(second);
+    REQUIRE(completed.has_value());
+    CHECK(completed->id == "latest");
+    CHECK(completed->prepared.probe.Ok());
+}
+
+TEST_CASE("Background scene preparation publishes only the latest request", "[scene][prepare]")
+{
+    TempSceneDir dir("loader_background");
+    WriteText(dir.mPath / "scene.json", R"({"name":"scene","entities":[]})");
+    mir::JobExecutor jobs(1);
+    mir::SceneLoader loader(jobs);
+    const auto source = mir::AllocateSceneInstanceId();
+    loader.Request("superseded", dir.mPath, source);
+    loader.Request("latest", dir.mPath, source);
+    std::optional<mir::SceneLoadCompletion> completed;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!completed && std::chrono::steady_clock::now() < deadline)
+    {
+        completed = loader.TakeReady(source);
+        if (!completed) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    REQUIRE(completed.has_value());
+    CHECK(completed->id == "latest");
+    CHECK(completed->prepared.probe.Ok());
+    CHECK_FALSE(loader.Pending());
 }
 
 TEST_CASE("An empty scene standing in for a broken one is unbound and does not save over it", "[scene]")

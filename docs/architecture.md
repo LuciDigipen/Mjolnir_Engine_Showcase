@@ -101,7 +101,7 @@ each library links in the engine, besides `core`; `app` links everything.
 | `core` | module | `core_base` |
 | `assets` | module | `project` |
 | `particles` | module | `assets` |
-| `scene` | module | `serial` |
+| `scene` | module | `serial`, `jobs` |
 | `prefab` | module | `assets`, `scene`, `serial` |
 | `window` | module | none |
 | `audio` | module | `serial` |

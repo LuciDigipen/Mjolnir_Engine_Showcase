@@ -12,9 +12,11 @@
 
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <span>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -87,6 +89,21 @@ namespace mir
 
     // Reads scene.json and every entity and instance file it lists; call before unloading what LoadScene replaces
     SceneProbe ProbeScene(const std::filesystem::path &sceneDir);
+
+    struct PreparedSceneData;
+    struct PreparedScene
+    {
+        std::shared_ptr<const PreparedSceneData> data;
+        SceneProbe probe;
+        bool cancelled = false;
+    };
+
+    // thread safe file reading and JSON parsing only
+    PreparedScene PrepareScene(const std::filesystem::path &sceneDir, std::stop_token cancellation = {});
+
+    // materializes an immutable preparation on the main thread, without reading scene files again.
+    LoadedScene LoadPreparedScene(World &world, const PreparedScene &prepared,
+        ScenePrefabResolver *resolver = nullptr, SceneInstanceId instance = kOwnedBySession);
 
     // Destroy all entity in scene
     void UnloadScene(World &world, const LoadedScene &loaded);

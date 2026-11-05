@@ -23,7 +23,7 @@
 #include <filesystem>
 #include <string>
 
-TEST_CASE("Play and Stop keep the authored scene while replacing the runtime world", "[app][smoke]")
+TEST_CASE("Play and Stop isolate authoring while scene swaps retain the runtime World", "[app][smoke]")
 {
     const std::filesystem::path logPath = std::filesystem::temp_directory_path() /
         ("mjolnir_app_runtime_test_" + std::to_string(mir::CurrentProcessId()) + ".log");
@@ -37,9 +37,9 @@ TEST_CASE("Play and Stop keep the authored scene while replacing the runtime wor
     desc.mProject = project;
     desc.mHidden = true;
     desc.mNonInteractive = true;
-    desc.mWorkerThreads = 0;
+    desc.mWorkerThreads = 1;
     desc.mEnableEditorLayout = true;
-    desc.mMaxFrames = 1;
+    desc.mMaxFrames = 120;
 
     {
         mir::App app(desc);

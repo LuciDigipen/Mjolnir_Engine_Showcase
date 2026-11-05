@@ -43,6 +43,7 @@
 #include <renderer_script/RendererScriptModule.h>
 #include <prefab/PrefabModule.h>
 #include <scene/SceneIO.h>
+#include <scene/SceneLoader.h>
 #include <scene/SceneModule.h>
 #include <script/ScriptModule.h>
 #include <terrain/TerrainModule.h>
@@ -210,8 +211,10 @@ namespace mir
         // what the editor, the game shell and the import asked for last frame
         void ApplyRequests();
 
-        // Loads a registered scene beside the running one, then swaps them at the frame boundary. False leaves the running scene.
+        // Queues background preparation, then activates a current result at the frame boundary.
         bool SwapScene(const std::string &id);
+        void PollSceneLoad();
+        bool ActivateScene(const SceneLoadCompletion &completed);
 
         // A standalone game starts no gameplay for a scene until its resources are ready. The window, the
         // completions, the uploads and the loading UI keep running, and only the resource systems tick. False
@@ -271,6 +274,7 @@ namespace mir
         std::string mOpenSceneId = mProject.mStartupSceneId;
         StartupSplash mSplash;
         JobExecutor mJobs;
+        SceneLoader mSceneLoader{ mJobs };
 
         struct WorldState
         {

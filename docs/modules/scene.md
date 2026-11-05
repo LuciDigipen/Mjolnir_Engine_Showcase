@@ -1,11 +1,25 @@
 # scene
 
 Saves and loads a scene, or one entity and its descendants, as data. It owns the
-save-file identity, `StableId`, and the three-pass load. It owns no runtime state and no authoring UI.
+save-file identity, `StableId`, and the three-pass load. `SceneModule` owns the
+current scene metadata, and `SceneLoader` owns pending background preparation.
 
-`mir::scene` · depends `mir::core` (public); `mir::serial` (private) · API `modules/scene/include/scene/` · maintainer Sumin Park · reviewed 2026-09-18
+`mir::scene` · depends `mir::core`, `mir::serial` (public); `mir::jobs` (private) · API `modules/scene/include/scene/` · maintainer Sumin Park · reviewed 2026-09-18
 
 ## Model
+
+`SceneLoader` owns a background lane on the shared `JobExecutor`. A request
+captures its scene ID, directory and source instance ID. `PrepareScene` reads
+the manifest, entity files and prefab instance records into immutable data,
+checking cancellation between files. Workers never access a World, component
+registry, prefab resolver or GPU service.
+
+At a frame boundary, App takes a ready result only if its source instance is
+still current. `LoadPreparedScene` materializes the captured data on the main
+thread without reading scene files again. Preparation failure keeps the running
+scene intact. Stop cancels pending work, and a newer request replaces the earlier
+one. Cancelled work may finish reading its current file, but its result cannot
+activate. Zero-worker builds use the same path and prepare inline.
 
 A scene is a directory, not a file.
 
@@ -104,6 +118,8 @@ around them.
 | `NewScene`, `AllocateStableId`, `CreateSceneEntity`, `DestroySceneEntity` | `scene/SceneAsset.h` | Authoring entry points |
 | `SaveScene`, `LoadScene`, `UnloadScene` | `scene/SceneIO.h` | Directory in, directory out, scoped destroy |
 | `ProbeScene`, `SceneProbe` | `scene/SceneIO.h` | What `LoadScene` would skip, found without a `World` |
+| `PreparedScene`, `PrepareScene`, `LoadPreparedScene` | `scene/SceneIO.h` | Immutable file preparation and main-thread entity materialization |
+| `SceneLoader`, `SceneLoadCompletion` | `scene/SceneLoader.h` | Background requests, cancellation and results checked against the current source instance |
 | `PlaySnapshot`, `CaptureWorld`, `RestoreWorld`, `CopyWorld`, `DiscardSnapshot` | `scene/PlaySnapshot.h` | Copy a live World into Play through a temporary scene directory |
 | `SceneModule`, `SceneLoadResult`, `SceneLoadCause` | `scene/SceneModule.h` | The scene each World holds and how it last got there |
 | `EntitySnapshot`, `SnapshotMembers`, `CaptureEntity`, `RestoreEntity`, `RestoreEntityAt`, `DuplicateSceneEntity` | `scene/EntitySnapshot.h` | One entity and its descendants as in-memory data, restored into new entities registered in a `LoadedScene`, under new `StableId`s or, for undo, their old ones |

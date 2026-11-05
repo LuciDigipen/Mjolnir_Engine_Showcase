@@ -562,6 +562,7 @@ namespace mir
 
     void App::StopScene()
     {
+        mSceneLoader.Cancel();
         if (!IsPlaying(mWorldState.world))
             return;
 
@@ -591,6 +592,7 @@ namespace mir
 
     bool App::SwapScene(const std::string &id)
     {
+        mSceneLoader.Cancel();
         if (!mRuntime)
             return false;
 
@@ -601,7 +603,32 @@ namespace mir
             return false;
         }
 
-        const SceneProbe probe = ProbeScene(target->mDirectory);
+        mSceneLoader.Request(id, target->mDirectory, mRuntime->state.scene.Scene().mInstanceId);
+        return true;
+    }
+
+    void App::PollSceneLoad()
+    {
+        if (!mRuntime || mWindow.Get().ShouldClose())
+        {
+            mSceneLoader.Cancel();
+            return;
+        }
+        if (const auto completed = mSceneLoader.TakeReady(mRuntime->state.scene.Scene().mInstanceId))
+            ActivateScene(*completed);
+    }
+
+    bool App::ActivateScene(const SceneLoadCompletion &completed)
+    {
+        if (!mRuntime || completed.source != mRuntime->state.scene.Scene().mInstanceId)
+            return false;
+        const std::string &id = completed.id;
+        const SceneProbe &probe = completed.prepared.probe;
+        if (!completed.error.empty())
+        {
+            MIR_LOG_ERROR("Scene swap: scene '{}' could not be prepared ({})", id, completed.error);
+            return false;
+        }
         if (!probe.Ok())
         {
             MIR_LOG_ERROR("Scene swap: scene '{}' could not be prepared ({}, {} missing files)", id,
@@ -613,7 +640,7 @@ namespace mir
         LoadedScene prepared;
         try
         {
-            prepared = mir::LoadScene(world, target->mDirectory,
+            prepared = mir::LoadPreparedScene(world, completed.prepared,
                 &mRuntime->state.prefab.Coordinator().Resolver(), prepared.mInstanceId);
             if (!prepared.mComplete)
             {
@@ -636,7 +663,7 @@ namespace mir
         mRuntime->state.scheduler.RunStage(Stage::SceneEnd, oldContext);
         mRuntime->state.scene.Unload();
         mRuntime->state.scheduler.RunStage(Stage::SceneUnload, oldContext);
-        mRuntime->state.scene.Adopt(std::move(prepared), target->mDirectory);
+        mRuntime->state.scene.Adopt(std::move(prepared), completed.directory);
         SystemContext loadedContext = MakeRuntimeContext(0.0f);
         loadedContext.sceneSwapped = true;
         mRuntime->state.scheduler.RunStage(Stage::SceneLoad, loadedContext);
@@ -753,8 +780,10 @@ namespace mir
 
         std::vector<Request> actions = queue.Take();
         std::optional<std::string> nextScene;
+        SceneInstanceId sourceScene = kOwnedBySession;
         if (mRuntime)
         {
+            sourceScene = mRuntime->state.scene.Scene().mInstanceId;
             RequestQueue &runtimeQueue = mRuntime->state.world.Resource<RequestQueue>();
             nextScene = runtimeQueue.TakeNextScene();
             std::vector<Request> runtimeActions = runtimeQueue.Take();
@@ -799,8 +828,10 @@ namespace mir
                 break;
             }
         }
-        if (nextScene && mRuntime && !mWindow.Get().ShouldClose())
+        if (nextScene && mRuntime && !mWindow.Get().ShouldClose() &&
+            sourceScene == mRuntime->state.scene.Scene().mInstanceId)
             SwapScene(*nextScene);
+        PollSceneLoad();
     }
 
     void App::ToggleFullscreen()

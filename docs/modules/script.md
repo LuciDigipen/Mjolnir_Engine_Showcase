@@ -95,8 +95,10 @@ bindings run after them.
 
 `world:load_scene("sceneId")` queues a swap of the running Play scene to a
 scene registered in `game.json`. It returns `true` when the request is queued.
-The swap runs at the next frame boundary. An unknown ID or a scene that
+Scene files prepare on a worker while the current scene continues running.
+The swap runs at a frame boundary after preparation finishes. An unknown ID or a scene that
 cannot be prepared leaves the current scene running and logs an error.
+The latest queued scene replaces a pending request, and Stop cancels it.
 `SceneEnd` stops only the outgoing scene's scripts. `world:persist(entity)`
 keeps an entity and its children across the swap, `world:scene_instance()`
 returns the active instance ID, and `world:session_data()` returns a table that
