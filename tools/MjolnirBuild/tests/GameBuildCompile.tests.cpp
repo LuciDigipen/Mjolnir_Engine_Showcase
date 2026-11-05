@@ -75,30 +75,47 @@ namespace
         return nlohmann::json::parse(*text);
     }
 
-    // Puts the test-only cmake.exe first on PATH, which the game build step's cmd inherits
-    struct FakeCMakeOnPath
+    std::wstring EnvironmentText(const wchar_t *name)
     {
-        std::wstring mPath;
+        const DWORD size = GetEnvironmentVariableW(name, nullptr, 0);
+        std::wstring value(size, L'\0');
+        value.resize(GetEnvironmentVariableW(name, value.data(), size));
+        return value;
+    }
 
-        FakeCMakeOnPath()
+    // A cl.cmd and ninja.cmd that do nothing, for the game build step's where checks
+    fs::path MakeFakeTools(const fs::path &dir)
+    {
+        Touch(dir / "cl.cmd", "@exit /b 0\r\n");
+        Touch(dir / "ninja.cmd", "@exit /b 0\r\n");
+        return fs::path(dir).make_preferred();
+    }
+
+    std::wstring FakeCMakeDir() { return fs::path(MJOLNIR_BUILD_FAKE_CMAKE_DIR).make_preferred().wstring(); }
+
+    // Only what cmd itself needs, so a tool the test leaves out is missing
+    std::wstring SystemPath() { return (fs::path(EnvironmentText(L"SystemRoot")) / "System32").wstring(); }
+
+    // The test-only cmake.exe and the fake cl and ninja first on PATH, which the game build step's cmd inherits.
+    // VCToolsInstallDir marks a Developer environment, so no Visual Studio is loaded
+    struct FakeToolsOnPath
+    {
+        fs::path mTools;
+        ScopedEnvironment mPath;
+        ScopedEnvironment mDeveloper;
+
+        explicit FakeToolsOnPath(const fs::path &dir)
+            : mTools(MakeFakeTools(dir)),
+              mPath(L"PATH", FakeCMakeDir() + L";" + mTools.wstring() + L";" + EnvironmentText(L"PATH")),
+              mDeveloper(L"VCToolsInstallDir", mTools.wstring())
         {
-            const DWORD size = GetEnvironmentVariableW(L"PATH", nullptr, 0);
-            mPath.resize(size);
-            mPath.resize(GetEnvironmentVariableW(L"PATH", mPath.data(), size));
-            const std::wstring fake = fs::path(MJOLNIR_BUILD_FAKE_CMAKE_DIR).make_preferred().wstring();
-            REQUIRE(SetEnvironmentVariableW(L"PATH", (fake + L";" + mPath).c_str()));
         }
-
-        ~FakeCMakeOnPath() { SetEnvironmentVariableW(L"PATH", mPath.c_str()); }
-
-        FakeCMakeOnPath(const FakeCMakeOnPath &) = delete;
-        FakeCMakeOnPath &operator=(const FakeCMakeOnPath &) = delete;
     };
 
     struct CompileFixture
     {
         Sandbox mSandbox;
-        FakeCMakeOnPath mPath;
+        FakeToolsOnPath mPath{ mSandbox.mRoot / "tools" };
         fs::path mCheckout = mSandbox.mRoot / "checkout";
         fs::path mGameBuildDir = mSandbox.mRoot / "game-build";
         fs::path mOut = mSandbox.mRoot / "out";
@@ -406,6 +423,76 @@ TEST_CASE("The batch file configures, then compiles the game build's two targets
                     "|| exit /b 13\r\n"));
     CHECK(text.find("cmake --preset") < text.find("cmake --build"));
     CHECK(text.find("cmake --build") < text.find("cmake --install"));
+
+    // a Developer environment loads nothing, but the tools are still checked
+    CHECK_FALSE(Has(text, "call "));
+    CHECK(Has(text, "where /q cl || exit /b 15\r\n"));
+    CHECK(Has(text, "where /q cmake || exit /b 16\r\n"));
+    CHECK(Has(text, "where /q ninja || exit /b 16\r\n"));
+    CHECK(text.find("where /q") < text.find("cd /d"));
+}
+
+TEST_CASE("The batch file loads Visual Studio first, with the toolset the build folder was configured with",
+    "[game-build-compile]")
+{
+    GameBuildScript script{ "C:/checkout", "game-release", "C:/checkout/builds/game-release", "C:/out/game-build.tmp",
+        {}, { "C:/Program Files/Microsoft Visual Studio/18/Community/VC/Auxiliary/Build/vcvars64.bat", "14.51.36231" } };
+    std::string text = GameBuildScriptText(script);
+    CHECK(Has(text, "cd /d \"C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Auxiliary\\Build\" "
+                    "|| exit /b 14\r\n"));
+    CHECK(Has(text, "call .\\vcvars64.bat -vcvars_ver=14.51.36231 || exit /b 14\r\n"));
+    CHECK(text.find("call ") < text.find("where /q cl"));
+    CHECK(text.find("call ") < text.find("cd /d \"C:\\checkout\""));
+
+    script.mVisualStudio.mToolset.clear();
+    text = GameBuildScriptText(script);
+    CHECK(Has(text, "call .\\vcvars64.bat || exit /b 14\r\n"));
+    CHECK_FALSE(Has(text, "-vcvars_ver"));
+}
+
+TEST_CASE("Visual Studio under a folder with % and ^ in its name is loaded as named", "[game-build-compile]")
+{
+    CompileFixture fixture;
+    const ScopedEnvironment plain(L"VCToolsInstallDir", std::nullopt);
+    // what %SDK% would expand to, were the path expanded twice
+    const ScopedEnvironment sdk(L"SDK", L"wrong");
+
+    const fs::path install = fixture.mSandbox.mRoot / "D 100%SDK%^x" / "Visual Studio";
+    const fs::path build = install / "VC" / "Auxiliary" / "Build";
+    Touch(build / "vcvars64.bat", "@echo %*> called.txt\r\n@exit /b 0\r\n");
+    const fs::path cl = install / "VC" / "Tools" / "MSVC" / "14.51.36231" / "bin" / "Hostx64" / "x64" / "cl.exe";
+    Touch(cl);
+    Touch(fixture.BuildDir() / "CMakeCache.txt", "CMAKE_CXX_COMPILER:FILEPATH=" + PathText(cl) + "\r\n");
+
+    const BuildReport report = RunGameBuild(fixture.Request());
+    INFO(report.mError);
+    INFO(ReadText(fixture.BuildDir() / "mjolnir_game_build.log").value_or(""));
+    REQUIRE(report.mOk);
+    CHECK(Has(ReadText(build / "called.txt").value_or(""), "-vcvars_ver=14.51.36231"));
+    CHECK(fixture.Calls("--install") == 1);
+}
+
+TEST_CASE("A missing compiler or CMake fails naming the Visual Studio component to install", "[game-build-compile]")
+{
+    for (const auto &[missing, message] : { std::pair{ "cl", "\"Desktop development with C++\" workload" },
+             std::pair{ "cmake", "\"C++ CMake tools for Windows\"" } })
+    {
+        INFO(missing);
+        CompileFixture fixture;
+        MakeGameBuildTemplate(fixture.mGameBuildDir);
+        const std::wstring tools = fixture.mPath.mTools.wstring();
+        const ScopedEnvironment path(L"PATH",
+            (std::string_view(missing) == "cl" ? FakeCMakeDir() : tools) + L";" + SystemPath());
+
+        const BuildReport report = RunGameBuild(fixture.Request());
+        CHECK_FALSE(report.mOk);
+        REQUIRE(FindStep(report, "game build"));
+        CHECK(FindStep(report, "game build")->mStatus == StepStatus::Failed);
+        CHECK(Has(report.mError, message));
+        CHECK(fixture.Calls("--preset") == 0);
+        CHECK(fs::exists(fixture.mGameBuildDir / "MjolnirEngine.exe"));
+        CHECK_FALSE(fs::exists(GameBuildStagingDir(fixture.mGameBuildDir)));
+    }
 }
 
 TEST_CASE("Without a game build preset the game build step is skipped and nothing compiles", "[game-build-compile]")

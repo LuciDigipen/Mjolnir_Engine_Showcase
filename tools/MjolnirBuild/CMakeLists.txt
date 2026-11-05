@@ -5,6 +5,7 @@ add_library(mjolnir_build STATIC
     BuildOutput.cpp
     GameBuild.cpp
     GameBuildCompile.cpp
+    VisualStudio.cpp
 )
 target_include_directories(mjolnir_build PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(mjolnir_build
@@ -31,6 +32,7 @@ if(BUILD_TESTING)
         tests/BuildOutput.tests.cpp
         tests/GameBuild.tests.cpp
         tests/GameBuildCompile.tests.cpp
+        tests/VisualStudio.tests.cpp
     )
     engine_target_utf8(mjolnir_build_tests)
     target_link_libraries(mjolnir_build_tests PRIVATE

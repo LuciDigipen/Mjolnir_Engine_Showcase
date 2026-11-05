@@ -10,6 +10,7 @@
 #include "GameBuildCompile.h"
 
 #include "BuildOutput.h"
+#include "VisualStudio.h"
 
 #include <core/fs/FileIO.h>
 #include <core/fs/Paths.h>
@@ -19,7 +20,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <cstdlib>
 #include <map>
 #include <stdexcept>
 #include <system_error>
@@ -81,15 +81,13 @@ namespace mir::build
             fs::remove_all(dir, ec);
         }
 
-        std::optional<fs::path> EnvironmentPath(const wchar_t *name)
+        constexpr std::string_view kNoVisualStudio = "no Visual Studio with the C++ tools was found; install the "
+                                                     "\"Desktop development with C++\" workload with the Visual Studio "
+                                                     "Installer";
+
+        fs::path EditorBuildDir(const GameBuildCompile &compile)
         {
-            wchar_t *value = nullptr;
-            std::size_t length = 0;
-            if (_wdupenv_s(&value, &length, name) != 0 || value == nullptr)
-                return std::nullopt;
-            const fs::path path(value);
-            std::free(value);
-            return path.empty() ? std::nullopt : std::optional(path);
+            return compile.mEditorInfo.empty() ? fs::path() : compile.mEditorInfo.parent_path();
         }
 
         fs::path CommandShell()
@@ -247,11 +245,23 @@ namespace mir::build
             return { NormalizedPath(dir), {} };
         }
 
-        std::string FailureText(int exit, const GameBuildCompile &compile, const fs::path &buildDir, const fs::path &log)
+        std::string FailureText(int exit, const GameBuildCompile &compile, const GameBuildScript &script,
+            const fs::path &log)
         {
             std::string what;
             switch (exit)
             {
+            case kGameBuildExitVisualStudio:
+                what = "loading Visual Studio with " + PathText(script.mVisualStudio.mVcvars) + " failed";
+                break;
+            case kGameBuildExitNoCompiler:
+                what = "cl.exe, the C++ compiler, is not on PATH; install the \"Desktop development with C++\" "
+                       "workload with the Visual Studio Installer";
+                break;
+            case kGameBuildExitNoCMake:
+                what = "cmake or ninja is not on PATH; install \"C++ CMake tools for Windows\" with the Visual Studio "
+                       "Installer";
+                break;
             case kGameBuildExitNoCheckout:
                 what = "could not enter the checkout " + PathText(compile.mSourceRoot);
                 break;
@@ -262,15 +272,13 @@ namespace mir::build
                 what = "compiling the game build with " + compile.mPreset + " failed";
                 break;
             case kGameBuildExitInstall:
-                what = "installing the game build from " + PathText(buildDir) + " failed";
+                what = "installing the game build from " + PathText(script.mBuildDir) + " failed";
                 break;
             default:
                 what = std::string(kScriptFileName) + " stopped with exit code " + std::to_string(exit);
                 break;
             }
             what += "; its output is in " + PathText(log);
-            if (!EnvironmentPath(L"VCToolsInstallDir"))
-                what += ". This is not a Developer Command Prompt, which the compile needs";
             return what;
         }
 
@@ -428,6 +436,9 @@ namespace mir::build
             if (std::optional<std::string> problem = GameBuildDirProblem(previous))
                 return *problem + " (the previous template is moved there while the new one replaces it)";
         }
+
+        if (!FindVisualStudio(buildDir, EditorBuildDir(compile)))
+            return std::string(kNoVisualStudio);
         return std::nullopt;
     }
 
@@ -447,6 +458,23 @@ namespace mir::build
         const auto exitWith = [](int code) { return " || exit /b " + std::to_string(code) + "\r\n"; };
 
         std::string text = "@echo off\r\nchcp 65001 >nul\r\n";
+        const VisualStudio &visualStudio = script.mVisualStudio;
+        if (!visualStudio.mVcvars.empty())
+        {
+            // vcvars looks for vswhere on PATH, and says so in the log when it is missing
+            text += "set \"PATH=%PATH%;%ProgramFiles(x86)%\\Microsoft Visual Studio\\Installer\"\r\n";
+            // call expands % a second time and doubles ^ in its line, so the folder is entered first and named only here
+            text += "cd /d \"" + BatchPath(visualStudio.mVcvars.parent_path()) + "\"" +
+                exitWith(kGameBuildExitVisualStudio);
+            text += "call .\\" + std::string(kVcvarsFileName);
+            if (!visualStudio.mToolset.empty())
+                text += " -vcvars_ver=" + visualStudio.mToolset;
+            text += exitWith(kGameBuildExitVisualStudio);
+        }
+        text += "where /q cl" + exitWith(kGameBuildExitNoCompiler);
+        text += "where /q cmake" + exitWith(kGameBuildExitNoCMake);
+        text += "where /q ninja" + exitWith(kGameBuildExitNoCMake);
+        // after vcvars, which leaves the script in its own folder
         text += "cd /d \"" + BatchPath(script.mSourceRoot) + "\"" + exitWith(kGameBuildExitNoCheckout);
         text += "cmake --preset " + script.mPreset;
         for (const std::string &define : script.mDefines)
@@ -471,6 +499,9 @@ namespace mir::build
         const fs::path &buildDir = *found;
         if (std::optional<std::string> problem = OverlapProblem(buildDir, compile.mGameBuildDir, {}))
             throw std::runtime_error(*problem);
+        const std::optional<VisualStudio> visualStudio = FindVisualStudio(buildDir, EditorBuildDir(compile));
+        if (!visualStudio)
+            throw std::runtime_error(std::string(kNoVisualStudio));
 
         // Installed beside the template first, so a failure leaves the previous one in place
         const fs::path gameBuildDir = NormalizedPath(compile.mGameBuildDir);
@@ -505,7 +536,7 @@ namespace mir::build
                     defines = FeatureDefines(*info);
             }
 
-            const GameBuildScript script{ compile.mSourceRoot, compile.mPreset, buildDir, staging, defines };
+            const GameBuildScript script{ compile.mSourceRoot, compile.mPreset, buildDir, staging, defines, *visualStudio };
 
             // Kept, so the same commands can be run again by hand
             fs::create_directories(buildDir, ec);
@@ -522,7 +553,7 @@ namespace mir::build
             if (!exit)
                 throw std::runtime_error("lost track of " + std::string(kScriptFileName));
             if (*exit != 0)
-                throw std::runtime_error(FailureText(*exit, compile, buildDir, log));
+                throw std::runtime_error(FailureText(*exit, compile, script, log));
 
             if (std::optional<std::string> problem = GameBuildTemplateProblem(staging))
                 throw std::runtime_error(PathText(buildDir) + " installed no game build: " + *problem +

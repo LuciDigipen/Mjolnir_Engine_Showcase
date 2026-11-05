@@ -16,12 +16,43 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 
 namespace mir::build::test
 {
     namespace fs = std::filesystem;
+
+    // Sets, or with nullopt clears, one variable of the environment children inherit, until it goes out of scope
+    struct ScopedEnvironment
+    {
+        std::wstring mName;
+        std::optional<std::wstring> mPrevious;
+
+        ScopedEnvironment(std::wstring name, const std::optional<std::wstring> &value) : mName(std::move(name))
+        {
+            const DWORD size = GetEnvironmentVariableW(mName.c_str(), nullptr, 0);
+            if (size != 0)
+            {
+                std::wstring previous(size, L'\0');
+                previous.resize(GetEnvironmentVariableW(mName.c_str(), previous.data(), size));
+                mPrevious = std::move(previous);
+            }
+            REQUIRE(SetEnvironmentVariableW(mName.c_str(), value ? value->c_str() : nullptr));
+        }
+
+        ~ScopedEnvironment() { SetEnvironmentVariableW(mName.c_str(), mPrevious ? mPrevious->c_str() : nullptr); }
+
+        ScopedEnvironment(const ScopedEnvironment &) = delete;
+        ScopedEnvironment &operator=(const ScopedEnvironment &) = delete;
+    };
 
     // A fresh folder per test, removed when it ends
     struct Sandbox

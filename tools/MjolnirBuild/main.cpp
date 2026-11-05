@@ -42,8 +42,9 @@ namespace
         "preset, e.g. windows-msvc-game-release, with this build's large world, audio, DLSS and\n"
         "RTXGI options, and installed fresh into <template>, which must then be missing, empty or\n"
         "a game build template. The commands are kept in the preset's build folder as\n"
-        "mjolnir_game_build.bat, with their output in mjolnir_game_build.log. Run it from a\n"
-        "Developer Command Prompt.\n"
+        "mjolnir_game_build.bat, with their output in mjolnir_game_build.log. Visual Studio is\n"
+        "loaded first: the one the build folder was configured with, else the editor's, else\n"
+        "the newest with the C++ tools; nothing in a Developer Command Prompt.\n"
         "Without it, <template> is used as it is; make one with\n"
         "  cmake --install builds/windows-msvc-game-release --prefix <template>\n"
         "Exit 0: built; 1: the build failed; 2: bad arguments.\n";
