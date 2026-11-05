@@ -13,8 +13,6 @@ ICON_SIZES = [16, 24, 32, 48, 64, 128, 256]
 ICON_OUTLINE_COLOR = (18, 18, 22)
 SPLASH_SIZE = 512
 SPLASH_LOGO_FRACTION = 0.84
-SPLASH_SHADOW_COLOR = (8, 10, 14)
-SPLASH_SHADOW_OPACITY = 0.75
 
 
 def white_with_alpha(alpha):
@@ -36,15 +34,9 @@ def centered_alpha(cropped_alpha, size, inner):
 
 
 def make_splash_logo(cropped_alpha):
-    # A soft shadow keeps the white logo readable over the artwork's pale wires.
+    # Plain white: the splash draws its own hard drop shadow behind it.
     glyph_alpha = centered_alpha(cropped_alpha, SPLASH_SIZE, round(SPLASH_SIZE * SPLASH_LOGO_FRACTION))
-    shadow_alpha = glyph_alpha.filter(ImageFilter.MaxFilter(9)).filter(ImageFilter.GaussianBlur(10))
-    shadow_alpha = shadow_alpha.point(lambda value: round(value * SPLASH_SHADOW_OPACITY))
-
-    image = Image.new("RGBA", glyph_alpha.size, SPLASH_SHADOW_COLOR + (0,))
-    image.putalpha(shadow_alpha)
-    image.alpha_composite(white_with_alpha(glyph_alpha))
-    return image
+    return white_with_alpha(glyph_alpha)
 
 
 def make_icon_frame(cropped_alpha, size):

@@ -54,7 +54,14 @@ namespace mir
         constexpr wchar_t kIconResource[] = L"GLFW_ICON";
 
         constexpr char kLogoFile[] = "mjolnir-logo-splash.png";
-        constexpr int kLogoSize = 280;
+        constexpr int kLogoSize = 70;
+
+        // Engine title and logo in the artwork's lower right corner, title first.
+        constexpr wchar_t kEngineTitle[] = L"Mjolnir Engine";
+        constexpr int kTitleFontHeight = 46;
+        constexpr int kTitleLogoGap = 6;
+        constexpr int kBrandRightMargin = 26;
+        constexpr int kBrandBottomMargin = 44;
 
         // Bottom strip: status text + progress bar + version/copyright.
         // Scaled 2x alongside SplashScreen::kWidth/kHeight (640x360 -> 1280x720).
@@ -65,7 +72,6 @@ namespace mir
 
         struct PaintState
         {
-            std::string mEngineName;
             std::string mVersion;
             std::string mCopyright;
             std::string mStatus;
@@ -233,7 +239,7 @@ namespace mir
             static HBRUSH trackBrush = ::CreateSolidBrush(RGB(45, 45, 52));
             static HBRUSH fillBrush = ::CreateSolidBrush(RGB(90, 140, 235));
             static HFONT nameFont = ::CreateFontW(
-                72, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+                -kTitleFontHeight, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                 CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
             static HFONT smallFont = ::CreateFontW(
@@ -269,29 +275,35 @@ namespace mir
                 ::FillRect(dc, &artRect, artBrush);
             }
 
-            // Engine logo, centered in the artwork.
-            if (logoBitmap != nullptr)
-            {
-                ScopedBitmapDc logo(dc, logoBitmap);
-                const BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
-                ::AlphaBlend(dc, (artRect.right - kLogoSize) / 2, (artRect.bottom - kLogoSize) / 2,
-                             kLogoSize, kLogoSize, logo.mDc, 0, 0, kLogoSize, kLogoSize, blend);
-            }
-
             RECT stripRect{0, artRect.bottom, client.right, client.bottom};
             ::FillRect(dc, &stripRect, stripBrush);
 
             ::SetBkMode(dc, TRANSPARENT);
 
-            // Engine name in the logo's place, so a missing logo still identifies the engine.
+            // Title then logo in the artwork's lower right, the logo's box on the right margin.
+            // A missing logo leaves the title alone at the corner.
+            const int logoRight = artRect.right - kBrandRightMargin;
+            const int logoTop = artRect.bottom - kBrandBottomMargin - kLogoSize;
+            const bool hasLogo = logoBitmap != nullptr;
+
             HGDIOBJ prevFont = ::SelectObject(dc, nameFont);
-            if (logoBitmap == nullptr)
+            RECT titleRect{0, 0, 0, 0};
+            ::DrawTextW(dc, kEngineTitle, -1, &titleRect, DT_CALCRECT | DT_SINGLELINE);
+            const int titleWidth = titleRect.right - titleRect.left;
+            const int titleHeight = titleRect.bottom - titleRect.top;
+
+            const int titleRight = hasLogo ? logoRight - kLogoSize - kTitleLogoGap : logoRight;
+            const int titleTop = logoTop + (kLogoSize - titleHeight) / 2;
+            titleRect = RECT{titleRight - titleWidth, titleTop, titleRight, titleTop + titleHeight};
+            ::SetTextColor(dc, RGB(230, 230, 235));
+            ::DrawTextW(dc, kEngineTitle, -1, &titleRect, DT_LEFT | DT_SINGLELINE);
+
+            if (hasLogo)
             {
-                ::SetTextColor(dc, RGB(230, 230, 235));
-                RECT nameRect = artRect;
-                const std::wstring engineName = Utf8ToWide(state.mEngineName);
-                ::DrawTextW(dc, engineName.c_str(), -1, &nameRect,
-                            DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                const BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+                ScopedBitmapDc logo(dc, logoBitmap);
+                ::AlphaBlend(dc, logoRight - kLogoSize, logoTop, kLogoSize, kLogoSize,
+                             logo.mDc, 0, 0, kLogoSize, kLogoSize, blend);
             }
 
             // Status text, top-left of the bottom strip.
@@ -426,7 +438,7 @@ namespace mir
             PaintState initialState;
             try
             {
-                initialState = PaintState{desc.mEngineName, desc.mVersion, desc.mCopyright, desc.mStatus, desc.mProgress};
+                initialState = PaintState{desc.mVersion, desc.mCopyright, desc.mStatus, desc.mProgress};
                 std::lock_guard<std::mutex> lock(impl->mMutex);
                 impl->mState = initialState;
             }
