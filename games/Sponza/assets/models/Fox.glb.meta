@@ -1,0 +1,42 @@
+{
+  "guid": "f28b5d1b1b7239f2",
+  "importer": {
+    "next": 34,
+    "objects": {
+      "animation:name/Run": "33",
+      "animation:name/Survey": "31",
+      "animation:name/Walk": "32",
+      "image:hash/3028595376029657840": "1",
+      "material:name/fox_material": "2",
+      "mesh:name/fox1": "3",
+      "node:name/_rootJoint": "6",
+      "node:name/b_Head_05": "12",
+      "node:name/b_Hip_01": "8",
+      "node:name/b_LeftFoot01_017": "24",
+      "node:name/b_LeftFoot02_018": "25",
+      "node:name/b_LeftForeArm_010": "17",
+      "node:name/b_LeftHand_011": "18",
+      "node:name/b_LeftLeg01_015": "22",
+      "node:name/b_LeftLeg02_016": "23",
+      "node:name/b_LeftUpperArm_09": "16",
+      "node:name/b_Neck_04": "11",
+      "node:name/b_RightFoot01_021": "28",
+      "node:name/b_RightFoot02_022": "29",
+      "node:name/b_RightForeArm_07": "14",
+      "node:name/b_RightHand_08": "15",
+      "node:name/b_RightLeg01_019": "26",
+      "node:name/b_RightLeg02_020": "27",
+      "node:name/b_RightUpperArm_06": "13",
+      "node:name/b_Root_00": "7",
+      "node:name/b_Spine01_02": "9",
+      "node:name/b_Spine02_03": "10",
+      "node:name/b_Tail01_012": "19",
+      "node:name/b_Tail02_013": "20",
+      "node:name/b_Tail03_014": "21",
+      "node:name/fox": "5",
+      "node:name/root": "4",
+      "skeleton:hash/13502555501258654477": "30"
+    }
+  },
+  "version": 1
+}

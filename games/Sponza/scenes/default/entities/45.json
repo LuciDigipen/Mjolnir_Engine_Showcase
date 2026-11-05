@@ -1,0 +1,35 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [-0.27, 0.18, -4.33],
+        "rotation": [0, 0, 0, 1],
+        "scale": [1.16, 0.32, 1]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [-0.27, 0.18, -4.33]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "Fountain plinth"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "materialShader": "default",
+        "meshName": "builtin:cylinder",
+        "tint": [0.23, 0.3, 0.36, 1]
+      },
+      "type": "MeshRenderer"
+    }
+  ],
+  "id": 45,
+  "parent": 43,
+  "siblingIndex": 1
+}

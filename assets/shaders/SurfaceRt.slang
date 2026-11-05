@@ -8,6 +8,7 @@
 
 #include "PbrCommon.slang"
 #include "SurfaceCommon.slang"
+#include "RayPayload.slang"
 
 [[vk::binding(0, 0)]] RaytracingAccelerationStructure gSurfaceTlas;
 
@@ -39,14 +40,6 @@ struct RtInstanceInfo
     float4 modelCol2;
 };
 
-struct RayPayload
-{
-    float3 color;
-    float distance;
-    float hardwareDepth;
-    float2 velocity;
-};
-
 struct ShadowPayload
 {
     float visibility;
@@ -62,7 +55,6 @@ struct RtPushConstants
 [[vk::push_constant]] RtPushConstants pushData;
 
 static const uint kInstanceRasterFacingCorrection = 32u;
-static const uint kAaModeDlss = 3u;
 static const uint kVertexStrideFloats = 16;
 static const uint kColorOffset = 3;
 static const uint kNormalOffset = 6;
@@ -236,7 +228,7 @@ void closestHitSurface<M : IMaterial>(inout RayPayload payload, in BuiltInTriang
     const float4 prevClip = mul(prevViewProj, mul(info.prevModel, float4(objectPos, 1.0)));
     payload.velocity = (currClip.xy / currClip.w) - (prevClip.xy / prevClip.w);
 
-    if (pushData.aaMode == kAaModeDlss)
+    if (payload.writeGuides != 0)
     {
         const uint2 guidePixel = DispatchRaysIndex().xy + pushData.outputOffset;
         const float3 viewDir = normalize(cameraPos.xyz - hitWorldPos);

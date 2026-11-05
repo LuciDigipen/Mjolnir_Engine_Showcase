@@ -1,0 +1,35 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [0.66, 0.54, -5.61],
+        "rotation": [0, 0, 0, 1],
+        "scale": [0.58, 1, 0.55]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [0.66, 0.54, -5.61]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "Depth of field background"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "materialShader": "default",
+        "meshName": "builtin:cube",
+        "tint": [0.86, 0.35, 0.14, 1]
+      },
+      "type": "MeshRenderer"
+    }
+  ],
+  "id": 47,
+  "parent": 43,
+  "siblingIndex": 3
+}

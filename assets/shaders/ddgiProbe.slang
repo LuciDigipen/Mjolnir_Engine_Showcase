@@ -62,13 +62,13 @@ void shadowMissMain(inout ShadowPayload payload) { payload.visibility = 1.0; }
 [shader("anyhit")]
 void probeAnyHit(inout ProbePayload payload, BuiltInTriangleIntersectionAttributes attribs)
 {
-    if (!AlphaTestPasses(attribs)) IgnoreHit();
+    if (!OpaqueOrMaskedHit(attribs)) IgnoreHit();
 }
 
 [shader("anyhit")]
 void shadowAnyHitMain(inout ShadowPayload payload, BuiltInTriangleIntersectionAttributes attribs)
 {
-    if (!AlphaTestPasses(attribs)) IgnoreHit();
+    if (!OpaqueOrMaskedHit(attribs)) IgnoreHit();
 }
 
 // Diffuse direct lighting excludes ambient to avoid feeding it into probe history.

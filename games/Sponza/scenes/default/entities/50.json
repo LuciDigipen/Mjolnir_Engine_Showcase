@@ -1,0 +1,35 @@
+{
+  "components": [
+    {
+      "fields": {
+        "position": [-0.06, 0.15, -7.13],
+        "rotation": [0, 0, 0, 1],
+        "scale": [2.68, 0.25, 2.64]
+      },
+      "type": "Transform"
+    },
+    {
+      "fields": {
+        "position": [-0.06, 0.15, -7.13]
+      },
+      "type": "WorldTransform"
+    },
+    {
+      "fields": {
+        "name": "Motion field plinth"
+      },
+      "type": "Name"
+    },
+    {
+      "fields": {
+        "materialShader": "default",
+        "meshName": "builtin:cube",
+        "tint": [0.23, 0.3, 0.36, 1]
+      },
+      "type": "MeshRenderer"
+    }
+  ],
+  "id": 50,
+  "parent": 49,
+  "siblingIndex": 0
+}

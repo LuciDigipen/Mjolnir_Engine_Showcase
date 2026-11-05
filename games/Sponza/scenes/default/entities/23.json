@@ -30,7 +30,7 @@
     },
     {
       "fields": {
-        "motion": 1,
+        "motion": 2,
         "shape": 1,
         "radius": 0.5,
         "friction": 0.45,

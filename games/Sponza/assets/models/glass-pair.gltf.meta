@@ -1,0 +1,15 @@
+{
+  "guid": "7489a0c0d497d99f",
+  "importer": {
+    "next": 7,
+    "objects": {
+      "material:name/Amber glass": "2",
+      "material:name/Pale blue glass": "1",
+      "mesh:name/Amber sphere": "4",
+      "mesh:name/Blue sphere": "3",
+      "node:name/Amber": "6",
+      "node:name/Pale blue": "5"
+    }
+  },
+  "version": 1
+}

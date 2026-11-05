@@ -166,6 +166,10 @@ engine_add_shaders(MjolnirEngine
     ENTRIES initMain:compute reduceMain:compute)
 
 engine_add_shaders(MjolnirEngine
+    SOURCE assets/shaders/rayDeform.slang
+    ENTRIES deformMain:compute)
+
+engine_add_shaders(MjolnirEngine
     SOURCE assets/shaders/SsgiTrace.slang
     ENTRIES traceMain:compute)
 

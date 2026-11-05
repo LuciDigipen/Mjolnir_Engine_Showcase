@@ -403,6 +403,7 @@ namespace mir
                 mDevice->EndLabel(frame->cmd);
             }
             mModelDescriptors->ResetFrame(mFrameSync->Index());
+            mRayTracer->ResetDeformations(mFrameSync->Index());
             mMeshUploads->Collect(*mResources, *mRayTracer, mFrameSync->CompletedValue());
             CollectReleasedResources(mFrameSync->CompletedValue());
             mMeshUploads->Record(frame->cmd, frame->signalValue, *mResources, *mRayTracer);

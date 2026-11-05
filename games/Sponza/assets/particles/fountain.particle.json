@@ -1,0 +1,14 @@
+{
+  "version": 3,
+  "parameters": {
+    "spawnRateScale": 1,
+    "sizeScale": 1
+  },
+  "placements": [
+    {
+      "id": 1,
+      "emitter": "particles/fountain.emitter.json",
+      "offset": [0, 0, 0]
+    }
+  ]
+}
