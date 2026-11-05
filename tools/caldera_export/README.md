@@ -43,4 +43,4 @@ python test_export_ocean.py
 
 ## License
 
-Caldera's data is under Activision's Non-Commercial Use License (`LICENSE.md` in the dataset). Everything exported from it stays under those terms: heights, the runway, the buildings and the ocean mesh, whose depths derive from the heights. `games/CalderaDemo/` is git-ignored for this reason. Confirm the terms before any public showing.
+Caldera's data is under Activision's Non-Commercial Use License (`LICENSE.md` in the dataset). Everything exported from it stays under those terms: heights, the runway, the buildings and the ocean mesh, whose depths derive from the heights.

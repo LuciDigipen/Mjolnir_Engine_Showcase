@@ -2,6 +2,5 @@
     "name": "CalderaDemo",
     "title": "MjolnirEngine - CalderaDemo",
     "assetsRoot": "assets",
-    "sceneDir": "scenes/default",
-    "requiresContent": "source/caldera.heights"
+    "sceneDir": "scenes/default"
 }

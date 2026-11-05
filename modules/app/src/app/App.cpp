@@ -11,6 +11,7 @@
 
 #include "Prompt.h"
 #include <assets/AssetIdRoot.h>
+#include <assets/AssetManifest.h>
 #include <assets/AssetSettings.h>
 #include <core/EngineVersion.h>
 #include <core/ecs/EngineMode.h>
@@ -83,6 +84,38 @@ namespace mir
                     std::string(kPrefabDirectoryName);
             }
             return project.mRootDir / "assets" / std::string(kPrefabDirectoryName);
+        }
+
+        // A game the build left out, as CMake does while its LFS files are pointers, has
+        // source assets but none cooked: say so once, before each entity reports its own
+        void ReportUncookedGame(const GameProject &project, const AssetManifest &manifest)
+        {
+            const std::string prefix = project.mAssetIdRoot + "/";
+            for (const AssetManifestEntry &entry : manifest.Entries())
+                if (manifest.LogicalPathOf(entry).starts_with(prefix))
+                    return;
+
+            std::error_code ec;
+            std::filesystem::recursive_directory_iterator it(project.mAssetsDir, ec);
+            for (; !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
+            {
+                std::error_code entryEc;
+                // SoundBanks are read in place, never cooked
+                if (it->is_directory(entryEc) && it->path().lexically_normal() == project.mSoundBankDir)
+                {
+                    it.disable_recursion_pending();
+                    continue;
+                }
+                if (it->is_regular_file(entryEc))
+                {
+                    MIR_LOG_ERROR("Game '{}' was not cooked: '{}' holds source assets but the cooked manifest has none "
+                        "under '{}'. The build leaves out a game whose Git LFS files are still pointers; run "
+                        "`git lfs pull` from the repository root, then build again, and check the CMake output for "
+                        "'Skipping game {}'.", project.mDir, project.mAssetsDir.string(), project.mAssetIdRoot,
+                        std::filesystem::path(project.mDir).filename().string());
+                    return;
+                }
+            }
         }
     }
 
@@ -189,6 +222,8 @@ namespace mir
     #if MIR_WITH_EDITOR
         mEditor.SetNonInteractive(mDesc.mNonInteractive);
     #endif
+
+        ReportUncookedGame(mProject, mAssets.Manifest());
 
         mSplash.screen.SetProgress("Loading scene...", 0.9f);
         LoadProjectScene();

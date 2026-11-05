@@ -278,10 +278,14 @@ foreach(manifest IN LISTS game_manifests)
 
     file(READ "${manifest}" game_json)
 
-    # A game whose large files were left out of the clone is not a game on this machine.
-    game_content_present("${game_dir}" "${game_json}" game_has_content)
-    if(NOT game_has_content)
-        message(STATUS "Skipping game ${game_name}: its LFS content is not here; see games/${game_name}/README.md")
+    # A game whose large files were never fetched is not a game on this machine.
+    game_lfs_pointers("${game_dir}" game_pointers)
+    if(game_pointers)
+        list(LENGTH game_pointers pointer_count)
+        list(GET game_pointers 0 first_pointer)
+        message(WARNING "Skipping game ${game_name}: ${pointer_count} of its files are still Git LFS pointers "
+            "(first: games/${game_name}/${first_pointer}). Run `git lfs install` once, then `git lfs pull` from "
+            "the repository root; the next build reconfigures and includes the game.")
         continue()
     endif()
     list(APPEND game_names "${game_name}")
