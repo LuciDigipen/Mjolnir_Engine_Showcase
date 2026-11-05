@@ -22,15 +22,16 @@ namespace mir
     {
     public:
         // Restores the volumes from settingsPath, or the project's defaults when it has none yet
-        // starts Wwise and queues every bank in bankDir also throws SetupError when it cannot start
-        AudioModule(ModuleContext context, const std::filesystem::path &bankDir,
+        // starts Wwise and queues every bank in bankDir also throws SetupError when it cannot start.
+        // defaults is the project's "audio" section, loaded by the caller, which must outlive this module.
+        AudioModule(ModuleContext context, const std::filesystem::path &bankDir, AudioSettings &defaults,
             const std::filesystem::path &projectSettingsPath, const std::filesystem::path &settingsPath);
         ~AudioModule();
 
         AudioModule(const AudioModule &) = delete;
         AudioModule &operator=(const AudioModule &) = delete;
 
-        // The "audio" section of project_settings.json, as read at startup or last saved
+        // The "audio" section of project_settings.json, as loaded or last saved
         const AudioSettings &Defaults() const { return mDefaults; }
 
         // Writes the "audio" section of project_settings.json and keeps it as Defaults(); false when it cannot
@@ -55,7 +56,7 @@ namespace mir
 
     private:
         std::filesystem::path mProjectSettingsPath;
-        AudioSettings mDefaults;
+        AudioSettings &mDefaults;
 
         // Wwise is process state, not a member, so the destructor drops this before Terminate
         Registration mHooks;

@@ -19,8 +19,8 @@ namespace mir
     class InputModule
     {
     public:
-        // the map comes from project settings, with the engine's default actions added
-        InputModule(ModuleContext context, Window &window, const std::filesystem::path &projectSettingsPath);
+        // The InputMap is a shared project resource, so the World already holds it.
+        InputModule(ModuleContext context, Window &window);
 
         InputModule(const InputModule &) = delete;
         InputModule &operator=(const InputModule &) = delete;

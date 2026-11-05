@@ -447,19 +447,25 @@ namespace mir
             return value;
         }
 
-        // Shares the source value without extending its lifetime. The value must outlive this reference,
+        // Shares a value its caller owns without extending its lifetime. The value must outlive this reference,
         // so the owner must not remove or replace it while this World uses it.
         template <typename T>
-        T &ShareResourceFrom(World &source)
+        T &ShareResource(T &value)
         {
             static_assert(std::is_same_v<T, std::remove_cvref_t<T>>);
-            T &value = source.Resource<T>();
             const auto key = detail::ResourceKeyOf<T>();
             if (TryResource<T>() == &value)
                 return value;
             mReferencedResources[key] = &value;
             mWorldResources.erase(key);
             return value;
+        }
+
+        // Shares the source World's value, with the same lifetime contract.
+        template <typename T>
+        T &ShareResourceFrom(World &source)
+        {
+            return ShareResource(source.Resource<T>());
         }
 
         // Scene resources are released with their instance, ordinary resources belong to the session.

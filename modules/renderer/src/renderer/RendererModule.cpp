@@ -12,7 +12,6 @@
 #include <renderer/ActiveCamera.h>
 #include <renderer/ComponentRegistration.h>
 #include <renderer/MeshResolveSystem.h>
-#include <renderer/PostProcessingSettings.h>
 #include <renderer/RenderSettings.h>
 #include <renderer/RenderSystem.h>
 #include <renderer/ViewDrawSource.h>
@@ -80,14 +79,13 @@ namespace mir
         context.world.EmplaceResource<ViewDrawSources>();
         // physics fills it while a view shows colliders
         context.world.EmplaceResource<DebugLines>();
-        const RenderSettings renderSettings =
-            RenderSettings::LoadFile(settings.mProjectSettingsPath).value_or(RenderSettings{});
-        context.world.EmplaceResource<RenderSettings>(renderSettings);
-        // The game's play-time upload budget.
-        mRenderer.SetUploadFrameBudget(renderSettings.UploadFrameBytes());
-        mRenderer.SharedResidency()->SetTotalTarget(renderSettings.ResidencyBytes());
-        context.world.EmplaceResource<PostProcessingSettings>(
-            PostProcessingSettings::LoadFile(settings.mProjectSettingsPath).value_or(PostProcessingSettings{}));
+        // The renderer is shared, so only the main binding applies the budgets.
+        if (settings.mAdvanceSharedFrame)
+        {
+            const RenderSettings &renderSettings = context.world.Resource<RenderSettings>();
+            mRenderer.SetUploadFrameBudget(renderSettings.UploadFrameBytes());
+            mRenderer.SharedResidency()->SetTotalTarget(renderSettings.ResidencyBytes());
+        }
 
         MIR_ASSERT(settings.mResolver != nullptr, "RendererModule: settings.mResolver is required");
 

@@ -15,7 +15,6 @@
 #include <core/ecs/Query.h>
 #include <core/ecs/World.h>
 #include <core/ecs/components/Name.h>
-#include <core/fs/Paths.h>
 #include <core/log/Log.h>
 #include <physics/PhysicsWorld.h>
 #include <physics/components/RigidBody.h>
@@ -27,6 +26,7 @@
 #include <terrain/TerrainExecutor.h>
 #include <jobs/JobExecutor.h>
 #include <terrain/TerrainMaterialUv.h>
+#include <terrain/TerrainStreamingConfiguration.h>
 #include <terrain/TerrainStreamingSettings.h>
 
 #include <glm/geometric.hpp>
@@ -226,16 +226,14 @@ namespace mir
             sources = &world.EmplaceResource<ViewDrawSources>();
         sources->sources.push_back(this);
 
-        const TerrainStreamingSettingsLoad load =
-            LoadTerrainStreamingSettings(project.mRootDir / kTerrainStreamingSettingsFileName,
-                                         ExecutableDir() / kTerrainStreamingLocalSettingsFileName);
-        if (!load.settings)
+        const TerrainStreamingConfiguration &configuration = world.Resource<TerrainStreamingConfiguration>();
+        if (!configuration.Effective())
         {
             mSettingsProblem.clear();
-            for (const std::string &problem : load.problems)
+            for (const std::string &problem : configuration.Problems())
                 mSettingsProblem += (mSettingsProblem.empty() ? "" : "; ") + problem;
             // Without either file the game may simply have no terrain; Apply reports it if it does.
-            if (load.gameFileFound || load.localFileFound)
+            if (configuration.GameFileFound() || configuration.LocalFileFound())
             {
                 MIR_LOG_ERROR("Terrain streaming is not configured, so no terrain loads: {}", mSettingsProblem);
                 mSettingsReported = true;
@@ -243,14 +241,14 @@ namespace mir
             return;
         }
 
-        const TerrainStreamingSettings &settings = *load.settings;
+        const TerrainStreamingSettings &settings = *configuration.Effective();
         world.EmplaceResource<TerrainStreamingSettings>(settings);
         mPool = std::make_shared<TerrainJobExecutor>(jobs, settings.io.workerThreads);
         world.EmplaceResource<TerrainStreamer>(settings, mPool);
         MIR_LOG_INFO("Terrain streaming: {:.0f} MiB CPU budget, {} shared slots ({} engine workers), {} residency{}",
                      MiB(settings.cpu.budgetBytes), mPool->Concurrency(), jobs.WorkerCount(),
                      TerrainResidencyModeName(*settings.residency.mode),
-                     load.localFileFound ? " (machine-local overrides applied)" : "");
+                     configuration.LocalFileFound() ? " (machine-local overrides applied)" : "");
         MIR_LOG_INFO("Terrain views: refine above {} px, merge below {} px, prefetch to {} px within {:.1f} MiB",
                      settings.view.refineErrorPixels, settings.view.mergeErrorPixels, settings.view.prefetchErrorPixels,
                      MiB(*settings.view.prefetchBudgetBytes));

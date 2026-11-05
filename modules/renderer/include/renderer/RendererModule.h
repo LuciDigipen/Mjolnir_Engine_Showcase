@@ -31,8 +31,6 @@ namespace mir
         // Vulkan instance name
         const char *mAppName = "MjolnirEngine";
         bool mEnableValidation = true;
-        // RenderSettings and PostProcessingSettings are read from it
-        std::filesystem::path mProjectSettingsPath;
         // looks up the names a MeshRenderer holds, required
         const AssetResolver *mResolver = nullptr;
         // loads mesh assets in the background, null disables mesh asset loading

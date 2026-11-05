@@ -32,6 +32,8 @@ namespace mir
             collides.fill(0xFFFFFFFFu);
         }
 
+        bool operator==(const PhysicsLayerTable &) const = default;
+
         bool Collide(int a, int b) const { return ((collides[a] >> b) & 1u) != 0; }
 
         void SetCollide(int a, int b, bool collide)

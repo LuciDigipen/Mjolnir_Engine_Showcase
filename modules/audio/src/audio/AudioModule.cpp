@@ -76,9 +76,9 @@ namespace mir
         };
     }
 
-    AudioModule::AudioModule(ModuleContext context, const std::filesystem::path &bankDir,
+    AudioModule::AudioModule(ModuleContext context, const std::filesystem::path &bankDir, AudioSettings &defaults,
         const std::filesystem::path &projectSettingsPath, const std::filesystem::path &settingsPath)
-        : mProjectSettingsPath(projectSettingsPath), mDefaults(LoadAudioSettings(projectSettingsPath))
+        : mProjectSettingsPath(projectSettingsPath), mDefaults(defaults)
     {
         // before Init, which applies the volumes without a ramp
         const AudioSettings settings = LoadAudioSettings(settingsPath, mDefaults);

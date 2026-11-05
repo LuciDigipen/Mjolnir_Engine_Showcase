@@ -8,6 +8,7 @@
  */
 #pragma once
 
+#include <app/ProjectResources.h>
 #include <project/GameProject.h>
 #include <animation/AnimationModule.h>
 #include <assets/AssetResolver.h>
@@ -286,13 +287,20 @@ namespace mir
 
         struct WorldState
         {
-            WorldState(const GameProject &project, AssetsModule &assets, const AssetResolver &resolver,
-                GameShellSettings shellSettings);
+            WorldState(ProjectResources &resources, const GameProject &project, AssetsModule &assets,
+                const AssetResolver &resolver, GameShellSettings shellSettings);
+
+            // Shares the project resources first, so every module member below finds them in the World.
+            struct ProjectShare
+            {
+                ProjectShare(World &world, ProjectResources &resources) { resources.ShareInto(world); }
+            };
 
             CommandBuffer commands;
             World world;
             SystemScheduler scheduler;
             CoreModule core{ ModuleContext{ world, scheduler }, commands };
+            ProjectShare projectShare;
 
             ParticlesModule particles;
             SceneModule scene;
@@ -306,6 +314,8 @@ namespace mir
         AssetsModule mAssets;
         std::unique_ptr<AsyncAssetService> mAssetService;
         AssetResolver mResolver;
+        // every World borrows from it, so it outlives them
+        ProjectResources mProjectResources{ mProject };
         // before ImGuiModule: ImGui's shutdown frees the GPU side of the UI's textures,
         // so the textures must still be there
         WorldState mWorldState;

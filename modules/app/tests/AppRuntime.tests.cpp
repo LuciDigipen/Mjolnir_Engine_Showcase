@@ -15,7 +15,12 @@
 #include <core/ecs/components/Transform.h>
 #include <core/log/Log.h>
 #include <core/platform/Process.h>
+#include <input/InputMap.h>
+#include <physics_layers/PhysicsLayers.h>
+#include <renderer/PostProcessingSettings.h>
+#include <renderer/RenderSettings.h>
 #include <scene/SceneIO.h>
+#include <terrain/TerrainStreamingConfiguration.h>
 
 #include <catch2/catch_test_macros.hpp>
 #include <glm/vec3.hpp>
@@ -225,6 +230,49 @@ TEST_CASE("An unknown scene swap keeps a pending additive load", "[app][smoke]")
         REQUIRE(app.RuntimeWorld() != nullptr);
         CHECK(app.RuntimeWorld()->Resource<mir::SceneCollection>().Find(beacons) != nullptr);
         app.StopScene();
+    }
+
+    mir::ShutdownLog();
+    std::error_code ec;
+    std::filesystem::remove(logPath, ec);
+}
+
+TEST_CASE("The authoring and Play Worlds share one set of project resources", "[app][smoke]")
+{
+    const std::filesystem::path logPath = std::filesystem::temp_directory_path() /
+        ("mjolnir_app_resources_test_" + std::to_string(mir::CurrentProcessId()) + ".log");
+    mir::InitLog({ .filePath = logPath.string() });
+
+    mir::GameProject project = mir::ResolveGameProject(
+        (std::filesystem::path(MIR_APP_TEST_ROOT) / "games/HelloWorld").string(), mir::ErrorCategory::Usage);
+    mir::ResolveAssetIdRoot(project);
+
+    mir::AppDesc desc;
+    desc.mProject = project;
+    desc.mHidden = true;
+    desc.mNonInteractive = true;
+    desc.mWorkerThreads = 1;
+    desc.mEnableEditorLayout = true;
+    desc.mMaxFrames = 1;
+
+    {
+        mir::App app(desc);
+        mir::World &authored = app.GetWorld();
+        app.PlayScene();
+        mir::World *runtime = app.RuntimeWorld();
+        REQUIRE(runtime != nullptr);
+
+        CHECK(&runtime->Resource<mir::InputMap>() == &authored.Resource<mir::InputMap>());
+        CHECK(&runtime->Resource<mir::RenderSettings>() == &authored.Resource<mir::RenderSettings>());
+        CHECK(&runtime->Resource<mir::PostProcessingSettings>() == &authored.Resource<mir::PostProcessingSettings>());
+        CHECK(&runtime->Resource<mir::PhysicsLayerTable>() == &authored.Resource<mir::PhysicsLayerTable>());
+        CHECK(&runtime->Resource<mir::TerrainStreamingConfiguration>() ==
+              &authored.Resource<mir::TerrainStreamingConfiguration>());
+
+        runtime->Resource<mir::RenderSettings>().rayTracing = !runtime->Resource<mir::RenderSettings>().rayTracing;
+        const bool changed = runtime->Resource<mir::RenderSettings>().rayTracing;
+        app.StopScene();
+        CHECK(authored.Resource<mir::RenderSettings>().rayTracing == changed);
     }
 
     mir::ShutdownLog();

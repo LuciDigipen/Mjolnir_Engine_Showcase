@@ -24,11 +24,8 @@
 #include <editor/Selection.h>
 #endif
 #include <input/DefaultInputMap.h>
-#include <input/InputMap.h>
 #include <input/InputState.h>
 #include <prefab/PrefabCoordinator.h>
-#include <renderer/PostProcessingSettings.h>
-#include <renderer/RenderSettings.h>
 #include <project/ProjectSettings.h>
 #include <scene/SceneIO.h>
 #include <serial/JsonFile.h>
@@ -128,9 +125,10 @@ namespace mir
                       .mProgress = 0.0f });
     }
 
-    App::WorldState::WorldState(const GameProject &project, AssetsModule &assets, const AssetResolver &resolver,
-        GameShellSettings shellSettings)
-        : particles(Context(), assets, resolver),
+    App::WorldState::WorldState(ProjectResources &resources, const GameProject &project, AssetsModule &assets,
+        const AssetResolver &resolver, GameShellSettings shellSettings)
+        : projectShare(world, resources),
+        particles(Context(), assets, resolver),
         scene(Context(), project.mSceneDir),
         prefab(Context(), scene, PrefabSourceDir(project), kHasEditor ? nullptr : &assets),
         gameUI(Context()),
@@ -140,7 +138,7 @@ namespace mir
     App::SimulationSystems::SimulationSystems(ModuleContext context, const GameProject &project, JobExecutor &jobs,
         AssetsModule &assets, const AssetResolver &resolver, ParticlesModule &particles,
         ParticlesGpuModule &particlesGpu, RenderSystem &rendering)
-        : physics(context, project.mProjectSettingsPath, &jobs),
+        : physics(context, &jobs),
         terrainData(context),
         script(context, assets, resolver),
         particlesRuntime(context, particles, particlesGpu, rendering),
@@ -157,16 +155,15 @@ namespace mir
     struct App::RuntimeSession
     {
         explicit RuntimeSession(App &app)
-            : state(app.mProject, app.mAssets, app.mResolver,
+            : state(app.mProjectResources, app.mProject, app.mAssets, app.mResolver,
                 GameShellSettings{ .mUIDemo = app.mDesc.mUIDemo, .mQuitStopsPlay = app.mDesc.mEnableEditorLayout }),
             rendering(app.mRenderer.BindWorld(state.Context(),
                 RendererModuleSettings{ .mAppName = app.mDesc.mAppName,
                                         .mEnableValidation = app.mDesc.mEnableValidation,
-                                        .mProjectSettingsPath = app.mProject.mProjectSettingsPath,
                                         .mResolver = &app.mResolver,
                                         .mAssetService = app.mAssetService.get(),
                                         .mAdvanceSharedFrame = false })),
-            input(state.Context(), app.mWindow.Get(), app.mProject.mProjectSettingsPath),
+            input(state.Context(), app.mWindow.Get()),
             animation(state.Context(), app.mRenderer.Renderer(), app.mAssetService.get(), app.mResolver, &app.mJobs),
             camera(state.Context()),
         #if MIR_WITH_AUDIO
@@ -182,10 +179,6 @@ namespace mir
         #if MIR_WITH_EDITOR
             state.world.EmplaceResource<Selection>();
         #endif
-            // Project settings have one owner, so a panel's edit and Save reach the running game at once.
-            state.world.ShareResourceFrom<InputMap>(app.mWorldState.world);
-            state.world.ShareResourceFrom<RenderSettings>(app.mWorldState.world);
-            state.world.ShareResourceFrom<PostProcessingSettings>(app.mWorldState.world);
             state.prefab.Coordinator().CopyPrefabDefinitionsFrom(app.mWorldState.prefab.Coordinator());
             state.scene.CopyFrom(app.mWorldState.world, app.mWorldState.scene.Scene(),
                 &app.mWorldState.prefab.Coordinator().Resolver(), &state.prefab.Coordinator().Resolver());
@@ -228,17 +221,16 @@ namespace mir
         mAssets(CookedAssetsDir()),
         mAssetService(MakeAssetService(mAssets, mJobs, mProject.mProjectSettingsPath)),
         mResolver(mAssets, mProject.mAssetIdRoot),
-        mWorldState(mProject, mAssets, mResolver,
+        mWorldState(mProjectResources, mProject, mAssets, mResolver,
             GameShellSettings{ .mUIDemo = mDesc.mUIDemo, .mQuitStopsPlay = mDesc.mEnableEditorLayout }),
         mWindow(MakeWindowDesc(mDesc)),
         mRenderer(Context(), mWindow.Get(),
             RendererModuleSettings{ .mAppName = mDesc.mAppName,
                                     .mEnableValidation = mDesc.mEnableValidation,
-                                    .mProjectSettingsPath = mProject.mProjectSettingsPath,
                                     .mResolver = &mResolver,
                                     .mAssetService = mAssetService.get() }),
         mParticlesGpu(mRenderer.Renderer()),
-        mInput(Context(), mWindow.Get(), mProject.mProjectSettingsPath),
+        mInput(Context(), mWindow.Get()),
         mAnimation(Context(), mRenderer.Renderer(), mAssetService.get(), mResolver, &mJobs),
         mImGui(Context(), mWindow, mRenderer),
     #if MIR_WITH_EDITOR
@@ -247,7 +239,7 @@ namespace mir
     #endif
         mCamera(Context()),
     #if MIR_WITH_AUDIO
-        mAudio(Context(), mProject.mSoundBankDir, mProject.mProjectSettingsPath,
+        mAudio(Context(), mProject.mSoundBankDir, mProjectResources.AudioDefaults(), mProject.mProjectSettingsPath,
             UserDataDir() / mProject.mName / "settings.json"),
     #endif
         mSimulation(Context(), mProject, mJobs, mAssets, mResolver, mWorldState.particles,
@@ -1111,6 +1103,7 @@ namespace mir
             ApplyRequests();
             if (mAssetService)
                 mAssetService->DrainCompletions();
+            mProjectResources.Refresh();
 
             if (mGateScenes && !(mRuntime ? mRuntime->state.world : mWorldState.world).Resource<SceneLoadGroup>().Ready())
             {

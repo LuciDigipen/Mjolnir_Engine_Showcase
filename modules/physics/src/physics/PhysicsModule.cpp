@@ -12,7 +12,6 @@
 #include <physics/CollisionEventSystem.h>
 #include <physics/CollisionEvents.h>
 #include <physics/ComponentRegistration.h>
-#include <physics_layers/PhysicsLayerSettings.h>
 #include <physics/PhysicsInterpolationSystem.h>
 #include <physics/PhysicsSystem.h>
 #include <physics/PhysicsWorld.h>
@@ -25,7 +24,7 @@
 
 namespace mir
 {
-    PhysicsModule::PhysicsModule(ModuleContext context, const std::filesystem::path &projectSettingsPath, JobExecutor *jobs)
+    PhysicsModule::PhysicsModule(ModuleContext context, JobExecutor *jobs)
     {
         RegisterPhysicsComponents();
 
@@ -33,7 +32,7 @@ namespace mir
         if (jobs) desc.mWorkerThreads = static_cast<int>(jobs->WorkerCount());
         PhysicsWorld &physics = context.world.EmplaceResource<PhysicsWorld>(desc);
         MIR_LOG_INFO("Physics: {} simulation workers, {} pose workers", physics.WorkerCount(), jobs ? jobs->WorkerCount() : 0);
-        physics.SetLayerTable(ReadPhysicsLayers(projectSettingsPath));
+        physics.SetLayerTable(context.world.Resource<PhysicsLayerTable>());
         context.world.EmplaceResource<CollisionEvents>();
         context.world.EmplaceResource<PhysicsLayerUpdate>();
 

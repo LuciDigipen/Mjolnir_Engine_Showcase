@@ -255,3 +255,18 @@ TEST_CASE("Sharing a resource from its own World preserves ownership", "[ecs][re
     CHECK(world.RemoveResource<Tracked>());
     CHECK(destructions == 1);
 }
+
+TEST_CASE("ShareResource shares a value its caller owns", "[ecs][resources]")
+{
+    Settings value{ "caller", 1 };
+    World authoring;
+    World runtime;
+
+    CHECK(&authoring.ShareResource(value) == &value);
+    CHECK(&runtime.ShareResource(value) == &value);
+    CHECK(&authoring.Resource<Settings>() == &runtime.Resource<Settings>());
+
+    runtime.Resource<Settings>().level = 9;
+    CHECK(authoring.Resource<Settings>().level == 9);
+    CHECK(value.level == 9);
+}

@@ -20,8 +20,8 @@ namespace mir
     class PhysicsModule
     {
     public:
-        // projectSettingsPath: the "physicsLayers" section sets which layers collide
-        PhysicsModule(ModuleContext context, const std::filesystem::path &projectSettingsPath, JobExecutor *jobs = nullptr);
+        // The World holds the shared PhysicsLayerTable, which sets which layers collide.
+        explicit PhysicsModule(ModuleContext context, JobExecutor *jobs = nullptr);
 
         PhysicsModule(const PhysicsModule &) = delete;
         PhysicsModule &operator=(const PhysicsModule &) = delete;
