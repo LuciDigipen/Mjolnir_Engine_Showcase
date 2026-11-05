@@ -202,9 +202,6 @@ namespace mir
                     const double number = value.as<double>();
                     if (std::isnan(number) || std::isinf(number) || !std::isfinite(static_cast<float>(number)))
                         return refuse("the number is NaN, infinite or too large");
-                    // the range the field declares, which the Inspector keeps to as well
-                    if (field.mClamped && (number < field.mMin || number > field.mMax))
-                        return refuse("it must be between " + std::to_string(field.mMin) + " and " + std::to_string(field.mMax));
                     scratch.asFloat = static_cast<float>(number);
                     return true;
                 }
@@ -241,6 +238,10 @@ namespace mir
                         return refuse(why);
                     scratch.asQuat = glm::quat(static_cast<float>(c[3]), static_cast<float>(c[0]), static_cast<float>(c[1]),
                         static_cast<float>(c[2]));
+                    const float length = glm::length(scratch.asQuat);
+                    if (!(length > 0.0f) || !std::isfinite(length))
+                        return refuse("the rotation must have a finite, nonzero length");
+                    scratch.asQuat /= length;
                     return true;
                 }
             case FieldKind::Mat4:
@@ -379,13 +380,6 @@ namespace mir
                 MIR_LOG_ERROR("script: world:set '{}.{}' - value is the wrong shape or non-finite for a {}{}",
                     componentName, fieldName, FieldKindName(field->mKind),
                     problem.empty() ? std::string() : ": " + problem);
-                return false;
-            }
-
-            if (!field->Constrain(&scratch))
-            {
-                MIR_LOG_ERROR("script: world:set '{}.{}' - value is outside the field's range", componentName,
-                    fieldName);
                 return false;
             }
 

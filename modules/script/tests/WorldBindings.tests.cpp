@@ -513,7 +513,7 @@ function T.NewInstanceData()
 end
 
 function T.OnStart(self, world, entity)
-    world:set(entity, "RotationProbe", "normalized", world:set(entity, "Transform", "rotation", { y = 1 }) and 1 or 0)
+    world:set(entity, "RotationProbe", "normalized", world:set(entity, "Transform", "rotation", { x = 0, y = 1, z = 0 }) and 1 or 0)
 end
 
 return T
@@ -527,8 +527,8 @@ function T.NewInstanceData()
 end
 
 function T.OnStart(self, world, entity)
-    local zero = world:set(entity, "Transform", "rotation", { w = 0 })
-    local nan = world:set(entity, "Transform", "rotation", { w = 0 / 0 })
+    local zero = world:set(entity, "Transform", "rotation", { x = 0, y = 0, z = 0, w = 0 })
+    local nan = world:set(entity, "Transform", "rotation", { x = 0, y = 0, z = 0, w = 0 / 0 })
     world:set(entity, "RotationProbe", "refused", (not zero and not nan) and 1 or 0)
 end
 
