@@ -341,6 +341,36 @@ TEST_CASE("Removing the last user cancels a pending upload without affecting ano
     CHECK(f.host.MeshState(shared) == MeshUploadState::Stale);
 }
 
+TEST_CASE("A scene swap releases the outgoing scene's meshes and keeps the ones the next scene uses",
+    "[renderer][mesh-resolve]")
+{
+    Fixture f;
+    const Entity outgoingShared = f.scene.Spawn("tri");
+    const Entity outgoingOnly = f.scene.Spawn("big");
+    f.Frame();
+    f.Frame();
+    REQUIRE(f.host.uploader.queued == 2);
+    const MeshHandle shared = f.scene.MeshOf(outgoingShared);
+    const MeshHandle unfinished = f.scene.MeshOf(outgoingOnly);
+    f.host.uploader.Record(shared);
+    f.host.uploader.Complete(shared);
+    f.Frame();
+    REQUIRE(f.host.MeshState(shared) == MeshUploadState::Ready);
+    REQUIRE(f.host.MeshState(unfinished) == MeshUploadState::Pending);
+
+    // The swap destroys the outgoing entities and creates the incoming ones in the same frame
+    f.scene.world.DestroyEntity(outgoingShared);
+    f.scene.world.DestroyEntity(outgoingOnly);
+    const Entity incoming = f.scene.Spawn("tri");
+    f.Frame();
+
+    CHECK(f.scene.MeshOf(incoming) == shared);
+    CHECK(f.scene.BoundsOf(incoming) != nullptr);
+    CHECK(f.host.MeshState(shared) == MeshUploadState::Ready);
+    CHECK(f.host.MeshState(unfinished) == MeshUploadState::Stale);
+    CHECK(f.host.uploader.queued == 2);
+}
+
 TEST_CASE("GPU cache pressure evicts unused meshes and preserves active World claims", "[renderer][mesh-resolve]")
 {
     Fixture f;
