@@ -21,6 +21,7 @@
 #include <core/ecs/components/WorldTransform.h>
 #include <core/fs/Paths.h>
 #include <core/log/Log.h>
+#include <gameui/GameUIDemo.h>
 #include <editor/EditorWidgets.h>
 #include <physics_layers/PhysicsLayers.h>
 #include <editor/Selection.h>
@@ -1512,6 +1513,8 @@ namespace mir
                     ImGui::Separator();
                     ImGui::MenuItem("Style Editor", nullptr, &mShowStyleEditor);
                     ImGui::MenuItem("Profiler", nullptr, &mShowProfiler);
+                    if (GameUIDemo *demo = sceneWorld.TryResource<GameUIDemo>())
+                        ImGui::MenuItem("Game UI Widget Demo", nullptr, &demo->mShow);
                     ImGui::EndMenu();
                 }
                 if (const SceneMenuAction playAction = DrawPlayControls(mode); playAction != SceneMenuAction::None)

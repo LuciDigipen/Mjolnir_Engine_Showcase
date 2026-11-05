@@ -9,6 +9,7 @@
 #include <gameui/GameUIModule.h>
 
 #include <gameui/GameUIArea.h>
+#include <gameui/GameUIDemo.h>
 
 #include <core/ecs/SystemScheduler.h>
 #include <core/ecs/World.h>
@@ -22,6 +23,7 @@ namespace mir
     GameUIModule::GameUIModule(ModuleContext context) : mWorld(context.world)
     {
         context.world.EmplaceResource<GameUIArea>();
+        context.world.EmplaceResource<GameUIDemo>();
 
         mFrameBegin = context.scheduler.AddFrameSlot(FrameSlot::FrameBegin,
             [this](SystemContext &frame) { mFrameDt = frame.dt; });

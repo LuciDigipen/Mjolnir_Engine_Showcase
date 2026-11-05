@@ -23,7 +23,7 @@ namespace mir
 
     struct GameShellSettings
     {
-        // debug: every core widget instead of the menus (--ui-demo)
+        // debug: start with every core widget instead of the menus (--ui-demo); GameUIDemo switches it later
         bool mUIDemo = false;
         // the pause menu's Quit leaves Play, as in the editor, instead of closing the game
         bool mQuitStopsPlay = false;
@@ -45,13 +45,21 @@ namespace mir
         void SetControlsOptions(IControlsOptions *controls) { mShell.SetControlsOptions(controls); }
 
     private:
+        void Draw(UIContext &ui, float dt);
+
         // what the player asked of the game, as requests App applies next frame
         void Apply(GameShellAction action);
 
         World &mWorld;
+        AssetsModule &mAssets;
+        const AssetResolver &mResolver;
         GameShellSettings mSettings;
         GameShell mShell;
         UIDemoScreen mDemo;
+        bool mDemoLoaded = false;
+        bool mDemoShown = false;
+        // the demo swaps the style's sprites; restored when the menus come back
+        UIStyle mShellStyle;
 
         // last: unregisters before the screens above are destroyed
         Registration mScreen;
