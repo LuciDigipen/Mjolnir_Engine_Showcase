@@ -1,6 +1,6 @@
 {
     "name": "mjolnir",
-    "version": "0.1.0",
+    "version": "1.0.0",
     "builtin-baseline": "05925b52317eb9a900a8583782e630aafd7a8929",
     "dependencies": [
         "fastgltf",
