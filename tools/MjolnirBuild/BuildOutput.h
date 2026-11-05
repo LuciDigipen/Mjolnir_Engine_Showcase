@@ -41,6 +41,14 @@ namespace mir::build
     // Why out, or the .tmp and .old folders a build deletes beside it, cannot be used, nullopt when they can
     std::optional<std::string> CheckOutputDir(const std::filesystem::path &out, const OutputRules &rules);
 
+    // Why a file MjolnirBuild writes beside the build, named by option (--result, --progress), would be lost with out,
+    // its .tmp or its .old; nullopt when it would not
+    std::optional<std::string> ReportFileProblem(const std::filesystem::path &file, const std::filesystem::path &out,
+        std::string_view option);
+
+    // Writes a --result or --progress file, making its folder, and retries for a moment while a reader has it open
+    bool WriteReportFile(const std::filesystem::path &file, std::string_view text);
+
     // Why a file longestRelative characters below out could not be opened, or nullopt
     std::optional<std::string> CheckPathLength(const std::filesystem::path &out, std::size_t longestRelative);
 

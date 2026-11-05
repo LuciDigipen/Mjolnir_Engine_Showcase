@@ -430,6 +430,20 @@ TEST_CASE("The batch file configures, then compiles the game build's two targets
     CHECK(Has(text, "where /q cmake || exit /b 16\r\n"));
     CHECK(Has(text, "where /q ninja || exit /b 16\r\n"));
     CHECK(text.find("where /q") < text.find("cd /d"));
+
+    // each phase says so in the log as it starts
+    std::size_t at = 0;
+    for (const auto &[marker, command] : { std::pair{ "echo mjolnir_game_build: environment\r\n", "where /q cl" },
+             std::pair{ "echo mjolnir_game_build: configure\r\n", "cmake --preset" },
+             std::pair{ "echo mjolnir_game_build: compile\r\n", "cmake --build" },
+             std::pair{ "echo mjolnir_game_build: install\r\n", "cmake --install" } })
+    {
+        INFO(marker);
+        const std::size_t found = text.find(marker, at);
+        REQUIRE(found != std::string::npos);
+        CHECK(found < text.find(command));
+        at = found + 1;
+    }
 }
 
 TEST_CASE("The batch file loads Visual Studio first, with the toolset the build folder was configured with",
@@ -589,9 +603,12 @@ TEST_CASE("A failed compile keeps the previous template and build, and leaves no
     CHECK_FALSE(report.mOk);
     REQUIRE(FindStep(report, "game build"));
     CHECK(FindStep(report, "game build")->mStatus == StepStatus::Failed);
-    CHECK(Has(report.mError, "compiling the game build with game-release failed"));
-    CHECK(Has(report.mError, PathText(fixture.BuildDir() / "mjolnir_game_build.log")));
-    CHECK(Has(ReadText(fixture.BuildDir() / "mjolnir_game_build.log").value_or(""), "error C2065"));
+    // the phase, the compiler's own line and the log, not Ninja's FAILED: line
+    CHECK(Has(report.mError, "compiling the game build with game-release failed:\n"
+                             "  Engine.cpp(1): error C2065: 'oops': undeclared identifier\n"
+                             "The whole output is in " +
+            PathText(fixture.BuildDir() / "mjolnir_game_build.log")));
+    CHECK_FALSE(Has(report.mError, "FAILED:"));
 
     CHECK(fs::exists(fixture.mGameBuildDir / "kept.txt"));
     CHECK(fs::exists(fixture.mGameBuildDir / "MjolnirEngine.exe"));
@@ -603,8 +620,10 @@ TEST_CASE("A failed compile keeps the previous template and build, and leaves no
 
 TEST_CASE("A failed configure or install says which, and installs nothing", "[game-build-compile]")
 {
-    for (const auto &[phase, message] : { std::pair{ "configure", "configuring game-release failed" },
-             std::pair{ "install", "installing the game build from" } })
+    for (const auto &[phase, message] :
+        { std::pair{ "configure", "configuring game-release failed:\n  CMake Error at CMakeLists.txt:1 (project): No "
+                                  "CMAKE_CXX_COMPILER could be found.\nThe whole output is in " },
+            std::pair{ "install", "installing the game build from" } })
     {
         INFO(phase);
         CompileFixture fixture;
@@ -727,4 +746,73 @@ TEST_CASE("A preset with its own binaryDir is compiled and installed from there"
     CHECK(fs::exists(fixture.BuildDir() / "mjolnir_game_build.log"));
     CHECK_FALSE(fs::exists(fixture.mCheckout / "builds"));
     CHECK(ReadJson(fixture.mGameBuildDir / "game_build_info.json").at("rtxgi") == true);
+}
+
+TEST_CASE("Every step is told as it starts, and the compile's phases and Ninja's count as they change",
+    "[game-build-compile]")
+{
+    CompileFixture fixture;
+    Touch(fixture.mCheckout / "fake_cmake_slow.txt", "");
+    std::vector<BuildProgress> told;
+    BuildRequest request = fixture.Request();
+    request.mOnProgress = [&](const BuildProgress &progress) { told.push_back(progress); };
+    const BuildReport report = RunGameBuild(request);
+    INFO(report.mError);
+    REQUIRE(report.mOk);
+
+    std::vector<std::string> steps;
+    std::vector<std::string> phases;
+    std::vector<std::size_t> done;
+    for (const BuildProgress &progress : told)
+    {
+        if (steps.empty() || steps.back() != progress.mStep)
+            steps.push_back(progress.mStep);
+        if (progress.mStep != "game build")
+        {
+            CHECK(progress.mPhase.empty());
+            continue;
+        }
+        if (!progress.mPhase.empty() && (phases.empty() || phases.back() != progress.mPhase))
+            phases.push_back(progress.mPhase);
+        if (progress.mTotal > 0)
+        {
+            CHECK(progress.mPhase == "compile");
+            CHECK(progress.mTotal == 3);
+            done.push_back(progress.mDone);
+        }
+    }
+
+    // every step once, in order
+    std::vector<std::string> ran;
+    for (const BuildStep &step : report.mSteps)
+        ran.push_back(step.mName);
+    CHECK(steps == ran);
+
+    // the log is read every 250 ms, so a quick phase may pass unseen, but none goes back
+    const std::vector<std::string> order = { "environment", "configure", "compile", "install" };
+    std::size_t at = 0;
+    for (const std::string &phase : phases)
+    {
+        INFO(phase);
+        const auto found = std::find(order.begin() + static_cast<std::ptrdiff_t>(at), order.end(), phase);
+        REQUIRE(found != order.end());
+        at = static_cast<std::size_t>(found - order.begin()) + 1;
+    }
+    CHECK(std::find(phases.begin(), phases.end(), "compile") != phases.end());
+    CHECK(phases.back() == "install");
+
+    // Ninja's count rises to its total
+    REQUIRE(done.size() >= 2);
+    CHECK(std::is_sorted(done.begin(), done.end()));
+    CHECK(done.front() < 3);
+    CHECK(done.back() == 3);
+}
+
+TEST_CASE("The progress file holds the step, and the phase and Ninja's count once there are any", "[game-build-compile]")
+{
+    CHECK(BuildProgressJson({ "cook" }) == "{\"version\":1,\"step\":\"cook\"}\n");
+    CHECK(BuildProgressJson({ "game build", "configure" }) ==
+        "{\"version\":1,\"step\":\"game build\",\"phase\":\"configure\"}\n");
+    CHECK(BuildProgressJson({ "game build", "compile", 412, 1310 }) ==
+        "{\"version\":1,\"step\":\"game build\",\"phase\":\"compile\",\"done\":412,\"total\":1310}\n");
 }
