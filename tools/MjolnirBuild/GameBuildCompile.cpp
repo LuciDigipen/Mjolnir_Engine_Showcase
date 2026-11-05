@@ -10,6 +10,7 @@
 #include "GameBuildCompile.h"
 
 #include "BuildOutput.h"
+#include "CompileLog.h"
 #include "VisualStudio.h"
 
 #include <core/fs/FileIO.h>
@@ -20,9 +21,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <map>
 #include <stdexcept>
 #include <system_error>
+#include <thread>
 #include <utility>
 
 namespace mir::build
@@ -40,6 +43,8 @@ namespace mir::build
         constexpr std::string_view kStagingMarkerFileName = "mjolnir_game_build_install";
         // In a previous template moved aside, for the same reason
         constexpr std::string_view kPreviousMarkerFileName = "mjolnir_game_build_previous";
+        // How often the log is read for progress while the compile runs
+        constexpr std::chrono::milliseconds kProgressInterval{ 250 };
 
         fs::path FromText(std::string_view text)
         {
@@ -278,8 +283,14 @@ namespace mir::build
                 what = std::string(kScriptFileName) + " stopped with exit code " + std::to_string(exit);
                 break;
             }
-            what += "; its output is in " + PathText(log);
-            return what;
+
+            const std::vector<std::string> errors = LogErrors(ReadText(log).value_or(std::string()));
+            if (errors.empty())
+                return what + "; its output is in " + PathText(log);
+            what += ":";
+            for (const std::string &error : errors)
+                what += "\n  " + error;
+            return what + "\nThe whole output is in " + PathText(log);
         }
 
         // The build folder, the template with its .tmp and .old, and the output with its own: none may hold another
@@ -456,8 +467,10 @@ namespace mir::build
     std::string GameBuildScriptText(const GameBuildScript &script)
     {
         const auto exitWith = [](int code) { return " || exit /b " + std::to_string(code) + "\r\n"; };
+        const auto phase = [](std::string_view name) { return "echo " + std::string(kPhaseMarker) + std::string(name) + "\r\n"; };
 
         std::string text = "@echo off\r\nchcp 65001 >nul\r\n";
+        text += phase("environment");
         const VisualStudio &visualStudio = script.mVisualStudio;
         if (!visualStudio.mVcvars.empty())
         {
@@ -476,18 +489,21 @@ namespace mir::build
         text += "where /q ninja" + exitWith(kGameBuildExitNoCMake);
         // after vcvars, which leaves the script in its own folder
         text += "cd /d \"" + BatchPath(script.mSourceRoot) + "\"" + exitWith(kGameBuildExitNoCheckout);
+        text += phase("configure");
         text += "cmake --preset " + script.mPreset;
         for (const std::string &define : script.mDefines)
             text += " " + define;
         text += exitWith(kGameBuildExitConfigure);
+        text += phase("compile");
         text += "cmake --build --preset " + script.mPreset + " --target " + std::string(kGameBuildTargets) +
             exitWith(kGameBuildExitCompile);
+        text += phase("install");
         text += "cmake --install \"" + BatchPath(script.mBuildDir) + "\" --prefix \"" + BatchPath(script.mPrefix) + "\"" +
             exitWith(kGameBuildExitInstall);
         return text;
     }
 
-    void CompileGameBuild(const GameBuildCompile &compile)
+    void CompileGameBuild(const GameBuildCompile &compile, const std::function<void(const CompileProgress &)> &onProgress)
     {
         if (std::optional<std::string> problem = PresetProblem(compile.mSourceRoot, compile.mPreset))
             throw std::runtime_error(*problem);
@@ -549,6 +565,23 @@ namespace mir::build
             ChildProcess process;
             if (!process.Start(CommandShell(), args, buildDir, log))
                 throw std::runtime_error("could not start " + PathText(CommandShell()) + " to compile the game build");
+
+            CompileProgress told;
+            const auto tell = [&] {
+                if (!onProgress)
+                    return;
+                const CompileProgress now = LogProgress(ReadText(log).value_or(std::string()));
+                if (now == told)
+                    return;
+                told = now;
+                onProgress(now);
+            };
+            while (process.Running())
+            {
+                std::this_thread::sleep_for(kProgressInterval);
+                tell();
+            }
+            tell();
             const std::optional<int> exit = process.Wait();
             if (!exit)
                 throw std::runtime_error("lost track of " + std::string(kScriptFileName));

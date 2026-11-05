@@ -7,7 +7,7 @@ if(MIR_LARGE_WORLD)
 endif()
 
 project(Mjolnir
-    VERSION 0.1.0
+    VERSION 1.0.0
     DESCRIPTION "A modular 3D engine"
     # C is needed for volk.c
     LANGUAGES CXX C)

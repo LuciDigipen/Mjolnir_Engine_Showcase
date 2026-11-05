@@ -154,8 +154,7 @@ namespace mir
 
     App::StartupSplash::StartupSplash(const AppDesc &desc)
     {
-        if (!desc.mHidden) screen.Show({ .mEngineName = desc.mAppName,
-                      .mVersion = kEngineVersion,
+        if (!desc.mHidden) screen.Show({ .mVersion = kEngineVersion,
                       .mCopyright = kEngineCopyright,
                       .mStatus = "Creating window...",
                       .mProgress = 0.0f });

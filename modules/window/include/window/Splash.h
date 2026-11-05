@@ -16,8 +16,6 @@ namespace mir
 
     struct SplashDesc
     {
-        // Shown only when the logo cannot load.
-        const char *mEngineName = "MjolnirEngine";
         const char *mVersion = "";
         const char *mCopyright = "";
         const char *mStatus = "Loading...";

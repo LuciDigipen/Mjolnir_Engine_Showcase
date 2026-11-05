@@ -70,8 +70,10 @@ namespace mir::build
         };
 
         template <typename Work>
-        void RunStep(BuildReport &report, std::string name, Work &&work)
+        void RunStep(BuildReport &report, const BuildRequest &request, std::string name, Work &&work)
         {
+            if (request.mOnProgress)
+                request.mOnProgress({ name });
             const std::size_t index = report.mSteps.size();
             report.mSteps.push_back({ std::move(name) });
             const auto start = std::chrono::steady_clock::now();
@@ -462,7 +464,7 @@ namespace mir::build
             GameInputs inputs;
             GameBuildCompile gameBuild;
             const bool compile = !request.mGameBuildPreset.empty();
-            RunStep(report, "check", [&] {
+            RunStep(report, request, "check", [&] {
                 inputs = ResolveGame(request);
                 report.mGame = inputs.mDirName;
                 report.mOutDir = inputs.mOutDir;
@@ -478,31 +480,34 @@ namespace mir::build
                     throw BuildError(*problem);
                 return true;
             });
-            RunStep(report, "game build", [&] {
+            RunStep(report, request, "game build", [&] {
                 if (!compile)
                     return false;
-                CompileGameBuild(gameBuild);
+                CompileGameBuild(gameBuild, [&](const CompileProgress &progress) {
+                    if (request.mOnProgress)
+                        request.mOnProgress({ "game build", progress.mPhase, progress.mDone, progress.mTotal });
+                });
                 return true;
             });
 
             const fs::path gameOut = StagingDir(inputs.mOutDir) / "games" / inputs.mDirName;
-            RunStep(report, "template", [&] {
+            RunStep(report, request, "template", [&] {
                 if (compile)
                     CheckTemplate(inputs, request, report);
                 staging = BeginStaging(inputs.mOutDir);
                 return CopyTemplate(inputs, staging, report);
             });
-            RunStep(report, "cook", [&] {
+            RunStep(report, request, "cook", [&] {
                 report.mAssetCount = Cook(inputs, staging, request.mAssetCooker);
                 return true;
             });
-            RunStep(report, "game data", [&] {
+            RunStep(report, request, "game data", [&] {
                 WriteEngineManifest(inputs, staging);
                 return CopyGameData(inputs, gameOut, report);
             });
-            RunStep(report, "sound banks", [&] { return CopySoundBanks(inputs, gameOut); });
-            RunStep(report, "terrain", [&] { return PackageTerrain(inputs, gameOut, request.mTerrainTool); });
-            RunStep(report, "finish", [&] {
+            RunStep(report, request, "sound banks", [&] { return CopySoundBanks(inputs, gameOut); });
+            RunStep(report, request, "terrain", [&] { return PackageTerrain(inputs, gameOut, request.mTerrainTool); });
+            RunStep(report, request, "finish", [&] {
                 report.mBytes = FolderBytes(staging);
                 CommitStaging(staging, inputs.mOutDir);
                 staging.clear();
@@ -547,5 +552,19 @@ namespace mir::build
         else
             json["error"] = report.mError;
         return json.dump(2) + "\n";
+    }
+
+    std::string BuildProgressJson(const BuildProgress &progress)
+    {
+        // ordered, so the file reads as documented
+        nlohmann::ordered_json json = { { "version", 1 }, { "step", progress.mStep } };
+        if (!progress.mPhase.empty())
+            json["phase"] = progress.mPhase;
+        if (progress.mTotal > 0)
+        {
+            json["done"] = progress.mDone;
+            json["total"] = progress.mTotal;
+        }
+        return json.dump() + "\n";
     }
 }

@@ -3,17 +3,20 @@
  * @author Quy Dong Ta
  * @brief A test-only cmake.exe for the game build step: configures, compiles and installs without a compiler,
  *        and appends each call to fake_cmake_calls.txt in the checkout. fake_cmake_fail.txt there names
- *        a phase to fail ("configure", "compile", "install") or "editor" to install an editor build.
+ *        a phase to fail ("configure", "compile", "install") or "editor" to install an editor build, and
+ *        fake_cmake_slow.txt makes the compile take a couple of seconds.
  *
  * @copyright Copyright (c) 2026 DigiPen (USA) Corporation
  *
  */
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -61,6 +64,7 @@ int main(int argc, char **argv)
         if (failing("configure"))
         {
             std::puts("CMake Error at CMakeLists.txt:1 (project):");
+            std::puts("  No CMAKE_CXX_COMPILER could be found.");
             return 1;
         }
         std::string cache = "# fake\n";
@@ -80,8 +84,18 @@ int main(int argc, char **argv)
 
     if (args.size() >= 3 && args[0] == "--build" && args[1] == "--preset")
     {
+        // As Ninja prints to a file; fake_cmake_slow.txt spaces the lines out for the progress reader
+        const bool slow = fs::exists("fake_cmake_slow.txt");
+        for (int done = 1; done <= 3; ++done)
+        {
+            std::printf("[%d/3] Building CXX object engine/CMakeFiles/Engine.dir/Part%d.cpp.obj\n", done, done);
+            std::fflush(stdout);
+            if (slow)
+                std::this_thread::sleep_for(std::chrono::milliseconds(700));
+        }
         if (failing("compile"))
         {
+            std::puts("FAILED: engine/CMakeFiles/Engine.dir/Engine.cpp.obj");
             std::puts("Engine.cpp(1): error C2065: 'oops': undeclared identifier");
             return 1;
         }

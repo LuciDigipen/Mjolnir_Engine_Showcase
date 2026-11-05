@@ -10,16 +10,16 @@
 #include "BuildOutput.h"
 #include "GameBuild.h"
 
-#include <core/fs/FileIO.h>
-
 #include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <iterator>
 #include <map>
 #include <stdexcept>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace
 {
@@ -33,7 +33,7 @@ namespace
     constexpr const char *kUsage =
         "usage:\n"
         "  MjolnirBuild --game <checkout>/games/<name> --game-build <template> --out <dir>\n"
-        "               [--game-build-preset <preset>] [--result <json>]\n"
+        "               [--game-build-preset <preset>] [--result <json>] [--progress <json>]\n"
         "Cooks the game, then copies it with the game build template into <dir>, where <dir>/<name>.exe\n"
         "starts it. Built in <dir>.tmp and moved into place only when every step succeeds, and\n"
         "compared with this build's game_build_info.json. <dir> must be empty, a previous build, or\n"
@@ -47,6 +47,11 @@ namespace
         "the newest with the C++ tools; nothing in a Developer Command Prompt.\n"
         "Without it, <template> is used as it is; make one with\n"
         "  cmake --install builds/windows-msvc-game-release --prefix <template>\n"
+        "--progress is rewritten as each step starts, and during the compile as Ninja moves on:\n"
+        "  { \"version\": 1, \"step\": \"game build\", \"phase\": \"compile\", \"done\": 412, \"total\": 1310 }\n"
+        "where phase (environment, configure, compile, install) is only in the game build step,\n"
+        "and done and total only once Ninja has printed them. --result and --progress must lie\n"
+        "outside <dir>, <dir>.tmp and <dir>.old.\n"
         "Exit 0: built; 1: the build failed; 2: bad arguments.\n";
 
     struct UsageError : std::runtime_error
@@ -56,7 +61,8 @@ namespace
 
     std::map<std::string, std::string, std::less<>> Parse(int argc, char **argv)
     {
-        constexpr std::string_view kAllowed[] = { "--game", "--game-build", "--out", "--game-build-preset", "--result" };
+        constexpr std::string_view kAllowed[] = { "--game", "--game-build", "--out", "--game-build-preset", "--result",
+            "--progress" };
 
         std::map<std::string, std::string, std::less<>> values;
         for (int i = 1; i < argc; ++i)
@@ -98,6 +104,35 @@ namespace
         else
             std::fprintf(stderr, "MjolnirBuild: error: %s\n", report.mError.c_str());
     }
+
+    // A line per step and phase, so a terminal is not silent through a compile, and the progress file if asked
+    struct ProgressOutput
+    {
+        fs::path mFile;
+        std::string mStep;
+        std::string mPhase;
+        bool mWarned = false;
+
+        void operator()(const BuildProgress &progress)
+        {
+            if (progress.mStep != mStep || progress.mPhase != mPhase)
+            {
+                mStep = progress.mStep;
+                mPhase = progress.mPhase;
+                if (mPhase.empty())
+                    std::printf("MjolnirBuild: %s...\n", mStep.c_str());
+                else
+                    std::printf("MjolnirBuild: %s: %s...\n", mStep.c_str(), mPhase.c_str());
+                std::fflush(stdout);
+            }
+
+            if (!mFile.empty() && !WriteReportFile(mFile, BuildProgressJson(progress)) && !mWarned)
+            {
+                mWarned = true;
+                std::fprintf(stderr, "MjolnirBuild: WARNING: could not write %s\n", PathText(mFile).c_str());
+            }
+        }
+    };
 }
 
 int main(int argc, char **argv)
@@ -112,13 +147,22 @@ int main(int argc, char **argv)
     try
     {
         const auto values = Parse(argc, argv);
-        const fs::path result = values.contains("--result") ? fs::path(values.find("--result")->second) : fs::path();
+        const auto optional = [&](std::string_view name) {
+            const auto found = values.find(name);
+            return found == values.end() ? fs::path() : fs::path(found->second);
+        };
+        const fs::path result = optional("--result");
+        const fs::path progress = optional("--progress");
         const fs::path out = values.find("--out")->second;
-        for (const fs::path &dir : { NormalizedPath(out), StagingDir(out), PreviousDir(out) })
+        for (const auto &[file, option] : { std::pair{ result, "--result" }, std::pair{ progress, "--progress" } })
         {
-            if (!result.empty() && IsWithin(NormalizedPath(result), dir))
-                throw UsageError("--result must not be inside --out or its .tmp and .old folders");
+            if (file.empty())
+                continue;
+            if (const std::optional<std::string> problem = ReportFileProblem(file, out, option))
+                throw UsageError(*problem);
         }
+        if (!result.empty() && !progress.empty() && NormalizedPath(result) == NormalizedPath(progress))
+            throw UsageError("--result and --progress must be different files");
 
         BuildRequest request;
         request.mGameDir = values.find("--game")->second;
@@ -133,11 +177,12 @@ int main(int argc, char **argv)
         request.mAssetCooker = MJOLNIR_BUILD_ASSET_COOKER;
         request.mTerrainTool = MJOLNIR_BUILD_TERRAIN_TOOL;
         request.mEditorInfo = MJOLNIR_BUILD_EDITOR_INFO;
+        request.mOnProgress = ProgressOutput{ progress };
 
         const BuildReport report = RunGameBuild(request);
         Print(report);
 
-        if (!result.empty() && !mir::WriteTextAtomic(result, BuildReportJson(report)))
+        if (!result.empty() && !WriteReportFile(result, BuildReportJson(report)))
         {
             std::fprintf(stderr, "MjolnirBuild: error: could not write %s\n", PathText(result).c_str());
             return kExitFailed;

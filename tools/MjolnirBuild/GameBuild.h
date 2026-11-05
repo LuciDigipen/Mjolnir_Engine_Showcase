@@ -12,11 +12,22 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
 namespace mir::build
 {
+    struct BuildProgress
+    {
+        std::string mStep;
+        // In the game build step: environment, configure, compile or install, empty otherwise
+        std::string mPhase;
+        // Ninja's [done/total] in the compile phase, both 0 until it prints one
+        std::size_t mDone = 0;
+        std::size_t mTotal = 0;
+    };
+
     struct BuildRequest
     {
         // <checkout>/games/<name>
@@ -31,6 +42,9 @@ namespace mir::build
         // The editor's game_build_info.json, which the template is compared with and a compiled game build takes its
         // options from; empty skips both
         std::filesystem::path mEditorInfo;
+
+        // Told as each step starts and as the compile moves on, may be empty
+        std::function<void(const BuildProgress &)> mOnProgress;
     };
 
     enum class StepStatus
@@ -66,4 +80,8 @@ namespace mir::build
     BuildReport RunGameBuild(const BuildRequest &request);
 
     std::string BuildReportJson(const BuildReport &report);
+
+    // { "version": 1, "step": ..., "phase": ..., "done": ..., "total": ... }
+    // total only once Ninja prints them
+    std::string BuildProgressJson(const BuildProgress &progress);
 }

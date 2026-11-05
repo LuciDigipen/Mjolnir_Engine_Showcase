@@ -12,7 +12,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <fstream>
+#include <optional>
+#include <thread>
 
 using namespace mir::build;
 using namespace mir::build::test;
@@ -208,4 +211,44 @@ TEST_CASE("A commit blocked by a file in use leaves the previous build", "[build
     CHECK(fs::exists(out / "running.txt"));
     CHECK_FALSE(fs::exists(out / "new.txt"));
     CHECK(fs::exists(staging / "new.txt"));
+}
+
+TEST_CASE("--result and --progress are refused inside the output, its .tmp or its .old", "[build-output]")
+{
+    Sandbox sandbox;
+    const fs::path out = sandbox.mRoot / "out";
+
+    CHECK_FALSE(ReportFileProblem(sandbox.mRoot / "result.json", out, "--result"));
+    CHECK_FALSE(ReportFileProblem(sandbox.mRoot / "out.tmpx" / "progress.json", out, "--progress"));
+    for (const fs::path &file : { out, out / "progress.json", sandbox.mRoot / "out.tmp" / "progress.json",
+             sandbox.mRoot / "out.old" / "deep" / "progress.json" })
+    {
+        INFO(PathText(file));
+        const std::optional<std::string> problem = ReportFileProblem(file, out, "--progress");
+        REQUIRE(problem);
+        CHECK(*problem == "--progress must not be inside --out or its .tmp and .old folders");
+    }
+}
+
+TEST_CASE("A report file is written into a folder not made yet, and past a reader holding it for a moment",
+    "[build-output]")
+{
+    Sandbox sandbox;
+    const fs::path file = sandbox.mRoot / "reports" / "new" / "progress.json";
+    REQUIRE(WriteReportFile(file, "first\n"));
+    CHECK(mir::ReadText(file) == "first\n");
+
+    // MSVC's ifstream does not share delete, so the file cannot be replaced while it is open
+    std::optional<std::ifstream> reader(std::in_place, file, std::ios::binary);
+    REQUIRE(reader->is_open());
+    CHECK_FALSE(mir::WriteTextAtomic(file, "blocked\n"));
+
+    std::thread release([&reader] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        reader.reset();
+    });
+    const bool written = WriteReportFile(file, "second\n");
+    release.join();
+    CHECK(written);
+    CHECK(mir::ReadText(file) == "second\n");
 }
