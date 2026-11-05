@@ -284,20 +284,34 @@ template first, so no template has to be made by hand:
 builds/windows-msvc-debug/tools/MjolnirBuild/MjolnirBuild.exe --game games/HelloWorld --game-build builds/game-build/release --game-build-preset windows-msvc-game-release --out builds/game-build-out/HelloWorld
 ```
 
-Run it from a Developer PowerShell or Developer Command Prompt: the step does
-not load the Visual Studio environment itself yet. It writes
-`mjolnir_game_build.bat` into the preset's build folder (its `binaryDir`, e.g.
-`builds/<preset>`) and runs it with `cmd /d /c`. The script:
+It runs from any shell, or from the editor started from Explorer: the step
+loads Visual Studio itself. It writes `mjolnir_game_build.bat` into the
+preset's build folder (its `binaryDir`, e.g. `builds/<preset>`) and runs it
+with `cmd /d /c`. The script:
 
-1. Configures with `cmake --preset <preset>`, passing `MIR_LARGE_WORLD`,
+1. Loads Visual Studio with `call vcvars64.bat`, finding it in this order:
+   - nothing, when this is already a Developer PowerShell or Developer Command
+     Prompt (`VCToolsInstallDir` is set);
+   - the `CMAKE_CXX_COMPILER` in the build folder's `CMakeCache.txt`, with
+     `-vcvars_ver=<toolset>`, so a build folder keeps the Visual Studio and
+     toolset it was configured with, even when a newer one is installed;
+   - the same entry in the editor's own build folder, for a first compile;
+   - the newest install with the C++ tools, whether a release, a preview or the
+     Build Tools, from `vswhere -latest -prerelease -products *`.
+
+   It then checks that `cl`, `cmake` and `ninja` are on PATH. Without any
+   Visual Studio, `check` fails asking for the "Desktop development with C++"
+   workload; without `cmake` or `ninja`, the compile fails naming "C++ CMake
+   tools for Windows".
+2. Configures with `cmake --preset <preset>`, passing `MIR_LARGE_WORLD`,
    `MIR_WITH_AUDIO`, `MIR_WITH_DLSS` and `MIR_WITH_RTXGI` as the editor's
    `game_build_info.json` records them. It configures on every compile, so a
    preset whose settings changed, such as `CMAKE_BUILD_TYPE`, is never
    packaged with the old ones.
-2. Compiles only `MjolnirEngine` and `MjolnirErrorReporter`, with
+3. Compiles only `MjolnirEngine` and `MjolnirErrorReporter`, with
    `cmake --build --preset <preset> --target ...`, not the tests and tools
    the preset also builds.
-3. Installs with `cmake --install <build folder> --prefix <template>.tmp`.
+4. Installs with `cmake --install <build folder> --prefix <template>.tmp`.
    That folder replaces `<template>` only after every phase succeeds, so a
    failed compile keeps the previous template and the previous build. The
    previous template is moved to `<template>.old` first and deleted only once
@@ -308,6 +322,11 @@ not load the Visual Studio environment itself yet. It writes
 The script stays in the build folder, so the same commands can be run by
 hand, and its output goes to `mjolnir_game_build.log` beside it, replaced
 on each compile. A failure names the phase and the log.
+
+From a plain shell with no build folder, a first compile of
+`windows-msvc-game-release` took 199 s on an Intel Core Ultra 9 185H, with
+vcpkg restoring its packages from the binary cache. A compile with nothing
+changed took 13 s, most of it configure.
 
 `check` makes sure of everything it can before the compile, so a bad folder
 fails in seconds: the game and output checks, a non-hidden configure preset

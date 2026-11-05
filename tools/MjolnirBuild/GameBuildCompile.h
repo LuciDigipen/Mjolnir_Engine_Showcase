@@ -8,6 +8,8 @@
  */
 #pragma once
 
+#include "VisualStudio.h"
+
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
@@ -23,6 +25,9 @@ namespace mir::build
     inline constexpr int kGameBuildExitConfigure = 11;
     inline constexpr int kGameBuildExitCompile = 12;
     inline constexpr int kGameBuildExitInstall = 13;
+    inline constexpr int kGameBuildExitVisualStudio = 14;
+    inline constexpr int kGameBuildExitNoCompiler = 15;
+    inline constexpr int kGameBuildExitNoCMake = 16;
 
     struct GameBuildCompile
     {
@@ -65,6 +70,8 @@ namespace mir::build
         std::filesystem::path mPrefix;
         // Configure runs every compile, so a changed preset is never packaged with the old settings
         std::vector<std::string> mDefines;
+        // Loaded first, so the compile needs no Developer Command Prompt
+        VisualStudio mVisualStudio;
     };
 
     // The batch file that configures, compiles and installs, exiting with kGameBuildExit*
