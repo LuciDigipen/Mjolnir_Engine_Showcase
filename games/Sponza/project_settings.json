@@ -4,8 +4,28 @@
       {
         "bindings": [
           {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
             "device": "Mouse",
-            "mouseButton": "Left"
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Gamepad",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
           }
         ],
         "name": "showcase_next",
@@ -14,11 +34,643 @@
       {
         "bindings": [
           {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
             "device": "Mouse",
-            "mouseButton": "Right"
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "",
+            "mouseButton": "Right",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
           }
         ],
         "name": "showcase_previous",
+        "type": "Button"
+      },
+      {
+        "bindings": [
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Keyboard",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "Left",
+            "mouseButton": "Left",
+            "scale": -1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Keyboard",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "Right",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "Y",
+            "deadzone": 0.15000000596046448,
+            "device": "Keyboard",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "Up",
+            "mouseButton": "Left",
+            "scale": -1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "Y",
+            "deadzone": 0.15000000596046448,
+            "device": "Keyboard",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "Down",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Gamepad",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": true,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "Y",
+            "deadzone": 0.15000000596046448,
+            "device": "Gamepad",
+            "gamepadAxis": "LeftY",
+            "gamepadButton": "A",
+            "key": "",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": true,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Gamepad",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "DpadLeft",
+            "key": "",
+            "mouseButton": "Left",
+            "scale": -1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Gamepad",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "DpadRight",
+            "key": "",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "Y",
+            "deadzone": 0.15000000596046448,
+            "device": "Gamepad",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "DpadUp",
+            "key": "",
+            "mouseButton": "Left",
+            "scale": -1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "Y",
+            "deadzone": 0.15000000596046448,
+            "device": "Gamepad",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "DpadDown",
+            "key": "",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          }
+        ],
+        "name": "UINavigate",
+        "type": "Axis2D"
+      },
+      {
+        "bindings": [
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Keyboard",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "Enter",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Keyboard",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "Space",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Mouse",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Gamepad",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          }
+        ],
+        "name": "UIConfirm",
+        "type": "Button"
+      },
+      {
+        "bindings": [
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Keyboard",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "Escape",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Mouse",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "",
+            "mouseButton": "Right",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Gamepad",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "B",
+            "key": "",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          }
+        ],
+        "name": "UICancel",
+        "type": "Button"
+      },
+      {
+        "bindings": [
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Keyboard",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "Q",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Mouse",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "",
+            "mouseButton": "Button4",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Gamepad",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "LeftBumper",
+            "key": "",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          }
+        ],
+        "name": "UITabLeft",
+        "type": "Button"
+      },
+      {
+        "bindings": [
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Keyboard",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "E",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Mouse",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "",
+            "mouseButton": "Button5",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Gamepad",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "RightBumper",
+            "key": "",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          }
+        ],
+        "name": "UITabRight",
+        "type": "Button"
+      },
+      {
+        "bindings": [
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Keyboard",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "Escape",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Gamepad",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "Start",
+            "key": "",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          }
+        ],
+        "name": "UIPause",
+        "type": "Button"
+      },
+      {
+        "bindings": [
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Keyboard",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "F11",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          }
+        ],
+        "name": "ToggleFullscreen",
+        "type": "Button"
+      },
+      {
+        "bindings": [
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Keyboard",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "A",
+            "mouseButton": "Left",
+            "scale": -1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Keyboard",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "D",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "Y",
+            "deadzone": 0.15000000596046448,
+            "device": "Keyboard",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "W",
+            "mouseButton": "Left",
+            "scale": -1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "Y",
+            "deadzone": 0.15000000596046448,
+            "device": "Keyboard",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "S",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Gamepad",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": true,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "Y",
+            "deadzone": 0.15000000596046448,
+            "device": "Gamepad",
+            "gamepadAxis": "LeftY",
+            "gamepadButton": "A",
+            "key": "",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": true,
+            "useMouseDelta": false
+          }
+        ],
+        "name": "CameraMove",
+        "type": "Axis2D"
+      },
+      {
+        "bindings": [
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Keyboard",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "E",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Keyboard",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "Q",
+            "mouseButton": "Left",
+            "scale": -1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Gamepad",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "RightBumper",
+            "key": "",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Gamepad",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "LeftBumper",
+            "key": "",
+            "mouseButton": "Left",
+            "scale": -1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          }
+        ],
+        "name": "CameraVertical",
+        "type": "Axis1D"
+      },
+      {
+        "bindings": [
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Mouse",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": true
+          },
+          {
+            "channel": "Y",
+            "deadzone": 0.15000000596046448,
+            "device": "Mouse",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": true
+          }
+        ],
+        "name": "CameraLook",
+        "type": "Delta2D"
+      },
+      {
+        "bindings": [
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Mouse",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "",
+            "mouseButton": "Right",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          }
+        ],
+        "name": "CameraLookHold",
+        "type": "Button"
+      },
+      {
+        "bindings": [
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Gamepad",
+            "gamepadAxis": "RightX",
+            "gamepadButton": "A",
+            "key": "",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": true,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "Y",
+            "deadzone": 0.15000000596046448,
+            "device": "Gamepad",
+            "gamepadAxis": "RightY",
+            "gamepadButton": "A",
+            "key": "",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": true,
+            "useMouseDelta": false
+          }
+        ],
+        "name": "CameraLookStick",
+        "type": "Axis2D"
+      },
+      {
+        "bindings": [
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Keyboard",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "LeftShift",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Gamepad",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "LeftThumb",
+            "key": "",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          }
+        ],
+        "name": "CameraFast",
+        "type": "Button"
+      },
+      {
+        "bindings": [
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Keyboard",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "A",
+            "key": "F2",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          },
+          {
+            "channel": "X",
+            "deadzone": 0.15000000596046448,
+            "device": "Gamepad",
+            "gamepadAxis": "LeftX",
+            "gamepadButton": "Back",
+            "key": "",
+            "mouseButton": "Left",
+            "scale": 1.0,
+            "useGamepadAxis": false,
+            "useMouseDelta": false
+          }
+        ],
+        "name": "ToggleCameraMode",
         "type": "Button"
       }
     ]

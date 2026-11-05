@@ -2,15 +2,32 @@
   "components": [
     {
       "fields": {
-        "position": [-1.42, 1.8, 4.36],
-        "rotation": [0, 0, 0, 1],
-        "scale": [1, 1, 1]
+        "position": [
+          -1.42,
+          1.8,
+          4.36
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
       },
       "type": "Transform"
     },
     {
       "fields": {
-        "position": [-1.42, 1.8, 4.36]
+        "position": [
+          -1.42,
+          1.8,
+          4.36
+        ]
       },
       "type": "WorldTransform"
     },
@@ -22,10 +39,16 @@
     },
     {
       "fields": {
-        "type": 1,
-        "color": [1, 0.82, 0.63],
+        "areaSize": 0.5,
+        "color": [
+          1.0,
+          0.82,
+          0.63
+        ],
         "intensity": 2.2,
-        "range": 2.65
+        "range": 2.65,
+        "spotAngleDegrees": 45.0,
+        "type": 1
       },
       "type": "Light"
     }
