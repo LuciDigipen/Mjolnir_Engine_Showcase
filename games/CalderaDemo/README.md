@@ -4,14 +4,13 @@ The Caldera island in Mjolnir: terrain, the airfield runway and buildings, and a
 
 ## Getting it
 
-Clones skip this game's large files by default (see `.lfsconfig`), and CMake leaves the game out while they are missing. To opt in, from the repository root:
+Its large files, about 1.5 GiB, are in Git LFS and download with the rest of the repository once `git lfs install` has run on the machine (see the root README). A clone from before that holds pointers, and CMake leaves the game out with a warning until they are fetched. From the repository root:
 
 ```text
-git config lfs.fetchexclude ""
 git lfs pull
 ```
 
-The local setting keeps later checkouts from turning these files back into pointers. Reconfigure and build, then run `MjolnirEngine --game games/CalderaDemo`. The first build on a machine bakes terrain, about 16 minutes in Release. The game needs about 6 GiB of VRAM.
+The next build reconfigures and includes the game; then run `MjolnirEngine --game games/CalderaDemo`. The first build on a machine bakes terrain, about 16 minutes in Release and longer in Debug, since TerrainTool is built in the same configuration. The game needs about 6 GiB of VRAM.
 
 ## Licenses
 
