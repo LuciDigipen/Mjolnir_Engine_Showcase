@@ -200,12 +200,17 @@ namespace mir::vk
             VmaAllocation vertexAllocation = VK_NULL_HANDLE;
             VkBuffer deformation = VK_NULL_HANDLE;
             VmaAllocation deformationAllocation = VK_NULL_HANDLE;
+            VkBuffer previousVertices = VK_NULL_HANDLE;
+            VmaAllocation previousVertexAllocation = VK_NULL_HANDLE;
+            VkBuffer previousDeformation = VK_NULL_HANDLE;
+            VmaAllocation previousDeformationAllocation = VK_NULL_HANDLE;
             MeshBlas blas;
             VkBuffer scratch = VK_NULL_HANDLE;
             VmaAllocation scratchAllocation = VK_NULL_HANDLE;
         };
         const DeformedMesh *RecordDeformedMesh(VkCommandBuffer cmd, uint32_t frame,
-            const GpuMesh &mesh, std::span<const glm::vec4> deformation);
+            const GpuMesh &mesh, std::span<const glm::vec4> deformation,
+            std::span<const glm::vec4> previousDeformation);
         PreparedScene RecordTlasBuild(VkCommandBuffer cmd, uint32_t frame, std::span<const DrawItem> items,
             const ResourceStore &resources, const MaterialStore &materials,
             std::optional<std::span<const DrawItem>> fallbackItems);

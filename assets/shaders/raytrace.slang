@@ -280,11 +280,14 @@ void closestHitMain(inout RayPayload payload, in BuiltInTriangleIntersectionAttr
     payload.distance = RayTCurrent();
 
     // hitWorldPos is already this frame's camera-relative space (cameraPos is
-    // its origin); info.prevModel puts objectPos in that SAME space (rebased
+    // its origin); info.prevModel puts the previous pose in that SAME space (rebased
     // to this frame's camera, not last frame's - see DrawItem::previousModel),
     // so viewProj/prevViewProj alone carry the camera's own motion.
     const float4 currClip = mul(viewProj, float4(hitWorldPos, 1.0));
     payload.hardwareDepth = saturate(currClip.z / currClip.w);
-    const float4 prevClip = mul(prevViewProj, mul(info.prevModel, float4(objectPos, 1.0)));
+    RtInstanceInfo previousInfo = info;
+    previousInfo.vertexAddress = info.previousVertexAddress;
+    const float3 previousObjectPos = InterpolateFloat3(previousInfo, indices, barycentrics, 0);
+    const float4 prevClip = mul(prevViewProj, mul(info.prevModel, float4(previousObjectPos, 1.0)));
     payload.velocity = (currClip.xy / currClip.w) - (prevClip.xy / prevClip.w);
 }

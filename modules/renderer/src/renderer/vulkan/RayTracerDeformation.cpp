@@ -82,6 +82,10 @@ namespace mir::vk
                 vmaDestroyBuffer(mDevice->Allocator(), mesh.vertices, mesh.vertexAllocation);
             if (mesh.deformation != VK_NULL_HANDLE)
                 vmaDestroyBuffer(mDevice->Allocator(), mesh.deformation, mesh.deformationAllocation);
+            if (mesh.previousVertices != VK_NULL_HANDLE)
+                vmaDestroyBuffer(mDevice->Allocator(), mesh.previousVertices, mesh.previousVertexAllocation);
+            if (mesh.previousDeformation != VK_NULL_HANDLE)
+                vmaDestroyBuffer(mDevice->Allocator(), mesh.previousDeformation, mesh.previousDeformationAllocation);
         }
         mDeformedMeshes[frame].clear();
     }
@@ -99,7 +103,8 @@ namespace mir::vk
     }
 
     const RayTracer::DeformedMesh *RayTracer::RecordDeformedMesh(VkCommandBuffer cmd, uint32_t frame,
-        const GpuMesh &mesh, std::span<const glm::vec4> deformation)
+        const GpuMesh &mesh, std::span<const glm::vec4> deformation,
+        std::span<const glm::vec4> previousDeformation)
     {
         if (deformation.size() < 3 || !std::isfinite(deformation[0].x) ||
             deformation[0].x < 1 || deformation[0].x >= 16777216)
@@ -108,26 +113,41 @@ namespace mir::vk
             return nullptr;
         }
         const uint32_t count = static_cast<uint32_t>(deformation[0].x);
+        if (!previousDeformation.empty() &&
+            (previousDeformation.size() < 3 || previousDeformation[0].x != deformation[0].x))
+        {
+            MIR_LOG_ERROR("RT deformation: incompatible previous vertex count");
+            return nullptr;
+        }
         auto &posed = mDeformedMeshes[frame].emplace_back();
-        if (!CreateUploadBuffer(mDevice->Allocator(), std::as_bytes(deformation),
+        const auto dispatch = [&](std::span<const glm::vec4> sample, VkBuffer &data, VmaAllocation &dataAllocation,
+                                  VkBuffer &vertices, VmaAllocation &vertexAllocation)
+        {
+            if (!CreateUploadBuffer(mDevice->Allocator(), std::as_bytes(sample),
                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-                posed.deformation, posed.deformationAllocation) ||
-            !CreateBuffer(mDevice->Allocator(), VkDeviceSize(count) * sizeof(Vertex),
+                data, dataAllocation) ||
+                !CreateBuffer(mDevice->Allocator(), VkDeviceSize(count) * sizeof(Vertex),
                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
                     VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
-                0, posed.vertices, posed.vertexAllocation, nullptr))
+                0, vertices, vertexAllocation, nullptr))
+                return false;
+            const DeformationPush push{
+                Address(mDevice->Handle(), mesh.mVertexBuffer), Address(mDevice->Handle(), data),
+                Address(mDevice->Handle(), vertices), count };
+            vkCmdPushConstants(cmd, mDeformationLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
+            vkCmdDispatch(cmd, (count + 63) / 64, 1, 1);
+            return true;
+        };
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, mDeformationPipeline);
+        if (!dispatch(deformation, posed.deformation, posed.deformationAllocation,
+                posed.vertices, posed.vertexAllocation) ||
+            (!previousDeformation.empty() && previousDeformation.data() != deformation.data() &&
+                !dispatch(previousDeformation, posed.previousDeformation, posed.previousDeformationAllocation,
+                    posed.previousVertices, posed.previousVertexAllocation)))
         {
             MIR_LOG_ERROR("RT deformation: frame buffer allocation failed");
             return nullptr;
         }
-
-        const DeformationPush push{
-            Address(mDevice->Handle(), mesh.mVertexBuffer),
-            Address(mDevice->Handle(), posed.deformation),
-            Address(mDevice->Handle(), posed.vertices), count };
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, mDeformationPipeline);
-        vkCmdPushConstants(cmd, mDeformationLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
-        vkCmdDispatch(cmd, (count + 63) / 64, 1, 1);
 
         const VkMemoryBarrier2 deformed{
             .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,

@@ -19,8 +19,7 @@ struct RtInstanceInfo
     uint materialRecord;   // byte offset into gMaterialRecords
     float alphaCutoff;     // read only with kInstanceAlphaTest
     float pad0;
-    float pad1;
-    float pad2;
+    float *previousVertexAddress;
     float4x4 prevModel; // camera-relative to THIS frame's camera - see DrawItem::previousModel
     float4 modelCol0;   // model linear transform, for tangents under non-uniform scale
     float4 modelCol1;

@@ -943,13 +943,17 @@ namespace mir::vk
             }
 
             VkDeviceAddress vertexAddress = GetBufferAddress(mDevice->Handle(), mesh->mVertexBuffer);
+            VkDeviceAddress previousVertexAddress = vertexAddress;
             VkDeviceAddress blasAddress = mBlases[item.mesh.mIndex].mAddress;
             if (!item.deformation.empty())
             {
-                const DeformedMesh *posed = RecordDeformedMesh(cmd, frameIndex, *mesh, item.deformation);
+                const DeformedMesh *posed = RecordDeformedMesh(cmd, frameIndex, *mesh, item.deformation,
+                    item.previousDeformation);
                 if (posed == nullptr)
                     continue;
                 vertexAddress = GetBufferAddress(mDevice->Handle(), posed->vertices);
+                previousVertexAddress = posed->previousVertices != VK_NULL_HANDLE
+                    ? GetBufferAddress(mDevice->Handle(), posed->previousVertices) : vertexAddress;
                 blasAddress = posed->blas.mAddress;
             }
 
@@ -1013,6 +1017,7 @@ namespace mir::vk
                 .baseColorSampler = samplerSlot,
                 .materialRecord = materialRecord,
                 .alphaCutoff = material != nullptr ? material->mParameters.y : 0.0f,
+                .previousVertexAddress = previousVertexAddress,
                 .prevModel = item.previousModel,
                 .modelCol0 = item.model[0],
                 .modelCol1 = item.model[1],

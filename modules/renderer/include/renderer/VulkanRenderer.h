@@ -123,6 +123,10 @@ namespace mir
         // "no history" (new this frame, or the producer doesn't track it) -
         // BuildViewDrawItems then falls back to `pose` itself, i.e. zero velocity.
         std::optional<WorldPose> previousPose;
+
+        // Previous morph/skin sample of this primitive. Empty means no
+        // compatible history; use the current deformation instead.
+        std::span<const glm::vec4> previousDeformation;
     };
 
     // One draw call's worth of data for one viewport. Temporary: it lives only
@@ -150,6 +154,8 @@ namespace mir
         // Equal to `model` when there is no history, so a still object under a
         // still camera comes out to exactly zero velocity.
         glm::mat4 previousModel{ 1.0f };
+
+        std::span<const glm::vec4> previousDeformation;
     };
 
     // Draw items produced outside the MeshRenderer query (by ModelSystem),
