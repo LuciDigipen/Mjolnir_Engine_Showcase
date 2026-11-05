@@ -3,6 +3,7 @@ find_package(nlohmann_json CONFIG REQUIRED)
 # Packages one game with a game build template; the engine never links it.
 add_library(mjolnir_build STATIC
     BuildOutput.cpp
+    CompileLog.cpp
     GameBuild.cpp
     GameBuildCompile.cpp
     VisualStudio.cpp
@@ -30,6 +31,7 @@ if(BUILD_TESTING)
 
     add_executable(mjolnir_build_tests
         tests/BuildOutput.tests.cpp
+        tests/CompileLog.tests.cpp
         tests/GameBuild.tests.cpp
         tests/GameBuildCompile.tests.cpp
         tests/VisualStudio.tests.cpp

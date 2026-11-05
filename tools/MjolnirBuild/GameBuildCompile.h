@@ -8,11 +8,13 @@
  */
 #pragma once
 
+#include "CompileLog.h"
 #include "VisualStudio.h"
 
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -37,7 +39,7 @@ namespace mir::build
         std::string mPreset;
         // Replaced by a fresh install
         std::filesystem::path mGameBuildDir;
-        // The editor's game_build_info.json, whose options the game build is configured with; empty keeps the preset's
+        // The editor's game_build_info.json, whose options the game build is configured with, empty keeps the preset's
         std::filesystem::path mEditorInfo;
     };
 
@@ -77,6 +79,8 @@ namespace mir::build
     // The batch file that configures, compiles and installs, exiting with kGameBuildExit*
     std::string GameBuildScriptText(const GameBuildScript &script);
 
-    // Throws std::runtime_error. A failure leaves the previous template as it was
-    void CompileGameBuild(const GameBuildCompile &compile);
+    // Throws std::runtime_error. A failure leaves the previous template as it was. onProgress hears each phase and
+    // Ninja's [done/total] as they change, read from the log every 250 ms
+    void CompileGameBuild(const GameBuildCompile &compile,
+        const std::function<void(const CompileProgress &)> &onProgress = {});
 }

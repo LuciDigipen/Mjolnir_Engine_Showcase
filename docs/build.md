@@ -265,6 +265,23 @@ step's status and time, warnings, the error (or, once built, the exe's path as
 when the build failed, 2 for bad arguments. The editor finds the tool through
 `buildTool` in `asset_workspace.json`.
 
+`--progress <file>` is rewritten as each step starts, and in the `game build`
+step as each phase starts and as Ninja moves through the compile, read from
+the log every 250 ms:
+
+```json
+{"version":1,"step":"game build","phase":"compile","done":412,"total":1310}
+```
+
+`phase` (`environment`, `configure`, `compile` or `install`) is only there in
+the `game build` step, and `done` and `total` only once Ninja has printed its
+`[done/total]`. `--result` and `--progress` must be different files outside
+`<out>`, `<out>.tmp` and `<out>.old`, and their folders are made if missing. A
+reader holding the progress file open delays the next write for a moment;
+MjolnirBuild retries for about 200 ms. Either way the terminal gets a line as
+each step and phase starts, such as `MjolnirBuild: game build: compile...`,
+and a table of every step's time at the end.
+
 A game preset's CTest packages every game the same way. `build.game_build` installs
 the build as a template, `build.package.<game>` runs MjolnirBuild into
 `builds/smoke-build/<build folder>/<game>`, and `smoke.build.<game>` starts the
@@ -321,7 +338,17 @@ with `cmd /d /c`. The script:
 
 The script stays in the build folder, so the same commands can be run by
 hand, and its output goes to `mjolnir_game_build.log` beside it, replaced
-on each compile. A failure names the phase and the log.
+on each compile. The script echoes `mjolnir_game_build: <phase>` into it as
+each phase starts. A failure names the phase, quotes the first three distinct
+error lines in the log (`error C…`, `error LNK…`, vcvars' `[ERROR:…]`, or
+`CMake Error` with the line after it, each cut at 300 characters) and gives
+the log's path:
+
+```
+compiling the game build with windows-msvc-game-release failed:
+  C:\alpha\modules\render\src\Renderer.cpp(88): error C2065: 'frameIndex': undeclared identifier
+The whole output is in C:\alpha\builds\windows-msvc-game-release\mjolnir_game_build.log
+```
 
 From a plain shell with no build folder, a first compile of
 `windows-msvc-game-release` took 199 s on an Intel Core Ultra 9 185H, with

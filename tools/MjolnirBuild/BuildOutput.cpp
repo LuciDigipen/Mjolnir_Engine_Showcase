@@ -10,8 +10,10 @@
 
 #include <core/fs/FileIO.h>
 
+#include <chrono>
 #include <stdexcept>
 #include <system_error>
+#include <thread>
 #include <utility>
 
 namespace mir::build
@@ -43,6 +45,10 @@ namespace mir::build
 
     namespace
     {
+        
+        constexpr int kReportWriteAttempts = 20;
+        constexpr std::chrono::milliseconds kReportWriteRetryDelay{ 10 };
+
         std::optional<std::string> CheckLocation(const fs::path &dir, const std::string &name, const fs::path &source,
             const fs::path &gameBuild)
         {
@@ -99,6 +105,32 @@ namespace mir::build
         }
 
         return std::nullopt;
+    }
+
+    std::optional<std::string> ReportFileProblem(const fs::path &file, const fs::path &out, std::string_view option)
+    {
+        const fs::path normalized = NormalizedPath(file);
+        for (const fs::path &dir : { NormalizedPath(out), StagingDir(out), PreviousDir(out) })
+        {
+            if (IsWithin(normalized, dir))
+                return std::string(option) + " must not be inside --out or its .tmp and .old folders";
+        }
+        return std::nullopt;
+    }
+
+    bool WriteReportFile(const fs::path &file, std::string_view text)
+    {
+        std::error_code ec;
+        if (file.has_parent_path())
+            fs::create_directories(file.parent_path(), ec);
+        for (int attempt = 1;; ++attempt)
+        {
+            if (WriteTextAtomic(file, text))
+                return true;
+            if (attempt == kReportWriteAttempts)
+                return false;
+            std::this_thread::sleep_for(kReportWriteRetryDelay);
+        }
     }
 
     std::optional<std::string> CheckPathLength(const fs::path &out, std::size_t longestRelative)
