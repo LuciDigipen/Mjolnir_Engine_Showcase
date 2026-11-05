@@ -10,5 +10,5 @@ engine_add_module_tests(script
 
 
 target_link_libraries(engine_script_tests PRIVATE
-    mir::assets mir::script_bindings)
+    mir::assets mir::scene mir::script_bindings)
 target_compile_definitions(engine_script_tests PRIVATE MIR_GAMES_DIR="${CMAKE_SOURCE_DIR}/games")

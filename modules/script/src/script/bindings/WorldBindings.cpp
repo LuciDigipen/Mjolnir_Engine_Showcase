@@ -11,6 +11,8 @@
 
 #include <script/BindingHelpers.h>
 
+#include <scene/SceneModule.h>
+
 #include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/DeferredAccess.h>
 #include <core/ecs/EngineMode.h>
@@ -433,9 +435,18 @@ namespace mir
             return out;
         }
 
-        Entity WorldSpawn(World &world)
+        sol::object WorldSpawn(World &world, sol::optional<SceneInstanceId> instance, sol::this_state state)
         {
-            return world.CreateEntity();
+            sol::state_view lua(state);
+            if (instance)
+            {
+                const auto *scenes = world.TryResource<SceneCollection>();
+                if (*instance != kOwnedBySession && (scenes == nullptr || scenes->Find(*instance) == nullptr))
+                    return sol::nil;
+                const World::SceneScope scope(world, *instance);
+                return sol::make_object(lua, world.CreateEntity());
+            }
+            return sol::make_object(lua, world.CreateEntity());
         }
 
         bool WorldDestroy(World &world, Entity entity)
@@ -671,6 +682,52 @@ namespace mir
                 return world.HasResource<EngineModeState>() && IsPlaying(world) && world.PersistEntity(entity);
             },
             "scene_instance", [](World &world) { return world.ActiveScene(); },
+            "primary_scene", [](World &world) { return world.PrimaryScene(); },
+            "scene_loaded", [](World &world, SceneInstanceId instance)
+            {
+                const auto *scenes = world.TryResource<SceneCollection>();
+                return scenes != nullptr && scenes->Find(instance) != nullptr;
+            },
+            "entity_scene", [](World &world, Entity entity) -> sol::optional<SceneInstanceId>
+            {
+                if (!world.IsAlive(entity)) return sol::nullopt;
+                return world.EntityScene(entity);
+            },
+            "is_alive", [](World &world, Entity entity) { return world.IsAlive(entity); },
+            "find_scene_entity", [](World &world, SceneInstanceId instance, StableId stable,
+                sol::this_state state) -> sol::object
+            {
+                const auto *scenes = world.TryResource<SceneCollection>();
+                if (scenes == nullptr) return sol::nil;
+                const Entity entity = scenes->FindEntity(world, instance, stable);
+                if (entity.IsNull()) return sol::nil;
+                return sol::make_object(sol::state_view(state), entity);
+            },
+            "load_scene_additive", [](World &world, const std::string &id) -> sol::optional<SceneInstanceId>
+            {
+                if (id.empty() || !world.HasResource<EngineModeState>() || !IsPlaying(world) ||
+                    !world.HasResource<RequestQueue>())
+                    return sol::nullopt;
+                const auto instance = AllocateSceneInstanceId();
+                world.Resource<RequestQueue>().PushAdditiveScene({ id, instance });
+                return instance;
+            },
+            "unload_scene", [](World &world, SceneInstanceId instance)
+            {
+                if (instance == kOwnedBySession || !world.HasResource<EngineModeState>() || !IsPlaying(world) ||
+                    !world.HasResource<RequestQueue>())
+                    return false;
+                world.Resource<RequestQueue>().PushUnloadScene(instance);
+                return true;
+            },
+            "set_primary_scene", [](World &world, SceneInstanceId instance)
+            {
+                if (instance == kOwnedBySession || !world.HasResource<EngineModeState>() || !IsPlaying(world) ||
+                    !world.HasResource<RequestQueue>())
+                    return false;
+                world.Resource<RequestQueue>().PushPrimaryScene(instance);
+                return true;
+            },
             "session_data", [](World &, sol::this_state state)
             {
                 sol::state_view lua(state);

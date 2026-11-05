@@ -74,6 +74,7 @@
 
 namespace mir
 {
+    struct AdditiveSceneRequest;
 
     struct AppDesc
     {
@@ -215,6 +216,10 @@ namespace mir
         bool SwapScene(const std::string &id);
         void PollSceneLoad();
         bool ActivateScene(const SceneLoadCompletion &completed);
+        bool LoadAdditiveScene(const AdditiveSceneRequest &request);
+        bool UnloadRuntimeScene(SceneInstanceId instance, bool partial = true);
+        bool SetPrimaryScene(SceneInstanceId instance);
+        void RefreshPrimaryScene();
 
         // A standalone game starts no gameplay for a scene until its resources are ready. The window, the
         // completions, the uploads and the loading UI keep running, and only the resource systems tick. False

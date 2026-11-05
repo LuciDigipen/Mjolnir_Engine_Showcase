@@ -182,6 +182,8 @@ namespace mir
             state.prefab.Coordinator().CopyPrefabDefinitionsFrom(app.mWorldState.prefab.Coordinator());
             state.scene.CopyFrom(app.mWorldState.world, app.mWorldState.scene.Scene(),
                 &app.mWorldState.prefab.Coordinator().Resolver(), &state.prefab.Coordinator().Resolver());
+            state.scene.SetCatalogId(app.mOpenSceneId);
+            state.scene.SetSceneDir(app.mWorldState.scene.SceneDir());
             SetEngineMode(state.world, EngineMode::Play);
             Begin(0.0, 0);
         }
@@ -198,6 +200,8 @@ namespace mir
             return SystemContext{ state.world, state.commands, dt, elapsed, frame, alpha, state.scene.Scene().mInstanceId };
         }
 
+        SceneInstanceId session = AllocateSceneInstanceId();
+        SceneInstanceId pendingPrimary = kOwnedBySession;
         WorldState state;
         std::unique_ptr<RendererModule::WorldBinding> rendering;
         InputModule input;
@@ -569,8 +573,10 @@ namespace mir
         SystemContext runtimeContext = MakeRuntimeContext(0.0f);
         if (mRuntime->state.scheduler.Started())
             mRuntime->state.scheduler.RunStage(Stage::PlayEnd, runtimeContext);
-        mRuntime->state.scene.Unload();
-        mRuntime->state.scheduler.RunStage(Stage::SceneUnload, runtimeContext);
+        const auto instances = mRuntime->state.scene.Scenes().Instances();
+        for (size_t i = 0; i < instances.size(); ++i)
+            UnloadRuntimeScene(instances[i], i + 1 != instances.size());
+        if (instances.empty()) mRuntime->state.scheduler.RunStage(Stage::SceneUnload, runtimeContext);
         mRuntime->state.scheduler.Stop(runtimeContext);
 
     #if MIR_WITH_EDITOR
@@ -603,7 +609,8 @@ namespace mir
             return false;
         }
 
-        mSceneLoader.Request(id, target->mDirectory, mRuntime->state.scene.Scene().mInstanceId);
+        mRuntime->pendingPrimary = kOwnedBySession;
+        mSceneLoader.Request(id, target->mDirectory, mRuntime->session);
         return true;
     }
 
@@ -614,13 +621,18 @@ namespace mir
             mSceneLoader.Cancel();
             return;
         }
-        if (const auto completed = mSceneLoader.TakeReady(mRuntime->state.scene.Scene().mInstanceId))
+        if (const auto completed = mSceneLoader.TakeReady(mRuntime->session))
             ActivateScene(*completed);
+        for (const auto &completed : mSceneLoader.TakeReadyAdditive(mRuntime->session))
+        {
+            if (!ActivateScene(completed) && mRuntime->pendingPrimary == completed.instance)
+                mRuntime->pendingPrimary = kOwnedBySession;
+        }
     }
 
     bool App::ActivateScene(const SceneLoadCompletion &completed)
     {
-        if (!mRuntime || completed.source != mRuntime->state.scene.Scene().mInstanceId)
+        if (!mRuntime || completed.source != mRuntime->session)
             return false;
         const std::string &id = completed.id;
         const SceneProbe &probe = completed.prepared.probe;
@@ -638,6 +650,7 @@ namespace mir
 
         World &world = mRuntime->state.world;
         LoadedScene prepared;
+        if (completed.instance != kOwnedBySession) prepared.mInstanceId = completed.instance;
         try
         {
             prepared = mir::LoadPreparedScene(world, completed.prepared,
@@ -658,15 +671,21 @@ namespace mir
             return false;
         }
 
-        SystemContext oldContext = MakeRuntimeContext(0.0f);
-        oldContext.sceneSwapped = true;
-        mRuntime->state.scheduler.RunStage(Stage::SceneEnd, oldContext);
-        mRuntime->state.scene.Unload();
-        mRuntime->state.scheduler.RunStage(Stage::SceneUnload, oldContext);
-        mRuntime->state.scene.Adopt(std::move(prepared), completed.directory);
+        const auto instance = prepared.mInstanceId;
+        if (completed.instance == kOwnedBySession)
+        {
+            mSceneLoader.Cancel();
+            mRuntime->pendingPrimary = kOwnedBySession;
+            const auto instances = mRuntime->state.scene.Scenes().Instances();
+            for (const auto outgoing : instances) UnloadRuntimeScene(outgoing);
+            mRuntime->state.scene.ReplacePrimaryScene(std::move(prepared), completed.directory, id);
+        }
+        else mRuntime->state.scene.Add(std::move(prepared), completed.directory, id);
         SystemContext loadedContext = MakeRuntimeContext(0.0f);
+        loadedContext.sceneInstance = instance;
         loadedContext.sceneSwapped = true;
         mRuntime->state.scheduler.RunStage(Stage::SceneLoad, loadedContext);
+        if (mRuntime->pendingPrimary == instance) SetPrimaryScene(instance);
         mRenderer.ActivateWorld(mRuntime->rendering.get());
         mGameUIImGui.ActivateWorld(&mRuntime->state.world, &mRuntime->state.gameUI);
         mImGui.SetInputWorld(&mRuntime->state.world);
@@ -674,6 +693,59 @@ namespace mir
         mEditor.SetPlayWorld(&mRuntime->state.world);
     #endif
         MIR_LOG_INFO("Scene swap: activated '{}'", id);
+        return true;
+    }
+
+    bool App::LoadAdditiveScene(const AdditiveSceneRequest &request)
+    {
+        if (!mRuntime || request.instance == kOwnedBySession ||
+            mRuntime->state.scene.Scenes().Find(request.instance) != nullptr ||
+            mSceneLoader.HasAdditive(request.instance))
+            return false;
+        const auto target = std::ranges::find(mProject.mScenes, request.id, &ProjectScene::mId);
+        if (target == mProject.mScenes.end())
+        {
+            MIR_LOG_ERROR("Additive scene: unknown scene ID '{}'", request.id);
+            return false;
+        }
+        mSceneLoader.RequestAdditive(request.id, target->mDirectory, mRuntime->session, request.instance);
+        return true;
+    }
+
+    void App::RefreshPrimaryScene()
+    {
+        mRuntime->state.prefab.Coordinator().Bind(mRuntime->state.scene.Scene());
+        mRenderer.ActivateWorld(mRuntime->rendering.get());
+    }
+
+    bool App::SetPrimaryScene(SceneInstanceId instance)
+    {
+        if (!mRuntime) return false;
+        if (mSceneLoader.HasAdditive(instance))
+        {
+            mRuntime->pendingPrimary = instance;
+            return true;
+        }
+        if (!mRuntime->state.scene.SetPrimary(instance)) return false;
+        mRuntime->pendingPrimary = kOwnedBySession;
+        RefreshPrimaryScene();
+        return true;
+    }
+
+    bool App::UnloadRuntimeScene(SceneInstanceId instance, bool partial)
+    {
+        if (!mRuntime) return false;
+        const bool pending = mSceneLoader.HasAdditive(instance);
+        mSceneLoader.Cancel(instance);
+        if (mRuntime->pendingPrimary == instance) mRuntime->pendingPrimary = kOwnedBySession;
+        if (mRuntime->state.scene.Scenes().Find(instance) == nullptr) return pending;
+        SystemContext context = MakeRuntimeContext(0.0f);
+        context.sceneInstance = instance;
+        context.sceneSwapped = partial;
+        mRuntime->state.scheduler.RunStage(Stage::SceneEnd, context);
+        mRuntime->state.scene.Remove(instance);
+        mRuntime->state.scheduler.RunStage(Stage::SceneUnload, context);
+        RefreshPrimaryScene();
         return true;
     }
 
@@ -780,12 +852,18 @@ namespace mir
 
         std::vector<Request> actions = queue.Take();
         std::optional<std::string> nextScene;
-        SceneInstanceId sourceScene = kOwnedBySession;
+        std::vector<AdditiveSceneRequest> additiveScenes;
+        std::vector<SceneInstanceId> unloadScenes;
+        std::optional<SceneInstanceId> primaryScene;
+        SceneInstanceId sourceSession = kOwnedBySession;
         if (mRuntime)
         {
-            sourceScene = mRuntime->state.scene.Scene().mInstanceId;
+            sourceSession = mRuntime->session;
             RequestQueue &runtimeQueue = mRuntime->state.world.Resource<RequestQueue>();
             nextScene = runtimeQueue.TakeNextScene();
+            additiveScenes = runtimeQueue.TakeAdditiveScenes();
+            unloadScenes = runtimeQueue.TakeUnloadScenes();
+            primaryScene = runtimeQueue.TakePrimaryScene();
             std::vector<Request> runtimeActions = runtimeQueue.Take();
             actions.insert(actions.end(), runtimeActions.begin(), runtimeActions.end());
         }
@@ -828,9 +906,13 @@ namespace mir
                 break;
             }
         }
-        if (nextScene && mRuntime && !mWindow.Get().ShouldClose() &&
-            sourceScene == mRuntime->state.scene.Scene().mInstanceId)
-            SwapScene(*nextScene);
+        if (mRuntime && !mWindow.Get().ShouldClose() && sourceSession == mRuntime->session)
+        {
+            for (const auto &request : additiveScenes) LoadAdditiveScene(request);
+            for (const auto instance : unloadScenes) UnloadRuntimeScene(instance);
+            if (primaryScene) SetPrimaryScene(*primaryScene);
+            if (nextScene) SwapScene(*nextScene);
+        }
         PollSceneLoad();
     }
 

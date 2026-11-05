@@ -13,6 +13,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace mir
 {
@@ -25,6 +26,7 @@ namespace mir
         SceneInstanceId source = kOwnedBySession;
         PreparedScene prepared;
         std::string error;
+        SceneInstanceId instance = kOwnedBySession;
     };
 
     class SceneLoader
@@ -38,6 +40,11 @@ namespace mir
         // Main thread only. The latest request replaces and cancels the previous one.
         void Request(std::string id, std::filesystem::path directory, SceneInstanceId source);
         std::optional<SceneLoadCompletion> TakeReady(SceneInstanceId currentSource);
+        void RequestAdditive(std::string id, std::filesystem::path directory,
+            SceneInstanceId source, SceneInstanceId instance);
+        std::vector<SceneLoadCompletion> TakeReadyAdditive(SceneInstanceId currentSource);
+        bool HasAdditive(SceneInstanceId instance) const;
+        void Cancel(SceneInstanceId instance);
         void Cancel();
         bool Pending() const;
 

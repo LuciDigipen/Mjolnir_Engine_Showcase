@@ -100,10 +100,17 @@ LoadScene    probe and prompt, SceneUnload, SceneModule::LoadFromDisk, SceneLoad
 SaveScene    prompt for an untitled scene, SceneModule::Bind, SceneModule::Save, SceneSaved stage
 PlayScene    commit authoring prefabs, copy the live scene into RuntimeSession, runtime SceneLoad and PlayBegin, Play mode
 StopScene    runtime PlayEnd, SceneUnload and scheduler Stop, destroy RuntimeSession, Edit mode
-SwapScene    load the destination, SceneEnd and SceneUnload with sceneSwapped, SceneModule::Adopt, SceneLoad
+SwapScene    queue background preparation, then activate the current result at a frame boundary
 asset swap   AssetsModule::BeginReload, ReloadPrepare stage, CommitReload, ReloadCommit stage
              (a veto: ReloadAbort stage, AbortReload)
 ```
+
+Runtime scenes share one World and scheduler. Additive requests reserve instance
+handles, prepare independently, and append to `SceneCollection` at a frame boundary.
+Unloading a handle cancels its pending preparation or emits `SceneEnd` and
+`SceneUnload` for its loaded instance. Stop cancels all preparation and unloads
+every instance before destroying the session. Primary selection controls the
+default spawn owner and camera preference, and can target a pending additive load.
 
 `StopScene` runs `PlayEnd` before unloading runtime entities, so scripts get
 their `OnStop` in the World they ran in. The authoring entities, unsaved edits

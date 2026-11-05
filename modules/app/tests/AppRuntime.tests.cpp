@@ -39,7 +39,7 @@ TEST_CASE("Play and Stop isolate authoring while scene swaps retain the runtime 
     desc.mNonInteractive = true;
     desc.mWorkerThreads = 1;
     desc.mEnableEditorLayout = true;
-    desc.mMaxFrames = 120;
+    desc.mMaxFrames = 240;
 
     {
         mir::App app(desc);
@@ -86,8 +86,84 @@ TEST_CASE("Play and Stop isolate authoring while scene swaps retain the runtime 
                 runtime->EmplaceSceneResource<int>(previousScene, 7);
                 const mir::Entity persistent = runtime->CreateEntity();
                 REQUIRE(runtime->PersistEntity(persistent));
+                const auto first = mir::AllocateSceneInstanceId();
+                const auto second = mir::AllocateSceneInstanceId();
+                const auto cancelled = mir::AllocateSceneInstanceId();
+                const auto finalAdditive = mir::AllocateSceneInstanceId();
+                mir::SceneInstanceId base = mir::kOwnedBySession;
+                mir::Entity a, b, spawnedA, spawnedB, baseEntity;
+                int phase = 0;
+                const auto additiveChecks = app.Systems().AddFrameSlot(mir::FrameSlot::FrameBegin,
+                    [&](mir::SystemContext &)
+                    {
+                        auto &world = *app.RuntimeWorld();
+                        const auto &scenes = world.Resource<mir::SceneCollection>();
+                        auto &requests = world.Resource<mir::RequestQueue>();
+                        if (phase == 0 && world.PrimaryScene() != previousScene)
+                        {
+                            base = world.PrimaryScene();
+                            baseEntity = scenes.FindEntity(world, base, 1);
+                            requests.PushAdditiveScene({ "newScene", first });
+                            requests.PushAdditiveScene({ "newScene", second });
+                            requests.PushAdditiveScene({ "newScene", cancelled });
+                            requests.PushUnloadScene(cancelled);
+                            requests.PushPrimaryScene(second);
+                            phase = 1;
+                        }
+                        else if (phase == 1 && scenes.Instances().size() == 3 && world.PrimaryScene() == second)
+                        {
+                            CHECK(scenes.Find(cancelled) == nullptr);
+                            a = scenes.FindEntity(world, first, 1);
+                            b = scenes.FindEntity(world, second, 1);
+                            CHECK(a != b);
+                            CHECK(world.IsAlive(baseEntity));
+                            spawnedB = world.CreateEntity();
+                            {
+                                const mir::World::SceneScope scope(world, first);
+                                spawnedA = world.CreateEntity();
+                            }
+                            CHECK(mir::SetParent(world, b, a));
+                            requests.PushUnloadScene(first);
+                            phase = 2;
+                        }
+                        else if (phase == 2 && scenes.Find(first) == nullptr)
+                        {
+                            CHECK_FALSE(world.IsAlive(a));
+                            CHECK_FALSE(world.IsAlive(spawnedA));
+                            CHECK(world.IsAlive(b));
+                            CHECK(world.HierarchyIndex().ParentOf(b).IsNull());
+                            CHECK(world.IsAlive(spawnedB));
+                            CHECK(world.IsAlive(baseEntity));
+                            requests.PushUnloadScene(second);
+                            phase = 3;
+                        }
+                        else if (phase == 3 && scenes.Find(second) == nullptr)
+                        {
+                            CHECK_FALSE(world.IsAlive(b));
+                            CHECK_FALSE(world.IsAlive(spawnedB));
+                            CHECK(world.PrimaryScene() == base);
+                            CHECK(world.IsAlive(persistent));
+                            requests.PushUnloadScene(base);
+                            phase = 4;
+                        }
+                        else if (phase == 4 && scenes.Instances().empty())
+                        {
+                            CHECK(world.PrimaryScene() == mir::kOwnedBySession);
+                            CHECK(world.IsAlive(persistent));
+                            requests.PushNextScene("newScene");
+                            phase = 5;
+                        }
+                        else if (phase == 5 && scenes.Instances().size() == 1)
+                        {
+                            requests.PushAdditiveScene({ "newScene", finalAdditive });
+                            phase = 6;
+                        }
+                        else if (phase == 6 && scenes.Instances().size() == 2 && scenes.Find(finalAdditive))
+                            phase = 7;
+                    });
                 runtime->Resource<mir::RequestQueue>().PushNextScene("newScene");
                 app.Run();
+                CHECK(phase == 7);
                 mir::World *destination = app.RuntimeWorld();
                 REQUIRE(destination != nullptr);
                 CHECK(destination == runtime);
@@ -99,7 +175,7 @@ TEST_CASE("Play and Stop isolate authoring while scene swaps retain the runtime 
                 CHECK(destination->TrySceneResource<int>(previousScene) == nullptr);
                 size_t entities = 0;
                 destination->ForEachAliveEntity([&](mir::Entity) { ++entities; });
-                CHECK(entities == 2);
+                CHECK(entities == 3);
             }
 
             app.StopScene();

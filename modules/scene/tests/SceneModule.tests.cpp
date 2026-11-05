@@ -143,6 +143,104 @@ TEST_CASE("Prepared scene activation uses the captured files", "[scene][prepare]
     CHECK(world.ActiveScene() == previous);
 }
 
+TEST_CASE("Additive instances keep independent identities, resources and entity lifetimes", "[scene][additive]")
+{
+    TempSceneDir dir("additive_instances");
+    WriteText(dir.mPath / "scene.json", R"({"name":"shared","entities":[1]})");
+    WriteText(dir.mPath / "entities/1.json", R"({"id":1,"components":[]})");
+    const auto prepared = mir::PrepareScene(dir.mPath);
+    World world;
+    SystemScheduler scheduler;
+    SceneModule module({ world, scheduler }, {});
+    const auto original = module.Scene().mInstanceId;
+    const auto root = mir::CreateSceneEntity(world, module.Scene());
+    const auto *stablePrimaryAddress = &module.Scene();
+    auto firstScene = mir::LoadPreparedScene(world, prepared);
+    auto secondScene = mir::LoadPreparedScene(world, prepared);
+    const auto first = firstScene.mInstanceId;
+    const auto second = secondScene.mInstanceId;
+    module.Add(std::move(firstScene), dir.mPath, "shared");
+    module.Add(std::move(secondScene), dir.mPath, "shared");
+    const auto &scenes = module.Scenes();
+    const auto a = scenes.FindEntity(world, first, 1);
+    const auto b = scenes.FindEntity(world, second, 1);
+    REQUIRE_FALSE(a.IsNull());
+    REQUIRE_FALSE(b.IsNull());
+    CHECK(a != b);
+    CHECK(scenes.FindEntity(world, original, 1) == root);
+    REQUIRE(mir::SetParent(world, b, a));
+    world.EmplaceSceneResource<int>(first, 11);
+    world.EmplaceSceneResource<int>(second, 22);
+    mir::Entity ownedSpawn;
+    mir::Entity persistent;
+    {
+        const World::SceneScope scope(world, first);
+        ownedSpawn = world.CreateEntity();
+        persistent = world.CreateEntity();
+        REQUIRE(world.PersistEntity(persistent));
+    }
+    REQUIRE(module.SetPrimary(second));
+    CHECK(world.PrimaryScene() == second);
+    CHECK(world.ActiveScene() == second);
+    CHECK(&module.Scene() == stablePrimaryAddress);
+    const auto defaultSpawn = world.CreateEntity();
+    CHECK(world.EntityScene(defaultSpawn) == second);
+
+    REQUIRE(module.Remove(first));
+    CHECK_FALSE(world.IsAlive(a));
+    CHECK_FALSE(world.IsAlive(ownedSpawn));
+    CHECK(world.IsAlive(b));
+    CHECK(world.HierarchyIndex().ParentOf(b).IsNull());
+    CHECK(world.IsAlive(root));
+    CHECK(world.IsAlive(persistent));
+    CHECK(scenes.FindEntity(world, first, 1).IsNull());
+    CHECK(scenes.FindEntity(world, second, 1) == b);
+    CHECK(world.TrySceneResource<int>(first) == nullptr);
+    REQUIRE(world.TrySceneResource<int>(second) != nullptr);
+    CHECK(*world.TrySceneResource<int>(second) == 22);
+
+    REQUIRE(module.Remove(second));
+    CHECK(world.PrimaryScene() == original);
+    CHECK_FALSE(world.IsAlive(b));
+    CHECK_FALSE(world.IsAlive(defaultSpawn));
+    REQUIRE(module.Remove(original));
+    CHECK(scenes.Instances().empty());
+    CHECK(world.PrimaryScene() == mir::kOwnedBySession);
+    CHECK(world.ActiveScene() == mir::kOwnedBySession);
+    CHECK(world.IsAlive(persistent));
+    CHECK_FALSE(module.Remove(original));
+}
+
+TEST_CASE("Additive preparation cancels one instance without discarding its peers", "[scene][prepare][additive]")
+{
+    TempSceneDir dir("additive_background");
+    WriteText(dir.mPath / "scene.json", R"({"name":"scene","entities":[]})");
+    mir::JobExecutor jobs(1);
+    mir::SceneLoader loader(jobs);
+    const auto source = mir::AllocateSceneInstanceId();
+    const auto cancelled = mir::AllocateSceneInstanceId();
+    const auto retained = mir::AllocateSceneInstanceId();
+    loader.RequestAdditive("cancelled", dir.mPath, source, cancelled);
+    loader.RequestAdditive("retained", dir.mPath, source, retained);
+    loader.Cancel(cancelled);
+    std::vector<mir::SceneLoadCompletion> completed;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (completed.empty() && std::chrono::steady_clock::now() < deadline)
+    {
+        completed = loader.TakeReadyAdditive(source);
+        if (completed.empty()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    REQUIRE(completed.size() == 1);
+    CHECK(completed.front().instance == retained);
+    CHECK(completed.front().id == "retained");
+    CHECK(completed.front().prepared.probe.Ok());
+    CHECK_FALSE(loader.HasAdditive(cancelled));
+    CHECK_FALSE(loader.HasAdditive(retained));
+    loader.RequestAdditive("stale", dir.mPath, source, retained);
+    CHECK(loader.TakeReadyAdditive(mir::AllocateSceneInstanceId()).empty());
+    CHECK_FALSE(loader.HasAdditive(retained));
+}
+
 TEST_CASE("A cancelled preparation never materializes entities", "[scene][prepare]")
 {
     std::stop_source stop;

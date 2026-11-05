@@ -114,7 +114,7 @@ each library links in the engine, besides `core`; `app` links everything.
 | `terrain` | module | `assets`, `serial`, `jobs` |
 | `particles_runtime` | module, bridge | `particles`, `particles_gpu` |
 | `terrain_runtime` | module, bridge | `terrain`, `renderer`, `physics`, `project`, `jobs` |
-| `script` | module | `assets` |
+| `script` | module | `assets`, `scene` |
 | `audio_script`, `input_script`, `physics_script`, `renderer_script`, `terrain_script`, `particles_script` | module, bridge | `script` and its library |
 | `imguiruntime` | module | `window`, `renderer`, `input` |
 | `gameui` | module | `assets`, `input` |

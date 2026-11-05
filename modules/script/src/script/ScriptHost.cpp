@@ -218,7 +218,11 @@ namespace mir
         class RunningScope
         {
         public:
-            RunningScope(ScriptHostImpl &impl, Entity entity) : mImpl(impl), mPrevious(impl.mRunning)
+            RunningScope(ScriptHostImpl &impl, World &world, Entity entity)
+                : mImpl(impl), mPrevious(impl.mRunning),
+                  mSceneScope(world, world.EntityScene(entity) == kOwnedBySession ?
+                      (world.PrimaryScene() == kOwnedBySession ? world.ActiveScene() : world.PrimaryScene()) :
+                      world.EntityScene(entity))
             {
                 mImpl.mRunning = entity;
             }
@@ -231,6 +235,7 @@ namespace mir
         private:
             ScriptHostImpl &mImpl;
             Entity mPrevious;
+            World::SceneScope mSceneScope;
         };
     }
 
@@ -242,25 +247,25 @@ namespace mir
 
     void ScriptHost::CallOnStart(World &world, CommandBuffer &, Entity entity, int32_t instanceRef)
     {
-        const RunningScope running(*mImpl, entity);
-        mImpl->CallCallback(instanceRef, "OnStart", std::ref(world), entity);
+        const RunningScope running(*mImpl, world, entity);
+        mImpl->CallCallback(instanceRef, "OnStart", std::ref(world), Entity{ entity });
     }
 
     void ScriptHost::CallOnUpdate(World &world, CommandBuffer &, Entity entity, int32_t instanceRef, float dt)
     {
-        const RunningScope running(*mImpl, entity);
-        mImpl->CallCallback(instanceRef, "OnUpdate", std::ref(world), entity, dt);
+        const RunningScope running(*mImpl, world, entity);
+        mImpl->CallCallback(instanceRef, "OnUpdate", std::ref(world), Entity{ entity }, dt);
     }
 
     void ScriptHost::CallOnFixedUpdate(World &world, CommandBuffer &, Entity entity, int32_t instanceRef, float dt)
     {
-        const RunningScope running(*mImpl, entity);
-        mImpl->CallCallback(instanceRef, "OnFixedUpdate", std::ref(world), entity, dt);
+        const RunningScope running(*mImpl, world, entity);
+        mImpl->CallCallback(instanceRef, "OnFixedUpdate", std::ref(world), Entity{ entity }, dt);
     }
 
     void ScriptHost::CallOnStop(World &world, CommandBuffer &, Entity entity, int32_t instanceRef)
     {
-        const RunningScope running(*mImpl, entity);
-        mImpl->CallCallback(instanceRef, "OnStop", std::ref(world), entity);
+        const RunningScope running(*mImpl, world, entity);
+        mImpl->CallCallback(instanceRef, "OnStop", std::ref(world), Entity{ entity });
     }
 }

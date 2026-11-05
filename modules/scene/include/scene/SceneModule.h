@@ -38,6 +38,23 @@ namespace mir
         SceneInstanceId instance = kOwnedBySession;
     };
 
+    struct SceneEntry
+    {
+        LoadedScene scene;
+        std::filesystem::path directory;
+        std::string id;
+    };
+
+    struct SceneCollection
+    {
+        SceneEntry primary;
+        std::map<SceneInstanceId, SceneEntry> additive;
+
+        const SceneEntry *Find(SceneInstanceId instance) const;
+        std::vector<SceneInstanceId> Instances() const;
+        Entity FindEntity(const World &world, SceneInstanceId instance, StableId stable) const;
+    };
+
     class SceneModule
     {
     public:
@@ -70,7 +87,12 @@ namespace mir
         // binds; an incomplete New unbinds, and any other New keeps the binding
         void New(std::string name, bool incomplete = false);
         void LoadFromDisk(ScenePrefabResolver *resolver, bool incomplete);
-        void Adopt(LoadedScene scene, std::filesystem::path directory);
+        void ReplacePrimaryScene(LoadedScene scene, std::filesystem::path directory, std::string id = {});
+        void Add(LoadedScene scene, std::filesystem::path directory, std::string id);
+        bool Remove(SceneInstanceId instance);
+        bool SetPrimary(SceneInstanceId instance);
+        void SetCatalogId(std::string id) { mScenes.primary.id = std::move(id); }
+        const SceneCollection &Scenes() const { return mScenes; }
 
         // Copies the live scene, including unsaved edits, into this module's World.
         void CopyFrom(World &source, const LoadedScene &scene, const ScenePrefabResolver *sourceResolver,
@@ -81,8 +103,9 @@ namespace mir
 
     private:
         World &mWorld;
-        std::filesystem::path mSceneDir;
-        LoadedScene mScene;
+        SceneCollection &mScenes;
+        std::filesystem::path &mSceneDir;
+        LoadedScene &mScene;
         SceneLoadResult mLastLoad;
         bool mBound = true;
     };

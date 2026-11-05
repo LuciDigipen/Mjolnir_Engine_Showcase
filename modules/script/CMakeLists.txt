@@ -14,6 +14,7 @@ target_link_libraries(engine_script
     PUBLIC  mir::assets
             mir::core
     PRIVATE sol2::sol2
+            mir::scene
             PkgConfig::LuaJIT
 )
 target_include_directories(engine_script PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include_bindings)

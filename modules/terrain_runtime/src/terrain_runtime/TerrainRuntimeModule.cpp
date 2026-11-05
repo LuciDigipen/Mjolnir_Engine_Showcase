@@ -33,7 +33,11 @@ namespace mir
                     mRuntime->Refresh(frame.dt, false);
             });
 
-        mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &) { mRuntime->Unload(); });
+        mSceneUnload = context.scheduler.AddStage(Stage::SceneUnload, [this](SystemContext &frame)
+            {
+                if (frame.sceneSwapped) mRuntime->Refresh(0.0f, true);
+                else mRuntime->Unload();
+            });
 
         // after an Unload it applies the whole spec; after Stop's restore, almost nothing
         mSceneLoad = context.scheduler.AddStage(Stage::SceneLoad, [this](SystemContext &) { mRuntime->Refresh(0.0f, true); });

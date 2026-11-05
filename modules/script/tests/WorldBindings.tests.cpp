@@ -8,10 +8,13 @@
  */
 #include <script/ScriptHost.h>
 
+#include <scene/SceneModule.h>
+
 #include <core/ecs/CommandBuffer.h>
 #include <core/ecs/ComponentRegistry.h>
 #include <core/ecs/EngineMode.h>
 #include <core/ecs/Requests.h>
+#include <core/ecs/SystemScheduler.h>
 #include <core/ecs/TransformHierarchy.h>
 #include <core/ecs/World.h>
 #include <core/ecs/components/Transform.h>
@@ -27,6 +30,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace
 {
@@ -134,6 +139,66 @@ return T
     world.SetActiveScene(mir::AllocateSceneInstanceId());
     host.CallOnUpdate(world, commands, entity, instance, 0.016f);
     CHECK(world.Resource<mir::RequestQueue>().TakeNextScene() == std::optional<std::string>("retained"));
+    host.DestroyInstance(instance);
+}
+
+TEST_CASE("Lua additive scene handles scope spawns and resolve cross-scene entities", "[script][scene][additive]")
+{
+    World world;
+    CommandBuffer commands;
+    mir::SystemScheduler scheduler;
+    mir::SceneModule scenes({ world, scheduler }, {});
+    world.EmplaceResource<mir::EngineModeState>();
+    world.EmplaceResource<mir::RequestQueue>();
+    mir::SetEngineMode(world, mir::EngineMode::Play);
+    const auto primary = scenes.Scene().mInstanceId;
+    const auto primaryEntity = mir::CreateSceneEntity(world, scenes.Scene());
+    auto additional = mir::NewScene("additional");
+    const auto additionalId = additional.mInstanceId;
+    const auto entity = mir::CreateSceneEntity(world, additional);
+    scenes.Add(std::move(additional), {}, "additional");
+    REQUIRE(scenes.Scenes().FindEntity(world, additionalId, 1) == entity);
+    ScriptHost host;
+    REQUIRE(host.LoadScriptSource("additive_scope", R"LUA(
+local T = {}
+function T.NewInstanceData() return {} end
+function T.OnStart(self, world, entity)
+    local own = world:scene_instance()
+    local primary = world:primary_scene()
+    local localSpawn = world:spawn()
+    local primarySpawn = world:spawn(primary)
+    local pending = world:load_scene_additive("room")
+    local resolved = world:find_scene_entity(own, 1)
+    local checks = { own ~= primary, resolved ~= nil, resolved == entity,
+        world:find_scene_entity(primary, 1) ~= entity, world:scene_loaded(own),
+        not world:scene_loaded(pending), world:entity_scene(localSpawn) == own,
+        world:entity_scene(primarySpawn) == primary, world:is_alive(entity), world:spawn(pending) == nil }
+    for index, passed in ipairs(checks) do
+        if not passed then world:load_scene("failed " .. index) return end
+    end
+    world:set_primary_scene(pending)
+    world:unload_scene(pending)
+    world:load_scene("scoped")
+end
+return T
+)LUA"));
+    const auto instance = host.CreateInstance("additive_scope");
+    REQUIRE(instance != -1);
+    host.CallOnStart(world, commands, entity, instance);
+    CHECK(world.ActiveScene() == primary);
+    auto &requests = world.Resource<mir::RequestQueue>();
+    const auto nextScene = requests.TakeNextScene();
+    REQUIRE(nextScene.has_value());
+    CHECK(*nextScene == "scoped");
+    const auto loads = requests.TakeAdditiveScenes();
+    REQUIRE(loads.size() == 1);
+    CHECK(loads.front().id == "room");
+    CHECK(requests.TakePrimaryScene() == loads.front().instance);
+    CHECK(requests.TakeUnloadScenes() == std::vector<mir::SceneInstanceId>{ loads.front().instance });
+    REQUIRE(scenes.Remove(additionalId));
+    CHECK_FALSE(world.IsAlive(entity));
+    CHECK(world.IsAlive(primaryEntity));
+    CHECK(scenes.Scenes().FindEntity(world, additionalId, 1).IsNull());
     host.DestroyInstance(instance);
 }
 

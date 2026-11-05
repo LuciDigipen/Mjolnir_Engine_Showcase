@@ -9,17 +9,45 @@ current scene metadata, and `SceneLoader` owns pending background preparation.
 ## Model
 
 `SceneLoader` owns a background lane on the shared `JobExecutor`. A request
-captures its scene ID, directory and source instance ID. `PrepareScene` reads
+captures its scene ID, directory and source session token. `PrepareScene` reads
 the manifest, entity files and prefab instance records into immutable data,
 checking cancellation between files. Workers never access a World, component
 registry, prefab resolver or GPU service.
 
-At a frame boundary, App takes a ready result only if its source instance is
-still current. `LoadPreparedScene` materializes the captured data on the main
+At a frame boundary, App takes a ready result only if its source session is
+still running. `LoadPreparedScene` materializes the captured data on the main
 thread without reading scene files again. Preparation failure keeps the running
-scene intact. Stop cancels pending work, and a newer request replaces the earlier
-one. Cancelled work may finish reading its current file, but its result cannot
+scene intact. Stop cancels pending work. Replacement requests supersede earlier
+requests, while additive requests have separate instance handles and cancellation.
+Cancelled work may finish reading its current file, but its result cannot
 activate. Zero-worker builds use the same path and prepare inline.
+
+`SceneCollection` is a World resource containing a primary scene entry and
+additive entries keyed by instance ID. Copies of the same scene asset have
+different instance IDs, so their saved `StableId` values can overlap safely.
+`SceneModule::Add`, `Remove` and `SetPrimary` manage these entries. The primary
+`LoadedScene` object keeps a stable address for the prefab coordinator and editor.
+
+Additive activation and removal emit lifecycle stages for that instance. Removal
+destroys its authored entities and runtime spawns, releases its scene resources,
+and detaches children owned by other instances while preserving their world pose.
+Session-owned persistent entities survive. A replacement removes every loaded
+instance and cancels pending additive loads before adopting its destination.
+
+The first loaded scene is primary. Removing it promotes the oldest remaining
+instance. Removing the final scene leaves primary ID 0, which denotes session
+ownership. General spawns use the primary instance, scene script callbacks use
+their entity's instance, and persistent scripts use the primary instance. A caller
+can also supply an explicit loaded instance to Lua `world:spawn(instance)`.
+Flagged cameras retain per-instance state, with the primary scene's flagged camera
+preferred for rendering. Input, global post-processing and music arbitration use
+session resources.
+
+Runtime references can cross instance boundaries through live Entity handles.
+`SceneCollection::FindEntity` resolves an explicit `(instance, StableId)` pair.
+Unloading its owner invalidates the Entity generation, so callers check liveness
+before use. Scene files store references within their own saved ID map, runtime
+cross-scene links must be resolved explicitly after the destination loads.
 
 A scene is a directory, not a file.
 
@@ -122,6 +150,7 @@ around them.
 | `SceneLoader`, `SceneLoadCompletion` | `scene/SceneLoader.h` | Background requests, cancellation and results checked against the current source instance |
 | `PlaySnapshot`, `CaptureWorld`, `RestoreWorld`, `CopyWorld`, `DiscardSnapshot` | `scene/PlaySnapshot.h` | Copy a live World into Play through a temporary scene directory |
 | `SceneModule`, `SceneLoadResult`, `SceneLoadCause` | `scene/SceneModule.h` | The scene each World holds and how it last got there |
+| `SceneCollection`, `SceneEntry` | `scene/SceneModule.h` | Primary and additive instances, directories, catalog IDs and scoped entity lookup |
 | `EntitySnapshot`, `SnapshotMembers`, `CaptureEntity`, `RestoreEntity`, `RestoreEntityAt`, `DuplicateSceneEntity` | `scene/EntitySnapshot.h` | One entity and its descendants as in-memory data, restored into new entities registered in a `LoadedScene`, under new `StableId`s or, for undo, their old ones |
 
 `SceneModule` holds the `LoadedScene` and the scene directory. Its commands replace the scene without unloading it first, because

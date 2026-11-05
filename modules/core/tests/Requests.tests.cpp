@@ -64,6 +64,29 @@ TEST_CASE("Holding and restoring an empty queue changes nothing", "[ecs][request
     CHECK(queue.Empty());
 }
 
+TEST_CASE("Holding additive scene operations keeps their instance handles", "[ecs][requests]")
+{
+    RequestQueue queue;
+    const auto instance = AllocateSceneInstanceId();
+    queue.PushAdditiveScene({ "room", instance });
+    queue.PushUnloadScene(instance);
+    queue.PushUnloadScene(instance);
+    queue.PushPrimaryScene(instance);
+    auto held = queue.Hold();
+    CHECK(queue.Empty());
+    queue.PushAdditiveScene({ "discarded", AllocateSceneInstanceId() });
+    queue.PushUnloadScene(AllocateSceneInstanceId());
+    queue.PushPrimaryScene(AllocateSceneInstanceId());
+    CHECK(queue.Restore(std::move(held)) == 3);
+    const auto loads = queue.TakeAdditiveScenes();
+    REQUIRE(loads.size() == 1);
+    CHECK(loads.front().id == "room");
+    CHECK(loads.front().instance == instance);
+    CHECK(queue.TakeUnloadScenes() == std::vector<SceneInstanceId>{ instance });
+    CHECK(queue.TakePrimaryScene() == std::optional<SceneInstanceId>{ instance });
+    CHECK(queue.Empty());
+}
+
 TEST_CASE("A request pushed while applying waits for the next Take", "[ecs][requests]")
 {
     RequestQueue queue;

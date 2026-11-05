@@ -21,6 +21,19 @@ namespace mir
             if (slot.IsNull() || entity.mIndex < slot.mIndex)
                 slot = entity;
         }
+
+        void KeepPreferred(World &world, Entity &slot, Entity entity)
+        {
+            const auto priority = [&](Entity candidate)
+                {
+                    const auto owner = world.EntityScene(candidate);
+                    if (owner == world.PrimaryScene() && owner != kOwnedBySession) return 0;
+                    return owner == kOwnedBySession ? 1 : 2;
+                };
+            if (slot.IsNull() || priority(entity) < priority(slot) ||
+                (priority(entity) == priority(slot) && entity.mIndex < slot.mIndex))
+                slot = entity;
+        }
     }
 
     Entity FindActiveCamera(World &world)
@@ -29,7 +42,7 @@ namespace mir
         world.GetOrCreateQuery<const Camera>().ForEach([&](Entity entity, const Camera &camera)
             {
                 if (camera.mActive)
-                    KeepLowest(active, entity);
+                    KeepPreferred(world, active, entity);
             });
         return active;
     }
@@ -41,7 +54,7 @@ namespace mir
 
         world.GetOrCreateQuery<Camera>().ForEach([&](Entity entity, Camera &other)
             {
-                other.mActive = entity == camera;
+                if (world.EntityScene(entity) == world.EntityScene(camera)) other.mActive = entity == camera;
             });
         return true;
     }
@@ -53,9 +66,9 @@ namespace mir
         world.GetOrCreateQuery<const WorldTransform, const Camera>().ForEach(
             [&](Entity entity, const WorldTransform &, const Camera &camera)
             {
-                KeepLowest(lowest, entity);
+                KeepPreferred(world, lowest, entity);
                 if (camera.mActive)
-                    KeepLowest(active, entity);
+                    KeepPreferred(world, active, entity);
             });
 
         if (!active.IsNull())
@@ -68,29 +81,30 @@ namespace mir
         mQuery = &context.world.GetOrCreateQuery<Camera>();
     }
 
-    void ActiveCameraSystem::OnUpdate(SystemContext &)
+    void ActiveCameraSystem::OnUpdate(SystemContext &context)
     {
-        Entity switched = kNullEntity;
-        Entity kept = kNullEntity;
-        Entity arrived = kNullEntity;
+        struct Candidates { Entity switched; Entity kept; Entity arrived; };
+        std::unordered_map<SceneInstanceId, Candidates> candidates;
         mQuery->ForEach([&](Entity entity, const Camera &camera)
             {
                 if (!camera.mActive)
                     return;
+                auto &scene = candidates[context.world.EntityScene(entity)];
                 const auto it = mWasActive.find(PackEntity(entity));
                 if (it == mWasActive.end())
-                    KeepLowest(arrived, entity);
+                    KeepLowest(scene.arrived, entity);
                 else if (it->second)
-                    KeepLowest(kept, entity);
+                    KeepLowest(scene.kept, entity);
                 else
-                    KeepLowest(switched, entity);
+                    KeepLowest(scene.switched, entity);
             });
-
-        const Entity active = !switched.IsNull() ? switched : !kept.IsNull() ? kept : arrived;
 
         mWasActive.clear();
         mQuery->ForEach([&](Entity entity, Camera &camera)
             {
+                const auto &scene = candidates[context.world.EntityScene(entity)];
+                const Entity active = !scene.switched.IsNull() ? scene.switched :
+                    !scene.kept.IsNull() ? scene.kept : scene.arrived;
                 if (camera.mActive && entity != active)
                     camera.mActive = false;
                 mWasActive[PackEntity(entity)] = camera.mActive;

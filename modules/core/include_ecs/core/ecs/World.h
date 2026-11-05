@@ -135,6 +135,8 @@ namespace mir
 
         SceneInstanceId ActiveScene() const { return mActiveScene; }
         void SetActiveScene(SceneInstanceId scene) { mActiveScene = scene; }
+        SceneInstanceId PrimaryScene() const { return mPrimaryScene; }
+        void SetPrimaryScene(SceneInstanceId scene) { mPrimaryScene = scene; mActiveScene = scene; }
         class SceneScope
         {
         public:
@@ -855,6 +857,7 @@ namespace mir
         std::unordered_map<SceneInstanceId,
             std::unordered_map<uint32_t, std::unique_ptr<detail::IResource>>> mSceneResources;
         SceneInstanceId mActiveScene = kOwnedBySession;
+        SceneInstanceId mPrimaryScene = kOwnedBySession;
         std::size_t mArchetypeGeneration = 0;
         uint32_t mQueryIterationDepth = 0; // depth for nested iteration checking
         uint32_t mHookDepth = 0;           // hooks currently running

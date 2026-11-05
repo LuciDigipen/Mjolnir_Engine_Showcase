@@ -104,6 +104,43 @@ keeps an entity and its children across the swap, `world:scene_instance()`
 returns the active instance ID, and `world:session_data()` returns a table that
 survives swaps for the length of Play.
 
+Additive loads keep the other loaded scenes simulating and rendering together:
+
+```lua
+local interior = world:load_scene_additive("Interior")
+world:set_primary_scene(interior) -- applies when this instance finishes loading
+
+-- Later, once world:scene_loaded(interior) is true:
+local doorway = world:find_scene_entity(interior, 1)
+if doorway and world:is_alive(doorway) then
+    -- Use this instance's saved entity 1.
+end
+
+world:unload_scene(interior) -- also cancels an instance still preparing
+```
+
+`load_scene_additive` returns a unique instance handle immediately, or `nil`
+outside Play. Loading the same scene twice produces two handles. `unload_scene`
+removes only that instance and its spawns. Unloading the primary promotes the
+oldest remaining instance. With no loaded scenes, `world:primary_scene()` is 0
+and ordinary spawns belong to the session. `load_scene` replaces every loaded
+scene and cancels pending additive loads, preserving session data and persistent
+entities.
+
+`world:spawn()` inside a scene script belongs to the script's scene.
+`world:spawn(instance)` chooses a loaded scene explicitly, or session ownership
+with 0. It returns `nil` for an unavailable instance. `world:entity_scene(entity)`
+returns its owner, or `nil` for a dead entity. A persistent script's default spawn
+owner is the primary scene. Primary selection also prefers that scene's flagged
+camera, while each scene keeps its own active-camera flags.
+
+`find_scene_entity(instance, stableId)` resolves a saved entity in a particular
+loaded instance. Runtime Entity handles may cross scenes, and become invalid when
+their owning scene unloads. Use `is_alive` before using a retained handle. Scene
+files save references within their own scene, cross-scene links are resolved at
+runtime. Persisted entities have session ownership and no longer resolve through
+their former scene's saved ID.
+
 The input half is `world:is_down/just_pressed/just_released/axis/axis2d` and
 `world:active_device`. Scripts are gameplay, so the action reads go through
 `InputState::ForGame`: every action reads at rest while a game UI screen, such
