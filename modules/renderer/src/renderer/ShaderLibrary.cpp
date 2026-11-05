@@ -376,6 +376,14 @@ namespace mir
                     frontend.raytracing = *raytracing;
                     frontend.layout = *layout;
                     frontend.surfaceFragment = std::move(*surfaceFragment);
+                    for (auto [key, target] : { std::pair{"giRaytracing", &frontend.giRaytracing},
+                        std::pair{"probeRaytracing", &frontend.probeRaytracing} })
+                    {
+                        if (!entry.contains(key)) continue;
+                        const auto args = ReadStringArray(entry, key, error, "frontend template");
+                        if (!args) return std::nullopt;
+                        *target = *args;
+                    }
                     manifest.frontendTemplates.push_back(std::move(frontend));
                 }
             }
@@ -420,7 +428,8 @@ namespace mir
             templates.push_back({ { "frontend", frontend.frontend }, { "placeholders", frontend.placeholders },
                 { "vertex", frontend.vertex }, { "fragment", frontend.fragment },
                 { "raytracing", frontend.raytracing }, { "layout", frontend.layout },
-                { "surfaceFragment", frontend.surfaceFragment } });
+                { "surfaceFragment", frontend.surfaceFragment },
+                { "giRaytracing", frontend.giRaytracing }, { "probeRaytracing", frontend.probeRaytracing } });
         }
         root["frontendTemplates"] = std::move(templates);
         return root.dump(2) + "\n";

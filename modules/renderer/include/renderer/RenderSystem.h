@@ -368,6 +368,7 @@ namespace mir
             // asset, with their morph/skin data attached).
             if (const ModelDrawItems *models = source.TryResource<ModelDrawItems>())
                 mDrawItems.insert(mDrawItems.end(), models->items.begin(), models->items.end());
+            mRenderer.UpdateGiSceneBounds(mDrawItems);
 
             // A traced frame shadows by ray, so it records no shadow maps.
             const bool traceable = mRenderer.RayTracingActive(renderSettings.rayTracing);
@@ -496,6 +497,9 @@ namespace mir
                     if (debugLines != nullptr)
                         BuildViewDebugLines(debugLines->mColliders, view.pose.position, mDebugLinesPerViewport[v]);
                 }
+                if (mRenderer.mShowGiVolume)
+                    AppendGiVolumeLines(renderSettings.ddgi, view.pose.position, mDebugLinesPerViewport[v],
+                        mRenderer.GiProbeStates());
                 mRenderViews.back().debugLines = mDebugLinesPerViewport[v];
             }
             // after every view, since two viewports can show the same camera

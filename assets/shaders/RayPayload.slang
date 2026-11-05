@@ -11,6 +11,12 @@ struct RayPayload
     float opacity;
     uint writeGuides;
     uint skipBlend;
+#ifdef MIR_DDGI
+    float3 giDiffuse;
+    float3 giAmbient;
+    float3 giNormal;
+    uint materialGi;
+#endif
 };
 
 #endif

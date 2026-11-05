@@ -1542,7 +1542,7 @@ namespace mir
             {
                 if (ImGui::Begin("Project Settings", &mShowProjectSettings))
                     mProjectSettingsPanel.Draw(renderSettings, mProjectSettingsPath, mShowInputSettings,
-                        sceneWorld.TryResource<PhysicsLayerUpdate>(), mAudio, mode.mMode == EngineMode::Edit);
+                        sceneWorld.TryResource<PhysicsLayerUpdate>(), mAudio, mode.mMode == EngineMode::Edit, &renderer);
                 ImGui::End();
             }
             else

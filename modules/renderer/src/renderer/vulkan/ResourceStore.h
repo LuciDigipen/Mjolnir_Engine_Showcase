@@ -12,6 +12,8 @@
 #include <renderer/Mesh.h>
 #include <renderer/Texture.h>
 #include <renderer/TextureTable.h>
+#include <renderer/components/MeshBounds.h>
+#include <glm/common.hpp>
 
 #include <volk.h>
 
@@ -39,6 +41,7 @@ namespace mir::vk
     // One buffer pair per mesh
     struct GpuMesh
     {
+        MeshBounds mBounds;
         VkBuffer mVertexBuffer = VK_NULL_HANDLE;
         VmaAllocation mVertexAllocation = VK_NULL_HANDLE;
         VkBuffer mIndexBuffer = VK_NULL_HANDLE;

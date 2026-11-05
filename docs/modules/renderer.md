@@ -860,6 +860,25 @@ checks device limits. The editor shows estimated memory and ray work and
 rejects invalid drafts. Malformed or over-budget GI blocks load as disabled
 defaults without discarding other rendering settings.
 
+The editor distinguishes compiled support from runtime state (inactive,
+warming up, active, missing resources, or incomplete scene history). It shows
+sampling weight, first-sweep progress and allocated probe-image memory.
+`Fit to resident scene bounds` measures loaded meshes, including imported model
+transforms, and fits a padded static grid at the chosen spacing. A rejected fit
+leaves the draft unchanged and suggests coarser spacing when possible. Account
+for future animation and streaming in the padding. The overlay shows saved
+volume bounds and relocated GPU probe positions. Green probes are active, gray
+probes inactive, and yellow probes await state readback. The small state copies
+use frame-slot fences without a device wait; their display trails the GPU by a
+few frames. The status also shows completed probe-update and camera-RT GPU
+times when the graphics queue supports timestamps. Those timings exclude
+post-processing, allocation and optional full-atlas diagnostic readback.
+
+Coverage is `(probeCounts - 1) * probeSpacing` on each axis. Sponza uses a
+15 x 12 x 20 grid at 2 m spacing (28 x 22 x 38 m), centred on its measured
+building bounds with at least 4 m padding. Its 512-probe update budget takes
+eight frames per sweep; density and update cost are separate controls.
+
 **Scene submission and pass order.**
 
 For a single RT viewport, `RenderSystem` supplies a camera-relative extended
@@ -893,6 +912,19 @@ It evaluates diffuse direct light and prior-frame irradiance. Circular batches
 honor `probesPerFrame`; only traced probes are blended. Inactive probes still
 trace fixed rays so classification can reactivate them.
 
+Camera, probe and ordinary RT pipelines share the same material SBT ordering:
+legacy primary/shadow records 0/1, then a pair at `2 + 2 * registrationIndex`.
+The build generates `.gi.closestHitSurface.spv` and
+`.probe.closestHitSurface.spv` variants for both mesh and terrain frontends.
+Material evaluation supplies diffuse reflectance, AO, normal and emissive
+radiance. Surface camera variants return receiver data through the shared
+payload; raygen samples irradiance and replaces the ambient contribution before
+fog. Keeping SDK sampling outside generic material specialization also avoids a
+Slang compiler crash seen with the SDK headers inside specialized hit shaders.
+Shader publication/reload includes both variants and prepares matching base
+and GI pipeline generations transactionally. Missing variants reject reload
+without discarding working pipelines.
+
 **Resources, history and shading.**
 
 `vk::Ddgi` owns the SDK volume, five RGBA32F array images (rays, irradiance,
@@ -916,11 +948,27 @@ intensity setting. GI replaces ambient within coverage. Outside coverage or
 while unavailable, ambient remains. Direct lighting, shadows, unlit materials,
 fog, DLSS guides and raster lighting retain their existing behavior.
 
+The first sweep also bypasses the SDK brightness-delta clamp. Applying that
+clamp to cleared probes can seed encoded irradiance at one quarter of its
+intended value, which is roughly 1/1024 of the linear energy at gamma 5.
+Subsequent updates restore the normal clamp and hysteresis.
+
 `Ddgi::Record` lends the camera pipeline, descriptors and SBT for the final
 trace only when data is ready. Transitions into/out of GI and settings changes
 reset post-processing history. The implementation supports one axis-aligned
 volume and one RT viewport; coarse spacing and thin walls can cause light
 leakage, and partial updates/hysteresis delay lighting changes.
+
+`smoke.ddgi-gpu` exercises two material registrations, nonzero indirect light,
+shader reload and rejection of a missing GI variant, incomplete-scene recovery,
+volume edits, resize and re-enable with Vulkan validation. It disables NGX
+initialization through `RendererDesc::enableDlss` to isolate ordinary RT/DDGI
+checks from DLSS lifetime. Applications keep the default `true`.
+
+For an explicit diagnostic run, set `MIR_DDGI_READBACK=1`. After 64 successful
+updates it copies probe atlases to host buffers and logs finite/nonzero data and
+classification counts. This mode intentionally waits for the GPU and allocates
+readback buffers; leave it unset for performance measurements.
 
 **`volk` is compiled from source in this module**, so the platform defines are
 ours. VMA is configured with `VMA_STATIC_VULKAN_FUNCTIONS=0` and

@@ -17,12 +17,12 @@
 namespace mir::vk
 {
     bool PostProcessingStack::Initialize(Device &device, VkFormat swapchainFormat, VkExtent2D extent,
-        VkDescriptorSetLayout cameraSetLayout)
+        VkDescriptorSetLayout cameraSetLayout, bool enableDlss)
     {
         mDevice = &device;
 
     #if MIR_WITH_DLSS
-        if (device.NgxSupported())
+        if (enableDlss && device.NgxSupported())
         {
             mDlssReady = mDlss.Initialize(device);
             if (!mDlssReady)

@@ -125,7 +125,7 @@ namespace mir::vk
             VkDescriptorSetLayout layout = VK_NULL_HANDLE;
             uint32_t instanceCount = 0;
             bool truncated = false; // Requested scene exceeded capacity, even if camera fallback succeeded.
-            // False when a per-material hit group offset exceeds DDGI's fixed SBT groups.
+            // False when an instance offset is outside the ordered material catalog.
             bool giCompatible = true;
         };
 

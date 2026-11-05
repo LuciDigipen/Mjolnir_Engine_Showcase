@@ -5,7 +5,7 @@
 [[vk::binding(1, 2)]] RWTexture2DArray<float4> gRayData;
 [[vk::binding(7, 2)]] StructuredBuffer<uint4> gBudget;
 
-struct ProbePayload { float3 radiance; float distance; uint kind; };
+#include "ProbePayload.slang"
 
 [shader("raygeneration")]
 void probeRayGen()
@@ -29,8 +29,16 @@ void probeRayGen()
     payload.radiance = float3(0);
     payload.distance = ray.TMax;
     payload.kind = 0;
+    payload.materialHit = 0;
     // Back faces are required by relocation/classification.
     TraceRay(gTlas, RAY_FLAG_NONE, 0xFF, 0, 0, 0, ray, payload);
+    if (payload.materialHit != 0 && budget.w != 0)
+    {
+        const float3 position = ray.Origin + payload.distance * ray.Direction;
+        const float3 irradiance = SampleProbeIrradiance(position, payload.geometricNormal, ray.Direction, volume);
+        payload.radiance += payload.diffuseReflectance * (1.0 / 3.14159265359) * irradiance *
+            DDGIGetVolumeBlendWeight(position, volume);
+    }
     if (payload.kind == 0)
         DDGIStoreProbeRayMiss(gRayData, coords, volume, payload.radiance);
     else if (payload.kind == HIT_KIND_TRIANGLE_BACK_FACE)

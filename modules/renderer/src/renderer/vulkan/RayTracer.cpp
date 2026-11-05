@@ -982,9 +982,9 @@ namespace mir::vk
                         flags |= kInstanceDoubleSided;
                 }
                 materialRecord = material->mRecordOffset;
-                // The DDGI probe and camera pipelines keep one legacy hit pair;
-                // any per-material hit group would index past their SBT.
-                if (material->mRayTracingSbtOffset != 0)
+                // Base and GI pipelines share the same legacy/material pair layout.
+                if ((material->mRayTracingSbtOffset & 1u) != 0 ||
+                    material->mRayTracingSbtOffset >= SurfaceMaterialCatalog::HitGroupRecordOffset(mSurfaceMaterials.size()))
                     giCompatible = false;
             }
 

@@ -2,14 +2,24 @@
   "input": {
     "actions": [
       {
+        "bindings": [
+          {
+            "device": "Mouse",
+            "mouseButton": "Left"
+          }
+        ],
         "name": "showcase_next",
-        "type": "Button",
-        "bindings": [{"device": "Mouse", "mouseButton": "Left"}]
+        "type": "Button"
       },
       {
+        "bindings": [
+          {
+            "device": "Mouse",
+            "mouseButton": "Right"
+          }
+        ],
         "name": "showcase_previous",
-        "type": "Button",
-        "bindings": [{"device": "Mouse", "mouseButton": "Right"}]
+        "type": "Button"
       }
     ]
   },
@@ -68,14 +78,14 @@
       "enabled": true,
       "intensity": 4.059999942779541,
       "origin": [
-        0.0,
-        0.0,
-        0.0
+        -0.309524,
+        5.211963,
+        0.484151
       ],
       "probeCounts": [
-        8,
-        8,
-        8
+        15,
+        12,
+        20
       ],
       "probeSpacing": 2.0,
       "probesPerFrame": 512,
@@ -84,7 +94,7 @@
     "rayTracing": true,
     "residencyMiB": 512.0,
     "ssgi": {
-      "enabled": true,
+      "enabled": false,
       "halfResolution": true,
       "intensity": 1.0,
       "maxTraceDistance": 10.0,

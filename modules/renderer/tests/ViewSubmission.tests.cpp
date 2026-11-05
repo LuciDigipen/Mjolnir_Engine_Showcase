@@ -20,6 +20,28 @@
 #include <cmath>
 #include <limits>
 #include <optional>
+
+TEST_CASE("GI overlay maps asymmetric GPU probe order and relocation into camera space", "[renderer][ddgi]")
+{
+    mir::DdgiSettings gi;
+    gi.origin = {12, 3, -8};
+    gi.probeCounts = {3, 2, 4};
+    gi.probesPerFrame = 24;
+    std::vector<mir::GiProbeDebug> states(24);
+    // X varies fastest, then Z, then the Y array layer. Probe 3 is (0,0,1).
+    states[3].offset = {.25f, .5f, .75f};
+    states[3].inactive = true;
+    const auto camera = mir::WorldPosition::FromDoubleMeters({10, 2, -9});
+    REQUIRE(camera.has_value());
+    std::vector<mir::DebugLinePoint> lines;
+    mir::AppendGiVolumeLines(gi, *camera, lines, states);
+    CHECK(std::count_if(lines.begin(), lines.end(), [](const auto &point)
+        { return point.color == 0xFF808080u; }) == 4);
+    // Centre is (.25,.5,.75) after camera subtraction and relocation.
+    CHECK(std::any_of(lines.begin(), lines.end(), [](const auto &point)
+        { return point.color == 0xFF808080u && std::abs(point.position.x - .17f) < 1e-5f &&
+            std::abs(point.position.y - .5f) < 1e-5f && std::abs(point.position.z - .75f) < 1e-5f; }));
+}
 #include <vector>
 
 namespace

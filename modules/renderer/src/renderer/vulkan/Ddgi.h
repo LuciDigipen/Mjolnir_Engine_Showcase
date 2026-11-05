@@ -10,6 +10,7 @@
 
 #include "RayTracer.h"
 #include <renderer/RenderSettings.h>
+#include <renderer/SurfaceMaterialCatalog.h>
 #include <memory>
 
 namespace mir::vk
@@ -22,6 +23,7 @@ namespace mir::vk
             { return { mFirst, count, total, mVisited >= total ? 1u : 0u }; }
         void Reset() { mFirst = mVisited = mReadyFrames = mMissedFrames = 0; }
         void SkipUpdate() { if (!Expired()) ++mMissedFrames; }
+        uint32_t Visited() const { return mVisited; }
         bool Expired() const { return mMissedFrames >= kHoldFrames + kFadeFrames; }
         void Advance(uint32_t total, uint32_t count)
         {
@@ -47,17 +49,26 @@ namespace mir::vk
     public:
         Ddgi();
         ~Ddgi();
-        void Initialize(Device &device, VkDescriptorSetLayout sceneLayout, VkDescriptorSetLayout cameraLayout);
+        void Initialize(Device &device, VkDescriptorSetLayout sceneLayout, VkDescriptorSetLayout cameraLayout,
+            std::span<const SurfaceMaterialRegistration> materials);
+        bool PrepareShaderReload(std::span<const SurfaceMaterialRegistration> materials, std::string *error);
+        void CommitShaderReload();
+        void DiscardShaderReload();
         // Before BeginFrame: waits only when replacing/freeing GPU resources.
         void Configure(const DdgiSettings &settings, bool active);
         void ResetHistory();
+        std::string Status() const;
+        std::span<const GiProbeDebug> ProbeDebug() const;
+        void CameraTimestamp(VkCommandBuffer cmd, uint32_t frame, bool begin);
         bool CanUpdate(WorldPosition camera) const;
         std::optional<RayTracer::GiShading> Record(VkCommandBuffer cmd, uint32_t frame, WorldPosition camera,
-            VkDescriptorSet cameraSet, uint32_t cameraOffset, const RayTracer::PreparedScene &scene, bool complete);
+            VkDescriptorSet cameraSet, uint32_t cameraOffset, const RayTracer::PreparedScene &scene, bool complete,
+            bool visualize = false);
         void Shutdown(); // Caller has idled the device.
 
     private:
         struct Impl;
         std::unique_ptr<Impl> mImpl;
+        std::unique_ptr<Ddgi> mReload;
     };
 }

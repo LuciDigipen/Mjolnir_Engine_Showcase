@@ -47,6 +47,8 @@ namespace mir
 
     // nullopt for invalid settings or an unrepresentable world center.
     std::optional<GiTraceVolume> MakeGiTraceVolume(const DdgiSettings &settings);
+    void AppendGiVolumeLines(const DdgiSettings &settings, WorldPosition camera,
+        std::vector<DebugLinePoint> &out, std::span<const GiProbeDebug> probes = {});
 
     // Include resident geometry for both probe rays and their shadow rays.
     // Output must not alias worldItems. Prepare has already run on the sources.

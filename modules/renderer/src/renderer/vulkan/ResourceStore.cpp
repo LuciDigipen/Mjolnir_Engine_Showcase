@@ -81,6 +81,12 @@ namespace mir::vk
         vmaFlushAllocation(mDevice->Allocator(), stagingAllocation, 0, VK_WHOLE_SIZE);
 
         GpuMesh mesh{};
+        mesh.mBounds.mLocalMin = mesh.mBounds.mLocalMax = vertices.front().pos;
+        for (const auto &vertex : vertices)
+        {
+            mesh.mBounds.mLocalMin = glm::min(mesh.mBounds.mLocalMin, vertex.pos);
+            mesh.mBounds.mLocalMax = glm::max(mesh.mBounds.mLocalMax, vertex.pos);
+        }
         mesh.mIndexCount = static_cast<uint32_t>(indices.size());
         if (mDevice->RayTracingSupported())
             mesh.mBlasVertexCount = static_cast<uint32_t>(vertices.size());

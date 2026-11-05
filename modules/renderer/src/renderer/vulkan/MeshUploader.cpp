@@ -327,6 +327,12 @@ namespace mir::vk
             mQueued.erase(found);
 
             const uint32_t vertexCount = uint32_t(queued.source.vertices.size());
+            mesh->mBounds.mLocalMin = mesh->mBounds.mLocalMax = queued.source.vertices.front().pos;
+            for (const auto &vertex : queued.source.vertices)
+            {
+                mesh->mBounds.mLocalMin = glm::min(mesh->mBounds.mLocalMin, vertex.pos);
+                mesh->mBounds.mLocalMax = glm::max(mesh->mBounds.mLocalMax, vertex.pos);
+            }
             const uint32_t indexCount = uint32_t(queued.source.indices.size());
             const VkDeviceSize vertexBytes = VkDeviceSize(vertexCount) * sizeof(Vertex);
             const VkDeviceSize indexBytes = VkDeviceSize(indexCount) * sizeof(uint32_t);

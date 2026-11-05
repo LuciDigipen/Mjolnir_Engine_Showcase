@@ -85,6 +85,8 @@ namespace mir
         const ISurfaceProvider *window;
         const char *appName;
         bool enableValidation;
+        // Device checks can omit NGX when exercising ordinary RT or probe GI.
+        bool enableDlss = true;
     };
 
     // A generation-checked copy of one live surface material's accepted layout
@@ -369,6 +371,12 @@ namespace mir
         // A disabled Bloom/DepthOfField/MotionBlur skips its GPU chain for the frame.
         void SetPostProcessing(const PostProcessingState &state);
         void SetGlobalIllumination(const DdgiSettings &settings);
+        struct GiBounds { std::array<double, 3> minimum{}, maximum{}; };
+        void UpdateGiSceneBounds(std::span<const WorldDrawItem> items);
+        std::optional<GiBounds> GetGiSceneBounds() const { return mGiSceneBounds; }
+        std::string GiStatus() const;
+        std::span<const GiProbeDebug> GiProbeStates() const;
+        mutable bool mShowGiVolume = false;
         void SetScreenSpaceGlobalIllumination(const SsgiSettings &settings) { mSsgiSettings = settings; }
 
         void SetAtmosphere(const Sky &sky);
@@ -453,6 +461,7 @@ namespace mir
         std::unique_ptr<vk::Ddgi> mDdgi;
 #endif
         DdgiSettings mDdgiSettings;
+        std::optional<GiBounds> mGiSceneBounds;
         bool mGiWasShading = false;
         // views[0]'s camera on the last TraceFrame.
         uint64_t mTracedHistoryId = 0;

@@ -173,11 +173,12 @@ namespace mir
         mSsgiTrace->Initialize(*mDevice, mCameraBuffer->SetLayout());
 #if MIR_WITH_RTXGI
         if (mDevice->RayTracingSupported() && mDevice->DdgiSupported())
-            mDdgi->Initialize(*mDevice, mRayTracer->SceneLayout(), mCameraBuffer->SetLayout());
+            mDdgi->Initialize(*mDevice, mRayTracer->SceneLayout(), mCameraBuffer->SetLayout(),
+                mMaterialStore->SurfaceMaterials().materials);
 #endif
 
         if (!mPostProcessing->Initialize(*mDevice, mSwapchain->Format(), mSwapchain->Extent(),
-            mCameraBuffer->SetLayout()))
+            mCameraBuffer->SetLayout(), desc.enableDlss))
             return false;
 
         if (!mDebugDraw->Initialize(*mDevice, mSwapchain->Format()))
@@ -275,6 +276,25 @@ namespace mir
         library.Register("RayTracer.closesthit", std::move(rayHit), { "closesthit" });
         library.Register("RayTracer.anyhit", { "raytrace.anyHitMain.spv", "raytrace.shadowAnyHitMain.spv" },
             { "anyhit" });
+#if MIR_WITH_RTXGI
+        std::vector<std::string> giHits, probeHits;
+        for (const auto &hit : surfaceClosestHit)
+        {
+            const auto stem = hit.substr(0, hit.size() - std::string(".closestHitSurface.spv").size());
+            giHits.push_back(stem + ".gi.closestHitSurface.spv");
+            probeHits.push_back(stem + ".probe.closestHitSurface.spv");
+        }
+        library.Register("Ddgi.materialCamera", std::move(giHits), { "closesthit" });
+        library.Register("Ddgi.materialProbe", std::move(probeHits), { "closesthit" });
+        for (const auto &shader : { std::string("raytraceGi"), std::string("ddgiProbe") })
+        {
+            const bool probe = shader == "ddgiProbe";
+            library.Register(shader + ".raygen", { shader + (probe ? ".probeRayGen.spv" : ".rayGenMain.spv") }, { "raygeneration" });
+            library.Register(shader + ".miss", { shader + (probe ? ".probeMiss.spv" : ".missMain.spv"), shader + ".shadowMissMain.spv" }, { "miss" });
+            library.Register(shader + ".hit", { shader + (probe ? ".probeClosestHit.spv" : ".closestHitMain.spv") }, { "closesthit" });
+            library.Register(shader + ".anyhit", { shader + (probe ? ".probeAnyHit.spv" : ".anyHitMain.spv"), shader + ".shadowAnyHitMain.spv" }, { "anyhit" });
+        }
+#endif
     }
 
     bool VulkanRenderer::LoadAcceptedShaderSignatures(std::string *error)
@@ -396,6 +416,9 @@ namespace mir
         for (const ShaderManifestOutput &output : manifest->outputs)
         {
             const std::string name = ShaderOutputName(output.output);
+            std::error_code missing;
+            if (!std::filesystem::is_regular_file(ShaderPath(name), missing))
+                return fail("shader output is missing: " + name);
             const auto bytes = ReadBytes(ShaderPath(name));
             if (!bytes) return fail("shader output is missing: " + name);
             candidateHashes[name] = HashShaderContent(*bytes);
@@ -466,6 +489,12 @@ namespace mir
         }
 
         std::string prepareError;
+#if MIR_WITH_RTXGI
+        mPendingShaderReload.AddStage("ddgi",
+            [&](std::string &stageError) { return mDdgi->PrepareShaderReload(mPendingCatalog.materials, &stageError); },
+            [&] { mDdgi->CommitShaderReload(); },
+            [&] { mDdgi->DiscardShaderReload(); });
+#endif
         if (!mPendingShaderReload.PrepareAll(&prepareError))
             return fail(prepareError);
 
@@ -830,6 +859,50 @@ namespace mir
         if (settings == mDdgiSettings) return;
         mDdgiSettings = settings;
         if (mGiWasShading) mPostProcessing->ResetHistory();
+    }
+
+    void VulkanRenderer::UpdateGiSceneBounds(std::span<const WorldDrawItem> items)
+    {
+        mGiSceneBounds.reset();
+        for (const auto &item : items)
+        {
+            const auto *mesh = mResources->FindMesh(item.mesh);
+            if (!mesh) continue;
+            for (int corner = 0; corner < 8; ++corner)
+            {
+                glm::dvec3 local;
+                for (int axis = 0; axis < 3; ++axis)
+                    local[axis] = (corner & (1 << axis)) ? mesh->mBounds.mLocalMax[axis] : mesh->mBounds.mLocalMin[axis];
+                const auto point = glm::dvec3(item.pose.position.Meters()) + glm::dmat3(item.pose.linear) * local;
+                if (!mGiSceneBounds) mGiSceneBounds = GiBounds{ {point.x, point.y, point.z}, {point.x, point.y, point.z} };
+                for (int axis = 0; axis < 3; ++axis)
+                {
+                    mGiSceneBounds->minimum[axis] = (std::min)(mGiSceneBounds->minimum[axis], point[axis]);
+                    mGiSceneBounds->maximum[axis] = (std::max)(mGiSceneBounds->maximum[axis], point[axis]);
+                }
+            }
+        }
+    }
+
+    std::string VulkanRenderer::GiStatus() const
+    {
+        if (!mDdgiSettings.enabled) return "Disabled";
+        if (!mDevice->RayTracingSupported()) return "Unavailable: ray tracing hardware support";
+#if MIR_WITH_RTXGI
+        if (!mDevice->DdgiSupported()) return "Unavailable: device descriptor limits";
+        return mDdgi->Status();
+#else
+        return "Unavailable: RTXGI was not compiled into this build";
+#endif
+    }
+
+    std::span<const GiProbeDebug> VulkanRenderer::GiProbeStates() const
+    {
+#if MIR_WITH_RTXGI
+        return mDdgi->ProbeDebug();
+#else
+        return {};
+#endif
     }
 
     void VulkanRenderer::ReleaseSceneResources()

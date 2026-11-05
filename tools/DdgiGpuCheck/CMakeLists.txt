@@ -1,0 +1,8 @@
+add_executable(DdgiGpuCheck main.cpp)
+target_link_libraries(DdgiGpuCheck PRIVATE mir::renderer mir::window)
+find_path(DDGI_STB_INCLUDE_DIR stb_image.h REQUIRED)
+target_include_directories(DdgiGpuCheck PRIVATE ${DDGI_STB_INCLUDE_DIR})
+set_target_properties(DdgiGpuCheck PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+add_dependencies(DdgiGpuCheck MjolnirEngine)
+add_test(NAME smoke.ddgi-gpu COMMAND DdgiGpuCheck "${CMAKE_BINARY_DIR}/ddgi-gpu")
+set_tests_properties(smoke.ddgi-gpu PROPERTIES LABELS smoke RUN_SERIAL TRUE TIMEOUT 180)

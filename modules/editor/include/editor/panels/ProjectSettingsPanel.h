@@ -18,12 +18,13 @@
 
 namespace mir
 {
+    class VulkanRenderer;
     class ProjectSettingsPanel
     {
     public:
 
         void Draw(RenderSettings &renderSettings, const std::filesystem::path &savePath, bool &showInputSettings,
-            PhysicsLayerUpdate *layerUpdate, IEditorAudio *audio, bool editing);
+            PhysicsLayerUpdate *layerUpdate, IEditorAudio *audio, bool editing, const VulkanRenderer *renderer = nullptr);
 
         void OnHidden()
         {
@@ -46,6 +47,9 @@ namespace mir
         void LoadLayers(const std::filesystem::path &savePath);
 
         std::string mRenderingStatusMessage;
+        const VulkanRenderer *mRenderer = nullptr;
+        float mGiPadding = 4.0f;
+        std::string mGiFitStatus;
         RenderSettings mMessageSnapshot;
 
         bool mDraftLoaded = false;
